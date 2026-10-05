@@ -126,7 +126,7 @@
           }
         }
       ],
-      "description": "设备范围固定为一个 asset_id。未选择设备时不显示跨设备数据；SNMP 不可达与硬件指标缺失分开显示。"
+      "description": "仅显示所选设备；SNMP 不可达与指标缺失分开呈现。"
     },
     {
       "id": 2,
@@ -243,8 +243,7 @@
           "refId": "A",
           "legendFormat": "{{sensor_name}} · {{group}} · {{window}}"
         }
-      ],
-      "description": "显示所选设备当前窗口中 CPU 使用率最高的部件。"
+      ]
     },
     {
       "id": 4,
@@ -307,8 +306,7 @@
           "refId": "A",
           "legendFormat": "{{sensor_name}} · {{group}}"
         }
-      ],
-      "description": "显示使用率最高的内存池，不合并不同内存池。"
+      ]
     },
     {
       "id": 5,
@@ -363,8 +361,7 @@
           "refId": "A",
           "legendFormat": "{{sensor_name}} · {{group}}"
         }
-      ],
-      "description": "显示当前最高温度；传感器名称见图例。"
+      ]
     },
     {
       "id": 6,
@@ -419,7 +416,7 @@
           "refId": "A"
         }
       ],
-      "description": "异常部件数；无异常为 0，无状态数据时显示暂无数据。"
+      "description": "无异常时显示 0；没有状态数据时显示 —。"
     },
     {
       "id": 7,
@@ -474,7 +471,7 @@
           "refId": "A"
         }
       ],
-      "description": "未知状态部件数；无未知为 0，无状态数据时显示暂无数据。"
+      "description": "没有未知状态时显示 0；没有状态数据时显示 —。"
     },
     {
       "id": 900,
@@ -543,8 +540,7 @@
           "legendFormat": "{{sensor_name}} · {{group}} · {{window}}",
           "refId": "A"
         }
-      ],
-      "description": "按采样窗口展示 CPU 部件趋势，最多 10 条。"
+      ]
     },
     {
       "id": 26,
@@ -598,8 +594,7 @@
           "expr": "clamp_min((count(max by (tenant_id, asset_id, sensor_key, window) ((nexora_hw_cpu_usage_percent{asset_id=\"$asset_id\",asset_id!=\"\",window=\"$cpu_window\"}  * on(tenant_id, asset_id, sensor_key) group_left(sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class, source_id, hostname, site_name, vendor, platform, ent_physical_index, measured_entity_type) (nexora_hw_sensor_info{asset_id=\"$asset_id\",asset_id!=\"\",group=~\"$hardware_group\",sensor_name=~\"$sensor_name\",component_class=~\"$component_class\"})))))) - 10, 0)",
           "refId": "A"
         }
-      ],
-      "description": "当前采样窗口中未显示的 CPU 部件数。"
+      ]
     },
     {
       "id": 9,
@@ -655,8 +650,7 @@
           "legendFormat": "{{sensor_name}} · {{group}}",
           "refId": "A"
         }
-      ],
-      "description": "按内存池展示使用率，不合并池数据。"
+      ]
     },
     {
       "id": 10,
@@ -712,8 +706,7 @@
           "legendFormat": "{{sensor_name}} · {{group}}",
           "refId": "A"
         }
-      ],
-      "description": "展示有效温度读数；可按分组筛选光模块。"
+      ]
     },
     {
       "id": 11,
@@ -769,8 +762,7 @@
           "legendFormat": "{{sensor_name}} · {{group}}",
           "refId": "A"
         }
-      ],
-      "description": "展示风扇 RPM；运行状态请看状态明细。"
+      ]
     },
     {
       "id": 12,
@@ -826,8 +818,7 @@
           "legendFormat": "{{sensor_name}} · {{group}}",
           "refId": "A"
         }
-      ],
-      "description": "展示功率读数；电源状态见状态明细。"
+      ]
     },
     {
       "id": 27,
@@ -883,8 +874,7 @@
           "legendFormat": "{{sensor_name}} · {{group}}",
           "refId": "A"
         }
-      ],
-      "description": "展示光模块收发功率（dBm）。"
+      ]
     },
     {
       "id": 901,
@@ -996,8 +986,7 @@
             }
           }
         }
-      ],
-      "description": "按 CPU/处理单元列出使用率和采样窗口。"
+      ]
     },
     {
       "id": 14,
@@ -1166,7 +1155,7 @@
           }
         }
       ],
-      "description": "列出各内存池已用量、总量和使用率，不合并不同内存池。"
+      "description": "分别显示各内存池的已用容量、总容量和使用率。"
     },
     {
       "id": 15,
@@ -1265,8 +1254,7 @@
             }
           }
         }
-      ],
-      "description": "列出温度传感器读数；可按分组筛选。"
+      ]
     },
     {
       "id": 16,
@@ -1365,8 +1353,7 @@
             }
           }
         }
-      ],
-      "description": "列出风扇转速；未提供 RPM 时无数据。"
+      ]
     },
     {
       "id": 17,
@@ -1581,7 +1568,7 @@
           }
         }
       ],
-      "description": "显示部件状态、原始值、采集质量和存在性；未验证状态不做推断。"
+      "description": "未识别的状态显示原始值，不作健康判断。"
     },
     {
       "id": 18,
@@ -1681,7 +1668,7 @@
           }
         }
       ],
-      "description": "列出功率读数，不代表电源状态。"
+      "description": "功率读数不代表电源状态。"
     },
     {
       "id": 902,
@@ -1961,7 +1948,7 @@
           }
         }
       ],
-      "description": "显示硬件类别发现状态、传感器数量及最近成功时间。"
+      "description": "显示各类硬件的发现状态、数量和最近采集时间。"
     },
     {
       "id": 21,
@@ -2048,7 +2035,7 @@
           }
         }
       ],
-      "description": "显示采集质量原始值，不推测枚举含义。"
+      "description": "显示设备返回的采集质量值，系统不解释未确认的代码。"
     },
     {
       "id": 22,
@@ -2147,8 +2134,7 @@
             }
           }
         }
-      ],
-      "description": "显示各传感器距最近成功采集的秒数。"
+      ]
     },
     {
       "id": 24,
@@ -2203,7 +2189,7 @@
           "refId": "A"
         }
       ],
-      "description": "Exporter 全局抓取错误数，不代表所选设备错误数。"
+      "description": "这是全局采集错误数，不是所选设备错误数。"
     },
     {
       "id": 903,
@@ -2421,8 +2407,7 @@
             }
           }
         }
-      ],
-      "description": "接口行同样使用所选 asset_id 限定，并保留现有接口详情跳转。"
+      ]
     },
     {
       "id": 25,
@@ -2514,8 +2499,7 @@
           "legendFormat": "{{hostname}} / {{ifName}} 出流量",
           "refId": "B"
         }
-      ],
-      "description": "接口流量仍按选定资产过滤，入向/出向分开显示。"
+      ]
     },
     {
       "id": 28,
@@ -2614,8 +2598,7 @@
             }
           }
         }
-      ],
-      "description": "显示光功率读数及传感器分组。"
+      ]
     },
     {
       "id": 29,
@@ -2702,7 +2685,7 @@
           }
         }
       ],
-      "description": "显示尚无规范单位换算的传感器及上游单位。"
+      "description": "单位尚未统一，数值按设备原始单位显示。"
     }
   ],
   "refresh": "30s",

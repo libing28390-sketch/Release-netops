@@ -61,7 +61,7 @@
           "refId": "A"
         }
       ],
-      "description": "仅统计六类 platform_* Prometheus 指标端点中当前为 UP 的目标，不代表 Docker 容器总数。"
+      "description": "统计可访问的监控端点，不代表容器数。"
     },
     {
       "id": 2,
@@ -119,8 +119,7 @@
           "expr": "count(up{job=~\"platform_api|platform_victoriametrics|platform_vmagent|platform_snmp_exporter|platform_grafana|platform_cadvisor\"} == 0)",
           "refId": "A"
         }
-      ],
-      "description": "六类 platform_* Prometheus 指标端点 DOWN 时显示为失败；数据缺失保持为无数据。"
+      ]
     },
     {
       "id": 3,
@@ -174,8 +173,7 @@
           "expr": "count(up{job=~\"platform_api|platform_victoriametrics|platform_vmagent|platform_snmp_exporter|platform_grafana|platform_cadvisor\"})",
           "refId": "A"
         }
-      ],
-      "description": "已配置的 API、VictoriaMetrics、vmagent、SNMP Exporter、Grafana 和 cAdvisor 指标端点数。"
+      ]
     },
     {
       "id": 4,
@@ -296,7 +294,7 @@
           "refId": "A"
         }
       ],
-      "description": "API /metrics 的 SELECT 1 健康探测：1 表示连接与查询成功，0 表示失败；这不是 PostgreSQL exporter。"
+      "description": "1 表示连接与查询成功，0 表示失败。"
     },
     {
       "id": 6,
@@ -403,7 +401,7 @@
           "refId": "A"
         }
       ],
-      "description": "按 platform_* 指标端点展示 UP 值；0 表示该端点不可达。"
+      "description": "1 表示可达，0 表示不可达。"
     },
     {
       "id": 8,
@@ -572,7 +570,7 @@
           }
         }
       ],
-      "description": "仅列出六类 platform_* Prometheus 指标端点的状态；cAdvisor 的 container_last_seen 观测清单单独展示，不冒充 Docker 健康状态。"
+      "description": "只反映监控指标端点状态，不代表容器健康。"
     },
     {
       "id": 10,
@@ -635,7 +633,7 @@
           "refId": "A"
         }
       ],
-      "description": "vmagent 尚未成功写入 VictoriaMetrics 的持久化队列字节数；数据源缺失时保持无数据。"
+      "description": "显示等待写入的数据量；无数据时状态未知。"
     },
     {
       "id": 11,
@@ -805,8 +803,7 @@
           "expr": "sum(vm_free_disk_space_bytes)",
           "refId": "A"
         }
-      ],
-      "description": "VictoriaMetrics storageDataPath 所在文件系统的剩余空间。"
+      ]
     },
     {
       "id": 14,
@@ -861,7 +858,7 @@
           "refId": "A"
         }
       ],
-      "description": "VictoriaMetrics 当前已用数据量；使用 v1.103.0 支持的 vm_data_size_bytes，不表示所在文件系统占用率。"
+      "description": "显示监控数据量，不代表磁盘使用率。"
     },
     {
       "id": 15,
@@ -920,7 +917,7 @@
           "refId": "A"
         }
       ],
-      "description": "0 表示可写，1 表示存储进入只读状态；此指标缺失时保持无数据。"
+      "description": "0 表示可写，1 表示只读；无数据时状态未知。"
     },
     {
       "id": 16,
@@ -975,8 +972,7 @@
           "legendFormat": "{{name}}",
           "refId": "A"
         }
-      ],
-      "description": "CPU 按单个逻辑核归一化；cAdvisor 不导出自定义容器标签。"
+      ]
     },
     {
       "id": 17,
@@ -1146,7 +1142,7 @@
           "refId": "A"
         }
       ],
-      "description": "按 cAdvisor container_last_seen 的非空容器名统计当前观测到的 Docker 容器数；不等同于容器健康检查。"
+      "description": "统计已观测到的容器，不代表容器健康。"
     },
     {
       "id": 20,
@@ -1226,7 +1222,7 @@
           }
         }
       ],
-      "description": "基于 cAdvisor container_last_seen 的当前容器采集观测；最后观测时间不代表 Docker 容器健康状态。"
+      "description": "最后观测时间不代表容器健康状态。"
     }
   ],
   "refresh": "30s",

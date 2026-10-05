@@ -840,15 +840,14 @@ def build_overview_dashboard():
         stat_panel(2, "监控站点数", f'count(count by (site_name) (up{{{target_site_sel}}}))', 4, 0, 4, 3, color="#A352CC"),
         stat_panel(3, "全网在线数", f'count(count by (instance) (up{{{target_sel}}} == 1)) or on() ((count(up{{{target_sel}}}) > 0) * 0)', 8, 0, 4, 3, color="#56A64B"),
         stat_panel(
-            4, "无线在线客户端数", client_online_expr, 12, 0, 4, 3, color="#37872D",
-            description="没有匹配的无线客户端采集指标时显示暂无采集数据，不代表当前客户端数为 0。",
+            4, "控制器汇总在线终端数", client_online_expr, 12, 0, 4, 3, color="#37872D",
         ),
         stat_panel(5, "采集接口总数", f"count(count by (instance, ifIndex) (ifOperStatus{{{sel}}}))", 16, 0, 4, 3, color="#3274D9"),
         stat_panel(6, "近24h变动且当前 Down 接口数", f'count({anomaly_rows}) or on() ((count(ifOperStatus{{{sel}}}) > 0) * 0)', 20, 0, 4, 3, thresholds=[
             {"color": "green", "value": None},
             {"color": "#E0B400", "value": 1},
             {"color": "#F2495C", "value": 5}
-        ], description="只统计管理状态为启用、当前运行状态为 Down，且过去24小时运行状态有变化的接口。长期稳定 Down 的端口不会重复计入，可在设备或接口详情查看当前状态。"),
+        ], description="只统计已启用、当前 Down 且24小时内状态有变化的接口。"),
         timeseries_panel(7, "接口总流量趋势", [
             {"expr": f"sum({in_rate}) * 8", "legendFormat": "入流量", "refId": "A"},
             {"expr": f"sum({out_rate}) * 8", "legendFormat": "出流量", "refId": "B"}
@@ -857,20 +856,20 @@ def build_overview_dashboard():
             timeseries_color_override("byName", "出流量", OUTBOUND_COLOR),
         ]),
         timeseries_panel(8, "全网无线终端与 AP 规模趋势", [
-            {"expr": f"sum((hwWlanCurAssocUserNum{{{sel}}} or hh3cDot11CurrAssocUserNum{{{sel}}} or ruijieApcTotalStaNum{{{sel}}} or cLSysTotalNumOfClients{{{sel}}} or wlsxSysExtStationsNum{{{sel}}} or ruckusZDTotalNumSta{{{sel}}}))", "legendFormat": "无线客户端总数", "refId": "A"},
+            {"expr": f"sum((hwWlanCurAssocUserNum{{{sel}}} or hh3cDot11CurrAssocUserNum{{{sel}}} or ruijieApcTotalStaNum{{{sel}}} or cLSysTotalNumOfClients{{{sel}}} or wlsxSysExtStationsNum{{{sel}}} or ruckusZDTotalNumSta{{{sel}}}))", "legendFormat": "控制器统计的在线终端", "refId": "A"},
             {"expr": f"sum((hwWlanCurOnlineApNum{{{sel}}} or hh3cDot11CurrOnlineAPNum{{{sel}}} or ruijieApcOnlineApNum{{{sel}}} or ruijieApcTotalApNum{{{sel}}} or cLApTotalUpAPs{{{sel}}} or wlsxSysExtAccessPointsNum{{{sel}}} or ruckusZDTotalNumAP{{{sel}}}))", "legendFormat": "在线 AP 总数", "refId": "B"}
         ], 12, 3, 12, 8, unit="short"),
         stat_panel(
             9, "CPU 指标覆盖设备数", online_metric_device_count(cpu_metric), 0, 11, 8, 3,
-            description="当前在线设备中至少采集到一条规范 CPU 指标的设备数量。不同 window 作为独立样本保留，设备只按资产 ID 计数一次。",
+            description=None,
         ),
         stat_panel(
             10, "内存指标覆盖设备数", online_metric_device_count(memory_metric), 8, 11, 8, 3,
-            description="当前在线设备中至少采集到一条规范内存池使用率指标的设备数量。没有指标不等于内存使用率为 0。",
+            description="没有采到指标不代表使用率为 0。",
         ),
         stat_panel(
             11, "温度指标覆盖设备数", online_metric_device_count(temperature_metric), 16, 11, 8, 3,
-            description="当前在线设备中至少采集到一条规范温度传感器指标的设备数量。温度阈值因设备而异，请进入设备视图检查具体传感器。",
+            description="温度阈值因设备而异，请查看设备详情。",
         ),
         table_panel(
             15, "设备 CPU 使用率 Top10（按 window）", f"topk by (window) (10, {cpu_expr})", 0, 14, 8, 8,
@@ -878,7 +877,7 @@ def build_overview_dashboard():
             transformations=cpu_overview_transform,
             value_col_name="CPU 使用率 (%)",
             device_detail_link=True,
-            description="每台设备在每个实际采样 window 中取最高 CPU 部件使用率，再分别排列前10台设备；window 标签始终保留，不会把不同采样窗口求平均。资产 ID 可直接打开对应设备详情。",
+            description="按采样窗口分别排名，不混合不同窗口。",
         ),
         table_panel(
             16, "内存池使用率 Top10", f"topk(10, {mem_expr})", 8, 14, 8, 8,
@@ -886,7 +885,7 @@ def build_overview_dashboard():
             transformations=hardware_sensor_transform,
             value_col_name="数值",
             device_detail_link=True,
-            description="按单个内存池的规范使用率排列，展示传感器名称和分组，不对不同容量内存池取平均。资产 ID 可打开设备详情。",
+            description=None,
         ),
         table_panel(
             25, "温度传感器 Top10", f"topk(10, {temperature_expr})", 16, 14, 8, 8,
@@ -894,7 +893,7 @@ def build_overview_dashboard():
             transformations=hardware_sensor_transform,
             value_col_name="数值",
             device_detail_link=True,
-            description="按单个规范温度传感器读数排列，保留传感器名称和分组。资产 ID 可打开设备详情。",
+            description=None,
         ),
         table_panel(
             12, "设备总吞吐速率 Top10",
@@ -902,7 +901,7 @@ def build_overview_dashboard():
             0, 22, 12, 8, unit="bps",
             transformations=clean_organize_transformation("总速率 (bit/s)"),
             value_col_name="总速率 (bit/s)",
-            description="按设备汇总所有接口近 5 分钟平均入向与出向吞吐速率（入向 + 出向）。单位为 bit/s，Grafana 会自动换算为 kb/s、Mb/s 等；此值是速率，不是累计流量。",
+            description="按近5分钟吞吐速率排序；这是速率，不是累计流量。",
         ),
         timeseries_panel(13, "错误/丢弃趋势", [
             {"expr": f"sum(rate(ifInErrors{{{sel}}}[5m])) + sum(rate(ifOutErrors{{{sel}}}[5m]))", "legendFormat": "错误包/秒", "refId": "A"},
@@ -919,7 +918,7 @@ def build_overview_dashboard():
             value_col_name="24h变化次数",
             value_mappings=RECENT_CHANGE_VALUE_MAPPINGS,
             detail_link=True,
-            description="列出管理状态为启用、当前仍为 Down，且过去24小时运行状态发生过变化的接口；按24小时状态变化次数取前20项。长期稳定 Down 的端口不列入此表，不代表持续 Down 的接口一定正常。",
+            description="只列当前 Down 且24小时内状态变动过的接口；长期 Down 不在此列。",
             map_interface_role=True,
         )
     ]
@@ -1143,7 +1142,7 @@ def build_device_dashboard():
             },
         }],
         color_mapped_cells=True,
-        description="设备范围固定为一个 asset_id。未选择设备时不显示跨设备数据；SNMP 不可达与硬件指标缺失分开显示。",
+        description="仅显示所选设备；SNMP 不可达与指标缺失分开呈现。",
     )
     cpu_gauge = gauge_panel(
         3,
@@ -1158,7 +1157,7 @@ def build_device_dashboard():
             {"color": "#E0B400", "value": 70},
             {"color": "red", "value": 85},
         ],
-        description="显示所选设备当前窗口中 CPU 使用率最高的部件。",
+        description=None,
     )
     cpu_gauge["targets"][0]["legendFormat"] = "{{sensor_name}} · {{group}} · {{window}}"
     memory_gauge = gauge_panel(
@@ -1174,7 +1173,7 @@ def build_device_dashboard():
             {"color": "#E0B400", "value": 75},
             {"color": "red", "value": 90},
         ],
-        description="显示使用率最高的内存池，不合并不同内存池。",
+        description=None,
     )
     memory_gauge["targets"][0]["legendFormat"] = "{{sensor_name}} · {{group}}"
     temp_stat = stat_panel(
@@ -1187,7 +1186,7 @@ def build_device_dashboard():
         3,
         unit="celsius",
         color="#3274D9",
-        description="显示当前最高温度；传感器名称见图例。",
+        description=None,
         graph_mode="none",
     )
     temp_stat["targets"][0]["legendFormat"] = "{{sensor_name}} · {{group}}"
@@ -1250,7 +1249,7 @@ def build_device_dashboard():
                 },
             },
         ],
-        description="列出各内存池已用量、总量和使用率，不合并不同内存池。",
+        description="分别显示各内存池的已用容量、总容量和使用率。",
     )
     memory_detail_table["fieldConfig"]["overrides"].extend([
         {
@@ -1351,7 +1350,7 @@ def build_device_dashboard():
         value_mappings=state_mappings,
         extra_value_mappings={"明确存在性": presence_state_mappings},
         color_mapped_cells=True,
-        description="显示部件状态、原始值、采集质量和存在性；未验证状态不做推断。",
+        description="未识别的状态显示原始值，不作健康判断。",
     )
     component_state_table["fieldConfig"]["overrides"].append({
         "matcher": {"id": "byName", "options": "明确存在性"},
@@ -1459,7 +1458,7 @@ def build_device_dashboard():
                 "options": {"-1": {"text": "无成功记录", "color": "red"}},
             }],
         },
-        description="显示硬件类别发现状态、传感器数量及最近成功时间。",
+        description="显示各类硬件的发现状态、数量和最近采集时间。",
     )
     capability_table["fieldConfig"]["overrides"].extend([
         {
@@ -1487,13 +1486,13 @@ def build_device_dashboard():
         stat_panel(
             6, "异常部件数", abnormal_count, 16, 3, 4, 3,
             unit="short", color="#E02F44",
-            description="异常部件数；无异常为 0，无状态数据时显示暂无数据。",
+            description="无异常时显示 0；没有状态数据时显示 —。",
             graph_mode="none",
         ),
         stat_panel(
             7, "状态未知部件数", unknown_count, 20, 3, 4, 3,
             unit="short", color="#8A8F98",
-            description="未知状态部件数；无未知为 0，无状态数据时显示暂无数据。",
+            description="没有未知状态时显示 0；没有状态数据时显示 —。",
             graph_mode="none",
         ),
         timeseries_panel(
@@ -1503,13 +1502,13 @@ def build_device_dashboard():
                 "refId": "A",
             }],
             0, 6, 9, 8, unit="percent",
-            description="按采样窗口展示 CPU 部件趋势，最多 10 条。",
+            description=None,
         ),
         stat_panel(
             26, "超出10条的 CPU 部件数", cpu_overflow_count,
             9, 6, 3, 8,
             unit="short", color="#E02F44", graph_mode="none",
-            description="当前采样窗口中未显示的 CPU 部件数。",
+            description=None,
         ),
         timeseries_panel(
             9, "各内存池使用率走势", [{
@@ -1518,7 +1517,7 @@ def build_device_dashboard():
                 "refId": "A",
             }],
             12, 6, 12, 8, unit="percent",
-            description="按内存池展示使用率，不合并池数据。",
+            description=None,
         ),
         timeseries_panel(
             10, "板卡与环境温度走势", [{
@@ -1527,7 +1526,7 @@ def build_device_dashboard():
                 "refId": "A",
             }],
             0, 14, 12, 8, unit="celsius",
-            description="展示有效温度读数；可按分组筛选光模块。",
+            description=None,
         ),
         timeseries_panel(
             11, "风扇转速走势", [{
@@ -1536,7 +1535,7 @@ def build_device_dashboard():
                 "refId": "A",
             }],
             12, 14, 12, 8, unit="rpm",
-            description="展示风扇 RPM；运行状态请看状态明细。",
+            description=None,
         ),
         timeseries_panel(
             12, "电源功率读数走势", [{
@@ -1545,7 +1544,7 @@ def build_device_dashboard():
                 "refId": "A",
             }],
             0, 22, 12, 8, unit="watt",
-            description="展示功率读数；电源状态见状态明细。",
+            description=None,
         ),
         timeseries_panel(
             27, "光模块收发功率走势（dBm）", [{
@@ -1554,46 +1553,46 @@ def build_device_dashboard():
                 "refId": "A",
             }],
             12, 22, 12, 8, unit="dBm",
-            description="展示光模块收发功率（dBm）。",
+            description=None,
         ),
         current_table(
             13, "CPU 部件当前读数", cpu, 0, 30,
             unit="percent", value_name="CPU 使用率",
-            description="按 CPU/处理单元列出使用率和采样窗口。",
+            description=None,
         ),
         memory_detail_table,
         current_table(
             15, "温度传感器明细", temperature, 0, 38,
             unit="celsius", value_name="温度",
-            description="列出温度传感器读数；可按分组筛选。",
+            description=None,
         ),
         current_table(
             16, "风扇转速当前读数", fan_speed, 12, 38,
             unit="rpm", value_name="转速",
-            description="列出风扇转速；未提供 RPM 时无数据。",
+            description=None,
         ),
         component_state_table,
         current_table(
             18, "电源功率当前读数", power, 16, 46, 8,
             unit="watt", value_name="功率",
-            description="列出功率读数，不代表电源状态。",
+            description="功率读数不代表电源状态。",
         ),
         capability_table,
         current_table(
             21, "传感器数据质量", quality, 0, 62, 8,
             value_name="质量值",
-            description="显示采集质量原始值，不推测枚举含义。",
+            description="显示设备返回的采集质量值，系统不解释未确认的代码。",
         ),
         current_table(
             22, "距最近一次成功采集", last_success_age, 8, 62, 8,
             unit="s", value_name="距上次成功",
-            description="显示各传感器距最近成功采集的秒数。",
+            description=None,
         ),
         stat_panel(
             24, "全局硬件指标渲染错误数", "nexora_hw_sensor_render_errors",
             16, 62, 8, 8,
             unit="short", color="#E02F44", graph_mode="none",
-            description="Exporter 全局抓取错误数，不代表所选设备错误数。",
+            description="这是全局采集错误数，不是所选设备错误数。",
         ),
         table_panel(
             23, "设备端口实时状态清单",
@@ -1607,7 +1606,7 @@ def build_device_dashboard():
             color_mapped_cells=True,
             mapped_cell_mode="color-background",
             detail_link=True,
-            description="接口行同样使用所选 asset_id 限定，并保留现有接口详情跳转。",
+            description=None,
         ),
         timeseries_panel(
             25, "设备接口流量走势", [
@@ -1627,17 +1626,17 @@ def build_device_dashboard():
                 timeseries_color_override("byRegexp", ".*入流量$", INBOUND_COLOR),
                 timeseries_color_override("byRegexp", ".*出流量$", OUTBOUND_COLOR),
             ],
-            description="接口流量仍按选定资产过滤，入向/出向分开显示。",
+            description=None,
         ),
         current_table(
             28, "光模块功率当前读数（dBm）", optical_power, 0, 78, 12,
             unit="dBm", value_name="光功率",
-            description="显示光功率读数及传感器分组。",
+            description=None,
         ),
         current_table(
             29, "其他 LibreNMS 传感器读数", generic_sensor, 12, 78, 12,
             value_name="当前值",
-            description="显示尚无规范单位换算的传感器及上游单位。",
+            description="单位尚未统一，数值按设备原始单位显示。",
         ),
     ]
     # Reserve one additional grid row for the identity table and move all
@@ -1771,20 +1770,10 @@ def build_wireless_dashboard():
     ssid_clients = f'sum by ({device_labels}) (nexora_wireless_sensor_value{{{inventory_sel},component_class="wireless_ssid",sensor_class="clients"}})'
     inventory_clients = f"({controller_clients} or on({device_labels}) {ssid_clients})"
     clients = f"({legacy_clients} unless on({device_labels}) ({inventory_clients})) or on({device_labels}) ({inventory_clients})"
-    missing_wireless_data_note = "未显示不代表 AP 或客户端数量为 0。"
-    ap_total_description = (
-        f"按实际采集到状态的 AP 明细记录计数；不等同于控制器配置总量，明细发现不完整时可能低于实际数量。"
-        f"{missing_wireless_data_note}"
-    )
-    ap_online_description = (
-        f"AP 状态发现完整且状态均可识别时，按 associated/run 明细计数；否则回退到实际采集的控制器在线计数。"
-        f"{missing_wireless_data_note}"
-    )
-    ap_offline_description = (
-        f"只统计状态明确为 deassociated/idle 的 AP 明细；完整状态明细无离线记录时显示 0，不从总量减在线数推算。"
-        f"{missing_wireless_data_note}"
-    )
-    client_count_description = f"显示当前已关联无线终端数。{missing_wireless_data_note}"
+    missing_wireless_data_note = "暂无数据不代表数量为 0。"
+    ap_total_description = f"统计已采到状态的 AP，不等于控制器配置总数。{missing_wireless_data_note}"
+    ap_online_description = "优先按 AP 状态统计；明细不完整时采用控制器上报数。"
+    ap_offline_description = "只统计明确离线的 AP，不用总数减在线数推算。"
     ap_client_rows = f'topk(20, nexora_wireless_sensor_value{{{inventory_sel},component_class="wireless_access_point",sensor_class="clients"}})'
     radio_utilization_labels = "site_name,vendor,role,hostname,ap_id,ap_name,radio_id"
     radio_utilization_samples = f'nexora_wireless_sensor_value{{{inventory_sel},component_class="wireless_radio",sensor_class="utilization"}}'
@@ -1800,9 +1789,9 @@ def build_wireless_dashboard():
         stat_panel(1, "采集 AP", f"sum({ap_state_count})", 0, 0, 4, 3, color="#3274D9", description=ap_total_description, no_value="—"),
         stat_panel(2, "在线 AP", f"sum({ap_online})", 4, 0, 4, 3, color="#56A64B", description=ap_online_description, no_value="—"),
         stat_panel(3, "明确离线 AP", f"sum({ap_offline})", 8, 0, 4, 3, thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 1}, {"color": "red", "value": 5}], description=ap_offline_description, no_value="—"),
-        stat_panel(4, "在线终端", f"sum({clients})", 12, 0, 4, 3, color="#A352CC", description=client_count_description, no_value="—"),
-        stat_panel(5, "高利用率 Radio", high_utilization_radio_count, 16, 0, 4, 3, thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 1}, {"color": "red", "value": 5}], description=f"统计当前利用率不低于 75% 的已采集 Radio；此门槛用于首页热点筛查，不代表告警策略。{missing_wireless_data_note}", no_value="—"),
-        stat_panel(6, "平均 Radio 利用率", f"avg({radio_utilization_rows})", 20, 0, 4, 3, unit="percent", thresholds=UTILIZATION_THRESHOLDS, description=f"对当前已采集 Radio 利用率取平均；只代表有有效样本的 Radio。{missing_wireless_data_note}", no_value="—"),
+        stat_panel(4, "控制器汇总在线终端数", f"sum({clients})", 12, 0, 4, 3, color="#A352CC", no_value="—"),
+        stat_panel(5, "高利用率 Radio", high_utilization_radio_count, 16, 0, 4, 3, thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 1}, {"color": "red", "value": 5}], description="统计利用率达到 75% 的 Radio，仅用于定位热点。", no_value="—"),
+        stat_panel(6, "平均 Radio 利用率", f"avg({radio_utilization_rows})", 20, 0, 4, 3, unit="percent", thresholds=UTILIZATION_THRESHOLDS, description=None, no_value="—"),
         row_panel(900, "趋势与 AP 状态", 3),
         timeseries_panel(7, "在线 AP 与关联终端趋势", [
             {"expr": f"sum({ap_online})", "legendFormat": "在线 AP", "refId": "A"},
@@ -1812,7 +1801,7 @@ def build_wireless_dashboard():
             8, "采集到的 AP 状态分布", f"count by (state_description) ({ap_state_rows})",
             14, 4, 10, 7, unit="short", legend_format="{{state_description}}", max_value=None,
             thresholds=[], color="#3274D9", instant=True,
-            description="按 AP 状态明细中的实际 state_description 统计；不推断 Healthy/Warning/Critical。",
+            description=None,
         ),
         row_panel(901, "AP 明细", 11),
         table_panel(
@@ -1825,7 +1814,7 @@ def build_wireless_dashboard():
                 extra_indices={"ap_name": 0, "state_description": 1, "ap_ip": 2, "hostname": 3, "vendor": 4, "ap_model": 5, "Value": 6},
                 extra_excludes={"source_type": True, "measurement_type": True, "component_class": True, "source_id": True, "sensor_key": True, "window": True, "raw_state": True, "device_id": True, "ap_id": True, "ap_mac": True, "ap_serial": True, "platform": True, "discovery_status": True, "lifecycle_status": True},
             ),
-            description=f"展示采集到的 AP 状态明细；状态缺失或发现不完整时不能据此判断全量健康。{missing_wireless_data_note}",
+            description=f"只显示已采到状态的 AP。{missing_wireless_data_note}",
         ),
         table_panel(
             10, "AP 当前关联客户端 Top 20",
@@ -1837,14 +1826,14 @@ def build_wireless_dashboard():
                 extra_indices={"ap_name": 0, "hostname": 1, "vendor": 2, "ap_ip": 3, "ap_model": 4, "Value": 5},
                 extra_excludes={"source_type": True, "measurement_type": True, "component_class": True, "source_id": True, "sensor_key": True, "window": True, "unit": True, "device_id": True, "ap_id": True, "ap_mac": True, "ap_serial": True, "platform": True, "discovery_status": True, "lifecycle_status": True},
             ),
-            description="仅列出实际采集到 AP 客户端数的 AP；厂商或设备未提供该指标时不生成数据。",
+            description=None,
         ),
         row_panel(902, "Radio 热点", 21),
         bar_gauge_panel(
             11, "Radio 利用率 Top 10", f"topk(10, {radio_utilization_rows})",
             0, 22, 24, 8, unit="percent", legend_format="{{hostname}} / {{ap_name}} / Radio {{radio_id}}",
             thresholds=UTILIZATION_THRESHOLDS, max_value=100, instant=True,
-            description="按实际采集的 Radio 利用率排行；阈值用于视觉定位热点，不创建告警。",
+            description=None,
         ),
         row_panel(903, "SSID / BSS 客户端明细（依厂商采集覆盖）", 30),
         table_panel(
@@ -1856,14 +1845,14 @@ def build_wireless_dashboard():
                 extra_renames={"ap_name": "AP 名称", "radio_id": "Radio", "ssid": "SSID", "hostname": "设备名称", "wlan_id": "WLAN ID"},
                 extra_excludes={"source_type": True, "measurement_type": True, "component_class": True, "source_id": True, "sensor_key": True, "window": True, "device_id": True, "ap_id": True, "ap_mac": True, "ap_serial": True, "platform": True, "unit": True},
             ),
-            description="按实际采集到的 AP、Radio 与 BSS 客户端数排行；当前查询覆盖 H3C 与华为标准化数据。",
+            description="当前数据覆盖 H3C 与华为设备。",
         ),
         table_panel(
             13, "华为 SSID 客户端 Top 20",
             huawei_ssid_rows,
             12, 31, 12, 8, unit="short",
             transformations=clean_organize_transformation("客户端数", extra_renames={"ssid": "SSID"}),
-            description="按 SSID 汇总实际采集的华为 2.4 GHz 与 5 GHz 客户端数。",
+            description=None,
         ),
     ]
 
@@ -2041,14 +2030,14 @@ def build_interface_dashboard():
             0, 27, 12, 7, unit="bps",
             legend_format="{{site_name}} / {{hostname}} / {{ifName}}",
             thresholds=[], max_value=None, color=INBOUND_COLOR, instant=True,
-            description="按过去5分钟窗口内的入向平均速率排序；IF-MIB 八位组每秒速率换算为 bit/s。未知带宽的接口仍可按实际速率排名。",
+            description=None,
         ),
         bar_gauge_panel(
             18, "近5分钟出向速率 Top10", out_rate_top10,
             12, 27, 12, 7, unit="bps",
             legend_format="{{site_name}} / {{hostname}} / {{ifName}}",
             thresholds=[], max_value=None, color=OUTBOUND_COLOR, instant=True,
-            description="按过去5分钟窗口内的出向平均速率排序；IF-MIB 八位组每秒速率换算为 bit/s。未知带宽的接口仍可按实际速率排名。",
+            description=None,
         ),
         row_panel(903, "链路质量", 34),
         table_panel(
@@ -2125,7 +2114,7 @@ def build_interface_dashboard():
             value_col_name="运行状态", value_mappings=STATUS_VALUE_MAPPINGS,
             color_mapped_cells=True, mapped_cell_mode="color-background", detail_link=True,
             extra_value_mappings={"管理状态": ADMIN_STATUS_VALUE_MAPPINGS},
-            description="管理状态为启用时，运行 DOWN 表示异常候选；管理状态为停用且运行 DOWN 表示管理员停用；管理停用但运行 UP 表示状态不一致。默认隐藏管理停用接口，可通过“接口范围”切换显示。",
+            description="仅将管理启用且运行 Down 的接口列为异常候选。",
         ),
     ]
 
@@ -2355,7 +2344,7 @@ def build_interface_detail_dashboard():
                     "renameByName": {"site_name": "站点", "hostname": "设备名称", "vendor": "厂商", "ifName": "接口", "direction": "方向", "Value": "光功率 (dBm)"},
                 },
             }],
-            description="仅展示有已确认 SNMP 光模块 MIB 数据的接口。不同模块的告警阈值不同，因此此处显示实测 dBm，不套用全局阈值。",
+            description="显示实测光功率；告警阈值因模块而异。",
         ),
         timeseries_panel(19, "接收 / 发送光功率趋势", [
             {"expr": optical_rx, "legendFormat": "{{hostname}} / {{ifName}} 接收", "refId": "A"},
@@ -2756,7 +2745,7 @@ def build_platform_health_dashboard():
             4,
             unit="none",
             color="#56A64B",
-            description="仅统计六类 platform_* Prometheus 指标端点中当前为 UP 的目标，不代表 Docker 容器总数。",
+            description="统计可访问的监控端点，不代表容器数。",
         ),
         stat_panel(
             2,
@@ -2771,7 +2760,7 @@ def build_platform_health_dashboard():
                 {"color": "green", "value": None},
                 {"color": "red", "value": 1},
             ],
-            description="六类 platform_* Prometheus 指标端点 DOWN 时显示为失败；数据缺失保持为无数据。",
+            description=None,
         ),
         stat_panel(
             3,
@@ -2783,7 +2772,7 @@ def build_platform_health_dashboard():
             4,
             unit="none",
             color="#A352CC",
-            description="已配置的 API、VictoriaMetrics、vmagent、SNMP Exporter、Grafana 和 cAdvisor 指标端点数。",
+            description=None,
         ),
         stat_panel(
             4,
@@ -2813,7 +2802,7 @@ def build_platform_health_dashboard():
                 {"color": "red", "value": None},
                 {"color": "green", "value": 1},
             ],
-            description="API /metrics 的 SELECT 1 健康探测：1 表示连接与查询成功，0 表示失败；这不是 PostgreSQL exporter。",
+            description="1 表示连接与查询成功，0 表示失败。",
         ),
         stat_panel(
             6,
@@ -2844,7 +2833,7 @@ def build_platform_health_dashboard():
             legend_display_mode="list",
             legend_placement="bottom",
             legend_calcs=[],
-            description="按 platform_* 指标端点展示 UP 值；0 表示该端点不可达。",
+            description="1 表示可达，0 表示不可达。",
         ),
         timeseries_panel(
             8,
@@ -2891,7 +2880,7 @@ def build_platform_health_dashboard():
                     },
                 }
             ],
-            description="仅列出六类 platform_* Prometheus 指标端点的状态；cAdvisor 的 container_last_seen 观测清单单独展示，不冒充 Docker 健康状态。",
+            description="只反映监控指标端点状态，不代表容器健康。",
         ),
         stat_panel(
             10,
@@ -2907,7 +2896,7 @@ def build_platform_health_dashboard():
                 {"color": "#E0B400", "value": 104857600},
                 {"color": "red", "value": 1073741824},
             ],
-            description="vmagent 尚未成功写入 VictoriaMetrics 的持久化队列字节数；数据源缺失时保持无数据。",
+            description="显示等待写入的数据量；无数据时状态未知。",
         ),
         stat_panel(
             11,
@@ -2946,7 +2935,7 @@ def build_platform_health_dashboard():
             4,
             4,
             unit="bytes",
-            description="VictoriaMetrics storageDataPath 所在文件系统的剩余空间。",
+            description=None,
         ),
         stat_panel(
             14,
@@ -2957,7 +2946,7 @@ def build_platform_health_dashboard():
             4,
             4,
             unit="bytes",
-            description="VictoriaMetrics 当前已用数据量；使用 v1.103.0 支持的 vm_data_size_bytes，不表示所在文件系统占用率。",
+            description="显示监控数据量，不代表磁盘使用率。",
         ),
         stat_panel(
             15,
@@ -2972,7 +2961,7 @@ def build_platform_health_dashboard():
                 {"color": "green", "value": None},
                 {"color": "red", "value": 1},
             ],
-            description="0 表示可写，1 表示存储进入只读状态；此指标缺失时保持无数据。",
+            description="0 表示可写，1 表示只读；无数据时状态未知。",
         ),
         timeseries_panel(
             16,
@@ -2990,7 +2979,7 @@ def build_platform_health_dashboard():
             legend_display_mode="list",
             legend_placement="bottom",
             legend_calcs=["lastNotNull", "max"],
-            description="CPU 按单个逻辑核归一化；cAdvisor 不导出自定义容器标签。",
+            description=None,
         ),
         timeseries_panel(
             17,
@@ -3043,7 +3032,7 @@ def build_platform_health_dashboard():
             4,
             unit="none",
             color="#A352CC",
-            description="按 cAdvisor container_last_seen 的非空容器名统计当前观测到的 Docker 容器数；不等同于容器健康检查。",
+            description="统计已观测到的容器，不代表容器健康。",
         ),
         table_panel(
             20,
@@ -3074,7 +3063,7 @@ def build_platform_health_dashboard():
                     },
                 }
             ],
-            description="基于 cAdvisor container_last_seen 的当前容器采集观测；最后观测时间不代表 Docker 容器健康状态。",
+            description="最后观测时间不代表容器健康状态。",
         ),
     ]
     return {
@@ -3265,7 +3254,7 @@ def build_outbound_probe_quality_dashboard():
             legend_display_mode="list",
             legend_placement="bottom",
             legend_calcs=["lastNotNull"],
-            description="分别统计 DNS、TCP、HTTP、HTTPS 和 ICMP 探测结果；只显示有样本的协议。",
+            description=None,
         ),
         timeseries_panel(
             12,
@@ -3283,7 +3272,7 @@ def build_outbound_probe_quality_dashboard():
             legend_display_mode="list",
             legend_placement="bottom",
             legend_calcs=["lastNotNull", "max"],
-            description="ICMP 使用多回显 RTT；DNS/TCP/HTTP 是各协议自身的响应时间，不应互相视作同一层 RTT。",
+            description="ICMP 为往返时延；其他协议为自身响应时间。",
         ),
         stat_panel(
             13,
@@ -3294,7 +3283,7 @@ def build_outbound_probe_quality_dashboard():
             6,
             4,
             unit="percentunit",
-            description="每轮发送 5 个 ICMP Echo；按已完成探测样本的回显丢失率求平均。",
+            description=None,
         ),
         stat_panel(
             14,
@@ -3305,7 +3294,7 @@ def build_outbound_probe_quality_dashboard():
             6,
             4,
             unit="ms",
-            description="按每轮相邻成功 Echo RTT 的平均绝对变化聚合；这是 ICMP 探测间隔内的抖动估计。",
+            description=None,
         ),
         stat_panel(
             15,
@@ -3316,7 +3305,7 @@ def build_outbound_probe_quality_dashboard():
             6,
             4,
             unit="percentunit",
-            description="仅计算启用 WAN 链路的接口采样是否成功。",
+            description="仅统计已启用的 WAN 接口。",
         ),
         stat_panel(
             16,
@@ -3332,7 +3321,7 @@ def build_outbound_probe_quality_dashboard():
                 {"color": "#E0B400", "value": 0.95},
                 {"color": "green", "value": 0.99},
             ],
-            description="分母仅包括采集成功且管理状态为 UP 的样本，不能代表互联网端到端 SLA。",
+            description="只按采集成功样本计算，不代表端到端 SLA。",
         ),
         timeseries_panel(
             17,
@@ -3374,7 +3363,7 @@ def build_outbound_probe_quality_dashboard():
             legend_display_mode="list",
             legend_placement="bottom",
             legend_calcs=["lastNotNull", "max"],
-            description="这是所有启用 WAN 接口采样的平均值汇总，不是物理线路总流量或逐线路 SLA。",
+            description="显示启用接口的平均速率，不是线路总流量。",
         ),
         timeseries_panel(
             19,
@@ -3413,7 +3402,7 @@ def build_outbound_probe_quality_dashboard():
                 {"color": "green", "value": None},
                 {"color": "red", "value": 1},
             ],
-            description="只统计采样新鲜、采集成功、管理状态 UP 且运行状态 DOWN 的启用线路接口。",
+            description="仅统计采集正常、管理启用且运行 Down 的线路。",
         ),
         stat_panel(
             21,
@@ -3424,7 +3413,7 @@ def build_outbound_probe_quality_dashboard():
             6,
             4,
             unit="s",
-            description="连续 DOWN 样本数 × 配置采样间隔的估算值；不等同精确的运营商中断起点。",
+            description="按采样结果估算，实际故障起点可能不同。",
         ),
     ]
     return {
@@ -3526,7 +3515,7 @@ def build_alert_operations_dashboard():
             4,
             4,
             unit="percentunit",
-            description="成功的尝试数 /（成功的尝试数 + 进入重试的失败尝试数 + 终态失败的尝试数）。排除排队、发送中和跳过；暂无已完成尝试时显示对应提示，指标源缺失时保留无数据状态。",
+            description="按已完成的通知尝试计算；无完成记录时显示无数据。",
             value_mappings=NO_COMPLETED_DELIVERY_VALUE_MAPPINGS,
         ),
         timeseries_panel(
@@ -3557,7 +3546,7 @@ def build_alert_operations_dashboard():
             legend_display_mode="list",
             legend_placement="bottom",
             legend_calcs=[],
-            description="展示滚动 24 小时的告警创建、确认和恢复数量。",
+            description=None,
         ),
         timeseries_panel(
             8,
@@ -3578,7 +3567,7 @@ def build_alert_operations_dashboard():
             legend_display_mode="list",
             legend_placement="bottom",
             legend_calcs=[],
-            description="按中文级别名称展示当前未恢复告警计数，包含未知级别。查询仍使用稳定的英文 severity 标签。",
+            description=None,
         ),
         timeseries_panel(
             9,
@@ -3598,7 +3587,7 @@ def build_alert_operations_dashboard():
             legend_display_mode="table",
             legend_placement="right",
             legend_calcs=["lastNotNull", "max"],
-            description="按通知渠道和投递状态汇总，帮助识别发送失败或重试增加。",
+            description=None,
         ),
         timeseries_panel(
             10,
@@ -3618,7 +3607,7 @@ def build_alert_operations_dashboard():
             legend_display_mode="table",
             legend_placement="right",
             legend_calcs=["lastNotNull", "max"],
-            description="按状态展示通知 outbox 中当前待处理、重试或终态条目数量。",
+            description=None,
         ),
         stat_panel(
             11,
@@ -3656,7 +3645,7 @@ def build_alert_operations_dashboard():
             3,
             4,
             unit="s",
-            description="近 24 小时已确认告警的平均创建至首次确认时间；无样本时显示无数据。",
+            description="告警创建到首次确认的平均时间。",
         ),
         stat_panel(
             14,
@@ -3667,7 +3656,7 @@ def build_alert_operations_dashboard():
             3,
             4,
             unit="s",
-            description="近 24 小时已恢复告警的平均创建至恢复时间；无样本时显示无数据。",
+            description="告警创建到恢复的平均时间。",
         ),
         stat_panel(
             15,
@@ -3679,7 +3668,7 @@ def build_alert_operations_dashboard():
             4,
             unit="none",
             thresholds=open_thresholds,
-            description="相同 dedupe key 同时存在的未恢复事件，超出 1 条的数量。",
+            description="相同告警未恢复时，重复记录超出 1 条的数量。",
         ),
         stat_panel(
             16,

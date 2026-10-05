@@ -61,7 +61,7 @@
           "refId": "A"
         }
       ],
-      "description": "按实际采集到状态的 AP 明细记录计数；不等同于控制器配置总量，明细发现不完整时可能低于实际数量。未显示不代表 AP 或客户端数量为 0。"
+      "description": "统计已采到状态的 AP，不等于控制器配置总数。暂无数据不代表数量为 0。"
     },
     {
       "id": 2,
@@ -116,7 +116,7 @@
           "refId": "A"
         }
       ],
-      "description": "AP 状态发现完整且状态均可识别时，按 associated/run 明细计数；否则回退到实际采集的控制器在线计数。未显示不代表 AP 或客户端数量为 0。"
+      "description": "优先按 AP 状态统计；明细不完整时采用控制器上报数。"
     },
     {
       "id": 3,
@@ -179,11 +179,11 @@
           "refId": "A"
         }
       ],
-      "description": "只统计状态明确为 deassociated/idle 的 AP 明细；完整状态明细无离线记录时显示 0，不从总量减在线数推算。未显示不代表 AP 或客户端数量为 0。"
+      "description": "只统计明确离线的 AP，不用总数减在线数推算。"
     },
     {
       "id": 4,
-      "title": "在线终端",
+      "title": "控制器汇总在线终端数",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -233,8 +233,7 @@
           "expr": "sum((sum by (site_name,vendor,role,hostname) (hh3cDot11CurrAssocUserNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or cLSysTotalNumOfClients{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or wlsxSysExtStationsNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or ruckusZDTotalNumSta{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}) unless on(site_name,vendor,role,hostname) ((sum by (site_name,vendor,role,hostname) (nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",component_class=\"wireless_controller\",sensor_class=\"clients\"}) or on(site_name,vendor,role,hostname) sum by (site_name,vendor,role,hostname) (nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",component_class=\"wireless_ssid\",sensor_class=\"clients\"})))) or on(site_name,vendor,role,hostname) ((sum by (site_name,vendor,role,hostname) (nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",component_class=\"wireless_controller\",sensor_class=\"clients\"}) or on(site_name,vendor,role,hostname) sum by (site_name,vendor,role,hostname) (nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",component_class=\"wireless_ssid\",sensor_class=\"clients\"}))))",
           "refId": "A"
         }
-      ],
-      "description": "显示当前已关联无线终端数。未显示不代表 AP 或客户端数量为 0。"
+      ]
     },
     {
       "id": 5,
@@ -297,7 +296,7 @@
           "refId": "A"
         }
       ],
-      "description": "统计当前利用率不低于 75% 的已采集 Radio；此门槛用于首页热点筛查，不代表告警策略。未显示不代表 AP 或客户端数量为 0。"
+      "description": "统计利用率达到 75% 的 Radio，仅用于定位热点。"
     },
     {
       "id": 6,
@@ -363,8 +362,7 @@
           "expr": "avg(max by (site_name,vendor,role,hostname,ap_id,ap_name,radio_id) (nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",component_class=\"wireless_radio\",sensor_class=\"utilization\"}))",
           "refId": "A"
         }
-      ],
-      "description": "对当前已采集 Radio 利用率取平均；只代表有有效样本的 Radio。未显示不代表 AP 或客户端数量为 0。"
+      ]
     },
     {
       "id": 900,
@@ -483,8 +481,7 @@
           "instant": true,
           "refId": "A"
         }
-      ],
-      "description": "按 AP 状态明细中的实际 state_description 统计；不推断 Healthy/Warning/Critical。"
+      ]
     },
     {
       "id": 901,
@@ -633,7 +630,7 @@
           }
         }
       ],
-      "description": "展示采集到的 AP 状态明细；状态缺失或发现不完整时不能据此判断全量健康。未显示不代表 AP 或客户端数量为 0。"
+      "description": "只显示已采到状态的 AP。暂无数据不代表数量为 0。"
     },
     {
       "id": 10,
@@ -766,8 +763,7 @@
             }
           }
         }
-      ],
-      "description": "仅列出实际采集到 AP 客户端数的 AP；厂商或设备未提供该指标时不生成数据。"
+      ]
     },
     {
       "id": 902,
@@ -846,8 +842,7 @@
           "instant": true,
           "refId": "A"
         }
-      ],
-      "description": "按实际采集的 Radio 利用率排行；阈值用于视觉定位热点，不创建告警。"
+      ]
     },
     {
       "id": 903,
@@ -990,7 +985,7 @@
           }
         }
       ],
-      "description": "按实际采集到的 AP、Radio 与 BSS 客户端数排行；当前查询覆盖 H3C 与华为标准化数据。"
+      "description": "当前数据覆盖 H3C 与华为设备。"
     },
     {
       "id": 13,
@@ -1105,8 +1100,7 @@
             }
           }
         }
-      ],
-      "description": "按 SSID 汇总实际采集的华为 2.4 GHz 与 5 GHz 客户端数。"
+      ]
     }
   ],
   "refresh": "30s",

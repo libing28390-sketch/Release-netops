@@ -185,7 +185,7 @@
     },
     {
       "id": 4,
-      "title": "无线在线客户端数",
+      "title": "控制器汇总在线终端数",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -235,8 +235,7 @@
           "expr": "sum((hwWlanCurAssocUserNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hh3cDot11CurrAssocUserNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or ruijieApcTotalStaNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or cLSysTotalNumOfClients{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or wlsxSysExtStationsNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or ruckusZDTotalNumSta{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}))",
           "refId": "A"
         }
-      ],
-      "description": "没有匹配的无线客户端采集指标时显示暂无采集数据，不代表当前客户端数为 0。"
+      ]
     },
     {
       "id": 5,
@@ -353,7 +352,7 @@
           "refId": "A"
         }
       ],
-      "description": "只统计管理状态为启用、当前运行状态为 Down，且过去24小时运行状态有变化的接口。长期稳定 Down 的端口不会重复计入，可在设备或接口详情查看当前状态。"
+      "description": "只统计已启用、当前 Down 且24小时内状态有变化的接口。"
     },
     {
       "id": 901,
@@ -511,7 +510,7 @@
       "targets": [
         {
           "expr": "sum((hwWlanCurAssocUserNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or hh3cDot11CurrAssocUserNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or ruijieApcTotalStaNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or cLSysTotalNumOfClients{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or wlsxSysExtStationsNum{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} or ruckusZDTotalNumSta{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}))",
-          "legendFormat": "无线客户端总数",
+          "legendFormat": "控制器统计的在线终端",
           "refId": "A"
         },
         {
@@ -586,8 +585,7 @@
           "expr": "count(count by (asset_id) ((nexora_hw_cpu_usage_percent{asset_id!=\"\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}) and on(asset_id) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",asset_id!=\"\"} == 1))) or on() ((count(count by (instance) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1)) > 0) * 0)",
           "refId": "A"
         }
-      ],
-      "description": "当前在线设备中至少采集到一条规范 CPU 指标的设备数量。不同 window 作为独立样本保留，设备只按资产 ID 计数一次。"
+      ]
     },
     {
       "id": 10,
@@ -642,7 +640,7 @@
           "refId": "A"
         }
       ],
-      "description": "当前在线设备中至少采集到一条规范内存池使用率指标的设备数量。没有指标不等于内存使用率为 0。"
+      "description": "没有采到指标不代表使用率为 0。"
     },
     {
       "id": 11,
@@ -697,7 +695,7 @@
           "refId": "A"
         }
       ],
-      "description": "当前在线设备中至少采集到一条规范温度传感器指标的设备数量。温度阈值因设备而异，请进入设备视图检查具体传感器。"
+      "description": "温度阈值因设备而异，请查看设备详情。"
     },
     {
       "id": 15,
@@ -841,7 +839,7 @@
           }
         }
       ],
-      "description": "每台设备在每个实际采样 window 中取最高 CPU 部件使用率，再分别排列前10台设备；window 标签始终保留，不会把不同采样窗口求平均。资产 ID 可直接打开对应设备详情。"
+      "description": "按采样窗口分别排名，不混合不同窗口。"
     },
     {
       "id": 16,
@@ -988,8 +986,7 @@
             }
           }
         }
-      ],
-      "description": "按单个内存池的规范使用率排列，展示传感器名称和分组，不对不同容量内存池取平均。资产 ID 可打开设备详情。"
+      ]
     },
     {
       "id": 25,
@@ -1136,8 +1133,7 @@
             }
           }
         }
-      ],
-      "description": "按单个规范温度传感器读数排列，保留传感器名称和分组。资产 ID 可打开设备详情。"
+      ]
     },
     {
       "id": 903,
@@ -1265,7 +1261,7 @@
           }
         }
       ],
-      "description": "按设备汇总所有接口近 5 分钟平均入向与出向吞吐速率（入向 + 出向）。单位为 bit/s，Grafana 会自动换算为 kb/s、Mb/s 等；此值是速率，不是累计流量。"
+      "description": "按近5分钟吞吐速率排序；这是速率，不是累计流量。"
     },
     {
       "id": 13,
@@ -1535,7 +1531,7 @@
           }
         }
       ],
-      "description": "列出管理状态为启用、当前仍为 Down，且过去24小时运行状态发生过变化的接口；按24小时状态变化次数取前20项。长期稳定 Down 的端口不列入此表，不代表持续 Down 的接口一定正常。"
+      "description": "只列当前 Down 且24小时内状态变动过的接口；长期 Down 不在此列。"
     }
   ],
   "refresh": "30s",

@@ -9,6 +9,12 @@ import json
 from monitoring.grafana.generate_dashboards import build_wireless_dashboard
 
 
+def _iter_panels(panels):
+    for panel in panels:
+        yield panel
+        yield from _iter_panels(panel.get("panels", []))
+
+
 def test_allowed_metrics_includes_wireless():
     assert "wireless_ap_online_count" in ALLOWED_METRICS
     assert "wireless_client_online_count" in ALLOWED_METRICS
@@ -77,6 +83,9 @@ def test_dashboards_suite_completeness():
         "nexora-network-outbound.json",
         "nexora-linux-metrics.json",
         "nexora-windows-metrics.json",
+        "nexora-platform-health.json",
+        "nexora-outbound-probe-quality.json",
+        "nexora-alert-operations.json",
     ]
     for filename in expected_files:
         path = os.path.join(dashboard_dir, filename)
@@ -120,14 +129,15 @@ def test_dashboards_suite_completeness():
     assert 'ifAdminStatus{' in interface_count_query and "== 1" in interface_count_query
     assert 'ifOperStatus{' in interface_count_query and "== 2" in interface_count_query
     assert "!= 1" not in interface_count_query
-    assert "过去24小时运行状态有变化" in interface_count_panel["description"]
-    assert "长期稳定 Down" in interface_count_panel["description"]
+    assert "当前 Down" in interface_count_panel["description"]
+    assert "24小时内状态有变化" in interface_count_panel["description"]
     interface_candidates_panel = next(panel for panel in overview_dashboard["panels"] if panel["id"] == 14)
     candidate_query = interface_candidates_panel["targets"][0]["expr"]
     assert interface_candidates_panel["title"] == "近24h状态变动且当前仍 Down Top20"
     assert 'ifAdminStatus{' in candidate_query and "== 1" in candidate_query
     assert 'ifOperStatus{' in candidate_query and "== 2" in candidate_query
-    assert "长期稳定 Down 的端口不列入此表" in interface_candidates_panel["description"]
+    assert "长期" in interface_candidates_panel["description"]
+    assert "不在此列" in interface_candidates_panel["description"]
     candidate_role_override = next(
         override
         for override in interface_candidates_panel["fieldConfig"]["overrides"]
@@ -135,8 +145,9 @@ def test_dashboards_suite_completeness():
     )
     assert candidate_role_override["properties"][0]["value"][0]["options"]["unclassified"]["text"] == "用途待确认"
     wireless_client_panel = next(panel for panel in overview_dashboard["panels"] if panel["id"] == 4)
+    assert wireless_client_panel["title"] == "控制器汇总在线终端数"
     assert "or vector(0)" not in wireless_client_panel["targets"][0]["expr"]
-    assert "不代表当前客户端数为 0" in wireless_client_panel["description"]
+    assert "description" not in wireless_client_panel
 
     wireless_path = os.path.join(dashboard_dir, "nexora-network-wireless.json")
     with open(wireless_path, "r", encoding="utf-8") as f:
@@ -144,7 +155,6 @@ def test_dashboards_suite_completeness():
     for panel_id in range(1, 5):
         panel = next(panel for panel in wireless_dashboard["panels"] if panel["id"] == panel_id)
         assert "or vector(0)" not in panel["targets"][0]["expr"]
-        assert "不代表 AP 或客户端数量为 0" in panel["description"]
     bss_panel = next(panel for panel in wireless_dashboard["panels"] if panel["id"] == 12)
     assert 'vendor=~"(?i)(h3c|comware|huawei)"' in bss_panel["targets"][0]["expr"]
     huawei_ssid_panel = next(panel for panel in wireless_dashboard["panels"] if panel["id"] == 13)
@@ -181,7 +191,8 @@ def test_dashboards_suite_completeness():
     assert "!= -100" in optical_queries  # Ruijie invalid power sentinel.
     assert "!= 0" in optical_queries  # Juniper's unsupported zero-power reading.
     assert "hwEntityOptical" not in optical_queries  # Huawei's mixed encoding stays out of exporter dBm panels.
-    assert "不同模块的告警阈值不同" in optical_table["description"]
+    assert "实测光功率" in optical_table["description"]
+    assert "阈值因模块而异" in optical_table["description"]
 
     for filename in (
         "nexora-network-device.json",
@@ -222,6 +233,24 @@ def test_dashboards_suite_completeness():
                 assert organize["excludeByName"].get("ifDescr") is True
 
 
+def test_dashboard_panel_descriptions_are_concise():
+    dashboard_dir = os.path.join("monitoring", "grafana", "dashboards")
+    for dashboard_path in sorted(
+        os.path.join(dashboard_dir, filename)
+        for filename in os.listdir(dashboard_dir)
+        if filename.endswith(".json")
+    ):
+        with open(dashboard_path, "r", encoding="utf-8") as dashboard_file:
+            dashboard = json.load(dashboard_file)
+        for panel in _iter_panels(dashboard.get("panels", [])):
+            description = panel.get("description")
+            if description:
+                assert len(description) <= 60, (
+                    f"Panel description exceeds 60 characters in "
+                    f"{os.path.basename(dashboard_path)}: {panel.get('title', panel.get('id'))}"
+                )
+
+
 def test_wireless_dashboard_uses_hardware_inventory_job_and_joins_by_device():
     dashboard = build_wireless_dashboard()
     panels = {panel["title"]: panel for panel in dashboard["panels"]}
@@ -252,7 +281,7 @@ def test_wireless_dashboard_uses_hardware_inventory_job_and_joins_by_device():
     assert "unless on(site_name,vendor,role,hostname)" in online_ap_expression
     assert "or on(site_name,vendor,role,hostname)" in online_ap_expression
 
-    clients_expression = query("在线终端")
+    clients_expression = query("控制器汇总在线终端数")
     assert 'job="network_snmp"' in clients_expression
     assert 'job="platform_hardware_inventory"' in clients_expression
     assert "unless on(site_name,vendor,role,hostname)" in clients_expression
@@ -272,7 +301,11 @@ def test_wireless_dashboard_homepage_groups_actual_metrics_by_wireless_layer():
     assert panels[5]["title"] == "高利用率 Radio"
     assert 'sensor_class="utilization"' in panels[5]["targets"][0]["expr"]
     assert ">= 75" in panels[5]["targets"][0]["expr"]
-    assert "不代表告警策略" in panels[5]["description"]
+    assert (
+        "不代表告警" in panels[5]["description"]
+        or "不创建告警" in panels[5]["description"]
+        or "用于定位热点" in panels[5]["description"]
+    )
     assert 'max by (site_name,vendor,role,hostname,ap_id,ap_name,radio_id)' in panels[5]["targets"][0]["expr"]
     assert 'sensor_class="utilization"' in panels[6]["targets"][0]["expr"]
     assert "avg(" in panels[6]["targets"][0]["expr"]
@@ -282,7 +315,10 @@ def test_wireless_dashboard_homepage_groups_actual_metrics_by_wireless_layer():
     assert {target["legendFormat"] for target in trend_targets} == {"在线 AP", "关联终端"}
     assert panels[8]["type"] == "bargauge"
     assert 'count by (state_description)' in panels[8]["targets"][0]["expr"]
-    assert "Healthy/Warning/Critical" in panels[8]["description"]
+    assert "description" not in panels[8]
+
+    assert panels[4]["title"] == "控制器汇总在线终端数"
+    assert "description" not in panels[4]
 
     assert panels[9]["gridPos"]["y"] < panels[11]["gridPos"]["y"] < panels[12]["gridPos"]["y"]
     assert panels[11]["type"] == "bargauge"
@@ -304,7 +340,9 @@ def test_wireless_ap_counts_use_collected_state_rows_and_explicit_statuses():
     assert 'nexora_hw_component_state{' in total_expression
     assert 'component_class="wireless_access_point"' in total_expression
     assert "hwWlanApTotalNum" not in total_expression
-    assert "不等同于控制器配置总量" in total_panel["description"]
+    assert any(term in total_panel["description"] for term in ("实际采集", "已采集", "已采到"))
+    assert "控制器配置" in total_panel["description"]
+    assert "不等" in total_panel["description"]
 
     online_expression = panels["在线 AP"]["targets"][0]["expr"]
     assert 'state_description=~"^(associated|run)$"' in online_expression
@@ -317,7 +355,9 @@ def test_wireless_ap_counts_use_collected_state_rows_and_explicit_statuses():
     assert 'state_description=~"^(deassociated|idle)$"' in offline_expression
     assert 'coverage_complete="true"' in offline_expression
     assert "hwWlanApTotalNum" not in offline_expression
-    assert "总量减在线数" in offline_panel["description"]
+    assert any(term in offline_panel["description"] for term in ("不从", "不用"))
+    assert "在线数" in offline_panel["description"]
+    assert "推算" in offline_panel["description"]
 
 
 def test_dashboard_device_variables_use_current_up_targets():

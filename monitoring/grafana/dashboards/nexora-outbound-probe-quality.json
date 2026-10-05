@@ -616,8 +616,7 @@
           "legendFormat": "{{probe_type}}",
           "refId": "A"
         }
-      ],
-      "description": "分别统计 DNS、TCP、HTTP、HTTPS 和 ICMP 探测结果；只显示有样本的协议。"
+      ]
     },
     {
       "id": 12,
@@ -673,7 +672,7 @@
           "refId": "A"
         }
       ],
-      "description": "ICMP 使用多回显 RTT；DNS/TCP/HTTP 是各协议自身的响应时间，不应互相视作同一层 RTT。"
+      "description": "ICMP 为往返时延；其他协议为自身响应时间。"
     },
     {
       "id": 13,
@@ -727,8 +726,7 @@
           "expr": "nexora_outbound_probe_icmp_packet_loss_ratio{window=\"24h\"}",
           "refId": "A"
         }
-      ],
-      "description": "每轮发送 5 个 ICMP Echo；按已完成探测样本的回显丢失率求平均。"
+      ]
     },
     {
       "id": 14,
@@ -782,8 +780,7 @@
           "expr": "nexora_outbound_probe_icmp_jitter_avg_ms{window=\"24h\"}",
           "refId": "A"
         }
-      ],
-      "description": "按每轮相邻成功 Echo RTT 的平均绝对变化聚合；这是 ICMP 探测间隔内的抖动估计。"
+      ]
     },
     {
       "id": 15,
@@ -838,7 +835,7 @@
           "refId": "A"
         }
       ],
-      "description": "仅计算启用 WAN 链路的接口采样是否成功。"
+      "description": "仅统计已启用的 WAN 接口。"
     },
     {
       "id": 16,
@@ -901,7 +898,7 @@
           "refId": "A"
         }
       ],
-      "description": "分母仅包括采集成功且管理状态为 UP 的样本，不能代表互联网端到端 SLA。"
+      "description": "只按采集成功样本计算，不代表端到端 SLA。"
     },
     {
       "id": 17,
@@ -1016,7 +1013,7 @@
           "refId": "B"
         }
       ],
-      "description": "这是所有启用 WAN 接口采样的平均值汇总，不是物理线路总流量或逐线路 SLA。"
+      "description": "显示启用接口的平均速率，不是线路总流量。"
     },
     {
       "id": 19,
@@ -1134,7 +1131,7 @@
           "refId": "A"
         }
       ],
-      "description": "只统计采样新鲜、采集成功、管理状态 UP 且运行状态 DOWN 的启用线路接口。"
+      "description": "仅统计采集正常、管理启用且运行 Down 的线路。"
     },
     {
       "id": 21,
@@ -1189,7 +1186,7 @@
           "refId": "A"
         }
       ],
-      "description": "连续 DOWN 样本数 × 配置采样间隔的估算值；不等同精确的运营商中断起点。"
+      "description": "按采样结果估算，实际故障起点可能不同。"
     }
   ],
   "refresh": "30s",
