@@ -61,11 +61,11 @@
                     "options": {
                       "0": {
                         "text": "不可达",
-                        "color": "#F2495C"
+                        "color": "#FF5D73"
                       },
                       "1": {
                         "text": "在线",
-                        "color": "#73BF69"
+                        "color": "#2AD4A7"
                       }
                     }
                   }
@@ -166,7 +166,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#8A8F98",
+                "color": "#9AA8B8",
                 "value": null
               }
             ]
@@ -223,15 +223,15 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#73BF69",
+                "color": "#2AD4A7",
                 "value": null
               },
               {
-                "color": "#E0B400",
+                "color": "#F5C451",
                 "value": 70
               },
               {
-                "color": "#F2495C",
+                "color": "#FF5D73",
                 "value": 85
               }
             ]
@@ -286,15 +286,15 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#73BF69",
+                "color": "#2AD4A7",
                 "value": null
               },
               {
-                "color": "#E0B400",
+                "color": "#F5C451",
                 "value": 75
               },
               {
-                "color": "#F2495C",
+                "color": "#FF5D73",
                 "value": 90
               }
             ]
@@ -347,7 +347,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#8A8F98",
+                "color": "#9AA8B8",
                 "value": null
               }
             ]
@@ -403,11 +403,11 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#8A8F98",
+                "color": "#9AA8B8",
                 "value": null
               },
               {
-                "color": "#F2495C",
+                "color": "#FF5D73",
                 "value": 1
               }
             ]
@@ -463,7 +463,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#8A8F98",
+                "color": "#9AA8B8",
                 "value": null
               }
             ]
@@ -588,11 +588,11 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#8A8F98",
+                "color": "#9AA8B8",
                 "value": null
               },
               {
-                "color": "#E0B400",
+                "color": "#F5C451",
                 "value": 1
               }
             ]
@@ -1421,19 +1421,19 @@
                     "options": {
                       "0": {
                         "text": "正常",
-                        "color": "#73BF69"
+                        "color": "#2AD4A7"
                       },
                       "1": {
                         "text": "警告",
-                        "color": "#E0B400"
+                        "color": "#F5C451"
                       },
                       "2": {
                         "text": "严重",
-                        "color": "#F2495C"
+                        "color": "#FF5D73"
                       },
                       "3": {
                         "text": "未知",
-                        "color": "#8A8F98"
+                        "color": "#9AA8B8"
                       }
                     }
                   }
@@ -1469,15 +1469,15 @@
                     "options": {
                       "0": {
                         "text": "未安装",
-                        "color": "#F2495C"
+                        "color": "#FF5D73"
                       },
                       "1": {
                         "text": "已安装",
-                        "color": "#73BF69"
+                        "color": "#2AD4A7"
                       },
                       "-1": {
                         "text": "无法判断",
-                        "color": "#8A8F98"
+                        "color": "#9AA8B8"
                       }
                     }
                   }
@@ -1761,27 +1761,27 @@
                     "options": {
                       "success": {
                         "text": "成功",
-                        "color": "#73BF69"
+                        "color": "#2AD4A7"
                       },
                       "partial": {
                         "text": "部分成功",
-                        "color": "#E0B400"
+                        "color": "#F5C451"
                       },
                       "failed": {
                         "text": "失败",
-                        "color": "#F2495C"
+                        "color": "#FF5D73"
                       },
                       "unsupported": {
                         "text": "不支持",
-                        "color": "#8A8F98"
+                        "color": "#9AA8B8"
                       },
                       "not_found": {
                         "text": "未发现",
-                        "color": "#8A8F98"
+                        "color": "#9AA8B8"
                       },
                       "unknown": {
                         "text": "未知",
-                        "color": "#8A8F98"
+                        "color": "#9AA8B8"
                       }
                     }
                   }
@@ -1803,11 +1803,11 @@
                     "options": {
                       "true": {
                         "text": "完整",
-                        "color": "#73BF69"
+                        "color": "#2AD4A7"
                       },
                       "false": {
                         "text": "不完整",
-                        "color": "#E0B400"
+                        "color": "#F5C451"
                       }
                     }
                   }
@@ -1829,7 +1829,7 @@
                     "options": {
                       "-1": {
                         "text": "无成功记录",
-                        "color": "#8A8F98"
+                        "color": "#9AA8B8"
                       }
                     }
                   }
@@ -2187,11 +2187,11 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#8A8F98",
+                "color": "#9AA8B8",
                 "value": null
               },
               {
-                "color": "#F2495C",
+                "color": "#FF5D73",
                 "value": 1
               }
             ]
@@ -2275,35 +2275,35 @@
                     "options": {
                       "1": {
                         "text": "Up",
-                        "color": "#73BF69"
+                        "color": "#2AD4A7"
                       },
                       "2": {
                         "text": "down",
-                        "color": "#F2495C"
+                        "color": "#FF5D73"
                       },
                       "0": {
                         "text": "UNKNOWN",
-                        "color": "#8A8F98"
+                        "color": "#9AA8B8"
                       },
                       "3": {
                         "text": "UNKNOWN",
-                        "color": "#8A8F98"
+                        "color": "#9AA8B8"
                       },
                       "4": {
                         "text": "UNKNOWN",
-                        "color": "#8A8F98"
+                        "color": "#9AA8B8"
                       },
                       "5": {
                         "text": "UNKNOWN",
-                        "color": "#8A8F98"
+                        "color": "#9AA8B8"
                       },
                       "6": {
                         "text": "UNKNOWN",
-                        "color": "#8A8F98"
+                        "color": "#9AA8B8"
                       },
                       "7": {
                         "text": "UNKNOWN",
-                        "color": "#8A8F98"
+                        "color": "#9AA8B8"
                       }
                     }
                   },
@@ -2313,7 +2313,7 @@
                       "match": "null",
                       "result": {
                         "text": "UNKNOWN",
-                        "color": "#8A8F98"
+                        "color": "#9AA8B8"
                       }
                     }
                   },
@@ -2323,7 +2323,7 @@
                       "match": "nan",
                       "result": {
                         "text": "UNKNOWN",
-                        "color": "#8A8F98"
+                        "color": "#9AA8B8"
                       }
                     }
                   }
@@ -2481,7 +2481,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#5794F2"
+                  "fixedColor": "#49B5FF"
                 }
               }
             ]
@@ -2496,7 +2496,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#73BF69"
+                  "fixedColor": "#2AD4A7"
                 }
               }
             ]

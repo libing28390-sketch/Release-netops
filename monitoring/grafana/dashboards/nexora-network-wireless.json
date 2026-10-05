@@ -46,7 +46,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#8A8F98",
+                "color": "#9AA8B8",
                 "value": null
               }
             ]
@@ -102,7 +102,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#73BF69",
+                "color": "#2AD4A7",
                 "value": null
               }
             ]
@@ -158,15 +158,15 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#73BF69",
+                "color": "#2AD4A7",
                 "value": null
               },
               {
-                "color": "#E0B400",
+                "color": "#F5C451",
                 "value": 1
               },
               {
-                "color": "#F2495C",
+                "color": "#FF5D73",
                 "value": 5
               }
             ]
@@ -222,7 +222,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#8A8F98",
+                "color": "#9AA8B8",
                 "value": null
               }
             ]
@@ -277,15 +277,15 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#73BF69",
+                "color": "#2AD4A7",
                 "value": null
               },
               {
-                "color": "#E0B400",
+                "color": "#F5C451",
                 "value": 1
               },
               {
-                "color": "#F2495C",
+                "color": "#FF5D73",
                 "value": 5
               }
             ]
@@ -341,19 +341,19 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#73BF69",
+                "color": "#2AD4A7",
                 "value": null
               },
               {
-                "color": "#E0B400",
+                "color": "#F5C451",
                 "value": 60
               },
               {
-                "color": "#FF9830",
+                "color": "#FF985C",
                 "value": 75
               },
               {
-                "color": "#F2495C",
+                "color": "#FF5D73",
                 "value": 90
               }
             ]
@@ -437,7 +437,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#73BF69"
+                  "fixedColor": "#2AD4A7"
                 }
               }
             ]
@@ -452,7 +452,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#5794F2"
+                  "fixedColor": "#49B5FF"
                 }
               }
             ]
@@ -505,7 +505,7 @@
           "noValue": "暂无采集数据",
           "color": {
             "mode": "fixed",
-            "fixedColor": "#8A8F98"
+            "fixedColor": "#9AA8B8"
           }
         },
         "overrides": [
@@ -519,7 +519,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#73BF69"
+                  "fixedColor": "#2AD4A7"
                 }
               }
             ]
@@ -534,7 +534,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#73BF69"
+                  "fixedColor": "#2AD4A7"
                 }
               }
             ]
@@ -549,7 +549,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#73BF69"
+                  "fixedColor": "#2AD4A7"
                 }
               }
             ]
@@ -564,7 +564,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#F2495C"
+                  "fixedColor": "#FF5D73"
                 }
               }
             ]
@@ -579,7 +579,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#F2495C"
+                  "fixedColor": "#FF5D73"
                 }
               }
             ]
@@ -594,7 +594,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#F2495C"
+                  "fixedColor": "#FF5D73"
                 }
               }
             ]
@@ -609,7 +609,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#E0B400"
+                  "fixedColor": "#F5C451"
                 }
               }
             ]
@@ -624,7 +624,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#E0B400"
+                  "fixedColor": "#F5C451"
                 }
               }
             ]
@@ -639,7 +639,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#E0B400"
+                  "fixedColor": "#F5C451"
                 }
               }
             ]
@@ -654,7 +654,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#E0B400"
+                  "fixedColor": "#F5C451"
                 }
               }
             ]
@@ -669,7 +669,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#E0B400"
+                  "fixedColor": "#F5C451"
                 }
               }
             ]
@@ -684,7 +684,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#E0B400"
+                  "fixedColor": "#F5C451"
                 }
               }
             ]
@@ -699,7 +699,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#E0B400"
+                  "fixedColor": "#F5C451"
                 }
               }
             ]
@@ -790,55 +790,55 @@
                     "options": {
                       "associated": {
                         "text": "在线",
-                        "color": "#73BF69"
+                        "color": "#2AD4A7"
                       },
                       "run": {
                         "text": "在线",
-                        "color": "#73BF69"
+                        "color": "#2AD4A7"
                       },
                       "active": {
                         "text": "在线",
-                        "color": "#73BF69"
+                        "color": "#2AD4A7"
                       },
                       "deassociated": {
                         "text": "离线",
-                        "color": "#F2495C"
+                        "color": "#FF5D73"
                       },
                       "idle": {
                         "text": "离线",
-                        "color": "#F2495C"
+                        "color": "#FF5D73"
                       },
                       "down": {
                         "text": "离线",
-                        "color": "#F2495C"
+                        "color": "#FF5D73"
                       },
                       "join": {
                         "text": "接入中",
-                        "color": "#E0B400"
+                        "color": "#F5C451"
                       },
                       "joining": {
                         "text": "接入中",
-                        "color": "#E0B400"
+                        "color": "#F5C451"
                       },
                       "joinack": {
                         "text": "接入中",
-                        "color": "#E0B400"
+                        "color": "#F5C451"
                       },
                       "config": {
                         "text": "接入中",
-                        "color": "#E0B400"
+                        "color": "#F5C451"
                       },
                       "data check": {
                         "text": "接入中",
-                        "color": "#E0B400"
+                        "color": "#F5C451"
                       },
                       "image load": {
                         "text": "接入中",
-                        "color": "#E0B400"
+                        "color": "#F5C451"
                       },
                       "downloading image": {
                         "text": "接入中",
-                        "color": "#E0B400"
+                        "color": "#F5C451"
                       }
                     }
                   }
@@ -1132,19 +1132,19 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#73BF69",
+                "color": "#2AD4A7",
                 "value": null
               },
               {
-                "color": "#E0B400",
+                "color": "#F5C451",
                 "value": 60
               },
               {
-                "color": "#FF9830",
+                "color": "#FF985C",
                 "value": 75
               },
               {
-                "color": "#F2495C",
+                "color": "#FF5D73",
                 "value": 90
               }
             ]

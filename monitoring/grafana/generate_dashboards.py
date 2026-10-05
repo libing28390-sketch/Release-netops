@@ -12,14 +12,16 @@ DS_UID = "victoriametrics"
 DASHBOARD_VERSION = 30
 NO_VALUE_TEXT = "暂无采集数据"
 
-HEALTHY_COLOR = "#73BF69"
-WARNING_COLOR = "#E0B400"
-HIGH_COLOR = "#FF9830"
-CRITICAL_COLOR = "#F2495C"
-INFO_COLOR = "#5794F2"
+# Nexora's high-contrast operations palette: vivid on Grafana's dark theme,
+# while preserving familiar status and traffic-direction semantics.
+HEALTHY_COLOR = "#2AD4A7"
+WARNING_COLOR = "#F5C451"
+HIGH_COLOR = "#FF985C"
+CRITICAL_COLOR = "#FF5D73"
+INFO_COLOR = "#49B5FF"
 CLIENT_COLOR = INFO_COLOR
-PURPLE_COLOR = "#A352CC"
-NEUTRAL_COLOR = "#8A8F98"
+PURPLE_COLOR = "#B18CFF"
+NEUTRAL_COLOR = "#9AA8B8"
 
 # Keep interface direction consistent across summary, detail, and overview
 # dashboards: inbound is blue, outbound is green, errors are orange, and

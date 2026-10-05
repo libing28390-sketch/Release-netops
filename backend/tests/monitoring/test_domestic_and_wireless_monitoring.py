@@ -362,7 +362,7 @@ def test_wireless_dashboard_homepage_groups_actual_metrics_by_wireless_layer():
 
 def test_wireless_and_interface_dashboards_share_reference_semantic_colors():
     assert (HEALTHY_COLOR, WARNING_COLOR, HIGH_COLOR, CRITICAL_COLOR, INFO_COLOR, NEUTRAL_COLOR) == (
-        "#73BF69", "#E0B400", "#FF9830", "#F2495C", "#5794F2", "#8A8F98"
+        "#2AD4A7", "#F5C451", "#FF985C", "#FF5D73", "#49B5FF", "#9AA8B8"
     )
     assert [step["value"] for step in UTILIZATION_THRESHOLDS] == [None, 60, 75, 90]
 

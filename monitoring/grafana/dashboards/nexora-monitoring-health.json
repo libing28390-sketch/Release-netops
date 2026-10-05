@@ -46,7 +46,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#8A8F98",
+                "color": "#9AA8B8",
                 "value": null
               }
             ]
@@ -101,11 +101,11 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#8A8F98",
+                "color": "#9AA8B8",
                 "value": null
               },
               {
-                "color": "#F2495C",
+                "color": "#FF5D73",
                 "value": 1
               }
             ]
@@ -160,7 +160,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#8A8F98",
+                "color": "#9AA8B8",
                 "value": null
               }
             ]
@@ -215,15 +215,15 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#8A8F98",
+                "color": "#9AA8B8",
                 "value": null
               },
               {
-                "color": "#E0B400",
+                "color": "#F5C451",
                 "value": 5
               },
               {
-                "color": "#F2495C",
+                "color": "#FF5D73",
                 "value": 15
               }
             ]
