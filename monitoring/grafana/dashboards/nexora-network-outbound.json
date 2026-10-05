@@ -33,7 +33,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#3274D9",
+                "color": "#73BF69",
                 "value": null
               }
             ]
@@ -87,7 +87,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#56A64B",
+                "color": "#FF9830",
                 "value": null
               }
             ]
@@ -141,19 +141,19 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "#73BF69",
                 "value": null
               },
               {
-                "color": "yellow",
+                "color": "#E0B400",
                 "value": 60
               },
               {
-                "color": "orange",
+                "color": "#FF9830",
                 "value": 75
               },
               {
-                "color": "red",
+                "color": "#F2495C",
                 "value": 90
               }
             ]
@@ -207,19 +207,19 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "#73BF69",
                 "value": null
               },
               {
-                "color": "yellow",
+                "color": "#E0B400",
                 "value": 60
               },
               {
-                "color": "orange",
+                "color": "#FF9830",
                 "value": 75
               },
               {
-                "color": "red",
+                "color": "#F2495C",
                 "value": 90
               }
             ]
@@ -405,7 +405,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#3274D9"
+                  "fixedColor": "#73BF69"
                 }
               }
             ]
@@ -477,7 +477,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#56A64B"
+                  "fixedColor": "#FF9830"
                 }
               }
             ]
@@ -549,7 +549,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#3274D9"
+                  "fixedColor": "#73BF69"
                 }
               }
             ]
@@ -621,7 +621,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#56A64B"
+                  "fixedColor": "#FF9830"
                 }
               }
             ]
@@ -693,7 +693,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#FF9830"
+                  "fixedColor": "#F2495C"
                 }
               }
             ]
@@ -708,7 +708,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#F2495C"
+                  "fixedColor": "#E0B400"
                 }
               }
             ]
@@ -801,19 +801,19 @@
                   "mode": "absolute",
                   "steps": [
                     {
-                      "color": "green",
+                      "color": "#73BF69",
                       "value": null
                     },
                     {
-                      "color": "yellow",
+                      "color": "#E0B400",
                       "value": 60
                     },
                     {
-                      "color": "orange",
+                      "color": "#FF9830",
                       "value": 75
                     },
                     {
-                      "color": "red",
+                      "color": "#F2495C",
                       "value": 90
                     }
                   ]
@@ -977,19 +977,19 @@
                   "mode": "absolute",
                   "steps": [
                     {
-                      "color": "green",
+                      "color": "#73BF69",
                       "value": null
                     },
                     {
-                      "color": "yellow",
+                      "color": "#E0B400",
                       "value": 60
                     },
                     {
-                      "color": "orange",
+                      "color": "#FF9830",
                       "value": 75
                     },
                     {
-                      "color": "red",
+                      "color": "#F2495C",
                       "value": 90
                     }
                   ]

@@ -2244,35 +2244,35 @@
                     "options": {
                       "1": {
                         "text": "Up",
-                        "color": "green"
+                        "color": "#73BF69"
                       },
                       "2": {
                         "text": "down",
-                        "color": "red"
+                        "color": "#F2495C"
                       },
                       "0": {
                         "text": "UNKNOWN",
-                        "color": "gray"
+                        "color": "#8A8F98"
                       },
                       "3": {
                         "text": "UNKNOWN",
-                        "color": "gray"
+                        "color": "#8A8F98"
                       },
                       "4": {
                         "text": "UNKNOWN",
-                        "color": "gray"
+                        "color": "#8A8F98"
                       },
                       "5": {
                         "text": "UNKNOWN",
-                        "color": "gray"
+                        "color": "#8A8F98"
                       },
                       "6": {
                         "text": "UNKNOWN",
-                        "color": "gray"
+                        "color": "#8A8F98"
                       },
                       "7": {
                         "text": "UNKNOWN",
-                        "color": "gray"
+                        "color": "#8A8F98"
                       }
                     }
                   },
@@ -2282,7 +2282,7 @@
                       "match": "null",
                       "result": {
                         "text": "UNKNOWN",
-                        "color": "gray"
+                        "color": "#8A8F98"
                       }
                     }
                   },
@@ -2292,7 +2292,7 @@
                       "match": "nan",
                       "result": {
                         "text": "UNKNOWN",
-                        "color": "gray"
+                        "color": "#8A8F98"
                       }
                     }
                   }
@@ -2450,7 +2450,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#3274D9"
+                  "fixedColor": "#73BF69"
                 }
               }
             ]
@@ -2465,7 +2465,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#56A64B"
+                  "fixedColor": "#FF9830"
                 }
               }
             ]

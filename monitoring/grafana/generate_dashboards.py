@@ -12,13 +12,24 @@ DS_UID = "victoriametrics"
 DASHBOARD_VERSION = 30
 NO_VALUE_TEXT = "暂无采集数据"
 
-INBOUND_COLOR = "#3274D9"
-OUTBOUND_COLOR = "#56A64B"
-ERROR_COLOR = "#FF9830"
-DISCARD_COLOR = "#F2495C"
-MULTICAST_COLOR = "#A352CC"
-BROADCAST_COLOR = "#E0B400"
-PPS_COLOR = "#00A6B2"
+HEALTHY_COLOR = "#73BF69"
+WARNING_COLOR = "#E0B400"
+HIGH_COLOR = "#FF9830"
+CRITICAL_COLOR = "#F2495C"
+INFO_COLOR = "#5794F2"
+CLIENT_COLOR = INFO_COLOR
+PURPLE_COLOR = "#A352CC"
+NEUTRAL_COLOR = "#8A8F98"
+
+# Keep interface direction consistent across summary, detail, and overview
+# dashboards: receive/inbound is green and send/outbound is orange.
+INBOUND_COLOR = HEALTHY_COLOR
+OUTBOUND_COLOR = HIGH_COLOR
+ERROR_COLOR = CRITICAL_COLOR
+DISCARD_COLOR = WARNING_COLOR
+MULTICAST_COLOR = PURPLE_COLOR
+BROADCAST_COLOR = WARNING_COLOR
+PPS_COLOR = INFO_COLOR
 UNKNOWN_COLOR = "gray"
 
 ALERT_SEVERITY_LABELS = (
@@ -43,38 +54,65 @@ NO_COMPLETED_DELIVERY_VALUE_MAPPINGS = [
 ]
 
 UTILIZATION_THRESHOLDS = [
-    {"color": "green", "value": None},
-    {"color": "yellow", "value": 60},
-    {"color": "orange", "value": 75},
-    {"color": "red", "value": 90},
+    {"color": HEALTHY_COLOR, "value": None},
+    {"color": WARNING_COLOR, "value": 60},
+    {"color": HIGH_COLOR, "value": 75},
+    {"color": CRITICAL_COLOR, "value": 90},
+]
+
+OFFLINE_COUNT_THRESHOLDS = [
+    {"color": HEALTHY_COLOR, "value": None},
+    {"color": WARNING_COLOR, "value": 1},
+    {"color": CRITICAL_COLOR, "value": 5},
+]
+
+AP_STATE_VALUE_MAPPINGS = [
+    {
+        "type": "value",
+        "options": {
+            "associated": {"text": "在线", "color": HEALTHY_COLOR},
+            "run": {"text": "在线", "color": HEALTHY_COLOR},
+            "active": {"text": "在线", "color": HEALTHY_COLOR},
+            "deassociated": {"text": "离线", "color": CRITICAL_COLOR},
+            "idle": {"text": "离线", "color": CRITICAL_COLOR},
+            "down": {"text": "离线", "color": CRITICAL_COLOR},
+            "join": {"text": "接入中", "color": WARNING_COLOR},
+            "joining": {"text": "接入中", "color": WARNING_COLOR},
+            "joinack": {"text": "接入中", "color": WARNING_COLOR},
+            "config": {"text": "接入中", "color": WARNING_COLOR},
+            "data check": {"text": "接入中", "color": WARNING_COLOR},
+            "image load": {"text": "接入中", "color": WARNING_COLOR},
+            "downloading image": {"text": "接入中", "color": WARNING_COLOR},
+        },
+    },
 ]
 
 STATUS_VALUE_MAPPINGS = [
     {
         "type": "value",
         "options": {
-            "1": {"text": "Up", "color": "green"},
-            "2": {"text": "down", "color": "red"},
-            "0": {"text": "UNKNOWN", "color": UNKNOWN_COLOR},
-            "3": {"text": "UNKNOWN", "color": UNKNOWN_COLOR},
-            "4": {"text": "UNKNOWN", "color": UNKNOWN_COLOR},
-            "5": {"text": "UNKNOWN", "color": UNKNOWN_COLOR},
-            "6": {"text": "UNKNOWN", "color": UNKNOWN_COLOR},
-            "7": {"text": "UNKNOWN", "color": UNKNOWN_COLOR},
+            "1": {"text": "Up", "color": HEALTHY_COLOR},
+            "2": {"text": "down", "color": CRITICAL_COLOR},
+            "0": {"text": "UNKNOWN", "color": NEUTRAL_COLOR},
+            "3": {"text": "UNKNOWN", "color": NEUTRAL_COLOR},
+            "4": {"text": "UNKNOWN", "color": NEUTRAL_COLOR},
+            "5": {"text": "UNKNOWN", "color": NEUTRAL_COLOR},
+            "6": {"text": "UNKNOWN", "color": NEUTRAL_COLOR},
+            "7": {"text": "UNKNOWN", "color": NEUTRAL_COLOR},
         },
     },
     {
         "type": "special",
         "options": {
             "match": "null",
-            "result": {"text": "UNKNOWN", "color": UNKNOWN_COLOR},
+            "result": {"text": "UNKNOWN", "color": NEUTRAL_COLOR},
         },
     },
     {
         "type": "special",
         "options": {
             "match": "nan",
-            "result": {"text": "UNKNOWN", "color": UNKNOWN_COLOR},
+            "result": {"text": "UNKNOWN", "color": NEUTRAL_COLOR},
         },
     },
 ]
@@ -450,6 +488,7 @@ def table_panel(
     extra_value_mappings=None,
     description=None,
     map_interface_role=None,
+    extra_color_mapped_cells=None,
 ):
     overrides = []
     value_properties = []
@@ -485,6 +524,14 @@ def table_panel(
         overrides.append({
             "matcher": {"id": "byName", "options": field_name},
             "properties": [{"id": "mappings", "value": mappings}],
+        })
+    for field_name, cell_mode in (extra_color_mapped_cells or {}).items():
+        overrides.append({
+            "matcher": {"id": "byName", "options": field_name},
+            "properties": [{
+                "id": "custom.cellOptions",
+                "value": {"type": cell_mode},
+            }],
         })
     if detail_link:
         overrides.append({
@@ -586,6 +633,7 @@ def bar_gauge_panel(
     thresholds=None,
     max_value=100,
     color=None,
+    color_overrides=None,
     instant=False,
     description=None,
 ):
@@ -607,7 +655,7 @@ def bar_gauge_panel(
         "gridPos": {"h": h, "w": w, "x": x, "y": y},
         "fieldConfig": {
             "defaults": defaults,
-            "overrides": []
+            "overrides": color_overrides or []
         },
         "options": {
             "displayMode": "gradient",
@@ -840,7 +888,7 @@ def build_overview_dashboard():
         stat_panel(2, "监控站点数", f'count(count by (site_name) (up{{{target_site_sel}}}))', 4, 0, 4, 3, color="#A352CC"),
         stat_panel(3, "全网在线数", f'count(count by (instance) (up{{{target_sel}}} == 1)) or on() ((count(up{{{target_sel}}}) > 0) * 0)', 8, 0, 4, 3, color="#56A64B"),
         stat_panel(
-            4, "控制器汇总在线终端数", client_online_expr, 12, 0, 4, 3, color="#37872D",
+            4, "控制器汇总在线终端数", client_online_expr, 12, 0, 4, 3, color=CLIENT_COLOR,
         ),
         stat_panel(5, "采集接口总数", f"count(count by (instance, ifIndex) (ifOperStatus{{{sel}}}))", 16, 0, 4, 3, color="#3274D9"),
         stat_panel(6, "近24h变动且当前 Down 接口数", f'count({anomaly_rows}) or on() ((count(ifOperStatus{{{sel}}}) > 0) * 0)', 20, 0, 4, 3, thresholds=[
@@ -1786,21 +1834,38 @@ def build_wireless_dashboard():
     huawei_ssid_rows = f'topk(20, sum by ({device_labels},ssid) (nexora_wireless_sensor_value{{{huawei_inventory_sel},component_class="wireless_ssid",sensor_class="clients"}}))'
 
     panels = [
-        stat_panel(1, "采集 AP", f"sum({ap_state_count})", 0, 0, 4, 3, color="#3274D9", description=ap_total_description, no_value="—"),
-        stat_panel(2, "在线 AP", f"sum({ap_online})", 4, 0, 4, 3, color="#56A64B", description=ap_online_description, no_value="—"),
-        stat_panel(3, "明确离线 AP", f"sum({ap_offline})", 8, 0, 4, 3, thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 1}, {"color": "red", "value": 5}], description=ap_offline_description, no_value="—"),
-        stat_panel(4, "控制器汇总在线终端数", f"sum({clients})", 12, 0, 4, 3, color="#A352CC", no_value="—"),
-        stat_panel(5, "高利用率 Radio", high_utilization_radio_count, 16, 0, 4, 3, thresholds=[{"color": "green", "value": None}, {"color": "#E0B400", "value": 1}, {"color": "red", "value": 5}], description="统计利用率达到 75% 的 Radio，仅用于定位热点。", no_value="—"),
+        stat_panel(1, "采集 AP", f"sum({ap_state_count})", 0, 0, 4, 3, color=INFO_COLOR, description=ap_total_description, no_value="—"),
+        stat_panel(2, "在线 AP", f"sum({ap_online})", 4, 0, 4, 3, color=HEALTHY_COLOR, description=ap_online_description, no_value="—"),
+        stat_panel(3, "明确离线 AP", f"sum({ap_offline})", 8, 0, 4, 3, thresholds=OFFLINE_COUNT_THRESHOLDS, description=ap_offline_description, no_value="—"),
+        stat_panel(4, "控制器汇总在线终端数", f"sum({clients})", 12, 0, 4, 3, color=CLIENT_COLOR, no_value="—"),
+        stat_panel(5, "高利用率 Radio", high_utilization_radio_count, 16, 0, 4, 3, thresholds=OFFLINE_COUNT_THRESHOLDS, description="统计利用率达到 75% 的 Radio，仅用于定位热点。", no_value="—"),
         stat_panel(6, "平均 Radio 利用率", f"avg({radio_utilization_rows})", 20, 0, 4, 3, unit="percent", thresholds=UTILIZATION_THRESHOLDS, description=None, no_value="—"),
         row_panel(900, "趋势与 AP 状态", 3),
         timeseries_panel(7, "在线 AP 与关联终端趋势", [
             {"expr": f"sum({ap_online})", "legendFormat": "在线 AP", "refId": "A"},
             {"expr": f"sum({clients})", "legendFormat": "关联终端", "refId": "B"},
-        ], 0, 4, 14, 7, unit="short"),
+        ], 0, 4, 14, 7, unit="short", color_overrides=[
+            timeseries_color_override("byName", "在线 AP", HEALTHY_COLOR),
+            timeseries_color_override("byName", "关联终端", CLIENT_COLOR),
+        ]),
         bar_gauge_panel(
             8, "采集到的 AP 状态分布", f"count by (state_description) ({ap_state_rows})",
             14, 4, 10, 7, unit="short", legend_format="{{state_description}}", max_value=None,
-            thresholds=[], color="#3274D9", instant=True,
+            thresholds=[], color=NEUTRAL_COLOR, color_overrides=[
+                timeseries_color_override("byName", "associated", HEALTHY_COLOR),
+                timeseries_color_override("byName", "run", HEALTHY_COLOR),
+                timeseries_color_override("byName", "active", HEALTHY_COLOR),
+                timeseries_color_override("byName", "deassociated", CRITICAL_COLOR),
+                timeseries_color_override("byName", "idle", CRITICAL_COLOR),
+                timeseries_color_override("byName", "down", CRITICAL_COLOR),
+                timeseries_color_override("byName", "join", WARNING_COLOR),
+                timeseries_color_override("byName", "joining", WARNING_COLOR),
+                timeseries_color_override("byName", "joinack", WARNING_COLOR),
+                timeseries_color_override("byName", "config", WARNING_COLOR),
+                timeseries_color_override("byName", "data check", WARNING_COLOR),
+                timeseries_color_override("byName", "image load", WARNING_COLOR),
+                timeseries_color_override("byName", "downloading image", WARNING_COLOR),
+            ], instant=True,
             description=None,
         ),
         row_panel(901, "AP 明细", 11),
@@ -1811,9 +1876,11 @@ def build_wireless_dashboard():
             transformations=clean_organize_transformation(
                 "状态",
                 extra_renames={"ap_name": "AP 名称", "ap_ip": "AP 管理 IP", "ap_model": "型号", "state_description": "状态说明"},
-                extra_indices={"ap_name": 0, "state_description": 1, "ap_ip": 2, "hostname": 3, "vendor": 4, "ap_model": 5, "Value": 6},
-                extra_excludes={"source_type": True, "measurement_type": True, "component_class": True, "source_id": True, "sensor_key": True, "window": True, "raw_state": True, "device_id": True, "ap_id": True, "ap_mac": True, "ap_serial": True, "platform": True, "discovery_status": True, "lifecycle_status": True},
+                extra_indices={"ap_name": 0, "state_description": 1, "ap_ip": 2, "hostname": 3, "vendor": 4, "ap_model": 5},
+                extra_excludes={"Value": True, "source_type": True, "measurement_type": True, "component_class": True, "source_id": True, "sensor_key": True, "window": True, "raw_state": True, "device_id": True, "ap_id": True, "ap_mac": True, "ap_serial": True, "platform": True, "discovery_status": True, "lifecycle_status": True},
             ),
+            extra_value_mappings={"状态说明": AP_STATE_VALUE_MAPPINGS},
+            extra_color_mapped_cells={"状态说明": "color-background"},
             description=f"只显示已采到状态的 AP。{missing_wireless_data_note}",
         ),
         table_panel(
@@ -1870,7 +1937,7 @@ def build_wireless_dashboard():
         "templating": {
             "list": make_network_variables()
         },
-        "time": {"from": "now-6h", "to": "now"},
+        "time": {"from": "now-15m", "to": "now"},
         "timezone": "browser",
         "title": "03 无线专网监控 (Wireless AP & Clients)",
         "uid": "nexora-network-wireless",

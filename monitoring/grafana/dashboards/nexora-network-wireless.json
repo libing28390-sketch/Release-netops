@@ -33,7 +33,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#3274D9",
+                "color": "#5794F2",
                 "value": null
               }
             ]
@@ -88,7 +88,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#56A64B",
+                "color": "#73BF69",
                 "value": null
               }
             ]
@@ -143,7 +143,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "#73BF69",
                 "value": null
               },
               {
@@ -151,7 +151,7 @@
                 "value": 1
               },
               {
-                "color": "red",
+                "color": "#F2495C",
                 "value": 5
               }
             ]
@@ -206,7 +206,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#A352CC",
+                "color": "#5794F2",
                 "value": null
               }
             ]
@@ -260,7 +260,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "#73BF69",
                 "value": null
               },
               {
@@ -268,7 +268,7 @@
                 "value": 1
               },
               {
-                "color": "red",
+                "color": "#F2495C",
                 "value": 5
               }
             ]
@@ -323,19 +323,19 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "#73BF69",
                 "value": null
               },
               {
-                "color": "yellow",
+                "color": "#E0B400",
                 "value": 60
               },
               {
-                "color": "orange",
+                "color": "#FF9830",
                 "value": 75
               },
               {
-                "color": "red",
+                "color": "#F2495C",
                 "value": 90
               }
             ]
@@ -407,7 +407,38 @@
             "showPoints": "never"
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "在线 AP"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#73BF69"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "关联终端"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#5794F2"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -459,10 +490,206 @@
           "noValue": "暂无采集数据",
           "color": {
             "mode": "fixed",
-            "fixedColor": "#3274D9"
+            "fixedColor": "#8A8F98"
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "associated"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#73BF69"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "run"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#73BF69"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "active"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#73BF69"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "deassociated"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#F2495C"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "idle"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#F2495C"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "down"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#F2495C"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "join"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#E0B400"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "joining"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#E0B400"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "joinack"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#E0B400"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "config"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#E0B400"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "data check"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#E0B400"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "image load"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#E0B400"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "downloading image"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#E0B400"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "displayMode": "gradient",
@@ -533,6 +760,90 @@
                 "value": "short"
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "状态说明"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "associated": {
+                        "text": "在线",
+                        "color": "#73BF69"
+                      },
+                      "run": {
+                        "text": "在线",
+                        "color": "#73BF69"
+                      },
+                      "active": {
+                        "text": "在线",
+                        "color": "#73BF69"
+                      },
+                      "deassociated": {
+                        "text": "离线",
+                        "color": "#F2495C"
+                      },
+                      "idle": {
+                        "text": "离线",
+                        "color": "#F2495C"
+                      },
+                      "down": {
+                        "text": "离线",
+                        "color": "#F2495C"
+                      },
+                      "join": {
+                        "text": "接入中",
+                        "color": "#E0B400"
+                      },
+                      "joining": {
+                        "text": "接入中",
+                        "color": "#E0B400"
+                      },
+                      "joinack": {
+                        "text": "接入中",
+                        "color": "#E0B400"
+                      },
+                      "config": {
+                        "text": "接入中",
+                        "color": "#E0B400"
+                      },
+                      "data check": {
+                        "text": "接入中",
+                        "color": "#E0B400"
+                      },
+                      "image load": {
+                        "text": "接入中",
+                        "color": "#E0B400"
+                      },
+                      "downloading image": {
+                        "text": "接入中",
+                        "color": "#E0B400"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "状态说明"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              }
+            ]
           }
         ]
       },
@@ -576,6 +887,7 @@
               "platform": true,
               "sysName": true,
               "nexora_interface_role": true,
+              "Value": true,
               "source_type": true,
               "measurement_type": true,
               "component_class": true,
@@ -602,7 +914,7 @@
               "utilization_warn_pct": 8,
               "utilization_high_pct": 9,
               "utilization_critical_pct": 10,
-              "Value": 6,
+              "Value": 11,
               "ap_name": 0,
               "state_description": 1,
               "ap_ip": 2,
@@ -805,19 +1117,19 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "#73BF69",
                 "value": null
               },
               {
-                "color": "yellow",
+                "color": "#E0B400",
                 "value": 60
               },
               {
-                "color": "orange",
+                "color": "#FF9830",
                 "value": 75
               },
               {
-                "color": "red",
+                "color": "#F2495C",
                 "value": 90
               }
             ]
@@ -1215,7 +1527,7 @@
     ]
   },
   "time": {
-    "from": "now-6h",
+    "from": "now-15m",
     "to": "now"
   },
   "timezone": "browser",

@@ -6,7 +6,21 @@ from backend.services.metric_provider import (
 from backend.services.monitoring_oid_catalog import BUILTIN_OID_CATALOG
 import os
 import json
-from monitoring.grafana.generate_dashboards import build_wireless_dashboard
+from monitoring.grafana.generate_dashboards import (
+    CLIENT_COLOR,
+    CRITICAL_COLOR,
+    HEALTHY_COLOR,
+    HIGH_COLOR,
+    INFO_COLOR,
+    NEUTRAL_COLOR,
+    OUTBOUND_COLOR,
+    WARNING_COLOR,
+    UTILIZATION_THRESHOLDS,
+    build_interface_dashboard,
+    build_interface_detail_dashboard,
+    build_overview_dashboard,
+    build_wireless_dashboard,
+)
 
 
 def _iter_panels(panels):
@@ -328,6 +342,102 @@ def test_wireless_dashboard_homepage_groups_actual_metrics_by_wireless_layer():
     row_titles = {panel["title"] for panel in dashboard["panels"] if panel["type"] == "row"}
     assert row_titles == {"趋势与 AP 状态", "AP 明细", "Radio 热点", "SSID / BSS 客户端明细（依厂商采集覆盖）"}
     assert "无线控制器" not in " ".join(panel["title"] for panel in dashboard["panels"])
+
+
+def test_wireless_and_interface_dashboards_share_reference_semantic_colors():
+    assert (HEALTHY_COLOR, WARNING_COLOR, HIGH_COLOR, CRITICAL_COLOR, INFO_COLOR, NEUTRAL_COLOR) == (
+        "#73BF69", "#E0B400", "#FF9830", "#F2495C", "#5794F2", "#8A8F98"
+    )
+    assert [step["value"] for step in UTILIZATION_THRESHOLDS] == [None, 60, 75, 90]
+
+    wireless = build_wireless_dashboard()
+    wireless_panels = {panel["id"]: panel for panel in wireless["panels"]}
+    assert wireless["time"] == {"from": "now-15m", "to": "now"}
+    assert wireless["refresh"] == "30s"
+
+    assert wireless_panels[1]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == INFO_COLOR
+    assert wireless_panels[2]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == HEALTHY_COLOR
+    assert wireless_panels[3]["fieldConfig"]["defaults"]["thresholds"]["steps"] == [
+        {"color": HEALTHY_COLOR, "value": None},
+        {"color": WARNING_COLOR, "value": 1},
+        {"color": CRITICAL_COLOR, "value": 5},
+    ]
+    trend_colors = {
+        override["matcher"]["options"]: override["properties"][0]["value"]["fixedColor"]
+        for override in wireless_panels[7]["fieldConfig"]["overrides"]
+    }
+    assert trend_colors == {"在线 AP": HEALTHY_COLOR, "关联终端": CLIENT_COLOR}
+
+    ap_state_distribution = wireless_panels[8]
+    assert ap_state_distribution["fieldConfig"]["defaults"]["color"] == {
+        "mode": "fixed",
+        "fixedColor": NEUTRAL_COLOR,
+    }
+    state_color_overrides = {
+        override["matcher"]["options"]: {
+            prop["id"]: prop["value"]
+            for prop in override["properties"]
+        }
+        for override in ap_state_distribution["fieldConfig"]["overrides"]
+    }
+    assert state_color_overrides["associated"]["color"]["fixedColor"] == HEALTHY_COLOR
+    assert state_color_overrides["idle"]["color"]["fixedColor"] == CRITICAL_COLOR
+    assert state_color_overrides["join"]["color"]["fixedColor"] == WARNING_COLOR
+
+    ap_state_table = wireless_panels[9]
+    state_mapping = next(
+        override for override in ap_state_table["fieldConfig"]["overrides"]
+        if override["matcher"] == {"id": "byName", "options": "状态说明"}
+        and override["properties"][0]["id"] == "mappings"
+    )["properties"][0]["value"]
+    state_options = state_mapping[0]["options"]
+    assert state_options["associated"] == {"text": "在线", "color": HEALTHY_COLOR}
+    assert state_options["idle"] == {"text": "离线", "color": CRITICAL_COLOR}
+    assert state_options["join"] == {"text": "接入中", "color": WARNING_COLOR}
+    assert any(
+        override["matcher"] == {"id": "byName", "options": "状态说明"}
+        and override["properties"][0]["value"] == {"type": "color-background"}
+        for override in ap_state_table["fieldConfig"]["overrides"]
+    )
+    organized_fields = ap_state_table["transformations"][0]["options"]["excludeByName"]
+    assert organized_fields["Value"] is True
+
+    interface = build_interface_dashboard()
+    interface_panels = {panel["id"]: panel for panel in interface["panels"]}
+    assert interface_panels[1]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == HEALTHY_COLOR
+    assert interface_panels[2]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == OUTBOUND_COLOR
+    assert interface_panels[3]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == CRITICAL_COLOR
+    assert interface_panels[4]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == WARNING_COLOR
+    flow_colors = {
+        override["matcher"]["options"]: override["properties"][0]["value"]["fixedColor"]
+        for override in interface_panels[5]["fieldConfig"]["overrides"]
+    }
+    assert flow_colors[".*入向$"] == HEALTHY_COLOR
+    assert flow_colors[".*出向$"] == HIGH_COLOR
+    assert interface_panels[17]["fieldConfig"]["defaults"]["color"]["fixedColor"] == HEALTHY_COLOR
+    assert interface_panels[18]["fieldConfig"]["defaults"]["color"]["fixedColor"] == OUTBOUND_COLOR
+    interface_utilization_thresholds = next(
+        prop["value"]["steps"]
+        for override in interface_panels[6]["fieldConfig"]["overrides"]
+        if override["matcher"] == {"id": "byName", "options": "利用率 (%)"}
+        for prop in override["properties"]
+        if prop["id"] == "thresholds"
+    )
+    assert interface_utilization_thresholds == UTILIZATION_THRESHOLDS
+
+    detail = build_interface_detail_dashboard()
+    detail_panels = {panel["id"]: panel for panel in detail["panels"]}
+    assert detail_panels[1]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == HEALTHY_COLOR
+    assert detail_panels[2]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == OUTBOUND_COLOR
+    detail_flow_colors = {
+        override["matcher"]["options"]: override["properties"][0]["value"]["fixedColor"]
+        for override in detail_panels[7]["fieldConfig"]["overrides"]
+    }
+    assert detail_flow_colors["入向带宽"] == HEALTHY_COLOR
+    assert detail_flow_colors["出向带宽"] == OUTBOUND_COLOR
+
+    overview = {panel["id"]: panel for panel in build_overview_dashboard()["panels"]}
+    assert overview[4]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == CLIENT_COLOR
 
 
 def test_wireless_ap_counts_use_collected_state_rows_and_explicit_statuses():
