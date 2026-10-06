@@ -169,5 +169,3 @@ def test_m0275_registers_scoped_templates_and_preserves_custom_profile(isolated_
         )
     finally:
         conn.close()
-
-\n

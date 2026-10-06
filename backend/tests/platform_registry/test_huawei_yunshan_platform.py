@@ -119,5 +119,3 @@ def test_identification_prefers_yunshan_to_the_shared_vrp_title(isolated_db) -> 
     assert result["success"] is True
     assert result["selected"]["platform_code"] == "huawei_yunshan"
     assert [item["platform_code"] for item in result["suggestions"]] == ["huawei_yunshan"]
-
-\n
