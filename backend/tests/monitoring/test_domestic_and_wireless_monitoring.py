@@ -178,9 +178,12 @@ def test_dashboards_suite_completeness():
         panel = next(panel for panel in wireless_dashboard["panels"] if panel["id"] == panel_id)
         assert "or vector(0)" not in panel["targets"][0]["expr"]
     bss_panel = next(panel for panel in wireless_dashboard["panels"] if panel["id"] == 12)
-    assert 'vendor=~"(?i)(h3c|comware|huawei)"' in bss_panel["targets"][0]["expr"]
-    huawei_ssid_panel = next(panel for panel in wireless_dashboard["panels"] if panel["id"] == 13)
-    assert 'vendor=~"(?i).*huawei.*"' in huawei_ssid_panel["targets"][0]["expr"]
+    assert 'vendor=~"$vendor"' in bss_panel["targets"][0]["expr"]
+    assert '(?i)' not in bss_panel["targets"][0]["expr"]
+    ssid_panel = next(panel for panel in wireless_dashboard["panels"] if panel["id"] == 13)
+    assert ssid_panel["title"] == "SSID 客户端 Top 20"
+    assert 'vendor=~"$vendor"' in ssid_panel["targets"][0]["expr"]
+    assert '(?i)' not in ssid_panel["targets"][0]["expr"]
     ap_wireless_client_panel = next(panel for panel in wireless_dashboard["panels"] if panel["id"] == 10)
     assert 'component_class="wireless_access_point",sensor_class="clients"' in ap_wireless_client_panel["targets"][0]["expr"]
     assert 'vendor=~"$vendor"' in ap_wireless_client_panel["targets"][0]["expr"]
@@ -285,7 +288,7 @@ def test_wireless_dashboard_uses_hardware_inventory_job_and_joins_by_device():
         "AP 当前关联客户端 Top 20",
         "Radio 利用率 Top 10",
         "AP 无线单元（BSS）客户端 Top 20",
-        "华为 SSID 客户端 Top 20",
+        "SSID 客户端 Top 20",
     ):
         expression = query(title)
         assert 'job="platform_hardware_inventory"' in expression
@@ -294,8 +297,13 @@ def test_wireless_dashboard_uses_hardware_inventory_job_and_joins_by_device():
     assert 'vendor=~"$vendor"' in query("AP 当前状态明细")
     assert 'component_class="wireless_access_point"' in query("AP 当前状态明细")
     assert 'sensor_class="utilization"' in query("Radio 利用率 Top 10")
-    assert 'vendor=~"(?i)(h3c|comware|huawei)"' in query("AP 无线单元（BSS）客户端 Top 20")
-    assert 'vendor=~"(?i).*huawei.*"' in query("华为 SSID 客户端 Top 20")
+    assert 'vendor=~"$vendor"' in query("AP 无线单元（BSS）客户端 Top 20")
+    ssid_query = query("SSID 客户端 Top 20")
+    assert 'vendor=~"$vendor"' in ssid_query
+    assert 'component_class="wireless_ssid"' in ssid_query
+    assert 'component_class="wireless_bss"' in ssid_query
+    assert 'ssid!=""' in ssid_query
+    assert 'or on(site_name,vendor,role,hostname,ssid)' in ssid_query
 
     online_ap_expression = query("在线 AP")
     assert 'job="network_snmp"' in online_ap_expression
@@ -353,7 +361,7 @@ def test_wireless_dashboard_homepage_groups_actual_metrics_by_wireless_layer():
         "趋势与 AP 状态",
         "AP 明细",
         "Radio 热点",
-        "SSID / BSS 客户端明细（依厂商采集覆盖）",
+        "SSID / BSS 客户端明细",
     }
     assert "无线控制器" not in " ".join(panel["title"] for panel in dashboard["panels"])
 

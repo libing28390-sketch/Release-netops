@@ -224,13 +224,11 @@ def wireless_clients_by_device(network_selector, inventory_selector):
         f"sum by ({WIRELESS_DEVICE_LABELS}) ("
         f"nexora_wireless_sensor_value{{{inventory_selector},"
         'component_class="wireless_controller",sensor_class="clients"})'
-        ")"
     )
     ssid_clients = (
         f"sum by ({WIRELESS_DEVICE_LABELS}) ("
         f"nexora_wireless_sensor_value{{{inventory_selector},"
         'component_class="wireless_ssid",sensor_class="clients"})'
-        ")"
     )
     inventory_clients = (
         f"({controller_clients} or on({WIRELESS_DEVICE_LABELS}) {ssid_clients})"
@@ -247,6 +245,25 @@ def wireless_clients_by_device(network_selector, inventory_selector):
     assert 'component_class="wireless_ssid",sensor_class="clients"' in expression
     assert "vector(0)" not in expression
     return expression
+
+
+def wireless_ssid_clients_by_device(inventory_selector):
+    """Prefer controller SSID counts, then sum named BSS rows per SSID.
+
+    Huawei exposes controller SSID rows; H3C exposes SSID names on BSS
+    rows. Keep their scopes separate so overlapping sources are not added
+    together, and ignore BSS rows without an SSID name.
+    """
+    labels = f"{WIRELESS_DEVICE_LABELS},ssid"
+    ssid_clients = (
+        f"sum by ({labels}) (nexora_wireless_sensor_value{{{inventory_selector},"
+        'component_class="wireless_ssid",sensor_class="clients",ssid!=""})'
+    )
+    bss_clients = (
+        f"sum by ({labels}) (nexora_wireless_sensor_value{{{inventory_selector},"
+        'component_class="wireless_bss",sensor_class="clients",ssid!=""})'
+    )
+    return f"({ssid_clients} or on({labels}) {bss_clients})"
 
 
 def counter_rate_expr(high_capacity_metric, legacy_metric, selector):
@@ -1693,6 +1710,7 @@ def build_device_dashboard():
                 "refId": "A",
             }],
             0, 6, 9, 8, unit="percent",
+            legend_display_mode="list", legend_placement="bottom", legend_calcs=[],
             description=None,
         ),
         stat_panel(
@@ -1711,6 +1729,7 @@ def build_device_dashboard():
                 "refId": "A",
             }],
             12, 6, 12, 8, unit="percent",
+            legend_display_mode="list", legend_placement="bottom", legend_calcs=[],
             description=None,
         ),
         timeseries_panel(
@@ -1720,6 +1739,7 @@ def build_device_dashboard():
                 "refId": "A",
             }],
             0, 14, 12, 8, unit="celsius",
+            legend_display_mode="list", legend_placement="bottom", legend_calcs=[],
             description=None,
         ),
         timeseries_panel(
@@ -1729,6 +1749,7 @@ def build_device_dashboard():
                 "refId": "A",
             }],
             12, 14, 12, 8, unit="rpm",
+            legend_display_mode="list", legend_placement="bottom", legend_calcs=[],
             description=None,
         ),
         timeseries_panel(
@@ -1738,6 +1759,7 @@ def build_device_dashboard():
                 "refId": "A",
             }],
             0, 22, 12, 8, unit="watt",
+            legend_display_mode="list", legend_placement="bottom", legend_calcs=[],
             description=None,
         ),
         timeseries_panel(
@@ -1747,6 +1769,7 @@ def build_device_dashboard():
                 "refId": "A",
             }],
             12, 22, 12, 8, unit="dBm",
+            legend_display_mode="list", legend_placement="bottom", legend_calcs=[],
             description=None,
         ),
         current_table(
@@ -1923,8 +1946,6 @@ def build_device_dashboard():
 def build_wireless_dashboard():
     sel = f'{NETWORK_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
     inventory_sel = f'{HARDWARE_INVENTORY_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
-    huawei_inventory_sel = f'{inventory_sel},vendor=~"(?i).*huawei.*"'
-    wireless_inventory_sel = f'{inventory_sel},vendor=~"(?i)(h3c|comware|huawei)"'
     # The wireless dashboard combines SNMP-exporter series and normalized
     # hardware-inventory series. Their job labels differ, so device identity
     # must not include `job` when de-duplicating or joining these sources.
@@ -1977,8 +1998,8 @@ def build_wireless_dashboard():
         f'count({radio_utilization_rows} >= 75) or on() '
         f'((count({radio_utilization_rows}) > 0) * 0)'
     )
-    bss_client_rows = f'topk(20, nexora_wireless_sensor_value{{{wireless_inventory_sel},component_class="wireless_bss",sensor_class="clients"}})'
-    huawei_ssid_rows = f'topk(20, sum by ({device_labels},ssid) (nexora_wireless_sensor_value{{{huawei_inventory_sel},component_class="wireless_ssid",sensor_class="clients"}}))'
+    bss_client_rows = f'topk(20, nexora_wireless_sensor_value{{{inventory_sel},component_class="wireless_bss",sensor_class="clients"}})'
+    ssid_client_rows = f"topk(20, {wireless_ssid_clients_by_device(inventory_sel)})"
 
     panels = [
         stat_panel(1, "采集 AP", f"sum({ap_state_count})", 0, 0, 4, 3, color=NEUTRAL_COLOR, description=ap_total_description, no_value=NO_VALUE_TEXT),
@@ -2049,7 +2070,7 @@ def build_wireless_dashboard():
             thresholds=UTILIZATION_THRESHOLDS, max_value=100, instant=True,
             description=None,
         ),
-        row_panel(903, "SSID / BSS 客户端明细（依厂商采集覆盖）", 30),
+        row_panel(903, "SSID / BSS 客户端明细", 30),
         table_panel(
             12, "AP 无线单元（BSS）客户端 Top 20",
             bss_client_rows,
@@ -2059,14 +2080,14 @@ def build_wireless_dashboard():
                 extra_renames={"ap_name": "AP 名称", "radio_id": "Radio", "ssid": "SSID", "hostname": "设备名称", "wlan_id": "WLAN ID"},
                 extra_excludes={"source_type": True, "measurement_type": True, "component_class": True, "source_id": True, "sensor_key": True, "window": True, "device_id": True, "ap_id": True, "ap_mac": True, "ap_serial": True, "platform": True, "unit": True},
             ),
-            description="当前数据覆盖 H3C 与华为设备。",
+            description="按 AP 无线单元展示已采集的 BSS 客户端数；没有数据不代表数量为 0。",
         ),
         table_panel(
-            13, "华为 SSID 客户端 Top 20",
-            huawei_ssid_rows,
+            13, "SSID 客户端 Top 20",
+            ssid_client_rows,
             12, 31, 12, 8, unit="short",
             transformations=clean_organize_transformation("客户端数", extra_renames={"ssid": "SSID"}),
-            description=None,
+            description="优先采用控制器 SSID 统计，缺失时按同名 BSS 汇总；暂无数据不代表数量为 0。",
         ),
     ]
 
@@ -4111,6 +4132,43 @@ def apply_v2_presentation(dashboards):
                 panel.pop("fieldConfig", None)
 
 
+def validate_query_delimiters(query, context):
+    """Reject malformed grouping before provisioning, without parsing PromQL.
+
+    Label regexes and strings can contain delimiters. Ignore their contents
+    and escaped quotes; a MetricsQL/PromQL parser is still needed to verify
+    syntax and execution semantics beyond balanced grouping.
+    """
+    stack = []
+    closing = {")": "(", "]": "[", "}": "{"}
+    quote = None
+    escaped = False
+    comment = False
+    for offset, char in enumerate(query):
+        if comment:
+            comment = char != "\n"
+            continue
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\" and quote != "`":
+                escaped = True
+            elif char == quote:
+                quote = None
+            continue
+        if char in ('"', "'", "`"):
+            quote = char
+        elif char == "#":
+            comment = True
+        elif char in "([{":
+            stack.append(char)
+        elif char in closing:
+            if not stack or stack.pop() != closing[char]:
+                raise ValueError(f"{context}: unmatched {char!r} at offset {offset}")
+    if quote or stack:
+        raise ValueError(f"{context}: unclosed query string or delimiter")
+
+
 def validate_dashboard(source_name, dashboard):
     """Validate the generated top-level dashboard contract before writing it."""
     uid = dashboard.get("uid")
@@ -4123,6 +4181,15 @@ def validate_dashboard(source_name, dashboard):
     panel_ids = [panel.get("id") for panel in iter_panels(panels)]
     assert all(panel_id is not None for panel_id in panel_ids), f"{source_name}: panel without id"
     assert len(panel_ids) == len(set(panel_ids)), f"{source_name}: duplicate panel id"
+
+    for panel in iter_panels(panels):
+        for target in panel.get("targets", []):
+            expression = target.get("expr")
+            if isinstance(expression, str) and expression:
+                validate_query_delimiters(
+                    expression,
+                    f"{source_name}: panel {panel['id']}/{target.get('refId', '?')}",
+                )
 
     occupied = {}
     for panel in panels:
@@ -4171,6 +4238,7 @@ def main():
     dashboards = build_dashboard_catalog()
     for fname, data in dashboards:
         validate_dashboard(fname, data)
+    for fname, data in dashboards:
         path = DASHBOARDS_DIR / fname
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)

@@ -6695,7 +6695,7 @@
           }
         },
         "903": {
-          "title": "SSID / BSS 客户端明细（依厂商采集覆盖）",
+          "title": "SSID / BSS 客户端明细",
           "type": "row"
         },
         "12": {
@@ -6742,7 +6742,7 @@
           }
         },
         "13": {
-          "title": "华为 SSID 客户端 Top 20",
+          "title": "SSID 客户端 Top 20",
           "type": "table",
           "fieldConfig": {
             "defaults": {
