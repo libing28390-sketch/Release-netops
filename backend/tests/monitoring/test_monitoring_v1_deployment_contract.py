@@ -85,13 +85,30 @@ def test_grafana_subpath_is_preserved_and_native_session_cookie_is_stripped():
     )
 
     nginx = (ROOT / "nginx" / "nginx.conf").read_text(encoding="utf-8")
+    https_server = nginx.split("server {\n    listen 443 ssl;", 1)[1].split("\n}", 1)[0]
+    assert "http2 on;" in https_server
+
+    upgrade_map = nginx.split("map $http_upgrade $grafana_connection_upgrade {", 1)[1].split("\n}", 1)[0]
+    assert "default upgrade;" in upgrade_map
+    assert "''      '';" in upgrade_map
+
     auth_location = nginx.split("location = /_grafana_auth {", 1)[1].split("\n    location", 1)[0]
+    assert "internal;" in auth_location
+    assert "proxy_http_version 1.1;" in auth_location
+    assert 'proxy_set_header Connection              "";' in auth_location
     assert 'proxy_set_header Authorization       "Bearer $cookie_nexora_grafana_session";' in auth_location
     assert 'proxy_set_header Cookie              "";' in auth_location
 
     grafana_location = nginx.split("location ^~ /grafana/ {", 1)[1].split("\n    location", 1)[0]
+    assert "auth_request /_grafana_auth;" in grafana_location
+    assert "proxy_http_version 1.1;" in grafana_location
     assert "proxy_pass http://grafana_backend;" in grafana_location
     assert 'proxy_set_header Cookie              "";' in grafana_location
+    assert 'proxy_set_header Authorization      "";' in grafana_location
+    assert "proxy_set_header X-WEBAUTH-USER     $grafana_auth_user;" in grafana_location
+    assert "proxy_set_header X-WEBAUTH-ROLE     $grafana_auth_role;" in grafana_location
+    assert "proxy_set_header Upgrade           $http_upgrade;" in grafana_location
+    assert "proxy_set_header Connection        $grafana_connection_upgrade;" in grafana_location
     assert "X-Forwarded-Prefix" not in grafana_location
 
 
