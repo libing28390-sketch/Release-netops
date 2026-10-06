@@ -2324,7 +2324,7 @@
           }
         },
         "4": {
-          "title": "控制器汇总在线终端数",
+          "title": "在线终端数",
           "type": "stat",
           "fieldConfig": {
             "defaults": {
@@ -2739,33 +2739,6 @@
                   {
                     "id": "unit",
                     "value": "percent"
-                  },
-                  {
-                    "id": "custom.cellOptions",
-                    "value": {
-                      "type": "gauge",
-                      "mode": "gradient"
-                    }
-                  },
-                  {
-                    "id": "thresholds",
-                    "value": {
-                      "mode": "absolute",
-                      "steps": [
-                        {
-                          "color": "#22C55E",
-                          "value": null
-                        },
-                        {
-                          "color": "#F59E0B",
-                          "value": 70
-                        },
-                        {
-                          "color": "#F43F5E",
-                          "value": 85
-                        }
-                      ]
-                    }
                   }
                 ]
               },
@@ -2773,6 +2746,22 @@
                 "matcher": {
                   "id": "byName",
                   "options": "资产 ID"
+                },
+                "properties": [
+                  {
+                    "id": "custom.hideFrom",
+                    "value": {
+                      "tooltip": false,
+                      "viz": true,
+                      "legend": false
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "设备名称"
                 },
                 "properties": [
                   {
@@ -2814,33 +2803,6 @@
                   {
                     "id": "unit",
                     "value": "percent"
-                  },
-                  {
-                    "id": "custom.cellOptions",
-                    "value": {
-                      "type": "gauge",
-                      "mode": "gradient"
-                    }
-                  },
-                  {
-                    "id": "thresholds",
-                    "value": {
-                      "mode": "absolute",
-                      "steps": [
-                        {
-                          "color": "#22C55E",
-                          "value": null
-                        },
-                        {
-                          "color": "#F59E0B",
-                          "value": 80
-                        },
-                        {
-                          "color": "#F43F5E",
-                          "value": 90
-                        }
-                      ]
-                    }
                   }
                 ]
               },
@@ -2848,6 +2810,22 @@
                 "matcher": {
                   "id": "byName",
                   "options": "资产 ID"
+                },
+                "properties": [
+                  {
+                    "id": "custom.hideFrom",
+                    "value": {
+                      "tooltip": false,
+                      "viz": true,
+                      "legend": false
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "设备名称"
                 },
                 "properties": [
                   {
@@ -2896,6 +2874,22 @@
                 "matcher": {
                   "id": "byName",
                   "options": "资产 ID"
+                },
+                "properties": [
+                  {
+                    "id": "custom.hideFrom",
+                    "value": {
+                      "tooltip": false,
+                      "viz": true,
+                      "legend": false
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "设备名称"
                 },
                 "properties": [
                   {
@@ -5991,7 +5985,7 @@
           }
         },
         "3": {
-          "title": "明确离线 AP",
+          "title": "离线 AP",
           "type": "stat",
           "fieldConfig": {
             "defaults": {
@@ -6044,7 +6038,7 @@
           }
         },
         "4": {
-          "title": "控制器汇总在线终端数",
+          "title": "在线终端数",
           "type": "stat",
           "fieldConfig": {
             "defaults": {
@@ -6057,7 +6051,7 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "#A78BFA",
+                    "color": "#64748B",
                     "value": null
                   }
                 ]
@@ -6785,7 +6779,7 @@
           }
         },
         "14": {
-          "title": "纳管 AC",
+          "title": "离线 AC",
           "type": "stat",
           "fieldConfig": {
             "defaults": {
@@ -6798,8 +6792,16 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "#64748B",
+                    "color": "#22C55E",
                     "value": null
+                  },
+                  {
+                    "color": "#F59E0B",
+                    "value": 1
+                  },
+                  {
+                    "color": "#F43F5E",
+                    "value": 5
                   }
                 ]
               },
@@ -6908,6 +6910,12 @@
                         }
                       }
                     ]
+                  },
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "color-text"
+                    }
                   }
                 ]
               }
@@ -6916,6 +6924,169 @@
         },
         "905": {
           "title": "AP 下在线终端",
+          "type": "row"
+        },
+        "17": {
+          "title": "AC 接口入向流量",
+          "type": "stat",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bps",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "#22D3EE",
+                    "value": null
+                  }
+                ]
+              },
+              "mappings": [
+                {
+                  "type": "special",
+                  "options": {
+                    "match": "null",
+                    "result": {
+                      "text": "暂无采集数据",
+                      "color": "#64748B"
+                    }
+                  }
+                },
+                {
+                  "type": "special",
+                  "options": {
+                    "match": "nan",
+                    "result": {
+                      "text": "暂无采集数据",
+                      "color": "#64748B"
+                    }
+                  }
+                }
+              ]
+            },
+            "overrides": []
+          }
+        },
+        "18": {
+          "title": "AC 接口出向流量",
+          "type": "stat",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bps",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "#3B82F6",
+                    "value": null
+                  }
+                ]
+              },
+              "mappings": [
+                {
+                  "type": "special",
+                  "options": {
+                    "match": "null",
+                    "result": {
+                      "text": "暂无采集数据",
+                      "color": "#64748B"
+                    }
+                  }
+                },
+                {
+                  "type": "special",
+                  "options": {
+                    "match": "nan",
+                    "result": {
+                      "text": "暂无采集数据",
+                      "color": "#64748B"
+                    }
+                  }
+                }
+              ]
+            },
+            "overrides": []
+          }
+        },
+        "19": {
+          "title": "无线 AC 接口流量趋势",
+          "type": "timeseries",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bps",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "lineWidth": 2,
+                "fillOpacity": 10,
+                "gradientMode": "none",
+                "showPoints": "never"
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": ".*入向$"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#22D3EE"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": ".*出向$"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#3B82F6"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "20": {
+          "title": "AC 接口吞吐 Top 10",
+          "type": "bargauge",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bps",
+              "min": 0,
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "fixed",
+                "fixedColor": "#3B82F6"
+              }
+            },
+            "overrides": []
+          }
+        },
+        "906": {
+          "title": "无线专网流量",
           "type": "row"
         }
       }

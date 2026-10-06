@@ -5,6 +5,8 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from core.scheduler_lock import acquire_scheduler_lock, synchronized_scheduler_job
 from database import get_db_connection
 
@@ -140,4 +142,160 @@ def test_dynamic_scheduler_releases_its_owner_fenced_lease(isolated_db, monkeypa
     scheduler_service.run_scheduled_automation_job_sync_wrapper("dynamic-lease-test")
 
     assert completed == ["dynamic-lease-test", "dynamic-lease-test"]
+    assert _lock_exists(lock_name) is False
+
+
+def test_async_scheduler_keeps_loop_responsive_during_slow_acquire_and_release(monkeypatch):
+    from core import scheduler_lock
+
+    acquiring = threading.Event()
+    acquired = threading.Event()
+    releasing = threading.Event()
+    finish_release = threading.Event()
+    operation_threads = []
+
+    class Lease:
+        def __enter__(self):
+            return self
+
+        def release(self):
+            operation_threads.append(threading.get_ident())
+            releasing.set()
+            assert finish_release.wait(timeout=3)
+
+    def acquire(*_args):
+        operation_threads.append(threading.get_ident())
+        acquiring.set()
+        assert acquired.wait(timeout=3)
+        return Lease()
+
+    monkeypatch.setattr(scheduler_lock, "acquire_scheduler_lock", acquire)
+
+    @synchronized_scheduler_job("test_slow_async_lock")
+    async def job():
+        return "completed"
+
+    async def scenario():
+        loop_thread = threading.get_ident()
+        task = asyncio.create_task(job())
+        try:
+            assert await asyncio.to_thread(acquiring.wait, 2)
+            assert not task.done()
+            assert operation_threads == [operation_threads[0]]
+            assert operation_threads[0] != loop_thread
+            acquired.set()
+            assert await asyncio.to_thread(releasing.wait, 2)
+            # A lightweight coroutine can run while release is still waiting.
+            await asyncio.sleep(0)
+            assert not task.done()
+            assert operation_threads[1] != loop_thread
+        finally:
+            acquired.set()
+            finish_release.set()
+        assert await task == "completed"
+
+    asyncio.run(scenario())
+
+
+def test_async_scheduler_releases_lease_acquired_after_repeated_cancellation(monkeypatch):
+    from core import scheduler_lock
+
+    acquiring = threading.Event()
+    finish_acquire = threading.Event()
+    released = []
+    invoked = []
+
+    class Lease:
+        def release(self):
+            released.append(True)
+
+    def acquire(*_args):
+        acquiring.set()
+        assert finish_acquire.wait(timeout=3)
+        return Lease()
+
+    monkeypatch.setattr(scheduler_lock, "acquire_scheduler_lock", acquire)
+
+    @synchronized_scheduler_job("test_cancel_acquiring")
+    async def job():
+        invoked.append(True)
+
+    async def scenario():
+        task = asyncio.create_task(job())
+        try:
+            assert await asyncio.to_thread(acquiring.wait, 2)
+            task.cancel()
+            await asyncio.sleep(0)
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not task.done()
+        finally:
+            finish_acquire.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=3)
+
+    asyncio.run(scenario())
+    assert released == [True]
+    assert invoked == []
+
+
+def test_async_scheduler_finishes_release_after_repeated_cancellation(monkeypatch):
+    from core import scheduler_lock
+
+    releasing = threading.Event()
+    finish_release = threading.Event()
+    released = []
+
+    class Lease:
+        def __enter__(self):
+            return self
+
+        def release(self):
+            releasing.set()
+            assert finish_release.wait(timeout=3)
+            released.append(True)
+
+    monkeypatch.setattr(scheduler_lock, "acquire_scheduler_lock", lambda *_args: Lease())
+
+    @synchronized_scheduler_job("test_cancel_releasing")
+    async def job():
+        return "completed"
+
+    async def scenario():
+        task = asyncio.create_task(job())
+        try:
+            assert await asyncio.to_thread(releasing.wait, 2)
+            task.cancel()
+            await asyncio.sleep(0)
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not task.done()
+        finally:
+            finish_release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=3)
+
+    asyncio.run(scenario())
+    assert released == [True]
+
+
+def test_async_scheduler_releases_real_pg_lease_when_job_is_cancelled(isolated_db):
+    lock_name = "test_scheduler_cancel_active_job"
+    _clear_lock(lock_name)
+
+    async def scenario():
+        started = asyncio.Event()
+
+        @synchronized_scheduler_job(lock_name, expire_seconds=10)
+        async def job():
+            started.set()
+            await asyncio.Event().wait()
+
+        task = asyncio.create_task(job())
+        await asyncio.wait_for(started.wait(), timeout=3)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=3)
+
+    asyncio.run(scenario())
     assert _lock_exists(lock_name) is False

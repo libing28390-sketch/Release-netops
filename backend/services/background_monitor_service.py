@@ -2100,7 +2100,7 @@ async def _process_device_raw(device, cycle_tick: int):
                     template_only=True,
                 )
                 if not intf_data:
-                    record_collection_result(
+                    await asyncio.to_thread(record_collection_result,
                         dev_id,
                         'snmp_interfaces',
                         status='template_required' if not interface_config else 'failed',
@@ -2114,7 +2114,7 @@ async def _process_device_raw(device, cycle_tick: int):
                     )
                 if intf_data:
                     snmp_available = True
-                    record_collection_result(
+                    await asyncio.to_thread(record_collection_result,
                         dev_id,
                         'snmp_interfaces',
                         status='success',
@@ -2469,7 +2469,7 @@ async def _process_device_raw(device, cycle_tick: int):
                     finally:
                         conn.close()
             except Exception as intf_err:
-                record_collection_result(
+                await asyncio.to_thread(record_collection_result,
                     dev_id,
                     'snmp_interfaces',
                     status='failed',
@@ -2480,7 +2480,7 @@ async def _process_device_raw(device, cycle_tick: int):
                 )
                 logger.debug(f"[SNMP] {ip} interface collection failed: {intf_err}")
         elif collect_intf:
-            record_collection_result(
+            await asyncio.to_thread(record_collection_result,
                 dev_id,
                 'snmp_interfaces',
                 status='not_configured',
@@ -2500,7 +2500,7 @@ async def _process_device_raw(device, cycle_tick: int):
         if not any(value is not None for value in metric_values):
             metric_values = (cpu_usage, memory_usage, temp, fan, psu)
         if is_server_asset:
-            record_collection_result(
+            await asyncio.to_thread(record_collection_result,
                 dev_id,
                 'snmp_metrics',
                 status='skipped',
@@ -2533,7 +2533,7 @@ async def _process_device_raw(device, cycle_tick: int):
                 collection_status = 'success'
                 collection_error_code = ''
                 collection_error_message = ''
-            record_collection_result(
+            await asyncio.to_thread(record_collection_result,
                 dev_id,
                 'snmp_metrics',
                 status=collection_status if snmp_community else 'not_configured',
@@ -2610,7 +2610,7 @@ async def process_device_fast(device):
         mark_offline_and_clear_cache()
         if str(device.get('status') or '').lower() != 'offline':
             _schedule_monitoring_target_sync()
-        record_collection_result(
+        await asyncio.to_thread(record_collection_result,
             dev_id,
             'reachability',
             status='not_configured',
@@ -2627,7 +2627,7 @@ async def process_device_fast(device):
                 _device_management_port(device),
             )
         new_status = 'online' if reachable else 'offline'
-        record_collection_result(
+        await asyncio.to_thread(record_collection_result,
             dev_id,
             'reachability',
             status='success' if reachable else 'failed',
@@ -2651,7 +2651,7 @@ async def process_device_fast(device):
             )
             _schedule_monitoring_target_sync()
     except Exception as exc:
-        record_collection_result(
+        await asyncio.to_thread(record_collection_result,
             dev_id,
             'reachability',
             status='failed',

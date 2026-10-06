@@ -290,9 +290,12 @@ def test_h3c_radio_text_attributes_poll_as_inventory_values(monkeypatch):
     monkeypatch.setattr(database, "get_db_connection", lambda: Connection())
     monkeypatch.setattr(
         inventory,
-        "record_sensor_sample",
-        lambda _conn, device_id, sensor_key, value, raw_value, quality, _observed_at:
-            recorded.append((device_id, sensor_key, value, raw_value, quality)),
+        "record_sensor_samples_batch",
+        lambda _conn, samples: recorded.extend(
+            (sample["device_id"], sample["sensor_key"], sample["value"],
+             sample["raw_value"], sample["quality"])
+            for sample in samples
+        ),
     )
     suffix = "5.65.80.45.48.49.1"
     oid = f"{probe._H3C_DOT11_AP_RADIO_TABLE}.32"
@@ -340,9 +343,12 @@ def test_h3c_station_text_attributes_poll_as_inventory_values(monkeypatch):
     monkeypatch.setattr(database, "get_db_connection", lambda: Connection())
     monkeypatch.setattr(
         inventory,
-        "record_sensor_sample",
-        lambda _conn, device_id, sensor_key, value, raw_value, quality, _observed_at:
-            recorded.append((device_id, sensor_key, value, raw_value, quality)),
+        "record_sensor_samples_batch",
+        lambda _conn, samples: recorded.extend(
+            (sample["device_id"], sample["sensor_key"], sample["value"],
+             sample["raw_value"], sample["quality"])
+            for sample in samples
+        ),
     )
     suffix = "0.17.34.51.68.85"
     username = "operator-fixture"

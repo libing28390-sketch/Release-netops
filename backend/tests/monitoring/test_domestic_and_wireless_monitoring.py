@@ -167,7 +167,7 @@ def test_dashboards_suite_completeness():
     )
     assert candidate_role_override["properties"][0]["value"][0]["options"]["unclassified"]["text"] == "用途待确认"
     wireless_client_panel = next(panel for panel in overview_dashboard["panels"] if panel["id"] == 4)
-    assert wireless_client_panel["title"] == "控制器汇总在线终端数"
+    assert wireless_client_panel["title"] == "在线终端数"
     assert "or vector(0)" not in wireless_client_panel["targets"][0]["expr"]
     assert "description" not in wireless_client_panel
 
@@ -312,7 +312,7 @@ def test_wireless_dashboard_uses_hardware_inventory_job_and_joins_by_device():
     assert "unless on(site_name,vendor,role,hostname)" in online_ap_expression
     assert "or on(site_name,vendor,role,hostname)" in online_ap_expression
 
-    clients_expression = query("控制器汇总在线终端数")
+    clients_expression = query("在线终端数")
     assert 'job="network_snmp"' in clients_expression
     assert 'job="platform_hardware_inventory"' in clients_expression
     assert "unless on(site_name,vendor,role,hostname)" in clients_expression
@@ -331,11 +331,13 @@ def test_wireless_dashboard_uses_hardware_inventory_job_and_joins_by_device():
         for term in ("switch", "firewall", "router")
     )
 
-    total_ac_query = panels["纳管 AC"]["targets"][0]["expr"]
+    offline_ac_query = panels["离线 AC"]["targets"][0]["expr"]
     online_ac_query = panels["在线 AC"]["targets"][0]["expr"]
-    assert "count by (site_name,vendor,role,hostname)" in total_ac_query
-    assert 'role="wireless_controller"' in total_ac_query
+    assert "count by (site_name,vendor,role,hostname)" in offline_ac_query
+    assert 'role="wireless_controller"' in offline_ac_query
+    assert "- count(count by (site_name,vendor,role,hostname)" in offline_ac_query
     assert 'up{' in online_ac_query and '== 1' in online_ac_query
+    assert "* 0" in offline_ac_query
     assert "* 0" in online_ac_query  # Existing but fully-down AC targets show 0.
 
     station_panel = panels["AP 下在线终端明细"]
@@ -345,7 +347,22 @@ def test_wireless_dashboard_uses_hardware_inventory_job_and_joins_by_device():
     assert station_panel["transformations"][0]["options"]["renameByName"]["hostname"] == "所属 AC"
     assert station_panel["transformations"][0]["options"]["renameByName"]["station_mac"] == "终端 MAC"
     station_excluded_fields = station_panel["transformations"][0]["options"]["excludeByName"]
-    assert all(station_excluded_fields[field] for field in ("site_name", "vendor", "role", "instance"))
+    assert all(station_excluded_fields[field] for field in ("site_name", "vendor", "role", "instance", "rule_version"))
+    station_status_overrides = station_panel["fieldConfig"]["overrides"]
+    assert any(
+        override.get("matcher") == {"id": "byName", "options": "在线状态"}
+        and any(
+            prop.get("id") == "custom.cellOptions" and prop.get("value") == {"type": "color-text"}
+            for prop in override.get("properties", [])
+        )
+        for override in station_status_overrides
+    )
+    assert any(
+        override.get("matcher") == {"id": "byName", "options": "在线状态"}
+        and override.get("properties", [{}])[0].get("id") == "mappings"
+        and override["properties"][0]["value"][0]["options"]["1"] == {"text": "在线", "color": HEALTHY_COLOR}
+        for override in station_status_overrides
+    )
     panels_by_id = {panel["id"]: panel for panel in dashboard["panels"]}
     for panel_id in (9, 10):
         assert panels_by_id[panel_id]["transformations"][0]["options"]["renameByName"]["hostname"] == "所属 AC"
@@ -362,8 +379,19 @@ def test_wireless_dashboard_homepage_groups_actual_metrics_by_wireless_layer():
         assert panel["gridPos"]["h"] == 4
         assert panel["fieldConfig"]["defaults"]["noValue"] == NO_VALUE_TEXT
 
-    assert panels[14]["title"] == "纳管 AC"
+    summary_order = [
+        panel["id"]
+        for panel in sorted(
+            (panel for panel in dashboard["panels"] if panel["type"] == "stat" and panel["gridPos"]["y"] == 1),
+            key=lambda panel: panel["gridPos"]["x"],
+        )
+    ]
+    assert summary_order == [15, 14, 1, 2, 3, 4, 5, 6]
+    assert [panels[panel_id]["gridPos"]["x"] for panel_id in summary_order] == list(range(0, 24, 3))
+
     assert panels[15]["title"] == "在线 AC"
+    assert panels[14]["title"] == "离线 AC"
+    assert "纳管 AC" not in [panel["title"] for panel in dashboard["panels"]]
     assert panels[16]["type"] == "table"
 
     assert panels[5]["title"] == "高利用率 Radio"
@@ -385,7 +413,7 @@ def test_wireless_dashboard_homepage_groups_actual_metrics_by_wireless_layer():
     assert 'count by (state_description)' in panels[8]["targets"][0]["expr"]
     assert "description" not in panels[8]
 
-    assert panels[4]["title"] == "控制器汇总在线终端数"
+    assert panels[4]["title"] == "在线终端数"
     assert "description" not in panels[4]
 
     assert panels[9]["gridPos"]["y"] < panels[11]["gridPos"]["y"] < panels[12]["gridPos"]["y"]
@@ -401,8 +429,51 @@ def test_wireless_dashboard_homepage_groups_actual_metrics_by_wireless_layer():
         "Radio 热点",
         "SSID / BSS 客户端明细",
         "AP 下在线终端",
+        "无线专网流量",
     }
     assert "无线控制器" not in " ".join(panel["title"] for panel in dashboard["panels"])
+
+
+def test_wireless_dashboard_exposes_ac_interface_traffic_with_semantic_direction_colors():
+    dashboard = build_wireless_dashboard()
+    panels = {panel["id"]: panel for panel in dashboard["panels"]}
+
+    inbound = panels[17]
+    outbound = panels[18]
+    assert inbound["title"] == "AC 接口入向流量"
+    assert outbound["title"] == "AC 接口出向流量"
+    assert inbound["fieldConfig"]["defaults"]["unit"] == "bps"
+    assert outbound["fieldConfig"]["defaults"]["unit"] == "bps"
+    assert inbound["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == INBOUND_COLOR
+    assert outbound["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == OUTBOUND_COLOR
+    for panel in (inbound, outbound):
+        expression = panel["targets"][0]["expr"]
+        assert 'job="network_snmp"' in expression
+        assert 'role="wireless_controller"' in expression
+        assert 'hostname=~"$device"' in expression
+        assert "ifAdminStatus" in expression and "== 1" in expression
+        assert "ifOperStatus" in expression and "== 1" in expression
+        assert "* 8" in expression
+
+    trend = panels[19]
+    assert len(trend["targets"]) == 2
+    assert {target["legendFormat"] for target in trend["targets"]} == {"{{hostname}} 入向", "{{hostname}} 出向"}
+    trend_colors = {
+        override["matcher"]["options"]: override["properties"][0]["value"]["fixedColor"]
+        for override in trend["fieldConfig"]["overrides"]
+    }
+    assert trend_colors == {
+        ".*入向$": INBOUND_COLOR,
+        ".*出向$": OUTBOUND_COLOR,
+    }
+
+    top = panels[20]
+    top_query = top["targets"][0]["expr"]
+    assert top["title"] == "AC 接口吞吐 Top 10"
+    assert top["type"] == "bargauge"
+    assert "topk(10" in top_query
+    assert "ifHCInOctets" in top_query and "ifHCOutOctets" in top_query
+    assert "ifName" in top["targets"][0]["legendFormat"]
 
 
 def test_wireless_and_interface_dashboards_share_reference_semantic_colors():
@@ -540,7 +611,7 @@ def test_wireless_ap_counts_use_collected_state_rows_and_explicit_statuses():
     assert 'sensor_class="ap-count"' in online_expression  # Actual aggregate fallback for platforms without a complete AP detail set.
     assert "unless on(site_name,vendor,role,hostname)" in online_expression
 
-    offline_panel = panels["明确离线 AP"]
+    offline_panel = panels["离线 AP"]
     offline_expression = offline_panel["targets"][0]["expr"]
     assert 'state_description=~"^(deassociated|idle)$"' in offline_expression
     assert 'coverage_complete="true"' in offline_expression

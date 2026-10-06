@@ -41,7 +41,7 @@ def test_all_generated_dashboards_validate_the_complete_panel_catalog(catalog):
         panel_count += len(panels)
         validate_dashboard(filename, dashboard)
 
-    assert panel_count == 257
+    assert panel_count == 262
 
 
 @pytest.mark.parametrize(

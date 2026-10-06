@@ -58,9 +58,12 @@ def test_profile_and_inventory_poll_share_percent_and_temperature_normalization(
     monkeypatch.setattr(database, "get_db_connection", lambda: Connection())
     monkeypatch.setattr(
         inventory,
-        "record_sensor_sample",
-        lambda _conn, device_id, sensor_key, value, raw_value, quality, observed_at:
-            written_samples.append((device_id, sensor_key, value, raw_value, quality)),
+        "record_sensor_samples_batch",
+        lambda _conn, samples: written_samples.extend(
+            (sample["device_id"], sample["sensor_key"], sample["value"],
+             sample["raw_value"], sample["quality"])
+            for sample in samples
+        ),
     )
 
     cases = [

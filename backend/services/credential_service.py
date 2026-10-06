@@ -159,14 +159,50 @@ def _public_device_refs(devices: list[dict], credential_id: str | None = None) -
     ]
 
 
+def _list_devices_using_rows_for_credentials(conn, credential_ids: list[str]) -> dict[str, list[dict]]:
+    """Fetch the minimal device metadata for a credential list in one query."""
+    devices_by_credential = {credential_id: [] for credential_id in credential_ids}
+    if not devices_by_credential:
+        return devices_by_credential
+
+    try:
+        rows = conn.execute(
+            """SELECT id, hostname, ip_address, username, normal_username, admin_username, auth_model, credential_id, admin_credential_id
+               FROM devices
+               WHERE credential_id = ANY(?) OR admin_credential_id = ANY(?)
+               ORDER BY hostname""",
+            (credential_ids, credential_ids),
+        ).fetchall()
+    except Exception:
+        # Keep the existing list helper's failure contract: missing/unavailable
+        # device metadata yields empty associations without exposing DB errors.
+        return devices_by_credential
+
+    for row in rows:
+        device = _row_to_dict(row)
+        normal_credential_id = device.get('credential_id')
+        admin_credential_id = device.get('admin_credential_id')
+        if normal_credential_id in devices_by_credential:
+            devices_by_credential[normal_credential_id].append(device)
+        if admin_credential_id in devices_by_credential and admin_credential_id != normal_credential_id:
+            devices_by_credential[admin_credential_id].append(device)
+
+    return devices_by_credential
+
+
 def list_credentials(conn) -> list[dict]:
     rows = conn.execute(
         "SELECT * FROM credentials ORDER BY credential_name"
     ).fetchall()
+    views = [_to_safe_view(row) for row in rows]
+    devices_by_credential = _list_devices_using_rows_for_credentials(
+        conn,
+        [view['id'] for view in views],
+    )
+
     res = []
-    for r in rows:
-        view = _to_safe_view(r)
-        device_rows = _list_devices_using_rows(conn, view["id"])
+    for view in views:
+        device_rows = devices_by_credential.get(view['id'], [])
         view["device_count"] = len(device_rows)
         view["devices"] = _public_device_refs(device_rows[:5], view["id"])
         view["devices_truncated"] = len(device_rows) > 5

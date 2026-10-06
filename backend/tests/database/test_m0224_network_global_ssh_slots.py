@@ -144,8 +144,14 @@ def test_heartbeat_renews_global_and_device_rows(isolated_db):
     )
     try:
         before_global, before_device = _read_slot_expirations(lease)
-        time.sleep(0.3)
         after_global, after_device = _read_slot_expirations(lease)
+        deadline = time.monotonic() + 2.0
+        while (
+            (after_global <= before_global or after_device <= before_device)
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.05)
+            after_global, after_device = _read_slot_expirations(lease)
         assert after_global > before_global
         assert after_device > before_device
         assert lease.is_valid

@@ -4568,14 +4568,10 @@ async def poll_hardware_inventory(
                     return oid, None
 
         scalar_values = dict(await asyncio.gather(*(read_scalar(oid) for oid in sorted(get_oids))))
-    from database import get_db_connection
-    from services.snmp_hardware_inventory_service import record_sensor_sample
-
     now = datetime.now(timezone.utc)
     good = missing = invalid = unsupported = 0
-    conn = get_db_connection()
-    try:
-        for sensor in sensors:
+    samples_to_persist: list[dict[str, Any]] = []
+    for sensor in sensors:
             sensor_key = str(sensor.get("sensor_key") or "")
             plan = plans.get(sensor_key)
             if not plan:
@@ -4823,22 +4819,39 @@ async def poll_hardware_inventory(
                 unsupported += 1
             else:
                 invalid += 1
-            sample = (
-                conn, str(sensor.get("device_id") or ""), sensor_key,
-                value, raw_value, quality, now,
-            )
+            sample = {
+                "device_id": str(sensor.get("device_id") or ""),
+                "sensor_key": sensor_key,
+                "value": value,
+                "raw_value": raw_value,
+                "quality": quality,
+                "observed_at": now,
+            }
             if str(sensor.get("measurement_type") or "").casefold() == "component_state":
-                presence_status = _state_presence(raw_value, sensor.get("states")) if quality == "good" else None
-                record_sensor_sample(*sample, presence_status=presence_status)
-            else:
-                record_sensor_sample(*sample)
+                sample["presence_status"] = (
+                    _state_presence(raw_value, sensor.get("states")) if quality == "good" else None
+                )
+            samples_to_persist.append(sample)
+    await asyncio.to_thread(_persist_hardware_sensor_samples, samples_to_persist)
+    return {"good": good, "missing": missing, "invalid": invalid, "unsupported_mapping": unsupported}
+
+
+def _persist_hardware_sensor_samples(samples: list[dict[str, Any]]) -> None:
+    """Persist one device's sample batch outside the async SNMP event loop."""
+    if not samples:
+        return
+    from database import get_db_connection
+    from services.snmp_hardware_inventory_service import record_sensor_samples_batch
+
+    conn = get_db_connection()
+    try:
+        record_sensor_samples_batch(conn, samples)
         conn.commit()
     except Exception:
         conn.rollback()
         raise
     finally:
         conn.close()
-    return {"good": good, "missing": missing, "invalid": invalid, "unsupported_mapping": unsupported}
 
 
 __all__ = ["probe_standard_hardware", "probe_librenms_hardware", "poll_hardware_inventory"]

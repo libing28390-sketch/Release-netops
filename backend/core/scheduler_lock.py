@@ -191,13 +191,14 @@ def synchronized_scheduler_job(lock_name: str, expire_seconds: int = 55):
 
             @functools.wraps(func)
             async def async_wrapper(*args: Any, **kwargs: Any):
-                lease = acquire_scheduler_lock(lock_name, expire_seconds)
+                lease = await _acquire_scheduler_lock_async(lock_name, expire_seconds)
                 if lease is None:
                     logger.debug("Scheduler lock %s is already held. Skipping execution.", lock_name)
                     return None
                 try:
-                    with lease:
-                        return await func(*args, **kwargs)
+                    # Starting the heartbeat does not perform database I/O.
+                    lease.__enter__()
+                    return await func(*args, **kwargs)
                 except Exception as exc:
                     logger.error(
                         "Error executing synchronized scheduler job %s: %s",
@@ -206,6 +207,8 @@ def synchronized_scheduler_job(lock_name: str, expire_seconds: int = 55):
                         exc_info=True,
                     )
                     return None
+                finally:
+                    await _release_scheduler_lock_async(lease)
 
             return async_wrapper
 
@@ -230,3 +233,43 @@ def synchronized_scheduler_job(lock_name: str, expire_seconds: int = 55):
         return sync_wrapper
 
     return decorator
+
+
+async def _finish_lease_operation(task: asyncio.Task):
+    """Finish lease cleanup even if the caller is cancelled again.
+
+    Cancelling a coroutine cannot stop an in-flight synchronous DB operation.
+    Its result must be consumed so a successfully acquired lease is released.
+    """
+    while True:
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if task.done():
+                return task.result()
+
+
+async def _acquire_scheduler_lock_async(
+    lock_name: str, expire_seconds: int,
+) -> SchedulerLockLease | None:
+    task = asyncio.create_task(
+        asyncio.to_thread(acquire_scheduler_lock, lock_name, expire_seconds)
+    )
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        lease = await _finish_lease_operation(task)
+        if lease is not None:
+            await _finish_lease_operation(
+                asyncio.create_task(asyncio.to_thread(lease.release))
+            )
+        raise
+
+
+async def _release_scheduler_lock_async(lease: SchedulerLockLease) -> None:
+    task = asyncio.create_task(asyncio.to_thread(lease.release))
+    try:
+        await asyncio.shield(task)
+    except asyncio.CancelledError:
+        await _finish_lease_operation(task)
+        raise

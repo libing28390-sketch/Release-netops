@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+from itertools import islice
 import math
 import re
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Mapping, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 
 _DISCOVERY_STATUSES = {"success", "partial", "failed", "unsupported", "not_found"}
 _QUALITY_VALUES = {"good", "missing", "invalid", "stale", "unsupported_mapping"}
 _PRESENCE_VALUES = {"present", "not_present"}
+_SENSOR_SAMPLE_BATCH_SIZE = 500
 _METRIC_FAMILIES = {
     "cpu_usage_percent": "nexora_hw_cpu_usage_percent",
     "memory_used_bytes": "nexora_hw_memory_used_bytes",
@@ -341,9 +343,7 @@ def _record_sensor_sample(
     observed_at: datetime,
     presence_status: str | None = None,
 ) -> bool:
-    presence_value = str(presence_status or ("present" if quality == "good" else "")).strip().casefold()
-    if presence_value and presence_value not in _PRESENCE_VALUES:
-        raise HardwareInventoryError(f"unsupported presence_status: {presence_value}")
+    presence_value = _normalize_sample_presence(quality, presence_status)
     existing = conn.execute(
         """
         SELECT last_seen FROM snmp_hardware_sensors
@@ -388,6 +388,94 @@ def _record_sensor_sample(
         ),
     )
     return int(getattr(cursor, "rowcount", 0) or 0) > 0
+
+
+def _normalize_sample_presence(quality: str, presence_status: Any) -> str:
+    presence_value = str(presence_status or ("present" if quality == "good" else "")).strip().casefold()
+    if presence_value and presence_value not in _PRESENCE_VALUES:
+        raise HardwareInventoryError(f"unsupported presence_status: {presence_value}")
+    return presence_value
+
+
+def _normalize_sensor_sample(
+    *,
+    device_id: Any,
+    sensor_key: Any,
+    value: Any,
+    raw_value: Any,
+    quality: Any,
+    observed_at: Any,
+    presence_status: Any = None,
+) -> dict[str, Any]:
+    resolved_value = _finite_number(value, field="value")
+    quality_value = _clean_text(quality, field="quality", required=True).lower()
+    if quality_value not in _QUALITY_VALUES:
+        raise HardwareInventoryError(f"unsupported sample quality: {quality_value}")
+    raw_text = None if raw_value is None else _clean_text(raw_value, field="raw_value", limit=500)
+    return {
+        "device_id": _clean_text(device_id, field="device_id", required=True),
+        "sensor_key": _clean_text(sensor_key, field="sensor_key", required=True),
+        "value": resolved_value,
+        "raw_value": raw_text,
+        "quality": quality_value,
+        "observed_at": _timestamp(observed_at),
+        "presence_status": _normalize_sample_presence(quality_value, presence_status),
+    }
+
+
+def _update_sensor_sample_batch(conn, samples: Sequence[Mapping[str, Any]]) -> int:
+    """Update one bounded set of normalized sensor samples in PostgreSQL."""
+    if not samples:
+        return 0
+    # Explicitly type the numeric column: a chunk containing only NULL values
+    # otherwise leaves PostgreSQL unable to infer the VALUES column type.
+    values_sql = ", ".join(["(?, ?, CAST(? AS DOUBLE PRECISION), ?, ?, ?, ?)"] * len(samples))
+    cursor = conn.execute(
+        f"""
+        UPDATE snmp_hardware_sensors AS sensor
+           SET last_value = sample.value,
+               last_raw_value = sample.raw_value,
+               last_quality = sample.quality,
+               last_seen = GREATEST(sensor.last_seen, sample.observed_at),
+               lifecycle_status = CASE
+                   WHEN sample.quality = 'good' THEN 'active' ELSE sensor.lifecycle_status END,
+               discovery_status = CASE
+                   WHEN sample.quality = 'good' AND sample.presence_status <> ''
+                   THEN sample.presence_status ELSE sensor.discovery_status END,
+               missing_success_count = CASE
+                   WHEN sample.quality = 'good' THEN 0 ELSE sensor.missing_success_count END,
+               last_missing_run_id = CASE
+                   WHEN sample.quality = 'good' THEN '' ELSE sensor.last_missing_run_id END,
+               enabled = CASE
+                   WHEN sample.quality = 'good' THEN TRUE ELSE sensor.enabled END,
+               last_success = CASE
+                   WHEN sample.quality <> 'good' THEN sensor.last_success
+                   WHEN sensor.last_success IS NULL THEN sample.observed_at
+                   ELSE GREATEST(sensor.last_success, sample.observed_at)
+               END,
+               updated_at = GREATEST(sensor.updated_at, sample.observed_at)
+          FROM (VALUES {values_sql}) AS sample(
+              device_id, sensor_key, value, raw_value, quality, observed_at, presence_status
+          )
+         WHERE sensor.device_id = sample.device_id
+           AND sensor.sensor_key = sample.sensor_key
+           AND (sensor.last_seen IS NULL OR sensor.last_seen <= sample.observed_at)
+        """,
+        tuple(
+            value
+            for sample in samples
+            for value in (
+                sample["device_id"],
+                sample["sensor_key"],
+                sample["value"],
+                sample["raw_value"],
+                sample["quality"],
+                sample["observed_at"],
+                sample["presence_status"],
+            )
+        ),
+    )
+    return max(0, int(getattr(cursor, "rowcount", 0) or 0))
 
 
 def _retire_unseen_sensors(
@@ -646,21 +734,57 @@ def record_sensor_sample(
     presence_status: str | None = None,
 ) -> bool:
     """Store the latest normalized value and the corresponding raw value."""
-    resolved_value = _finite_number(value, field="value")
-    quality_value = _clean_text(quality, field="quality", required=True).lower()
-    if quality_value not in _QUALITY_VALUES:
-        raise HardwareInventoryError(f"unsupported sample quality: {quality_value}")
-    raw_text = None if raw_value is None else _clean_text(raw_value, field="raw_value", limit=500)
     return _record_sensor_sample(
         conn,
-        device_id=_clean_text(device_id, field="device_id", required=True),
-        sensor_key=_clean_text(sensor_key, field="sensor_key", required=True),
-        value=resolved_value,
-        raw_value=raw_text,
-        quality=quality_value,
-        observed_at=_timestamp(observed_at),
-        presence_status=presence_status,
+        **_normalize_sensor_sample(
+            device_id=device_id,
+            sensor_key=sensor_key,
+            value=value,
+            raw_value=raw_value,
+            quality=quality,
+            observed_at=observed_at,
+            presence_status=presence_status,
+        ),
     )
+
+
+def record_sensor_samples_batch(conn, samples: Iterable[Mapping[str, Any]]) -> int:
+    """Persist normalized samples with bounded PostgreSQL multi-row updates.
+
+    Samples are validated with the same rules as :func:`record_sensor_sample`.
+    Missing targets and stale samples are skipped. The caller owns transaction
+    commit and rollback behavior.
+    """
+    updated_count = 0
+    iterator = iter(samples)
+    while raw_chunk := list(islice(iterator, _SENSOR_SAMPLE_BATCH_SIZE)):
+        normalized_chunk: list[dict[str, Any]] = []
+        for sample in raw_chunk:
+            if not isinstance(sample, Mapping):
+                raise HardwareInventoryError("each sensor sample must be a mapping")
+            normalized_chunk.append(
+                _normalize_sensor_sample(
+                    device_id=sample.get("device_id"),
+                    sensor_key=sample.get("sensor_key"),
+                    value=sample.get("value"),
+                    raw_value=sample.get("raw_value"),
+                    quality=sample.get("quality"),
+                    observed_at=sample.get("observed_at"),
+                    presence_status=sample.get("presence_status"),
+                )
+            )
+
+        # PostgreSQL UPDATE ... FROM must not match a target row more than once.
+        # Keep the last sample at the newest timestamp for each target, which
+        # matches sequential record_sensor_sample calls within this chunk.
+        newest_by_sensor: dict[tuple[str, str], dict[str, Any]] = {}
+        for sample in normalized_chunk:
+            key = (sample["device_id"], sample["sensor_key"])
+            previous = newest_by_sensor.get(key)
+            if previous is None or sample["observed_at"] >= previous["observed_at"]:
+                newest_by_sensor[key] = sample
+        updated_count += _update_sensor_sample_batch(conn, tuple(newest_by_sensor.values()))
+    return updated_count
 
 
 def mark_sensor_poll_success(conn, device_id: str, sensor_key: str, observed_at: Any) -> bool:
@@ -1060,6 +1184,7 @@ __all__ = [
     "build_sensor_key",
     "upsert_discovery_run",
     "record_sensor_sample",
+    "record_sensor_samples_batch",
     "mark_sensor_poll_success",
     "list_hardware_sensors",
     "list_hardware_metric_rows",

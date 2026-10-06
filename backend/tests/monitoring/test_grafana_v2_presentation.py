@@ -154,10 +154,10 @@ def test_catalog_covers_the_complete_v2_dashboard_set(catalog):
     ]
     row_count = sum(panel.get("type") == "row" for panel in panels)
     stat_count = sum(panel.get("type") == "stat" for panel in panels)
-    assert len(panels) == 257
-    assert row_count == 54
-    assert len(panels) - row_count == 203
-    assert stat_count == 92
+    assert len(panels) == 262
+    assert row_count == 55
+    assert len(panels) - row_count == 207
+    assert stat_count == 94
 
 
 def test_generated_catalog_uses_every_effective_source_field_config(
@@ -190,7 +190,7 @@ def test_all_stat_panels_render_null_and_nan_as_gray_no_data(catalog):
         for panel in iter_panels(dashboard.get("panels", []))
         if panel.get("type") == "stat"
     ]
-    assert len(stat_panels) == 92
+    assert len(stat_panels) == 94
 
     for panel in stat_panels:
         defaults = panel.get("fieldConfig", {}).get("defaults", {})
@@ -232,6 +232,22 @@ def test_if_mib_admin_status_only_maps_defined_values(catalog):
     }
     _assert_gray_no_data_mappings(mappings)
     assert cell_options == {"type": "color-text"}
+
+
+def test_overview_hides_asset_id_and_keeps_device_name_drilldown(catalog):
+    for panel_id in (15, 16, 25):
+        panel = _panel(catalog, "nexora-network-overview", panel_id)
+        hidden_asset_id = _override(panel, "资产 ID")
+        assert _property(hidden_asset_id, "custom.hideFrom") == {
+            "tooltip": False,
+            "viz": True,
+            "legend": False,
+        }
+
+        device_name_link = _override(panel, "设备名称")
+        links = _property(device_name_link, "links")
+        assert len(links) == 1
+        assert "var-asset_id=${__data.fields[\"资产 ID\"]}" in links[0]["url"]
 
 
 def test_mapped_tables_use_text_colors_and_have_no_duplicate_matchers(catalog):

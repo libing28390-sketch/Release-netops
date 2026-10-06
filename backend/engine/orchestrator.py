@@ -118,7 +118,8 @@ class TelemetryOrchestrator:
         while True:
             try:
                 # Always query through the configured PostgreSQL adapter.
-                devices = _db_quick(
+                devices = await asyncio.to_thread(
+                    _db_quick,
                     "SELECT * FROM devices WHERE ip_address IS NOT NULL AND ip_address != ''",
                     fetchall=True,
                 )
@@ -148,7 +149,11 @@ class TelemetryOrchestrator:
         while True:
             try:
                 # As in the A-Loop, PostgreSQL is authoritative.
-                devices = _db_quick("SELECT * FROM devices WHERE status = 'online'", fetchall=True)
+                devices = await asyncio.to_thread(
+                    _db_quick,
+                    "SELECT * FROM devices WHERE status = 'online'",
+                    fetchall=True,
+                )
                 current_slow_cycle = slow_cycle_tick
                 slow_cycle_tick += 1
                 async def bounded_slow(d):
@@ -160,7 +165,7 @@ class TelemetryOrchestrator:
                 maintenance_counter += 1
                 if maintenance_counter >= 12: # Run ~every 12 mins
                     maintenance_counter = 0
-                    _run_telemetry_maintenance()
+                    await asyncio.to_thread(_run_telemetry_maintenance)
                     # Reclaim idle SSH sessions independently of collector
                     # success so a failed device cannot leak a login session.
                     from engine.pool import ConnectionPool

@@ -333,6 +333,7 @@ def _get_host_resource_alerts(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
 def _sync_host_resource_alerts(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     desired_alerts = _get_host_resource_alerts(snapshot)
     desired_map = {item["dedupe_key"]: item for item in desired_alerts}
+    pending_notifications: list[tuple[dict[str, Any], dict[str, Any]]] = []
     conn = get_db_connection()
     try:
         open_rows = conn.execute(
@@ -397,12 +398,14 @@ def _sync_host_resource_alerts(snapshot: dict[str, Any]) -> list[dict[str, Any]]
                 ),
             )
             if not maintenance_window:
-                _dispatch_host_resource_notification(
+                pending_notifications.append((
                     alert,
-                    status='active',
-                    first_occurrence=now_utc,
-                    last_occurrence=now_utc,
-                )
+                    {
+                        'status': 'active',
+                        'first_occurrence': now_utc,
+                        'last_occurrence': now_utc,
+                    },
+                ))
 
         stale_keys = open_keys - set(desired_map)
         if stale_keys:
@@ -433,18 +436,31 @@ def _sync_host_resource_alerts(snapshot: dict[str, Any]) -> list[dict[str, Any]]
                 impact_window = None
                 if ' ' in start_label and ' ' in end_label:
                     impact_window = f"{start_label.split(' ')[-1]} → {end_label.split(' ')[-1]}"
-                _dispatch_host_resource_notification(
+                pending_notifications.append((
                     row,
-                    status='resolved',
-                    first_occurrence=first_occurrence,
-                    last_occurrence=now_utc,
-                    duration_seconds=duration_seconds,
-                    impact_window=impact_window,
-                    alert_count=1,
-                )
+                    {
+                        'status': 'resolved',
+                        'first_occurrence': first_occurrence,
+                        'last_occurrence': now_utc,
+                        'duration_seconds': duration_seconds,
+                        'impact_window': impact_window,
+                        'alert_count': 1,
+                    },
+                ))
         conn.commit()
     finally:
         conn.close()
+
+    # Dispatch only after the alert state is committed and its connection is
+    # returned to the pool. A delivery failure must not roll back that state.
+    for alert, notification_kwargs in pending_notifications:
+        try:
+            _dispatch_host_resource_notification(alert, **notification_kwargs)
+        except Exception as exc:
+            logger.error(
+                "Host resource notification dispatch failed (%s)",
+                type(exc).__name__,
+            )
     return desired_alerts
 
 
@@ -594,7 +610,7 @@ def _get_db_metrics() -> dict:
         conn.close()
 
 @router.api_route("/health", methods=["GET", "HEAD"], tags=["health"])
-async def health_check():
+def health_check():
     logger.debug("Health check endpoint called")
     db_ok, db_status = _get_db_health()
 
@@ -689,7 +705,7 @@ async def health_live():
 
 
 @router.get("/health/metrics", tags=["health"])
-async def health_metrics():
+def health_metrics():
     from core.metrics import metrics_registry
     metrics = metrics_registry.get_metrics()
     db_pool = _get_db_pool_status()
@@ -711,18 +727,18 @@ async def health_metrics():
 
 
 @router.get("/health/resources", tags=["health"])
-async def health_resources():
+def health_resources():
     logger.debug("Health resources endpoint called")
-    return record_host_resource_snapshot(sync_alerts=True)
+    return record_host_resource_snapshot(sync_alerts=False)
 
 
 @router.get("/health/resources/history", tags=["health"])
-async def health_resource_history(
+def health_resource_history(
     range_hours: int = Query(default=24, ge=1, le=24 * 7),
 ):
     logger.debug("Health resource history endpoint called")
     init_db()
-    current = record_host_resource_snapshot(sync_alerts=True)
+    current = record_host_resource_snapshot(sync_alerts=False)
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=range_hours)).replace(microsecond=0).isoformat()
     conn = get_db_connection()
     try:

@@ -120,8 +120,11 @@ def test_m0275_registers_scoped_templates_and_preserves_custom_profile(isolated_
         )
         conn.commit()
 
-        recorded_max = conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
-        assert recorded_max == 274
+        recorded_versions = {
+            row[0] for row in conn.execute("SELECT version FROM schema_migrations").fetchall()
+        }
+        assert 274 in recorded_versions
+        assert 275 not in recorded_versions
 
         migration.upgrade(conn.cursor(), use_pg=True)
         conn.commit()

@@ -22,6 +22,36 @@ PostgreSQL 18 官方容器将数据目录设为 `/var/lib/postgresql/18/docker`�
 
 > 这些文件**保持在根目录**，所以下面所有命令都直接在仓库根目录执行，无需 `-f` 指定路径。
 
+## 容器资源上限与 Nginx worker
+
+所有服务均设置 CPU、内存和进程数上限。下面的 CPU 是使用上限，并不预留或独占对应核心；基础服务（未启用 `object-storage` profile）的默认内存上限合计 6272 MiB，启用 SeaweedFS 后合计 6784 MiB。按 2 CPU / 8 GiB 主机计算，启用全部服务时约留 1 GiB 给系统；设备数、采集并发、数据库查询和存储量增加时，按实际峰值调整部署机 `.env` 中的对应项。
+
+| 服务 | CPU 上限 | 内存上限 | 内存配置项 |
+|---|---:|---:|---|
+| netops | 2 | 2304 MiB | `NETOPS_MEM_LIMIT` |
+| db | 2 | 1 GiB | `POSTGRES_MEM_LIMIT` |
+| victoriametrics | 2 | 768 MiB | `VICTORIAMETRICS_MEM_LIMIT` |
+| grafana | 1 | 384 MiB | `GRAFANA_MEM_LIMIT` |
+| seaweedfs | 1 | 512 MiB | `SEAWEEDFS_MEM_LIMIT` |
+| redis | 1 | 1 GiB | `REDIS_MEM_LIMIT` |
+| nginx | 1 | 256 MiB | `NGINX_MEM_LIMIT` |
+| vmagent | 1 | 192 MiB | `VMAGENT_MEM_LIMIT` |
+| snmp-exporter | 1 | 128 MiB | `SNMP_EXPORTER_MEM_LIMIT` |
+| cadvisor | 0.5 | 128 MiB | `CADVISOR_MEM_LIMIT` |
+| docker-socket-proxy | 0.25 | 64 MiB | `DOCKER_SOCKET_PROXY_MEM_LIMIT` |
+
+CPU 配置项使用同一前缀和 `_CPUS`，例如 `NETOPS_CPUS=2.0`。Redis 内部数据上限仍为 512 MB，容器默认 1 GiB 给 AOF/缓冲留空间；这不是峰值内存不会超过上限的保证，数据增长时结合缓存和持久化峰值调整。磁盘容量不由内存 limit 限制，指标保留与 vmagent 重试队列沿用现有设置。
+
+Nginx 默认 `NGINX_WORKER_PROCESSES=1`，通过 `40-configure-workers.sh` 在官方自动调节 hook 后设置主文件 `/etc/nginx/nginx.conf` 的 `worker_processes`。接受 1～8 的整数，为 128 个 PID 上限留出 master、init 与其他进程空间；无效值会阻止启动。站点代理配置仍在 `/etc/nginx/conf.d/default.conf`，`worker_connections` 保持 1024。该变量与后端 `WORKERS` 无关，后端默认仍为 1。
+
+编辑部署机现有 `.env`，不要用 `.env.example` 覆盖真实凭据。修改资源上限或 worker 环境需要后续重建容器；只有 `docker compose restart` 不会更新容器的创建配置。Nginx 新 hook 首次发布还需要重建 Nginx 镜像。部署后可只读确认实际生效值：
+
+```bash
+docker inspect --format '{{.Name}} memory={{.HostConfig.Memory}} nano_cpus={{.HostConfig.NanoCpus}} pids={{.HostConfig.PidsLimit}}' $(docker compose ps -q)
+docker exec nexora-nginx nginx -T 2>&1 | grep -E 'worker_processes|worker_connections'
+docker exec nexora-nginx ps aux
+```
+
 ## 步骤
 
 1. 克隆仓库并准备环境文件：

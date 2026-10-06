@@ -1071,7 +1071,13 @@ def _create_linked_device(conn, asset_id: str, body, user: dict) -> str:
     # Manual dual-account entry creates two separate device-local records so
     # the credential center can distinguish the normal and privileged account.
     # They remain ``unbound`` and therefore do not expose a shared vault secret.
-    if not is_bound and (normal_user or normal_pwd or (auth_model != 'dual' and (uname or pwd or community))):
+    # A separately bound SNMPv2 credential supplies ``community`` for SNMP
+    # polling, but must not create an SSH credential-center binding.
+    has_legacy_login_credential = bool(uname or pwd or (community and not existing_snmp_cred_id))
+    if not is_bound and (
+        normal_user or normal_pwd
+        or (auth_model != 'dual' and has_legacy_login_credential)
+    ):
         credential_id = _create_device_local_credential(
             conn,
             hostname=body.hostname,
@@ -2046,9 +2052,45 @@ def asset_summary(_user=require_role("Viewer")):
         ):
             by_department[row['department']] = row['cnt']
 
+        # The home page and asset inventory both use physical assets as their
+        # authority. Match the inventory's network-device + server total and
+        # its device-status fallback for assets without an associated device.
+        availability_clauses = [
+            *scope_clauses,
+            "pa.asset_type IN ('network_device', 'server')",
+        ]
+        availability_where = ' WHERE ' + ' AND '.join(availability_clauses)
+        online_status_expr = (
+            "COALESCE(NULLIF(d.status, ''), CASE "
+            "WHEN pa.status = 'active' THEN 'online' "
+            "WHEN pa.status IN ('inactive', 'maintenance', 'decommissioned') THEN 'offline' "
+            "ELSE 'pending' END)"
+        )
+        platform_expr = "COALESCE(NULLIF(TRIM(pa.platform), ''), 'unknown')"
+        by_online_status = {}
+        by_platform = {}
+        for row in conn.execute(
+            f'''SELECT {online_status_expr} AS online_status,
+                       {platform_expr} AS platform,
+                       COUNT(DISTINCT pa.id) AS cnt
+                  FROM physical_assets pa
+                  LEFT JOIN devices d ON d.asset_id = pa.id
+                  {availability_where}
+                 GROUP BY {online_status_expr}, {platform_expr}
+                 ORDER BY {platform_expr}, {online_status_expr}''',
+            scope_params,
+        ):
+            count = int(row['cnt'])
+            online_status = str(row['online_status'] or 'unknown').strip().lower() or 'unknown'
+            platform = str(row['platform'] or 'unknown').strip() or 'unknown'
+            by_online_status[online_status] = by_online_status.get(online_status, 0) + count
+            by_platform[platform] = by_platform.get(platform, 0) + count
+
         return {
             'total': total,
             'by_type': {'server': servers, 'network_device': network},
+            'by_online_status': by_online_status,
+            'by_platform': by_platform,
             'warranty_expiring_soon': warranty_soon,
             'by_status': by_status,
             'by_vendor': by_vendor,

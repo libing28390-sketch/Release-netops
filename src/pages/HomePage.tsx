@@ -54,34 +54,43 @@ const isRecord = (value: unknown): value is Record<string, unknown> => (
   typeof value === 'object' && value !== null
 );
 
-const parseDeviceSummary = (payload: unknown): DeviceSummary => {
-  if (!isRecord(payload)) throw new Error('Invalid device summary response');
+const parseAssetSummary = (payload: unknown): DeviceSummary => {
+  if (!isRecord(payload) || !isRecord(payload.by_type)) {
+    throw new Error('Invalid asset summary response');
+  }
 
-  const count = (key: string): number => {
-    const value = payload[key];
+  const count = (source: Record<string, unknown>, key: string, missingAsZero = false): number => {
+    const hasValue = Object.prototype.hasOwnProperty.call(source, key);
+    const value = hasValue ? source[key] : missingAsZero ? 0 : undefined;
     if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
-      throw new Error(`Invalid device summary field: ${key}`);
+      throw new Error(`Invalid asset summary field: ${key}`);
     }
     return Math.floor(value);
   };
 
-  if (!Array.isArray(payload.by_platform)) {
-    throw new Error('Invalid device summary field: by_platform');
+  const byOnlineStatus = payload.by_online_status;
+  const platformCounts = payload.by_platform;
+  if (!isRecord(byOnlineStatus) || !isRecord(platformCounts)) {
+    throw new Error('Invalid asset summary status or platform counts');
   }
 
-  const by_platform = payload.by_platform.map((item): DeviceSummary['by_platform'][number] => {
-    if (!isRecord(item) || typeof item.platform !== 'string' || typeof item.count !== 'number' || !Number.isFinite(item.count) || item.count < 0) {
-      throw new Error('Invalid device summary platform entry');
+  const online = count(byOnlineStatus, 'online', true);
+  const offline = count(byOnlineStatus, 'offline', true);
+  const pending = count(byOnlineStatus, 'pending', true);
+  const total = count(payload.by_type, 'network_device') + count(payload.by_type, 'server');
+  const by_platform = Object.entries(platformCounts).map(([platform, value]) => {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+      throw new Error(`Invalid asset summary platform count: ${platform}`);
     }
-    return { platform: item.platform.trim() || 'unknown', count: Math.floor(item.count) };
+    return { platform: platform.trim() || 'unknown', count: Math.floor(value) };
   });
 
   return {
-    total: count('total'),
-    online: count('online'),
-    offline: count('offline'),
-    pending: count('pending'),
-    unknown: count('unknown'),
+    total,
+    online,
+    offline,
+    pending,
+    unknown: Math.max(0, total - online - offline - pending),
     by_platform,
   };
 };
@@ -164,14 +173,14 @@ const HomePage: React.FC<HomePageProps> = ({
       if (!hasLoadedSummaryRef.current) setDeviceSummaryLoading(true);
 
       try {
-        const response = await fetch('/api/devices/summary?asset_type=network_device', {
+        const response = await fetch('/api/assets/summary', {
           headers: authHeaders(),
           signal: controller.signal,
         });
         if (!response.ok) {
-          throw new Error(`Failed to load device summary (${response.status})`);
+          throw new Error(`Failed to load asset summary (${response.status})`);
         }
-        const nextSummary = parseDeviceSummary(await response.json());
+        const nextSummary = parseAssetSummary(await response.json());
         if (disposed) return;
         setDeviceSummary(nextSummary);
         setDeviceSummaryError(null);

@@ -63,6 +63,11 @@ import psycopg2.extras
 import psycopg2.pool
 
 _POOL_SIZE = int(os.environ.get('DB_POOL_SIZE', '16'))
+# psycopg2 retains only minconn idle connections, closing the rest on return.
+# Keep the configured steady pool reusable instead of rebuilding it per burst.
+_POOL_MIN_SIZE = max(1, min(
+    _POOL_SIZE, int(os.environ.get('DB_POOL_MIN_SIZE', str(_POOL_SIZE))),
+))
 _PG_OVERFLOW_MAX = max(0, int(os.environ.get('DB_POOL_OVERFLOW_MAX', '4')))
 _PG_ACQUIRE_TIMEOUT = max(0.1, float(os.environ.get('DB_POOL_ACQUIRE_TIMEOUT_SECONDS', '10')))
 
@@ -194,7 +199,7 @@ if _USE_PG:
             _ensure_database_exists()
             try:
                 _pg_pool = psycopg2.pool.ThreadedConnectionPool(
-                    minconn=2, maxconn=_POOL_SIZE, dsn=_DATABASE_URL,
+                    minconn=_POOL_MIN_SIZE, maxconn=_POOL_SIZE, dsn=_DATABASE_URL,
                     client_encoding='UTF8',
                     keepalives=1,
                     keepalives_idle=30,

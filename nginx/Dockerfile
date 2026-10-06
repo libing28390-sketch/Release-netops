@@ -7,5 +7,6 @@ RUN apk add --no-cache openssl tzdata \
 ENV TZ=Asia/Shanghai
 
 COPY docker-entrypoint.d/05-ensure-tls-certificate.sh /docker-entrypoint.d/05-ensure-tls-certificate.sh
+COPY docker-entrypoint.d/40-configure-workers.sh /docker-entrypoint.d/40-configure-workers.sh
 
-RUN chmod +x /docker-entrypoint.d/05-ensure-tls-certificate.sh
+RUN chmod +x /docker-entrypoint.d/05-ensure-tls-certificate.sh /docker-entrypoint.d/40-configure-workers.sh

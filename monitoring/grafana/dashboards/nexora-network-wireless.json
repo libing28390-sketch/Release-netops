@@ -22,6 +22,170 @@
       "panels": []
     },
     {
+      "id": 15,
+      "title": "在线 AC",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 0,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#22C55E",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "count(count by (site_name,vendor,role,hostname) (up{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1)) or on() ((count(count by (site_name,vendor,role,hostname) (up{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"})) > 0) * 0)",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "只统计 up 值为 1 的无线控制器；目标存在但全部离线时显示 0。"
+    },
+    {
+      "id": 14,
+      "title": "离线 AC",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 3,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#22C55E",
+                "value": null
+              },
+              {
+                "color": "#F59E0B",
+                "value": 1
+              },
+              {
+                "color": "#F43F5E",
+                "value": 5
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "(count(count by (site_name,vendor,role,hostname) (up{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"})) - count(count by (site_name,vendor,role,hostname) (up{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1))) or on() ((count(count by (site_name,vendor,role,hostname) (up{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"})) > 0) * 0)",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "纳管 AC 数减去在线 AC 数；没有 AC 目标时显示无数据。"
+    },
+    {
       "id": 1,
       "title": "采集 AP",
       "type": "stat",
@@ -32,7 +196,7 @@
       "gridPos": {
         "h": 4,
         "w": 3,
-        "x": 0,
+        "x": 6,
         "y": 1
       },
       "fieldConfig": {
@@ -110,7 +274,7 @@
       "gridPos": {
         "h": 4,
         "w": 3,
-        "x": 3,
+        "x": 9,
         "y": 1
       },
       "fieldConfig": {
@@ -179,7 +343,7 @@
     },
     {
       "id": 3,
-      "title": "明确离线 AP",
+      "title": "离线 AP",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -188,7 +352,7 @@
       "gridPos": {
         "h": 4,
         "w": 3,
-        "x": 6,
+        "x": 12,
         "y": 1
       },
       "fieldConfig": {
@@ -265,7 +429,7 @@
     },
     {
       "id": 4,
-      "title": "控制器汇总在线终端数",
+      "title": "在线终端数",
       "type": "stat",
       "datasource": {
         "type": "prometheus",
@@ -274,7 +438,7 @@
       "gridPos": {
         "h": 4,
         "w": 3,
-        "x": 9,
+        "x": 15,
         "y": 1
       },
       "fieldConfig": {
@@ -288,7 +452,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#A78BFA",
+                "color": "#64748B",
                 "value": null
               }
             ]
@@ -351,7 +515,7 @@
       "gridPos": {
         "h": 4,
         "w": 3,
-        "x": 12,
+        "x": 18,
         "y": 1
       },
       "fieldConfig": {
@@ -437,7 +601,7 @@
       "gridPos": {
         "h": 4,
         "w": 3,
-        "x": 15,
+        "x": 21,
         "y": 1
       },
       "fieldConfig": {
@@ -514,162 +678,6 @@
           "instant": true
         }
       ]
-    },
-    {
-      "id": 14,
-      "title": "纳管 AC",
-      "type": "stat",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "victoriametrics"
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 3,
-        "x": 18,
-        "y": 1
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "",
-          "noValue": "暂无采集数据",
-          "color": {
-            "mode": "thresholds"
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "#64748B",
-                "value": null
-              }
-            ]
-          },
-          "mappings": [
-            {
-              "type": "special",
-              "options": {
-                "match": "null",
-                "result": {
-                  "text": "暂无采集数据",
-                  "color": "#64748B"
-                }
-              }
-            },
-            {
-              "type": "special",
-              "options": {
-                "match": "nan",
-                "result": {
-                  "text": "暂无采集数据",
-                  "color": "#64748B"
-                }
-              }
-            }
-          ]
-        },
-        "overrides": []
-      },
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "center",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "targets": [
-        {
-          "expr": "count(count by (site_name,vendor,role,hostname) (up{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}))",
-          "refId": "A",
-          "instant": true
-        }
-      ],
-      "description": "按无线控制器设备统计纳管 AC 数；包含当前 SNMP 不可达但仍有 up 序列的控制器。"
-    },
-    {
-      "id": 15,
-      "title": "在线 AC",
-      "type": "stat",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "victoriametrics"
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 3,
-        "x": 21,
-        "y": 1
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "",
-          "noValue": "暂无采集数据",
-          "color": {
-            "mode": "thresholds"
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "#22C55E",
-                "value": null
-              }
-            ]
-          },
-          "mappings": [
-            {
-              "type": "special",
-              "options": {
-                "match": "null",
-                "result": {
-                  "text": "暂无采集数据",
-                  "color": "#64748B"
-                }
-              }
-            },
-            {
-              "type": "special",
-              "options": {
-                "match": "nan",
-                "result": {
-                  "text": "暂无采集数据",
-                  "color": "#64748B"
-                }
-              }
-            }
-          ]
-        },
-        "overrides": []
-      },
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "center",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "targets": [
-        {
-          "expr": "count(count by (site_name,vendor,role,hostname) (up{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1)) or on() ((count(count by (site_name,vendor,role,hostname) (up{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"})) > 0) * 0)",
-          "refId": "A",
-          "instant": true
-        }
-      ],
-      "description": "只统计 up 值为 1 的无线控制器；目标存在但全部离线时显示 0。"
     },
     {
       "id": 900,
@@ -1228,7 +1236,9 @@
               "ap_mac": true,
               "ap_serial": true,
               "discovery_status": true,
-              "lifecycle_status": true
+              "lifecycle_status": true,
+              "instance": true,
+              "rule_version": true
             },
             "indexByName": {
               "site_name": 0,
@@ -1377,7 +1387,9 @@
               "ap_mac": true,
               "ap_serial": true,
               "discovery_status": true,
-              "lifecycle_status": true
+              "lifecycle_status": true,
+              "instance": true,
+              "rule_version": true
             },
             "indexByName": {
               "site_name": 0,
@@ -1613,7 +1625,9 @@
               "ap_id": true,
               "ap_mac": true,
               "ap_serial": true,
-              "unit": true
+              "unit": true,
+              "instance": true,
+              "rule_version": true
             },
             "indexByName": {
               "site_name": 0,
@@ -1745,7 +1759,9 @@
               "site_id": true,
               "platform": true,
               "sysName": true,
-              "nexora_interface_role": true
+              "nexora_interface_role": true,
+              "instance": true,
+              "rule_version": true
             },
             "indexByName": {
               "site_name": 0,
@@ -1840,6 +1856,12 @@
                     }
                   }
                 ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
               }
             ]
           }
@@ -1899,7 +1921,8 @@
               "role": true,
               "ap_id": true,
               "discovery_status": true,
-              "lifecycle_status": true
+              "lifecycle_status": true,
+              "rule_version": true
             },
             "indexByName": {
               "site_name": 0,
@@ -1948,6 +1971,310 @@
         }
       ],
       "description": "显示 AC 当前采集到的在线终端及 AP 归属，仅展示 MAC/IP/SSID 和无线接口字段，不含用户名。"
+    },
+    {
+      "id": 906,
+      "title": "无线专网流量",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 52
+      },
+      "panels": []
+    },
+    {
+      "id": 17,
+      "title": "AC 接口入向流量",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 53
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bps",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#22D3EE",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "sum((rate(ifHCInOctets{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}[5m]) or rate(ifInOctets{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}[5m])) * on(instance, ifIndex) group_left(ifName, ifAlias) (((max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",ifName!=\"\"} * 0 + 1)) * on(instance, ifIndex) group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} * 0 + 1))) or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",ifName!=\"\"} * 0 + 1))) and on(instance, ifIndex) (ifAdminStatus{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",ifName!=\"\"} == 1) and on(instance, ifIndex) (ifOperStatus{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",ifName!=\"\"} == 1)) * 8",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "按 AC 在线接口计数器汇总，不拆分单终端流量。"
+    },
+    {
+      "id": 18,
+      "title": "AC 接口出向流量",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 53
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bps",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#3B82F6",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "sum((rate(ifHCOutOctets{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}[5m]) or rate(ifOutOctets{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}[5m])) * on(instance, ifIndex) group_left(ifName, ifAlias) (((max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",ifName!=\"\"} * 0 + 1)) * on(instance, ifIndex) group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} * 0 + 1))) or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",ifName!=\"\"} * 0 + 1))) and on(instance, ifIndex) (ifAdminStatus{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",ifName!=\"\"} == 1) and on(instance, ifIndex) (ifOperStatus{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",ifName!=\"\"} == 1)) * 8",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "按 AC 在线接口计数器汇总，不拆分单终端流量。"
+    },
+    {
+      "id": 20,
+      "title": "AC 接口吞吐 Top 10",
+      "type": "bargauge",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 14,
+        "w": 10,
+        "x": 14,
+        "y": 53
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bps",
+          "min": 0,
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#3B82F6"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "topk(10, max by (site_name,hostname,instance,ifIndex,ifName,ifAlias) (((rate(ifHCInOctets{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}[5m]) or rate(ifInOctets{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}[5m])) + (rate(ifHCOutOctets{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}[5m]) or rate(ifOutOctets{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}[5m]))) * on(instance, ifIndex) group_left(ifName, ifAlias) (((max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",ifName!=\"\"} * 0 + 1)) * on(instance, ifIndex) group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} * 0 + 1))) or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",ifName!=\"\"} * 0 + 1))) and on(instance, ifIndex) (ifAdminStatus{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",ifName!=\"\"} == 1) and on(instance, ifIndex) (ifOperStatus{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",ifName!=\"\"} == 1)) * 8)",
+          "legendFormat": "{{hostname}} / {{ifName}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "description": "按在线 AC 接口入向与出向吞吐之和排名。"
+    },
+    {
+      "id": 19,
+      "title": "无线 AC 接口流量趋势",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 14,
+        "x": 0,
+        "y": 57
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bps",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*入向$"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#22D3EE"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*出向$"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3B82F6"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (site_name,hostname) ((rate(ifHCInOctets{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}[5m]) or rate(ifInOctets{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}[5m])) * on(instance, ifIndex) group_left(ifName, ifAlias) (((max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",ifName!=\"\"} * 0 + 1)) * on(instance, ifIndex) group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} * 0 + 1))) or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",ifName!=\"\"} * 0 + 1))) and on(instance, ifIndex) (ifAdminStatus{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",ifName!=\"\"} == 1) and on(instance, ifIndex) (ifOperStatus{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",ifName!=\"\"} == 1)) * 8",
+          "legendFormat": "{{hostname}} 入向",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (site_name,hostname) ((rate(ifHCOutOctets{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}[5m]) or rate(ifOutOctets{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"}[5m])) * on(instance, ifIndex) group_left(ifName, ifAlias) (((max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",ifName!=\"\"} * 0 + 1)) * on(instance, ifIndex) group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\"} * 0 + 1))) or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",ifName!=\"\"} * 0 + 1))) and on(instance, ifIndex) (ifAdminStatus{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",ifName!=\"\"} == 1) and on(instance, ifIndex) (ifOperStatus{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",hostname=~\"$device\",ifName!=\"\"} == 1)) * 8",
+          "legendFormat": "{{hostname}} 出向",
+          "refId": "B"
+        }
+      ],
+      "description": "按无线控制器 AC 汇总接口计数器，不表示单终端流量。"
     }
   ],
   "refresh": "30s",

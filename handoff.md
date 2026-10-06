@@ -1,3 +1,259 @@
+# 当前交接：页面卡顿、Docker 资源配额与 300 台容量验证
+
+> 更新时间：2026-10-07 02:50（Asia/Shanghai）。本节优先于下方早期检查点。用户已明确授权完成修复后提交并 push 工作区相关代码、跟进并修复 Actions、登录 Docker 部署机自主修改和验证；任务完成后关闭工作站。下方此前“不要 push/部署/关机”的限制已被这次明确授权取代。
+
+## 当前目标与授权
+
+- 目标：继续执行 handoff 和关联计划，定位监控看板刷新、资产表单打开/保存和 Grafana 卡顿；尽量验证 300 台规模下页面与采集任务的响应、资源使用；所有相关代码推送并确认 Actions 通过，部署验证完成后再关机。
+- 允许：远端 Docker 主机只读采样、备份、部署代码/配置/索引迁移和运行测试；提交、push；遇 Actions 失败继续修复。不得更改真实网络设备配置，也不使用无登录态的资产 POST/PUT 或创建 Grafana session 测试生产业务写入。
+- 远端 SSH 会话仍在本机终端，会话 ID 72558；登录凭据只通过交互终端输入，没有写入文件或报告。部署前检查发现 `/data/nexora-automation` 的 Git 跟踪树干净；存在多个未跟踪诊断/容量文件，部署同步前必须将与新跟踪路径冲突的文件保存在仓库外，禁止 `git clean`。
+- 私有 `main` 的 release workflow 会验证后生成公共 `Release-netops`。远端更新先备份 `.env`、PostgreSQL、Source Manifest、TLS 与配置快照；部署时避免自动删除现有 Grafana dashboard，部署后再做一次 300 秒 API/资源/PG 复测。
+
+## 最新采样结果（部署前旧代码）
+
+- 新增三轮连续约 300 秒多 URL 采样，Asia/Shanghai 窗口为 02:30:17–02:35:17、02:35:33–02:40:33、02:41:18–02:46:18；总计与更早的四轮合为七轮。
+- 三轮后端 live p95 为 2.33 秒、0.58 秒、2.26 秒；Nginx p95 为 3.82 秒、0.59 秒、2.17 秒。第一、第三轮各出现一次约 6 秒直连/代理同步超时，第二轮无超时；慢请求约每两分钟成簇。Grafana 与 VictoriaMetrics health p95 保持约 5.6–11.1ms。
+- 受保护的资产表单、列表和 11 个 dashboard URL 均因无用户会话返回 401；此延迟不能代表已认证查询、保存或 PromQL 面板的真实响应。没有执行生产资产写入或创建 Grafana session。
+- 每轮 `snmp_mib_nodes` 增加 48 次 Seq Scan 和 3,245,376 tuple read；表约 67,612 行。PG 1 秒活动样本最长 active SQL 约 329–513ms，没有 lock wait/blocker。PG 没有可用的 `pg_stat_statements`；该采样可能漏掉短 SQL。
+- 第三轮应用容器 CPU p95 99.63%、峰值109.95%，内存约693MiB；数据库 CPU p95 42.8%。7个核心容器 CPU 合计 p95 相当于两核约58.8%；cgroup 没有 CPU throttling/OOM。此资源列表未包括 Redis、SeaweedFS、cAdvisor 和 socket proxy。
+- 生产当前只有17台设备、15台带 SNMP 绑定、5,296个 active sensor，因此真实远端不等于300台验证。隔离 PostgreSQL + fake SNMP 的密度校准从143.799秒/186,649 SQL降至26.142秒/529 SQL，但不能保证生产真实网络时延。
+
+## 已完成本地修复与验证
+
+- 新增 MIB `LOWER(node_name)` 表达式索引迁移，修复实测 Seq Scan 对应查询；生产只读 EXPLAIN 在应用迁移前仍是 Seq Scan。
+- 传感器样本改为按设备批量写入；新增全空值批次 PostgreSQL 类型 cast；采集器样本落库及采集状态同步记录从 async event loop 移到线程。其他少数同步路径仍保留，不能宣称已消除全部阻塞。
+- Compose 为11个容器设置 CPU、内存、PID 上限；Nginx worker 默认1并受 PID 上限约束（1–8）；Uvicorn `WORKERS=1` 保持不变。
+- 本轮相邻焦点回归 39 passed；凭据、资产绑定、连接池、迁移、诊断与资源执行回归另 39 passed；PostgreSQL-only 扫描 0 violation；前端已有全量 445 tests、lint、production build 通过。之前95分钟后端全量为3410 passed / 1 failed / 1 skipped / 26 subtests，唯一失败的旧 m0275 版本断言已修复，迁移相邻测试5 passed；全量等待 push 后 Actions 重新执行。
+
+## 尚待执行
+
+1. 更新计划、walkthrough 和修复记录，精确 stage 相关文件，不包含 `.agents/skills/netops-grafana-dashboards/SKILL.md`、`logs/`、`dist-*`、`.codex-build-validation-*`、fake TEST-MIB 样本等临时/无关文件。
+2. 在 `main` 提交并 push；等待 release Actions 完整通过，若失败先定位并修复。
+3. 检查部署主机数据库/磁盘与备份；保全会被新增跟踪文件覆盖的历史诊断文件；从 `Release-netops` 更新、构建并重建服务，跳过破坏性 Grafana 旧 dashboard 清理。
+4. 验证 m0276 索引迁移及实际查询计划、容器健康与资源配置、Nginx worker 数；跑部署后300秒重复 URL/PG/资源采样并分析前后变化。
+5. 更新实际部署结果并 push 完整记录，确认相应 Actions 通过；完成全部工作后按用户要求关闭电脑。
+
+---
+
+# 历史交接检查点（2026-10-07 02:18）
+
+> 下方内容记录之前的检查状态；其中旧的“暂不提交、不 push、不部署、不关机”授权限制已经被本次对话中的最新用户指示取代。具体技术证据仍保留作历史参考。
+
+## 1. 当前目标和授权边界
+
+- 用户最新请求：接续交接排查页面/资产操作卡顿及疑似 PG 查询慢，用户怀疑设备数量及 SNMP 频率负载。
+- 主任务：依据真实 Linux Docker 证据排查 Nexora 页面卡顿，修正后端阻塞调用和连接复用，为所有容器设置可调整资源配额，将 Nginx 默认 worker 改为 1。
+- **后端 Uvicorn `WORKERS=1` 保持不变**。用户明确要求“先不要改 worker 数量”；Nginx worker 是另外一个配置。
+- **暂不提交、不 push、不部署**。用户“完成后先不要 push，我还有别的问题”的指令仍有效。
+- 不修改真实网络设备，不对远端数据库写入、安装扩展、重置统计或重启服务。用户明确授权 SSH 只读检查与采样；已完成四轮各 300 秒的多 URL/PG/容器采样，以及一轮 60 秒的设备和 SNMP 传感器聚合计数，并只读 EXPLAIN 了实际 MIB 精确匹配查询。SSH 已关闭，未持久保存凭据。授权仍不包含部署、配置修改或业务写入。
+- 所有本轮代码和配置仍是本地未提交改动，不能宣称真实 Docker 已完成修复。最新资源分配附件只是评估，未自动采纳。
+- 工作区：`D:\netops\netsops-main`，当前分支 `main`。本机是 Windows，**没有 Docker 部署环境**。
+- 真实部署：Linux `root@devops`，目录 `/data/nexora-automation`，页面 `https://192.168.204.128/monitor/dashboards`。已提供证据显示主机 2 个逻辑 CPU、Docker 可见约 7.709 GiB 内存。
+- 遵循 `.agents/AGENTS.md`；按需使用 backend、monitoring-telemetry、quality-gate、release、seaweedfs skills。`handoff.md`、`.agents/`、`.codex/` 是内部协作材料，不进入公有发布树。
+
+## 2. 当前执行状态：完整回归已运行，修复一项迁移测试断言
+
+- 当前工作树执行 `uv run --offline --project backend pytest backend/tests -q --tb=short`，结果为 **3410 passed, 1 failed, 1 skipped, 26 subtests passed**，用时5736.01秒（95分36秒）。唯一失败是 `backend/tests/database/test_m0275_huawei_yunshan_platform.py::test_m0275_registers_scoped_templates_and_preserves_custom_profile`：期望 `MAX(schema_migrations.version)==274`，实际276。
+- 原因是本任务新增 m0276 后，m0275 测试的“最新迁移仍是274”前置假设过时。已将其改为确认274已登记、275已删除，再测试重放275；m0275 与 m0276 的相邻迁移测试组随后 **5 passed / 67.04s**。
+- 全量回归没有在这项测试断言修正后再跑一次，因此完整全量结果仍按一次失败报告；其余3410个通过项、一个显式要求 Redis 短期 key 授权的跳过项和26个 subtests均来自同一次全量运行。
+- SNMP 样本批量 helper 和轮询接入相关聚焦套件 **36 passed**；同规模300台/93,192传感器的端到端测试 **1 passed**。此前初始全量快照中的旧失败项在本次全量中均通过。
+- 本轮测试只使用本地隔离 PostgreSQL 与 fake SNMP；没有对业务库运行测试。全量 pytest 进程已结束。
+
+## 3. 已确认的真实 Docker 证据及结论边界
+
+### 正常采样，没有主动复现卡顿
+
+- 用户原始日志：`C:\Users\NINGMEI\Desktop\nexora-container-review-20261006_220737.log`。
+- 用户明确回复：“本次没有测试”。采样窗 22:07:37.822～22:08:38.775，约 60.95 秒。
+- 解析结果：`logs/validation/perf-container-review-20261006_220737.json`。
+- 后端直连 `/api/health/live` 约 5～48.3ms，经 Nginx 约 9.4～119.6ms；不能据此否定其他时段或业务请求的卡顿。
+- MIB/raw 表该窗口 seq scan 增量均为 0。事务 rollback +1699，commit +606，无 deadlock。
+
+### 用户实际复现卡顿的采样
+
+- 用户原始日志：`C:\Users\NINGMEI\Desktop\nexora-container-review-20261006_221103.log`。
+- 用户确认：“这次有卡顿，确定是旧代码在跑”。窗口 22:11:04.035～22:12:05.975，约 61.94 秒。
+- 解析结果：`logs/validation/perf-container-review-20261006_221103.json`。
+- 后端直连 live 四次：约 **50.9ms、1931.1ms、5007ms 超时、553.3ms**；经 Nginx 四次约 50～1246ms，TCP 建连约 0.16～1.20ms。
+- **绕过 Nginx 的轻量 live 请求也出现秒级延迟和超时，确认卡顿涉及后端请求执行/事件循环/宿主机调度路径。** 不能仅凭这条证据分配每次卡顿的具体代码责任。
+- `snmp_mib_nodes`：seq scan +13，扫描行 +878956 = 13 × 67612，有整表扫描证据。
+- `interface_telemetry_raw`：seq scan +6，扫描行 +1096436；复合索引扫描 +540、索引读取 +332150。DB commit +835、rollback +2740，block read +54282、hit +410733，窗口命中率约 88.33%。
+- 上述扫描与卡顿同窗发生，但没有 SQL 耗时/执行计划和请求时间关联，**不能判定某一张表或 rollup 是全部卡顿的根因**。PostgreSQL block read 也不等于物理磁盘读取耗时。
+- 1m rollup 表索引计数无增量，不能声称本窗口确认 rollup 执行。
+- 该窗口 Netops CPU 最高约 81.54%，内存约 703～704MiB / 2GiB；PG CPU 最高约 48.33%。未见新增 CPU throttling、OOM、容器重启或锁阻塞。
+- activity 捕获到 `idle in transaction / ClientRead`，不是锁等待，也不是持续执行 SQL 的时长。两个窗口 temp bytes 增量都为 9,109,504，不能据此认定卡顿窗口有独有 spill。
+
+### 线上代码和组件审查
+
+- 两次日志镜像、启动时间及配置一致；`engine/orchestrator.py`、`database/core.py`、`main.py` 的源文件 SHA 与本地 HEAD 一致，和当前工作区修复后的内容不同。仅据此确认这三个关键文件未采用本轮补丁，不扩大为所有文件逐一已核验。
+- 实际 `WORKERS=1`、`DB_POOL_SIZE=16`、overflow=4，未配置 `DB_POOL_MIN_SIZE`；`STORAGE_BACKEND=s3`，**SeaweedFS 确实在用**。
+- PostgreSQL 18.6：`shared_preload_libraries` 为空，`pg_stat_statements` 安装包可用但未启用；未执行安装、重启或统计重置。
+- Nginx/Redis/VM 的低 CPU、低内存不能证明业务性能完全没问题；Grafana/VM 轻量 health 正常也不代表业务查询正常。
+- 高 rollback 计数不等于同数量的数据库错误：SELECT-only 事务清理、连接回收探测和 `_db_quick()` 都可能贡献；不能把全部 82 万次归给一个函数。
+- 历史累计 raw 扫描行最多，只能定位扫描热点，不能替代 SQL 总耗时或 CPU 证据。
+- 2h rollup 窗口及每 12 次成功采集维护一次的代码行为已核实，实际间隔还包含采集耗时和休眠，不是严格每 12 分钟。
+- 已有 `/api/ai/metrics`（`ai.audit.view`）数据库只读观测可作为扩展起点；已有 pg_stat_statements 可用时 top20 与 activity fallback，但不是完整平台 SQL 历史监控。
+- 后续若启用 pg_stat_statements，需单独完成配置和计划重启；它提供调用/耗时/缓冲区信息，不直接提供 SQL CPU 耗时。
+- 未盲目新增 trgm 索引、改变 SELECT 提交行为或缩短 rollup 回溯窗口。
+
+## 4. 本轮后端实际改动（全部未提交）
+
+| 文件 | 行为 |
+| --- | --- |
+| `backend/core/scheduler_lock.py` | 异步锁获取/释放移入线程，shield 并等待重复取消后的清理，保留所有权围栏、心跳和同步入口。 |
+| `backend/main.py` | 请求日志中同步 `validate_session_token` 改用 `asyncio.to_thread`，请求 ContextVar 仍在请求协程设置。 |
+| `backend/database/core.py` | 增加 `DB_POOL_MIN_SIZE`；默认按 pool size 保留连接，默认 16；上限仍 16+4=20/worker，保留事务清理、失效连接探测及获取超时。 |
+| `backend/services/notification_service.py` | 物化收件人/SMTP 配置并释放 DB 连接后发 Webhook/邮件；保留 SMTP 配置失败时 Webhook 独立发送及原错误处理契约。 |
+| `backend/api/health.py` | resources/metrics/history 等同步路由由 FastAPI 线程池执行；HTTP 资源读取不同步触发告警；定时采样仍处理告警；告警外发前提交、释放连接。 |
+| `backend/engine/orchestrator.py` | A/B 设备查询物化快照移入线程；B-loop 每 12 次成功采集的遥测维护移入线程；保持过滤、顺序、cycle_tick 和设备并发契约。 |
+| `.env.example`、`docker-compose.yml` | 增加 DB_POOL_MIN_SIZE，默认随 DB_POOL_SIZE；另含下面资源配额配置。 |
+
+剩余边界：LLDP 同步告警、ConnectionPool.cleanup 因共享状态仍保留原路径；不能宣称全部阻塞已消除。线程运行不能因取消 await 被强制终止。告警先提交后直接外发没有持久化 outbox，提交后崩溃/发送失败仍存在漏发窗口，未在本轮扩大为架构变更。
+
+### 新增/修改回归测试
+
+- 修改：`backend/tests/database/test_scheduler_lock_leases.py`。
+- 新增：`backend/tests/database/test_pg_pool_reuse.py`、`backend/tests/security/test_request_logging_execution.py`。
+- 新增：`backend/tests/monitoring/test_health_resource_execution.py`、`test_notification_connection_lifecycle.py`、`test_telemetry_orchestrator_execution.py`。
+- 覆盖慢鉴权/资源读取时 live 响应可推进、请求上下文、租约取消清理、连接复用/上限、数据库关闭先于外发、SMTP 失败兼容、多循环成功次数和线程执行。
+
+## 5. Docker 配额和 Nginx 当前工作区方案
+
+所有 11 个服务已设置 `cpus`、`mem_limit`、`pids_limit`。CPU/内存有 `.env.example` 可调默认值；CPU 上限不预留独占核，内存上限不预分配。
+
+| 服务 | CPU 上限 | 内存上限 | PIDs |
+| --- | ---: | ---: | ---: |
+| netops | 2.0 | 2304m | 512 |
+| db | 2.0 | 1g | 256 |
+| victoriametrics | 2.0 | 768m | 256 |
+| grafana | 1.0 | 384m | 256 |
+| seaweedfs | 1.0 | 512m | 256 |
+| redis | 1.0 | 1g | 128 |
+| nginx | 1.0 | 256m | 128 |
+| vmagent | 1.0 | 192m | 128 |
+| snmp-exporter | 1.0 | 128m | 128 |
+| cadvisor | 0.5 | 128m | 128 |
+| docker-socket-proxy | 0.25 | 64m | 64 |
+
+- 合计 **6784MiB = 6.625GiB**，按真实主机约留 1.084GiB 给宿主机及余量。Redis 内部 `maxmemory=512mb` 不变，其余内存留给缓冲、AOF 和进程开销。
+- Env 前缀：`NETOPS`、`POSTGRES`、`VICTORIAMETRICS`、`GRAFANA`、`SEAWEEDFS`、`REDIS`、`NGINX`、`VMAGENT`、`SNMP_EXPORTER`、`CADVISOR`、`DOCKER_SOCKET_PROXY`，后缀 `_CPUS` / `_MEM_LIMIT`。
+- 用户最新资源附件第一版合计 **7872MiB = 7.6875GiB**，在当前主机仅留约 22MiB；附件声称 7.25GB 的加总不正确，**没有采纳**。
+- 附件第二版合计 **6976MiB = 6.8125GiB**，较合理但 Redis 从 1GiB 降至 768MiB 要和内部 maxmemory 一起考虑；后续还可评估 PG/SeaweedFS/SNMP 增加余量。没有自动切换到第二版或创建自动资源档位。
+- 增加 PostgreSQL 容器内存上限不会自动调优 shared_buffers/work_mem。扩展本身也不能直接推导额外 512MiB 的必要性。
+
+### Nginx 单 worker 实现
+
+- 用户真实 `nginx -T` / `ps`：主配置 `worker_processes auto`，connections 1024，实际 2 个 worker。
+- 仓库 `nginx/nginx.conf` 是挂载到 `/etc/nginx/conf.d/default.conf` 的站点配置，不适合写顶层 worker 指令。
+- 新文件：`nginx/docker-entrypoint.d/40-configure-workers.sh`，在官方 30 自动调优 hook 之后执行，重写容器 `/etc/nginx/nginx.conf` 的唯一 worker 指令。
+- 配置 `NGINX_WORKER_PROCESSES` 默认 1，允许整数 1～1024；非法值、缺失/重复指令明确失败。修改具有幂等性，不改 worker_connections。
+- `nginx/Dockerfile` COPY 并 chmod 新 hook；Compose 和 `.env.example` 加入默认值；没有修改后端 WORKERS。
+- 新测试：`backend/tests/release/test_nginx_worker_contract.py`，Git Bash 对临时主配置执行实际 hook 函数，覆盖默认、自定义、LF/CRLF、重复执行和拒绝非法输入。
+- 未在 Linux 做 Docker 构建、`nginx -t`、重建容器或线上验证。未来应用 Compose 配额/环境和镜像 hook 需要经授权重建相应容器，单纯 restart 不会更新全部配置。
+
+## 6. 已完成验证与未完成验证
+
+| 验证 | 结果 / 日志 |
+| --- | --- |
+| 首轮后端定向 | 12 passed / 140.26s；`logs/validation/perf-focused-20261006_2054.log`，早于最后两条 pool 测试。 |
+| health/通知/pool/groups/outbox 定向 | 29 passed / 约 200s；`logs/validation/perf-notifications-20261006_2054.log`。 |
+| SMTP 兼容补丁后通知/groups/outbox | 22 passed / 350.60s；`logs/validation/perf-notifications-final-20261006_2054.log`，临时库已清理。 |
+| 遥测线程执行 | 2 passed / 184.15s；`logs/validation/perf-telemetry-loop-20261006_2054.log`，临时库已清理。 |
+| Nginx/存储/Redis/监控部署契约 | 首轮 27 passed、2 个新测试 CRLF 字节比较失败；确认 Git Bash sed 的 LF 规范化后调整新测试按规范化内容比较，既有 15 项部署契约已通过。 |
+| Nginx 最终新测试 | 14 passed / 4.88s，退出 0；覆盖实际 hook 行为，未删除/削弱业务断言。 |
+| 静态检查 | PostgreSQL-only policy scanner 通过；变更 Python AST、Compose YAML/配额默认值、shell `bash -n`、相关 diff whitespace 检查通过。 |
+| 全量后端 | **仍运行，65%，2 F / 1 s，最终报告待取得**；session 60701。 |
+| Linux Docker 集成/线上性能复测 | **未执行**，本机不具备该环境且没有部署授权。 |
+
+纯配置/部署测试命令：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest backend/tests/release/test_nginx_worker_contract.py backend/tests/release/test_deploy_docker_storage_contract.py backend/tests/release/test_deploy_docker_redis_contract.py backend/tests/monitoring/test_monitoring_v1_deployment_contract.py -q --confcutdir=backend/tests/release
+```
+
+`--confcutdir` 用于这些纯文件/配置测试，避免无关 PostgreSQL 自动 fixture；不能用于绕过实际数据库业务测试。此次没有重复运行前端全量构建，前端已有改动保留。
+
+## 7. 真实 Docker 只读采集脚本和敏感信息
+
+- 本轮脚本：`scripts/diagnostics/collect_nexora_container_review.sh`，默认 60 秒，10 秒采样；只读 SQL、5 秒 statement timeout、1 秒 lock timeout，日志 umask 077、避免覆盖。
+- 内容包括配置白名单、源文件 hash、资源/cgroup、DB 表/索引计数增量、活动与阻塞摘要、可用时 pg_stat_statements、后端直连和代理 live 探测。不输出完整 SQL、密码、完整环境或原始业务日志。
+- 用户两份日志来自脚本早期版本。最新脚本补充连接数、temp、work_mem/shared_buffers、状态计数和监控文件 hash；已通过语法验证，最新补充项尚未在真实 Linux 复测。
+- 传输/执行示例（后续有需要再给用户，不自动执行远端操作）：
+
+```powershell
+scp "D:\netops\netsops-main\scripts\diagnostics\collect_nexora_container_review.sh" root@192.168.204.128:/tmp/
+```
+
+```bash
+DURATION_SECONDS=60 bash /tmp/collect_nexora_container_review.sh
+```
+
+- 早期 5 分钟原始采集：`C:\Users\NINGMEI\Desktop\nexora-perf-20261006_203301.log`；保留已有 `scripts/diagnostics/collect_nexora_perf.sh`。
+- 相关后端日志附件包含真实 Feishu Webhook。**不要粘贴原始敏感日志、真实 DSN 或凭据到本文件、测试和回复**。
+
+## 8. 并行审查、既有变更与文档入口
+
+- Luna 6 Max 子 Agent `/root/component_perf_audit` 已独立审查截图的九项判断及两份真实容器日志；只读，未修改文件、未触碰远端。
+- `/root/latency_health_audit` 完成 health/engine 局部工作与独立审查。后续创建/唤醒部分 Agent 曾遇到 agent thread limit，Nginx/配额由主 Agent 完成；不要声称由子 Agent 实现。
+- 最多并行两个子 Agent，不继续嵌套分派；主 Agent 负责共享配置、集成和文档。当前没有已知写代码中的子 Agent。
+- 当前工作树还包含更早无线 Grafana/资产首页修改：`backend/api/assets.py`、Grafana generator/presentation/overview/wireless JSON、对应监控和资产测试、`src/pages/HomePage.tsx`/测试、`.gitattributes`、Grafana skill，以及多个 `.codex-build-validation-*`/`dist-*` 目录。**保留，不 reset/clean/revert，也不自动 stage 全工作区**。
+- 早期需求包括无线状态绿色、隐藏采集目标/rule_version、无线流量及 Top、AC 前置及在线/离线统计、在线终端名称、移除资产 ID、首页数量与资产管理一致；具体已改行为和验证以 1934 walkthrough 为准。
+- 22:29 工作树出现 `backend/vendor/librenms/mibs/cisco/TEST-MIB-*`，可能来自正在执行的 MIB fixture；先等待测试 cleanup，不能当作生产 MIB 发布或立即清除。
+- 根目录 `handoff.md` 旧记录保留在下面；不要把历史已经推送、部署之类的状态套用到这次工作。
+
+当前计划/验证文档：
+
+- `docs/plans/plan_20261006_1934_01_无线面板排序与首页资产数量一致性.md`
+- `docs/walkthrough/walkthrough_20261006_1934_01_无线面板排序与首页资产数量一致性.md`
+- `docs/plans/plan_20261006_2054_01_API请求阻塞与连接复用.md`
+- `docs/walkthrough/walkthrough_20261006_2054_01_API请求阻塞与连接复用.md`
+- `docs/walkthrough/walkthrough_20261006_2148_01_页面卡顿与PostgreSQL证据审查.md`
+- `docs/plans/plan_20261006_2223_01_Docker资源配额与Nginx进程.md`
+- `docs/walkthrough/walkthrough_20261006_2223_01_Docker资源配额与Nginx进程.md`
+- `docs/deploy/docker.md`：资源配额、Nginx hook、未来重建/核验说明。
+
+## 9. 接手后的下一步顺序
+
+1. **完成**：结束并记录全量后端 pytest 结果；继续保留10项失败的原始证据，局部定向验证通过不覆盖全量红灯。
+2. **完成**：按用户要求执行四轮各5分钟的远端多 URL 采样，补充60秒 SNMP binding/sensor 聚合统计，整理结果见本节和 walkthrough。
+3. **完成**：用生产只读连接对 `_resolve_mib_symbol` 对应的精确 SQL 执行 EXPLAIN；计划为 `snmp_mib_nodes` Seq Scan。下一步在隔离 PostgreSQL 验证表达式索引和迁移，然后做 fake SNMP 的300台合成规模核验。
+4. 当前能确认周期性应用级停顿与 MIB seq scan 同期出现，但不能确认因果。资产和 Grafana 业务 API 采样未登录、返回401；获得登录态后可再同步复现 dashboard 刷新及资产表单加载，并关联 request ID、PG耗时及 event-loop lag/连接池等待。
+5. 如继续做只读远端核验，优先确认设备硬件 discovery/capability 的版本新鲜度、probe/discovery 模块的线上源文件指纹，以及 MIB scan 每轮触发的设备数；不启用扩展或重置 PG 统计。
+6. Docker 资源配额方案、Nginx worker 调整、后端阻塞补丁和新 MIB 索引仍是本地工作区候选，尚未部署；保持 Uvicorn worker 1。
+7. **继续保持不提交、不 push、不部署、不改真实设备或采集频率**，直到用户更新授权。提交前按项目规则补 `docs/fixes/` 并剔除内部协作文件和测试产物。
+
+## 10. 页面、资产、Grafana 与 SNMP/PG 最新排查结果（2026-10-06）
+
+- 用户报告的触发点：打开/刷新监控看板；资产添加/修改表单打开和保存；Grafana 偶发慢。错误文字未知。本轮没有通过浏览器完成真实登录态操作。
+- 采样器按真实前端调用链重复 GET `/api/racks`、`/api/cmdb/sites`、`/api/credentials`、资产 summary/list、Grafana auth gate，以及前端 dashboard 页面列出的11个 Grafana URL；同时探测后端直连和 Nginx health、Grafana/VictoriaMetrics health。请求间隔分别为 health 5秒、API 15秒、dashboard 30秒，超时6秒；没有 Authorization/Cookie，不读响应体，也没有调用有 session 副作用的 `POST /api/grafana/session`。
+- 完成两个连续的300秒窗口和一个60秒只读聚合计数窗口。原始脱敏数据：`logs/validation/remote-pg-latency-20261006_230914.jsonl` 及 `.resources.jsonl`、汇总 `...230914.summary.json`；`logs/validation/remote-pg-latency-20261006_231514.jsonl` 及 `.resources.jsonl`、汇总 `...231514.summary.json`；计数窗口 `logs/validation/remote-pg-latency-20261006_232243.jsonl` 及 `.resources.jsonl`。
+- 两个300秒窗口都出现应用 live 与多个 API 同时变慢/超时的簇，重复间隔约110秒。窗口1后端直连56次，p50 7.1ms/p95 4175ms/max 6007ms、2次超时；Nginx 56次，p50 20.8ms/p95 5840ms/max 6041ms、2次超时。窗口2后端直连57次，p50 11.3ms/p95 4019ms/max 6006ms、1次超时；Nginx 57次，p50 21.4ms/p95 4001ms/max 6011ms、1次超时。Grafana/VM health 在两个窗口保持快速成功，第二窗口 p95 分别10.4ms/5.5ms。
+- 受保护的资产 API 与11个 dashboard URL 没有用户会话，绝大多数请求返回401；部分在同一停顿簇中超时。这只能证明这些 URL 的请求也碰到同一应用级停顿，不能代表认证后的资产查询/保存或 Grafana PromQL 页面耗时。没有发起资产 POST/PUT 保存请求（保持只读授权）；未读取、保存或输出响应体和凭据。
+- 两轮 PostgreSQL activity 分别采样298/299次，最长 active SQL 年龄约341/412ms，没有采样到锁等待或阻塞。`pg_stat_statements` 未启用，1秒采样也可能漏掉短 SQL。两轮 `snmp_mib_nodes` 都增加42次 seq scan、读取2,839,704行（表约67,612行），集中在约110秒节律的扫描簇；`interface_telemetry_raw` 两轮 seq scan 均为0，以索引读取为主。现有证据没有给出这些 MIB 查询的单次耗时，不能据扫描行数断言它独自导致卡顿。
+- NetOps 容器 CPU p95 两轮约92%/101%，峰值约103%/106%，约为一个 CPU；容器 quota 是2 CPU。cgroup 未见 throttling/OOM。PostgreSQL、Grafana、VictoriaMetrics、SNMP exporter 没有持续满载迹象。应用容器存在周期性 CPU/阻塞负担，但当前不能定位到单条 SQL。
+- 60秒只读 fleet 汇总：17台设备，15台有 SNMP community/credential 绑定；A/B native loop 候选各17台。硬件传感器表有5,296条 active sensor、涉及15台设备。V1 assignment 按间隔为30秒/15台、120秒/1台、900秒/15台；native 与 V1 资产是否重叠未知，`explicit_snmp_profiles=0` 也不代表没有 SNMP。这些计数表明采集负载值得关注，但不等于5,296个独立 SNMP 包。
+- 代码路径证据（工作区）：B-loop await `process_device_slow`；若设备/硬件发现被判 stale，会触发自动 `discover_device_oid_config`，经 LibreNMS hardware probe 解析 MIB 符号；`_resolve_mib_symbol` 在 async 探测路径里同步执行 `LOWER(node_name)` SQL，计划含 `Seq Scan snmp_mib_nodes`。这是比常规 active sensor 轮询更直接的扫描路径。active sensor 轮询另会同步加载传感器清单并 await SNMP walk。周期性全表扫描与 API 停顿节律吻合，使自动硬件发现/MIB 查找成为首要疑点，但远端本轮源文件指纹未包括 discovery/probe 模块，且没有查询耗时/请求 ID关联，仍未证实根因。
+- 资产表单的 `/api/credentials` 原先按每条 credential 单独读取关联 devices。`backend/services/credential_service.py` 已改为单次 `ANY(array)` 批量读取，新增 `backend/tests/configuration/test_credential_list_batching.py`；这只减少表单选项加载的 N+1。`backend/api/assets.py` 另修复独立 SNMP credential 的 community 不再误建 SSH credential binding，对应资产绑定单测单独重跑通过。所有这些改动均未部署。
+- 当前完整后端回归为3410 passed、1 failed、1 skipped、26 subtests passed；唯一失败是 m0275 测试对“最高 migration version=274”的旧假设。该断言已修复，m0275+m0276相邻迁移组5 passed；全量没有因测试-only修复再跑一次。诊断 helper 为14 passed；硬件样本批量相关聚焦组36 passed；PostgreSQL-only scanner 为0 violations。
+- 下一步需要用户登录态下同步复现 dashboard 刷新及资产表单打开/保存，关联浏览器时间、请求 ID、已认证 API 耗时，并补充 event-loop lag/连接池等待观测，才能分开页面、授权、SQL和采集的因果关系。未启用扩展、未重置 PG 统计、未重启容器、未部署、未改采集频率或设备。
+
+## 11. 加长采样与 MIB 精确查询计划（2026-10-07）
+
+- 用户要求把远端采样延长到约5分钟、多次重复调用页面/API URL。基于该授权新增完成两轮300秒窗口（23:47:26–23:52:26、23:53:30–23:58:30），与既有两轮构成四轮；追加采样覆盖资产表单的 `/api/racks/validate-u` 哨兵 GET。远端原始文件保留在 `/tmp/remote-pg-latency-20261006-2347-r1*`、`/tmp/remote-pg-latency-20261006-2353-r2*`，早期窗口见 `...230914*` 和 `...231514*`。
+- 新窗口后端直连 live p95 为2,196ms/2,751ms，Nginx p95 为1,794ms/3,489ms；Grafana/VM health p95 为8.4/11.5ms和5.9/6.7ms。两轮 `snmp_mib_nodes` 均新增42次 seq scan、读取2,839,704行。最新两轮 PG activity 活跃查询最大年龄约266/396ms，无 lock wait/block；应用容器 CPU p95约97.6%/85.3%，没有 CPU throttling 或 OOM。
+- 当前生产规模仍是17台设备、15台 SNMP 绑定设备、5,296条 active hardware sensor，远低于300台目标；不得将线上真实采样描述成300台验证。
+- 用户给出的浏览器当前无登录态；资产及Grafana受保护路由仍返回401。真实保存 POST/PUT、登录后 PromQL/业务查询和浏览器请求关联未测试，不能用未认证 gate 延迟代替。
+- 对照 `snmp_hardware_probe_service._resolve_mib_symbol` 精确过滤/join/order/limit 的只读 `EXPLAIN (FORMAT JSON)`：顶层 Limit→Sort→Hash Join；`snmp_mib_nodes` 为 Seq Scan，估算成本约5323、匹配336行；没有执行 ANALYZE。计划使用表达式索引 `LOWER(node_name)` 进行隔离验证。诊断 helper 已加入该精确计划探针及回归测试（14 passed）。
+- 新增计划与 walkthrough：`docs/plans/plan_20261007_0004_01_SNMP符号查询与300台容量验证.md`、`docs/walkthrough/walkthrough_20261007_0004_01_SNMP符号查询与300台容量验证.md`。`LOWER(node_name)` 表达式索引迁移已通过3万条合成 MIB nodes 的隔离 PG planner 测试；默认 planner 选择该索引，fresh schema 和重复迁移测试通过。迁移尚未部署到生产。
+- 300台合成轮询基线为143.799秒、186,649条 SQL、样本 SQL 118.712秒；批量候选同场景为26.142秒、529条 SQL、批量样本 SQL 12.464秒，93,192个样本全部写入成功。测试覆盖隔离 PostgreSQL 与 fake SNMP，不能外推为生产时延承诺。
+- 批量 helper/轮询接入回归36 passed；300台复测1 passed；前端 lint、独立目录 production build、首页测试及配置/部署契约测试通过；PostgreSQL-only scanner 为0 violations。完整后端回归3410 passed、1 failed、1 skipped、26 subtests；m0275测试断言修正后相邻迁移组5 passed，完整套件未重跑。
+- 只读业务 URL 因没有登录态仍为401；资产保存 POST/PUT 和登录后 Grafana/业务查询时延尚未复现。SSH 已关闭。
+- 依据当前授权边界继续保持本地未提交状态；不 push、不部署、不关机。
+
+---
+
+# 历史交接记录（原文保留，以下不代表当前执行状态或授权）
+
 # Nexora Monitoring V1 P0 交接记录
 
 - 日期：2026-09-16

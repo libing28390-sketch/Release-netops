@@ -1144,6 +1144,35 @@ def _dispatch_to_users(
                         'lang': u_lang,
                     }
 
+        email_requested = requested_channels is not None and 'email' in requested_channels
+        if requested_channels is None and email_pref_seen:
+            email_requested = True
+        email_profiles = []
+        email_profile_error = None
+        if email_requested:
+            try:
+                if profile_id:
+                    email_profiles = get_email_profiles_for_dispatch(
+                        conn, tenant_id or 'tenant-default', profile_id=profile_id,
+                    )
+                elif legacy_primary or requested_channels is None:
+                    email_profiles = get_email_profiles_for_dispatch(
+                        conn, tenant_id or 'tenant-default', legacy_primary=True,
+                    )
+                else:
+                    email_profiles = get_email_profiles_for_dispatch(
+                        conn, tenant_id or 'tenant-default', enabled_only=True,
+                    )
+            except Exception as exc:
+                # Preserve webhook delivery when only SMTP lookup fails. The
+                # original error is handled after the webhook stage, as before.
+                email_profile_error = exc
+
+        # All dispatch inputs are materialized. External sends must not hold a
+        # database connection or leave a read transaction idle for their timeout.
+        conn.close()
+        conn = None
+
         # 4. 执行 webhook 发送
         results = []
         for (platform, url), cfg in targets.items():
@@ -1165,30 +1194,9 @@ def _dispatch_to_users(
             else:
                 logger.warning(f"[Notify] Dispatch failed to {platform}: {msg}")
 
-        email_requested = requested_channels is not None and 'email' in requested_channels
-        if requested_channels is None and email_pref_seen:
-            email_requested = True
         if email_requested:
-            if profile_id:
-                email_profiles = get_email_profiles_for_dispatch(
-                    conn,
-                    tenant_id or 'tenant-default',
-                    profile_id=profile_id,
-                )
-            elif legacy_primary or requested_channels is None:
-                # Workspace notifications retain the legacy primary profile.
-                email_profiles = get_email_profiles_for_dispatch(
-                    conn,
-                    tenant_id or 'tenant-default',
-                    legacy_primary=True,
-                )
-            else:
-                email_profiles = get_email_profiles_for_dispatch(
-                    conn,
-                    tenant_id or 'tenant-default',
-                    enabled_only=True,
-                )
-
+            if email_profile_error is not None:
+                raise email_profile_error
             if not email_profiles:
                 results.append({
                     'platform': 'email',
@@ -1247,7 +1255,8 @@ def _dispatch_to_users(
             raise
         return []
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 
 def dispatch_to_all_users(

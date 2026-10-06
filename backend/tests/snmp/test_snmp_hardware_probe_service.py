@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from pathlib import Path
 
 from services import librenms_rule_service as rules
@@ -98,6 +99,8 @@ def test_entity_sensor_poll_uses_rfc_scale_and_precision_and_checks_sensor_type(
     import database
 
     writes = []
+    persistence_thread_ids = []
+    event_loop_thread_id = threading.get_ident()
 
     class Connection:
         def commit(self):
@@ -113,9 +116,15 @@ def test_entity_sensor_poll_uses_rfc_scale_and_precision_and_checks_sensor_type(
     monkeypatch.setattr(database, "get_db_connection", lambda: connection)
     monkeypatch.setattr(
         inventory,
-        "record_sensor_sample",
-        lambda _conn, device_id, sensor_key, value, raw_value, quality, observed_at:
-            writes.append((device_id, sensor_key, value, raw_value, quality)),
+        "record_sensor_samples_batch",
+        lambda _conn, samples: (
+            persistence_thread_ids.append(threading.get_ident()),
+            writes.extend(
+                (sample["device_id"], sample["sensor_key"], sample["value"],
+                 sample["raw_value"], sample["quality"])
+                for sample in samples
+            ),
+        ),
     )
     oids = probe
     rows = {
@@ -157,6 +166,7 @@ def test_entity_sensor_poll_uses_rfc_scale_and_precision_and_checks_sensor_type(
     ))
 
     assert result == {"good": 1, "missing": 0, "invalid": 0, "unsupported_mapping": 1}
+    assert persistence_thread_ids and persistence_thread_ids[0] != event_loop_thread_id
     assert writes[0][2:] == (42.5, "425", "good")
     assert writes[1][2:] == (None, "500", "unsupported_mapping")
 
@@ -301,9 +311,12 @@ def test_vrp_fixture_executes_external_and_self_oid_skip_conditions(monkeypatch)
     samples = []
     monkeypatch.setattr(database, "get_db_connection", lambda: Connection())
     monkeypatch.setattr(
-        inventory, "record_sensor_sample",
-        lambda _conn, device_id, sensor_key, value, raw, quality, _at:
-            samples.append((device_id, sensor_key, value, raw, quality)),
+        inventory, "record_sensor_samples_batch",
+        lambda _conn, batch: samples.extend(
+            (sample["device_id"], sample["sensor_key"], sample["value"],
+             sample["raw_value"], sample["quality"])
+            for sample in batch
+        ),
     )
     # The running poll sees a changed operative state and must apply the same
     # external-OID filter used during discovery.
@@ -574,9 +587,11 @@ def test_unimplemented_librenms_user_func_never_exports_raw_as_canonical(monkeyp
 
     monkeypatch.setattr(database, "get_db_connection", lambda: Connection())
     monkeypatch.setattr(
-        inventory, "record_sensor_sample",
-        lambda _conn, _device_id, _sensor_key, value, raw, quality, _at:
-            writes.append((value, raw, quality)),
+        inventory, "record_sensor_samples_batch",
+        lambda _conn, batch: writes.extend(
+            (sample["value"], sample["raw_value"], sample["quality"])
+            for sample in batch
+        ),
     )
     poll_result = asyncio.run(probe.poll_hardware_inventory(
         "192.0.2.13", "public", 161, "2c",

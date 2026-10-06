@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import threading
+import time
+
 import pytest
 
 from api.knowledge_ingestion import OfficialSeedBatchRequest, api_import_official_seed_batch, router
@@ -37,9 +40,27 @@ def reset_limiter():
     rate_limiter.reset_for_tests()
 
 
-def test_ing022_preflights_all_items_and_applies_tenant_host_spacing():
+def test_ing022_preflights_all_items_and_applies_tenant_host_spacing(monkeypatch):
     calls: list[dict] = []
     waits: list[float] = []
+    reservations: list[tuple[float, float]] = []
+    reservation_lock = threading.Lock()
+    original_reserve = rate_limiter.reserve
+
+    def record_reservation(*, tenant_id: str, host: str, rate_limit_per_minute: int) -> float:
+        # Keep the observed order aligned with the limiter's serialized claims.
+        with reservation_lock:
+            reserved_at = time.monotonic()
+            wait_seconds = original_reserve(
+                tenant_id=tenant_id,
+                host=host,
+                rate_limit_per_minute=rate_limit_per_minute,
+                now=reserved_at,
+            )
+            reservations.append((reserved_at, wait_seconds))
+            return wait_seconds
+
+    monkeypatch.setattr(rate_limiter, "reserve", record_reservation)
 
     def importer(user, payload):
         calls.append(payload)
@@ -67,7 +88,15 @@ def test_ing022_preflights_all_items_and_applies_tenant_host_spacing():
     assert len(calls) == 2
     assert calls[0]["request_id"] == "seed-req-001:item:1"
     assert calls[1]["request_id"] == "seed-req-001:item:2"
-    assert waits and waits[0] == pytest.approx(2.0, abs=0.001)
+    assert len(reservations) == 2
+    first_reserved_at, first_wait = reservations[0]
+    second_reserved_at, second_wait = reservations[1]
+    assert first_wait == 0
+    actual_spacing = second_reserved_at - first_reserved_at + second_wait
+    assert actual_spacing >= 2.0 - 1e-6
+    if second_wait > 0:
+        assert actual_spacing == pytest.approx(2.0, abs=1e-6)
+    assert waits == ([second_wait] if second_wait > 0 else [])
     assert "raw" not in str(result).lower()
 
 

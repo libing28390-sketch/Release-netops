@@ -641,13 +641,19 @@ def table_panel(
             "properties": [{"id": "mappings", "value": mappings}],
         })
     for field_name, cell_mode in (extra_color_mapped_cells or {}).items():
-        overrides.append({
-            "matcher": {"id": "byName", "options": field_name},
-            "properties": [{
-                "id": "custom.cellOptions",
-                "value": {"type": cell_mode},
-            }],
-        })
+        matcher = {"id": "byName", "options": field_name}
+        existing_override = next(
+            (override for override in overrides if override["matcher"] == matcher),
+            None,
+        )
+        property_value = {
+            "id": "custom.cellOptions",
+            "value": {"type": cell_mode},
+        }
+        if existing_override:
+            existing_override["properties"].append(property_value)
+        else:
+            overrides.append({"matcher": matcher, "properties": [property_value]})
     if detail_link:
         overrides.append({
             "matcher": {"id": "byName", "options": "接口全称"},
@@ -663,6 +669,13 @@ def table_panel(
     if device_detail_link:
         overrides.append({
             "matcher": {"id": "byName", "options": "资产 ID"},
+            "properties": [{
+                "id": "custom.hideFrom",
+                "value": {"tooltip": False, "viz": True, "legend": False},
+            }],
+        })
+        overrides.append({
+            "matcher": {"id": "byName", "options": "设备名称"},
             "properties": [{
                 "id": "links",
                 "value": [{
@@ -1071,7 +1084,7 @@ def build_overview_dashboard():
         stat_panel(2, "监控站点数", f'count(count by (site_name) (up{{{target_site_sel}}}))', 4, 0, 4, 3),
         stat_panel(3, "全网在线数", f'count(count by (instance) (up{{{target_sel}}} == 1)) or on() ((count(up{{{target_sel}}}) > 0) * 0)', 8, 0, 4, 3),
         stat_panel(
-            4, "控制器汇总在线终端数", client_online_expr, 12, 0, 4, 3,
+            4, "在线终端数", client_online_expr, 12, 0, 4, 3,
         ),
         stat_panel(5, "采集接口总数", f"count(count by (instance, ifIndex) (ifOperStatus{{{sel}}}))", 16, 0, 4, 3),
         stat_panel(6, "近24h变动且当前 Down 接口数", f'count({anomaly_rows}) or on() ((count(ifOperStatus{{{sel}}}) > 0) * 0)', 20, 0, 4, 3, thresholds=[
@@ -1180,7 +1193,7 @@ def build_overview_dashboard():
         "time": {"from": "now-6h", "to": "now"},
         "timezone": "browser",
         "title": "01 网络总览（Network Overview）",
-        "description": "硬件概览使用 LibreNMS 规则采集后规范化的 nexora_hw_* 指标展示在线设备 CPU、内存池和温度传感器覆盖及热点排行。CPU Top10 按实际 window 分组，设备取窗口内最高处理器读数；内存池和温度按各自部件排序，不跨部件求平均。排行表资产 ID 可打开单设备详情。接口异常列表仅列出过去24小时状态有变化且当前仍为 Down 的管理启用接口；长期稳定 Down 的接口可在设备或接口详情查看。",
+        "description": "硬件概览使用 LibreNMS 规则采集后规范化的 nexora_hw_* 指标展示在线设备 CPU、内存池和温度传感器覆盖及热点排行。CPU Top10 按实际 window 分组，设备取窗口内最高处理器读数；内存池和温度按各自部件排序，不跨部件求平均。排行表点击设备名称可打开单设备详情。接口异常列表仅列出过去24小时状态有变化且当前仍为 Down 的管理启用接口；长期稳定 Down 的接口可在设备或接口详情查看。",
         "uid": "nexora-network-overview",
         "version": DASHBOARD_VERSION
     }
@@ -1974,6 +1987,19 @@ def build_wireless_dashboard():
     sel = f'{NETWORK_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
     inventory_sel = f'{HARDWARE_INVENTORY_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
     ac_sel = f'{NETWORK_JOB},role="wireless_controller",site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
+    wireless_interface_sel = f'{NETWORK_JOB},role="wireless_controller",site_name=~"$site",vendor=~"$vendor",hostname=~"$device"'
+    wireless_interface_meta_sel = f'{wireless_interface_sel},ifName!=""'
+    wireless_in_rate = counter_rate_expr("ifHCInOctets", "ifInOctets", wireless_interface_sel)
+    wireless_out_rate = counter_rate_expr("ifHCOutOctets", "ifOutOctets", wireless_interface_sel)
+    wireless_interface_join = (
+        f"{filtered_interface_join(wireless_interface_meta_sel, alias_selector=wireless_interface_sel, fallback_status=False)} "
+        f"and on(instance, ifIndex) (ifAdminStatus{{{wireless_interface_meta_sel}}} == 1) "
+        f"and on(instance, ifIndex) (ifOperStatus{{{wireless_interface_meta_sel}}} == 1)"
+    )
+    wireless_total_rate = (
+        f"max by (site_name,hostname,instance,ifIndex,ifName,ifAlias) "
+        f"(({wireless_in_rate} + {wireless_out_rate}) {wireless_interface_join}) * 8"
+    )
     # The wireless dashboard combines SNMP-exporter series and normalized
     # hardware-inventory series. Their job labels differ, so device identity
     # must not include `job` when de-duplicating or joining these sources.
@@ -2015,9 +2041,12 @@ def build_wireless_dashboard():
     )
     clients = wireless_clients_by_device(sel, inventory_sel)
     ac_total = f"count(count by ({device_labels}) (up{{{ac_sel}}}))"
+    ac_online_targets = f"count(count by ({device_labels}) (up{{{ac_sel}}} == 1))"
     ac_online = (
-        f"count(count by ({device_labels}) (up{{{ac_sel}}} == 1)) or on() "
-        f"((count(count by ({device_labels}) (up{{{ac_sel}}})) > 0) * 0)"
+        f"{ac_online_targets} or on() (({ac_total} > 0) * 0)"
+    )
+    ac_offline = (
+        f"({ac_total} - {ac_online_targets}) or on() (({ac_total} > 0) * 0)"
     )
     missing_wireless_data_note = "暂无数据不代表数量为 0。"
     ap_total_description = f"统计已采到状态的 AP，不等于控制器配置总数。{missing_wireless_data_note}"
@@ -2036,14 +2065,14 @@ def build_wireless_dashboard():
     ssid_client_rows = f"topk(20, {wireless_ssid_clients_by_device(inventory_sel)})"
 
     panels = [
-        stat_panel(1, "采集 AP", f"sum({ap_state_count})", 0, 0, 3, 3, color=NEUTRAL_COLOR, description=ap_total_description, no_value=NO_VALUE_TEXT),
-        stat_panel(2, "在线 AP", f"sum({ap_online})", 3, 0, 3, 3, color=HEALTHY_COLOR, description=ap_online_description, no_value=NO_VALUE_TEXT),
-        stat_panel(3, "明确离线 AP", f"sum({ap_offline})", 6, 0, 3, 3, thresholds=OFFLINE_COUNT_THRESHOLDS, description=ap_offline_description, no_value=NO_VALUE_TEXT),
-        stat_panel(4, "控制器汇总在线终端数", f"sum({clients})", 9, 0, 3, 3, color=NEUTRAL_COLOR, no_value=NO_VALUE_TEXT),
-        stat_panel(5, "高利用率 Radio", high_utilization_radio_count, 12, 0, 3, 3, thresholds=OFFLINE_COUNT_THRESHOLDS, description="统计利用率达到 75% 的 Radio，仅用于定位热点。", no_value=NO_VALUE_TEXT),
-        stat_panel(6, "平均 Radio 利用率", f"avg({radio_utilization_rows})", 15, 0, 3, 3, unit="percent", thresholds=UTILIZATION_THRESHOLDS, no_value=NO_VALUE_TEXT),
-        stat_panel(14, "纳管 AC", ac_total, 18, 0, 3, 3, color=NEUTRAL_COLOR, description="按无线控制器设备统计纳管 AC 数；包含当前 SNMP 不可达但仍有 up 序列的控制器。", no_value=NO_VALUE_TEXT),
-        stat_panel(15, "在线 AC", ac_online, 21, 0, 3, 3, color=HEALTHY_COLOR, description="只统计 up 值为 1 的无线控制器；目标存在但全部离线时显示 0。", no_value=NO_VALUE_TEXT),
+        stat_panel(15, "在线 AC", ac_online, 0, 0, 3, 3, color=HEALTHY_COLOR, description="只统计 up 值为 1 的无线控制器；目标存在但全部离线时显示 0。", no_value=NO_VALUE_TEXT),
+        stat_panel(14, "离线 AC", ac_offline, 3, 0, 3, 3, thresholds=OFFLINE_COUNT_THRESHOLDS, description="纳管 AC 数减去在线 AC 数；没有 AC 目标时显示无数据。", no_value=NO_VALUE_TEXT),
+        stat_panel(1, "采集 AP", f"sum({ap_state_count})", 6, 0, 3, 3, color=NEUTRAL_COLOR, description=ap_total_description, no_value=NO_VALUE_TEXT),
+        stat_panel(2, "在线 AP", f"sum({ap_online})", 9, 0, 3, 3, color=HEALTHY_COLOR, description=ap_online_description, no_value=NO_VALUE_TEXT),
+        stat_panel(3, "离线 AP", f"sum({ap_offline})", 12, 0, 3, 3, thresholds=OFFLINE_COUNT_THRESHOLDS, description=ap_offline_description, no_value=NO_VALUE_TEXT),
+        stat_panel(4, "在线终端数", f"sum({clients})", 15, 0, 3, 3, color=NEUTRAL_COLOR, no_value=NO_VALUE_TEXT),
+        stat_panel(5, "高利用率 Radio", high_utilization_radio_count, 18, 0, 3, 3, thresholds=OFFLINE_COUNT_THRESHOLDS, description="统计利用率达到 75% 的 Radio，仅用于定位热点。", no_value=NO_VALUE_TEXT),
+        stat_panel(6, "平均 Radio 利用率", f"avg({radio_utilization_rows})", 21, 0, 3, 3, unit="percent", thresholds=UTILIZATION_THRESHOLDS, no_value=NO_VALUE_TEXT),
         row_panel(900, "趋势与 AP 状态", 3),
         timeseries_panel(7, "在线 AP 与关联终端趋势", [
             {"expr": f"sum({ap_online})", "legendFormat": "在线 AP", "refId": "A"},
@@ -2081,7 +2110,7 @@ def build_wireless_dashboard():
                 "状态",
                 extra_renames={"ap_name": "AP 名称", "ap_ip": "AP 管理 IP", "ap_model": "型号", "state_description": "状态说明", "hostname": "所属 AC"},
                 extra_indices={"ap_name": 0, "state_description": 1, "ap_ip": 2, "hostname": 3, "vendor": 4, "ap_model": 5},
-                extra_excludes={"Value": True, "source_type": True, "measurement_type": True, "component_class": True, "source_id": True, "sensor_key": True, "window": True, "raw_state": True, "device_id": True, "ap_id": True, "ap_mac": True, "ap_serial": True, "platform": True, "discovery_status": True, "lifecycle_status": True},
+                extra_excludes={"Value": True, "source_type": True, "measurement_type": True, "component_class": True, "source_id": True, "sensor_key": True, "window": True, "raw_state": True, "device_id": True, "ap_id": True, "ap_mac": True, "ap_serial": True, "platform": True, "discovery_status": True, "lifecycle_status": True, "instance": True, "rule_version": True},
             ),
             extra_value_mappings={"状态说明": AP_STATE_VALUE_MAPPINGS},
             extra_color_mapped_cells={"状态说明": "color-background"},
@@ -2095,7 +2124,7 @@ def build_wireless_dashboard():
                 "客户端数",
                 extra_renames={"ap_name": "AP 名称", "ap_ip": "AP 管理 IP", "ap_model": "型号", "hostname": "所属 AC"},
                 extra_indices={"ap_name": 0, "hostname": 1, "vendor": 2, "ap_ip": 3, "ap_model": 4, "Value": 5},
-                extra_excludes={"source_type": True, "measurement_type": True, "component_class": True, "source_id": True, "sensor_key": True, "window": True, "unit": True, "device_id": True, "ap_id": True, "ap_mac": True, "ap_serial": True, "platform": True, "discovery_status": True, "lifecycle_status": True},
+                extra_excludes={"source_type": True, "measurement_type": True, "component_class": True, "source_id": True, "sensor_key": True, "window": True, "unit": True, "device_id": True, "ap_id": True, "ap_mac": True, "ap_serial": True, "platform": True, "discovery_status": True, "lifecycle_status": True, "instance": True, "rule_version": True},
             ),
             description=None,
         ),
@@ -2114,7 +2143,7 @@ def build_wireless_dashboard():
             transformations=clean_organize_transformation(
                 "客户端数",
                 extra_renames={"ap_name": "AP 名称", "radio_id": "Radio", "ssid": "SSID", "hostname": "所属 AC", "wlan_id": "WLAN ID"},
-                extra_excludes={"source_type": True, "measurement_type": True, "component_class": True, "source_id": True, "sensor_key": True, "window": True, "device_id": True, "ap_id": True, "ap_mac": True, "ap_serial": True, "platform": True, "unit": True},
+                extra_excludes={"source_type": True, "measurement_type": True, "component_class": True, "source_id": True, "sensor_key": True, "window": True, "device_id": True, "ap_id": True, "ap_mac": True, "ap_serial": True, "platform": True, "unit": True, "instance": True, "rule_version": True},
             ),
             description="按 AP 无线单元展示已采集的 BSS 客户端数；没有数据不代表数量为 0。",
         ),
@@ -2122,7 +2151,11 @@ def build_wireless_dashboard():
             13, "SSID 客户端 Top 20",
             ssid_client_rows,
             12, 31, 12, 8, unit="short",
-            transformations=clean_organize_transformation("客户端数", extra_renames={"ssid": "SSID"}),
+            transformations=clean_organize_transformation(
+                "客户端数",
+                extra_renames={"ssid": "SSID"},
+                extra_excludes={"instance": True, "rule_version": True},
+            ),
             description="优先采用控制器 SSID 统计，缺失时按同名 BSS 汇总；暂无数据不代表数量为 0。",
         ),
         row_panel(905, "AP 下在线终端", 40),
@@ -2171,10 +2204,51 @@ def build_wireless_dashboard():
                     "discovery_status": True,
                     "lifecycle_status": True,
                     "job": True,
+                    "rule_version": True,
                 },
             ),
             extra_value_mappings={"在线状态": [{"type": "value", "options": {"1": {"text": "在线", "color": HEALTHY_COLOR}}}]},
+            extra_color_mapped_cells={"在线状态": "color-text"},
             description="显示 AC 当前采集到的在线终端及 AP 归属，仅展示 MAC/IP/SSID 和无线接口字段，不含用户名。",
+        ),
+        row_panel(906, "无线专网流量", 50),
+        stat_panel(
+            17, "AC 接口入向流量",
+            f"sum({wireless_in_rate} {wireless_interface_join}) * 8",
+            0, 51, 6, 4, unit="bps", color=INBOUND_COLOR,
+            description="按 AC 在线接口计数器汇总，不拆分单终端流量。",
+            no_value=NO_VALUE_TEXT,
+        ),
+        stat_panel(
+            18, "AC 接口出向流量",
+            f"sum({wireless_out_rate} {wireless_interface_join}) * 8",
+            6, 51, 6, 4, unit="bps", color=OUTBOUND_COLOR,
+            description="按 AC 在线接口计数器汇总，不拆分单终端流量。",
+            no_value=NO_VALUE_TEXT,
+        ),
+        timeseries_panel(
+            19, "无线 AC 接口流量趋势", [
+                {
+                    "expr": f"sum by (site_name,hostname) ({wireless_in_rate} {wireless_interface_join}) * 8",
+                    "legendFormat": "{{hostname}} 入向", "refId": "A",
+                },
+                {
+                    "expr": f"sum by (site_name,hostname) ({wireless_out_rate} {wireless_interface_join}) * 8",
+                    "legendFormat": "{{hostname}} 出向", "refId": "B",
+                },
+            ],
+            0, 55, 14, 10, unit="bps", legend_display_mode="list",
+            legend_placement="bottom", legend_calcs=[], color_overrides=[
+                timeseries_color_override("byRegexp", ".*入向$", INBOUND_COLOR),
+                timeseries_color_override("byRegexp", ".*出向$", OUTBOUND_COLOR),
+            ],
+            description="按无线控制器 AC 汇总接口计数器，不表示单终端流量。",
+        ),
+        bar_gauge_panel(
+            20, "AC 接口吞吐 Top 10", f"topk(10, {wireless_total_rate})",
+            14, 51, 10, 14, unit="bps", legend_format="{{hostname}} / {{ifName}}",
+            thresholds=[], max_value=None, color=INFO_COLOR, instant=True,
+            description="按在线 AC 接口入向与出向吞吐之和排名。",
         ),
     ]
 

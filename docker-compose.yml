@@ -16,6 +16,9 @@ services:
       context: ./docker/postgres
       dockerfile: Dockerfile
     container_name: nexora-db
+    mem_limit: ${POSTGRES_MEM_LIMIT:-1g}
+    cpus: "${POSTGRES_CPUS:-2.0}"
+    pids_limit: 256
     command:
       - postgres
       - -c
@@ -53,8 +56,8 @@ services:
     env_file:
       - .env
     init: true
-    mem_limit: 2g
-    cpus: "2.0"
+    mem_limit: ${NETOPS_MEM_LIMIT:-2304m}
+    cpus: "${NETOPS_CPUS:-2.0}"
     pids_limit: 512
     stop_grace_period: 30s
     expose:
@@ -129,6 +132,7 @@ services:
       - CONFIG_MANAGEMENT_URL=${CONFIG_MANAGEMENT_URL:-}
       - CONFIG_MANAGEMENT_TIMEOUT_SECONDS=${CONFIG_MANAGEMENT_TIMEOUT_SECONDS:-1}
       - DB_POOL_SIZE=${DB_POOL_SIZE:-16}
+      - DB_POOL_MIN_SIZE=${DB_POOL_MIN_SIZE:-${DB_POOL_SIZE:-16}}
       - DB_POOL_OVERFLOW_MAX=${DB_POOL_OVERFLOW_MAX:-4}
       - DB_POOL_ACQUIRE_TIMEOUT_SECONDS=${DB_POOL_ACQUIRE_TIMEOUT_SECONDS:-10}
       - TEMPLATES_CACHE_TTL_SECONDS=${TEMPLATES_CACHE_TTL_SECONDS:-2}
@@ -160,6 +164,9 @@ services:
   victoriametrics:
     image: victoriametrics/victoria-metrics:v1.103.0
     container_name: nexora-victoriametrics
+    mem_limit: ${VICTORIAMETRICS_MEM_LIMIT:-768m}
+    cpus: "${VICTORIAMETRICS_CPUS:-2.0}"
+    pids_limit: 256
     environment:
       - TZ=${TZ:-Asia/Shanghai}
     command:
@@ -183,6 +190,9 @@ services:
   snmp-exporter:
     image: prom/snmp-exporter:v0.26.0
     container_name: nexora-snmp-exporter
+    mem_limit: ${SNMP_EXPORTER_MEM_LIMIT:-128m}
+    cpus: "${SNMP_EXPORTER_CPUS:-1.0}"
+    pids_limit: 128
     environment:
       - TZ=${TZ:-Asia/Shanghai}
     # Start immediately with the checked-in, credential-free bootstrap config.
@@ -214,6 +224,9 @@ services:
   vmagent:
     image: victoriametrics/vmagent:v1.103.0
     container_name: nexora-vmagent
+    mem_limit: ${VMAGENT_MEM_LIMIT:-192m}
+    cpus: "${VMAGENT_CPUS:-1.0}"
+    pids_limit: 128
     environment:
       - TZ=${TZ:-Asia/Shanghai}
       # All platform scrape and remote-write targets are Docker-internal.
@@ -262,6 +275,9 @@ services:
   docker-socket-proxy:
     image: ghcr.io/tecnativa/docker-socket-proxy:v0.4.2
     container_name: nexora-docker-socket-proxy
+    mem_limit: ${DOCKER_SOCKET_PROXY_MEM_LIMIT:-64m}
+    cpus: "${DOCKER_SOCKET_PROXY_CPUS:-0.25}"
+    pids_limit: 64
     environment:
       CONTAINERS: "1"
       EVENTS: "1"
@@ -281,6 +297,9 @@ services:
   cadvisor:
     image: ghcr.io/google/cadvisor:v0.60.6
     container_name: nexora-cadvisor
+    mem_limit: ${CADVISOR_MEM_LIMIT:-128m}
+    cpus: "${CADVISOR_CPUS:-0.5}"
+    pids_limit: 128
     environment:
       # cAdvisor talks to the Docker API through the internal socket proxy.
       - HTTP_PROXY=
@@ -326,6 +345,9 @@ services:
   grafana:
     image: grafana/grafana:12.1.0
     container_name: nexora-grafana
+    mem_limit: ${GRAFANA_MEM_LIMIT:-384m}
+    cpus: "${GRAFANA_CPUS:-1.0}"
+    pids_limit: 256
     environment:
       - TZ=${TZ:-Asia/Shanghai}
       - GF_DATE_FORMATS_DEFAULT_TIMEZONE=${GRAFANA_DEFAULT_TIMEZONE:-Asia/Shanghai}
@@ -393,13 +415,14 @@ services:
       context: ./nginx
     container_name: nexora-nginx
     init: true
-    mem_limit: 256m
-    cpus: "1.0"
+    mem_limit: ${NGINX_MEM_LIMIT:-256m}
+    cpus: "${NGINX_CPUS:-1.0}"
     pids_limit: 128
     stop_grace_period: 15s
     environment:
       - TZ=${TZ:-Asia/Shanghai}
       - TLS_COMMON_NAME=${TLS_COMMON_NAME:-localhost}
+      - NGINX_WORKER_PROCESSES=${NGINX_WORKER_PROCESSES:-1}
       # Production does not need an outbound proxy for the reverse proxy.
       # Explicitly clear host/Docker-injected proxy variables so internal
       # health checks never get sent to an external proxy.
@@ -439,6 +462,10 @@ services:
   redis:
     image: redis:7.4.2-alpine
     container_name: nexora-redis
+    # Keep room above Redis's 512 MB data limit for persistence and buffers.
+    mem_limit: ${REDIS_MEM_LIMIT:-1g}
+    cpus: "${REDIS_CPUS:-1.0}"
+    pids_limit: 128
     restart: unless-stopped
     environment:
       TZ: ${TZ:-Asia/Shanghai}
@@ -484,6 +511,9 @@ services:
     image: chrislusf/seaweedfs:latest
     profiles: ["object-storage"]
     container_name: nexora-seaweedfs
+    mem_limit: ${SEAWEEDFS_MEM_LIMIT:-512m}
+    cpus: "${SEAWEEDFS_CPUS:-1.0}"
+    pids_limit: 256
     command: ["mini", "-dir=/data"]
     environment:
       # Use the same values as the netops S3 client. deploy-docker.sh fills

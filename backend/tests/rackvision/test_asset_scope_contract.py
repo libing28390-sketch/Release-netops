@@ -61,6 +61,15 @@ def test_asset_reads_are_site_scoped_and_secrets_are_not_projected(isolated_db, 
             snmp_community="snmp-secret",
         )
     )
+    standalone_network_asset = assets.create_asset(
+        assets.AssetCreate(
+            asset_type="network_device",
+            asset_tag=_id("standalone-network-asset"),
+            hostname="asset-without-device-row",
+            site_id=site_a,
+            management_ip="192.0.2.105",
+        )
+    )
     same_tenant_hidden = assets.create_asset(
         assets.AssetCreate(
             asset_type="server",
@@ -83,8 +92,21 @@ def test_asset_reads_are_site_scoped_and_secrets_are_not_projected(isolated_db, 
     conn = get_db_connection()
     try:
         conn.execute(
+            "UPDATE physical_assets SET status = 'active' WHERE id = ?",
+            (standalone_network_asset["id"],),
+        )
+        conn.execute(
+            "DELETE FROM devices WHERE asset_id = ?",
+            (standalone_network_asset["id"],),
+        )
+        conn.execute(
             "UPDATE physical_assets SET vault_path = ?, password = ?, snmp_community = ? WHERE id = ?",
             ("vault://do-not-disclose", "encrypted-password", "encrypted-snmp", visible["id"]),
+        )
+        conn.execute(
+            """UPDATE devices SET status = 'offline', platform = 'huawei_vrp', tenant_id = ?
+               WHERE asset_id = ?""",
+            (tenant_a, visible["id"]),
         )
         user = make_user("asset-scope-operator", role="Operator")
         conn.execute(
@@ -120,20 +142,31 @@ def test_asset_reads_are_site_scoped_and_secrets_are_not_projected(isolated_db, 
     listed = _request("GET", "/api/assets", headers=headers)
     assert listed.status_code == 200, listed.text
     items = listed.json()["items"]
-    assert [item["id"] for item in items] == [visible["id"]]
-    assert "vault_path" not in items[0]
-    assert items[0]["password"] == ""
-    assert items[0]["password_set"] is True
-    assert items[0]["snmp_community"] == ""
-    assert items[0]["snmp_community_set"] is True
+    assert {item["id"] for item in items} == {visible["id"], standalone_network_asset["id"]}
+    visible_item = next(item for item in items if item["id"] == visible["id"])
+    standalone_item = next(item for item in items if item["id"] == standalone_network_asset["id"])
+    assert visible_item["online_status"] == "offline"
+    assert standalone_item["online_status"] == "online"
+    assert "vault_path" not in visible_item
+    assert visible_item["password"] == ""
+    assert visible_item["password_set"] is True
+    assert visible_item["snmp_community"] == ""
+    assert visible_item["snmp_community_set"] is True
 
     summary = _request("GET", "/api/assets/summary", headers=headers)
     assert summary.status_code == 200, summary.text
-    assert summary.json()["total"] == 1
+    assert summary.json()["total"] == 2
+    assert summary.json()["by_type"] == {"server": 1, "network_device": 1}
+    assert summary.json()["by_online_status"] == {"offline": 1, "online": 1}
+    expected_platform_counts = {}
+    for item in (visible_item, standalone_item):
+        platform = item["platform"] or "unknown"
+        expected_platform_counts[platform] = expected_platform_counts.get(platform, 0) + 1
+    assert summary.json()["by_platform"] == expected_platform_counts
 
     tree = _request("GET", "/api/assets/tree", headers=headers)
     assert tree.status_code == 200, tree.text
-    assert [item["site_id"] for item in tree.json()["items"]] == [site_a]
+    assert {item["site_id"] for item in tree.json()["items"]} == {site_a}
 
     detail = _request("GET", f"/api/assets/{visible['id']}", headers=headers)
     assert detail.status_code == 200, detail.text

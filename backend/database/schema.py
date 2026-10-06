@@ -397,6 +397,7 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     ''')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_snmp_mib_nodes_oid ON snmp_mib_nodes(oid)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_snmp_mib_nodes_name ON snmp_mib_nodes(node_name)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_snmp_mib_nodes_name_lower ON snmp_mib_nodes(LOWER(node_name))')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_snmp_mib_nodes_mib ON snmp_mib_nodes(mib_id)')
 
     cursor.execute('''

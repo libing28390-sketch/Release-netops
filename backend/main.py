@@ -544,7 +544,7 @@ async def add_request_id_and_log(request: Request, call_next):
         if token:
             try:
                 from api.users import validate_session_token
-                user = validate_session_token(token)
+                user = await asyncio.to_thread(validate_session_token, token)
                 if user and user.get('username'):
                     user_var.set(user['username'])
             except Exception:
