@@ -307,8 +307,7 @@ def test_open_alert_recovery_dispatches_after_commit(isolated_db, monkeypatch):
     assert dispatches[0]["alert_count"] == 1
 
 
-@pytest.mark.asyncio
-async def test_live_request_progresses_while_resource_handler_waits(monkeypatch):
+def test_live_request_progresses_while_resource_handler_waits(monkeypatch):
     entered = threading.Event()
     resume = threading.Event()
 
@@ -323,20 +322,23 @@ async def test_live_request_progresses_while_resource_handler_waits(monkeypatch)
     app = FastAPI()
     app.include_router(health.router, prefix="/api")
 
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app),
-        base_url="http://test",
-    ) as client:
-        resource_task = asyncio.create_task(client.get("/api/health/resources"))
-        try:
-            assert await asyncio.to_thread(entered.wait, 2)
-            live_response = await asyncio.wait_for(client.get("/api/health/live"), timeout=1)
-            assert live_response.status_code == 200
-            assert live_response.json() == {"status": "alive"}
-        finally:
-            resume.set()
+    async def scenario():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            resource_task = asyncio.create_task(client.get("/api/health/resources"))
+            try:
+                assert await asyncio.to_thread(entered.wait, 2)
+                live_response = await asyncio.wait_for(client.get("/api/health/live"), timeout=1)
+                assert live_response.status_code == 200
+                assert live_response.json() == {"status": "alive"}
+            finally:
+                resume.set()
 
-        resource_response = await resource_task
+            resource_response = await resource_task
 
-    assert resource_response.status_code == 200
-    assert resource_response.json() == {"status": "healthy"}
+        assert resource_response.status_code == 200
+        assert resource_response.json() == {"status": "healthy"}
+
+    asyncio.run(scenario())

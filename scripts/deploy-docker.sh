@@ -127,7 +127,7 @@ compose() {
 }
 
 compose_service_args() {
-  printf '%s\n' db netops victoriametrics snmp-exporter vmagent grafana nginx
+  printf '%s\n' db netops victoriametrics snmp-exporter vmagent grafana nginx docker-socket-proxy cadvisor
     if storage_backend_is_s3; then
         printf '%s\n' seaweedfs
     fi

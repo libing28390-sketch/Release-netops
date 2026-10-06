@@ -1,6 +1,6 @@
 # 当前交接：页面卡顿、Docker 资源配额与 300 台容量验证
 
-> 更新时间：2026-10-07 02:50（Asia/Shanghai）。本节优先于下方早期检查点。用户已明确授权完成修复后提交并 push 工作区相关代码、跟进并修复 Actions、登录 Docker 部署机自主修改和验证；任务完成后关闭工作站。下方此前“不要 push/部署/关机”的限制已被这次明确授权取代。
+> 更新时间：2026-10-07 03:10（Asia/Shanghai）。本节优先于下方早期检查点。用户已明确授权完成修复后提交并 push 工作区相关代码、跟进并修复 Actions、登录 Docker 部署机自主修改和验证；任务完成后关闭工作站。下方此前“不要 push/部署/关机”的限制已被这次明确授权取代。
 
 ## 当前目标与授权
 
@@ -27,11 +27,13 @@
 
 ## 尚待执行
 
-1. 更新计划、walkthrough 和修复记录，精确 stage 相关文件，不包含 `.agents/skills/netops-grafana-dashboards/SKILL.md`、`logs/`、`dist-*`、`.codex-build-validation-*`、fake TEST-MIB 样本等临时/无关文件。
-2. 在 `main` 提交并 push；等待 release Actions 完整通过，若失败先定位并修复。
-3. 检查部署主机数据库/磁盘与备份；保全会被新增跟踪文件覆盖的历史诊断文件；从 `Release-netops` 更新、构建并重建服务，跳过破坏性 Grafana 旧 dashboard 清理。
-4. 验证 m0276 索引迁移及实际查询计划、容器健康与资源配置、Nginx worker 数；跑部署后300秒重复 URL/PG/资源采样并分析前后变化。
-5. 更新实际部署结果并 push 完整记录，确认相应 Actions 通过；完成全部工作后按用户要求关闭电脑。
+1. GitHub Actions run #677 (`37515055183`) 后端测试为2940 passed、1 failed、1 skipped；唯一失败是新并发测试使用 `pytest.mark.asyncio`，而 release runner 未安装 pytest-asyncio。本地已改为 `asyncio.run`；对应健康测试7 passed。
+2. 部署服务清单已复核并补入 `docker-socket-proxy` 与 `cadvisor`，配有服务选择契约测试；契约测试4 passed，Git Bash 语法检查通过。
+3. 更新计划、walkthrough 和修复记录，精确 stage 相关文件，不包含 `.agents/skills/netops-grafana-dashboards/SKILL.md`、`logs/`、`dist-*`、`.codex-build-validation-*`、fake TEST-MIB 样本等临时/无关文件。
+4. 在 `main` 提交并 push；等待新一轮 release Actions 完整通过，若失败先定位并修复。
+5. 检查部署主机数据库/磁盘与备份；保全会被新增跟踪文件覆盖的历史诊断文件；从 `Release-netops` 更新、构建并重建服务，跳过破坏性 Grafana 旧 dashboard 清理。
+6. 验证 m0276 索引迁移及实际查询计划、容器健康与资源配置、Nginx worker 数；跑部署后300秒重复 URL/PG/资源采样并分析前后变化。
+7. 更新实际部署结果并 push 完整记录，确认相应 Actions 通过；完成全部工作后按用户要求关闭电脑。
 
 ---
 

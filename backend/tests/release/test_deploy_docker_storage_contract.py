@@ -92,6 +92,22 @@ def test_storage_backend_normalizes_dotenv_format_and_selects_profile(tmp_path):
     assert "object-storage" not in local_result["docker_call"]
 
 
+def test_deploy_service_selection_includes_resource_limited_support_containers(tmp_path):
+    result = _run_storage_contract(tmp_path / "local", "local")
+
+    assert {
+        "db",
+        "netops",
+        "victoriametrics",
+        "snmp-exporter",
+        "vmagent",
+        "grafana",
+        "nginx",
+        "docker-socket-proxy",
+        "cadvisor",
+    } <= set(result["services"])
+
+
 def test_s3_examples_use_the_compose_network_and_document_required_settings():
     env_example = ENV_EXAMPLE.read_text(encoding="utf-8")
     compose = DOCKER_COMPOSE.read_text(encoding="utf-8")
