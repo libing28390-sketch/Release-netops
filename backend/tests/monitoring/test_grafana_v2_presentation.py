@@ -154,10 +154,10 @@ def test_catalog_covers_the_complete_v2_dashboard_set(catalog):
     ]
     row_count = sum(panel.get("type") == "row" for panel in panels)
     stat_count = sum(panel.get("type") == "stat" for panel in panels)
-    assert len(panels) == 253
-    assert row_count == 53
-    assert len(panels) - row_count == 200
-    assert stat_count == 90
+    assert len(panels) == 257
+    assert row_count == 54
+    assert len(panels) - row_count == 203
+    assert stat_count == 92
 
 
 def test_generated_catalog_uses_every_effective_source_field_config(
@@ -190,7 +190,7 @@ def test_all_stat_panels_render_null_and_nan_as_gray_no_data(catalog):
         for panel in iter_panels(dashboard.get("panels", []))
         if panel.get("type") == "stat"
     ]
-    assert len(stat_panels) == 90
+    assert len(stat_panels) == 92
 
     for panel in stat_panels:
         defaults = panel.get("fieldConfig", {}).get("defaults", {})
