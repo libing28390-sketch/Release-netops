@@ -46,6 +46,38 @@ def _json(value) -> str:
     return json.dumps(value if value is not None else {}, ensure_ascii=False, sort_keys=True)
 
 
+def _resolve_template_root(project_root: Path | None = None) -> Path:
+    """Find a complete immutable template set in Docker or source layouts.
+
+    Docker keeps release-owned templates outside the persistent ``/app/data``
+    volume. In a source checkout, they remain under ``data/textfsm_templates``.
+    Require the full migration set before choosing either directory so an empty
+    or user-populated volume cannot shadow the image's reviewed templates.
+    """
+    root = project_root or Path(__file__).resolve().parents[3]
+    candidates = (
+        root / "release-textfsm-templates",
+        root / "data" / "textfsm_templates",
+    )
+    expected = tuple(TEMPLATES)
+    for candidate in candidates:
+        if all((candidate / filename).is_file() for filename in expected):
+            return candidate
+
+    missing = {
+        str(candidate): [filename for filename in expected if not (candidate / filename).is_file()]
+        for candidate in candidates
+    }
+    missing_summary = "; ".join(
+        f"{candidate}: {', '.join(filenames) or '(none)'}"
+        for candidate, filenames in missing.items()
+    )
+    raise RuntimeError(
+        "Required YunShan TextFSM templates are missing from packaged and source directories: "
+        f"{missing_summary}"
+    )
+
+
 def _ensure_action_definitions(cursor, now: str) -> None:
     from services.platform_registry_service import iter_action_definitions
 
@@ -133,10 +165,12 @@ def _ensure_profile_and_release(cursor, now: str) -> tuple[str, str]:
     return profile_id, release_id
 
 
-def _register_templates(cursor, profile_id: str, now: str) -> dict[str, str]:
-    root = Path(__file__).resolve().parents[3] / "data" / "textfsm_templates"
-    if not root.is_dir():
-        raise RuntimeError("YunShan TextFSM template directory is missing")
+def _register_templates(
+    cursor,
+    profile_id: str,
+    now: str,
+    root: Path,
+) -> dict[str, str]:
     versions: dict[str, str] = {}
     for filename, (action_code, command) in TEMPLATES.items():
         path = root / filename
@@ -260,10 +294,13 @@ def upgrade(cursor, use_pg: bool) -> None:
     if not use_pg:
         raise RuntimeError("Huawei YunShan platform registration requires PostgreSQL")
 
+    # Validate deployment assets before writing any rows. This also resolves
+    # the distinct immutable-template path used by Docker images.
+    template_root = _resolve_template_root()
     now = _now()
     _ensure_action_definitions(cursor, now)
     profile_id, release_id = _ensure_profile_and_release(cursor, now)
-    versions = _register_templates(cursor, profile_id, now)
+    versions = _register_templates(cursor, profile_id, now, template_root)
     _bind_actions(cursor, release_id, versions, now)
     _ensure_identification_rule(cursor, profile_id, now)
 

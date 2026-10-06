@@ -1,6 +1,55 @@
 from __future__ import annotations
 
+import pytest
+
 from database.migrations import m0275_huawei_yunshan_platform as migration
+
+
+def test_m0275_uses_packaged_templates_when_docker_data_volume_is_empty(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        migration,
+        "TEMPLATES",
+        {"huawei_yunshan_display_version.textfsm": ("get_version", "display version")},
+    )
+    # Docker mounts persistent storage at /app/data, so the source-layout
+    # directory may exist while containing no release-owned templates.
+    (tmp_path / "data" / "textfsm_templates").mkdir(parents=True)
+    packaged = tmp_path / "release-textfsm-templates"
+    packaged.mkdir()
+    (packaged / "huawei_yunshan_display_version.textfsm").write_text(
+        "# packaged YunShan template\n", encoding="utf-8",
+    )
+
+    assert migration._resolve_template_root(tmp_path) == packaged
+
+
+def test_m0275_falls_back_to_source_templates_for_development(tmp_path, monkeypatch) -> None:
+    filename = "huawei_yunshan_display_version.textfsm"
+    monkeypatch.setattr(migration, "TEMPLATES", {filename: ("get_version", "display version")})
+    source = tmp_path / "data" / "textfsm_templates"
+    source.mkdir(parents=True)
+    (source / filename).write_text("# source YunShan template\n", encoding="utf-8")
+
+    assert migration._resolve_template_root(tmp_path) == source
+
+
+def test_m0275_reports_missing_templates_before_registration(tmp_path, monkeypatch) -> None:
+    missing = (
+        "huawei_yunshan_display_version.textfsm",
+        "huawei_yunshan_display_interface_brief.textfsm",
+    )
+    monkeypatch.setattr(
+        migration,
+        "TEMPLATES",
+        {filename: ("get_version", "display version") for filename in missing},
+    )
+    (tmp_path / "release-textfsm-templates").mkdir()
+    (tmp_path / "data" / "textfsm_templates").mkdir(parents=True)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        migration._resolve_template_root(tmp_path)
+
+    assert all(filename in str(exc_info.value) for filename in missing)
 
 
 def _remove_system_yunshan_seed(conn) -> None:
