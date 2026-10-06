@@ -1,15 +1,29 @@
 # 当前交接：页面卡顿、Docker 资源配额与 300 台容量验证
 
-> 更新时间：2026-10-07 03:10（Asia/Shanghai）。本节优先于下方早期检查点。用户已明确授权完成修复后提交并 push 工作区相关代码、跟进并修复 Actions、登录 Docker 部署机自主修改和验证；任务完成后关闭工作站。下方此前“不要 push/部署/关机”的限制已被这次明确授权取代。
+> 更新时间：2026-10-07 03:48（Asia/Shanghai）。本节优先于下方早期检查点。用户已明确授权修复完成后提交并 push、跟进 Actions、登录 Docker 部署机自主修改和验证，最后关闭工作站；下方历史检查点中的旧限制已被本次授权取代。
 
 ## 当前目标与授权
 
-- 目标：继续执行 handoff 和关联计划，定位监控看板刷新、资产表单打开/保存和 Grafana 卡顿；尽量验证 300 台规模下页面与采集任务的响应、资源使用；所有相关代码推送并确认 Actions 通过，部署验证完成后再关机。
-- 允许：远端 Docker 主机只读采样、备份、部署代码/配置/索引迁移和运行测试；提交、push；遇 Actions 失败继续修复。不得更改真实网络设备配置，也不使用无登录态的资产 POST/PUT 或创建 Grafana session 测试生产业务写入。
-- 远端 SSH 会话仍在本机终端，会话 ID 72558；登录凭据只通过交互终端输入，没有写入文件或报告。部署前检查发现 `/data/nexora-automation` 的 Git 跟踪树干净；存在多个未跟踪诊断/容量文件，部署同步前必须将与新跟踪路径冲突的文件保存在仓库外，禁止 `git clean`。
-- 私有 `main` 的 release workflow 会验证后生成公共 `Release-netops`。远端更新先备份 `.env`、PostgreSQL、Source Manifest、TLS 与配置快照；部署时避免自动删除现有 Grafana dashboard，部署后再做一次 300 秒 API/资源/PG 复测。
+- 目标：修复监控页面、资产表单和采集相关卡顿；验证300台负载候选方案、资源上限与部署后的 API/PG 表现；所有相关代码推送且 Actions 通过，再关闭工作站。
+- 授权边界：已授权 SSH、备份、代码部署、索引迁移和测试；没有修改真实网络设备，也没有对资产写入或建立 Grafana 登录态。受保护的资产/看板 API 都返回401，因此不把未认证入口耗时说成真实保存或 PromQL 结果。
+- 公共 release workflow run #678（`37516754689`）已成功，发布树提交为 `d2c0629`。远端部署前完整备份位于 `/data/netops-release-backups/release-20261007-032303`；被新版本路径覆盖的旧诊断/容量脚本已保存在 `/data/nexora-preserved-untracked-20261007-032348`。其他未跟踪诊断产物仍留在原位置；未运行 `git clean`。
+- Docker 主机 `/data/nexora-automation` 已部署。11个容器均运行，9个有 healthcheck 的容器 healthy，SeaweedFS 与 socket proxy 无 healthcheck。11个服务的内存、CPU、PID 限额均非零；Nginx 配置有效、worker 为1；Grafana旧dashboard清理步骤已跳过。
+- m0276 已迁移。实际 MIB 精确查询使用 `idx_snmp_mib_nodes_name_lower`；部署后两轮 `snmp_mib_nodes` 顺扫增量均为0、索引扫描增量144。
 
-## 最新采样结果（部署前旧代码）
+## 部署后复测
+
+| 窗口（Asia/Shanghai） | 后端 live p95 / max | Nginx live p95 / max | Grafana / VM health p95 | 慢请求与数据库 |
+| --- | --- | --- | --- | --- |
+| 03:31:14–03:36:14 | 39.8 / 108.1ms | 215.8 / 1326.4ms | 4.7 / 3.8ms | 1个 HTTP 样本≥1s，无超时；PG active query 最大224.5ms，无 lock wait。 |
+| 03:38:02–03:43:02 | 266.4 / 707.2ms | 243.3 / 616.3ms | 7.2 / 3.9ms | 没有 HTTP 样本≥1s或超时；PG active query 最大386.9ms，无 lock wait。 |
+
+- 每轮300秒：后端 live 与代理各60次；Grafana/VM health 各60次；资产表单/列表依赖 API 每条路由直连和代理各20次；11个 Grafana dashboard URL 每个10次。资产和 dashboard API 均返回401；已认证的保存和 PromQL 仍未测。
+- 两轮均未见 `snmp_mib_nodes` 顺扫或 tuple-read 增量；精确符号计划使用表达式索引。`interface_telemetry_raw` 顺扫增量0。PG 无 lock wait/blocker；idle-in-transaction 最长约5.15/5.32秒，active query 年龄低于0.4秒。
+- 7个主要业务/监控容器 CPU 总和 p95 折算为双核主机约61.8%/57.0%；后端 CPU p95 为103.1%/96.0%，内存 p95 约460/462MiB；无 cgroup throttling/OOM。每轮结尾的全11容器 `docker stats` 快照中，应用约432–442MiB，数据库约259–272MiB，SeaweedFS约199MiB；其余服务亦低于各自上限。全11容器快照与持续7容器时序口径不同。
+- 与部署前七轮相比，后端 live p95 从0.58–4.18秒降至0.04–0.27秒；最大代理样本1.33秒仅出现在第一轮，第二轮未重现。卡顿显著缓解，但不能据此保证真实300台设备或已登录业务页表现。
+- 原始样本位于远端 `/tmp/remote-pg-latency-20261007-post-r1*`、`post-r2*`，本机 `%TEMP%\\nexora-latency-20261007`。生产仍为17台设备、15台有 SNMP 绑定、5,296 active sensors。
+
+## 部署前七轮采样基线（旧代码）
 
 - 新增三轮连续约 300 秒多 URL 采样，Asia/Shanghai 窗口为 02:30:17–02:35:17、02:35:33–02:40:33、02:41:18–02:46:18；总计与更早的四轮合为七轮。
 - 三轮后端 live p95 为 2.33 秒、0.58 秒、2.26 秒；Nginx p95 为 3.82 秒、0.59 秒、2.17 秒。第一、第三轮各出现一次约 6 秒直连/代理同步超时，第二轮无超时；慢请求约每两分钟成簇。Grafana 与 VictoriaMetrics health p95 保持约 5.6–11.1ms。
@@ -20,20 +34,16 @@
 
 ## 已完成本地修复与验证
 
-- 新增 MIB `LOWER(node_name)` 表达式索引迁移，修复实测 Seq Scan 对应查询；生产只读 EXPLAIN 在应用迁移前仍是 Seq Scan。
+- 新增 MIB `LOWER(node_name)` 表达式索引迁移，修复实测 Seq Scan 对应查询；迁移后生产只读 EXPLAIN 已使用索引。
 - 传感器样本改为按设备批量写入；新增全空值批次 PostgreSQL 类型 cast；采集器样本落库及采集状态同步记录从 async event loop 移到线程。其他少数同步路径仍保留，不能宣称已消除全部阻塞。
 - Compose 为11个容器设置 CPU、内存、PID 上限；Nginx worker 默认1并受 PID 上限约束（1–8）；Uvicorn `WORKERS=1` 保持不变。
-- 本轮相邻焦点回归 39 passed；凭据、资产绑定、连接池、迁移、诊断与资源执行回归另 39 passed；PostgreSQL-only 扫描 0 violation；前端已有全量 445 tests、lint、production build 通过。之前95分钟后端全量为3410 passed / 1 failed / 1 skipped / 26 subtests，唯一失败的旧 m0275 版本断言已修复，迁移相邻测试5 passed；全量等待 push 后 Actions 重新执行。
+- GitHub Actions #677 的异步标记失败已改为 `asyncio.run`；部署服务选择加入 cAdvisor/socket proxy。Actions #678 成功：后端收集2,943项并通过，前端115个文件/445项测试通过，release 总时长12分9秒。
+- 本地聚焦验证：health resource execution 7 passed，Docker storage/deploy contract 4 passed；Git Bash 语法与 `git diff --check` 通过。更早的焦点回归和300台隔离 PostgreSQL/fake-SNMP 结果保留在 walkthrough。
 
 ## 尚待执行
 
-1. GitHub Actions run #677 (`37515055183`) 后端测试为2940 passed、1 failed、1 skipped；唯一失败是新并发测试使用 `pytest.mark.asyncio`，而 release runner 未安装 pytest-asyncio。本地已改为 `asyncio.run`；对应健康测试7 passed。
-2. 部署服务清单已复核并补入 `docker-socket-proxy` 与 `cadvisor`，配有服务选择契约测试；契约测试4 passed，Git Bash 语法检查通过。
-3. 更新计划、walkthrough 和修复记录，精确 stage 相关文件，不包含 `.agents/skills/netops-grafana-dashboards/SKILL.md`、`logs/`、`dist-*`、`.codex-build-validation-*`、fake TEST-MIB 样本等临时/无关文件。
-4. 在 `main` 提交并 push；等待新一轮 release Actions 完整通过，若失败先定位并修复。
-5. 检查部署主机数据库/磁盘与备份；保全会被新增跟踪文件覆盖的历史诊断文件；从 `Release-netops` 更新、构建并重建服务，跳过破坏性 Grafana 旧 dashboard 清理。
-6. 验证 m0276 索引迁移及实际查询计划、容器健康与资源配置、Nginx worker 数；跑部署后300秒重复 URL/PG/资源采样并分析前后变化。
-7. 更新实际部署结果并 push 完整记录，确认相应 Actions 通过；完成全部工作后按用户要求关闭电脑。
+1. 精确提交本次部署结果、两轮采样和修复记录；保留 `.agents/skills/netops-grafana-dashboards/SKILL.md`、`logs/`、`dist-*`、`.codex-build-validation-*` 和 fake TEST-MIB 等用户/临时文件，不纳入提交。
+2. push 文档提交并等待其 Actions 完整成功；之后关闭剩余 SSH 会话，并按用户要求关闭工作站。
 
 ---
 
