@@ -61,10 +61,15 @@ _H3C_DOT11_RADIO_TX_STATS = "1.3.6.1.4.1.25506.2.75.2.2.2.1"
 _H3C_DOT11_RADIO_ASSOC_STATS = "1.3.6.1.4.1.25506.2.75.2.2.8.1"
 _H3C_DOT11_BSS_ASSOC_STATS = "1.3.6.1.4.1.25506.2.75.2.2.6.1"
 _H3C_DOT11_STATION_TABLE = "1.3.6.1.4.1.25506.2.75.3.1.1.1"
+_H3C_DOT11_STATION_VLAN_OID = f"{_H3C_DOT11_STATION_TABLE}.11"
 _H3C_DOT11_STATION_IP_OID = f"{_H3C_DOT11_STATION_TABLE}.2"
 _H3C_DOT11_STATION_USERNAME_OID = f"{_H3C_DOT11_STATION_TABLE}.3"
 _H3C_DOT11_STATION_TX_RATE_SET_OID = f"{_H3C_DOT11_STATION_TABLE}.4"
 _H3C_DOT11_STATION_SSID_OID = f"{_H3C_DOT11_STATION_TABLE}.12"
+_H3C_DOT11_STATION_AP_RELATION_TABLE = "1.3.6.1.4.1.25506.2.75.3.1.2.1"
+_H3C_DOT11_STATION_AP_ID_OID = f"{_H3C_DOT11_STATION_AP_RELATION_TABLE}.1"
+_H3C_DOT11_STATION_RADIO_ID_OID = f"{_H3C_DOT11_STATION_AP_RELATION_TABLE}.2"
+_H3C_DOT11_STATION_WLAN_ID_OID = f"{_H3C_DOT11_STATION_AP_RELATION_TABLE}.3"
 _H3C_ENTITY_CPU_USAGE_OID = "1.3.6.1.4.1.25506.2.6.1.1.1.1.6"
 _H3C_ENTITY_MEM_USAGE_OID = "1.3.6.1.4.1.25506.2.6.1.1.1.1.8"
 _H3C_ENTITY_MEM_SIZE_OID = "1.3.6.1.4.1.25506.2.6.1.1.1.1.10"
@@ -1778,6 +1783,13 @@ def _h3c_dot11_number(value: Any) -> float | None:
     return _number(match.group(1)) if match else None
 
 
+def _h3c_dot11_integer_text(value: Any) -> str:
+    number = _h3c_dot11_number(value)
+    if number is None or not math.isfinite(number) or number < 0 or not number.is_integer():
+        return ""
+    return str(int(number))
+
+
 def _h3c_wireless_sensor(
     *,
     rule: Mapping[str, Any],
@@ -1930,7 +1942,13 @@ async def _probe_h3c_comware_wireless(
     }
     radio_assoc_oid = f"{_H3C_DOT11_RADIO_ASSOC_STATS}.6"
     bss_assoc_oid = f"{_H3C_DOT11_BSS_ASSOC_STATS}.6"
-    station_oids = {oid for oid, _variant, _label in station_column_specs}
+    station_attribute_oids = {oid for oid, _variant, _label in station_column_specs}
+    station_oids = station_attribute_oids | {_H3C_DOT11_STATION_VLAN_OID}
+    station_relation_oids = {
+        _H3C_DOT11_STATION_AP_ID_OID,
+        _H3C_DOT11_STATION_RADIO_ID_OID,
+        _H3C_DOT11_STATION_WLAN_ID_OID,
+    }
     ap_oids = {f"{_H3C_DOT11_AP_OBJECT_TABLE}.{column}" for column in ap_columns}
     ap_brief_oids = {f"{_H3C_DOT11_AP_BRIEF_TABLE}.{column}" for column in ap_brief_columns}
     radio_oids = {f"{_H3C_DOT11_AP_RADIO_TABLE}.{column}" for column in radio_columns}
@@ -1939,7 +1957,7 @@ async def _probe_h3c_comware_wireless(
     legacy_system_oids = {f"{_H3C_DOT11_AP_SYSTEM_LEGACY_TABLE}.{column}" for column in system_columns}
     all_oids = (
         ap_oids | ap_brief_oids | radio_oids | bss_oids | system_oids | legacy_system_oids
-        | set(error_columns) | {radio_assoc_oid, bss_assoc_oid} | station_oids
+        | set(error_columns) | {radio_assoc_oid, bss_assoc_oid} | station_oids | station_relation_oids
     )
     reads = await _walk_many(ip, community, all_oids, port, version, walk_func=walk_func)
     rows = {oid: _row_map(read) for oid, read in reads.items()}
@@ -2476,29 +2494,50 @@ async def _probe_h3c_comware_wireless(
     ))
 
     station_rows = {oid: rows.get(oid, {}) for oid in station_oids}
-    station_suffixes = set().union(*(set(column_rows) for column_rows in station_rows.values()))
+    station_relation_rows = {oid: rows.get(oid, {}) for oid in station_relation_oids}
+    station_suffixes = set().union(
+        *(set(column_rows) for column_rows in (*station_rows.values(), *station_relation_rows.values()))
+    )
     station_count = 0
     for suffix in sorted(station_suffixes):
         decoded_mac = _h3c_dot11_mac_index(suffix)
         if decoded_mac is None:
             continue
         station_mac, _index = decoded_mac
+        ap_id = _h3c_dot11_text(station_relation_rows[_H3C_DOT11_STATION_AP_ID_OID].get(suffix))
+        associated_ap = ap_by_id.get(ap_id) or ap_by_id.get(ap_id.casefold()) if ap_id else None
+        ap_name = str(associated_ap.get("ap_name") or "").strip() if associated_ap else ""
+        radio_id = _h3c_dot11_integer_text(
+            station_relation_rows[_H3C_DOT11_STATION_RADIO_ID_OID].get(suffix),
+        )
+        wlan_id = _h3c_dot11_integer_text(
+            station_relation_rows[_H3C_DOT11_STATION_WLAN_ID_OID].get(suffix),
+        )
+        vlan_id = _h3c_dot11_integer_text(station_rows[_H3C_DOT11_STATION_VLAN_OID].get(suffix))
+        station_labels = {
+            "ap_name": ap_name,
+            "radio_id": radio_id,
+            "wlan_id": wlan_id,
+            "vlan_id": vlan_id,
+        }
+        if ap_id:
+            station_labels["ap_id"] = ap_id
         entity_name = "无线客户端"
         for oid, series_variant, display in station_column_specs:
             raw = _h3c_dot11_text(station_rows.get(oid, {}).get(suffix))
             if not raw:
                 continue
+            index_labels = dict(station_labels)
+            if series_variant == "ssid":
+                index_labels["ssid"] = raw
             sensor = _h3c_wireless_sensor(
                 rule=rule, component_class="wireless_station",
                 measurement_type="wireless_station_attribute", sensor_class="identity",
                 oid=oid, suffix=suffix, raw_value=raw, unit="text",
                 sensor_name=f"无线客户端 {display}", entity_name=entity_name,
-                series_variant=series_variant, index_labels={},
+                series_variant=series_variant, index_labels=index_labels,
             )
             if sensor:
-                sensor_labels = sensor.get("index_labels")
-                if isinstance(sensor_labels, dict):
-                    sensor_labels.clear()
                 metadata = sensor.get("metadata")
                 if isinstance(metadata, dict):
                     metadata["station_mac"] = station_mac
@@ -2509,12 +2548,12 @@ async def _probe_h3c_comware_wireless(
                 sensors.append(sensor)
                 station_count += 1
     categories.append(_h3c_wireless_category(
-        "wireless_station", reads=reads, required_oids=station_oids, rows=station_count,
+        "wireless_station", reads=reads, required_oids=station_attribute_oids, rows=station_count,
         empty_is_complete=confirmed_empty_controller,
         reason_code="h3c_dot11_station_associate_table",
         reason=(
             "HH3C-DOT11-STATION-MIB hh3cDot11StationAssociateTable uses the fixed six-octet Station MAC index; "
-            "collects client IP, username, TxRateSet, and SSID."
+            "collects client IP, username, TxRateSet, and SSID, joined with the optional AP/radio/WLAN relation and VLAN columns."
         ),
     ))
     brief_metadata_fields = (

@@ -622,6 +622,7 @@ H3C_WIRELESS_CONFIG = {
         "https://www.h3c.com/en/d_202410/2281922_294551_0.htm",
         "https://www.h3c.com/en/Support/Resource_Center/EN/Home/Wireless/00-Public/Reference_Guides/MIB_Companion/H3C_Wireless_Access_Controllers_MIB_Reference_R16x/12/202606/2850302_294551_0.htm",
         "https://www.h3c.com/en/d_202604/2834085_294551_0.htm",
+        "https://www.h3c.com/en/d_202606/2850312_294551_0.htm",
     ],
     "get": [
         "1.3.6.1.4.1.25506.2.75.1.1.2.21.0",
@@ -648,6 +649,7 @@ H3C_WIRELESS_CONFIG = {
         "1.3.6.1.4.1.25506.2.75.2.2.8.1",
         "1.3.6.1.4.1.25506.2.75.2.2.6.1",
         "1.3.6.1.4.1.25506.2.75.3.1.1.1",
+        "1.3.6.1.4.1.25506.2.75.3.1.2.1",
     ],
     "metrics": [
         _metric("hh3Dot11CurrenACMACMode", "1.3.6.1.4.1.25506.2.75.1.1.1.1", "gauge", "Current AC CAPWAP MAC mode from HH3C-DOT11-ACMT-MIB.", source_name="hh3Dot11CurrenACMACMode"),
@@ -661,6 +663,10 @@ H3C_WIRELESS_CONFIG = {
         _metric("hh3cDot11SlaveAPCount", "1.3.6.1.4.1.25506.2.75.1.1.2.5", "gauge", "Number of APs with stable backup tunnels to the AC.", source_name="hh3cDot11SlaveAPCount"),
         _metric("hh3cDot11ConnectAutoAPCount", "1.3.6.1.4.1.25506.2.75.1.1.2.6", "gauge", "Number of automatically associated APs.", source_name="hh3cDot11ConnectAutoAPCount"),
         _metric("hh3cDot11PersistentAPCount", "1.3.6.1.4.1.25506.2.75.1.1.2.7", "gauge", "Number of APs converted from auto APs.", source_name="hh3cDot11PersistentAPCount"),
+        _metric("hh3cDot11StationVlanId", "1.3.6.1.4.1.25506.2.75.3.1.1.1.11", "gauge", "VLAN ID associated with one wireless station, indexed by the fixed six-octet station MAC.", source_name="hh3cDot11StationVlanId", indexes=("station_mac",), index_types=("PhysAddress48",)),
+        _metric("hh3cDot11CurrAPID", "1.3.6.1.4.1.25506.2.75.3.1.2.1.1", "DisplayString", "AP identifier currently associated with one wireless station.", source_name="hh3cDot11CurrAPID", indexes=("station_mac",), index_types=("PhysAddress48",)),
+        _metric("hh3cDot11CurrRadioID", "1.3.6.1.4.1.25506.2.75.3.1.2.1.2", "gauge", "Radio ID currently associated with one wireless station.", source_name="hh3cDot11CurrRadioID", indexes=("station_mac",), index_types=("PhysAddress48",)),
+        _metric("hh3cDot11CurrWlanID", "1.3.6.1.4.1.25506.2.75.3.1.2.1.3", "gauge", "WLAN ID currently associated with one wireless station.", source_name="hh3cDot11CurrWlanID", indexes=("station_mac",), index_types=("PhysAddress48",)),
     ],
 }
 

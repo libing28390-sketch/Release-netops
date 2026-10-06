@@ -26,6 +26,13 @@ def test_h3c_station_associate_table_maps_fixed_mac_index_and_requested_columns(
         probe._H3C_DOT11_STATION_SSID_OID: "corp-fixture",
     }
     rows = {oid: [(suffix, value)] for oid, value in station_values.items()}
+    ap_id = "AP-01"
+    ap_suffix = ".".join(str(value) for value in (len(ap_id), *ap_id.encode("ascii")))
+    rows[f"{probe._H3C_DOT11_AP_OBJECT_TABLE}.8"] = [(ap_suffix, ap_id)]
+    rows[probe._H3C_DOT11_STATION_AP_ID_OID] = [(suffix, ap_id)]
+    rows[probe._H3C_DOT11_STATION_RADIO_ID_OID] = [(suffix, "1")]
+    rows[probe._H3C_DOT11_STATION_WLAN_ID_OID] = [(suffix, "2")]
+    rows[probe._H3C_DOT11_STATION_VLAN_OID] = [(suffix, "200")]
     calls: list[str] = []
 
     async def no_scalars(*_args):
@@ -56,19 +63,67 @@ def test_h3c_station_associate_table_maps_fixed_mac_index_and_requested_columns(
     for attribute, expected in expected_values.items():
         sensor = by_attribute[attribute]
         assert sensor["index"] == [0, 17, 34, 51, 68, 85]
-        assert sensor["index_labels"] == {}
+        assert sensor["index_labels"]["ap_name"] == ap_id
+        assert sensor["index_labels"]["radio_id"] == "1"
+        assert sensor["index_labels"]["wlan_id"] == "2"
+        assert sensor["index_labels"]["vlan_id"] == "200"
         assert sensor["raw_value"] == expected
         assert sensor["value"] is None
         assert sensor["quality"] == "good"
         assert sensor["metadata"]["station_mac"] == station_mac
         assert sensor["metadata"]["station_attributes"] == {attribute: expected}
-        assert expected not in sensor["index_labels"].values()
+        assert "username" not in sensor["index_labels"]
 
+    current_station_sensors = [
+        {
+            **sensor,
+            "tenant_id": "tenant-fixture",
+            "asset_id": "asset-fixture",
+            "device_id": "device-fixture",
+            "last_quality": "good",
+            "last_value": sensor["value"],
+            "last_raw_value": sensor["raw_value"],
+            "last_success": "2026-10-06T12:00:00Z",
+            "discovery_status": "present",
+            "lifecycle_status": "active",
+            "enabled": True,
+        }
+        for sensor in station_sensors
+    ]
     metrics_text = inventory.render_hardware_metrics(
-        station_sensors, {"device_id": "device-fixture"},
+        current_station_sensors,
+        {
+            "device_id": "device-fixture", "tenant_id": "tenant-fixture",
+            "asset_id": "asset-fixture", "hostname": "wlc-fixture",
+            "site_name": "site-fixture", "vendor": "h3c", "platform": "comware",
+            "role": "wireless_controller",
+        },
     )
-    assert all(expected not in metrics_text for expected in expected_values.values())
-    assert "station_mac" not in metrics_text
+    station_metric_lines = [
+        line for line in metrics_text.splitlines()
+        if line.startswith("nexora_wireless_station_info{")
+    ]
+    assert len(station_metric_lines) == 1
+    station_metric = station_metric_lines[0]
+    assert station_metric.endswith(" 1")
+    for label in (
+        'tenant_id="tenant-fixture"', 'asset_id="asset-fixture"',
+        'device_id="device-fixture"', 'hostname="wlc-fixture"',
+        'site_name="site-fixture"', 'vendor="h3c"', 'platform="comware"',
+        'role="wireless_controller"', f'station_mac="{station_mac}"',
+        'station_ip="192.0.2.50"', 'ap_name="AP-01"', 'ssid="corp-fixture"',
+        'radio_id="1"', 'wlan_id="2"', 'vlan_id="200"',
+    ):
+        assert label in station_metric
+    assert "operator-fixture" not in metrics_text
+    assert "username=" not in metrics_text
+    assert "tx_rate_set=" not in metrics_text
+
+    stale_metrics_text = inventory.render_hardware_metrics(
+        [{**sensor, "last_quality": "stale"} for sensor in current_station_sensors],
+        {"device_id": "device-fixture"},
+    )
+    assert "nexora_wireless_station_info{" not in stale_metrics_text
 
     category = next(
         item for item in result["category_results"]
@@ -84,9 +139,59 @@ def test_h3c_station_catalog_registers_station_mib_and_table_walk_without_scalar
     config = module["variant"]["oid_config"]
     assert "HH3C-DOT11-STATION-MIB" in config["mib_sources"]
     assert "https://www.h3c.com/en/d_202604/2834085_294551_0.htm" in config["source_urls"]
+    assert "https://www.h3c.com/en/d_202606/2850312_294551_0.htm" in config["source_urls"]
     assert probe._H3C_DOT11_STATION_TABLE in config["walk"]
+    assert probe._H3C_DOT11_STATION_AP_RELATION_TABLE in config["walk"]
     assert not any(oid.endswith(".0") for oid in config["walk"])
     assert all(oid.endswith(".0") for oid in config["get"])
+    catalog_metrics = {metric["name"]: metric for metric in config["metrics"]}
+    for metric_name in (
+        "hh3cDot11StationVlanId", "hh3cDot11CurrAPID",
+        "hh3cDot11CurrRadioID", "hh3cDot11CurrWlanID",
+    ):
+        assert catalog_metrics[metric_name]["indexes"][0]["labelname"] == "station_mac"
+
+
+def test_h3c_station_metric_keeps_empty_ap_name_when_relation_is_missing(monkeypatch):
+    suffix = "0.17.34.51.68.85"
+    rows = {
+        probe._H3C_DOT11_STATION_IP_OID: [(suffix, "192.0.2.50")],
+        probe._H3C_DOT11_STATION_SSID_OID: [(suffix, "corp-fixture")],
+    }
+
+    async def no_scalars(*_args):
+        return {}
+
+    monkeypatch.setattr(probe, "_get_many", no_scalars)
+    result = asyncio.run(probe._probe_h3c_comware_wireless(
+        "192.0.2.1", "public", 161,
+        rule={"id": "h3c-wireless-test", "source_commit": "fixture"},
+        version="2c", walk_func=_walk_from(rows),
+    ))
+    station_sensors = [
+        {
+            **sensor,
+            "last_quality": "good",
+            "last_raw_value": sensor["raw_value"],
+            "last_success": "2026-10-06T12:00:00Z",
+            "discovery_status": "present",
+            "lifecycle_status": "active",
+            "enabled": True,
+        }
+        for sensor in result["sensors"]
+        if sensor["component_class"] == "wireless_station"
+    ]
+    metrics_text = inventory.render_hardware_metrics(
+        station_sensors, {"device_id": "device-fixture"},
+    )
+    station_metric = next(
+        line for line in metrics_text.splitlines()
+        if line.startswith("nexora_wireless_station_info{")
+    )
+    assert 'ap_name=""' in station_metric
+    assert 'radio_id=""' in station_metric
+    assert 'wlan_id=""' in station_metric
+    assert 'vlan_id=""' in station_metric
 
 
 def test_h3c_radio_table_collects_documented_type_status_ssid_and_signal_columns(monkeypatch):

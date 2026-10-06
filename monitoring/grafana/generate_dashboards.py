@@ -894,6 +894,33 @@ def make_network_variables(multi_device=True, include_all_device=True, device_la
         ),
     ]
 
+
+def make_wireless_variables():
+    """Limit the wireless dashboard selectors to monitored AC controllers."""
+    controller_targets = 'up{job="network_snmp",role="wireless_controller"'
+    return [
+        make_query_variable(
+            "site", "站点",
+            f'query_result(count by (site_name) ({controller_targets}}}))',
+            regex='/.*site_name="([^\"]+)".*/',
+        ),
+        make_query_variable(
+            "vendor", "厂商",
+            f'query_result(count by (vendor) ({controller_targets},site_name=~"$site"}}))',
+            regex='/.*vendor="([^\"]+)".*/',
+        ),
+        make_query_variable(
+            "role", "角色",
+            f'query_result(count by (role) ({controller_targets},site_name=~"$site",vendor=~"$vendor"}}))',
+            regex='/.*role="([^\"]+)".*/',
+        ),
+        make_query_variable(
+            "device", "AC 控制器",
+            f'query_result(count by (hostname) ({controller_targets},site_name=~"$site",vendor=~"$vendor",role=~"$role"}}))',
+            regex='/.*hostname="([^\"]+)".*/',
+        ),
+    ]
+
 def make_interface_variables(
     multi_device=True,
     include_all_device=True,
@@ -1946,6 +1973,7 @@ def build_device_dashboard():
 def build_wireless_dashboard():
     sel = f'{NETWORK_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
     inventory_sel = f'{HARDWARE_INVENTORY_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
+    ac_sel = f'{NETWORK_JOB},role="wireless_controller",site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
     # The wireless dashboard combines SNMP-exporter series and normalized
     # hardware-inventory series. Their job labels differ, so device identity
     # must not include `job` when de-duplicating or joining these sources.
@@ -1986,11 +2014,17 @@ def build_wireless_dashboard():
         f"(({ap_state_detail_coverage}) * 0)"
     )
     clients = wireless_clients_by_device(sel, inventory_sel)
+    ac_total = f"count(count by ({device_labels}) (up{{{ac_sel}}}))"
+    ac_online = (
+        f"count(count by ({device_labels}) (up{{{ac_sel}}} == 1)) or on() "
+        f"((count(count by ({device_labels}) (up{{{ac_sel}}})) > 0) * 0)"
+    )
     missing_wireless_data_note = "暂无数据不代表数量为 0。"
     ap_total_description = f"统计已采到状态的 AP，不等于控制器配置总数。{missing_wireless_data_note}"
     ap_online_description = "优先按 AP 状态统计；明细不完整时采用控制器上报数。"
     ap_offline_description = "只统计明确离线的 AP，不用总数减在线数推算。"
     ap_client_rows = f'topk(20, nexora_wireless_sensor_value{{{inventory_sel},component_class="wireless_access_point",sensor_class="clients"}})'
+    station_rows = f'topk(100, nexora_wireless_station_info{{{inventory_sel}}})'
     radio_utilization_labels = "site_name,vendor,role,hostname,ap_id,ap_name,radio_id"
     radio_utilization_samples = f'nexora_wireless_sensor_value{{{inventory_sel},component_class="wireless_radio",sensor_class="utilization"}}'
     radio_utilization_rows = f"max by ({radio_utilization_labels}) ({radio_utilization_samples})"
@@ -2002,12 +2036,14 @@ def build_wireless_dashboard():
     ssid_client_rows = f"topk(20, {wireless_ssid_clients_by_device(inventory_sel)})"
 
     panels = [
-        stat_panel(1, "采集 AP", f"sum({ap_state_count})", 0, 0, 4, 3, color=NEUTRAL_COLOR, description=ap_total_description, no_value=NO_VALUE_TEXT),
-        stat_panel(2, "在线 AP", f"sum({ap_online})", 4, 0, 4, 3, color=HEALTHY_COLOR, description=ap_online_description, no_value=NO_VALUE_TEXT),
-        stat_panel(3, "明确离线 AP", f"sum({ap_offline})", 8, 0, 4, 3, thresholds=OFFLINE_COUNT_THRESHOLDS, description=ap_offline_description, no_value=NO_VALUE_TEXT),
-        stat_panel(4, "控制器汇总在线终端数", f"sum({clients})", 12, 0, 4, 3, color=NEUTRAL_COLOR, no_value=NO_VALUE_TEXT),
-        stat_panel(5, "高利用率 Radio", high_utilization_radio_count, 16, 0, 4, 3, thresholds=OFFLINE_COUNT_THRESHOLDS, description="统计利用率达到 75% 的 Radio，仅用于定位热点。", no_value=NO_VALUE_TEXT),
-        stat_panel(6, "平均 Radio 利用率", f"avg({radio_utilization_rows})", 20, 0, 4, 3, unit="percent", thresholds=UTILIZATION_THRESHOLDS, no_value=NO_VALUE_TEXT),
+        stat_panel(1, "采集 AP", f"sum({ap_state_count})", 0, 0, 3, 3, color=NEUTRAL_COLOR, description=ap_total_description, no_value=NO_VALUE_TEXT),
+        stat_panel(2, "在线 AP", f"sum({ap_online})", 3, 0, 3, 3, color=HEALTHY_COLOR, description=ap_online_description, no_value=NO_VALUE_TEXT),
+        stat_panel(3, "明确离线 AP", f"sum({ap_offline})", 6, 0, 3, 3, thresholds=OFFLINE_COUNT_THRESHOLDS, description=ap_offline_description, no_value=NO_VALUE_TEXT),
+        stat_panel(4, "控制器汇总在线终端数", f"sum({clients})", 9, 0, 3, 3, color=NEUTRAL_COLOR, no_value=NO_VALUE_TEXT),
+        stat_panel(5, "高利用率 Radio", high_utilization_radio_count, 12, 0, 3, 3, thresholds=OFFLINE_COUNT_THRESHOLDS, description="统计利用率达到 75% 的 Radio，仅用于定位热点。", no_value=NO_VALUE_TEXT),
+        stat_panel(6, "平均 Radio 利用率", f"avg({radio_utilization_rows})", 15, 0, 3, 3, unit="percent", thresholds=UTILIZATION_THRESHOLDS, no_value=NO_VALUE_TEXT),
+        stat_panel(14, "纳管 AC", ac_total, 18, 0, 3, 3, color=NEUTRAL_COLOR, description="按无线控制器设备统计纳管 AC 数；包含当前 SNMP 不可达但仍有 up 序列的控制器。", no_value=NO_VALUE_TEXT),
+        stat_panel(15, "在线 AC", ac_online, 21, 0, 3, 3, color=HEALTHY_COLOR, description="只统计 up 值为 1 的无线控制器；目标存在但全部离线时显示 0。", no_value=NO_VALUE_TEXT),
         row_panel(900, "趋势与 AP 状态", 3),
         timeseries_panel(7, "在线 AP 与关联终端趋势", [
             {"expr": f"sum({ap_online})", "legendFormat": "在线 AP", "refId": "A"},
@@ -2043,7 +2079,7 @@ def build_wireless_dashboard():
             0, 12, 14, 9, unit="short",
             transformations=clean_organize_transformation(
                 "状态",
-                extra_renames={"ap_name": "AP 名称", "ap_ip": "AP 管理 IP", "ap_model": "型号", "state_description": "状态说明"},
+                extra_renames={"ap_name": "AP 名称", "ap_ip": "AP 管理 IP", "ap_model": "型号", "state_description": "状态说明", "hostname": "所属 AC"},
                 extra_indices={"ap_name": 0, "state_description": 1, "ap_ip": 2, "hostname": 3, "vendor": 4, "ap_model": 5},
                 extra_excludes={"Value": True, "source_type": True, "measurement_type": True, "component_class": True, "source_id": True, "sensor_key": True, "window": True, "raw_state": True, "device_id": True, "ap_id": True, "ap_mac": True, "ap_serial": True, "platform": True, "discovery_status": True, "lifecycle_status": True},
             ),
@@ -2057,7 +2093,7 @@ def build_wireless_dashboard():
             14, 12, 10, 9, unit="short",
             transformations=clean_organize_transformation(
                 "客户端数",
-                extra_renames={"ap_name": "AP 名称", "ap_ip": "AP 管理 IP", "ap_model": "型号"},
+                extra_renames={"ap_name": "AP 名称", "ap_ip": "AP 管理 IP", "ap_model": "型号", "hostname": "所属 AC"},
                 extra_indices={"ap_name": 0, "hostname": 1, "vendor": 2, "ap_ip": 3, "ap_model": 4, "Value": 5},
                 extra_excludes={"source_type": True, "measurement_type": True, "component_class": True, "source_id": True, "sensor_key": True, "window": True, "unit": True, "device_id": True, "ap_id": True, "ap_mac": True, "ap_serial": True, "platform": True, "discovery_status": True, "lifecycle_status": True},
             ),
@@ -2077,7 +2113,7 @@ def build_wireless_dashboard():
             0, 31, 12, 8, unit="short",
             transformations=clean_organize_transformation(
                 "客户端数",
-                extra_renames={"ap_name": "AP 名称", "radio_id": "Radio", "ssid": "SSID", "hostname": "设备名称", "wlan_id": "WLAN ID"},
+                extra_renames={"ap_name": "AP 名称", "radio_id": "Radio", "ssid": "SSID", "hostname": "所属 AC", "wlan_id": "WLAN ID"},
                 extra_excludes={"source_type": True, "measurement_type": True, "component_class": True, "source_id": True, "sensor_key": True, "window": True, "device_id": True, "ap_id": True, "ap_mac": True, "ap_serial": True, "platform": True, "unit": True},
             ),
             description="按 AP 无线单元展示已采集的 BSS 客户端数；没有数据不代表数量为 0。",
@@ -2088,6 +2124,57 @@ def build_wireless_dashboard():
             12, 31, 12, 8, unit="short",
             transformations=clean_organize_transformation("客户端数", extra_renames={"ssid": "SSID"}),
             description="优先采用控制器 SSID 统计，缺失时按同名 BSS 汇总；暂无数据不代表数量为 0。",
+        ),
+        row_panel(905, "AP 下在线终端", 40),
+        table_panel(
+            16, "AP 下在线终端明细",
+            station_rows,
+            0, 41, 24, 9, value_col_name="在线状态",
+            transformations=clean_organize_transformation(
+                "在线状态",
+                extra_renames={
+                    "hostname": "所属 AC",
+                    "station_mac": "终端 MAC",
+                    "station_ip": "终端 IP",
+                    "ap_name": "关联 AP",
+                    "ssid": "SSID",
+                    "radio_id": "Radio",
+                    "wlan_id": "WLAN ID",
+                    "vlan_id": "VLAN ID",
+                },
+                extra_indices={
+                    "station_mac": 0,
+                    "station_ip": 1,
+                    "ap_name": 2,
+                    "ssid": 3,
+                    "hostname": 4,
+                    "radio_id": 5,
+                    "wlan_id": 6,
+                    "vlan_id": 7,
+                    "Value": 8,
+                },
+                extra_excludes={
+                    "source_type": True,
+                    "measurement_type": True,
+                    "component_class": True,
+                    "source_id": True,
+                    "sensor_key": True,
+                    "window": True,
+                    "unit": True,
+                    "device_id": True,
+                    "instance": True,
+                    "site_name": True,
+                    "vendor": True,
+                    "role": True,
+                    "ap_id": True,
+                    "platform": True,
+                    "discovery_status": True,
+                    "lifecycle_status": True,
+                    "job": True,
+                },
+            ),
+            extra_value_mappings={"在线状态": [{"type": "value", "options": {"1": {"text": "在线", "color": HEALTHY_COLOR}}}]},
+            description="显示 AC 当前采集到的在线终端及 AP 归属，仅展示 MAC/IP/SSID 和无线接口字段，不含用户名。",
         ),
     ]
 
@@ -2106,7 +2193,7 @@ def build_wireless_dashboard():
         "schemaVersion": 39,
         "tags": ["nexora", "network", "wireless"],
         "templating": {
-            "list": make_network_variables()
+            "list": make_wireless_variables()
         },
         "time": {"from": "now-15m", "to": "now"},
         "timezone": "browser",

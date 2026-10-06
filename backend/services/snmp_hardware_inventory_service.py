@@ -48,6 +48,7 @@ _FAMILY_HELP = {
     "nexora_hw_optical_power_dbm": "Optical receive or transmit power in dBm.",
     "nexora_hw_sensor_value": "Numeric LibreNMS sensor value without Nexora unit conversion.",
     "nexora_wireless_sensor_value": "Current LibreNMS-compatible wireless sensor value for one controller, AP, radio, or BSS entity.",
+    "nexora_wireless_station_info": "Current associated H3C wireless station identity and access-point relation.",
 }
 
 
@@ -864,11 +865,11 @@ def _presence_metric_value(description: str) -> str | None:
     return None
 
 
-def _labels_text(labels: Mapping[str, Any]) -> str:
+def _labels_text(labels: Mapping[str, Any], *, include_empty: bool = False) -> str:
     entries = [
         f'{name}="{_prom_escape(value)}"'
         for name, value in sorted(labels.items())
-        if value is not None and str(value) != ""
+        if value is not None and (include_empty or str(value) != "")
     ]
     return "{" + ",".join(entries) + "}"
 
@@ -883,9 +884,18 @@ def render_hardware_metrics(sensors: Sequence[Mapping[str, Any]], device_labels:
         raise HardwareInventoryError("device_labels must be a mapping")
     allowed_device_labels = ("tenant_id", "asset_id", "device_id", "hostname", "site_name", "vendor", "platform", "role")
     lines_by_family: dict[str, list[tuple[str, str]]] = {}
+    wireless_station_samples: dict[tuple[str, ...], dict[str, Any]] = {}
 
-    def add(family: str, labels: Mapping[str, Any], value: str) -> None:
-        lines_by_family.setdefault(family, []).append((_labels_text(labels), value))
+    def add(
+        family: str,
+        labels: Mapping[str, Any],
+        value: str,
+        *,
+        include_empty: bool = False,
+    ) -> None:
+        lines_by_family.setdefault(family, []).append((
+            _labels_text(labels, include_empty=include_empty), value,
+        ))
 
     for sensor in sensors:
         if not isinstance(sensor, Mapping):
@@ -952,6 +962,61 @@ def render_hardware_metrics(sensors: Sequence[Mapping[str, Any]], device_labels:
             )
 
         measurement_type = str(sensor.get("measurement_type") or "").lower()
+        if (
+            measurement_type == "wireless_station_attribute"
+            and str(sensor.get("source_type") or "").lower() == "h3c_wireless"
+            and str(sensor.get("component_class") or "").lower() == "wireless_station"
+            and quality == "good"
+            and str(sensor.get("discovery_status") or "present").lower() == "present"
+        ):
+            last_success = _epoch_seconds(sensor.get("last_success"))
+            station_mac = _clean_text(
+                metadata.get("station_mac"), field="station MAC", limit=32,
+            )
+            if last_success is not None and station_mac:
+                station_context = {
+                    name: base[name]
+                    for name in allowed_device_labels
+                    if base.get(name) not in (None, "")
+                }
+                station_identity = tuple(
+                    str(station_context.get(name) or "")
+                    for name in allowed_device_labels
+                ) + (station_mac,)
+                station = wireless_station_samples.setdefault(station_identity, {
+                    "context": station_context,
+                    "fields": {
+                        "station_mac": station_mac,
+                        "station_ip": "",
+                        "ap_name": "",
+                        "ssid": "",
+                        "radio_id": "",
+                        "wlan_id": "",
+                        "vlan_id": "",
+                    },
+                    "field_timestamps": {},
+                })
+                fields = station["fields"]
+                field_timestamps = station["field_timestamps"]
+                for field_name in ("ap_name", "radio_id", "wlan_id", "vlan_id"):
+                    label_value = index_labels.get(field_name)
+                    if label_value is None:
+                        continue
+                    if last_success >= field_timestamps.get(field_name, float("-inf")):
+                        fields[field_name] = _clean_text(
+                            label_value, field=field_name, limit=120,
+                        )
+                        field_timestamps[field_name] = last_success
+                series_variant = str(sensor.get("series_variant") or "").lower()
+                field_name = {"station_ip": "station_ip", "ssid": "ssid"}.get(series_variant)
+                if field_name:
+                    raw_value = sensor.get("last_raw_value")
+                    if raw_value is not None and last_success >= field_timestamps.get(field_name, float("-inf")):
+                        fields[field_name] = _clean_text(
+                            raw_value, field=field_name, limit=300,
+                        )
+                        field_timestamps[field_name] = last_success
+
         family = _METRIC_FAMILIES.get(measurement_type)
         if family and quality == "good":
             value = _metric_value(sensor.get("last_value"))
@@ -974,6 +1039,12 @@ def render_hardware_metrics(sensors: Sequence[Mapping[str, Any]], device_labels:
                         if presence_value is not None:
                             add("nexora_hw_component_present", sample_labels, presence_value)
                 add(family, sample_labels, value)
+
+    for _station_identity, station in sorted(wireless_station_samples.items()):
+        labels = {**station["context"], **station["fields"]}
+        station_mac = station["fields"]["station_mac"]
+        labels["station_mac"] = station_mac
+        add("nexora_wireless_station_info", labels, "1", include_empty=True)
 
     output: list[str] = []
     for family in sorted(lines_by_family):

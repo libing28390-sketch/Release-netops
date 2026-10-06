@@ -31,7 +31,7 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
+        "w": 3,
         "x": 0,
         "y": 1
       },
@@ -109,8 +109,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 4,
+        "w": 3,
+        "x": 3,
         "y": 1
       },
       "fieldConfig": {
@@ -187,8 +187,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 8,
+        "w": 3,
+        "x": 6,
         "y": 1
       },
       "fieldConfig": {
@@ -273,8 +273,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 12,
+        "w": 3,
+        "x": 9,
         "y": 1
       },
       "fieldConfig": {
@@ -350,8 +350,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 16,
+        "w": 3,
+        "x": 12,
         "y": 1
       },
       "fieldConfig": {
@@ -436,8 +436,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 20,
+        "w": 3,
+        "x": 15,
         "y": 1
       },
       "fieldConfig": {
@@ -514,6 +514,162 @@
           "instant": true
         }
       ]
+    },
+    {
+      "id": 14,
+      "title": "纳管 AC",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 18,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#64748B",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "count(count by (site_name,vendor,role,hostname) (up{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}))",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "按无线控制器设备统计纳管 AC 数；包含当前 SNMP 不可达但仍有 up 序列的控制器。"
+    },
+    {
+      "id": 15,
+      "title": "在线 AC",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 21,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#22C55E",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "count(count by (site_name,vendor,role,hostname) (up{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1)) or on() ((count(count by (site_name,vendor,role,hostname) (up{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"})) > 0) * 0)",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "只统计 up 值为 1 的无线控制器；目标存在但全部离线时显示 0。"
     },
     {
       "id": 900,
@@ -1094,7 +1250,7 @@
             },
             "renameByName": {
               "sysName": "设备名称",
-              "hostname": "设备名称",
+              "hostname": "所属 AC",
               "instance": "采集目标",
               "site_name": "站点",
               "ifName": "接口全称",
@@ -1242,7 +1398,7 @@
             },
             "renameByName": {
               "sysName": "设备名称",
-              "hostname": "设备名称",
+              "hostname": "所属 AC",
               "instance": "采集目标",
               "site_name": "站点",
               "ifName": "接口全称",
@@ -1475,7 +1631,7 @@
             },
             "renameByName": {
               "sysName": "设备名称",
-              "hostname": "设备名称",
+              "hostname": "所属 AC",
               "instance": "采集目标",
               "site_name": "站点",
               "ifName": "接口全称",
@@ -1625,6 +1781,173 @@
         }
       ],
       "description": "优先采用控制器 SSID 统计，缺失时按同名 BSS 汇总；暂无数据不代表数量为 0。"
+    },
+    {
+      "id": 905,
+      "title": "AP 下在线终端",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 42
+      },
+      "panels": []
+    },
+    {
+      "id": 16,
+      "title": "AP 下在线终端明细",
+      "type": "table",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 43
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "在线状态"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "1": {
+                        "text": "在线",
+                        "color": "#22C55E"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "footer": {
+          "show": false
+        },
+        "enablePagination": true
+      },
+      "targets": [
+        {
+          "expr": "topk(100, nexora_wireless_station_info{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"})",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "ifIndex": true,
+              "asset_id": true,
+              "nexora_asset_id": true,
+              "nexora_hostname": true,
+              "nexora_module": true,
+              "nexora_platform": true,
+              "nexora_role": true,
+              "nexora_site_id": true,
+              "nexora_site_name": true,
+              "nexora_tenant_id": true,
+              "nexora_vendor": true,
+              "job": true,
+              "tenant_id": true,
+              "site_id": true,
+              "platform": true,
+              "sysName": true,
+              "nexora_interface_role": true,
+              "source_type": true,
+              "measurement_type": true,
+              "component_class": true,
+              "source_id": true,
+              "sensor_key": true,
+              "window": true,
+              "unit": true,
+              "device_id": true,
+              "instance": true,
+              "site_name": true,
+              "vendor": true,
+              "role": true,
+              "ap_id": true,
+              "discovery_status": true,
+              "lifecycle_status": true
+            },
+            "indexByName": {
+              "site_name": 0,
+              "hostname": 4,
+              "instance": 2,
+              "ifName": 3,
+              "ifDescr": 4,
+              "vendor": 5,
+              "role": 6,
+              "interface_role": 7,
+              "utilization_warn_pct": 8,
+              "utilization_high_pct": 9,
+              "utilization_critical_pct": 10,
+              "Value": 8,
+              "station_mac": 0,
+              "station_ip": 1,
+              "ap_name": 2,
+              "ssid": 3,
+              "radio_id": 5,
+              "wlan_id": 6,
+              "vlan_id": 7
+            },
+            "renameByName": {
+              "sysName": "设备名称",
+              "hostname": "所属 AC",
+              "instance": "采集目标",
+              "site_name": "站点",
+              "ifName": "接口全称",
+              "ifDescr": "接口描述",
+              "vendor": "厂商",
+              "role": "角色",
+              "interface_role": "接口用途",
+              "utilization_warn_pct": "预警阈值 (%)",
+              "utilization_high_pct": "高位阈值 (%)",
+              "utilization_critical_pct": "严重阈值 (%)",
+              "Value": "在线状态",
+              "station_mac": "终端 MAC",
+              "station_ip": "终端 IP",
+              "ap_name": "关联 AP",
+              "ssid": "SSID",
+              "radio_id": "Radio",
+              "wlan_id": "WLAN ID",
+              "vlan_id": "VLAN ID"
+            }
+          }
+        }
+      ],
+      "description": "显示 AC 当前采集到的在线终端及 AP 归属，仅展示 MAC/IP/SSID 和无线接口字段，不含用户名。"
     }
   ],
   "refresh": "30s",
@@ -1647,14 +1970,14 @@
             "$__all"
           ]
         },
-        "definition": "query_result(count by (site_name) (up{job=\"network_snmp\"}))",
+        "definition": "query_result(count by (site_name) (up{job=\"network_snmp\",role=\"wireless_controller\"}))",
         "includeAll": true,
         "label": "站点",
         "multi": true,
         "name": "site",
         "options": [],
         "query": {
-          "query": "query_result(count by (site_name) (up{job=\"network_snmp\"}))",
+          "query": "query_result(count by (site_name) (up{job=\"network_snmp\",role=\"wireless_controller\"}))",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -1672,14 +1995,14 @@
             "$__all"
           ]
         },
-        "definition": "query_result(count by (vendor) (up{job=\"network_snmp\",site_name=~\"$site\"}))",
+        "definition": "query_result(count by (vendor) (up{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\"}))",
         "includeAll": true,
         "label": "厂商",
         "multi": true,
         "name": "vendor",
         "options": [],
         "query": {
-          "query": "query_result(count by (vendor) (up{job=\"network_snmp\",site_name=~\"$site\"}))",
+          "query": "query_result(count by (vendor) (up{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\"}))",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -1697,14 +2020,14 @@
             "$__all"
           ]
         },
-        "definition": "query_result(count by (role) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\"}))",
+        "definition": "query_result(count by (role) (up{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\"}))",
         "includeAll": true,
         "label": "角色",
         "multi": true,
         "name": "role",
         "options": [],
         "query": {
-          "query": "query_result(count by (role) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\"}))",
+          "query": "query_result(count by (role) (up{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\"}))",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -1722,14 +2045,14 @@
             "$__all"
           ]
         },
-        "definition": "query_result(count by (hostname) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\"}))",
+        "definition": "query_result(count by (hostname) (up{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\"}))",
         "includeAll": true,
-        "label": "设备",
+        "label": "AC 控制器",
         "multi": true,
         "name": "device",
         "options": [],
         "query": {
-          "query": "query_result(count by (hostname) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\"}))",
+          "query": "query_result(count by (hostname) (up{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\"}))",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,

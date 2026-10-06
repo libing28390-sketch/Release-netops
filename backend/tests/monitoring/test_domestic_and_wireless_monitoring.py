@@ -289,6 +289,7 @@ def test_wireless_dashboard_uses_hardware_inventory_job_and_joins_by_device():
         "Radio 利用率 Top 10",
         "AP 无线单元（BSS）客户端 Top 20",
         "SSID 客户端 Top 20",
+        "AP 下在线终端明细",
     ):
         expression = query(title)
         assert 'job="platform_hardware_inventory"' in expression
@@ -316,17 +317,54 @@ def test_wireless_dashboard_uses_hardware_inventory_job_and_joins_by_device():
     assert 'job="platform_hardware_inventory"' in clients_expression
     assert "unless on(site_name,vendor,role,hostname)" in clients_expression
 
+    variables = {item["name"]: item for item in dashboard["templating"]["list"]}
+    assert variables["device"]["label"] == "AC 控制器"
+    assert variables["device"]["query"]["query"].count('role="wireless_controller"') == 1
+    assert variables["role"]["query"]["query"].count('role="wireless_controller"') == 1
+    assert all(
+        'role="wireless_controller"' in variables[name]["query"]["query"]
+        for name in ("site", "vendor", "role", "device")
+    )
+    assert not any(
+        term in variables[name]["query"]["query"].lower()
+        for name in variables
+        for term in ("switch", "firewall", "router")
+    )
+
+    total_ac_query = panels["纳管 AC"]["targets"][0]["expr"]
+    online_ac_query = panels["在线 AC"]["targets"][0]["expr"]
+    assert "count by (site_name,vendor,role,hostname)" in total_ac_query
+    assert 'role="wireless_controller"' in total_ac_query
+    assert 'up{' in online_ac_query and '== 1' in online_ac_query
+    assert "* 0" in online_ac_query  # Existing but fully-down AC targets show 0.
+
+    station_panel = panels["AP 下在线终端明细"]
+    assert 'nexora_wireless_station_info{' in station_panel["targets"][0]["expr"]
+    assert 'hostname=~"$device"' in station_panel["targets"][0]["expr"]
+    assert "username" not in station_panel["targets"][0]["expr"].lower()
+    assert station_panel["transformations"][0]["options"]["renameByName"]["hostname"] == "所属 AC"
+    assert station_panel["transformations"][0]["options"]["renameByName"]["station_mac"] == "终端 MAC"
+    station_excluded_fields = station_panel["transformations"][0]["options"]["excludeByName"]
+    assert all(station_excluded_fields[field] for field in ("site_name", "vendor", "role", "instance"))
+    panels_by_id = {panel["id"]: panel for panel in dashboard["panels"]}
+    for panel_id in (9, 10):
+        assert panels_by_id[panel_id]["transformations"][0]["options"]["renameByName"]["hostname"] == "所属 AC"
+
 
 def test_wireless_dashboard_homepage_groups_actual_metrics_by_wireless_layer():
     dashboard = build_wireless_dashboard()
     panels = {panel["id"]: panel for panel in dashboard["panels"]}
 
-    for panel_id in range(1, 7):
+    for panel_id in (*range(1, 7), 14, 15):
         panel = panels[panel_id]
         assert panel["type"] == "stat"
-        assert panel["gridPos"]["w"] == 4
+        assert panel["gridPos"]["w"] == 3
         assert panel["gridPos"]["h"] == 4
         assert panel["fieldConfig"]["defaults"]["noValue"] == NO_VALUE_TEXT
+
+    assert panels[14]["title"] == "纳管 AC"
+    assert panels[15]["title"] == "在线 AC"
+    assert panels[16]["type"] == "table"
 
     assert panels[5]["title"] == "高利用率 Radio"
     assert 'sensor_class="utilization"' in panels[5]["targets"][0]["expr"]
@@ -362,6 +400,7 @@ def test_wireless_dashboard_homepage_groups_actual_metrics_by_wireless_layer():
         "AP 明细",
         "Radio 热点",
         "SSID / BSS 客户端明细",
+        "AP 下在线终端",
     }
     assert "无线控制器" not in " ".join(panel["title"] for panel in dashboard["panels"])
 
@@ -532,6 +571,24 @@ def test_dashboard_device_variables_use_current_up_targets():
         with open(os.path.join(dashboard_dir, filename), "r", encoding="utf-8") as dashboard_file:
             dashboard = json.load(dashboard_file)
         variables = {variable["name"]: variable for variable in dashboard["templating"]["list"]}
+        if filename == "nexora-network-wireless.json":
+            for variable_name, label in (
+                ("site", "site_name"),
+                ("vendor", "vendor"),
+                ("role", "role"),
+                ("device", "hostname"),
+            ):
+                variable = variables[variable_name]
+                query = variable["query"]["query"]
+                assert variable["definition"] == query
+                assert query.startswith(
+                    f'query_result(count by ({label}) (up{{job="network_snmp",role="wireless_controller"'
+                )
+                assert variable["regex"] == network_variable_specs[variable_name][1]
+                assert "switch" not in query.lower()
+                assert "firewall" not in query.lower()
+            assert variables["device"]["label"] == "AC 控制器"
+            continue
         if filename == "nexora-network-device.json":
             asset_variable = variables["asset_id"]
             asset_query = asset_variable["query"]["query"]
