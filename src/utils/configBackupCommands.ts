@@ -35,7 +35,7 @@ const VENDOR_ALIASES: Array<[string, string[]]> = [
 
 const PLATFORM_ALIASES: Array<[string, string[]]> = [
   ['cisco', ['cisco_ios', 'cisco_nxos']],
-  ['huawei', ['huawei_vrp', 'vrp']],
+  ['huawei', ['huawei_vrp', 'huawei_yunshan', 'huawei_yunshan_os', 'yunshan', 'yunshanos', 'yunshan_os', 'vrp']],
   ['h3c', ['h3c_comware', 'hp_comware', 'comware']],
   ['juniper', ['juniper_junos', 'junos']],
   ['arista', ['arista_eos', 'eos']],

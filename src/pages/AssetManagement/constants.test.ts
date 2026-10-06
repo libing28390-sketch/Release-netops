@@ -13,6 +13,7 @@ import {
   getPlatformsForVendor,
   isNetworkVendor,
   isValidVendorPlatform,
+  normalizeImportedPlatform,
   SERVER_ONLY_VENDOR_VALUES,
   SSH_ALGORITHM_PROFILE_OPTIONS,
 } from './constants';
@@ -58,6 +59,24 @@ describe('asset vendor catalog', () => {
     expect(isValidVendorPlatform('network_device', 'Cisco', 'cisco_ios')).toBe(true);
     expect(isValidVendorPlatform('network_device', 'Cisco', 'linux')).toBe(false);
     expect(isValidVendorPlatform('server', 'HP', 'linux')).toBe(true);
+  });
+
+  it('normalizes Huawei YunShan OS aliases to its independent platform key', () => {
+    expect(getPlatformsForVendor('Huawei').map(option => option.value)).toContain('huawei_yunshan');
+    expect(getPlatformsForVendor('Huawei').find(option => option.value === 'huawei_yunshan')).toMatchObject({
+      labelEn: 'Huawei YunShan OS',
+      labelZh: '华为 YunShan OS（云杉）',
+    });
+    const aliases = ['yunshan', 'yunshanos', 'YunShan OS', 'yunshan_os', 'huawei_yunshan_os',
+      'Huawei YunShan OS', 'huawei yunshan os', '华为 YunShan OS（云杉）', '华为 yunshan os (云杉)'];
+    expect(aliases.map(normalizeImportedPlatform)).toEqual(Array(aliases.length).fill('huawei_yunshan'));
+    expect(NETWORK_IMPORT_PLATFORM_VALUES).toEqual(expect.arrayContaining([
+      'huawei_yunshan', 'Huawei YunShan OS', 'yunshan', 'yunshanos', 'huawei_yunshan_os',
+    ]));
+    expect(IMPORT_VALUE_MAP.platform['华为 YunShan OS（云杉）']).toBe('huawei_yunshan');
+    expect(isValidVendorPlatform('network_device', 'Huawei', 'huawei_yunshan')).toBe(true);
+    expect(isValidVendorPlatform('network_device', 'Cisco', 'huawei_yunshan')).toBe(false);
+    expect(isValidVendorPlatform('network_device', 'Huawei', 'huawei_vrp')).toBe(true);
   });
 });
 

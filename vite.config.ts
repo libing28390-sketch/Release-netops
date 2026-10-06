@@ -40,6 +40,8 @@ export default defineConfig(({ mode }) => {
   // outside the currently reserved 5241-5340 range; VITE_PORT remains an
   // explicit override for deployments or another local environment.
   const frontendPort = Number(env.VITE_PORT || process.env.VITE_PORT || '5400');
+  const backendPort = process.env.BACKEND_PORT || (process.platform === 'win32' ? '15310' : '5310');
+  const apiTarget = process.env.VITE_API_TARGET || `http://127.0.0.1:${backendPort}`;
   return {
     plugins: [react(), tailwindcss(), buildProgressPlugin()],
     define: {
@@ -149,20 +151,20 @@ export default defineConfig(({ mode }) => {
       },
       proxy: {
         '/api': {
-          target: process.env.VITE_API_TARGET || 'http://127.0.0.1:5310',
+          target: apiTarget,
           changeOrigin: true,
           ws: true,
         },
         '/docs': {
-          target: process.env.VITE_API_TARGET || 'http://127.0.0.1:5310',
+          target: apiTarget,
           changeOrigin: true,
         },
         '/redoc': {
-          target: process.env.VITE_API_TARGET || 'http://127.0.0.1:5310',
+          target: apiTarget,
           changeOrigin: true,
         },
         '/openapi.json': {
-          target: process.env.VITE_API_TARGET || 'http://127.0.0.1:5310',
+          target: apiTarget,
           changeOrigin: true,
         },
       },

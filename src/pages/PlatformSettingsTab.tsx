@@ -234,6 +234,7 @@ const CONFIG_VENDOR_PLATFORM_OPTIONS: Record<string, Array<{ value: string; labe
   Huawei: [
     { value: 'huawei_vrp', label: 'Huawei VRP' },
     { value: 'huawei_vrpv8', label: 'Huawei VRP8' },
+    { value: 'huawei_yunshan', label: 'Huawei YunShan OS' },
     { value: 'huawei_smartax', label: 'Huawei SmartAX' },
     { value: 'huawei_usg', label: 'Huawei USG' },
   ],

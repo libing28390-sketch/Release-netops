@@ -346,7 +346,7 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
   const platform = normalizeAutomationPlatform(singleDevice?.platform);
   const isCisco = platform === 'cisco_ios' || platform === 'cisco_xe' || platform === 'cisco';
   const isNxos = platform === 'cisco_nxos';
-  const isHuawei = platform === 'huawei_vrp' || platform === 'huawei_vrpv8';
+  const isHuawei = platform === 'huawei_vrp' || platform === 'huawei_vrpv8' || platform === 'huawei_yunshan';
   const isH3c = platform === 'h3c_comware' || platform.startsWith('h3c_comware_v');
   const isJuniper = platform === 'juniper_junos';
   const isArista = platform === 'arista_eos';

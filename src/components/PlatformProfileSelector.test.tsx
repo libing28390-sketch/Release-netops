@@ -1,6 +1,8 @@
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { cleanup, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import PlatformProfileSelector from './PlatformProfileSelector';
+
+afterEach(() => cleanup());
 
 describe('PlatformProfileSelector', () => {
   it('only exposes profiles from the device vendor when vendor locking is enabled', () => {
@@ -36,5 +38,33 @@ describe('PlatformProfileSelector', () => {
     expect(vendor.disabled).toBe(true);
     expect(Array.from(vendor.options).map((option) => option.value)).toEqual(['', 'huawei']);
     expect(screen.getByText(/已限制为设备厂商：华为/)).toBeTruthy();
+  });
+
+  it('shows Huawei YunShan OS as one common-version family', () => {
+    render(
+      <PlatformProfileSelector
+        profiles={[
+          {
+            id: 'profile-huawei-yunshan',
+            platform_code: 'huawei_yunshan',
+            vendor: 'Huawei',
+            catalog_vendor: 'huawei',
+            platform_family: 'huawei_yunshan',
+            version: 'common',
+          },
+        ]}
+        value="profile-huawei-yunshan"
+        language="zh"
+        allowedVendor="Huawei"
+        requireVendor
+        onChange={vi.fn()}
+      />,
+    );
+
+    expect((screen.getByLabelText('平台类型') as HTMLSelectElement).value).toBe('huawei_yunshan');
+    expect(screen.getByRole('option', { name: '华为 YunShan OS（云杉）' })).toBeTruthy();
+    const version = screen.getByLabelText('平台版本') as HTMLSelectElement;
+    expect(version.value).toBe('common');
+    expect(Array.from(version.options).map((option) => option.value)).toEqual(['', 'common']);
   });
 });

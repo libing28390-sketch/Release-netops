@@ -35,7 +35,7 @@ _CLI_ERROR_PATTERNS = re.compile(
 )
 
 # 慢速平台（Huawei/H3C）不适合 fast_cli，需要保守的时序参数
-_SLOW_PLATFORMS = {'huawei_vrp', 'h3c_comware', 'ruijie_rgos', 'zte_zxros', 'raisecom_ros', 'maipu', 'dptech', 'dptech_ios', 'dptech_conplat', 'dptech_conplat_fw'}
+_SLOW_PLATFORMS = {'huawei_yunshan', 'huawei_vrp', 'h3c_comware', 'ruijie_rgos', 'zte_zxros', 'raisecom_ros', 'maipu', 'dptech', 'dptech_ios', 'dptech_conplat', 'dptech_conplat_fw'}
 
 # ── IP 地址前缀长度 → 点分十进制子网掩码 自动归一化 ─────────────────────────
 # 华为 VRP / H3C Comware 支持 `ip address X.X.X.X 24` 写法；
@@ -210,6 +210,16 @@ class NetmikoDriver(BaseDriver):
             'h3c': 'h3c_comware',
             'comware': 'h3c_comware',
             'huawei': 'huawei_vrp',
+            'huawei_yunshan': 'huawei_vrp',
+            'huawei_yunshan_os': 'huawei_vrp',
+            'yunshan': 'huawei_vrp',
+            'yunshanos': 'huawei_vrp',
+            'yunshan os': 'huawei_vrp',
+            'yunshan_os': 'huawei_vrp',
+            'huawei yunshan os': 'huawei_vrp',
+            '华为云杉': 'huawei_vrp',
+            '华为 yunshan os（云杉）': 'huawei_vrp',
+            '华为 yunshan os (云杉)': 'huawei_vrp',
             'huawei_vrpv8': 'huawei_vrp',
             'vrp': 'huawei_vrp',
             'ce': 'huawei_vrp',

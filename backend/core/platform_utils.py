@@ -3,7 +3,7 @@ from typing import Dict, Any
 
 def _platform_vendor(platform: str) -> str:
     value = str(platform or '').strip().lower().replace('-', '_').replace(' ', '_')
-    if value.startswith(('huawei', 'vrp')):
+    if value.startswith(('huawei', 'vrp', 'yunshan')) or '华为云杉' in value:
         return 'huawei'
     if value.startswith(('h3c', 'comware', 'hp_comware')):
         return 'h3c'
@@ -35,9 +35,15 @@ def normalize_device_platform(vendor: str, platform: str) -> str:
     """
     v = str(vendor or '').strip().lower()
     p = str(platform or '').strip().lower()
+    p_key = p.replace('-', '_').replace(' ', '_')
+    if p_key in {
+        'huawei_yunshan', 'huawei_yunshan_os', 'yunshan', 'yunshanos', 'yunshan_os',
+        '华为云杉',
+    } or (p_key.startswith('华为_yunshan_os') and '云杉' in p_key):
+        p = 'huawei_yunshan'
     
     # Map vendor names to vendor keys
-    if 'huawei' in v or 'vrp' in v or '华为' in v:
+    if 'huawei' in v or 'vrp' in v or '华为' in v or '云杉' in v:
         v_key = 'huawei'
     elif 'h3c' in v or 'comware' in v or 'hp' in v or '华三' in v:
         v_key = 'h3c'
@@ -89,7 +95,7 @@ def normalize_device_platform(vendor: str, platform: str) -> str:
     # V3/V5/V7/V9 command differences belong to Platform Profile releases, not to
     # another device platform string.
     explicit_platforms = {
-        'huawei_vrp', 'huawei_vrpv8', 'vrp5', 'vrpv5', 'vrp8', 'vrpv8',
+        'huawei_vrp', 'huawei_vrpv8', 'huawei_yunshan', 'vrp5', 'vrpv5', 'vrp8', 'vrpv8',
         'h3c_comware', 'h3c_comware_v3', 'h3c_comware_v5', 'h3c_comware_v7', 'h3c_comware_v9',
         'ruijie_rgos', 'ruijie_os', 'zte_zxros', 'maipu', 'maipu_network', 'maipu_mypower',
         'dptech_ios', 'dptech', 'dptech_conplat', 'dptech_conplat_fw',

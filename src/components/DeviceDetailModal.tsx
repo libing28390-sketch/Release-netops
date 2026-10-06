@@ -114,6 +114,7 @@ const formatPlatformLabel = (value: unknown, language: string) => {
     h3c_comware_v3: '华三 Comware V3',
     hp_comware: '华三 Comware',
     huawei_vrp: '华为 VRP',
+    huawei_yunshan: '华为 YunShan OS（云杉）',
     hillstone_stoneos: '山石 StoneOS',
     dptech_ios: '迪普 DPtech',
     cisco_ios: 'Cisco IOS',

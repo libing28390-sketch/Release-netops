@@ -680,7 +680,8 @@ def _platform_from_vendor(vendor: str, asset_type: str = 'network_device') -> st
 
 _VENDOR_PLATFORM_RULES: tuple[tuple[str, set[str], str], ...] = (
     ('cisco', {'cisco', 'ios', 'iosxe', 'cisco_ios', 'cisco_iosxe', 'cisco_xe', 'cisco_nxos', 'nxos', 'nexus'}, 'cisco_ios'),
-    ('huawei', {'huawei', 'huawei_vrp', 'huawei_vrpv8', 'vrp', 'ce', 'ce_vrp', 'ne'}, 'huawei_vrp'),
+    ('huawei', {'huawei', 'huawei_vrp', 'huawei_vrpv8', 'huawei_yunshan', 'vrp', 'ce', 'ce_vrp', 'ne'}, 'huawei_vrp'),
+    ('华为', {'huawei', 'huawei_vrp', 'huawei_vrpv8', 'huawei_yunshan', 'vrp', 'ce', 'ce_vrp', 'ne'}, 'huawei_vrp'),
     ('h3c', {'h3c_comware'}, 'h3c_comware'),
     ('comware', {'h3c_comware'}, 'h3c_comware'),
     ('arista', {'arista', 'arista_eos', 'eos'}, 'arista_eos'),
@@ -706,6 +707,15 @@ def _normalize_asset_platform(vendor: str, platform: str, asset_type: str = 'net
     raw = str(platform or '').strip()
     normalized = raw.lower()
     normalized = {
+        'huawei yunshan os': 'huawei_yunshan',
+        'huawei_yunshan_os': 'huawei_yunshan',
+        'yunshan': 'huawei_yunshan',
+        'yunshanos': 'huawei_yunshan',
+        'yunshan_os': 'huawei_yunshan',
+        'yunshan os': 'huawei_yunshan',
+        '华为云杉': 'huawei_yunshan',
+        '华为 yunshan os（云杉）': 'huawei_yunshan',
+        '华为 yunshan os (云杉)': 'huawei_yunshan',
         'h3c': 'h3c_comware',
         'comware': 'h3c_comware',
         'hillstone': 'hillstone_stoneos',
@@ -721,6 +731,8 @@ def _normalize_asset_platform(vendor: str, platform: str, asset_type: str = 'net
     for vendor_marker, allowed, default_platform in _VENDOR_PLATFORM_RULES:
         if vendor_marker in vendor_normalized:
             if normalized in allowed:
+                if normalized == 'huawei_yunshan':
+                    return normalized
                 if default_platform == 'hillstone_stoneos':
                     return default_platform
                 return raw
@@ -2292,6 +2304,62 @@ def _build_asset_import_template(snmpv2_credential_names: list[str]) -> bytes:
     )
     if credential_column is None:
         raise ValueError('SNMP credential column is missing from the asset template')
+
+    # The public workbook carries vendor-dependent dropdowns in named ranges.
+    # Keep the API-distributed copy current even when an older static workbook
+    # is present; the fallback is still a visible Huawei choice in both the
+    # vendor-specific and all-network lists.
+    helper_sheet = workbook['下拉选项'] if '下拉选项' in workbook.sheetnames else None
+    if helper_sheet is not None:
+        import re
+
+        def ensure_platform_choice(defined_name: str, label: str) -> None:
+            named_range = workbook.defined_names.get(defined_name)
+            if named_range is None:
+                return
+            match = re.fullmatch(
+                r"'(?P<sheet>[^']+)'!\$(?P<column>[A-Z]+)\$(?P<start>\d+):\$(?P=column)\$(?P<end>\d+)",
+                str(named_range.attr_text or ''),
+            )
+            if not match or match.group('sheet') not in workbook.sheetnames:
+                return
+            choice_sheet = workbook[match.group('sheet')]
+            column = match.group('column')
+            start = int(match.group('start'))
+            end = int(match.group('end'))
+            values = [
+                str(choice_sheet.cell(row=row_number, column=choice_sheet[column + str(row_number)].column).value or '').strip()
+                for row_number in range(start, end + 1)
+            ]
+            if any(value.casefold() == label.casefold() for value in values):
+                return
+
+            next_row = end + 1
+            next_cell = choice_sheet[f'{column}{next_row}']
+            if next_cell.value in (None, ''):
+                next_cell.value = label
+                new_start, new_end = start, next_row
+            else:
+                # If an adjacent vendor-list heading occupies the next row,
+                # copy this short choice list to an isolated block so no other
+                # vendor's values or defined names are shifted.
+                new_start = choice_sheet.max_row + 2
+                copied_values = [value for value in values if value]
+                copied_values.append(label)
+                for offset, value in enumerate(copied_values):
+                    choice_sheet.cell(row=new_start + offset, column=choice_sheet[column + '1'].column, value=value)
+                new_end = new_start + len(copied_values) - 1
+
+            from openpyxl.utils.cell import quote_sheetname
+            from openpyxl.workbook.defined_name import DefinedName
+
+            workbook.defined_names[defined_name] = DefinedName(
+                defined_name,
+                attr_text=f'{quote_sheetname(match.group("sheet"))}!${column}${new_start}:${column}${new_end}',
+            )
+
+        ensure_platform_choice('Platform_Huawei', 'Huawei YunShan OS')
+        ensure_platform_choice('Platform_All_Network', 'Huawei YunShan OS')
 
     names = sorted({str(name).strip() for name in snmpv2_credential_names if str(name or '').strip()}, key=str.casefold)
     helper_sheet_name = '_SNMPv2Credentials'

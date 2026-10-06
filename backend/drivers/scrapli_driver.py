@@ -25,6 +25,16 @@ class ScrapliDriver(BaseDriver):
         mapping = {
             'cisco_ios': 'cisco_iosxe',
             'huawei_vrp': 'huawei_vrp',
+            'huawei_yunshan': 'huawei_vrp',
+            'huawei_yunshan_os': 'huawei_vrp',
+            'yunshan': 'huawei_vrp',
+            'yunshanos': 'huawei_vrp',
+            'yunshan os': 'huawei_vrp',
+            'yunshan_os': 'huawei_vrp',
+            'huawei yunshan os': 'huawei_vrp',
+            '华为云杉': 'huawei_vrp',
+            '华为 yunshan os（云杉）': 'huawei_vrp',
+            '华为 yunshan os (云杉)': 'huawei_vrp',
             'huawei_vrpv8': 'huawei_vrp',
             'h3c_comware': 'hp_comware',
             'h3c_comware_v3': 'hp_comware',
@@ -37,7 +47,7 @@ class ScrapliDriver(BaseDriver):
             'linux': 'linux',
             'server': 'linux'
         }
-        return mapping.get(platform, platform or 'cisco_iosxe')
+        return mapping.get(str(platform or '').strip().lower(), platform or 'cisco_iosxe')
 
     def connect(self):
         import logging

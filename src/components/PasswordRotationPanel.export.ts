@@ -49,7 +49,7 @@ export const rotationExportHeaders = (zh: boolean) => [
 const platformLabel = (platform: string) => {
   const labels: Record<string, string> = {
     cisco_ios: 'Cisco IOS', cisco_nxos: 'Cisco NX-OS', cisco_xe: 'Cisco IOS-XE',
-    huawei_vrp: 'Huawei VRP', h3c_comware: 'H3C Comware', h3c_comware_v3: 'H3C Comware V3',
+    huawei_vrp: 'Huawei VRP', huawei_yunshan: 'Huawei YunShan OS', h3c_comware: 'H3C Comware', h3c_comware_v3: 'H3C Comware V3',
     arista_eos: 'Arista EOS', juniper_junos: 'Juniper JunOS',
     linux: 'Linux', ubuntu: 'Ubuntu', centos: 'CentOS', debian: 'Debian', esxi: 'VMware ESXi',
   };

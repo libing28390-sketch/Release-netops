@@ -1,7 +1,7 @@
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 
-const backendPort = Number(process.env.BACKEND_PORT || 5310);
+const backendPort = Number(process.env.BACKEND_PORT || (process.platform === 'win32' ? 15310 : 5310));
 const frontendPort = Number(process.env.VITE_PORT || 5400);
 const waitTimeoutMs = 120_000;
 

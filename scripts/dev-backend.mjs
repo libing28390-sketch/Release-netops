@@ -2,9 +2,9 @@ import http from 'node:http';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 
-// 5010 is reserved by Hyper-V/WSL on some Windows hosts and fails with
-// WinError 10013. Keep BACKEND_PORT as an explicit override for deployments.
-const port = Number(process.env.BACKEND_PORT || 5310);
+// Hyper-V/WSL can reserve 5310 on Windows and cause WinError 10013.
+// Keep the Linux default and explicit BACKEND_PORT overrides intact.
+const port = Number(process.env.BACKEND_PORT || (process.platform === 'win32' ? 15310 : 5310));
 
 function isHealthyBackendBody(body) {
   try {

@@ -8,6 +8,7 @@ import type { Device } from '../types';
 const profiles = [
   { id: 'profile-zte-5900', platform_code: 'zte_5900_v6', name_zh: '中兴 5900 V6', name_en: 'ZTE 5900 V6', vendor: 'ZTE', status: 'ACTIVE' },
   { id: 'profile-zte-zsrv2', platform_code: 'zte_zsrv2_v3', name_zh: '中兴 ZSRV2 V3', name_en: 'ZTE ZSRV2 V3', vendor: 'ZTE', status: 'ACTIVE' },
+  { id: 'profile-huawei-yunshan', platform_code: 'huawei_yunshan', name_zh: '华为 YunShan OS（云杉）', name_en: 'Huawei YunShan OS', vendor: 'Huawei', status: 'ACTIVE' },
 ];
 
 describe('DeviceFormModal platform registry selector', () => {
@@ -54,6 +55,34 @@ describe('DeviceFormModal platform registry selector', () => {
       platform_source: 'MANUAL',
     }));
     expect(screen.getByRole('link', { name: 'Manage platforms' }).getAttribute('href')).toBe('/automation/platforms');
+  });
+
+  it('offers Huawei YunShan as a Huawei legacy option and registry binding', async () => {
+    const user = userEvent.setup();
+    const onFormChange = vi.fn();
+    render(
+      <DeviceFormModal
+        mode="add"
+        language="en"
+        form={{ platform: 'huawei_yunshan', vendor: 'Huawei' }}
+        passwordVisible={false}
+        onFormChange={onFormChange}
+        onTogglePasswordVisibility={vi.fn()}
+        onClose={vi.fn()}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    const platformSelect = screen.getByTitle('Select device platform');
+    await screen.findByRole('option', { name: 'Huawei YunShan OS · Huawei' });
+    expect(screen.getByRole('option', { name: /^Huawei YunShan OS$/ })).toBeTruthy();
+    await user.selectOptions(platformSelect, 'profile-huawei-yunshan');
+    expect(onFormChange).toHaveBeenLastCalledWith(expect.objectContaining({
+      platform: 'huawei_yunshan',
+      vendor: 'Huawei',
+      platform_profile_id: 'profile-huawei-yunshan',
+      platform_source: 'MANUAL',
+    }));
   });
 
   it('defaults SSH algorithm policy to auto and gates break-glass submission behind acknowledgement', async () => {

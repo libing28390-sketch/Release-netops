@@ -157,9 +157,15 @@ export const VENDOR_IMPORT_ALIASES: Record<string, string> = {
   '帕洛阿尔托': 'Palo Alto',
 };
 
-export const VENDOR_PLATFORMS: Record<string, { value: string; label: string }[]> = {
+export const VENDOR_PLATFORMS: Record<string, { value: string; label: string; labelZh?: string; labelEn?: string }[]> = {
   Cisco:      [{ value: 'cisco_ios', label: 'Cisco IOS' }, { value: 'cisco_nxos', label: 'Cisco NX-OS' }, { value: 'cisco_xe', label: 'Cisco IOS-XE' }, { value: 'cisco_iosxr', label: 'Cisco IOS-XR' }, { value: 'cisco_asa', label: 'Cisco ASA/Firepower' }],
-  Huawei:     [{ value: 'huawei_vrp', label: 'Huawei VRPv5' }, { value: 'huawei_vrpv8', label: 'Huawei VRPv8' }, { value: 'huawei_smartax', label: 'Huawei SmartAX' }, { value: 'huawei_usg', label: 'Huawei USG' }],
+  Huawei:     [
+    { value: 'huawei_vrp', label: 'Huawei VRPv5' },
+    { value: 'huawei_vrpv8', label: 'Huawei VRPv8' },
+    { value: 'huawei_smartax', label: 'Huawei SmartAX' },
+    { value: 'huawei_usg', label: 'Huawei USG' },
+    { value: 'huawei_yunshan', label: 'Huawei YunShan OS', labelEn: 'Huawei YunShan OS', labelZh: '华为 YunShan OS（云杉）' },
+  ],
   // Keep one canonical H3C platform. V3/V5/V7/V9 labels are accepted as
   // legacy import aliases and normalized to h3c_comware below.
   H3C:        [{ value: 'h3c_comware', label: 'H3C Comware' }],
@@ -235,7 +241,7 @@ export const SSH_ALGORITHM_PROFILE_OPTIONS = [
 
 export const SSH_ALGORITHM_PROFILE_VALUES = SSH_ALGORITHM_PROFILE_OPTIONS.map(option => option.value);
 
-export const uniquePlatforms = (items: { value: string; label: string }[]) => {
+export const uniquePlatforms = <T extends { value: string; label: string }>(items: T[]): T[] => {
   const seen = new Set<string>();
   return items.filter(item => {
     if (seen.has(item.value)) return false;
@@ -407,6 +413,10 @@ export const IMPORT_VALUE_MAP: Record<string, Record<string, string>> = {
   platform: {
     '思科 IOS': 'cisco_ios', '思科 NX-OS': 'cisco_nxos', '思科 IOS-XE': 'cisco_xe',
     '华为 VRPv5': 'huawei_vrp', '华为 VRPv8': 'huawei_vrpv8',
+    yunshan: 'huawei_yunshan', yunshanos: 'huawei_yunshan', 'yunshan os': 'huawei_yunshan',
+    huawei_yunshan_os: 'huawei_yunshan', yunshan_os: 'huawei_yunshan', 'Huawei YunShan OS': 'huawei_yunshan', 'huawei yunshan os': 'huawei_yunshan',
+    '华为 YunShan OS（云杉）': 'huawei_yunshan', '华为 YunShan OS (云杉)': 'huawei_yunshan',
+    '华为 yunshan os（云杉）': 'huawei_yunshan', '华为 yunshan os (云杉)': 'huawei_yunshan',
     '华三 Comware V3': 'h3c_comware', '华三 Comware V5': 'h3c_comware', '华三 Comware V7': 'h3c_comware', '华三 Comware V9': 'h3c_comware', 'hp_comware': 'h3c_comware', 'h3c_comware_v3': 'h3c_comware',
     '阿里斯塔 EOS': 'arista_eos', '瞻博 JunOS': 'juniper_junos', '锐捷 RGOS': 'ruijie_rgos', '锐捷 OS': 'ruijie_rgos', 'Ruijie OS': 'ruijie_rgos', 'ruijie_os': 'ruijie_rgos',
     '飞塔 FortiOS': 'fortinet', '帕洛阿尔托 PAN-OS': 'paloalto_panos', '中兴 ZXROS': 'zte_zxros', '瑞斯康达 ROS': 'raisecom_ros', '迈普网络系统': 'maipu',
@@ -440,6 +450,15 @@ for (const platform of ALL_PLATFORMS) {
   IMPORT_VALUE_MAP.platform[platform.value] = platform.value;
   IMPORT_VALUE_MAP.platform[platform.label] = platform.value;
 }
+
+/** Normalize known display names and legacy aliases to the canonical asset platform code. */
+export const normalizeImportedPlatform = (platform: unknown): string => {
+  const value = String(platform ?? '').trim();
+  if (!value) return '';
+  return IMPORT_VALUE_MAP.platform[value]
+    || IMPORT_VALUE_MAP.platform[value.toLowerCase()]
+    || value;
+};
 
 export const NETWORK_IMPORT_VENDOR_VALUES = Array.from(new Set([
   ...NETWORK_VENDOR_NAMES,

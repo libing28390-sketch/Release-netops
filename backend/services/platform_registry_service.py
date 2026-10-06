@@ -130,6 +130,7 @@ def iter_action_definitions() -> tuple[dict[str, Any], ...]:
 SYSTEM_PROFILES: tuple[dict[str, Any], ...] = (
     {"platform_code": "cisco_ios", "name_zh": "Cisco IOS", "name_en": "Cisco IOS", "vendor": "Cisco", "connection_driver": "cisco_ios", "parser_platform": "cisco_ios"},
     {"platform_code": "huawei_vrp", "name_zh": "Huawei VRP", "name_en": "Huawei VRP", "vendor": "Huawei", "connection_driver": "huawei_vrp", "parser_platform": "huawei_vrp"},
+    {"platform_code": "huawei_yunshan", "name_zh": "华为 YunShan OS", "name_en": "Huawei YunShan OS", "vendor": "Huawei", "connection_driver": "huawei_vrp", "parser_platform": "huawei_yunshan"},
     # Concrete vendor/version profiles are the authoritative targets used by
     # manual inventory binding.  The older family profiles above remain
     # available for backwards-compatible device records.
@@ -200,6 +201,9 @@ def list_platform_vendor_names(conn=None) -> list[str]:
 
 PLATFORM_ALIASES = {
     "cisco": "cisco_ios", "ios": "cisco_ios", "huawei": "huawei_vrp", "vrp": "huawei_vrp",
+    "yunshan": "huawei_yunshan", "yunshanos": "huawei_yunshan", "yunshan os": "huawei_yunshan", "yunshan_os": "huawei_yunshan",
+    "huawei_yunshan_os": "huawei_yunshan", "huawei yunshan os": "huawei_yunshan", "华为云杉": "huawei_yunshan",
+    "华为 yunshan os（云杉）": "huawei_yunshan", "华为 yunshan os (云杉)": "huawei_yunshan",
     "huawei_vrpv8": "huawei_vrp", "h3c": "h3c_comware", "comware": "h3c_comware",
     "h3c_comware": "h3c_comware",
     "juniper": "juniper_junos",
@@ -213,6 +217,7 @@ PLATFORM_ALIASES = {
 
 PLATFORM_CATALOG_METADATA: dict[str, dict[str, str]] = {
     "huawei_vrp": {"catalog_vendor": "huawei", "platform_family": "huawei_vrp", "version": "v5"},
+    "huawei_yunshan": {"catalog_vendor": "huawei", "platform_family": "huawei_yunshan", "version": "common"},
     "huawei_vrp5": {"catalog_vendor": "huawei", "platform_family": "huawei_vrp", "version": "v5"},
     "huawei_vrp8": {"catalog_vendor": "huawei", "platform_family": "huawei_vrp", "version": "v8"},
     "huawei_vrp_unknown": {"catalog_vendor": "huawei", "platform_family": "huawei_vrp", "version": "unknown"},
@@ -248,6 +253,7 @@ PLATFORM_CATALOG_METADATA: dict[str, dict[str, str]] = {
 
 PLATFORM_FAMILY_ALIASES: dict[str, tuple[str, ...]] = {
     "huawei_vrp": ("huawei", "huawei_vrp"),
+    "huawei_yunshan": ("huawei_yunshan",),
     "maipu_mypower": ("maipu", "maipu_mypower"),
     "ruijie_rgos": ("ruijie", "ruijie_os", "ruijie_rgos"),
     "dptech_conplat": ("dptech", "dptech_ios", "dptech_conplat"),
@@ -274,6 +280,7 @@ def _with_platform_catalog_metadata(profile: dict[str, Any]) -> dict[str, Any]:
 PLATFORM_ACTION_COMMANDS: dict[str, dict[str, str]] = {
     "cisco_ios": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors", "get_interface_brief": "show ip interface brief", "get_interfaces": "show interfaces", "get_ip_interfaces": "show ip interface", "get_link_aggregation": "show etherchannel summary", "get_arp_table": "show ip arp", "get_mac_table": "show mac address-table", "get_vlan_table": "show vlan brief", "get_route_table": "show ip route", "get_bgp_neighbors": "show ip bgp summary", "get_ospf_neighbors": "show ip ospf neighbor", "get_isis_neighbors": "show isis neighbors", "get_stp": "show spanning-tree", "get_cpu": "show processes cpu", "get_memory": "show processes memory", "get_fans": "show environment fan", "get_power": "show environment power", "get_temperature": "show environment temperature", "get_clock": "show clock", "get_running_config": "show running-config", "get_startup_config": "show startup-config"},
     "huawei_vrp": {"get_version": "display version", "get_lldp_neighbors": "display lldp neighbor brief", "get_interface_brief": "display interface brief", "get_interfaces": "display interface", "get_ip_interfaces": "display ip interface brief", "get_link_aggregation": "display eth-trunk", "get_arp_table": "display arp", "get_mac_table": "display mac-address", "get_vlan_table": "display vlan", "get_route_table": "display ip routing-table", "get_bgp_neighbors": "display bgp peer", "get_ospf_neighbors": "display ospf peer brief", "get_isis_neighbors": "display isis peer", "get_stp": "display stp brief", "get_cpu": "display cpu-usage", "get_memory": "display memory-usage", "get_fans": "dis fan", "get_power": "display power", "get_temperature": "display temperature", "get_clock": "display clock", "get_running_config": "display current-configuration", "get_startup_config": "display saved-configuration"},
+    "huawei_yunshan": {"get_version": "display version", "get_lldp_neighbors": "display lldp neighbor brief", "get_interface_brief": "display interface brief", "get_ip_interfaces": "display ip interface brief", "get_arp_table": "display arp", "get_mac_table": "display mac-address"},
     "h3c_comware": {"get_version": "display version", "get_lldp_neighbors": "display lldp neighbor-information list", "get_interface_brief": "display interface brief", "get_interfaces": "display interface", "get_ip_interfaces": "display ip interface brief", "get_link_aggregation": "display link-aggregation verbose", "get_bfd_sessions": "display bfd session", "get_ntp_status": "display ntp-service status", "get_logbuffer": "display logbuffer", "get_interface_description": "display interface brief description", "get_irf": "display irf", "get_uptime": "display version", "get_arp_table": "display arp all", "get_mac_table": "display mac-address", "get_vlan_table": "display vlan brief", "get_route_table": "display ip routing-table", "get_bgp_neighbors": "display bgp peer ipv4 unicast", "get_ospf_neighbors": "display ospf peer", "get_isis_neighbors": "display isis peer", "get_stp": "display stp brief", "get_cpu": "display cpu-usage", "get_memory": "display memory", "get_fans": "display fan", "get_power": "display power", "get_temperature": "display environment", "get_clock": "display clock", "get_running_config": "display current-configuration", "get_startup_config": "display saved-configuration"},
     "juniper_junos": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors detail", "get_interfaces": "show interfaces detail", "get_interface_brief": "show interfaces terse", "get_ip_interfaces": "show interfaces terse", "get_route_table": "show route", "get_isis_neighbors": "show isis adjacency", "get_stp": "show spanning-tree bridge", "get_clock": "show system uptime", "get_running_config": "show configuration", "get_startup_config": "show configuration"},
     "arista_eos": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors detail", "get_interface_brief": "show ip interface brief", "get_interfaces": "show interfaces", "get_ip_interfaces": "show ip interface", "get_link_aggregation": "show port-channel summary", "get_arp_table": "show arp", "get_mac_table": "show mac address-table", "get_vlan_table": "show vlan", "get_route_table": "show ip route", "get_bgp_neighbors": "show ip bgp summary", "get_ospf_neighbors": "show ip ospf neighbor", "get_isis_neighbors": "show isis neighbors", "get_stp": "show spanning-tree", "get_cpu": "show processes top once", "get_memory": "show version", "get_clock": "show clock", "get_running_config": "show running-config", "get_startup_config": "show startup-config"},

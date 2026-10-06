@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react';
 import type { Device } from '../types';
 import { authHeaders } from '../api/http';
 import { useInventoryStore } from '../store/inventoryStore';
-import { SSH_ALGORITHM_PROFILE_VALUES } from '../pages/AssetManagement/constants';
+import { normalizeImportedPlatform, SSH_ALGORITHM_PROFILE_VALUES } from '../pages/AssetManagement/constants';
 import { getPlatformBindingErrorMessage } from '../utils/platformBindingErrors';
 
 const normalizeSshAlgorithmProfile = (value: unknown): Device['ssh_algorithm_profile'] => {
@@ -64,6 +64,7 @@ export const useDeviceFormActions = ({ devices, setDevices, showToast }: UseDevi
     try {
       const payload = {
         ...editForm,
+        platform: editForm.platform ? normalizeImportedPlatform(editForm.platform) : editForm.platform,
         ssh_algorithm_profile: normalizeSshAlgorithmProfile(editForm.ssh_algorithm_profile),
       };
       const response = await fetch(`/api/devices/${editingDevice.id}`, {
@@ -114,6 +115,7 @@ export const useDeviceFormActions = ({ devices, setDevices, showToast }: UseDevi
     try {
       const payload = {
         ...addForm,
+        platform: addForm.platform ? normalizeImportedPlatform(addForm.platform) : addForm.platform,
         ssh_algorithm_profile: normalizeSshAlgorithmProfile(addForm.ssh_algorithm_profile),
       };
       const response = await fetch('/api/devices', {

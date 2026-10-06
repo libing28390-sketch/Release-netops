@@ -1,0 +1,17 @@
+# nexora-action-code: get_ip_interfaces
+Value Required INTERFACE ((?:[0-9]+)?[A-Za-z][A-Za-z0-9-]*\s*\d[\w/.-]*)
+Value IP_ADDRESS (\d+\.\d+\.\d+\.\d+|unassigned)
+Value PREFIX_LENGTH (\d+)
+Value PHY ([*^]?down|up(?:\([a-z]+\))?)
+Value PROTOCOL ([*^]?down|up(?:\([a-z]+\))?)
+Value VPN (\S+)
+
+Start
+  ^\s*${INTERFACE}\s+${IP_ADDRESS}(?:/${PREFIX_LENGTH})?\s+${PHY}\s+${PROTOCOL}\s+${VPN}\s*$$ -> Record
+  ^\s*${INTERFACE}\s+${IP_ADDRESS}(?:/${PREFIX_LENGTH})?\s+${PHY}\s+${PROTOCOL}\s*$$ -> Record
+  ^\s*(?:\*down:|\^down:|\([a-z]+\):|The\s+number\s+of).*$$
+  ^\s*Interface\s+IP\s+Address/Mask\s+Physical\s+Protocol(?:\s+VPN)?\s*$$
+  ^\s*[-=]+\s*$$
+  ^\s*<[^>]+>.*$$
+  ^\s*$$
+  ^. -> Error

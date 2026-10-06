@@ -1008,6 +1008,7 @@ const App: React.FC = () => {
       cisco_nxos: '#0369a1',
       cisco_iosxr: '#7c3aed',
       huawei_vrp: '#f59e0b',
+      huawei_yunshan: '#f59e0b',
       h3c_comware: '#f97316',
       h3c_comware_v3: '#f97316',
       arista_eos: '#6366f1',

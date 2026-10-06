@@ -26,6 +26,7 @@ IDENTIFICATION_COMMANDS: dict[str, tuple[str, ...]] = {
     "arista_eos": ("show version",),
     "juniper_junos": ("show version",),
     "huawei_vrp": ("display version",),
+    "huawei_yunshan": ("display version",),
     "h3c_comware": ("display version",),
     # ``hp_comware`` is the Netmiko connection-driver name used by the
     # concrete H3C profiles. It still needs an explicit approved probe when
@@ -41,6 +42,7 @@ IDENTIFICATION_COMMANDS: dict[str, tuple[str, ...]] = {
 _IDENTIFICATION_DRIVER_ALIASES = {
     "h3c_comware": "hp_comware",
     "huawei": "huawei_vrp",
+    "huawei_yunshan": "huawei_vrp",
     "huawei_vrpv8": "huawei_vrp",
     "ruijie_rgos": "ruijie_os",
     "zte_5900_v6": "zte_zxros",
@@ -515,6 +517,16 @@ def identify_platforms(
             result["matched_rule_count"] = len(matched)
             suggestions.append(result)
         suggestions.sort(key=lambda value: (-float(value["score"]), str(value["platform_code"])))
+        # YunShan's explicit OS banner can also contain the shared Huawei VRP
+        # product-title line. Prefer that more specific signature whenever
+        # both identification rules match the same observation.
+        if any(str(item.get("platform_code") or "") == "huawei_yunshan" for item in suggestions):
+            suggestions = [
+                item for item in suggestions
+                if str(item.get("platform_code") or "") not in {
+                    "huawei_vrp", "huawei_vrp5", "huawei_vrp8", "huawei_vrp_unknown",
+                }
+            ]
         conflict = len(suggestions) > 1 and float(suggestions[0]["score"]) == float(suggestions[1]["score"])
         return {
             "success": not conflict,
@@ -551,6 +563,7 @@ def identify_device(
 
 _INVENTORY_PROFILE_BY_PARSER_VARIANT = {
     "huawei_vrpv8": "huawei_vrp8",
+    "huawei_yunshan": "huawei_yunshan",
     "h3c_comware_v3": "h3c_comware_v3",
     "h3c_comware_v5": "h3c_comware_v5",
     "h3c_comware_v7": "h3c_comware_v7",

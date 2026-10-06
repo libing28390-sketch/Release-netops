@@ -977,6 +977,7 @@ export const PLATFORM_LABELS: Record<string, string> = {
   cisco_iosxr: 'Cisco IOS-XR',
   huawei_vrp: 'Huawei VRP',
   huawei_vrpv8: 'Huawei VRP8',
+  huawei_yunshan: 'Huawei YunShan OS',
   h3c_comware: 'H3C Comware',
   h3c_comware_v3: 'H3C Comware V3',
   arista_eos: 'Arista EOS',
@@ -995,7 +996,7 @@ export const getVendorFromPlatform = (platform: string) => {
   const p = platform.toLowerCase();
   if (p.includes('cisco')) return 'Cisco';
   if (p.includes('juniper')) return 'Juniper';
-  if (p.includes('huawei') || p.includes('ne4') || p.includes('ne5') || p.includes('cx6')) return 'Huawei';
+  if (p.includes('huawei') || p.includes('yunshan') || p.includes('云杉') || p.includes('ne4') || p.includes('ne5') || p.includes('cx6')) return 'Huawei';
   if (p.includes('h3c') || p.includes('comware') || p.includes('vsr')) return 'H3C';
   if (p.includes('arista')) return 'Arista';
   if (p.includes('ruijie') || p.includes('rgos')) return 'Ruijie';

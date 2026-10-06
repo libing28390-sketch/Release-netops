@@ -3,6 +3,7 @@ import {
   TEXTFSM_PLATFORM_FAMILIES,
   getConcreteEditorPlatform,
   getEditorSelection,
+  getPlatformFamilyOption,
 } from './textfsmPlatformCatalog';
 
 describe('TextFSM platform catalog', () => {
@@ -55,5 +56,37 @@ describe('TextFSM platform catalog', () => {
     expect(getEditorSelection('maipu')).toEqual({
       vendor: 'maipu', platformFamily: 'maipu_mypower', version: 'common',
     });
+  });
+});
+
+describe('Huawei YunShan TextFSM platform family', () => {
+  it('uses a single common version and the independent parser key', () => {
+    expect(getPlatformFamilyOption('huawei_yunshan')).toMatchObject({
+      vendor: 'huawei',
+      label: '华为 YunShan OS（云杉）',
+      labelEn: 'Huawei YunShan OS',
+      versions: ['common'],
+    });
+    expect(getEditorSelection('huawei_yunshan')).toEqual({
+      vendor: 'huawei',
+      platformFamily: 'huawei_yunshan',
+      version: 'common',
+    });
+    expect(getConcreteEditorPlatform('huawei_yunshan', 'common')).toBe('huawei_yunshan');
+  });
+
+  it('keeps YunShan aliases out of Huawei VRP version inference', () => {
+    for (const alias of [
+      'yunshanos',
+      'YunShan OS',
+      'Huawei YunShan OS',
+      '华为 YunShan OS（云杉）',
+    ]) {
+      expect(getEditorSelection(alias)).toEqual({
+        vendor: 'huawei',
+        platformFamily: 'huawei_yunshan',
+        version: 'common',
+      });
+    }
   });
 });

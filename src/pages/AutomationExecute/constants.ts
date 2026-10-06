@@ -6,6 +6,7 @@ export const VENDOR_MAP: Record<string, string> = {
   cisco_nxos: 'Cisco',
   cisco_iosxe: 'Cisco',
   huawei_vrp: 'Huawei',
+  huawei_yunshan: 'Huawei',
   h3c_comware: 'H3C',
   h3c_comware_v3: 'H3C',
   arista_eos: 'Arista',

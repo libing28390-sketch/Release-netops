@@ -1,6 +1,10 @@
 const VENDOR_ALIASES: Array<[string, string]> = [
   ['huawei', 'huawei'],
+  ['huawei_yunshan_os', 'huawei'],
+  ['yunshanos', 'huawei'],
+  ['yunshan', 'huawei'],
   ['华为', 'huawei'],
+  ['云杉', 'huawei'],
   ['h3c', 'h3c'],
   ['hpcomware', 'h3c'],
   ['hp', 'h3c'],

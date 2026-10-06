@@ -44,6 +44,7 @@ import {
   isNetworkVendor,
   isValidVendorPlatform,
   normalizeImportedVendor,
+  normalizeImportedPlatform,
   isValidIpAddress,
 } from './constants';
 import { statusMeta, typeMeta, severityOf } from './helpers';
@@ -479,7 +480,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       status: a.status, lifecycle_status: a.lifecycle_status || 'staging', asset_origin: a.asset_origin || 'legacy', takeover_exempt_reason: '',
       purchase_date: a.purchase_date, warranty_expiry: a.warranty_expiry,
       department: a.department, notes: a.notes,
-      platform: (a as any).platform || (a.asset_type === 'server' ? 'linux' : 'cisco_ios'),
+      platform: normalizeImportedPlatform((a as any).platform || (a.asset_type === 'server' ? 'linux' : 'cisco_ios')),
       connection_method: (a as any).connection_method || 'ssh',
       ssh_algorithm_profile: a.ssh_algorithm_profile || 'auto',
       username: (a as any).username || '',
@@ -558,15 +559,15 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       // Guard: a server must never carry a network-device platform (e.g. stale
       // cisco_ios). If the stored value isn't a valid server platform, coerce
       // it to a sane Linux default so we don't persist an inconsistent platform.
-      let normalizedPlatform = form.platform;
+      let normalizedPlatform = normalizeImportedPlatform(form.platform);
       if (form.asset_type === 'server') {
         const serverValues = SERVER_PLATFORMS.map(p => p.value);
-        if (!serverValues.includes(String(form.platform))) {
+        if (!serverValues.includes(normalizedPlatform)) {
           normalizedPlatform = 'linux';
         }
       } else if (form.asset_type === 'network_device') {
-        const vendorPlatforms = VENDOR_PLATFORMS[form.vendor] || [];
-        if (vendorPlatforms.length > 0 && !vendorPlatforms.some(p => p.value === String(form.platform))) {
+        const vendorPlatforms = VENDOR_PLATFORMS[normalizeImportedVendor(String(form.vendor || ''))] || [];
+        if (vendorPlatforms.length > 0 && !vendorPlatforms.some(p => p.value === normalizedPlatform)) {
           normalizedPlatform = vendorPlatforms[0].value;
         }
       }
@@ -1152,6 +1153,9 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                 const valueMap = IMPORT_VALUE_MAP[key];
                 if (valueMap) {
                   mappedVal = valueMap[mappedVal] || valueMap[mappedVal.toLowerCase()] || mappedVal;
+                }
+                if (key === 'platform') {
+                  mappedVal = normalizeImportedPlatform(mappedVal);
                 }
                 if (key === 'asset_type') {
                   const v = mappedVal.toLowerCase();

@@ -267,7 +267,8 @@ def _resolve_platform_binding(
             )
         return str(profile['platform_code']), profile_id, 'MANUAL', 0
 
-    platform = str(fallback_platform or '').strip() or 'cisco_ios'
+    from services.platform_registry_service import normalize_platform_code
+    platform = normalize_platform_code(str(fallback_platform or '').strip()) or 'cisco_ios'
     if existing is not None and not submitted and not clear_existing:
         return (
             platform,

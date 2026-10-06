@@ -635,7 +635,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                         ))
                       ) : (
                         getPlatformsForVendor(form.vendor).map(p => (
-                          <option key={p.value} value={p.value}>{p.label}</option>
+                          <option key={p.value} value={p.value}>{zh ? (p.labelZh || p.label) : (p.labelEn || p.label)}</option>
                         ))
                       )}
                     </select>

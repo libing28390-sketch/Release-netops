@@ -62,6 +62,17 @@ _PACKAGED_TEMPLATES_DIR = _PROJECT_ROOT / "release-textfsm-templates"
 # ``h3c_comware_v9``.  ``hp_comware`` is deliberately not a TextFSM alias: it
 # is only the literal Netmiko device_type at the transport adapter boundary.
 TEXTFSM_PLATFORM_MAP = {
+    # YunShan shares Huawei SSH transport, but keeps a separate parser family.
+    'huawei_yunshan': 'huawei_yunshan',
+    'huawei_yunshan_os': 'huawei_yunshan',
+    'yunshan': 'huawei_yunshan',
+    'yunshanos': 'huawei_yunshan',
+    'yunshan os': 'huawei_yunshan',
+    'yunshan_os': 'huawei_yunshan',
+    'huawei yunshan os': 'huawei_yunshan',
+    '华为云杉': 'huawei_yunshan',
+    '华为 yunshan os（云杉）': 'huawei_yunshan',
+    '华为 yunshan os (云杉)': 'huawei_yunshan',
     # Planned concrete template namespaces.  These codes are kept distinct
     # on disk while resolving to the existing parser/driver families at
     # runtime.
@@ -340,6 +351,11 @@ def _legacy_file_fallback_enabled() -> bool:
 def _template_filename_variants(platform: str, command: str) -> list[str]:
     """Return current names first, then compatible legacy NTC names."""
     commands = [command]
+    # The shared Huawei normalizer expands `display arp` to `display arp all`.
+    # YunShan's profile uses the documented versionless query. Both forms use
+    # the same YunShan grammar without selecting another OS namespace.
+    if platform == 'huawei_yunshan' and command.strip().lower() == 'display arp all':
+        commands.append('display arp')
     # Comware V7 has a dedicated description grammar, while V5/V9 can safely
     # reuse their ordinary brief grammar when no version-specific description
     # file exists. Keep the exact command first so the dedicated V7 template is
@@ -1307,6 +1323,14 @@ def _template_catalog_metadata(info: dict[str, Any]) -> dict[str, Any]:
 # the template-index boundary so suggestions and template listings expose the
 # command that should actually be sent to the device.
 _TEMPLATE_COMMAND_CANONICAL: dict[str, dict[str, str]] = {
+    'huawei_yunshan': {
+        'display cpu usage': 'display cpu-usage',
+        'display memory usage': 'display memory-usage',
+        'display ip routing table': 'display ip routing-table',
+        'display ip routing table statistics': 'display ip routing-table statistics',
+        'display eth trunk': 'display eth-trunk',
+        'display mac address': 'display mac-address',
+    },
     'huawei_vrp': {
         'display cpu usage': 'display cpu-usage',
         'display memory usage': 'display memory-usage',
@@ -1572,7 +1596,7 @@ def _parse_template_filename(filename: str) -> dict[str, Any] | None:
     known_platforms = [
         'cisco_ios', 'cisco_xe', 'cisco_nxos', 'cisco_xr', 'cisco_asa', 'cisco_ftd', 'cisco_fxos',
         'cisco_wlc', 'cisco_viptela', 'cisco_s300', 'cisco_s200', 'cisco_apic',
-        'huawei_vrp_unknown', 'huawei_vrp5', 'huawei_vrp8', 'huawei_vrpv8', 'huawei_vrp',
+        'huawei_yunshan', 'huawei_vrp_unknown', 'huawei_vrp5', 'huawei_vrp8', 'huawei_vrpv8', 'huawei_vrp',
         'huawei_smartax', 'huawei_ont',
         # H3C uses one public parser family.  Variant prefixes are explicit
         # grammar selectors and are checked before the family prefix.

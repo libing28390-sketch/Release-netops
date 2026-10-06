@@ -1,9 +1,10 @@
 import type { Device } from '../../types';
 import type { ScenarioVariable } from './types';
 import { VENDOR_MAP } from './constants';
+import { normalizeImportedPlatform } from '../AssetManagement/constants';
 
 export const normalizeAutomationPlatform = (platform?: string | null): string => {
-  const p = String(platform || '').toLowerCase().trim();
+  const p = normalizeImportedPlatform(platform).toLowerCase().trim();
   const aliases: Record<string, string> = {
     cisco: 'cisco_ios',
     ios: 'cisco_ios',

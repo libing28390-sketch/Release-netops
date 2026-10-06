@@ -2,10 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { AlertTriangle, ChevronDown, ChevronRight, Pencil, Plus, Search, X } from 'lucide-react';
 import type { Device, TagDefinition } from '../types';
+import { getVendorFromPlatform } from '../types';
 import { TAG_CATEGORY_LABELS } from '../types';
 import { apiRequest } from '../api/http';
 import { inferPlatformVendor, platformVendorLabel } from '../utils/platformVendor';
-import { SSH_ALGORITHM_PROFILE_OPTIONS, SSH_ALGORITHM_PROFILE_VALUES } from '../pages/AssetManagement/constants';
+import { normalizeImportedPlatform, SSH_ALGORITHM_PROFILE_OPTIONS, SSH_ALGORITHM_PROFILE_VALUES } from '../pages/AssetManagement/constants';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import { PasswordInputField } from './ui/PasswordInputField';
 
@@ -43,6 +44,7 @@ const PLATFORM_OPTIONS = [
   { value: 'fortinet_fortios', label: 'Fortinet FortiOS' },
   { value: 'huawei_vrp', label: 'Huawei VRPv5' },
   { value: 'huawei_vrpv8', label: 'Huawei VRPv8' },
+  { value: 'huawei_yunshan', label: 'Huawei YunShan OS' },
   { value: 'h3c_comware_v3', label: 'H3C Comware V3' },
   { value: 'h3c_comware', label: 'H3C Comware' },
   { value: 'ruijie_rgos', label: 'Ruijie RGOS' },
@@ -159,7 +161,7 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
       })),
   ];
 
-  const selectedPlatformValue = form.platform_profile_id || form.platform || 'cisco_ios';
+  const selectedPlatformValue = form.platform_profile_id || normalizeImportedPlatform(form.platform) || 'cisco_ios';
   const existingBindingReadOnly = mode === 'edit' && platformBindingReadOnly;
   const hasCmdbAsset = Boolean(form.asset_id);
   const selectedRegistryProfile = registryPlatforms.find((profile) => profile.id === form.platform_profile_id);
@@ -190,7 +192,8 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
     }
     onFormChange({
       ...form,
-      platform: value,
+      platform: normalizeImportedPlatform(value),
+      vendor: getVendorFromPlatform(value) === 'Other' ? form.vendor : getVendorFromPlatform(value),
       platform_profile_id: null,
       platform_source: 'LEGACY',
       platform_locked: false,

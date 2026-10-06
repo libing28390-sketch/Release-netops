@@ -54,7 +54,7 @@ const VENDORS = [
   'Generic',
   // ── 主流厂商（友好名称 + 具体 platform code）──
   'Cisco', 'cisco_ios', 'cisco_nxos', 'cisco_xr', 'cisco_asa', 'cisco_ftd',
-  'Huawei', 'huawei_vrp', 'huawei_vrpv8',
+  'Huawei', 'huawei_vrp', 'huawei_vrpv8', 'huawei_yunshan',
   'H3C', 'h3c_comware', 'h3c_comware_v3',
   'Juniper', 'juniper_junos',
   'Arista', 'arista_eos',

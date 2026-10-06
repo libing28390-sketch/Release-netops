@@ -119,7 +119,7 @@ const authHeaders = (): Record<string, string> => {
    show a clean "Linux" label instead of the raw (misleading) platform value. */
 const NETWORK_PLATFORM_CODES = new Set([
   'cisco_ios', 'cisco_nxos', 'cisco_xr', 'cisco_asa', 'cisco_ftd',
-  'huawei_vrp', 'huawei_vrpv8', 'huawei', 'h3c_comware', 'h3c_comware_v3',
+  'huawei_vrp', 'huawei_vrpv8', 'huawei_yunshan', 'huawei', 'h3c_comware', 'h3c_comware_v3',
   'juniper_junos', 'juniper', 'arista_eos', 'paloalto_panos', 'fortinet',
   'checkpoint_gaia', 'hillstone_stoneos', 'ruijie_os', 'ruijie_rgos', 'zte_zxros', 'maipu',
 ]);
