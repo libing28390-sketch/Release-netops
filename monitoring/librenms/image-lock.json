@@ -1,0 +1,29 @@
+{
+  "locked_on": "2026-10-07",
+  "librenms": {
+    "image": "librenms/librenms:26.9.1.1@sha256:814e3fb8d837c65ac51c1d9659ca5f551ed8ea47661ea7de6afbe2081207909b",
+    "image_tag": "26.9.1.1",
+    "manifest_digest": "sha256:814e3fb8d837c65ac51c1d9659ca5f551ed8ea47661ea7de6afbe2081207909b",
+    "docker_repository_release": "26.9.1.1-r1",
+    "docker_repository_commit": "afb3e410afbbf8a10a2204a957f16160943fcf3f",
+    "sources": [
+      "https://github.com/librenms/docker/releases/tag/26.9.1.1-r1",
+      "https://github.com/librenms/docker/blob/26.9.1.1-r1/examples/compose/compose.yml",
+      "https://hub.docker.com/r/librenms/librenms/tags"
+    ]
+  },
+  "mariadb": {
+    "image": "mariadb:11.8.9@sha256:6422478cb8e159f080fb1d8ccf65101e26fe51385787fde7d16c3b165a331f15",
+    "manifest_digest": "sha256:6422478cb8e159f080fb1d8ccf65101e26fe51385787fde7d16c3b165a331f15",
+    "sources": [
+      "https://hub.docker.com/_/mariadb/tags"
+    ]
+  },
+  "redis": {
+    "image": "redis:7.4.11-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499",
+    "manifest_digest": "sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499",
+    "sources": [
+      "https://hub.docker.com/_/redis/tags"
+    ]
+  }
+}

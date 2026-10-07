@@ -1,0 +1,9 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/interface/command/ir-cr-book/ir-s4.html",
+  "vendor": "Cisco",
+  "platform": "IOS/IOS-XE",
+  "model_family": "Cisco routers and Catalyst platforms",
+  "command": "show interfaces transceiver",
+  "source_note": "Official Cisco interface command reference transceiver example."
+}

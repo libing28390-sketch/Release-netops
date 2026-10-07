@@ -1,0 +1,36 @@
+# nexora-action-code: get_version
+Value Filldown SYSTEM_DESCRIPTION (.+?)
+Value Filldown START_TIME (.+?)
+Value Filldown UPTIME (.+?)
+Value Filldown HARDWARE_VERSION (\S+)
+Value Filldown SOFTWARE_VERSION (.+?)
+Value Filldown SERIAL_NUMBER (\S+)
+Value Filldown BOOT_VERSION (\S+)
+Value List SLOT (\d+)
+Value List MODULE_NAME (.+?)
+Value List MODULE_HW_VER (\S+)
+Value List MODULE_BOOT_VER (\S+)
+Value List MODULE_SW_VER (.+?)
+Value List MODULE_SN (\S+)
+
+Start
+  ^\s*System\s+description\s*:\s*${SYSTEM_DESCRIPTION}\s*$$
+  ^\s*System\s+start\s+time\s*:\s*${START_TIME}\s*$$
+  ^\s*System\s+uptime\s*:\s*${UPTIME}\s*$$
+  ^\s*System\s+hardware\s+version\s*:\s*${HARDWARE_VERSION}\s*$$
+  ^\s*System\s+software\s+version\s*:\s*${SOFTWARE_VERSION}\s*$$
+  ^\s*System\s+serial\s+number\s*:\s*${SERIAL_NUMBER}\s*$$
+  ^\s*System\s+boot\s+version\s*:\s*${BOOT_VERSION}\s*$$
+  ^\s*Module\s+information\s*: -> ModuleInfo
+  ^\s*$$
+  ^.*#\s*show\s+ -> Next
+  ^. -> Next
+
+ModuleInfo
+  ^\s*Slot\s+${SLOT}\s*:\s*${MODULE_NAME}\s*$$
+  ^\s*Hardware\s+version\s*:\s*${MODULE_HW_VER}\s*$$
+  ^\s*Boot\s+version\s*:\s*${MODULE_BOOT_VER}\s*$$
+  ^\s*Software\s+version\s*:\s*${MODULE_SW_VER}\s*$$
+  ^\s*Serial\s+number\s*:\s*${MODULE_SN}\s*$$
+  ^\s*$$
+  ^. -> Next

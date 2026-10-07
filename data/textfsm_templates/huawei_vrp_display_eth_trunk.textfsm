@@ -1,0 +1,43 @@
+Value Filldown ETH_TRUNK (\S+)
+Value Filldown WORKING_MODE (\S+)
+Value Filldown PREEMPT_DELAY (\S+)
+Value Filldown HASH_ARITHMETIC (\S.+\S)
+Value Filldown SYSTEM_PRIORITY (\d+)
+Value Filldown SYSTEM_ID (\S+)
+Value Filldown LEAST_ACTIVE_LINKNUMBER (\d+)
+Value Filldown MAX_ACTIVE_LINKNUMBER (\d+)
+Value Filldown OPERATE_STATUS (\S+)
+Value Filldown NUMBER_OF_UP_PORT_IN_TRUNK (\d+)
+Value Required INTERFACE (\S+)
+Value Required STATUS (\S+)
+Value PORT_TYPE (\S+)
+Value PORT_PRIORITY (\d+)
+Value PORT_NUMBER (\d+)
+Value PORT_KEY (\d+)
+Value PORT_STATE (\d+)
+Value WEIGHT (\d+)
+
+Start
+  ^\s*${ETH_TRUNK}'s\s+state\s+information\s+is:\s*$$
+  ^\s*Local:\s*$$
+  ^\s*LAG\s+ID:\s+\d+\s+WorkingMode:\s+${WORKING_MODE}\s*$$
+  ^\s*Preempt\s+Delay(?:\s+Time)?:\s+${PREEMPT_DELAY}\s+Hash\s+arithmetic:\s+${HASH_ARITHMETIC}\s*$$
+  ^\s*System\s+Priority:\s+${SYSTEM_PRIORITY}\s+System\s+ID:\s+${SYSTEM_ID}\s*$$
+  ^\s*Least\s+Active-linknumber:\s+${LEAST_ACTIVE_LINKNUMBER}\s+Max\s+Active-linknumber:\s+${MAX_ACTIVE_LINKNUMBER}\s*$$
+  ^\s*Least\s+Active-linknumber:\s+${LEAST_ACTIVE_LINKNUMBER}\s+Max\s+Bandwidth-affected-linknumber:\s+\d+\s*$$
+  ^\s*Operate\s+status:\s+${OPERATE_STATUS}\s+Number\s+Of\s+Up\s+Ports?\s+In\s+Trunk:\s+${NUMBER_OF_UP_PORT_IN_TRUNK}\s*$$
+  ^\s*-+\s*$$
+  ^\s*ActorPortName\s+Status\s+PortType\s+PortPri\s+PortNo\s+PortKey\s+PortState\s+Weight\s*$$
+  ^\s*${INTERFACE}\s+${STATUS}\s+${PORT_TYPE}\s+${PORT_PRIORITY}\s+${PORT_NUMBER}\s+${PORT_KEY}\s+${PORT_STATE}\s+${WEIGHT}\s*$$ -> Record
+  ^\s*Partner:\s*$$ -> Partner
+  ^\s*\[[^\]]+\]\s*$$
+  ^\s*$$
+  ^. -> Error
+
+Partner
+  ^\s*-+\s*$$
+  ^\s*ActorPortName\s+SysPri\s+SystemID\s+PortPri\s+PortNo\s+PortKey\s+PortState\s*$$
+  ^\s*\S+\s+\d+\s+\S+\s+\d+\s+\d+\s+\d+\s+\d+\s*$$
+  ^\s*\[[^\]]+\]\s*$$ -> Start
+  ^\s*$$
+  ^.*$$

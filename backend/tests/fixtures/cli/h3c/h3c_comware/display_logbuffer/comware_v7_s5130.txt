@@ -1,0 +1,8 @@
+<Sysname> display logbuffer
+Log buffer: Enabled
+Max buffer size: 1024
+Actual buffer size: 512
+Dropped messages: 0
+Overwritten messages: 718
+Current messages: 512
+%Jun 17 15:57:09:578 2016 Sysname SYSLOG/7/SYS_RESTART:System restarted --

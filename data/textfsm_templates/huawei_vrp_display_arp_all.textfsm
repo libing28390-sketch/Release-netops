@@ -1,0 +1,24 @@
+Value Required IP_ADDRESS (\d+\.\d+\.\d+\.\d+)
+Value Required MAC_ADDRESS (\S+)
+Value VLAN_ID (\d+)
+Value EXPIRE (\d+)
+Value Required TYPE (\S+(?:\s+\S+)?)
+Value Required INTERFACE (\S+)
+
+Start
+  ^IP\s+ADDRESS\s+MAC\s+ADDRESS\s+EXPIRE\(M\)\s+TYPE\s+INTERFACE\s+VPN-INSTANCE\s*$$
+  ^\s*VLAN(?:/CEVLAN)?\s*$$
+  ^-+\s*$$
+  ^\s*${IP_ADDRESS}\s+${MAC_ADDRESS}(?:\s+${EXPIRE})?\s+${TYPE}\s+(?=Vlan(?:if|-interface)?\d+\s*$$)${INTERFACE}\s*$$ -> Record
+  ^\s*${IP_ADDRESS}\s+${MAC_ADDRESS}(?:\s+${EXPIRE})?\s+${TYPE}\s+${INTERFACE}\s*$$ -> ARP_ROW
+  ^Total:\d+\s+Dynamic:\d+\s+Static:\d+\s+Interface:\d+(?:\s+Remote:\d+)?\s*$$
+  ^\s*\d+\s*$$
+  ^\s*$$
+  ^. -> Error
+
+ARP_ROW
+  ^\s*${VLAN_ID}\s*$$ -> Record Start
+  ^\s*${IP_ADDRESS}\s+${MAC_ADDRESS}(?:\s+${EXPIRE})?\s+${TYPE}\s+${INTERFACE}\s*$$ -> Continue.Record
+  ^Total:\d+\s+Dynamic:\d+\s+Static:\d+(?:\s+Interface:\d+)?(?:\s+Remote:\d+)?\s*$$ -> Record Start
+  ^\s*$$ -> Record Start
+  ^. -> Record Start

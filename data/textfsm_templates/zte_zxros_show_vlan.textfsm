@@ -1,0 +1,16 @@
+Value Required VLAN_ID (\d+)
+Value NAME (\S+)
+Value List PVID_PORTS (\S+)
+Value List UNTAG_PORTS (\S+)
+Value List TAG_PORTS (\S+)
+
+Start
+  ^${VLAN_ID}\s+${NAME}\s+${PVID_PORTS}\s+${UNTAG_PORTS}\s+${TAG_PORTS}\s*$$ -> Continue
+  ^${VLAN_ID}\s+${NAME}\s+${PVID_PORTS}\s{10,}${TAG_PORTS}\s*$$ -> Continue
+  ^${VLAN_ID}\s+${NAME}\s+${PVID_PORTS}\s*$$ -> Continue
+  ^${VLAN_ID}\s+${NAME}\s{30,}${TAG_PORTS}\s*$$ -> Continue
+  ^\s{18}${PVID_PORTS}\s*$$
+  ^\s{38}${UNTAG_PORTS}\s*$$
+  ^\s{58}${TAG_PORTS}\s*$$
+  ^${VLAN_ID}\s+${NAME} -> Record
+  ^\d+\s+\S+ -> Record

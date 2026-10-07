@@ -1,0 +1,10 @@
+Value Required SLOT (\d+(?:\([^\)]+\))?)
+Value CPU_30SEC (\d+)
+Value CPU_1MIN (\d+)
+Value CPU_5MIN (\d+)
+
+Start
+  ^Slot\s+${SLOT}\s+CPU usage:
+  ^\s*${CPU_30SEC}%\s+in last 30 seconds
+  ^\s*${CPU_1MIN}%\s+in last 1\s+minute
+  ^\s*${CPU_5MIN}%\s+in last 5\s+minute -> Record

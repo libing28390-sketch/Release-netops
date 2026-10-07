@@ -1,0 +1,18 @@
+Value Filldown OSPF_PROCESS (\d+)
+Value Filldown LOCAL_ROUTER_ID (\d+\.\d+\.\d+\.\d+)
+Value Required AREA_ID (\S+)
+Value Required INTERFACE (\S+)
+Value Required NEIGHBOR_ID (\d+\.\d+\.\d+\.\d+)
+Value Required STATE (\S+)
+
+Start
+  ^\s*\(M\)\s+Indicates\s+MADJ\s+neighbor
+  ^OSPF\s+Process\s+${OSPF_PROCESS}\s+with\s+Router\s+ID\s+${LOCAL_ROUTER_ID}
+  ^\s*Peer\s+Statistic\s+Informations
+  ^\s*Total\s+number\s+of\s+peer\(s\):\s+\d+
+  ^\s*Peer\(s\)\s+in\s+full\s+state:\s+\d+
+  ^-+
+  ^\s*Area\s+Id\s+Interface\s+Neighbor\s+id\s+State
+  ^\s*${AREA_ID}\s+${INTERFACE}\s+${NEIGHBOR_ID}(?:\(M\))?\s+${STATE}\s* -> Record
+  ^\s*$$
+  ^. -> Error

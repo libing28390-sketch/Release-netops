@@ -1,0 +1,32 @@
+# nexora-action-code: get_power
+Value Filldown SLOT (\d+)
+Value Required POWER_ID (\d+)
+Value Required STATUS (\S+)
+Value TYPE (\S+)
+
+Start
+  ^\s*Device\s+Info\s+on\s+Slot\s+${SLOT}:?\s*$$ -> DeviceTable
+  ^\s*Slot\s+${SLOT}:\s*$$ -> Power
+  ^\s*Slot\s+${SLOT}\s*$$ -> SimplePower
+  ^\s*$$
+  ^.*$$
+
+DeviceTable
+  ^\s*Device\s+ID\.\s+Status\s*$$
+  ^\s*${POWER_ID}\s+${STATUS}\s*$$ -> Record DeviceTable
+  ^\s*$$
+  ^.*$$
+
+Power
+  ^\s*PowerID\s+State\s+Mode
+  ^\s*${POWER_ID}\s+${STATUS}\s+${TYPE}(?:\s+\S+)*\s*$$ -> Record Power
+  ^\s*$$
+  ^.*$$
+
+SimplePower
+  ^\s*Power\s+${POWER_ID}\s*$$
+  ^\s*State\s*:\s*${STATUS}\s*$$
+  ^\s*Type\s*:\s*${TYPE}\s*$$ -> Record SimplePower
+  ^\s*Slot\s+${SLOT}\s*$$ -> SimplePower
+  ^\s*$$
+  ^.*$$

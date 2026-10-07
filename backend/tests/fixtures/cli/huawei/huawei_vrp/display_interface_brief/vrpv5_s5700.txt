@@ -1,0 +1,7 @@
+<HUAWEI> display interface brief
+PHY: Physical
+*down: administratively down
+^down: standby
+Interface                   PHY      Protocol InUti OutUti inErrors outErrors
+GigabitEthernet0/0/1        up       up       0.01% 0.01% 0         0
+

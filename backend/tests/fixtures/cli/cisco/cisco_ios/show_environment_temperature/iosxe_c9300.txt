@@ -1,0 +1,11 @@
+Device> show environment temperature
+Switch 1: SYSTEM TEMPERATURE is OK
+Inlet Temperature Value: 25 Degree Celsius
+Temperature State: GREEN
+Yellow Threshold : 46 Degree Celsius
+Red Threshold    : 56 Degree Celsius
+
+Hotspot Temperature Value: 35 Degree Celsius
+Temperature State: GREEN
+Yellow Threshold : 105 Degree Celsius
+Red Threshold    : 125 Degree Celsius

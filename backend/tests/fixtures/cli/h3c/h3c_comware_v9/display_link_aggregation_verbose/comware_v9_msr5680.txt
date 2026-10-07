@@ -1,0 +1,28 @@
+[DeviceA] display link-aggregation verbose
+
+Loadsharing Type: Shar -- Loadsharing, NonS -- Non-Loadsharing
+Port Status: S -- Selected, U -- Unselected, I -- Individual
+Port: A -- Auto port, M -- Management port, R -- Reference port
+Flags: A -- LACP_Activity, B -- LACP_Timeout, C -- Aggregation,
+       D -- Synchronization, E -- Collecting, F -- Distributing,
+       G -- Defaulted, H -- Expired
+Role: P -- Primary, S -- Secondary
+
+Aggregate Interface: Route-Aggregation1
+Creation Mode: Manual
+Aggregation Mode: Dynamic
+Loadsharing Type: Shar
+Management VLANs: None
+System ID: 0x8000, 000f-e267-6c6a
+
+Local:
+  Port                Status   Priority Index    Oper-Key               Flag
+  GE1/0/1(R)           S       32768    11       1                     {ACDEF}
+  GE1/0/2              S       32768    12       1                     {ACDEF}
+  GE1/0/3              S       32768    13       1                     {ACDEF}
+
+Remote:
+  Actor               Priority Index    Oper-Key SystemID               Flag
+  GE1/0/1              32768    81       1        0x8000, 000f-e267-57ad {ACDEF}
+  GE1/0/2              32768    82       1        0x8000, 000f-e267-57ad {ACDEF}
+  GE1/0/3              32768    83       1        0x8000, 000f-e267-57ad {ACDEF}

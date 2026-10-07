@@ -1,0 +1,13 @@
+Value Filldown PROCESS_ID (\d+)
+Value NEIGHBOR_ID (\S+)
+Value PRIORITY (\d+)
+Value STATE (\S+)
+Value DEAD_TIME (\S+)
+Value ADDRESS (\S+)
+Value INTERFACE (\S+)
+
+Start
+  ^OSPF process ${PROCESS_ID}:\s*$$
+  ^${NEIGHBOR_ID}\s+${PRIORITY}\s+${STATE}\s+${DEAD_TIME}\s+${ADDRESS}\s+${INTERFACE}\s*$$ -> Record
+
+EOF
