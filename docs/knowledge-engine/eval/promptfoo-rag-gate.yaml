@@ -5,7 +5,7 @@ prompts:
   - "{{query}}"
 
 providers:
-  - id: "python:scripts/promptfoo_nexora_provider.py"
+  - id: "python:../../../scripts/promptfoo_nexora_provider.py"
     label: "nexora-rag-local"
 
 defaultTest:

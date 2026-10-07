@@ -44,11 +44,16 @@ def _safe_error(value: Any) -> str | None:
     # stable class is enough to locate the server-side diagnostic.
     if value in (None, ""):
         return None
+    if isinstance(value, int) and not isinstance(value, bool):
+        # Promptfoo 0.118.0 uses ResultFailureReason numeric enum values.
+        return {0: None, 1: "assertion_failure", 2: "evaluation_error"}.get(value, "evaluation_error")
     text = str(value).casefold()
     if "assert" in text:
         return "assertion_failure"
     if "timeout" in text:
         return "timeout"
+    if "enoent" in text or "no such file" in text or "cannot find module" in text:
+        return "provider_setup_error"
     if "provider" in text:
         return "provider_error"
     return "evaluation_error"
@@ -69,6 +74,8 @@ def build_redacted_report(payload: Mapping[str, Any]) -> dict[str, Any]:
         grading = item.get("gradingResult") if isinstance(item.get("gradingResult"), Mapping) else {}
         components = grading.get("componentResults") if isinstance(grading.get("componentResults"), list) else []
         metadata = item.get("metadata") if isinstance(item.get("metadata"), Mapping) else {}
+        error_text = item.get("error")
+        failure_reason = error_text if isinstance(error_text, str) and error_text.strip() else item.get("failureReason")
         cases.append(
             {
                 "case": _safe_name(
@@ -78,7 +85,7 @@ def build_redacted_report(payload: Mapping[str, Any]) -> dict[str, Any]:
                     f"case-{index}",
                 ),
                 "passed": bool(item.get("success", item.get("pass", False))),
-                "failure_reason": _safe_error(item.get("failureReason") or item.get("error")),
+                "failure_reason": _safe_error(failure_reason),
                 "error_type": _safe_error_type(metadata.get("error_type")),
                 "error_stage": _safe_error_type(metadata.get("error_stage")),
                 "assertion_count": len(components),
