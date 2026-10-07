@@ -2053,6 +2053,10 @@ def build_wireless_dashboard():
     ap_online_description = "优先按 AP 状态统计；明细不完整时采用控制器上报数。"
     ap_offline_description = "只统计明确离线的 AP，不用总数减在线数推算。"
     ap_client_rows = f'topk(20, nexora_wireless_sensor_value{{{inventory_sel},component_class="wireless_access_point",sensor_class="clients"}})'
+    librenms_wireless_sensor_rows = (
+        f'topk(100, nexora_wireless_sensor_value{{{inventory_sel},'
+        'data_origin="librenms_native",component_class="wireless_sensor"})'
+    )
     station_rows = f'topk(100, nexora_wireless_station_info{{{inventory_sel}}})'
     radio_utilization_labels = "site_name,vendor,role,hostname,ap_id,ap_name,radio_id"
     radio_utilization_samples = f'nexora_wireless_sensor_value{{{inventory_sel},component_class="wireless_radio",sensor_class="utilization"}}'
@@ -2249,6 +2253,56 @@ def build_wireless_dashboard():
             14, 51, 10, 14, unit="bps", legend_format="{{hostname}} / {{ifName}}",
             thresholds=[], max_value=None, color=INFO_COLOR, instant=True,
             description="按在线 AC 接口入向与出向吞吐之和排名。",
+        ),
+        table_panel(
+            21, "LibreNMS 原生无线传感器",
+            librenms_wireless_sensor_rows,
+            0, 66, 24, 9,
+            transformations=clean_organize_transformation(
+                "数值",
+                extra_renames={
+                    "hostname": "设备",
+                    "sensor_name": "传感器",
+                    "sensor_class": "类别",
+                    "ap_name": "AP 名称",
+                    "radio_id": "Radio",
+                    "ssid": "SSID",
+                    "unit": "单位",
+                },
+                extra_indices={
+                    "hostname": 0,
+                    "sensor_name": 1,
+                    "sensor_class": 2,
+                    "ap_name": 3,
+                    "radio_id": 4,
+                    "ssid": 5,
+                    "Value": 6,
+                    "unit": 7,
+                },
+                extra_excludes={
+                    "asset_id": True,
+                    "data_origin": True,
+                    "device_id": True,
+                    "discovery_status": True,
+                    "instance": True,
+                    "job": True,
+                    "lifecycle_status": True,
+                    "measurement_type": True,
+                    "native_device_id": True,
+                    "native_entity_id": True,
+                    "native_instance_id": True,
+                    "platform": True,
+                    "role": True,
+                    "rule_version": True,
+                    "sensor_key": True,
+                    "site_name": True,
+                    "source_id": True,
+                    "source_type": True,
+                    "tenant_id": True,
+                    "window": True,
+                },
+            ),
+            description="LibreNMS 原生无线值；未推断 AP 或 Radio 归属。",
         ),
     ]
 

@@ -5,18 +5,6 @@ import { useEscapeClose } from '../../hooks/useEscapeClose';
 import type { ModelPresetItem } from './PresetProfilesModal';
 import type { CandidateDevice } from './components/LiveWalkInspector';
 
-interface HardwareMetricResult {
-  value?: unknown;
-  status?: string;
-  message?: string;
-}
-
-interface HardwareTestResult {
-  status?: string;
-  message?: string;
-  metrics?: Record<string, HardwareMetricResult>;
-}
-
 interface InterfaceTestResult {
   status?: string;
   passed?: boolean;
@@ -25,7 +13,6 @@ interface InterfaceTestResult {
 }
 
 interface BindingTestResult {
-  hardware?: HardwareTestResult;
   interface?: InterfaceTestResult;
   errors: string[];
 }
@@ -89,18 +76,6 @@ const templateCompatible = (template: ModelPresetItem | null, device: CandidateD
       || Boolean(major && (new RegExp(`(?:^|[^0-9])v?${major}(?:$|[^0-9])`).test(version) || platformForVersion.includes(`v${major}`) || platformForVersion.endsWith(major)));
   })) return false;
   return true;
-};
-
-const displayValue = (value: unknown) => {
-  if (value === undefined || value === null || value === '') return '-';
-  if (typeof value === 'object') {
-    try {
-      return JSON.stringify(value);
-    } catch {
-      return String(value);
-    }
-  }
-  return String(value);
 };
 
 const TemplateBindingModal: React.FC<TemplateBindingModalProps> = ({
@@ -229,6 +204,7 @@ const TemplateBindingModal: React.FC<TemplateBindingModalProps> = ({
   if (!open || !template) return null;
 
   const selectedDevice = devices.find(device => device.device_id === testDeviceId);
+  const hasInterfaceTemplate = template.interface_config?.enabled === true;
   const toggleDevice = (deviceId: string) => {
     setTestResult(null);
     setSelectedDeviceIds(current => {
@@ -270,6 +246,7 @@ const TemplateBindingModal: React.FC<TemplateBindingModalProps> = ({
   };
 
   const testTemplate = async () => {
+    if (!hasInterfaceTemplate) return;
     if (!testDeviceId) {
       showToast(zh ? '请先选择测试设备' : 'Select a test device first', 'error');
       return;
@@ -282,58 +259,30 @@ const TemplateBindingModal: React.FC<TemplateBindingModalProps> = ({
     setTestResult(null);
     const result: BindingTestResult = { errors: [] };
     try {
-      const requests: Array<Promise<unknown>> = [
-        apiRequest<{ success: boolean; data: HardwareTestResult }>(
-          '/api/platform-registry/snmp-hardware-test',
-          {
-            method: 'POST',
-            body: JSON.stringify({
-              device_id: testDeviceId,
-              version: snmpVersion,
-              include_default_metrics: true,
-              metric_definitions: template.metric_definitions,
-            }),
-          },
-        ),
-      ];
-      if (template.interface_config?.enabled) {
-        requests.push(
-          apiRequest<{ success: boolean; data: InterfaceTestResult }>(
-            '/api/platform-registry/snmp-interface-test',
-            {
-              method: 'POST',
-              body: JSON.stringify({
-                device_id: testDeviceId,
-                version: snmpVersion,
-                interface_config: template.interface_config,
-              }),
-            },
-          ),
-        );
-      }
-      const responses = await Promise.allSettled(requests);
-      if (responses[0]?.status === 'fulfilled') {
-        result.hardware = (responses[0].value as { data: HardwareTestResult }).data;
-      } else {
-        result.errors.push(zh ? '硬件指标测试失败' : 'Hardware metric test failed');
-      }
-      if (responses[1]) {
-        if (responses[1].status === 'fulfilled') {
-          result.interface = (responses[1].value as { data: InterfaceTestResult }).data;
-        } else {
-          result.errors.push(zh ? '接口指标测试失败' : 'Interface metric test failed');
-        }
-      }
+      const response = await apiRequest<{ success: boolean; data: InterfaceTestResult }>(
+        '/api/platform-registry/snmp-interface-test',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            device_id: testDeviceId,
+            version: snmpVersion,
+            interface_config: template.interface_config,
+          }),
+        },
+      );
+      result.interface = response.data;
       setTestResult(result);
+      const passed = result.interface.passed === true;
       showToast(
-        result.errors.length === 0 && result.hardware?.status === 'ok'
-          ? (zh ? '测试通过，可确认绑定' : 'Test passed; the binding can be confirmed')
-          : (zh ? '测试未通过，但仍可由操作员直接确认绑定' : 'The test did not pass; an operator may still confirm the binding directly'),
-        result.errors.length === 0 && result.hardware?.status === 'ok' ? 'success' : 'info',
+        passed
+          ? (zh ? '接口模板验证通过，可确认绑定' : 'Interface template validation passed; the binding can be confirmed')
+          : (zh ? '接口模板验证未通过，但仍可由操作员直接确认绑定' : 'Interface template validation did not pass; an operator may still confirm the binding directly'),
+        passed ? 'success' : 'info',
       );
     } catch (error) {
-      const message = error instanceof Error ? error.message : zh ? '模板测试失败' : 'Template test failed';
-      setTestResult({ errors: [message] });
+      const message = error instanceof Error ? error.message : zh ? '接口模板验证失败' : 'Interface template validation failed';
+      result.errors.push(message);
+      setTestResult(result);
       showToast(message, 'error');
     } finally {
       setTesting(false);
@@ -369,7 +318,7 @@ const TemplateBindingModal: React.FC<TemplateBindingModalProps> = ({
               {isExistingTemplate ? (zh ? '管理模板绑定设备' : 'Manage template device bindings') : (zh ? '选择设备并绑定 SNMP 模板' : 'Select devices and bind SNMP template')}
             </div>
             <div className="mt-1 text-[11px] text-black/45 dark:text-white/45">
-              {zh ? '模板不会按型号自动套用；请勾选需要使用该模板的设备。在线设备可先做一次 SNMP 测试。' : 'Templates are not applied by model automatically; select the exact devices that should use this template. Online devices can be tested first.'}
+              {zh ? '模板不会按型号自动套用；请勾选需要使用该模板的设备。此处仅验证已启用的接口 IF-MIB 模板。' : 'Templates are not applied by model automatically; select the exact devices that should use this template. This dialog only validates an enabled interface IF-MIB template.'}
             </div>
           </div>
           <button type="button" onClick={onClose} className="rounded-lg p-1.5 text-black/40 hover:bg-black/5 dark:text-white/45 dark:hover:bg-white/8" aria-label={zh ? '关闭' : 'Close'}>
@@ -422,15 +371,15 @@ const TemplateBindingModal: React.FC<TemplateBindingModalProps> = ({
                         <span className="block truncate text-xs font-medium text-black/80 dark:text-white/85">{device.hostname || device.device_id}</span>
                         <span className="block truncate text-[10px] text-black/45 dark:text-white/45">{device.ip_address || '-'} · {device.vendor || '-'} · {device.platform || '-'} · {device.model || '-'} · {device.version || '-'} · {device.status || (zh ? '状态未知' : 'unknown')}</span>
                       </span>
-                      <button type="button" onClick={event => { event.preventDefault(); setTestDeviceId(device.device_id); setTestResult(null); }} className={`shrink-0 rounded px-1.5 py-1 text-[9px] ${testDeviceId === device.device_id ? 'bg-[#00bceb]/15 text-[#007391] dark:text-[#00bceb]' : 'text-black/35 hover:bg-black/5 dark:text-white/35 dark:hover:bg-white/8'}`}>
-                        {testDeviceId === device.device_id ? (zh ? '测试样例' : 'Test sample') : (zh ? '设为测试' : 'Test')}
-                      </button>
+                      {hasInterfaceTemplate && <button type="button" onClick={event => { event.preventDefault(); setTestDeviceId(device.device_id); setTestResult(null); }} className={`shrink-0 rounded px-1.5 py-1 text-[9px] ${testDeviceId === device.device_id ? 'bg-[#00bceb]/15 text-[#007391] dark:text-[#00bceb]' : 'text-black/35 hover:bg-black/5 dark:text-white/35 dark:hover:bg-white/8'}`}>
+                        {testDeviceId === device.device_id ? (zh ? '接口测试样例' : 'Interface test sample') : (zh ? '设为测试' : 'Test')}
+                      </button>}
                       {!compatible && <span className="shrink-0 text-[9px] font-semibold text-rose-600">{zh ? '范围不匹配' : 'Out of scope'}</span>}
                     </label>
                   );
                 })}
               </div>
-              <label className="mt-2 block text-[10px] font-medium text-black/55 dark:text-white/55">
+              {hasInterfaceTemplate ? <label className="mt-2 block text-[10px] font-medium text-black/55 dark:text-white/55">
                 {zh ? '测试设备' : 'Test device'}
                 <select
                   aria-label={zh ? '选择测试设备' : 'Test device'}
@@ -446,11 +395,12 @@ const TemplateBindingModal: React.FC<TemplateBindingModalProps> = ({
                     </option>
                   ))}
                 </select>
-              </label>
+              </label> : null}
               {loadError && <div className="mt-2 flex items-start gap-1.5 rounded-lg border border-amber-500/20 bg-amber-500/[.05] px-3 py-2 text-[10px] text-amber-800 dark:text-amber-200"><AlertTriangle size={13} className="mt-0.5 shrink-0" /><span>{loadError}</span></div>}
             </div>
 
             <div>
+              {hasInterfaceTemplate ? <>
               <label className="block text-xs font-medium text-black/70 dark:text-white/70">
                 {zh ? 'SNMP 版本' : 'SNMP version'}
                 <select value={snmpVersion} onChange={event => setSnmpVersion(event.target.value as '1' | '2c')} className="mt-1.5 w-full rounded-lg border border-black/8 bg-transparent px-3 py-2 text-xs outline-none dark:border-white/10">
@@ -461,21 +411,25 @@ const TemplateBindingModal: React.FC<TemplateBindingModalProps> = ({
               <div className="mt-3 rounded-lg border border-black/8 bg-black/[.015] p-3 text-[10px] text-black/55 dark:border-white/8 dark:bg-white/[.02] dark:text-white/55">
                 <div className="font-semibold text-black/70 dark:text-white/75">{zh ? '测试样例' : 'Test sample'}</div>
                 <div className="mt-1">{selectedDevice ? `${selectedDevice.hostname} · ${selectedDevice.ip_address || '-'}` : (zh ? '尚未选择' : 'Not selected')}</div>
-                <div className="mt-2 text-black/45 dark:text-white/45">{zh ? '测试只读取当前样例设备，不会对已选设备逐台发起 SNMP 测试；全选只保存绑定关系。' : 'Testing reads only the selected sample device; it does not run SNMP tests for every selected device. Select all only saves the bindings.'}</div>
-                {selectedDevice && !testDeviceIsOnline && <div className="mt-2 flex items-start gap-1 text-amber-700 dark:text-amber-300"><AlertTriangle size={12} className="mt-0.5 shrink-0" /><span>{zh ? '设备不在线，不能实时测试，但仍可直接绑定。' : 'Live testing is unavailable; binding is still allowed.'}</span></div>}
+                <div className="mt-2 text-black/45 dark:text-white/45">{zh ? '此测试只校验当前样例设备上的接口 IF-MIB 配置，不采集 CPU、内存等硬件数据。' : 'This validates only the interface IF-MIB configuration on the selected sample device; it does not collect CPU, memory, or other hardware readings.'}</div>
+                {selectedDevice && !testDeviceIsOnline && <div className="mt-2 flex items-start gap-1 text-amber-700 dark:text-amber-300"><AlertTriangle size={12} className="mt-0.5 shrink-0" /><span>{zh ? '设备不在线，不能实时验证接口模板，但仍可直接绑定。' : 'The device is offline, so the interface template cannot be validated live; binding is still allowed.'}</span></div>}
               </div>
               <button type="button" onClick={() => void testTemplate()} disabled={testing || !testDeviceId || !testDeviceIsOnline} className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-[#00bceb]/30 bg-[#00bceb]/10 py-2.5 text-xs font-semibold text-[#008aad] hover:bg-[#00bceb]/20 disabled:cursor-not-allowed disabled:opacity-45 dark:text-[#00bceb]">
                 {testing ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
-                {testing ? (zh ? '测试中…' : 'Testing…') : testDeviceIsOnline ? (zh ? '测试在线样例（可选）' : 'Test template') : (zh ? '设备不在线，无法测试' : 'Device offline; test unavailable')}
+                {testing ? (zh ? '接口验证中…' : 'Validating interface…') : testDeviceIsOnline ? (zh ? '验证接口模板（可选）' : 'Validate interface template') : (zh ? '设备不在线，无法验证' : 'Device offline; validation unavailable')}
               </button>
+              </> : <div className="rounded-lg border border-[#00bceb]/20 bg-[#00bceb]/[.04] p-3 text-[10px] text-black/60 dark:text-white/65">
+                <div className="font-semibold text-black/75 dark:text-white/80">{zh ? '硬件结果使用 LibreNMS 原生采集' : 'Hardware results use native LibreNMS collection'}</div>
+                <div className="mt-1">{zh ? '此模板未启用接口 IF-MIB 验证。CPU、内存等硬件采集结果请在 SNMP 诊断页查看。' : 'This template has no enabled interface IF-MIB validation. View CPU, memory, and other native hardware collection results in SNMP diagnostics.'}</div>
+                <a href="/monitor/snmp-walk" className="mt-2 inline-block font-semibold text-[#008aad] underline dark:text-[#00bceb]">{zh ? '打开 SNMP 诊断 →' : 'Open SNMP diagnostics →'}</a>
+              </div>}
             </div>
           </div>
 
           {testResult && (
             <div className="mt-4 rounded-xl border border-black/8 bg-black/[.015] p-3 dark:border-white/8 dark:bg-white/[.02]">
-              <div className="flex items-center justify-between gap-2 text-xs font-semibold text-black/80 dark:text-white/85"><span>{zh ? '测试结果' : 'Test result'}</span><span className={testResult.hardware?.status === 'ok' ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300'}>{testResult.hardware?.status === 'ok' ? (zh ? '通过' : 'Passed') : (zh ? '需关注' : 'Review')}</span></div>
-              {testResult.hardware && <div className="mt-2 grid gap-1.5 sm:grid-cols-2">{Object.entries(testResult.hardware.metrics || {}).map(([key, detail]) => <div key={key} className="rounded-lg border border-black/6 bg-white/55 px-2.5 py-2 dark:border-white/8 dark:bg-white/[.03]"><div className="flex items-center justify-between gap-2 text-[10px]"><span className="font-medium">{key}</span><span className={detail.status === 'ok' ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300'}>{detail.status || '-'}</span></div><div className="mt-1 font-mono text-sm text-black/75 dark:text-white/80">{displayValue(detail.value)}</div></div>)}</div>}
-              {testResult.interface && <div className="mt-2 text-[10px] text-black/60 dark:text-white/65">{zh ? '接口指标' : 'Interface metrics'}：{testResult.interface.passed ? (zh ? '通过' : 'passed') : (testResult.interface.status || (zh ? '失败' : 'failed'))} · {testResult.interface.interfaces || 0} {zh ? '个接口' : 'interfaces'}</div>}
+              <div className="flex items-center justify-between gap-2 text-xs font-semibold text-black/80 dark:text-white/85"><span>{zh ? '接口模板验证结果' : 'Interface template validation'}</span><span className={testResult.interface?.passed ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300'}>{testResult.interface?.passed ? (zh ? '通过' : 'Passed') : (zh ? '需关注' : 'Review')}</span></div>
+              {testResult.interface && <div className="mt-2 text-[10px] text-black/60 dark:text-white/65">{testResult.interface.message || testResult.interface.status} · {testResult.interface.interfaces || 0} {zh ? '个接口' : 'interfaces'}</div>}
               {testResult.errors.map(error => <div key={error} className="mt-2 text-[10px] text-red-700 dark:text-red-300">{error}</div>)}
             </div>
           )}

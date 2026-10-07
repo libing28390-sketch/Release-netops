@@ -237,9 +237,6 @@ describe('MetricOidProfilesModal editor', () => {
           items: [{ id: 'device-1', hostname: 'edge-01', ip_address: '10.254.0.1', vendor: 'H3C', model: 'S6800', status: 'online' }],
         } as never;
       }
-      if (url === '/api/platform-registry/snmp-hardware-test') {
-        return { success: true, data: { status: 'ok', metric_count: 1, metrics: { cpu: { status: 'ok', value: 30 } } } } as never;
-      }
       if (String(url).includes('/mapping-validation')) {
         return { success: true, data: { matched_device_count: 1, sample_device_id: null, profile_applied_device_count: 0, blocked_device_count: 1, collector_status: 'blocked_unverified' } } as never;
       }
@@ -260,11 +257,9 @@ describe('MetricOidProfilesModal editor', () => {
     await user.click(screen.getByRole('button', { name: 'Official Templates' }));
     await waitFor(() => expect(screen.getByText('H3C S6800')).toBeTruthy());
     await user.click(screen.getByRole('button', { name: 'Test & bind (H3C S6800)' }));
-    await screen.findByRole('combobox', { name: 'Test device' });
+    await screen.findByText('Hardware results use native LibreNMS collection');
+    expect(screen.queryByRole('combobox', { name: 'Test device' })).toBeNull();
     await user.click(screen.getByRole('checkbox'));
-    await waitFor(() => expect((screen.getByRole('button', { name: 'Test template' }) as HTMLButtonElement).disabled).toBe(false));
-    await user.click(screen.getByRole('button', { name: 'Test template' }));
-    await screen.findByText('Passed');
     await user.click(screen.getByRole('button', { name: 'Confirm binding' }));
 
     await waitFor(() => expect(mockedApiRequest).toHaveBeenCalledWith(
@@ -274,6 +269,7 @@ describe('MetricOidProfilesModal editor', () => {
         body: JSON.stringify({ preset_id: 'md-h3c-s6800-v7' }),
       }),
     ));
+    expect(mockedApiRequest.mock.calls.some(([url]) => String(url).includes('/snmp-hardware-test') || String(url).includes('/snmp-interface-test'))).toBe(false);
   });
 
   it('applies the exact built-in preset directly from a matched model row', async () => {
@@ -324,9 +320,6 @@ describe('MetricOidProfilesModal editor', () => {
           items: [{ id: 'device-1', hostname: 'edge-01', ip_address: '10.254.0.1', vendor: 'H3C', model: 'S6800', status: 'online' }],
         } as never;
       }
-      if (url === '/api/platform-registry/snmp-hardware-test') {
-        return { success: true, data: { status: 'ok', metric_count: 1, metrics: { cpu: { status: 'ok', value: 30 } } } } as never;
-      }
       return { success: true, data: [], total: 0, page: 1, page_size: 20, total_pages: 0 } as never;
     });
 
@@ -342,10 +335,8 @@ describe('MetricOidProfilesModal editor', () => {
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Test and bind' })).toBeTruthy());
     await user.click(screen.getByRole('button', { name: 'Test and bind' }));
-    await screen.findByRole('combobox', { name: 'Test device' });
-    await waitFor(() => expect((screen.getByRole('button', { name: 'Test template' }) as HTMLButtonElement).disabled).toBe(false));
-    await user.click(screen.getByRole('button', { name: 'Test template' }));
-    await screen.findByText('Passed');
+    await screen.findByText('Hardware results use native LibreNMS collection');
+    expect(screen.queryByRole('combobox', { name: 'Test device' })).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Confirm binding' }));
     await waitFor(() => expect(mockedApiRequest).toHaveBeenCalledWith(
       '/api/platform-registry/snmp-metric-profiles/apply-preset',
@@ -354,6 +345,7 @@ describe('MetricOidProfilesModal editor', () => {
         body: JSON.stringify({ preset_id: 'md-h3c-s6800-v7' }),
       }),
     ));
+    expect(mockedApiRequest.mock.calls.some(([url]) => String(url).includes('/snmp-hardware-test') || String(url).includes('/snmp-interface-test'))).toBe(false);
   });
 
   it('shows the official preset as already applied after the list is refreshed', async () => {
@@ -486,9 +478,9 @@ describe('MetricOidProfilesModal editor', () => {
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Test and bind' })).toBeTruthy());
     await user.click(screen.getByRole('button', { name: 'Test and bind' }));
-    await screen.findByText(/live testing is unavailable; binding is still allowed/i);
-    const testButton = screen.getByRole('button', { name: 'Device offline; test unavailable' }) as HTMLButtonElement;
-    expect(testButton.disabled).toBe(true);
+    await screen.findByText('Hardware results use native LibreNMS collection');
+    expect(screen.queryByRole('combobox', { name: 'Test device' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Device offline; test unavailable' })).toBeNull();
     const confirmButton = screen.getByRole('button', { name: 'Confirm binding \(untested\)' }) as HTMLButtonElement;
     expect(confirmButton.disabled).toBe(false);
     await user.click(confirmButton);
@@ -501,6 +493,7 @@ describe('MetricOidProfilesModal editor', () => {
         body: JSON.stringify({ preset_id: 'md-h3c-s6800-v7' }),
       }),
     ));
+    expect(mockedApiRequest.mock.calls.some(([url]) => String(url).includes('/snmp-hardware-test') || String(url).includes('/snmp-interface-test'))).toBe(false);
   });
 
   it('does not auto-test a mapped device when opening collected results', async () => {
@@ -573,6 +566,6 @@ describe('MetricOidProfilesModal editor', () => {
     await new Promise(resolve => setTimeout(resolve, 0));
 
     expect(mockedApiRequest.mock.calls.some(([url]) => String(url).includes('/snmp-hardware-test'))).toBe(false);
-    expect(screen.getByRole('button', { name: 'Test Hardware Metrics' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Test Hardware Metrics' })).toBeNull();
   });
 });

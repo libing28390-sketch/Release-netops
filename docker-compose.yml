@@ -140,6 +140,14 @@ services:
       # Keep one worker by default because the lifespan-owned telemetry loops
       # must run once per deployment, not once per Uvicorn worker process.
       - WORKERS=${WORKERS:-1}
+      # LibreNMS secrets are sourced from this shared .env file for the
+      # optional runtime services below. Explicitly clear them in the Nexora
+      # container so the broad env_file contract cannot expose them to the
+      # backend process.
+      - LIBRENMS_APP_KEY=
+      - LIBRENMS_DB_PASSWORD=
+      - LIBRENMS_DB_ROOT_PASSWORD=
+      - LIBRENMS_REDIS_PASSWORD=
     volumes:
       - nexora-data:/app/data
       - nexora-backup:/app/backup
@@ -148,6 +156,9 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    networks:
+      - default
+      - librenms_control
     restart: unless-stopped
     ulimits:
       nofile:
@@ -172,6 +183,9 @@ services:
     command:
       - "-storageDataPath=/storage"
       - "-retentionPeriod=${VM_RETENTION_PERIOD:-30d}"
+      # LibreNMS native Influx output probes/creates its database through the
+      # Influx v1 API. VictoriaMetrics uses this list for SHOW DATABASES.
+      - "-influx.databaseNames=librenms"
       # Stop accepting samples before this filesystem falls below 10 GiB free.
       - "-storage.minFreeDiskSpaceBytes=${VM_MIN_FREE_DISK_SPACE_BYTES:-10737418240}"
       - "-httpListenAddr=:8428"
@@ -179,6 +193,9 @@ services:
       - nexora-vmdata:/storage
     expose:
       - "8428"
+    networks:
+      - default
+      - librenms_metrics
     restart: unless-stopped
     logging: *container-logging
     healthcheck:
@@ -529,6 +546,152 @@ services:
     restart: unless-stopped
     logging: *container-logging
 
+  # Optional full LibreNMS runtime. The profile is deliberately opt-in; the
+  # dispatcher is the only service with a route to the configured device
+  # management network. These services never use Nexora PostgreSQL/Redis.
+  librenms-db:
+    image: mariadb:11.8.9@sha256:6422478cb8e159f080fb1d8ccf65101e26fe51385787fde7d16c3b165a331f15
+    profiles: ["librenms-native"]
+    container_name: nexora-librenms-db
+    command:
+      - mysqld
+      - --innodb-file-per-table=1
+      - --lower-case-table-names=0
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      MARIADB_ROOT_PASSWORD: ${LIBRENMS_DB_ROOT_PASSWORD:-}
+      MARIADB_DATABASE: librenms
+      MARIADB_USER: librenms
+      MARIADB_PASSWORD: ${LIBRENMS_DB_PASSWORD:-}
+    volumes:
+      - nexora-librenms-dbdata:/var/lib/mysql
+      - ./monitoring/librenms/mariadb-entrypoint.sh:/run/nexora/librenms/mariadb-entrypoint.sh:ro
+    entrypoint: ["/bin/sh", "/run/nexora/librenms/mariadb-entrypoint.sh"]
+    networks:
+      - librenms_internal
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    stop_grace_period: 60s
+    restart: unless-stopped
+    logging: *container-logging
+
+  librenms-redis:
+    image: redis:7.4.11-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+    profiles: ["librenms-native"]
+    container_name: nexora-librenms-redis
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      REDIS_PASSWORD: ${LIBRENMS_REDIS_PASSWORD:-}
+    entrypoint: ["/bin/sh", "/run/nexora/librenms/redis-entrypoint.sh"]
+    volumes:
+      - nexora-librenms-redis-data:/data
+      - ./monitoring/librenms/redis-entrypoint.sh:/run/nexora/librenms/redis-entrypoint.sh:ro
+    networks:
+      - librenms_internal
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - redis-cli --no-auth-warning -a "$${REDIS_PASSWORD}" ping | grep -q PONG
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+    logging: *container-logging
+
+  librenms:
+    image: librenms/librenms:26.9.1.1@sha256:814e3fb8d837c65ac51c1d9659ca5f551ed8ea47661ea7de6afbe2081207909b
+    profiles: ["librenms-native"]
+    container_name: nexora-librenms
+    hostname: librenms
+    environment: &librenms-runtime-environment
+      TZ: ${TZ:-Asia/Shanghai}
+      PUID: "1000"
+      PGID: "1000"
+      APP_KEY: ${LIBRENMS_APP_KEY:-}
+      DB_HOST: librenms-db
+      DB_PORT: "3306"
+      DB_NAME: librenms
+      DB_USER: librenms
+      DB_PASSWORD: ${LIBRENMS_DB_PASSWORD:-}
+      DB_TIMEOUT: "60"
+      REDIS_HOST: librenms-redis
+      REDIS_PORT: "6379"
+      REDIS_SCHEME: tcp
+      REDIS_PASSWORD: ${LIBRENMS_REDIS_PASSWORD:-}
+      REDIS_DB: "0"
+      REDIS_CACHE_DB: "1"
+      CACHE_DRIVER: redis
+      SESSION_DRIVER: redis
+      LIBRENMS_WEATHERMAP: "false"
+    entrypoint: ["/bin/sh", "/run/nexora/librenms/runtime-guard.sh"]
+    volumes:
+      - nexora-librenms-data:/data
+      - ./monitoring/librenms/runtime-guard.sh:/run/nexora/librenms/runtime-guard.sh:ro
+    expose:
+      - "8000"
+    # Local-only bootstrap access for the initial admin account. No public
+    # interface is bound; remote setup should use an SSH tunnel.
+    ports:
+      - "127.0.0.1:18000:8000"
+    networks:
+      - librenms_control
+      - librenms_internal
+    depends_on:
+      librenms-db:
+        condition: service_healthy
+      librenms-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- --timeout=5 http://127.0.0.1:8000/ >/dev/null"]
+      interval: 20s
+      timeout: 6s
+      retries: 5
+      start_period: 120s
+    stop_grace_period: 60s
+    restart: unless-stopped
+    logging: *container-logging
+
+  librenms-dispatcher:
+    image: librenms/librenms:26.9.1.1@sha256:814e3fb8d837c65ac51c1d9659ca5f551ed8ea47661ea7de6afbe2081207909b
+    profiles: ["librenms-native"]
+    container_name: nexora-librenms-dispatcher
+    hostname: librenms-dispatcher
+    environment:
+      <<: *librenms-runtime-environment
+      DISPATCHER_NODE_ID: nexora-librenms-dispatcher-1
+      SIDECAR_DISPATCHER: "1"
+    entrypoint: ["/bin/sh", "/run/nexora/librenms/runtime-guard.sh"]
+    volumes:
+      - nexora-librenms-data:/data
+      - ./monitoring/librenms/runtime-guard.sh:/run/nexora/librenms/runtime-guard.sh:ro
+    cap_add:
+      - NET_RAW
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - librenms_internal
+      - librenms_device_management
+      - librenms_metrics
+    depends_on:
+      librenms:
+        condition: service_healthy
+      librenms-db:
+        condition: service_healthy
+      librenms-redis:
+        condition: service_healthy
+      victoriametrics:
+        condition: service_healthy
+    stop_grace_period: 60s
+    restart: unless-stopped
+    logging: *container-logging
+
 volumes:
   nexora-data:
     name: nexora-data
@@ -550,10 +713,27 @@ volumes:
     name: nexora-grafana-data
   nexora-seaweedfs-data:
     name: nexora-seaweedfs-data
+  nexora-librenms-data:
+    name: nexora-librenms-data
+  nexora-librenms-dbdata:
+    name: nexora-librenms-dbdata
+  nexora-librenms-redis-data:
+    name: nexora-librenms-redis-data
 
 networks:
   monitoring_internal:
     internal: true
+  librenms_control:
+    internal: true
+  librenms_internal:
+    internal: true
+  librenms_metrics:
+    internal: true
+  # This external, non-internal network must already be attached/routed to the
+  # device-management network. It is not the isolated monitoring_internal net.
+  librenms_device_management:
+    name: ${LIBRENMS_DEVICE_NETWORK_NAME:-nexora-librenms-device-management}
+    external: true
   grafana_auth:
     internal: true
     ipam:

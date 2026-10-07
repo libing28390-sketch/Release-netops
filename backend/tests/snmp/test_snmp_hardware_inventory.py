@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import database
 from database.migrations.m0260_snmp_hardware_inventory import upgrade as upgrade_hardware_inventory
@@ -172,6 +172,121 @@ def test_same_cpu_index_keeps_independent_one_and_five_minute_series(isolated_db
         })
         assert 'window="1m"' in exposition
         assert 'window="5m"' in exposition
+    finally:
+        conn.close()
+
+
+def test_native_samples_use_native_identity_and_order_by_sample_time(isolated_db) -> None:
+    conn = database.get_db_connection()
+    device_id = "hardware-native-device"
+    try:
+        _seed_device(conn, device_id)
+        base_at = datetime(2026, 10, 7, 10, 0, tzinfo=timezone.utc)
+
+        def native_cpu(value: float, sample_at: datetime):
+            return _sensor(
+                source_type="librenms_native",
+                source_id="processor:3",
+                data_origin="librenms_native",
+                native_instance_id="lnms-1",
+                native_device_id="17",
+                native_entity_id="processor:3",
+                component_class="processor",
+                measurement_type="cpu_usage_percent",
+                index={
+                    "instance_id": "lnms-1",
+                    "native_device_id": "17",
+                    "row_kind": "processor",
+                    "native_row_id": "3",
+                },
+                oid="",
+                unit="%",
+                scale=1,
+                offset=0,
+                metadata={"window": "unknown", "poll_interval_seconds": 300},
+                value=value,
+                raw_value=str(value),
+                quality="good",
+                sample_at=sample_at,
+            )
+
+        for run_id, request_at, value, sample_at in (
+            ("native-run-1", base_at + timedelta(minutes=10), 37, base_at),
+            ("native-run-2", base_at + timedelta(minutes=20), 42, base_at + timedelta(minutes=5)),
+            # A fresh API read may contain a lagging upstream row. It must not
+            # replace the newer LibreNMS sample already projected.
+            ("native-run-3", base_at + timedelta(minutes=30), 8, base_at + timedelta(minutes=3)),
+        ):
+            upsert_discovery_run(
+                conn,
+                device_id,
+                run_id,
+                "librenms-26.9.1",
+                [native_cpu(value, sample_at)],
+                [_category("librenms_native", "processor")],
+                observed_at=request_at,
+            )
+
+        stored = list_hardware_sensors(conn, device_id, component_class="processor")
+        assert len(stored) == 1
+        row = stored[0]
+        assert row["data_origin"] == "librenms_native"
+        assert row["native_instance_id"] == "lnms-1"
+        assert row["native_device_id"] == "17"
+        assert row["native_entity_id"] == "processor:3"
+        assert row["last_value"] == 42
+        assert row["last_sample_at"] == base_at + timedelta(minutes=5)
+        assert row["last_success"] == base_at + timedelta(minutes=5)
+        metrics = render_hardware_metrics(stored, {"device_id": device_id})
+        cpu_line = next(line for line in metrics.splitlines() if line.startswith("nexora_hw_cpu_usage_percent{"))
+        assert 'data_origin="librenms_native"' in cpu_line
+        assert 'native_instance_id="lnms-1"' in cpu_line
+        assert cpu_line.endswith(" 42")
+    finally:
+        conn.close()
+
+
+def test_native_sample_without_lastupdate_does_not_borrow_request_time(isolated_db) -> None:
+    conn = database.get_db_connection()
+    device_id = "hardware-native-unknown-time"
+    try:
+        _seed_device(conn, device_id)
+        request_at = datetime(2026, 10, 7, 11, 0, tzinfo=timezone.utc)
+        sensor = _sensor(
+            source_type="librenms_native",
+            source_id="mempool:4",
+            data_origin="librenms_native",
+            native_instance_id="lnms-1",
+            native_device_id="17",
+            native_entity_id="mempool:4",
+            component_class="mempool",
+            measurement_type="memory_usage_percent",
+            index={"instance_id": "lnms-1", "native_device_id": "17", "row_kind": "mempool", "native_row_id": "4"},
+            oid="",
+            unit="%",
+            scale=1,
+            value=62,
+            raw_value="62",
+            quality="good",
+            sample_at=None,
+        )
+        upsert_discovery_run(
+            conn,
+            device_id,
+            "native-unknown-time-run",
+            "librenms-26.9.1",
+            [sensor],
+            [_category("librenms_native", "mempool")],
+            observed_at=request_at,
+        )
+        stored = list_hardware_sensors(conn, device_id, component_class="mempool")
+        assert len(stored) == 1
+        assert stored[0]["last_value"] is None
+        assert stored[0]["last_raw_value"] is None
+        assert stored[0]["last_quality"] == "missing"
+        assert stored[0]["last_success"] is None
+        assert stored[0]["last_sample_at"] is None
+        assert stored[0]["last_seen"] == request_at
     finally:
         conn.close()
 

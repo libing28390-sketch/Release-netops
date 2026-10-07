@@ -2275,6 +2275,136 @@
         }
       ],
       "description": "按无线控制器 AC 汇总接口计数器，不表示单终端流量。"
+    },
+    {
+      "id": 21,
+      "title": "LibreNMS 原生无线传感器",
+      "type": "table",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 68
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "footer": {
+          "show": false
+        },
+        "enablePagination": true
+      },
+      "targets": [
+        {
+          "expr": "topk(100, nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",data_origin=\"librenms_native\",component_class=\"wireless_sensor\"})",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "ifIndex": true,
+              "asset_id": true,
+              "nexora_asset_id": true,
+              "nexora_hostname": true,
+              "nexora_module": true,
+              "nexora_platform": true,
+              "nexora_role": true,
+              "nexora_site_id": true,
+              "nexora_site_name": true,
+              "nexora_tenant_id": true,
+              "nexora_vendor": true,
+              "job": true,
+              "tenant_id": true,
+              "site_id": true,
+              "platform": true,
+              "sysName": true,
+              "nexora_interface_role": true,
+              "data_origin": true,
+              "device_id": true,
+              "discovery_status": true,
+              "instance": true,
+              "lifecycle_status": true,
+              "measurement_type": true,
+              "native_device_id": true,
+              "native_entity_id": true,
+              "native_instance_id": true,
+              "role": true,
+              "rule_version": true,
+              "sensor_key": true,
+              "site_name": true,
+              "source_id": true,
+              "source_type": true,
+              "window": true
+            },
+            "indexByName": {
+              "site_name": 0,
+              "hostname": 0,
+              "instance": 2,
+              "ifName": 3,
+              "ifDescr": 4,
+              "vendor": 5,
+              "role": 6,
+              "interface_role": 7,
+              "utilization_warn_pct": 8,
+              "utilization_high_pct": 9,
+              "utilization_critical_pct": 10,
+              "Value": 6,
+              "sensor_name": 1,
+              "sensor_class": 2,
+              "ap_name": 3,
+              "radio_id": 4,
+              "ssid": 5,
+              "unit": 7
+            },
+            "renameByName": {
+              "sysName": "设备名称",
+              "hostname": "设备",
+              "instance": "采集目标",
+              "site_name": "站点",
+              "ifName": "接口全称",
+              "ifDescr": "接口描述",
+              "vendor": "厂商",
+              "role": "角色",
+              "interface_role": "接口用途",
+              "utilization_warn_pct": "预警阈值 (%)",
+              "utilization_high_pct": "高位阈值 (%)",
+              "utilization_critical_pct": "严重阈值 (%)",
+              "Value": "数值",
+              "sensor_name": "传感器",
+              "sensor_class": "类别",
+              "ap_name": "AP 名称",
+              "radio_id": "Radio",
+              "ssid": "SSID",
+              "unit": "单位"
+            }
+          }
+        }
+      ],
+      "description": "LibreNMS 原生无线值；未推断 AP 或 Radio 归属。"
     }
   ],
   "refresh": "30s",

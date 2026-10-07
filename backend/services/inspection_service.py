@@ -28,7 +28,7 @@ from services.device_health_service import (
     evaluate_device_health,
     _build_open_alert_stats,
 )
-from services.snmp_service import collect_device_metrics, collect_interface_data
+from services.snmp_service import collect_interface_data
 from services.snmp_metric_profile_service import resolve_metric_profiles
 from services.network_access_limiter import limited_connect_handler
 from core.config import settings
@@ -578,7 +578,7 @@ def _get_last_metrics_dict(device_id: str) -> dict | None:
 def _extract_snmp_item_value(item: dict, snmp_metrics: dict, snmp_interfaces: list[dict]) -> tuple[Any, str]:
     """
     从 SNMP 采集结果中提取指标值。
-    snmp_metrics 来自 collect_device_metrics(): {cpu_usage, memory_usage, temp, fan_status, psu_status}
+    snmp_metrics 来自 LibreNMS 原生硬件快照；接口状态来自独立 IF-MIB 采集。
     snmp_interfaces 来自 collect_interface_data(): [{name, status, ...}, ...]
 
     根据 check_key 后缀匹配:
@@ -642,11 +642,14 @@ def _extract_snmp_item_value(item: dict, snmp_metrics: dict, snmp_interfaces: li
 
 def _collect_snmp_for_inspection(device: dict) -> tuple[dict, list[dict]]:
     """
-    在 ThreadPoolExecutor 线程中同步执行异步 SNMP 采集。
-    返回 (snmp_metrics, snmp_interfaces)。
+    Read hardware values from the existing LibreNMS binding and collect only
+    IF-MIB interface state directly from the device.
+
+    Hardware rows without a native sample timestamp are deliberately excluded
+    from inspection thresholds; the diagnostic UI still displays those rows
+    with unknown freshness.
     """
     ip = device.get('ip_address') or ''
-    platform = device.get('platform') or 'cisco_ios'
     community = device.get('snmp_community') or 'public'
     port = int(device.get('snmp_port') or 161)
 
@@ -657,20 +660,45 @@ def _collect_snmp_for_inspection(device: dict) -> tuple[dict, list[dict]]:
         resolved_metrics = resolve_metric_profiles(device)
         loop = asyncio.new_event_loop()
         try:
-            snmp_metrics = loop.run_until_complete(
-                collect_device_metrics(
-                    ip,
-                    platform,
-                    community,
-                    port,
-                    custom_metrics=resolved_metrics.get('metrics') or {},
-                    device_id=str(device.get('id') or ''),
-                    metric_profile_id=str(resolved_metrics.get('profile_id') or ''),
-                    template_only=True,
-                )
-            )
+            from services.librenms_diagnostic_service import diagnose_librenms_hardware
+
+            native = loop.run_until_complete(diagnose_librenms_hardware(device))
+            processor_rows = native.get('processor_sensors') or []
+            memory_rows = native.get('memory_pools') or []
+            temperature_rows = [
+                row for row in native.get('hardware_sensors') or []
+                if str(row.get('sensor_class') or '').casefold() in {'temperature', 'temp'}
+            ]
+
+            def fresh_values(rows: list[dict]) -> list[float]:
+                values: list[float] = []
+                for row in rows:
+                    if row.get('value_status') != 'available' or row.get('freshness') != 'fresh':
+                        continue
+                    value = row.get('sensor_current')
+                    if isinstance(value, bool):
+                        continue
+                    try:
+                        number = float(value)
+                    except (TypeError, ValueError, OverflowError):
+                        continue
+                    if number == number and abs(number) != float('inf'):
+                        values.append(number)
+                return values
+
+            for key, rows in (
+                ('cpu_usage', processor_rows),
+                ('memory_usage', memory_rows),
+                ('temp', temperature_rows),
+            ):
+                values = fresh_values(rows)
+                if values:
+                    # Keep every native entity in the diagnostic response. The
+                    # legacy inspection rule contract accepts one scalar, so
+                    # its device-level threshold uses the highest fresh row.
+                    snmp_metrics[key] = max(values)
         except Exception as e:
-            logger.warning(f"SNMP metrics collection failed for {ip}: {e}")
+            logger.warning("LibreNMS inspection snapshot failed for %s: %s", ip, type(e).__name__)
             snmp_metrics = {}
         try:
             snmp_interfaces = loop.run_until_complete(

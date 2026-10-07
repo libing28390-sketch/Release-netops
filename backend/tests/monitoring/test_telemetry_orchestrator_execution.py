@@ -60,6 +60,37 @@ def test_fast_loop_collection_status_write_runs_off_event_loop(monkeypatch):
     assert persistence_thread_ids[0] != loop_thread_id
 
 
+def test_offline_reachability_does_not_replace_native_hardware_values_with_zero(monkeypatch):
+    db_updates: list[tuple[str, tuple]] = []
+
+    class Limiter:
+        @asynccontextmanager
+        async def async_probe(self):
+            yield
+
+    async def unreachable(_ip: str, _port: int):
+        return False, "test"
+
+    monkeypatch.setattr(background_monitor_service, "get_network_access_limiter", lambda: Limiter())
+    monkeypatch.setattr(background_monitor_service, "_probe_device_reachability", unreachable)
+    monkeypatch.setattr(background_monitor_service, "_db_quick", lambda sql, params=(), **_kwargs: db_updates.append((sql, params)))
+    monkeypatch.setattr(background_monitor_service, "_sync_device_status_tag", lambda *_args: None)
+    monkeypatch.setattr(background_monitor_service, "_set_protocol_alerts_for_device_offline", lambda *_args: None)
+    monkeypatch.setattr(background_monitor_service, "_set_device_reachability_alert", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(background_monitor_service, "_schedule_monitoring_target_sync", lambda: None)
+    monkeypatch.setattr(background_monitor_service, "record_collection_result", lambda *_args, **_kwargs: None)
+
+    asyncio.run(background_monitor_service.process_device_fast({
+        "id": "offline-native-values",
+        "ip_address": "192.0.2.7",
+        "status": "online",
+    }))
+
+    offline_update = next(sql for sql, _params in db_updates if "UPDATE devices" in sql)
+    assert "cpu_usage" not in offline_update
+    assert "memory_usage" not in offline_update
+
+
 def test_a_loop_offloads_device_snapshot_and_keeps_loop_responsive(monkeypatch):
     loop_thread_id = threading.get_ident()
     entered = threading.Event()
@@ -225,3 +256,37 @@ def test_b_loop_offloads_snapshot_and_maintenance_after_twelve_successful_cycles
             await asyncio.gather(task, return_exceptions=True)
 
     asyncio.run(scenario())
+
+
+def test_native_hardware_loop_syncs_only_enabled_bindings_and_is_cancellable(monkeypatch):
+    query_calls: list[tuple[str, dict]] = []
+    synced_devices: list[str] = []
+
+    def fetch_bindings(sql, **kwargs):
+        query_calls.append((sql, kwargs))
+        return [{"device_id": "device-1"}, {"device_id": "device-2"}]
+
+    async def sync_device(device_id: str):
+        synced_devices.append(device_id)
+        return {"status": "synced"}
+
+    async def stop_after_one_cycle(_seconds: float):
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(background_monitor_service, "_db_quick", fetch_bindings)
+    monkeypatch.setattr(
+        "services.librenms_native_sync_service.sync_bound_device_hardware",
+        sync_device,
+    )
+    monkeypatch.setattr(asyncio, "sleep", stop_after_one_cycle)
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(TelemetryOrchestrator().native_hardware_loop())
+
+    assert len(query_calls) == 1
+    query, kwargs = query_calls[0]
+    assert "FROM librenms_device_bindings" in query
+    assert "b.desired_state = 'enabled'" in query
+    assert "i.enabled = TRUE" in query
+    assert kwargs == {"fetchall": True}
+    assert sorted(synced_devices) == ["device-1", "device-2"]

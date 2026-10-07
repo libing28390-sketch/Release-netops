@@ -295,6 +295,13 @@ def test_wireless_dashboard_uses_hardware_inventory_job_and_joins_by_device():
         assert 'job="platform_hardware_inventory"' in expression
         assert 'job="network_snmp"' not in expression
 
+    native_wireless_sensor_panel = panels["LibreNMS 原生无线传感器"]
+    native_wireless_sensor_query = native_wireless_sensor_panel["targets"][0]["expr"]
+    assert 'data_origin="librenms_native"' in native_wireless_sensor_query
+    assert 'component_class="wireless_sensor"' in native_wireless_sensor_query
+    assert native_wireless_sensor_panel["gridPos"] == {"h": 9, "w": 24, "x": 0, "y": 68}
+    assert "未推断 AP 或 Radio 归属" in native_wireless_sensor_panel["description"]
+
     assert 'vendor=~"$vendor"' in query("AP 当前状态明细")
     assert 'component_class="wireless_access_point"' in query("AP 当前状态明细")
     assert 'sensor_class="utilization"' in query("Radio 利用率 Top 10")

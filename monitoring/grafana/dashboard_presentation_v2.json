@@ -7085,6 +7085,23 @@
             "overrides": []
           }
         },
+        "21": {
+          "title": "LibreNMS 原生无线传感器",
+          "type": "table",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "filterable": true
+              }
+            },
+            "overrides": []
+          }
+        },
         "906": {
           "title": "无线专网流量",
           "type": "row"

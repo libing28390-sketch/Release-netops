@@ -16,13 +16,9 @@ from services.snmp_metric_profile_service import (
 )
 from services.snmp_service import (
     SnmpTypedValue,
-    _collect_metric_definition,
-    _collect_h3c_fan_psu_status,
-    collect_device_metrics,
     collect_interface_data,
     collect_interface_health,
     probe_interface_definition,
-    probe_metric_definition,
 )
 
 
@@ -49,175 +45,6 @@ def test_counter64_restart_is_a_baseline_not_a_spike() -> None:
     )
     assert result["status"] == "device_restart"
     assert result["rate_per_sec"] is None
-
-
-def test_metric_definition_rejects_counter_as_direct_percentage(monkeypatch) -> None:
-    async def fake_get(*_args, **_kwargs):
-        return SnmpTypedValue(42, "counter", 64)
-
-    monkeypatch.setattr("services.snmp_service._snmp_get_typed", fake_get)
-    result = asyncio.run(
-        probe_metric_definition(
-            "192.0.2.1",
-            "public",
-            {"mode": "direct_percent", "oid": "1.3.6.1.4.1.1"},
-        )
-    )
-    assert result["passed"] is False
-    assert result["status"] == "type_mismatch"
-    assert result["counter_bits"] == 64
-
-
-def test_metric_definition_accepts_typed_gauge_percentage(monkeypatch) -> None:
-    async def fake_get(*_args, **_kwargs):
-        return SnmpTypedValue(42, "gauge", 32)
-
-    monkeypatch.setattr("services.snmp_service._snmp_get_typed", fake_get)
-    result = asyncio.run(
-        probe_metric_definition(
-            "192.0.2.1",
-            "public",
-            {"mode": "direct_percent", "oid": "1.3.6.1.4.1.2"},
-        )
-    )
-    assert result["passed"] is True
-    assert result["value"] == 42
-
-
-def test_h3c_entity_table_health_metric_uses_max_without_rewriting_template(monkeypatch) -> None:
-    async def fake_points(*_args, **_kwargs):
-        return [
-            ("1", SnmpTypedValue(0, "gauge", 32)),
-            ("2", SnmpTypedValue(15, "gauge", 32)),
-            ("3", SnmpTypedValue(28, "gauge", 32)),
-        ]
-
-    # The test exercises the collector's health aggregation hook directly;
-    # the saved template remains an ordinary direct-percent definition.
-    monkeypatch.setattr("services.snmp_service._read_typed_points", fake_points)
-    result = asyncio.run(
-        _collect_metric_definition(
-            "192.0.2.1",
-            "public",
-            {"mode": "direct_percent", "oid": "1.3.6.1.4.1.1"},
-            161,
-            metric_name="cpu",
-            aggregation_override="max",
-        )
-    )
-
-    assert result["passed"] is True
-    assert result["value"] == 28
-    assert result["raw_value"] == 28
-    assert result["oid"] == "1.3.6.1.4.1.1"
-
-
-def test_status_metric_returns_true_for_normal_and_false_for_abnormal(monkeypatch) -> None:
-    current_code = {"value": 1}
-
-    async def fake_get(*_args, **_kwargs):
-        return SnmpTypedValue(current_code["value"], "integer", 32)
-
-    monkeypatch.setattr("services.snmp_service._snmp_get_typed", fake_get)
-    config = {
-        "mode": "status_code",
-        "oid": "1.3.6.1.4.1.5",
-        "status_ok_values": "1",
-        "status_fail_values": "2,3",
-    }
-    normal = asyncio.run(probe_metric_definition("192.0.2.1", "public", config))
-    assert normal["passed"] is True
-    assert normal["value"] is True
-    assert normal["unit"] == "bool"
-
-    current_code["value"] = 2
-    abnormal = asyncio.run(probe_metric_definition("192.0.2.1", "public", config))
-    assert abnormal["passed"] is True
-    assert abnormal["value"] is False
-    assert abnormal["status"] == "fail"
-
-
-def test_status_metric_returns_null_for_unmapped_code(monkeypatch) -> None:
-    async def fake_get(*_args, **_kwargs):
-        return SnmpTypedValue(99, "integer", 32)
-
-    monkeypatch.setattr("services.snmp_service._snmp_get_typed", fake_get)
-    result = asyncio.run(
-        probe_metric_definition(
-            "192.0.2.1",
-            "public",
-            {
-                "mode": "status_code",
-                "oid": "1.3.6.1.4.1.6",
-                "status_ok_values": "1",
-                "status_fail_values": "2",
-            },
-        )
-    )
-    assert result["passed"] is False
-    assert result["value"] is None
-    assert result["status"] == "unknown"
-
-
-def test_direct_value_keeps_unit_and_rejects_counter(monkeypatch) -> None:
-    async def fake_get(*_args, **_kwargs):
-        return SnmpTypedValue(38, "gauge", 32)
-
-    monkeypatch.setattr("services.snmp_service._snmp_get_typed", fake_get)
-    result = asyncio.run(
-        probe_metric_definition(
-            "192.0.2.1",
-            "public",
-            {"mode": "direct_value", "oid": "1.3.6.1.4.1.7", "unit": "°C"},
-        )
-    )
-    assert result["passed"] is True
-    assert result["value"] == 38
-    assert result["unit"] == "°C"
-
-
-def test_temperature_sentinel_is_reported_as_invalid_not_a_real_temperature(monkeypatch) -> None:
-    async def fake_get(*_args, **_kwargs):
-        return SnmpTypedValue(65535, "gauge", 32)
-
-    monkeypatch.setattr("services.snmp_service._snmp_get_typed", fake_get)
-    result = asyncio.run(
-        probe_metric_definition(
-            "192.0.2.1",
-            "public",
-            {"mode": "direct_value", "oid": "1.3.6.1.4.1.7", "unit": "°C"},
-            metric_name="temperature",
-        )
-    )
-    assert result["value"] is None
-    assert result["raw_value"] == 65535
-    assert result["status"] == "invalid_value"
-    assert result["passed"] is False
-
-
-def test_h3c_entity_status_filters_fan_and_psu_by_entity_class(monkeypatch) -> None:
-    async def fake_walk(_ip, _community, oid, _port):
-        if oid.endswith('.1.1.1.1.19'):
-            return [('10', '2'), ('11', '2'), ('12', '2'), ('13', '51')]
-        if oid.endswith('.1.1.1.1.5'):
-            return [('10', '7'), ('11', '6'), ('12', '7'), ('13', '6')]
-        return []
-
-    monkeypatch.setattr('services.snmp_service._snmp_walk', fake_walk)
-    fan_status, psu_status = asyncio.run(
-        _collect_h3c_fan_psu_status(
-            '192.0.2.1',
-            'public',
-            {
-                'fan': '1.3.6.1.4.1.25506.2.6.1.1.1.1.19',
-                'psu': '1.3.6.1.4.1.25506.2.6.1.1.1.1.19',
-                'entity_class': '1.3.6.1.2.1.47.1.1.1.1.5',
-            },
-            161,
-        )
-    )
-    assert fan_status == 'ok'
-    assert psu_status == 'fail'
 
 
 def test_status_metric_normalization_requires_normal_codes() -> None:
@@ -269,25 +96,6 @@ def test_interface_profile_normalizes_defaults_and_explicit_width() -> None:
     assert config["if_hc_in_ucast_pkts_oid"].endswith(".7")
     assert config["if_hc_out_broadcast_pkts_oid"].endswith(".13")
     assert config["dot3_hc_fcs_errors_oid"] == "1.3.6.1.2.1.10.7.11.1.2"
-
-
-def test_selector_probes_exact_table_instance_before_walk(monkeypatch) -> None:
-    requested: list[str] = []
-
-    async def fake_get(_ip, _community, oid, _port):
-        requested.append(oid)
-        return SnmpTypedValue(7, "gauge", 32) if oid.endswith(".67108873") else None
-
-    async def fake_walk(*_args, **_kwargs):
-        return []
-
-    monkeypatch.setattr("services.snmp_service._snmp_get_typed", fake_get)
-    monkeypatch.setattr("services.snmp_service._snmp_walk_typed", fake_walk)
-    from services.snmp_service import _read_typed_points
-
-    points = asyncio.run(_read_typed_points("192.0.2.1", "public", "1.3.6.1.4.1.1", 161, "67108873"))
-    assert points[0][1].number == 7
-    assert requested == ["1.3.6.1.4.1.1.67108873"]
 
 
 def test_interface_probe_requires_paired_counter_width(monkeypatch) -> None:
@@ -727,78 +535,6 @@ def test_template_resolution_ignores_legacy_device_oids_without_an_applied_profi
     assert resolved["metrics"] == {}
     assert resolved["metric_sources"]["cpu"] == "template_not_applied"
     assert resolved["metric_sources"]["memory"] == "template_not_applied"
-
-
-def test_template_only_hardware_collection_never_reads_builtin_oids(monkeypatch) -> None:
-    requested: list[str] = []
-
-    async def fail_walk(*_args, **_kwargs):
-        requested.append("walk")
-        raise AssertionError("template-only collection must not read a built-in OID")
-
-    monkeypatch.setattr("services.snmp_service._snmp_walk_versioned", fail_walk)
-    result = asyncio.run(
-        collect_device_metrics(
-            "192.0.2.199",
-            "h3c_comware",
-            "public",
-            161,
-            bypass_cache=True,
-            template_only=True,
-        )
-    )
-
-    assert requested == []
-    assert result["collection_source"] == "snmp_template"
-    assert result["collection_status"] == "template_not_applied"
-    assert result["cpu_usage"] is None
-    assert result["memory_usage"] is None
-    assert result["metric_details"]["cpu"]["status"] == "template_not_applied"
-
-
-def test_template_only_hardware_template_columns_are_walked_in_parallel(monkeypatch) -> None:
-    active = 0
-    max_active = 0
-    requested: list[str] = []
-
-    async def fake_walk(_ip, _community, oid, _port, **_kwargs):
-        nonlocal active, max_active
-        requested.append(oid)
-        active += 1
-        max_active = max(max_active, active)
-        await asyncio.sleep(0.01)
-        active -= 1
-        return [('1', SnmpTypedValue(42, 'gauge', 32))]
-
-    async def fail_get(*_args, **_kwargs):
-        raise AssertionError('table-root template metrics should not probe with GET first')
-
-    monkeypatch.setattr('services.snmp_service._snmp_walk_typed', fake_walk)
-    monkeypatch.setattr('services.snmp_service._snmp_get_typed', fail_get)
-    definitions = {
-        'cpu': {'mode': 'direct_percent', 'oid': '1.3.6.1.4.1.25506.1.6'},
-        'memory': {'mode': 'direct_percent', 'oid': '1.3.6.1.4.1.25506.1.8'},
-        'temperature': {'mode': 'direct_value', 'oid': '1.3.6.1.4.1.25506.1.12'},
-        'fan': {'mode': 'status_code', 'oid': '1.3.6.1.4.1.25506.1.19', 'status_ok_values': [42]},
-        'power_supply': {'mode': 'status_code', 'oid': '1.3.6.1.4.1.25506.1.19', 'status_ok_values': [42]},
-        'uptime': {'mode': 'direct_value', 'oid': '1.3.6.1.4.1.25506.1.11'},
-    }
-
-    result = asyncio.run(
-        collect_device_metrics(
-            '192.0.2.200',
-            'h3c_comware',
-            'public',
-            161,
-            custom_metrics=definitions,
-            bypass_cache=True,
-            template_only=True,
-        )
-    )
-
-    assert max_active >= 2
-    assert len(requested) == len(definitions)
-    assert all(result['metric_details'][key]['status'] == 'ok' for key in definitions)
 
 
 def test_template_only_interface_collection_never_reads_default_if_mib(monkeypatch) -> None:

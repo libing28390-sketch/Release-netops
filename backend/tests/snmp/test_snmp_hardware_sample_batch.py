@@ -39,11 +39,11 @@ def _seed_sensor(
         INSERT INTO snmp_hardware_sensors (
             sensor_id, device_id, sensor_key, source_type, source_id,
             component_class, measurement_type, index_json, first_seen, last_seen, updated_at,
-            last_success, lifecycle_status, discovery_status, missing_success_count,
+            last_success, last_sample_at, lifecycle_status, discovery_status, missing_success_count,
             last_missing_run_id, enabled, last_value, last_raw_value, last_quality
         )
         VALUES (?, ?, ?, 'entity_sensor', '', 'temperature', 'temperature_celsius', jsonb_build_array(?),
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             f"batch-id-{sensor_key}",
@@ -53,6 +53,7 @@ def _seed_sensor(
             last_seen,
             last_seen,
             updated_at or last_seen,
+            last_success,
             last_success,
             lifecycle_status,
             discovery_status,
@@ -70,7 +71,7 @@ def _sensor(conn, device_id: str, sensor_key: str):
     return conn.execute(
         """
         SELECT last_value, last_raw_value, last_quality, last_seen, last_success,
-               updated_at, lifecycle_status, discovery_status, missing_success_count,
+               last_sample_at, updated_at, lifecycle_status, discovery_status, missing_success_count,
                last_missing_run_id, enabled
           FROM snmp_hardware_sensors
          WHERE device_id = ? AND sensor_key = ?
@@ -179,6 +180,7 @@ def test_batch_skips_stale_samples_and_missing_targets(isolated_db) -> None:
         assert existing["last_raw_value"] == "22"
         assert existing["last_seen"] == t0 + timedelta(minutes=10)
         assert existing["last_success"] == t0 + timedelta(minutes=8)
+        assert existing["last_sample_at"] == t0 + timedelta(minutes=8)
         absent_count = conn.execute(
             "SELECT COUNT(*) FROM snmp_hardware_sensors WHERE device_id = ? AND sensor_key = ?",
             (device_id, "not-discovered"),

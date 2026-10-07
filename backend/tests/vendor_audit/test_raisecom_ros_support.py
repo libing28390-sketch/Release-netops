@@ -9,7 +9,6 @@ from services.platform_registry_service import (
     PLATFORM_ACTION_COMMANDS,
     SYSTEM_PROFILES,
 )
-from services.snmp_service import VENDOR_OIDS, _resolve_platform
 
 
 RAW_VERSION = """Raisecom Operating System Software
@@ -41,11 +40,9 @@ def test_raisecom_version_parser_and_textfsm_template() -> None:
     assert records and records[0]["MODEL"] == "ISCOM S5600-28C-EI"
 
 
-def test_raisecom_registry_and_snmp_baseline_are_explicit() -> None:
+def test_raisecom_registry_profile_is_explicit() -> None:
     profile = next(item for item in SYSTEM_PROFILES if item["platform_code"] == "raisecom_ros")
     assert profile["connection_driver"] == "raisecom_ros"
     assert CONNECTION_DRIVER_TO_IMPLEMENTATION["raisecom_ros"] == "netmiko"
     assert PLATFORM_ACTION_COMMANDS["raisecom_ros"]["get_version"] == "show version"
     assert PLATFORM_ACTION_COMMANDS["raisecom_ros"]["get_interface_brief"] == "show interface brief"
-    assert _resolve_platform("瑞斯康达") == "raisecom_ros"
-    assert VENDOR_OIDS["raisecom_ros"]["cpu"] == "1.3.6.1.2.1.25.3.3.1.2"

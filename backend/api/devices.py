@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Body, Query, Depends, File, UploadFile, BackgroundTasks
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from collections.abc import Mapping
 import os
 import uuid
 import json
@@ -21,7 +22,7 @@ from core.crypto import encrypt_credential, decrypt_credential
 from core.config import settings
 from core.rbac import authorize_resource, require_role
 from services.vault_service import resolve_device_credentials, resolve_collector_credentials, write_credentials as vault_write, vault_available
-from services.snmp_service import collect_device_metrics, normalize_metric_oid
+from services.snmp_service import normalize_metric_oid
 from services.snmp_mib_service import (
     list_mibs_page,
     get_mib_repository_stats,
@@ -65,7 +66,6 @@ from services.snmp_metric_profile_service import (
     profile_interface_config,
     profile_metric_definitions,
     profile_scope_match,
-    HEALTH_METRIC_KEYS,
     validate_metric_definitions,
     SUPPORTED_METRIC_KEYS,
     annotate_devices_with_snmp_profile,
@@ -1695,184 +1695,67 @@ async def test_snmp_walk(payload: dict = Body(default={}), user=require_role("Op
 
 @router.post("/platform-registry/snmp-hardware-test")
 async def test_snmp_hardware_metrics(payload: dict = Body(default={}), user=require_role("Operator")):
-    """Read the default health hardware set and any submitted template metrics.
+    """Compatibility endpoint that displays the already-collected native snapshot.
 
-    This is intentionally separate from the raw WALK compatibility endpoint.
-    The template editor submits its current definitions when available, but a
-    live test always includes the default health set (CPU, memory, temperature,
-    fan, and power supply).  Configured definitions take precedence for their
-    metric; missing definitions use the vendor collector.  The operation is
-    read-only and never changes the saved profile or returns an OID table.
+    The supplied SNMP version and metric definitions are intentionally ignored:
+    Nexora no longer tests or polls hardware OIDs in Python.
     """
     requested_device_id = str(payload.get('device_id') or '').strip()
-    target_query = str(payload.get('target_query') or '').strip()
-    if not requested_device_id and not target_query:
-        raise HTTPException(status_code=400, detail='A managed device_id or target_query is required')
+    if not requested_device_id:
+        raise HTTPException(status_code=400, detail='A managed device_id is required')
 
-    targets = _find_snmp_walk_targets(device_id=requested_device_id, target_query=target_query, user=user)
+    targets = _find_snmp_walk_targets(device_id=requested_device_id, user=user)
     if not targets:
         raise HTTPException(status_code=404, detail='No matching managed asset was found')
     if len(targets) > 1:
-        raise HTTPException(status_code=409, detail='Target matches multiple assets; enter a more specific IP or hostname')
+        raise HTTPException(status_code=409, detail='Target matches multiple assets')
 
-    raw_definitions = payload.get('metric_definitions')
-    if raw_definitions is None:
-        raw_definitions = payload.get('metrics')
-    if raw_definitions is None:
-        raw_definitions = {}
-    if not isinstance(raw_definitions, dict):
-        raise HTTPException(status_code=400, detail='metric_definitions must be an object')
-    unsupported = [
-        str(key)
-        for key in raw_definitions
-        if str(key).strip().casefold() not in {item.casefold() for item in SUPPORTED_METRIC_KEYS}
-    ]
-    if unsupported:
-        raise HTTPException(status_code=400, detail=f'Unsupported hardware metric: {unsupported[0]}')
-    try:
-        definitions = validate_metric_definitions({'metric_definitions': raw_definitions}, allow_empty=True)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    from services.librenms_diagnostic_service import diagnose_librenms_hardware
 
-    device = targets[0]
-    collector_credentials = resolve_collector_credentials(device)
-    snmp_credentials = collector_credentials.get('snmp') or {}
-    host = str(snmp_credentials.get('server') or device.get('ip_address') or '').strip()
-    community = str(snmp_credentials.get('community') or '').strip()
-    if not host or not community:
-        raise HTTPException(status_code=400, detail='Matched asset has no SNMP address or community configured')
-    try:
-        port = int(snmp_credentials.get('port') or 161)
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail='SNMP port must be an integer') from exc
-    if not 1 <= port <= 65535:
-        raise HTTPException(status_code=400, detail='SNMP port must be between 1 and 65535')
+    diagnostic = await diagnose_librenms_hardware(targets[0])
+    metric_rows: dict[str, dict[str, Any]] = {}
+    for group_name, rows in (
+        ('processor', diagnostic.get('processor_sensors') or []),
+        ('memory', diagnostic.get('memory_pools') or []),
+        ('sensor', diagnostic.get('hardware_sensors') or []),
+        ('wireless', diagnostic.get('wireless_sensors') or []),
+    ):
+        for position, row in enumerate(rows):
+            if not isinstance(row, Mapping):
+                continue
+            name = str(
+                row.get('sensor_descr') or row.get('processor_descr') or row.get('mempool_descr')
+                or row.get('sensor_id') or f'{group_name}_{position + 1}'
+            )
+            current = row.get('sensor_current')
+            status = 'ok' if row.get('value_status') == 'available' and row.get('freshness') == 'fresh' else str(
+                row.get('freshness') or row.get('value_status') or 'unknown'
+            )
+            metric_rows[f'{group_name}:{name}'] = {
+                'value': current,
+                'raw_value': current,
+                'status': status,
+                'message': str(row.get('observed_at') or row.get('freshness') or ''),
+                'source': 'librenms_native',
+            }
 
-    version = str(payload.get('version') or payload.get('snmp_version') or '2c').strip().lower()
-    if version in {'v1', '1'}:
-        version = '1'
-    elif version in {'v2c', '2c', '2'}:
-        version = '2c'
-    else:
-        raise HTTPException(status_code=400, detail='SNMP version must be 1 or 2c')
-
-    platform = str(device.get('platform') or device.get('vendor') or '').strip()
-    if not platform:
-        raise HTTPException(status_code=400, detail='Matched asset has no vendor or platform mapping')
-    try:
-        snapshot = await collect_device_metrics(
-            host,
-            platform,
-            community,
-            port,
-            custom_metrics=definitions or None,
-            device_id=str(device.get('id') or ''),
-            metric_profile_id=str(payload.get('metric_profile_id') or 'live-test'),
-            bypass_cache=True,
-            version=version,
-            template_only=True,
-        )
-    except Exception as exc:
-        logger.warning('SNMP hardware metric test failed for %s: %s', host, type(exc).__name__)
-        raise HTTPException(status_code=502, detail='SNMP hardware metric test failed') from exc
-
-    result_keys = {
-        'cpu': 'cpu_usage',
-        'memory': 'memory_usage',
-        'temperature': 'temp',
-        'fan': 'fan_status',
-        'power_supply': 'psu_status',
-        'uptime': 'uptime',
-        'storage': 'storage_usage',
-        'voltage': 'voltage',
-        'power': 'power_watts',
-    }
-    default_units = {
-        'cpu': '%',
-        'memory': '%',
-        'temperature': '°C',
-        'fan': 'bool',
-        'power_supply': 'bool',
-        'uptime': 's',
-        'storage': '%',
-        'voltage': 'V',
-        'power': 'W',
-    }
-    requested_metrics = list(dict.fromkeys([*HEALTH_METRIC_KEYS, *definitions.keys()]))
-    snapshot_values = snapshot.get('hardware_metrics') or {}
-    snapshot_details = snapshot.get('metric_details') or {}
-
-    def _builtin_status(value: Any) -> str:
-        if value is None or value == '':
-            return 'missing'
-        if isinstance(value, bool):
-            return 'ok' if value else 'fail'
-        normalized = str(value).strip().casefold()
-        if normalized in {'fail', 'failed', 'warning', 'down', 'offline', 'alarm'}:
-            return 'fail'
-        return 'ok'
-
-    metric_results: dict[str, dict[str, Any]] = {}
-    for metric in requested_metrics:
-        configured_detail = snapshot_details.get(metric)
-        if isinstance(configured_detail, dict):
-            detail = dict(configured_detail)
-            detail.setdefault('source', 'template_definition')
-            metric_results[metric] = detail
-            continue
-        result_key = result_keys[metric]
-        value = snapshot_values.get(metric, snapshot.get(result_key))
-        status = _builtin_status(value)
-        metric_results[metric] = {
-            'value': value,
-            'raw_value': value,
-            'status': status,
-            'passed': status == 'ok',
-            'message': (
-                'Applied SNMP template returned a valid value'
-                if status == 'ok'
-                else 'Applied SNMP template returned no value'
-                if status == 'missing'
-                else 'Applied SNMP template reported an abnormal state'
-            ),
-            'mode': 'snmp_template',
-            'oid': '',
-            'unit': default_units[metric],
-            'source': 'snmp_template',
-        }
-
-    statuses = [str(item.get('status') or '').casefold() for item in metric_results.values()]
-    if statuses and all(status == 'ok' for status in statuses):
-        overall_status = 'ok'
-        message = 'All applied SNMP template health metrics returned valid values'
-    elif any(status in {'fail', 'warning', 'probe_error'} for status in statuses):
-        overall_status = 'abnormal'
-        message = 'One or more hardware metrics reported an abnormal state'
-    else:
-        overall_status = 'unknown'
-        message = 'Applied SNMP template health metrics were read, but one or more values are missing or invalid'
-
+    state = str(diagnostic.get('state') or 'unknown')
     return {
         'success': True,
         'data': {
-            'host': host,
-            'version': version,
-            'port': port,
-            'platform': platform,
-            'status': overall_status,
-            'message': message,
-            'metric_count': len(metric_results),
-            'metrics': metric_results,
-            'target_source': 'asset',
-            'matched_device_id': str(device.get('id') or ''),
-            'matched_hostname': str(device.get('hostname') or device.get('ip_address') or ''),
+            'host': str((diagnostic.get('identity') or {}).get('hostname') or targets[0].get('hostname') or ''),
+            'status': 'ok' if state == 'available' else state,
+            'message': str(diagnostic.get('message') or ''),
+            'metric_count': len(metric_rows),
+            'metrics': metric_rows,
+            'hardware_collection_status': state,
+            'native_hardware': diagnostic,
         },
     }
 
-
 @router.post("/platform-registry/snmp-hardware-discovery-test")
 async def test_snmp_hardware_discovery(payload: dict = Body(default={}), user=require_role("Operator")):
-    """Run the same read-only standard-MIB and LibreNMS hardware discovery used by collection."""
+    """Read the latest hardware values already sampled by the bound LibreNMS instance."""
     requested_device_id = str(payload.get('device_id') or '').strip()
     if not requested_device_id:
         raise HTTPException(status_code=400, detail='A managed device_id is required')
@@ -1884,104 +1767,12 @@ async def test_snmp_hardware_discovery(payload: dict = Body(default={}), user=re
         raise HTTPException(status_code=409, detail='Target matches multiple assets')
 
     device = targets[0]
-    collector_credentials = resolve_collector_credentials(device) or {}
-    snmp_credentials = collector_credentials.get('snmp') or {}
-    host = str(snmp_credentials.get('server') or device.get('ip_address') or '').strip()
-    community = str(snmp_credentials.get('community') or '').strip()
-    if not host or not community:
-        raise HTTPException(status_code=400, detail='Matched asset has no SNMP address or community configured')
-    try:
-        port = int(snmp_credentials.get('port') or 161)
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail='SNMP port must be an integer') from exc
-    if not 1 <= port <= 65535:
-        raise HTTPException(status_code=400, detail='SNMP port must be between 1 and 65535')
+    from services.librenms_diagnostic_service import diagnose_librenms_hardware
 
-    version = str(payload.get('version') or payload.get('snmp_version') or '2c').strip().lower()
-    if version in {'v1', '1'}:
-        version = '1'
-    elif version in {'v2c', '2c', '2'}:
-        version = '2c'
-    else:
-        raise HTTPException(status_code=400, detail='SNMP version must be 1 or 2c')
-
-    from services.snmp_discovery_service import discover_device_oid_config
-
-    try:
-        discovery = await discover_device_oid_config(
-            host,
-            community,
-            port,
-            vendor=device.get('vendor'),
-            platform=device.get('platform'),
-            model=device.get('model'),
-            version=device.get('version'),
-            role=device.get('role'),
-            snmp_version=version,
-        )
-    except Exception as exc:
-        logger.warning('SNMP hardware discovery test failed for %s: %s', host, type(exc).__name__)
-        raise HTTPException(status_code=502, detail='SNMP hardware discovery test failed') from exc
-
-    identity = discovery.get('identity') if isinstance(discovery.get('identity'), dict) else {}
-    categories = [
-        {
-            'source_type': str(item.get('source_type') or ''),
-            'component_class': str(item.get('component_class') or ''),
-            'status': str(item.get('status') or ''),
-            'coverage_complete': bool(item.get('coverage_complete')),
-            'reason_code': str(item.get('reason_code') or ''),
-            'reason': str(item.get('reason') or ''),
-        }
-        for item in discovery.get('hardware_category_results') or []
-        if isinstance(item, dict)
-    ]
-    sensors = [
-        {
-            key: item.get(key)
-            for key in (
-                'source_type', 'component_class', 'measurement_type', 'sensor_name',
-                'entity_name', 'group_name', 'value', 'raw_value', 'unit', 'quality',
-                'oid', 'index', 'presence_status',
-            )
-        }
-        for item in discovery.get('hardware_sensors') or []
-        if isinstance(item, dict)
-    ]
-    hardware_compatibility = discovery.get('hardware_compatibility')
-    if not isinstance(hardware_compatibility, dict):
-        hardware_compatibility = {}
-    hardware_support_status = str(discovery.get('hardware_support_status') or '')
-    if not hardware_support_status:
-        hardware_support_status = 'available' if sensors else 'no_hardware_data'
-    sensor_limit = 200
+    diagnostic = await diagnose_librenms_hardware(device)
     return {
         'success': True,
-        'data': {
-            'host': host,
-            'port': port,
-            'version': version,
-            'matched_device_id': str(device.get('id') or ''),
-            'matched_hostname': str(device.get('hostname') or device.get('ip_address') or ''),
-            'discovery_status': str(discovery.get('status') or 'unknown'),
-            'discovery_reason': str(discovery.get('reason') or ''),
-            'identity': {
-                'status': str(identity.get('status') or ''),
-                'vendor': str(identity.get('vendor') or ''),
-                'platform': str(identity.get('platform') or ''),
-                'model': str(identity.get('model') or ''),
-                'sys_object_id': str(identity.get('sys_object_id') or ''),
-            },
-            'librenms_rule_id': str(discovery.get('librenms_rule_id') or ''),
-            'librenms_source_path': str(discovery.get('librenms_source_path') or ''),
-            'hardware_support_status': hardware_support_status,
-            'hardware_support_reason': str(hardware_compatibility.get('reason') or discovery.get('reason') or ''),
-            'category_results': categories,
-            'hardware_sensors': sensors[:sensor_limit],
-            'sensor_count': len(sensors),
-            'sensor_limit': sensor_limit,
-            'sensors_truncated': len(sensors) > sensor_limit,
-        },
+        'data': diagnostic,
     }
 
 
@@ -2517,82 +2308,60 @@ async def test_snmp_metric_profile(
         raise HTTPException(status_code=400, detail='No device matches this vendor/model profile')
 
     device = matching[0]
-    collector_credentials = resolve_collector_credentials(device)
-    snmp_credentials = collector_credentials.get('snmp') or {}
-    ip = snmp_credentials.get('server') or device.get('ip_address') or ''
-    community = snmp_credentials.get('community') or ''
-    port = snmp_credentials.get('port') or 161
     configured = profile_metric_definitions(profile)
     interface_config = profile_interface_config(profile)
     hardware_configured = bool(configured)
     interface_configured = bool(interface_config)
     test_results: dict[str, dict] = {}
+    native_hardware: dict[str, Any] = {}
     interface_result: dict[str, Any] = {}
-    hardware_passed: bool | None = None if not hardware_configured else False
+    # Hardware profile OIDs are no longer executed by Nexora. Read the native
+    # LibreNMS snapshot for diagnostics, while keeping interface validation on
+    # the independent IF-MIB path.
+    hardware_passed: bool | None = None
     interface_passed: bool | None = None if not interface_configured else False
-    if not ip or not community:
-        message = 'SNMP address or community is not configured on the sample device'
-        if hardware_configured:
-            hardware_passed = False
-        if interface_configured:
+    message_parts: list[str] = []
+    if hardware_configured:
+        try:
+            from services.librenms_diagnostic_service import diagnose_librenms_hardware
+
+            native_hardware = await diagnose_librenms_hardware(device)
+        except Exception as exc:
+            native_hardware = {
+                'source': 'librenms_native',
+                'state': 'error',
+                'message': type(exc).__name__,
+            }
+        message_parts.append('Hardware collection is delegated to the bound LibreNMS runtime')
+
+    if interface_configured:
+        collector_credentials = resolve_collector_credentials(device)
+        snmp_credentials = collector_credentials.get('snmp') or {}
+        ip = snmp_credentials.get('server') or device.get('ip_address') or ''
+        community = snmp_credentials.get('community') or ''
+        port = snmp_credentials.get('port') or 161
+        if not ip or not community:
             interface_passed = False
             interface_result = {
                 'passed': False,
                 'status': 'credentials_missing',
-                'message': message,
+                'message': 'SNMP address or community is not configured on the sample device',
                 'checks': {},
                 'counter_mode': interface_config.get('counter_mode', 'auto'),
                 'interfaces': 0,
                 'counter_supported': 0,
             }
-    else:
-        from services.snmp_service import probe_interface_definition, probe_metric_definition
-        import asyncio as _aio
+        else:
+            from services.snmp_service import probe_interface_definition
 
-        async def _test_metric(metric: str, config: dict) -> tuple[str, dict]:
-            try:
-                detail = await probe_metric_definition(
-                    ip,
-                    community,
-                    config,
-                    int(port),
-                    metric_name=metric,
-                    platform=str(device.get('platform') or ''),
-                )
-                return metric, detail
-            except Exception as exc:
-                return metric, {
-                    'oid': config.get('oid') or config.get('used_oid'),
-                    'value': None,
-                    'passed': False,
-                    'status': 'probe_error',
-                    'message': type(exc).__name__,
-                }
-
-        tasks = []
-        if hardware_configured:
-            tasks.append(_aio.gather(*[_test_metric(metric, config) for metric, config in configured.items()]))
-        if interface_configured:
-            tasks.append(probe_interface_definition(ip, community, interface_config, int(port)))
-        task_results = await _aio.gather(*tasks) if tasks else []
-        task_index = 0
-        if hardware_configured:
-            test_results = dict(task_results[task_index])
-            task_index += 1
-            hardware_passed = bool(test_results) and all(item.get('passed') for item in test_results.values())
-        if interface_configured:
-            interface_result = dict(task_results[task_index] or {})
+            interface_result = await probe_interface_definition(
+                ip, community, interface_config, int(port)
+            )
             interface_passed = bool(interface_result.get('passed'))
+        message_parts.append('interface OIDs passed' if interface_passed else 'interface OIDs failed')
 
-        message_parts = []
-        if hardware_configured:
-            message_parts.append('hardware metrics passed' if hardware_passed else 'hardware metrics failed')
-        if interface_configured:
-            message_parts.append('interface OIDs passed' if interface_passed else 'interface OIDs failed')
-        message = '; '.join(message_parts) or 'No configured definitions to test'
-
-    configured_results = [value for value in (hardware_passed, interface_passed) if value is not None]
-    passed = bool(configured_results) and all(configured_results)
+    message = '; '.join(message_parts) or 'No configured definitions to test'
+    passed = bool(interface_configured and interface_passed)
 
     conn = get_db_connection()
     try:
@@ -2600,7 +2369,7 @@ async def test_snmp_metric_profile(
             conn,
             profile_id,
             str(device['id']),
-            passed if hardware_configured else None,
+            None,
             message,
             hardware_passed=hardware_passed,
             interface_passed=interface_passed,
@@ -2623,6 +2392,8 @@ async def test_snmp_metric_profile(
             'sample_device_id': str(device['id']),
             'sample_hostname': device.get('hostname') or device.get('ip_address') or str(device['id']),
             'metrics': test_results,
+            'hardware_collection_status': str(native_hardware.get('state') or 'delegated_to_librenms') if hardware_configured else 'not_configured',
+            'native_hardware': native_hardware,
             'interface': interface_result,
         },
     }
@@ -4232,7 +4003,7 @@ def import_devices(payload: dict = Body(...), user=require_role("Operator")):
 
 @router.post("/devices/{device_id}/snmp-test")
 async def snmp_test(device_id: str):
-    """Test SNMP connectivity and immediately sync all SNMP data into DB on success."""
+    """Test SNMP reachability and sync system identity plus explicit interface data."""
     import time, re as _re, json as _json
     conn = get_db_connection()
     try:
@@ -4249,10 +4020,37 @@ async def snmp_test(device_id: str):
     snmp_ip = collector_credentials['snmp'].get('server') or ip
     community = collector_credentials['snmp'].get('community') or ''
     port = collector_credentials['snmp'].get('port') or 161
-    resolved_metrics = resolve_health_metric_profiles(device_data)
+    # Do not load the legacy discovery snapshot here: this route is limited
+    # to reachability and an explicitly saved interface profile. The native
+    # LibreNMS runtime owns hardware discovery and polling.
+    profile_device = {
+        key: value for key, value in device_data.items()
+        if key not in {'id', 'snmp_discovery'}
+    }
+    has_explicit_profile = bool(
+        "snmp_metric_profile_id" in device_data
+        and str(device_data.get("snmp_metric_profile_id") or "").strip()
+    )
+    if has_explicit_profile:
+        resolved_metrics = resolve_health_metric_profiles(profile_device)
+    else:
+        resolved_metrics = {
+            "profile_id": "",
+            "profile_status": "none",
+            "profile_source": "template_not_applied",
+            "metric_sources": {},
+            "interface": {},
+        }
 
     if not snmp_ip:
-        return {"success": False, "error": "No IP address configured"}
+        return {
+            "success": False,
+            "error": "No IP address configured",
+            "hardware_metrics": {},
+            "metric_details": {},
+            "hardware_collection_status": "delegated_to_librenms",
+            "collection_mode": "connectivity_interface_only",
+        }
     if not community:
         from services.collection_status_service import record_collection_result
         record_collection_result(
@@ -4272,54 +4070,28 @@ async def snmp_test(device_id: str):
             "metric_profile_status": resolved_metrics.get('profile_status') or 'none',
             "metric_profile_source": resolved_metrics.get('profile_source') or 'template_not_applied',
             "metric_sources": resolved_metrics.get('metric_sources') or {},
-            "collection_mode": "health_only",
+            "hardware_metrics": {},
+            "metric_details": {},
+            "hardware_collection_status": "delegated_to_librenms",
+            "collection_mode": "connectivity_interface_only",
         }
 
-    from services.snmp_discovery_service import discover_device_oid_config, persist_discovery
-    discovery = None
-    try:
-        discovery = await discover_device_oid_config(
-            snmp_ip,
-            community,
-            port,
-            vendor=device_data.get('vendor'),
-            platform=device_data.get('platform'),
-            model=device_data.get('model'),
-            version=device_data.get('version'),
-            role=device_data.get('role'),
-            snmp_version=str(device_data.get('snmp_version') or '2c'),
-        )
-        persist_discovery(device_id, discovery)
-        if str(discovery.get('status') or '') in {'matched', 'partial'} and str(resolved_metrics.get('profile_status') or '').casefold() not in {'tested', 'published', 'verified', 'passed', 'approved'}:
-            resolved_metrics = {
-                **resolved_metrics,
-                'profile_id': f"discovery:{device_id}:{discovery.get('rule_version') or 'current'}",
-                'profile_status': discovery.get('status'),
-                'profile_source': 'snmp_discovery',
-                'metrics': discovery.get('metrics') or {},
-                'interface': discovery.get('interface') or {},
-                'metric_keys': sorted((discovery.get('metrics') or {}).keys()),
-                'template_applied': bool(discovery.get('metrics') or discovery.get('interface')),
-            }
-    except Exception as discovery_err:
-        logger.warning("SNMP OID discovery failed for %s: %s", snmp_ip, type(discovery_err).__name__)
-
     import asyncio as _aio
-    from services.snmp_service import _snmp_get, _snmp_walk, collect_device_info, collect_interface_health, collect_device_metrics
+    from services.snmp_service import _snmp_get, _snmp_walk, collect_device_info, collect_interface_health
 
     results = {"success": False, "ip": snmp_ip, "port": port,
                "sys_name": None, "sys_descr": None, "response_ms": None, "error": None,
-               "sys_object_id": (discovery or {}).get('identity', {}).get('sys_object_id'),
-               "snmp_discovery_status": (discovery or {}).get('status', 'pending'),
-               "snmp_discovery_reason": (discovery or {}).get('reason', ''),
+               "sys_object_id": None,
+               "snmp_discovery_status": "delegated_to_librenms",
+               "snmp_discovery_reason": "Hardware discovery is handled by the bound LibreNMS runtime",
                "synced": False,
                "hardware_metrics": {}, "metric_details": {},
-               "hardware_collection_status": "pending",
+               "hardware_collection_status": "delegated_to_librenms",
                "metric_profile_id": resolved_metrics.get('profile_id') or None,
                "metric_profile_status": resolved_metrics.get('profile_status') or 'none',
                "metric_profile_source": resolved_metrics.get('profile_source') or 'template_not_applied',
                "metric_sources": resolved_metrics.get('metric_sources') or {},
-               "collection_mode": "health_only"}
+               "collection_mode": "connectivity_interface_only"}
 
     start = time.monotonic()
     try:
@@ -4367,101 +4139,20 @@ async def snmp_test(device_id: str):
         error_message='' if results['success'] else str(results.get('error') or 'No SNMP response'),
     )
 
-    # ── 先同步健康快照，再在后台补齐设备详情与接口 ──────────────────────
-    prefetched_metrics = None
+    # ── Keep system identity and explicit IF-MIB synchronization separate from hardware collection. ──
     if results['success']:
-        try:
-            prefetched_metrics = await collect_device_metrics(
-                snmp_ip,
-                device_data.get('platform') or 'cisco_ios',
-                community,
-                port,
-                custom_metrics=resolved_metrics.get('metrics') or {},
-                device_id=str(device_data.get('id') or device_id),
-                metric_profile_id=str(resolved_metrics.get('profile_id') or ''),
-                bypass_cache=True,
-                template_only=True,
-            )
-            hardware = prefetched_metrics.get('hardware_metrics') or {}
-            results['hardware_metrics'] = {
-                metric: hardware.get(metric)
-                for metric in HEALTH_METRIC_KEYS
-            }
-            results['metric_details'] = prefetched_metrics.get('metric_details') or {}
-            results['hardware_collection_status'] = (
-                'success'
-                if any(value is not None for value in results['hardware_metrics'].values())
-                else 'no_data'
-            )
-
-            # Persist the health snapshot before returning the manual test
-            # response.  This makes the inventory CPU/MEM column reflect the
-            # same read and clears stale values such as a previous 65535°C
-            # sentinel when the current read is invalid or unavailable.
-            health_updates = {
-                'cpu_usage': prefetched_metrics.get('cpu_usage'),
-                'memory_usage': prefetched_metrics.get('memory_usage'),
-                'temp': prefetched_metrics.get('temp'),
-                'fan_status': prefetched_metrics.get('fan_status'),
-                'psu_status': prefetched_metrics.get('psu_status'),
-            }
-            if isinstance(health_updates['fan_status'], bool):
-                health_updates['fan_status'] = 'true' if health_updates['fan_status'] else 'false'
-            if isinstance(health_updates['psu_status'], bool):
-                health_updates['psu_status'] = 'true' if health_updates['psu_status'] else 'false'
+        async def _background_sync():
             try:
-                health_conn = get_db_connection()
-                try:
-                    health_conn.execute(
-                        'UPDATE devices SET cpu_usage = ?, memory_usage = ?, temp = ?, fan_status = ?, psu_status = ? WHERE id = ?',
-                        (*health_updates.values(), device_id),
-                    )
-                    health_conn.commit()
-                    results['synced'] = True
-                finally:
-                    health_conn.close()
-            except Exception as persist_exc:
-                logger.warning('SNMP health snapshot persistence failed for %s: %s', snmp_ip, type(persist_exc).__name__)
-        except Exception as exc:
-            logger.warning('SNMP hardware prefetch failed for %s: %s', snmp_ip, type(exc).__name__)
-            results['hardware_collection_status'] = 'failed'
-
-        async def _background_sync(prefetched=None):
-            try:
-                platform = device['platform'] or 'cisco_ios'
-                if prefetched is None:
-                    dev_info, intf_data, metrics = await _aio.gather(
-                        collect_device_info(snmp_ip, community, port),
-                        collect_interface_health(
-                            snmp_ip,
-                            community,
-                            port,
-                            resolved_metrics.get('interface') or None,
-                            template_only=True,
-                        ),
-                        collect_device_metrics(
-                            snmp_ip,
-                            platform,
-                            community,
-                            port,
-                            custom_metrics=resolved_metrics.get('metrics') or {},
-                            device_id=str(device_data.get('id') or device_id),
-                            metric_profile_id=str(resolved_metrics.get('profile_id') or ''),
-                            template_only=True,
-                        ),
-                    )
-                else:
-                    dev_info, intf_data = await _aio.gather(
-                        collect_device_info(snmp_ip, community, port),
-                        collect_interface_health(
-                            snmp_ip,
-                            community,
-                            port,
-                            resolved_metrics.get('interface') or None,
-                            template_only=True,
-                        ),
-                    )
-                    metrics = prefetched
+                dev_info, intf_data = await _aio.gather(
+                    collect_device_info(snmp_ip, community, port),
+                    collect_interface_health(
+                        snmp_ip,
+                        community,
+                        port,
+                        resolved_metrics.get('interface') or None,
+                        template_only=True,
+                    ),
+                )
 
                 updates: dict = {}
 
@@ -4481,18 +4172,6 @@ async def snmp_test(device_id: str):
                     updates['uptime'] = dev_info['uptime']
                 if dev_info.get('sys_location'):
                     updates['sys_location'] = dev_info['sys_location']
-
-                for field in ('cpu_usage', 'memory_usage', 'temp', 'fan_status', 'psu_status'):
-                    if field in metrics:
-                        updates[field] = metrics.get(field)
-
-                # Device status columns remain TEXT for backward-compatible
-                # SQLite/PostgreSQL schemas; persist the boolean contract as
-                # canonical text and normalize it back to bool at API edges.
-                if 'fan_status' in updates and isinstance(updates['fan_status'], bool):
-                    updates['fan_status'] = 'true' if updates['fan_status'] else 'false'
-                if 'psu_status' in updates and isinstance(updates['psu_status'], bool):
-                    updates['psu_status'] = 'true' if updates['psu_status'] else 'false'
 
                 conn2 = get_db_connection()
                 try:
@@ -4539,7 +4218,7 @@ async def snmp_test(device_id: str):
             except Exception:
                 pass  # 后台同步失败不影响测试结果
 
-        _aio.create_task(_background_sync(prefetched_metrics))
+        _aio.create_task(_background_sync())
 
     return results
 

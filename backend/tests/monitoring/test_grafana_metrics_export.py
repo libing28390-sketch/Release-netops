@@ -244,9 +244,13 @@ def test_metrics_export_runs_aggregate_queries_on_postgres(monkeypatch, isolated
 
 def test_metrics_export_includes_normalized_hardware_and_capability_without_addresses(monkeypatch, isolated_db):
     from database.migrations.m0260_snmp_hardware_inventory import upgrade
+    from database.migrations.m0277_librenms_native_bindings import upgrade as upgrade_native_bindings
+    from database.migrations.m0278_librenms_native_inventory_projection import upgrade as upgrade_native_projection
 
     conn = database.get_db_connection()
     upgrade(conn.cursor(), use_pg=True)
+    upgrade_native_bindings(conn.cursor(), use_pg=True)
+    upgrade_native_projection(conn.cursor(), use_pg=True)
     conn.execute(
         """
         INSERT INTO devices (id, hostname, tenant_id, asset_id, platform, vendor, role)
@@ -262,12 +266,21 @@ def test_metrics_export_includes_normalized_hardware_and_capability_without_addr
         "grafana-hardware-run-1",
         "rules-abc123",
         [{
-            "source_type": "standard_mib",
-            "source_id": "HOST-RESOURCES-MIB::hrProcessorLoad",
+            "source_type": "librenms_native",
+            "data_origin": "librenms_native",
+            "native_instance_id": "librenms-test-instance",
+            "native_device_id": "native-device-17",
+            "native_entity_id": "processor:3",
+            "source_id": "processor:3",
             "component_class": "processor",
             "measurement_type": "cpu_usage_percent",
-            "index": [1],
-            "oid": "1.3.6.1.2.1.25.3.3.1.2",
+            "index": {
+                "instance_id": "librenms-test-instance",
+                "native_device_id": "native-device-17",
+                "row_kind": "processor",
+                "row_id": "3",
+            },
+            "oid": "",
             "unit": "percent",
             "sensor_name": "CPU 1",
             "group_name": "processor",
@@ -278,14 +291,14 @@ def test_metrics_export_includes_normalized_hardware_and_capability_without_addr
             "metadata": {"window": "unknown"},
         }],
         [{
-            "source_type": "standard_mib",
+            "source_type": "librenms_native",
             "component_class": "processor",
             "status": "success",
             "coverage_complete": True,
         }],
         sampled_at,
-        discovery_version="nexora.hardware.discovery.v1",
-        artifact_version="nexora.hardware.direct-poll.v1",
+        discovery_version="librenms-native-snapshot-v1",
+        artifact_version="26.9",
     )
     assert outcome["results"][0]["active_sensor_count"] == 1
     conn.commit()
@@ -294,14 +307,28 @@ def test_metrics_export_includes_normalized_hardware_and_capability_without_addr
 
     body = grafana_metrics.grafana_hardware_metrics().body.decode("utf-8")
 
-    assert 'nexora_hw_cpu_usage_percent{asset_id="asset-hw-01",component_class="processor",device_id="grafana-hardware-device"' in body
+    cpu_line = next(
+        line for line in body.splitlines()
+        if line.startswith("nexora_hw_cpu_usage_percent{")
+    )
+    for label in (
+        'asset_id="asset-hw-01"',
+        'component_class="processor"',
+        'data_origin="librenms_native"',
+        'device_id="grafana-hardware-device"',
+        'native_device_id="native-device-17"',
+        'native_entity_id="processor:3"',
+        'native_instance_id="librenms-test-instance"',
+    ):
+        assert label in cpu_line
+    assert cpu_line.endswith(" 26.5")
     assert 'hostname="router-hw-01"' in body
     assert 'window="unknown"' in body
     assert 'nexora_hw_sensor_quality{' in body and 'quality="good"' in body
     assert 'nexora_hw_capability_status{' in body and 'status="success"' in body
     assert 'nexora_hw_capability_active_sensor_count{' in body and '} 1' in body
     assert 'nexora_hw_capability_last_discovered_count{' in body and '} 1' in body
-    assert 'artifact_version="nexora.hardware.direct-poll.v1"' in body
+    assert 'artifact_version="26.9"' in body
     assert 'nexora_hw_capability_info{' in body
     assert 'nexora_hw_capability_last_success_timestamp_seconds{' in body
     assert 'nexora_hw_sensor_render_errors 0' in body

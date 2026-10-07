@@ -754,7 +754,8 @@ def _collect_hardware(lines: list[str], conn: Any, now: datetime) -> dict[str, A
           FROM snmp_hardware_capabilities c
           JOIN devices d ON d.id = c.device_id
           LEFT JOIN physical_assets pa ON pa.id = d.asset_id
-          LEFT JOIN sites s ON s.id = COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''))
+         LEFT JOIN sites s ON s.id = COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''))
+         WHERE c.source_type = 'librenms_native'
          ORDER BY c.device_id, c.component_class, c.source_type
         """,
     )

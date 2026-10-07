@@ -25,10 +25,15 @@ import {
 import { ApiError, apiRequest } from '../../../api/http';
 import { ActionButton, ActionIconButton } from '../../ui/ActionIconButton';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
-import { MetricRow, metricLabel, toPayload } from './MetricRowItem';
+import { MetricRow } from './MetricRowItem';
 import type { InterfaceOidConfig } from './InterfaceConfigSection';
 import OidPickerModal, { type MibNodeItem } from '../OidPickerModal';
-import { formatMetricValue, formatRawValue, formatUptime, summarizeRawValue } from './metricResultFormatters';
+import { formatRawValue, formatUptime } from './metricResultFormatters';
+import HardwareDiagnosticSummary from './HardwareDiagnosticSummary';
+import type { SnmpHardwareDiscoveryTestResult } from './hardwareDiagnosticTypes';
+import { getHardwareDiscoveryToast, redactHardwareDiagnosticText } from './hardwareDiagnosticUtils';
+
+export type { SnmpHardwareDiscoveryTestResult } from './hardwareDiagnosticTypes';
 
 export type SnmpWalkVersion = '1' | '2c';
 export type SnmpWalkTargetStatus = 'idle' | 'loading' | 'matched' | 'multiple' | 'none' | 'error';
@@ -58,52 +63,6 @@ export interface SnmpHardwareTestResult {
   target_source?: string;
   matched_device_id?: string | null;
   matched_hostname?: string;
-}
-
-export interface SnmpHardwareDiscoveryTestResult {
-  host: string;
-  port: number;
-  version: SnmpWalkVersion;
-  matched_hostname?: string;
-  discovery_status: string;
-  discovery_reason: string;
-  identity: {
-    status?: string;
-    vendor?: string;
-    platform?: string;
-    model?: string;
-    sys_object_id?: string;
-  };
-  librenms_rule_id?: string;
-  librenms_source_path?: string;
-  hardware_support_status?: string;
-  hardware_support_reason?: string;
-  category_results: Array<{
-    source_type: string;
-    component_class: string;
-    status: string;
-    coverage_complete: boolean;
-    reason_code: string;
-    reason: string;
-  }>;
-  hardware_sensors: Array<{
-    source_type?: string;
-    component_class?: string;
-    measurement_type?: string;
-    sensor_name?: string;
-    entity_name?: string;
-    group_name?: string;
-    value?: number | null;
-    raw_value?: string | null;
-    unit?: string;
-    quality?: string;
-    oid?: string;
-    index?: Array<string | number>;
-    presence_status?: string;
-  }>;
-  sensor_count: number;
-  sensor_limit: number;
-  sensors_truncated: boolean;
 }
 
 export interface SnmpSystemInfoTestResult {
@@ -220,7 +179,6 @@ const inputClass =
 const selectClass =
   'w-full rounded-md border border-black/8 bg-transparent px-2.5 py-1.5 text-xs outline-none focus:border-[#00bceb]/55 dark:border-white/10';
 const tinyLabelClass = 'mb-1 block text-[10px] font-medium text-black/50 dark:text-white/50';
-const DEFAULT_HARDWARE_METRIC_KEYS = ['cpu', 'memory', 'temperature', 'fan', 'power_supply'];
 const candidateStatusRank = (status?: string) => String(status || '').trim().toLowerCase() === 'online' ? 0 : 1;
 const LLDP_REMOTE_ROOT_OID = '1.0.8802.1.1.2.1.4';
 const LLDP_REMOTE_TABLE_ROOT_OID = '1.0.8802.1.1.2.1.4.1';
@@ -591,53 +549,6 @@ const statusTone = (status: string) => {
   };
 };
 
-const statusLabel = (status: string, zh: boolean) => {
-  const normalized = status.trim().toLowerCase();
-  if (normalized === 'ok') return zh ? '正常' : 'Normal';
-  if (normalized === 'fail' || normalized === 'abnormal') return zh ? '异常' : 'Abnormal';
-  if (normalized === 'warning') return zh ? '告警' : 'Warning';
-  if (normalized === 'missing') return zh ? '无返回值' : 'No value';
-  if (normalized === 'invalid_value' || normalized === 'out_of_range') return zh ? '值无效' : 'Invalid value';
-  if (normalized === 'probe_error') return zh ? '探测失败' : 'Probe failed';
-  return zh ? '未知' : 'Unknown';
-};
-
-const hardwareProbeStatusClass = (status: string) => {
-  switch (status.trim().toLowerCase()) {
-    case 'supported':
-    case 'available':
-    case 'success':
-      return 'border-emerald-500/20 bg-emerald-500/[.05] text-emerald-700 dark:text-emerald-300';
-    case 'not_found':
-    case 'no_hardware_data':
-      return 'border-slate-500/20 bg-slate-500/[.05] text-slate-600 dark:text-slate-300';
-    case 'unsupported':
-    case 'failed':
-      return 'border-rose-500/20 bg-rose-500/[.05] text-rose-700 dark:text-rose-300';
-    default:
-      return 'border-amber-500/20 bg-amber-500/[.05] text-amber-700 dark:text-amber-300';
-  }
-};
-
-const hardwareProbeStatusLabel = (status: string, zh: boolean) => {
-  const labels: Record<string, [string, string]> = {
-    supported: ['支持', 'Supported'],
-    partial: ['部分支持', 'Partial'],
-    requires_adapter: ['需要适配', 'Adapter required'],
-    unsupported: ['不支持', 'Unsupported'],
-    available: ['有指标返回', 'Data returned'],
-    no_hardware_data: ['无硬件数据', 'No hardware data'],
-    success: ['已返回', 'Returned'],
-    not_found: ['未发现实例', 'No instances'],
-    failed: ['探测失败', 'Probe failed'],
-    matched: ['识别成功', 'Matched'],
-    no_supported_oid: ['无可用 OID', 'No supported OID'],
-    unknown: ['未知', 'Unknown'],
-  };
-  const pair = labels[status.trim().toLowerCase()];
-  return pair ? pair[zh ? 0 : 1] : status || (zh ? '未知' : 'Unknown');
-};
-
 const formatInterfaceSample = (sample: SnmpInterfaceCheckResult['sample'], zh: boolean) => {
   const first = sample?.[0];
   if (!first) return '';
@@ -658,12 +569,10 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
   diagnosticPresetOnly = false,
   hideMaxRowsSelector = false,
   publicSummaryOnly = false,
-  metrics,
   interfaceConfig,
   initialTab = 'snmpwalk',
   saving = false,
   showToast,
-  onTestResult,
 }) => {
   const [activeTab, setActiveTab] = useState<InspectorTab>(initialTab);
   const [metricTesting, setMetricTesting] = useState(false);
@@ -795,27 +704,26 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
   }, [walkResultOpen]);
 
   // Probe Test Results
-  const [testResult, setTestResult] = useState<SnmpHardwareTestResult | null>(null);
-  const [hardwareDiscoveryResult, setHardwareDiscoveryResult] = useState<SnmpHardwareDiscoveryTestResult | null>(null);
+  const [nativeHardwareResult, setNativeHardwareResult] = useState<SnmpHardwareDiscoveryTestResult | null>(null);
   const [systemInfoTesting, setSystemInfoTesting] = useState(false);
   const [systemInfoResult, setSystemInfoResult] = useState<SnmpSystemInfoTestResult | null>(null);
   const [systemInfoError, setSystemInfoError] = useState('');
-  const [hardwareDiscoveryError, setHardwareDiscoveryError] = useState('');
+  const [nativeHardwareError, setNativeHardwareError] = useState<{ message: string; permissionDenied: boolean } | null>(null);
   const systemInfoAbortRef = useRef<AbortController | null>(null);
-  const hardwareDiscoveryAbortRef = useRef<AbortController | null>(null);
+  const nativeHardwareAbortRef = useRef<AbortController | null>(null);
   const [interfaceTestResult, setInterfaceTestResult] = useState<SnmpInterfaceTestResult | null>(null);
   const autoSelectedCandidateRef = useRef('');
 
   useEffect(() => {
     setSystemInfoResult(null);
-    setHardwareDiscoveryResult(null);
+    setNativeHardwareResult(null);
     setSystemInfoError('');
-    setHardwareDiscoveryError('');
+    setNativeHardwareError(null);
     setSystemInfoTesting(false);
     if (librenmsHardwareDiscoveryTest) setMetricTesting(false);
     return () => {
       systemInfoAbortRef.current?.abort();
-      hardwareDiscoveryAbortRef.current?.abort();
+      nativeHardwareAbortRef.current?.abort();
     };
   }, [walkDeviceId, walkIp, walkVersion, librenmsHardwareDiscoveryTest]);
 
@@ -842,29 +750,6 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
     if (!showSystemInfoTab && activeTab === 'system') setActiveTab('snmpwalk');
   }, [activeTab, showSystemInfoTab]);
 
-  const configuredMetrics = useMemo(
-    () =>
-      metrics
-        .map(row => ({ row, definition: toPayload(row.definition) }))
-        .filter(item => Object.keys(item.definition).length > 0),
-    [metrics],
-  );
-
-  const testMetricKeys = useMemo(
-    () =>
-      Array.from(
-        new Set([
-          ...DEFAULT_HARDWARE_METRIC_KEYS,
-          ...configuredMetrics.map(item => item.row.key),
-        ]),
-      ),
-    [configuredMetrics],
-  );
-
-  const configuredMetricKeys = useMemo(
-    () => new Set(configuredMetrics.map(item => item.row.key)),
-    [configuredMetrics],
-  );
   const orderedCandidateDevices = useMemo(
     () => [...candidateDevices].sort((left, right) => (
       candidateStatusRank(left.status) - candidateStatusRank(right.status)
@@ -886,8 +771,6 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
     setWalkTargetLabel(`${candidate.hostname}${ip ? ` (${ip})` : ''}`);
     setWalkTargetError('');
   }, [orderedCandidateDevices, walkDeviceId, walkIp, walkTargetStatus]);
-  const hasTemplateExtras = configuredMetrics.some(item => !DEFAULT_HARDWARE_METRIC_KEYS.includes(item.row.key));
-
   const handleSelectCandidate = (event: React.ChangeEvent<HTMLSelectElement>) => {
     const deviceId = event.target.value;
     if (!deviceId) return;
@@ -908,8 +791,7 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
     setWalkResultOpen(false);
     setWalkFilter('');
     setWalkResultScope('public');
-    setTestResult(null);
-    setHardwareDiscoveryResult(null);
+    setNativeHardwareResult(null);
     setSystemInfoResult(null);
     setInterfaceTestResult(null);
     showToast(
@@ -934,8 +816,7 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
     setWalkResultOpen(false);
     setWalkFilter('');
     setWalkResultScope('public');
-    setTestResult(null);
-    setHardwareDiscoveryResult(null);
+    setNativeHardwareResult(null);
     setSystemInfoResult(null);
     setInterfaceTestResult(null);
   };
@@ -1100,95 +981,48 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
     }
   };
 
-  const executeHardwareTest = async () => {
+  const readNativeHardwareResults = async () => {
     const targetDeviceId = walkDeviceId;
-    if (!walkIp.trim() && !targetDeviceId) {
-      showToast(zh ? '请先选择样例设备或输入 IP' : 'Select a device or enter an IP first', 'error');
+    if (!librenmsHardwareDiscoveryTest) return;
+    if (!targetDeviceId) {
+      showToast(zh ? '请先选择已纳管设备，再读取其 LibreNMS 原生结果' : 'Select a managed device before reading its native LibreNMS results', 'error');
       return;
     }
     if (walkTargetStatus !== 'matched') {
       showToast(zh ? '请先选择设备或按回车确认 IP' : 'Select a device or confirm the IP first', 'error');
       return;
     }
-    if (!targetDeviceId) {
-      await confirmSnmpTarget();
-      return;
-    }
     setMetricTesting(true);
-    setTestResult(null);
-    setHardwareDiscoveryResult(null);
-    setHardwareDiscoveryError('');
-    const controller = librenmsHardwareDiscoveryTest ? new AbortController() : null;
-    if (controller) {
-      hardwareDiscoveryAbortRef.current?.abort();
-      hardwareDiscoveryAbortRef.current = controller;
-    }
+    setNativeHardwareResult(null);
+    setNativeHardwareError(null);
+    const controller = new AbortController();
+    nativeHardwareAbortRef.current?.abort();
+    nativeHardwareAbortRef.current = controller;
     try {
-      if (librenmsHardwareDiscoveryTest) {
-        const response = await apiRequest<{ success: boolean; data: SnmpHardwareDiscoveryTestResult }>(
-          '/api/platform-registry/snmp-hardware-discovery-test',
-          {
-            method: 'POST',
-            signal: controller?.signal,
-            body: JSON.stringify({
-              device_id: targetDeviceId,
-              version: walkVersion,
-            }),
-          },
-        );
-        if (controller?.signal.aborted) return;
-        setHardwareDiscoveryResult(response.data);
-        const foundCount = response.data.sensor_count || 0;
-        const supportStatus = String(response.data.hardware_support_status || '').toLowerCase();
-        showToast(
-          zh
-            ? `硬件探测完成：发现 ${foundCount} 个传感器`
-            : `Hardware probe completed: ${foundCount} sensors found`,
-          foundCount > 0 ? 'success' : supportStatus === 'unsupported' || supportStatus === 'requires_adapter' ? 'error' : 'info',
-        );
-        return;
-      }
-
-      const response = await apiRequest<{ success: boolean; data: SnmpHardwareTestResult }>(
-        '/api/platform-registry/snmp-hardware-test',
+      const response = await apiRequest<{ success: boolean; data: SnmpHardwareDiscoveryTestResult }>(
+        '/api/platform-registry/snmp-hardware-discovery-test',
         {
           method: 'POST',
+          signal: controller.signal,
           body: JSON.stringify({
             device_id: targetDeviceId,
-            version: walkVersion,
-            include_default_metrics: true,
-            metric_definitions: Object.fromEntries(
-              configuredMetrics.map(item => [item.row.key, item.definition]),
-            ),
           }),
         },
       );
-      setTestResult(response.data);
-      onTestResult?.(response.data);
-      const isHealthy = response.data.status === 'ok';
-      const readableMetrics = ['cpu', 'memory', 'temperature']
-        .map(key => {
-          const detail = response.data.metrics?.[key];
-          return detail && detail.value !== null && detail.value !== undefined
-            ? `${metricLabel(key, zh)} ${formatMetricValue(key, detail, zh)}`
-            : '';
-        })
-        .filter(Boolean);
-      showToast(
-        isHealthy
-          ? zh
-            ? `硬件指标读取成功${readableMetrics.length ? ` · ${readableMetrics.join(' · ')}` : ''}`
-            : `Hardware metrics read${readableMetrics.length ? ` · ${readableMetrics.join(' · ')}` : ''}`
-          : response.data.message || (zh ? '硬件指标存在异常或无法确认' : 'Some hardware metrics are abnormal or unknown'),
-        isHealthy ? 'success' : response.data.status === 'unknown' ? 'info' : 'error',
-      );
+      if (controller.signal.aborted) return;
+      setNativeHardwareResult(response.data);
+      const toast = getHardwareDiscoveryToast(response.data, zh);
+      showToast(toast.message, toast.type);
     } catch (error) {
-      if (controller?.signal.aborted) return;
-      const message = error instanceof Error ? error.message : zh ? '硬件指标测试失败' : 'Hardware metric test failed';
-      if (librenmsHardwareDiscoveryTest) setHardwareDiscoveryError(message);
+      if (controller.signal.aborted) return;
+      const permissionDenied = error instanceof ApiError && (error.status === 401 || error.status === 403);
+      const message = permissionDenied
+        ? zh ? '无权读取 LibreNMS 原生结果，请检查账户权限或重新登录。' : 'You are not allowed to read native LibreNMS results. Check your access or sign in again.'
+        : redactHardwareDiagnosticText(error instanceof Error ? error.message : zh ? 'LibreNMS 原生结果读取失败' : 'Failed to read native LibreNMS results');
+      setNativeHardwareError({ message, permissionDenied });
       showToast(message, 'error');
     } finally {
-      if (!controller?.signal.aborted) setMetricTesting(false);
+      if (!controller.signal.aborted) setMetricTesting(false);
     }
   };
 
@@ -1439,8 +1273,8 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
               >
                 <CheckCircle2 size={12} />
                 {librenmsHardwareDiscoveryTest
-                  ? zh ? '硬件指标' : 'Hardware Metrics'
-                  : zh ? '硬件与接口指标综合验证' : 'Hardware & Interface Health Probing'}
+                  ? zh ? '原生硬件结果' : 'Native Hardware Results'
+                  : zh ? '接口 IF-MIB 验证' : 'Interface IF-MIB Validation'}
               </button>
             </div>
           </div>
@@ -1451,9 +1285,15 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
               <Activity size={18} />
             </span>
             <div className="min-w-0">
-              <h2 className="text-sm font-semibold text-black/85 dark:text-white/90">{zh ? '配置并执行 SNMP 探测' : 'Configure and run an SNMP probe'}</h2>
+              <h2 className="text-sm font-semibold text-black/85 dark:text-white/90">
+                {librenmsHardwareDiscoveryTest
+                  ? zh ? 'SNMP 诊断与原生采集结果' : 'SNMP diagnostics and native results'
+                  : zh ? '配置并执行 SNMP 探测' : 'Configure and run an SNMP probe'}
+              </h2>
               <p className="mt-0.5 text-[11px] leading-4 text-black/50 dark:text-white/50">
-                {zh ? '使用快捷 OID 或输入目标 OID，再执行只读 WALK。' : 'Choose a quick OID or enter one, then run a read-only WALK.'}
+                {librenmsHardwareDiscoveryTest
+                  ? zh ? 'SNMP WALK/MIB 为单独的手动只读查询；硬件结果页只读取 LibreNMS 已保存的采样。' : 'SNMP Walk/MIB is a separate, user-initiated read-only query; the hardware results view only reads samples already stored by LibreNMS.'
+                  : zh ? '使用快捷 OID 或输入目标 OID，再执行只读 WALK。' : 'Choose a quick OID or enter one, then run a read-only WALK.'}
               </p>
             </div>
           </div>
@@ -1475,20 +1315,17 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
 
         {showHardwareValidationTab && activeTab === 'validate' && (
           <div className="flex flex-wrap items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => void executeHardwareTest()}
-              disabled={metricTesting || systemInfoTesting || interfaceTesting || saving || walkTargetStatus !== 'matched'}
-              className="inline-flex items-center gap-1 rounded-lg bg-[#00a9ce] px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-[#008fb1] disabled:opacity-45"
-            >
-              <Activity size={13} className={metricTesting ? 'animate-spin' : ''} />
-              {metricTesting
-                ? (zh ? '探测中...' : 'Probing...')
-                : librenmsHardwareDiscoveryTest
-                  ? zh ? '探测硬件指标' : 'Probe Hardware Metrics'
-                  : zh ? '测试硬件指标' : 'Test Hardware Metrics'}
-            </button>
-            {!librenmsHardwareDiscoveryTest && (
+            {librenmsHardwareDiscoveryTest ? (
+              <button
+                type="button"
+                onClick={() => void readNativeHardwareResults()}
+                disabled={metricTesting || systemInfoTesting || interfaceTesting || saving || walkTargetStatus !== 'matched'}
+                className="inline-flex items-center gap-1 rounded-lg bg-[#00a9ce] px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-[#008fb1] disabled:opacity-45"
+              >
+                <Activity size={13} className={metricTesting ? 'animate-spin' : ''} />
+                {metricTesting ? (zh ? '读取中...' : 'Reading...') : (zh ? '读取 LibreNMS 原生结果' : 'Read Native LibreNMS Results')}
+              </button>
+            ) : (
               <button
                 type="button"
                 onClick={executeInterfaceTest}
@@ -2084,7 +1921,7 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
       )}
 
       {/* ───────────────────────────────────────────────────────────── */}
-      {/* TAB 2: Hardware & Interface Probing Results */}
+      {/* TAB 2: Native hardware results or user-initiated IF-MIB validation */}
       {/* ───────────────────────────────────────────────────────────── */}
       {showHardwareValidationTab && activeTab === 'validate' && (
         <div className="mt-3.5 space-y-3">
@@ -2093,180 +1930,28 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
             {librenmsHardwareDiscoveryTest ? (
               <>
                 <span className="text-[10px] text-black/50 dark:text-white/50">
-                  {zh ? '使用与硬件发现相同的只读探测：' : 'Read-only probe used by hardware discovery:'}
+                  {zh ? '只读查询 LibreNMS 已保存的最新结果：' : 'Read the latest results already stored by LibreNMS:'}
                 </span>
-                <span className="rounded bg-[#00bceb]/10 px-1.5 py-0.5 text-[10px] font-medium text-[#007391] dark:text-[#00bceb]">{zh ? 'LibreNMS 设备规则' : 'LibreNMS device rules'}</span>
-                <span className="rounded bg-[#00bceb]/10 px-1.5 py-0.5 text-[10px] font-medium text-[#007391] dark:text-[#00bceb]">HOST-RESOURCES-MIB</span>
-                <span className="rounded bg-[#00bceb]/10 px-1.5 py-0.5 text-[10px] font-medium text-[#007391] dark:text-[#00bceb]">ENTITY-SENSOR-MIB</span>
+                <span className="rounded bg-[#00bceb]/10 px-1.5 py-0.5 text-[10px] font-medium text-[#007391] dark:text-[#00bceb]">{zh ? '需要已绑定资产' : 'Bound managed asset required'}</span>
+                <span className="rounded bg-[#00bceb]/10 px-1.5 py-0.5 text-[10px] font-medium text-[#007391] dark:text-[#00bceb]">{zh ? '不会触发轮询' : 'No poll triggered'}</span>
               </>
             ) : (
-              <>
-                <span className="text-[10px] text-black/50 dark:text-white/50">{zh ? '本次测试指标：' : 'Metrics in this test: '}</span>
-                {testMetricKeys.map(key => (
-                  <span key={key} className="rounded bg-[#00bceb]/10 px-1.5 py-0.5 text-[10px] font-medium text-[#007391] dark:text-[#00bceb]">
-                    {metricLabel(key, zh)}{configuredMetricKeys.has(key) ? '' : zh ? '（默认）' : ' (default)'}
-                  </span>
-                ))}
-                {hasTemplateExtras && (
-                  <span className="text-[10px] text-black/40 dark:text-white/40">
-                    {zh ? '模板额外指标也会一并验证' : 'Template extras are tested too'}
-                  </span>
-                )}
-                {interfaceConfig?.enabled && (
-                  <span className="rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-300">
-                    {zh ? '接口 IF-MIB（需单独验证）' : 'Interface IF-MIB (validate separately)'}
-                  </span>
-                )}
-              </>
+              <span className="text-[10px] text-black/50 dark:text-white/50">
+                {zh
+                  ? '这里只验证显式启用的 IF-MIB 接口配置；硬件 OID 模板的即时 Python 探测已停用。可在上方手动执行通用 SNMP WALK/MIB 查询。'
+                  : 'This view only validates explicitly enabled IF-MIB interface settings. Immediate Python probes for hardware OID templates are disabled; use the generic SNMP Walk/MIB tool above for a user-initiated query.'}
+              </span>
             )}
           </div>
 
-          {hardwareDiscoveryError && <div role="alert" className="rounded-lg bg-rose-500/10 p-3 text-xs text-rose-700 dark:text-rose-300">{hardwareDiscoveryError}</div>}
-          {librenmsHardwareDiscoveryTest && !hardwareDiscoveryResult && !hardwareDiscoveryError && (
-            <div className="rounded-md border border-dashed border-black/10 px-3 py-6 text-center text-xs text-black/50 dark:border-white/10 dark:text-white/50">
-              {metricTesting ? (zh ? '正在探测硬件传感器，设备返回较慢时可能需要一些时间…' : 'Probing hardware sensors; slow devices may take some time…') : (zh ? '点击“探测硬件指标”查看传感器读数和各类硬件的采集状态。' : 'Click “Probe Hardware Metrics” to view sensor readings and collection status.')}
-            </div>
-          )}
-          {hardwareDiscoveryResult && (
-            <div className="rounded-lg border border-black/8 bg-white/70 p-3 shadow-sm dark:border-white/10 dark:bg-white/[.04]">
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="text-xs font-semibold text-black/80 dark:text-white/85">
-                    {zh ? '硬件指标探测结果' : 'Hardware metrics probe result'}
-                  </div>
-                  <div className="mt-1 text-[10px] text-black/50 dark:text-white/50">
-                    {hardwareDiscoveryResult.librenms_rule_id
-                      ? `${zh ? 'LibreNMS 规则' : 'LibreNMS rule'}: ${hardwareDiscoveryResult.librenms_rule_id}`
-                      : hardwareDiscoveryResult.matched_hostname || hardwareDiscoveryResult.host}
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-1.5 text-[10px]">
-                  <span className={`rounded-full border px-2 py-0.5 font-semibold ${hardwareProbeStatusClass(hardwareDiscoveryResult.hardware_support_status || hardwareDiscoveryResult.discovery_status)}`}>
-                    {zh ? `支持状态：${hardwareProbeStatusLabel(hardwareDiscoveryResult.hardware_support_status || hardwareDiscoveryResult.discovery_status, zh)}` : `Support: ${hardwareProbeStatusLabel(hardwareDiscoveryResult.hardware_support_status || hardwareDiscoveryResult.discovery_status, zh)}`}
-                  </span>
-                  <span className="rounded-full bg-black/[.05] px-2 py-0.5 dark:bg-white/[.08]">
-                    {zh ? `${hardwareDiscoveryResult.sensor_count} 个传感器` : `${hardwareDiscoveryResult.sensor_count} sensors`}
-                  </span>
-                </div>
-              </div>
-
-              {(hardwareDiscoveryResult.hardware_support_reason || hardwareDiscoveryResult.discovery_reason) && (
-                <p className="mt-2 text-[10px] leading-4 text-black/55 dark:text-white/55">
-                  {hardwareDiscoveryResult.hardware_support_reason || hardwareDiscoveryResult.discovery_reason}
-                </p>
-              )}
-
-              {hardwareDiscoveryResult.category_results.length > 0 && (
-                <div className="mt-2 grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
-                  {hardwareDiscoveryResult.category_results.map((category, index) => (
-                    <div key={`${category.source_type}-${category.component_class}-${index}`} className={`rounded-md border px-2 py-1.5 text-[10px] ${hardwareProbeStatusClass(category.status)}`}>
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-semibold">{category.component_class.replace(/_/g, ' ')}</span>
-                        <span>{hardwareProbeStatusLabel(category.status, zh)}</span>
-                      </div>
-                      <div className="mt-0.5 opacity-75">{category.source_type}{category.coverage_complete ? (zh ? ' · 覆盖完整' : ' · complete') : ''}</div>
-                      {category.reason && <div className="mt-0.5 opacity-75">{category.reason}</div>}
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {hardwareDiscoveryResult.hardware_sensors.length > 0 ? (
-                <div className="mt-2 max-h-80 overflow-auto rounded-md border border-black/8 dark:border-white/10">
-                  <div className="grid min-w-[720px] grid-cols-[minmax(170px,1.5fr)_minmax(120px,1fr)_minmax(130px,1fr)_minmax(180px,1.4fr)] gap-2 border-b border-black/8 bg-black/[.025] px-2.5 py-1.5 text-[9px] font-semibold text-black/45 dark:border-white/10 dark:bg-white/[.03] dark:text-white/45">
-                    <span>{zh ? '传感器' : 'Sensor'}</span>
-                    <span>{zh ? '类别 / 类型' : 'Component / Type'}</span>
-                    <span>{zh ? '读取值' : 'Value'}</span>
-                    <span>OID / Index</span>
-                  </div>
-                  {hardwareDiscoveryResult.hardware_sensors.map((sensor, index) => (
-                    <div key={`${sensor.oid || ''}-${(sensor.index || []).join('.')}-${sensor.measurement_type || ''}-${index}`} className="grid min-w-[720px] grid-cols-[minmax(170px,1.5fr)_minmax(120px,1fr)_minmax(130px,1fr)_minmax(180px,1.4fr)] gap-2 border-b border-black/[.04] px-2.5 py-1.5 text-[10px] last:border-b-0 dark:border-white/[.05]">
-                      <span className="truncate font-medium text-black/75 dark:text-white/80" title={sensor.sensor_name || sensor.entity_name || ''}>{sensor.sensor_name || sensor.entity_name || '—'}</span>
-                      <span className="truncate text-black/55 dark:text-white/55" title={`${sensor.component_class || ''} ${sensor.measurement_type || ''}`}>{sensor.component_class || '—'} · {sensor.measurement_type || '—'}</span>
-                      <span className="truncate font-mono text-black/70 dark:text-white/70" title={`${zh ? '原始值' : 'Raw value'}: ${formatRawValue(sensor.raw_value)}`}>{formatRawValue(sensor.value)}{sensor.unit ? ` ${sensor.unit}` : ''} · {sensor.quality || 'unknown'}</span>
-                      <span className="truncate font-mono text-black/45 dark:text-white/45" title={`${sensor.oid || ''} · ${(sensor.index || []).join('.')}`}>{sensor.oid || '—'} · {(sensor.index || []).join('.') || '—'}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="mt-2 rounded-md border border-dashed border-black/10 px-3 py-4 text-center text-[10px] text-black/45 dark:border-white/10 dark:text-white/45">
-                  {zh ? '本次探测没有读到硬件传感器；请查看上方分类结果和支持状态。' : 'No hardware sensors were returned. Review the category results and support status above.'}
-                </div>
-              )}
-              {hardwareDiscoveryResult.sensors_truncated && (
-                <p className="mt-1.5 text-[9px] text-amber-700 dark:text-amber-300">
-                  {zh
-                    ? `结果过多，仅展示前 ${hardwareDiscoveryResult.sensor_limit} 条；设备共返回 ${hardwareDiscoveryResult.sensor_count} 条。`
-                    : `Showing the first ${hardwareDiscoveryResult.sensor_limit} of ${hardwareDiscoveryResult.sensor_count} returned sensors.`}
-                </p>
-              )}
-            </div>
-          )}
-
-          {testResult && !librenmsHardwareDiscoveryTest && (
-            <div className="rounded-lg border border-black/8 bg-white/70 p-3 shadow-sm dark:border-white/10 dark:bg-white/[.04]">
-              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                <div className={`flex items-center gap-1.5 font-semibold ${statusTone(testResult.status).text}`}>
-                  {statusTone(testResult.status).icon}
-                  {testResult.message}
-                </div>
-                <span className="rounded bg-black/[.05] px-1.5 py-0.5 text-[10px] dark:bg-white/[.08]">
-                  {zh ? `${testResult.metric_count} 项指标` : `${testResult.metric_count} metrics`}
-                </span>
-              </div>
-
-              <div className="mt-2.5 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                {Object.entries(testResult.metrics || {}).map(([key, detail]) => {
-                  const tone = statusTone(detail.status);
-                  const hasRawValue = detail.raw_value !== undefined && detail.raw_value !== detail.value;
-                  return (
-                    <div key={key} className={`flex min-h-[148px] min-w-0 flex-col rounded-lg border p-2.5 ${tone.box}`}>
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="min-w-0 truncate text-xs font-semibold text-black/75 dark:text-white/80" title={metricLabel(key, zh)}>{metricLabel(key, zh)}</span>
-                        <span className={`inline-flex items-center gap-1 text-[10px] font-semibold ${tone.text}`}>
-                          {tone.icon}
-                          {statusLabel(detail.status, zh)}
-                        </span>
-                      </div>
-                      <div
-                        className={`mt-2 min-h-7 break-words text-lg font-semibold leading-7 tabular-nums ${tone.text}`}
-                        title={key === 'uptime' ? `${formatRawValue(detail.value)}${detail.unit ? ` ${detail.unit}` : ''}` : undefined}
-                      >
-                        {formatMetricValue(key, detail, zh)}
-                      </div>
-                      {hasRawValue && (
-                        <div
-                          className="mt-1 min-w-0 truncate text-[10px] text-black/45 dark:text-white/45"
-                          title={formatRawValue(detail.raw_value)}
-                        >
-                          {zh ? '原始摘要：' : 'Raw summary: '}{summarizeRawValue(detail.raw_value, zh)}
-                        </div>
-                      )}
-                      {detail.message && (
-                        <div className="mt-1 max-h-8 overflow-hidden text-[10px] leading-4 text-black/50 dark:text-white/50">{detail.message}</div>
-                      )}
-                      <div className="mt-auto pt-2">
-                        {detail.source && (
-                          <div className={`inline-flex max-w-full truncate rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${detail.source === 'template_definition' ? 'bg-cyan-500/10 text-cyan-700 dark:text-cyan-300' : 'bg-slate-500/10 text-slate-600 dark:text-slate-300'}`} title={detail.source}>
-                            {detail.source === 'template_definition'
-                              ? (zh ? '来源：已关联 SNMP 型号模板' : 'Source: linked SNMP model template')
-                              : (zh ? '来源：厂商内置采集器' : 'Source: vendor built-in collector')}
-                          </div>
-                        )}
-                        <details className="mt-1.5 text-[9px] text-black/35 dark:text-white/35">
-                          <summary className="cursor-pointer select-none hover:text-black/60 dark:hover:text-white/60">
-                            {zh ? '查看采集定义' : 'View collection definition'}
-                          </summary>
-                          <div className="mt-1 break-all font-mono">
-                            {detail.mode || '—'} · {detail.oid || '—'}{detail.rows ? ` · ${detail.rows} ${zh ? '行' : 'rows'}` : ''}
-                          </div>
-                        </details>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+          {librenmsHardwareDiscoveryTest && (
+            <HardwareDiagnosticSummary
+              result={nativeHardwareResult}
+              loading={metricTesting}
+              error={nativeHardwareError}
+              zh={zh}
+              onCopy={payload => void copyToClipboard(payload, zh ? '脱敏诊断 JSON' : 'redacted diagnostic JSON')}
+            />
           )}
 
           {interfaceTestResult && (

@@ -196,8 +196,19 @@ def _normalize_sensor(sensor: Mapping[str, Any], observed_at: datetime) -> dict[
     if presence_status not in _PRESENCE_VALUES:
         raise HardwareInventoryError(f"unsupported presence_status: {presence_status}")
     oid = _clean_text(sensor.get("oid"), field="oid", limit=500)
-    if not oid:
+    data_origin = _clean_text(
+        sensor.get("data_origin") or ("librenms_native" if source_type == "librenms_native" else "legacy_snmp"),
+        field="data_origin",
+        required=True,
+        limit=40,
+    ).lower()
+    native_instance_id = _clean_text(sensor.get("native_instance_id"), field="native_instance_id", limit=128)
+    native_device_id = _clean_text(sensor.get("native_device_id"), field="native_device_id", limit=128)
+    native_entity_id = _clean_text(sensor.get("native_entity_id"), field="native_entity_id", limit=200)
+    if not oid and data_origin != "librenms_native":
         raise HardwareInventoryError("sensor oid must not be empty")
+    if data_origin == "librenms_native" and not all((native_instance_id, native_device_id, native_entity_id)):
+        raise HardwareInventoryError("native sensors require instance, device, and entity identity")
     scale = _finite_number(sensor.get("scale", 1), field="scale", default=1.0)
     offset = _finite_number(sensor.get("offset", 0), field="offset", default=0.0)
     assert scale is not None and offset is not None
@@ -209,8 +220,26 @@ def _normalize_sensor(sensor: Mapping[str, Any], observed_at: datetime) -> dict[
     raw_value = sensor.get("raw_value")
     if raw_value is not None:
         raw_value = _clean_text(raw_value, field="raw_value", limit=500)
+    sample_value_at = None
+    if initial_value is not None or raw_value is not None:
+        provided_sample_at = sensor.get("sample_at")
+        if provided_sample_at is not None and str(provided_sample_at).strip():
+            sample_value_at = _timestamp(provided_sample_at)
+        elif data_origin != "librenms_native":
+            # Legacy probes historically used collector time when their
+            # payload omitted it. Native rows must not borrow API request time.
+            sample_value_at = observed_at
+        else:
+            initial_value = None
+            raw_value = None
+            initial_quality = "missing"
+
     return {
         "source_type": source_type,
+        "data_origin": data_origin,
+        "native_instance_id": native_instance_id,
+        "native_device_id": native_device_id,
+        "native_entity_id": native_entity_id,
         "source_id": _clean_text(sensor.get("source_id"), field="source_id", limit=200),
         "component_class": component_class,
         "measurement_type": measurement_type,
@@ -233,7 +262,7 @@ def _normalize_sensor(sensor: Mapping[str, Any], observed_at: datetime) -> dict[
         "value": initial_value,
         "raw_value": raw_value,
         "quality": initial_quality,
-        "sample_at": _timestamp(sensor.get("sample_at"), default=observed_at) if sensor.get("value") is not None or raw_value is not None else None,
+        "sample_at": sample_value_at,
     }
 
 
@@ -266,20 +295,27 @@ def _upsert_sensor(conn, *, device: Mapping[str, Any], sensor: Mapping[str, Any]
         """
         INSERT INTO snmp_hardware_sensors (
             sensor_id, tenant_id, asset_id, device_id, sensor_key, source_type, source_id,
+            data_origin, native_instance_id, native_device_id, native_entity_id,
             component_class, measurement_type, series_variant, index_json, index_labels_json, oid, unit,
             scale, value_offset, states_json, thresholds_json, metadata_json, sensor_name,
             entity_name, group_name, rule_version, discovery_status, lifecycle_status,
             missing_success_count, last_missing_run_id, enabled, last_value, last_raw_value,
-            last_quality, first_seen, last_seen, last_success, last_run_id, created_at, updated_at
+            last_quality, first_seen, last_seen, last_success, last_sample_at,
+            last_run_id, created_at, updated_at
         ) VALUES (
-            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?, ?, ?, ?::jsonb,
-            ?::jsonb, ?::jsonb, ?, ?, ?, ?, ?, 'active', 0, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb,
+            ?, ?, ?, ?, ?, 'active', 0, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         )
         ON CONFLICT (device_id, sensor_key)
         DO UPDATE SET
             tenant_id = EXCLUDED.tenant_id,
             asset_id = EXCLUDED.asset_id,
             source_id = EXCLUDED.source_id,
+            data_origin = EXCLUDED.data_origin,
+            native_instance_id = EXCLUDED.native_instance_id,
+            native_device_id = EXCLUDED.native_device_id,
+            native_entity_id = EXCLUDED.native_entity_id,
             index_labels_json = EXCLUDED.index_labels_json,
             oid = EXCLUDED.oid,
             unit = EXCLUDED.unit,
@@ -298,13 +334,21 @@ def _upsert_sensor(conn, *, device: Mapping[str, Any], sensor: Mapping[str, Any]
             last_missing_run_id = '',
             enabled = EXCLUDED.enabled,
             last_value = CASE
-                WHEN EXCLUDED.last_seen >= snmp_hardware_sensors.last_seen AND EXCLUDED.last_value IS NOT NULL
+                WHEN EXCLUDED.last_sample_at IS NOT NULL
+                     AND (snmp_hardware_sensors.last_sample_at IS NULL
+                          OR EXCLUDED.last_sample_at >= snmp_hardware_sensors.last_sample_at)
+                     AND EXCLUDED.last_value IS NOT NULL
                 THEN EXCLUDED.last_value ELSE snmp_hardware_sensors.last_value END,
             last_raw_value = CASE
-                WHEN EXCLUDED.last_seen >= snmp_hardware_sensors.last_seen AND EXCLUDED.last_raw_value IS NOT NULL
+                WHEN EXCLUDED.last_sample_at IS NOT NULL
+                     AND (snmp_hardware_sensors.last_sample_at IS NULL
+                          OR EXCLUDED.last_sample_at >= snmp_hardware_sensors.last_sample_at)
+                     AND EXCLUDED.last_raw_value IS NOT NULL
                 THEN EXCLUDED.last_raw_value ELSE snmp_hardware_sensors.last_raw_value END,
             last_quality = CASE
-                WHEN EXCLUDED.last_seen >= snmp_hardware_sensors.last_seen
+                WHEN EXCLUDED.last_sample_at IS NOT NULL
+                     AND (snmp_hardware_sensors.last_sample_at IS NULL
+                          OR EXCLUDED.last_sample_at >= snmp_hardware_sensors.last_sample_at)
                      AND (EXCLUDED.last_value IS NOT NULL OR EXCLUDED.last_raw_value IS NOT NULL)
                 THEN EXCLUDED.last_quality ELSE snmp_hardware_sensors.last_quality END,
             first_seen = LEAST(snmp_hardware_sensors.first_seen, EXCLUDED.first_seen),
@@ -314,12 +358,19 @@ def _upsert_sensor(conn, *, device: Mapping[str, Any], sensor: Mapping[str, Any]
                 WHEN snmp_hardware_sensors.last_success IS NULL THEN EXCLUDED.last_success
                 ELSE GREATEST(snmp_hardware_sensors.last_success, EXCLUDED.last_success)
             END,
+            last_sample_at = CASE
+                WHEN EXCLUDED.last_sample_at IS NULL THEN snmp_hardware_sensors.last_sample_at
+                WHEN snmp_hardware_sensors.last_sample_at IS NULL THEN EXCLUDED.last_sample_at
+                ELSE GREATEST(snmp_hardware_sensors.last_sample_at, EXCLUDED.last_sample_at)
+            END,
             last_run_id = EXCLUDED.last_run_id,
             updated_at = EXCLUDED.updated_at
         """,
         (
             str(uuid.uuid4()), device.get("tenant_id"), device.get("asset_id"), device["id"],
             sensor["sensor_key"], sensor["source_type"], sensor["source_id"],
+            sensor["data_origin"], sensor["native_instance_id"] or None,
+            sensor["native_device_id"] or None, sensor["native_entity_id"] or None,
             sensor["component_class"], sensor["measurement_type"], sensor["series_variant"],
             _json_text(sensor["index"]),
             _json_text(sensor["index_labels"]), sensor["oid"], sensor["unit"], sensor["scale"],
@@ -327,7 +378,8 @@ def _upsert_sensor(conn, *, device: Mapping[str, Any], sensor: Mapping[str, Any]
             _json_text(sensor["metadata"]), sensor["sensor_name"], sensor["entity_name"],
             sensor["group_name"], rule_version, sensor["presence_status"],
             sensor["presence_status"] == "present", sensor["value"], sensor["raw_value"],
-            sensor["quality"], observed_at, observed_at, initial_last_success, run_id,
+            sensor["quality"], observed_at, observed_at, initial_last_success,
+            sensor["sample_at"], run_id,
             observed_at, observed_at,
         ),
     )
@@ -347,7 +399,7 @@ def _record_sensor_sample(
     presence_value = _normalize_sample_presence(quality, presence_status)
     existing = conn.execute(
         """
-        SELECT last_seen FROM snmp_hardware_sensors
+        SELECT last_sample_at FROM snmp_hardware_sensors
          WHERE device_id = ? AND sensor_key = ?
          FOR UPDATE
         """,
@@ -355,7 +407,7 @@ def _record_sensor_sample(
     ).fetchone()
     if existing is None:
         return False
-    previous_seen = _row_value(existing, "last_seen", 0)
+    previous_seen = _row_value(existing, "last_sample_at", 0)
     if previous_seen is not None and previous_seen > observed_at:
         # The target exists, but this older sample must not replace current data.
         return True
@@ -367,6 +419,8 @@ def _record_sensor_sample(
                last_raw_value = ?,
                last_quality = ?,
                last_seen = CASE WHEN last_seen IS NULL THEN ? ELSE GREATEST(last_seen, ?) END,
+               last_sample_at = CASE
+                   WHEN last_sample_at IS NULL THEN ? ELSE GREATEST(last_sample_at, ?) END,
                lifecycle_status = CASE WHEN ? = 'good' THEN 'active' ELSE lifecycle_status END,
                discovery_status = CASE
                    WHEN ? = 'good' AND ? <> '' THEN ? ELSE discovery_status END,
@@ -382,7 +436,7 @@ def _record_sensor_sample(
          WHERE device_id = ? AND sensor_key = ?
         """,
         (
-            value, raw_value, quality, observed_at, observed_at,
+            value, raw_value, quality, observed_at, observed_at, observed_at, observed_at,
             quality, quality, presence_value, presence_value,
             quality, quality, quality, quality,
             observed_at, observed_at, observed_at, device_id, sensor_key,
@@ -438,6 +492,9 @@ def _update_sensor_sample_batch(conn, samples: Sequence[Mapping[str, Any]]) -> i
                last_raw_value = sample.raw_value,
                last_quality = sample.quality,
                last_seen = GREATEST(sensor.last_seen, sample.observed_at),
+               last_sample_at = CASE
+                   WHEN sensor.last_sample_at IS NULL THEN sample.observed_at
+                   ELSE GREATEST(sensor.last_sample_at, sample.observed_at) END,
                lifecycle_status = CASE
                    WHEN sample.quality = 'good' THEN 'active' ELSE sensor.lifecycle_status END,
                discovery_status = CASE
@@ -460,7 +517,7 @@ def _update_sensor_sample_batch(conn, samples: Sequence[Mapping[str, Any]]) -> i
           )
          WHERE sensor.device_id = sample.device_id
            AND sensor.sensor_key = sample.sensor_key
-           AND (sensor.last_seen IS NULL OR sensor.last_seen <= sample.observed_at)
+           AND (sensor.last_sample_at IS NULL OR sensor.last_sample_at <= sample.observed_at)
         """,
         tuple(
             value
@@ -793,7 +850,7 @@ def mark_sensor_poll_success(conn, device_id: str, sensor_key: str, observed_at:
     at = _timestamp(observed_at)
     target = conn.execute(
         """
-        SELECT last_seen FROM snmp_hardware_sensors
+        SELECT last_sample_at FROM snmp_hardware_sensors
          WHERE device_id = ? AND sensor_key = ?
          FOR UPDATE
         """,
@@ -801,13 +858,15 @@ def mark_sensor_poll_success(conn, device_id: str, sensor_key: str, observed_at:
     ).fetchone()
     if target is None:
         return False
-    previous_seen = _row_value(target, "last_seen", 0)
+    previous_seen = _row_value(target, "last_sample_at", 0)
     if previous_seen is not None and previous_seen > at:
         return True
     cursor = conn.execute(
         """
         UPDATE snmp_hardware_sensors
            SET last_seen = CASE WHEN last_seen IS NULL THEN ? ELSE GREATEST(last_seen, ?) END,
+               last_sample_at = CASE
+                   WHEN last_sample_at IS NULL THEN ? ELSE GREATEST(last_sample_at, ?) END,
                last_success = CASE WHEN last_success IS NULL THEN ? ELSE GREATEST(last_success, ?) END,
                last_quality = 'good', lifecycle_status = 'active',
                discovery_status = 'present', missing_success_count = 0,
@@ -815,7 +874,7 @@ def mark_sensor_poll_success(conn, device_id: str, sensor_key: str, observed_at:
                updated_at = GREATEST(updated_at, ?)
          WHERE device_id = ? AND sensor_key = ?
         """,
-        (at, at, at, at, at, device_id, sensor_key),
+        (at, at, at, at, at, at, at, device_id, sensor_key),
     )
     return int(getattr(cursor, "rowcount", 0) or 0) > 0
 
@@ -880,6 +939,7 @@ def list_hardware_metric_rows(
     rows = conn.execute(
         """
         SELECT s.tenant_id, s.asset_id, s.device_id, s.sensor_key,
+               s.data_origin, s.native_instance_id, s.native_device_id, s.native_entity_id,
                s.source_type, s.source_id, s.component_class, s.measurement_type,
                s.series_variant, s.index_json, s.index_labels_json, s.states_json,
                s.metadata_json, s.sensor_name, s.entity_name, s.group_name,
@@ -893,6 +953,7 @@ def list_hardware_metric_rows(
           LEFT JOIN physical_assets pa ON pa.id = d.asset_id
           LEFT JOIN sites si ON si.id = COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''))
          WHERE s.lifecycle_status <> 'retired' AND s.enabled = TRUE
+           AND s.data_origin = 'librenms_native'
          ORDER BY s.device_id, s.component_class, s.sensor_key
         """
     ).fetchall()
@@ -1023,7 +1084,9 @@ def render_hardware_metrics(sensors: Sequence[Mapping[str, Any]], device_labels:
     """
     if not isinstance(device_labels, Mapping):
         raise HardwareInventoryError("device_labels must be a mapping")
-    allowed_device_labels = ("tenant_id", "asset_id", "device_id", "hostname", "site_name", "vendor", "platform", "role")
+    allowed_device_labels = (
+        "tenant_id", "asset_id", "device_id", "hostname", "site_name", "vendor", "platform", "role",
+    )
     lines_by_family: dict[str, list[tuple[str, str]]] = {}
     wireless_station_samples: dict[tuple[str, ...], dict[str, Any]] = {}
 
@@ -1050,6 +1113,10 @@ def render_hardware_metrics(sensors: Sequence[Mapping[str, Any]], device_labels:
                 base[name] = sensor[name]
         sensor_key = _get_sensor_key(sensor)
         base["sensor_key"] = sensor_key
+        base["data_origin"] = sensor.get("data_origin", "")
+        for identity_label in ("native_instance_id", "native_device_id", "native_entity_id"):
+            if sensor.get(identity_label) not in (None, ""):
+                base[identity_label] = sensor[identity_label]
         base["source_type"] = sensor.get("source_type", "")
         base["component_class"] = sensor.get("component_class", "")
         base["measurement_type"] = sensor.get("measurement_type", "")

@@ -99,6 +99,12 @@ class Settings(BaseSettings):
     CONFIG_MANAGEMENT_URL: str = ""
     CONFIG_MANAGEMENT_TIMEOUT_SECONDS: float = 1.0
 
+    # LibreNMS is a separately operated native runtime. Outbound API calls
+    # are restricted to explicitly allowed hosts so an instance record cannot
+    # turn the control plane into a generic HTTP proxy.
+    LIBRENMS_ALLOWED_HOSTS: str = "librenms,localhost,127.0.0.1"
+    LIBRENMS_API_TIMEOUT_SECONDS: float = 10.0
+
     # MIBs can be maintained from the versioned LibreNMS catalog or uploaded
     # by an Operator.  Keep the limits configurable so a large vendor archive
     # cannot exhaust memory during parsing.

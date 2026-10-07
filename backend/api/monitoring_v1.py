@@ -55,7 +55,6 @@ from services.monitoring_compiler import (
 )
 from services.monitoring_health_service import classify_collection_health, summarize_collection_health
 from services.collector_artifact_service import ArtifactStoreError, CollectorArtifactStore
-from services.snmp_discovery_service import load_discoveries
 
 
 router = APIRouter(prefix="/monitoring", tags=["monitoring-v1"])
@@ -1089,25 +1088,29 @@ def device_assignments(device_id: str, _user=require_role("Viewer")):
 
 @router.get("/devices/{device_id}/snmp-discovery")
 def device_snmp_discovery(device_id: str, _user=require_role("Viewer")):
-    """Return secret-free identity and per-device OID discovery evidence."""
+    """Return device identity and indicate that hardware discovery is native."""
     _assert_asset_visible(device_id, _user)
     conn = get_db_connection()
     try:
-        row = conn.execute("SELECT id FROM devices WHERE id = ?", (device_id,)).fetchone()
+        row = conn.execute(
+            "SELECT id, vendor, platform, model, version FROM devices WHERE id = ?",
+            (device_id,),
+        ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Device not found")
-        discovery = load_discoveries(conn, [device_id]).get(device_id)
-        if not discovery:
-            return {
-                "device_id": device_id,
-                "status": "pending",
-                "reason": "SNMP identity discovery has not run yet",
-                "identity": {},
-                "metrics": {},
-                "interface": {},
-                "exporter_module": {},
-            }
-        return discovery
+        device = dict(row)
+        return {
+            "device_id": device_id,
+            "status": "delegated_to_librenms",
+            "reason": "Hardware discovery and polling are owned by the bound LibreNMS runtime",
+            "identity": {
+                key: device.get(key) or ""
+                for key in ("vendor", "platform", "model", "version")
+            },
+            "metrics": {},
+            "interface": {},
+            "exporter_module": {},
+        }
     finally:
         conn.close()
 
@@ -1151,27 +1154,6 @@ def _load_compile_inputs(conn, collector_id: str, user: Any = None):
         device_sql += " AND COALESCE(d.tenant_id, 'tenant-default') = ?"
         device_params = (tenant,)
     devices = [_dict(row) for row in conn.execute(device_sql, device_params).fetchall()]
-    discovery_map = load_discoveries(conn, [str(item.get("id") or "") for item in devices])
-    for device in devices:
-        discovery = discovery_map.get(str(device.get("id") or ""))
-        if discovery:
-            identity = discovery.get("identity") or {}
-            identity_mismatch = any(
-                str(device.get(field) or "").strip().casefold()
-                and str(device.get(field) or "").strip().casefold()
-                != str(identity.get("software_version" if field == "version" else field) or discovery.get(field) or "").strip().casefold()
-                for field in ("vendor", "platform", "model", "version")
-            )
-            if identity_mismatch:
-                discovery = {
-                    **discovery,
-                    "status": "pending",
-                    "reason": "asset identity changed after the last SNMP discovery",
-                    "metrics": {},
-                    "interface": {},
-                    "exporter_module": {},
-                }
-            device["snmp_discovery"] = discovery
     server_sql = """
         SELECT pa.id, 'server' AS asset_type, pa.management_ip, pa.hostname, pa.platform, pa.status,
                COALESCE(NULLIF(s.site_name, ''), NULLIF(s.site_code, ''), '') AS site_name,

@@ -103,6 +103,7 @@ class TelemetryOrchestrator:
         if hasattr(self, 'initialized'): return
         self.a_loop_task = None
         self.b_loop_task = None
+        self.native_hardware_loop_task = None
         self.initialized = True
 
     async def a_loop(self):
@@ -176,12 +177,61 @@ class TelemetryOrchestrator:
                 logger.error(f"[Orchestrator B-Loop] Error: {e}")
             await asyncio.sleep(60)
 
+    async def native_hardware_loop(self):
+        """Refresh Nexora's projection from LibreNMS-owned hardware samples."""
+        import asyncio
+
+        logger.info("[Orchestrator] Starting LibreNMS native hardware sync loop")
+        concurrency = asyncio.Semaphore(4)
+        while True:
+            try:
+                from services.background_monitor_service import _db_quick
+                from services.librenms_native_sync_service import sync_bound_device_hardware
+
+                bindings = await asyncio.to_thread(
+                    _db_quick,
+                    """
+                    SELECT b.device_id
+                      FROM librenms_device_bindings AS b
+                      JOIN librenms_instances AS i ON i.id = b.instance_id
+                     WHERE b.desired_state = 'enabled'
+                       AND b.librenms_device_id IS NOT NULL
+                       AND i.enabled = TRUE
+                     ORDER BY b.device_id
+                    """,
+                    fetchall=True,
+                )
+
+                async def sync_one(row):
+                    device_id = str(row.get("device_id") or "") if isinstance(row, dict) else str(row[0] or "")
+                    if not device_id:
+                        return
+                    async with concurrency:
+                        result = await sync_bound_device_hardware(device_id)
+                    if result.get("status") in {"failed", "binding_conflict"}:
+                        logger.warning(
+                            "LibreNMS hardware sync for device %s failed with code %s",
+                            device_id,
+                            str(result.get("error_code") or result.get("status"))[:80],
+                        )
+
+                await asyncio.gather(*(sync_one(row) for row in bindings or []))
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                # Keep ordinary device reachability/interface polling running
+                # if the optional native integration is not yet configured.
+                logger.warning("LibreNMS native hardware sync cycle failed: %s", type(exc).__name__)
+            await asyncio.sleep(60)
+
     def start_loops(self):
         import asyncio
         if not self.a_loop_task:
             self.a_loop_task = asyncio.create_task(self.a_loop())
         if not self.b_loop_task:
             self.b_loop_task = asyncio.create_task(self.b_loop())
+        if not self.native_hardware_loop_task:
+            self.native_hardware_loop_task = asyncio.create_task(self.native_hardware_loop())
 
     def stop_loops(self):
         if self.a_loop_task:
@@ -190,6 +240,9 @@ class TelemetryOrchestrator:
         if self.b_loop_task:
             self.b_loop_task.cancel()
             self.b_loop_task = None
+        if self.native_hardware_loop_task:
+            self.native_hardware_loop_task.cancel()
+            self.native_hardware_loop_task = None
 
 def get_telemetry_orchestrator() -> TelemetryOrchestrator:
     return TelemetryOrchestrator()

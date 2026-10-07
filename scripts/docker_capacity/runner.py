@@ -1111,6 +1111,45 @@ def _insert_rows(connection: Any, table: str, columns: list[str], rows: list[tup
         cursor.close()
 
 
+def _capacity_device_rows(cfg: ValidatedConfig, columns: set[str]) -> tuple[list[str], list[tuple[Any, ...]]]:
+    """Build API fixtures without scheduling background probes to fake IPs."""
+
+    allowed_device_values: dict[str, Any] = {
+        "id": None,
+        "hostname": None,
+        # The app starts its normal A-Loop in the isolated NetOps container.
+        # Null IPs keep API fixtures out of its reachability probes; SNMP
+        # traffic is exercised separately against the internal simulator.
+        "ip_address": None,
+        "platform": "linux",
+        "status": "active",
+        "compliance": "unknown",
+        "sn": None,
+        "model": "capacity-simulator",
+        "version": "capacity",
+        "role": "network_device",
+        "site": "capacity-lab",
+        "uptime": "0",
+        "connection_method": "snmp",
+        "username": "capacity",
+        "password": "capacity-lab-placeholder",
+        "cpu_usage": 25,
+        "memory_usage": 40,
+        "snmp_community": "capacity_lab_only",
+        "snmp_port": cfg.snmp_ports[0],
+        "tenant_id": "tenant-default",
+    }
+    selected_columns = [name for name in allowed_device_values if name in columns]
+    rows: list[tuple[Any, ...]] = []
+    for index in range(cfg.dataset["rows"]):
+        values = dict(allowed_device_values)
+        values["id"] = f"capacity-{cfg.run_id}-{index}"
+        values["hostname"] = f"capacity-{cfg.run_id[:8]}-{index:05d}"
+        values["sn"] = f"capacity-{cfg.run_id[:8]}-{index:05d}"
+        rows.append(tuple(values[name] for name in selected_columns))
+    return selected_columns, rows
+
+
 def _prepare_database(cfg: ValidatedConfig) -> dict[str, Any]:
     """Seed isolated PostgreSQL data after the app migrations have completed."""
 
@@ -1183,37 +1222,7 @@ def _prepare_database(cfg: ValidatedConfig) -> dict[str, Any]:
         device_columns = _db_table_columns(conn, "devices")
         if not {"id", "hostname"}.issubset(device_columns):
             raise CapacityError("db_schema_missing", "devices table is not ready")
-        allowed_device_values: dict[str, Any] = {
-            "id": None,
-            "hostname": None,
-            "ip_address": None,
-            "platform": "linux",
-            "status": "active",
-            "compliance": "unknown",
-            "sn": None,
-            "model": "capacity-simulator",
-            "version": "capacity",
-            "role": "network_device",
-            "site": "capacity-lab",
-            "uptime": "0",
-            "connection_method": "snmp",
-            "username": "capacity",
-            "password": "capacity-lab-placeholder",
-            "cpu_usage": 25,
-            "memory_usage": 40,
-            "snmp_community": "capacity_lab_only",
-            "snmp_port": cfg.snmp_ports[0],
-            "tenant_id": "tenant-default",
-        }
-        device_columns_to_insert = [name for name in allowed_device_values if name in device_columns]
-        device_rows: list[tuple[Any, ...]] = []
-        for index in range(cfg.dataset["rows"]):
-            values = dict(allowed_device_values)
-            values["id"] = f"capacity-{cfg.run_id}-{index}"
-            values["hostname"] = f"capacity-{cfg.run_id[:8]}-{index:05d}"
-            values["ip_address"] = f"198.18.{index // 254 % 254 + 1}.{index % 254 + 1}"
-            values["sn"] = f"capacity-{cfg.run_id[:8]}-{index:05d}"
-            device_rows.append(tuple(values[name] for name in device_columns_to_insert))
+        device_columns_to_insert, device_rows = _capacity_device_rows(cfg, device_columns)
 
         cursor = conn.cursor()
         try:
@@ -1744,6 +1753,14 @@ def _vm_check(cfg: ValidatedConfig, metric: str = VM_PUSH_METRIC) -> dict[str, A
     return {"victoriametrics_push_visible": False, "error": last_code or "vm_no_result"}
 
 
+def _seed_vm_verification_sample(cfg: ValidatedConfig) -> None:
+    """Keep the final instant-query verification fresh after long test runs."""
+    timestamp_ms = int(time.time() * 1000)
+    body = f'{VM_SEED_METRIC}{{run_id="{cfg.run_id}",series_id="0"}} 1 {timestamp_ms}\n'
+    response = _vm_request(cfg, "POST", "/api/v1/import/prometheus", body=body)
+    _success_status(response, (200, 204))
+
+
 def check(cfg: ValidatedConfig) -> dict[str, Any]:
     started = time.monotonic()
     context = _make_context(cfg)
@@ -1772,7 +1789,11 @@ def check(cfg: ValidatedConfig) -> dict[str, Any]:
             **({"error": vm_check["error"]} if isinstance(vm_check.get("error"), str) else {}),
         }
     elif "victoriametrics" in cfg.available_services:
-        vm_check = _vm_check(cfg, VM_SEED_METRIC)
+        try:
+            _seed_vm_verification_sample(cfg)
+            vm_check = _vm_check(cfg, VM_SEED_METRIC)
+        except CapacityError as exc:
+            vm_check = {"victoriametrics_push_visible": False, "error": exc.code}
         checks["victoriametrics_query"] = {
             "ok": vm_check.get("victoriametrics_push_visible") is True,
             **({"error": vm_check["error"]} if isinstance(vm_check.get("error"), str) else {}),

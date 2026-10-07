@@ -1,41 +1,38 @@
 from __future__ import annotations
 
-import pytest
-
-from services import background_monitor_service as monitor
-from services import snmp_hardware_inventory_service as inventory
-from services.snmp_discovery_service import HARDWARE_DISCOVERY_VERSION
+import ast
+from pathlib import Path
 
 
-class _Connection:
-    def __init__(self) -> None:
-        self.closed = False
+def test_background_monitor_does_not_run_python_hardware_discovery_or_sampling() -> None:
+    source_path = Path(__file__).resolve().parents[2] / "services" / "background_monitor_service.py"
+    source = source_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
 
-    def close(self) -> None:
-        self.closed = True
-
-
-@pytest.mark.parametrize(
-    ("capabilities", "expected_stale"),
-    [
-        ([], True),
-        ([{"discovery_version": "nexora.hardware.discovery.v1"}], True),
-        ([{"discovery_version": "older.hardware.discovery"}], True),
-        ([{"discovery_version": HARDWARE_DISCOVERY_VERSION}], False),
-    ],
-)
-def test_hardware_discovery_refreshes_missing_or_outdated_capabilities(
-    monkeypatch,
-    capabilities: list[dict[str, str]],
-    expected_stale: bool,
-) -> None:
-    connection = _Connection()
-    monkeypatch.setattr(monitor, "get_db_connection", lambda: connection)
-    monkeypatch.setattr(
-        inventory,
-        "list_hardware_capabilities",
-        lambda _connection, device_id: capabilities if device_id == "device-1" else [],
+    retired_calls = {
+        "collect_device_metrics",
+        "discover_device_oid_config",
+        "poll_hardware_inventory",
+        "probe_librenms_hardware",
+        "probe_standard_hardware",
+    }
+    calls = {
+        node.func.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    imports = {
+        alias.name.rsplit(".", 1)[-1]
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    }
+    imports.update(
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
     )
 
-    assert monitor._hardware_inventory_discovery_is_stale("device-1") is expected_stale
-    assert connection.closed is True
+    assert calls.isdisjoint(retired_calls)
+    assert imports.isdisjoint(retired_calls)

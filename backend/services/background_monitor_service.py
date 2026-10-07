@@ -5,7 +5,6 @@ import json
 import hashlib
 import uuid
 import logging
-import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 from urllib import request as urlrequest
@@ -18,20 +17,13 @@ from services import alert_maintenance_service
 from services import alert_rule_service
 import re as _re
 import time as _time
-from services.snmp_service import collect_device_metrics, collect_device_info, collect_interface_data
+from services.snmp_service import collect_device_info, collect_interface_data
 from services.snmp_counter_service import (
     calculate_counter_delta,
     load_interface_counter_sample,
     save_interface_counter_sample,
 )
-from services.snmp_metric_profile_service import HEALTH_METRIC_KEYS, resolve_health_metric_profiles
-from services.snmp_discovery_service import (
-    HARDWARE_DISCOVERY_VERSION,
-    RULE_VERSION,
-    discover_device_oid_config,
-    load_discovery,
-    persist_discovery,
-)
+from services.snmp_metric_profile_service import resolve_health_metric_profiles
 from services.operational_data_service import collect_operational_data
 from services.network_access_limiter import get_network_access_limiter
 from services.collection_status_service import record_collection_result
@@ -43,290 +35,6 @@ from core.crypto import decrypt_credential
 
 logger = logging.getLogger(__name__)
 
-
-# Automatic hardware discovery runs from the B-loop.  A device that has no
-# persisted capability rows must remain eligible for discovery, but retrying a
-# failing/empty probe on every 60-second tick can turn one bad target into a
-# process-wide hot loop.  Keep this state local to the worker: persisted
-# discovery remains the source of truth for normal six-hour freshness, while
-# this guard only bounds repeated automatic retries in the current process.
-_AUTOMATIC_DISCOVERY_FAILURE_DELAY_SECONDS = 120.0
-_AUTOMATIC_DISCOVERY_EMPTY_DELAY_SECONDS = 900.0
-_AUTOMATIC_DISCOVERY_MAX_DELAY_SECONDS = 900.0
-_AUTOMATIC_DISCOVERY_STATE_TTL_SECONDS = 3600.0
-_AUTOMATIC_DISCOVERY_MAX_STATE_ENTRIES = 256
-_automatic_discovery_retry_state: dict[str, dict[str, Any]] = {}
-_automatic_discovery_retry_lock = threading.Lock()
-_AUTOMATIC_DISCOVERY_SKIPPED = object()
-
-
-def _automatic_discovery_now() -> float:
-    """Return the monotonic clock used by the automatic discovery guard."""
-    return _time.monotonic()
-
-
-def _prune_automatic_discovery_retry_state_locked(now: float) -> None:
-    expired = [
-        signature
-        for signature, state in _automatic_discovery_retry_state.items()
-        if not state.get("in_flight")
-        and now - float(state.get("last_touched", now)) >= _AUTOMATIC_DISCOVERY_STATE_TTL_SECONDS
-    ]
-    for signature in expired:
-        _automatic_discovery_retry_state.pop(signature, None)
-
-    overflow = len(_automatic_discovery_retry_state) - _AUTOMATIC_DISCOVERY_MAX_STATE_ENTRIES
-    if overflow <= 0:
-        return
-    candidates = sorted(
-        (
-            (float(state.get("last_touched", now)), signature)
-            for signature, state in _automatic_discovery_retry_state.items()
-            if not state.get("in_flight")
-        ),
-    )
-    for _last_touched, signature in candidates[:overflow]:
-        _automatic_discovery_retry_state.pop(signature, None)
-
-
-def _automatic_discovery_signature(
-    device: Mapping[str, Any],
-    *,
-    snmp_ip: Any,
-    snmp_port: Any,
-    snmp_version: Any,
-    community: Any,
-    profile: Mapping[str, Any] | Any = None,
-) -> str:
-    """Build a credential-safe signature of the automatic discovery inputs.
-
-    The signature is a digest rather than a tuple kept in process state, so a
-    community string (or any other sensitive input) cannot be recovered from
-    the retry map.  Changing an address, credential digest, identity field,
-    poll/profile input, or discovery rule version naturally selects a new
-    retry bucket and is therefore immediately eligible.
-    """
-    profile_value: Any
-    if isinstance(profile, Mapping):
-        profile_value = dict(profile)
-    else:
-        profile_value = str(profile or "")
-    metric_profile = (
-        device.get("metric_profile_id")
-        or device.get("health_metric_profile_id")
-        or device.get("profile_id")
-        or device.get("profile")
-        or ""
-    )
-    signature_input = {
-        "device_id": str(device.get("id") or ""),
-        "snmp_ip": str(snmp_ip or "").strip(),
-        "snmp_port": str(snmp_port or 161).strip(),
-        "snmp_version": str(snmp_version or "2c").strip().casefold(),
-        "community_digest": hashlib.sha256(str(community or "").encode("utf-8")).hexdigest(),
-        "vendor": str(device.get("vendor") or "").strip().casefold(),
-        "platform": str(device.get("platform") or "").strip().casefold(),
-        "model": str(device.get("model") or "").strip().casefold(),
-        "software": str(device.get("version") or device.get("software_version") or "").strip().casefold(),
-        "profile": {
-            "poll": profile_value,
-            "device": str(metric_profile or ""),
-            "role": str(device.get("role") or "").strip().casefold(),
-        },
-        "rule_version": RULE_VERSION,
-        "hardware_discovery_version": HARDWARE_DISCOVERY_VERSION,
-    }
-    encoded = json.dumps(
-        signature_input,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        default=str,
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
-
-
-def _begin_automatic_discovery(signature: str) -> str | None:
-    """Claim one automatic discovery attempt for a signature, if eligible."""
-    now = _automatic_discovery_now()
-    with _automatic_discovery_retry_lock:
-        _prune_automatic_discovery_retry_state_locked(now)
-        state = _automatic_discovery_retry_state.get(signature)
-        if state is not None:
-            state["last_touched"] = now
-            if state.get("in_flight") or now < float(state.get("next_retry_at", 0.0)):
-                return None
-        else:
-            if len(_automatic_discovery_retry_state) >= _AUTOMATIC_DISCOVERY_MAX_STATE_ENTRIES:
-                # The prune above normally frees expired entries.  If every
-                # remaining entry is in flight, refuse this new attempt rather
-                # than allowing an unbounded map during a discovery storm.
-                candidates = [
-                    (float(item.get("last_touched", now)), key)
-                    for key, item in _automatic_discovery_retry_state.items()
-                    if not item.get("in_flight")
-                ]
-                if not candidates:
-                    return None
-                _last_touched, oldest = min(candidates)
-                _automatic_discovery_retry_state.pop(oldest, None)
-            state = {
-                "failure_count": 0,
-                "in_flight": False,
-                "last_touched": now,
-                "next_retry_at": 0.0,
-            }
-            _automatic_discovery_retry_state[signature] = state
-        state["in_flight"] = True
-        state["last_touched"] = now
-        return signature
-
-
-def _record_automatic_discovery_failure(signature: str) -> None:
-    """Release a failed attempt and apply bounded exponential backoff."""
-    now = _automatic_discovery_now()
-    with _automatic_discovery_retry_lock:
-        state = _automatic_discovery_retry_state.get(signature)
-        if state is None:
-            return
-        failure_count = int(state.get("failure_count", 0)) + 1
-        exponent = min(failure_count - 1, 3)
-        delay = min(
-            _AUTOMATIC_DISCOVERY_MAX_DELAY_SECONDS,
-            _AUTOMATIC_DISCOVERY_FAILURE_DELAY_SECONDS * (2 ** exponent),
-        )
-        state.update(
-            failure_count=failure_count,
-            in_flight=False,
-            last_touched=now,
-            next_retry_at=now + delay,
-        )
-        _prune_automatic_discovery_retry_state_locked(now)
-
-
-def _record_automatic_discovery_empty(signature: str) -> None:
-    """Release an empty discovery result with the longer retry delay."""
-    now = _automatic_discovery_now()
-    with _automatic_discovery_retry_lock:
-        state = _automatic_discovery_retry_state.get(signature)
-        if state is None:
-            return
-        state.update(
-            failure_count=0,
-            in_flight=False,
-            last_touched=now,
-            next_retry_at=now + _AUTOMATIC_DISCOVERY_EMPTY_DELAY_SECONDS,
-        )
-        _prune_automatic_discovery_retry_state_locked(now)
-
-
-def _record_automatic_discovery_success(signature: str) -> None:
-    """Forget a successful attempt so persisted discovery controls freshness."""
-    with _automatic_discovery_retry_lock:
-        _automatic_discovery_retry_state.pop(signature, None)
-
-
-def _release_automatic_discovery_cancelled(signature: str) -> None:
-    """Release an interrupted attempt without counting cancellation as failure."""
-    now = _automatic_discovery_now()
-    with _automatic_discovery_retry_lock:
-        state = _automatic_discovery_retry_state.get(signature)
-        if state is None:
-            return
-        state.update(in_flight=False, last_touched=now, next_retry_at=0.0)
-        _prune_automatic_discovery_retry_state_locked(now)
-
-
-async def _run_automatic_oid_discovery(signature: str, operation):
-    """Run one guarded automatic discovery operation.
-
-    The operation includes persistence at the call site.  This means a DB
-    failure after a network probe is still retried with the failure backoff,
-    while an ordinary payload without hardware categories gets the explicit
-    900-second empty-result delay.
-    """
-    token = _begin_automatic_discovery(signature)
-    if token is None:
-        return _AUTOMATIC_DISCOVERY_SKIPPED
-    try:
-        payload = await operation()
-    except asyncio.CancelledError:
-        _release_automatic_discovery_cancelled(token)
-        raise
-    except Exception:
-        _record_automatic_discovery_failure(token)
-        raise
-    if isinstance(payload, Mapping) and payload.get("hardware_category_results"):
-        _record_automatic_discovery_success(token)
-    else:
-        _record_automatic_discovery_empty(token)
-    return payload
-
-
-def _discovery_is_stale(
-    discovery: dict[str, Any] | None,
-    *,
-    device: Mapping[str, Any] | None = None,
-    max_age_seconds: int = 21600,
-) -> bool:
-    if not discovery:
-        return True
-    if device:
-        for field in ("vendor", "platform", "model", "version"):
-            current = str(device.get(field) or "").strip().casefold()
-            observed = str(discovery.get("identity", {}).get("software_version" if field == "version" else field) or discovery.get(field) or "").strip().casefold()
-            if current and observed and current != observed:
-                return True
-    observed = discovery.get("observed_at")
-    try:
-        timestamp = datetime.fromisoformat(str(observed).replace("Z", "+00:00"))
-        if timestamp.tzinfo is None:
-            timestamp = timestamp.replace(tzinfo=timezone.utc)
-        age = (datetime.now(timezone.utc) - timestamp).total_seconds()
-        return age < 0 or age >= max_age_seconds
-    except (TypeError, ValueError):
-        return True
-
-
-def _hardware_inventory_discovery_is_stale(device_id: str) -> bool:
-    """Return whether this device lacks a current persisted hardware discovery."""
-    from services.snmp_discovery_service import HARDWARE_DISCOVERY_VERSION
-    from services.snmp_hardware_inventory_service import list_hardware_capabilities
-
-    conn = get_db_connection()
-    try:
-        capabilities = list_hardware_capabilities(conn, str(device_id))
-    finally:
-        conn.close()
-
-    if not capabilities:
-        return True
-    return any(
-        str(capability.get("discovery_version") or "") != HARDWARE_DISCOVERY_VERSION
-        for capability in capabilities
-    )
-
-
-def _resolved_metrics_from_discovery(discovery: dict[str, Any], device_id: str) -> dict[str, Any]:
-    status = str(discovery.get("status") or "pending")
-    usable = status in {"matched", "partial"}
-    metrics = dict(discovery.get("metrics") or {}) if usable else {}
-    interface = dict(discovery.get("interface") or {}) if usable else {}
-    return {
-        "profile_id": f"discovery:{device_id}:{discovery.get('rule_version') or 'current'}" if usable else "",
-        "metrics": metrics,
-        "metric_keys": sorted(metrics),
-        "metric_sources": {key: "snmp_discovery" for key in metrics},
-        "profile_source": "snmp_discovery" if usable else "template_not_applied",
-        "interface": interface,
-        "interface_source": "snmp_discovery" if interface else "template_not_applied",
-        "template_applied": usable and bool(metrics or interface),
-        "template_required": True,
-        "profile_status": status,
-        "profile_binding_status": status,
-        "profile_match_reason": str(discovery.get("reason") or ""),
-        "discovery_status": status,
-    }
 
 def _db_quick(sql, params=(), fetch=False, fetchall=False):
     """Execute a quick DB operation with its own connection (no long locks)."""
@@ -1720,9 +1428,9 @@ async def _process_device_raw(device, cycle_tick: int):
             # discard last SNMP snapshot so stale interface rows are not shown.
             _db_quick('''
                 UPDATE devices
-                SET status = ?, cpu_usage = ?, memory_usage = ?
+                SET status = ?
                 WHERE id = ?
-            ''', ('offline', 0, 0, dev_id))
+            ''', ('offline', dev_id))
             _sync_device_status_tag(dev_id, 'offline')
             prev_intf_octets.pop(dev_id, None)
             prev_intf_config_hash.pop(dev_id, None)
@@ -1783,150 +1491,16 @@ async def _process_device_raw(device, cycle_tick: int):
         snmp_available = False
         snmp_error_code = ''
         snmp_error_message = ''
-        metric_details: dict[str, Any] = {}
-        resolved_metrics: dict[str, Any] = {}
-        discovery: dict[str, Any] | None = None
-
-        # Try real SNMP collection (no DB lock held during await)
+        # Hardware polling is owned by the bound LibreNMS runtime. This Nexora
+        # worker keeps only the SNMP reachability check and non-hardware
+        # interface collection; it must not run vendor OID rules or probes.
+        resolved_metrics = resolve_health_metric_profiles(device)
         cpu_usage = None
         memory_usage = None
         temp = None
         fan = None
         psu = None
         hardware_metrics: dict[str, Any] = {}
-        if snmp_community:
-            try:
-                discovery = load_discovery(str(dev_id))
-            except Exception as discovery_store_err:
-                logger.debug(f"[SNMP] OID discovery store unavailable for {ip}: {type(discovery_store_err).__name__}")
-                discovery = None
-            discovery_is_stale = _discovery_is_stale(discovery, device=device)
-            if not discovery_is_stale:
-                try:
-                    # Older SNMP identity rows can still be fresh while their
-                    # hardware categories were never persisted. In that case,
-                    # run the hardware discovery once instead of leaving the
-                    # Grafana hardware inventory empty until the identity TTL.
-                    discovery_is_stale = _hardware_inventory_discovery_is_stale(str(dev_id))
-                except Exception as hardware_discovery_check_err:
-                    logger.debug(
-                        "[SNMP] %s hardware discovery state unavailable: %s",
-                        ip,
-                        type(hardware_discovery_check_err).__name__,
-                    )
-            if discovery_is_stale:
-                try:
-                    discovery_signature = _automatic_discovery_signature(
-                        device,
-                        snmp_ip=snmp_ip,
-                        snmp_port=snmp_port,
-                        snmp_version=str(device.get('snmp_version') or '2c'),
-                        community=snmp_community,
-                        profile=poll_profile,
-                    )
-
-                    async def _discover_and_persist_automatically():
-                        payload = await discover_device_oid_config(
-                            snmp_ip,
-                            snmp_community,
-                            snmp_port,
-                            vendor=device.get('vendor'),
-                            platform=platform,
-                            model=device.get('model'),
-                            version=device.get('version'),
-                            role=device.get('role'),
-                            snmp_version=str(device.get('snmp_version') or '2c'),
-                        )
-                        persist_discovery(str(dev_id), payload)
-                        return payload
-
-                    automatic_discovery = await _run_automatic_oid_discovery(
-                        discovery_signature,
-                        _discover_and_persist_automatically,
-                    )
-                    if automatic_discovery is not _AUTOMATIC_DISCOVERY_SKIPPED:
-                        discovery = automatic_discovery
-                except Exception as discovery_err:
-                    logger.debug(f"[SNMP] {ip} OID discovery failed: {discovery_err}")
-                    discovery = discovery or {
-                        'status': 'snmp_error',
-                        'reason': type(discovery_err).__name__,
-                        'metrics': {},
-                        'interface': {},
-                    }
-
-        resolved_metrics = resolve_health_metric_profiles(device)
-        profile_verified = str(resolved_metrics.get("profile_status") or "").casefold() in {"tested", "published", "verified", "passed", "approved"}
-        if discovery and str(discovery.get("status") or "") in {"matched", "partial"} and not profile_verified:
-            # A successful device probe is the authoritative source for this
-            # polling cycle.  An unverified model profile remains visible as
-            # metadata but cannot silently override observed table columns.
-            resolved_metrics = _resolved_metrics_from_discovery(discovery, str(dev_id))
-        elif discovery and str(resolved_metrics.get("profile_status") or "").casefold() not in {"tested", "published", "verified", "passed", "approved"}:
-            # Keep unknown or unsupported vendors on the safe generic baseline;
-            # a previously verified operator profile remains usable as an
-            # explicit exception when discovery cannot identify a table.
-            resolved_metrics = _resolved_metrics_from_discovery(discovery, str(dev_id))
-        if snmp_community:
-            try:
-                from services.snmp_hardware_inventory_service import list_hardware_sensors
-                from services.snmp_hardware_probe_service import poll_hardware_inventory
-
-                inventory_conn = get_db_connection()
-                try:
-                    active_hardware_sensors = list_hardware_sensors(
-                        inventory_conn, str(dev_id), include_retired=False,
-                    )
-                finally:
-                    inventory_conn.close()
-                if active_hardware_sensors:
-                    sensor_poll_result = await poll_hardware_inventory(
-                        snmp_ip,
-                        snmp_community,
-                        int(snmp_port),
-                        str(device.get("snmp_version") or "2c"),
-                        active_hardware_sensors,
-                    )
-                    logger.debug(
-                        "[SNMP] %s hardware inventory poll: good=%s missing=%s invalid=%s unsupported=%s",
-                        ip,
-                        sensor_poll_result.get("good", 0),
-                        sensor_poll_result.get("missing", 0),
-                        sensor_poll_result.get("invalid", 0),
-                        sensor_poll_result.get("unsupported_mapping", 0),
-                    )
-            except Exception as hardware_poll_err:
-                logger.debug("[SNMP] %s hardware inventory poll failed: %s", ip, type(hardware_poll_err).__name__)
-        if snmp_community:
-            try:
-                metrics = await collect_device_metrics(
-                    snmp_ip,
-                    platform,
-                    snmp_community,
-                    snmp_port,
-                    custom_metrics=resolved_metrics.get('metrics') or {},
-                    device_id=str(device.get('id') or ''),
-                    metric_profile_id=str(resolved_metrics.get('profile_id') or ''),
-                    template_only=True,
-                )
-                cpu_usage = metrics.get('cpu_usage')
-                memory_usage = metrics.get('memory_usage')
-                metric_details = metrics.get('metric_details') or {}
-                hardware_metrics = metrics.get('hardware_metrics') or {}
-                temp = metrics.get('temp')
-                fan = metrics.get('fan_status')
-                psu = metrics.get('psu_status')
-                snmp_available = any(
-                    hardware_metrics.get(metric) is not None
-                    for metric in HEALTH_METRIC_KEYS
-                )
-            except Exception as snmp_err:
-                snmp_error_code = 'snmp_metrics_failed'
-                snmp_error_message = type(snmp_err).__name__
-                logger.debug(f"[SNMP] {ip} metrics failed: {snmp_err}")
-        else:
-            snmp_error_code = 'snmp_not_configured'
-            snmp_error_message = 'SNMP credentials are not configured'
 
         # Fallback: if standard metrics failed (e.g. Linux servers lacking specific OIDs),
         # verify true reachability via standard sysUpTime before marking unreachable.
@@ -1941,21 +1515,9 @@ async def _process_device_raw(device, cycle_tick: int):
                     snmp_error_code = 'snmp_no_response'
                     snmp_error_message = 'No response from standard SNMP system OID'
 
-        # Only append to history if we got data
-        if cpu_usage is not None:
-            cpu_history.append(cpu_usage)
-            cpu_history = cpu_history[-20:]
-        if memory_usage is not None:
-            mem_history.append(memory_usage)
-            mem_history = mem_history[-20:]
-
-        fan_db = 'true' if fan is True else 'false' if fan is False else fan
-        psu_db = 'true' if psu is True else 'false' if psu is False else psu
-        _db_quick('''
-            UPDATE devices 
-            SET cpu_usage = ?, memory_usage = ?, cpu_history = ?, memory_history = ?, temp = ?, fan_status = ?, psu_status = ?
-            WHERE id = ?
-        ''', (cpu_usage, memory_usage, json.dumps(cpu_history), json.dumps(mem_history), temp, fan_db, psu_db, dev_id))
+        # Device hardware fields and history are populated by the native-result
+        # projection. Leaving them untouched here prevents the reachability
+        # worker from overwriting native samples with empty Python probe values.
 
         # CPU / 内存阈值告警
         if cpu_usage is not None:
@@ -2496,9 +2058,6 @@ async def _process_device_raw(device, cycle_tick: int):
         if is_server_asset:
             snmp_available = True  # Linux 服务器采用 SSH 巡检，免除传统 SNMP 可达性告警监控
 
-        metric_values = tuple(hardware_metrics.get(metric) for metric in HEALTH_METRIC_KEYS)
-        if not any(value is not None for value in metric_values):
-            metric_values = (cpu_usage, memory_usage, temp, fan, psu)
         if is_server_asset:
             await asyncio.to_thread(record_collection_result,
                 dev_id,
@@ -2510,48 +2069,19 @@ async def _process_device_raw(device, cycle_tick: int):
                 metadata={'reason': 'server_asset'},
             )
         else:
-            metric_count = sum(value is not None for value in metric_values)
-            profile_metrics = resolved_metrics.get('metrics') or {}
-            profile_status = str(resolved_metrics.get('profile_status') or '').casefold()
-            if profile_status == 'failed':
-                collection_status = 'failed'
-                collection_error_code = 'snmp_template_verification_failed'
-                collection_error_message = 'Applied SNMP hardware template verification failed'
-            elif not profile_metrics:
-                collection_status = 'template_required'
-                collection_error_code = 'snmp_template_not_applied'
-                collection_error_message = 'No applied SNMP hardware metric template is available for this device model'
-            elif not snmp_available:
-                collection_status = 'failed'
-                collection_error_code = snmp_error_code or 'snmp_no_response'
-                collection_error_message = snmp_error_message or 'SNMP collection returned no data'
-            elif metric_count < len(metric_values):
-                collection_status = 'partial'
-                collection_error_code = 'snmp_metrics_partial'
-                collection_error_message = 'Applied SNMP template returned only a subset of health metrics'
-            else:
-                collection_status = 'success'
-                collection_error_code = ''
-                collection_error_message = ''
+            # This status explicitly records the ownership boundary. It is not
+            # evidence that LibreNMS has produced a sample; the diagnostic and
+            # native-result sync report that state independently.
             await asyncio.to_thread(record_collection_result,
                 dev_id,
                 'snmp_metrics',
-                status=collection_status if snmp_community else 'not_configured',
-                transport='udp',
-                source='snmp',
+                status='skipped',
+                transport='librenms_api',
+                source='librenms_native',
                 duration_ms=(_time.perf_counter() - collection_started) * 1000,
-                coverage_total=len(metric_values),
-                coverage_supported=metric_count,
-                error_code=collection_error_code if snmp_community else 'snmp_not_configured',
-                error_message=collection_error_message if snmp_community else 'SNMP credentials are not configured',
-                metadata={
-                    'collection_mode': 'health_only',
-                    'metric_profile_id': resolved_metrics.get('profile_id') or None,
-                    'metric_profile_status': resolved_metrics.get('profile_status') or 'none',
-                    'metric_profile_source': resolved_metrics.get('profile_source') or 'template_not_applied',
-                    'metric_sources': resolved_metrics.get('metric_sources') or {},
-                    'metric_details': metric_details,
-                },
+                error_code='hardware_sampling_delegated',
+                error_message='Hardware sampling is owned by the bound LibreNMS runtime',
+                metadata={'collection_mode': 'librenms_native'},
             )
 
         snmp_rule = resolve_alert_rule('snmp_unreachable', device_row=device, ip_address=ip)
@@ -2599,9 +2129,9 @@ async def process_device_fast(device):
     def mark_offline_and_clear_cache():
         _db_quick("""
             UPDATE devices
-            SET status = ?, cpu_usage = ?, memory_usage = ?
+            SET status = ?
             WHERE id = ?
-        """, ('offline', 0, 0, dev_id))
+        """, ('offline', dev_id))
         _sync_device_status_tag(dev_id, 'offline')
         prev_intf_octets.pop(dev_id, None)
         prev_intf_config_hash.pop(str(dev_id), None)

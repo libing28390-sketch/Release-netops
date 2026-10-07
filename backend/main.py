@@ -74,6 +74,7 @@ from api.tags import router as tags_router
 from api.scheduled_jobs import router as scheduled_jobs_router
 from api.racks import router as racks_router
 from api.credentials import router as credentials_router
+from api.librenms_native import router as librenms_native_router
 from api.cmdb import router as cmdb_router
 from api.interfaces import router as interfaces_router
 from api.discovery import router as discovery_router
@@ -714,6 +715,7 @@ app.include_router(config_templates_router, prefix="/api")
 app.include_router(assets_router,        prefix="/api")
 app.include_router(racks_router,         prefix="/api")
 app.include_router(credentials_router,   prefix="/api")
+app.include_router(librenms_native_router, prefix="/api")
 app.include_router(cmdb_router,          prefix="/api")
 app.include_router(ip_locator_router,    prefix="/api")
 app.include_router(device_health_router, prefix="/api")

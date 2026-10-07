@@ -63,6 +63,8 @@ done
 
 所有测试业务写入都发生在新实例中：临时 PostgreSQL 数据库、独立 Redis、独立时序存储与 S3 桶。SNMP 目标是工具自己的 UDP 模拟设备，internal 网络阻止测试容器访问真实外部设备。
 
+NetOps API 场景使用没有管理 IP 的合成资产记录，避免隔离应用的后台 A-Loop 把 API 数据集当作真实设备探测；SNMP 报文由独立 exporter 场景发往内部模拟器。
+
 cAdvisor 与只读 socket proxy 使用宿主机现有 `/sys`、Docker 根目录和 socket 的只读挂载，以测试实际容器规模下的观测工作。socket proxy 仅开放 GET 读取所需的容器/信息 API，关闭 POST；普通负载生成器没有 Docker socket。Docker socket 的只读挂载本身不是权限控制，限制写操作由 proxy 的 API 规则实施。
 
 测试栈与源栈仍共享宿主机 CPU、内存和磁盘，因此适合在测试主机或维护窗口运行。工具同步观察宿主机和源容器；当宿主机可用内存低于默认 10% 或 256 MiB、有限额测试容器内存达到默认 95%，或测试服务发生 OOM/异常退出时停止。可通过 `--min-host-available-percent`、`--max-container-memory-percent` 调整。

@@ -242,6 +242,16 @@ class ConfigAndSnmpTests(unittest.TestCase):
             runner.validate_config(make_config(credentials={**make_config()["credentials"], "db_name": "netops"}))
         self.assertEqual(raised.exception.code, "unsafe_database_target")
 
+    def test_capacity_api_devices_do_not_enter_background_reachability_probes(self):
+        cfg = runner.validate_config(make_config())
+        columns, rows = runner._capacity_device_rows(
+            cfg, {"id", "hostname", "ip_address", "status", "sn"}
+        )
+
+        self.assertEqual(len(rows), cfg.dataset["rows"])
+        ip_index = columns.index("ip_address")
+        self.assertTrue(all(row[ip_index] is None for row in rows))
+
     def test_database_only_prepare_does_not_require_app_migrations(self):
         class Cursor:
             def __init__(self):
@@ -392,11 +402,13 @@ class RunnerFailureDiagnosticsTests(unittest.TestCase):
              mock.patch.object(runner, "_single_check", return_value=(
                  {"status": "passed", "successful": 1}, runner.ScenarioOutcome(True, status_code=200)
              )), \
+             mock.patch.object(runner, "_seed_vm_verification_sample") as seed_sample, \
              mock.patch.object(runner, "_vm_check", return_value={"victoriametrics_push_visible": True}):
             result = runner.check(cfg)
 
         self.assertEqual(result["status"], "passed")
         self.assertEqual(result["checks"]["victoriametrics_query"], {"ok": True})
+        seed_sample.assert_called_once_with(cfg)
 
     def test_victoriametrics_preflight_failure_keeps_stable_error_code(self):
         cfg = runner.validate_config(
@@ -409,6 +421,7 @@ class RunnerFailureDiagnosticsTests(unittest.TestCase):
              mock.patch.object(runner, "_single_check", return_value=(
                  {"status": "passed", "successful": 1}, runner.ScenarioOutcome(True, status_code=200)
              )), \
+             mock.patch.object(runner, "_seed_vm_verification_sample"), \
              mock.patch.object(runner, "_vm_check", return_value={
                  "victoriametrics_push_visible": False, "error": "vm_no_result"
              }):
