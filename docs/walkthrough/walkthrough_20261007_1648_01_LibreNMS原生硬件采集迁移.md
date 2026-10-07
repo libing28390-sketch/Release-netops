@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-P1 核查及 P2–P6 代码实现已完成。前端全量 476 项、Grafana 相关后端 68 项、Docker capacity 17 项均通过；TypeScript 检查、前端生产构建、PostgreSQL-only 扫描、发布配置检查和 12 份 dashboard JSON 解析通过。根目录定向后端回归 128 passed；修正样本时间 fixture 后对应 PostgreSQL 测试文件 5 passed。首次全量 pytest 是从 `backend` 子目录误启动，不能代表 Actions 根目录命令；24 个失败已拆分，其中根相对路径用例在根目录重跑通过、旧 Python discovery 测试已删除、其余修复后专项通过。Push 后继续跟踪 Actions 的根目录全量门禁。Compose 容器运行时和 HCL/真实设备验证未执行；后者按用户要求留待 push 后由用户现场验证。
+P1 核查及 P2–P6 代码实现已完成。commit `669f0f67` 已推送到 `main`；GitHub Actions run 681 全量门禁成功，包含后端 pytest、前端/Docker 构建、净化发布树同步和归档。净化发布仓库 `main` 当前提交为 `a34b1257`。前端全量 476 项、Grafana 相关后端 68 项、Docker capacity 17 项、根目录定向后端回归 128 项和当前样本时间 PostgreSQL 测试 5 项均通过。首次全量 pytest 从 `backend` 子目录误启动，其 24 个失败已拆分并由正确根目录的 CI 全量结果覆盖。Compose 容器运行时和 HCL/真实设备验证未执行；后者按用户要求留待现场验证，因此真实部署问题根因仍未确认。
 
 ## 实现结果
 
@@ -27,7 +27,7 @@ P1 核查及 P2–P6 代码实现已完成。前端全量 476 项、Grafana 相�
 - `git diff --check` 退出码 **0**；仅有 Git 关于 LF/CRLF 将转换的提示，没有空白错误。
 - 首次错误 cwd 的全量 `.venv\Scripts\python.exe -m pytest -q`：3382 passed、24 failed、1 skipped（1:39:24）；根目录相对路径测试误判，另有迁移后已删除的 legacy 重试测试、厂商前缀定义、光模块旧 adapter 测试和未初始化 `last_sample_at` 的 fixture。以上问题/测试边界已处理并针对性验证。
 - 根目录后端专项命令覆盖上述失败项和原生采集链路：**128 passed**；`backend/tests/snmp/test_snmp_hardware_sample_batch.py` 使用补齐 `last_sample_at` 的当前 fixture 单独复跑：**5 passed**。
-- Actions 的完整根目录 pytest/release gate 尚待本次 push 后运行；本地首次全量命令 cwd 不符，不能记录为全量通过。
+- GitHub Actions run 681（commit `669f0f67`）的完整根目录 pytest/release gate：**success**。后端 pytest、前端/Docker 构建、移除私有/开发文件、净化发布树 commit/push 和归档均成功；Knowledge Engine 评估、百度上传和 GitHub Release 按本次 `main` push 条件跳过。
 
 ## 未验证项与风险
 
@@ -41,4 +41,4 @@ P1 核查及 P2–P6 代码实现已完成。前端全量 476 项、Grafana 相�
 
 本次提交按显式清单纳入后端 API/服务/迁移/测试、`docker-compose.yml`、`.env.example`、`monitoring/librenms/`、SNMP 诊断前端和回归测试、容量测试脚本/测试/说明，以及本计划和 walkthrough。任务前 `main`/`origin/main` 均为 `d510c59b`，无远端领先或落后提交。
 
-未纳入 `.agents/`、`handoff.md`、`.codex-build-*`、`dist-*`、`logs/`、`backend/vendor/librenms/mibs/cisco/TEST-MIB-*`；它们分别是内部协作资料或生成/测试产物。推送待最终提交审阅；推送后以 Actions 根目录全量门禁为准并跟踪到完成。
+未纳入 `.agents/`、`handoff.md`、`.codex-build-*`、`dist-*`、`logs/`、`backend/vendor/librenms/mibs/cisco/TEST-MIB-*`；它们分别是内部协作资料或生成/测试产物。代码提交与 Actions 门禁已完成；P7 现场运行时验证仍待用户执行，P8 生产切换需单独授权。
