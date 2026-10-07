@@ -132,6 +132,10 @@ def _version_row(conn, template: dict[str, Any], version: str = "") -> dict[str,
     ).fetchone()
     if row:
         return dict(row)
+    return _legacy_version_row(template, selected_version)
+
+
+def _legacy_version_row(template: dict[str, Any], selected_version: str) -> dict[str, Any]:
     return {
         "id": "",
         "template_id": template["id"],
@@ -148,6 +152,49 @@ def _version_row(conn, template: dict[str, Any], version: str = "") -> dict[str,
         "created_at": template.get("created_at") or "",
         "published_at": "",
     }
+
+
+def _list_template_versions(conn, templates: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Load each template's current version with one query for a list page."""
+    if not templates:
+        return {}
+
+    version_predicates = " OR ".join(
+        "(template_id = ? AND version = ?)" for _template in templates
+    )
+    version_params = tuple(
+        value
+        for template in templates
+        for value in (template["id"], str(template.get("current_version") or "1.0"))
+    )
+    rows = conn.execute(
+        f"SELECT * FROM config_template_versions WHERE {version_predicates}",
+        version_params,
+    ).fetchall()
+    versions_by_key = {
+        (str(row["template_id"]), str(row["version"])): dict(row)
+        for row in rows
+    }
+    return {
+        str(template["id"]): versions_by_key.get(
+            (str(template["id"]), str(template.get("current_version") or "1.0")),
+            _legacy_version_row(template, str(template.get("current_version") or "1.0")),
+        )
+        for template in templates
+    }
+
+
+def _list_template_favorites(conn, template_ids: list[str], username: str) -> set[str]:
+    """Load favorites for the current session username with one query."""
+    if not template_ids or not username:
+        return set()
+    placeholders = ", ".join("?" for _template_id in template_ids)
+    rows = conn.execute(
+        "SELECT template_id FROM config_template_favorites "
+        f"WHERE username = ? AND template_id IN ({placeholders})",
+        (username, *template_ids),
+    ).fetchall()
+    return {str(row["template_id"]) for row in rows}
 
 
 def _schema_for(template: dict[str, Any], version: dict[str, Any]) -> list[dict[str, Any]]:
@@ -173,8 +220,14 @@ def _serialize_template(
     username: str = "",
     include_detail: bool = False,
     version_name: str = "",
+    preloaded_version: dict[str, Any] | None = None,
+    preloaded_favorite: bool | None = None,
 ) -> dict[str, Any]:
-    version = _version_row(conn, template, version_name)
+    version = (
+        _version_row(conn, template, version_name)
+        if preloaded_version is None
+        else preloaded_version
+    )
     schema = _schema_for(template, version)
     normalized_schema, normalized_examples = normalize_template_definition(
         version.get("source") or template.get("content") or "",
@@ -183,8 +236,8 @@ def _serialize_template(
     )
     schema = normalized_schema
     quality = template_quality_score(template, schema)
-    favorite = False
-    if username:
+    favorite = bool(preloaded_favorite) if preloaded_favorite is not None else False
+    if username and preloaded_favorite is None:
         favorite = conn.execute(
             "SELECT 1 FROM config_template_favorites WHERE template_id = ? AND username = ?",
             (template["id"], username),
@@ -319,9 +372,23 @@ def list_config_templates(
             """,
             (*params, page_size, (page - 1) * page_size),
         ).fetchall()
+        template_rows = [dict(row) for row in rows]
+        username = str(user.get("username") or "")
+        versions_by_template = _list_template_versions(conn, template_rows)
+        favorites = _list_template_favorites(
+            conn,
+            [str(template["id"]) for template in template_rows],
+            username,
+        )
         items = [
-            _serialize_template(conn, dict(row), username=str(user.get("username") or ""))
-            for row in rows
+            _serialize_template(
+                conn,
+                template,
+                username=username,
+                preloaded_version=versions_by_template[str(template["id"])],
+                preloaded_favorite=str(template["id"]) in favorites,
+            )
+            for template in template_rows
         ]
         return {
             "items": items,

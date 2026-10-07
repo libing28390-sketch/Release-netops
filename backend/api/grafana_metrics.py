@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -683,15 +684,17 @@ def _hardware_stale_after_seconds(sensor: dict[str, Any]) -> float:
     return max(3.0 * max(1.0, interval), max(180.0, configured))
 
 
-def _collect_hardware(lines: list[str], conn: Any, now: datetime) -> None:
+def _collect_hardware(lines: list[str], conn: Any, now: datetime) -> dict[str, Any]:
     """Expose current normalized hardware samples and per-category capability."""
     from services.snmp_hardware_inventory_service import (
         list_hardware_metric_rows,
         render_hardware_metrics,
     )
 
-    rows = list_hardware_metric_rows(conn)
+    timings: dict[str, float] = {}
+    rows = list_hardware_metric_rows(conn, timings=timings)
 
+    preparation_started = time.perf_counter()
     by_device: dict[str, tuple[dict[str, Any], list[dict[str, Any]]]] = {}
     for row in rows:
         device_id = str(row.get("device_id") or "")
@@ -715,7 +718,9 @@ def _collect_hardware(lines: list[str], conn: Any, now: datetime) -> None:
             if (now - last_success).total_seconds() > _hardware_stale_after_seconds(sensor):
                 sensor["last_quality"] = "stale"
         by_device[device_id][1].append(sensor)
+    timings["group_and_stale_ms"] = (time.perf_counter() - preparation_started) * 1000
 
+    render_started = time.perf_counter()
     seen_headers: set[tuple[str, str]] = set()
     render_errors = 0
     for device_id in sorted(by_device):
@@ -734,7 +739,9 @@ def _collect_hardware(lines: list[str], conn: Any, now: datetime) -> None:
                     continue
                 seen_headers.add(key)
             lines.append(line)
+    timings["device_render_ms"] = (time.perf_counter() - render_started) * 1000
 
+    capability_query_started = time.perf_counter()
     capability_rows = _safe_query(
         conn,
         """
@@ -751,8 +758,10 @@ def _collect_hardware(lines: list[str], conn: Any, now: datetime) -> None:
          ORDER BY c.device_id, c.component_class, c.source_type
         """,
     )
+    timings["capability_query_ms"] = (time.perf_counter() - capability_query_started) * 1000
     if capability_rows is None:
         raise RuntimeError("hardware capability inventory query failed")
+    capability_render_started = time.perf_counter()
     capability_name = "nexora_hw_capability_status"
     _append_header(lines, capability_name, "Last discovery status for one hardware source and component category.")
     active_count_name = "nexora_hw_capability_active_sensor_count"
@@ -800,6 +809,14 @@ def _collect_hardware(lines: list[str], conn: Any, now: datetime) -> None:
     render_error_name = "nexora_hw_sensor_render_errors"
     _append_header(lines, render_error_name, "Number of devices whose hardware metrics could not be rendered during this scrape.")
     lines.append(_metric_line(render_error_name, render_errors))
+    timings["capability_render_ms"] = (time.perf_counter() - capability_render_started) * 1000
+    return {
+        **timings,
+        "sensor_rows": len(rows),
+        "device_count": len(by_device),
+        "capability_rows": len(capability_rows),
+        "render_errors": render_errors,
+    }
 
 
 @router.get("/metrics", include_in_schema=False)
@@ -849,12 +866,14 @@ def grafana_metrics() -> Response:
 def grafana_hardware_metrics() -> Response:
     """Export per-device hardware series separately from low-cardinality API metrics."""
 
+    scrape_started = time.perf_counter()
     lines: list[str] = []
     conn = None
+    scrape_stats: dict[str, Any] = {}
     try:
         conn = get_db_connection()
         conn.execute("SELECT 1").fetchone()
-        _collect_hardware(lines, conn, datetime.now(timezone.utc))
+        scrape_stats = _collect_hardware(lines, conn, datetime.now(timezone.utc))
     except Exception as exc:
         logger.warning("Grafana hardware metrics unavailable (%s)", type(exc).__name__)
         return Response(
@@ -870,6 +889,25 @@ def grafana_hardware_metrics() -> Response:
                 pass
 
     body = "\n".join(line for line in lines if line) + ("\n" if lines else "")
+    body_bytes = len(body.encode("utf-8"))
+    logger.info(
+        "Grafana hardware metrics scrape sensor_rows=%d devices=%d capabilities=%d "
+        "render_errors=%d sensor_query_ms=%.1f sensor_decode_ms=%.1f "
+        "group_stale_ms=%.1f device_render_ms=%.1f capability_query_ms=%.1f "
+        "capability_render_ms=%.1f total_ms=%.1f response_bytes=%d",
+        int(scrape_stats.get("sensor_rows", 0)),
+        int(scrape_stats.get("device_count", 0)),
+        int(scrape_stats.get("capability_rows", 0)),
+        int(scrape_stats.get("render_errors", 0)),
+        float(scrape_stats.get("sensor_query_ms", 0.0)),
+        float(scrape_stats.get("sensor_decode_ms", 0.0)),
+        float(scrape_stats.get("group_and_stale_ms", 0.0)),
+        float(scrape_stats.get("device_render_ms", 0.0)),
+        float(scrape_stats.get("capability_query_ms", 0.0)),
+        float(scrape_stats.get("capability_render_ms", 0.0)),
+        (time.perf_counter() - scrape_started) * 1000,
+        body_bytes,
+    )
     return Response(content=body, media_type="text/plain; version=0.0.4; charset=utf-8")
 
 

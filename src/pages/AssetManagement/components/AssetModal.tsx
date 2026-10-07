@@ -1,6 +1,6 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Terminal, Shield, Lock, Wifi, Network, Building2, AlertCircle, AlertTriangle, Globe2, Plus, Trash2, X } from 'lucide-react';
+import { Terminal, Shield, Lock, Wifi, Network, Building2, AlertCircle, AlertTriangle, Globe2, Plus, Trash2, X, RefreshCw } from 'lucide-react';
 import DateTimePicker from '../../../components/DateTimePicker';
 import { PasswordInputField } from '../../../components/ui/PasswordInputField';
 import { Asset } from '../types';
@@ -23,7 +23,7 @@ import {
 import { AssetTagPicker } from './AssetTagPicker';
 import { ActionIconButton } from '../../../components/ui/ActionIconButton';
 import { isReservedSystemSite } from '../../../utils/siteIdentity';
-import { authHeaders } from '../../../api/http';
+import { ApiError, apiRequest, authHeaders } from '../../../api/http';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 interface AssetModalProps {
@@ -40,8 +40,8 @@ interface AssetModalProps {
   setShowEnableSecret: React.Dispatch<React.SetStateAction<boolean>>;
   showProductionConfirm: boolean;
   setShowProductionConfirm: (val: boolean) => void;
-  handleSave: () => void;
-  doSave: (overrides?: Record<string, unknown>) => void;
+  handleSave: () => void | Promise<void>;
+  doSave: (overrides?: Record<string, unknown>) => void | Promise<void>;
   language: string;
   setFeedbackMsg: (msg: any) => void;
   allTags: TagDefinition[];
@@ -72,9 +72,15 @@ export const AssetModal: React.FC<AssetModalProps> = ({
 
   const [racks, setRacks] = React.useState<any[]>([]);
   const [sites, setSites] = React.useState<any[]>([]);
+  const [lookupsLoading, setLookupsLoading] = React.useState(false);
+  const [lookupsLoaded, setLookupsLoaded] = React.useState(false);
+  const [lookupRetry, setLookupRetry] = React.useState(0);
+  const [lookupError, setLookupError] = React.useState<{ status: number | null; message: string; permissionDenied: boolean } | null>(null);
+  const [lookupEmptyResources, setLookupEmptyResources] = React.useState<string[]>([]);
   const [uValidationError, setUValidationError] = React.useState<string | null>(null);
   const [legacyExemptReason, setLegacyExemptReason] = React.useState('');
   const [credentials, setCredentials] = React.useState<any[]>([]);
+  const saveLockRef = React.useRef(false);
   const [credMode, setCredMode] = React.useState<'manual' | 'existing'>('manual');
   const [breakGlassAcknowledged, setBreakGlassAcknowledged] = React.useState(false);
   const mgmtIpError = React.useMemo(() => {
@@ -91,28 +97,69 @@ export const AssetModal: React.FC<AssetModalProps> = ({
   }, [isOpen, form.credential_id]);
 
   React.useEffect(() => {
-    if (isOpen) {
-      const token = localStorage.getItem('netops_token');
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      Promise.all([
-        fetch('/api/racks', { headers }).then(res => res.json()),
-        fetch('/api/cmdb/sites', { headers }).then(res => res.json()),
-        fetch('/api/credentials', { headers }).then(res => res.json()),
-      ])
-      .then(([rackData, siteData, credData]) => {
-        if (rackData && rackData.success && Array.isArray(rackData.data)) {
-          setRacks(rackData.data);
-        }
-        if (siteData && siteData.success && Array.isArray(siteData.data)) {
-          setSites(siteData.data);
-        }
-        if (credData && credData.success && Array.isArray(credData.data)) {
-          setCredentials(credData.data);
-        }
-      })
-      .catch(err => console.error('Failed to load asset location data:', err));
-    }
-  }, [isOpen]);
+    if (!isOpen) return;
+    const controller = new AbortController();
+    let active = true;
+    setLookupsLoading(true);
+    setLookupError(null);
+
+    const readLookup = (
+      result: PromiseSettledResult<{ success?: boolean; data?: unknown }>,
+      label: string,
+    ): { data: any[] | null; failure: { label: string; status: number | null } | null; empty: boolean } => {
+      if (result.status === 'rejected') {
+        const status = result.reason instanceof ApiError ? result.reason.status : null;
+        return { data: null, failure: { label, status }, empty: false };
+      }
+      if (!result.value.success || !Array.isArray(result.value.data)) {
+        return { data: null, failure: { label, status: null }, empty: false };
+      }
+      return { data: result.value.data, failure: null, empty: result.value.data.length === 0 };
+    };
+
+    const loadLookups = async () => {
+      const results = await Promise.allSettled([
+        apiRequest<{ success?: boolean; data?: unknown }>('/api/racks', { signal: controller.signal }),
+        apiRequest<{ success?: boolean; data?: unknown }>('/api/cmdb/sites', { signal: controller.signal }),
+        apiRequest<{ success?: boolean; data?: unknown }>('/api/credentials', { signal: controller.signal }),
+      ]);
+      if (!active) return;
+
+      const rackResult = readLookup(results[0], zh ? '机柜' : 'racks');
+      const siteResult = readLookup(results[1], zh ? '站点' : 'sites');
+      const credentialResult = readLookup(results[2], zh ? '凭据' : 'credentials');
+      if (rackResult.data) setRacks(rackResult.data);
+      if (siteResult.data) setSites(siteResult.data);
+      if (credentialResult.data) setCredentials(credentialResult.data);
+
+      const failures = [rackResult.failure, siteResult.failure, credentialResult.failure].filter(Boolean) as Array<{ label: string; status: number | null }>;
+      const emptyResources = [rackResult, siteResult, credentialResult].filter(result => result.empty).map(result => result.failure?.label || (
+        result === rackResult ? (zh ? '机柜' : 'racks') : result === siteResult ? (zh ? '站点' : 'sites') : (zh ? '凭据' : 'credentials')
+      ));
+      setLookupEmptyResources(emptyResources);
+      if (failures.length > 0) {
+        const status = failures.some(failure => failure.status === 401) ? 401
+          : failures.some(failure => failure.status === 403) ? 403
+            : failures.find(failure => failure.status)?.status || null;
+        const permissionDenied = status === 401 || status === 403;
+        const names = failures.map(failure => failure.label).join(zh ? '、' : ', ');
+        const message = status === 401
+          ? (zh ? '登录状态已失效，请重新登录后加载表单选项。' : 'Your session has expired. Sign in again to load form options.')
+          : status === 403
+            ? (zh ? `你没有权限读取以下表单选项：${names}。` : `You do not have permission to load these form options: ${names}.`)
+            : (zh ? `表单选项加载失败：${names}。请重试。` : `Unable to load these form options: ${names}. Retry to check again.`);
+        setLookupError({ status, message, permissionDenied });
+      }
+      setLookupsLoaded(true);
+      setLookupsLoading(false);
+    };
+
+    void loadLookups();
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [isOpen, lookupRetry, zh]);
 
   const filteredRacks = React.useMemo(() => {
     if (!form.site_id) {
@@ -144,6 +191,20 @@ export const AssetModal: React.FC<AssetModalProps> = ({
   );
   const selectedSnmpCredential = snmpCredentials.find(c => c.id === form.snmp_credential_id);
   const snmpCommunityConfigured = Boolean(form.snmp_community_set || selectedSnmpCredential?.has_snmp_community);
+  const showLookupLoading = isOpen && (lookupsLoading || (!lookupsLoaded && !lookupError));
+  const runSaveAction = React.useCallback(async (action: () => void | Promise<void>) => {
+    if (saving || saveLockRef.current) return;
+    saveLockRef.current = true;
+    try {
+      await action();
+    } finally {
+      saveLockRef.current = false;
+    }
+  }, [saving]);
+  const handleSaveOnce = React.useCallback(() => { void runSaveAction(handleSave); }, [handleSave, runSaveAction]);
+  const doSaveOnce = React.useCallback((overrides?: Record<string, unknown>) => {
+    void runSaveAction(() => doSave(overrides));
+  }, [doSave, runSaveAction]);
 
   const withTechnologyTag = (next: any, vendor: string, platform: string) => {
     let targetPlatform = platform;
@@ -192,28 +253,31 @@ export const AssetModal: React.FC<AssetModalProps> = ({
       return;
     }
 
+    const controller = new AbortController();
     const validate = async () => {
       try {
-        const token = localStorage.getItem('netops_token');
-        const headers = token ? { Authorization: `Bearer ${token}` } : {};
         const url = `/api/racks/validate-u?rack=${encodeURIComponent(rack)}&start_u=${startU}&u_height=${height}&exclude_asset_id=${editingAsset?.id || ''}`;
-        const res = await fetch(url, { headers });
-        if (res.ok) {
-          const data = await res.json();
-          if (!data.success) {
-            setUValidationError(data.reason);
-          } else {
-            setUValidationError(null);
-          }
-        }
-      } catch (err) {
-        console.error("U validation failed", err);
+        const data = await apiRequest<{ success?: boolean; reason?: string }>(url, { signal: controller.signal });
+        if (!data.success) setUValidationError(data.reason || (zh ? '机柜位置校验失败' : 'Rack position validation failed'));
+        else setUValidationError(null);
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        const status = error instanceof ApiError ? error.status : null;
+        const message = status === 401
+          ? (zh ? '登录状态已失效，请重新登录后校验机柜位置。' : 'Your session has expired. Sign in again to validate rack placement.')
+          : status === 403
+            ? (zh ? '你没有权限校验机柜位置。' : 'You do not have permission to validate rack placement.')
+            : (zh ? '机柜位置校验失败，请稍后重试。' : 'Unable to validate rack placement. Retry shortly.');
+        setUValidationError(message);
       }
     };
 
-    const timer = setTimeout(validate, 300);
-    return () => clearTimeout(timer);
-  }, [form.rack, form.planned_start_u, form.u_height, editingAsset]);
+    const timer = setTimeout(() => { void validate(); }, 300);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [form.rack, form.planned_start_u, form.u_height, editingAsset, language]);
 
   if (!isOpen) return null;
 
@@ -248,6 +312,23 @@ export const AssetModal: React.FC<AssetModalProps> = ({
             <div className="rounded-lg border border-cyan-100 bg-cyan-50/60 px-3 py-2 text-[10px] text-cyan-800">
               {zh ? '必填规则：主机名、资产编号至少填写一项。存量设备直接投产时，还必须填写普通账号、普通密码和免上收投产原因（至少 5 个字符）。' : 'Required: provide either Hostname or Asset Tag. Legacy devices created as production also require a normal username, normal password, and an exemption reason (minimum 5 characters).'}
             </div>
+            {showLookupLoading && (
+              <div role="status" className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] text-slate-600">
+                <RefreshCw size={12} className="animate-spin" />
+                {zh ? '正在加载站点、机柜和凭据选项…' : 'Loading sites, racks, and credential options…'}
+              </div>
+            )}
+            {lookupError && (
+              <div role="alert" className={`flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-[10px] ${lookupError.permissionDenied ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-rose-200 bg-rose-50 text-rose-800'}`}>
+                <span>{lookupError.message}</span>
+                <button type="button" onClick={() => setLookupRetry(value => value + 1)} disabled={lookupsLoading} className="rounded-md border border-current/20 px-2 py-1 font-semibold disabled:opacity-50">{lookupsLoading ? (zh ? '重试中…' : 'Retrying…') : (zh ? '重试选项' : 'Retry options')}</button>
+              </div>
+            )}
+            {lookupEmptyResources.length > 0 && (
+              <div role="status" className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] text-slate-600">
+                {zh ? `没有可用的${lookupEmptyResources.join('、')}选项。` : `No ${lookupEmptyResources.join(', ')} options are available.`}
+              </div>
+            )}
             {/* ─── 基本属性 ─── */}
             <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">
               <div>
@@ -740,7 +821,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                   </div>
                 )}
 
-                <AssetTagPicker tags={allTags} selectedIds={form.tag_ids || []} onChange={ids => setForm(f => ({ ...f, tag_ids: ids }))} onSave={handleSave} language={language} assetType={form.asset_type} />
+                <AssetTagPicker tags={allTags} selectedIds={form.tag_ids || []} onChange={ids => setForm(f => ({ ...f, tag_ids: ids }))} onSave={handleSaveOnce} language={language} assetType={form.asset_type} />
 
                 {/* PAM Toggle */}
                 <div className="flex items-center justify-between p-2.5 rounded-xl bg-cyan-50 border border-cyan-200/60 mt-1">
@@ -1089,7 +1170,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
             <div className="flex justify-end gap-2">
               <button onClick={onClose} className="px-3 py-1.5 rounded-lg bg-black/[0.01] border border-black/5 text-black/40 text-xs hover:bg-black/[0.02]">{zh ? '取消' : 'Cancel'}</button>
               <button
-                onClick={handleSave}
+                onClick={handleSaveOnce}
                 disabled={saving || (!form.hostname.trim() && !form.asset_tag.trim()) || !!uValidationError || (!isEditMode && form.asset_origin === 'legacy' && form.lifecycle_status === 'production' && String(form.takeover_exempt_reason || '').trim().length < 5) || (form.ssh_algorithm_profile === 'legacy_break_glass' && !breakGlassAcknowledged)}
                 className="px-4 py-1.5 rounded-lg bg-[#00bceb] text-white text-xs font-bold hover:bg-[#00a5d0] disabled:opacity-50 shadow-sm shadow-[#00bceb]/20"
               >
@@ -1132,7 +1213,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                     {zh ? '取消' : 'Cancel'}
                   </button>
                   <button
-                    onClick={() => { setShowProductionConfirm(false); doSave({ production_mode: 'takeover' }); }}
+                    onClick={() => { setShowProductionConfirm(false); doSaveOnce({ production_mode: 'takeover' }); }}
                     disabled={saving}
                     className="flex-1 px-3 py-1.5 rounded-lg bg-[#00bceb] text-white text-xs font-bold hover:bg-[#00a5d0] disabled:opacity-50"
                   >
@@ -1142,7 +1223,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                 <button
                   onClick={() => {
                     setShowProductionConfirm(false);
-                    doSave({ production_mode: 'legacy_exempt', takeover_exempt_reason: legacyExemptReason.trim() });
+                    doSaveOnce({ production_mode: 'legacy_exempt', takeover_exempt_reason: legacyExemptReason.trim() });
                   }}
                   disabled={saving || editingAsset?.asset_origin !== 'legacy' || legacyExemptReason.trim().length < 5}
                   className="mt-2 w-full rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40"

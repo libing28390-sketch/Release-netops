@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useMonitoringStore } from '../store/monitoringStore';
-import { authHeaders } from '../api/http';
+import { apiRequest, authHeaders } from '../api/http';
 import type { OutboundTarget } from '../types/outbound';
 import type { DeviceHealthHistoryResponse, MonitoringHealthDevicesResponse, MonitoringIncident, MonitoringIncidentImpact, MonitoringIncidentListResponse, MonitoringPlaybookRecommendationsResponse } from '../types';
 
@@ -18,7 +18,7 @@ const isAbortError = (error: unknown) => {
   return typeof error === 'object' && (error as { name?: string }).name === 'AbortError';
 };
 
-export const useMonitoring = ({ isAuthenticated, activeTab, pollOutbound = true, healthHistoryRange = 24 }: UseMonitoringProps) => {
+export const useMonitoring = ({ isAuthenticated, activeTab, language, pollOutbound = true, healthHistoryRange = 24 }: UseMonitoringProps) => {
   const {
     monitorSearch,
     monitorSearchResults,
@@ -97,20 +97,50 @@ export const useMonitoring = ({ isAuthenticated, activeTab, pollOutbound = true,
   } = useMonitoringStore();
 
   const monitorRequestEpochRef = useRef(0);
+  const overviewRequestSequenceRef = useRef(0);
+  const [monitorOverviewLoading, setMonitorOverviewLoading] = useState(
+    isAuthenticated && ['monitoring', 'health'].includes(activeTab),
+  );
+  const [monitorOverviewError, setMonitorOverviewError] = useState<{
+    status: number | null;
+    message: string;
+    permissionDenied: boolean;
+  } | null>(null);
+  const [monitorOverviewUpdatedAt, setMonitorOverviewUpdatedAt] = useState<Date | null>(null);
 
   const fetchMonitoringOverview = useCallback(async (forceRefresh = false, signal?: AbortSignal) => {
+    const requestSequence = ++overviewRequestSequenceRef.current;
     const reqEpoch = monitorRequestEpochRef.current;
+    setMonitorOverviewLoading(true);
     try {
       const suffix = forceRefresh ? '?force_refresh=1' : '';
-      const resp = await fetch(`/api/monitoring/overview${suffix}`, { signal, headers: authHeaders() });
-      if (!resp.ok) return;
-      const payload = await resp.json();
-      if (reqEpoch !== monitorRequestEpochRef.current) return;
+      const payload = await apiRequest<Record<string, unknown>>(`/api/monitoring/overview${suffix}`, { signal });
+      if (requestSequence !== overviewRequestSequenceRef.current || reqEpoch !== monitorRequestEpochRef.current) return;
       setMonitorOverview(payload);
+      setMonitorOverviewError(null);
+      setMonitorOverviewUpdatedAt(new Date());
     } catch (error) {
-      if (isAbortError(error)) return;
+      if (isAbortError(error) || requestSequence !== overviewRequestSequenceRef.current || reqEpoch !== monitorRequestEpochRef.current) return;
+      const status = typeof error === 'object' && error !== null && 'status' in error
+        ? Number((error as { status?: unknown }).status) || null
+        : null;
+      const permissionDenied = status === 401 || status === 403;
+      const message = status === 401
+        ? (language === 'zh' ? '登录状态已失效，请重新登录后加载监控数据。' : 'Your session has expired. Sign in again to load monitoring data.')
+        : status === 403
+          ? (language === 'zh' ? '你没有权限查看监控概览。' : 'You do not have permission to view the monitoring overview.')
+          : (language === 'zh' ? '无法加载监控概览，请重试。' : 'Unable to load the monitoring overview. Retry to check again.');
+      setMonitorOverviewError({ status, message, permissionDenied });
+    } finally {
+      if (requestSequence === overviewRequestSequenceRef.current && reqEpoch === monitorRequestEpochRef.current) {
+        setMonitorOverviewLoading(false);
+      }
     }
-  }, [setMonitorOverview]);
+  }, [language, setMonitorOverview]);
+
+  useEffect(() => () => {
+    overviewRequestSequenceRef.current += 1;
+  }, []);
 
   const fetchHostResources = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -705,6 +735,9 @@ export const useMonitoring = ({ isAuthenticated, activeTab, pollOutbound = true,
     outboundHistoryHours,
     setOutboundHistoryHours,
     fetchMonitoringOverview,
+    monitorOverviewLoading,
+    monitorOverviewError,
+    monitorOverviewUpdatedAt,
     fetchMonitoringHealthHistory,
     fetchMonitoringCollectionStatus,
     fetchMonitoringHealthDevices,

@@ -68,6 +68,212 @@ const AppModals = lazy(() => import('./components/modals/AppModals').then(({ App
 
 // Types imported from ./types — re-export User as UserType to avoid clash with lucide-react User icon
 
+type AppSharedLookupSetters = {
+  sessionIdentity: string;
+  setScripts: React.Dispatch<React.SetStateAction<Script[]>>;
+  setUsers: React.Dispatch<React.SetStateAction<UserType[]>>;
+  setConfigTemplates: React.Dispatch<React.SetStateAction<ConfigTemplate[]>>;
+  setSelectedTemplateId: React.Dispatch<React.SetStateAction<string>>;
+  setGlobalVars: React.Dispatch<React.SetStateAction<Array<{ id?: string; key: string; value: string }>>>;
+};
+
+const fingerprintSessionToken = (token: string) => {
+  // This fingerprint is only an in-memory change detector. The token itself
+  // is never returned, persisted, or logged.
+  let first = 0x811c9dc5;
+  let second = 0x9e3779b9;
+  for (let index = 0; index < token.length; index += 1) {
+    const code = token.charCodeAt(index);
+    first = Math.imul(first ^ code, 0x01000193);
+    second = Math.imul(second ^ code, 0x85ebca6b);
+  }
+  return `${(first >>> 0).toString(36)}-${(second >>> 0).toString(36)}`;
+};
+
+type AppSharedLookupRequest = {
+  sessionIdentity: string;
+  controller: AbortController;
+  promise: Promise<void>;
+};
+
+export const useAppSharedLookups = ({
+  sessionIdentity,
+  setScripts,
+  setUsers,
+  setConfigTemplates,
+  setSelectedTemplateId,
+  setGlobalVars,
+}: AppSharedLookupSetters) => {
+  const inFlightRef = React.useRef<AppSharedLookupRequest | null>(null);
+  const activeSessionIdentityRef = React.useRef(sessionIdentity);
+  activeSessionIdentityRef.current = sessionIdentity;
+
+  useEffect(() => () => {
+    const request = inFlightRef.current;
+    if (request?.sessionIdentity === sessionIdentity) {
+      request.controller.abort();
+      inFlightRef.current = null;
+    }
+  }, [sessionIdentity]);
+
+  return useCallback(() => {
+    if (!sessionIdentity) return Promise.resolve();
+
+    const currentRequest = inFlightRef.current;
+    if (currentRequest?.sessionIdentity === sessionIdentity) return currentRequest.promise;
+    if (currentRequest) {
+      currentRequest.controller.abort();
+      inFlightRef.current = null;
+    }
+
+    const controller = new AbortController();
+    const request: AppSharedLookupRequest = {
+      sessionIdentity,
+      controller,
+      promise: Promise.resolve(),
+    };
+    const isCurrentRequest = () => (
+      inFlightRef.current === request
+      && activeSessionIdentityRef.current === sessionIdentity
+      && !controller.signal.aborted
+    );
+
+    const runRequest = async () => {
+      try {
+        const headers = authHeaders();
+        const init = { headers, signal: controller.signal };
+        const [scriptsRes, usersRes, templatesRes, varsRes] = await Promise.all([
+          fetch('/api/scripts', init),
+          fetch('/api/users', init),
+          fetch('/api/config-templates?page=1&page_size=200&sort=updated', init),
+          fetch('/api/vars', init),
+        ]);
+
+        if (!isCurrentRequest()) return;
+        if (usersRes.status === 401) {
+          window.dispatchEvent(new Event('netops:auth-expired'));
+          return;
+        }
+        if (scriptsRes.ok) {
+          const scripts = await scriptsRes.json();
+          if (!isCurrentRequest()) return;
+          setScripts(scripts);
+        }
+        if (usersRes.ok) {
+          const users = await usersRes.json();
+          if (!isCurrentRequest()) return;
+          setUsers(users);
+        }
+        if (templatesRes.ok) {
+          const templatePayload = await templatesRes.json();
+          if (!isCurrentRequest()) return;
+          const templates: ConfigTemplate[] = Array.isArray(templatePayload)
+            ? templatePayload
+            : (templatePayload.items || []);
+          setConfigTemplates(templates);
+          setSelectedTemplateId((current) => current || templates[0]?.id || '');
+        }
+        if (varsRes.ok) {
+          const vars = await varsRes.json();
+          if (!isCurrentRequest()) return;
+          setGlobalVars(vars);
+        }
+      } catch (error) {
+        if (isCurrentRequest() && !(error instanceof DOMException && error.name === 'AbortError')) {
+          console.error('Failed to fetch shared lookups:', error);
+        }
+      }
+    };
+
+    request.promise = runRequest().finally(() => {
+      if (inFlightRef.current === request) inFlightRef.current = null;
+    });
+    inFlightRef.current = request;
+    return request.promise;
+  }, [sessionIdentity, setScripts, setUsers, setConfigTemplates, setSelectedTemplateId, setGlobalVars]);
+};
+
+interface AppSharedDataRefreshLifecycleArgs {
+  isAuthenticated: boolean;
+  pathname: string;
+  activeTab: string;
+  inventorySubPage: string;
+  autoRefreshEnabled: boolean;
+  fetchSharedLookups: () => Promise<void>;
+  fetchHotData: () => Promise<void>;
+  fetchDevicesData: () => Promise<void>;
+  setIsLoading: React.Dispatch<React.SetStateAction<boolean>>;
+}
+
+export const useAppSharedDataRefreshLifecycle = ({
+  isAuthenticated,
+  pathname,
+  activeTab,
+  inventorySubPage,
+  autoRefreshEnabled,
+  fetchSharedLookups,
+  fetchHotData,
+  fetchDevicesData,
+  setIsLoading,
+}: AppSharedDataRefreshLifecycleArgs) => {
+  const skipNextRouteRefreshRef = React.useRef(false);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      skipNextRouteRefreshRef.current = false;
+      setIsLoading(false);
+      return;
+    }
+
+    // The initial-load effect and route-change effect run together on the
+    // first authenticated render. Let the initial load own that refresh.
+    skipNextRouteRefreshRef.current = true;
+    setIsLoading(true);
+    const shouldFetchSharedDevices = activeTab !== 'dashboard'
+      && !(activeTab === 'inventory' && inventorySubPage === 'devices');
+    const sharedDevicesLoad = shouldFetchSharedDevices
+      ? fetchDevicesData()
+      : Promise.resolve();
+    Promise.all([fetchSharedLookups(), fetchHotData(), sharedDevicesLoad])
+      .finally(() => setIsLoading(false));
+
+    let hotInterval: ReturnType<typeof setInterval> | undefined;
+    let lookupsInterval: ReturnType<typeof setInterval> | undefined;
+    let devicesInterval: ReturnType<typeof setInterval> | undefined;
+
+    if (autoRefreshEnabled) {
+      hotInterval = setInterval(fetchHotData, 30000);
+      lookupsInterval = setInterval(fetchSharedLookups, 120000);
+      if (activeTab !== 'network-monitoring'
+        && activeTab !== 'dashboard'
+        && !(activeTab === 'inventory' && inventorySubPage === 'devices')) {
+        devicesInterval = setInterval(fetchDevicesData, 15000);
+      }
+    }
+
+    return () => {
+      if (hotInterval) clearInterval(hotInterval);
+      if (lookupsInterval) clearInterval(lookupsInterval);
+      if (devicesInterval) clearInterval(devicesInterval);
+    };
+  }, [isAuthenticated, fetchSharedLookups, fetchHotData, fetchDevicesData, activeTab, inventorySubPage, autoRefreshEnabled, setIsLoading]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    if (skipNextRouteRefreshRef.current) {
+      skipNextRouteRefreshRef.current = false;
+      return;
+    }
+    fetchSharedLookups();
+    fetchHotData();
+    if (activeTab !== 'network-monitoring'
+      && activeTab !== 'dashboard'
+      && !(activeTab === 'inventory' && inventorySubPage === 'devices')) {
+      fetchDevicesData();
+    }
+  }, [isAuthenticated, pathname, fetchSharedLookups, fetchHotData, fetchDevicesData, activeTab, inventorySubPage]);
+};
+
 
 // Sparkline imported from ./components/Sparkline
 
@@ -708,7 +914,6 @@ const App: React.FC = () => {
   const [dashBannerCollapsed, setDashBannerCollapsed] = useState(false);
   const [dashLastRefresh, setDashLastRefresh] = useState<Date>(new Date());
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
-  const skipNextRouteRefreshRef = React.useRef(false);
   const [isLoading, setIsLoading] = useState(true);
   const currentUserRecord = users.find(u => u.username === currentUser.username);
   const currentUserLastLogin = currentUserRecord?.lastLogin || 'Never';
@@ -822,36 +1027,16 @@ const App: React.FC = () => {
    * which amplified backend load proportional to the user count, script
    * count and topology link count.
    */
-  const fetchSharedLookups = useCallback(async () => {
-    try {
-      const headers = authHeaders();
-      const [scriptsRes, usersRes, templatesRes, varsRes] = await Promise.all([
-        fetch('/api/scripts', { headers }),
-        fetch('/api/users', { headers }),
-        fetch('/api/config-templates?page=1&page_size=200&sort=updated', { headers }),
-        fetch('/api/vars', { headers })
-      ]);
-
-      if (usersRes.status === 401) {
-        window.dispatchEvent(new Event('netops:auth-expired'));
-      }
-      if (scriptsRes.ok) setScripts(await scriptsRes.json());
-      if (usersRes.ok) setUsers(await usersRes.json());
-      if (templatesRes.ok) {
-        const templatePayload = await templatesRes.json();
-        const tpls: ConfigTemplate[] = Array.isArray(templatePayload)
-          ? templatePayload
-          : (templatePayload.items || []);
-        setConfigTemplates(tpls);
-        if (tpls.length > 0 && !selectedTemplateId) {
-          setSelectedTemplateId(tpls[0].id);
-        }
-      }
-      if (varsRes.ok) setGlobalVars(await varsRes.json());
-    } catch (error) {
-      console.error('Failed to fetch shared lookups:', error);
-    }
-  }, [selectedTemplateId]);
+  const fetchSharedLookups = useAppSharedLookups({
+    sessionIdentity: isAuthenticated
+      ? `${currentUser.id || currentUser.username}:${fingerprintSessionToken(localStorage.getItem('netops_token') || '')}`
+      : '',
+    setScripts,
+    setUsers,
+    setConfigTemplates,
+    setSelectedTemplateId,
+    setGlobalVars,
+  });
 
   /**
    * Fetch only the data that genuinely changes often (recent jobs, upcoming
@@ -904,77 +1089,17 @@ const App: React.FC = () => {
     });
   };
 
-
-
-  useEffect(() => {
-    if (!isAuthenticated) {
-      skipNextRouteRefreshRef.current = false;
-      setIsLoading(false);
-      return;
-    }
-    // The initial-load effect and the route-change effect run together on the
-    // first authenticated render. Let the initial load own that refresh so the
-    // same lookup/hot/device requests are not issued twice.
-    skipNextRouteRefreshRef.current = true;
-    setIsLoading(true);
-    // Initial load: lookups (rarely change) + hot data (recent activity).
-    // The dashboard owns its lightweight summary request, while the inventory
-    // devices page owns its paginated query. Neither needs the shared detail list.
-    const shouldFetchSharedDevices = activeTab !== 'dashboard'
-      && !(activeTab === 'inventory' && inventorySubPage === 'devices');
-    const sharedDevicesLoad = shouldFetchSharedDevices
-      ? fetchDevicesData()
-      : Promise.resolve();
-    Promise.all([fetchSharedLookups(), fetchHotData(), sharedDevicesLoad])
-      .finally(() => setIsLoading(false));
-
-    let hotInterval: any;
-    let lookupsInterval: any;
-    let devicesInterval: any;
-
-    if (autoRefreshEnabled) {
-      // Recent activity / upcoming tasks — light, refresh frequently.
-      hotInterval = setInterval(fetchHotData, 30000);
-      // Heavy lookup tables (users / scripts / templates / vars / topology
-      // links) — slow-changing, refresh on a long cadence. Page-level
-      // forms still trigger their own fetches when they need fresh data.
-      lookupsInterval = setInterval(fetchSharedLookups, 120000);
-      // Network monitoring owns its own server-side paginated device list and
-      // telemetry polling. Refreshing the shared inventory here only causes
-      // the left-hand list and its site fallback to re-render, without adding
-      // any data to the monitoring view. Keep the shared poll for the pages
-      // that still consume the global inventory snapshot.
-      if (activeTab !== 'network-monitoring'
-        && activeTab !== 'dashboard'
-        && !(activeTab === 'inventory' && inventorySubPage === 'devices')) {
-        devicesInterval = setInterval(fetchDevicesData, 15000);
-      }
-    }
-
-    return () => {
-      if (hotInterval) clearInterval(hotInterval);
-      if (lookupsInterval) clearInterval(lookupsInterval);
-      if (devicesInterval) clearInterval(devicesInterval);
-    };
-  }, [isAuthenticated, fetchSharedLookups, fetchHotData, fetchDevicesData, activeTab, inventorySubPage, autoRefreshEnabled]);
-
-  // Force refresh when switching between submenus so returning pages always
-  // show latest data. Only refresh shared lookups on explicit route changes
-  // (not on each polling tick) to avoid the prior amplification.
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    if (skipNextRouteRefreshRef.current) {
-      skipNextRouteRefreshRef.current = false;
-      return;
-    }
-    fetchSharedLookups();
-    fetchHotData();
-    if (activeTab !== 'network-monitoring'
-      && activeTab !== 'dashboard'
-      && !(activeTab === 'inventory' && inventorySubPage === 'devices')) {
-      fetchDevicesData();
-    }
-  }, [isAuthenticated, location.pathname, fetchSharedLookups, fetchHotData, fetchDevicesData, activeTab, inventorySubPage]);
+  useAppSharedDataRefreshLifecycle({
+    isAuthenticated,
+    pathname: location.pathname,
+    activeTab,
+    inventorySubPage,
+    autoRefreshEnabled,
+    fetchSharedLookups,
+    fetchHotData,
+    fetchDevicesData,
+    setIsLoading,
+  });
 
   // 合规趋势：基于过去N天任务执行成功率
   const complianceTrend = useMemo(() => {

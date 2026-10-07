@@ -43,6 +43,56 @@ interface MonitoringCenterProps {
   isAuthenticated?: boolean;
 }
 
+export const MonitoringOverviewStatus: React.FC<{
+  hasData: boolean;
+  loading: boolean;
+  error: { status: number | null; message: string; permissionDenied: boolean } | null;
+  updatedAt: Date | null;
+  language: 'zh' | 'en';
+  onRetry: () => void;
+}> = ({ hasData, loading, error, updatedAt, language, onRetry }) => {
+  if (!error && (!loading || hasData)) return null;
+  const zh = language === 'zh';
+
+  return (
+    <div
+      role={error ? 'alert' : 'status'}
+      className={`mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-sm ${
+        error?.permissionDenied
+          ? 'border-amber-300/40 bg-amber-400/10 text-amber-900 dark:text-amber-100'
+          : error
+            ? 'border-rose-300/30 bg-rose-400/10 text-rose-900 dark:text-rose-100'
+            : 'border-slate-200 bg-white/80 text-slate-600 dark:border-zinc-700 dark:bg-zinc-900/70 dark:text-zinc-300'
+      }`}
+    >
+      <div className="flex min-w-0 items-start gap-2.5">
+        {error ? <AlertTriangle size={16} className="mt-0.5 shrink-0" /> : <RefreshCw size={15} className="mt-0.5 shrink-0 animate-spin" />}
+        <div>
+          <p className="font-semibold">
+            {error?.message || (zh ? '正在加载监控概览…' : 'Loading monitoring overview…')}
+          </p>
+          {error && updatedAt && (
+            <p className="mt-1 text-xs opacity-80">
+              {zh ? '当前保留的数据更新时间：' : 'Showing data last updated: '}{updatedAt.toLocaleString(zh ? 'zh-CN' : 'en-US')}
+            </p>
+          )}
+        </div>
+      </div>
+      {error && (
+        <button
+          type="button"
+          onClick={onRetry}
+          disabled={loading}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-current/20 px-3 py-1.5 text-xs font-semibold transition hover:bg-black/5 disabled:cursor-wait disabled:opacity-60"
+        >
+          <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+          {loading ? (zh ? '重试中…' : 'Retrying…') : (zh ? '重试' : 'Retry')}
+        </button>
+      )}
+    </div>
+  );
+};
+
 /* ─── sub-components ─── */
 
 const StatusCard: React.FC<{
@@ -408,6 +458,9 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
   // Get fetch functions from the hook (they use store internally)
   const {
     fetchMonitoringOverview,
+    monitorOverviewLoading,
+    monitorOverviewError,
+    monitorOverviewUpdatedAt,
     fetchMonitoringHealthHistory,
     fetchMonitoringAlerts,
     fetchMonitoringIncidentDetail,
@@ -1172,6 +1225,14 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
       />
 
       <div className="ops-page-scroll flex-1 overflow-auto p-4 md:p-6">
+      <MonitoringOverviewStatus
+        hasData={Boolean(monitorOverview)}
+        loading={monitorOverviewLoading}
+        error={monitorOverviewError}
+        updatedAt={monitorOverviewUpdatedAt}
+        language={language}
+        onRetry={() => { void fetchMonitoringOverview(true); }}
+      />
       <div className="monitoring-cockpit-frame space-y-4 pb-2">
 
       {/* CRITICAL BANNER */}
@@ -1197,6 +1258,7 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
       )}
 
       {/* SECTION 1: EXPLICIT NOC DIMENSIONS */}
+      {monitorOverview ? (
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
         <StatusCard
           label={language === 'zh' ? '设备连通可用性' : 'Availability'}
@@ -1232,6 +1294,17 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
           icon={<Bell size={14} />}
         />
       </div>
+      ) : (
+        <div className="rounded-2xl border border-dashed border-gray-200 bg-white/70 p-6 text-center text-sm text-gray-500 dark:border-zinc-700 dark:bg-zinc-900/50 dark:text-zinc-400">
+          {monitorOverviewLoading
+            ? (language === 'zh' ? '监控概览加载中，当前指标暂不可用。' : 'Loading monitoring overview; metrics are not available yet.')
+            : monitorOverviewError?.permissionDenied
+              ? (language === 'zh' ? '当前账号无权查看监控概览。' : 'This account cannot view the monitoring overview.')
+              : monitorOverviewError
+                ? (language === 'zh' ? '监控概览暂不可用，请重试。' : 'The monitoring overview is unavailable. Retry to check again.')
+                : (language === 'zh' ? '暂无监控概览数据。' : 'No monitoring overview data is available.')}
+        </div>
+      )}
 
       {/* ACTIVE INCIDENTS: grouped operator-facing work queue */}
       <section className="bg-white dark:bg-zinc-900/90 rounded-2xl border border-gray-200/70 dark:border-zinc-800/80 p-5 shadow-2xs space-y-4">
@@ -1333,12 +1406,12 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
               </h3>
             </div>
           </div>
-          <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${platformHealth?.collectors?.status === 'degraded' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>{platformHealth?.collectors?.status === 'degraded' ? (language === 'zh' ? '存在采集器异常' : 'Collector degraded') : (language === 'zh' ? '平台正常' : 'Platform healthy')}</span>
+          <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${!monitorOverview ? 'bg-slate-100 text-slate-500' : platformHealth?.collectors?.status === 'degraded' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>{!monitorOverview ? (language === 'zh' ? '概览不可用' : 'Overview unavailable') : platformHealth?.collectors?.status === 'degraded' ? (language === 'zh' ? '存在采集器异常' : 'Collector degraded') : (language === 'zh' ? '平台正常' : 'Platform healthy')}</span>
         </div>
         <div className="mt-3 grid grid-cols-2 gap-2.5 md:grid-cols-4">
-          <div className="rounded-xl bg-gray-50/80 dark:bg-zinc-800/50 p-3 border border-gray-100 dark:border-zinc-800/60"><p className="text-[11px] text-gray-400 dark:text-zinc-500 font-medium">{language === 'zh' ? '核心数据库' : 'Database'}</p><p className="mt-1 text-sm font-bold text-emerald-600">{language === 'zh' ? '正常' : 'Healthy'}</p></div>
-          <div className="rounded-xl bg-gray-50/80 dark:bg-zinc-800/50 p-3 border border-gray-100 dark:border-zinc-800/60"><p className="text-[11px] text-gray-400 dark:text-zinc-500 font-medium">{language === 'zh' ? '采集器状态' : 'Collectors'}</p><p className="mt-1 text-sm font-bold text-gray-800 dark:text-zinc-100 font-mono">{platformHealth?.collectors?.total ?? '--'} <span className="text-[10px] font-normal text-gray-400">/ {platformHealth?.collectors?.failed ?? 0} {language === 'zh' ? '异常' : 'failed'}</span></p></div>
-          <div className="rounded-xl bg-gray-50/80 dark:bg-zinc-800/50 p-3 border border-gray-100 dark:border-zinc-800/60"><p className="text-[11px] text-gray-400 dark:text-zinc-500 font-medium">{language === 'zh' ? '采集异常设备' : 'Collection anomalies'}</p><p className="mt-1 text-sm font-bold text-amber-600 font-mono">{collectionAnomalyDevices}</p></div>
+          <div className="rounded-xl bg-gray-50/80 dark:bg-zinc-800/50 p-3 border border-gray-100 dark:border-zinc-800/60"><p className="text-[11px] text-gray-400 dark:text-zinc-500 font-medium">{language === 'zh' ? '核心数据库' : 'Database'}</p><p className={`mt-1 text-sm font-bold ${monitorOverview ? 'text-emerald-600' : 'text-gray-400'}`}>{monitorOverview ? (language === 'zh' ? '正常' : 'Healthy') : '--'}</p></div>
+          <div className="rounded-xl bg-gray-50/80 dark:bg-zinc-800/50 p-3 border border-gray-100 dark:border-zinc-800/60"><p className="text-[11px] text-gray-400 dark:text-zinc-500 font-medium">{language === 'zh' ? '采集器状态' : 'Collectors'}</p><p className="mt-1 text-sm font-bold text-gray-800 dark:text-zinc-100 font-mono">{platformHealth?.collectors?.total ?? '--'} <span className="text-[10px] font-normal text-gray-400">/ {platformHealth?.collectors?.failed ?? (monitorOverview ? 0 : '--')} {language === 'zh' ? '异常' : 'failed'}</span></p></div>
+          <div className="rounded-xl bg-gray-50/80 dark:bg-zinc-800/50 p-3 border border-gray-100 dark:border-zinc-800/60"><p className="text-[11px] text-gray-400 dark:text-zinc-500 font-medium">{language === 'zh' ? '采集异常设备' : 'Collection anomalies'}</p><p className="mt-1 text-sm font-bold text-amber-600 font-mono">{monitorOverview ? collectionAnomalyDevices : '--'}</p></div>
           <div className="rounded-xl bg-gray-50/80 dark:bg-zinc-800/50 p-3 border border-gray-100 dark:border-zinc-800/60"><p className="text-[11px] text-gray-400 dark:text-zinc-500 font-medium">{language === 'zh' ? '最近采集时间' : 'Last collection'}</p><p className="mt-1 truncate text-xs font-bold text-gray-800 dark:text-zinc-100 font-mono">{lastCollectionAt ? formatTs(lastCollectionAt, true) : '--'}</p></div>
         </div>
         <div className="mt-2 grid grid-cols-2 gap-2.5 md:grid-cols-4">
