@@ -989,7 +989,6 @@ def build_overview_dashboard():
     sel = f'{NETWORK_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
     target_sel = f'{NETWORK_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
     inventory_sel = f'{HARDWARE_INVENTORY_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
-    hardware_target_sel = f'{target_sel},asset_id!=""'
     target_site_sel = f'{NETWORK_JOB},site_name!="",site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
     in_rate = counter_rate_expr("ifHCInOctets", "ifInOctets", sel)
     out_rate = counter_rate_expr("ifHCOutOctets", "ifOutOctets", sel)
@@ -1020,15 +1019,11 @@ def build_overview_dashboard():
     )
     mem_expr = hardware_metric("nexora_hw_memory_usage_percent")
     temperature_expr = hardware_metric("nexora_hw_temperature_celsius")
-    online_devices_expr = f'count(count by (instance) (up{{{target_sel}}} == 1))'
-
     def online_metric_device_count(metric_expr):
-        covered_devices = (
-            f'count(count by (asset_id) (({metric_expr}) '
-            f'and on(asset_id) (up{{{hardware_target_sel}}} == 1)))'
-        )
-        no_metric_fallback = f'(({online_devices_expr} > 0) * 0)'
-        return f'{covered_devices} or on() {no_metric_fallback}'
+        # Hardware inventory metrics come from LibreNMS' native projection.
+        # Their coverage must not depend on the legacy network_snmp exporter
+        # being online; absent samples should remain No Data, not zero.
+        return f'count(count by (asset_id) ({metric_expr}))'
 
     ap_online_expr = (
         f"sum((hwWlanCurOnlineApNum{{{sel}}} or hh3cDot11CurrOnlineAPNum{{{sel}}} or ruijieApcOnlineApNum{{{sel}}} or "

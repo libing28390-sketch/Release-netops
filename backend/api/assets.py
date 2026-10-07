@@ -771,26 +771,55 @@ def _safe_encrypt_snmp_community(community: str) -> str:
         ) from exc
 
 
+def _validate_snmp_credential_row(row, *, requested: str) -> str:
+    """Validate an SNMPv2/v3 vault profile without returning its secret."""
+    credential_type = str(row['credential_type'] or '').strip().lower()
+    if credential_type == 'snmpv2':
+        stored_community = str(row['snmp_community'] or '')
+        community = decrypt_credential(stored_community)
+        if community is None:
+            raise HTTPException(status_code=422, detail='SNMPv2 凭据无法解密，请检查加密密钥或重新保存凭据')
+        if not str(community).strip():
+            raise HTTPException(status_code=422, detail='SNMPv2 凭据未配置 Community')
+        return credential_type
+    if credential_type == 'snmpv3':
+        username = str(row['username'] or '').strip()
+        level = str(row['snmp_security_level'] or '').strip().lower()
+        if level not in {'noauthnopriv', 'authnopriv', 'authpriv'} or not username:
+            raise HTTPException(status_code=422, detail='SNMPv3 凭据缺少有效用户名或安全级别')
+        if level != 'noauthnopriv' and not (decrypt_credential(row['snmp_auth_password']) or '').strip():
+            raise HTTPException(status_code=422, detail='SNMPv3 凭据未配置认证密码')
+        if level == 'authpriv' and not (decrypt_credential(row['snmp_priv_password']) or '').strip():
+            raise HTTPException(status_code=422, detail='SNMPv3 凭据未配置加密密码')
+        auth_algorithm = str(row['snmp_auth_protocol'] or 'SHA').strip().upper()
+        if level != 'noauthnopriv' and auth_algorithm not in {
+            'MD5', 'SHA', 'SHA-224', 'SHA-256', 'SHA-384', 'SHA-512',
+        }:
+            raise HTTPException(status_code=422, detail='SNMPv3 认证算法不受 LibreNMS 支持')
+        privacy_algorithm = str(row['snmp_priv_protocol'] or 'AES').strip().upper()
+        if level == 'authpriv' and privacy_algorithm not in {'AES', 'DES'}:
+            raise HTTPException(status_code=422, detail='SNMPv3 加密算法不受 LibreNMS 添加设备 API 支持')
+        return credential_type
+    raise HTTPException(status_code=422, detail=f'SNMP凭据类型不受支持: {requested}')
+
+
 def _resolve_snmp_credential_id(conn, value: str | None) -> str:
-    """Validate and normalize an independent SNMP credential binding."""
+    """Validate and normalize an independent SNMPv2/v3 credential binding."""
     requested = str(value or '').strip()
     if not requested:
         return ''
     row = conn.execute(
-        '''SELECT id, credential_type, snmp_community
+        '''SELECT *
            FROM credentials WHERE id = ? OR credential_name = ?''',
         (requested, requested),
     ).fetchone()
     if not row:
         raise HTTPException(status_code=422, detail=f'SNMP凭据不存在: {requested}')
-    if str(row['credential_type'] or '').lower() != 'snmpv2':
-        raise HTTPException(status_code=422, detail='SNMP关联必须选择 SNMPv2 凭据')
-    if not (decrypt_credential(row['snmp_community']) or str(row['snmp_community'] or '').strip()):
-        raise HTTPException(status_code=422, detail='SNMP凭据未配置 Community')
+    _validate_snmp_credential_row(row, requested=requested)
     return str(row['id'])
 
 
-def _resolve_snmp_credential_binding(conn, body) -> None:
+def _resolve_snmp_credential_binding(conn, body) -> str:
     """Resolve the import-friendly SNMP credential name/id into its id.
 
     ``snmp_credential_id`` is the established API field and already accepts
@@ -807,25 +836,21 @@ def _resolve_snmp_credential_binding(conn, body) -> None:
     requested = requested_id or requested_name
     if not requested:
         body.snmp_credential_id = ''
-        return
+        return ''
     row = conn.execute(
-        '''SELECT id, credential_name, credential_type, snmp_community
+        '''SELECT *
            FROM credentials WHERE id = ? OR credential_name = ?''',
         (requested, requested),
     ).fetchone()
     if not row:
         raise HTTPException(status_code=422, detail=f'SNMP凭据不存在: {requested}')
-    if str(row['credential_type'] or '').lower() != 'snmpv2':
-        raise HTTPException(status_code=422, detail='SNMP关联必须选择 SNMPv2 凭据')
-    from core.crypto import decrypt_credential
-    dec_community = decrypt_credential(row['snmp_community']) or str(row['snmp_community'] or '').strip()
-    if not dec_community:
-        raise HTTPException(status_code=422, detail='SNMP凭据未配置 Community')
+    credential_type = _validate_snmp_credential_row(row, requested=requested)
     body.snmp_credential_id = str(row['id'])
     if hasattr(body, 'snmp_credential_name'):
         body.snmp_credential_name = str(row['credential_name'] or '')
-    if not getattr(body, 'snmp_community', None):
-        body.snmp_community = dec_community
+    if credential_type == 'snmpv2' and not getattr(body, 'snmp_community', None):
+        body.snmp_community = decrypt_credential(row['snmp_community']) or str(row['snmp_community'] or '').strip()
+    return credential_type
 
 
 def _create_device_local_credential(
@@ -2316,8 +2341,8 @@ def asset_tree(_user=require_role("Viewer")):
         conn.close()
 
 
-def _build_asset_import_template(snmpv2_credential_names: list[str]) -> bytes:
-    """Build the distributable asset workbook with this vault's SNMPv2 names."""
+def _build_asset_import_template(snmp_credential_names: list[str]) -> bytes:
+    """Build the distributable asset workbook with this vault's SNMP profiles."""
     from io import BytesIO
 
     import openpyxl
@@ -2335,7 +2360,13 @@ def _build_asset_import_template(snmpv2_credential_names: list[str]) -> bytes:
 
     workbook = openpyxl.load_workbook(template_path)
     network_sheet = workbook['网络设备']
-    credential_headers = {'SNMPv2凭据名称（选填）', 'SNMP凭据（推荐）'}
+    credential_headers = {
+        'SNMPv2凭据名称（选填）',
+        'SNMP凭据名称（选填）',
+        'SNMP凭据（推荐）',
+        'SNMP Credential Name (optional)',
+        'SNMPv2 Credential Name (optional)',
+    }
     credential_column = next(
         (
             cell.column
@@ -2346,6 +2377,7 @@ def _build_asset_import_template(snmpv2_credential_names: list[str]) -> bytes:
     )
     if credential_column is None:
         raise ValueError('SNMP credential column is missing from the asset template')
+    network_sheet.cell(row=1, column=credential_column, value='SNMP凭据名称（选填）')
 
     # The public workbook carries vendor-dependent dropdowns in named ranges.
     # Keep the API-distributed copy current even when an older static workbook
@@ -2403,16 +2435,16 @@ def _build_asset_import_template(snmpv2_credential_names: list[str]) -> bytes:
         ensure_platform_choice('Platform_Huawei', 'Huawei YunShan OS')
         ensure_platform_choice('Platform_All_Network', 'Huawei YunShan OS')
 
-    names = sorted({str(name).strip() for name in snmpv2_credential_names if str(name or '').strip()}, key=str.casefold)
-    helper_sheet_name = '_SNMPv2Credentials'
+    names = sorted({str(name).strip() for name in snmp_credential_names if str(name or '').strip()}, key=str.casefold)
+    helper_sheet_name = '_SNMPCredentials'
     if helper_sheet_name in workbook.sheetnames:
         del workbook[helper_sheet_name]
-    if 'SNMPv2CredentialNames' in workbook.defined_names:
-        del workbook.defined_names['SNMPv2CredentialNames']
+    if 'SNMPCredentialNames' in workbook.defined_names:
+        del workbook.defined_names['SNMPCredentialNames']
 
     if names:
         helper_sheet = workbook.create_sheet(helper_sheet_name)
-        helper_sheet['A1'] = 'SNMPv2 credential names'
+        helper_sheet['A1'] = 'SNMP credential profile names'
         for row_number, credential_name in enumerate(names, start=2):
             cell = helper_sheet.cell(row=row_number, column=1, value=credential_name)
             # Credential names are user-managed text; force text so a name
@@ -2420,21 +2452,21 @@ def _build_asset_import_template(snmpv2_credential_names: list[str]) -> bytes:
             cell.data_type = 's'
         helper_sheet.sheet_state = 'hidden'
         workbook.defined_names.add(DefinedName(
-            'SNMPv2CredentialNames',
+            'SNMPCredentialNames',
             attr_text=f"'{helper_sheet_name}'!$A$2:$A${len(names) + 1}",
         ))
 
         column_letter = openpyxl.utils.get_column_letter(credential_column)
         validation = DataValidation(
             type='list',
-            formula1='=SNMPv2CredentialNames',
+            formula1='=SNMPCredentialNames',
             allow_blank=True,
             errorStyle='stop',
         )
         validation.errorTitle = 'SNMP 凭据无效'
-        validation.error = '请选择凭据中心中已存在的 SNMPv2 凭据名称。'
-        validation.promptTitle = '选择 SNMPv2 凭据'
-        validation.prompt = '只列出凭据中心中现有的 SNMPv2 凭据；不使用凭据中心时可留空。'
+        validation.error = '请选择凭据中心中已存在且配置完整的 SNMPv2/v3 Profile。'
+        validation.promptTitle = '选择 SNMP Profile'
+        validation.prompt = '只列出凭据中心中配置完整的 SNMPv2/v3 Profile；不使用凭据中心时可留空。'
         validation.showErrorMessage = True
         validation.showInputMessage = True
         network_sheet.add_data_validation(validation)
@@ -2452,9 +2484,23 @@ def download_asset_import_template(_user=require_role('Operator')):
     try:
         rows = conn.execute(
             '''SELECT credential_name FROM credentials
-               WHERE LOWER(COALESCE(credential_type, '')) = 'snmpv2'
-                 AND credential_name IS NOT NULL
-                 AND NULLIF(BTRIM(COALESCE(snmp_community, '')), '') IS NOT NULL
+               WHERE credential_name IS NOT NULL
+                 AND (
+                      (LOWER(COALESCE(credential_type, '')) = 'snmpv2'
+                       AND NULLIF(BTRIM(COALESCE(snmp_community, '')), '') IS NOT NULL)
+                   OR (LOWER(COALESCE(credential_type, '')) = 'snmpv3'
+                       AND NULLIF(BTRIM(COALESCE(username, '')), '') IS NOT NULL
+                       AND LOWER(COALESCE(snmp_security_level, '')) IN ('noauthnopriv', 'authnopriv', 'authpriv')
+                       AND (LOWER(COALESCE(snmp_security_level, '')) = 'noauthnopriv'
+                            OR NULLIF(BTRIM(COALESCE(snmp_auth_password, '')), '') IS NOT NULL)
+                       AND (LOWER(COALESCE(snmp_security_level, '')) = 'noauthnopriv'
+                            OR UPPER(COALESCE(NULLIF(BTRIM(snmp_auth_protocol), ''), 'SHA'))
+                               IN ('MD5', 'SHA', 'SHA-224', 'SHA-256', 'SHA-384', 'SHA-512'))
+                       AND (LOWER(COALESCE(snmp_security_level, '')) <> 'authpriv'
+                            OR (NULLIF(BTRIM(COALESCE(snmp_priv_password, '')), '') IS NOT NULL
+                                AND UPPER(COALESCE(NULLIF(BTRIM(snmp_priv_protocol), ''), 'AES'))
+                                    IN ('AES', 'DES'))))
+                 )
                ORDER BY credential_name'''
         ).fetchall()
         credential_names = [str(row['credential_name'] or '').strip() for row in rows]
@@ -3344,6 +3390,7 @@ def import_assets(
         failed_items: list[dict] = []
         row_results: list[dict] = []
         pending_hostname_sync: list[dict] = []
+        pending_librenms_enrollment: list[dict] = []
 
         def _safe_import_error(exc: Exception) -> dict:
             detail = exc.detail if isinstance(exc, HTTPException) else None
@@ -3367,15 +3414,22 @@ def import_assets(
         def _import_one(body: AssetCreate, row_number: int) -> dict:
             imported_hostname = str(body.hostname or '').strip()
             if not imported_hostname:
-                raise HTTPException(status_code=422, detail={
-                    'code': 'ASSET_HOSTNAME_REQUIRED',
-                    'message': '导入资产必须填写主机名',
-                    'row': row_number,
-                    'field': 'hostname',
-                })
+                if body.asset_type == 'network_device' and str(body.management_ip or '').strip():
+                    # LibreNMS accepts an IP as the device hostname and polls
+                    # through it by default. Keeping the canonical management
+                    # IP here also makes enrollment independent of a guessed
+                    # hostname before LibreNMS performs native discovery.
+                    imported_hostname = str(body.management_ip).strip()
+                else:
+                    raise HTTPException(status_code=422, detail={
+                        'code': 'ASSET_HOSTNAME_REQUIRED',
+                        'message': '请填写主机名；网络设备也可留空并填写有效管理 IP',
+                        'row': row_number,
+                        'field': 'hostname',
+                    })
             body.hostname = imported_hostname
             _pre_resolve_credential(conn, body)
-            _resolve_snmp_credential_binding(conn, body)
+            snmp_profile_type = _resolve_snmp_credential_binding(conn, body)
             requested_tag_ids = _resolve_asset_tag_ids(conn, body)
             requested_site = body.site_id
             try:
@@ -3424,6 +3478,7 @@ def import_assets(
             duplicates = _find_asset_identity_duplicates(conn, body.model_dump())
             if duplicates:
                 duplicate_device_id = ''
+                duplicate_enrollment_status: dict[str, str] | None = None
                 if body.asset_type == 'network_device':
                     existing_asset_ids = {str(item['existing_id']) for item in duplicates}
                     if len(existing_asset_ids) == 1:
@@ -3431,22 +3486,68 @@ def import_assets(
                         existing_network_device = conn.execute(
                             '''SELECT pa.id AS asset_id, pa.asset_tag, pa.hostname,
                                       COALESCE(NULLIF(pa.management_ip, ''), NULLIF(d.ip_address, '')) AS ip,
+                                      COALESCE(NULLIF(pa.snmp_credential_id, ''), NULLIF(d.snmp_credential_id, ''), '') AS snmp_credential_id,
+                                      COALESCE(NULLIF(pa.snmp_port, 0), NULLIF(d.snmp_port, 0), 161) AS snmp_port,
+                                      pa.snmp_community,
+                                      COALESCE(NULLIF(profile.credential_type, ''), '') AS snmp_profile_type,
                                       d.id AS device_id
                                FROM physical_assets pa
                                JOIN devices d ON d.asset_id = pa.id
+                               LEFT JOIN credentials profile
+                                 ON profile.id = COALESCE(NULLIF(pa.snmp_credential_id, ''), NULLIF(d.snmp_credential_id, ''))
                                WHERE pa.id = ? AND pa.asset_type = 'network_device'
                                LIMIT 1''',
                             (existing_asset_id,),
                         ).fetchone()
                         if existing_network_device:
                             duplicate_device_id = str(existing_network_device['device_id'])
-                            pending_hostname_sync.append({
-                                'device_id': duplicate_device_id,
-                                'row': row_number,
-                                'asset_tag': existing_network_device['asset_tag'] or body.asset_tag or '',
-                                'hostname': existing_network_device['hostname'] or body.hostname or '',
-                                'ip': existing_network_device['ip'] or body.management_ip or '',
-                            })
+                            requested_credential_id = str(getattr(body, 'snmp_credential_id', '') or '')
+                            existing_credential_id = str(existing_network_device['snmp_credential_id'] or '')
+                            same_profile = requested_credential_id == existing_credential_id
+                            if not requested_credential_id and not existing_credential_id:
+                                stored_community = str(existing_network_device['snmp_community'] or '')
+                                existing_community = decrypt_credential(stored_community)
+                                requested_community = str(getattr(body, 'snmp_community', '') or '')
+                                same_profile = (
+                                    existing_community is not None
+                                    and str(existing_community) == requested_community
+                                )
+
+                            try:
+                                requested_ip = ipaddress.ip_address(str(body.management_ip or '').strip()).compressed.casefold()
+                            except ValueError:
+                                requested_ip = ''
+                            try:
+                                existing_ip = ipaddress.ip_address(str(existing_network_device['ip'] or '').strip()).compressed.casefold()
+                            except ValueError:
+                                existing_ip = ''
+                            same_enrollment_target = (
+                                bool(requested_ip)
+                                and requested_ip == existing_ip
+                                and int(body.snmp_port or 161) == int(existing_network_device['snmp_port'] or 161)
+                                and same_profile
+                            )
+                            if same_enrollment_target:
+                                pending_librenms_enrollment.append({
+                                    'device_id': duplicate_device_id,
+                                    'row': row_number,
+                                    'asset_tag': existing_network_device['asset_tag'] or body.asset_tag or '',
+                                    'hostname': existing_network_device['hostname'] or body.hostname or '',
+                                    'ip': existing_network_device['ip'] or body.management_ip or '',
+                                })
+                            else:
+                                duplicate_enrollment_status = {
+                                    'status': 'skipped_duplicate_profile_mismatch',
+                                    'message': '该行匹配到已有资产，导入规则不会修改其管理 IP、端口或 SNMP Profile；请在资产管理中编辑原资产后应用所选 Profile。',
+                                }
+                            if str(existing_network_device['snmp_profile_type'] or '').casefold() != 'snmpv3':
+                                pending_hostname_sync.append({
+                                    'device_id': duplicate_device_id,
+                                    'row': row_number,
+                                    'asset_tag': existing_network_device['asset_tag'] or body.asset_tag or '',
+                                    'hostname': existing_network_device['hostname'] or body.hostname or '',
+                                    'ip': existing_network_device['ip'] or body.management_ip or '',
+                                })
                 skipped_item = {
                     'row': row_number,
                     'asset_tag': body.asset_tag,
@@ -3462,6 +3563,8 @@ def import_assets(
                 }
                 if duplicate_device_id:
                     skipped_item['device_id'] = duplicate_device_id
+                if duplicate_enrollment_status:
+                    skipped_item['librenms_enrollment'] = duplicate_enrollment_status
                 skipped_items.append(skipped_item)
                 return {'status': 'skipped', **skipped_item}
 
@@ -3532,13 +3635,21 @@ def import_assets(
                 device_id = _create_linked_device(conn, asset_id, body, _user)
                 _sync_asset_tags(conn, asset_id, requested_tag_ids)
                 if body.asset_type == 'network_device' and device_id:
-                    pending_hostname_sync.append({
+                    pending_librenms_enrollment.append({
                         'device_id': device_id,
                         'row': row_number,
                         'asset_tag': body.asset_tag or '',
                         'hostname': body.hostname or '',
                         'ip': body.management_ip or '',
                     })
+                    if snmp_profile_type != 'snmpv3':
+                        pending_hostname_sync.append({
+                            'device_id': device_id,
+                            'row': row_number,
+                            'asset_tag': body.asset_tag or '',
+                            'hostname': body.hostname or '',
+                            'ip': body.management_ip or '',
+                        })
                 if legacy_production:
                     conn.execute(
                         "UPDATE devices SET lifecycle_status = 'production', rotation_status = 'exempt', is_managed = 0 WHERE id = ?",
@@ -3621,6 +3732,81 @@ def import_assets(
                 conn.rollback()
                 raise
         conn.commit()
+
+        librenms_enrollment_results: list[dict] = []
+        if pending_librenms_enrollment:
+            import asyncio as _aio
+            unique_enrollment_targets: dict[str, dict] = {}
+            for item in pending_librenms_enrollment:
+                grouped = unique_enrollment_targets.setdefault(
+                    item['device_id'],
+                    {**item, 'rows': []},
+                )
+                if item.get('row') not in grouped['rows']:
+                    grouped['rows'].append(item.get('row'))
+            pending_librenms_enrollment = list(unique_enrollment_targets.values())
+
+            async def _enroll_imported_device(item: dict, semaphore) -> dict:
+                from services.librenms_enrollment_service import enroll_imported_network_device
+
+                try:
+                    async with semaphore:
+                        result = await enroll_imported_network_device(item['device_id'], actor=_user)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        'LibreNMS enrollment failed for imported device %s (%s)',
+                        item['device_id'],
+                        type(exc).__name__,
+                    )
+                    result = {
+                        'status': 'api_failed',
+                        'message': 'LibreNMS 纳管暂时失败；资产已保存，可重新导入该行重试',
+                    }
+                return {
+                    **item,
+                    'status': str(result.get('status') or 'api_failed'),
+                    'message': str(result.get('message') or ''),
+                    'profile_applied': bool(result.get('profile_applied')),
+                }
+
+            async def _enroll_all_imported_devices() -> list:
+                semaphore = _aio.Semaphore(min(5, len(pending_librenms_enrollment)))
+                return await _aio.gather(
+                    *(_enroll_imported_device(item, semaphore) for item in pending_librenms_enrollment),
+                    return_exceptions=True,
+                )
+
+            enrollment_outputs = _aio.run(_enroll_all_imported_devices())
+            for item, output in zip(pending_librenms_enrollment, enrollment_outputs):
+                if isinstance(output, BaseException):
+                    logger.warning(
+                        'LibreNMS enrollment task failed for imported device %s (%s)',
+                        item['device_id'],
+                        type(output).__name__,
+                    )
+                    librenms_enrollment_results.append({
+                        **item,
+                        'status': 'api_failed',
+                        'message': 'LibreNMS 纳管暂时失败；资产已保存，可重新导入该行重试',
+                        'profile_applied': False,
+                    })
+                else:
+                    librenms_enrollment_results.append(output)
+
+            enrollment_by_row: dict[int, dict] = {}
+            for enrollment_result in librenms_enrollment_results:
+                covered_rows = enrollment_result.get('rows') or [enrollment_result.get('row')]
+                for covered_row in covered_rows:
+                    if covered_row is not None:
+                        enrollment_by_row[int(covered_row)] = enrollment_result
+            for row_result in row_results:
+                enrollment_result = enrollment_by_row.get(int(row_result.get('row') or 0))
+                if enrollment_result:
+                    row_result['librenms_enrollment'] = {
+                        'status': enrollment_result['status'],
+                        'message': enrollment_result['message'],
+                        'profile_applied': enrollment_result['profile_applied'],
+                    }
 
         async def _sync_imported_hostname(item: dict, semaphore) -> dict:
             result = {
@@ -3766,6 +3952,39 @@ def import_assets(
         hostname_sync_failures = [
             item for item in hostname_sync_results if item['status'] == 'failed'
         ]
+        enrollment_success_statuses = {
+            'added_and_bound',
+            'profile_updated_and_bound',
+            'found_after_retry_and_bound',
+            'profile_updated_after_retry_and_bound',
+        }
+        enrollment_failures = [
+            item for item in librenms_enrollment_results
+            if item['status'] not in enrollment_success_statuses
+        ]
+        librenms_enrollment_items: list[dict] = []
+        for row_result in row_results:
+            row_number = int(row_result.get('row') or 0)
+            if not row_number or str(getattr(items[row_number - 1], 'asset_type', '') or '') != 'network_device':
+                continue
+            enrollment_result = row_result.get('librenms_enrollment') or {}
+            row_status = str(row_result.get('status') or '')
+            default_enrollment_status = (
+                'not_attempted_import_failed' if row_status == 'failed'
+                else 'skipped' if row_status == 'skipped'
+                else 'not_attempted'
+            )
+            librenms_enrollment_items.append({
+                'row': row_number,
+                'device_id': row_result.get('device_id') or '',
+                'asset_tag': row_result.get('asset_tag') or '',
+                'hostname': row_result.get('hostname') or '',
+                'ip': str(getattr(items[row_number - 1], 'management_ip', '') or ''),
+                'asset_status': row_status,
+                'status': enrollment_result.get('status') or default_enrollment_status,
+                'message': enrollment_result.get('message') or row_result.get('message') or '',
+                'profile_applied': bool(enrollment_result.get('profile_applied')),
+            })
         response = {
             'created': created,
             'skipped': skipped,
@@ -3775,6 +3994,13 @@ def import_assets(
                 'succeeded': len(hostname_sync_results) - len(hostname_sync_failures),
                 'failed': len(hostname_sync_failures),
                 'failed_items': hostname_sync_failures,
+            },
+            'librenms_enrollment': {
+                'total': len(librenms_enrollment_results),
+                'succeeded': len(librenms_enrollment_results) - len(enrollment_failures),
+                'failed': len(enrollment_failures),
+                'failed_items': enrollment_failures,
+                'items': librenms_enrollment_items,
             },
         }
         if detailed or atomic:

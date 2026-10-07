@@ -21,6 +21,30 @@ from core.config import settings
 
 _MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 _HEALTH_TYPES = {"processor", "mempool", "storage"}
+_ADD_DEVICE_SNMP_FIELDS = {
+    "snmpver",
+    "community",
+    "authlevel",
+    "authname",
+    "authpass",
+    "authalgo",
+    "cryptopass",
+    "cryptoalgo",
+}
+_ADD_DEVICE_RESPONSE_FIELDS = {
+    "device_id",
+    "hostname",
+    "display",
+    "os",
+    "version",
+    "hardware",
+    "sysObjectID",
+    "status",
+    "disabled",
+    "ignore",
+    "last_discovered",
+    "last_polled",
+}
 
 
 class LibreNMSAPIError(RuntimeError):
@@ -202,7 +226,14 @@ class LibreNMSRuntimeClient:
             )
         return self._http
 
-    async def _get_json(self, resource_path: str, *, params: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    async def _request_json_payload(
+        self,
+        method: str,
+        resource_path: str,
+        *,
+        params: Mapping[str, Any] | None = None,
+        json_payload: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any] | list[dict[str, Any]]:
         if not resource_path.startswith("/api/v0/") or ".." in resource_path.split("/"):
             raise LibreNMSAPIError("invalid_api_path")
 
@@ -210,9 +241,10 @@ class LibreNMSRuntimeClient:
         url = f"{self.base_url}{resource_path}"
         try:
             async with http.stream(
-                "GET",
+                method,
                 url,
                 params=dict(params or {}),
+                json=dict(json_payload) if json_payload is not None else None,
                 headers={"Authorization": f"Bearer {self._token}", "Accept": "application/json"},
             ) as response:
                 if response.status_code == 401:
@@ -238,11 +270,221 @@ class LibreNMSRuntimeClient:
             payload = json.loads(body)
         except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
             raise LibreNMSAPIError("invalid_json") from exc
+        if isinstance(payload, dict):
+            if str(payload.get("status") or "").casefold() == "error":
+                raise LibreNMSAPIError("upstream_error")
+            return payload
+        if isinstance(payload, list) and all(isinstance(row, Mapping) for row in payload):
+            return [dict(row) for row in payload]
+        raise LibreNMSAPIError("unexpected_payload")
+
+    async def _request_json(
+        self,
+        method: str,
+        resource_path: str,
+        *,
+        params: Mapping[str, Any] | None = None,
+        json_payload: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Read a JSON object response, rejecting collection-shaped payloads."""
+        payload = await self._request_json_payload(
+            method,
+            resource_path,
+            params=params,
+            json_payload=json_payload,
+        )
         if not isinstance(payload, dict):
             raise LibreNMSAPIError("unexpected_payload")
-        if str(payload.get("status") or "").casefold() == "error":
-            raise LibreNMSAPIError("upstream_error")
         return payload
+
+    async def _get_json(self, resource_path: str, *, params: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        return await self._request_json("GET", resource_path, params=params)
+
+    @staticmethod
+    def _validated_add_device_payload(
+        *, hostname: str, snmp_parameters: Mapping[str, Any], port: int
+    ) -> dict[str, Any]:
+        if not isinstance(hostname, str):
+            raise LibreNMSAPIError("invalid_hostname")
+        normalized_hostname = hostname.strip()
+        if (
+            not normalized_hostname
+            or len(normalized_hostname) > 253
+            or any(character.isspace() or ord(character) < 33 for character in normalized_hostname)
+            or any(character in normalized_hostname for character in "/?#@")
+        ):
+            raise LibreNMSAPIError("invalid_hostname")
+        if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+            raise LibreNMSAPIError("invalid_port")
+        if not isinstance(snmp_parameters, Mapping):
+            raise LibreNMSAPIError("invalid_snmp_parameters")
+
+        parameters = dict(snmp_parameters)
+        if any(not isinstance(key, str) for key in parameters):
+            raise LibreNMSAPIError("invalid_snmp_parameters")
+        if set(parameters) - _ADD_DEVICE_SNMP_FIELDS:
+            # Reject path/behavior controls and unknown options at this boundary.
+            raise LibreNMSAPIError("unsupported_snmp_parameter")
+        if "snmpver" not in parameters or not isinstance(parameters["snmpver"], str):
+            raise LibreNMSAPIError("invalid_snmp_parameters")
+
+        version = parameters["snmpver"].strip().casefold()
+        if version not in {"v1", "v2c", "v3"}:
+            raise LibreNMSAPIError("invalid_snmp_parameters")
+        parameters["snmpver"] = version
+
+        def require_text(field: str) -> str:
+            value = parameters.get(field)
+            if not isinstance(value, str):
+                raise LibreNMSAPIError("invalid_snmp_parameters")
+            if not value.strip() or len(value) > 2048 or any(ord(character) < 32 for character in value):
+                raise LibreNMSAPIError("invalid_snmp_parameters")
+            # Credential octet strings can contain meaningful surrounding
+            # spaces. Validate blankness, but pass the original value through.
+            return value
+
+        if version in {"v1", "v2c"}:
+            if set(parameters) != {"snmpver", "community"}:
+                raise LibreNMSAPIError("invalid_snmp_parameters")
+            parameters["community"] = require_text("community")
+        else:
+            authlevel = parameters.get("authlevel")
+            if not isinstance(authlevel, str):
+                raise LibreNMSAPIError("invalid_snmp_parameters")
+            levels = {
+                "noauthnopriv": "noAuthNoPriv",
+                "authnopriv": "authNoPriv",
+                "authpriv": "authPriv",
+            }
+            canonical_level = levels.get(authlevel.strip().casefold())
+            if canonical_level is None:
+                raise LibreNMSAPIError("invalid_snmp_parameters")
+            parameters["authlevel"] = canonical_level
+
+            required_fields = {"snmpver", "authlevel", "authname"}
+            if canonical_level in {"authNoPriv", "authPriv"}:
+                required_fields.update({"authpass", "authalgo"})
+            if canonical_level == "authPriv":
+                required_fields.update({"cryptopass", "cryptoalgo"})
+            if set(parameters) != required_fields:
+                raise LibreNMSAPIError("invalid_snmp_parameters")
+            for field in required_fields - {"snmpver", "authlevel"}:
+                parameters[field] = require_text(field)
+
+        return {"hostname": normalized_hostname, "port": port, **parameters}
+
+    @staticmethod
+    def _safe_add_device_result(payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Project only non-credential identity fields from a write response."""
+        result: dict[str, Any] = {}
+        status = payload.get("status")
+        if isinstance(status, str):
+            result["status"] = status
+
+        def safe_row(row: Mapping[str, Any]) -> dict[str, Any]:
+            return {key: row[key] for key in _ADD_DEVICE_RESPONSE_FIELDS if key in row}
+
+        devices = payload.get("devices")
+        if isinstance(devices, list):
+            result["devices"] = [safe_row(row) for row in devices if isinstance(row, Mapping)]
+        device = payload.get("device")
+        if isinstance(device, Mapping):
+            result["device"] = safe_row(device)
+        top_level = safe_row(payload)
+        for key, value in top_level.items():
+            if key not in result:
+                result[key] = value
+        return result
+
+    async def add_device(
+        self,
+        *,
+        hostname: str,
+        snmp_parameters: Mapping[str, Any],
+        port: int = 161,
+    ) -> dict[str, Any]:
+        """Create one LibreNMS device using its documented add-device fields.
+
+        The request is always sent to the fixed devices endpoint. Device SNMP
+        credentials are never included in an exception or returned response.
+        """
+        request_payload = self._validated_add_device_payload(
+            hostname=hostname,
+            snmp_parameters=snmp_parameters,
+            port=port,
+        )
+        payload = await self._request_json("POST", "/api/v0/devices", json_payload=request_payload)
+        if str(payload.get("status") or "").strip().casefold() != "ok":
+            raise LibreNMSAPIError("unexpected_payload")
+        return self._safe_add_device_result(payload)
+
+    async def update_device_snmp_profile(
+        self,
+        *,
+        native_device_id: str,
+        snmp_parameters: Mapping[str, Any],
+        port: int = 161,
+    ) -> dict[str, Any]:
+        """Apply one explicitly selected profile to an existing native device.
+
+        LibreNMS documents PATCH /devices/:hostname for updating device fields;
+        its Device model exposes the SNMP fields as writable. Keep this caller
+        constrained to those fields and a numeric native device ID so callers
+        cannot turn the generic endpoint into an arbitrary device mutation.
+        """
+        device_id = str(native_device_id or "").strip()
+        if not device_id.isdigit():
+            raise LibreNMSAPIError("invalid_native_device_id")
+        if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+            raise LibreNMSAPIError("invalid_port")
+
+        normalized = self._validated_add_device_payload(
+            hostname="127.0.0.1",
+            snmp_parameters=snmp_parameters,
+            port=port,
+        )
+        fields = [
+            "snmpver",
+            "port",
+            "community",
+            "authlevel",
+            "authname",
+            "authpass",
+            "authalgo",
+            "cryptopass",
+            "cryptoalgo",
+        ]
+        values = [
+            normalized["snmpver"],
+            port,
+            normalized.get("community", ""),
+            normalized.get("authlevel", ""),
+            normalized.get("authname", ""),
+            normalized.get("authpass", ""),
+            normalized.get("authalgo", ""),
+            normalized.get("cryptopass", ""),
+            normalized.get("cryptoalgo", ""),
+        ]
+        response_payload = await self._request_json_payload(
+            "PATCH",
+            f"/api/v0/devices/{quote(device_id, safe='')}",
+            json_payload={"field": fields, "data": values},
+        )
+        if isinstance(response_payload, list):
+            if len(response_payload) != 1:
+                raise LibreNMSAPIError("unexpected_payload")
+            payload = response_payload[0]
+        else:
+            payload = response_payload
+
+        response_status = str(payload.get("status") or "").strip().casefold()
+        if response_status == "error":
+            raise LibreNMSAPIError("upstream_error")
+        if response_status != "ok":
+            raise LibreNMSAPIError("profile_update_rejected")
+        # Do not echo arbitrary upstream fields or messages after a credential
+        # update. The caller only needs an unambiguous success indication.
+        return {"status": "ok"}
 
     async def get_system_info(self) -> dict[str, Any]:
         payload = await self._get_json("/api/v0/system")
@@ -267,13 +509,16 @@ class LibreNMSRuntimeClient:
         return dict(device) if isinstance(device, Mapping) else {}
 
     async def get_devices(self, *, query: str = "", device_type: str = "all", max_rows: int = 5000) -> list[dict[str, Any]]:
-        """List native device identities for explicit operator binding.
+        """List native device identities for exact operator or auto matching.
 
         LibreNMS documents a filtered device-list endpoint but no pagination
         contract. Keep the request bounded and expose only identity/status
-        fields; this is never used to infer an asset match from hostname/IP.
+        fields; automatic matching must separately verify an exact IP address.
         """
-        allowed_types = {"all", "active", "ignored", "up", "down", "disabled", "hostname", "sysName", "display", "device_id"}
+        allowed_types = {
+            "all", "active", "ignored", "up", "down", "disabled", "hostname",
+            "sysName", "display", "device_id", "ipv4", "ipv6",
+        }
         selected_type = str(device_type or "all").strip()
         if selected_type not in allowed_types:
             raise LibreNMSAPIError("unsupported_device_filter")
@@ -293,6 +538,19 @@ class LibreNMSRuntimeClient:
         return [
             {field: row[field] for field in safe_fields if field in row}
             for row in rows[:max(0, int(max_rows))]
+        ]
+
+    async def get_device_ip_addresses(self, native_device_id: str) -> list[dict[str, Any]]:
+        """Read the documented IP address list for one native device."""
+        device_id = quote(str(native_device_id or "").strip(), safe="")
+        if not device_id:
+            raise LibreNMSAPIError("missing_native_device_id")
+        payload = await self._get_json(f"/api/v0/devices/{device_id}/ip")
+        rows = _records(payload, "addresses")
+        safe_fields = ("ipv4_address", "ipv6_address")
+        return [
+            {field: row[field] for field in safe_fields if field in row}
+            for row in rows
         ]
 
     async def get_health_graphs(self, native_device_id: str, health_type: str) -> list[dict[str, Any]]:

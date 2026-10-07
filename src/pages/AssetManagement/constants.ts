@@ -311,8 +311,8 @@ export const COL_MAP: Record<string, string> = {
   // SNMP credentials are referenced by vault name (or ID for compatibility),
   // never by a community string in the template. Keep generic Credential
   // mapped to SSH above so existing imports remain unambiguous.
-  'SNMP凭据': 'snmp_credential_name', 'SNMP凭据名称': 'snmp_credential_name', 'SNMP凭据（推荐）': 'snmp_credential_name', 'SNMPv2凭据名称': 'snmp_credential_name', 'SNMPv2凭据名称（选填）': 'snmp_credential_name', '团体字凭据': 'snmp_credential_name', 'SNMP团体凭据': 'snmp_credential_name', 'community的凭据': 'snmp_credential_name', 'Community凭据': 'snmp_credential_name',
-  'SNMP Credential': 'snmp_credential_name', 'SNMP Credential Name': 'snmp_credential_name', 'SNMP Credential (recommended)': 'snmp_credential_name', 'SNMPv2 Credential Name': 'snmp_credential_name', 'SNMPv2 Credential Name (optional)': 'snmp_credential_name', 'Community Credential': 'snmp_credential_name', 'Community Credential Name': 'snmp_credential_name',
+  'SNMP凭据': 'snmp_credential_name', 'SNMP凭据名称': 'snmp_credential_name', 'SNMP凭据名称（选填）': 'snmp_credential_name', 'SNMP凭据（推荐）': 'snmp_credential_name', 'SNMPv2凭据名称': 'snmp_credential_name', 'SNMPv2凭据名称（选填）': 'snmp_credential_name', '团体字凭据': 'snmp_credential_name', 'SNMP团体凭据': 'snmp_credential_name', 'community的凭据': 'snmp_credential_name', 'Community凭据': 'snmp_credential_name',
+  'SNMP Credential': 'snmp_credential_name', 'SNMP Credential Name': 'snmp_credential_name', 'SNMP Credential Name (optional)': 'snmp_credential_name', 'SNMP Credential (recommended)': 'snmp_credential_name', 'SNMPv2 Credential Name': 'snmp_credential_name', 'SNMPv2 Credential Name (optional)': 'snmp_credential_name', 'Community Credential': 'snmp_credential_name', 'Community Credential Name': 'snmp_credential_name',
   'snmp_credential_name': 'snmp_credential_name',
   'SNMP凭据ID': 'snmp_credential_id', 'SNMP Credential ID': 'snmp_credential_id',
   'snmp_credential_id': 'snmp_credential_id',

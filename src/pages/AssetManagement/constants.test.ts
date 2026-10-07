@@ -91,9 +91,11 @@ describe('asset import role header contract', () => {
   it('accepts named SNMP credential headers without colliding with SSH credentials', () => {
     expect(COL_MAP['SNMP凭据']).toBe('snmp_credential_name');
     expect(COL_MAP['SNMP凭据（推荐）']).toBe('snmp_credential_name');
+    expect(COL_MAP['SNMP凭据名称（选填）']).toBe('snmp_credential_name');
     expect(COL_MAP['SNMPv2凭据名称（选填）']).toBe('snmp_credential_name');
     expect(COL_MAP['SNMP Credential']).toBe('snmp_credential_name');
     expect(COL_MAP['SNMP Credential (recommended)']).toBe('snmp_credential_name');
+    expect(COL_MAP['SNMP Credential Name (optional)']).toBe('snmp_credential_name');
     expect(COL_MAP['SNMPv2 Credential Name (optional)']).toBe('snmp_credential_name');
     expect(COL_MAP.snmp_credential_name).toBe('snmp_credential_name');
     expect(COL_MAP['SNMP凭据ID']).toBe('snmp_credential_id');

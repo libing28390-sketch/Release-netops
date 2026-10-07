@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
 import httpx
@@ -78,6 +79,361 @@ def test_reuses_one_http_client_and_reads_system_and_device() -> None:
     assert len(requests) == 2
     assert all(request.headers["Authorization"] == "Bearer test-token" for request in requests)
     assert all(request.headers["Accept"] == "application/json" for request in requests)
+
+
+def test_device_search_supports_exact_ip_lookup_and_sanitizes_ip_address_rows() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/api/v0/devices":
+            return httpx.Response(200, json={"status": "ok", "devices": [{
+                "device_id": 17, "hostname": "sw-1", "display": "Switch 1",
+                "sysName": "sw-1", "private_field": "must not escape",
+            }]})
+        if request.url.path == "/api/v0/devices/17/ip":
+            return httpx.Response(200, json={"status": "ok", "addresses": [{
+                "ipv4_address": "192.0.2.10", "ipv4_prefixlen": "24",
+                "ipv6_address": "2001:db8::10", "private_field": "must not escape",
+            }]})
+        return httpx.Response(404, json={"status": "error"})
+
+    async def run() -> None:
+        client = _client(handler)
+        try:
+            devices = await client.get_devices(device_type="ipv4", query="192.0.2.10", max_rows=10)
+            addresses = await client.get_device_ip_addresses("17")
+        finally:
+            await client.aclose()
+        assert devices == [{"device_id": 17, "hostname": "sw-1", "display": "Switch 1"}]
+        assert addresses == [{"ipv4_address": "192.0.2.10", "ipv6_address": "2001:db8::10"}]
+
+    asyncio.run(run())
+    assert requests[0].url.params["type"] == "ipv4"
+    assert requests[0].url.params["query"] == "192.0.2.10"
+    assert [request.url.path for request in requests] == ["/api/v0/devices", "/api/v0/devices/17/ip"]
+
+
+@pytest.mark.parametrize(
+    ("hostname", "snmp_parameters", "port", "response_row", "expected_payload", "secrets"),
+    [
+        (
+            "192.0.2.21",
+            {"snmpver": "v2c", "community": " private-community "},
+            161,
+            {"device_id": 21, "hostname": "192.0.2.21", "community": " private-community "},
+            {"hostname": "192.0.2.21", "port": 161, "snmpver": "v2c", "community": " private-community "},
+            (" private-community ",),
+        ),
+        (
+            "edge-01.example.net",
+            {
+                "snmpver": "v3",
+                "authlevel": "authPriv",
+                "authname": "private-user",
+                "authpass": "private-auth-pass",
+                "authalgo": "SHA",
+                "cryptopass": "private-privacy-pass",
+                "cryptoalgo": "AES",
+            },
+            1161,
+            {
+                "device_id": 22,
+                "hostname": "edge-01.example.net",
+                "authname": "private-user",
+                "authpass": "private-auth-pass",
+                "cryptopass": "private-privacy-pass",
+            },
+            {
+                "hostname": "edge-01.example.net",
+                "port": 1161,
+                "snmpver": "v3",
+                "authlevel": "authPriv",
+                "authname": "private-user",
+                "authpass": "private-auth-pass",
+                "authalgo": "SHA",
+                "cryptopass": "private-privacy-pass",
+                "cryptoalgo": "AES",
+            },
+            ("private-user", "private-auth-pass", "private-privacy-pass"),
+        ),
+    ],
+)
+def test_add_device_posts_only_fixed_documented_payload_and_sanitizes_result(
+    hostname: str,
+    snmp_parameters: dict[str, str],
+    port: int,
+    response_row: dict[str, Any],
+    expected_payload: dict[str, Any],
+    secrets: tuple[str, ...],
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"status": "ok", "devices": [response_row]})
+
+    async def run() -> None:
+        client = _client(handler)
+        try:
+            result = await client.add_device(
+                hostname=hostname,
+                snmp_parameters=snmp_parameters,
+                port=port,
+            )
+        finally:
+            await client.aclose()
+
+        assert result["status"] == "ok"
+        assert result["devices"][0]["device_id"] in {21, 22}
+        serialized_result = json.dumps(result)
+        for secret in secrets:
+            assert secret not in serialized_result
+
+    asyncio.run(run())
+    assert len(requests) == 1
+    request = requests[0]
+    assert request.method == "POST"
+    assert request.url.path == "/api/v0/devices"
+    assert request.headers["Authorization"] == "Bearer test-token"
+    assert request.headers["Accept"] == "application/json"
+    assert json.loads(request.content) == expected_payload
+    assert "force_add" not in json.loads(request.content)
+    assert "ping_fallback" not in json.loads(request.content)
+
+
+@pytest.mark.parametrize("response_payload", [{}, {"status": "pending", "devices": []}])
+def test_add_device_requires_explicit_success_status(response_payload: dict[str, Any]) -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=response_payload)
+
+    async def run() -> None:
+        client = _client(handler)
+        try:
+            with pytest.raises(LibreNMSAPIError) as exc_info:
+                await client.add_device(
+                    hostname="192.0.2.40",
+                    snmp_parameters={"snmpver": "v2c", "community": "private"},
+                )
+        finally:
+            await client.aclose()
+        assert exc_info.value.code == "unexpected_payload"
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "response_payload",
+    [
+        {"status": "ok", "message": "updated", "authpass": "response-secret"},
+        [{"status": "ok", "message": "updated", "community": "response-secret"}],
+    ],
+)
+def test_update_device_snmp_profile_accepts_object_and_documented_array_response(
+    response_payload: dict[str, Any] | list[dict[str, Any]],
+) -> None:
+    requests: list[httpx.Request] = []
+    secret = "v3-private-auth-secret"
+    parameters = {
+        "snmpver": "v3",
+        "authlevel": "authPriv",
+        "authname": "profile-user",
+        "authpass": secret,
+        "authalgo": "SHA",
+        "cryptopass": "v3-private-privacy-secret",
+        "cryptoalgo": "AES",
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=response_payload)
+
+    async def run() -> None:
+        client = _client(handler)
+        try:
+            result = await client.update_device_snmp_profile(
+                native_device_id="42",
+                snmp_parameters=parameters,
+                port=1161,
+            )
+        finally:
+            await client.aclose()
+        assert result == {"status": "ok"}
+        assert secret not in json.dumps(result)
+        assert "response-secret" not in json.dumps(result)
+
+    asyncio.run(run())
+    assert len(requests) == 1
+    request = requests[0]
+    assert request.method == "PATCH"
+    assert request.url.path == "/api/v0/devices/42"
+    payload = json.loads(request.content)
+    assert payload["field"] == [
+        "snmpver", "port", "community", "authlevel", "authname", "authpass",
+        "authalgo", "cryptopass", "cryptoalgo",
+    ]
+    assert payload["data"] == [
+        "v3", 1161, "", "authPriv", "profile-user", secret, "SHA",
+        "v3-private-privacy-secret", "AES",
+    ]
+    assert "hostname" not in payload
+    assert "force_add" not in payload
+
+
+@pytest.mark.parametrize(
+    ("response_payload", "expected_code"),
+    [
+        ({"status": "error", "message": "private upstream detail", "authpass": "response-secret"}, "upstream_error"),
+        ([{"status": "error", "message": "private upstream detail", "community": "response-secret"}], "upstream_error"),
+        ({"message": "status missing"}, "profile_update_rejected"),
+        ([{}], "profile_update_rejected"),
+        ([], "unexpected_payload"),
+    ],
+)
+def test_update_device_snmp_profile_rejects_error_or_empty_status_without_exposing_response(
+    response_payload: dict[str, Any] | list[dict[str, Any]],
+    expected_code: str,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=response_payload)
+
+    async def run() -> None:
+        client = _client(handler)
+        try:
+            with pytest.raises(LibreNMSAPIError) as exc_info:
+                await client.update_device_snmp_profile(
+                    native_device_id="42",
+                    snmp_parameters={"snmpver": "v2c", "community": "request-secret"},
+                )
+            assert exc_info.value.code == expected_code
+            assert "private upstream detail" not in str(exc_info.value)
+            assert "response-secret" not in str(exc_info.value)
+            assert "request-secret" not in str(exc_info.value)
+        finally:
+            await client.aclose()
+
+    asyncio.run(run())
+
+
+def test_update_device_snmp_profile_rejects_non_numeric_id_and_bad_profile() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"status": "ok"})
+
+    async def run() -> None:
+        client = _client(handler)
+        try:
+            for native_device_id, parameters, expected in (
+                ("../devices/other", {"snmpver": "v2c", "community": "community"}, "invalid_native_device_id"),
+                ("42", {"snmpver": "v2c", "community": "community", "hostname": "bad"}, "unsupported_snmp_parameter"),
+            ):
+                with pytest.raises(LibreNMSAPIError) as exc_info:
+                    await client.update_device_snmp_profile(
+                        native_device_id=native_device_id,
+                        snmp_parameters=parameters,
+                    )
+                assert exc_info.value.code == expected
+        finally:
+            await client.aclose()
+
+    asyncio.run(run())
+    assert requests == []
+
+
+@pytest.mark.parametrize(
+    ("hostname", "snmp_parameters", "port", "expected_code"),
+    [
+        ("", {"snmpver": "v2c", "community": "community"}, 161, "invalid_hostname"),
+        ("device/../api/v0/system", {"snmpver": "v2c", "community": "community"}, 161, "invalid_hostname"),
+        ("192.0.2.2", {"snmpver": "v2c", "community": "community"}, 0, "invalid_port"),
+        ("192.0.2.2", {"snmpver": "v2c", "community": "community"}, True, "invalid_port"),
+        ("192.0.2.2", {"snmpver": "v2c"}, 161, "invalid_snmp_parameters"),
+        (
+            "192.0.2.2",
+            {"snmpver": "v3", "authlevel": "authPriv", "authname": "user"},
+            161,
+            "invalid_snmp_parameters",
+        ),
+        (
+            "192.0.2.2",
+            {"snmpver": "v3", "authlevel": "authPriv", "authname": "user", "authpass": "pass",
+             "authalgo": "SHA", "cryptopass": "privacy", "cryptoalgo": "AES", "force_add": True},
+            161,
+            "unsupported_snmp_parameter",
+        ),
+        (
+            "192.0.2.2",
+            {"snmpver": "v3", "authlevel": "authPriv", "authname": "user", "authpass": "pass",
+             "authalgo": "SHA", "cryptopass": "privacy", "cryptoalgo": "AES", "ping_fallback": True},
+            161,
+            "unsupported_snmp_parameter",
+        ),
+    ],
+)
+def test_add_device_rejects_invalid_or_unapproved_inputs_before_request(
+    hostname: str,
+    snmp_parameters: dict[str, Any],
+    port: int,
+    expected_code: str,
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"status": "ok"})
+
+    async def run() -> None:
+        client = _client(handler)
+        try:
+            with pytest.raises(LibreNMSAPIError) as exc_info:
+                await client.add_device(hostname=hostname, snmp_parameters=snmp_parameters, port=port)
+            assert exc_info.value.code == expected_code
+            assert "community" not in str(exc_info.value)
+            assert "pass" not in str(exc_info.value)
+        finally:
+            await client.aclose()
+
+    asyncio.run(run())
+    assert requests == []
+
+
+@pytest.mark.parametrize(
+    ("status_code", "expected_code"),
+    [(401, "unauthorized"), (403, "forbidden"), (503, "http_error")],
+)
+def test_add_device_upstream_failures_do_not_expose_request_or_response_secrets(
+    status_code: int, expected_code: str
+) -> None:
+    auth_secret = "request-auth-secret"
+    response_secret = "response-auth-secret"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status_code, json={"message": response_secret, "authpass": response_secret})
+
+    async def run() -> None:
+        client = _client(handler)
+        try:
+            with pytest.raises(LibreNMSAPIError) as exc_info:
+                await client.add_device(
+                    hostname="192.0.2.4",
+                    snmp_parameters={
+                        "snmpver": "v3",
+                        "authlevel": "authNoPriv",
+                        "authname": "snmp-user",
+                        "authpass": auth_secret,
+                        "authalgo": "SHA",
+                    },
+                )
+            assert exc_info.value.code == expected_code
+            assert exc_info.value.http_status == status_code
+            assert auth_secret not in str(exc_info.value)
+            assert response_secret not in str(exc_info.value)
+        finally:
+            await client.aclose()
+
+    asyncio.run(run())
 
 
 @pytest.mark.parametrize(

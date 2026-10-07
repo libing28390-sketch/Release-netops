@@ -126,6 +126,29 @@ def test_overview_and_wireless_share_the_client_query_without_zero_fallback(cata
 
 
 @pytest.mark.parametrize(
+    ("panel_id", "metric"),
+    [
+        (9, "nexora_hw_cpu_usage_percent"),
+        (10, "nexora_hw_memory_usage_percent"),
+        (11, "nexora_hw_temperature_celsius"),
+    ],
+)
+def test_overview_hardware_coverage_counts_native_samples_without_snmp_exporter_gate(
+    catalog, panel_id, metric
+):
+    overview = _panels_by_id(catalog["nexora-network-overview"][1])
+    query = overview[panel_id]["targets"][0]["expr"]
+
+    assert query == (
+        f'count(count by (asset_id) ({metric}'
+        '{asset_id!="",site_name=~"$site",vendor=~"$vendor",'
+        'role=~"$role",hostname=~"$device"}))'
+    )
+    assert 'up{job="network_snmp"' not in query
+    assert "vector(0)" not in query
+
+
+@pytest.mark.parametrize(
     ("panel_id", "component_class", "expected_vendor_matchers"),
     [(12, "wireless_bss", 1), (13, "wireless_ssid", 2)],
 )

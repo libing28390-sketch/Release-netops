@@ -332,7 +332,7 @@ services:
       - "--docker_only=true"
       - "--housekeeping_interval=30s"
       - "--store_container_labels=false"
-      - "--disable_metrics=percpu,sched,process,hugetlb,resctrl,tcp,udp,network"
+      - "--disable_metrics=percpu,sched,process,hugetlb,resctrl,tcp,udp,network,referenced_memory"
     volumes:
       - /sys:/sys:ro
       # cAdvisor maps Docker API container IDs to overlay2 metadata through

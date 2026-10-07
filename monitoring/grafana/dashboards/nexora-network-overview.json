@@ -765,7 +765,7 @@
       },
       "targets": [
         {
-          "expr": "count(count by (asset_id) ((nexora_hw_cpu_usage_percent{asset_id!=\"\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}) and on(asset_id) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",asset_id!=\"\"} == 1))) or on() ((count(count by (instance) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1)) > 0) * 0)",
+          "expr": "count(count by (asset_id) (nexora_hw_cpu_usage_percent{asset_id!=\"\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}))",
           "refId": "A",
           "instant": true
         }
@@ -842,7 +842,7 @@
       },
       "targets": [
         {
-          "expr": "count(count by (asset_id) ((nexora_hw_memory_usage_percent{asset_id!=\"\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}) and on(asset_id) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",asset_id!=\"\"} == 1))) or on() ((count(count by (instance) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1)) > 0) * 0)",
+          "expr": "count(count by (asset_id) (nexora_hw_memory_usage_percent{asset_id!=\"\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}))",
           "refId": "A",
           "instant": true
         }
@@ -920,7 +920,7 @@
       },
       "targets": [
         {
-          "expr": "count(count by (asset_id) ((nexora_hw_temperature_celsius{asset_id!=\"\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}) and on(asset_id) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",asset_id!=\"\"} == 1))) or on() ((count(count by (instance) (up{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} == 1)) > 0) * 0)",
+          "expr": "count(count by (asset_id) (nexora_hw_temperature_celsius{asset_id!=\"\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}))",
           "refId": "A",
           "instant": true
         }

@@ -295,8 +295,8 @@ const HardwareDiagnosticSummary: React.FC<HardwareDiagnosticSummaryProps> = ({
 
       <div className="mt-2 rounded-md border border-cyan-500/15 bg-cyan-500/[.035] px-2.5 py-2 text-[10px] leading-4 text-cyan-900 dark:text-cyan-100">
         {zh
-          ? '此处只读取 LibreNMS 已保存的原生结果，不会立即发现设备或触发轮询。传感器时间取自 LibreNMS 原生样本；Grafana/时序导出状态需单独验证。'
-          : 'This view reads results already stored by LibreNMS; it does not discover the device or trigger a poll. Sensor times come from native samples. Grafana/time-series export must be validated separately.'}
+          ? '此处读取 LibreNMS 已保存的原生结果；若本地尚无关联，会按唯一管理 IP 自动关联。不会立即发现设备或触发轮询。传感器时间取自原生样本；Grafana/时序导出状态需单独验证。'
+          : 'This view reads results already stored by LibreNMS and automatically links an unbound CMDB device only when its management IP has one exact match. It does not trigger discovery or polling. Sensor times come from native samples; Grafana/time-series export must be validated separately.'}
       </div>
 
       {result.collection && (

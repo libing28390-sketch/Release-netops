@@ -163,6 +163,7 @@ export interface SnmpHardwareDiscoveryTestResult {
   message: string;
   matched_device_id?: string;
   matched_hostname?: string;
+  binding_resolution?: { status?: string } | null;
   binding: LibreNMSHardwareBinding | null;
   engine: LibreNMSHardwareEngine | null;
   identity: LibreNMSHardwareIdentity;

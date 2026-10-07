@@ -44,8 +44,8 @@ export const getHardwareDiscoveryToast = (
   if (state === 'available' && hasFreshResult) {
     return {
       message: zh
-        ? `已读取 LibreNMS 原生结果：${nativeRowCount} 个传感器/采样行，${visibleFreshCount} 个有新鲜数值`
-        : `LibreNMS native results loaded: ${nativeRowCount} sensor/sample rows, ${visibleFreshCount} with fresh values`,
+        ? `${result.binding_resolution?.status === 'bound' ? '已按唯一管理 IP 自动关联；' : ''}已读取 LibreNMS 原生结果：${nativeRowCount} 个传感器/采样行，${visibleFreshCount} 个有新鲜数值`
+        : `${result.binding_resolution?.status === 'bound' ? 'Automatically linked by unique management IP; ' : ''}LibreNMS native results loaded: ${nativeRowCount} sensor/sample rows, ${visibleFreshCount} with fresh values`,
       type: 'success',
     };
   }
@@ -68,6 +68,7 @@ export const getHardwareDiscoveryToast = (
     no_native_hardware_data: ['LibreNMS 当前没有返回硬件实体', 'LibreNMS returned no hardware entities'],
   };
   const safeMessage = redactHardwareDiagnosticText(result.message || '');
+  if (state === 'not_bound' && safeMessage) return { message: safeMessage, type: 'info' };
   const fallback = messages[state] || [safeMessage || '未知状态', safeMessage || 'Unknown state'];
   return { message: zh ? fallback[0] : fallback[1], type: 'info' };
 };
@@ -94,6 +95,7 @@ export const buildHardwareDiagnosticSharePayload = (result: SnmpHardwareDiscover
     message: result.message,
     matched_device_id: result.matched_device_id,
     matched_hostname: result.matched_hostname,
+    binding_resolution: result.binding_resolution,
     binding: result.binding,
     engine: result.engine,
     identity: result.identity,

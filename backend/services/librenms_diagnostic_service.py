@@ -95,15 +95,21 @@ def _parse_native_time(value: Any) -> datetime | None:
 
 def _binding_for_device(device: Mapping[str, Any]) -> dict[str, Any] | None:
     device_id = str(device.get("id") or "").strip()
-    asset_id = str(device.get("asset_id") or "").strip()
-    tenant_id = str(device.get("tenant_id") or "").strip()
-    if not device_id or not asset_id or not tenant_id:
+    if not device_id:
         return None
 
     conn = get_db_connection()
     try:
         rows = conn.execute(
             """
+            WITH target AS (
+                SELECT d.id, d.asset_id,
+                       COALESCE(NULLIF(d.tenant_id, ''), NULLIF(s.tenant_id, ''), 'tenant-default') AS tenant_id
+                  FROM devices d
+                  LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+                  LEFT JOIN sites s ON s.id = COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''))
+                 WHERE d.id = ?
+            )
             SELECT b.id AS binding_id, b.tenant_id, b.asset_id, b.device_id,
                    b.instance_id, b.librenms_device_id, b.librenms_hostname,
                    b.collector_id, b.poller_group, b.desired_state, b.sync_status,
@@ -115,14 +121,21 @@ def _binding_for_device(device: Mapping[str, Any]) -> dict[str, Any] | None:
               FROM librenms_device_bindings b
               JOIN librenms_instances i ON i.id = b.instance_id
               LEFT JOIN credentials c ON c.id = i.token_credential_id
-             WHERE b.device_id = ? AND b.tenant_id = ? AND b.asset_id = ?
+              JOIN target t ON t.id = b.device_id
+             WHERE b.tenant_id = t.tenant_id AND b.asset_id = t.asset_id
              ORDER BY b.updated_at DESC
              LIMIT 2
             """,
-            (device_id, tenant_id, asset_id),
+            (device_id,),
         ).fetchall()
         if len(rows) != 1:
-            return {"binding_conflict": True} if len(rows) > 1 else None
+            if len(rows) > 1:
+                return {"binding_conflict": True}
+            stale = conn.execute(
+                "SELECT id FROM librenms_device_bindings WHERE device_id = ? LIMIT 1",
+                (device_id,),
+            ).fetchone()
+            return {"binding_conflict": True} if stale else None
         return dict(rows[0])
     finally:
         conn.close()
@@ -323,8 +336,34 @@ async def diagnose_librenms_hardware(device: Mapping[str, Any]) -> dict[str, Any
         result["collection"]["sync_status"] = "unavailable"
         return result
 
+    binding_resolution: dict[str, Any] | None = None
     if binding is None:
-        return result
+        try:
+            from services.librenms_binding_service import auto_bind_device_by_management_ip
+
+            binding_resolution = await auto_bind_device_by_management_ip(device)
+        except Exception as exc:
+            logger.warning("LibreNMS auto-binding failed: %s", type(exc).__name__)
+            binding_resolution = {
+                "status": "lookup_unavailable",
+                "message": "无法自动确认 LibreNMS 设备关联，请检查实例配置或使用管理员手动关联",
+            }
+        result["binding_resolution"] = {"status": binding_resolution.get("status")}
+        if binding_resolution.get("status") not in {"bound", "already_bound"}:
+            result.update(
+                state="not_bound",
+                message=str(binding_resolution.get("message") or "未能自动关联到唯一的 LibreNMS 原生设备"),
+            )
+            return result
+        try:
+            binding = _binding_for_device(device)
+        except Exception as exc:
+            logger.warning("LibreNMS binding reload failed: %s", type(exc).__name__)
+            binding = None
+        if binding is None:
+            result.update(state="unavailable", message="自动关联已完成，但本地绑定暂不可读取")
+            result["collection"]["sync_status"] = "unavailable"
+            return result
     if binding.get("binding_conflict"):
         result.update(state="binding_conflict", message="该设备存在多个 LibreNMS 绑定，需要先修正绑定关系")
         return result
@@ -333,10 +372,6 @@ async def diagnose_librenms_hardware(device: Mapping[str, Any]) -> dict[str, Any
     result["collection"]["sync_status"] = str(binding.get("sync_status") or "unknown")
     if str(binding.get("desired_state") or "").casefold() != "enabled":
         result.update(state="disabled", message="LibreNMS 资产绑定已停用")
-        return result
-    if str(binding.get("sync_status") or "").casefold() != "synced":
-        state = "sync_failed" if str(binding.get("sync_status") or "").casefold() == "failed" else "sync_pending"
-        result.update(state=state, message="LibreNMS 设备关联尚未同步完成")
         return result
     if not bool(binding.get("instance_enabled")):
         result.update(state="instance_disabled", message="LibreNMS 实例已停用")
@@ -454,9 +489,13 @@ async def diagnose_librenms_hardware(device: Mapping[str, Any]) -> dict[str, Any
         message = "LibreNMS 当前未返回硬件实体；这表示暂无原生结果，不等于设备已确认不支持"
         sample_status = "no_data"
 
+    if binding_resolution and binding_resolution.get("status") == "bound":
+        message = f"已按唯一管理 IP 自动关联。{message}"
+
     result.update(
         state=state,
         message=message,
+        **({"binding_resolution": {"status": binding_resolution.get("status")}} if binding_resolution else {}),
         engine=engine,
         identity=identity,
         health_graphs=health_graphs,

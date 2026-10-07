@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
 
+import database
 from services import librenms_diagnostic_service as diagnostics
 
 
@@ -23,7 +24,7 @@ class _Connection:
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> _Rows:
         assert "librenms_device_bindings" in sql
-        assert params == ("device-1", "tenant-1", "asset-1")
+        assert params == ("device-1",)
         return _Rows([self.binding])
 
     def close(self) -> None:
@@ -59,8 +60,8 @@ def _binding() -> dict[str, Any]:
     }
 
 
-def _install_client(monkeypatch, snapshot: SimpleNamespace) -> _Connection:
-    connection = _Connection(_binding())
+def _install_client(monkeypatch, snapshot: SimpleNamespace, binding: dict[str, Any] | None = None) -> _Connection:
+    connection = _Connection(binding or _binding())
     monkeypatch.setattr(diagnostics, "get_db_connection", lambda: connection)
     monkeypatch.setattr(diagnostics, "decrypt_credential", lambda _value: "unit-test-token")
 
@@ -192,3 +193,57 @@ def test_processor_and_mempool_without_sample_timestamps_remain_freshness_unknow
     assert memory["freshness"] == "unknown"
     assert result["metric_summary"][-2]["status"] == "unknown"
     assert result["metric_summary"][-1]["status"] == "unknown"
+
+
+def test_native_snapshot_remains_readable_while_projection_sync_is_pending(monkeypatch) -> None:
+    snapshot = _snapshot(
+        processor={"processor_id": 3, "processor_usage": "8", "processor_descr": "CPU"},
+        memory_pool={"mempool_id": 4, "mempool_perc": "50", "mempool_descr": "Memory"},
+    )
+    pending_binding = _binding()
+    pending_binding["sync_status"] = "pending"
+    _install_client(monkeypatch, snapshot, pending_binding)
+
+    result = asyncio.run(diagnostics.diagnose_librenms_hardware({
+        "id": "device-1", "asset_id": "asset-1", "tenant_id": "tenant-1",
+    }))
+
+    assert result["state"] == "available"
+    assert result["collection"]["sync_status"] == "pending"
+    assert result["processor_sensors"][0]["sensor_current"] == 8
+    assert result["memory_pools"][0]["sensor_current"] == 50
+
+
+def test_binding_lookup_uses_canonical_default_tenant_when_device_row_is_unscoped(isolated_db, monkeypatch) -> None:
+    conn = database.get_db_connection()
+    try:
+        conn.execute(
+            """INSERT INTO physical_assets (id, asset_type, created_at, updated_at)
+               VALUES ('asset-unscoped', 'network_device', '2026-01-01', '2026-01-01')"""
+        )
+        conn.execute(
+            """INSERT INTO devices (id, hostname, asset_id, tenant_id)
+               VALUES ('device-unscoped', 'edge-unscoped', 'asset-unscoped', NULL)"""
+        )
+        conn.execute(
+            """INSERT INTO librenms_instances (id, display_name, base_url, enabled, health_state)
+               VALUES ('instance-unscoped', 'LibreNMS', 'https://librenms.example', TRUE, 'healthy')"""
+        )
+        conn.execute(
+            """INSERT INTO librenms_device_bindings
+               (id, tenant_id, asset_id, device_id, instance_id, librenms_device_id, sync_status)
+               VALUES ('binding-unscoped', 'tenant-default', 'asset-unscoped', 'device-unscoped',
+                       'instance-unscoped', '17', 'pending')"""
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    monkeypatch.setattr(diagnostics, "get_db_connection", database.get_db_connection)
+
+    binding = diagnostics._binding_for_device({
+        "id": "device-unscoped", "asset_id": "asset-unscoped", "tenant_id": "",
+    })
+
+    assert binding is not None
+    assert binding["binding_id"] == "binding-unscoped"
+    assert binding["tenant_id"] == "tenant-default"

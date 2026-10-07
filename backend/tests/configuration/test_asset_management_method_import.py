@@ -121,6 +121,216 @@ def test_batch_import_binds_snmp_credential_name_to_asset_and_device(isolated_db
     assert listed["items"][0]["snmp_community_set"] is True
 
 
+def test_import_commits_asset_then_enrolls_with_bound_snmpv3_profile(isolated_db, monkeypatch):
+    with get_db_connection() as conn:
+        conn.execute(
+            """INSERT INTO credentials (
+                   id, credential_name, credential_type, username, snmp_security_level,
+                   snmp_auth_protocol, snmp_auth_password, snmp_priv_protocol,
+                   snmp_priv_password, created_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                "cred-import-snmpv3",
+                "import-snmpv3-edge",
+                "snmpv3",
+                "edge-poller",
+                "authPriv",
+                "SHA",
+                encrypt_credential("import-auth-secret"),
+                "AES",
+                encrypt_credential("import-privacy-secret"),
+                "2026-10-07T00:00:00+00:00",
+            ),
+        )
+        conn.commit()
+
+    async def fake_enroll(device_id, *, actor=None):
+        # Enrollment is deliberately after commit so a remote API failure can
+        # never roll back the CMDB asset.
+        with get_db_connection() as conn:
+            row = conn.execute(
+                """SELECT pa.management_ip, pa.snmp_credential_id, d.ip_address
+                     FROM physical_assets pa JOIN devices d ON d.asset_id = pa.id
+                    WHERE d.id = ?""",
+                (device_id,),
+            ).fetchone()
+        assert row is not None
+        assert row["management_ip"] == "192.0.2.87"
+        assert row["ip_address"] == "192.0.2.87"
+        assert row["snmp_credential_id"] == "cred-import-snmpv3"
+        assert actor is not None
+        return {
+            "status": "profile_updated_and_bound",
+            "message": "profile applied",
+            "profile_applied": True,
+        }
+
+    from services import librenms_enrollment_service
+    monkeypatch.setattr(librenms_enrollment_service, "enroll_imported_network_device", fake_enroll)
+
+    result = assets.import_assets([
+        assets.AssetCreate(
+            asset_type="network_device",
+            hostname="",
+            management_ip="192.0.2.87",
+            vendor="Huawei",
+            model="S6730",
+            snmp_credential_name="import-snmpv3-edge",
+        )
+    ])
+
+    assert result["created"] == 1
+    assert result["hostname_sync"]["total"] == 0
+    enrollment = result["librenms_enrollment"]
+    assert {key: enrollment[key] for key in ("total", "succeeded", "failed", "failed_items")} == {
+        "total": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "failed_items": [],
+    }
+    enrollment_item = enrollment["items"][0]
+    assert enrollment_item["row"] == 1
+    assert enrollment_item["device_id"]
+    assert enrollment_item["hostname"] == enrollment_item["ip"] == "192.0.2.87"
+    assert enrollment_item["status"] == "profile_updated_and_bound"
+    assert enrollment_item["profile_applied"] is True
+    assert "import-auth-secret" not in str(result)
+    assert "import-privacy-secret" not in str(result)
+
+
+def test_duplicate_import_retries_only_the_persisted_snmp_profile(isolated_db, monkeypatch):
+    with get_db_connection() as conn:
+        conn.executemany(
+            """INSERT INTO credentials
+               (id, credential_name, credential_type, snmp_community, created_at)
+               VALUES (?, ?, 'snmpv2', ?, ?)""",
+            [
+                ("cred-retry-v2-a", "retry-profile-a", encrypt_credential("community-a"), "2026-10-08T00:00:00+00:00"),
+                ("cred-retry-v2-b", "retry-profile-b", encrypt_credential("community-b"), "2026-10-08T00:00:00+00:00"),
+            ],
+        )
+        conn.commit()
+
+    async def fake_snmp_get(*_args, **_kwargs):
+        return "retry-device.example"
+
+    import services.snmp_service as snmp_service
+    monkeypatch.setattr(snmp_service, "_snmp_get", fake_snmp_get)
+    enrollment_calls = []
+
+    async def fake_enroll(device_id, *, actor=None):
+        enrollment_calls.append(device_id)
+        return {
+            "status": "api_failed",
+            "message": "LibreNMS test failure",
+            "profile_applied": False,
+        }
+
+    from services import librenms_enrollment_service
+    monkeypatch.setattr(librenms_enrollment_service, "enroll_imported_network_device", fake_enroll)
+
+    initial = assets.AssetCreate(
+        asset_type="network_device",
+        asset_tag="RETRY-PROFILE-IMPORT",
+        hostname="retry-device-placeholder",
+        management_ip="192.0.2.90",
+        vendor="Cisco",
+        snmp_credential_name="retry-profile-a",
+    )
+    first = assets.import_assets([initial])
+    device_id = first["librenms_enrollment"]["items"][0]["device_id"]
+    assert first["librenms_enrollment"]["items"][0]["status"] == "api_failed"
+    assert enrollment_calls == [device_id]
+
+    changed_profile = assets.import_assets([
+        assets.AssetCreate(
+            asset_type="network_device",
+            asset_tag="RETRY-PROFILE-IMPORT",
+            hostname="retry-device-placeholder",
+            management_ip="192.0.2.90",
+            vendor="Cisco",
+            snmp_credential_name="retry-profile-b",
+        )
+    ])
+    changed_item = changed_profile["librenms_enrollment"]["items"][0]
+    assert changed_item["status"] == "skipped_duplicate_profile_mismatch"
+    assert changed_item["asset_status"] == "skipped"
+    assert changed_profile["librenms_enrollment"]["total"] == 0
+    assert enrollment_calls == [device_id]
+
+    retry_same_profile = assets.import_assets([initial])
+    retry_item = retry_same_profile["librenms_enrollment"]["items"][0]
+    assert retry_item["status"] == "api_failed"
+    assert retry_same_profile["librenms_enrollment"]["total"] == 1
+    assert enrollment_calls == [device_id, device_id]
+
+
+def test_import_rejects_undecryptable_v2_community_instead_of_sending_ciphertext(isolated_db):
+    with get_db_connection() as conn:
+        conn.execute(
+            """INSERT INTO credentials
+               (id, credential_name, credential_type, snmp_community, created_at)
+               VALUES (?, ?, 'snmpv2', ?, ?)""",
+            ("cred-broken-v2", "broken-v2-profile", "enc:v2:invalid-ciphertext", "2026-10-08T00:00:00+00:00"),
+        )
+        conn.commit()
+
+    with pytest.raises(HTTPException, match="SNMPv2 凭据无法解密"):
+        assets.import_assets([
+            assets.AssetCreate(
+                asset_type="network_device",
+                asset_tag="BROKEN-V2-IMPORT",
+                hostname="broken-v2-import",
+                management_ip="192.0.2.88",
+                vendor="Cisco",
+                snmp_credential_name="broken-v2-profile",
+            )
+        ])
+
+    with get_db_connection() as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM physical_assets WHERE asset_tag = ?",
+            ("BROKEN-V2-IMPORT",),
+        ).fetchone()[0] == 0
+
+
+def test_import_rejects_unknown_librenms_snmpv3_auth_algorithm(isolated_db):
+    with get_db_connection() as conn:
+        conn.execute(
+            """INSERT INTO credentials (
+                   id, credential_name, credential_type, username, snmp_security_level,
+                   snmp_auth_protocol, snmp_auth_password, created_at
+               ) VALUES (?, ?, 'snmpv3', ?, 'authNoPriv', ?, ?, ?)""",
+            (
+                "cred-bad-v3-algorithm",
+                "bad-v3-algorithm-profile",
+                "snmp-user",
+                "SHA-1024",
+                encrypt_credential("auth-secret"),
+                "2026-10-08T00:00:00+00:00",
+            ),
+        )
+        conn.commit()
+
+    with pytest.raises(HTTPException, match="SNMPv3 认证算法不受 LibreNMS 支持"):
+        assets.import_assets([
+            assets.AssetCreate(
+                asset_type="network_device",
+                asset_tag="BAD-V3-ALGORITHM-IMPORT",
+                hostname="bad-v3-algorithm-import",
+                management_ip="192.0.2.89",
+                vendor="Cisco",
+                snmp_credential_name="bad-v3-algorithm-profile",
+            )
+        ])
+
+    with get_db_connection() as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM physical_assets WHERE asset_tag = ?",
+            ("BAD-V3-ALGORITHM-IMPORT",),
+        ).fetchone()[0] == 0
+
+
 def test_batch_import_keeps_imported_hostname_and_reports_snmp_sync_failure(isolated_db, monkeypatch):
     async def fake_snmp_get(*_args, **_kwargs):
         raise TimeoutError('test-only timeout')
@@ -176,7 +386,7 @@ def test_batch_import_rejects_non_snmp_credential_name(isolated_db):
         )
         conn.commit()
 
-    with pytest.raises(HTTPException, match="SNMPv2"):
+    with pytest.raises(HTTPException, match="SNMP凭据类型不受支持"):
         assets.import_assets([
             assets.AssetCreate(
                 asset_type="network_device",

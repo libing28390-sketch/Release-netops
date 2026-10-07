@@ -65,6 +65,7 @@ def test_vmagent_and_cadvisor_bypass_proxy_for_internal_targets():
 
     cadvisor_command = " ".join(str(item) for item in services["cadvisor"]["command"])
     assert "accelerator" not in cadvisor_command
+    assert "referenced_memory" in cadvisor_command
     docker_root_mount = next(
         item for item in services["cadvisor"]["volumes"]
         if isinstance(item, dict) and item.get("target") == "/var/lib/docker"
