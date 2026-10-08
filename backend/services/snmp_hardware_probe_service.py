@@ -13,6 +13,7 @@ import math
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Awaitable, Callable, Mapping
 
 from database import get_db_connection
@@ -39,40 +40,11 @@ _IF_NAME_OID = "1.3.6.1.2.1.31.1.1.1.1"
 _IF_DESCR_OID = "1.3.6.1.2.1.2.2.1.2"
 _IF_ADMIN_STATUS_OID = "1.3.6.1.2.1.2.2.1.7"
 _H3C_TRANSCEIVER_TABLE_OID = "1.3.6.1.4.1.25506.2.70.1.1.1"
-_H3C_DOT11_AC_AP_COUNT_OID = "1.3.6.1.4.1.25506.2.75.1.1.2.21.0"
-_H3C_DOT11_AC_CLIENT_COUNT_OID = "1.3.6.1.4.1.25506.2.75.1.1.3.6.0"
-_H3C_DOT11_AC_MAC_MODE_OID = "1.3.6.1.4.1.25506.2.75.1.1.1.1.0"
-_H3C_DOT11_AC_MAX_AP_COUNT_OID = "1.3.6.1.4.1.25506.2.75.1.1.1.2.0"
-_H3C_DOT11_AC_MAX_STATION_COUNT_OID = "1.3.6.1.4.1.25506.2.75.1.1.1.3.0"
-_H3C_DOT11_AC_AP_CONNECT_COUNT_OID = "1.3.6.1.4.1.25506.2.75.1.1.2.1.0"
-_H3C_DOT11_AC_STATION_CONNECT_COUNT_OID = "1.3.6.1.4.1.25506.2.75.1.1.2.2.0"
-_H3C_DOT11_AC_MASTER_AP_COUNT_OID = "1.3.6.1.4.1.25506.2.75.1.1.2.4.0"
-_H3C_DOT11_AC_SLAVE_AP_COUNT_OID = "1.3.6.1.4.1.25506.2.75.1.1.2.5.0"
-_H3C_DOT11_AC_AUTO_AP_COUNT_OID = "1.3.6.1.4.1.25506.2.75.1.1.2.6.0"
-_H3C_DOT11_AC_PERSISTENT_AP_COUNT_OID = "1.3.6.1.4.1.25506.2.75.1.1.2.7.0"
-_H3C_DOT11_AP_OBJECT_TABLE = "1.3.6.1.4.1.25506.2.75.2.1.2.1"
-_H3C_DOT11_AP_RADIO_TABLE = "1.3.6.1.4.1.25506.2.75.2.1.3.1"
-_H3C_DOT11_AP_BSS_TABLE = "1.3.6.1.4.1.25506.2.75.2.1.4.1"
-_H3C_DOT11_AP_SYSTEM_LEGACY_TABLE = "1.3.6.1.4.1.25506.2.75.2.1.8.1"
-_H3C_DOT11_AP_SYSTEM_TABLE = "1.3.6.1.4.1.25506.2.75.2.1.10.1"
-_H3C_DOT11_AP_BRIEF_TABLE = "1.3.6.1.4.1.25506.2.75.2.1.12.1"
-_H3C_DOT11_RADIO_RX_STATS = "1.3.6.1.4.1.25506.2.75.2.2.1.1"
-_H3C_DOT11_RADIO_TX_STATS = "1.3.6.1.4.1.25506.2.75.2.2.2.1"
-_H3C_DOT11_RADIO_ASSOC_STATS = "1.3.6.1.4.1.25506.2.75.2.2.8.1"
-_H3C_DOT11_BSS_ASSOC_STATS = "1.3.6.1.4.1.25506.2.75.2.2.6.1"
-_H3C_DOT11_STATION_TABLE = "1.3.6.1.4.1.25506.2.75.3.1.1.1"
-_H3C_DOT11_STATION_VLAN_OID = f"{_H3C_DOT11_STATION_TABLE}.11"
-_H3C_DOT11_STATION_IP_OID = f"{_H3C_DOT11_STATION_TABLE}.2"
-_H3C_DOT11_STATION_USERNAME_OID = f"{_H3C_DOT11_STATION_TABLE}.3"
-_H3C_DOT11_STATION_TX_RATE_SET_OID = f"{_H3C_DOT11_STATION_TABLE}.4"
-_H3C_DOT11_STATION_SSID_OID = f"{_H3C_DOT11_STATION_TABLE}.12"
-_H3C_DOT11_STATION_AP_RELATION_TABLE = "1.3.6.1.4.1.25506.2.75.3.1.2.1"
-_H3C_DOT11_STATION_AP_ID_OID = f"{_H3C_DOT11_STATION_AP_RELATION_TABLE}.1"
-_H3C_DOT11_STATION_RADIO_ID_OID = f"{_H3C_DOT11_STATION_AP_RELATION_TABLE}.2"
-_H3C_DOT11_STATION_WLAN_ID_OID = f"{_H3C_DOT11_STATION_AP_RELATION_TABLE}.3"
 _H3C_ENTITY_CPU_USAGE_OID = "1.3.6.1.4.1.25506.2.6.1.1.1.1.6"
 _H3C_ENTITY_MEM_USAGE_OID = "1.3.6.1.4.1.25506.2.6.1.1.1.1.8"
 _H3C_ENTITY_MEM_SIZE_OID = "1.3.6.1.4.1.25506.2.6.1.1.1.1.10"
+_H3C_ENTITY_TEMPERATURE_OID = "1.3.6.1.4.1.25506.2.6.1.1.1.1.12"
+_H3C_ENTITY_TEMPERATURE_THRESHOLD_OID = "1.3.6.1.4.1.25506.2.6.1.1.1.1.13"
 _H3C_COMWARE_PHP_SOURCE = "LibreNMS/OS/Comware.php"
 _H3C_COMWARE_ADAPTER = "librenms_comware_processor_mempool"
 _ENTITY_PHYSICAL_CLASS_MODULE = 9
@@ -944,11 +916,10 @@ def _mempool_targets(relations: Mapping[str, Any]) -> set[str]:
     """Return the byte/percent measurements derivable from configured inputs."""
     roles = {str(name) for name, value in relations.items() if isinstance(value, Mapping) and value.get("kind") in {"oid", "constant"}}
     targets: set[str] = set()
-    # LibreNMS accepts a lone percent relation, but byte relations need enough
-    # information for fillUsage to build a usable pool (two of used/free/total/
-    # percent_used). Do not publish a half-defined pool for a lone byte value.
+    # LibreNMS fillMissingRatio represents a percent-only pool as a 100-unit
+    # total and derives used/free from that ratio.
     if roles == {"percent_used"}:
-        return {"percent_used"}
+        return {"used", "total", "percent_used"}
     if len(roles) < 2:
         return targets
     if "percent_used" in roles:
@@ -964,6 +935,21 @@ def _mempool_targets(relations: Mapping[str, Any]) -> set[str]:
     if {"used", "total"} <= roles or {"used", "free"} <= roles or {"total", "free"} <= roles:
         targets.add("percent_used")
     return targets
+
+
+def _librenms_round(value: float, precision: int = 0) -> float:
+    quantizer = Decimal(1).scaleb(-precision)
+    return float(Decimal(str(value)).quantize(quantizer, rounding=ROUND_HALF_UP))
+
+
+def _normalize_librenms_mempool_percent(value: Any) -> float | None:
+    """Mirror LibreNMS Number::normalizePercent() for mempool values."""
+    percent = _number(value)
+    if percent is None:
+        return None
+    while percent > 100:
+        percent /= 10.0
+    return _librenms_round(percent, 2)
 
 
 def _mempool_metric_values(
@@ -987,7 +973,8 @@ def _mempool_metric_values(
             byte_values[name] = normalized * precision * unit_factor
 
     percent_raw = _number(relation_values.get("percent_used"))
-    percent = normalize_percentage(normalize_scaled_value(percent_raw, factor, offset)) if percent_raw is not None else None
+    scaled_percent = normalize_scaled_value(percent_raw, factor, offset) if percent_raw is not None else None
+    percent = _normalize_librenms_mempool_percent(scaled_percent)
 
     # Match LibreNMS fillUsage's two-of-four inference while keeping the
     # discovery and polling values derived from the current SNMP sample.
@@ -1011,6 +998,16 @@ def _mempool_metric_values(
             if byte_values["free"] is not None:
                 byte_values["total"] = byte_values["free"] / (1.0 - ratio)
                 byte_values["used"] = byte_values["total"] - byte_values["free"]
+        else:
+            # LibreNMS Number::fillMissingRatio() uses a 100-unit denominator
+            # when only the used percentage is available.
+            quantities["total"] = 100.0
+            quantities["used"] = percent
+            quantities["free"] = 100.0 - percent
+            if unit_factor is not None:
+                byte_values["total"] = 100.0 * precision * unit_factor
+                byte_values["used"] = percent * precision * unit_factor
+                byte_values["free"] = (100.0 - percent) * precision * unit_factor
 
     if quantities["used"] is not None and quantities["total"] is not None and quantities["total"] > 0:
         quantities["free"] = quantities["free"] if quantities["free"] is not None else quantities["total"] - quantities["used"]
@@ -1032,9 +1029,10 @@ def _mempool_metric_values(
             byte_values["used"] = byte_values["total"] - byte_values["free"]
 
     return {
-        "used": byte_values["used"],
-        "total": byte_values["total"],
-        "percent_used": percent,
+        "used": _librenms_round(byte_values["used"], 2) if byte_values["used"] is not None else None,
+        "total": _librenms_round(byte_values["total"], 2) if byte_values["total"] is not None else None,
+        # LibreNMS' Mempool model rounds mempool_perc to an integer on assignment.
+        "percent_used": _librenms_round(percent) if percent is not None else None,
     }
 
 
@@ -1541,14 +1539,14 @@ def _h3c_transceiver_value(raw_value: Any, measurement_type: str) -> float | Non
 
 def _h3c_transceiver_threshold(raw_value: Any, measurement_type: str) -> float | None:
     number = _number(raw_value)
-    if number is None or number in {2147483647, -2147483648}:
+    if number is None:
         return None
     if measurement_type == "optical_power_dbm":
         # LibreNMS divides tenths-of-microwatts by ten, then calls uw_to_dbm.
         microwatts = number / 10.0
         if microwatts < 0:
             return None
-        return -60.0 if microwatts == 0 else 10.0 * math.log10(microwatts / 1000.0)
+        return -60.0 if microwatts == 0 else _librenms_round(10.0 * math.log10(microwatts / 1000.0), 2)
     if measurement_type == "temperature_celsius":
         return number / 1000.0
     if measurement_type == "voltage_volts":
@@ -1611,7 +1609,7 @@ async def _probe_h3c_comware_transceivers(
         {
             "column": 15, "name": "temperature_celsius", "measurement": "temperature_celsius",
             "component": "temperature", "unit": "celsius", "factor": 1.0,
-            "label": "Module Temperature", "thresholds": {"low_alarm": 19, "low_warning": 21, "high_warning": 20, "high_alarm": 18},
+            "label": "Module", "thresholds": {"low_alarm": 19, "low_warning": 21, "high_warning": 20, "high_alarm": 18},
         },
         {
             "column": 16, "name": "voltage_volts", "measurement": "voltage_volts",
@@ -1630,12 +1628,12 @@ async def _probe_h3c_comware_transceivers(
     missing_port_name = 0
     source_commit = str(rule.get("source_commit") or "")
     rule_id = str(rule.get("id") or rule.get("os_key") or "comware")
-    source_files = [
-        "includes/discovery/sensors/dbm/comware.inc.php",
-        "includes/discovery/sensors/temperature/comware.inc.php",
-        "includes/discovery/sensors/voltage/comware.inc.php",
-        "includes/discovery/sensors/current/comware.inc.php",
-    ]
+    source_paths = {
+        "optical_power": "includes/discovery/sensors/dbm/comware.inc.php",
+        "temperature": "includes/discovery/sensors/temperature/comware.inc.php",
+        "voltage": "includes/discovery/sensors/voltage/comware.inc.php",
+        "current": "includes/discovery/sensors/current/comware.inc.php",
+    }
 
     for if_index, values in sorted(table.items()):
         # LibreNMS checks isset(diagnostic): the field must exist, but its
@@ -1656,7 +1654,9 @@ async def _probe_h3c_comware_transceivers(
         interface_name = str(if_names.get(str(if_index)) or if_descriptions.get(str(if_index)) or "").strip()
         if not interface_name:
             missing_port_name += 1
-            interface_name = f"ifIndex{if_index}"
+            # LibreNMS resolves an actual PortCache entry before creating
+            # these sensors. Do not invent an ifIndex label for an unknown port.
+            continue
 
         for definition in metric_definitions:
             column = int(definition["column"])
@@ -1675,6 +1675,7 @@ async def _probe_h3c_comware_transceivers(
 
             metric_name = str(definition["name"])
             measurement_type = str(definition["measurement"])
+            source_path = source_paths[str(definition["component"])]
             oid = f"{_H3C_TRANSCEIVER_TABLE_OID}.{column}"
             sensor = _sensor(
                 source_type="librenms_adapter",
@@ -1693,10 +1694,11 @@ async def _probe_h3c_comware_transceivers(
                 metadata={
                     "rule_id": rule_id,
                     "source_commit": source_commit,
+                    "source_path": source_path,
                     "os_key": "comware",
                     "mib": "HH3C-TRANSCEIVER-INFO-MIB",
                     "adapter": "librenms_comware_transceiver",
-                    "adapter_source_files": source_files,
+                    "adapter_source_files": [source_path],
                     "if_index": if_index,
                     "ent_physical_index": if_index,
                     "ent_physical_index_measured": "ports",
@@ -1734,37 +1736,7 @@ async def _probe_h3c_comware_transceivers(
     return {"sensors": sensors, "category_results": category_results}
 
 
-def _h3c_dot11_octet_index(suffix: str, *, trailing_parts: int = 0) -> tuple[str, list[int]] | None:
-    """Decode the length-prefixed OCTET STRING index used by HH3C-DOT11 tables."""
-    parts = _index_parts(suffix)
-    if not parts or parts[0] <= 0 or parts[0] > 127:
-        return None
-    octet_count = parts[0]
-    split_at = 1 + octet_count
-    if split_at + trailing_parts != len(parts):
-        return None
-    octets = parts[1:split_at]
-    if any(value < 0 or value > 255 for value in octets):
-        return None
-    try:
-        decoded = bytes(octets).decode("utf-8").strip()
-    except UnicodeDecodeError:
-        decoded = "hex:" + bytes(octets).hex()
-    if not decoded or any(not character.isprintable() for character in decoded):
-        decoded = "hex:" + bytes(octets).hex()
-    return decoded[:128], parts[split_at:]
-
-
-def _h3c_dot11_mac_index(suffix: str) -> tuple[str, list[int]] | None:
-    """Decode the six-octet MacAddress index of HH3C-DOT11-STATION-MIB."""
-    parts = _index_parts(suffix)
-    if parts is None or len(parts) != 6 or any(value < 0 or value > 255 for value in parts):
-        return None
-    mac = ":".join(f"{value:02x}" for value in parts)
-    return mac, parts
-
-
-def _h3c_dot11_text(value: Any) -> str:
+def _wireless_text_value(value: Any) -> str:
     text = str(value or "").strip()
     text = re.sub(r"^(?:OCTET STRING|STRING|IpAddress|MacAddress|Hex-STRING)\s*:\s*", "", text, flags=re.IGNORECASE)
     text = text.strip().strip('"').strip()
@@ -1775,821 +1747,25 @@ def _h3c_dot11_text(value: Any) -> str:
     return text[:300]
 
 
-def _h3c_dot11_number(value: Any) -> float | None:
-    number = _number(value)
+def _h3c_entity_class_code(raw_value: Any) -> int | None:
+    text = str(raw_value or "").strip().casefold()
+    named_classes = {"other": 1, "unknown": 2, "chassis": 3, "backplane": 4, "container": 5, "power supply": 6, "fan": 7, "sensor": 8, "module": 9}
+    if text in named_classes:
+        return named_classes[text]
+    number = _number(text)
     if number is not None:
-        return number
-    match = re.search(r"(?<!\d)(-?\d+(?:\.\d+)?)\s*\([^)]*\)", str(value or ""))
-    return _number(match.group(1)) if match else None
-
-
-def _h3c_dot11_integer_text(value: Any) -> str:
-    number = _h3c_dot11_number(value)
-    if number is None or not math.isfinite(number) or number < 0 or not number.is_integer():
-        return ""
-    return str(int(number))
-
-
-def _h3c_wireless_sensor(
-    *,
-    rule: Mapping[str, Any],
-    component_class: str,
-    measurement_type: str,
-    sensor_class: str = "",
-    oid: str,
-    suffix: str,
-    raw_value: Any,
-    unit: str,
-    sensor_name: str,
-    entity_name: str,
-    series_variant: str,
-    index_labels: Mapping[str, Any] | None = None,
-    states: Any = None,
-    get_scalar: bool = False,
-) -> dict[str, Any] | None:
-    """Build one persistent sensor from a documented H3C WLAN MIB value."""
-    value: float | None = None
-    quality = "missing" if raw_value is None else "invalid"
-    if raw_value is not None and measurement_type == "component_state":
-        value, _mapping, quality = _mapped_state(raw_value, states)
-    elif raw_value is not None and measurement_type == "wireless_station_attribute":
-        quality = "good" if str(raw_value).strip() else "invalid"
-    elif raw_value is not None and measurement_type == "wireless_radio_attribute":
-        quality = "good" if str(raw_value).strip() else "invalid"
-    elif raw_value is not None:
-        number = _h3c_dot11_number(raw_value)
-        allow_negative_raw_signal = sensor_class in {
-            "signal_strength_average_raw", "signal_strength_max_raw", "signal_strength_min_raw",
-        }
-        if number is not None and math.isfinite(number) and (number >= 0 or allow_negative_raw_signal):
-            if sensor_class in {"utilization", "radio-resource-usage"}:
-                if number <= 100:
-                    value, quality = number, "good"
-            elif measurement_type in {"cpu_usage_percent", "memory_usage_percent"}:
-                if number <= 100:
-                    value, quality = number, "good"
-            else:
-                value, quality = number, "good"
-
-    metadata: dict[str, Any] = {
-        "adapter": "nexora_h3c_dot11_official_mib",
-        "adapter_source_files": [
-            "H3C HH3C-DOT11-ACMT-MIB",
-            "H3C HH3C-DOT11-APMT-MIB",
-            "H3C HH3C-DOT11-STATION-MIB",
-        ],
-        "os_key": "comware",
-        "rule_id": str(rule.get("id") or "comware"),
-        "source_commit": str(rule.get("source_commit") or ""),
-        "index_suffix": suffix,
-        "series_variant": series_variant,
-    }
-    if sensor_class:
-        metadata["wireless_sensor_class"] = sensor_class
-    sensor = _sensor(
-        source_type="h3c_wireless",
-        source_id=f"{metadata['rule_id']}:h3c_dot11:{component_class}:{sensor_class or measurement_type}:{series_variant}:{suffix}",
-        component_class=component_class,
-        measurement_type=measurement_type,
-        oid=oid,
-        suffix=suffix,
-        raw_value=raw_value,
-        value=value,
-        unit=unit,
-        sensor_name=sensor_name,
-        entity_name=entity_name,
-        group_name="wireless",
-        quality=quality,
-        states=states,
-        metadata=metadata,
-        poll_plan={
-            "kind": "get" if get_scalar else "direct",
-            "oid": oid,
-            "index": suffix,
-            "factor": 1.0,
-            "offset": 0.0,
-        },
-    )
-    if sensor is not None:
-        sensor["series_variant"] = series_variant
-        sensor["index_labels"].update(dict(index_labels or {}))
-    return sensor
-
-
-def _h3c_wireless_category(
-    component_class: str,
-    *,
-    reads: Mapping[str, WalkResult],
-    required_oids: set[str],
-    rows: int,
-    empty_is_complete: bool = False,
-    reason_code: str,
-    reason: str,
-) -> dict[str, Any]:
-    complete = bool(required_oids) and all(
-        reads.get(oid, WalkResult([], False, "missing_read")).complete
-        and not reads.get(oid, WalkResult([], False, "missing_read")).reason
-        for oid in required_oids
-    )
-    status = "success" if rows and complete else "partial" if rows else (
-        "not_found" if complete and empty_is_complete else "failed"
-    )
-    result_complete = bool(complete and (rows > 0 or empty_is_complete))
-    resolved_reason_code = reason_code
-    if not rows and not empty_is_complete:
-        resolved_reason_code = f"{reason_code}_walk_failed" if not complete else f"{reason_code}_empty_unconfirmed"
-    return _category_result(
-        "h3c_wireless", component_class,
-        status=status,
-        complete=result_complete,
-        reason_code=resolved_reason_code,
-        reason=reason,
-    )
-
-
-async def _probe_h3c_comware_wireless(
-    ip: str,
-    community: str | Mapping[str, Any],
-    port: int,
-    *,
-    rule: Mapping[str, Any],
-    version: str,
-    walk_func: Callable[..., Awaitable[list[tuple[str, str]]]] | None,
-) -> dict[str, Any]:
-    """Collect H3C controller/AP/radio/BSS/station telemetry from official HH3C-DOT11 MIBs.
-
-    LibreNMS Comware has no Wireless*Discovery implementation.  This is an
-    explicit Nexora extension, using H3C's documented object semantics.
-    """
-    # hh3cDot11APObjectTable is keyed by APObjID. The AP Brief table is
-    # separately keyed by AP name and is joined only after decoding that name.
-    ap_columns = (2, 3, 7, 8, 9)
-    ap_brief_columns = (2, 3, 4, 11, 16, 17, 18, 20, 21, 22, 23, 25)
-    radio_columns = (3, 4, 5, 6, 7, 10, 11, 12, 25, 26, 30, 31, 32, 33, 34, 35)
-    bss_columns = (2, 4, 6)
-    system_columns = (2, 3, 4, 5, 7)
-    station_column_specs = (
-        (_H3C_DOT11_STATION_IP_OID, "station_ip", "IP 地址"),
-        (_H3C_DOT11_STATION_USERNAME_OID, "username", "用户名"),
-        (_H3C_DOT11_STATION_TX_RATE_SET_OID, "tx_rate_set", "Tx Rate Set"),
-        (_H3C_DOT11_STATION_SSID_OID, "ssid", "SSID"),
-    )
-    error_columns = {
-        f"{_H3C_DOT11_RADIO_RX_STATS}.6": "rx_discarded_frames",
-        f"{_H3C_DOT11_RADIO_RX_STATS}.8": "rx_fcs_errors",
-        f"{_H3C_DOT11_RADIO_TX_STATS}.2": "tx_failures",
-        f"{_H3C_DOT11_RADIO_TX_STATS}.7": "tx_ack_failures",
-    }
-    radio_assoc_oid = f"{_H3C_DOT11_RADIO_ASSOC_STATS}.6"
-    bss_assoc_oid = f"{_H3C_DOT11_BSS_ASSOC_STATS}.6"
-    station_attribute_oids = {oid for oid, _variant, _label in station_column_specs}
-    station_oids = station_attribute_oids | {_H3C_DOT11_STATION_VLAN_OID}
-    station_relation_oids = {
-        _H3C_DOT11_STATION_AP_ID_OID,
-        _H3C_DOT11_STATION_RADIO_ID_OID,
-        _H3C_DOT11_STATION_WLAN_ID_OID,
-    }
-    ap_oids = {f"{_H3C_DOT11_AP_OBJECT_TABLE}.{column}" for column in ap_columns}
-    ap_brief_oids = {f"{_H3C_DOT11_AP_BRIEF_TABLE}.{column}" for column in ap_brief_columns}
-    radio_oids = {f"{_H3C_DOT11_AP_RADIO_TABLE}.{column}" for column in radio_columns}
-    bss_oids = {f"{_H3C_DOT11_AP_BSS_TABLE}.{column}" for column in bss_columns}
-    system_oids = {f"{_H3C_DOT11_AP_SYSTEM_TABLE}.{column}" for column in system_columns}
-    legacy_system_oids = {f"{_H3C_DOT11_AP_SYSTEM_LEGACY_TABLE}.{column}" for column in system_columns}
-    all_oids = (
-        ap_oids | ap_brief_oids | radio_oids | bss_oids | system_oids | legacy_system_oids
-        | set(error_columns) | {radio_assoc_oid, bss_assoc_oid} | station_oids | station_relation_oids
-    )
-    reads = await _walk_many(ip, community, all_oids, port, version, walk_func=walk_func)
-    rows = {oid: _row_map(read) for oid, read in reads.items()}
-    scalar_oids = {
-        _H3C_DOT11_AC_AP_COUNT_OID,
-        _H3C_DOT11_AC_CLIENT_COUNT_OID,
-        _H3C_DOT11_AC_MAC_MODE_OID,
-        _H3C_DOT11_AC_MAX_AP_COUNT_OID,
-        _H3C_DOT11_AC_MAX_STATION_COUNT_OID,
-        _H3C_DOT11_AC_AP_CONNECT_COUNT_OID,
-        _H3C_DOT11_AC_STATION_CONNECT_COUNT_OID,
-        _H3C_DOT11_AC_MASTER_AP_COUNT_OID,
-        _H3C_DOT11_AC_SLAVE_AP_COUNT_OID,
-        _H3C_DOT11_AC_AUTO_AP_COUNT_OID,
-        _H3C_DOT11_AC_PERSISTENT_AP_COUNT_OID,
-    }
-    scalar_values = await _get_many(
-        ip, community, scalar_oids, port, version,
-    )
-
-    sensors: list[dict[str, Any]] = []
-    categories: list[dict[str, Any]] = []
-    controller_count = 0
-    controller_sources = (
-        ("ap-count", "在线 AP 数", (_H3C_DOT11_AC_AP_COUNT_OID, _H3C_DOT11_AC_AP_CONNECT_COUNT_OID)),
-        ("clients", "无线客户端总数", (_H3C_DOT11_AC_CLIENT_COUNT_OID, _H3C_DOT11_AC_STATION_CONNECT_COUNT_OID)),
-    )
-    controller_selected: dict[str, tuple[str, Any, float]] = {}
-    for sensor_class, display, candidates in controller_sources:
-        selected: tuple[str, Any, float] | None = None
-        for oid in candidates:
-            raw_candidate = scalar_values.get(oid)
-            candidate_number = _h3c_dot11_number(raw_candidate)
-            if candidate_number is not None and candidate_number >= 0:
-                selected = (oid, raw_candidate, candidate_number)
-                break
-        if selected is None:
-            continue
-        oid, raw, number = selected
-        controller_selected[sensor_class] = selected
-        sensor = _h3c_wireless_sensor(
-            rule=rule, component_class="wireless_controller", measurement_type="wireless_sensor_value",
-            sensor_class=sensor_class, oid=oid, suffix="0", raw_value=raw, unit="count",
-            sensor_name=display, entity_name="H3C Wireless Controller", series_variant=sensor_class,
-            index_labels={"controller": "true"}, get_scalar=True,
-        )
-        if sensor:
-            sensors.append(sensor)
-            controller_count += 1
-    controller_complete = len(controller_selected) == len(controller_sources)
-    controller_ap_count = controller_selected.get("ap-count", ("", None, None))[2]
-    confirmed_empty_controller = controller_ap_count == 0
-    categories.append(_category_result(
-        "h3c_wireless", "wireless_controller",
-        status="success" if controller_complete else "partial" if controller_count else "not_found",
-        complete=controller_complete,
-        reason_code="h3c_dot11_controller_summary",
-        reason=(
-            "H3C HH3C-DOT11-ACMT-MIB summary GETs; prefer current AP/associated-station counters and fall back to legacy connect counters."
-            if controller_count else "No H3C HH3C-DOT11 wireless controller summary objects responded."
-        ),
-    ))
-    controller_detail_specs = (
-        (_H3C_DOT11_AC_MAC_MODE_OID, "ac_mac_mode", "enum", "AC MAC 模式"),
-        (_H3C_DOT11_AC_MAX_AP_COUNT_OID, "max_ap_count", "count", "AC 最大 AP 数"),
-        (_H3C_DOT11_AC_MAX_STATION_COUNT_OID, "max_station_count", "count", "AC 最大无线终端数"),
-        (_H3C_DOT11_AC_MASTER_AP_COUNT_OID, "master_ap_count", "count", "主连接 AP 数"),
-        (_H3C_DOT11_AC_SLAVE_AP_COUNT_OID, "slave_ap_count", "count", "备连接 AP 数"),
-        (_H3C_DOT11_AC_AUTO_AP_COUNT_OID, "auto_ap_count", "count", "自动 AP 数"),
-        (_H3C_DOT11_AC_PERSISTENT_AP_COUNT_OID, "persistent_ap_count", "count", "固化 AP 数"),
-    )
-    for oid, sensor_class, unit, display in controller_detail_specs:
-        raw = scalar_values.get(oid)
-        if raw is None:
-            continue
-        sensor = _h3c_wireless_sensor(
-            rule=rule, component_class="wireless_controller", measurement_type="wireless_sensor_value",
-            sensor_class=sensor_class, oid=oid, suffix="0", raw_value=raw, unit=unit,
-            sensor_name=display, entity_name="H3C Wireless Controller", series_variant=sensor_class,
-            index_labels={"controller": "true"}, get_scalar=True,
-        )
-        if sensor:
-            sensors.append(sensor)
-
-
-    ap_suffixes: set[str] = set()
-    ap_column_maps = {column: rows.get(f"{_H3C_DOT11_AP_OBJECT_TABLE}.{column}", {}) for column in ap_columns}
-    for values in ap_column_maps.values():
-        ap_suffixes.update(values)
-    ap_by_id: dict[str, dict[str, Any]] = {}
-    ap_by_suffix: dict[str, dict[str, Any]] = {}
-    for suffix in sorted(ap_suffixes):
-        decoded = _h3c_dot11_octet_index(suffix)
-        if decoded is None:
-            continue
-        ap_id, _tail = decoded
-        item: dict[str, Any] = {"suffix": suffix, "ap_id": ap_id}
-        for column, label in ((2, "ap_ip"), (3, "ap_mac"), (7, "ap_clients"), (8, "ap_name"), (9, "ap_model")):
-            value = ap_column_maps[column].get(suffix)
-            if value is not None:
-                item[label] = _h3c_dot11_text(value)
-        ap_by_id[ap_id] = item
-        ap_by_suffix[suffix] = item
-
-    # The AP Brief table is indexed by AP name, unlike the AP/radio tables.
-    # Join it only through that documented identity and keep its extra values
-    # as labels/metadata instead of treating its suffix as an APObjID.
-    ap_brief_column_maps = {
-        column: rows.get(f"{_H3C_DOT11_AP_BRIEF_TABLE}.{column}", {})
-        for column in ap_brief_columns
-    }
-    ap_brief_suffixes: set[str] = set()
-    for values in ap_brief_column_maps.values():
-        ap_brief_suffixes.update(values)
-    ap_brief_by_name: dict[str, dict[str, str]] = {}
-    ap_brief_fields = {
-        2: "ap_serial",
-        3: "ap_model",
-        4: "ap_description",
-        11: "ap_element_id",
-        16: "ap_ip",
-        17: "ap_mac",
-        18: "ap_connection_type",
-        20: "ap_ac_port_index",
-        21: "ap_clients",
-        22: "ap_image_name",
-        23: "ap_software_version",
-        25: "ap_operation_status",
-    }
-    for suffix in sorted(ap_brief_suffixes):
-        decoded = _h3c_dot11_octet_index(suffix)
-        if decoded is None:
-            continue
-        ap_name, _tail = decoded
-        brief: dict[str, str] = {}
-        brief["ap_name"] = ap_name
-        brief["ap_brief_suffix"] = suffix
-        for column, label in ap_brief_fields.items():
-            raw = ap_brief_column_maps[column].get(suffix)
-            if raw is not None:
-                brief[label] = _h3c_dot11_text(raw)
-        ap_brief_by_name[ap_name.casefold()] = brief
-    for item in list(ap_by_id.values()):
-        ap_name = str(item.get("ap_name") or "").strip()
-        ap_identifier = str(item.get("ap_id") or "").strip()
-        brief = ap_brief_by_name.get(ap_name.casefold()) or ap_brief_by_name.get(ap_identifier.casefold())
-        if not brief:
-            continue
-        if not ap_name and brief.get("ap_name"):
-            item["ap_name"] = brief["ap_name"]
-        for label, value in brief.items():
-            if value and not item.get(label):
-                item[label] = value
-    ap_names_seen = {
-        identity.casefold()
-        for item in ap_by_id.values()
-        for identity in (item.get("ap_name"), item.get("ap_id"))
-        if identity
-    }
-    legacy_ap_items: list[dict[str, Any]] = []
-    for ap_name_key, brief in ap_brief_by_name.items():
-        if ap_name_key in ap_names_seen:
-            continue
-        item: dict[str, Any] = dict(brief)
-        item["suffix"] = str(brief.get("ap_brief_suffix") or "")
-        legacy_ap_items.append(item)
-        ap_by_id.setdefault(ap_name_key, item)
-    for item in list(ap_by_id.values()):
-        ap_name = str(item.get("ap_name") or "").strip()
-        if ap_name:
-            ap_by_id.setdefault(ap_name, item)
-            ap_by_id.setdefault(ap_name.casefold(), item)
-
-    ap_status_states = [
-        {"value": "1", "descr": "associated", "generic": "up"},
-        {"value": "associated(1)", "descr": "associated", "generic": "up"},
-        {"value": "2", "descr": "deassociated", "generic": "down"},
-        {"value": "deassociated(2)", "descr": "deassociated", "generic": "down"},
-        {"value": "3", "descr": "downloading image", "generic": "warning"},
-        {"value": "downloadingImage(3)", "descr": "downloading image", "generic": "warning"},
-    ]
-    ap_sensor_count = 0
-    ap_system_raw = {column: rows.get(f"{_H3C_DOT11_AP_SYSTEM_TABLE}.{column}", {}) for column in system_columns}
-    legacy_system_raw = {column: rows.get(f"{_H3C_DOT11_AP_SYSTEM_LEGACY_TABLE}.{column}", {}) for column in system_columns}
-    ap_brief_status_oid = f"{_H3C_DOT11_AP_BRIEF_TABLE}.25"
-    ap_sensor_items = list(ap_by_suffix.items()) + [
-        (str(item.get("suffix") or ""), item) for item in legacy_ap_items if item.get("suffix")
-    ]
-    for suffix, item in sorted(ap_sensor_items):
-        ap_name = str(item.get("ap_name") or "").strip()
-        ap_id = str(item.get("ap_id") or "").strip()
-        labels = {key: value for key, value in item.items() if key in {"ap_id", "ap_name", "ap_model", "ap_ip", "ap_mac", "ap_serial"} and value}
-        entity_name = ap_name or f"AP ID {ap_id}"
-        raw_status = ap_system_raw[7].get(suffix)
-        status_oid = f"{_H3C_DOT11_AP_SYSTEM_TABLE}.7"
-        status_suffix = suffix
-        status_states = ap_status_states
-        if raw_status is None and item.get("ap_element_id"):
-            status_oid = f"{_H3C_DOT11_AP_SYSTEM_LEGACY_TABLE}.7"
-            status_suffix = str(item["ap_element_id"])
-            raw_status = legacy_system_raw[7].get(status_suffix)
-        if raw_status is None and item.get("ap_brief_suffix"):
-            status_oid = ap_brief_status_oid
-            status_suffix = str(item["ap_brief_suffix"])
-            raw_status = ap_brief_column_maps[25].get(status_suffix)
-            status_states = [
-                {"value": "1", "descr": "run", "generic": "up"},
-                {"value": "run(1)", "descr": "run", "generic": "up"},
-                {"value": "2", "descr": "idle", "generic": "down"},
-                {"value": "idle(2)", "descr": "idle", "generic": "down"},
-            ]
-        if raw_status is not None:
-            sensor = _h3c_wireless_sensor(
-                rule=rule, component_class="wireless_access_point", measurement_type="component_state",
-                oid=status_oid, suffix=status_suffix, raw_value=raw_status, unit="state",
-                sensor_name=f"{entity_name} 状态", entity_name=entity_name, series_variant="ap_status",
-                index_labels=labels, states=status_states,
-            )
-            if sensor:
-                sensors.append(sensor)
-                ap_sensor_count += 1
-        raw_clients = ap_column_maps[7].get(suffix)
-        client_oid = f"{_H3C_DOT11_AP_OBJECT_TABLE}.7"
-        client_suffix = suffix
-        if raw_clients is None and item.get("ap_clients") is not None and item.get("ap_brief_suffix"):
-            raw_clients = item["ap_clients"]
-            client_oid = f"{_H3C_DOT11_AP_BRIEF_TABLE}.21"
-            client_suffix = str(item["ap_brief_suffix"])
-        if raw_clients is not None:
-            sensor = _h3c_wireless_sensor(
-                rule=rule, component_class="wireless_access_point", measurement_type="wireless_sensor_value",
-                sensor_class="clients", oid=client_oid, suffix=client_suffix,
-                raw_value=raw_clients, unit="count", sensor_name=f"{entity_name} 客户端数",
-                entity_name=entity_name, series_variant="clients", index_labels=labels,
-            )
-            if sensor:
-                sensors.append(sensor)
-                ap_sensor_count += 1
-    ap_object_clients_oid = f"{_H3C_DOT11_AP_OBJECT_TABLE}.7"
-    ap_brief_clients_oid = f"{_H3C_DOT11_AP_BRIEF_TABLE}.21"
-    ap_object_client_rows = rows.get(ap_object_clients_oid, {})
-    ap_brief_client_rows = rows.get(ap_brief_clients_oid, {})
-    ap_object_client_read = reads.get(ap_object_clients_oid, WalkResult([], False, "missing_read"))
-    if ap_object_client_rows:
-        ap_client_coverage_oid = ap_object_clients_oid
-    elif ap_brief_client_rows:
-        ap_client_coverage_oid = ap_brief_clients_oid
-    elif ap_object_client_read.complete and not ap_object_client_read.reason:
-        ap_client_coverage_oid = ap_object_clients_oid
-    else:
-        ap_client_coverage_oid = ap_brief_clients_oid
-    if ap_column_maps[8]:
-        ap_identity_coverage_oid = f"{_H3C_DOT11_AP_OBJECT_TABLE}.8"
-    else:
-        ap_brief_identity_column = next(
-            (column for column in (2, 3, 16, 17, 25, 21) if ap_brief_column_maps[column]),
-            21,
-        )
-        ap_identity_coverage_oid = f"{_H3C_DOT11_AP_BRIEF_TABLE}.{ap_brief_identity_column}"
-    if ap_system_raw[7]:
-        ap_status_coverage_oid = f"{_H3C_DOT11_AP_SYSTEM_TABLE}.7"
-    elif legacy_system_raw[7]:
-        ap_status_coverage_oid = f"{_H3C_DOT11_AP_SYSTEM_LEGACY_TABLE}.7"
-    elif ap_brief_column_maps[25]:
-        ap_status_coverage_oid = ap_brief_status_oid
-    elif ap_by_suffix:
-        ap_status_coverage_oid = f"{_H3C_DOT11_AP_SYSTEM_TABLE}.7"
-    else:
-        ap_status_coverage_oid = ap_brief_status_oid
-    categories.append(_h3c_wireless_category(
-        "wireless_access_point", reads=reads,
-        required_oids={
-            ap_identity_coverage_oid,
-            ap_status_coverage_oid,
-            ap_client_coverage_oid,
-        },
-        empty_is_complete=confirmed_empty_controller,
-        rows=ap_sensor_count, reason_code="h3c_dot11_ap_brief_table",
-        reason="AP Object table when present, with AP name-indexed HH3C-DOT11-APMT-MIB AP Brief and version-matched AP system-table fallbacks.",
-    ))
-
-    processor_count = memory_count = 0
-    processor_specs = ((2, "realtime", "CPU 实时使用率"), (3, "average", "CPU 平均使用率"))
-    memory_specs = ((4, "realtime", "内存实时使用率"), (5, "average", "内存平均使用率"))
-    use_legacy_ap_system = (
-        not any(ap_system_raw[column] for column in (2, 3, 4, 5))
-        and any(legacy_system_raw[column] for column in (2, 3, 4, 5))
-    )
-    metric_system_root = _H3C_DOT11_AP_SYSTEM_LEGACY_TABLE if use_legacy_ap_system else _H3C_DOT11_AP_SYSTEM_TABLE
-    metric_system_raw = legacy_system_raw if use_legacy_ap_system else ap_system_raw
-    ap_by_element_id = {
-        str(item.get("ap_element_id")): item
-        for _, item in ap_sensor_items
-        if item.get("ap_element_id") not in (None, "")
-    }
-    for column, variant, display in processor_specs:
-        oid = f"{metric_system_root}.{column}"
-        for suffix, raw in sorted(metric_system_raw[column].items()):
-            if use_legacy_ap_system:
-                ap = ap_by_element_id.get(str(suffix), {})
-                decoded_ap_id = ""
-            else:
-                decoded = _h3c_dot11_octet_index(suffix)
-                decoded_ap_id = decoded[0] if decoded else ""
-                ap = (ap_by_id.get(decoded_ap_id) or ap_by_id.get(decoded_ap_id.casefold(), {})) if decoded else {}
-            ap_name = str(ap.get("ap_name") or "").strip()
-            ap_id = str(ap.get("ap_id") or decoded_ap_id).strip()
-            labels = {key: ap[key] for key in ("ap_id", "ap_name", "ap_model", "ap_ip", "ap_mac", "ap_serial") if ap.get(key)}
-            if ap_id:
-                labels.setdefault("ap_id", ap_id)
-            title = f"{ap_name or f'AP ID {ap_id}'} {display}" if ap_id or ap_name else display
-            sensor = _h3c_wireless_sensor(
-                rule=rule, component_class="processor", measurement_type="cpu_usage_percent",
-                oid=oid, suffix=suffix, raw_value=raw, unit="percent", sensor_name=title,
-                entity_name=ap_name or (f"AP ID {ap_id}" if ap_id else ""), series_variant=f"ap_{variant}", index_labels=labels,
-            )
-            if sensor:
-                sensors.append(sensor)
-                processor_count += 1
-    for column, variant, display in memory_specs:
-        oid = f"{metric_system_root}.{column}"
-        for suffix, raw in sorted(metric_system_raw[column].items()):
-            if use_legacy_ap_system:
-                ap = ap_by_element_id.get(str(suffix), {})
-                decoded_ap_id = ""
-            else:
-                decoded = _h3c_dot11_octet_index(suffix)
-                decoded_ap_id = decoded[0] if decoded else ""
-                ap = (ap_by_id.get(decoded_ap_id) or ap_by_id.get(decoded_ap_id.casefold(), {})) if decoded else {}
-            ap_name = str(ap.get("ap_name") or "").strip()
-            ap_id = str(ap.get("ap_id") or decoded_ap_id).strip()
-            labels = {key: ap[key] for key in ("ap_id", "ap_name", "ap_model", "ap_ip", "ap_mac", "ap_serial") if ap.get(key)}
-            if ap_id:
-                labels.setdefault("ap_id", ap_id)
-            title = f"{ap_name or f'AP ID {ap_id}'} {display}" if ap_id or ap_name else display
-            sensor = _h3c_wireless_sensor(
-                rule=rule, component_class="memory_pool", measurement_type="memory_usage_percent",
-                oid=oid, suffix=suffix, raw_value=raw, unit="percent", sensor_name=title,
-                entity_name=ap_name or (f"AP ID {ap_id}" if ap_id else ""), series_variant=f"ap_{variant}", index_labels=labels,
-            )
-            if sensor:
-                sensors.append(sensor)
-                memory_count += 1
-    categories.append(_h3c_wireless_category(
-        "processor", reads=reads, required_oids={f"{metric_system_root}.{column}" for column, _, _ in processor_specs},
-        empty_is_complete=confirmed_empty_controller,
-        rows=processor_count, reason_code="h3c_dot11_ap_cpu",
-        reason="HH3C-DOT11-APMT-MIB AP real-time and average CPU usage (0-100 percent).",
-    ))
-    categories.append(_h3c_wireless_category(
-        "memory_pool", reads=reads, required_oids={f"{metric_system_root}.{column}" for column, _, _ in memory_specs},
-        empty_is_complete=confirmed_empty_controller,
-        rows=memory_count, reason_code="h3c_dot11_ap_memory",
-        reason="HH3C-DOT11-APMT-MIB AP real-time and average memory usage (0-100 percent).",
-    ))
-
-    def joined_ap(suffix: str, trailing_parts: int) -> tuple[dict[str, Any], str, list[int]] | None:
-        decoded = _h3c_dot11_octet_index(suffix, trailing_parts=trailing_parts)
-        if decoded is None:
-            return None
-        ap_identifier, tail = decoded
-        return ap_by_id.get(ap_identifier) or ap_by_id.get(ap_identifier.casefold(), {}), ap_identifier, tail
-
-    radio_scope_oids = radio_oids | {radio_assoc_oid} | set(error_columns)
-    radio_suffixes: set[str] = set()
-    for oid in radio_scope_oids:
-        radio_suffixes.update(rows.get(oid, {}))
-    radio_count = 0
-    radio_status_states = [
-        {"value": "1", "descr": "up", "generic": "up"},
-        {"value": "up(1)", "descr": "up", "generic": "up"},
-        {"value": "2", "descr": "down", "generic": "down"},
-        {"value": "down(2)", "descr": "down", "generic": "down"},
-        {"value": "3", "descr": "testing", "generic": "warning"},
-        {"value": "testing(3)", "descr": "testing", "generic": "warning"},
-        {"value": "4", "descr": "administratively down", "generic": "down"},
-        {"value": "admindown(4)", "descr": "administratively down", "generic": "down"},
-    ]
-    radio_truth_states = [
-        {"value": "1", "descr": "enabled", "generic": "up"},
-        {"value": "true", "descr": "enabled", "generic": "up"},
-        {"value": "true(1)", "descr": "enabled", "generic": "up"},
-        {"value": "2", "descr": "disabled", "generic": "down"},
-        {"value": "false", "descr": "disabled", "generic": "down"},
-        {"value": "false(2)", "descr": "disabled", "generic": "down"},
-    ]
-    for suffix in sorted(radio_suffixes):
-        joined = joined_ap(suffix, 1)
-        if joined is None:
-            continue
-        ap, ap_identifier, tail = joined
-        ap_name = str(ap.get("ap_name") or "").strip()
-        radio_id = str(tail[0])
-        labels = {key: ap[key] for key in ("ap_id", "ap_name", "ap_model", "ap_ip", "ap_mac", "ap_serial") if ap.get(key)}
-        labels.setdefault("ap_id", ap_identifier)
-        labels["radio_id"] = radio_id
-        radio_ifindex = rows.get(f"{_H3C_DOT11_AP_RADIO_TABLE}.7", {}).get(suffix)
-        if radio_ifindex is not None:
-            labels["radio_ifindex"] = _h3c_dot11_text(radio_ifindex)
-        entity_name = f"{ap_name or f'AP ID {ap_identifier}'} Radio {radio_id}"
-        for column, variant, label, state_map in (
-            (3, "admin_status", "管理状态", radio_truth_states),
-            (4, "oper_status", "运行状态", radio_truth_states),
-            (25, "oper_status_cm", "运行状态", radio_status_states),
-        ):
-            oid = f"{_H3C_DOT11_AP_RADIO_TABLE}.{column}"
-            raw_status = rows.get(oid, {}).get(suffix)
-            if raw_status is None:
-                continue
-            sensor = _h3c_wireless_sensor(
-                rule=rule, component_class="wireless_radio", measurement_type="component_state",
-                sensor_class="state", oid=oid, suffix=suffix, raw_value=raw_status,
-                unit="state", sensor_name=f"{entity_name} {label}", entity_name=entity_name,
-                series_variant=variant, index_labels=labels, states=state_map,
-            )
-            if sensor:
-                sensors.append(sensor)
-                radio_count += 1
-        for column, sensor_class, unit, variant, label in (
-            (5, "channel", "channel", "channel", "信道"),
-            (6, "tx_power_level", "level", "tx_power_level", "发射功率等级"),
-            (10, "radio-resource-usage", "percent", "radio_resource_usage", "射频资源使用率"),
-            (11, "radio_mode", "bitmask", "radio_mode_support", "支持模式位图"),
-            (12, "tx_power_level", "level", "tx_power_level_current", "当前发射功率等级"),
-            (26, "utilization", "percent", "channel_utilization", "主信道利用率"),
-            (30, "radio_type_code", "enum", "radio_type_code", "Radio 类型代码"),
-            (31, "radio_oper_code", "enum", "radio_oper_code", "Radio 运行代码"),
-            (33, "signal_strength_average_raw", "raw", "signal_strength_average_raw", "平均接收信号强度原始值"),
-            (34, "signal_strength_max_raw", "raw", "signal_strength_max_raw", "最大接收信号强度原始值"),
-            (35, "signal_strength_min_raw", "raw", "signal_strength_min_raw", "最小接收信号强度原始值"),
-        ):
-            oid = f"{_H3C_DOT11_AP_RADIO_TABLE}.{column}"
-            raw = rows.get(oid, {}).get(suffix)
-            number = _h3c_dot11_number(raw)
-            if raw is None or number is None or (sensor_class in {"utilization", "radio-resource-usage"} and (number < 0 or number > 100)):
-                continue
-            sensor = _h3c_wireless_sensor(
-                rule=rule, component_class="wireless_radio", measurement_type="wireless_sensor_value",
-                sensor_class=sensor_class, oid=oid, suffix=suffix, raw_value=raw, unit=unit,
-                sensor_name=f"{entity_name} {label}", entity_name=entity_name,
-                series_variant=variant, index_labels=labels,
-            )
-            if sensor:
-                sensors.append(sensor)
-                radio_count += 1
-        bound_ssids_oid = f"{_H3C_DOT11_AP_RADIO_TABLE}.32"
-        raw_bound_ssids = rows.get(bound_ssids_oid, {}).get(suffix)
-        if raw_bound_ssids is not None:
-            sensor = _h3c_wireless_sensor(
-                rule=rule, component_class="wireless_radio", measurement_type="wireless_radio_attribute",
-                sensor_class="bound_ssids", oid=bound_ssids_oid, suffix=suffix,
-                raw_value=raw_bound_ssids, unit="text", sensor_name=f"{entity_name} 绑定 SSID 原始值",
-                entity_name=entity_name, series_variant="bound_ssids_raw", index_labels=labels,
-            )
-            if sensor:
-                sensors.append(sensor)
-                radio_count += 1
-        raw_clients = rows.get(radio_assoc_oid, {}).get(suffix)
-        if raw_clients is not None:
-            sensor = _h3c_wireless_sensor(
-                rule=rule, component_class="wireless_radio", measurement_type="wireless_sensor_value",
-                sensor_class="clients", oid=radio_assoc_oid, suffix=suffix, raw_value=raw_clients,
-                unit="count", sensor_name=f"{entity_name} 客户端数", entity_name=entity_name,
-                series_variant="clients", index_labels=labels,
-            )
-            if sensor:
-                sensors.append(sensor)
-                radio_count += 1
-        for oid, variant in error_columns.items():
-            raw = rows.get(oid, {}).get(suffix)
-            if raw is None:
-                continue
-            sensor = _h3c_wireless_sensor(
-                rule=rule, component_class="wireless_radio", measurement_type="wireless_sensor_value",
-                sensor_class="errors", oid=oid, suffix=suffix, raw_value=raw, unit="count",
-                sensor_name=f"{entity_name} {variant.replace('_', ' ')}", entity_name=entity_name,
-                series_variant=variant, index_labels=labels,
-            )
-            if sensor:
-                sensors.append(sensor)
-                radio_count += 1
-    radio_required = {
-        f"{_H3C_DOT11_AP_RADIO_TABLE}.{column}" for column in radio_columns
-    } | {radio_assoc_oid}
-    categories.append(_h3c_wireless_category(
-        "wireless_radio", reads=reads, required_oids=radio_required, rows=radio_count,
-        empty_is_complete=confirmed_empty_controller,
-        reason_code="h3c_dot11_radio_tables",
-        reason="HH3C-DOT11 radio admin/oper status, channel, transmit power, utilization, mode/type, raw signal-strength columns, bound SSIDs, associated clients and documented error counters.",
-    ))
-
-    bss_scope_oids = bss_oids | {bss_assoc_oid}
-    bss_suffixes: set[str] = set()
-    for oid in bss_scope_oids:
-        bss_suffixes.update(rows.get(oid, {}))
-    bss_count = 0
-    bss_info = {column: rows.get(f"{_H3C_DOT11_AP_BSS_TABLE}.{column}", {}) for column in bss_columns}
-    for suffix in sorted(bss_suffixes):
-        joined = joined_ap(suffix, 2)
-        if joined is None:
-            continue
-        ap, ap_identifier, tail = joined
-        ap_name = str(ap.get("ap_name") or "").strip()
-        radio_id, wlan_id = str(tail[0]), str(tail[1])
-        labels = {key: ap[key] for key in ("ap_id", "ap_name", "ap_model", "ap_ip", "ap_mac", "ap_serial") if ap.get(key)}
-        labels.setdefault("ap_id", ap_identifier)
-        labels["radio_id"] = radio_id
-        labels["wlan_id"] = wlan_id
-        labels["ssid"] = _h3c_dot11_text(bss_info[4].get(suffix))
-        labels["bssid"] = _h3c_dot11_text(bss_info[2].get(suffix))
-        vlan = _h3c_dot11_number(bss_info[6].get(suffix))
-        if vlan is not None:
-            labels["vlan_id"] = str(int(vlan))
-        ssid_label = labels["ssid"] or f"WLAN {wlan_id}"
-        entity_name = f"{ap_name or f'AP ID {ap_identifier}'} / {ssid_label}"
-        raw_clients = rows.get(bss_assoc_oid, {}).get(suffix)
-        if raw_clients is None:
-            continue
-        sensor = _h3c_wireless_sensor(
-            rule=rule, component_class="wireless_bss", measurement_type="wireless_sensor_value",
-            sensor_class="clients", oid=bss_assoc_oid, suffix=suffix, raw_value=raw_clients,
-            unit="count", sensor_name=f"{entity_name} 客户端数", entity_name=entity_name,
-            series_variant="clients", index_labels=labels,
-        )
-        if sensor:
-            sensors.append(sensor)
-            bss_count += 1
-    bss_required = {f"{_H3C_DOT11_AP_BSS_TABLE}.{column}" for column in bss_columns} | {bss_assoc_oid}
-    categories.append(_h3c_wireless_category(
-        "wireless_bss", reads=reads, required_oids=bss_required, rows=bss_count,
-        empty_is_complete=confirmed_empty_controller,
-        reason_code="h3c_dot11_bss_tables",
-        reason="HH3C-DOT11 BSS SSID/BSSID/VLAN identity joined with current associated client count.",
-    ))
-
-    station_rows = {oid: rows.get(oid, {}) for oid in station_oids}
-    station_relation_rows = {oid: rows.get(oid, {}) for oid in station_relation_oids}
-    station_suffixes = set().union(
-        *(set(column_rows) for column_rows in (*station_rows.values(), *station_relation_rows.values()))
-    )
-    station_count = 0
-    for suffix in sorted(station_suffixes):
-        decoded_mac = _h3c_dot11_mac_index(suffix)
-        if decoded_mac is None:
-            continue
-        station_mac, _index = decoded_mac
-        ap_id = _h3c_dot11_text(station_relation_rows[_H3C_DOT11_STATION_AP_ID_OID].get(suffix))
-        associated_ap = ap_by_id.get(ap_id) or ap_by_id.get(ap_id.casefold()) if ap_id else None
-        ap_name = str(associated_ap.get("ap_name") or "").strip() if associated_ap else ""
-        radio_id = _h3c_dot11_integer_text(
-            station_relation_rows[_H3C_DOT11_STATION_RADIO_ID_OID].get(suffix),
-        )
-        wlan_id = _h3c_dot11_integer_text(
-            station_relation_rows[_H3C_DOT11_STATION_WLAN_ID_OID].get(suffix),
-        )
-        vlan_id = _h3c_dot11_integer_text(station_rows[_H3C_DOT11_STATION_VLAN_OID].get(suffix))
-        station_labels = {
-            "ap_name": ap_name,
-            "radio_id": radio_id,
-            "wlan_id": wlan_id,
-            "vlan_id": vlan_id,
-        }
-        if ap_id:
-            station_labels["ap_id"] = ap_id
-        entity_name = "无线客户端"
-        for oid, series_variant, display in station_column_specs:
-            raw = _h3c_dot11_text(station_rows.get(oid, {}).get(suffix))
-            if not raw:
-                continue
-            index_labels = dict(station_labels)
-            if series_variant == "ssid":
-                index_labels["ssid"] = raw
-            sensor = _h3c_wireless_sensor(
-                rule=rule, component_class="wireless_station",
-                measurement_type="wireless_station_attribute", sensor_class="identity",
-                oid=oid, suffix=suffix, raw_value=raw, unit="text",
-                sensor_name=f"无线客户端 {display}", entity_name=entity_name,
-                series_variant=series_variant, index_labels=index_labels,
-            )
-            if sensor:
-                metadata = sensor.get("metadata")
-                if isinstance(metadata, dict):
-                    metadata["station_mac"] = station_mac
-                    metadata["station_attributes"] = {series_variant: raw[:300]}
-                sensor["source_id"] = (
-                    f"{rule.get('id') or 'comware'}:h3c_dot11:wireless_station:{series_variant}"
-                )
-                sensors.append(sensor)
-                station_count += 1
-    categories.append(_h3c_wireless_category(
-        "wireless_station", reads=reads, required_oids=station_attribute_oids, rows=station_count,
-        empty_is_complete=confirmed_empty_controller,
-        reason_code="h3c_dot11_station_associate_table",
-        reason=(
-            "HH3C-DOT11-STATION-MIB hh3cDot11StationAssociateTable uses the fixed six-octet Station MAC index; "
-            "collects client IP, username, TxRateSet, and SSID, joined with the optional AP/radio/WLAN relation and VLAN columns."
-        ),
-    ))
-    brief_metadata_fields = (
-        "ap_description", "ap_element_id", "ap_connection_type",
-        "ap_ac_port_index", "ap_image_name", "ap_software_version",
-    )
-    for sensor in sensors:
-        labels = sensor.get("index_labels")
-        if not isinstance(labels, dict):
-            continue
-        ap_identity = str(labels.get("ap_id") or labels.get("ap_name") or "")
-        ap = ap_by_id.get(ap_identity) or ap_by_id.get(ap_identity.casefold())
-        if not ap:
-            continue
-        if ap.get("ap_serial"):
-            labels.setdefault("ap_serial", ap["ap_serial"])
-        metadata = sensor.get("metadata")
-        if isinstance(metadata, dict):
-            metadata["h3c_ap_brief"] = {
-                key: ap[key] for key in brief_metadata_fields if ap.get(key)
-            }
-    return {"sensors": sensors, "category_results": categories}
+        return int(number)
+    enum_number = re.fullmatch(r"\s*(\d+)\s*\([^)]*\)\s*", text)
+    if enum_number:
+        return int(enum_number.group(1))
+    enum_label = re.fullmatch(r"\s*([^()]+)\((\d+)\)\s*", text)
+    if enum_label:
+        return named_classes.get(enum_label.group(1).strip(), int(enum_label.group(2)))
+    return None
 
 
 def _h3c_module_entity_class(raw_value: Any) -> bool:
-    text = str(raw_value or "").strip().casefold()
-    if text == "module" or re.fullmatch(r"module\(\s*9\s*\)", text):
-        return True
-    number = _number(text)
-    if number is not None:
-        return int(number) == _ENTITY_PHYSICAL_CLASS_MODULE
-    enum_number = re.fullmatch(r"\s*(\d+)\s*\([^)]*\)\s*", text)
-    if enum_number:
-        return int(enum_number.group(1)) == _ENTITY_PHYSICAL_CLASS_MODULE
-    enum_label = re.fullmatch(r"\s*[^()]+\((\d+)\)\s*", text)
-    return bool(enum_label and int(enum_label.group(1)) == _ENTITY_PHYSICAL_CLASS_MODULE)
+    return _h3c_entity_class_code(raw_value) == _ENTITY_PHYSICAL_CLASS_MODULE
 
 
 def _append_unique_probe_sensors(
@@ -2636,6 +1812,8 @@ async def _probe_h3c_comware_cpu_memory(
             _H3C_ENTITY_CPU_USAGE_OID,
             _H3C_ENTITY_MEM_USAGE_OID,
             _H3C_ENTITY_MEM_SIZE_OID,
+            _H3C_ENTITY_TEMPERATURE_OID,
+            _H3C_ENTITY_TEMPERATURE_THRESHOLD_OID,
             _ENTITY_CLASS_OID,
             _ENTITY_NAME_OID,
         },
@@ -2651,6 +1829,8 @@ async def _probe_h3c_comware_cpu_memory(
     }
     entity_names = _row_map(reads.get(_ENTITY_NAME_OID))
     entity_classes = _row_map(memory_reads[_ENTITY_CLASS_OID])
+    entity_temperatures = _row_map(reads.get(_H3C_ENTITY_TEMPERATURE_OID))
+    entity_temperature_thresholds = _row_map(reads.get(_H3C_ENTITY_TEMPERATURE_THRESHOLD_OID))
     rule_id = str(rule.get("id") or rule.get("os_key") or "comware")
     source_commit = str(rule.get("source_commit") or "")
     sensors: list[dict[str, Any]] = []
@@ -2660,7 +1840,7 @@ async def _probe_h3c_comware_cpu_memory(
     for suffix, raw_value in cpu_read.rows:
         index = _index_parts(suffix)
         number = _number(raw_value)
-        if index is None or len(index) != 1 or number is None or normalize_percentage(number) is None:
+        if index is None or len(index) != 1 or number is None:
             malformed_cpu_rows += 1
             continue
         # LibreNMS only discovers non-zero processor entities. Once discovered,
@@ -2677,7 +1857,7 @@ async def _probe_h3c_comware_cpu_memory(
             oid=_H3C_ENTITY_CPU_USAGE_OID,
             suffix=entity_index,
             raw_value=raw_value,
-            value=normalize_percentage(number),
+            value=number,
             unit="percent",
             sensor_name=entity_name,
             entity_name=entity_name,
@@ -2737,46 +1917,45 @@ async def _probe_h3c_comware_cpu_memory(
         entity_index = str(index[0])
         if not _h3c_module_entity_class(entity_classes.get(suffix)):
             continue
-        if usage is None or normalize_percentage(usage) is None:
+        if usage is None:
             malformed_memory_rows += 1
             continue
         if usage <= 0:
             continue
         raw_size = memory_sizes.get(suffix)
         size = _number(raw_size)
-        if size is None or size <= 0:
+        if size is None:
             malformed_memory_rows += 1
-            continue
 
         entity_name = _name_at(entity_names, index, f"Memory pool {entity_index}")
-        sensor_definitions = (
-            (
-                "memory_usage_percent",
-                _H3C_ENTITY_MEM_USAGE_OID,
-                raw_usage,
-                normalize_percentage(usage),
-                "percent",
-                "usage",
-            ),
-            (
-                "memory_total_bytes",
-                _H3C_ENTITY_MEM_SIZE_OID,
-                raw_size,
-                size,
-                "bytes",
-                "total",
-            ),
+        relation_values = {"percent_used": usage, "total": size}
+        relations = {
+            "percent_used": {"kind": "oid", "oid": _H3C_ENTITY_MEM_USAGE_OID, "index": entity_index},
+        }
+        if size is not None:
+            relations["total"] = {"kind": "oid", "oid": _H3C_ENTITY_MEM_SIZE_OID, "index": entity_index}
+        metrics = _mempool_metric_values(
+            relation_values, factor=1.0, offset=0.0, precision=1.0,
+            unit_factor=1.0,
         )
-        for measurement_type, oid, raw_value, value, unit, measurement_key in sensor_definitions:
+        metric_definitions = (
+            ("used", "memory_used_bytes", "bytes", _H3C_ENTITY_MEM_USAGE_OID, raw_usage),
+            ("total", "memory_total_bytes", "bytes", _H3C_ENTITY_MEM_SIZE_OID, raw_size),
+            ("percent_used", "memory_usage_percent", "percent", _H3C_ENTITY_MEM_USAGE_OID, raw_usage),
+        )
+        for target, measurement_type, unit, oid, raw_value in metric_definitions:
+            if target not in _mempool_targets(relations):
+                continue
+            sensor_value = metrics.get(target)
             sensor = _sensor(
                 source_type="librenms_adapter",
-                source_id=f"{rule_id}:mempool:{entity_index}:{measurement_key}",
+                source_id=f"{rule_id}:mempool:{entity_index}:{target}",
                 component_class="memory_pool",
                 measurement_type=measurement_type,
                 oid=oid,
                 suffix=entity_index,
                 raw_value=raw_value,
-                value=value,
+                value=sensor_value,
                 unit=unit,
                 sensor_name=entity_name,
                 entity_name=entity_name,
@@ -2793,7 +1972,18 @@ async def _probe_h3c_comware_cpu_memory(
                     "ent_physical_index_measured": "entPhysicalIndex",
                     "index_suffix": entity_index,
                 },
-                poll_plan=_direct_plan(oid, entity_index),
+                poll_plan={
+                    "kind": "memory_pool",
+                    "index": entity_index,
+                    "relations": relations,
+                    "target": target,
+                    "factor": 1.0,
+                    "offset": 0.0,
+                    "precision": 1.0,
+                    "precision_supported": True,
+                    "unit_factor": 1.0,
+                    "unit_supported": True,
+                },
             )
             if sensor:
                 sensor["index_labels"]["ent_physical_index"] = entity_index
@@ -2838,6 +2028,77 @@ async def _probe_h3c_comware_cpu_memory(
         ]
         memory_reason = "Incomplete Comware memory discovery walk(s): " + ", ".join(incomplete)
 
+    temperature_read = reads.get(_H3C_ENTITY_TEMPERATURE_OID, WalkResult([], False, "missing_read"))
+    threshold_read = reads.get(_H3C_ENTITY_TEMPERATURE_THRESHOLD_OID, WalkResult([], False, "missing_read"))
+    entity_class_read = reads.get(_ENTITY_CLASS_OID, WalkResult([], False, "missing_read"))
+    entity_name_read = reads.get(_ENTITY_NAME_OID, WalkResult([], False, "missing_read"))
+    temperature_rows = 0
+    temperature_source = "includes/discovery/sensors/temperature/comware.inc.php"
+    for suffix, raw_temperature in entity_temperatures.items():
+        index = _index_parts(suffix)
+        if index is None or len(index) != 1:
+            continue
+        if _h3c_entity_class_code(entity_classes.get(suffix)) not in {8, 9}:
+            continue
+        temperature = _number(raw_temperature)
+        if temperature is None or temperature == 65535:
+            continue
+
+        entity_index = str(index[0])
+        entity_name = str(entity_names.get(suffix) or "").strip()
+        raw_threshold = entity_temperature_thresholds.get(suffix)
+        threshold = _number(raw_threshold)
+        thresholds = {}
+        if threshold is not None and threshold != 65535:
+            thresholds["high_limit"] = threshold
+        sensor = _sensor(
+            source_type="librenms_adapter",
+            source_id=f"{rule_id}:temperature:entity:{entity_index}",
+            component_class="temperature",
+            measurement_type="temperature_celsius",
+            oid=_H3C_ENTITY_TEMPERATURE_OID,
+            suffix=entity_index,
+            raw_value=raw_temperature,
+            value=temperature,
+            unit="celsius",
+            sensor_name=entity_name,
+            entity_name=entity_name,
+            thresholds=thresholds,
+            metadata={
+                "rule_id": rule_id,
+                "source_commit": source_commit,
+                "source_path": temperature_source,
+                "os_key": "comware",
+                "adapter": "librenms_comware_temperature",
+                "adapter_source_files": [temperature_source],
+                "mib": "HH3C-ENTITY-EXT-MIB",
+                "ent_physical_index": entity_index,
+                "index_suffix": entity_index,
+            },
+            poll_plan=_direct_plan(_H3C_ENTITY_TEMPERATURE_OID, entity_index),
+        )
+        if sensor:
+            sensor["index_labels"]["ent_physical_index"] = entity_index
+            sensors.append(sensor)
+            temperature_rows += 1
+
+    temperature_complete = all(
+        read.complete and not read.reason
+        for read in (temperature_read, threshold_read, entity_class_read, entity_name_read)
+    )
+    if temperature_rows:
+        temperature_status = "success" if temperature_complete else "partial"
+        temperature_reason_code = "h3c_comware_entity_temperature_rows"
+        temperature_reason = f"LibreNMS Comware temperature module returned {temperature_rows} ENTITY-MIB module/sensor measurements"
+    elif temperature_complete:
+        temperature_status = "not_found"
+        temperature_reason_code = "no_comware_entity_temperature"
+        temperature_reason = "Comware temperature module found no supported module/sensor temperature rows"
+    else:
+        temperature_status = "failed"
+        temperature_reason_code = "h3c_comware_temperature_walk_failed"
+        temperature_reason = "LibreNMS Comware temperature or ENTITY-MIB walks were incomplete"
+
     return {
         "sensors": sensors,
         "category_results": [
@@ -2850,6 +2111,11 @@ async def _probe_h3c_comware_cpu_memory(
                 "librenms_adapter", "memory_pool", status=memory_status,
                 complete=bool(memory_rows and memory_complete and not malformed_memory_rows),
                 reason_code=memory_reason_code, reason=memory_reason,
+            ),
+            _category_result(
+                "librenms_adapter", "temperature", status=temperature_status,
+                complete=bool(temperature_rows and temperature_complete),
+                reason_code=temperature_reason_code, reason=temperature_reason,
             ),
         ],
     }
@@ -3257,8 +2523,6 @@ def _wireless_controller_scope(identity: Mapping[str, Any]) -> bool:
         return True
     vendor = str(identity.get("vendor") or "").strip().casefold()
     model = str(identity.get("model") or "").strip().casefold()
-    if vendor in {"h3c", "comware"} and re.search(r"\bwx[\w-]*", model):
-        return True
     if vendor == "huawei" and (model.startswith("airengine") or re.match(r"^ac\d", model)):
         return True
     return False
@@ -3374,7 +2638,7 @@ async def _probe_vrp_wireless_adapter(
         ap_info = {"ap_mac": ap_mac}
         for field, table in ap_fields.items():
             raw_field = table.get(suffix)
-            text_field = _h3c_dot11_text(raw_field) if raw_field is not None else ""
+            text_field = _wireless_text_value(raw_field) if raw_field is not None else ""
             if text_field:
                 ap_info[field] = text_field
         ap_by_mac[ap_mac] = ap_info
@@ -3465,7 +2729,7 @@ async def _probe_vrp_wireless_adapter(
         radio_id = trailing[0]
         ap_info = dict(ap_by_mac.get(ap_mac) or {"ap_mac": ap_mac})
         radio_mac_raw = _row_map(reads.get(_VRP_WLAN_RADIO_MAC_OID)).get(suffix)
-        radio_mac = _h3c_dot11_text(radio_mac_raw) if radio_mac_raw is not None else ""
+        radio_mac = _wireless_text_value(radio_mac_raw) if radio_mac_raw is not None else ""
         if radio_mac and re.fullmatch(r"(?:[0-9a-f]{2}:){5}[0-9a-f]{2}", radio_mac, flags=re.IGNORECASE):
             ap_info["radio_mac"] = radio_mac.casefold()
         ap_name = str(ap_info.get("ap_name") or f"AP {ap_mac}")
@@ -4400,14 +3664,6 @@ async def probe_librenms_hardware(
         )
         _append_unique_probe_sensors(sensors, cpu_memory_result.get("sensors"))
         category_results.extend(cpu_memory_result.get("category_results") or [])
-
-        if _wireless_controller_scope(identity):
-            wireless_result = await _probe_h3c_comware_wireless(
-                ip, community, port, rule=rule, version=version, walk_func=walk_func,
-            )
-            _append_unique_probe_sensors(sensors, wireless_result.get("sensors"))
-            category_results.extend(wireless_result.get("category_results") or [])
-
         transceiver_result = await _probe_h3c_comware_transceivers(
             ip, community, port, rule=rule, identity=identity,
             version=version, walk_func=walk_func,
@@ -4601,7 +3857,7 @@ async def poll_hardware_inventory(
                     if quality == "good":
                         measurement_type = str(sensor.get("measurement_type") or "").casefold()
                         if measurement_type in {"wireless_station_attribute", "wireless_radio_attribute"}:
-                            normalized_text = _h3c_dot11_text(raw_value) if raw_value is not None else ""
+                            normalized_text = _wireless_text_value(raw_value) if raw_value is not None else ""
                             if normalized_text:
                                 raw_value = normalized_text
                             else:

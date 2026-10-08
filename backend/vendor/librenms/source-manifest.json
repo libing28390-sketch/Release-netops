@@ -3643,15 +3643,79 @@
     }
   ],
   "pinned_upstream_adapter_references": [
+    "LibreNMS/OS/Comware.php",
     "includes/discovery/sensors/dbm/comware.inc.php",
     "includes/discovery/sensors/temperature/comware.inc.php",
     "includes/discovery/sensors/voltage/comware.inc.php",
     "includes/discovery/sensors/current/comware.inc.php"
   ],
+  "pinned_upstream_runtime_helper_references": [
+    "app/Models/Mempool.php",
+    "LibreNMS/Util/Number.php",
+    "includes/common.php"
+  ],
+  "upstream_adapter_sources": [
+    {
+      "bundle_path": "LibreNMS/OS/Comware.php",
+      "upstream_path": "LibreNMS/OS/Comware.php",
+      "sha256": "3b78b1520b61d22ddf205e4afbbe21de3df50ca55632e1ba3f51e039925bf26d",
+      "size_bytes": 5603
+    },
+    {
+      "bundle_path": "includes/discovery/sensors/dbm/comware.inc.php",
+      "upstream_path": "includes/discovery/sensors/dbm/comware.inc.php",
+      "sha256": "6f332a6f620c2882a11376a7af33f15c8f0b8404201db16097996e56d59ab9ef",
+      "size_bytes": 3581
+    },
+    {
+      "bundle_path": "includes/discovery/sensors/temperature/comware.inc.php",
+      "upstream_path": "includes/discovery/sensors/temperature/comware.inc.php",
+      "sha256": "674d109438cfd2c4315e1225e173dc533718024d4321716dc5cb99dc00d73f29",
+      "size_bytes": 3839
+    },
+    {
+      "bundle_path": "includes/discovery/sensors/voltage/comware.inc.php",
+      "upstream_path": "includes/discovery/sensors/voltage/comware.inc.php",
+      "sha256": "59cc6ecb1ca2d4ac34ba9481fcfe1f61b194de07f1c700fe2e0c9223faa04c6c",
+      "size_bytes": 2162
+    },
+    {
+      "bundle_path": "includes/discovery/sensors/current/comware.inc.php",
+      "upstream_path": "includes/discovery/sensors/current/comware.inc.php",
+      "sha256": "ac4df3ad7902aa3fffcf64fa8baf584c3e1d9be1784954befb13c0f14e8bdd8e",
+      "size_bytes": 2499
+    }
+  ],
+  "upstream_runtime_helper_sources": [
+    {
+      "bundle_path": "app/Models/Mempool.php",
+      "upstream_path": "app/Models/Mempool.php",
+      "sha256": "61c64da706f26a668931c3ae7ec7a8e71bd2f40e428425f890ad9471597830c3",
+      "size_bytes": 4102
+    },
+    {
+      "bundle_path": "LibreNMS/Util/Number.php",
+      "upstream_path": "LibreNMS/Util/Number.php",
+      "sha256": "fd269c9998176df77da887a667259d713e7b5ec7af1eaf6d91fd3f77933e733e",
+      "size_bytes": 14218
+    },
+    {
+      "bundle_path": "includes/common.php",
+      "upstream_path": "includes/common.php",
+      "sha256": "878c70dbc0180e972f200e50b87c43983fea6c355e61db5a08f60f124ef9cec2",
+      "size_bytes": 16222
+    }
+  ],
+  "upstream_license": {
+    "bundle_path": "LICENSE.txt",
+    "sha256": "67c255477940ba46460c0e6774401897e99ef9e1f82fb08d6a9b7680f39dd038",
+    "size_bytes": 35337
+  },
   "notes": [
     "MIB files are copied byte-for-byte from the pinned LibreNMS commit; upstream paths and SHA-256 are recorded per file.",
     "MIBs are grouped under the asset vendor scope for offline indexing. Standard MIB definitions are grouped under mibs/standard/.",
-    "This is a curated source bundle for hardware polling. It is not a full LibreNMS checkout or a complete all-vendor MIB archive.",
-    "The upstream LibreNMS OS discovery YAML files are retained unchanged and are covered by their upstream license."
+    "This is a curated LibreNMS rule source bundle for hardware polling, not a full LibreNMS runtime or complete all-vendor MIB archive.",
+    "The Python collector executes the pinned upstream YAML rules and translates the pinned OS-specific PHP rules and required runtime helper semantics into Nexora metrics; the upstream files remain the rule source of truth.",
+    "LibreNMS source files are distributed under the upstream license included as LICENSE.txt; preserve each source file's copyright header."
   ]
 }

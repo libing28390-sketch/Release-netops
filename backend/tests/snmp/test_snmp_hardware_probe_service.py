@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import threading
 from pathlib import Path
 
@@ -337,30 +339,209 @@ def test_comware_fixture_maps_integer_state_codes_and_scalar_zero_skip(monkeypat
     assert [(item["index"], item["value"]) for item in watts] == [([2], 1.5)]
 
 
-def test_comware_wx_controller_dispatches_wireless_adapter_with_generic_role(monkeypatch):
-    calls = []
+def test_pinned_librenms_comware_sources_match_manifest():
+    bundle_root = Path(__file__).resolve().parents[2] / "vendor" / "librenms"
+    manifest = json.loads((bundle_root / "source-manifest.json").read_text(encoding="utf-8"))
+    expected_commit = "6c26b4fe4a40f7b392c19c36a44257212736e38c"
+    assert manifest["upstream_commit"] == expected_commit
+    sources = manifest["upstream_adapter_sources"]
+    assert {item["upstream_path"] for item in sources} == {
+        "LibreNMS/OS/Comware.php",
+        "includes/discovery/sensors/dbm/comware.inc.php",
+        "includes/discovery/sensors/temperature/comware.inc.php",
+        "includes/discovery/sensors/voltage/comware.inc.php",
+        "includes/discovery/sensors/current/comware.inc.php",
+    }
+    helpers = manifest["upstream_runtime_helper_sources"]
+    assert {item["upstream_path"] for item in helpers} == {
+        "app/Models/Mempool.php",
+        "LibreNMS/Util/Number.php",
+        "includes/common.php",
+    }
+    for item in [*sources, *helpers]:
+        source = bundle_root / item["bundle_path"]
+        content = source.read_bytes()
+        assert len(content) == item["size_bytes"]
+        assert hashlib.sha256(content).hexdigest() == item["sha256"]
+    license_item = manifest["upstream_license"]
+    license_content = (bundle_root / license_item["bundle_path"]).read_bytes()
+    assert len(license_content) == license_item["size_bytes"]
+    assert hashlib.sha256(license_content).hexdigest() == license_item["sha256"]
 
+
+def test_comware_adapters_follow_pinned_librenms_cpu_memory_and_temperature_rules():
+    rule = {
+        "id": "h3c-comware",
+        "os_key": "comware",
+        "source_commit": "6c26b4fe4a40f7b392c19c36a44257212736e38c",
+    }
+    rows = {
+        probe._H3C_ENTITY_CPU_USAGE_OID: [("1", "17"), ("2", "0"), ("3", "101")],
+        probe._H3C_ENTITY_MEM_USAGE_OID: [("1", "25"), ("2", "0"), ("3", "50"), ("6", "150")],
+        probe._H3C_ENTITY_MEM_SIZE_OID: [("1", "1000")],
+        probe._ENTITY_CLASS_OID: [
+            ("1", "module(9)"), ("2", "module"), ("3", "module"),
+            ("4", "sensor(8)"), ("5", "fan(7)"), ("6", "module"),
+        ],
+        probe._ENTITY_NAME_OID: [
+            ("1", "Main module"), ("2", "Zero module"), ("3", "Memory module"),
+            ("4", "Inlet temperature"), ("5", "Fan module"), ("6", "Large percentage module"),
+        ],
+        probe._H3C_ENTITY_TEMPERATURE_OID: [
+            ("1", "44"), ("2", "65535"), ("4", "48"), ("5", "53"),
+        ],
+        probe._H3C_ENTITY_TEMPERATURE_THRESHOLD_OID: [
+            ("1", "60"), ("2", "65535"), ("4", "65535"), ("5", "70"),
+        ],
+    }
+
+    result = asyncio.run(probe._probe_h3c_comware_cpu_memory(
+        "192.0.2.14", "test-only-community", 161, rule=rule,
+        version="2c", walk_func=_walk_from(rows),
+    ))
+
+    cpu = [item for item in result["sensors"] if item["component_class"] == "processor"]
+    assert [(item["index"], item["value"]) for item in cpu] == [([1], 17.0), ([3], 101.0)]
+    assert all(item["metadata"]["source_path"] == "LibreNMS/OS/Comware.php" for item in cpu)
+
+    memory = [item for item in result["sensors"] if item["component_class"] == "memory_pool"]
+    by_index = {}
+    for item in memory:
+        by_index.setdefault(tuple(item["index"]), {})[item["measurement_type"]] = item
+    assert set(by_index[(1,)]) == {
+        "memory_used_bytes", "memory_total_bytes", "memory_usage_percent",
+    }
+    assert by_index[(1,)]["memory_used_bytes"]["value"] == 250.0
+    assert by_index[(1,)]["memory_total_bytes"]["value"] == 1000.0
+    assert by_index[(1,)]["memory_usage_percent"]["value"] == 25.0
+    # LibreNMS fillUsage() creates a 100-unit denominator when size is absent,
+    # and normalizePercent() scales values above 100 by powers of ten.
+    assert set(by_index[(3,)]) == {
+        "memory_used_bytes", "memory_total_bytes", "memory_usage_percent",
+    }
+    assert by_index[(3,)]["memory_used_bytes"]["value"] == 50.0
+    assert by_index[(3,)]["memory_total_bytes"]["value"] == 100.0
+    assert by_index[(3,)]["memory_usage_percent"]["value"] == 50.0
+    assert by_index[(6,)]["memory_used_bytes"]["value"] == 15.0
+    assert by_index[(6,)]["memory_total_bytes"]["value"] == 100.0
+    assert by_index[(6,)]["memory_usage_percent"]["value"] == 15.0
+    assert by_index[(1,)]["memory_usage_percent"]["metadata"]["source_path"] == (
+        "LibreNMS/OS/Comware.php"
+    )
+
+    temperatures = [
+        item for item in result["sensors"]
+        if item["component_class"] == "temperature"
+    ]
+    assert {tuple(item["index"]) for item in temperatures} == {(1,), (4,)}
+    module_temperature = next(item for item in temperatures if item["index"] == [1])
+    assert module_temperature["value"] == 44.0
+    assert module_temperature["thresholds"] == {"high_limit": 60.0}
+    assert module_temperature["metadata"]["source_path"] == (
+        "includes/discovery/sensors/temperature/comware.inc.php"
+    )
+    sensor_temperature = next(item for item in temperatures if item["index"] == [4])
+    assert sensor_temperature["thresholds"] == {}
+
+
+def test_mempool_values_match_librenms_percent_only_and_overflow_normalization():
+    assert probe._mempool_targets({"percent_used": {"kind": "oid"}}) == {
+        "used", "total", "percent_used",
+    }
+    values = probe._mempool_metric_values(
+        {"percent_used": "150"}, factor=1.0, offset=0.0,
+        precision=1.0, unit_factor=1.0,
+    )
+    assert values == {"used": 15.0, "total": 100.0, "percent_used": 15.0}
+
+    fractional = probe._mempool_metric_values(
+        {"percent_used": "50.237"}, factor=1.0, offset=0.0,
+        precision=1.0, unit_factor=1.0,
+    )
+    assert fractional == {"used": 50.24, "total": 100.0, "percent_used": 50.0}
+
+
+def test_comware_transceiver_metrics_follow_pinned_librenms_filters_and_scales():
+    rule = {
+        "id": "h3c-comware",
+        "os_key": "comware",
+        "source_commit": "6c26b4fe4a40f7b392c19c36a44257212736e38c",
+    }
+    table_oid = probe._H3C_TRANSCEIVER_TABLE_OID
+    table_rows = [
+        ("8.1", "false"), ("9.1", "1500"), ("12.1", "2000"),
+        ("15.1", "42"), ("16.1", "330"), ("17.1", "1000"),
+        ("31.1", "1000"), ("33.1", "2000"), ("32.1", "3000"), ("30.1", "4000"),
+        ("35.1", "12345"), ("37.1", "20000"), ("36.1", "30000"), ("34.1", "40000"),
+        ("19.1", "1000"), ("21.1", "2000"), ("20.1", "3000"), ("18.1", "45000"),
+        ("23.1", "20000"), ("25.1", "25000"), ("24.1", "30000"), ("22.1", "35000"),
+        ("27.1", "10000"), ("29.1", "15000"), ("28.1", "20000"), ("26.1", "25000"),
+        # An administratively down interface, an unresolved port, a row without
+        # the diagnostic column, and a LibreNMS sentinel value are all excluded.
+        ("8.2", "false"), ("9.2", "1000"),
+        ("8.3", "false"), ("9.3", "1000"),
+        ("9.4", "1000"),
+        ("8.5", "false"), ("9.5", "2147483647"),
+    ]
+    rows = {
+        table_oid: table_rows,
+        probe._IF_NAME_OID: [("1", "GigabitEthernet1/0/1"), ("2", "GigabitEthernet1/0/2"), ("4", "GigabitEthernet1/0/4"), ("5", "GigabitEthernet1/0/5")],
+        probe._IF_ADMIN_STATUS_OID: [("1", "1"), ("2", "2"), ("3", "1"), ("4", "1"), ("5", "1")],
+    }
+
+    result = asyncio.run(probe._probe_h3c_comware_transceivers(
+        "192.0.2.14", "test-only-community", 161, rule=rule,
+        identity={"vendor": "H3C"}, version="2c", walk_func=_walk_from(rows),
+    ))
+
+    assert {item["measurement_type"] for item in result["sensors"]} == {
+        "optical_power_dbm", "temperature_celsius", "voltage_volts", "current_amperes",
+    }
+    assert {tuple(item["index"]) for item in result["sensors"]} == {(1,)}
+    tx = next(item for item in result["sensors"] if item["oid"].endswith(".9"))
+    rx = next(item for item in result["sensors"] if item["oid"].endswith(".12"))
+    assert tx["value"] == 15.0
+    assert tx["thresholds"]["low_alarm"] == -10.0
+    assert rx["value"] == 20.0
+    assert rx["thresholds"]["low_alarm"] == 0.91
+    voltage = next(item for item in result["sensors"] if item["measurement_type"] == "voltage_volts")
+    assert voltage["value"] == 3.3
+    assert voltage["thresholds"]["high_alarm"] == 3.5
+    current = next(item for item in result["sensors"] if item["measurement_type"] == "current_amperes")
+    assert current["value"] == 0.01
+    assert current["thresholds"]["high_alarm"] == 0.025
+    assert all(item["metadata"]["source_commit"] == rule["source_commit"] for item in result["sensors"])
+    expected_source_paths = {
+        "optical_power": "includes/discovery/sensors/dbm/comware.inc.php",
+        "temperature": "includes/discovery/sensors/temperature/comware.inc.php",
+        "voltage": "includes/discovery/sensors/voltage/comware.inc.php",
+        "current": "includes/discovery/sensors/current/comware.inc.php",
+    }
+    assert all(
+        item["metadata"]["source_path"] == expected_source_paths[item["component_class"]]
+        and item["metadata"]["adapter_source_files"] == [item["metadata"]["source_path"]]
+        for item in result["sensors"]
+    )
+
+
+def test_comware_wx_does_not_emit_nexora_only_wireless_hardware(monkeypatch):
     async def empty_adapter(*_args, **_kwargs):
-        return {"sensors": [], "category_results": []}
-
-    async def wireless_adapter(*_args, **kwargs):
-        calls.append(True)
         return {"sensors": [], "category_results": []}
 
     monkeypatch.setattr(probe, "get_db_connection", lambda: None)
     monkeypatch.setattr(probe, "_probe_h3c_comware_cpu_memory", empty_adapter)
-    monkeypatch.setattr(probe, "_probe_h3c_comware_wireless", wireless_adapter)
     monkeypatch.setattr(probe, "_probe_h3c_comware_transceivers", empty_adapter)
 
     identity = {"vendor": "H3C", "model": "H3C WX5540H", "role": "network_device"}
     result = asyncio.run(probe.probe_librenms_hardware(
         "192.0.2.14", "test-only-community", 161,
         rule={"vendor": "H3C", "os_key": "comware", "hardware_definitions": {}},
-        identity=identity,
+        identity=identity, walk_func=_walk_from({}),
     ))
 
-    assert calls == [True]
-    assert result == {"sensors": [], "category_results": []}
+    assert not any(item["source_type"] == "h3c_wireless" for item in result["sensors"])
+    assert not any(item["source_type"] == "h3c_wireless" for item in result["category_results"])
+    assert probe._wireless_controller_scope(identity) is False
 
 
 def test_skip_value_supports_librenms_string_regex_exists_and_index_operators():
