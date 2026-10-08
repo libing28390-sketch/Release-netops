@@ -257,7 +257,7 @@ describe('MetricOidProfilesModal editor', () => {
     await user.click(screen.getByRole('button', { name: 'Official Templates' }));
     await waitFor(() => expect(screen.getByText('H3C S6800')).toBeTruthy());
     await user.click(screen.getByRole('button', { name: 'Test & bind (H3C S6800)' }));
-    await screen.findByText('Hardware results use native LibreNMS collection');
+    await screen.findByText('Hardware results are collected locally by Nexora over SNMP');
     expect(screen.queryByRole('combobox', { name: 'Test device' })).toBeNull();
     await user.click(screen.getByRole('checkbox'));
     await user.click(screen.getByRole('button', { name: 'Confirm binding' }));
@@ -335,7 +335,7 @@ describe('MetricOidProfilesModal editor', () => {
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Test and bind' })).toBeTruthy());
     await user.click(screen.getByRole('button', { name: 'Test and bind' }));
-    await screen.findByText('Hardware results use native LibreNMS collection');
+    await screen.findByText('Hardware results are collected locally by Nexora over SNMP');
     expect(screen.queryByRole('combobox', { name: 'Test device' })).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Confirm binding' }));
     await waitFor(() => expect(mockedApiRequest).toHaveBeenCalledWith(
@@ -478,7 +478,7 @@ describe('MetricOidProfilesModal editor', () => {
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Test and bind' })).toBeTruthy());
     await user.click(screen.getByRole('button', { name: 'Test and bind' }));
-    await screen.findByText('Hardware results use native LibreNMS collection');
+    await screen.findByText('Hardware results are collected locally by Nexora over SNMP');
     expect(screen.queryByRole('combobox', { name: 'Test device' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Device offline; test unavailable' })).toBeNull();
     const confirmButton = screen.getByRole('button', { name: 'Confirm binding \(untested\)' }) as HTMLButtonElement;
