@@ -34,14 +34,15 @@
 - LibreNMS manifest 文件完整性：2,357 条记录、2,357 个 bundle 路径、0 项完整性问题。
 - 暂存 Git 对象来源检查：2,357 个 MIB 记录与 258 个规则文件共 2,615 个输入，0 项哈希/大小不一致。
 - `git diff --cached --check`（排除按上游字节原样保存的 LibreNMS `mibs/**` 与 `resources/definitions/**`）：通过。来源文件本身保留上游 CRLF/空白，不做 whitespace 改写。
-- 当前代码尚未提交/推送；GitHub Actions 尚未触发。
+- 功能代码提交 `5145245cc28a453d1b66bd68b3aa43d7f5012c77` 已推送到 `origin/main`。对应 GitHub Actions #692 已成功完成（15 分 24 秒）：后端发布门禁通过，Vitest 122 个测试文件/469 个测试通过；清理后的发行树同步步骤随工作流完成。运行记录：<https://github.com/chaojifeixia-007/netsops/actions/runs/37822199572>。
+- 本次修订交接文档会产生新的文档提交；该提交对应的 Actions 运行仍需检查。最终关机尚未执行。
 
 ## 未执行验证与剩余风险
 
 - 没有在真实网络设备上重新采集，也没有部署或重启 Ubuntu 主机。
-- 完整后端套件只在本轮修复前运行了一次；修复后的完整覆盖将由推送触发的 GitHub Actions 提供。若 Actions 报告新失败，需定位后再交付。
+- 修复后的完整后端套件已在 GitHub Actions #692 中运行并通过。此前本地完整套件是在修复前运行，曾有 11 项失败；修复后执行的针对性测试通过，完整修复后覆盖以 #692 为准。
 - Nexora 使用 Python 执行器解释固定 LibreNMS YAML，没有通过全部厂商与官方 PHP 运行实例的 differential parity 测试，因此不宣称与 LibreNMS PHP 每个边界行为完全等价。
 - 14 个 OS profile 没有 discovery YAML；31 个已有 discovery YAML 的 profile 当前未解析出硬件定义；不会用自定义 OID 静默补齐。
 - 通用接口 SNMP exporter 当前没有受来源校验的 module，新的接口指标样本不会产生；需单独确定符合 LibreNMS 来源要求的通用接口实现。
 - 迁移 `m0279_retire_custom_snmp_metric_profiles` 会清除自定义指标 Profile 绑定并删除 Profile 记录，downgrade 不可恢复。
-- 提交、主线推送、GitHub Actions 和最终关机尚未完成。
+- 功能提交的主线推送和 Actions #692 已完成；本次文档修订提交的 Actions 尚待验证，最终关机尚未执行。
