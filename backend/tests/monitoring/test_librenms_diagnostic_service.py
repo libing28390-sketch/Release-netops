@@ -63,6 +63,7 @@ def _binding() -> dict[str, Any]:
 def _install_client(monkeypatch, snapshot: SimpleNamespace, binding: dict[str, Any] | None = None) -> _Connection:
     connection = _Connection(binding or _binding())
     monkeypatch.setattr(diagnostics, "get_db_connection", lambda: connection)
+    monkeypatch.setattr(diagnostics, "_local_hardware_snapshot", lambda _device: None)
     monkeypatch.setattr(diagnostics, "decrypt_credential", lambda _value: "unit-test-token")
 
     class FakeClient:
@@ -85,6 +86,84 @@ def _install_client(monkeypatch, snapshot: SimpleNamespace, binding: dict[str, A
 
     monkeypatch.setattr(diagnostics, "LibreNMSRuntimeClient", FakeClient)
     return connection
+
+
+def test_diagnostic_reads_local_snmp_inventory_before_optional_librenms(monkeypatch) -> None:
+    from services import snmp_hardware_inventory_service as inventory
+
+    connection = SimpleNamespace(close=lambda: None)
+    sample_time = datetime.now(timezone.utc) - timedelta(seconds=10)
+    monkeypatch.setattr(diagnostics, "get_db_connection", lambda: connection)
+    monkeypatch.setattr(inventory, "list_hardware_sensors", lambda *_args, **_kwargs: [{
+        "sensor_key": "cpu-0",
+        "component_class": "processor",
+        "measurement_type": "cpu_usage_percent",
+        "index": [0],
+        "index_labels": {},
+        "data_origin": "legacy_snmp",
+        "enabled": True,
+        "oid": "1.3.6.1.4.1.25506.2.6.1.1.1.1.1",
+        "sensor_name": "CPU 0",
+        "unit": "percent",
+        "last_value": 35.5,
+        "last_quality": "good",
+        "last_success": sample_time,
+    }])
+    monkeypatch.setattr(inventory, "list_hardware_capabilities", lambda *_args: [])
+
+    result = asyncio.run(diagnostics.diagnose_librenms_hardware({
+        "id": "device-1", "hostname": "edge-01", "ip_address": "192.0.2.10",
+    }))
+
+    assert result["source"] == "nexora_snmp"
+    assert result["state"] == "available"
+    assert result["sensor_count"] == 1
+    assert result["processor_sensors"][0]["sensor_current"] == 35.5
+    assert result["processor_sensors"][0]["freshness"] == "fresh"
+    assert result["collection"]["sync_status"] == "not_applicable"
+
+
+def test_no_enabled_librenms_instance_reports_local_collection_state(monkeypatch) -> None:
+    from services import librenms_binding_service, vault_service
+
+    monkeypatch.setattr(diagnostics, "_local_hardware_snapshot", lambda _device: None)
+    monkeypatch.setattr(diagnostics, "_binding_for_device", lambda _device: None)
+    monkeypatch.setattr(librenms_binding_service, "_load_enabled_instances", lambda: [])
+    monkeypatch.setattr(vault_service, "resolve_collector_credentials", lambda _device: {
+        "snmp": {"community": "mock-community"},
+    })
+
+    result = asyncio.run(diagnostics.diagnose_librenms_hardware({
+        "id": "device-1", "hostname": "edge-01", "ip_address": "192.0.2.10",
+    }))
+
+    assert result["source"] == "nexora_snmp"
+    assert result["state"] == "pending"
+    assert "无需配置 LibreNMS" in result["message"]
+
+
+def test_uncollected_snmpv3_device_waits_for_nexora_local_collection(monkeypatch) -> None:
+    from services import librenms_binding_service, vault_service
+
+    monkeypatch.setattr(diagnostics, "_local_hardware_snapshot", lambda _device: None)
+    monkeypatch.setattr(diagnostics, "_binding_for_device", lambda _device: None)
+    monkeypatch.setattr(librenms_binding_service, "_load_enabled_instances", lambda: [])
+    monkeypatch.setattr(vault_service, "resolve_collector_credentials", lambda _device: {
+        "snmp": {
+            "version": "3",
+            "username": "poller-user",
+            "configured": True,
+            "community": "",
+        },
+    })
+
+    result = asyncio.run(diagnostics.diagnose_librenms_hardware({
+        "id": "device-v3", "hostname": "edge-v3", "ip_address": "192.0.2.30",
+    }))
+
+    assert result["source"] == "nexora_snmp"
+    assert result["state"] == "pending"
+    assert "无法开始本地硬件采集" not in result["message"]
 
 
 def _snapshot(*, processor: dict[str, Any], memory_pool: dict[str, Any]) -> SimpleNamespace:

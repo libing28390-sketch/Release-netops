@@ -295,12 +295,12 @@ def test_wireless_dashboard_uses_hardware_inventory_job_and_joins_by_device():
         assert 'job="platform_hardware_inventory"' in expression
         assert 'job="network_snmp"' not in expression
 
-    native_wireless_sensor_panel = panels["LibreNMS 原生无线传感器"]
-    native_wireless_sensor_query = native_wireless_sensor_panel["targets"][0]["expr"]
-    assert 'data_origin="librenms_native"' in native_wireless_sensor_query
-    assert 'component_class="wireless_sensor"' in native_wireless_sensor_query
-    assert native_wireless_sensor_panel["gridPos"] == {"h": 9, "w": 24, "x": 0, "y": 68}
-    assert "未推断 AP 或 Radio 归属" in native_wireless_sensor_panel["description"]
+    wireless_sensor_panel = panels["无线传感器明细"]
+    wireless_sensor_query = wireless_sensor_panel["targets"][0]["expr"]
+    assert 'data_origin=~"^(legacy_snmp|librenms_native)$"' in wireless_sensor_query
+    assert 'component_class=~"wireless_.*"' in wireless_sensor_query
+    assert wireless_sensor_panel["gridPos"] == {"h": 9, "w": 24, "x": 0, "y": 68}
+    assert "不推断 AP 或 Radio 归属" in wireless_sensor_panel["description"]
 
     assert 'vendor=~"$vendor"' in query("AP 当前状态明细")
     assert 'component_class="wireless_access_point"' in query("AP 当前状态明细")
@@ -329,7 +329,12 @@ def test_wireless_dashboard_uses_hardware_inventory_job_and_joins_by_device():
     assert variables["device"]["query"]["query"].count('role="wireless_controller"') == 1
     assert variables["role"]["query"]["query"].count('role="wireless_controller"') == 1
     assert all(
-        'role="wireless_controller"' in variables[name]["query"]["query"]
+        (
+            'role="wireless_controller"' in variables[name]["query"]["query"]
+            and 'nexora_hw_sensor_info{job="platform_hardware_inventory",component_class=~"wireless_.*"'
+            in variables[name]["query"]["query"]
+            and " or " in variables[name]["query"]["query"]
+        )
         for name in ("site", "vendor", "role", "device")
     )
     assert not any(
@@ -659,9 +664,10 @@ def test_dashboard_device_variables_use_current_up_targets():
                 variable = variables[variable_name]
                 query = variable["query"]["query"]
                 assert variable["definition"] == query
-                assert query.startswith(
-                    f'query_result(count by ({label}) (up{{job="network_snmp",role="wireless_controller"'
-                )
+                assert query.startswith(f'query_result(count by ({label}) ')
+                assert 'up{job="network_snmp",role="wireless_controller"' in query
+                assert 'nexora_hw_sensor_info{job="platform_hardware_inventory",component_class=~"wireless_.*"' in query
+                assert " or " in query
                 assert variable["regex"] == network_variable_specs[variable_name][1]
                 assert "switch" not in query.lower()
                 assert "firewall" not in query.lower()

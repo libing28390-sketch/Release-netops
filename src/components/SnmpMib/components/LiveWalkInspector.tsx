@@ -35,7 +35,7 @@ import { getHardwareDiscoveryToast, redactHardwareDiagnosticText } from './hardw
 
 export type { SnmpHardwareDiscoveryTestResult } from './hardwareDiagnosticTypes';
 
-export type SnmpWalkVersion = '1' | '2c';
+export type SnmpWalkVersion = '1' | '2c' | '3';
 export type SnmpWalkTargetStatus = 'idle' | 'loading' | 'matched' | 'multiple' | 'none' | 'error';
 export type InspectorTab = 'validate' | 'snmpwalk' | 'system';
 
@@ -963,12 +963,12 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
           : 'The device did not respond before timeout. Check network/routing, UDP/161, community/version, and device ACLs; an SNMP timeout alone cannot identify which one is wrong.'
         : error instanceof ApiError && error.status === 400 && /community/i.test(error.message)
           ? zh
-            ? '该 CMDB 设备未配置 SNMP Community，请先补全设备凭据。'
-            : 'No SNMP community is configured for this CMDB device. Add its SNMP credential first.'
+            ? '该 CMDB 设备未配置可用的 SNMP 凭据，请先绑定有效的 Community 或 SNMPv3 Profile。'
+            : 'No usable SNMP credentials are configured for this CMDB device. Bind a Community or SNMPv3 profile first.'
           : error instanceof ApiError && error.status === 502
             ? zh
-              ? 'SNMP 请求失败，请检查网络/路由、UDP/161、Community、SNMP 版本、OID 和设备 SNMP View/ACL。'
-              : 'The SNMP request failed. Check network/routing, UDP/161, community, SNMP version, OID, and device SNMP view/ACL.'
+              ? 'SNMP 请求失败，请检查网络/路由、UDP/161、凭据、安全级别、SNMP 版本、OID 和设备 SNMP View/ACL。'
+              : 'The SNMP request failed. Check network/routing, UDP/161, credentials, security level, version, OID, and device SNMP view/ACL.'
             : error instanceof Error ? error.message : zh ? 'SNMPWALK 探测失败' : 'SNMPWALK failed';
       setWalkError(message);
       setWalkResultOpen(true);
@@ -985,7 +985,7 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
     const targetDeviceId = walkDeviceId;
     if (!librenmsHardwareDiscoveryTest) return;
     if (!targetDeviceId) {
-      showToast(zh ? '请先选择已纳管设备，再读取其 LibreNMS 原生结果' : 'Select a managed device before reading its native LibreNMS results', 'error');
+      showToast(zh ? '请先选择已纳管设备，再读取其本地硬件采集结果' : 'Select a managed device before reading its local hardware results', 'error');
       return;
     }
     if (walkTargetStatus !== 'matched') {
@@ -1017,8 +1017,8 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
       if (controller.signal.aborted) return;
       const permissionDenied = error instanceof ApiError && (error.status === 401 || error.status === 403);
       const message = permissionDenied
-        ? zh ? '无权读取 LibreNMS 原生结果，请检查账户权限或重新登录。' : 'You are not allowed to read native LibreNMS results. Check your access or sign in again.'
-        : redactHardwareDiagnosticText(error instanceof Error ? error.message : zh ? 'LibreNMS 原生结果读取失败' : 'Failed to read native LibreNMS results');
+        ? zh ? '无权读取硬件采集结果，请检查账户权限或重新登录。' : 'You are not allowed to read hardware results. Check your access or sign in again.'
+        : redactHardwareDiagnosticText(error instanceof Error ? error.message : zh ? '硬件采集结果读取失败' : 'Failed to read hardware results');
       setNativeHardwareError({ message, permissionDenied });
       showToast(message, 'error');
     } finally {
@@ -1273,7 +1273,7 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
               >
                 <CheckCircle2 size={12} />
                 {librenmsHardwareDiscoveryTest
-                  ? zh ? '原生硬件结果' : 'Native Hardware Results'
+                  ? zh ? '硬件采集结果' : 'Hardware Collection Results'
                   : zh ? '接口 IF-MIB 验证' : 'Interface IF-MIB Validation'}
               </button>
             </div>
@@ -1287,12 +1287,12 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
             <div className="min-w-0">
               <h2 className="text-sm font-semibold text-black/85 dark:text-white/90">
                 {librenmsHardwareDiscoveryTest
-                  ? zh ? 'SNMP 诊断与原生采集结果' : 'SNMP diagnostics and native results'
+                  ? zh ? 'SNMP 诊断与硬件采集结果' : 'SNMP diagnostics and hardware results'
                   : zh ? '配置并执行 SNMP 探测' : 'Configure and run an SNMP probe'}
               </h2>
               <p className="mt-0.5 text-[11px] leading-4 text-black/50 dark:text-white/50">
                 {librenmsHardwareDiscoveryTest
-                  ? zh ? 'SNMP WALK/MIB 为单独的手动只读查询；硬件结果页只读取 LibreNMS 已保存的采样。' : 'SNMP Walk/MIB is a separate, user-initiated read-only query; the hardware results view only reads samples already stored by LibreNMS.'
+                  ? zh ? 'SNMP WALK/MIB 为单独的手动只读查询；硬件结果页读取 Nexora 后台保存的本地采样，不会触发即时采集。' : 'SNMP Walk/MIB is a separate, user-initiated read-only query; the hardware results view reads samples saved by Nexora and does not trigger an immediate poll.'
                   : zh ? '使用快捷 OID 或输入目标 OID，再执行只读 WALK。' : 'Choose a quick OID or enter one, then run a read-only WALK.'}
               </p>
             </div>
@@ -1323,7 +1323,7 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
                 className="inline-flex items-center gap-1 rounded-lg bg-[#00a9ce] px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-[#008fb1] disabled:opacity-45"
               >
                 <Activity size={13} className={metricTesting ? 'animate-spin' : ''} />
-                {metricTesting ? (zh ? '读取中...' : 'Reading...') : (zh ? '读取 LibreNMS 原生结果' : 'Read Native LibreNMS Results')}
+              {metricTesting ? (zh ? '读取中...' : 'Reading...') : (zh ? '读取本地硬件结果' : 'Read Local Hardware Results')}
               </button>
             ) : (
               <button
@@ -1391,6 +1391,7 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
           >
             <option value="2c">SNMPv2c</option>
             <option value="1">SNMPv1</option>
+            <option value="3">SNMPv3 Profile</option>
           </select>
         </label>
       </div>
@@ -1930,7 +1931,7 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
             {librenmsHardwareDiscoveryTest ? (
               <>
                 <span className="text-[10px] text-black/50 dark:text-white/50">
-                  {zh ? '只读查询 LibreNMS 已保存的最新结果：' : 'Read the latest results already stored by LibreNMS:'}
+                  {zh ? '只读查询 Nexora 已保存的最新硬件采集结果：' : 'Read the latest hardware collection results saved by Nexora:'}
                 </span>
                 <span className="rounded bg-[#00bceb]/10 px-1.5 py-0.5 text-[10px] font-medium text-[#007391] dark:text-[#00bceb]">{zh ? '需要已绑定资产' : 'Bound managed asset required'}</span>
                 <span className="rounded bg-[#00bceb]/10 px-1.5 py-0.5 text-[10px] font-medium text-[#007391] dark:text-[#00bceb]">{zh ? '不会触发轮询' : 'No poll triggered'}</span>

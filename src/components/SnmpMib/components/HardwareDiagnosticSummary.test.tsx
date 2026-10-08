@@ -110,6 +110,27 @@ describe('HardwareDiagnosticSummary', () => {
     expect(screen.queryByText(/实时读数与后台样本/)).toBeNull();
   });
 
+  it('renders local Nexora results without an external LibreNMS binding prompt', () => {
+    render(
+      <HardwareDiagnosticSummary
+        zh
+        result={result({
+          source: 'nexora_snmp',
+          state: 'available',
+          message: '已读取 Nexora 本地 SNMP 硬件采集结果',
+          hardware_sensors: [sensor({ data_origin: 'legacy_snmp', sensor_descr: 'Chassis temperature' })],
+          metric_summary: [metric({ source: 'nexora_snmp', key: 'temperature' })],
+        })}
+      />,
+    );
+
+    expect(screen.getByText('Nexora 本地 SNMP 硬件采集结果')).toBeTruthy();
+    expect(screen.getByText('本地采集器')).toBeTruthy();
+    expect(screen.getByText('本地传感器分类汇总')).toBeTruthy();
+    expect(screen.queryByText('LibreNMS 绑定')).toBeNull();
+    expect(screen.queryByText(/请先.*配置.*LibreNMS/)).toBeNull();
+  });
+
   it('renders native sensor class aggregates and freshness without guessing units', () => {
     render(
       <HardwareDiagnosticSummary
@@ -222,7 +243,7 @@ describe('HardwareDiagnosticSummary', () => {
 
   it('shows loading, permission-denied, and request failure states accessibly', () => {
     const { rerender } = render(<HardwareDiagnosticSummary zh result={null} loading />);
-    expect(screen.getByRole('status').textContent).toContain('读取 LibreNMS');
+    expect(screen.getByRole('status').textContent).toContain('读取 Nexora');
 
     rerender(<HardwareDiagnosticSummary zh result={null} error={{ message: '无权读取 LibreNMS 原生结果', permissionDenied: true }} />);
     expect(screen.getByRole('alert').textContent).toContain('无权读取 LibreNMS 原生结果');

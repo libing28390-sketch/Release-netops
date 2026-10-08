@@ -47,6 +47,17 @@ def _match():
     }
 
 
+def test_no_external_instance_leaves_device_on_nexora_local_snmp(monkeypatch):
+    monkeypatch.setattr(enrollment, "_load_asset_enrollment_context", lambda _device_id: _target())
+    monkeypatch.setattr(enrollment, "_load_enabled_instances", lambda: [])
+
+    result = asyncio.run(enrollment.enroll_imported_network_device("device-1"))
+
+    assert result["status"] == "local_snmp"
+    assert "Nexora 本地 SNMP 采集器" in result["message"]
+    assert result["profile_applied"] is False
+
+
 def test_snmp_parameters_maps_asset_local_v2_and_v3_profiles(monkeypatch):
     monkeypatch.setattr(enrollment, "decrypt_credential", lambda value: value or "")
 

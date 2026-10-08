@@ -210,7 +210,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#A78BFA",
+                "color": "#64748B",
                 "value": null
               }
             ]
@@ -717,7 +717,7 @@
             "drawStyle": "line",
             "lineInterpolation": "linear",
             "lineWidth": 2,
-            "fillOpacity": 12,
+            "fillOpacity": 10,
             "gradientMode": "none",
             "showPoints": "never"
           }
@@ -733,7 +733,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#22D3EE"
+                  "fixedColor": "#22C55E"
                 }
               }
             ]
@@ -1063,7 +1063,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "状态"
+              "options": "数值"
             },
             "properties": [
               {
@@ -1137,46 +1137,13 @@
                         "color": "#F59E0B"
                       }
                     }
-                  },
-                  {
-                    "type": "value",
-                    "options": {
-                      "unknown": {
-                        "text": "未知",
-                        "color": "#64748B"
-                      },
-                      "unclassified": {
-                        "text": "未分类",
-                        "color": "#64748B"
-                      }
-                    }
-                  },
-                  {
-                    "type": "special",
-                    "options": {
-                      "match": "null",
-                      "result": {
-                        "text": "暂无采集数据",
-                        "color": "#64748B"
-                      }
-                    }
-                  },
-                  {
-                    "type": "special",
-                    "options": {
-                      "match": "nan",
-                      "result": {
-                        "text": "暂无采集数据",
-                        "color": "#64748B"
-                      }
-                    }
                   }
                 ]
               },
               {
                 "id": "custom.cellOptions",
                 "value": {
-                  "type": "color-text"
+                  "type": "color-background"
                 }
               }
             ]
@@ -1311,25 +1278,12 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "客户端数"
+              "options": "数值"
             },
             "properties": [
               {
                 "id": "unit",
                 "value": "short"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#A78BFA"
-                }
-              },
-              {
-                "id": "custom.cellOptions",
-                "value": {
-                  "type": "color-text"
-                }
               }
             ]
           }
@@ -1551,25 +1505,12 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "客户端数"
+              "options": "数值"
             },
             "properties": [
               {
                 "id": "unit",
                 "value": "short"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#A78BFA"
-                }
-              },
-              {
-                "id": "custom.cellOptions",
-                "value": {
-                  "type": "color-text"
-                }
               }
             ]
           }
@@ -1696,25 +1637,12 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "客户端数"
+              "options": "数值"
             },
             "properties": [
               {
                 "id": "unit",
                 "value": "short"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#A78BFA"
-                }
-              },
-              {
-                "id": "custom.cellOptions",
-                "value": {
-                  "type": "color-text"
-                }
               }
             ]
           }
@@ -2278,7 +2206,7 @@
     },
     {
       "id": 21,
-      "title": "LibreNMS 原生无线传感器",
+      "title": "无线传感器明细",
       "type": "table",
       "datasource": {
         "type": "prometheus",
@@ -2313,7 +2241,7 @@
       },
       "targets": [
         {
-          "expr": "topk(100, nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",data_origin=\"librenms_native\",component_class=\"wireless_sensor\"})",
+          "expr": "topk(100, nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",data_origin=~\"^(legacy_snmp|librenms_native)$\",component_class=~\"wireless_.*\"})",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -2404,7 +2332,7 @@
           }
         }
       ],
-      "description": "LibreNMS 原生无线值；未推断 AP 或 Radio 归属。"
+      "description": "本地 SNMP 或可选外部采集的无线值；不推断 AP 或 Radio 归属。"
     }
   ],
   "refresh": "30s",
@@ -2427,14 +2355,14 @@
             "$__all"
           ]
         },
-        "definition": "query_result(count by (site_name) (up{job=\"network_snmp\",role=\"wireless_controller\"}))",
+        "definition": "query_result(count by (site_name) (up{job=\"network_snmp\",role=\"wireless_controller\"} or nexora_hw_sensor_info{job=\"platform_hardware_inventory\",component_class=~\"wireless_.*\"}))",
         "includeAll": true,
         "label": "站点",
         "multi": true,
         "name": "site",
         "options": [],
         "query": {
-          "query": "query_result(count by (site_name) (up{job=\"network_snmp\",role=\"wireless_controller\"}))",
+          "query": "query_result(count by (site_name) (up{job=\"network_snmp\",role=\"wireless_controller\"} or nexora_hw_sensor_info{job=\"platform_hardware_inventory\",component_class=~\"wireless_.*\"}))",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -2452,14 +2380,14 @@
             "$__all"
           ]
         },
-        "definition": "query_result(count by (vendor) (up{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\"}))",
+        "definition": "query_result(count by (vendor) (up{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\"} or nexora_hw_sensor_info{job=\"platform_hardware_inventory\",component_class=~\"wireless_.*\",site_name=~\"$site\"}))",
         "includeAll": true,
         "label": "厂商",
         "multi": true,
         "name": "vendor",
         "options": [],
         "query": {
-          "query": "query_result(count by (vendor) (up{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\"}))",
+          "query": "query_result(count by (vendor) (up{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\"} or nexora_hw_sensor_info{job=\"platform_hardware_inventory\",component_class=~\"wireless_.*\",site_name=~\"$site\"}))",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -2477,14 +2405,14 @@
             "$__all"
           ]
         },
-        "definition": "query_result(count by (role) (up{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\"}))",
+        "definition": "query_result(count by (role) (up{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\"} or nexora_hw_sensor_info{job=\"platform_hardware_inventory\",component_class=~\"wireless_.*\",site_name=~\"$site\",vendor=~\"$vendor\"}))",
         "includeAll": true,
         "label": "角色",
         "multi": true,
         "name": "role",
         "options": [],
         "query": {
-          "query": "query_result(count by (role) (up{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\"}))",
+          "query": "query_result(count by (role) (up{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\"} or nexora_hw_sensor_info{job=\"platform_hardware_inventory\",component_class=~\"wireless_.*\",site_name=~\"$site\",vendor=~\"$vendor\"}))",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -2502,14 +2430,14 @@
             "$__all"
           ]
         },
-        "definition": "query_result(count by (hostname) (up{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\"}))",
+        "definition": "query_result(count by (hostname) (up{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\"} or nexora_hw_sensor_info{job=\"platform_hardware_inventory\",component_class=~\"wireless_.*\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\"}))",
         "includeAll": true,
         "label": "AC 控制器",
         "multi": true,
         "name": "device",
         "options": [],
         "query": {
-          "query": "query_result(count by (hostname) (up{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\"}))",
+          "query": "query_result(count by (hostname) (up{job=\"network_snmp\",role=\"wireless_controller\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\"} or nexora_hw_sensor_info{job=\"platform_hardware_inventory\",component_class=~\"wireless_.*\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\"}))",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,

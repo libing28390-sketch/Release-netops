@@ -290,3 +290,32 @@ def test_native_hardware_loop_syncs_only_enabled_bindings_and_is_cancellable(mon
     assert "i.enabled = TRUE" in query
     assert kwargs == {"fetchall": True}
     assert sorted(synced_devices) == ["device-1", "device-2"]
+
+
+def test_local_snmp_hardware_loop_loads_asset_type_and_calls_collector(monkeypatch):
+    query_calls: list[tuple[str, dict]] = []
+    collected_devices: list[str] = []
+
+    def fetch_devices(sql, **kwargs):
+        query_calls.append((sql, kwargs))
+        return [{"id": "switch-1", "asset_type": "network_device"}]
+
+    async def collect_device(device):
+        collected_devices.append(device["id"])
+        return {"status": "collected"}
+
+    async def stop_after_one_cycle(_seconds: float):
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(background_monitor_service, "_db_quick", fetch_devices)
+    monkeypatch.setattr("services.snmp_hardware_poller_service.collect_device_hardware", collect_device)
+    monkeypatch.setattr(asyncio, "sleep", stop_after_one_cycle)
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(TelemetryOrchestrator().snmp_hardware_loop())
+
+    query, kwargs = query_calls[0]
+    assert "LEFT JOIN physical_assets AS pa" in query
+    assert "AS asset_type" in query
+    assert kwargs == {"fetchall": True}
+    assert collected_devices == ["switch-1"]

@@ -1,12 +1,13 @@
-"""Read-only, tenant-scoped diagnostics for LibreNMS-native hardware results.
+"""Read-only diagnostics for Nexora-local and optional LibreNMS hardware data.
 
-This service never opens an SNMP session. It resolves one explicit Nexora
-binding, calls the bound LibreNMS API, and exposes only an allowlisted subset of
-the native response. LibreNMS remains responsible for discovery and polling.
+The default path reads Nexora's persisted SNMP inventory. When an external
+LibreNMS instance is configured, this service retains the tenant-scoped,
+allowlisted compatibility view for bound devices.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import os
@@ -174,6 +175,240 @@ def _base_result(device: Mapping[str, Any], *, state: str, message: str) -> dict
     }
 
 
+def _local_hardware_snapshot(device: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Build a diagnostic view from Nexora's local SNMP hardware inventory."""
+    from services.snmp_hardware_inventory_service import (
+        list_hardware_capabilities,
+        list_hardware_sensors,
+    )
+
+    device_id = str(device.get("id") or "").strip()
+    if not device_id:
+        return None
+    conn = get_db_connection()
+    try:
+        sensors = list_hardware_sensors(conn, device_id, include_retired=False)
+        capabilities = list_hardware_capabilities(conn, device_id)
+    finally:
+        conn.close()
+
+    sensors = [
+        sensor for sensor in sensors
+        if str(sensor.get("data_origin") or "legacy_snmp").casefold() != "librenms_native"
+        and sensor.get("enabled") is not False
+    ]
+    capabilities = [
+        capability for capability in capabilities
+        if str(capability.get("source_type") or "").casefold() != "librenms_native"
+    ]
+    if not sensors and not capabilities:
+        return None
+
+    now = datetime.now(timezone.utc)
+    normalized: list[dict[str, Any]] = []
+    groups: dict[str, dict[str, Any]] = {}
+    latest_success: datetime | None = None
+    poll_interval = 300
+    for sensor in sensors:
+        metadata = sensor.get("metadata") if isinstance(sensor.get("metadata"), Mapping) else {}
+        configured_interval = _finite_number(metadata.get("poll_interval_seconds"))
+        if configured_interval is not None:
+            poll_interval = max(poll_interval, min(86400, int(configured_interval)))
+    stale_after_seconds = max(60, poll_interval * 3)
+    for sensor in sensors:
+        current = _finite_number(sensor.get("last_value"))
+        if str(sensor.get("last_quality") or "").casefold() != "good":
+            current = None
+        sample_at = _parse_native_time(sensor.get("last_success")) or _parse_native_time(sensor.get("last_sample_at"))
+        age = max(0.0, (now - sample_at).total_seconds()) if sample_at else None
+        freshness = "unknown" if age is None else "stale" if age > stale_after_seconds else "fresh"
+        if sample_at and str(sensor.get("last_quality") or "").casefold() == "good":
+            latest_success = max(latest_success, sample_at) if latest_success else sample_at
+        index = sensor.get("index") if isinstance(sensor.get("index"), (dict, list)) else []
+        index_text = ".".join(str(part) for part in index) if isinstance(index, list) else str(index)
+        component_class = str(sensor.get("component_class") or "sensor")
+        measurement_type = str(sensor.get("measurement_type") or "sensor_value")
+        labels = sensor.get("index_labels") if isinstance(sensor.get("index_labels"), Mapping) else {}
+        row = {
+            "sensor_id": str(sensor.get("sensor_key") or ""),
+            "sensor_class": component_class,
+            "device_id": device_id,
+            "poller_type": "nexora_snmp",
+            "sensor_oid": sensor.get("oid") or "",
+            "sensor_index": index_text,
+            "sensor_type": measurement_type,
+            "sensor_descr": sensor.get("sensor_name") or sensor.get("entity_name") or measurement_type,
+            "group": sensor.get("group_name") or component_class,
+            "sensor_current": current,
+            "lastupdate": sample_at.isoformat() if sample_at else None,
+            "data_origin": str(sensor.get("data_origin") or "legacy_snmp"),
+            "source_type": str(sensor.get("source_type") or ""),
+            "unit": sensor.get("unit") or "",
+            "raw_value": sensor.get("last_raw_value"),
+            "states": sensor.get("states") or {},
+            "quality": str(sensor.get("last_quality") or "missing"),
+            "value_status": "available" if current is not None else "missing",
+            "freshness": freshness,
+            "sample_age_seconds": round(age, 1) if age is not None else None,
+            "observed_at": sample_at.isoformat() if sample_at else None,
+            "index_labels": dict(labels),
+        }
+        normalized.append(row)
+        bucket = groups.setdefault(component_class, {
+            "key": component_class,
+            "measurement_type": measurement_type,
+            "unit": str(sensor.get("unit") or ""),
+            "source": "nexora_snmp",
+            "entity_count": 0,
+            "value_count": 0,
+            "fresh_count": 0,
+            "latest_sample_at": None,
+            "status": "missing",
+        })
+        bucket["entity_count"] += 1
+        if current is not None:
+            bucket["value_count"] += 1
+        if current is not None and freshness == "fresh":
+            bucket["fresh_count"] += 1
+        if sample_at:
+            previous = _parse_native_time(bucket["latest_sample_at"])
+            if previous is None or sample_at > previous:
+                bucket["latest_sample_at"] = sample_at.isoformat()
+
+    for bucket in groups.values():
+        bucket["status"] = (
+            "available" if bucket["fresh_count"]
+            else "stale" if bucket["value_count"]
+            else "missing"
+        )
+    discovery_times = [
+        parsed for item in capabilities
+        if (parsed := _parse_native_time(item.get("last_attempt_at"))) is not None
+    ]
+    latest_discovery = max(discovery_times, default=None)
+    has_values = any(row.get("value_status") == "available" for row in normalized)
+    if has_values:
+        state = "available"
+        message = "已读取 Nexora 本地 SNMP 硬件采集结果"
+        sample_status = "available"
+    elif normalized:
+        state = "metadata_only"
+        message = "Nexora 已发现本地硬件实体，当前没有有效数值样本"
+        sample_status = "metadata_only"
+    elif any(str(item.get("last_status") or "").casefold() in {"failed", "partial"} for item in capabilities):
+        state = "pending"
+        message = "Nexora 本地 SNMP 发现尚未完成；后台会按计划重试"
+        sample_status = "pending"
+    else:
+        state = "no_native_hardware_data"
+        message = "Nexora 已执行本地 SNMP 发现，但当前规则未检出硬件传感器"
+        sample_status = "no_data"
+
+    result = _base_result(device, state=state, message=message)
+    result.update(
+        source="nexora_snmp",
+        engine={
+            "instance_id": "",
+            "name": "Nexora SNMP collector",
+            "version": "native",
+            "commit": "",
+            "health_state": "active",
+        },
+        identity={
+            "hostname": str(device.get("hostname") or device.get("ip_address") or ""),
+            "display": str(device.get("display_name") or device.get("hostname") or ""),
+            "os": str(device.get("platform") or ""),
+            "version": str(device.get("version") or ""),
+            "hardware": str(device.get("model") or ""),
+            "sysObjectID": "",
+        },
+        hardware_sensors=[row for row in normalized if row["sensor_class"] not in {"processor", "memory_pool"}],
+        processor_sensors=[
+            {**row, "processor_usage": row.get("sensor_current"), "processor_descr": row.get("sensor_descr")}
+            for row in normalized if row["sensor_class"] == "processor"
+        ],
+        memory_pools=[
+            {**row, "mempool_perc": row.get("sensor_current"), "mempool_descr": row.get("sensor_descr")}
+            for row in normalized if row["sensor_class"] == "memory_pool"
+        ],
+        wireless_sensors=[
+            {
+                "sensor_id": row["sensor_id"],
+                "device_id": device_id,
+                "sensor_class": row["sensor_class"],
+                "sensor_index": row["sensor_index"],
+                "sensor_descr": row["sensor_descr"],
+                "sensor_current": row["sensor_current"],
+                "lastupdate": row["lastupdate"],
+                "ssid": row["index_labels"].get("ssid"),
+                "ap_name": row["index_labels"].get("ap_name"),
+                "value_status": row["value_status"],
+                "freshness": row["freshness"],
+            }
+            for row in normalized
+            if "wireless" in row["sensor_class"].casefold() or "wireless" in row["sensor_type"].casefold()
+        ],
+        sensor_count=len(normalized),
+        metric_summary=sorted(groups.values(), key=lambda item: item["key"]),
+        collection={
+            **result["collection"],
+            "engine_status": "active",
+            "sample_status": sample_status,
+            "sync_status": "not_applicable",
+            "last_discovered": latest_discovery.isoformat() if latest_discovery else None,
+            "last_polled": latest_success.isoformat() if latest_success else None,
+            "stale_after_seconds": max(60, poll_interval * 3),
+        },
+        background_snapshot_status=sample_status,
+    )
+    return result
+
+
+def _local_collection_waiting_result(device: Mapping[str, Any]) -> dict[str, Any]:
+    try:
+        from services.vault_service import resolve_collector_credentials
+
+        snmp = resolve_collector_credentials(dict(device)).get("snmp") or {}
+        configured = bool(snmp.get("configured", snmp.get("community")))
+    except Exception as exc:
+        logger.warning("Local SNMP credential check failed: %s", type(exc).__name__)
+        configured = False
+    state = "pending" if configured else "not_configured"
+    message = (
+        "Nexora 本地 SNMP 硬件采集已启用，等待后台完成首次发现；无需配置 LibreNMS 实例"
+        if configured
+        else "Nexora 未为该设备配置可用的 SNMP 凭据，无法开始本地硬件采集"
+    )
+    result = _base_result(device, state=state, message=message)
+    result.update(
+        source="nexora_snmp",
+        engine={
+            "instance_id": "",
+            "name": "Nexora SNMP collector",
+            "version": "native",
+            "commit": "",
+            "health_state": "scheduled" if configured else "not_configured",
+        },
+        identity={
+            "hostname": str(device.get("hostname") or device.get("ip_address") or ""),
+            "display": str(device.get("display_name") or device.get("hostname") or ""),
+            "os": str(device.get("platform") or ""),
+            "version": str(device.get("version") or ""),
+            "hardware": str(device.get("model") or ""),
+            "sysObjectID": "",
+        },
+        collection={
+            **result["collection"],
+            "engine_status": "scheduled" if configured else "not_configured",
+            "sample_status": state,
+            "sync_status": "not_applicable",
+            "stale_after_seconds": 900,
+        },
+        background_snapshot_status=state,
+    )
+    return result
+
+
 def _public_binding(binding: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "id": str(binding.get("binding_id") or ""),
@@ -326,28 +561,38 @@ def _summarize_health_rows(
 
 
 async def diagnose_librenms_hardware(device: Mapping[str, Any]) -> dict[str, Any]:
-    """Return the latest allowlisted native snapshot for one authorized device."""
+    """Return local SNMP inventory first, with external LibreNMS as compatibility fallback."""
+    try:
+        local_result = await asyncio.to_thread(_local_hardware_snapshot, device)
+    except Exception as exc:
+        logger.warning("Local SNMP hardware snapshot failed: %s", type(exc).__name__)
+        local_result = None
+    if local_result is not None:
+        return local_result
+
     result = _base_result(device, state="not_bound", message="该设备尚未绑定 LibreNMS 原生实例")
     try:
         binding = _binding_for_device(device)
     except Exception as exc:
-        logger.warning("LibreNMS binding lookup failed: %s", type(exc).__name__)
-        result.update(state="unavailable", message="LibreNMS 绑定信息暂不可用")
-        result["collection"]["sync_status"] = "unavailable"
-        return result
+        logger.warning("Optional LibreNMS binding lookup failed: %s", type(exc).__name__)
+        return await asyncio.to_thread(_local_collection_waiting_result, device)
 
     binding_resolution: dict[str, Any] | None = None
     if binding is None:
         try:
-            from services.librenms_binding_service import auto_bind_device_by_management_ip
+            from services.librenms_binding_service import (
+                _load_enabled_instances,
+                auto_bind_device_by_management_ip,
+            )
+
+            enabled_instances = await asyncio.to_thread(_load_enabled_instances)
+            if not enabled_instances:
+                return await asyncio.to_thread(_local_collection_waiting_result, device)
 
             binding_resolution = await auto_bind_device_by_management_ip(device)
         except Exception as exc:
-            logger.warning("LibreNMS auto-binding failed: %s", type(exc).__name__)
-            binding_resolution = {
-                "status": "lookup_unavailable",
-                "message": "无法自动确认 LibreNMS 设备关联，请检查实例配置或使用管理员手动关联",
-            }
+            logger.warning("Optional LibreNMS instance lookup failed: %s", type(exc).__name__)
+            return await asyncio.to_thread(_local_collection_waiting_result, device)
         result["binding_resolution"] = {"status": binding_resolution.get("status")}
         if binding_resolution.get("status") not in {"bound", "already_bound"}:
             result.update(

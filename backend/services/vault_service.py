@@ -193,8 +193,8 @@ def resolve_device_credentials(device: dict) -> dict[str, str]:
     Unified credential resolver.
     - If credential_source='vault' and Vault is available, fetch from Vault.
     - Otherwise, decrypt from local DB fields (supporting credentials table).
-    Returns the SSH account fields plus ``snmp_community``. Callers must never
-    log or return the resolved dictionary.
+    Returns SSH fields plus the bound SNMP credential profile. Callers must
+    never log or return the resolved dictionary.
 
     Enable-secret policy:
       `enable_password` is independent from SSH login credentials. It is
@@ -400,6 +400,17 @@ def resolve_device_credentials(device: dict) -> dict[str, str]:
     if db_snmp_creds:
         resolved['snmp_community'] = decrypt_credential(db_snmp_creds.get('snmp_community')) or resolved.get('snmp_community') or ''
         resolved['snmp_server'] = str(db_snmp_creds.get('snmp_server') or resolved.get('snmp_server') or '').strip()
+        credential_type = str(db_snmp_creds.get('credential_type') or '').strip().casefold()
+        resolved['snmp_credential_type'] = credential_type
+        resolved['snmp_version'] = '3' if credential_type == 'snmpv3' else '2c' if credential_type == 'snmpv2' else ''
+        if credential_type == 'snmpv3':
+            resolved['snmp_username'] = str(db_snmp_creds.get('username') or '').strip()
+            resolved['snmp_security_level'] = str(db_snmp_creds.get('snmp_security_level') or 'authPriv').strip()
+            resolved['snmp_auth_protocol'] = str(db_snmp_creds.get('snmp_auth_protocol') or 'SHA').strip()
+            resolved['snmp_auth_password'] = decrypt_credential(db_snmp_creds.get('snmp_auth_password') or '') or ''
+            resolved['snmp_priv_protocol'] = str(db_snmp_creds.get('snmp_priv_protocol') or 'AES').strip()
+            resolved['snmp_priv_password'] = decrypt_credential(db_snmp_creds.get('snmp_priv_password') or '') or ''
+            resolved['snmp_context_name'] = str(db_snmp_creds.get('snmp_context_name') or '')
 
     # Keep the generic return keys compatible for callers that have not yet
     # been migrated, but derive them from the explicit role pairs.
@@ -419,6 +430,11 @@ def resolve_device_credentials(device: dict) -> dict[str, str]:
     # Older Vault records may not contain SNMP fields. Keep the key stable so
     # collectors can distinguish "not configured" from an unreachable agent.
     resolved['snmp_community'] = resolved.get('snmp_community') or ''
+    resolved['snmp_credential_type'] = resolved.get('snmp_credential_type') or ''
+    resolved['snmp_version'] = (
+        resolved.get('snmp_version')
+        or str(device.get('snmp_version') or ('2c' if resolved['snmp_community'] else '')).strip()
+    )
 
     # ── Enable-secret fallback ─────────────────────────────────────────
     # If no explicit enable_password is configured, use admin_password
@@ -435,9 +451,9 @@ def resolve_device_credentials(device: dict) -> dict[str, str]:
 def resolve_collector_credentials(device: dict, *, ssh_role: str = 'normal') -> dict[str, object]:
     """Return the stable credential contract consumed by network collectors.
 
-    SNMPv2c is the currently supported wire driver. Keeping the version and
-    configured flag explicit prevents callers from treating an empty community
-    as the legacy public default and leaves a safe extension point for SNMPv3.
+    SNMP secrets are decrypted only inside this trusted collector boundary.
+    The version and configured flag keep v2c and v3 profiles explicit without
+    making callers infer readiness from a community string.
     """
     role = str(ssh_role or 'normal').strip().lower()
     if role not in {'normal', 'admin'}:
@@ -456,6 +472,41 @@ def resolve_collector_credentials(device: dict, *, ssh_role: str = 'normal') -> 
     if not has_explicit_role_fields:
         role_username = resolved.get('username') or ''
         role_password = resolved.get('password') or ''
+    snmp_profile_type = str(resolved.get('snmp_credential_type') or '').strip().casefold()
+    snmp_version = str(resolved.get('snmp_version') or '2c').strip().casefold()
+    snmp_security_level = str(resolved.get('snmp_security_level') or 'authPriv').strip()
+    snmp_username = str(resolved.get('snmp_username') or '').strip()
+    snmp_auth_protocol = str(resolved.get('snmp_auth_protocol') or 'SHA').strip()
+    snmp_priv_protocol = str(resolved.get('snmp_priv_protocol') or 'AES').strip()
+    snmp_auth_password = resolved.get('snmp_auth_password') or ''
+    snmp_priv_password = resolved.get('snmp_priv_password') or ''
+    snmp_context_name = str(resolved.get('snmp_context_name') or '')
+    security_level_key = snmp_security_level.casefold()
+    if snmp_profile_type == 'snmpv3' or snmp_version in {'3', 'v3', 'snmpv3'}:
+        snmp_version = '3'
+        if not snmp_username:
+            configuration_error = 'username_missing'
+        elif security_level_key not in {'noauthnopriv', 'authnopriv', 'authpriv'}:
+            configuration_error = 'security_level_invalid'
+        elif security_level_key != 'noauthnopriv' and not snmp_auth_password:
+            configuration_error = 'auth_password_missing'
+        elif security_level_key != 'noauthnopriv' and snmp_auth_protocol.casefold() not in {
+            'md5', 'sha', 'sha1', 'sha-1',
+            'sha224', 'sha-224', 'sha256', 'sha-256',
+            'sha384', 'sha-384', 'sha512', 'sha-512',
+        }:
+            configuration_error = 'auth_protocol_unsupported'
+        elif security_level_key == 'authpriv' and not snmp_priv_password:
+            configuration_error = 'priv_password_missing'
+        elif security_level_key == 'authpriv' and snmp_priv_protocol.casefold() not in {'aes', 'aes-128', 'des'}:
+            configuration_error = 'priv_protocol_unsupported'
+        else:
+            configuration_error = ''
+        snmp_configured = not configuration_error
+    else:
+        configuration_error = ''
+        snmp_configured = bool(resolved.get('snmp_community'))
+
     return {
         'ssh': {
             'username': role_username,
@@ -465,10 +516,19 @@ def resolve_collector_credentials(device: dict, *, ssh_role: str = 'normal') -> 
             'role': role,
         },
         'snmp': {
-            'version': '2c',
+            'version': snmp_version,
             'server': resolved.get('snmp_server') or str(device.get('ip_address') or '').strip(),
             'community': resolved.get('snmp_community') or '',
             'port': int(device.get('snmp_port') or 161),
-            'configured': bool(resolved.get('snmp_community')),
+            'credential_type': snmp_profile_type,
+            'username': snmp_username,
+            'security_level': snmp_security_level,
+            'auth_protocol': snmp_auth_protocol,
+            'auth_password': snmp_auth_password,
+            'priv_protocol': snmp_priv_protocol,
+            'priv_password': snmp_priv_password,
+            'context_name': snmp_context_name,
+            'configured': snmp_configured,
+            'configuration_error': configuration_error,
         },
     }

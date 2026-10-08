@@ -953,7 +953,7 @@ def list_hardware_metric_rows(
           LEFT JOIN physical_assets pa ON pa.id = d.asset_id
           LEFT JOIN sites si ON si.id = COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''))
          WHERE s.lifecycle_status <> 'retired' AND s.enabled = TRUE
-           AND s.data_origin = 'librenms_native'
+           AND s.data_origin IN ('librenms_native', 'legacy_snmp')
          ORDER BY s.device_id, s.component_class, s.sensor_key
         """
     ).fetchall()

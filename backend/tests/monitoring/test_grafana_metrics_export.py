@@ -301,6 +301,37 @@ def test_metrics_export_includes_normalized_hardware_and_capability_without_addr
         artifact_version="26.9",
     )
     assert outcome["results"][0]["active_sensor_count"] == 1
+    local_outcome = upsert_discovery_run(
+        conn,
+        "grafana-hardware-device",
+        "grafana-hardware-run-local-1",
+        "h3c-rules-v1",
+        [{
+            "source_type": "h3c_comware",
+            "component_class": "temperature",
+            "measurement_type": "temperature_celsius",
+            "index": [1],
+            "index_labels": {"sensor": "chassis"},
+            "oid": "1.3.6.1.4.1.25506.2.6.1.1.1.1.1",
+            "unit": "celsius",
+            "sensor_name": "Chassis temperature",
+            "group_name": "chassis",
+            "value": 41.0,
+            "raw_value": "41",
+            "quality": "good",
+            "sample_at": sampled_at,
+        }],
+        [{
+            "source_type": "h3c_comware",
+            "component_class": "temperature",
+            "status": "success",
+            "coverage_complete": True,
+        }],
+        sampled_at,
+        discovery_version="nexora-native-snmp-hardware-v1",
+        artifact_version="h3c-wx5540h",
+    )
+    assert local_outcome["results"][0]["active_sensor_count"] == 1
     conn.commit()
     conn.close()
     monkeypatch.setattr(grafana_metrics, "get_db_connection", database.get_db_connection)
@@ -322,6 +353,13 @@ def test_metrics_export_includes_normalized_hardware_and_capability_without_addr
     ):
         assert label in cpu_line
     assert cpu_line.endswith(" 26.5")
+    local_line = next(
+        line for line in body.splitlines()
+        if line.startswith("nexora_hw_temperature_celsius{")
+    )
+    assert 'data_origin="legacy_snmp"' in local_line
+    assert 'device_id="grafana-hardware-device"' in local_line
+    assert local_line.endswith(" 41")
     assert 'hostname="router-hw-01"' in body
     assert 'window="unknown"' in body
     assert 'nexora_hw_sensor_quality{' in body and 'quality="good"' in body

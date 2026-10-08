@@ -1,9 +1,7 @@
-"""Enroll imported CMDB network devices in LibreNMS with their assigned profile.
+"""Optionally enroll imported CMDB network devices in an external LibreNMS.
 
-LibreNMS remains the only SNMP discovery and hardware-polling engine. This
-module only sends the device identity and configured SNMP credentials to the
-documented LibreNMS add-device API, then verifies the returned native device by
-its exact management IP before creating Nexora's local binding.
+Nexora's local SNMP hardware collector is the default. This compatibility
+integration is used only when an enabled external LibreNMS instance exists.
 """
 
 from __future__ import annotations
@@ -261,13 +259,13 @@ async def enroll_imported_network_device(
     *,
     actor: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Ensure an imported network asset exists in LibreNMS and bind it locally.
+    """Optionally enroll an imported device in a configured external instance.
 
     Match on exact management IP. Existing native devices receive the selected
     asset SNMP profile through LibreNMS' documented device-field API before the
     local binding is persisted. New devices use the documented add-device API.
-    OS detection, discovery, polling, and hardware sampling remain native to
-    LibreNMS.
+    When no instance is enabled, the external enrollment is skipped; Nexora's
+    local SNMP collector remains responsible for hardware sampling.
     """
     target = _load_asset_enrollment_context(str(device_id or "").strip())
     if not target or str(target.get("asset_type") or "") != "network_device":
@@ -281,6 +279,21 @@ async def enroll_imported_network_device(
         _audit_enrollment(target=target, actor=actor, status="blocked", reason=result["status"])
         return result
     canonical_ip, _address_type = parsed_ip
+
+    try:
+        instances = _load_enabled_instances()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("External LibreNMS instance lookup failed: %s", type(exc).__name__)
+        result = _error_result("instance_unavailable")
+        _audit_enrollment(target=target, actor=actor, status="failed", reason="instance_lookup_failed")
+        return result
+    if not instances:
+        return {
+            "status": "local_snmp",
+            "message": "未配置外部 LibreNMS 实例；硬件数据由 Nexora 本地 SNMP 采集器负责（设备需配置有效 SNMP 凭据）",
+            "profile_applied": False,
+        }
+
     context = _load_auto_binding_context(str(target["id"]), canonical_ip)
     if context.get("status") != "ready":
         result = _error_result("not_eligible")
@@ -293,17 +306,6 @@ async def enroll_imported_network_device(
         _audit_enrollment(target=target, actor=actor, status="blocked", reason=profile_error)
         return result
 
-    try:
-        instances = _load_enabled_instances()
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("LibreNMS enrollment instance lookup failed: %s", type(exc).__name__)
-        result = _error_result("instance_unavailable")
-        _audit_enrollment(target=target, actor=actor, status="failed", reason="instance_lookup_failed")
-        return result
-    if not instances:
-        result = _error_result("instance_not_configured")
-        _audit_enrollment(target=target, actor=actor, status="blocked", reason=result["status"])
-        return result
     prepared_instances: list[dict[str, Any]] = []
     for instance in instances:
         instance_id = str(instance.get("id") or "")

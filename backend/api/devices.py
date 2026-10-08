@@ -97,6 +97,43 @@ def _normalize_device_metric_oid(value: object, field_name: str) -> str:
 router = APIRouter()
 
 
+def _snmp_request_transport(
+    snmp_credentials: Mapping[str, Any],
+    requested_version: Any = None,
+) -> tuple[str, str | Mapping[str, Any]]:
+    """Select a read-only SNMP transport without exposing secrets to clients."""
+    configured_version = str(snmp_credentials.get('version') or '').strip().casefold()
+    requested_key = str(requested_version or '').strip().casefold()
+    version_aliases = {
+        '1': '1', 'v1': '1',
+        '2': '2c', '2c': '2c', 'v2c': '2c',
+        '3': '3', 'v3': '3', 'snmpv3': '3',
+    }
+    configured_version = version_aliases.get(configured_version, '')
+    requested_version_key = version_aliases.get(requested_key, '')
+
+    # The bound credential profile is authoritative for v3, even when older
+    # clients still submit their default UI value of "2c".
+    if configured_version == '3':
+        error_code = str(snmp_credentials.get('configuration_error') or '').strip()
+        configured = bool(snmp_credentials.get('configured', snmp_credentials.get('username')))
+        if error_code or not configured:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Bound SNMPv3 credential profile is incomplete ({error_code or 'profile_missing'})",
+            )
+        return '3', snmp_credentials
+
+    if requested_version_key == '3':
+        raise HTTPException(status_code=400, detail='SNMP version 3 requires a bound SNMPv3 credential profile')
+
+    version = requested_version_key or configured_version or '2c'
+    community = str(snmp_credentials.get('community') or '').strip()
+    if not community:
+        raise HTTPException(status_code=400, detail='Matched asset has no usable SNMP credentials configured')
+    return version, community
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S+00:00')
 
@@ -1475,11 +1512,9 @@ async def detect_snmp_walk_vendor(payload: dict = Body(default={}), user=require
     collector_credentials = resolve_collector_credentials(matched_device) or {}
     snmp_credentials = collector_credentials.get("snmp") or {}
     host = str(snmp_credentials.get("server") or matched_device.get("ip_address") or "").strip()
-    community = str(snmp_credentials.get("community") or "").strip()
     if not host:
         raise HTTPException(status_code=400, detail="Matched asset has no SNMP address configured")
-    if not community:
-        raise HTTPException(status_code=400, detail="Matched asset has no SNMP community configured")
+    version, community = _snmp_request_transport(snmp_credentials)
     try:
         port = int(snmp_credentials.get("port") or matched_device.get("snmp_port") or 161)
     except (TypeError, ValueError) as exc:
@@ -1490,20 +1525,6 @@ async def detect_snmp_walk_vendor(payload: dict = Body(default={}), user=require
     # The browser submits only device_id.  Prefer the server-resolved
     # credential/device value and keep payload values as a compatibility
     # fallback for older callers.
-    version = str(
-        snmp_credentials.get("version")
-        or matched_device.get("snmp_version")
-        or payload.get("version")
-        or payload.get("snmp_version")
-        or "2c"
-    ).strip().lower()
-    if version in {"v1", "1"}:
-        version = "1"
-    elif version in {"v2c", "2c", "2", ""}:
-        version = "2c"
-    else:
-        raise HTTPException(status_code=400, detail="SNMP version must be 1 or 2c")
-
     from services.snmp_service import _snmp_get_versioned
 
     try:
@@ -1558,11 +1579,12 @@ async def test_snmp_walk(payload: dict = Body(default={}), user=require_role("Op
     The endpoint deliberately accepts structured values instead of an
     arbitrary shell command.  This keeps the test path independent of
     ``snmpwalk.exe`` and prevents command injection while still matching the
-    common ``snmpwalk -v2c -c COMMUNITY HOST OID`` workflow (v1 is also
-    accepted for legacy devices).
+    common ``snmpwalk -v2c -c COMMUNITY HOST OID`` workflow (v1 and bound
+    SNMPv3 profiles are also accepted).
     """
     host = str(payload.get('ip') or payload.get('host') or '').strip()
     community = str(payload.get('community') or '').strip()
+    snmp_credentials: Mapping[str, Any] = {}
     requested_device_id = str(payload.get('device_id') or '').strip()
     target_query = str(payload.get('target_query') or '').strip()
     matched_device: dict[str, Any] | None = None
@@ -1589,23 +1611,21 @@ async def test_snmp_walk(payload: dict = Body(default={}), user=require_role("Op
     raw_oid = payload.get('oid')
     if not host:
         raise HTTPException(status_code=400, detail='SNMP address is required')
-    if not community:
-        detail = 'Matched asset has no SNMP community configured' if matched_device else 'SNMP community is required'
-        raise HTTPException(status_code=400, detail=detail)
+    if matched_device:
+        version, transport_credentials = _snmp_request_transport(snmp_credentials, payload.get('version') or payload.get('snmp_version'))
+    else:
+        if not community:
+            raise HTTPException(status_code=400, detail='SNMP community is required for a manual target')
+        version, transport_credentials = _snmp_request_transport(
+            {'version': '2c', 'community': community, 'configured': True},
+            payload.get('version') or payload.get('snmp_version'),
+        )
     try:
         oid = normalize_metric_oid(raw_oid)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f'oid: {exc}') from exc
     if not oid:
         raise HTTPException(status_code=400, detail='OID is required')
-
-    version = str(payload.get('version') or payload.get('snmp_version') or '2c').strip().lower()
-    if version in {'v1', '1'}:
-        version = '1'
-    elif version in {'v2c', '2c', '2'}:
-        version = '2c'
-    else:
-        raise HTTPException(status_code=400, detail='SNMP version must be 1 or 2c')
 
     try:
         port = int(port if matched_device else (payload.get('port') or 161))
@@ -1633,7 +1653,7 @@ async def test_snmp_walk(payload: dict = Body(default={}), user=require_role("Op
     try:
         rows = await _snmp_walk(
             host,
-            community,
+            transport_credentials,
             oid,
             port=port,
             timeout=timeout,
@@ -1695,10 +1715,10 @@ async def test_snmp_walk(payload: dict = Body(default={}), user=require_role("Op
 
 @router.post("/platform-registry/snmp-hardware-test")
 async def test_snmp_hardware_metrics(payload: dict = Body(default={}), user=require_role("Operator")):
-    """Compatibility endpoint that displays the already-collected native snapshot.
+    """Display persisted hardware samples without triggering an immediate poll.
 
-    The supplied SNMP version and metric definitions are intentionally ignored:
-    Nexora no longer tests or polls hardware OIDs in Python.
+    The scheduled Nexora SNMP collector owns discovery and sampling; an
+    optional external LibreNMS snapshot remains supported for compatibility.
     """
     requested_device_id = str(payload.get('device_id') or '').strip()
     if not requested_device_id:
@@ -1755,7 +1775,7 @@ async def test_snmp_hardware_metrics(payload: dict = Body(default={}), user=requ
 
 @router.post("/platform-registry/snmp-hardware-discovery-test")
 async def test_snmp_hardware_discovery(payload: dict = Body(default={}), user=require_role("Operator")):
-    """Read the latest hardware values already sampled by the bound LibreNMS instance."""
+    """Read the latest hardware values already sampled by Nexora or LibreNMS."""
     requested_device_id = str(payload.get('device_id') or '').strip()
     if not requested_device_id:
         raise HTTPException(status_code=400, detail='A managed device_id is required')
@@ -1793,23 +1813,18 @@ async def test_snmp_system_info(payload: dict = Body(default={}), user=require_r
     collector_credentials = resolve_collector_credentials(device) or {}
     snmp_credentials = collector_credentials.get('snmp') or {}
     host = str(snmp_credentials.get('server') or device.get('ip_address') or '').strip()
-    community = str(snmp_credentials.get('community') or '').strip()
-    if not host or not community:
-        raise HTTPException(status_code=400, detail='Matched asset has no SNMP address or community configured')
+    if not host:
+        raise HTTPException(status_code=400, detail='Matched asset has no SNMP address configured')
+    version, transport_credentials = _snmp_request_transport(
+        snmp_credentials,
+        payload.get('version') or payload.get('snmp_version'),
+    )
     try:
         port = int(snmp_credentials.get('port') or 161)
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail='SNMP port must be an integer') from exc
     if not 1 <= port <= 65535:
         raise HTTPException(status_code=400, detail='SNMP port must be between 1 and 65535')
-
-    version = str(payload.get('version') or payload.get('snmp_version') or '2c').strip().lower()
-    if version in {'v1', '1'}:
-        version = '1'
-    elif version in {'v2c', '2c', '2'}:
-        version = '2c'
-    else:
-        raise HTTPException(status_code=400, detail='SNMP version must be 1 or 2c')
 
     import asyncio
 
@@ -1818,10 +1833,10 @@ async def test_snmp_system_info(payload: dict = Body(default={}), user=require_r
 
     try:
         sys_name, sys_descr, sys_object_id, sys_uptime = await asyncio.gather(
-            _snmp_get_versioned(host, community, SYS_NAME, port, version),
-            _snmp_get_versioned(host, community, SYS_DESCR, port, version),
-            _snmp_get_versioned(host, community, SYS_OBJECT_ID, port, version),
-            _snmp_get_versioned(host, community, SYS_UPTIME, port, version),
+            _snmp_get_versioned(host, transport_credentials, SYS_NAME, port, version),
+            _snmp_get_versioned(host, transport_credentials, SYS_DESCR, port, version),
+            _snmp_get_versioned(host, transport_credentials, SYS_OBJECT_ID, port, version),
+            _snmp_get_versioned(host, transport_credentials, SYS_UPTIME, port, version),
         )
     except Exception as exc:
         logger.warning('SNMP system information test failed for %s: %s', host, type(exc).__name__)
@@ -1916,9 +1931,12 @@ async def test_snmp_interface_oids(payload: dict = Body(default={}), user=requir
     collector_credentials = resolve_collector_credentials(device)
     snmp_credentials = collector_credentials.get('snmp') or {}
     host = str(snmp_credentials.get('server') or device.get('ip_address') or '').strip()
-    community = str(snmp_credentials.get('community') or '').strip()
-    if not host or not community:
-        raise HTTPException(status_code=400, detail='Matched asset has no SNMP address or community configured')
+    if not host:
+        raise HTTPException(status_code=400, detail='Matched asset has no SNMP address configured')
+    version, transport_credentials = _snmp_request_transport(
+        snmp_credentials,
+        payload.get('version') or payload.get('snmp_version'),
+    )
     try:
         port = int(snmp_credentials.get('port') or 161)
     except (TypeError, ValueError) as exc:
@@ -1926,18 +1944,10 @@ async def test_snmp_interface_oids(payload: dict = Body(default={}), user=requir
     if not 1 <= port <= 65535:
         raise HTTPException(status_code=400, detail='SNMP port must be between 1 and 65535')
 
-    version = str(payload.get('version') or payload.get('snmp_version') or '2c').strip().lower()
-    if version in {'v1', '1'}:
-        version = '1'
-    elif version in {'v2c', '2c', '2'}:
-        version = '2c'
-    else:
-        raise HTTPException(status_code=400, detail='SNMP version must be 1 or 2c')
-
     try:
         probe = await probe_interface_definition(
             host,
-            community,
+            transport_credentials,
             interface_config,
             port=port,
             version=version,
@@ -2338,14 +2348,23 @@ async def test_snmp_metric_profile(
         collector_credentials = resolve_collector_credentials(device)
         snmp_credentials = collector_credentials.get('snmp') or {}
         ip = snmp_credentials.get('server') or device.get('ip_address') or ''
-        community = snmp_credentials.get('community') or ''
+        try:
+            version, community = _snmp_request_transport(
+                snmp_credentials,
+                payload.get('version') or payload.get('snmp_version'),
+            )
+        except HTTPException as exc:
+            version, community = str(snmp_credentials.get('version') or '2c'), ''
+            credential_error = exc.detail
+        else:
+            credential_error = ''
         port = snmp_credentials.get('port') or 161
-        if not ip or not community:
+        if not ip or not community or credential_error:
             interface_passed = False
             interface_result = {
                 'passed': False,
                 'status': 'credentials_missing',
-                'message': 'SNMP address or community is not configured on the sample device',
+                'message': str(credential_error or 'SNMP address or credentials are not configured on the sample device'),
                 'checks': {},
                 'counter_mode': interface_config.get('counter_mode', 'auto'),
                 'interfaces': 0,
@@ -2355,7 +2374,7 @@ async def test_snmp_metric_profile(
             from services.snmp_service import probe_interface_definition
 
             interface_result = await probe_interface_definition(
-                ip, community, interface_config, int(port)
+                ip, community, interface_config, int(port), version=version,
             )
             interface_passed = bool(interface_result.get('passed'))
         message_parts.append('interface OIDs passed' if interface_passed else 'interface OIDs failed')
@@ -4017,9 +4036,14 @@ async def snmp_test(device_id: str):
     device_data = dict(device)
     collector_credentials = resolve_collector_credentials(device_data)
     ip = device_data['ip_address']
-    snmp_ip = collector_credentials['snmp'].get('server') or ip
-    community = collector_credentials['snmp'].get('community') or ''
-    port = collector_credentials['snmp'].get('port') or 161
+    snmp_credentials = collector_credentials.get('snmp') or {}
+    snmp_ip = snmp_credentials.get('server') or ip
+    port = snmp_credentials.get('port') or 161
+    try:
+        snmp_version, community = _snmp_request_transport(snmp_credentials)
+    except HTTPException:
+        community = ''
+        snmp_version = str(snmp_credentials.get('version') or '2c')
     # Do not load the legacy discovery snapshot here: this route is limited
     # to reachability and an explicitly saved interface profile. The native
     # LibreNMS runtime owns hardware discovery and polling.
@@ -4096,10 +4120,16 @@ async def snmp_test(device_id: str):
     start = time.monotonic()
     try:
         # Step 1: 标准 System MIB（sysName + sysDescr）并行查询
-        sys_name, sys_descr = await _aio.gather(
-            _snmp_get(snmp_ip, community, '1.3.6.1.2.1.1.5.0', port, timeout=3),
-            _snmp_get(snmp_ip, community, '1.3.6.1.2.1.1.1.0', port, timeout=3),
-        )
+        if snmp_version == '2c':
+            sys_name, sys_descr = await _aio.gather(
+                _snmp_get(snmp_ip, community, '1.3.6.1.2.1.1.5.0', port, timeout=3),
+                _snmp_get(snmp_ip, community, '1.3.6.1.2.1.1.1.0', port, timeout=3),
+            )
+        else:
+            sys_name, sys_descr = await _aio.gather(
+                _snmp_get(snmp_ip, community, '1.3.6.1.2.1.1.5.0', port, timeout=3, version=snmp_version),
+                _snmp_get(snmp_ip, community, '1.3.6.1.2.1.1.1.0', port, timeout=3, version=snmp_version),
+            )
         elapsed = round((time.monotonic() - start) * 1000)
         results['response_ms'] = elapsed
 
@@ -4109,10 +4139,16 @@ async def snmp_test(device_id: str):
             results['sys_descr'] = sys_descr
         else:
             # Step 2: ifName (ifXTable) — 部分设备/SNMP view 不含 system MIB
-            if_rows = await _snmp_walk(snmp_ip, community, '1.3.6.1.2.1.31.1.1.1.1', port, timeout=3, max_rows=3)
+            if snmp_version == '2c':
+                if_rows = await _snmp_walk(snmp_ip, community, '1.3.6.1.2.1.31.1.1.1.1', port, timeout=3, max_rows=3)
+            else:
+                if_rows = await _snmp_walk(snmp_ip, community, '1.3.6.1.2.1.31.1.1.1.1', port, timeout=3, max_rows=3, version=snmp_version)
             if not if_rows:
                 # Step 3: ifDescr (基础 IF-MIB RFC 1213) — 最广泛兼容
-                if_rows = await _snmp_walk(snmp_ip, community, '1.3.6.1.2.1.2.2.1.2', port, timeout=3, max_rows=3)
+                if snmp_version == '2c':
+                    if_rows = await _snmp_walk(snmp_ip, community, '1.3.6.1.2.1.2.2.1.2', port, timeout=3, max_rows=3)
+                else:
+                    if_rows = await _snmp_walk(snmp_ip, community, '1.3.6.1.2.1.2.2.1.2', port, timeout=3, max_rows=3, version=snmp_version)
             elapsed = round((time.monotonic() - start) * 1000)
             results['response_ms'] = elapsed
             if if_rows:
@@ -4143,16 +4179,29 @@ async def snmp_test(device_id: str):
     if results['success']:
         async def _background_sync():
             try:
-                dev_info, intf_data = await _aio.gather(
-                    collect_device_info(snmp_ip, community, port),
-                    collect_interface_health(
-                        snmp_ip,
-                        community,
-                        port,
-                        resolved_metrics.get('interface') or None,
-                        template_only=True,
-                    ),
-                )
+                if snmp_version == '2c':
+                    dev_info, intf_data = await _aio.gather(
+                        collect_device_info(snmp_ip, community, port),
+                        collect_interface_health(
+                            snmp_ip,
+                            community,
+                            port,
+                            resolved_metrics.get('interface') or None,
+                            template_only=True,
+                        ),
+                    )
+                else:
+                    dev_info, intf_data = await _aio.gather(
+                        collect_device_info(snmp_ip, community, port, version=snmp_version),
+                        collect_interface_health(
+                            snmp_ip,
+                            community,
+                            port,
+                            resolved_metrics.get('interface') or None,
+                            template_only=True,
+                            version=snmp_version,
+                        ),
+                    )
 
                 updates: dict = {}
 

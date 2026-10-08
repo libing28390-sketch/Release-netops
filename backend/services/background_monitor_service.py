@@ -1491,9 +1491,9 @@ async def _process_device_raw(device, cycle_tick: int):
         snmp_available = False
         snmp_error_code = ''
         snmp_error_message = ''
-        # Hardware polling is owned by the bound LibreNMS runtime. This Nexora
-        # worker keeps only the SNMP reachability check and non-hardware
-        # interface collection; it must not run vendor OID rules or probes.
+        # Hardware OID discovery and sampling run in Nexora's dedicated SNMP
+        # hardware scheduler. This reachability worker owns only interfaces
+        # and general device status collection.
         resolved_metrics = resolve_health_metric_profiles(device)
         cpu_usage = None
         memory_usage = None
@@ -2069,19 +2069,18 @@ async def _process_device_raw(device, cycle_tick: int):
                 metadata={'reason': 'server_asset'},
             )
         else:
-            # This status explicitly records the ownership boundary. It is not
-            # evidence that LibreNMS has produced a sample; the diagnostic and
-            # native-result sync report that state independently.
+            # Hardware collection runs in the dedicated local SNMP scheduler;
+            # this general metrics worker does not duplicate its OID walks.
             await asyncio.to_thread(record_collection_result,
                 dev_id,
                 'snmp_metrics',
                 status='skipped',
-                transport='librenms_api',
-                source='librenms_native',
+                transport='snmp',
+                source='nexora_snmp',
                 duration_ms=(_time.perf_counter() - collection_started) * 1000,
-                error_code='hardware_sampling_delegated',
-                error_message='Hardware sampling is owned by the bound LibreNMS runtime',
-                metadata={'collection_mode': 'librenms_native'},
+                error_code='hardware_sampling_scheduled',
+                error_message='Hardware sampling runs in Nexora native SNMP scheduler',
+                metadata={'collection_mode': 'nexora_snmp'},
             )
 
         snmp_rule = resolve_alert_rule('snmp_unreachable', device_row=device, ip_address=ip)

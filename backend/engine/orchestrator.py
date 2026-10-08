@@ -103,6 +103,7 @@ class TelemetryOrchestrator:
         if hasattr(self, 'initialized'): return
         self.a_loop_task = None
         self.b_loop_task = None
+        self.snmp_hardware_loop_task = None
         self.native_hardware_loop_task = None
         self.initialized = True
 
@@ -224,12 +225,60 @@ class TelemetryOrchestrator:
                 logger.warning("LibreNMS native hardware sync cycle failed: %s", type(exc).__name__)
             await asyncio.sleep(60)
 
+    async def snmp_hardware_loop(self):
+        """Run Nexora's local SNMP hardware discovery and polling scheduler."""
+        import asyncio
+
+        logger.info("[Orchestrator] Starting Nexora SNMP hardware collection loop")
+        concurrency = asyncio.Semaphore(4)
+        while True:
+            try:
+                from services.background_monitor_service import _db_quick
+                from services.snmp_hardware_poller_service import collect_device_hardware
+
+                devices = await asyncio.to_thread(
+                    _db_quick,
+                    """
+                    SELECT d.*, COALESCE(pa.asset_type, '') AS asset_type
+                      FROM devices AS d
+                      LEFT JOIN physical_assets AS pa ON pa.id = d.asset_id
+                     WHERE d.status = 'online'
+                       AND d.ip_address IS NOT NULL AND d.ip_address <> ''
+                     ORDER BY d.id
+                    """,
+                    fetchall=True,
+                )
+
+                async def collect_one(device):
+                    async with concurrency:
+                        try:
+                            return await collect_device_hardware(device)
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as exc:
+                            device_id = device.get("id") if isinstance(device, dict) else "unknown"
+                            logger.warning(
+                                "Nexora SNMP hardware collection failed for device %s (%s)",
+                                device_id,
+                                type(exc).__name__,
+                            )
+                            return {"status": "failed"}
+
+                await asyncio.gather(*(collect_one(device) for device in devices or []))
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("Nexora SNMP hardware collection cycle failed: %s", type(exc).__name__)
+            await asyncio.sleep(60)
+
     def start_loops(self):
         import asyncio
         if not self.a_loop_task:
             self.a_loop_task = asyncio.create_task(self.a_loop())
         if not self.b_loop_task:
             self.b_loop_task = asyncio.create_task(self.b_loop())
+        if not self.snmp_hardware_loop_task:
+            self.snmp_hardware_loop_task = asyncio.create_task(self.snmp_hardware_loop())
         if not self.native_hardware_loop_task:
             self.native_hardware_loop_task = asyncio.create_task(self.native_hardware_loop())
 
@@ -240,6 +289,9 @@ class TelemetryOrchestrator:
         if self.b_loop_task:
             self.b_loop_task.cancel()
             self.b_loop_task = None
+        if self.snmp_hardware_loop_task:
+            self.snmp_hardware_loop_task.cancel()
+            self.snmp_hardware_loop_task = None
         if self.native_hardware_loop_task:
             self.native_hardware_loop_task.cancel()
             self.native_hardware_loop_task = None

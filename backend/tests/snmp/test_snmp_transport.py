@@ -124,3 +124,143 @@ def test_snmpv3_get_uses_selected_authentication_and_privacy(monkeypatch) -> Non
     assert observed["endpoint"] == ("192.0.2.1", 1161)
     assert observed["oid"] == "1.3.6.1.2.1.1.5.0"
     assert result == "device-name"
+
+
+def test_snmpv3_walk_uses_bound_profile_context_and_authentication(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    import puresnmp
+    from puresnmp import V3
+    from services import snmp_service
+
+    observed: dict[str, object] = {}
+
+    def fake_build_client(ip, credentials, port, **kwargs):
+        observed["endpoint"] = (ip, port)
+        observed["credentials"] = credentials
+        observed["context_name"] = kwargs.get("context_name", b"")
+        return object()
+
+    class FakeWrapper:
+        def __init__(self, _client):
+            pass
+
+        async def walk(self, oid):
+            observed["oid"] = str(oid)
+            yield SimpleNamespace(oid=f"{oid}.0", value=42)
+
+    monkeypatch.setattr(snmp_service, "_build_snmp_client", fake_build_client)
+    monkeypatch.setattr(puresnmp, "PyWrapper", FakeWrapper)
+
+    profile = {
+        "version": "3",
+        "username": "probe-user",
+        "security_level": "authPriv",
+        "auth_protocol": "SHA",
+        "auth_password": "test-auth-key",
+        "priv_protocol": "AES",
+        "priv_password": "test-privacy-key",
+        "context_name": "tenant-a",
+    }
+    rows = asyncio.run(snmp_service._snmp_walk(
+        "192.0.2.1",
+        profile,
+        "1.3.6.1.2.1.1",
+        port=1161,
+        version="3",
+        raise_on_error=True,
+    ))
+
+    credentials = observed["credentials"]
+    assert isinstance(credentials, V3)
+    assert credentials.username == "probe-user"
+    assert credentials.auth is not None and credentials.auth.method == "sha1"
+    assert credentials.priv is not None and credentials.priv.method == "aes"
+    assert observed["context_name"] == b"tenant-a"
+    assert observed["endpoint"] == ("192.0.2.1", 1161)
+    assert observed["oid"] == "1.3.6.1.2.1.1"
+    assert rows == [("0", "42")]
+
+
+@pytest.mark.parametrize(
+    ("security_level", "auth_present", "priv_present"),
+    [
+        ("noAuthNoPriv", False, False),
+        ("authNoPriv", True, False),
+        ("authPriv", True, True),
+    ],
+)
+def test_snmpv3_security_levels_map_to_expected_usm_options(
+    security_level: str,
+    auth_present: bool,
+    priv_present: bool,
+) -> None:
+    from services.snmp_service import _snmpv3_credentials
+
+    credentials, context = _snmpv3_credentials({
+        "username": "probe-user",
+        "security_level": security_level,
+        "auth_protocol": "SHA",
+        "auth_password": "test-auth-key",
+        "priv_protocol": "AES",
+        "priv_password": "test-privacy-key",
+        "context_name": "",
+    })
+
+    assert (credentials.auth is not None) is auth_present
+    assert (credentials.priv is not None) is priv_present
+    assert context == b""
+
+
+def test_snmpv3_rejects_algorithms_not_implemented_by_the_transport() -> None:
+    from services.snmp_service import _snmpv3_credentials
+
+    with pytest.raises(ValueError, match="Unsupported SNMPv3 authentication protocol"):
+        _snmpv3_credentials({
+            "username": "probe-user",
+            "security_level": "authNoPriv",
+            "auth_protocol": "SHA-1024",
+            "auth_password": "test-auth-key",
+        })
+
+
+@pytest.mark.parametrize(
+    ("algorithm", "plugin", "digest_length"),
+    [
+        ("SHA-224", "sha224", 16),
+        ("SHA-256", "sha256", 24),
+        ("SHA-384", "sha384", 32),
+        ("SHA-512", "sha512", 48),
+    ],
+)
+def test_snmpv3_sha2_auth_plugins_follow_rfc7860(
+    algorithm: str,
+    plugin: str,
+    digest_length: int,
+) -> None:
+    from puresnmp.plugins.auth import create
+    from services.snmp_service import _snmpv3_credentials
+
+    credentials, _ = _snmpv3_credentials({
+        "username": "probe-user",
+        "security_level": "authNoPriv",
+        "auth_protocol": algorithm,
+        "auth_password": "test-auth-key",
+    })
+    assert credentials.auth is not None
+    assert credentials.auth.method == plugin
+
+    auth_plugin = create(plugin)
+    message = b"snmpv3-auth-test"
+    digest = auth_plugin.authenticate_outgoing_message(
+        credentials.auth.key,
+        message,
+        b"engine-id",
+    )
+    assert len(digest) == digest_length
+    assert auth_plugin.authenticate_incoming_message(
+        credentials.auth.key,
+        message,
+        digest,
+        b"engine-id",
+    )

@@ -4028,9 +4028,10 @@ def import_assets(
             'found_after_retry_and_bound',
             'profile_updated_after_retry_and_bound',
         }
+        enrollment_local_statuses = {'local_snmp'}
         enrollment_failures = [
             item for item in librenms_enrollment_results
-            if item['status'] not in enrollment_success_statuses
+            if item['status'] not in enrollment_success_statuses | enrollment_local_statuses
         ]
         librenms_enrollment_items: list[dict] = []
         for row_result in row_results:
@@ -4086,7 +4087,8 @@ def import_assets(
             },
             'librenms_enrollment': {
                 'total': len(librenms_enrollment_results),
-                'succeeded': len(librenms_enrollment_results) - len(enrollment_failures),
+                'succeeded': sum(1 for item in librenms_enrollment_results if item['status'] in enrollment_success_statuses),
+                'local_snmp': sum(1 for item in librenms_enrollment_results if item['status'] in enrollment_local_statuses),
                 'failed': len(enrollment_failures),
                 'failed_items': enrollment_failures,
                 'items': librenms_enrollment_items,

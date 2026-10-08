@@ -76,7 +76,7 @@ const BuiltinPresetBindingModal: React.FC<BuiltinPresetBindingModalProps> = ({
   const zh = language === 'zh';
   const [devices, setDevices] = useState<CandidateDevice[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
-  const [snmpVersion, setSnmpVersion] = useState<'1' | '2c'>('2c');
+  const [snmpVersion, setSnmpVersion] = useState<'1' | '2c' | '3'>('2c');
   const [loadingDevices, setLoadingDevices] = useState(false);
   const [testing, setTesting] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -308,9 +308,10 @@ const BuiltinPresetBindingModal: React.FC<BuiltinPresetBindingModalProps> = ({
             </label>
             <label className="block text-xs font-medium text-black/70 dark:text-white/70">
               {zh ? 'SNMP 版本' : 'SNMP version'}
-              <select value={snmpVersion} onChange={event => setSnmpVersion(event.target.value as '1' | '2c')} className="mt-1 w-full rounded-lg border border-black/8 bg-transparent px-3 py-2 text-xs outline-none dark:border-white/10">
+              <select value={snmpVersion} onChange={event => setSnmpVersion(event.target.value as '1' | '2c' | '3')} className="mt-1 w-full rounded-lg border border-black/8 bg-transparent px-3 py-2 text-xs outline-none dark:border-white/10">
                 <option value="2c">SNMPv2c</option>
                 <option value="1">SNMPv1</option>
+                <option value="3">SNMPv3 Profile</option>
               </select>
             </label>
           </div>

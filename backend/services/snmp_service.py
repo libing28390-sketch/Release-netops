@@ -428,11 +428,80 @@ class _SafeSNMPClientProtocol(asyncio.DatagramProtocol):
             raise
 
 
-def _build_snmp_client(ip: str, auth, port: int):
+def _snmpv3_credentials(profile: Mapping[str, Any]):
+    """Create puresnmp USM credentials from a resolved, server-side profile."""
+    from puresnmp import Auth, Priv, V3
+
+    username = str(profile.get('username') or '').strip()
+    level = str(profile.get('security_level') or 'authPriv').strip().casefold()
+    if not username:
+        raise ValueError('SNMPv3 username is missing')
+    if level not in {'noauthnopriv', 'authnopriv', 'authpriv'}:
+        raise ValueError('Unsupported SNMPv3 security level')
+
+    auth = None
+    privacy = None
+    if level != 'noauthnopriv':
+        auth_password = str(profile.get('auth_password') or '')
+        auth_method = str(profile.get('auth_protocol') or 'SHA').strip().casefold()
+        auth_methods = {
+            'md5': 'md5',
+            'sha': 'sha1', 'sha1': 'sha1', 'sha-1': 'sha1',
+            'sha224': 'sha224', 'sha-224': 'sha224',
+            'sha256': 'sha256', 'sha-256': 'sha256',
+            'sha384': 'sha384', 'sha-384': 'sha384',
+            'sha512': 'sha512', 'sha-512': 'sha512',
+        }
+        if not auth_password:
+            raise ValueError('SNMPv3 authentication password is missing')
+        if auth_method not in auth_methods:
+            raise ValueError('Unsupported SNMPv3 authentication protocol')
+        auth = Auth(auth_password.encode('utf-8'), auth_methods[auth_method])
+
+    if level == 'authpriv':
+        priv_password = str(profile.get('priv_password') or '')
+        priv_method = str(profile.get('priv_protocol') or 'AES').strip().casefold()
+        priv_methods = {'aes': 'aes', 'aes-128': 'aes', 'des': 'des'}
+        if not priv_password:
+            raise ValueError('SNMPv3 privacy password is missing')
+        if priv_method not in priv_methods:
+            raise ValueError('Unsupported SNMPv3 privacy protocol')
+        privacy = Priv(priv_password.encode('utf-8'), priv_methods[priv_method])
+
+    context_name = str(profile.get('context_name') or '').encode('utf-8')
+    return V3(username, auth=auth, priv=privacy), context_name
+
+
+def _build_versioned_snmp_client(
+    ip: str,
+    community_or_profile: str | Mapping[str, Any],
+    port: int,
+    version: str,
+):
+    """Build a bounded puresnmp client for v1/v2c or a resolved v3 profile."""
+    from puresnmp import V1, V2C
+
+    version_key = str(version or '2c').strip().casefold()
+    if version_key in {'3', 'v3', 'snmpv3'}:
+        if not isinstance(community_or_profile, Mapping):
+            raise ValueError('SNMPv3 requires a bound credential profile')
+        credentials, context_name = _snmpv3_credentials(community_or_profile)
+        if context_name:
+            return _build_snmp_client(ip, credentials, port, context_name=context_name)
+        return _build_snmp_client(ip, credentials, port)
+    community = str(community_or_profile or '')
+    auth = V1(community) if version_key in {'v1', '1'} else V2C(community)
+    return _build_snmp_client(ip, auth, port)
+
+
+def _build_snmp_client(ip: str, auth, port: int, *, context_name: bytes = b''):
     """Build a client whose internal deadline fits the collector deadline."""
     from puresnmp import Client
 
-    client = Client(ip, auth, port=port, sender=_safe_send_udp)
+    if context_name:
+        client = Client(ip, auth, port=port, sender=_safe_send_udp, context_name=context_name)
+    else:
+        client = Client(ip, auth, port=port, sender=_safe_send_udp)
     # puresnmp defaults to 6 seconds and 10 retries.  The collectors wrap
     # requests in 3-5 second application deadlines, so those defaults cause
     # outer cancellation before the library cleans up its UDP Future.
@@ -489,19 +558,19 @@ async def _safe_send_udp(
 
 async def _snmp_get(
     ip: str,
-    community: str,
+    community: str | Mapping[str, Any],
     oid: str,
     port: int = 161,
     timeout: float = 3,
     version: str = '2c',
 ) -> Optional[str]:
-    """GET a single OID value via puresnmp (SNMPv1/v2c)."""
+    """GET one OID via puresnmp using v1, v2c, or a resolved v3 profile."""
     async with get_network_access_limiter().async_snmp():
       try:
-        from puresnmp import V1, V2C, PyWrapper
         version_key = str(version or '2c').strip().lower()
-        auth = V1(community) if version_key in {'v1', '1'} else V2C(community)
-        client = PyWrapper(_build_snmp_client(ip, auth, port))
+        from puresnmp import PyWrapper
+
+        client = PyWrapper(_build_versioned_snmp_client(ip, community, port, version_key))
         result = await asyncio.wait_for(client.get(oid), timeout=timeout)
         if result is None:
             return None
@@ -509,7 +578,10 @@ async def _snmp_get(
         if v and 'noSuchObject' not in v and 'noSuchInstance' not in v:
             return v
       except Exception as e:
-        logger.debug(f"SNMP GET {ip} {oid} failed: {e}")
+        if str(version or '').strip().casefold() in {'3', 'v3', 'snmpv3'}:
+            logger.debug('SNMPv3 GET %s %s failed (%s)', ip, oid, type(e).__name__)
+        else:
+            logger.debug(f"SNMP GET {ip} {oid} failed: {e}")
       return None
 
 
@@ -523,15 +595,24 @@ async def _snmp_get_v3(
     auth_protocol: str = '',
     priv_password: str = '',
     priv_protocol: str = '',
+    context_name: str = '',
+    security_level: str = '',
 ) -> Optional[str]:
     """GET one OID using an explicitly configured SNMPv3 security profile."""
     async with get_network_access_limiter().async_snmp():
       try:
-        from puresnmp import Auth, Priv, PyWrapper, V3
+        from puresnmp import PyWrapper
 
-        auth = Auth(auth_password.encode('utf-8'), auth_protocol) if auth_protocol else None
-        privacy = Priv(priv_password.encode('utf-8'), priv_protocol) if priv_protocol else None
-        client = PyWrapper(_build_snmp_client(ip, V3(username, auth=auth, priv=privacy), port))
+        profile = {
+            'username': username,
+            'security_level': security_level or ('authPriv' if priv_protocol else 'authNoPriv' if auth_protocol else 'noAuthNoPriv'),
+            'auth_password': auth_password,
+            'auth_protocol': auth_protocol or 'SHA',
+            'priv_password': priv_password,
+            'priv_protocol': priv_protocol or 'AES',
+            'context_name': context_name,
+        }
+        client = PyWrapper(_build_versioned_snmp_client(ip, profile, port, '3'))
         result = await asyncio.wait_for(client.get(oid), timeout=timeout)
         if result is None:
             return None
@@ -573,7 +654,7 @@ class SnmpWalkTimeoutError(Exception):
 
 async def _snmp_walk(
     ip: str,
-    community: str,
+    community: str | Mapping[str, Any],
     oid: str,
     port: int = 161,
     timeout: float = 5,
@@ -602,13 +683,14 @@ async def _snmp_walk(
         version_key = '1'
     elif version_key in {'v2c', '2c', '2'}:
         version_key = '2c'
+    elif version_key in {'3', 'v3', 'snmpv3'}:
+        version_key = '3'
     else:
-        raise ValueError('Unsupported SNMP version; use 1 or 2c')
+        raise ValueError('Unsupported SNMP version; use 1, 2c, or 3')
 
     async def _collect():
-        from puresnmp import PyWrapper, V1, V2C
-        auth = V1(community) if version_key == '1' else V2C(community)
-        client = PyWrapper(_build_snmp_client(ip, auth, port))
+        from puresnmp import PyWrapper
+        client = PyWrapper(_build_versioned_snmp_client(ip, community, port, version_key))
         async for varbind in client.walk(base_oid):
             oid_str = str(varbind.oid)
             suffix = oid_str[len(base_oid) + 1:] if oid_str.startswith(base_oid + '.') else oid_str
@@ -630,7 +712,10 @@ async def _snmp_walk(
         if raise_on_error:
             raise SnmpWalkTimeoutError(results) from exc
       except Exception as exc:
-        logger.debug(f"SNMP WALK {ip} {oid} failed: {exc}")
+        if version_key == '3':
+            logger.debug('SNMPv3 WALK %s %s failed (%s)', ip, oid, type(exc).__name__)
+        else:
+            logger.debug(f"SNMP WALK {ip} {oid} failed: {exc}")
         if raise_on_error:
             is_timeout = (
                 isinstance(exc, (TimeoutError, socket.timeout, asyncio.TimeoutError))
@@ -644,7 +729,7 @@ async def _snmp_walk(
 
 async def _snmp_get_versioned(
     ip: str,
-    community: str,
+    community: str | Mapping[str, Any],
     oid: str,
     port: int,
     version: str,
@@ -652,12 +737,27 @@ async def _snmp_get_versioned(
     """Call the scalar helper without changing the v2c monkeypatch contract."""
     if str(version or '2c').strip().lower() in {'v2c', '2c', '2', ''}:
         return await _snmp_get(ip, community, oid, port)
+    if str(version or '').strip().lower() in {'3', 'v3', 'snmpv3'}:
+        if not isinstance(community, Mapping):
+            return None
+        return await _snmp_get_v3(
+            ip,
+            str(community.get('username') or ''),
+            oid,
+            port,
+            auth_password=str(community.get('auth_password') or ''),
+            auth_protocol=str(community.get('auth_protocol') or ''),
+            priv_password=str(community.get('priv_password') or ''),
+            priv_protocol=str(community.get('priv_protocol') or ''),
+            context_name=str(community.get('context_name') or ''),
+            security_level=str(community.get('security_level') or ''),
+        )
     return await _snmp_get(ip, community, oid, port, version=version)
 
 
 async def _snmp_walk_versioned(
     ip: str,
-    community: str,
+    community: str | Mapping[str, Any],
     oid: str,
     port: int,
     version: str,
@@ -670,7 +770,7 @@ async def _snmp_walk_versioned(
 
 async def _snmp_get_typed(
     ip: str,
-    community: str,
+    community: str | Mapping[str, Any],
     oid: str,
     port: int = 161,
     timeout: float = 3,
@@ -679,11 +779,10 @@ async def _snmp_get_typed(
     """GET one OID while preserving its puresnmp ASN.1 type."""
     async with get_network_access_limiter().async_snmp():
         try:
-            from puresnmp import ObjectIdentifier, V1, V2C
-
             version_key = str(version or '2c').strip().lower()
-            auth = V1(community) if version_key in {'v1', '1'} else V2C(community)
-            client = _build_snmp_client(ip, auth, port)
+            from puresnmp import ObjectIdentifier
+
+            client = _build_versioned_snmp_client(ip, community, port, version_key)
             result = await asyncio.wait_for(
                 client.get(ObjectIdentifier(oid)),
                 timeout=timeout,
@@ -692,13 +791,16 @@ async def _snmp_get_typed(
             if typed.number is not None:
                 return typed
         except Exception as exc:
-            logger.debug("Typed SNMP GET %s %s failed: %s", ip, oid, exc)
+            if str(version or '').strip().casefold() in {'3', 'v3', 'snmpv3'}:
+                logger.debug('Typed SNMPv3 GET %s %s failed (%s)', ip, oid, type(exc).__name__)
+            else:
+                logger.debug("Typed SNMP GET %s %s failed: %s", ip, oid, exc)
         return None
 
 
 async def _snmp_walk_typed(
     ip: str,
-    community: str,
+    community: str | Mapping[str, Any],
     oid: str,
     port: int = 161,
     timeout: float = 5,
@@ -710,11 +812,10 @@ async def _snmp_walk_typed(
     base_oid = oid.rstrip(".")
 
     async def _collect():
-        from puresnmp import ObjectIdentifier, V1, V2C
-
         version_key = str(version or '2c').strip().lower()
-        auth = V1(community) if version_key in {'v1', '1'} else V2C(community)
-        client = _build_snmp_client(ip, auth, port)
+        from puresnmp import ObjectIdentifier
+
+        client = _build_versioned_snmp_client(ip, community, port, version_key)
         async for varbind in client.walk(ObjectIdentifier(base_oid)):
             oid_str = str(varbind.oid)
             suffix = oid_str[len(base_oid) + 1:] if oid_str.startswith(base_oid + ".") else oid_str
@@ -730,13 +831,16 @@ async def _snmp_walk_typed(
         except asyncio.TimeoutError:
             logger.debug("Typed SNMP WALK %s %s timeout after %ss (%s rows)", ip, oid, timeout, len(results))
         except Exception as exc:
-            logger.debug("Typed SNMP WALK %s %s failed: %s", ip, oid, exc)
+            if str(version or '').strip().casefold() in {'3', 'v3', 'snmpv3'}:
+                logger.debug('Typed SNMPv3 WALK %s %s failed (%s)', ip, oid, type(exc).__name__)
+            else:
+                logger.debug("Typed SNMP WALK %s %s failed: %s", ip, oid, exc)
     return results
 
 
 async def _snmp_bulk_walk_typed(
     ip: str,
-    community: str,
+    community: str | Mapping[str, Any],
     oid: str,
     port: int = 161,
     timeout: float = 5,
@@ -749,11 +853,10 @@ async def _snmp_bulk_walk_typed(
     base_oid = oid.rstrip(".")
 
     async def _collect():
-        from puresnmp import ObjectIdentifier, V1, V2C
-
         version_key = str(version or '2c').strip().lower()
-        auth = V1(community) if version_key in {'v1', '1'} else V2C(community)
-        client = _build_snmp_client(ip, auth, port)
+        from puresnmp import ObjectIdentifier
+
+        client = _build_versioned_snmp_client(ip, community, port, version_key)
         async for varbind in client.bulkwalk([ObjectIdentifier(base_oid)], bulk_size=max_repetitions):
             oid_str = str(varbind.oid)
             suffix = oid_str[len(base_oid) + 1:] if oid_str.startswith(base_oid + ".") else oid_str
@@ -769,7 +872,10 @@ async def _snmp_bulk_walk_typed(
         except asyncio.TimeoutError:
             logger.debug("Typed SNMP BULK_WALK %s %s timeout after %ss (%s rows)", ip, oid, timeout, len(results))
         except Exception as exc:
-            logger.debug("Typed SNMP BULK_WALK %s %s failed: %s", ip, oid, exc)
+            if str(version or '').strip().casefold() in {'3', 'v3', 'snmpv3'}:
+                logger.debug('Typed SNMPv3 BULK_WALK %s %s failed (%s)', ip, oid, type(exc).__name__)
+            else:
+                logger.debug("Typed SNMP BULK_WALK %s %s failed: %s", ip, oid, exc)
     if not results:
         return await _snmp_walk_typed(
             ip,
@@ -785,7 +891,7 @@ async def _snmp_bulk_walk_typed(
 
 async def _snmp_bulk_walk(
     ip: str,
-    community: str,
+    community: str | Mapping[str, Any],
     oid: str,
     port: int = 161,
     timeout: float = 5,
@@ -797,10 +903,9 @@ async def _snmp_bulk_walk(
     base_oid = oid.rstrip('.')
 
     async def _collect():
-        from puresnmp import V1, V2C, PyWrapper
+        from puresnmp import PyWrapper
         version_key = str(version or '2c').strip().lower()
-        auth = V1(community) if version_key in {'v1', '1'} else V2C(community)
-        client = PyWrapper(_build_snmp_client(ip, auth, port))
+        client = PyWrapper(_build_versioned_snmp_client(ip, community, port, version_key))
         # bulkwalk significantly reduces UDP round-trips
         async for varbind in client.bulkwalk([base_oid], bulk_size=max_repetitions):
             oid_str = str(varbind.oid)
@@ -816,14 +921,22 @@ async def _snmp_bulk_walk(
       except asyncio.TimeoutError:
         logger.debug(f"SNMP BULK_WALK {ip} {oid} timeout after {timeout}s ({len(results)} rows collected)")
       except Exception as e:
-        logger.debug(f"SNMP BULK_WALK {ip} {oid} failed: {e}")
+        if str(version or '').strip().casefold() in {'3', 'v3', 'snmpv3'}:
+            logger.debug('SNMPv3 BULK_WALK %s %s failed (%s)', ip, oid, type(e).__name__)
+        else:
+            logger.debug(f"SNMP BULK_WALK {ip} {oid} failed: {e}")
     if not results:
         logger.debug(f"SNMP BULK_WALK returned no results for {ip} {oid}. Falling back to standard WALK.")
         results = await _snmp_walk(ip, community, oid, port, timeout=timeout, version=version)
     return results
 
 
-async def collect_device_info(ip: str, community: str = 'public', port: int = 161) -> dict:
+async def collect_device_info(
+    ip: str,
+    community: str | Mapping[str, Any] = 'public',
+    port: int = 161,
+    version: str = '2c',
+) -> dict:
     """
     Collect standard MIB-2 system information.
     Returns: { sys_name, sys_descr, sys_object_id, uptime, sys_location, sys_contact }
@@ -833,12 +946,12 @@ async def collect_device_info(ip: str, community: str = 'public', port: int = 16
               'sys_location': None, 'sys_contact': None}
     try:
         vals = await _aio.gather(
-            _snmp_get(ip, community, SYS_NAME, port),
-            _snmp_get(ip, community, SYS_DESCR, port),
-            _snmp_get(ip, community, SYS_OBJECT_ID, port),
-            _snmp_get(ip, community, SYS_UPTIME, port),
-            _snmp_get(ip, community, SYS_LOCATION, port),
-            _snmp_get(ip, community, SYS_CONTACT, port),
+            _snmp_get(ip, community, SYS_NAME, port, version=version),
+            _snmp_get(ip, community, SYS_DESCR, port, version=version),
+            _snmp_get(ip, community, SYS_OBJECT_ID, port, version=version),
+            _snmp_get(ip, community, SYS_UPTIME, port, version=version),
+            _snmp_get(ip, community, SYS_LOCATION, port, version=version),
+            _snmp_get(ip, community, SYS_CONTACT, port, version=version),
         )
         result['sys_name'] = vals[0]
         result['sys_descr'] = vals[1]
@@ -1615,11 +1728,12 @@ async def collect_interface_data(
 
 async def collect_interface_health(
     ip: str,
-    community: str = 'public',
+    community: str | Mapping[str, Any] = 'public',
     port: int = 161,
     interface_config: Mapping[str, Any] | None = None,
     *,
     template_only: bool = False,
+    version: str = '2c',
 ) -> list[dict]:
     """Collect only interface identity and oper state for device health.
 
@@ -1637,11 +1751,16 @@ async def collect_interface_health(
         if template_only:
             return []
         config = dict(DEFAULT_INTERFACE_CONFIG)
-    community_token = hashlib.sha256(str(community or '').encode('utf-8')).hexdigest()[:12]
+    community_token_source = (
+        json.dumps(community, sort_keys=True, ensure_ascii=False, default=str)
+        if isinstance(community, Mapping)
+        else str(community or '')
+    )
+    community_token = hashlib.sha256(community_token_source.encode('utf-8')).hexdigest()[:12]
     config_token = hashlib.sha256(
         json.dumps(config, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
     ).hexdigest()[:16]
-    cache_key = f"intf-health:{ip}:{port}:{int(template_only)}:{community_token}:{config_token}"
+    cache_key = f"intf-health:{ip}:{port}:{version}:{int(template_only)}:{community_token}:{config_token}"
     cached = _get_result_cache(cache_key)
     if cached is not None:
         return cached
@@ -1649,7 +1768,11 @@ async def collect_interface_health(
     interfaces: dict[str, dict[str, Any]] = {}
     try:
         async def _walk(oid: str):
-            return await _snmp_bulk_walk(ip, community, oid, port) if oid else []
+            if not oid:
+                return []
+            if str(version or '2c').strip().casefold() in {'2c', 'v2c', '2', ''}:
+                return await _snmp_bulk_walk(ip, community, oid, port)
+            return await _snmp_bulk_walk(ip, community, oid, port, version=version)
 
         name_rows = await _walk(config['if_name_oid'])
         if not name_rows:
@@ -1719,7 +1842,7 @@ async def collect_interface_health(
 
 async def probe_interface_definition(
     ip: str,
-    community: str,
+    community: str | Mapping[str, Any],
     config: Mapping[str, Any] | None = None,
     port: int = 161,
     version: str = '2c',
@@ -1748,6 +1871,8 @@ async def probe_interface_definition(
     version_key = str(version or '2c').strip().lower()
     if version_key in {'v1', '1'}:
         version_key = '1'
+    elif version_key in {'3', 'v3', 'snmpv3'}:
+        version_key = '3'
     else:
         version_key = '2c'
     if not normalized.get('enabled', True):
@@ -1769,7 +1894,7 @@ async def probe_interface_definition(
         try:
             # Keep the legacy four-argument call for the default v2c path so
             # existing collectors and tests that replace the walker remain
-            # compatible.  SNMPv1 explicitly uses the version-aware path.
+            # compatible. Other versions use the profile-aware transport.
             if version_key == '2c':
                 return await asyncio.wait_for(
                     _snmp_bulk_walk(ip, community, oid, port),

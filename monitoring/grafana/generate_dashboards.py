@@ -909,27 +909,40 @@ def make_network_variables(multi_device=True, include_all_device=True, device_la
 
 
 def make_wireless_variables():
-    """Limit the wireless dashboard selectors to monitored AC controllers."""
-    controller_targets = 'up{job="network_snmp",role="wireless_controller"'
+    """Select known ACs plus devices with locally discovered wireless hardware."""
+    def wireless_targets(*, site=None, vendor=None, role=None):
+        filters = []
+        if site:
+            filters.append(f'site_name=~"{site}"')
+        if vendor:
+            filters.append(f'vendor=~"{vendor}"')
+        if role:
+            filters.append(f'role=~"{role}"')
+        suffix = f',{",".join(filters)}' if filters else ""
+        return (
+            f'(up{{{NETWORK_JOB},role="wireless_controller"{suffix}}} or '
+            f'nexora_hw_sensor_info{{{HARDWARE_INVENTORY_JOB},component_class=~"wireless_.*"{suffix}}})'
+        )
+
     return [
         make_query_variable(
             "site", "站点",
-            f'query_result(count by (site_name) ({controller_targets}}}))',
+            f'query_result(count by (site_name) {wireless_targets()})',
             regex='/.*site_name="([^\"]+)".*/',
         ),
         make_query_variable(
             "vendor", "厂商",
-            f'query_result(count by (vendor) ({controller_targets},site_name=~"$site"}}))',
+            f'query_result(count by (vendor) {wireless_targets(site="$site")})',
             regex='/.*vendor="([^\"]+)".*/',
         ),
         make_query_variable(
             "role", "角色",
-            f'query_result(count by (role) ({controller_targets},site_name=~"$site",vendor=~"$vendor"}}))',
+            f'query_result(count by (role) {wireless_targets(site="$site", vendor="$vendor")})',
             regex='/.*role="([^\"]+)".*/',
         ),
         make_query_variable(
             "device", "AC 控制器",
-            f'query_result(count by (hostname) ({controller_targets},site_name=~"$site",vendor=~"$vendor",role=~"$role"}}))',
+            f'query_result(count by (hostname) {wireless_targets(site="$site", vendor="$vendor", role="$role")})',
             regex='/.*hostname="([^\"]+)".*/',
         ),
     ]
@@ -2048,9 +2061,9 @@ def build_wireless_dashboard():
     ap_online_description = "优先按 AP 状态统计；明细不完整时采用控制器上报数。"
     ap_offline_description = "只统计明确离线的 AP，不用总数减在线数推算。"
     ap_client_rows = f'topk(20, nexora_wireless_sensor_value{{{inventory_sel},component_class="wireless_access_point",sensor_class="clients"}})'
-    librenms_wireless_sensor_rows = (
+    wireless_sensor_rows = (
         f'topk(100, nexora_wireless_sensor_value{{{inventory_sel},'
-        'data_origin="librenms_native",component_class="wireless_sensor"})'
+        'data_origin=~"^(legacy_snmp|librenms_native)$",component_class=~"wireless_.*"})'
     )
     station_rows = f'topk(100, nexora_wireless_station_info{{{inventory_sel}}})'
     radio_utilization_labels = "site_name,vendor,role,hostname,ap_id,ap_name,radio_id"
@@ -2250,8 +2263,8 @@ def build_wireless_dashboard():
             description="按在线 AC 接口入向与出向吞吐之和排名。",
         ),
         table_panel(
-            21, "LibreNMS 原生无线传感器",
-            librenms_wireless_sensor_rows,
+            21, "无线传感器明细",
+            wireless_sensor_rows,
             0, 66, 24, 9,
             transformations=clean_organize_transformation(
                 "数值",
@@ -2297,7 +2310,7 @@ def build_wireless_dashboard():
                     "window": True,
                 },
             ),
-            description="LibreNMS 原生无线值；未推断 AP 或 Radio 归属。",
+            description="本地 SNMP 或可选外部采集的无线值；不推断 AP 或 Radio 归属。",
         ),
     ]
 

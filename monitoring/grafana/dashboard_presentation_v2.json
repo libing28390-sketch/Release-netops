@@ -7086,7 +7086,7 @@
           }
         },
         "21": {
-          "title": "LibreNMS 原生无线传感器",
+          "title": "无线传感器明细",
           "type": "table",
           "fieldConfig": {
             "defaults": {

@@ -1,7 +1,6 @@
 /**
- * Read-only view of the latest hardware results already collected by the
- * bound LibreNMS instance. This contract intentionally contains no SNMP
- * credentials, probe evidence, or Python-adapter readings.
+ * Read-only view of persisted hardware results from Nexora's local SNMP
+ * collector or an optional bound LibreNMS integration. It contains no secrets.
  */
 export type LibreNMSHardwareState =
   | 'not_bound'
@@ -13,6 +12,8 @@ export type LibreNMSHardwareState =
   | 'native_device_missing'
   | 'credential_unavailable'
   | 'engine_unavailable'
+  | 'pending'
+  | 'not_configured'
   | 'available'
   | 'metadata_only'
   | 'no_native_hardware_data'
@@ -97,7 +98,7 @@ export interface LibreNMSHardwareSensor {
   observed_at?: string | null;
 }
 
-/** Current values read from LibreNMS processor/mempool rows, never graph metadata. */
+/** Current values from local or LibreNMS processor/memory rows, never graph metadata. */
 export interface LibreNMSHardwareNativeSample {
   sensor_id?: number | string;
   sensor_descr?: string;
@@ -156,7 +157,7 @@ export interface LibreNMSHardwareTransceiver {
 }
 
 export interface SnmpHardwareDiscoveryTestResult {
-  source: 'librenms_native';
+  source: 'librenms_native' | 'nexora_snmp';
   /** Time the Nexora diagnostic response was generated, not a sample timestamp. */
   generated_at?: string | null;
   state: LibreNMSHardwareState | (string & {});

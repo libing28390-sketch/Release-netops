@@ -27,7 +27,9 @@ const stateLabels: Record<string, [string, string]> = {
   native_device_missing: ['未关联原生设备', 'Native device missing'],
   credential_unavailable: ['API 凭据不可用', 'API credential unavailable'],
   engine_unavailable: ['引擎不可用', 'Engine unavailable'],
-  available: ['已有原生样本', 'Native samples available'],
+  pending: ['等待本地采集', 'Waiting for local collection'],
+  not_configured: ['SNMP 凭据未配置', 'SNMP credentials not configured'],
+  available: ['已有硬件样本', 'Hardware samples available'],
   metadata_only: ['仅有元数据', 'Metadata only'],
   no_native_hardware_data: ['暂无硬件结果', 'No hardware results'],
   unavailable: ['暂不可用', 'Unavailable'],
@@ -39,6 +41,7 @@ const stateTone = (state: string): string => {
       return 'border-emerald-500/20 bg-emerald-500/[.05] text-emerald-700 dark:text-emerald-300';
     case 'metadata_only':
     case 'no_native_hardware_data':
+    case 'pending':
     case 'not_bound':
     case 'disabled':
     case 'sync_pending':
@@ -48,6 +51,7 @@ const stateTone = (state: string): string => {
     case 'binding_conflict':
     case 'sync_failed':
     case 'credential_unavailable':
+    case 'not_configured':
     case 'engine_unavailable':
     case 'unavailable':
       return 'border-rose-500/20 bg-rose-500/[.05] text-rose-700 dark:text-rose-300';
@@ -132,7 +136,7 @@ const InfoGrid: React.FC<{
   </div>
 );
 
-const MetricSummaryCard: React.FC<{ metric: LibreNMSHardwareMetricSummary; zh: boolean }> = ({ metric, zh }) => (
+const MetricSummaryCard: React.FC<{ metric: LibreNMSHardwareMetricSummary; zh: boolean; localSource: boolean }> = ({ metric, zh, localSource }) => (
   <article className="min-w-0 rounded-md border border-black/8 bg-white/55 p-2 dark:border-white/10 dark:bg-white/[.025]">
     <div className="flex flex-wrap items-center justify-between gap-1.5">
       <span className="truncate text-[10px] font-semibold text-black/75 dark:text-white/80" title={displayValue(metric.key)}>{displayValue(metric.key)}</span>
@@ -147,20 +151,20 @@ const MetricSummaryCard: React.FC<{ metric: LibreNMSHardwareMetricSummary; zh: b
     </div>
     <div className="mt-1.5 flex items-start gap-1 text-[9px] text-black/45 dark:text-white/45">
       <Clock3 size={10} className="mt-0.5 shrink-0" />
-      <span>{zh ? '最新原生样本' : 'Latest native sample'}: {formatTime(metric.latest_sample_at, zh)}</span>
+      <span>{zh ? (localSource ? '最新本地样本' : '最新原生样本') : (localSource ? 'Latest local sample' : 'Latest native sample')}: {formatTime(metric.latest_sample_at, zh)}</span>
     </div>
   </article>
 );
 
-const SensorRows: React.FC<{ sensors: LibreNMSHardwareSensor[]; zh: boolean }> = ({ sensors, zh }) => (
+const SensorRows: React.FC<{ sensors: LibreNMSHardwareSensor[]; zh: boolean; localSource: boolean }> = ({ sensors, zh, localSource }) => (
   <div className="mt-2 max-h-80 overflow-auto rounded-md border border-black/8 dark:border-white/10">
     <div className="grid min-w-[960px] grid-cols-[minmax(160px,1.4fr)_minmax(100px,.8fr)_minmax(130px,1fr)_minmax(120px,.8fr)_minmax(130px,1fr)_minmax(175px,1.2fr)] gap-2 border-b border-black/8 bg-black/[.025] px-2.5 py-1.5 text-[9px] font-semibold text-black/45 dark:border-white/10 dark:bg-white/[.03] dark:text-white/45">
       <span>{zh ? '传感器实体' : 'Sensor entity'}</span>
-      <span>{zh ? '原生类别' : 'Native class'}</span>
-      <span>{zh ? '原生当前值' : 'Native current value'}</span>
+      <span>{zh ? (localSource ? '传感器类别' : '原生类别') : (localSource ? 'Sensor class' : 'Native class')}</span>
+      <span>{zh ? (localSource ? '当前值' : '原生当前值') : (localSource ? 'Current value' : 'Native current value')}</span>
       <span>{zh ? '数值状态' : 'Value status'}</span>
       <span>{zh ? '样本时间' : 'Sample time'}</span>
-      <span>Native OID / Index</span>
+      <span>{localSource ? 'SNMP OID / Index' : 'Native OID / Index'}</span>
     </div>
     {sensors.map((sensor, index) => {
       const id = sensor.sensor_id ?? `${sensor.sensor_oid || ''}-${sensor.sensor_index ?? ''}-${index}`;
@@ -186,16 +190,17 @@ const NativeComputeRows: React.FC<{
   rows: LibreNMSHardwareNativeSample[];
   emptyMessage: string;
   zh: boolean;
-}> = ({ title, rows, emptyMessage, zh }) => (
+  localSource: boolean;
+}> = ({ title, rows, emptyMessage, zh, localSource }) => (
   <div className="min-w-0">
     <div className="mb-1.5 text-[10px] font-semibold text-black/65 dark:text-white/70">{title}</div>
     {rows.length > 0 ? (
       <div className="max-h-56 overflow-auto rounded-md border border-black/8 dark:border-white/10">
         <div className="grid min-w-[700px] grid-cols-[minmax(150px,1.2fr)_minmax(130px,1fr)_minmax(120px,.8fr)_minmax(160px,1fr)] gap-2 border-b border-black/8 bg-black/[.025] px-2.5 py-1.5 text-[9px] font-semibold text-black/45 dark:border-white/10 dark:bg-white/[.03] dark:text-white/45">
-          <span>{zh ? '原生实体' : 'Native entity'}</span>
-          <span>{zh ? 'LibreNMS 当前值' : 'LibreNMS current value'}</span>
+          <span>{zh ? (localSource ? '采集实体' : '原生实体') : (localSource ? 'Collected entity' : 'Native entity')}</span>
+          <span>{zh ? (localSource ? '当前值' : 'LibreNMS 当前值') : (localSource ? 'Current value' : 'LibreNMS current value')}</span>
           <span>{zh ? '数值与新鲜度' : 'Value and freshness'}</span>
-          <span>{zh ? '原生样本时间' : 'Native sample time'}</span>
+          <span>{zh ? (localSource ? '样本时间' : '原生样本时间') : (localSource ? 'Sample time' : 'Native sample time')}</span>
         </div>
         {rows.map((sample, index) => {
           const id = sample.sensor_id ?? `${sample.sensor_descr || ''}-${sample.sensor_index ?? ''}-${index}`;
@@ -242,8 +247,8 @@ const HardwareDiagnosticSummary: React.FC<HardwareDiagnosticSummaryProps> = ({
     return (
       <div role={loading ? 'status' : undefined} aria-live={loading ? 'polite' : undefined} className="rounded-md border border-dashed border-black/10 px-3 py-6 text-center text-xs text-black/50 dark:border-white/10 dark:text-white/50">
         {loading
-          ? (zh ? '正在读取 LibreNMS 已有的最新采集结果…' : 'Reading the latest results already collected by LibreNMS…')
-          : (zh ? '选择已纳管设备并读取 LibreNMS 原生采集快照。此操作不会触发 SNMP 采集。' : 'Select a managed device to read its native LibreNMS snapshot. This does not trigger an SNMP poll.')}
+          ? (zh ? '正在读取 Nexora 已保存的最新硬件采集结果…' : 'Reading the latest hardware results saved by Nexora…')
+          : (zh ? '选择已纳管设备并读取本地 SNMP 硬件采样。此操作不会触发即时 SNMP 采集。' : 'Select a managed device to read its stored local SNMP hardware samples. This does not trigger an immediate poll.')}
       </div>
     );
   }
@@ -256,14 +261,17 @@ const HardwareDiagnosticSummary: React.FC<HardwareDiagnosticSummaryProps> = ({
   const transceivers = result.transceivers || [];
   const wirelessSensors = result.wireless_sensors || [];
   const state = String(result.state || 'unknown');
-  const hasNativeRows = sensors.length + processorSensors.length + memoryPools.length + transceivers.length + wirelessSensors.length + healthGraphs.length > 0;
-  const nativeRowCount = result.sensor_count || sensors.length + processorSensors.length + memoryPools.length;
+  const localSource = result.source === 'nexora_snmp';
+  const hasHardwareRows = sensors.length + processorSensors.length + memoryPools.length + transceivers.length + wirelessSensors.length + healthGraphs.length > 0;
+  const hardwareRowCount = result.sensor_count || sensors.length + processorSensors.length + memoryPools.length;
 
   return (
     <section className="rounded-lg border border-black/8 bg-white/70 p-3 shadow-sm dark:border-white/10 dark:bg-white/[.04]">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="text-xs font-semibold text-black/80 dark:text-white/85">{zh ? 'LibreNMS 原生硬件采集结果' : 'LibreNMS native hardware results'}</div>
+          <div className="text-xs font-semibold text-black/80 dark:text-white/85">{localSource
+            ? (zh ? 'Nexora 本地 SNMP 硬件采集结果' : 'Nexora local SNMP hardware results')
+            : (zh ? 'LibreNMS 原生硬件采集结果' : 'LibreNMS native hardware results')}</div>
           <div className="mt-1 break-all text-[10px] text-black/50 dark:text-white/50">
             {displayValue(result.identity?.hostname || result.matched_hostname)}
             {result.identity?.native_device_id ? ` · ${zh ? '原生设备 ID' : 'Native device ID'} ${displayValue(result.identity.native_device_id)}` : ''}
@@ -274,7 +282,7 @@ const HardwareDiagnosticSummary: React.FC<HardwareDiagnosticSummaryProps> = ({
             {stateLabel(state, zh)}
           </span>
           <span className="rounded-full bg-black/[.05] px-2 py-0.5 text-[10px] text-black/65 dark:bg-white/[.08] dark:text-white/70">
-            {zh ? `${nativeRowCount} 个原生传感器/采样行` : `${nativeRowCount} native sensor/sample rows`}
+            {zh ? `${hardwareRowCount} 个传感器/采样行` : `${hardwareRowCount} sensor/sample rows`}
           </span>
           {onCopy && (
             <button
@@ -294,9 +302,13 @@ const HardwareDiagnosticSummary: React.FC<HardwareDiagnosticSummaryProps> = ({
       </div>
 
       <div className="mt-2 rounded-md border border-cyan-500/15 bg-cyan-500/[.035] px-2.5 py-2 text-[10px] leading-4 text-cyan-900 dark:text-cyan-100">
-        {zh
-          ? '此处读取 LibreNMS 已保存的原生结果；若本地尚无关联，会按唯一管理 IP 自动关联。不会立即发现设备或触发轮询。传感器时间取自原生样本；Grafana/时序导出状态需单独验证。'
-          : 'This view reads results already stored by LibreNMS and automatically links an unbound CMDB device only when its management IP has one exact match. It does not trigger discovery or polling. Sensor times come from native samples; Grafana/time-series export must be validated separately.'}
+        {localSource
+          ? (zh
+            ? '此处读取 Nexora 后台通过 SNMP 发现并保存的硬件结果；页面不会即时触发 SNMP 轮询。样本时间取自本地采集记录，Grafana/时序导出状态需单独验证。'
+            : 'This view reads hardware results discovered and stored by Nexora over SNMP. It does not trigger an immediate poll. Sample times come from local collection records; validate Grafana/time-series export separately.')
+          : (zh
+            ? '此处读取 LibreNMS 已保存的原生结果；若本地尚无关联，会按唯一管理 IP 自动关联。不会立即发现设备或触发轮询。传感器时间取自原生样本；Grafana/时序导出状态需单独验证。'
+            : 'This view reads results already stored by LibreNMS and automatically links an unbound CMDB device only when its management IP has one exact match. It does not trigger discovery or polling. Sensor times come from native samples; Grafana/time-series export must be validated separately.')}
       </div>
 
       {result.collection && (
@@ -317,8 +329,8 @@ const HardwareDiagnosticSummary: React.FC<HardwareDiagnosticSummaryProps> = ({
         </div>
       )}
 
-      <div className="mt-2 grid gap-2 xl:grid-cols-3">
-        <InfoGrid
+      <div className={`mt-2 grid gap-2 ${localSource ? 'xl:grid-cols-2' : 'xl:grid-cols-3'}`}>
+        {!localSource && <InfoGrid
           title={zh ? 'LibreNMS 绑定' : 'LibreNMS binding'}
           zh={zh}
           rows={[
@@ -335,9 +347,9 @@ const HardwareDiagnosticSummary: React.FC<HardwareDiagnosticSummaryProps> = ({
             [zh ? '最近轮询' : 'Last poll', formatTime(result.binding?.last_poll_at, zh)],
             [zh ? '同步错误码' : 'Sync error code', result.binding?.last_error_code],
           ]}
-        />
+        />}
         <InfoGrid
-          title={zh ? '原生引擎' : 'Native engine'}
+          title={zh ? (localSource ? '本地采集器' : '原生引擎') : (localSource ? 'Local collector' : 'Native engine')}
           zh={zh}
           icon={<Server size={12} />}
           rows={[
@@ -348,7 +360,7 @@ const HardwareDiagnosticSummary: React.FC<HardwareDiagnosticSummaryProps> = ({
           ]}
         />
         <InfoGrid
-          title={zh ? '原生设备身份' : 'Native device identity'}
+          title={zh ? (localSource ? '设备身份' : '原生设备身份') : (localSource ? 'Device identity' : 'Native device identity')}
           zh={zh}
           rows={[
             [zh ? '主机名' : 'Hostname', result.identity?.hostname],
@@ -364,40 +376,52 @@ const HardwareDiagnosticSummary: React.FC<HardwareDiagnosticSummaryProps> = ({
       </div>
 
       <div className="mt-3">
-        <div className="mb-1.5 text-[10px] font-semibold text-black/65 dark:text-white/70">{zh ? '原生传感器分类汇总' : 'Native sensor class summary'}</div>
+        <div className="mb-1.5 text-[10px] font-semibold text-black/65 dark:text-white/70">{zh ? (localSource ? '本地传感器分类汇总' : '原生传感器分类汇总') : (localSource ? 'Local sensor class summary' : 'Native sensor class summary')}</div>
         {summary.length > 0 ? (
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-            {summary.map((metric, index) => <MetricSummaryCard key={`${metric.key}-${index}`} metric={metric} zh={zh} />)}
+            {summary.map((metric, index) => <MetricSummaryCard key={`${metric.key}-${index}`} metric={metric} zh={zh} localSource={localSource} />)}
           </div>
         ) : (
           <div className="rounded-md border border-dashed border-black/10 px-3 py-3 text-center text-[10px] text-black/45 dark:border-white/10 dark:text-white/45">
-            {zh ? 'LibreNMS 当前没有返回传感器类别汇总。' : 'LibreNMS returned no sensor class summary.'}
+            {localSource
+              ? (zh ? '当前没有可汇总的本地传感器类别。' : 'No local sensor classes are available to summarize.')
+              : (zh ? 'LibreNMS 当前没有返回传感器类别汇总。' : 'LibreNMS returned no sensor class summary.')}
           </div>
         )}
       </div>
 
       <div className="mt-3 grid gap-2 xl:grid-cols-2">
         <NativeComputeRows
-          title={zh ? 'CPU / Processor 原生当前值' : 'CPU / processor native current values'}
+          title={zh ? 'CPU / Processor 当前值' : 'CPU / processor current values'}
           rows={processorSensors}
           zh={zh}
-          emptyMessage={zh ? 'LibreNMS 当前没有返回 Processor 当前值。健康图表名称和说明仅是元数据，不代表 CPU 读数。' : 'LibreNMS returned no current processor values. Health graph names and descriptions are metadata, not CPU readings.'}
+          localSource={localSource}
+          emptyMessage={localSource
+            ? (zh ? '当前没有本地 CPU 采样值。' : 'No local CPU samples are available.')
+            : (zh ? 'LibreNMS 当前没有返回 Processor 当前值。健康图表名称和说明仅是元数据，不代表 CPU 读数。' : 'LibreNMS returned no current processor values. Health graph names and descriptions are metadata, not CPU readings.')}
         />
         <NativeComputeRows
-          title={zh ? '内存池原生当前值' : 'Memory pool native current values'}
+          title={zh ? '内存池当前值' : 'Memory pool current values'}
           rows={memoryPools}
           zh={zh}
-          emptyMessage={zh ? 'LibreNMS 当前没有返回内存池当前值。健康图表名称和说明仅是元数据，不代表内存读数。' : 'LibreNMS returned no current memory pool values. Health graph names and descriptions are metadata, not memory readings.'}
+          localSource={localSource}
+          emptyMessage={localSource
+            ? (zh ? '当前没有本地内存池采样值。' : 'No local memory pool samples are available.')
+            : (zh ? 'LibreNMS 当前没有返回内存池当前值。健康图表名称和说明仅是元数据，不代表内存读数。' : 'LibreNMS returned no current memory pool values. Health graph names and descriptions are metadata, not memory readings.')}
         />
       </div>
 
       <div className="mt-3">
-        <div className="mb-1.5 text-[10px] font-semibold text-black/65 dark:text-white/70">{zh ? 'LibreNMS 原生传感器实体' : 'LibreNMS native sensor entities'}</div>
+        <div className="mb-1.5 text-[10px] font-semibold text-black/65 dark:text-white/70">{localSource
+          ? (zh ? '本地 SNMP 传感器实体' : 'Local SNMP sensor entities')
+          : (zh ? 'LibreNMS 原生传感器实体' : 'LibreNMS native sensor entities')}</div>
         {sensors.length > 0 ? (
-          <SensorRows sensors={sensors} zh={zh} />
+          <SensorRows sensors={sensors} zh={zh} localSource={localSource} />
         ) : (
           <div className="rounded-md border border-dashed border-black/10 px-3 py-3 text-center text-[10px] text-black/45 dark:border-white/10 dark:text-white/45">
-            {zh ? '没有可展示的原生传感器行；请结合上方绑定、引擎和样本状态判断。' : 'No native sensor rows are available. Check the binding, engine, and sample states above.'}
+            {localSource
+              ? (zh ? '当前没有可展示的本地传感器行；请检查上方采集状态和设备 SNMP 凭据。' : 'No local sensor rows are available. Check the collection state and device SNMP credentials above.')
+              : (zh ? '没有可展示的原生传感器行；请结合上方绑定、引擎和样本状态判断。' : 'No native sensor rows are available. Check the binding, engine, and sample states above.')}
           </div>
         )}
       </div>
@@ -408,8 +432,12 @@ const HardwareDiagnosticSummary: React.FC<HardwareDiagnosticSummaryProps> = ({
           <div role="note" className="mb-1.5 flex items-start gap-1.5 rounded-md border border-amber-500/20 bg-amber-500/[.05] px-2.5 py-2 text-[10px] leading-4 text-amber-800 dark:text-amber-200">
             <Info size={12} className="mt-0.5 shrink-0" />
             <span>{zh
-              ? '这里只显示 LibreNMS 健康图表的名称和说明元数据，不是数值样本。CPU 与内存读数只在上方存在对应原生当前值时展示。'
-              : 'These are LibreNMS health graph names and descriptions, not numeric samples. CPU and memory readings appear above only when native current-value rows are available.'}</span>
+              ? (localSource
+                ? '这里只显示硬件规则提供的名称和说明元数据，不是数值样本。CPU 与内存读数只在上方存在对应本地当前值时展示。'
+                : '这里只显示 LibreNMS 健康图表的名称和说明元数据，不是数值样本。CPU 与内存读数只在上方存在对应原生当前值时展示。')
+              : (localSource
+                ? 'These are hardware-rule names and descriptions, not numeric samples. CPU and memory readings appear above only when local current-value rows are available.'
+                : 'These are LibreNMS health graph names and descriptions, not numeric samples. CPU and memory readings appear above only when native current-value rows are available.')}</span>
           </div>
           <div className="max-h-48 overflow-auto rounded-md border border-black/8 dark:border-white/10">
             {healthGraphs.map((graph, index) => (
@@ -425,7 +453,7 @@ const HardwareDiagnosticSummary: React.FC<HardwareDiagnosticSummaryProps> = ({
 
       {wirelessSensors.length > 0 && (
         <div className="mt-3">
-          <div className="mb-1.5 text-[10px] font-semibold text-black/65 dark:text-white/70">{zh ? '原生无线传感器' : 'Native wireless sensors'}</div>
+          <div className="mb-1.5 text-[10px] font-semibold text-black/65 dark:text-white/70">{localSource ? (zh ? '本地无线传感器' : 'Local wireless sensors') : (zh ? '原生无线传感器' : 'Native wireless sensors')}</div>
           <div className="max-h-56 overflow-auto rounded-md border border-black/8 dark:border-white/10">
             {wirelessSensors.map((sensor, index) => (
               <div key={String(sensor.sensor_id ?? `${sensor.sensor_index ?? ''}-${index}`)} className="grid grid-cols-[minmax(130px,1fr)_minmax(90px,.8fr)_minmax(100px,.8fr)_minmax(150px,1.3fr)] gap-2 border-b border-black/[.04] px-2.5 py-1.5 text-[10px] last:border-b-0 dark:border-white/[.05]">
@@ -441,7 +469,7 @@ const HardwareDiagnosticSummary: React.FC<HardwareDiagnosticSummaryProps> = ({
 
       {transceivers.length > 0 && (
         <div className="mt-3">
-          <div className="mb-1.5 text-[10px] font-semibold text-black/65 dark:text-white/70">{zh ? '原生光模块' : 'Native transceivers'}</div>
+          <div className="mb-1.5 text-[10px] font-semibold text-black/65 dark:text-white/70">{localSource ? (zh ? '本地光模块' : 'Local transceivers') : (zh ? '原生光模块' : 'Native transceivers')}</div>
           <div className="max-h-56 overflow-auto rounded-md border border-black/8 dark:border-white/10">
             {transceivers.map((transceiver, index) => (
               <div key={String(transceiver.port_id ?? `${transceiver.ifIndex ?? ''}-${index}`)} className="grid grid-cols-[minmax(120px,1fr)_minmax(90px,.8fr)_minmax(100px,.8fr)_minmax(130px,1fr)_minmax(130px,1fr)] gap-2 border-b border-black/[.04] px-2.5 py-1.5 text-[10px] last:border-b-0 dark:border-white/[.05]">
@@ -456,17 +484,23 @@ const HardwareDiagnosticSummary: React.FC<HardwareDiagnosticSummaryProps> = ({
         </div>
       )}
 
-      {!hasNativeRows && state === 'no_native_hardware_data' && (
+      {!hasHardwareRows && state === 'no_native_hardware_data' && (
         <div role="status" className="mt-2 rounded-md border border-slate-500/15 bg-slate-500/[.04] px-2.5 py-2 text-[10px] leading-4 text-slate-700 dark:text-slate-200">
-          {zh ? 'LibreNMS 未返回硬件实体。这表示当前没有原生采集结果，不能据此断定设备不支持硬件监控。' : 'LibreNMS returned no hardware entities. This means no native result is available now; it does not prove that the device lacks hardware monitoring support.'}
+          {localSource
+            ? (zh ? '本地 SNMP 规则当前没有检出硬件实体；这不表示设备不支持硬件监控。' : 'No hardware entities were discovered by the local SNMP rules; this does not prove the device lacks hardware monitoring support.')
+            : (zh ? 'LibreNMS 未返回硬件实体。这表示当前没有原生采集结果，不能据此断定设备不支持硬件监控。' : 'LibreNMS returned no hardware entities. This means no native result is available now; it does not prove that the device lacks hardware monitoring support.')}
         </div>
       )}
 
       <div className="mt-3 flex items-start gap-1.5 text-[9px] leading-4 text-black/40 dark:text-white/40">
         <Info size={11} className="mt-0.5 shrink-0" />
-        <span>{zh
-          ? '硬件数值和原生 OID/索引只来自 LibreNMS 返回的传感器实体。此诊断不执行 Python OID 规则、不做即时 SNMP GET/WALK，也不把图表名称推断成读数。'
-          : 'Values and native OID/index fields come only from LibreNMS sensor entities. This diagnostic runs no Python OID rules or immediate SNMP GET/WALK, and does not infer readings from graph names.'}</span>
+        <span>{localSource
+          ? (zh
+            ? '硬件数值来自 Nexora 本地 SNMP 采集器保存的样本；此诊断页只读取库存，不触发即时 SNMP GET/WALK。'
+            : 'Hardware values come from samples stored by Nexora local SNMP collection. This diagnostic reads inventory only and does not trigger immediate SNMP GET/WALK.')
+          : (zh
+            ? '硬件数值和原生 OID/索引来自 LibreNMS 返回的传感器实体。此诊断页只读取已有样本，不触发即时 SNMP GET/WALK。'
+            : 'Hardware values and native OID/index fields come from LibreNMS sensor entities. This diagnostic reads stored samples only and does not trigger immediate SNMP GET/WALK.')}</span>
       </div>
     </section>
   );

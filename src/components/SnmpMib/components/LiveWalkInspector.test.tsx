@@ -74,7 +74,7 @@ describe('LiveWalkInspector native diagnostic flow', () => {
       />,
     );
 
-    const readButton = await screen.findByRole('button', { name: '读取 LibreNMS 原生结果' });
+    const readButton = await screen.findByRole('button', { name: '读取本地硬件结果' });
     await waitFor(() => expect((readButton as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(readButton);
 
@@ -107,5 +107,20 @@ describe('LiveWalkInspector native diagnostic flow', () => {
     expect(screen.queryByRole('button', { name: '测试硬件指标' })).toBeNull();
     expect(screen.getByText(/硬件 OID 模板的即时 Python 探测已停用/)).toBeTruthy();
     expect(vi.mocked(apiRequest)).not.toHaveBeenCalled();
+  });
+
+  it('offers a server-resolved SNMPv3 profile for live walks without exposing profile secrets', () => {
+    render(
+      <LiveWalkInspector
+        zh
+        selectedDevice={device}
+        showCandidateSelector={false}
+        metrics={[]}
+        initialTab="snmpwalk"
+        showToast={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('option', { name: 'SNMPv3 Profile' })).toBeTruthy();
   });
 });

@@ -124,6 +124,56 @@ def test_snmp_walk_test_reads_community_from_managed_device(monkeypatch) -> None
     assert calls[0][1]['port'] == 1161
 
 
+def test_snmp_walk_test_uses_bound_v3_profile_when_legacy_ui_submits_v2c(monkeypatch) -> None:
+    profile = {
+        'version': '3',
+        'server': '192.0.2.30',
+        'port': 1161,
+        'community': '',
+        'username': 'poller-user',
+        'security_level': 'authPriv',
+        'auth_protocol': 'SHA',
+        'auth_password': 'synthetic-auth-key',
+        'priv_protocol': 'AES',
+        'priv_password': 'synthetic-privacy-key',
+        'context_name': 'tenant-a',
+        'configured': True,
+        'configuration_error': '',
+    }
+    calls: list[tuple[tuple, dict]] = []
+
+    async def fake_walk(*args, **kwargs):
+        calls.append((args, kwargs))
+        return [('0', 'edge-v3')]
+
+    monkeypatch.setattr(
+        devices_api,
+        '_find_snmp_walk_targets',
+        lambda **_kwargs: [{'id': 'device-v3', 'hostname': 'edge-v3', 'ip_address': '192.0.2.30'}],
+    )
+    monkeypatch.setattr(
+        devices_api,
+        'resolve_collector_credentials',
+        lambda _device: {'snmp': profile},
+    )
+    monkeypatch.setattr('services.snmp_service._snmp_walk', fake_walk)
+
+    response = asyncio.run(run_snmp_walk_test(
+        {
+            'device_id': 'device-v3',
+            'version': '2c',
+            'oid': '1.3.6.1.2.1.1.5',
+        },
+        user={'role': 'Operator'},
+    ))
+
+    assert response['data']['version'] == '3'
+    assert calls[0][0][1] is profile
+    assert calls[0][1]['version'] == '3'
+    assert 'community' not in response['data']
+    assert 'auth_password' not in response['data']
+
+
 def test_snmp_walk_test_rejects_ambiguous_asset_match(monkeypatch) -> None:
     class Result:
         def fetchall(self):

@@ -10,6 +10,7 @@ const errorStates = new Set([
   'binding_conflict',
   'sync_failed',
   'credential_unavailable',
+  'not_configured',
   'engine_unavailable',
   'unavailable',
 ]);
@@ -19,6 +20,7 @@ export const getHardwareDiscoveryToast = (
   zh: boolean,
 ): { message: string; type: 'success' | 'error' | 'info' } => {
   const state = String(result.state || 'unknown').toLowerCase();
+  const localSource = result.source === 'nexora_snmp';
   const sensorCount = Number.isFinite(result.sensor_count) ? result.sensor_count : 0;
   const freshCount = (result.metric_summary || []).reduce(
     (count, metric) => count + (Number.isFinite(metric.fresh_count) ? metric.fresh_count : 0),
@@ -36,24 +38,24 @@ export const getHardwareDiscoveryToast = (
   if (errorStates.has(state)) {
     return {
       message: zh
-        ? `LibreNMS 原生结果读取异常：${redactHardwareDiagnosticText(result.message || state)}`
-        : `LibreNMS native result could not be read: ${redactHardwareDiagnosticText(result.message || state)}`,
+        ? `${localSource ? 'Nexora 本地硬件结果读取异常' : 'LibreNMS 原生结果读取异常'}：${redactHardwareDiagnosticText(result.message || state)}`
+        : `${localSource ? 'Nexora local hardware result could not be read' : 'LibreNMS native result could not be read'}: ${redactHardwareDiagnosticText(result.message || state)}`,
       type: 'error',
     };
   }
   if (state === 'available' && hasFreshResult) {
     return {
       message: zh
-        ? `${result.binding_resolution?.status === 'bound' ? '已按唯一管理 IP 自动关联；' : ''}已读取 LibreNMS 原生结果：${nativeRowCount} 个传感器/采样行，${visibleFreshCount} 个有新鲜数值`
-        : `${result.binding_resolution?.status === 'bound' ? 'Automatically linked by unique management IP; ' : ''}LibreNMS native results loaded: ${nativeRowCount} sensor/sample rows, ${visibleFreshCount} with fresh values`,
+        ? `${result.binding_resolution?.status === 'bound' ? '已按唯一管理 IP 自动关联；' : ''}已读取${localSource ? ' Nexora 本地 SNMP' : ' LibreNMS 原生'}结果：${nativeRowCount} 个传感器/采样行，${visibleFreshCount} 个有新鲜数值`
+        : `${result.binding_resolution?.status === 'bound' ? 'Automatically linked by unique management IP; ' : ''}${localSource ? 'Nexora local SNMP' : 'LibreNMS native'} results loaded: ${nativeRowCount} sensor/sample rows, ${visibleFreshCount} with fresh values`,
       type: 'success',
     };
   }
   if (state === 'available') {
     return {
       message: zh
-        ? `已读取 LibreNMS 原生结果：${nativeRowCount} 个传感器/采样行；当前数值已过期或时间未知`
-        : `LibreNMS native results loaded: ${nativeRowCount} sensor/sample rows; values are stale or their timestamps are unknown`,
+        ? `已读取${localSource ? ' Nexora 本地 SNMP' : ' LibreNMS 原生'}结果：${nativeRowCount} 个传感器/采样行；当前数值已过期或时间未知`
+        : `${localSource ? 'Nexora local SNMP' : 'LibreNMS native'} results loaded: ${nativeRowCount} sensor/sample rows; values are stale or their timestamps are unknown`,
       type: 'info',
     };
   }
@@ -66,8 +68,11 @@ export const getHardwareDiscoveryToast = (
     native_device_missing: ['绑定尚未关联 LibreNMS 原生设备', 'The binding has no native LibreNMS device'],
     metadata_only: ['已读取 LibreNMS 硬件元数据，当前没有可用数值样本', 'LibreNMS hardware metadata is available, but there are no numeric samples'],
     no_native_hardware_data: ['LibreNMS 当前没有返回硬件实体', 'LibreNMS returned no hardware entities'],
+    pending: ['Nexora 本地 SNMP 硬件采集等待完成', 'Nexora local SNMP hardware collection is pending'],
+    not_configured: ['Nexora 未配置设备 SNMP 凭据', 'Device SNMP credentials are not configured in Nexora'],
   };
   const safeMessage = redactHardwareDiagnosticText(result.message || '');
+  if (localSource && safeMessage) return { message: safeMessage, type: state === 'not_configured' ? 'error' : 'info' };
   if (state === 'not_bound' && safeMessage) return { message: safeMessage, type: 'info' };
   const fallback = messages[state] || [safeMessage || '未知状态', safeMessage || 'Unknown state'];
   return { message: zh ? fallback[0] : fallback[1], type: 'info' };
@@ -86,7 +91,7 @@ const sanitizeShareValue = (value: unknown): unknown => {
   return value;
 };
 
-/** Builds a credential-free native-result export and caps sensor detail size. */
+/** Builds a credential-free hardware-result export and caps sensor detail size. */
 export const buildHardwareDiagnosticSharePayload = (result: SnmpHardwareDiscoveryTestResult): string => {
   const sensors = result.hardware_sensors || [];
   const payload = {

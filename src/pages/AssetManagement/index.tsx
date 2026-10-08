@@ -1173,6 +1173,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
           const succeeded = ['added_and_bound', 'profile_updated_and_bound', 'found_after_retry_and_bound', 'profile_updated_after_retry_and_bound'].includes(item.status);
           const state = succeeded
             ? (zh ? '纳管成功' : 'enrolled')
+            : item.status === 'local_snmp'
+              ? (zh ? '由 Nexora 本地 SNMP 采集' : 'collected by Nexora local SNMP')
             : item.status === 'skipped_duplicate_profile_mismatch'
               ? (zh ? '未修改已有资产' : 'existing asset unchanged')
               : item.status === 'not_attempted_import_failed'
@@ -1185,11 +1187,19 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
             ? `另有 ${enrollmentRows.length - enrollmentDetails.length} 行纳管状态未展开`
             : `${enrollmentRows.length - enrollmentDetails.length} more enrollment rows are not shown`);
         }
-        const enrollmentSummary = Number(enrollment.total || 0) > 0
+        const localSnmpCount = Math.max(0, Number(enrollment.local_snmp) || 0);
+        const externalEnrollmentTotal = Math.max(0, Number(enrollment.total || 0) - localSnmpCount);
+        const localSnmpSummary = localSnmpCount > 0
           ? (zh
-            ? `；LibreNMS 纳管成功 ${enrollment.succeeded || 0}/${enrollment.total} 台${enrollmentFailedCount ? `，失败 ${enrollmentFailedCount} 台` : ''}`
-            : `; LibreNMS enrollment succeeded for ${enrollment.succeeded || 0}/${enrollment.total} device${Number(enrollment.total) === 1 ? '' : 's'}${enrollmentFailedCount ? `, ${enrollmentFailedCount} failed` : ''}`)
+            ? `；${localSnmpCount} 台由 Nexora 本地 SNMP 采集硬件数据`
+            : `; Nexora local SNMP will collect hardware data for ${localSnmpCount} device${localSnmpCount === 1 ? '' : 's'}`)
           : '';
+        const externalEnrollmentSummary = externalEnrollmentTotal > 0
+          ? (zh
+            ? `；LibreNMS 纳管成功 ${enrollment.succeeded || 0}/${externalEnrollmentTotal} 台${enrollmentFailedCount ? `，失败 ${enrollmentFailedCount} 台` : ''}`
+            : `; LibreNMS enrollment succeeded for ${enrollment.succeeded || 0}/${externalEnrollmentTotal} device${externalEnrollmentTotal === 1 ? '' : 's'}${enrollmentFailedCount ? `, ${enrollmentFailedCount} failed` : ''}`)
+          : '';
+        const enrollmentSummary = `${localSnmpSummary}${externalEnrollmentSummary}`;
         const enrollmentFailureSummary = enrollmentFailedCount > 0
           ? (zh
             ? '；资产已保存，但部分设备未能按所选 Profile 纳入 LibreNMS，请查看详情并修复配置后重新导入对应行重试。'
@@ -1573,7 +1583,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ['网络设备', '每台设备一行', '只填写网络设备；资产类型固定填写“网络设备”，不要混入服务器。'],
       ['服务器', '每台设备一行', '只填写服务器；资产类型固定填写“服务器”，不要混入网络设备。'],
       ['资产类型', '必填', '按当前工作表填写对应值：“网络设备”或“服务器”。'],
-      ['主机名/资产编号', '选填（支持留空）', '网络设备主机名可留空，但必须填写管理 IP；系统将先用管理 IP 将设备和 SNMP Profile 提交给 LibreNMS，再由 LibreNMS 执行原生识别与采集。'],
+      ['主机名/资产编号', '选填（支持留空）', '网络设备主机名可留空，但必须填写管理 IP；Nexora 将使用设备的 SNMP Profile 执行识别和硬件采集。'],
       ['录入来源', '必填', '填写“新设备”或“存量设备”。'],
       ['投产状态', '必填', '新设备填“待投产”；存量设备按实际状态填写。'],
       ['管理入口', '每个资产一行', '资产编号和主机名会从两张资产表自动带出；SSH 只填一行，导入后自动提供“SSH 终端”和“Web SSH”。'],
@@ -1591,7 +1601,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ['Network Devices', 'One row per device', 'Enter network devices only; keep Asset Type as network_device.'],
       ['Servers', 'One row per device', 'Enter servers only; keep Asset Type as server.'],
       ['Asset Type', 'Required', 'Use the value matching the current sheet: network_device or server.'],
-      ['Hostname / Asset Tag', 'Optional', 'For network devices, hostname may be blank when a management IP is provided. Nexora submits the IP and selected SNMP profile to LibreNMS for native discovery and polling.'],
+      ['Hostname / Asset Tag', 'Optional', 'For network devices, hostname may be blank when a management IP is provided. Nexora uses the selected SNMP profile for device identification and hardware collection.'],
       ['Asset Origin', 'Required', 'Use new or legacy.'],
       ['Lifecycle', 'Required', 'Use staging for new devices; use the actual state for legacy devices.'],
       ['Management Entries', 'One row per asset', 'Asset Tag and Hostname are read from Network Devices and Servers. For SSH, enter one row only; the imported asset automatically provides SSH terminal and Web SSH.'],

@@ -94,7 +94,7 @@ const TemplateBindingModal: React.FC<TemplateBindingModalProps> = ({
   const [initialDeviceIds, setInitialDeviceIds] = useState<string[]>([]);
   const [testDeviceId, setTestDeviceId] = useState('');
   const [deviceSearch, setDeviceSearch] = useState('');
-  const [snmpVersion, setSnmpVersion] = useState<'1' | '2c'>('2c');
+  const [snmpVersion, setSnmpVersion] = useState<'1' | '2c' | '3'>('2c');
   const [loadingDevices, setLoadingDevices] = useState(false);
   const [testing, setTesting] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -403,9 +403,10 @@ const TemplateBindingModal: React.FC<TemplateBindingModalProps> = ({
               {hasInterfaceTemplate ? <>
               <label className="block text-xs font-medium text-black/70 dark:text-white/70">
                 {zh ? 'SNMP 版本' : 'SNMP version'}
-                <select value={snmpVersion} onChange={event => setSnmpVersion(event.target.value as '1' | '2c')} className="mt-1.5 w-full rounded-lg border border-black/8 bg-transparent px-3 py-2 text-xs outline-none dark:border-white/10">
+                <select value={snmpVersion} onChange={event => setSnmpVersion(event.target.value as '1' | '2c' | '3')} className="mt-1.5 w-full rounded-lg border border-black/8 bg-transparent px-3 py-2 text-xs outline-none dark:border-white/10">
                   <option value="2c">SNMPv2c</option>
                   <option value="1">SNMPv1</option>
+                  <option value="3">SNMPv3 Profile</option>
                 </select>
               </label>
               <div className="mt-3 rounded-lg border border-black/8 bg-black/[.015] p-3 text-[10px] text-black/55 dark:border-white/8 dark:bg-white/[.02] dark:text-white/55">
@@ -419,7 +420,7 @@ const TemplateBindingModal: React.FC<TemplateBindingModalProps> = ({
                 {testing ? (zh ? '接口验证中…' : 'Validating interface…') : testDeviceIsOnline ? (zh ? '验证接口模板（可选）' : 'Validate interface template') : (zh ? '设备不在线，无法验证' : 'Device offline; validation unavailable')}
               </button>
               </> : <div className="rounded-lg border border-[#00bceb]/20 bg-[#00bceb]/[.04] p-3 text-[10px] text-black/60 dark:text-white/65">
-                <div className="font-semibold text-black/75 dark:text-white/80">{zh ? '硬件结果使用 LibreNMS 原生采集' : 'Hardware results use native LibreNMS collection'}</div>
+                <div className="font-semibold text-black/75 dark:text-white/80">{zh ? '硬件结果由 Nexora 本地 SNMP 采集' : 'Hardware results are collected locally by Nexora over SNMP'}</div>
                 <div className="mt-1">{zh ? '此模板未启用接口 IF-MIB 验证。CPU、内存等硬件采集结果请在 SNMP 诊断页查看。' : 'This template has no enabled interface IF-MIB validation. View CPU, memory, and other native hardware collection results in SNMP diagnostics.'}</div>
                 <a href="/monitor/snmp-walk" className="mt-2 inline-block font-semibold text-[#008aad] underline dark:text-[#00bceb]">{zh ? '打开 SNMP 诊断 →' : 'Open SNMP diagnostics →'}</a>
               </div>}

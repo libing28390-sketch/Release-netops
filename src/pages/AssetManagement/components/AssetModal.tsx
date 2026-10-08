@@ -1074,7 +1074,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                             </option>
                           ))}
                         </select>
-                        <p className="mt-1 text-[8px] text-black/30">{zh ? '导入网络设备时，系统会将该 Profile 与管理 IP 一起提交给 LibreNMS；不会替换 SSH 登录凭据，密钥也不会回显。' : 'On network-device import, this profile is submitted to LibreNMS with the management IP. It does not replace SSH credentials, and secrets are never revealed.'}</p>
+                        <p className="mt-1 text-[8px] text-black/30">{zh ? 'Nexora 后台将使用该 Profile 与管理 IP 执行设备识别和硬件采集；不会替换 SSH 登录凭据，密钥也不会回显。' : 'Nexora uses this profile with the management IP for device identification and hardware collection. It does not replace SSH credentials, and secrets are never revealed.'}</p>
                       </div>
                     </div>
                   </>

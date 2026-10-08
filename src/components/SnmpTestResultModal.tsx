@@ -115,7 +115,7 @@ const SnmpTestResultModal: React.FC<SnmpTestResultModalProps> = ({ open, languag
               <a href="/monitor/snmp-walk" className="font-semibold underline underline-offset-2 hover:text-cyan-700">
                 {isZh ? '/monitor/snmp-walk SNMP 诊断' : '/monitor/snmp-walk SNMP Diagnostics'}
               </a>
-              {isZh ? '，选择已纳管设备后读取 LibreNMS 已保存的样本。' : ' and select a managed device to read samples already stored by LibreNMS.'}
+              {isZh ? '，选择已纳管设备后读取 Nexora 已保存的本地硬件样本。' : ' and select a managed device to read hardware samples stored locally by Nexora.'}
             </p>
           </div>
 
