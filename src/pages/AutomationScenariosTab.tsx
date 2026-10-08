@@ -187,7 +187,7 @@ const AutomationScenariosTab: React.FC<AutomationScenariosTabProps> = ({
           <>
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/30 pointer-events-none" size={13} />
-              <input
+              <input type="search"
                 value={scenarioSearch}
                 onChange={e => onScenarioSearchChange(e.target.value)}
                 placeholder={language === 'zh' ? '搜索场景关键词…' : 'Search scenarios…'}

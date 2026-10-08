@@ -57,13 +57,15 @@ function renderTable(overrides: Partial<ComponentProps<typeof DeviceTable>> = {}
 
 describe('network device table core columns', () => {
   it('fits core columns to the available table width and hides secondary platform diagnostics', () => {
-    renderTable();
+    renderTable({ columns: { ...DEFAULT_COLUMNS, rack: true } });
     const table = screen.getByRole('table');
 
     expect(table.className).toContain('w-full');
     expect(table.className).not.toContain('2200px');
     expect(within(table).getByRole('columnheader', { name: '设备名称' })).toBeTruthy();
     expect(within(table).getByRole('columnheader', { name: '管理 IP' })).toBeTruthy();
+    expect(within(table).queryByRole('columnheader', { name: 'CPU' })).toBeNull();
+    expect(within(table).queryByRole('columnheader', { name: '内存' })).toBeNull();
     expect(within(table).queryByRole('columnheader', { name: '平台' })).toBeNull();
     expect(within(table).queryByText('h3c_comware')).toBeNull();
 

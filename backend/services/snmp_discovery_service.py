@@ -426,6 +426,7 @@ def resolve_snmp_vendor_identity(
         "platform": platform,
         "sys_object_id": observed_oid,
         "model": model_value,
+        "software_version": _version_from_descr(descr),
         "reason": reason,
         "sys_descr": descr,
         "sys_name": name,

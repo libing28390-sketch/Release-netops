@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { AlertTriangle, ChevronDown, ChevronRight, Pencil, Plus, Search, X } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, Pencil, Search, X } from 'lucide-react';
 import type { Device, TagDefinition } from '../types';
 import { getVendorFromPlatform } from '../types';
 import { TAG_CATEGORY_LABELS } from '../types';
@@ -10,10 +10,7 @@ import { normalizeImportedPlatform, SSH_ALGORITHM_PROFILE_OPTIONS, SSH_ALGORITHM
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import { PasswordInputField } from './ui/PasswordInputField';
 
-type DeviceFormMode = 'add' | 'edit';
-
 interface DeviceFormModalProps {
-  mode: DeviceFormMode;
   language: string;
   form: Partial<Device>;
   passwordVisible: boolean;
@@ -79,7 +76,6 @@ const LIFECYCLE_OPTIONS = [
 ];
 
 const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
-  mode,
   language,
   form,
   passwordVisible,
@@ -90,7 +86,6 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
   onSubmit,
 }) => {
   useEscapeClose(true, onClose);
-  const isAdd = mode === 'add';
   const [enablePwdVisible, setEnablePwdVisible] = useState(false);
   const [breakGlassAcknowledged, setBreakGlassAcknowledged] = useState(false);
   const [showAdvancedCred, setShowAdvancedCred] = useState(
@@ -162,7 +157,7 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
   ];
 
   const selectedPlatformValue = form.platform_profile_id || normalizeImportedPlatform(form.platform) || 'cisco_ios';
-  const existingBindingReadOnly = mode === 'edit' && platformBindingReadOnly;
+  const existingBindingReadOnly = platformBindingReadOnly;
   const hasCmdbAsset = Boolean(form.asset_id);
   const selectedRegistryProfile = registryPlatforms.find((profile) => profile.id === form.platform_profile_id);
   const missingRegistryProfile = form.platform_profile_id && !selectedRegistryProfile;
@@ -208,13 +203,8 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
     form.ssh_algorithm_profile as typeof SSH_ALGORITHM_PROFILE_VALUES[number],
   ) ? form.ssh_algorithm_profile || 'auto' : 'auto';
 
-  const title = isAdd
-    ? (language === 'zh' ? '新增设备' : 'Add New Device')
-    : (language === 'zh' ? '编辑设备' : 'Edit Device');
-
-  const submitLabel = isAdd
-    ? (language === 'zh' ? '创建设备' : 'Create Device')
-    : (language === 'zh' ? '保存修改' : 'Save Changes');
+  const title = language === 'zh' ? '编辑设备' : 'Edit Device';
+  const submitLabel = language === 'zh' ? '保存修改' : 'Save Changes';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
@@ -225,16 +215,14 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
       >
         <div className="flex items-center justify-between border-b border-black/5 bg-black/[0.02] p-6">
           <div className="flex items-center gap-3">
-            <div className={`rounded-lg p-2 ${isAdd ? 'bg-emerald-100 text-emerald-600' : 'bg-blue-100 text-blue-600'}`}>
-              {isAdd ? <Plus size={20} /> : <Pencil size={20} />}
+            <div className="rounded-lg bg-blue-100 p-2 text-blue-600">
+              <Pencil size={20} />
             </div>
             <h2 className="text-lg font-semibold text-black">{title}</h2>
           </div>
           <button
             onClick={onClose}
-            title={isAdd
-              ? (language === 'zh' ? '关闭新增设备窗口' : 'Close add device dialog')
-              : (language === 'zh' ? '关闭编辑设备窗口' : 'Close edit device dialog')}
+            title={language === 'zh' ? '关闭编辑设备窗口' : 'Close edit device dialog'}
             className="text-black/40 transition-colors hover:text-black"
           >
             <X size={20} />
@@ -476,7 +464,7 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
                   <div className="relative px-2 pt-2 pb-1 border-b border-black/5">
                     <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-black/25 pointer-events-none" size={12} />
                     <input
-                      type="text"
+                      type="search"
                       value={tagSearch}
                       onChange={e => setTagSearch(e.target.value)}
                       placeholder={language === 'zh' ? '搜索标签…' : 'Search tags…'}
@@ -527,7 +515,7 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
               />
             </div>
             <div>
-              <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">{isAdd ? 'Software Version' : 'Version'}</label>
+              <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">Version</label>
               <input
                 type="text"
                 value={form.version || ''}
@@ -598,7 +586,7 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
                 value={form.password || ''}
                 title={language === 'zh' ? 'SSH / Telnet 登录密码' : 'SSH / Telnet login password'}
                 onChange={(event) => handleFieldChange('password', event.target.value)}
-                placeholder={isAdd ? (language === 'zh' ? '输入 SSH 登录密码' : 'Enter SSH login password') : (language === 'zh' ? '留空则保持当前密码不变' : 'Leave blank to keep current password')}
+                placeholder={language === 'zh' ? '留空则保持当前密码不变' : 'Leave blank to keep current password'}
                 className="rounded-xl bg-black/[0.02] py-2.5 text-sm focus:border-black/20 focus:bg-white"
               />
             </div>
@@ -663,7 +651,7 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
                           hidePasswordLabel={language === 'zh' ? '隐藏普通账户密码' : 'Hide normal account password'}
                           value={form.normal_password || ''}
                           onChange={(e) => handleFieldChange('normal_password', e.target.value)}
-                          placeholder={!isAdd ? (language === 'zh' ? '留空保持不变' : 'Leave blank') : ''}
+                          placeholder={language === 'zh' ? '留空保持不变' : 'Leave blank'}
                           className="rounded-lg bg-white py-1.5 text-xs focus:border-blue-200"
                         />
                       </div>
@@ -694,7 +682,7 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
                           hidePasswordLabel={language === 'zh' ? '隐藏特权账户密码' : 'Hide admin account password'}
                           value={form.admin_password || ''}
                           onChange={(e) => handleFieldChange('admin_password', e.target.value)}
-                          placeholder={!isAdd ? (language === 'zh' ? '留空保持不变' : 'Leave blank') : ''}
+                          placeholder={language === 'zh' ? '留空保持不变' : 'Leave blank'}
                           className="rounded-lg bg-white py-1.5 text-xs focus:border-orange-200"
                         />
                       </div>
@@ -730,7 +718,7 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
                       value={form.enable_password || ''}
                       title={language === 'zh' ? '设备特权提权密码' : 'Device privilege escalation password'}
                       onChange={(event) => handleFieldChange('enable_password', event.target.value)}
-                      placeholder={isAdd ? (language === 'zh' ? '输入特权提权密码' : 'Enter enable secret') : (language === 'zh' ? '留空则保持不变' : 'Leave blank to keep unchanged')}
+                      placeholder={language === 'zh' ? '留空则保持不变' : 'Leave blank to keep unchanged'}
                       className="rounded-xl bg-black/[0.02] py-2.5 text-sm focus:border-black/20 focus:bg-white"
                     />
                   </div>
@@ -772,21 +760,17 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
           )}
         </div>
 
-        <div className={`border-t border-black/5 ${isAdd ? 'bg-black/[0.01]' : 'bg-black/[0.02]'} p-6 ${isAdd ? 'flex gap-3' : 'flex justify-end gap-3'}`}>
+        <div className="flex justify-end gap-3 border-t border-black/5 bg-black/[0.02] p-6">
           <button
             onClick={onClose}
-            className={isAdd
-              ? 'flex-1 rounded-xl border border-black/10 px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest transition-all hover:bg-black/5'
-              : 'px-6 py-2 text-sm font-medium text-black/60 hover:text-black'}
+            className="px-6 py-2 text-sm font-medium text-black/60 hover:text-black"
           >
             {language === 'zh' ? '取消' : 'Cancel'}
           </button>
           <button
             onClick={onSubmit}
             disabled={sshAlgorithmProfile === 'legacy_break_glass' && !breakGlassAcknowledged}
-            className={isAdd
-              ? 'flex-1 rounded-xl bg-black px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-white shadow-lg shadow-black/20 transition-all hover:bg-black/80 disabled:cursor-not-allowed disabled:opacity-40'
-              : 'rounded-xl bg-black px-8 py-2 text-sm font-medium text-white shadow-lg shadow-black/10 transition-all hover:bg-black/80 disabled:cursor-not-allowed disabled:opacity-40'}
+            className="rounded-xl bg-black px-8 py-2 text-sm font-medium text-white shadow-lg shadow-black/10 transition-all hover:bg-black/80 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {submitLabel}
           </button>

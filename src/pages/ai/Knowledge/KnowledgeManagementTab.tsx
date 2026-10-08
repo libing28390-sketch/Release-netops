@@ -2148,7 +2148,7 @@ export const KnowledgeManagementTab: React.FC = () => {
                 <Search className="w-4 h-4 absolute left-3 top-2.5 text-gray-400" />
                 <input
                   id="knowledge-full-text-search"
-                  type="text"
+                  type="search"
                   placeholder={tx('ai.knowledge.search.placeholder')}
                   value={searchInput}
                   onChange={(e) => setSearchInput(e.target.value)}
@@ -2281,28 +2281,28 @@ export const KnowledgeManagementTab: React.FC = () => {
               >
                 {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
               </select>
-              <input
+              <input type="search"
                 value={semanticFilters.productModel}
                 onChange={(event) => setSemanticFilter('productModel', event.target.value)}
                 placeholder={tx('ai.knowledge.filter.modelPlaceholder')}
                 className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 placeholder:text-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
                 aria-label={tx('ai.knowledge.filter.modelLabel')}
               />
-              <input
+              <input type="search"
                 value={semanticFilters.osFamily}
                 onChange={(event) => setSemanticFilter('osFamily', event.target.value)}
                 placeholder="OS Family"
                 className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 placeholder:text-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
                 aria-label={tx('ai.knowledge.filter.osLabel')}
               />
-              <input
+              <input type="search"
                 value={semanticFilters.softwareRelease}
                 onChange={(event) => setSemanticFilter('softwareRelease', event.target.value)}
                 placeholder={tx('ai.knowledge.filter.versionPlaceholder')}
                 className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 placeholder:text-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
                 aria-label={tx('ai.knowledge.filter.versionLabel')}
               />
-              <input
+              <input type="search"
                 value={semanticFilters.featureDomain}
                 onChange={(event) => setSemanticFilter('featureDomain', event.target.value)}
                 placeholder={tx('ai.knowledge.filter.featurePlaceholder')}

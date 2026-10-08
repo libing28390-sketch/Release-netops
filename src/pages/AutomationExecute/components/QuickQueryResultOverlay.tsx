@@ -252,7 +252,7 @@ export const QuickQueryResultOverlay: React.FC<QuickQueryResultOverlayProps> = (
                           type="button"
                           aria-label={isZh ? '清除过滤条件' : 'Clear filter'}
                           onClick={() => setQuickQuerySearch('')}
-                          className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-white/25 hover:bg-white/[0.06] hover:text-white"
+                          className="search-clear-button absolute right-2 top-1/2 -translate-y-1/2"
                         >
                           <X size={11} />
                         </button>

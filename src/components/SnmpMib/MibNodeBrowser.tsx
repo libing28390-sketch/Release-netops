@@ -362,7 +362,7 @@ const MibNodeBrowser: React.FC<MibNodeBrowserProps> = ({
         <form onSubmit={submitSearch} className="flex min-w-[260px] flex-1 items-center justify-end gap-2 sm:max-w-[420px]">
           <div className="relative min-w-0 flex-1">
             <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/25" />
-            <input
+            <input type="search"
               value={query}
               onChange={event => setQuery(event.target.value)}
               placeholder={zh ? '搜索符号名、OID、MIB 或说明' : 'Search symbol, OID, MIB or description'}

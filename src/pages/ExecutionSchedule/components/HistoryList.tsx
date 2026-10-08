@@ -230,7 +230,7 @@ const HistoryList: React.FC<HistoryListProps> = ({
           <div className="relative min-w-[220px]">
             <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
-              type="text"
+              type="search"
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
               placeholder={zh ? '搜索任务名称或执行人...' : 'Search task or operator...'}

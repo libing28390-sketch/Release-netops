@@ -277,7 +277,7 @@ const PrefixSearchSelect: React.FC<{
     <div ref={wrapRef} className="relative min-w-[280px]">
       <div className="relative">
         <Search size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-        <input
+        <input type="search"
           value={open ? query : selected ? `${selected.prefix}${selected.name ? ` (${selected.name})` : ''}` : ''}
           onChange={event => {
             setQuery(event.target.value);
@@ -358,7 +358,7 @@ const DeviceSearchSelect: React.FC<{
   return (
     <div className="relative" ref={wrapRef}>
       <input
-        type="text"
+        type="search"
         value={open ? query : display}
         onChange={(e) => {
           setQuery(e.target.value);
@@ -909,7 +909,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
             <div className="relative w-full md:w-56">
               <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
               <input
-                type="text"
+                type="search"
                 value={search}
                 onChange={(e) => { setSearch(e.target.value); setPage(1); }}
                 placeholder={zh ? '搜索IP、主机名、接口...' : 'Search IP, hostname...'}

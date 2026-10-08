@@ -607,7 +607,7 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
                 <div className="relative w-72">
                   <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input
-                    type="text"
+                    type="search"
                     value={recordSearch}
                     onChange={(e) => setRecordSearch(e.target.value)}
                     placeholder={isZh ? '搜索批次 ID、触发类型、范围...' : 'Search runs by ID, trigger, scope...'}

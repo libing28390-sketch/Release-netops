@@ -3391,6 +3391,7 @@ def import_assets(
         row_results: list[dict] = []
         pending_hostname_sync: list[dict] = []
         pending_librenms_enrollment: list[dict] = []
+        pending_snmp_identification: list[dict] = []
 
         def _safe_import_error(exc: Exception) -> dict:
             detail = exc.detail if isinstance(exc, HTTPException) else None
@@ -3430,6 +3431,11 @@ def import_assets(
             body.hostname = imported_hostname
             _pre_resolve_credential(conn, body)
             snmp_profile_type = _resolve_snmp_credential_binding(conn, body)
+            declared_identity = {
+                'vendor': str(body.vendor or '').strip(),
+                'platform': str(body.platform or '').strip(),
+                'model': str(body.model or '').strip(),
+            }
             requested_tag_ids = _resolve_asset_tag_ids(conn, body)
             requested_site = body.site_id
             try:
@@ -3642,6 +3648,17 @@ def import_assets(
                         'hostname': body.hostname or '',
                         'ip': body.management_ip or '',
                     })
+                    pending_snmp_identification.append({
+                        'device_id': device_id,
+                        'row': row_number,
+                        'asset_tag': body.asset_tag or '',
+                        'hostname': body.hostname or '',
+                        'ip': body.management_ip or '',
+                        'snmp_configured': bool(snmp_profile_type or body.snmp_community),
+                        'declared_vendor': declared_identity['vendor'],
+                        'declared_platform': declared_identity['platform'],
+                        'declared_model': declared_identity['model'],
+                    })
                     if snmp_profile_type != 'snmpv3':
                         pending_hostname_sync.append({
                             'device_id': device_id,
@@ -3732,6 +3749,16 @@ def import_assets(
                 conn.rollback()
                 raise
         conn.commit()
+
+        imported_device_ids = {
+            str(item.get('device_id') or '')
+            for item in row_results
+            if item.get('status') == 'created' and item.get('device_id')
+        }
+        pending_snmp_identification = [
+            item for item in pending_snmp_identification
+            if str(item.get('device_id') or '') in imported_device_ids
+        ]
 
         librenms_enrollment_results: list[dict] = []
         if pending_librenms_enrollment:
@@ -3943,6 +3970,49 @@ def import_assets(
                 if hostname_result['status'] == 'synced':
                     row_result['hostname'] = hostname_result['hostname']
 
+        snmp_identification_results: list[dict] = []
+        if pending_snmp_identification:
+            import asyncio as _aio
+            from services.snmp_import_identification_service import identify_imported_device
+
+            async def _identify_all_imported_devices() -> list:
+                semaphore = _aio.Semaphore(min(5, len(pending_snmp_identification)))
+                return await _aio.gather(
+                    *(identify_imported_device(item, semaphore) for item in pending_snmp_identification),
+                    return_exceptions=True,
+                )
+
+            identity_outputs = _aio.run(_identify_all_imported_devices())
+            for item, output in zip(pending_snmp_identification, identity_outputs):
+                if isinstance(output, BaseException):
+                    logger.warning(
+                        'Asset import SNMP identity task failed for device %s (%s)',
+                        item['device_id'],
+                        type(output).__name__,
+                    )
+                    snmp_identification_results.append({
+                        **{key: item.get(key) for key in ('device_id', 'row', 'asset_tag', 'hostname', 'ip')},
+                        'status': 'identification_failed',
+                        'message': 'SNMP 身份识别失败，资产已保存',
+                    })
+                else:
+                    snmp_identification_results.append(output)
+
+        snmp_identification_by_device = {
+            item['device_id']: item for item in snmp_identification_results
+        }
+        for row_result in row_results:
+            identity_result = snmp_identification_by_device.get(row_result.get('device_id'))
+            if identity_result:
+                row_result['snmp_identification'] = {
+                    key: identity_result.get(key)
+                    for key in (
+                        'status', 'message', 'detected_vendor', 'detected_platform',
+                        'detected_model', 'identity_source', 'profile_id', 'profile_name',
+                    )
+                    if identity_result.get(key) is not None
+                }
+
         if created > 0:
             try:
                 from services.collector_sync_service import trigger_async_monitoring_sync
@@ -3985,6 +4055,25 @@ def import_assets(
                 'message': enrollment_result.get('message') or row_result.get('message') or '',
                 'profile_applied': bool(enrollment_result.get('profile_applied')),
             })
+        identified_identity_statuses = {
+            'profile_bound',
+            'profile_already_bound',
+            'profile_no_match',
+            'profile_ambiguous',
+            'profile_unverified',
+            'profile_incomplete',
+            'profile_incompatible',
+        }
+        identified_count = sum(
+            1 for item in snmp_identification_results
+            if item.get('detected_vendor') or item.get('status') in identified_identity_statuses
+        )
+        profile_bound_count = sum(
+            1 for item in snmp_identification_results if item.get('status') == 'profile_bound'
+        )
+        profile_resolved_count = profile_bound_count + sum(
+            1 for item in snmp_identification_results if item.get('status') == 'profile_already_bound'
+        )
         response = {
             'created': created,
             'skipped': skipped,
@@ -4001,6 +4090,13 @@ def import_assets(
                 'failed': len(enrollment_failures),
                 'failed_items': enrollment_failures,
                 'items': librenms_enrollment_items,
+            },
+            'snmp_identification': {
+                'total': len(snmp_identification_results),
+                'identified': identified_count,
+                'profile_bound': profile_bound_count,
+                'unresolved': len(snmp_identification_results) - profile_resolved_count,
+                'items': snmp_identification_results,
             },
         }
         if detailed or atomic:

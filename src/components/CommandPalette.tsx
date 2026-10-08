@@ -50,7 +50,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
       >
         <div className="flex items-center gap-3 px-4 py-3 border-b border-white/10">
           <Search size={16} className="text-white/40 shrink-0" />
-          <input
+          <input type="search"
             autoFocus
             value={query}
             onChange={(event) => onQueryChange(event.target.value)}

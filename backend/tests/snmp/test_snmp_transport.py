@@ -76,3 +76,51 @@ def test_snmp_client_uses_bounded_internal_timeout_and_retries() -> None:
 
     assert client.config.timeout == _SNMP_TRANSPORT_TIMEOUT_SECONDS
     assert client.config.retries == _SNMP_TRANSPORT_RETRIES
+
+
+def test_snmpv3_get_uses_selected_authentication_and_privacy(monkeypatch) -> None:
+    import puresnmp
+    from puresnmp import V3
+    from services import snmp_service
+
+    observed: dict[str, object] = {}
+
+    def fake_build_client(ip, credentials, port):
+        observed["endpoint"] = (ip, port)
+        observed["credentials"] = credentials
+        return object()
+
+    class FakeWrapper:
+        def __init__(self, _client):
+            pass
+
+        async def get(self, oid):
+            observed["oid"] = oid
+            return b"device-name"
+
+    monkeypatch.setattr(snmp_service, "_build_snmp_client", fake_build_client)
+    monkeypatch.setattr(puresnmp, "PyWrapper", FakeWrapper)
+
+    result = asyncio.run(snmp_service._snmp_get_v3(
+        "192.0.2.1",
+        "probe-user",
+        "1.3.6.1.2.1.1.5.0",
+        port=1161,
+        auth_password="test-auth-key",
+        auth_protocol="sha1",
+        priv_password="test-privacy-key",
+        priv_protocol="aes",
+    ))
+
+    credentials = observed["credentials"]
+    assert isinstance(credentials, V3)
+    assert credentials.username == "probe-user"
+    assert credentials.auth is not None
+    assert credentials.auth.method == "sha1"
+    assert credentials.auth.key == b"test-auth-key"
+    assert credentials.priv is not None
+    assert credentials.priv.method == "aes"
+    assert credentials.priv.key == b"test-privacy-key"
+    assert observed["endpoint"] == ("192.0.2.1", 1161)
+    assert observed["oid"] == "1.3.6.1.2.1.1.5.0"
+    assert result == "device-name"

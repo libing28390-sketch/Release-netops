@@ -157,7 +157,7 @@ const OidPickerModal: React.FC<OidPickerModalProps> = ({
         <form onSubmit={handleSearch} className="flex flex-wrap items-center gap-2 border-b border-black/6 bg-black/[.015] p-3 dark:border-white/6 dark:bg-white/[.015]">
           <div className="relative min-w-[200px] flex-1">
             <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/25" />
-            <input
+            <input type="search"
               value={query}
               onChange={e => setQuery(e.target.value)}
               placeholder={zh ? '搜索符号名 / OID (如: cpu, temp, 1.3.6.1.4.1...)' : 'Search symbol or OID (e.g. cpu, temp, 1.3.6.1.4.1...)'}

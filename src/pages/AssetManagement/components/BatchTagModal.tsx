@@ -99,7 +99,7 @@ export const BatchTagModal: React.FC<BatchTagModalProps> = ({
                   size={14}
                   className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
                 />
-                <input
+                <input type="search"
                   autoFocus
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}

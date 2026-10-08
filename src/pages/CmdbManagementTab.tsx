@@ -1546,7 +1546,7 @@ const SearchableGeoSelect: React.FC<SearchableGeoSelectProps> = ({
     <div ref={rootRef} className="relative">
       <div className={`flex items-center rounded-xl border bg-white transition-all ${open ? 'border-[#06b6d4]/60 ring-2 ring-[#06b6d4]/10' : 'border-black/10'} ${disabled ? 'bg-slate-50' : ''}`}>
         <Search size={14} className="ml-3 shrink-0 text-black/35" />
-        <input
+        <input type="search"
           value={open ? query : displayValue}
           placeholder={open ? '输入名称或拼音搜索…' : placeholder}
           disabled={disabled}
@@ -3604,7 +3604,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                   type="button"
                   onClick={() => setSearch('')}
                   aria-label={zh ? '清除搜索' : 'Clear search'}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-black/30 hover:text-black/60"
+                  className="search-clear-button absolute right-3 top-1/2 -translate-y-1/2"
                 >
                   <X size={14} />
                 </button>
@@ -3815,7 +3815,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                         setInterfacePage(1);
                       }}
                       aria-label={zh ? '清除设备搜索' : 'Clear device search'}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 transition hover:text-slate-700 dark:hover:text-slate-200"
+                      className="search-clear-button absolute right-2 top-1/2 -translate-y-1/2"
                     >
                       <X size={13} />
                     </button>

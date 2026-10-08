@@ -1,7 +1,7 @@
 export type ColumnKey =
   | 'hostname' | 'assetTag' | 'managementIp' | 'category' | 'role' | 'connectionMethod'
   | 'vendor' | 'model' | 'version' | 'adaptation'
-  | 'site' | 'rack' | 'rackUnit' | 'tags' | 'status' | 'health' | 'lifecycle' | 'checkStatus' | 'checkTime' | 'cpu' | 'memory' | 'actions';
+  | 'site' | 'rack' | 'rackUnit' | 'tags' | 'status' | 'health' | 'lifecycle' | 'checkStatus' | 'checkTime' | 'actions';
 
 export type ColumnVisibility = Record<ColumnKey, boolean>;
 
@@ -10,11 +10,10 @@ export const COLUMN_VISIBILITY_STORAGE_KEY = 'netops:network-devices:columns:v2'
 export const COLUMN_KEYS: readonly ColumnKey[] = [
   'hostname', 'assetTag', 'managementIp', 'category', 'role', 'connectionMethod',
   'vendor', 'model', 'version', 'adaptation', 'site', 'rack', 'rackUnit', 'tags',
-  'status', 'health', 'lifecycle', 'checkStatus', 'checkTime', 'cpu', 'memory',
-  'actions',
+  'status', 'health', 'lifecycle', 'checkStatus', 'checkTime', 'actions',
 ];
 
-export const DEFAULT_COLUMNS: ColumnVisibility = {
+const LEGACY_DEFAULT_COLUMNS: Record<string, boolean> = {
   hostname: true,
   assetTag: true,
   managementIp: true,
@@ -36,6 +35,41 @@ export const DEFAULT_COLUMNS: ColumnVisibility = {
   checkTime: false,
   cpu: false,
   memory: false,
+  actions: true,
+};
+
+const LEGACY_COMPACT_DEFAULT_COLUMNS: Record<string, boolean> = {
+  ...LEGACY_DEFAULT_COLUMNS,
+  assetTag: false,
+  category: false,
+  role: false,
+  vendor: false,
+  model: false,
+  site: false,
+  rack: false,
+  rackUnit: false,
+};
+
+export const DEFAULT_COLUMNS: ColumnVisibility = {
+  hostname: true,
+  assetTag: true,
+  managementIp: true,
+  category: true,
+  role: true,
+  connectionMethod: false,
+  vendor: true,
+  model: true,
+  version: false,
+  adaptation: false,
+  site: false,
+  rack: false,
+  rackUnit: false,
+  tags: true,
+  status: true,
+  health: true,
+  lifecycle: false,
+  checkStatus: false,
+  checkTime: false,
   actions: true,
 };
 
@@ -73,7 +107,12 @@ export function loadColumnVisibility(storage = browserStorage()): ColumnVisibili
   if (!storage) return defaultColumnVisibility();
   try {
     const saved = storage.getItem(COLUMN_VISIBILITY_STORAGE_KEY);
-    return saved ? normalizeColumnVisibility(JSON.parse(saved)) : defaultColumnVisibility();
+    if (!saved) return defaultColumnVisibility();
+    const parsed = JSON.parse(saved) as Record<string, unknown>;
+    const matchesLegacyDefault = [LEGACY_DEFAULT_COLUMNS, LEGACY_COMPACT_DEFAULT_COLUMNS].some(legacy =>
+      COLUMN_KEYS.every(key => parsed[key] === legacy[key]),
+    );
+    return matchesLegacyDefault ? defaultColumnVisibility() : normalizeColumnVisibility(parsed);
   } catch {
     return defaultColumnVisibility();
   }

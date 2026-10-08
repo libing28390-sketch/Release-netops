@@ -34,7 +34,6 @@ describe('DeviceFormModal platform registry selector', () => {
     const onFormChange = vi.fn();
     render(
       <DeviceFormModal
-        mode="add"
         language="en"
         form={{ platform: 'zte_zxros', vendor: 'ZTE' }}
         passwordVisible={false}
@@ -62,7 +61,6 @@ describe('DeviceFormModal platform registry selector', () => {
     const onFormChange = vi.fn();
     render(
       <DeviceFormModal
-        mode="add"
         language="en"
         form={{ platform: 'huawei_yunshan', vendor: 'Huawei' }}
         passwordVisible={false}
@@ -93,7 +91,6 @@ describe('DeviceFormModal platform registry selector', () => {
       const [form, setForm] = React.useState<Partial<Device>>({ platform: 'cisco_ios', connection_method: 'ssh' });
       return (
         <DeviceFormModal
-          mode="add"
           language="en"
           form={form}
           passwordVisible={false}
@@ -112,7 +109,7 @@ describe('DeviceFormModal platform registry selector', () => {
     expect((algorithmSelect as HTMLSelectElement).value).toBe('auto');
     await user.selectOptions(algorithmSelect, 'legacy_break_glass');
 
-    const submitButton = screen.getByRole('button', { name: 'Create Device' });
+    const submitButton = screen.getByRole('button', { name: 'Save Changes' });
     expect((submitButton as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText('Acknowledge high-risk compatibility')).toBeTruthy();
 
@@ -127,7 +124,7 @@ describe('DeviceFormModal platform registry selector', () => {
     const user = userEvent.setup();
     const onFormChange = vi.fn();
     render(<DeviceFormModal
-      mode="edit" language="en"
+      language="en"
       form={{ platform: 'zte_zsrv2_v3', platform_profile_id: 'profile-zte-zsrv2', vendor: 'ZTE' }}
       platformBindingReadOnly passwordVisible={false}
       onFormChange={onFormChange} onTogglePasswordVisibility={vi.fn()}
@@ -146,7 +143,7 @@ describe('DeviceFormModal platform registry selector', () => {
   it('keeps the hostname read-only when the device is linked to a CMDB asset', () => {
     const onFormChange = vi.fn();
     render(<DeviceFormModal
-      mode="edit" language="en"
+      language="en"
       form={{ hostname: 'cmdb-core-01', asset_id: 'asset-1' } as Partial<Device>}
       passwordVisible={false}
       onFormChange={onFormChange} onTogglePasswordVisibility={vi.fn()}
@@ -163,7 +160,7 @@ describe('DeviceFormModal platform registry selector', () => {
     const user = userEvent.setup();
     const onFormChange = vi.fn();
     render(<DeviceFormModal
-      mode="edit" language="en"
+      language="en"
       form={{ hostname: 'legacy-core-01' }}
       passwordVisible={false}
       onFormChange={onFormChange} onTogglePasswordVisibility={vi.fn()}

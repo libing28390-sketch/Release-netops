@@ -157,7 +157,7 @@ const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                 <div className="relative">
                    <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
                    <input 
-                     type="text" 
+                     type="search"
                      placeholder={zh ? "输入名称搜索所有脚本..." : "Type to search all scripts..."}
                      value={scriptSearch}
                      onFocus={() => {

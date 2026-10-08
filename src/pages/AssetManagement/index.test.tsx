@@ -60,6 +60,101 @@ describe('AssetManagementTab request states', () => {
     vi.unstubAllGlobals();
   });
 
+  it('uses the requested default columns and reveals optional columns on demand', async () => {
+    window.localStorage.removeItem('netops:assets:columns:v1');
+    const asset = {
+      id: 'asset-columns-1',
+      asset_type: 'server',
+      asset_tag: 'SRV-COLUMNS-1',
+      hostname: 'server-columns-1',
+      management_ip: '192.0.2.20',
+      status: 'active',
+      lifecycle_status: 'production',
+      tags: [],
+    };
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input);
+      if (url.startsWith('/api/assets?')) return response({ items: [asset], total: 1 });
+      if (url === '/api/assets/summary') return response({ total: 1, online: 1, offline: 0 });
+      if (url === '/api/cmdb/sites') return response({ data: [] });
+      if (url === '/api/racks') return response({ success: true, data: [] });
+      if (url === '/api/tags/definitions') return response({ data: [] });
+      return response({});
+    });
+
+    renderAssetPage();
+    await screen.findByText('server-columns-1');
+
+    for (const column of [
+      'Device', 'Asset tag', 'Asset type', 'Category', 'Role', 'Site', 'Status',
+      'Vendor', 'Model', 'Serial', 'Management IP', 'Asset status',
+    ]) {
+      expect(screen.getByRole('columnheader', { name: column })).toBeTruthy();
+    }
+    expect(screen.queryByRole('columnheader', { name: 'Rack' })).toBeNull();
+    expect(screen.queryByRole('columnheader', { name: 'Rack U' })).toBeNull();
+    expect(screen.queryByRole('columnheader', { name: 'Tags' })).toBeNull();
+    expect(screen.queryByRole('columnheader', { name: 'SSH algorithm' })).toBeNull();
+    expect(screen.getByRole('columnheader', { name: 'Actions' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Columns' }));
+    const selectedColumns = [
+      'Device', 'Asset tag', 'Asset type', 'Category', 'Role', 'Site', 'Status',
+      'Vendor', 'Model', 'Serial', 'Management IP', 'Asset status',
+    ];
+    for (const column of selectedColumns) {
+      expect((screen.getByRole('checkbox', { name: column }) as HTMLInputElement).checked).toBe(true);
+    }
+    for (const column of ['Rack', 'Rack U', 'Tags', 'Created', 'Updated']) {
+      expect((screen.getByRole('checkbox', { name: column }) as HTMLInputElement).checked).toBe(false);
+    }
+    expect(screen.queryByRole('checkbox', { name: 'SSH algorithm' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Rack' }));
+
+    expect(await screen.findByRole('columnheader', { name: 'Rack' })).toBeTruthy();
+  });
+
+  it('migrates the previously auto-saved default columns', async () => {
+    window.localStorage.setItem('netops:assets:columns:v1', JSON.stringify({
+      hostname: true,
+      asset_tag: false,
+      asset_type: true,
+      device_category: false,
+      device_role: false,
+      site: false,
+      rack: true,
+      rack_unit: true,
+      status: true,
+      tags: false,
+      vendor: false,
+      model: false,
+      serial_number: false,
+      management_ip: true,
+      ssh_algorithm_profile: false,
+      lifecycle: false,
+      created_at: true,
+      updated_at: true,
+    }));
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input);
+      if (url.startsWith('/api/assets?')) return response({ items: [], total: 0 });
+      if (url === '/api/assets/summary') return response({ total: 0, online: 0, offline: 0 });
+      if (url === '/api/cmdb/sites') return response({ data: [] });
+      if (url === '/api/racks') return response({ success: true, data: [] });
+      if (url === '/api/tags/definitions') return response({ data: [] });
+      return response({});
+    });
+
+    renderAssetPage();
+    await screen.findByText('No asset records');
+    fireEvent.click(screen.getByRole('button', { name: 'Columns' }));
+
+    expect((screen.getByRole('checkbox', { name: 'Asset tag' }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole('checkbox', { name: 'Rack' }) as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByRole('checkbox', { name: 'Created' }) as HTMLInputElement).checked).toBe(false);
+  });
+
   it('shows a permission state instead of an empty inventory when the asset API returns 403', async () => {
     vi.mocked(fetch).mockImplementation(async input => {
       const url = String(input);

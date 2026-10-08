@@ -271,7 +271,7 @@ const HomePage: React.FC<HomePageProps> = ({
 
   /* ── Quick Action Buttons ── */
   const quickActions = [
-    { label: zh ? '添加网络设备' : 'Add Network Device', path: '/assets/network-devices', icon: Plus },
+    { label: zh ? '添加网络设备' : 'Add Network Device', path: '/assets/dashboard', icon: Plus },
     { label: zh ? '执行自动化巡检' : 'Run Inspection', path: '/automation/inspections', icon: Play },
     { label: zh ? '查看配置差异' : 'View Config Diff', path: '/config/diff', icon: FileCode2 },
     { label: zh ? '新建变更工单' : 'New Change Order', path: '/change-orders/new', icon: ClipboardList },

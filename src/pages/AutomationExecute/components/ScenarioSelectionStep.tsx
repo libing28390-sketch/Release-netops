@@ -78,7 +78,7 @@ export const ScenarioSelectionStep: React.FC<ScenarioSelectionStepProps> = ({
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-300" size={12} />
             <input
-              type="text"
+              type="search"
               value={scenarioSearch}
               onChange={(e) => onScenarioSearchChange(e.target.value)}
               placeholder={isZh ? '搜索场景...' : 'Search...'}

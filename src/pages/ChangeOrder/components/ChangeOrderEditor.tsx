@@ -782,7 +782,7 @@ export const ChangeOrderEditor: React.FC<Props> = ({
                   <X size={18} />
                 </button>
               </div>
-              <input
+              <input type="search"
                 title={zh ? '搜索设备清单' : 'Search inventory devices'}
                 value={deviceKeyword}
                 onChange={e => setDeviceKeyword(e.target.value)}
@@ -976,7 +976,8 @@ export const ChangeOrderEditor: React.FC<Props> = ({
                                   e.stopPropagation();
                                   setScenarioSearch('');
                                 }}
-                                className="text-black/40 hover:text-black/60"
+                                aria-label={zh ? '清空搜索' : 'Clear search'}
+                                className="search-clear-button"
                               >
                                 <X className="w-3.5 h-3.5" />
                               </button>

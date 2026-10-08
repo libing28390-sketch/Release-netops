@@ -7,7 +7,7 @@ import {
   Server, Router, AlertTriangle, SlidersHorizontal,
   Wifi, Upload, FileText,
   AlertCircle, CheckCircle2, Info,
-  Flame, LayoutList, Lock, Terminal, Eye, EyeOff, Loader2, Shield, User, MonitorSpeaker
+  Flame, Lock, Terminal, Eye, EyeOff, Loader2, Shield, User, MonitorSpeaker
 } from 'lucide-react';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
 import { TableActionCell, TableActionHeader } from '../../components/ui/TableActionColumn';
@@ -39,7 +39,6 @@ import {
   NETWORK_TOPOLOGY_ROLE_OPTIONS,
   TOPOLOGY_FUNCTION_OPTIONS,
   TOPOLOGY_ZONE_OPTIONS,
-  SSH_ALGORITHM_PROFILE_OPTIONS,
   SSH_ALGORITHM_PROFILE_VALUES,
   isNetworkVendor,
   isValidVendorPlatform,
@@ -87,7 +86,7 @@ type BatchTakeoverResult = {
   device_names?: string[];
 };
 
-type AssetColumnKey = AssetExportColumnKey;
+type AssetColumnKey = Exclude<AssetExportColumnKey, 'ssh_algorithm_profile'>;
 
 type AssetLoadIssue = {
   status: number | null;
@@ -145,11 +144,30 @@ const ASSET_COLUMN_DEFS: AssetColumnDefinition[] = [
   { key: 'model', zh: '型号', en: 'Model', width: 'min-w-[110px]' },
   { key: 'serial_number', zh: '序列号', en: 'Serial', width: 'min-w-[130px]' },
   { key: 'management_ip', zh: '管理IP', en: 'Management IP', width: 'w-[120px]' },
-  { key: 'ssh_algorithm_profile', zh: 'SSH算法策略', en: 'SSH algorithm', width: 'min-w-[150px]' },
   { key: 'lifecycle', zh: '资产状态', en: 'Asset status', width: 'w-[90px]' },
   { key: 'created_at', zh: '创建时间', en: 'Created', width: 'min-w-[145px]' },
   { key: 'updated_at', zh: '更新时间', en: 'Updated', width: 'min-w-[145px]' },
 ];
+
+const LEGACY_DEFAULT_ASSET_COLUMNS: Record<AssetColumnKey, boolean> = {
+  hostname: true,
+  asset_tag: false,
+  asset_type: true,
+  device_category: false,
+  device_role: false,
+  site: false,
+  rack: true,
+  rack_unit: true,
+  status: true,
+  tags: false,
+  vendor: false,
+  model: false,
+  serial_number: false,
+  management_ip: true,
+  lifecycle: false,
+  created_at: true,
+  updated_at: true,
+};
 
 const DEFAULT_ASSET_COLUMNS: Record<AssetColumnKey, boolean> = {
   hostname: true,
@@ -158,21 +176,99 @@ const DEFAULT_ASSET_COLUMNS: Record<AssetColumnKey, boolean> = {
   device_category: true,
   device_role: true,
   site: true,
-  rack: true,
-  rack_unit: true,
+  rack: false,
+  rack_unit: false,
   status: true,
   tags: false,
   vendor: true,
   model: true,
   serial_number: true,
   management_ip: true,
-  ssh_algorithm_profile: false,
   lifecycle: true,
-  created_at: true,
-  updated_at: true,
+  created_at: false,
+  updated_at: false,
 };
 
-const DEFAULT_VISIBLE_ASSET_COLUMNS = ASSET_COLUMN_DEFS.filter(column => DEFAULT_ASSET_COLUMNS[column.key]);
+type AssetColumnVisibility = Record<AssetColumnKey, boolean>;
+
+const ASSET_COLUMN_STORAGE_KEY = 'netops:assets:columns:v1';
+
+const loadAssetColumnVisibility = (): AssetColumnVisibility => {
+  try {
+    const stored = window.localStorage.getItem(ASSET_COLUMN_STORAGE_KEY);
+    const saved = stored ? JSON.parse(stored) as Record<string, unknown> : {};
+    const isLegacyDefault = stored && ASSET_COLUMN_DEFS.every(({ key }) => saved[key] === LEGACY_DEFAULT_ASSET_COLUMNS[key]);
+    if (isLegacyDefault) return { ...DEFAULT_ASSET_COLUMNS };
+    return Object.fromEntries(ASSET_COLUMN_DEFS.map(({ key }) => [
+      key,
+      typeof saved[key] === 'boolean' ? saved[key] : DEFAULT_ASSET_COLUMNS[key],
+    ])) as AssetColumnVisibility;
+  } catch {
+    return { ...DEFAULT_ASSET_COLUMNS };
+  }
+};
+
+const AssetColumnToggle: React.FC<{
+  columns: AssetColumnVisibility;
+  onChange: (key: AssetColumnKey, visible: boolean) => void;
+  onReset: () => void;
+  language: string;
+}> = ({ columns, onChange, onReset, language }) => {
+  const [open, setOpen] = useState(false);
+  const ref = React.useRef<HTMLDivElement>(null);
+  const zh = language === 'zh';
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (event: MouseEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const visibleCount = ASSET_COLUMN_DEFS.filter(({ key }) => columns[key]).length;
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls="asset-column-options"
+        onClick={() => setOpen(value => !value)}
+        title={zh ? '列显示设置' : 'Column visibility'}
+        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-gray-200/80 dark:border-zinc-700/80 bg-white dark:bg-zinc-800 text-xs font-semibold text-gray-700 dark:text-zinc-300 hover:bg-gray-50 dark:hover:bg-zinc-700/60 transition-all cursor-pointer"
+      >
+        <SlidersHorizontal size={13} className="text-gray-500" />
+        <span>{zh ? '列设置' : 'Columns'}</span>
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1.5 z-50 w-60 max-h-[70vh] overflow-y-auto rounded-2xl border border-gray-100 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-xl py-2">
+          <div id="asset-column-options" className="px-3 pb-1.5 mb-1 border-b border-gray-100 dark:border-zinc-800 text-[10px] font-bold uppercase tracking-wider text-gray-400">
+            {zh ? '自定义展示列' : 'Visible columns'}
+          </div>
+          <div className="px-2 pb-1">
+            {ASSET_COLUMN_DEFS.map(column => (
+              <label key={column.key} className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-gray-700 dark:text-zinc-300 hover:bg-gray-50 dark:hover:bg-white/5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={columns[column.key]}
+                  disabled={columns[column.key] && visibleCount <= 1}
+                  onChange={event => onChange(column.key, event.target.checked)}
+                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span>{zh ? column.zh : column.en}</span>
+              </label>
+            ))}
+          </div>
+          <button type="button" onClick={onReset} className="w-full border-t border-gray-100 dark:border-zinc-800 px-3 pt-2 text-left text-xs font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/30">
+            {zh ? '恢复默认列' : 'Restore default columns'}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
 
 const NETWORK_TEMPLATE_ROLES = new Set<string>(NETWORK_TOPOLOGY_ROLE_OPTIONS.map(option => option.value));
 const NETWORK_TEMPLATE_CATEGORIES = new Set([
@@ -295,6 +391,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const [deptFilter, setDeptFilter]     = useState('all');
   const [severityFilter, setSeverityFilter] = useState<string>('all');
   const [lifecycleFilter, setLifecycleFilter] = useState('all');
+  const [assetColumns, setAssetColumns] = useState<AssetColumnVisibility>(() => loadAssetColumnVisibility());
+  const visibleAssetColumns = ASSET_COLUMN_DEFS.filter(column => assetColumns[column.key]);
 
   const [selectedIds, setSelectedIds]   = useState<Set<string>>(new Set());
   const [drawerAsset, setDrawerAsset]   = useState<Asset | null>(null);
@@ -345,6 +443,14 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       })
       .catch(error => setFeedbackMsg({ type: 'error', text: getAssetLoadIssue(error, language, zh ? '标签选项' : 'Tag options').message }));
   }, [language, zh]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(ASSET_COLUMN_STORAGE_KEY, JSON.stringify(assetColumns));
+    } catch {
+      // Browser storage may be disabled; the in-memory selection still works.
+    }
+  }, [assetColumns]);
 
   useEffect(() => () => {
     if (rotationPollRef.current) clearInterval(rotationPollRef.current);
@@ -1090,12 +1196,45 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
             : '; assets were saved, but some devices were not enrolled with the selected profile. Review details and retry those rows after fixing the configuration.')
           : '';
         const hasEnrollmentFailures = enrollmentFailedCount > 0;
-        const details = [...skippedDetails, ...hostnameSyncDetails, ...enrollmentDetails];
+        const snmpIdentification = res.snmp_identification || {};
+        const identityRows = Array.isArray(snmpIdentification.items) ? snmpIdentification.items : [];
+        const identityBoundCount = Math.max(0, Number(snmpIdentification.profile_bound) || 0);
+        const identityUnresolvedCount = Math.max(0, Number(snmpIdentification.unresolved) || 0);
+        const identityDetails = identityRows.slice(0, 8).map((item: any) => {
+          const identity = [item.detected_vendor, item.detected_platform, item.detected_model]
+            .filter(Boolean)
+            .join(' / ');
+          const row = item.row ? (zh ? `第 ${item.row} 行 ` : `row ${item.row} `) : '';
+          const profile = item.profile_name
+            ? (zh ? `；指标 Profile：${item.profile_name}` : `; metric profile: ${item.profile_name}`)
+            : '';
+          const detected = identity
+            ? (zh ? `识别为 ${identity}` : `identified as ${identity}`)
+            : (zh ? `状态 ${item.status || '未识别'}` : `status ${item.status || 'unidentified'}`);
+          return `${row}${item.hostname || item.ip || item.asset_tag || item.device_id || (zh ? '未知设备' : 'Unknown device')}：${detected}${profile}${item.message ? `；${item.message}` : ''}`;
+        });
+        if (identityRows.length > identityDetails.length) {
+          identityDetails.push(zh
+            ? `另有 ${identityRows.length - identityDetails.length} 行 SNMP 识别状态未展开`
+            : `${identityRows.length - identityDetails.length} more SNMP identity results are not shown`);
+        }
+        const identitySummary = Number(snmpIdentification.total || 0) > 0
+          ? (zh
+            ? `；SNMP 自动识别 ${snmpIdentification.identified || 0}/${snmpIdentification.total} 台，自动绑定指标 Profile ${identityBoundCount} 台`
+            : `; SNMP identity detected for ${snmpIdentification.identified || 0}/${snmpIdentification.total} devices; metric profiles bound automatically for ${identityBoundCount}`)
+          : '';
+        const identityFailureSummary = identityUnresolvedCount > 0
+          ? (zh
+            ? `；${identityUnresolvedCount} 台设备未自动绑定指标 Profile，请查看 SNMP 识别详情`
+            : `; ${identityUnresolvedCount} device${identityUnresolvedCount === 1 ? '' : 's'} did not receive an automatic metric-profile binding; review the SNMP details`)
+          : '';
+        const hasIdentityIssues = identityUnresolvedCount > 0;
+        const details = [...skippedDetails, ...hostnameSyncDetails, ...enrollmentDetails, ...identityDetails];
         setFeedbackMsg({
-          type: hasSkipped || hasHostnameSyncFailures || hasEnrollmentFailures ? 'warning' : 'success',
+          type: hasSkipped || hasHostnameSyncFailures || hasEnrollmentFailures || hasIdentityIssues ? 'warning' : 'success',
           text: zh
-            ? `导入完成：新增 ${res.created} 条，跳过 ${res.skipped} 条${hasSkipped ? '（请查看跳过原因）' : ''}${enrollmentSummary}${enrollmentFailureSummary}${syncSummary}${hostnameSyncFailureSummary}`
-            : `Import done: ${res.created} created, ${res.skipped} skipped${hasSkipped ? ' (review skipped rows)' : ''}${enrollmentSummary}${enrollmentFailureSummary}${syncSummary}${hostnameSyncFailureSummary}`,
+            ? `导入完成：新增 ${res.created} 条，跳过 ${res.skipped} 条${hasSkipped ? '（请查看跳过原因）' : ''}${identitySummary}${identityFailureSummary}${enrollmentSummary}${enrollmentFailureSummary}${syncSummary}${hostnameSyncFailureSummary}`
+            : `Import done: ${res.created} created, ${res.skipped} skipped${hasSkipped ? ' (review skipped rows)' : ''}${identitySummary}${identityFailureSummary}${enrollmentSummary}${enrollmentFailureSummary}${syncSummary}${hostnameSyncFailureSummary}`,
           details: details.length > 0 ? details : undefined,
         });
         fetchAssets();
@@ -1718,17 +1857,6 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       case 'model': return <span className="text-xs text-gray-600 dark:text-zinc-400">{a.model || '—'}</span>;
       case 'serial_number': return <span className="font-mono text-xs text-gray-600 dark:text-zinc-400">{a.serial_number || '—'}</span>;
       case 'management_ip': return <span className="font-mono text-xs font-semibold text-gray-800 dark:text-zinc-200">{a.management_ip || '—'}</span>;
-      case 'ssh_algorithm_profile': {
-        const profile = a.ssh_algorithm_profile || 'auto';
-        const option = SSH_ALGORITHM_PROFILE_OPTIONS.find(item => item.value === profile);
-        const risky = profile === 'legacy_break_glass';
-        return (
-          <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${risky ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300' : profile === 'legacy_compat' ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300' : 'bg-slate-100 text-slate-600 dark:bg-zinc-800 dark:text-zinc-300'}`}>
-            {risky && <AlertTriangle size={10} />}
-            {option ? option.label[zh ? 'zh' : 'en'] : profile}
-          </span>
-        );
-      }
       case 'lifecycle': return rotatingAssetId === a.id ? (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 text-[10px] font-semibold">
           <Loader2 size={10} className="animate-spin" />{zh ? '上收中' : 'Rotating'}
@@ -1992,103 +2120,20 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
               <button type="button" onClick={() => { void fetchAssets(); }} className="rounded-lg border border-current/20 px-3 py-1.5 font-semibold hover:bg-black/5">{zh ? '重试' : 'Retry'}</button>
             </div>
           )}
-          {/* Header Bar */}
-          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-gray-100 dark:border-zinc-800 bg-gray-50/50 dark:bg-zinc-800/30">
-            <div className="flex items-center gap-2">
-              <span className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 text-xs font-bold shadow-2xs">
-                <LayoutList size={13} />
-                {zh ? '资产台账' : 'Inventory Table'}
-              </span>
-
-              <AnimatePresence>
-                {selectedIds.size > 0 && (
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
-                    className="flex items-center gap-1.5 ml-2 pl-3 border-l border-gray-200 dark:border-zinc-700"
-                  >
-                    <span className="text-xs font-bold text-blue-600 dark:text-blue-400 font-mono px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/40">
-                      {selectedIds.size} {zh ? '已选' : 'selected'}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={requestBatchTakeover}
-                      className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-blue-50 text-blue-600 hover:bg-blue-100 text-xs font-semibold transition-all cursor-pointer"
-                    >
-                      <Shield size={12} />
-                      {zh ? '批量上收' : 'Takeover'}
-                    </button>
-                    <ActionButton icon={Trash2} variant="danger" size="sm" onClick={handleBatchDelete}>
-                      {zh ? '批量删除' : 'Delete'}
-                    </ActionButton>
-                    <button
-                      type="button"
-                      onClick={clearSel}
-                      className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 cursor-pointer"
-                      title="Clear"
-                    >
-                      <X size={12} />
-                    </button>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={openAdd}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 shadow-2xs transition-all cursor-pointer"
-                title={zh ? '新增资产' : 'Add Asset'}
-              >
-                <Plus size={13} />
-                <span>{zh ? '新增' : 'Add'}</span>
-              </button>
-
-              <div className="flex items-center gap-1 border-l border-gray-200 dark:border-zinc-700 pl-2">
-                <button
-                  type="button"
-                  onClick={() => { fetchAssets(); fetchSummary(); }}
-                  className="p-1.5 rounded-xl border border-gray-200/80 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-gray-600 dark:text-zinc-300 hover:bg-gray-50 hover:text-blue-600 transition-all cursor-pointer"
-                  title={zh ? '刷新' : 'Refresh'}
-                >
-                  <RefreshCw size={13} />
-                </button>
-                <button
-                  type="button"
-                  onClick={handleDownloadTemplate}
-                  className="p-1.5 rounded-xl border border-gray-200/80 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-gray-600 dark:text-zinc-300 hover:bg-gray-50 hover:text-blue-600 transition-all cursor-pointer"
-                  title={zh ? '下载模板' : 'Template'}
-                >
-                  <FileText size={13} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="p-1.5 rounded-xl border border-gray-200/80 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-gray-600 dark:text-zinc-300 hover:bg-gray-50 hover:text-blue-600 transition-all cursor-pointer"
-                  title={zh ? '导入' : 'Import'}
-                >
-                  <Upload size={13} />
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Filter Bar */}
+          {/* Search, filters, and actions */}
           <div className="border-b border-gray-100 dark:border-zinc-800 px-4 py-2.5">
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap 2xl:flex-nowrap items-center gap-2">
               <div className="relative flex-1 min-w-[220px] max-w-[320px]">
                 <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                <input
+                <input type="text"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                   placeholder={zh ? '搜索 IP / 主机名 / 资产编号 / 序列号...' : 'Search IP / hostname / tag / serial...'}
                   className="w-full pl-8 pr-7 py-1.5 rounded-xl bg-gray-50 dark:bg-zinc-800 border border-gray-200/80 dark:border-zinc-700 text-xs text-gray-800 dark:text-zinc-100 placeholder:text-gray-400 focus:outline-none focus:border-blue-500 focus:bg-white transition-all"
                 />
                 {search && (
-                  <button onClick={() => setSearch('')} title="Clear" className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 cursor-pointer">
-                    <X size={11} />
+                  <button onClick={() => setSearch('')} title={zh ? '清空搜索' : 'Clear search'} aria-label={zh ? '清空搜索' : 'Clear search'} className="search-clear-button absolute right-2 top-1/2 -translate-y-1/2">
+                    <X size={13} />
                   </button>
                 )}
               </div>
@@ -2107,7 +2152,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                   value={f.val}
                   onChange={e => f.set(e.target.value)}
                   title={f.label}
-                  className={`px-3 py-1.5 rounded-xl border text-xs outline-none cursor-pointer transition-all ${
+                  className={`shrink-0 px-3 py-1.5 rounded-xl border text-xs outline-none cursor-pointer transition-all ${
                     f.val !== 'all'
                       ? 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300 font-semibold'
                       : 'bg-gray-50 dark:bg-zinc-800 border-gray-200/80 dark:border-zinc-700 text-gray-600 dark:text-zinc-300'
@@ -2154,8 +2199,90 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                 </button>
               )}
 
-              <div className="flex-1" />
-              <span className="text-xs font-mono text-gray-400 tabular-nums whitespace-nowrap">
+              <AssetColumnToggle
+                columns={assetColumns}
+                onChange={(key, visible) => setAssetColumns(current => ({ ...current, [key]: visible }))}
+                onReset={() => setAssetColumns({ ...DEFAULT_ASSET_COLUMNS })}
+                language={language}
+              />
+              <AnimatePresence>
+                {selectedIds.size > 0 && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    className="flex shrink-0 items-center gap-1.5 pl-2 border-l border-gray-200 dark:border-zinc-700"
+                  >
+                    <span className="text-xs font-bold text-blue-600 dark:text-blue-400 font-mono px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/40">
+                      {selectedIds.size} {zh ? '已选' : 'selected'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={requestBatchTakeover}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-blue-50 text-blue-600 hover:bg-blue-100 text-xs font-semibold transition-all cursor-pointer whitespace-nowrap"
+                    >
+                      <Shield size={12} />
+                      {zh ? '批量上收' : 'Takeover'}
+                    </button>
+                    <ActionButton icon={Trash2} variant="danger" size="sm" onClick={handleBatchDelete}>
+                      {zh ? '批量删除' : 'Delete'}
+                    </ActionButton>
+                    <button
+                      type="button"
+                      onClick={clearSel}
+                      className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 cursor-pointer"
+                      title={zh ? '清除选择' : 'Clear selection'}
+                      aria-label={zh ? '清除选择' : 'Clear selection'}
+                    >
+                      <X size={12} />
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  onClick={openAdd}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 shadow-2xs transition-all cursor-pointer whitespace-nowrap"
+                  title={zh ? '新增资产' : 'Add Asset'}
+                >
+                  <Plus size={13} />
+                  <span>{zh ? '新增' : 'Add'}</span>
+                </button>
+
+                <div className="flex items-center gap-1 border-l border-gray-200 dark:border-zinc-700 pl-2">
+                  <button
+                    type="button"
+                    onClick={() => { fetchAssets(); fetchSummary(); }}
+                    className="p-1.5 rounded-xl border border-gray-200/80 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-gray-600 dark:text-zinc-300 hover:bg-gray-50 hover:text-blue-600 transition-all cursor-pointer"
+                    title={zh ? '刷新' : 'Refresh'}
+                    aria-label={zh ? '刷新资产' : 'Refresh assets'}
+                  >
+                    <RefreshCw size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDownloadTemplate}
+                    className="p-1.5 rounded-xl border border-gray-200/80 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-gray-600 dark:text-zinc-300 hover:bg-gray-50 hover:text-blue-600 transition-all cursor-pointer"
+                    title={zh ? '下载模板' : 'Template'}
+                    aria-label={zh ? '下载模板' : 'Download template'}
+                  >
+                    <FileText size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="p-1.5 rounded-xl border border-gray-200/80 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-gray-600 dark:text-zinc-300 hover:bg-gray-50 hover:text-blue-600 transition-all cursor-pointer"
+                    title={zh ? '导入' : 'Import'}
+                    aria-label={zh ? '导入资产' : 'Import assets'}
+                  >
+                    <Upload size={13} />
+                  </button>
+                </div>
+              </div>
+
+              <span className="ml-auto shrink-0 text-xs font-mono text-gray-400 tabular-nums whitespace-nowrap">
                 {zh ? `共 ${severityFilter !== 'all' ? displayAssets.length : total} 条资产` : `${severityFilter !== 'all' ? displayAssets.length : total} assets`}
               </span>
             </div>
@@ -2205,7 +2332,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                     <th className="w-8 px-3 py-3 text-center">
                       <input type="checkbox" checked={selectedIds.size === displayAssets.length && displayAssets.length > 0} onChange={toggleAll} className="h-3.5 w-3.5 rounded border-gray-300 accent-blue-600 cursor-pointer" />
                     </th>
-                    {DEFAULT_VISIBLE_ASSET_COLUMNS.map(column => (
+                    {visibleAssetColumns.map(column => (
                       <th key={column.key} className={`text-left px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 ${column.width}`}>
                         {zh ? column.zh : column.en}
                       </th>
@@ -2215,14 +2342,14 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                 </thead>
                 <tbody>
                   {loading && assets.length === 0 ? (
-                    <tr><td colSpan={DEFAULT_VISIBLE_ASSET_COLUMNS.length + 2} className="text-center py-20 text-gray-400">
+                    <tr><td colSpan={visibleAssetColumns.length + 2} className="text-center py-20 text-gray-400">
                       <RefreshCw size={18} className="mx-auto mb-2 animate-spin text-blue-500" />
                       <p className="text-xs font-medium">{zh ? '加载资产中...' : 'Loading...'}</p>
                     </td></tr>
                   ) : assetError && displayAssets.length === 0 ? (
-                    <tr><td colSpan={DEFAULT_VISIBLE_ASSET_COLUMNS.length + 2} className="py-20 text-center text-sm text-rose-600">{assetError.permissionDenied ? (zh ? '无权查看资产列表。' : 'You do not have permission to view the asset list.') : (zh ? '资产列表加载失败，请使用上方按钮重试。' : 'The asset list could not be loaded. Use the retry button above.')}</td></tr>
+                    <tr><td colSpan={visibleAssetColumns.length + 2} className="py-20 text-center text-sm text-rose-600">{assetError.permissionDenied ? (zh ? '无权查看资产列表。' : 'You do not have permission to view the asset list.') : (zh ? '资产列表加载失败，请使用上方按钮重试。' : 'The asset list could not be loaded. Use the retry button above.')}</td></tr>
                   ) : displayAssets.length === 0 ? (
-                    <tr><td colSpan={DEFAULT_VISIBLE_ASSET_COLUMNS.length + 2} className="py-20">
+                    <tr><td colSpan={visibleAssetColumns.length + 2} className="py-20">
                       <div className="text-center max-w-lg mx-auto">
                         <div className="relative h-20 w-20 mx-auto mb-4">
                           <div className="absolute inset-0 rounded-2xl bg-blue-50 dark:bg-blue-950/40 flex items-center justify-center">
@@ -2267,7 +2394,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                         <td className="px-3 py-2.5 text-right" onClick={e => e.stopPropagation()}>
                           <input type="checkbox" checked={sel} onChange={() => toggle(a.id)} className="h-3.5 w-3.5 rounded border-gray-300 accent-blue-600 cursor-pointer" />
                         </td>
-                        {DEFAULT_VISIBLE_ASSET_COLUMNS.map(column => (
+                        {visibleAssetColumns.map(column => (
                           <td key={column.key} className="px-3 py-2.5 text-xs">
                             {renderAssetCell(column.key, a)}
                           </td>

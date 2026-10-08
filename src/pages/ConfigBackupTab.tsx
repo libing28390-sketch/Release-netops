@@ -1415,14 +1415,14 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
         <div className="flex items-center gap-3 px-5 py-4">
           <label className="relative min-w-[240px] flex-1">
             <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-black/30" />
-            <input
+            <input type="text"
               value={search}
               onChange={(e) => { setPage(1); setSearch(e.target.value); }}
               placeholder={zh ? '搜索设备名或 IP ...' : 'Search hostname or IP...'}
               className="w-full rounded-xl border border-black/10 bg-white py-3 pl-9 pr-3 text-sm text-[#164e63] outline-none placeholder:text-black/30 focus:border-[#06b6d4]/40 focus:ring-2 focus:ring-[#06b6d4]/10 transition-all"
             />
             {search && (
-              <button onClick={() => { setSearch(''); setPage(1); }} className="absolute right-3 top-1/2 -translate-y-1/2 text-black/30 hover:text-black/60">
+              <button onClick={() => { setSearch(''); setPage(1); }} aria-label={zh ? '清空搜索' : 'Clear search'} className="search-clear-button absolute right-3 top-1/2 -translate-y-1/2">
                 <X size={14} />
               </button>
             )}

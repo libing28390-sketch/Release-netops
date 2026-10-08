@@ -208,14 +208,14 @@ export const ChangeOrderList: React.FC<Props> = ({
         <div className="flex flex-wrap gap-3 items-center p-4">
           <div className="relative flex-1 min-w-[200px]">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-black/30" />
-            <input
+            <input type="text"
               value={search}
               onChange={e => { setSearch(e.target.value); setPage(1); }}
               placeholder={zh ? '搜索工单号 / 标题...' : 'Search order # / title...'}
               className="w-full pl-9 pr-8 py-2 text-sm bg-black/[0.02] border border-black/8 rounded-xl outline-none focus:border-[#00bceb]/40 focus:ring-2 focus:ring-[#00bceb]/10 transition-all"
             />
             {search && (
-              <button title={zh ? '清空搜索' : 'Clear search'} onClick={() => { setSearch(''); setPage(1); }} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-black/30 hover:text-black/60">
+              <button title={zh ? '清空搜索' : 'Clear search'} aria-label={zh ? '清空搜索' : 'Clear search'} onClick={() => { setSearch(''); setPage(1); }} className="search-clear-button absolute right-2.5 top-1/2 -translate-y-1/2">
                 <X size={13} />
               </button>
             )}

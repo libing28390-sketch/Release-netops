@@ -1740,7 +1740,7 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
                   )}
                   <div className="relative">
                     <Search size={12} className="absolute left-2 top-2 text-black/35 dark:text-white/35" />
-                    <input
+                    <input type="search"
                       value={walkFilter}
                       onChange={e => setWalkFilter(e.target.value)}
                       placeholder={zh ? '快速过滤 OID / 名称 / 值...' : 'Filter OID/name/value...'}

@@ -134,7 +134,7 @@ export const CopilotSidebar: React.FC<CopilotSidebarProps> = ({
           <div className="relative">
             <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-gray-400" />
             <input
-              type="text"
+              type="search"
               placeholder="搜索会话"
               value={searchTerm}
               onChange={(event) => setSearchTerm(event.target.value)}

@@ -679,7 +679,7 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
         <div className="grid gap-2.5 lg:grid-cols-[minmax(0,1.4fr)_repeat(7,minmax(0,0.8fr))]">
           <label className="flex items-center gap-2 rounded-xl border border-gray-200/80 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800 px-3 py-1.5">
             <Search size={14} className="text-gray-400" />
-            <input
+            <input type="search"
               value={topologySearch}
               onChange={(event) => onTopologySearchChange(event.target.value)}
               placeholder={language === 'zh' ? '搜索主机名、IP、站点、角色' : 'Search hostname, IP, site, role'}

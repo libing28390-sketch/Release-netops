@@ -916,7 +916,7 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
                     {/* Name search */}
                     <div className="relative">
                       <input
-                        type="text"
+                        type="search"
                         placeholder={zh ? '搜索计划名称...' : 'Search by name...'}
                         value={nameFilterInput}
                         onChange={(e) => setNameFilterInput(e.target.value)}

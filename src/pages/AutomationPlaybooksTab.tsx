@@ -125,7 +125,7 @@ const AutomationPlaybooksTab: React.FC<AutomationPlaybooksTabProps> = ({
             <h3 className="text-[10px] font-bold uppercase tracking-widest text-black/40">{t('chooseScenario')}</h3>
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-black/30" size={13} />
-              <input
+              <input type="search"
                 value={scenarioSearch}
                 onChange={(event) => onScenarioSearchChange(event.target.value)}
                 placeholder="Search keyword"

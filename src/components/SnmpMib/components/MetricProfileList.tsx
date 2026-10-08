@@ -420,7 +420,7 @@ export const MetricProfileList: React.FC<MetricProfileListProps> = ({
           {/* Search Input with Debounce */}
           <div className="relative min-w-[180px] flex-1 sm:max-w-xs">
             <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/25" />
-            <input
+            <input type="text"
               value={searchInput}
               onChange={e => setSearchInput(e.target.value)}
               placeholder={zh ? '搜索厂商 / 型号 / 描述...' : 'Search vendor / model...'}
@@ -430,7 +430,8 @@ export const MetricProfileList: React.FC<MetricProfileListProps> = ({
               <button
                 type="button"
                 onClick={() => setSearchInput('')}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-black/35 hover:text-black/70 dark:text-white/35 dark:hover:text-white/70"
+                aria-label={zh ? '清空搜索' : 'Clear search'}
+                className="search-clear-button absolute right-2 top-1/2 -translate-y-1/2"
               >
                 <X size={12} />
               </button>

@@ -216,7 +216,7 @@ const TagDropdown: React.FC<TagDropdownProps> = ({
         <Search size={12} className="shrink-0 text-black/20" />
         <input
           ref={inputRef}
-          type="search"
+          type="text"
           value={search}
           onFocus={() => setOpen(true)}
           onChange={event => {
@@ -227,7 +227,7 @@ const TagDropdown: React.FC<TagDropdownProps> = ({
           className="min-w-0 flex-1 bg-transparent text-[11px] text-black/70 outline-none placeholder:text-black/20"
         />
         {search && (
-          <button type="button" onClick={() => setSearch('')} className="text-black/20 hover:text-black/50">
+          <button type="button" onClick={() => setSearch('')} aria-label={zh ? '清空搜索' : 'Clear search'} className="search-clear-button">
             <X size={11} />
           </button>
         )}

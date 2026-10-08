@@ -1728,7 +1728,7 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
                 <>
                   <div className="relative hidden xl:block">
                     <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <input value={previewSearch} onChange={(event) => setPreviewSearch(event.target.value)} placeholder={zh ? '搜索命令' : 'Search output'} className="w-32 rounded-lg border border-slate-200 py-1.5 pl-7 pr-2 text-[9px] outline-none focus:border-cyan-300" />
+                    <input type="search" value={previewSearch} onChange={(event) => setPreviewSearch(event.target.value)} placeholder={zh ? '搜索命令' : 'Search output'} className="w-32 rounded-lg border border-slate-200 py-1.5 pl-7 pr-2 text-[9px] outline-none focus:border-cyan-300" />
                   </div>
                   <button type="button" onClick={() => setWrapPreview((value) => !value)} className={`rounded-lg border p-1.5 ${wrapPreview ? 'border-cyan-200 bg-cyan-50 text-cyan-700' : 'border-slate-200 text-slate-500'}`} title={zh ? '自动换行' : 'Wrap'}><WrapText size={12} /></button>
                   <ActionIconButton

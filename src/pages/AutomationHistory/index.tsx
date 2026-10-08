@@ -821,7 +821,8 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                     onHistoryPageChange(1);
                     void onRefreshHistory(1, playbookHistoryStatusFilter, '');
                   }}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-black/25 hover:text-black/50"
+                  aria-label={isZh ? '清空搜索' : 'Clear search'}
+                  className="search-clear-button absolute right-3 top-1/2 -translate-y-1/2"
                 >
                   <X size={12} />
                 </button>

@@ -913,13 +913,13 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
         <div className={`${panelClass} flex flex-wrap items-center gap-2 p-2.5`}>
           <div className="relative min-w-[220px] flex-1">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
+            <input type="text"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder={zh ? '搜索平台、厂商、驱动或解析器' : 'Search platform, vendor, driver, or parser'}
               className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-8 text-xs outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100"
             />
-            {search && <button type="button" onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700" aria-label="Clear search"><X size={14} /></button>}
+            {search && <button type="button" onClick={() => setSearch('')} className="search-clear-button absolute right-2 top-1/2 -translate-y-1/2" aria-label={zh ? '清空搜索' : 'Clear search'}><X size={14} /></button>}
           </div>
           <div className="flex items-center gap-1 text-slate-400"><Filter size={14} /><span className="text-[11px]">{zh ? '筛选' : 'Filters'}</span></div>
           <select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 outline-none">
@@ -1202,7 +1202,7 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                           <span>{zh ? 'Playbook 只保存 action_code；Release 发布的是平台映射快照，未修改的命令会从已发布版本带入。未绑定时不会改写命令或回退到其他模板。' : 'Playbooks store only action_code. A release publishes the platform mapping snapshot; unchanged commands are carried forward. Unbound actions never rewrite commands or fall back to another template.'}</span>
                           <label className="relative min-w-[220px] flex-1 sm:max-w-xs">
                             <Search size={12} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
-                            <input value={actionSearch} onChange={(event) => setActionSearch(event.target.value)} placeholder={zh ? '筛选 action_code / 命令' : 'Filter action_code / command'} className="w-full rounded-lg border border-slate-200 bg-white px-7 py-1.5 text-[10px] text-slate-700 outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100" />
+                            <input type="search" value={actionSearch} onChange={(event) => setActionSearch(event.target.value)} placeholder={zh ? '筛选 action_code / 命令' : 'Filter action_code / command'} className="w-full rounded-lg border border-slate-200 bg-white px-7 py-1.5 text-[10px] text-slate-700 outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100" />
                           </label>
                         </div>
                         {actionsLoading ? (

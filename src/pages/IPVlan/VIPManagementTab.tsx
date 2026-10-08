@@ -259,7 +259,7 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t }) => {
             <div className="relative w-full md:w-64">
               <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
               <input
-                type="text"
+                type="search"
                 value={search}
                 onChange={(e) => { setSearch(e.target.value); setPage(1); }}
                 placeholder={zh ? '搜索VIP地址、真实服务器...' : 'Search VIPs...'}

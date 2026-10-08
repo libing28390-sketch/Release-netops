@@ -587,10 +587,6 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
         subtitle={language === 'zh' ? '通过灵活的规则组合设定告警静默窗口，避免计划内变更引发告警风暴。' : 'Define suppression windows via flexible rule logic to prevent alert storms during planned maintenance.'}
         actions={
           <>
-            <button onClick={() => void loadMaintenanceWindows()} className={alertSecondaryButtonClass}>
-              <RefreshCw size={14} />
-              {language === 'zh' ? '刷新' : 'Refresh'}
-            </button>
             <button onClick={openCreate} className={alertPrimaryButtonClass}>
               <Plus size={14} />
               {language === 'zh' ? '新建维护期' : 'New Window'}
@@ -601,10 +597,10 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
 
       <div className="flex-1 flex flex-col overflow-hidden px-6 py-5 min-h-0">
       <div className={`${alertPanelClass} flex-1 min-h-0 flex flex-col overflow-hidden`}>
-        <div className="flex flex-col gap-3 px-5 py-4 lg:flex-row lg:items-center">
-          <label className="relative min-w-[240px] flex-1">
+        <div className="flex min-w-0 items-center gap-2 overflow-x-auto border-b border-black/5 px-5 py-3 no-scrollbar">
+          <label className="alert-management-search relative">
             <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/40" />
-            <input
+            <input type="search"
               value={searchQuery}
               onChange={(e) => {
                 setPage(1);
@@ -621,7 +617,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
               setPage(1);
               setStatusFilter(e.target.value as RuntimeFilter);
             }}
-            className="rounded-xl border border-black/10 bg-white px-3 py-3 text-sm text-[#164e63] outline-none"
+            className="shrink-0 whitespace-nowrap rounded-xl border border-black/10 bg-white px-3 py-3 text-sm text-[#164e63] outline-none"
           >
             <option value="all">{language === 'zh' ? '全部状态' : 'All Status'}</option>
             <option value="active">{language === 'zh' ? '生效中' : 'Active'}</option>
@@ -629,10 +625,18 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
             <option value="expired">{language === 'zh' ? '已过期' : 'Expired'}</option>
             <option value="cancelled">{language === 'zh' ? '已取消' : 'Cancelled'}</option>
           </select>
+          <ActionIconButton
+            icon={RefreshCw}
+            label={language === 'zh' ? '刷新维护窗口' : 'Refresh maintenance windows'}
+            size="md"
+            iconClassName={loading ? 'animate-spin' : ''}
+            className="shrink-0"
+            onClick={() => void loadMaintenanceWindows()}
+          />
         </div>
 
-        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar border-b border-black/5">
-          <DataTable unstyled exportConfig={{ filename: 'alert-maintenance-windows', language: language === 'zh' ? 'zh' : 'en', disabled: loading || windows.length === 0, exportData: exportAllMaintenanceWindows }} className="nx-data-table text-left">
+        <div className="alert-management-table-scroll flex-1 min-h-0 overflow-auto custom-scrollbar border-b border-black/5">
+          <DataTable unstyled exportConfig={{ filename: 'alert-maintenance-windows', language: language === 'zh' ? 'zh' : 'en', disabled: loading || windows.length === 0, exportData: exportAllMaintenanceWindows }} className="nx-data-table alert-management-table text-left">
             <thead className="sticky top-0 z-10">
               <tr className="border-y border-black/5 bg-[#f8fafc] text-[11px] font-bold uppercase tracking-[0.16em] text-black/40">
                 <th className="px-5 py-3">{language === 'zh' ? '维护名称' : 'Name'}</th>
@@ -1010,7 +1014,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
               <div className="space-y-4 px-6 py-6">
                 <label className="relative block">
                   <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/40" />
-                  <input
+                  <input type="search"
                     autoFocus
                     value={assetSearchQuery}
                     onChange={(e) => setAssetSearchQuery(e.target.value)}

@@ -13,7 +13,6 @@ import { listSites } from '../api/cmdb';
 import {
   alertInputClass,
   alertPanelClass,
-  alertSecondaryButtonClass,
   AlertPageCommonProps,
   formatDuration,
   formatTs,
@@ -179,24 +178,16 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
         eyebrow={zh ? '告警中心 / 历史告警' : 'Alert Center / Alert History'}
         title={zh ? '历史告警' : 'Alert History'}
         subtitle={zh ? '查询并溯源历史告警，复盘故障处理生命周期与时长记录。' : 'Trace historical alerts and review incident lifecycles and resolution metrics.'}
-        actions={
-          <>
-            <button onClick={() => void loadAlerts()} className={alertSecondaryButtonClass}>
-              <RefreshCw size={14} />
-              {zh ? '刷新' : 'Refresh'}
-            </button>
-          </>
-        }
       />
 
       <div className="flex-1 flex flex-col overflow-hidden px-6 py-5 min-h-0">
       <div className={`${alertPanelClass} flex-1 min-h-0 flex flex-col overflow-hidden`}>
         {/* Search bar */}
         <div className="flex flex-col gap-3 px-5 py-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-            <label className="relative min-w-[240px] flex-1">
+          <div className="flex min-w-0 items-center gap-2 overflow-x-auto border-b border-black/5 px-5 py-3 no-scrollbar">
+            <label className="alert-management-search relative">
               <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/40" />
-              <input
+              <input type="search"
                 value={search}
                 onChange={(e) => { setPage(1); setSearch(e.target.value); }}
                 placeholder={zh ? '搜索标题、设备、接口、IP' : 'Search title, device, interface, IP'}
@@ -208,7 +199,7 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
               title={zh ? '按级别筛选' : 'Filter by severity'}
               value={severityFilter}
               onChange={(e) => { setPage(1); setSeverityFilter(e.target.value); }}
-              className="rounded-xl border border-black/10 bg-white px-3 py-3 text-sm text-[#164e63] outline-none"
+              className="shrink-0 whitespace-nowrap rounded-xl border border-black/10 bg-white px-3 py-3 text-sm text-[#164e63] outline-none"
             >
               <option value="all">{zh ? '全部级别' : 'All Severity'}</option>
               <option value="critical">{severityLabel('critical', language)}</option>
@@ -220,7 +211,7 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
               title={zh ? '按通知投递状态筛选' : 'Filter by notification delivery'}
               value={notificationStatusFilter}
               onChange={(e) => { setPage(1); setNotificationStatusFilter(e.target.value); }}
-              className="rounded-xl border border-black/10 bg-white px-3 py-3 text-sm text-[#164e63] outline-none"
+              className="shrink-0 whitespace-nowrap rounded-xl border border-black/10 bg-white px-3 py-3 text-sm text-[#164e63] outline-none"
             >
               <option value="all">{zh ? '全部通知状态' : 'All Delivery Status'}</option>
               <option value="succeeded">{zh ? '已发送' : 'Sent'}</option>
@@ -231,7 +222,7 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
 
             <button
               onClick={() => setShowAdvanced(!showAdvanced)}
-              className={`flex items-center gap-1.5 rounded-xl border px-3 py-3 text-sm font-medium transition-colors ${
+              className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border px-3 py-3 text-sm font-medium transition-colors ${
                 showAdvanced || createdFrom || createdTo
                   ? 'border-[#06b6d4]/30 bg-[#ecfeff] text-[#0e7490]'
                   : 'border-black/10 bg-white text-black/55 hover:bg-black/[0.02]'
@@ -244,6 +235,14 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
                 <span className="ml-1 h-2 w-2 rounded-full bg-[#06b6d4]" />
               )}
             </button>
+            <ActionIconButton
+              icon={RefreshCw}
+              label={zh ? '刷新历史告警' : 'Refresh alert history'}
+              size="md"
+              iconClassName={loading ? 'animate-spin' : ''}
+              className="shrink-0"
+              onClick={() => void loadAlerts()}
+            />
           </div>
 
           {/* Advanced: time range */}
@@ -254,51 +253,44 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
                 animate={{ height: 'auto', opacity: 1 }}
                 exit={{ height: 0, opacity: 0 }}
                 transition={{ duration: 0.2 }}
-                className="overflow-hidden"
+                className="max-w-full overflow-x-auto overflow-y-hidden"
               >
-                <div className="rounded-2xl border border-black/5 bg-[#f8fafc] p-4">
-                  <div className="flex flex-wrap items-end gap-4">
-                    <div className="min-w-[200px] flex-1">
-                      <p className="mb-1.5 text-xs font-semibold text-black/45">{zh ? '开始时间' : 'From'}</p>
-                      <DateTimePicker value={createdFrom} onChange={(v) => { setCreatedFrom(v); setPage(1); }} language={language} placeholder={zh ? '选择开始时间' : 'Select start time'} />
-                    </div>
-                    <div className="min-w-[200px] flex-1">
-                      <p className="mb-1.5 text-xs font-semibold text-black/45">{zh ? '结束时间' : 'To'}</p>
-                      <DateTimePicker value={createdTo} onChange={(v) => { setCreatedTo(v); setPage(1); }} language={language} placeholder={zh ? '选择结束时间' : 'Select end time'} />
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="flex rounded-xl border border-black/10 bg-white">
-                        {[
-                          { label: zh ? '近7天' : '7d', days: 7 },
-                          { label: zh ? '近30天' : '30d', days: 30 },
-                          { label: zh ? '近90天' : '90d', days: 90 },
-                        ].map(q => (
-                          <button
-                            key={q.days}
-                            onClick={() => applyQuickRange(q.days)}
-                            className="border-r border-black/5 px-3 py-2.5 text-xs font-medium text-black/55 transition-colors last:border-r-0 hover:bg-[#ecfeff] hover:text-[#0e7490]"
-                          >
-                            {q.label}
-                          </button>
-                        ))}
-                      </div>
-                      {(createdFrom || createdTo) && (
-                        <button
-                          onClick={clearTimeRange}
-                          className="rounded-xl border border-black/10 p-2.5 text-black/40 hover:bg-black/[0.03] hover:text-black/60"
-                          title={zh ? '清除时间范围' : 'Clear time range'}
-                        >
-                          <X size={14} />
-                        </button>
-                      )}
-                    </div>
+                <div className="flex w-max flex-nowrap items-end gap-3 rounded-xl border border-black/5 bg-[#f8fafc] px-3 py-2.5">
+                  <div className="alert-management-time-search">
+                    <p className="mb-1 text-[11px] font-semibold text-black/45">{zh ? '开始时间' : 'From'}</p>
+                    <DateTimePicker value={createdFrom} onChange={(v) => { setCreatedFrom(v); setPage(1); }} language={language} placeholder={zh ? '选择开始时间' : 'Select start time'} />
                   </div>
-                  {(createdFrom || createdTo) && (
-                    <p className="mt-3 text-xs text-black/40">
-                      {zh ? '当前范围：' : 'Range: '}
-                      {createdFrom || '∞'} — {createdTo || '∞'}
-                    </p>
-                  )}
+                  <div className="alert-management-time-search">
+                    <p className="mb-1 text-[11px] font-semibold text-black/45">{zh ? '结束时间' : 'To'}</p>
+                    <DateTimePicker value={createdTo} onChange={(v) => { setCreatedTo(v); setPage(1); }} language={language} placeholder={zh ? '选择结束时间' : 'Select end time'} />
+                  </div>
+                  <div className="flex h-9 shrink-0 items-center gap-2">
+                    <div className="flex h-9 items-center rounded-lg border border-black/10 bg-white p-0.5">
+                      {[
+                        { label: zh ? '近7天' : '7d', days: 7 },
+                        { label: zh ? '近30天' : '30d', days: 30 },
+                        { label: zh ? '近90天' : '90d', days: 90 },
+                      ].map(q => (
+                        <button
+                          key={q.days}
+                          onClick={() => applyQuickRange(q.days)}
+                          className="h-8 rounded-md px-2.5 text-xs font-medium text-black/55 transition-colors hover:bg-[#ecfeff] hover:text-[#0e7490]"
+                        >
+                          {q.label}
+                        </button>
+                      ))}
+                    </div>
+                    {(createdFrom || createdTo) && (
+                      <button
+                        onClick={clearTimeRange}
+                        aria-label={zh ? '清除时间范围' : 'Clear time range'}
+                        className="flex h-9 w-9 items-center justify-center rounded-lg border border-black/10 bg-white text-black/40 transition-colors hover:bg-black/[0.03] hover:text-black/60"
+                        title={zh ? '清除时间范围' : 'Clear time range'}
+                      >
+                        <X size={14} />
+                      </button>
+                    )}
+                  </div>
                 </div>
               </motion.div>
             )}
@@ -313,8 +305,8 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
         </div>
 
         {/* Table */}
-        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar border-b border-black/5">
-          <DataTable unstyled exportConfig={{ filename: 'alert-history', language: zh ? 'zh' : 'en', disabled: loading || rows.length === 0, exportData: exportAllAlerts }} className="nx-data-table text-left">
+        <div className="alert-management-table-scroll flex-1 min-h-0 overflow-auto custom-scrollbar border-b border-black/5">
+          <DataTable unstyled exportConfig={{ filename: 'alert-history', language: zh ? 'zh' : 'en', disabled: loading || rows.length === 0, exportData: exportAllAlerts }} className="nx-data-table alert-management-table text-left">
             <thead className="sticky top-0 z-10">
               <tr className="border-y border-black/5 bg-[#f8fafc] text-[11px] font-bold uppercase tracking-[0.16em] text-black/40">
                 {exportHeaders.map((header) => <th key={header} className="px-5 py-3">{header}</th>)}
@@ -333,12 +325,12 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
                   <tr key={row.id} className="border-b border-black/5 hover:bg-black/[0.02]">
                     <td className="px-5 py-4 align-top">
                       <button onClick={() => setSelectedAlertId(row.id)} className="text-left" title={zh ? '查看详情' : 'View detail'}>
-                        <p className="text-sm font-semibold text-[#164e63]">
+                        <p title={row.title || '--'} className="max-w-[260px] truncate text-sm font-semibold text-[#164e63]">
                           {row.title || '--'}
                         </p>
                       </button>
                     </td>
-                    <td className="px-5 py-4 align-top text-sm text-black/60">{row.message || '--'}</td>
+                    <td className="px-5 py-4 align-top text-sm text-black/60"><div title={row.message || '--'} className="max-w-[360px] truncate">{row.message || '--'}</div></td>
                     <td className="px-5 py-4 align-top text-sm text-black/60">{row.occurrence_count ?? 1}</td>
                     <td className="px-5 py-4 align-top text-sm text-black/60">
                       {row.device_id ? (

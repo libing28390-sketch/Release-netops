@@ -804,7 +804,7 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                     </div>
                     <div className="relative">
                       <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-black/30" />
-                      <input
+                      <input type="search"
                         value={search}
                         onChange={(e) => {
                           setSearch(e.target.value);
@@ -1346,7 +1346,7 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                         <div className="flex gap-2 items-center flex-shrink-0 justify-between">
                           <div className="relative">
                             <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-black/25" />
-                            <input
+                            <input type="text"
                               value={addrSearch}
                               onChange={(e) => {
                                 setAddrSearch(e.target.value);
@@ -1361,7 +1361,8 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                                   setAddrSearch('');
                                   setAddrPage(1);
                                 }}
-                                className="absolute right-2 top-1/2 -translate-y-1/2 text-black/25 hover:text-black/50"
+                                aria-label={language === 'zh' ? '清空搜索' : 'Clear search'}
+                                className="search-clear-button absolute right-2 top-1/2 -translate-y-1/2"
                               >
                                 <X size={11} />
                               </button>

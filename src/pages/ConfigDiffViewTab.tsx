@@ -745,7 +745,7 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
                   <div className="flex items-center gap-2">
                     <div className="relative w-48 sm:w-72">
                       <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                      <input
+                      <input type="text"
                         value={deviceSearchDraft}
                         onChange={(e) => setDeviceSearchDraft(e.target.value)}
                         onKeyDown={(e) => { if (e.key === 'Enter') submitDeviceSearch(); }}
@@ -753,7 +753,7 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
                         className="w-full rounded-lg border border-slate-200 bg-slate-50 py-1 pl-8 pr-7 text-xs text-[#123b50] outline-none placeholder:text-slate-400 focus:border-cyan-300 focus:bg-white"
                       />
                       {deviceSearchDraft && (
-                        <button onClick={() => { setDeviceSearchDraft(''); setDeviceSearch(''); setDevPage(1); }} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700">
+                        <button onClick={() => { setDeviceSearchDraft(''); setDeviceSearch(''); setDevPage(1); }} aria-label={zh ? '清空搜索' : 'Clear search'} className="search-clear-button absolute right-2 top-1/2 -translate-y-1/2">
                           <X size={12} />
                         </button>
                       )}
@@ -1485,7 +1485,7 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
                           <PanelRightClose size={11} />
                         </button>
                       </div>
-                      <input
+                      <input type="search"
                         value={diffBlockQuery}
                         onChange={(e) => onDiffBlockQueryChange(e.target.value)}
                         placeholder={zh ? '过滤: interface / route' : 'Filter: interface / route'}

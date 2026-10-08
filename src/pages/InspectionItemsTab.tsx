@@ -339,7 +339,7 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
             <div className="relative group">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-black/20 group-focus-within:text-cyan-500 transition-colors" />
               <input
-                type="text"
+                type="search"
                 placeholder={zh ? '搜索指标...' : 'Search items...'}
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}

@@ -579,7 +579,7 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl shadow-lg backdrop-blur-xl bg-slate-950/90 border border-slate-700/70 text-slate-200 text-xs">
               <Search size={12} className="text-slate-400" />
               <input
-                type="text"
+                type="search"
                 placeholder={zh ? '搜索设备...' : 'Search device...'}
                 value={searchQuery}
                 onChange={e => {

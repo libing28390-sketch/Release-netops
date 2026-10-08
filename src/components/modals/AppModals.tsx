@@ -43,8 +43,6 @@ export const AppModals: React.FC<any> = (props) => {
     // DeleteConfirmModal
     showDeleteModal, isDeletingSelected, selectedDeviceIds, setShowDeleteModal,
     setDeviceToDelete, setIsDeletingSelected, confirmDeleteDevice,
-    // DeviceFormModal (add)
-    showAddModal, addForm, showAddDevicePwd, setAddForm, setShowAddDevicePwd, setShowAddModal, handleAddDevice,
     // DeviceFormModal (edit)
     showEditModal, editingDevice, editForm, showEditDevicePwd, setEditForm, setShowEditDevicePwd, setShowEditModal, handleSaveEdit,
     // Lifecycle confirm
@@ -217,24 +215,8 @@ export const AppModals: React.FC<any> = (props) => {
         }}
       />
 
-      {/* Edit Device Modal */}
-      {/* Add Device Modal */}
-      {showAddModal && (
-        <DeviceFormModal
-          mode="add"
-          language={language}
-          form={addForm}
-          passwordVisible={showAddDevicePwd}
-          onFormChange={setAddForm}
-          onTogglePasswordVisibility={() => setShowAddDevicePwd((value) => !value)}
-          onClose={() => setShowAddModal(false)}
-          onSubmit={handleAddDevice}
-        />
-      )}
-
       {showEditModal && editingDevice && (
         <DeviceFormModal
-          mode="edit"
           language={language}
           form={editForm}
           platformBindingReadOnly={Boolean(editingDevice.platform_profile_id)}
@@ -288,11 +270,7 @@ export const AppModals: React.FC<any> = (props) => {
               <button
                 disabled={!lifecycleConfirmChecked}
                 onClick={() => {
-                  if (showLifecycleConfirm === 'add') {
-                    handleAddDevice();
-                  } else {
-                    handleSaveEdit();
-                  }
+                  handleSaveEdit();
                 }}
                 className={`flex-1 rounded-xl px-4 py-2.5 text-xs font-bold uppercase tracking-widest text-white shadow-lg transition-all
                   ${lifecycleConfirmChecked

@@ -2247,7 +2247,7 @@ ${rep.repair_commands}
           <div className="relative flex-1 max-w-md">
             <Filter size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-black/30" />
             <input
-              type="text"
+              type="search"
               value={arpFilter}
               onChange={e => { setArpFilter(e.target.value); setArpPage(1); }}
               placeholder={zh ? '搜索 IP / MAC / 厂商 / 设备 / 接口...' : 'Filter by IP / MAC / vendor / device / interface...'}
@@ -2417,14 +2417,14 @@ ${rep.repair_commands}
           {/* Search */}
           <div className="relative flex-1 min-w-[200px]">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-black/30" />
-            <input
+            <input type="text"
               value={macFilter}
               onChange={e => { setMacFilter(e.target.value); setMacPage(1); }}
               placeholder={zh ? '搜索 IP / MAC / 厂商 / 设备...' : 'Search IP / MAC / Vendor / Device...'}
               className="w-full pl-9 pr-8 py-2.5 text-sm bg-black/[0.02] border border-black/8 rounded-xl outline-none focus:border-[#00bceb]/40 focus:ring-2 focus:ring-[#00bceb]/10 transition-all"
             />
             {macFilter && (
-              <button onClick={() => { setMacFilter(''); setMacPage(1); }} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-black/30 hover:text-black/60">
+              <button onClick={() => { setMacFilter(''); setMacPage(1); }} aria-label={zh ? '清空搜索' : 'Clear search'} className="search-clear-button absolute right-2.5 top-1/2 -translate-y-1/2">
                 <X size={13} />
               </button>
             )}
@@ -2649,7 +2649,7 @@ ${rep.repair_commands}
       <div className="flex items-center gap-3">
         <div className="relative flex-1 max-w-sm">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/30" />
-          <input
+          <input type="search"
             className="w-full pl-9 pr-3 py-2 bg-white dark:bg-[#1f2937]/30 rounded-xl border border-black/5 dark:border-white/5 text-sm placeholder-black/30 dark:placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-[#06b6d4]/30"
             placeholder={zh ? '搜索...' : 'Search...'}
             value={nsotFilter}

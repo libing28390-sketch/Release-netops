@@ -21,11 +21,6 @@ import {
 export { DEFAULT_COLUMNS } from './deviceColumns';
 export type { ColumnKey, ColumnVisibility } from './deviceColumns';
 /* ─── Helpers ─── */
-const clampPercent = (value?: number) => {
-  const n = Number(value ?? 0);
-  return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : 0;
-};
-
 const vendorOf = (platform: string): string => {
   if (!platform) return 'Unknown';
   const p = platform.toLowerCase();
@@ -186,8 +181,6 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
             {columns.lifecycle && <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">{zh ? '生命周期' : 'Lifecycle'}</th>}
             {columns.checkStatus && <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">{zh ? '连通性检查' : 'Connectivity check'}</th>}
             {columns.checkTime && <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">{zh ? '检查时间' : 'Check time'}</th>}
-            {columns.cpu && <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">CPU</th>}
-            {columns.memory && <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">{zh ? '内存' : 'Memory'}</th>}
             {columns.actions && (
               <TableActionHeader className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400 text-right pr-4">
                 {zh ? '操作' : 'Actions'}
@@ -200,8 +193,6 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
             const selected = selectedIds.includes(device.id);
             const expanded = expandedIds.has(device.id);
             const testing = connectionTestingDeviceId === device.id;
-            const cpu = clampPercent(device.cpu_usage);
-            const mem = clampPercent(device.memory_usage);
             const assetMetadata = device as Device & { asset_vendor?: string; asset_model?: string };
             const adaptationName = platformBindingName(device, zh) || (zh ? '待自动识别' : 'Awaiting detection');
             const statusConfig = STATUS_CFG[device.status] || STATUS_CFG.pending;
@@ -209,11 +200,6 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
             const lifecycleConfig = LIFECYCLE_CFG[device.lifecycle_status || 'staging'] || LIFECYCLE_CFG.staging;
             const connectionCheck = deviceConnectionChecks[device.id];
             const checkConfig = connectionCheck ? (CHECK_BADGE[connectionCheck.status] || CHECK_BADGE.fail) : null;
-            // Zero is a valid health value.  Only hide the bars when the
-            // collection status says there is no usable snapshot.
-            const metricsAvailable = device.collection_status === 'healthy'
-              || Boolean(device.collection_last_success_at)
-              || (!device.collection_status && (device.cpu_usage !== 0 || device.memory_usage !== 0));
 
             return (
               <React.Fragment key={device.id}>
@@ -288,8 +274,6 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
                   {columns.lifecycle && <td className={`px-3 py-2.5 text-xs font-semibold ${lifecycleConfig.text}`}>{zh ? lifecycleConfig.labelZh : lifecycleConfig.labelEn}</td>}
                   {columns.checkStatus && <td className="px-3 py-2.5 text-xs">{checkConfig ? <span className={`inline-flex rounded border px-1.5 py-0.5 font-bold ${checkConfig.cls}`}>{zh ? checkConfig.zh : checkConfig.en}</span> : <span className="text-gray-400 dark:text-zinc-500">—</span>}</td>}
                   {columns.checkTime && <td className="px-3 py-2.5 text-xs text-gray-600 dark:text-zinc-400">{connectionCheck?.checked_at ? formatCheckTime(connectionCheck.checked_at, language) : '—'}</td>}
-                  {columns.cpu && <td className="px-3 py-2.5 text-xs tabular-nums text-gray-700 dark:text-zinc-300">{metricsAvailable ? `${cpu}%` : '—'}</td>}
-                  {columns.memory && <td className="px-3 py-2.5 text-xs tabular-nums text-gray-700 dark:text-zinc-300">{metricsAvailable ? `${mem}%` : '—'}</td>}
                   {/* Actions */}
                   {columns.actions && (
                     <td className="px-3 py-2.5 text-right whitespace-nowrap" onClick={e => e.stopPropagation()}>

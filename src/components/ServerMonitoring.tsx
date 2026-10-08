@@ -747,7 +747,7 @@ const ServerMonitoring: React.FC<ServerMonitoringProps> = ({ language, devices, 
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={13} />
               <input
-                type="text"
+                type="search"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder={zh ? '搜索主机名 / IP...' : 'Search host / IP...'}

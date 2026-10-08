@@ -219,7 +219,7 @@ export default function WindowsServiceModal({
           <form onSubmit={submitSearch} className="flex min-w-[260px] flex-1 items-center gap-2">
             <div className="relative flex-1">
               <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
-              <input value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder={text.search} className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-xs outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100" />
+              <input type="search" value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder={text.search} className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-xs outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100" />
             </div>
             <button type="submit" className="rounded-xl bg-cyan-600 px-3.5 py-2 text-xs font-semibold text-white transition hover:bg-cyan-700">{text.submit}</button>
           </form>

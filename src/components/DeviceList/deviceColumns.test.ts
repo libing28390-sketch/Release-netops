@@ -19,13 +19,15 @@ function memoryStorage(initial: Record<string, string> = {}) {
 }
 
 describe('network-device column preferences', () => {
-  it('defaults to the useful identity, location, and health fields', () => {
+  it('defaults to the selected identity, tag, and health fields without CPU or memory columns', () => {
     expect(COLUMN_KEYS.filter((key) => DEFAULT_COLUMNS[key])).toEqual([
       'hostname', 'assetTag', 'managementIp', 'category', 'role',
-      'vendor', 'model', 'site', 'rack', 'rackUnit', 'status', 'health', 'actions',
+      'vendor', 'model', 'tags', 'status', 'health', 'actions',
     ]);
     expect(DEFAULT_COLUMNS.adaptation).toBe(false);
     const columnKeys = COLUMN_KEYS.map(String);
+    expect(columnKeys).not.toContain('cpu');
+    expect(columnKeys).not.toContain('memory');
     expect(columnKeys).not.toContain('platform');
     expect(columnKeys).not.toContain('adaptationVersion');
     expect(columnKeys).not.toContain('adaptationSource');
@@ -42,13 +44,60 @@ describe('network-device column preferences', () => {
     expect(loadColumnVisibility(storage)).toEqual(customized);
   });
 
-  it('resets old all-column preferences to the compact defaults after a preference version change', () => {
+  it('uses current defaults after a preference storage version change', () => {
     const oldAllColumns = Object.fromEntries(COLUMN_KEYS.map((key) => [key, true]));
     const storage = memoryStorage({
       'netops:network-devices:columns:v1': JSON.stringify(oldAllColumns),
     });
 
     expect(loadColumnVisibility(storage)).toEqual(DEFAULT_COLUMNS);
+  });
+
+  it('migrates the previous built-in defaults while keeping custom column choices', () => {
+    const previousDefaults = {
+      hostname: true, assetTag: true, managementIp: true, category: true, role: true,
+      connectionMethod: false, vendor: true, model: true, version: false, adaptation: false,
+      site: true, rack: true, rackUnit: true, tags: false, status: true, health: true,
+      lifecycle: false, checkStatus: false, checkTime: false, cpu: false, memory: false, actions: true,
+    };
+    const previousCompactDefaults = {
+      ...previousDefaults,
+      assetTag: false, category: false, role: false, vendor: false, model: false,
+      site: false, rack: false, rackUnit: false,
+    };
+
+    for (const previous of [previousDefaults, previousCompactDefaults]) {
+      expect(loadColumnVisibility(memoryStorage({
+        [COLUMN_VISIBILITY_STORAGE_KEY]: JSON.stringify(previous),
+      }))).toEqual(DEFAULT_COLUMNS);
+    }
+
+    const customized = { ...previousCompactDefaults, lifecycle: true };
+    expect(loadColumnVisibility(memoryStorage({
+      [COLUMN_VISIBILITY_STORAGE_KEY]: JSON.stringify(customized),
+    }))).toEqual({
+      ...DEFAULT_COLUMNS,
+      hostname: true,
+      assetTag: false,
+      managementIp: true,
+      category: false,
+      role: false,
+      connectionMethod: false,
+      vendor: false,
+      model: false,
+      version: false,
+      adaptation: false,
+      site: false,
+      rack: false,
+      rackUnit: false,
+      tags: false,
+      status: true,
+      health: true,
+      lifecycle: true,
+      checkStatus: false,
+      checkTime: false,
+      actions: true,
+    });
   });
 
   it('ignores unknown fields, defaults missing values, and keeps row actions enabled', () => {

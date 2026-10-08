@@ -234,7 +234,7 @@ const ROLE_LEVEL: Record<string, number> = { Administrator: 3, Operator: 2, View
                   <div className={`px-3 py-2.5 border-b ${resolvedTheme === 'dark' ? 'border-white/10' : 'border-black/[0.06]'}`}>
                     <div className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 ${resolvedTheme === 'dark' ? 'bg-white/[0.06]' : 'bg-black/[0.03]'}`}>
                       <Search size={14} className={resolvedTheme === 'dark' ? 'text-white/40' : 'text-black/35'} />
-                      <input
+                      <input type="search"
                         ref={appSearchRef}
                         value={appSearch}
                         onChange={e => setAppSearch(e.target.value)}

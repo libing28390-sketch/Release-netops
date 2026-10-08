@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { useInventoryStore } from '../store/inventoryStore';
 import { useInventoryTableActions } from '../hooks/useInventoryTableActions';
 import {
-  Upload, Plus, Search, Activity,
+  Search, Activity,
   AlertTriangle, CheckCircle2, XCircle, Server, Router,
   Shield, Trash2, SlidersHorizontal, Tag, RefreshCw, X, WifiOff, Settings2,
 } from 'lucide-react';
@@ -13,7 +13,6 @@ import {
   loadColumnVisibility,
   saveColumnVisibility,
   setColumnVisibility,
-  defaultColumnVisibility,
 } from '../components/DeviceList/deviceColumns';
 import { apiRequest } from '../api/http';
 import { buildNetworkDeviceExportData, fetchAllNetworkDevicePages, filterNetworkDevicesForExport } from '../components/DeviceList/deviceExport';
@@ -43,8 +42,6 @@ const COLUMN_LABELS: Record<ColumnKey, { zh: string; en: string }> = {
   lifecycle: { zh: '生命周期', en: 'Lifecycle' },
   checkStatus: { zh: '连通性检查', en: 'Connectivity check' },
   checkTime: { zh: '检查时间', en: 'Check time' },
-  cpu: { zh: 'CPU', en: 'CPU' },
-  memory: { zh: '内存', en: 'Memory' },
   actions: { zh: '操作', en: 'Actions' },
 };
 
@@ -129,7 +126,6 @@ interface InventoryDevicesTabProps {
   handleTestConnection: (device: Device, mode?: 'quick' | 'deep') => void;
   deviceConnectionChecks: Record<string, DeviceConnectionCheckSummary>;
   connectionTestingDeviceId: string | null;
-  setShowAddModal: (v: boolean) => void;
   setShowEditModal: (v: boolean) => void;
   setEditingDevice: (d: Device) => void;
   setEditForm: (d: Device) => void;
@@ -146,7 +142,7 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
   handleShowDetails,
   handleTestConnection,
   deviceConnectionChecks, connectionTestingDeviceId,
-  setShowAddModal, setShowEditModal, setEditingDevice, setEditForm,
+  setShowEditModal, setEditingDevice, setEditForm,
   setSelectedDevice, setActiveTab, onRefresh, language, currentUserRole, t,
 }) => {
   const zh = language === 'zh';
@@ -226,7 +222,7 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
     setColumns(prev => setColumnVisibility(prev, key, val));
   };
 
-  const handleColumnReset = () => setColumns(defaultColumnVisibility());
+  const handleColumnReset = () => setColumns({ ...DEFAULT_COLUMNS });
 
   // Status & Health Counts
   const totalDevices = inventoryTotal || 0;
@@ -364,28 +360,6 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
         icon={Router}
         title={zh ? '网络设备' : t('deviceInventory')}
         subtitle={zh ? '网络设备台账、多厂商驱动适配、配置同步与连通性监控' : t('manageMonitor')}
-        actions={
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setShowAddModal(true)}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all shadow-2xs cursor-pointer"
-            >
-              <Plus size={13} />
-              <span>{zh ? '添加设备' : 'Add Device'}</span>
-            </button>
-            <button
-              onClick={onRefresh}
-              title={zh ? '刷新设备列表' : 'Refresh list'}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-gray-200/80 dark:border-zinc-700/80
-                bg-white dark:bg-zinc-800 text-xs font-semibold text-gray-700 dark:text-zinc-300
-                hover:bg-gray-50 dark:hover:bg-zinc-700/60 transition-all cursor-pointer shadow-2xs"
-            >
-              <RefreshCw size={13} className={inventoryLoading ? 'animate-spin text-blue-500' : 'text-gray-500'} />
-              <span>{zh ? '刷新' : 'Refresh'}</span>
-            </button>
-            <ColumnToggle columns={columns} onChange={handleColumnToggle} onReset={handleColumnReset} language={language} />
-          </div>
-        }
       />
 
       <div className="flex-1 overflow-auto px-6 py-5 space-y-4">
@@ -497,9 +471,9 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
 
         {/* ════ Toolbar: Bento 搜索与高级过滤 ════ */}
         <div className="rounded-2xl border border-gray-100 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/90 shadow-2xs p-3.5">
-          <div className="flex flex-wrap items-center gap-2.5">
+          <div className="flex flex-wrap 2xl:flex-nowrap items-center gap-2">
             {/* Search Input */}
-            <div className="relative flex-1 min-w-[240px]">
+            <div className="relative flex-1 min-w-[220px] 2xl:max-w-[320px]">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={14} />
               <input
                 type="text"
@@ -514,7 +488,8 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
                 <button
                   type="button"
                   onClick={() => setInventorySearch('')}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-0.5 cursor-pointer"
+                  aria-label={zh ? '清空搜索' : 'Clear search'}
+                  className="search-clear-button absolute right-2.5 top-1/2 -translate-y-1/2"
                 >
                   <X size={12} />
                 </button>
@@ -526,7 +501,7 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
               value={inventoryPlatformFilter}
               onChange={e => setInventoryPlatformFilter(e.target.value)}
               title={zh ? '按平台筛选' : 'Filter by platform'}
-              className={`px-3 py-1.5 rounded-xl border text-xs outline-none cursor-pointer transition-all ${
+              className={`shrink-0 px-3 py-1.5 rounded-xl border text-xs outline-none cursor-pointer transition-all ${
                 inventoryPlatformFilter !== 'all'
                   ? 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300 font-semibold'
                   : 'bg-gray-50 dark:bg-zinc-800 border-gray-200/80 dark:border-zinc-700 text-gray-600 dark:text-zinc-300'
@@ -554,7 +529,7 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
               value={inventoryRoleFilter}
               onChange={e => setInventoryRoleFilter(e.target.value)}
               title={zh ? '按角色筛选' : 'Filter by role'}
-              className={`px-3 py-1.5 rounded-xl border text-xs outline-none cursor-pointer transition-all ${
+              className={`shrink-0 px-3 py-1.5 rounded-xl border text-xs outline-none cursor-pointer transition-all ${
                 inventoryRoleFilter !== 'all'
                   ? 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300 font-semibold'
                   : 'bg-gray-50 dark:bg-zinc-800 border-gray-200/80 dark:border-zinc-700 text-gray-600 dark:text-zinc-300'
@@ -575,7 +550,7 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
               value={inventoryStatusFilter}
               onChange={e => setInventoryStatusFilter(e.target.value)}
               title={zh ? '按在线状态筛选' : 'Filter by status'}
-              className={`px-3 py-1.5 rounded-xl border text-xs outline-none cursor-pointer transition-all ${
+              className={`shrink-0 px-3 py-1.5 rounded-xl border text-xs outline-none cursor-pointer transition-all ${
                 inventoryStatusFilter !== 'all'
                   ? 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300 font-semibold'
                   : 'bg-gray-50 dark:bg-zinc-800 border-gray-200/80 dark:border-zinc-700 text-gray-600 dark:text-zinc-300'
@@ -592,7 +567,7 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
               value={inventoryLifecycleFilter ?? 'all'}
               onChange={e => setInventoryLifecycleFilter(e.target.value)}
               title={zh ? '按生命周期筛选' : 'Filter by lifecycle'}
-              className={`px-3 py-1.5 rounded-xl border text-xs outline-none cursor-pointer transition-all ${
+              className={`shrink-0 px-3 py-1.5 rounded-xl border text-xs outline-none cursor-pointer transition-all ${
                 inventoryLifecycleFilter && inventoryLifecycleFilter !== 'all'
                   ? 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300 font-semibold'
                   : 'bg-gray-50 dark:bg-zinc-800 border-gray-200/80 dark:border-zinc-700 text-gray-600 dark:text-zinc-300'
@@ -613,6 +588,18 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
               language={language}
             />
 
+            <ColumnToggle columns={columns} onChange={handleColumnToggle} onReset={handleColumnReset} language={language} />
+            <button
+              type="button"
+              onClick={onRefresh}
+              disabled={inventoryLoading}
+              title={zh ? '刷新设备列表' : 'Refresh list'}
+              aria-label={zh ? '刷新设备列表' : 'Refresh list'}
+              className="shrink-0 p-1.5 rounded-xl border border-gray-200/80 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-gray-600 dark:text-zinc-300 hover:bg-gray-50 hover:text-blue-600 transition-all cursor-pointer disabled:cursor-wait"
+            >
+              <RefreshCw size={13} className={inventoryLoading ? 'animate-spin text-blue-500' : undefined} />
+            </button>
+
             {/* Reset CTA */}
             {hasFilters && (
               <button
@@ -624,8 +611,7 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
               </button>
             )}
 
-            <div className="flex-1" />
-            <span className="text-xs font-mono text-gray-400 tabular-nums whitespace-nowrap">
+            <span className="ml-auto shrink-0 text-xs font-mono text-gray-400 tabular-nums whitespace-nowrap">
               {zh
                 ? `本页显示 ${displayRows.length} 台 / 列表共 ${inventoryTotal} 台`
                 : `Showing ${displayRows.length} on this page / ${inventoryTotal} devices`}

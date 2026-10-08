@@ -436,7 +436,7 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative flex-1 max-w-md">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-black/30" />
-          <input
+          <input type="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={isZh ? '搜索模板名称或命令...' : 'Search filename or command...'}

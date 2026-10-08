@@ -586,7 +586,7 @@ const MibUploadModal: React.FC<MibUploadModalProps> = ({
                 <div className="absolute left-0 top-full z-50 mt-1 w-[260px] overflow-hidden rounded-xl border border-black/10 bg-white shadow-xl dark:border-white/12 dark:bg-[#111b2d]">
                   <div className="relative border-b border-black/6 p-1.5 dark:border-white/8">
                     <Search size={12} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/30" />
-                    <input
+                    <input type="search"
                       autoFocus
                       value={vendorSearch}
                       onChange={event => setVendorSearch(event.target.value)}
@@ -654,7 +654,7 @@ const MibUploadModal: React.FC<MibUploadModalProps> = ({
             </div>
             <div className="relative min-w-[160px] flex-1">
               <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/25" />
-              <input
+              <input type="search"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 placeholder={zh ? '搜索 MIB 名称…' : 'Search MIB name…'}
@@ -897,7 +897,7 @@ const MibUploadModal: React.FC<MibUploadModalProps> = ({
                   <form onSubmit={searchDetailNodes} className="mt-2 flex flex-wrap items-center gap-2">
                     <div className="relative min-w-[180px] flex-1">
                       <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/25" />
-                      <input
+                      <input type="search"
                         value={nodeSearchInput}
                         onChange={event => setNodeSearchInput(event.target.value)}
                         placeholder={zh ? '搜索节点名称 / OID…' : 'Search node name / OID…'}

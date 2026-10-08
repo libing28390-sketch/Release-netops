@@ -378,14 +378,14 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
             <div className="flex flex-col gap-3 border-b border-black/5 p-4 xl:flex-row xl:items-center">
               <label className="relative min-w-[240px] flex-1">
                 <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-black/30" />
-                <input
+                <input type="text"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                   placeholder={zh ? '搜索名称、代码或描述...' : 'Search name, code, or description...'}
                   className="w-full rounded-xl border border-black/10 bg-white py-2.5 pl-9 pr-9 text-sm text-[#164e63] outline-none placeholder:text-black/30 focus:border-[#06b6d4]/40 focus:ring-2 focus:ring-[#06b6d4]/10"
                 />
                 {search && (
-                  <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-black/30 hover:text-black/60">
+                  <button onClick={() => setSearch('')} aria-label={zh ? '清空搜索' : 'Clear search'} className="search-clear-button absolute right-3 top-1/2 -translate-y-1/2">
                     <X size={14} />
                   </button>
                 )}

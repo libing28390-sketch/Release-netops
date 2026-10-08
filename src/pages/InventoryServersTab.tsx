@@ -1,14 +1,14 @@
 import { DataTable } from '../components/DataTable';
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Search, Plus, Upload, Trash2, Pencil,
-  Server, ChevronDown, ChevronUp, ChevronRight,
+  Server, ChevronDown, ChevronUp, ChevronRight, SlidersHorizontal,
   CheckCircle2, XCircle, AlertTriangle, Wrench, X, Activity, RefreshCw, Settings2,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
-import { ActionButton, ActionIconButton } from '../components/ui/ActionIconButton';
+import { ActionIconButton } from '../components/ui/ActionIconButton';
 import { authHeaders } from '../api/http';
 import { fetchAllPaginatedItems } from '../utils/pagination';
 import { buildInventoryServersExportData, filterInventoryServers } from './inventoryServersExport';
@@ -27,6 +27,74 @@ interface ServerAsset {
   warranty_expiry: string; department: string; notes: string;
   created_at: string; updated_at: string;
 }
+
+type ServerColumnKey =
+  | 'hostname' | 'management_ip' | 'device_role' | 'vendor' | 'model'
+  | 'datacenter' | 'rack' | 'rack_unit' | 'status' | 'ping' | 'ssh' | 'department';
+
+type ServerColumnVisibility = Record<ServerColumnKey, boolean>;
+
+const SERVER_COLUMN_DEFS: Array<{ key: ServerColumnKey; zh: string; en: string }> = [
+  { key: 'hostname', zh: '主机名', en: 'Hostname' },
+  { key: 'management_ip', zh: '管理 IP', en: 'Management IP' },
+  { key: 'device_role', zh: '角色', en: 'Role' },
+  { key: 'vendor', zh: '厂商', en: 'Vendor' },
+  { key: 'model', zh: '型号', en: 'Model' },
+  { key: 'datacenter', zh: '数据中心', en: 'Datacenter' },
+  { key: 'rack', zh: '机柜', en: 'Rack' },
+  { key: 'rack_unit', zh: 'U 位', en: 'Rack unit' },
+  { key: 'status', zh: '状态', en: 'Status' },
+  { key: 'ping', zh: 'Ping', en: 'Ping' },
+  { key: 'ssh', zh: 'SSH', en: 'SSH' },
+  { key: 'department', zh: '部门', en: 'Department' },
+];
+
+const LEGACY_DEFAULT_SERVER_COLUMNS: ServerColumnVisibility = {
+  hostname: true,
+  management_ip: true,
+  device_role: false,
+  vendor: false,
+  model: false,
+  datacenter: false,
+  rack: false,
+  rack_unit: false,
+  status: true,
+  ping: false,
+  ssh: false,
+  department: false,
+};
+
+const DEFAULT_SERVER_COLUMNS: ServerColumnVisibility = {
+  hostname: true,
+  management_ip: true,
+  device_role: true,
+  vendor: true,
+  model: true,
+  datacenter: true,
+  rack: true,
+  rack_unit: true,
+  status: true,
+  ping: true,
+  ssh: true,
+  department: true,
+};
+
+const SERVER_COLUMN_STORAGE_KEY = 'netops:inventory-servers:columns:v1';
+
+const loadServerColumnVisibility = (): ServerColumnVisibility => {
+  try {
+    const stored = window.localStorage.getItem(SERVER_COLUMN_STORAGE_KEY);
+    const saved = stored ? JSON.parse(stored) as Record<string, unknown> : {};
+    const isLegacyDefault = stored && SERVER_COLUMN_DEFS.every(({ key }) => saved[key] === LEGACY_DEFAULT_SERVER_COLUMNS[key]);
+    if (isLegacyDefault) return { ...DEFAULT_SERVER_COLUMNS };
+    return Object.fromEntries(SERVER_COLUMN_DEFS.map(({ key }) => [
+      key,
+      typeof saved[key] === 'boolean' ? saved[key] : DEFAULT_SERVER_COLUMNS[key],
+    ])) as ServerColumnVisibility;
+  } catch {
+    return { ...DEFAULT_SERVER_COLUMNS };
+  }
+};
 
 interface Props {
   language: string;
@@ -76,6 +144,68 @@ const SortHeader: React.FC<{
         )}
       </span>
     </th>
+  );
+};
+
+const ServerColumnToggle: React.FC<{
+  columns: ServerColumnVisibility;
+  onChange: (key: ServerColumnKey, visible: boolean) => void;
+  onReset: () => void;
+  language: string;
+}> = ({ columns, onChange, onReset, language }) => {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const zh = language === 'zh';
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (event: MouseEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const visibleCount = SERVER_COLUMN_DEFS.filter(({ key }) => columns[key]).length;
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls="server-column-options"
+        onClick={() => setOpen(value => !value)}
+        title={zh ? '列显示设置' : 'Column visibility'}
+        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] border border-black/6 dark:border-white/8 rounded-lg text-black/55 dark:text-white/55 hover:bg-black/[.02] dark:hover:bg-white/[.03]"
+      >
+        <SlidersHorizontal size={12} />
+        {zh ? '列设置' : 'Columns'}
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1.5 z-50 w-56 max-h-[70vh] overflow-y-auto rounded-xl border border-black/8 dark:border-white/10 bg-white dark:bg-[#0d1526] shadow-xl py-2">
+          <div id="server-column-options" className="px-3 pb-1.5 mb-1 border-b border-black/6 dark:border-white/8 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/35">
+            {zh ? '自定义展示列' : 'Visible columns'}
+          </div>
+          <div className="px-2 pb-1">
+            {SERVER_COLUMN_DEFS.map(column => (
+              <label key={column.key} className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-black/70 dark:text-white/70 hover:bg-black/[.03] dark:hover:bg-white/[.04] cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={columns[column.key]}
+                  disabled={columns[column.key] && visibleCount <= 1}
+                  onChange={event => onChange(column.key, event.target.checked)}
+                  className="rounded border-black/20 dark:border-white/20 text-[#00bceb] focus:ring-[#00bceb]"
+                />
+                <span>{zh ? column.zh : column.en}</span>
+              </label>
+            ))}
+          </div>
+          <button type="button" onClick={onReset} className="w-full border-t border-black/6 dark:border-white/8 px-3 pt-2 text-left text-xs font-semibold text-[#0096bd] dark:text-[#5dd8f0] hover:bg-[#00bceb]/5">
+            {zh ? '恢复默认列' : 'Restore default columns'}
+          </button>
+        </div>
+      )}
+    </div>
   );
 };
 
@@ -200,6 +330,7 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
   const [statusFilter, setStatusFilter] = useState('all');
   const [vendorFilter, setVendorFilter] = useState('');
   const [dcFilter, setDcFilter]         = useState('');
+  const [columns, setColumns]           = useState<ServerColumnVisibility>(() => loadServerColumnVisibility());
   const [sortConfig, setSortConfig]     = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
   const [selectedIds, setSelectedIds]   = useState<Set<string>>(new Set());
   const [quickFilter, setQuickFilter]   = useState<'all' | 'offline' | 'warning' | 'healthy'>('all');
@@ -208,6 +339,15 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
   const [deleting, setDeleting]         = useState(false);
   const [verifyingIds, setVerifyingIds] = useState<Set<string>>(new Set());
   const [verifyResults, setVerifyResults] = useState<Record<string, any>>({});
+  const visibleServerColumns = SERVER_COLUMN_DEFS.filter(column => columns[column.key]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SERVER_COLUMN_STORAGE_KEY, JSON.stringify(columns));
+    } catch {
+      // Browser storage may be disabled; the in-memory selection still works.
+    }
+  }, [columns]);
 
   /* ─── Data Fetching ─── */
   const fetchServers = useCallback(async () => {
@@ -366,21 +506,16 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
         icon={Server}
         title={zh ? '服务器管理' : 'Server Management'}
         subtitle={zh ? '管理和查看数据中心服务器资产。' : 'Manage and view datacenter server assets.'}
-        actions={
-          <ActionButton icon={RefreshCw} iconClassName={loading ? 'animate-spin' : undefined} variant="accent" onClick={fetchServers} title={zh ? '刷新' : 'Refresh'}>
-            {zh ? '刷新' : 'Refresh'}
-          </ActionButton>
-        }
       />
 
       <div className="flex-1 overflow-auto px-6 py-5 space-y-4">
 
       {/* ════ Toolbar: Search + Filters ════ */}
-      <div className="flex flex-col lg:flex-row gap-3 p-3 rounded-xl border border-black/5 dark:border-white/8 bg-[var(--card-bg)]">
-        <div className="relative flex-1 min-w-0">
+      <div className="flex flex-col gap-3 p-3 rounded-xl border border-black/5 dark:border-white/8 bg-[var(--card-bg)] 2xl:flex-row 2xl:items-center">
+        <div className="relative w-full 2xl:flex-1 2xl:min-w-[220px] 2xl:max-w-[320px]">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/25 pointer-events-none" size={14} />
           <input
-            type="text"
+            type="search"
             placeholder={zh ? '搜索 IP / 主机名 / SN …' : 'Search IP / hostname / SN …'}
             value={search}
             onChange={e => { setSearch(e.target.value); setPage(1); }}
@@ -389,10 +524,10 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
               text-black/80 dark:text-white/80 placeholder:text-black/25 dark:placeholder:text-white/20"
           />
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex flex-wrap items-center gap-2 2xl:flex-nowrap">
           <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setPage(1); }}
             title={zh ? '按状态筛选' : 'Filter by status'}
-            className="px-2.5 py-1.5 text-[11px] border border-black/6 dark:border-white/8 rounded-lg bg-transparent
+            className="shrink-0 px-2.5 py-1.5 text-[11px] border border-black/6 dark:border-white/8 rounded-lg bg-transparent
               outline-none text-black/55 dark:text-white/55 focus:border-[#00bceb]/40">
             <option value="all">{zh ? '全部状态' : 'All Status'}</option>
             {STATUSES.map(s => (
@@ -402,7 +537,7 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
           {vendors.length > 0 && (
             <select value={vendorFilter} onChange={e => { setVendorFilter(e.target.value); setPage(1); }}
               title={zh ? '按厂商筛选' : 'Filter by vendor'}
-              className="px-2.5 py-1.5 text-[11px] border border-black/6 dark:border-white/8 rounded-lg bg-transparent
+              className="shrink-0 px-2.5 py-1.5 text-[11px] border border-black/6 dark:border-white/8 rounded-lg bg-transparent
                 outline-none text-black/55 dark:text-white/55 focus:border-[#00bceb]/40">
               <option value="">{zh ? '全部厂商' : 'All Vendors'}</option>
               {vendors.map(v => <option key={v} value={v}>{v}</option>)}
@@ -411,50 +546,63 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
           {datacenters.length > 0 && (
             <select value={dcFilter} onChange={e => { setDcFilter(e.target.value); setPage(1); }}
               title={zh ? '按数据中心筛选' : 'Filter by datacenter'}
-              className="px-2.5 py-1.5 text-[11px] border border-black/6 dark:border-white/8 rounded-lg bg-transparent
+              className="shrink-0 px-2.5 py-1.5 text-[11px] border border-black/6 dark:border-white/8 rounded-lg bg-transparent
                 outline-none text-black/55 dark:text-white/55 focus:border-[#00bceb]/40">
               <option value="">{zh ? '全部数据中心' : 'All Datacenters'}</option>
               {datacenters.map(d => <option key={d} value={d}>{d}</option>)}
             </select>
           )}
+          <div className="flex flex-wrap items-center gap-1.5 2xl:flex-nowrap 2xl:shrink-0">
+            <QuickTag icon={<Server size={11} />} label={zh ? '全部' : 'All'} count={total}
+              active={quickFilter === 'all'}
+              tone="bg-[#00bceb]/10 border-[#00bceb]/25 text-[#0096bd] dark:text-[#5dd8f0] dark:border-[#00bceb]/20"
+              onClick={() => setQuickFilter('all')} />
+            <QuickTag icon={<XCircle size={11} />} label={zh ? '离线' : 'Offline'} count={counts.offline}
+              active={quickFilter === 'offline'}
+              tone="bg-red-500/10 border-red-500/25 text-red-600 dark:text-red-400 dark:border-red-500/20"
+              onClick={() => setQuickFilter(quickFilter === 'offline' ? 'all' : 'offline')} />
+            <QuickTag icon={<AlertTriangle size={11} />} label={zh ? '维护中' : 'Maintenance'} count={counts.warning}
+              active={quickFilter === 'warning'}
+              tone="bg-amber-500/10 border-amber-500/25 text-amber-600 dark:text-amber-400 dark:border-amber-500/20"
+              onClick={() => setQuickFilter(quickFilter === 'warning' ? 'all' : 'warning')} />
+            <QuickTag icon={<CheckCircle2 size={11} />} label={zh ? '在线' : 'Online'} count={counts.healthy}
+              active={quickFilter === 'healthy'}
+              tone="bg-emerald-500/10 border-emerald-500/25 text-emerald-600 dark:text-emerald-400 dark:border-emerald-500/20"
+              onClick={() => setQuickFilter(quickFilter === 'healthy' ? 'all' : 'healthy')} />
+          </div>
+          <ServerColumnToggle
+            columns={columns}
+            onChange={(key, visible) => setColumns(current => ({ ...current, [key]: visible }))}
+            onReset={() => setColumns({ ...DEFAULT_SERVER_COLUMNS })}
+            language={language}
+          />
+          <button
+            type="button"
+            onClick={fetchServers}
+            disabled={loading}
+            title={zh ? '刷新服务器列表' : 'Refresh server list'}
+            aria-label={zh ? '刷新服务器列表' : 'Refresh server list'}
+            className="shrink-0 p-1.5 border border-black/6 dark:border-white/8 rounded-lg text-black/55 dark:text-white/55 hover:bg-black/[.02] dark:hover:bg-white/[.03] cursor-pointer disabled:cursor-wait"
+          >
+            <RefreshCw size={13} className={loading ? 'animate-spin' : undefined} />
+          </button>
         </div>
       </div>
 
-      {/* ════ Quick Filters + Batch Actions ════ */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <QuickTag icon={<Server size={11} />} label={zh ? '全部' : 'All'} count={total}
-            active={quickFilter === 'all'}
-            tone="bg-[#00bceb]/10 border-[#00bceb]/25 text-[#0096bd] dark:text-[#5dd8f0] dark:border-[#00bceb]/20"
-            onClick={() => setQuickFilter('all')} />
-          <QuickTag icon={<XCircle size={11} />} label={zh ? '离线' : 'Offline'} count={counts.offline}
-            active={quickFilter === 'offline'}
-            tone="bg-red-500/10 border-red-500/25 text-red-600 dark:text-red-400 dark:border-red-500/20"
-            onClick={() => setQuickFilter(quickFilter === 'offline' ? 'all' : 'offline')} />
-          <QuickTag icon={<AlertTriangle size={11} />} label={zh ? '维护中' : 'Maintenance'} count={counts.warning}
-            active={quickFilter === 'warning'}
-            tone="bg-amber-500/10 border-amber-500/25 text-amber-600 dark:text-amber-400 dark:border-amber-500/20"
-            onClick={() => setQuickFilter(quickFilter === 'warning' ? 'all' : 'warning')} />
-          <QuickTag icon={<CheckCircle2 size={11} />} label={zh ? '在线' : 'Online'} count={counts.healthy}
-            active={quickFilter === 'healthy'}
-            tone="bg-emerald-500/10 border-emerald-500/25 text-emerald-600 dark:text-emerald-400 dark:border-emerald-500/20"
-            onClick={() => setQuickFilter(quickFilter === 'healthy' ? 'all' : 'healthy')} />
-        </div>
-
-        {selectedIds.size > 0 && (
-          <div className="flex items-center gap-2">
+      {/* ════ Batch selection status ════ */}
+      {selectedIds.size > 0 && (
+          <div className="flex items-center justify-end gap-2">
             <span className="text-[11px] font-medium text-black/45 dark:text-white/40 tabular-nums">
               {selectedIds.size} {zh ? '已选' : 'selected'}
             </span>
             {/* Batch delete removed — use Asset Management for CRUD */}
           </div>
-        )}
-      </div>
+      )}
 
       {/* ════ Table ════ */}
       <div className="rounded-xl border border-black/5 dark:border-white/8 bg-[var(--card-bg)] overflow-hidden">
         <div className="overflow-x-auto">
-          <DataTable unstyled exportConfig={{ filename: 'inventory-servers', exportData }} className="nx-data-table min-w-[1320px] text-left">
+          <DataTable unstyled exportConfig={{ filename: 'inventory-servers', exportData }} className="nx-data-table w-full min-w-[760px] text-left">
             <thead>
               <tr className="bg-black/[.02] dark:bg-white/[.02] border-b border-black/5 dark:border-white/6">
                 <th className="px-3 py-2.5 w-9">
@@ -467,29 +615,19 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
                     onChange={e => handleSelectAll(e.target.checked)}
                   />
                 </th>
-                <SortHeader col="hostname" sortConfig={sortConfig} onSort={handleSort}>
-                  {zh ? '主机名' : 'Hostname'}
-                </SortHeader>
-                <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">{zh ? '管理 IP' : 'Management IP'}</th>
-                <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">{zh ? '角色' : 'Role'}</th>
-                <SortHeader col="vendor" sortConfig={sortConfig} onSort={handleSort}>
-                  {zh ? '厂商' : 'Vendor'}
-                </SortHeader>
-                <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">{zh ? '型号' : 'Model'}</th>
-                <SortHeader col="datacenter" sortConfig={sortConfig} onSort={handleSort}>
-                  {zh ? '数据中心' : 'Datacenter'}
-                </SortHeader>
-                <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">{zh ? '机柜' : 'Rack'}</th>
-                <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">{zh ? 'U 位' : 'Rack Unit'}</th>
-                <SortHeader col="status" sortConfig={sortConfig} onSort={handleSort}>
-                  {zh ? '状态' : 'Status'}
-                </SortHeader>
-                <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">Ping</th>
-                <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">SSH</th>
-                <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">
-                  {zh ? '部门' : 'Dept'}
-                </th>
-                <TableActionHeader className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30 text-right pr-4">
+                <SortHeader col="hostname" sortConfig={sortConfig} onSort={handleSort} className={columns.hostname ? '' : 'hidden'}>{zh ? '主机名' : 'Hostname'}</SortHeader>
+                <th hidden={!columns.management_ip} className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">{zh ? '管理 IP' : 'Management IP'}</th>
+                <th hidden={!columns.device_role} className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">{zh ? '角色' : 'Role'}</th>
+                <SortHeader col="vendor" sortConfig={sortConfig} onSort={handleSort} className={columns.vendor ? '' : 'hidden'}>{zh ? '厂商' : 'Vendor'}</SortHeader>
+                <th hidden={!columns.model} className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">{zh ? '型号' : 'Model'}</th>
+                <SortHeader col="datacenter" sortConfig={sortConfig} onSort={handleSort} className={columns.datacenter ? '' : 'hidden'}>{zh ? '数据中心' : 'Datacenter'}</SortHeader>
+                <th hidden={!columns.rack} className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">{zh ? '机柜' : 'Rack'}</th>
+                <th hidden={!columns.rack_unit} className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">{zh ? 'U 位' : 'Rack Unit'}</th>
+                <SortHeader col="status" sortConfig={sortConfig} onSort={handleSort} className={columns.status ? '' : 'hidden'}>{zh ? '状态' : 'Status'}</SortHeader>
+                <th hidden={!columns.ping} className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">Ping</th>
+                <th hidden={!columns.ssh} className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">SSH</th>
+                <th hidden={!columns.department} className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">{zh ? '部门' : 'Dept'}</th>
+                <TableActionHeader className="sticky right-0 z-20 bg-[var(--card-bg)] px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30 text-right pr-4">
                   {zh ? '操作' : 'Actions'}
                 </TableActionHeader>
               </tr>
@@ -525,52 +663,45 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
                         }}
                       />
                     </td>
-                    {/* Hostname */}
-                    <td className="px-3 py-2">
+                    <td hidden={!columns.hostname} className="px-3 py-2">
                       <div className="text-left">
                         <span className="text-[12px] font-semibold text-black/80 dark:text-white/85 group-hover:text-[#00bceb] transition-colors">
                           {server.hostname || 'Unknown'}
                         </span>
                       </div>
                     </td>
-                    <td className="px-3 py-2 text-[10px] font-mono text-black/55 dark:text-white/55">{server.management_ip || '0.0.0.0'}</td>
-                    <td className="px-3 py-2">
+                    <td hidden={!columns.management_ip} className="px-3 py-2 text-[10px] font-mono text-black/55 dark:text-white/55">{server.management_ip || '0.0.0.0'}</td>
+                    <td hidden={!columns.device_role} className="px-3 py-2">
                       {server.device_role ? (
                         <span className="inline-block text-[9px] font-semibold uppercase px-1.5 py-0.5 rounded bg-black/[.04] dark:bg-white/6 text-black/45 dark:text-white/45">
                           {server.device_role}
                         </span>
                       ) : '—'}
                     </td>
-                    <td className="px-3 py-2">
-                      <span className="text-[11px] font-medium text-black/65 dark:text-white/65">{server.vendor || '—'}</span>
-                    </td>
-                    <td className="px-3 py-2 text-[10px] text-black/45 dark:text-white/45">{server.model || '—'}</td>
-                    {/* Datacenter */}
-                    <td className="px-3 py-2 text-[11px] text-black/55 dark:text-white/55">{server.datacenter || '—'}</td>
-                    <td className="px-3 py-2 text-[10px] text-black/45 dark:text-white/45">{server.rack || '—'}</td>
-                    <td className="px-3 py-2 text-[10px] text-black/45 dark:text-white/45">{server.rack_unit ? `U${server.rack_unit}` : '—'}</td>
-                    {/* Status */}
-                    <td className="px-3 py-2">
+                    <td hidden={!columns.vendor} className="px-3 py-2"><span className="text-[11px] font-medium text-black/65 dark:text-white/65">{server.vendor || '—'}</span></td>
+                    <td hidden={!columns.model} className="px-3 py-2 text-[10px] text-black/45 dark:text-white/45">{server.model || '—'}</td>
+                    <td hidden={!columns.datacenter} className="px-3 py-2 text-[11px] text-black/55 dark:text-white/55">{server.datacenter || '—'}</td>
+                    <td hidden={!columns.rack} className="px-3 py-2 text-[10px] text-black/45 dark:text-white/45">{server.rack || '—'}</td>
+                    <td hidden={!columns.rack_unit} className="px-3 py-2 text-[10px] text-black/45 dark:text-white/45">{server.rack_unit ? `U${server.rack_unit}` : '—'}</td>
+                    <td hidden={!columns.status} className="px-3 py-2">
                       <div className="flex flex-col gap-1.5">
                         <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold border self-start ${st.badge}`}>
                           <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`} />
                           {zh ? st.zh : st.en}
                         </span>
-                        
                       </div>
                     </td>
-                    <td className="px-3 py-2 text-[10px] font-semibold text-black/55 dark:text-white/55" title={verifyResults[server.id]?.ping_error || undefined}>
+                    <td hidden={!columns.ping} className="px-3 py-2 text-[10px] font-semibold text-black/55 dark:text-white/55" title={verifyResults[server.id]?.ping_error || undefined}>
                       {verifyResults[server.id] ? (verifyResults[server.id].ping ? 'OK' : 'FAIL') : '—'}
                     </td>
-                    <td className="px-3 py-2 text-[10px] font-semibold text-black/55 dark:text-white/55" title={verifyResults[server.id]?.ssh_error || undefined}>
+                    <td hidden={!columns.ssh} className="px-3 py-2 text-[10px] font-semibold text-black/55 dark:text-white/55" title={verifyResults[server.id]?.ssh_error || undefined}>
                       {verifyResults[server.id] ? (verifyResults[server.id].ssh ? 'OK' : 'FAIL') : '—'}
                     </td>
-                    {/* Department */}
-                    <td className="px-3 py-2">
+                    <td hidden={!columns.department} className="px-3 py-2">
                       <span className="text-[11px] text-black/55 dark:text-white/55">{server.department || '—'}</span>
                     </td>
                     {/* Actions */}
-                    <TableActionCell className="px-3 py-2" onClick={e => e.stopPropagation()} label={zh ? '服务器操作' : 'Server actions'}>
+                    <TableActionCell className="sticky right-0 z-10 bg-[var(--card-bg)] px-3 py-2" onClick={e => e.stopPropagation()} label={zh ? '服务器操作' : 'Server actions'}>
                       <ActionIconButton
                         icon={Settings2}
                         label={zh ? '配置连接' : 'Configure connection'}
@@ -596,7 +727,7 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
               {/* Empty state */}
               {!loading && displayRows.length === 0 && (
                 <tr>
-                  <td colSpan={14} className="px-6 py-12 text-center">
+                  <td colSpan={visibleServerColumns.length + 2} className="px-6 py-12 text-center">
                     <Server size={28} className="mx-auto mb-2 text-black/15 dark:text-white/15" />
                     <p className="text-sm text-black/35 dark:text-white/30">
                       {zh ? '没有匹配的服务器' : 'No servers found for current filters.'}
@@ -608,7 +739,7 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
               {/* Loading state */}
               {loading && displayRows.length === 0 && (
                 <tr>
-                  <td colSpan={14} className="px-6 py-12 text-center">
+                  <td colSpan={visibleServerColumns.length + 2} className="px-6 py-12 text-center">
                     <div className="inline-block w-5 h-5 border-2 border-[#00bceb]/30 border-t-[#00bceb] rounded-full animate-spin mb-2" />
                     <p className="text-sm text-black/35 dark:text-white/30">
                       {zh ? '加载中…' : 'Loading servers...'}

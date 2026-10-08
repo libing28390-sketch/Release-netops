@@ -1316,10 +1316,6 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
               </span>
               {language === 'zh' ? '遥测采集守护中 (15s/60s)' : 'Telemetry Daemon Active (15s/60s)'}
             </div>
-            <button onClick={() => void loadAlertRules()} className={alertSecondaryButtonClass}>
-              <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-              {language === 'zh' ? '刷新' : 'Refresh'}
-            </button>
             <button onClick={openCreate} className={alertPrimaryButtonClass}>
               <Plus size={14} />
               {language === 'zh' ? '新增规则' : 'New Rule'}
@@ -1330,68 +1326,10 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
 
       <div className="flex-1 flex flex-col overflow-hidden px-6 py-5 min-h-0">
       <div className={`${alertPanelClass} flex-1 min-h-0 flex flex-col overflow-hidden`}>
-        {/* Category filter tabs */}
-        <div className="px-5 py-4 border-b border-black/5 bg-[linear-gradient(to_right,#f4fbfc_0%,#ffffff_100%)] rounded-t-[28px]">
-          <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
-            <button
-              onClick={() => setCategoryFilter('all')}
-              className={`px-4 py-2 rounded-2xl text-[11px] font-black tracking-widest uppercase transition-all whitespace-nowrap shadow-sm border ${
-                categoryFilter === 'all'
-                ? 'bg-gradient-to-br from-[#164e63] to-[#0e3f52] text-white border-[#164e63] shadow-lg shadow-cyan-900/20 scale-[1.02]'
-                : 'bg-white text-slate-400 border-slate-100 hover:border-slate-200 hover:text-slate-600'
-              }`}
-            >
-              {language === 'zh' ? '全部规则' : 'All Rules'}
-              <span className={`ml-2 px-1.5 py-0.5 rounded-lg text-[9px] ${categoryFilter === 'all' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                {categoryCounts.all || 0}
-              </span>
-            </button>
-            <button
-              onClick={() => setCategoryFilter('network')}
-              className={`px-4 py-2 rounded-2xl text-[11px] font-black tracking-widest uppercase transition-all whitespace-nowrap shadow-sm border ${
-                categoryFilter === 'network'
-                ? 'bg-gradient-to-br from-cyan-600 to-cyan-700 text-white border-cyan-500 shadow-lg shadow-cyan-600/20 scale-[1.02]'
-                : 'bg-white text-slate-400 border-slate-100 hover:border-slate-200 hover:text-slate-600'
-              }`}
-            >
-              {language === 'zh' ? '网络设备' : 'Network Device'}
-              <span className={`ml-2 px-1.5 py-0.5 rounded-lg text-[9px] ${categoryFilter === 'network' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                {categoryCounts.network || 0}
-              </span>
-            </button>
-            <button
-              onClick={() => setCategoryFilter('host')}
-              className={`px-4 py-2 rounded-2xl text-[11px] font-black tracking-widest uppercase transition-all whitespace-nowrap shadow-sm border ${
-                categoryFilter === 'host'
-                ? 'bg-gradient-to-br from-cyan-600 to-cyan-700 text-white border-cyan-500 shadow-lg shadow-cyan-600/20 scale-[1.02]'
-                : 'bg-white text-slate-400 border-slate-100 hover:border-slate-200 hover:text-slate-600'
-              }`}
-            >
-              {language === 'zh' ? '宿主机' : 'Host'}
-              <span className={`ml-2 px-1.5 py-0.5 rounded-lg text-[9px] ${categoryFilter === 'host' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                {categoryCounts.host || 0}
-              </span>
-            </button>
-            <button
-              onClick={() => setCategoryFilter('server')}
-              className={`px-4 py-2 rounded-2xl text-[11px] font-black tracking-widest uppercase transition-all whitespace-nowrap shadow-sm border ${
-                categoryFilter === 'server'
-                ? 'bg-gradient-to-br from-cyan-600 to-cyan-700 text-white border-cyan-500 shadow-lg shadow-cyan-600/20 scale-[1.02]'
-                : 'bg-white text-slate-400 border-slate-100 hover:border-slate-200 hover:text-slate-600'
-              }`}
-            >
-              {language === 'zh' ? '服务器' : 'Server'}
-              <span className={`ml-2 px-1.5 py-0.5 rounded-lg text-[9px] ${categoryFilter === 'server' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                {categoryCounts.server || 0}
-              </span>
-            </button>
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-3 px-5 py-4 lg:flex-row lg:items-center">
-          <label className="relative min-w-[240px] flex-1">
+        <div className="flex min-w-0 items-center gap-2 overflow-x-auto border-b border-black/5 px-5 py-3 no-scrollbar">
+          <label className="alert-management-search relative">
             <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/40" />
-            <input
+            <input type="search"
               value={search}
               onChange={(e) => {
                 setPage(1);
@@ -1401,11 +1339,36 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
               className={`${alertInputClass} rounded-xl py-3 pl-9 pr-3`}
             />
           </label>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {([
+              { value: 'all', label: language === 'zh' ? '全部规则' : 'All Rules', count: categoryCounts.all || 0 },
+              { value: 'network', label: language === 'zh' ? '网络设备' : 'Network Device', count: categoryCounts.network || 0 },
+              { value: 'host', label: language === 'zh' ? '宿主机' : 'Host', count: categoryCounts.host || 0 },
+              { value: 'server', label: language === 'zh' ? '服务器' : 'Server', count: categoryCounts.server || 0 },
+            ] as const).map(option => (
+              <button
+                key={option.value}
+                type="button"
+                aria-pressed={categoryFilter === option.value}
+                onClick={() => setCategoryFilter(option.value)}
+                className={`shrink-0 whitespace-nowrap rounded-xl border px-3 py-2 text-xs font-semibold transition-colors ${
+                  categoryFilter === option.value
+                    ? 'border-cyan-700 bg-cyan-700 text-white shadow-sm'
+                    : 'border-black/10 bg-white text-black/55 hover:bg-black/[0.03] hover:text-black/75'
+                }`}
+              >
+                {option.label}
+                <span className={`ml-1.5 rounded-md px-1.5 py-0.5 text-[10px] ${categoryFilter === option.value ? 'bg-white/20' : 'bg-black/[0.06] text-black/45'}`}>
+                  {option.count}
+                </span>
+              </button>
+            ))}
+          </div>
           <select
             title={language === 'zh' ? '按监控类型筛选' : 'Filter by metric type'}
             value={metricFilter}
             onChange={(e) => { setPage(1); setMetricFilter(e.target.value); }}
-            className="rounded-xl border border-black/10 bg-white px-3 py-3 text-sm text-[#164e63] outline-none"
+            className="shrink-0 rounded-xl border border-black/10 bg-white px-3 py-3 text-sm text-[#164e63] outline-none"
           >
             <option value="all">{language === 'zh' ? '全部类型' : 'All Metrics'}</option>
             {(categoryFilter === 'all' || categoryFilter === 'network') && (
@@ -1437,12 +1400,20 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
               setPage(1);
               setEnabledFilter(e.target.value);
             }}
-            className="rounded-xl border border-black/10 bg-white px-3 py-3 text-sm text-[#164e63] outline-none"
+            className="shrink-0 rounded-xl border border-black/10 bg-white px-3 py-3 text-sm text-[#164e63] outline-none"
           >
             <option value="all">{language === 'zh' ? '全部状态' : 'All Status'}</option>
             <option value="enabled">{language === 'zh' ? '已启用' : 'Enabled'}</option>
             <option value="disabled">{language === 'zh' ? '已停用' : 'Disabled'}</option>
           </select>
+          <ActionIconButton
+            icon={RefreshCw}
+            label={language === 'zh' ? '刷新告警规则' : 'Refresh alert rules'}
+            size="md"
+            iconClassName={loading ? 'animate-spin' : ''}
+            className="shrink-0"
+            onClick={() => void loadAlertRules()}
+          />
         </div>
 
         {someSelected && (
@@ -1467,8 +1438,8 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
           </div>
         )}
 
-        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar border-b border-black/5">
-          <DataTable unstyled exportConfig={{ filename: 'alert-rules', language: language === 'zh' ? 'zh' : 'en', disabled: loading || rulesLoadError !== null || alertRules.length === 0, exportData: exportAllAlertRules }} className="nx-data-table text-left">
+        <div className="alert-management-table-scroll flex-1 min-h-0 overflow-auto custom-scrollbar border-b border-black/5">
+          <DataTable unstyled exportConfig={{ filename: 'alert-rules', language: language === 'zh' ? 'zh' : 'en', disabled: loading || rulesLoadError !== null || alertRules.length === 0, exportData: exportAllAlertRules }} className="nx-data-table alert-management-table text-left">
             <thead className="sticky top-0 z-10">
               <tr className="border-y border-black/5 bg-[#f8fafc] text-[11px] font-bold uppercase tracking-[0.16em] text-black/40">
                 <th className="w-10 px-3 py-3">

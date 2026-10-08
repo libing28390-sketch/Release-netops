@@ -111,7 +111,6 @@ interface InventoryContextValue {
   handleTestConnection: (device?: Device | null, mode?: 'quick' | 'deep') => Promise<void>;
   deviceConnectionChecks: Record<string, any>;
   connectionTestingDeviceId: string | null;
-  setShowAddModal: (show: boolean) => void;
   setShowEditModal: (show: boolean) => void;
   setEditingDevice: (device: Device | null) => void;
   setEditForm: (form: Partial<Device>) => void;

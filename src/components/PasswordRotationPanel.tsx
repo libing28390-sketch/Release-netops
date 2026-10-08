@@ -801,7 +801,7 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
              <div className="relative min-w-[200px] flex-1 sm:flex-none">
                 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input
-                  type="text"
+                  type="search"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                   placeholder={zh ? '快速搜索设备或账号...' : 'Quick search...'}
@@ -1139,7 +1139,7 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
             >
               <label className="relative block">
                 <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input
+                <input type="search"
                   value={deviceSearchDraft}
                   onChange={event => setDeviceSearchDraft(event.target.value)}
                   placeholder={zh ? '搜索设备名称或管理 IP' : 'Search device name or management IP'}

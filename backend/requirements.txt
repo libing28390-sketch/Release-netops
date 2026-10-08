@@ -34,6 +34,7 @@ pywinrm>=0.5.0,<0.6.0
 
 # SNMP & Telemetry
 puresnmp>=2.0.0,<3.0.0
+puresnmp-crypto>=1.0.1.post1,<2.0.0
 
 # Templates & Parsing
 textfsm>=1.1.3

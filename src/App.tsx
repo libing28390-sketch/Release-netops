@@ -1343,18 +1343,14 @@ const App: React.FC = () => {
   const [remediatingDevice, setRemediatingDevice] = useState<Device | null>(null);
 
   const {
-    showAddModal, setShowAddModal,
     showEditModal, setShowEditModal,
     editingDevice, setEditingDevice,
     editForm, setEditForm,
-    addForm, setAddForm,
-    showAddDevicePwd, setShowAddDevicePwd,
     showEditDevicePwd, setShowEditDevicePwd,
     showLifecycleConfirm, setShowLifecycleConfirm,
     lifecycleConfirmChecked, setLifecycleConfirmChecked,
     handleSaveEdit,
-    handleAddDevice,
-  } = useDeviceFormActions({ devices, setDevices, showToast });
+  } = useDeviceFormActions({ setDevices, showToast });
 
   const handleRemediate = (device: Device) => {
     setRemediatingDevice(device);
@@ -1478,7 +1474,7 @@ const App: React.FC = () => {
   });
 
   // Deleted hook for delete actions
-  // handleSaveEdit / handleAddDevice moved to useDeviceFormActions
+  // handleSaveEdit moved to useDeviceFormActions
   // Connection and SNMP sync actions moved to useDeviceConnectionAndSnmp
 
   const { handleImport, handleExport } = useInventoryImportExport({ devices, setDevices, showToast, t });
@@ -1706,7 +1702,7 @@ const App: React.FC = () => {
 
   const inventoryValue = {
     handleImport, handleExport, handleShowDetails, handleTestConnection, deviceConnectionChecks, connectionTestingDeviceId,
-    setShowAddModal, setShowEditModal, setEditingDevice, setEditForm, setSelectedDevice, selectedDevice,
+    setShowEditModal, setEditingDevice, setEditForm, setSelectedDevice, selectedDevice,
   };
 
   const automationValue = {
@@ -2031,7 +2027,6 @@ const App: React.FC = () => {
           showRemediationModal, remediatingDevice, setShowRemediationModal, confirmRemediation,
           showDeleteModal, isDeletingSelected, selectedDeviceIds, setShowDeleteModal,
           setDeviceToDelete, setIsDeletingSelected, confirmDeleteDevice,
-          showAddModal, addForm, showAddDevicePwd, setAddForm, setShowAddDevicePwd, setShowAddModal, handleAddDevice,
           showEditModal, editingDevice, editForm, showEditDevicePwd, setEditForm, setShowEditDevicePwd, setShowEditModal, handleSaveEdit,
           showLifecycleConfirm, lifecycleConfirmChecked, setLifecycleConfirmChecked, setShowLifecycleConfirm,
           showDetailsModal, viewingDevice, deviceConnectionChecks,

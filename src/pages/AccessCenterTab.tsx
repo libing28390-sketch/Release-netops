@@ -997,6 +997,8 @@ export default function AccessCenterTab({
     );
   };
 
+  // The app-shell table selector outranks Tailwind min-width utilities, so use
+  // inline widths to keep narrow viewports scrolling instead of squeezing cells.
   const renderAccessTable = () => {
     const emptyRow = (colSpan: number) => (
       <tr>
@@ -1011,7 +1013,7 @@ export default function AccessCenterTab({
 
     if (activeCategory === 'WEB') {
       return (
-        <DataTable className="min-w-[1500px] text-left" exportConfig={{ filename: 'access-center-web', language: isZh ? 'zh' : 'en', disabled: filteredDevices.length === 0, exportData: accessExportData }}>
+        <DataTable className="min-w-[1500px] text-left" style={{ minWidth: '1500px' }} exportConfig={{ filename: 'access-center-web', language: isZh ? 'zh' : 'en', disabled: filteredDevices.length === 0, exportData: accessExportData }}>
           <thead>
             <tr className="border-b border-slate-200 bg-cyan-50/40">
               {tableHeader(isZh ? '设备名称' : 'Device')}
@@ -1044,7 +1046,7 @@ export default function AccessCenterTab({
 
     if (activeCategory === 'RDP') {
       return (
-        <DataTable className="min-w-[1320px] text-left" exportConfig={{ filename: 'access-center-rdp', language: isZh ? 'zh' : 'en', disabled: filteredDevices.length === 0, exportData: accessExportData }}>
+        <DataTable className="min-w-[1320px] text-left" style={{ minWidth: '1320px' }} exportConfig={{ filename: 'access-center-rdp', language: isZh ? 'zh' : 'en', disabled: filteredDevices.length === 0, exportData: accessExportData }}>
           <thead>
             <tr className="border-b border-slate-200 bg-violet-50/40">
               {tableHeader(isZh ? '设备名称' : 'Device')}
@@ -1073,7 +1075,7 @@ export default function AccessCenterTab({
 
     if (activeCategory === 'SSH') {
       return (
-        <DataTable className="min-w-[1500px] text-left" exportConfig={{ filename: 'access-center-ssh', language: isZh ? 'zh' : 'en', disabled: filteredDevices.length === 0, exportData: accessExportData }}>
+        <DataTable className="min-w-[1500px] text-left" style={{ minWidth: '1500px' }} exportConfig={{ filename: 'access-center-ssh', language: isZh ? 'zh' : 'en', disabled: filteredDevices.length === 0, exportData: accessExportData }}>
           <thead>
             <tr className="border-b border-slate-200 bg-emerald-50/40">
               {tableHeader(isZh ? '设备名称' : 'Device')}
@@ -1103,7 +1105,7 @@ export default function AccessCenterTab({
     }
 
     return (
-      <DataTable className="min-w-[1640px] text-left" exportConfig={{ filename: 'access-center-all', language: isZh ? 'zh' : 'en', disabled: filteredDevices.length === 0, exportData: accessExportData }}>
+      <DataTable className="min-w-[1640px] text-left" style={{ minWidth: '1640px' }} exportConfig={{ filename: 'access-center-all', language: isZh ? 'zh' : 'en', disabled: filteredDevices.length === 0, exportData: accessExportData }}>
         <thead>
           <tr className="border-b border-slate-200 bg-slate-50/70">
             {tableHeader(isZh ? '设备名称' : 'Device')}
@@ -1160,7 +1162,7 @@ export default function AccessCenterTab({
           <div className="relative group">
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300 group-focus-within:text-[#00bceb] transition-colors" />
             <input
-              type="text"
+              type="search"
               placeholder="搜索资产名称或 IP 地址..."
               className="w-80 pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-[#00bceb] focus:bg-white focus:ring-4 focus:ring-[#00bceb]/5 transition-all text-sm font-medium"
               value={searchQuery}

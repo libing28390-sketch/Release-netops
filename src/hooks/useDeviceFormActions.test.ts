@@ -12,7 +12,7 @@ describe('ordinary device editing binding failures', () => {
     }), { status: 409, headers: { 'X-Request-ID': 'ordinary-edit-request' } })));
     const showToast = vi.fn();
     const setDevices = vi.fn();
-    const { result } = renderHook(() => useDeviceFormActions({ devices: [], setDevices, showToast }));
+    const { result } = renderHook(() => useDeviceFormActions({ setDevices, showToast }));
     act(() => {
       result.current.setEditingDevice({ id: 'device-1', platform_profile_id: 'existing-profile' } as Device);
       result.current.setEditForm({ platform_profile_id: 'other-profile' });

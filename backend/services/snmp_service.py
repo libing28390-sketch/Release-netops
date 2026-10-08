@@ -513,6 +513,37 @@ async def _snmp_get(
       return None
 
 
+async def _snmp_get_v3(
+    ip: str,
+    username: str,
+    oid: str,
+    port: int = 161,
+    timeout: float = 3,
+    auth_password: str = '',
+    auth_protocol: str = '',
+    priv_password: str = '',
+    priv_protocol: str = '',
+) -> Optional[str]:
+    """GET one OID using an explicitly configured SNMPv3 security profile."""
+    async with get_network_access_limiter().async_snmp():
+      try:
+        from puresnmp import Auth, Priv, PyWrapper, V3
+
+        auth = Auth(auth_password.encode('utf-8'), auth_protocol) if auth_protocol else None
+        privacy = Priv(priv_password.encode('utf-8'), priv_protocol) if priv_protocol else None
+        client = PyWrapper(_build_snmp_client(ip, V3(username, auth=auth, priv=privacy), port))
+        result = await asyncio.wait_for(client.get(oid), timeout=timeout)
+        if result is None:
+            return None
+        value = _val_to_str(result)
+        if value and 'noSuchObject' not in value and 'noSuchInstance' not in value:
+            return value
+      except Exception as exc:
+        # Never include SNMPv3 secrets or library exception text in logs.
+        logger.debug('SNMPv3 GET %s %s failed (%s)', ip, oid, type(exc).__name__)
+      return None
+
+
 class SnmpWalkResult(list[tuple[str, str]]):
     """List-compatible SNMP walk result with an explicit row-limit marker."""
 

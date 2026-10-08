@@ -1051,7 +1051,8 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                   {searchQuery && (
                     <button
                       onClick={() => setSearchQuery('')}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                      aria-label={zh ? '清空搜索' : 'Clear search'}
+                      className="search-clear-button absolute right-3 top-1/2 -translate-y-1/2"
                     >
                       <X size={12} />
                     </button>

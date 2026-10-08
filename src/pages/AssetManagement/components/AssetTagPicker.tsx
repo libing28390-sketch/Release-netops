@@ -70,7 +70,7 @@ export const AssetTagPicker: React.FC<Props> = ({ tags, selectedIds, onChange, o
         <div className="mt-1 flex max-h-64 flex-col overflow-hidden rounded-lg border border-black/8 bg-white shadow-lg">
           <div className="relative shrink-0 border-b border-black/5 p-1.5">
             <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-black/25" />
-            <input value={search} onChange={event => setSearch(event.target.value)} placeholder={zh ? '搜索标签名称或代码' : 'Search label or code'} className="w-full rounded-md bg-black/[0.03] py-1.5 pl-7 pr-2 text-[10px] outline-none" />
+            <input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder={zh ? '搜索标签名称或代码' : 'Search label or code'} className="w-full rounded-md bg-black/[0.03] py-1.5 pl-7 pr-2 text-[10px] outline-none" />
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
             {CATEGORY_ORDER.map(category => {

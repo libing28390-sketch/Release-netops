@@ -605,7 +605,7 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
             <div className="relative flex-1 min-w-[220px]">
               <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
-                type="text"
+                type="search"
                 value={filters.keyword}
                 onChange={(e) => setFilters({ ...filters, keyword: e.target.value })}
                 onKeyDown={(e) => e.key === 'Enter' && void fetchData()}

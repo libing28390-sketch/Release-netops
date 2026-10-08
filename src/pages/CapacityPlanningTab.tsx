@@ -407,8 +407,8 @@ const CapacityPlanningTab: React.FC<CapacityPlanningTabProps> = ({ language, t }
               {searchTerm && (
                 <button
                   onClick={() => setSearchTerm('')}
-                  className="absolute right-2.5 p-0.5 rounded-full hover:bg-neutral-200 dark:hover:bg-neutral-700 transition-colors"
-                  style={{ color: 'var(--dim-text)', border: 'none', background: 'transparent', cursor: 'pointer' }}
+                  aria-label={zh ? '清空搜索' : 'Clear search'}
+                  className="search-clear-button absolute right-2.5 top-1/2 -translate-y-1/2"
                 >
                   <X size={12} />
                 </button>

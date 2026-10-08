@@ -398,7 +398,7 @@ const Sidebar: React.FC<SidebarProps> = (props) => {
           >
             <div className="flex items-center gap-2 px-4 py-3 border-b border-white/[0.06]">
               <Search size={15} className="text-[#4a5568] shrink-0" />
-              <input
+              <input type="search"
                 ref={searchInputRef}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}

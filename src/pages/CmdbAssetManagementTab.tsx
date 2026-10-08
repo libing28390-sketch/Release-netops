@@ -658,7 +658,7 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
                 size={14}
                 className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
               />
-              <input
+              <input type="search"
                 value={query}
                 onChange={(event) => {
                   setQuery(event.target.value);

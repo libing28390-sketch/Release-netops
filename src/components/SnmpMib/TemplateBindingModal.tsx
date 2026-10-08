@@ -354,7 +354,7 @@ const TemplateBindingModal: React.FC<TemplateBindingModalProps> = ({
               </div>
               <div className="relative mt-1.5">
                 <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/25" />
-                <input value={deviceSearch} onChange={event => setDeviceSearch(event.target.value)} placeholder={zh ? '搜索主机名 / IP' : 'Search hostname / IP'} className="w-full rounded-lg border border-black/8 bg-transparent py-2 pl-8 pr-3 text-xs outline-none focus:border-[#00bceb]/55 dark:border-white/10" />
+                <input type="search" value={deviceSearch} onChange={event => setDeviceSearch(event.target.value)} placeholder={zh ? '搜索主机名 / IP' : 'Search hostname / IP'} className="w-full rounded-lg border border-black/8 bg-transparent py-2 pl-8 pr-3 text-xs outline-none focus:border-[#00bceb]/55 dark:border-white/10" />
               </div>
               <div className="mt-2 max-h-[270px] overflow-y-auto rounded-xl border border-black/8 dark:border-white/10">
                 {loadingDevices ? (

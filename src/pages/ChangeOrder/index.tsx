@@ -1738,7 +1738,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
                 <div>
                   <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '搜索候选人 (拼音/中文)' : 'Search Candidates (Pinyin/Chinese)'}</label>
                   <input
-                    type="text"
+                    type="search"
                     placeholder={zh ? '输入用户名或拼音筛选...' : 'Type username...'}
                     value={finalApproverSearch}
                     onChange={(e) => setFinalApproverSearch(e.target.value)}
@@ -1851,7 +1851,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
                 <div>
                   <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '搜索候选人 (拼音/中文)' : 'Search Candidates (Pinyin/Chinese)'}</label>
                   <input
-                    type="text"
+                    type="search"
                     placeholder={zh ? '输入用户名或拼音筛选...' : 'Type username...'}
                     value={initialApproverSearch}
                     onChange={(e) => setInitialApproverSearch(e.target.value)}

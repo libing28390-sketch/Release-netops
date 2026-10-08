@@ -548,7 +548,7 @@ export const JobModal: React.FC<JobModalProps> = ({
                         <div className="relative">
                           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
                           <input
-                            type="text"
+                            type="search"
                             placeholder={zh ? "搜索巡检脚本..." : "Search inspection scripts..."}
                             value={scriptSearch}
                             onFocus={() => {
@@ -706,7 +706,7 @@ export const JobModal: React.FC<JobModalProps> = ({
                       <div className="relative">
                         <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
                         <input
-                          type="text"
+                          type="search"
                           placeholder={zh ? `搜索适用的 ${scriptAssetCategory === 'network' ? '网络' : '服务器'} 脚本...` : 'Search scripts...'}
                           value={scriptSearch}
                           onFocus={() => {
@@ -994,7 +994,7 @@ export const JobModal: React.FC<JobModalProps> = ({
                 <div className="relative">
                   <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input
-                    type="text"
+                    type="search"
                     value={deviceSearchQuery}
                     onChange={e => setDeviceSearchQuery(e.target.value)}
                     placeholder={zh ? "在命中结果中快速搜索..." : "Filter matched devices..."}

@@ -88,7 +88,7 @@ const TagFilterDropdown: React.FC<TagFilterDropdownProps> = ({
             <div className="relative">
               <Search className="absolute left-2 top-1/2 -translate-y-1/2 text-black/25 dark:text-white/20" size={12} />
               <input
-                type="text"
+                type="search"
                 placeholder={isZh ? '搜索标签…' : 'Search tags…'}
                 value={search}
                 onChange={e => setSearch(e.target.value)}

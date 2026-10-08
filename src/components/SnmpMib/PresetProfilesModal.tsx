@@ -405,7 +405,7 @@ const PresetProfilesModal: React.FC<PresetProfilesModalProps> = ({
         <div className="flex flex-wrap items-center gap-2 border-b border-black/6 bg-black/[.015] p-3 dark:border-white/6 dark:bg-white/[.015]">
           <div className="relative min-w-[200px] flex-1">
             <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/25" />
-            <input
+            <input type="search"
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder={zh ? '搜索厂商 / 型号 (如: Cisco, S5700, Catalyst 9300)...' : 'Search vendor or model...'}

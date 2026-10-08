@@ -5,7 +5,7 @@ import type { AlertDetailResponse, AlertListResponse, AlertRecord } from '../typ
 import Pagination from '../components/Pagination';
 import { DataTable } from '../components/DataTable';
 import PageHero from '../components/PageHero';
-import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
+import { ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
 import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
 import type { TableExportData } from '../components/ui/TableExportMenu';
 import { alertWorkflowBadgeClass, severityBadgeClass } from '../components/shared';
@@ -14,6 +14,14 @@ import { listSites } from '../api/cmdb';
 import { fetchAllPaginatedItems } from '../utils/pagination';
 import { alertSiteLabel, buildAlertDeskExportData, buildAlertSiteLabels, getAlertDeskExportHeaders } from './alertTableExport';
 import { useAlertSiteLabels } from './useAlertSiteLabels';
+import AlertDeskColumnToggle from './AlertDeskColumnToggle';
+import {
+  ALERT_DESK_COLUMN_DEFS,
+  defaultAlertDeskColumnVisibility,
+  loadAlertDeskColumnVisibility,
+  saveAlertDeskColumnVisibility,
+  setAlertDeskColumnVisibility,
+} from './alertDeskColumns';
 import {
   alertInputClass,
   alertPanelClass,
@@ -81,8 +89,15 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
   const [autoRefresh, setAutoRefresh] = useState(false);
+  const [alertColumns, setAlertColumns] = useState(loadAlertDeskColumnVisibility);
   const siteLabels = useAlertSiteLabels();
   const exportHeaders = getAlertDeskExportHeaders(language);
+  const visibleAlertColumns = ALERT_DESK_COLUMN_DEFS.flatMap((column, index) =>
+    alertColumns[column.key] ? [{ ...column, index }] : [],
+  );
+  const visibleExportHeaders = visibleAlertColumns.map((column) => exportHeaders[column.index]);
+
+  useEffect(() => saveAlertDeskColumnVisibility(alertColumns), [alertColumns]);
 
   const exportAllAlerts = async (): Promise<TableExportData> => {
     const params = new URLSearchParams({
@@ -96,7 +111,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
       fetchAllPaginatedItems<AlertRecord>('/api/alerts', params, 100),
       listSites().catch(() => []),
     ]);
-    return buildAlertDeskExportData(items, language, {
+    const exportData = buildAlertDeskExportData(items, language, {
       severity: (value) => severityLabel(value, language),
       workflow: (value) => workflowLabel(value, language),
       metricType: (value) => metricTypeLabel(value, language),
@@ -104,6 +119,11 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
       duration: (value) => formatDuration(value, language),
       unassigned: language === 'zh' ? '未分派' : 'Unassigned',
     }, buildAlertSiteLabels(sites));
+    const visibleIndexes = ALERT_DESK_COLUMN_DEFS.flatMap((column, index) => alertColumns[column.key] ? [index] : []);
+    return {
+      headers: visibleIndexes.map((index) => exportData.headers[index]),
+      rows: exportData.rows.map((row) => visibleIndexes.map((index) => row[index])),
+    };
   };
 
   const loadAlerts = async () => {
@@ -376,19 +396,17 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
               <RefreshCw size={14} className={autoRefresh ? 'animate-spin' : ''} style={autoRefresh ? { animationDuration: '3s' } : undefined} />
               {language === 'zh' ? (autoRefresh ? '自动刷新中' : '自动刷新') : (autoRefresh ? 'Auto On' : 'Auto')}
             </button>
-            <ActionButton icon={RefreshCw} variant="default" size="md" onClick={() => void loadAlerts()}>
-              {language === 'zh' ? '刷新列表' : 'Refresh'}
-            </ActionButton>
           </>
         }
       />
 
       <div className="flex-1 flex flex-col overflow-hidden px-6 py-5 min-h-0">
       <div className={`${alertPanelClass} flex-1 min-h-0 flex flex-col overflow-hidden`}>
-        <div className="flex flex-col gap-3 px-5 py-4 lg:flex-row lg:items-center">
-          <label className="relative min-w-[240px] flex-1">
+        <div className="flex min-w-0 items-center gap-2 border-b border-black/5 px-5 py-3">
+          <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto no-scrollbar">
+          <label className="alert-management-search relative">
             <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/40" />
-            <input
+            <input type="search"
               value={search}
               onChange={(e) => {
                 setPage(1);
@@ -406,36 +424,52 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
               setPage(1);
               setSeverityFilter(e.target.value);
             }}
-            className="rounded-xl border border-black/10 bg-white px-3 py-3 text-sm text-[#164e63] outline-none"
+            className="shrink-0 whitespace-nowrap rounded-xl border border-black/10 bg-white px-3 py-3 text-sm text-[#164e63] outline-none"
           >
             <option value="all">{language === 'zh' ? '全部级别' : 'All Severity'}</option>
             <option value="critical">{severityLabel('critical', language)}</option>
             <option value="major">{severityLabel('major', language)}</option>
             <option value="warning">{severityLabel('warning', language)}</option>
           </select>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-1.5 border-b border-black/5 px-5 pb-3">
-          {STATUS_TABS.map(tab => (
-            <button
-              key={tab.value}
-              onClick={() => { setPage(1); setStatusFilter(tab.value); setSelectedIds(new Set()); }}
-              className={`rounded-xl px-3 py-2 text-sm font-medium transition-colors ${
-                statusFilter === tab.value
-                  ? 'bg-[#06b6d4] text-white shadow-sm'
-                  : 'text-black/55 hover:bg-black/[0.04] hover:text-black/75'
-              }`}
-            >
-              {language === 'zh' ? tab.zh : tab.en}
-              {statusCounts[tab.value] != null && (
-                <span className={`ml-1.5 inline-flex min-w-[18px] items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
-                  statusFilter === tab.value ? 'bg-white/25 text-white' : 'bg-black/[0.06] text-black/45'
-                }`}>
-                  {statusCounts[tab.value]}
-                </span>
-              )}
-            </button>
-          ))}
+          <div className="flex shrink-0 items-center gap-1.5">
+            {STATUS_TABS.map(tab => (
+              <button
+                key={tab.value}
+                type="button"
+                aria-pressed={statusFilter === tab.value}
+                onClick={() => { setPage(1); setStatusFilter(tab.value); setSelectedIds(new Set()); }}
+                className={`shrink-0 whitespace-nowrap rounded-xl px-3 py-2 text-sm font-medium transition-colors ${
+                  statusFilter === tab.value
+                    ? 'bg-[#06b6d4] text-white shadow-sm'
+                    : 'text-black/55 hover:bg-black/[0.04] hover:text-black/75'
+                }`}
+              >
+                {language === 'zh' ? tab.zh : tab.en}
+                {statusCounts[tab.value] != null && (
+                  <span className={`ml-1.5 inline-flex min-w-[18px] items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
+                    statusFilter === tab.value ? 'bg-white/25 text-white' : 'bg-black/[0.06] text-black/45'
+                  }`}>
+                    {statusCounts[tab.value]}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+          <ActionIconButton
+            icon={RefreshCw}
+            label={language === 'zh' ? '刷新告警列表' : 'Refresh alert list'}
+            size="md"
+            iconClassName={loading ? 'animate-spin' : ''}
+            className="shrink-0"
+            onClick={() => void loadAlerts()}
+          />
+          </div>
+          <AlertDeskColumnToggle
+            columns={alertColumns}
+            onChange={(key, visible) => setAlertColumns((current) => setAlertDeskColumnVisibility(current, key, visible))}
+            onReset={() => setAlertColumns(defaultAlertDeskColumnVisibility())}
+            language={language}
+          />
         </div>
 
         {selectedIds.size > 0 && (
@@ -457,8 +491,8 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
           </div>
         )}
 
-        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar border-b border-black/5">
-          <DataTable className="min-w-[1900px] text-left" exportConfig={{ filename: 'alert-desk', language: language === 'zh' ? 'zh' : 'en', disabled: loading || rows.length === 0, exportData: exportAllAlerts }}>
+        <div className="alert-management-table-scroll flex-1 min-h-0 overflow-auto custom-scrollbar border-b border-black/5">
+          <DataTable className="alert-management-table text-left" exportConfig={{ filename: 'alert-desk', language: language === 'zh' ? 'zh' : 'en', disabled: loading || rows.length === 0, exportData: exportAllAlerts }}>
             <thead className="sticky top-0 z-10">
               <tr className="border-y border-black/5 bg-[#f8fafc] text-[11px] font-bold uppercase tracking-[0.16em] text-black/40">
                 <th className="w-10 px-3 py-3">
@@ -466,14 +500,16 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                     {rows.length > 0 && rows.every(r => selectedIds.has(r.id)) ? <CheckSquare size={16} /> : <Square size={16} />}
                   </button>
                 </th>
-                {exportHeaders.map((header, index) => <th key={header} className={`px-5 py-3 ${alertDeskColumnMinWidths[index] || ''}`}>{header}</th>)}
+                {visibleAlertColumns.map(({ key, index }) => (
+                  <th key={key} className={`px-5 py-3 ${alertDeskColumnMinWidths[index] || ''}`}>{exportHeaders[index]}</th>
+                ))}
                 <TableActionHeader className="min-w-[120px] whitespace-nowrap px-5 py-3">{language === 'zh' ? '操作' : 'Action'}</TableActionHeader>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={exportHeaders.length + 2} className="px-5 py-12 text-center text-sm text-black/40">
+                  <td colSpan={visibleExportHeaders.length + 2} className="px-5 py-12 text-center text-sm text-black/40">
                     {language === 'zh' ? '正在加载告警...' : 'Loading alerts...'}
                   </td>
                 </tr>
@@ -490,21 +526,21 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                         {selectedIds.has(row.id) ? <CheckSquare size={16} /> : <Square size={16} />}
                       </button>
                     </td>
-                    <td className="min-w-[160px] px-5 py-4 align-top">
+                    <td className={`${alertColumns.title ? '' : 'hidden'} min-w-[160px] px-5 py-4 align-top`}>
                       <button
                         onClick={() => setSelectedAlertId(row.id)}
                         className="text-left"
                         title={language === 'zh' ? `查看告警 ${row.title}` : `View alert ${row.title}`}
                       >
-                        <p data-export-primary className="text-sm font-semibold text-[#164e63]">
+                        <p data-export-primary title={row.title || '--'} className="max-w-[260px] truncate text-sm font-semibold text-[#164e63]">
                           {row.title || '--'}
                         </p>
                       </button>
                     </td>
-                    <td className="min-w-[250px] px-5 py-4 align-top text-sm text-black/60">{row.message || '--'}</td>
-                    <td className="min-w-[125px] whitespace-nowrap px-5 py-4 align-top text-sm text-black/60">{row.metric_type && row.metric_type !== 'unknown' ? metricTypeLabel(row.metric_type, language) : '--'}</td>
-                    <td className="min-w-[88px] whitespace-nowrap px-5 py-4 align-top text-sm text-black/60">{row.occurrence_count ?? 1}</td>
-                    <td className="min-w-[140px] whitespace-nowrap px-5 py-4 align-top text-sm font-semibold text-[#164e63]">
+                    <td className={`${alertColumns.message ? '' : 'hidden'} min-w-[250px] px-5 py-4 align-top text-sm text-black/60`}><div title={row.message || '--'} className="max-w-[360px] truncate">{row.message || '--'}</div></td>
+                    <td className={`${alertColumns.metricType ? '' : 'hidden'} min-w-[125px] whitespace-nowrap px-5 py-4 align-top text-sm text-black/60`}>{row.metric_type && row.metric_type !== 'unknown' ? metricTypeLabel(row.metric_type, language) : '--'}</td>
+                    <td className={`${alertColumns.occurrences ? '' : 'hidden'} min-w-[88px] whitespace-nowrap px-5 py-4 align-top text-sm text-black/60`}>{row.occurrence_count ?? 1}</td>
+                    <td className={`${alertColumns.hostname ? '' : 'hidden'} min-w-[140px] whitespace-nowrap px-5 py-4 align-top text-sm font-semibold text-[#164e63]`}>
                       <div className="flex items-center gap-1.5 whitespace-nowrap">
                         <span>{row.hostname || '--'}</span>
                         {row.device_id && (
@@ -527,10 +563,10 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                         )}
                       </div>
                     </td>
-                    <td className="min-w-[125px] whitespace-nowrap px-5 py-4 align-top text-sm text-black/60">{row.ip_address || '--'}</td>
-                    <td className="min-w-[100px] whitespace-nowrap px-5 py-4 align-top text-sm text-black/60">{row.interface_name || '--'}</td>
-                    <td className="min-w-[120px] whitespace-nowrap px-5 py-4 align-top text-sm text-black/60">{alertSiteLabel(row, siteLabels, language === 'zh' ? '未分配站点' : 'Unassigned site')}</td>
-                    <td className="min-w-[100px] whitespace-nowrap px-5 py-4 align-top">
+                    <td className={`${alertColumns.ipAddress ? '' : 'hidden'} min-w-[125px] whitespace-nowrap px-5 py-4 align-top text-sm text-black/60`}>{row.ip_address || '--'}</td>
+                    <td className={`${alertColumns.interface ? '' : 'hidden'} min-w-[100px] whitespace-nowrap px-5 py-4 align-top text-sm text-black/60`}>{row.interface_name || '--'}</td>
+                    <td className={`${alertColumns.site ? '' : 'hidden'} min-w-[120px] whitespace-nowrap px-5 py-4 align-top text-sm text-black/60`}>{alertSiteLabel(row, siteLabels, language === 'zh' ? '未分配站点' : 'Unassigned site')}</td>
+                    <td className={`${alertColumns.severity ? '' : 'hidden'} min-w-[100px] whitespace-nowrap px-5 py-4 align-top`}>
                       <span className={`inline-flex whitespace-nowrap items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[10px] font-extrabold uppercase shadow-sm ${
                         row.severity === 'critical'
                           ? 'bg-rose-50 text-rose-700 border border-rose-200/50 shadow-rose-100'
@@ -548,16 +584,16 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                         {severityLabel(row.severity, language)}
                       </span>
                     </td>
-                    <td className="min-w-[105px] whitespace-nowrap px-5 py-4 align-top">
+                    <td className={`${alertColumns.workflow ? '' : 'hidden'} min-w-[105px] whitespace-nowrap px-5 py-4 align-top`}>
                       <span data-export-primary className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase ${alertWorkflowBadgeClass(row.workflow_status)}`}>
                         {workflowLabel(row.workflow_status, language)}
                       </span>
                     </td>
-                    <td className="min-w-[100px] whitespace-nowrap px-5 py-4 align-top text-sm text-black/60">
+                    <td className={`${alertColumns.assignee ? '' : 'hidden'} min-w-[100px] whitespace-nowrap px-5 py-4 align-top text-sm text-black/60`}>
                       {row.assignee || (language === 'zh' ? '未分派' : 'Unassigned')}
                     </td>
-                    <td className="min-w-[180px] whitespace-nowrap px-5 py-4 align-top text-sm text-black/60">{formatTs(row.created_at)}</td>
-                    <td className={`min-w-[155px] whitespace-nowrap px-5 py-4 align-top text-sm ${
+                    <td className={`${alertColumns.createdAt ? '' : 'hidden'} min-w-[180px] whitespace-nowrap px-5 py-4 align-top text-sm text-black/60`}>{formatTs(row.created_at)}</td>
+                    <td className={`${alertColumns.duration ? '' : 'hidden'} min-w-[155px] whitespace-nowrap px-5 py-4 align-top text-sm ${
                       !row.resolved_at && (row.duration_seconds ?? 0) > 86400
                         ? 'font-semibold text-red-600'
                         : !row.resolved_at && (row.duration_seconds ?? 0) > 14400
@@ -597,7 +633,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                 ))
               ) : (
                 <tr>
-                  <td colSpan={exportHeaders.length + 2} className="px-5 py-12 text-center text-sm text-black/40">
+                  <td colSpan={visibleExportHeaders.length + 2} className="px-5 py-12 text-center text-sm text-black/40">
                     {language === 'zh' ? '当前筛选条件下没有告警。' : 'No alerts found for the current filter.'}
                   </td>
                 </tr>

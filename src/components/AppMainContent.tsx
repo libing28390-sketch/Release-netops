@@ -139,7 +139,6 @@ const AppMainContent: React.FC = () => {
     handleTestConnection,
     deviceConnectionChecks,
     connectionTestingDeviceId,
-    setShowAddModal,
     setShowEditModal,
     setEditingDevice,
     setEditForm,
@@ -735,7 +734,6 @@ const AppMainContent: React.FC = () => {
             handleTestConnection={handleTestConnection}
             deviceConnectionChecks={deviceConnectionChecks}
             connectionTestingDeviceId={connectionTestingDeviceId}
-            setShowAddModal={setShowAddModal}
             setShowEditModal={setShowEditModal}
             setEditingDevice={setEditingDevice}
             setEditForm={setEditForm}

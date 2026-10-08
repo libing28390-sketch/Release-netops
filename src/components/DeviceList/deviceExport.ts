@@ -115,13 +115,6 @@ function lifecycleLabel(device: Device, zh: boolean): string {
   return labels[device.lifecycle_status || 'staging'] || (device.lifecycle_status || 'staging');
 }
 
-function cpuMemValue(value: number | undefined, empty: boolean): string {
-  if (empty) return '—';
-  const numeric = Number(value ?? 0);
-  if (!Number.isFinite(numeric)) return '—';
-  return `${Math.max(0, Math.min(100, numeric))}%`;
-}
-
 /** Generate one export field per visible network-device table column. */
 export function buildNetworkDeviceExportData(devices: Device[], view: NetworkDeviceExportView): TableExportData {
   const zh = view.language === 'zh';
@@ -151,16 +144,6 @@ export function buildNetworkDeviceExportData(devices: Device[], view: NetworkDev
     { key: 'checkTime', header: zh ? '检查时间' : 'Check time', value: (device) => {
       const checkedAt = view.connectionChecks?.[device.id]?.checked_at;
       return checkedAt ? formatCheckTime(checkedAt, view.language) : '—';
-    } },
-    { key: 'cpu', header: 'CPU', value: (device) => {
-      const hasMetrics = device.collection_status === 'healthy' || Boolean(device.collection_last_success_at)
-        || (!device.collection_status && (device.cpu_usage !== 0 || device.memory_usage !== 0));
-      return cpuMemValue(device.cpu_usage, !hasMetrics);
-    } },
-    { key: 'memory', header: zh ? '内存' : 'Memory', value: (device) => {
-      const hasMetrics = device.collection_status === 'healthy' || Boolean(device.collection_last_success_at)
-        || (!device.collection_status && (device.cpu_usage !== 0 || device.memory_usage !== 0));
-      return cpuMemValue(device.memory_usage, !hasMetrics);
     } },
   ];
   const visibleColumns = columns.filter(({ key }) => view.columns[key]);

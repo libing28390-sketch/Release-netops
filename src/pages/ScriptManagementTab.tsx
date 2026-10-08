@@ -289,7 +289,7 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
             <div className="relative">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 dark:text-slate-600" size={14} />
               <input
-                type="text"
+                type="search"
                 placeholder={zh ? "搜索操作名称、命令或描述..." : "Search operation name, command, or description..."}
                 value={searchQuery}
                 onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
@@ -642,7 +642,7 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
                    <div className="relative">
                       <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
                       <input 
-                        type="text" 
+                        type="search"
                         placeholder={zh ? "输入用户名搜索..." : "Search user..."}
                         value={auditorSearch}
                         onFocus={() => setShowAuditorDropdown(true)}

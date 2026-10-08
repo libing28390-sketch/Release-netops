@@ -531,7 +531,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
               <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--muted-text)] pointer-events-none" />
               <input
                 ref={searchRef}
-                type="text"
+                type="search"
                 placeholder={zh ? '搜索或跳转...' : 'Search or jump...'}
                 className="w-full pl-8 pr-10 py-2 rounded-lg bg-[var(--search-bg)] border border-[var(--card-border)] text-[13px] text-[var(--app-text)] placeholder:text-[var(--dim-text)] focus:outline-none focus:border-[#0078d4] focus:ring-1 focus:ring-[#0078d4]/30 transition-colors"
                 onFocus={() => {
