@@ -52,24 +52,22 @@ def _device(**overrides):
     return value
 
 
-def test_compiler_builds_secret_free_snapshot_and_artifact():
+def test_compiler_excludes_generic_oid_assignment_without_verified_source_mapping():
     assignments = build_assignments([_device()], PLANS, MODULES, VARIANTS, COLLECTORS, credential_aliases={"cred-1": "auth_opaque"})
     artifact = compile_artifact(assignments, collector_id="collector-local", config_version=7, credentials=[{"id": "cred-1", "credential_type": "snmpv2", "community": "private"}])
 
     assert assignments[0]["auth_alias"] == "auth_opaque"
     assert assignments[0]["selection_reason"] == "generic baseline"
-    assert "private" not in artifact["files"]["vmagent/targets/snmp_targets.yml"]
-    assert "auth_opaque" in artifact["files"]["vmagent/targets/snmp_targets.yml"]
-    assert yaml.safe_load(artifact["files"]["snmp_exporter/auth/auth.yml"])["auths"]["auth_opaque"]["version"] == 2
+    assert yaml.safe_load(artifact["files"]["vmagent/targets/snmp_targets.yml"]) == []
+    assert yaml.safe_load(artifact["files"]["snmp_exporter/auth/auth.yml"])["auths"] == {}
     snmp_config = yaml.safe_load(artifact["files"]["snmp_exporter/snmp.yml"])
-    if_metrics = snmp_config["modules"]["generic_ifmib_interface_std"]["metrics"]
-    if_oper_status = next(metric for metric in if_metrics if metric["name"] == "ifOperStatus")
-    assert if_oper_status["lookups"] == [
-        {"labels": ["ifIndex"], "labelname": "ifName", "oid": "1.3.6.1.2.1.31.1.1.1.1", "type": "DisplayString"},
-        {"labels": ["ifIndex"], "labelname": "ifDescr", "oid": "1.3.6.1.2.1.2.2.1.2", "type": "DisplayString"},
-    ]
+    assert snmp_config["modules"] == {}
     assert artifact["manifest"]["config_version"] == 7
-    assert "snmp_exporter/modules/generic_ifmib_interface_std.yml" in artifact["files"]
+    assert artifact["manifest"]["assignment_count"] == 0
+    assert artifact["manifest"]["excluded_nonbaseline_assignment_count"] == 1
+    assert artifact["manifest"]["excluded_nonbaseline_variant_keys"] == ["generic_ifmib_interface_std"]
+    assert artifact["manifest"]["modules"] == []
+    assert "snmp_exporter/modules/generic_ifmib_interface_std.yml" not in artifact["files"]
     assert "snmp_exporter/modules/modules.yml" in artifact["files"]
     assert validate_artifact(artifact)["valid"] is True
     artifact["files"]["vmagent/scrape.yml"] += "# tampered\n"
@@ -186,7 +184,7 @@ class _Provider:
 def test_shadow_provider_returns_primary_and_records_compare():
     comparisons = []
     provider = ShadowMetricProvider(_Provider(100), _Provider(103), tolerance=0.05, sink=comparisons.append)
-    result = provider.instant(query="cpu_usage_percent", asset_id="asset-1", metric_key="cpu_usage_percent")
+    result = provider.instant(query="in_bps", asset_id="asset-1", metric_key="interface_rx_bps")
     assert result["provider"] == "shadow"
     assert result["shadow"]["status"] == "MATCH"
     assert comparisons[0]["delta"] == 3
@@ -201,28 +199,54 @@ def test_collection_health_uses_assignment_interval_not_device_status():
     assert classify_collection_health({"id": "a", "asset_id": "asset-1", "interval_seconds": 30, "last_success_at": now.isoformat(), "last_attempt_at": now.isoformat(), "duration_ms": 12, "consecutive_failures": 2})["consecutive_failures"] == 2
 
 
-def test_vendor_oid_catalog_renders_h3c_huawei_and_cisco_modules():
+def test_compiler_excludes_all_generic_and_vendor_oid_assignments_across_the_catalog():
     catalog = iter_builtin_catalog()
     modules = []
     variants = []
     assignments = []
+    candidate_count = 0
     for item in catalog:
         modules.append({key: value for key, value in item.items() if key != "variant"})
         variant = dict(item["variant"])
         variant["module_id"] = item["id"]
         variants.append(variant)
         if str(variant.get("status") or "PUBLISHED").upper() != "DRAFT" and variant.get("enabled") is not False:
-            assignments.append({"variant_key": variant["variant_key"], "enabled": True})
+            assignments.append({
+                "collector_id": "collector-local",
+                "asset_id": f"asset-{candidate_count}",
+                "target": f"192.0.2.{candidate_count + 1}",
+                "variant_key": variant["variant_key"],
+                "credential_id": "cred-1",
+                "auth_alias": "auth_opaque",
+                "interval_seconds": 60,
+                "scrape_timeout_seconds": 20,
+                "enabled": True,
+            })
+            candidate_count += 1
 
-    rendered = render_exporter_modules(assignments, modules=modules, variants=variants)
-
-    assert {"h3c_common_std", "huawei_common_std", "cisco_common_std", "ruijie_common_std", "juniper_common_std", "fortinet_common_std"} <= set(rendered)
-    assert rendered["h3c_common_std"]["metrics"][0]["oid"].startswith("1.3.6.1.4.1.25506")
-    assert rendered["huawei_common_std"]["metrics"][0]["oid"].startswith("1.3.6.1.4.1.2011")
-    assert rendered["cisco_common_std"]["metrics"][0]["oid"].startswith("1.3.6.1.4.1.9.9")
-    assert rendered["ruijie_common_std"]["metrics"][0]["oid"].startswith("1.3.6.1.4.1.4881")
-    assert rendered["juniper_common_std"]["metrics"][0]["oid"].startswith("1.3.6.1.4.1.2636")
-    assert rendered["fortinet_common_std"]["metrics"][0]["oid"].startswith("1.3.6.1.4.1.12356")
+    artifact = compile_artifact(
+        assignments,
+        collector_id="collector-local",
+        config_version=1,
+        credentials=[{"id": "cred-1", "credential_type": "snmpv2", "community": "private"}],
+        modules=modules,
+        variants=variants,
+    )
+    exporter_config = yaml.safe_load(artifact["files"]["snmp_exporter/snmp.yml"])
+    assert exporter_config["modules"] == {}
+    assert yaml.safe_load(artifact["files"]["vmagent/targets/snmp_targets.yml"]) == []
+    assert artifact["manifest"]["assignment_count"] == 0
+    assert artifact["manifest"]["module_count"] == 0
+    assert artifact["manifest"]["modules"] == []
+    assert artifact["manifest"]["excluded_nonbaseline_assignment_count"] == candidate_count
+    assert "generic_ifmib_interface_std" in artifact["manifest"]["excluded_nonbaseline_variant_keys"]
+    assert "generic_system_std" in artifact["manifest"]["excluded_nonbaseline_variant_keys"]
+    assert "h3c_common_std" in artifact["manifest"]["excluded_nonbaseline_variant_keys"]
+    assert "huawei_common_std" in artifact["manifest"]["excluded_nonbaseline_variant_keys"]
+    assert "cisco_common_std" in artifact["manifest"]["excluded_nonbaseline_variant_keys"]
+    assert "ruijie_common_std" in artifact["manifest"]["excluded_nonbaseline_variant_keys"]
+    assert "juniper_common_std" in artifact["manifest"]["excluded_nonbaseline_variant_keys"]
+    assert "fortinet_common_std" in artifact["manifest"]["excluded_nonbaseline_variant_keys"]
 
 
 def test_optical_oid_catalog_uses_verified_units_and_does_not_scale_huawei_mixed_power():
@@ -267,7 +291,7 @@ def test_multi_vendor_device_variant_matching_matrix():
     assert not variant_matches_device(variant_by_key["h3c_common_std"], ruijie_device)
 
 
-def test_exporter_renderer_drops_nexora_only_metric_metadata():
+def test_exporter_renderer_never_emits_unverified_oid_modules():
     rendered = render_exporter_modules(
         [{"variant_key": "custom_variant", "enabled": True}],
         modules=[{"module_key": "custom_module", "walk": ["1.3.6.1.2.1.1"]}],
@@ -288,9 +312,8 @@ def test_exporter_renderer_drops_nexora_only_metric_metadata():
         }],
     )
 
-    metric = rendered["custom_variant"]["metrics"][0]
-    assert "unit" not in metric
-    assert "source_name" not in metric
+    assert rendered == {}
+    assert render_exporter_modules([]) == {}
 
     artifact = compile_artifact(
         [{
@@ -324,7 +347,12 @@ def test_exporter_renderer_drops_nexora_only_metric_metadata():
             },
         }],
     )
-    assert "unit:" not in artifact["files"]["snmp_exporter/snmp.yml"]
+    exporter_config = yaml.safe_load(artifact["files"]["snmp_exporter/snmp.yml"])
+    assert exporter_config["modules"] == {}
+    assert yaml.safe_load(artifact["files"]["vmagent/targets/snmp_targets.yml"]) == []
+    assert artifact["manifest"]["assignment_count"] == 0
+    assert artifact["manifest"]["excluded_nonbaseline_assignment_count"] == 1
+    assert artifact["manifest"]["excluded_nonbaseline_variant_keys"] == ["custom_variant"]
 
 
 def test_runtime_normalizer_repairs_legacy_exporter_copy(tmp_path):
@@ -406,7 +434,7 @@ def test_oid_config_compiler_accepts_legacy_lookups_but_emits_v026_schema():
     }]
 
 
-def test_compiled_manifest_records_oid_module_provenance():
+def test_compiled_manifest_excludes_vendor_oid_collection_without_source_mapping():
     catalog = iter_builtin_catalog()
     modules = [{key: value for key, value in item.items() if key != "variant"} for item in catalog]
     variants = []
@@ -433,10 +461,12 @@ def test_compiled_manifest_records_oid_module_provenance():
         modules=modules,
         variants=variants,
     )
-    module = next(item for item in artifact["manifest"]["modules"] if item["variant_key"] == "h3c_common_std")
-    assert module["mib_bundle_id"]
-    assert module["metric_count"] >= 10
-    assert module["generator_config_hash"]
+    exporter_config = yaml.safe_load(artifact["files"]["snmp_exporter/snmp.yml"])
+    assert exporter_config["modules"] == {}
+    assert yaml.safe_load(artifact["files"]["vmagent/targets/snmp_targets.yml"]) == []
+    assert artifact["manifest"]["modules"] == []
+    assert artifact["manifest"]["excluded_nonbaseline_assignment_count"] == 1
+    assert artifact["manifest"]["excluded_nonbaseline_variant_keys"] == ["h3c_common_std"]
 
 
 def test_vendor_plan_entry_selector_keeps_one_plan_for_multiple_vendors():

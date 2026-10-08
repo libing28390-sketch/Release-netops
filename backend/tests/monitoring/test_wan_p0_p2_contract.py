@@ -60,6 +60,52 @@ def test_failed_collection_keeps_last_valid_rate_and_does_not_increment_down(iso
     assert status["consecutive_down_count"] == 0
 
 
+def test_wan_collection_and_manual_tests_do_not_poll_profile_oids(isolated_db, monkeypatch):
+    from database import get_db_connection
+    from services import snmp_metric_profile_service, snmp_service, wan_link_service
+
+    conn = get_db_connection()
+    try:
+        link = _seed_link(conn)
+    finally:
+        conn.close()
+
+    profile_calls = []
+    transport_calls = []
+
+    def resolve_profile(device):
+        profile_calls.append(device)
+        return {"interface": {"in_octets_oid": "1.3.6.1.4.1.55555.10"}}
+
+    async def collect_interfaces(*args, **kwargs):
+        transport_calls.append((args, kwargs))
+        return {"status": "success", "items": []}
+
+    async def collect_interface_rows(*args, **kwargs):
+        transport_calls.append((args, kwargs))
+        return []
+
+    monkeypatch.setattr(snmp_metric_profile_service, "resolve_metric_profiles", resolve_profile)
+    monkeypatch.setattr(snmp_service, "collect_interface_data_detailed", collect_interfaces)
+    monkeypatch.setattr(snmp_service, "collect_interface_data", collect_interface_rows)
+    monkeypatch.setattr(wan_link_service, "resolve_metric_profiles", resolve_profile, raising=False)
+    monkeypatch.setattr(wan_link_service, "collect_interface_data_detailed", collect_interfaces, raising=False)
+
+    scheduled = wan_link_service.run_wan_collection_once()
+    manual = _run_async(wan_link_service.test_wan_link_collection(link["id"]))
+    configuration = _run_async(wan_link_service.test_wan_link_configuration({
+        "device_id": "wan-device", "interface_id": "wan-interface",
+    }))
+
+    assert scheduled["results"][0]["collection_status"] == "unsupported"
+    assert manual["status"] == "unsupported"
+    assert manual["error_code"] == "librenms_interface_rule_unsupported"
+    assert configuration["status"] == "unsupported"
+    assert configuration["error_code"] == "librenms_interface_rule_unsupported"
+    assert profile_calls == []
+    assert transport_calls == []
+
+
 def test_shared_interface_collection_hides_contract_utilization_and_resolves_util_alert(isolated_db):
     from database import get_db_connection
     from services.wan_link_service import _collect_link

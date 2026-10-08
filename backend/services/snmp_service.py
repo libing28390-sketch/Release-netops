@@ -1,7 +1,7 @@
 """SNMP identity, IF-MIB interface monitoring, LLDP, and raw walk transport.
 
-Hardware discovery and polling are owned by the bound LibreNMS runtime.
-This module retains protocol and interface operations only.
+Hardware discovery and polling execute versioned LibreNMS rules locally.
+This module owns their SNMP transport and interface operations.
 """
 
 import asyncio
@@ -753,6 +753,57 @@ async def _snmp_get_versioned(
             security_level=str(community.get('security_level') or ''),
         )
     return await _snmp_get(ip, community, oid, port, version=version)
+
+
+async def _snmp_get_many_versioned(
+    ip: str,
+    community: str | Mapping[str, Any],
+    oids: list[str],
+    port: int,
+    version: str,
+) -> dict[str, Optional[str]]:
+    """Read known instances in bounded GET batches, without walking columns.
+
+    SNMPv1 rejects an entire request containing one unavailable instance.
+    Split only protocol size/missing-instance errors so healthy instances are
+    retained, while timeouts and authentication failures never fan out into
+    one request per sensor.
+    """
+    from puresnmp import PyWrapper
+    from puresnmp.exc import NoSuchOID, TooBig
+
+    requested = list(dict.fromkeys(str(oid).strip('.') for oid in oids))
+    if any(not re.fullmatch(r'\d+(?:\.\d+)+', oid) for oid in requested):
+        raise ValueError('SNMP GET instances must be numeric OIDs')
+    results: dict[str, Optional[str]] = {oid: None for oid in requested}
+    semaphore = asyncio.Semaphore(4)
+
+    async def read_batch(batch: list[str]) -> None:
+        split = False
+        async with semaphore:
+            async with get_network_access_limiter().async_snmp():
+                try:
+                    client = PyWrapper(_build_versioned_snmp_client(ip, community, port, version))
+                    values = await asyncio.wait_for(client.multiget(batch), timeout=3)
+                    if len(values) != len(batch):
+                        raise ValueError('Unexpected SNMP GET response length')
+                    for oid, value in zip(batch, values):
+                        if value is None:
+                            continue
+                        text = _val_to_str(value)
+                        if not any(token in text.casefold() for token in ('nosuchobject', 'nosuchinstance', 'endofmibview')):
+                            results[oid] = text
+                except (NoSuchOID, TooBig):
+                    split = len(batch) > 1
+                except Exception as exc:
+                    logger.debug('SNMP batch GET %s failed (%s)', ip, type(exc).__name__)
+        if split:
+            middle = len(batch) // 2
+            await read_batch(batch[:middle])
+            await read_batch(batch[middle:])
+
+    await asyncio.gather(*(read_batch(requested[start:start + 20]) for start in range(0, len(requested), 20)))
+    return results
 
 
 async def _snmp_walk_versioned(

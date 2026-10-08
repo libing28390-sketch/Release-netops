@@ -156,6 +156,15 @@ const MetricSummaryCard: React.FC<{ metric: LibreNMSHardwareMetricSummary; zh: b
   </article>
 );
 
+const RuleSource: React.FC<{ row: LibreNMSHardwareSensor | LibreNMSHardwareNativeSample }> = ({ row }) => (
+  <span className="min-w-0 break-all font-mono text-black/50 dark:text-white/50" title={row.source_commit}>
+    {displayValue(row.source_path)}<br />
+    {row.source_commit ? row.source_commit.slice(0, 12) : '—'}
+    {row.poll_interval_seconds ? ` · ${row.poll_interval_seconds}s` : ''}
+    {row.last_quality ? ` · ${displayValue(row.last_quality)}` : ''}
+  </span>
+);
+
 const SensorRows: React.FC<{ sensors: LibreNMSHardwareSensor[]; zh: boolean; localSource: boolean }> = ({ sensors, zh, localSource }) => (
   <div className="mt-2 max-h-80 overflow-auto rounded-md border border-black/8 dark:border-white/10">
     <div className="grid min-w-[960px] grid-cols-[minmax(160px,1.4fr)_minmax(100px,.8fr)_minmax(130px,1fr)_minmax(120px,.8fr)_minmax(130px,1fr)_minmax(175px,1.2fr)] gap-2 border-b border-black/8 bg-black/[.025] px-2.5 py-1.5 text-[9px] font-semibold text-black/45 dark:border-white/10 dark:bg-white/[.03] dark:text-white/45">
@@ -178,7 +187,10 @@ const SensorRows: React.FC<{ sensors: LibreNMSHardwareSensor[]; zh: boolean; loc
           <span className="text-black/55 dark:text-white/55" title={sensor.lastupdate || sensor.observed_at || undefined}>
             {formatTime(sensor.lastupdate || sensor.observed_at, zh)}<br />{formatAge(sensor.sample_age_seconds, zh)}
           </span>
-          <span className="truncate font-mono text-black/45 dark:text-white/45" title={oidAndIndex}>{oidAndIndex}</span>
+          <span className="min-w-0 font-mono text-black/45 dark:text-white/45">
+            <span className="block truncate" title={oidAndIndex}>{oidAndIndex}</span>
+            {localSource && <RuleSource row={sensor} />}
+          </span>
         </div>
       );
     })}
@@ -210,7 +222,10 @@ const NativeComputeRows: React.FC<{
           const sampleTime = sample.lastupdate || sample.observed_at;
           return (
             <div key={String(id)} className="grid min-w-[700px] grid-cols-[minmax(150px,1.2fr)_minmax(130px,1fr)_minmax(120px,.8fr)_minmax(160px,1fr)] gap-2 border-b border-black/[.04] px-2.5 py-1.5 text-[10px] last:border-b-0 dark:border-white/[.05]">
-              <span className="truncate font-medium text-black/75 dark:text-white/80" title={displayValue(sample.sensor_descr || String(sample.sensor_id ?? ''))}>{displayValue(sample.sensor_descr || (sample.sensor_id !== undefined ? `#${sample.sensor_id}` : '—'))}</span>
+              <span className="min-w-0 font-medium text-black/75 dark:text-white/80">
+                <span className="block truncate" title={displayValue(sample.sensor_descr || String(sample.sensor_id ?? ''))}>{displayValue(sample.sensor_descr || (sample.sensor_id !== undefined ? `#${sample.sensor_id}` : '—'))}</span>
+                {localSource && <RuleSource row={sample} />}
+              </span>
               <span className="truncate font-mono text-black/70 dark:text-white/70" title={valueWithUnit}>{valueWithUnit}</span>
               <span className="text-black/60 dark:text-white/60">{valueStatusLabel(sample.value_status, zh)} · {freshnessLabel(sample.freshness, zh)}</span>
               <span className="text-black/55 dark:text-white/55" title={sampleTime || undefined}>
@@ -304,8 +319,8 @@ const HardwareDiagnosticSummary: React.FC<HardwareDiagnosticSummaryProps> = ({
       <div className="mt-2 rounded-md border border-cyan-500/15 bg-cyan-500/[.035] px-2.5 py-2 text-[10px] leading-4 text-cyan-900 dark:text-cyan-100">
         {localSource
           ? (zh
-            ? '此处读取 Nexora 后台通过 SNMP 发现并保存的硬件结果；页面不会即时触发 SNMP 轮询。样本时间取自本地采集记录，Grafana/时序导出状态需单独验证。'
-            : 'This view reads hardware results discovered and stored by Nexora over SNMP. It does not trigger an immediate poll. Sample times come from local collection records; validate Grafana/time-series export separately.')
+            ? '此处读取 Nexora 按打包的 LibreNMS 规则保存的硬件样本；每行显示规则文件、版本和采样周期。页面不会即时触发 SNMP 轮询，Grafana 导出状态需单独验证。'
+            : 'This view reads hardware samples collected using the bundled LibreNMS rules. Each row shows its rule file, revision, and polling interval. It does not trigger a poll; validate Grafana export separately.')
           : (zh
             ? '此处读取 LibreNMS 已保存的原生结果；若本地尚无关联，会按唯一管理 IP 自动关联。不会立即发现设备或触发轮询。传感器时间取自原生样本；Grafana/时序导出状态需单独验证。'
             : 'This view reads results already stored by LibreNMS and automatically links an unbound CMDB device only when its management IP has one exact match. It does not trigger discovery or polling. Sensor times come from native samples; Grafana/time-series export must be validated separately.')}
@@ -322,6 +337,9 @@ const HardwareDiagnosticSummary: React.FC<HardwareDiagnosticSummaryProps> = ({
           </span>
           {result.collection.stale_after_seconds !== null && result.collection.stale_after_seconds !== undefined && (
             <span className="rounded bg-black/[.04] px-1.5 py-1 dark:bg-white/[.05]">{zh ? '过期阈值' : 'Stale after'}: {result.collection.stale_after_seconds}s</span>
+          )}
+          {result.collection.poll_interval_seconds && (
+            <span className="rounded bg-black/[.04] px-1.5 py-1 dark:bg-white/[.05]">{zh ? '采样周期' : 'Polling interval'}: {result.collection.poll_interval_seconds}s</span>
           )}
           {result.collection.error_code && (
             <span className="rounded bg-rose-500/[.06] px-1.5 py-1 text-rose-700 dark:text-rose-300">{zh ? '错误码' : 'Error code'}: {result.collection.error_code}</span>

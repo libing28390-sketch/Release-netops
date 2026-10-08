@@ -6,7 +6,6 @@ from core.rbac import require_role
 from database import get_db_connection
 from services import rack_scope_service
 from services.device_health_service import annotate_devices_with_health, build_health_overview, fetch_device_health_history, fetch_device_health_trend, load_devices_for_health, record_device_health_snapshot
-from services.snmp_metric_profile_service import annotate_devices_with_snmp_profile
 from services.platform_registry_service import PLATFORM_CATALOG_METADATA
 from services.site_identity_service import canonical_site_name
 
@@ -79,9 +78,7 @@ def device_health_overview(
                 tenant_id=scope.tenant_id,
                 site_ids=scope.site_ids,
             )
-        devices = annotate_devices_with_snmp_profile(
-            load_devices_for_health(conn, **load_kwargs)
-        )
+        devices = load_devices_for_health(conn, **load_kwargs)
         devices = annotate_devices_with_health(conn, devices)
         overview = build_health_overview(devices)
         if normalized_rack_id:
@@ -151,7 +148,6 @@ def device_health_detail(device_id: str, _user=require_role("Viewer")):
         raw_device['site'] = canonical_site_name(raw_device)
         raw_device.pop('resolved_site_id', None)
         raw_device = _attach_platform_binding(conn, raw_device)
-        raw_device = annotate_devices_with_snmp_profile([raw_device])[0]
         device = annotate_devices_with_health(conn, [raw_device])[0]
         recent_alerts = conn.execute(
             '''

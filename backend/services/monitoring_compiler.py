@@ -18,8 +18,6 @@ from typing import Any, Iterable, Mapping
 
 import yaml
 
-from .monitoring_oid_catalog import exporter_config_from_variant
-
 
 class CompileError(ValueError):
     """A configuration cannot safely be applied to a collector."""
@@ -37,7 +35,6 @@ _LEGACY_LOOKUP_METADATA = {
     "ifName": ("1.3.6.1.2.1.31.1.1.1.1", "DisplayString"),
     "ifDescr": ("1.3.6.1.2.1.2.2.1.2", "DisplayString"),
 }
-
 
 def _valid_oid_token(value: str) -> bool:
     token = str(value or "").strip()
@@ -82,28 +79,6 @@ def _normalize_exporter_enum_value_keys(value: Any) -> Any:
     if isinstance(value, list):
         return [_normalize_exporter_enum_value_keys(item) for item in value]
     return value
-
-GENERIC_IF_MIB_MODULE = {
-    "module_key": "generic_ifmib_interface",
-    "display_name": "Generic IF-MIB interface",
-    "metric_group": "interface",
-    "walk": ["1.3.6.1.2.1.2.2", "1.3.6.1.2.1.31.1.1", "1.3.6.1.2.1.10.7.2.1"],
-}
-GENERIC_IF_MIB_VARIANT = {
-    "variant_key": "generic_ifmib_interface_std",
-    "max_repetitions": 25,
-    "retries": 2,
-    "request_timeout_ms": 3000,
-    "scrape_timeout_ms": 20000,
-}
-GENERIC_IF_MIB_METRICS = (
-    "sysUpTime", "ifName", "ifAdminStatus", "ifOperStatus", "ifHighSpeed",
-    "ifHCInOctets", "ifHCOutOctets", "ifInErrors", "ifOutErrors",
-    "ifInDiscards", "ifOutDiscards", "ifHCInUcastPkts", "ifHCInMulticastPkts",
-    "ifHCInBroadcastPkts", "ifHCOutUcastPkts", "ifHCOutMulticastPkts",
-    "ifHCOutBroadcastPkts", "ifLastChange",
-)
-
 
 def _parse_variant_oid_config(value: Any, *, include_unit: bool = True) -> dict[str, Any]:
     """Parse and validate the persisted generator payload.
@@ -252,73 +227,6 @@ def _parse_variant_oid_config(value: Any, *, include_unit: bool = True) -> dict[
     return config if include_unit else _normalize_exporter_enum_value_keys(config)
 
 
-def _fallback_exporter_modules() -> dict[str, dict[str, Any]]:
-    """Compatibility modules for offline callers that pass no catalog rows."""
-
-    _if_lookups = [
-        {"labels": ["ifIndex"], "labelname": "ifName", "oid": "1.3.6.1.2.1.31.1.1.1.1", "type": "DisplayString"},
-        {"labels": ["ifIndex"], "labelname": "ifDescr", "oid": "1.3.6.1.2.1.2.2.1.2", "type": "DisplayString"},
-    ]
-    return {
-        GENERIC_IF_MIB_VARIANT["variant_key"]: {
-            "walk": list(GENERIC_IF_MIB_MODULE["walk"]),
-            "max_repetitions": GENERIC_IF_MIB_VARIANT["max_repetitions"],
-            "retries": GENERIC_IF_MIB_VARIANT["retries"],
-            "timeout": f"{GENERIC_IF_MIB_VARIANT['request_timeout_ms'] / 1000:g}s",
-            "metrics": [
-                {
-                    "name": name,
-                    "oid": oid,
-                    "type": "DisplayString" if name in {"ifName", "ifAlias"} else ("counter" if any(token in name for token in ("Octets", "Errors", "Discards", "Pkts")) else "gauge"),
-                    "help": name,
-                    "indexes": [{"labelname": "ifIndex", "type": "gauge"}],
-                    **({"lookups": _if_lookups} if name not in {"ifName", "ifAlias"} else {})
-                }
-                for name, oid in (
-                    ("ifMtu", "1.3.6.1.2.1.2.2.1.4"),
-                    ("ifSpeed", "1.3.6.1.2.1.2.2.1.5"),
-                    ("ifType", "1.3.6.1.2.1.2.2.1.3"),
-                    ("ifAdminStatus", "1.3.6.1.2.1.2.2.1.7"),
-                    ("ifOperStatus", "1.3.6.1.2.1.2.2.1.8"),
-                    ("ifInDiscards", "1.3.6.1.2.1.2.2.1.13"),
-                    ("ifInErrors", "1.3.6.1.2.1.2.2.1.14"),
-                    ("ifInOctets", "1.3.6.1.2.1.2.2.1.10"),
-                    ("ifOutDiscards", "1.3.6.1.2.1.2.2.1.19"),
-                    ("ifOutErrors", "1.3.6.1.2.1.2.2.1.20"),
-                    ("ifOutOctets", "1.3.6.1.2.1.2.2.1.16"),
-                    ("ifName", "1.3.6.1.2.1.31.1.1.1.1"),
-                    ("ifHighSpeed", "1.3.6.1.2.1.31.1.1.1.15"),
-                    ("ifHCInOctets", "1.3.6.1.2.1.31.1.1.1.6"),
-                    ("ifHCInUcastPkts", "1.3.6.1.2.1.31.1.1.1.7"),
-                    ("ifHCInMulticastPkts", "1.3.6.1.2.1.31.1.1.1.8"),
-                    ("ifHCInBroadcastPkts", "1.3.6.1.2.1.31.1.1.1.9"),
-                    ("ifHCOutOctets", "1.3.6.1.2.1.31.1.1.1.10"),
-                    ("ifHCOutUcastPkts", "1.3.6.1.2.1.31.1.1.1.11"),
-                    ("ifHCOutMulticastPkts", "1.3.6.1.2.1.31.1.1.1.12"),
-                    ("ifHCOutBroadcastPkts", "1.3.6.1.2.1.31.1.1.1.13"),
-                    ("ifLastChange", "1.3.6.1.2.1.2.2.1.9"),
-                    ("ifAlias", "1.3.6.1.2.1.31.1.1.1.18"),
-                    ("dot3StatsFCSErrors", "1.3.6.1.2.1.10.7.2.1.3"),
-                )
-            ],
-        },
-        "generic_system_std": {
-            "walk": ["1.3.6.1.2.1.1"],
-            "max_repetitions": 10,
-            "retries": 2,
-            "timeout": "3s",
-            "metrics": [
-                {"name": name, "oid": oid, "type": "DisplayString" if name != "sysUpTime" else "gauge", "help": name}
-                for name, oid in (
-                    ("sysUpTime", "1.3.6.1.2.1.1.3"),
-                    ("sysDescr", "1.3.6.1.2.1.1.1"),
-                    ("sysName", "1.3.6.1.2.1.1.5"),
-                )
-            ],
-        },
-    }
-
-
 def validate_oid_config(value: Any, *, allow_empty: bool = False) -> dict[str, Any]:
     """Public validation boundary used by the API and offline tests."""
 
@@ -333,19 +241,16 @@ def render_exporter_modules(
     modules: Iterable[Mapping[str, Any]] = (),
     variants: Iterable[Mapping[str, Any]] = (),
 ) -> dict[str, dict[str, Any]]:
-    """Render one strict snmp_exporter module per selected Variant.
+    """Validate persisted OID definitions without enabling exporter polling.
 
-    ``oid_config_json`` is the source of truth.  Module metadata only supplies
-    a fallback walk for legacy rows, while the row-level timing knobs remain
-    authoritative for GETBULK behaviour.
+    Monitoring V1 has no pinned LibreNMS-source mapping for its snmp_exporter
+    variants. Until such provenance is available, neither built-in generic
+    modules nor database-defined vendor/custom modules may become device
+    polling requests. Plan validation still parses supplied OID definitions
+    so malformed persisted configuration is reported to its caller.
     """
 
-    module_rows: dict[str, dict[str, Any]] = {}
-    for item in modules:
-        row = _row(item)
-        for key in (row.get("module_key"), row.get("id")):
-            if key:
-                module_rows[str(key)] = row
+    del modules  # Module metadata cannot establish LibreNMS source provenance.
     variant_rows: dict[str, dict[str, Any]] = {}
     for item in variants:
         row = _row(item)
@@ -358,28 +263,19 @@ def render_exporter_modules(
         if _row(item).get("enabled", True) is not False
     ]
     selected_keys = {str(item.get("variant_key") or "") for item in selected_rows}
-    if not selected_keys:
-        return _fallback_exporter_modules()
-    output: dict[str, dict[str, Any]] = {}
-    fallbacks = _fallback_exporter_modules()
     for variant_key in sorted(selected_keys):
         variant = variant_rows.get(variant_key) or {}
-        module = module_rows.get(str(variant.get("module_key") or "")) or module_rows.get(str(variant.get("module_id") or "")) or {}
         raw = variant.get("oid_config") or variant.get("oid_config_json")
-        if not raw and variant_key in fallbacks:
-            output[variant_key] = fallbacks[variant_key]
+        if not raw and variant_key in {"generic_ifmib_interface_std", "generic_system_std"}:
+            # Legacy baseline rows used compiler-owned fallback definitions.
+            # They are recognized for validation compatibility but never emitted.
             continue
+        if not raw:
+            raise CompileError(f"OID_CONFIG_MISSING:{variant_key}")
         config = _parse_variant_oid_config(raw)
         if not config:
             raise CompileError(f"OID_CONFIG_MISSING:{variant_key}")
-        exporter_config = exporter_config_from_variant(module, {"oid_config": config})
-        exporter_config = _parse_variant_oid_config(exporter_config, include_unit=False)
-        exporter_config["max_repetitions"] = int(variant.get("max_repetitions") or 25)
-        exporter_config["retries"] = int(variant.get("retries") or 2)
-        timeout_ms = int(variant.get("request_timeout_ms") or 3000)
-        exporter_config["timeout"] = f"{timeout_ms / 1000:g}s"
-        output[variant_key] = exporter_config
-    return output
+    return {}
 
 
 def duration_seconds(value: Any, *, field: str) -> int:
@@ -1276,10 +1172,16 @@ def compile_artifact(
     compiler_version: str = "monitoring-compiler-1.0.0",
 ) -> dict[str, Any]:
     """Build a versioned artifact; writes atomically only when ``output_root`` is supplied."""
-    selected = [a for a in assignments if str(a.get("collector_id")) == collector_id and a.get("enabled", True) is not False]
+    candidates = [a for a in assignments if str(a.get("collector_id")) == collector_id and a.get("enabled", True) is not False]
     credential_rows = list(credentials)
     module_rows = list(modules)
     variant_rows = list(variants)
+    # The pinned LibreNMS source manifest currently proves OS hardware-rule
+    # inputs, but does not prove any Monitoring V1 exporter module definition.
+    # Fail closed at the artifact boundary: no assignment can become a device
+    # SNMP target until a source-verified module mapping exists.
+    selected: list[Mapping[str, Any]] = []
+    excluded_assignments = candidates
     snapshot = render_target_snapshot(selected, collector_id=collector_id)
     target_yaml = yaml.safe_dump(snapshot, allow_unicode=True, sort_keys=False)
     vmagent_yaml = yaml.safe_dump(render_vmagent_config(interface_profiles=interface_profiles, collector_id=collector_id), allow_unicode=True, sort_keys=False)
@@ -1289,7 +1191,11 @@ def compile_artifact(
         for a in selected
         if a.get("credential_id") and a.get("auth_alias")
     }
-    auth_payload = render_auth_aliases(credential_rows, assignment_aliases)
+    selected_credential_ids = {str(a.get("credential_id") or "") for a in selected}
+    auth_payload = render_auth_aliases(
+        [row for row in credential_rows if str(row.get("id") or "") in selected_credential_ids],
+        assignment_aliases,
+    )
     rendered_aliases = set(auth_payload.get("auths") or {})
     required_aliases = {str(a.get("auth_alias") or "") for a in selected}
     missing_aliases = sorted(alias for alias in required_aliases if alias and alias not in rendered_aliases)
@@ -1330,6 +1236,10 @@ def compile_artifact(
         "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "assignment_count": len(selected),
         "module_count": len({str(a.get("variant_key")) for a in selected}),
+        "excluded_nonbaseline_assignment_count": len(excluded_assignments),
+        "excluded_nonbaseline_variant_keys": sorted({
+            str(_row(a).get("variant_key") or "unknown") for a in excluded_assignments
+        }),
         "auth_alias_count": len(auth_payload.get("auths") or {}),
         "server_target_count": len(linux_targets) + len(windows_targets),
         "modules": module_manifest,

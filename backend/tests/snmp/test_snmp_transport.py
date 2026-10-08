@@ -78,6 +78,83 @@ def test_snmp_client_uses_bounded_internal_timeout_and_retries() -> None:
     assert client.config.retries == _SNMP_TRANSPORT_RETRIES
 
 
+@pytest.mark.parametrize("version", ["1", "2c", "3"])
+def test_known_instance_gets_are_batched_and_keep_selected_version(monkeypatch, version) -> None:
+    import puresnmp
+    from services import snmp_service
+
+    builds = []
+    requests = []
+    credentials = {"username": "test-user", "security_level": "noAuthNoPriv"} if version == "3" else "test-community"
+
+    def build(ip, profile, port, selected_version):
+        builds.append((ip, profile, port, selected_version))
+        return object()
+
+    class Wrapper:
+        def __init__(self, _client):
+            pass
+
+        async def multiget(self, oids):
+            requests.append(oids)
+            return [42 if not oid.endswith('.0') else None for oid in oids]
+
+    monkeypatch.setattr(snmp_service, "_build_versioned_snmp_client", build)
+    monkeypatch.setattr(puresnmp, "PyWrapper", Wrapper)
+    oids = [f"1.3.6.1.2.1.1.{i}" for i in range(45)]
+    result = asyncio.run(snmp_service._snmp_get_many_versioned("192.0.2.1", credentials, oids + oids[:2], 1161, version))
+
+    assert sorted(map(len, requests)) == [5, 20, 20]
+    assert all(build == ("192.0.2.1", credentials, 1161, version) for build in builds)
+    assert len(result) == 45
+    assert result[oids[0]] is None
+    assert all(result[oid] == "42" for oid in oids[1:])
+
+
+def test_v1_missing_instance_does_not_discard_other_get_results(monkeypatch) -> None:
+    import puresnmp
+    from puresnmp.exc import NoSuchOID
+    from services import snmp_service
+
+    class Wrapper:
+        def __init__(self, _client):
+            pass
+
+        async def multiget(self, oids):
+            if any(oid.endswith('.2') for oid in oids):
+                raise NoSuchOID(None)
+            return [7 for _ in oids]
+
+    monkeypatch.setattr(snmp_service, "_build_versioned_snmp_client", lambda *_: object())
+    monkeypatch.setattr(puresnmp, "PyWrapper", Wrapper)
+    result = asyncio.run(snmp_service._snmp_get_many_versioned(
+        "192.0.2.1", "test-community", ["1.3.6.1.2.1.1.1", "1.3.6.1.2.1.1.2", "1.3.6.1.2.1.1.3"], 161, "1",
+    ))
+    assert list(result.values()) == ["7", None, "7"]
+
+
+def test_get_timeout_does_not_fan_out_to_individual_sensor_requests(monkeypatch) -> None:
+    import puresnmp
+    from services import snmp_service
+
+    requests = []
+
+    class Wrapper:
+        def __init__(self, _client):
+            pass
+
+        async def multiget(self, oids):
+            requests.append(oids)
+            raise TimeoutError("test timeout")
+
+    monkeypatch.setattr(snmp_service, "_build_versioned_snmp_client", lambda *_: object())
+    monkeypatch.setattr(puresnmp, "PyWrapper", Wrapper)
+    oids = [f"1.3.6.1.2.1.1.{i}" for i in range(40)]
+    result = asyncio.run(snmp_service._snmp_get_many_versioned("192.0.2.1", "test-community", oids, 161, "2c"))
+    assert len(requests) == 2
+    assert set(result.values()) == {None}
+
+
 def test_snmpv3_get_uses_selected_authentication_and_privacy(monkeypatch) -> None:
     import puresnmp
     from puresnmp import V3

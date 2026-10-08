@@ -28,8 +28,6 @@ from services.device_health_service import (
     evaluate_device_health,
     _build_open_alert_stats,
 )
-from services.snmp_service import collect_interface_data
-from services.snmp_metric_profile_service import resolve_metric_profiles
 from services.network_access_limiter import limited_connect_handler
 from core.config import settings
 from core.subprocess_utils import run_console_command
@@ -629,7 +627,7 @@ def _extract_snmp_item_value(item: dict, snmp_metrics: dict, snmp_interfaces: li
     # Interface Down count
     if 'intf_down' in check_key or 'interface_down' in check_key:
         if not snmp_interfaces:
-            return 0, ''
+            return None, 'LibreNMS interface status is unavailable because no supported YAML rule produced interface rows'
         down_count = sum(
             1 for iface in snmp_interfaces
             if str(iface.get('status', '')).lower() in ('down', '2', 'notconnect')
@@ -642,22 +640,18 @@ def _extract_snmp_item_value(item: dict, snmp_metrics: dict, snmp_interfaces: li
 
 def _collect_snmp_for_inspection(device: dict) -> tuple[dict, list[dict]]:
     """
-    Read hardware values from the existing LibreNMS binding and collect only
-    IF-MIB interface state directly from the device.
+    Read fresh hardware values from the existing LibreNMS binding.
 
     Hardware rows without a native sample timestamp are deliberately excluded
-    from inspection thresholds; the diagnostic UI still displays those rows
-    with unknown freshness.
+    from inspection thresholds. Interface profile OIDs are not queried here;
+    this executor has no pinned LibreNMS YAML interface rule.
     """
     ip = device.get('ip_address') or ''
-    community = device.get('snmp_community') or 'public'
-    port = int(device.get('snmp_port') or 161)
 
     snmp_metrics: dict = {}
     snmp_interfaces: list[dict] = []
 
     try:
-        resolved_metrics = resolve_metric_profiles(device)
         loop = asyncio.new_event_loop()
         try:
             from services.librenms_diagnostic_service import diagnose_librenms_hardware
@@ -700,19 +694,6 @@ def _collect_snmp_for_inspection(device: dict) -> tuple[dict, list[dict]]:
         except Exception as e:
             logger.warning("LibreNMS inspection snapshot failed for %s: %s", ip, type(e).__name__)
             snmp_metrics = {}
-        try:
-            snmp_interfaces = loop.run_until_complete(
-                collect_interface_data(
-                    ip,
-                    community,
-                    port,
-                    resolved_metrics.get('interface') or None,
-                    template_only=True,
-                )
-            )
-        except Exception as e:
-            logger.warning(f"SNMP interface collection failed for {ip}: {e}")
-            snmp_interfaces = []
         finally:
             loop.close()
     except Exception as e:
@@ -1828,7 +1809,7 @@ def _load_devices(conn, scope_type: str, scope_filter: str) -> list[dict[str, An
         'username, password, normal_username, normal_password, '
         'admin_username, admin_password, management_port, enable_password, '
         'credential_source, vault_path, snmp_community, snmp_port, '
-        'snmp_cpu_oid, snmp_memory_oid, collection_policy_json'
+        'collection_policy_json'
     )
     if scope_type == 'all':
         rows = conn.execute(f'SELECT {select} FROM devices ORDER BY hostname').fetchall()

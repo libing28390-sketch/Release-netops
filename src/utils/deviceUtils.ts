@@ -45,8 +45,6 @@ export const normalizeDeviceRecord = (raw: any): Device => {
     interface_data: safeJsonArray(raw?.interface_data),
     cpu_history: safeJsonArray(raw?.cpu_history),
     memory_history: safeJsonArray(raw?.memory_history),
-    snmp_cpu_oid: typeof raw?.snmp_cpu_oid === 'string' ? raw.snmp_cpu_oid : '',
-    snmp_memory_oid: typeof raw?.snmp_memory_oid === 'string' ? raw.snmp_memory_oid : '',
     health_status: ['healthy', 'warning', 'critical', 'unknown'].includes(String(raw?.health_status)) ? raw.health_status : 'unknown',
     health_score: typeof raw?.health_score === 'number' ? raw.health_score : Number(raw?.health_score || 0),
     health_summary: typeof raw?.health_summary === 'string' ? raw.health_summary : '',

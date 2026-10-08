@@ -1208,20 +1208,16 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         const hasEnrollmentFailures = enrollmentFailedCount > 0;
         const snmpIdentification = res.snmp_identification || {};
         const identityRows = Array.isArray(snmpIdentification.items) ? snmpIdentification.items : [];
-        const identityBoundCount = Math.max(0, Number(snmpIdentification.profile_bound) || 0);
         const identityUnresolvedCount = Math.max(0, Number(snmpIdentification.unresolved) || 0);
         const identityDetails = identityRows.slice(0, 8).map((item: any) => {
           const identity = [item.detected_vendor, item.detected_platform, item.detected_model]
             .filter(Boolean)
             .join(' / ');
           const row = item.row ? (zh ? `第 ${item.row} 行 ` : `row ${item.row} `) : '';
-          const profile = item.profile_name
-            ? (zh ? `；指标 Profile：${item.profile_name}` : `; metric profile: ${item.profile_name}`)
-            : '';
           const detected = identity
             ? (zh ? `识别为 ${identity}` : `identified as ${identity}`)
             : (zh ? `状态 ${item.status || '未识别'}` : `status ${item.status || 'unidentified'}`);
-          return `${row}${item.hostname || item.ip || item.asset_tag || item.device_id || (zh ? '未知设备' : 'Unknown device')}：${detected}${profile}${item.message ? `；${item.message}` : ''}`;
+          return `${row}${item.hostname || item.ip || item.asset_tag || item.device_id || (zh ? '未知设备' : 'Unknown device')}：${detected}${item.message ? `；${item.message}` : ''}`;
         });
         if (identityRows.length > identityDetails.length) {
           identityDetails.push(zh
@@ -1230,13 +1226,13 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         }
         const identitySummary = Number(snmpIdentification.total || 0) > 0
           ? (zh
-            ? `；SNMP 自动识别 ${snmpIdentification.identified || 0}/${snmpIdentification.total} 台，自动绑定指标 Profile ${identityBoundCount} 台`
-            : `; SNMP identity detected for ${snmpIdentification.identified || 0}/${snmpIdentification.total} devices; metric profiles bound automatically for ${identityBoundCount}`)
+            ? `；按 LibreNMS 规则完成 SNMP 身份识别 ${snmpIdentification.identified || 0}/${snmpIdentification.total} 台`
+            : `; LibreNMS-rule SNMP identity detected for ${snmpIdentification.identified || 0}/${snmpIdentification.total} devices`)
           : '';
         const identityFailureSummary = identityUnresolvedCount > 0
           ? (zh
-            ? `；${identityUnresolvedCount} 台设备未自动绑定指标 Profile，请查看 SNMP 识别详情`
-            : `; ${identityUnresolvedCount} device${identityUnresolvedCount === 1 ? '' : 's'} did not receive an automatic metric-profile binding; review the SNMP details`)
+            ? `；${identityUnresolvedCount} 台设备尚未完成 SNMP 身份识别，请查看识别详情`
+            : `; ${identityUnresolvedCount} device${identityUnresolvedCount === 1 ? '' : 's'} could not be identified over SNMP; review the identity details`)
           : '';
         const hasIdentityIssues = identityUnresolvedCount > 0;
         const details = [...skippedDetails, ...hostnameSyncDetails, ...enrollmentDetails, ...identityDetails];

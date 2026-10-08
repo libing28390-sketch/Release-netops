@@ -200,26 +200,12 @@ HARDWARE_INVENTORY_JOB = 'job="platform_hardware_inventory"'
 WIRELESS_DEVICE_LABELS = "site_name,vendor,role,hostname"
 
 
-def wireless_clients_by_device(network_selector, inventory_selector):
-    """Return the shared controller/SSID client contract by device.
+def wireless_clients_by_device(inventory_selector):
+    """Return only LibreNMS-rule-backed controller/SSID counts by device.
 
-    The normalized inventory can expose both a controller total and one row
-    per SSID. Prefer the controller series, fall back to the SSID aggregate,
-    and only use the legacy SNMP counters when inventory has no client
-    series. Grouping on the four stable device labels prevents duplicate
-    controller/SSID rows from being counted together. No zero fallback is
-    introduced, so a missing source remains No data while a real zero stays
-    visible as zero.
+    Missing normalized inventory remains No data. Raw vendor OIDs from the
+    separate snmp_exporter path are not a fallback source.
     """
-    legacy_clients = (
-        f"sum by ({WIRELESS_DEVICE_LABELS}) ("
-        f"hwWlanCurAssocUserNum{{{network_selector}}} or "
-        f"hh3cDot11CurrAssocUserNum{{{network_selector}}} or "
-        f"ruijieApcTotalStaNum{{{network_selector}}} or "
-        f"cLSysTotalNumOfClients{{{network_selector}}} or "
-        f"wlsxSysExtStationsNum{{{network_selector}}} or "
-        f"ruckusZDTotalNumSta{{{network_selector}}})"
-    )
     controller_clients = (
         f"sum by ({WIRELESS_DEVICE_LABELS}) ("
         f"nexora_wireless_sensor_value{{{inventory_selector},"
@@ -233,17 +219,15 @@ def wireless_clients_by_device(network_selector, inventory_selector):
     inventory_clients = (
         f"({controller_clients} or on({WIRELESS_DEVICE_LABELS}) {ssid_clients})"
     )
-    expression = (
-        f"(({legacy_clients} unless on({WIRELESS_DEVICE_LABELS}) "
-        f"({inventory_clients})) or on({WIRELESS_DEVICE_LABELS}) "
-        f"({inventory_clients}))"
-    )
+    expression = inventory_clients
     # Keep the query contract executable and reviewable: this guard catches a
     # future edit that accidentally drops the SSID fallback or fabricates 0.
     assert f"sum by ({WIRELESS_DEVICE_LABELS})" in expression
     assert 'component_class="wireless_controller",sensor_class="clients"' in expression
     assert 'component_class="wireless_ssid",sensor_class="clients"' in expression
+    assert 'source_type="librenms_rule"' in expression
     assert "vector(0)" not in expression
+    assert "hwWlan" not in expression and "hh3cDot11" not in expression
     return expression
 
 
@@ -1002,6 +986,7 @@ def build_overview_dashboard():
     sel = f'{NETWORK_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
     target_sel = f'{NETWORK_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
     inventory_sel = f'{HARDWARE_INVENTORY_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
+    wireless_inventory_sel = f'{inventory_sel},source_type="librenms_rule"'
     target_site_sel = f'{NETWORK_JOB},site_name!="",site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
     in_rate = counter_rate_expr("ifHCInOctets", "ifInOctets", sel)
     out_rate = counter_rate_expr("ifHCOutOctets", "ifOutOctets", sel)
@@ -1039,10 +1024,10 @@ def build_overview_dashboard():
         return f'count(count by (asset_id) ({metric_expr}))'
 
     ap_online_expr = (
-        f"sum((hwWlanCurOnlineApNum{{{sel}}} or hh3cDot11CurrOnlineAPNum{{{sel}}} or ruijieApcOnlineApNum{{{sel}}} or "
-        f"ruijieApcTotalApNum{{{sel}}} or cLApTotalUpAPs{{{sel}}} or wlsxSysExtAccessPointsNum{{{sel}}} or ruckusZDTotalNumAP{{{sel}}}))"
+        f'sum(nexora_wireless_sensor_value{{{wireless_inventory_sel},'
+        'component_class="wireless_controller",sensor_class="ap-count"})'
     )
-    client_online_by_device = wireless_clients_by_device(sel, inventory_sel)
+    client_online_by_device = wireless_clients_by_device(wireless_inventory_sel)
     client_online_expr = f"sum({client_online_by_device})"
     anomaly_rows = (
         f'((changes(ifOperStatus{{{sel}}}[24h]) > 0) '
@@ -1109,7 +1094,7 @@ def build_overview_dashboard():
         ]),
         timeseries_panel(8, "全网无线终端与 AP 规模趋势", [
             {"expr": f"sum({client_online_by_device})", "legendFormat": "控制器统计的在线终端", "refId": "A"},
-            {"expr": f"sum((hwWlanCurOnlineApNum{{{sel}}} or hh3cDot11CurrOnlineAPNum{{{sel}}} or ruijieApcOnlineApNum{{{sel}}} or ruijieApcTotalApNum{{{sel}}} or cLApTotalUpAPs{{{sel}}} or wlsxSysExtAccessPointsNum{{{sel}}} or ruckusZDTotalNumAP{{{sel}}}))", "legendFormat": "在线 AP 总数", "refId": "B"}
+            {"expr": ap_online_expr, "legendFormat": "在线 AP 总数", "refId": "B"}
         ], 12, 3, 12, 8, unit="short", legend_display_mode="list", legend_placement="bottom", legend_calcs=[]),
         stat_panel(
             9, "CPU 指标覆盖设备数", online_metric_device_count(cpu_metric), 0, 11, 8, 3,
@@ -1994,6 +1979,7 @@ def build_device_dashboard():
 def build_wireless_dashboard():
     sel = f'{NETWORK_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
     inventory_sel = f'{HARDWARE_INVENTORY_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
+    wireless_inventory_sel = f'{inventory_sel},source_type="librenms_rule"'
     ac_sel = f'{NETWORK_JOB},role="wireless_controller",site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
     wireless_interface_sel = f'{NETWORK_JOB},role="wireless_controller",site_name=~"$site",vendor=~"$vendor",hostname=~"$device"'
     wireless_interface_meta_sel = f'{wireless_interface_sel},ifName!=""'
@@ -2008,14 +1994,12 @@ def build_wireless_dashboard():
         f"max by (site_name,hostname,instance,ifIndex,ifName,ifAlias) "
         f"(({wireless_in_rate} + {wireless_out_rate}) {wireless_interface_join}) * 8"
     )
-    # The wireless dashboard combines SNMP-exporter series and normalized
-    # hardware-inventory series. Their job labels differ, so device identity
-    # must not include `job` when de-duplicating or joining these sources.
+    # Wireless hardware metrics use only the normalized inventory populated
+    # from the pinned LibreNMS rule bundle.
     device_labels = WIRELESS_DEVICE_LABELS
-    # Prefer the collected per-AP state rows for AP totals and status counts.
-    # The controller-level online counters remain a fallback for platforms
-    # that do not expose a complete AP state inventory.
-    ap_state_selector = f'{inventory_sel},component_class="wireless_access_point"'
+    # Prefer collected per-AP state rows for AP totals and status counts.
+    # Controller counts are also read only from normalized inventory.
+    ap_state_selector = f'{wireless_inventory_sel},component_class="wireless_access_point"'
     ap_state_rows = f"nexora_hw_component_state{{{ap_state_selector}}}"
     ap_state_online_rows = f'nexora_hw_component_state{{{ap_state_selector},state_description=~"^(associated|run)$"}}'
     ap_state_offline_rows = f'nexora_hw_component_state{{{ap_state_selector},state_description=~"^(deassociated|idle)$"}}'
@@ -2024,7 +2008,7 @@ def build_wireless_dashboard():
     ap_state_known_count = f"count by ({device_labels}) ({ap_state_known_rows})"
     ap_state_complete = (
         f'max by ({device_labels}) '
-        f'(nexora_hw_capability_status{{{inventory_sel},component_class="wireless_access_point",coverage_complete="true"}})'
+        f'(nexora_hw_capability_status{{{wireless_inventory_sel},component_class="wireless_access_point",coverage_complete="true"}})'
     )
     ap_state_detail_coverage = (
         f'(({ap_state_known_count}) == on({device_labels}) ({ap_state_count})) '
@@ -2032,9 +2016,8 @@ def build_wireless_dashboard():
     )
     ap_state_online_count = f"count by ({device_labels}) ({ap_state_online_rows})"
     ap_state_offline_count = f"count by ({device_labels}) ({ap_state_offline_rows})"
-    legacy_ap_online = f"sum by ({device_labels}) (hh3cDot11CurrOnlineAPNum{{{sel}}} or cLApTotalUpAPs{{{sel}}} or wlsxSysExtAccessPointsNum{{{sel}}} or ruckusZDTotalNumAP{{{sel}}})"
-    inventory_ap_online = f'sum by ({device_labels}) (nexora_wireless_sensor_value{{{inventory_sel},component_class="wireless_controller",sensor_class="ap-count"}})'
-    reported_ap_online = f"({legacy_ap_online} unless on({device_labels}) ({inventory_ap_online})) or on({device_labels}) ({inventory_ap_online})"
+    inventory_ap_online = f'sum by ({device_labels}) (nexora_wireless_sensor_value{{{wireless_inventory_sel},component_class="wireless_controller",sensor_class="ap-count"}})'
+    reported_ap_online = inventory_ap_online
     ap_online_from_complete_details = (
         f"(({ap_state_online_count}) and on({device_labels}) ({ap_state_detail_coverage})) "
         f"or on({device_labels}) (({ap_state_detail_coverage}) * 0)"
@@ -2047,7 +2030,7 @@ def build_wireless_dashboard():
         f"({ap_state_offline_count}) or on({device_labels}) "
         f"(({ap_state_detail_coverage}) * 0)"
     )
-    clients = wireless_clients_by_device(sel, inventory_sel)
+    clients = wireless_clients_by_device(wireless_inventory_sel)
     ac_total = f"count(count by ({device_labels}) (up{{{ac_sel}}}))"
     ac_online_targets = f"count(count by ({device_labels}) (up{{{ac_sel}}} == 1))"
     ac_online = (
@@ -2058,23 +2041,22 @@ def build_wireless_dashboard():
     )
     missing_wireless_data_note = "暂无数据不代表数量为 0。"
     ap_total_description = f"统计已采到状态的 AP，不等于控制器配置总数。{missing_wireless_data_note}"
-    ap_online_description = "优先按 AP 状态统计；明细不完整时采用控制器上报数。"
+    ap_online_description = "优先按 AP 状态统计；覆盖不完整时采用 LibreNMS 规则采集的控制器上报数。"
     ap_offline_description = "只统计明确离线的 AP，不用总数减在线数推算。"
-    ap_client_rows = f'topk(20, nexora_wireless_sensor_value{{{inventory_sel},component_class="wireless_access_point",sensor_class="clients"}})'
+    ap_client_rows = f'topk(20, nexora_wireless_sensor_value{{{wireless_inventory_sel},component_class="wireless_access_point",sensor_class="clients"}})'
     wireless_sensor_rows = (
-        f'topk(100, nexora_wireless_sensor_value{{{inventory_sel},'
-        'data_origin=~"^(legacy_snmp|librenms_native)$",component_class=~"wireless_.*"})'
+        f'topk(100, nexora_wireless_sensor_value{{{wireless_inventory_sel},'
+        'component_class=~"wireless_.*"})'
     )
-    station_rows = f'topk(100, nexora_wireless_station_info{{{inventory_sel}}})'
     radio_utilization_labels = "site_name,vendor,role,hostname,ap_id,ap_name,radio_id"
-    radio_utilization_samples = f'nexora_wireless_sensor_value{{{inventory_sel},component_class="wireless_radio",sensor_class="utilization"}}'
+    radio_utilization_samples = f'nexora_wireless_sensor_value{{{wireless_inventory_sel},component_class="wireless_radio",sensor_class="utilization"}}'
     radio_utilization_rows = f"max by ({radio_utilization_labels}) ({radio_utilization_samples})"
     high_utilization_radio_count = (
         f'count({radio_utilization_rows} >= 75) or on() '
         f'((count({radio_utilization_rows}) > 0) * 0)'
     )
-    bss_client_rows = f'topk(20, nexora_wireless_sensor_value{{{inventory_sel},component_class="wireless_bss",sensor_class="clients"}})'
-    ssid_client_rows = f"topk(20, {wireless_ssid_clients_by_device(inventory_sel)})"
+    bss_client_rows = f'topk(20, nexora_wireless_sensor_value{{{wireless_inventory_sel},component_class="wireless_bss",sensor_class="clients"}})'
+    ssid_client_rows = f"topk(20, {wireless_ssid_clients_by_device(wireless_inventory_sel)})"
 
     panels = [
         stat_panel(15, "在线 AC", ac_online, 0, 0, 3, 3, color=HEALTHY_COLOR, description="只统计 up 值为 1 的无线控制器；目标存在但全部离线时显示 0。", no_value=NO_VALUE_TEXT),
@@ -2169,59 +2151,6 @@ def build_wireless_dashboard():
                 extra_excludes={"instance": True, "rule_version": True},
             ),
             description="优先采用控制器 SSID 统计，缺失时按同名 BSS 汇总；暂无数据不代表数量为 0。",
-        ),
-        row_panel(905, "AP 下在线终端", 40),
-        table_panel(
-            16, "AP 下在线终端明细",
-            station_rows,
-            0, 41, 24, 9, value_col_name="在线状态",
-            transformations=clean_organize_transformation(
-                "在线状态",
-                extra_renames={
-                    "hostname": "所属 AC",
-                    "station_mac": "终端 MAC",
-                    "station_ip": "终端 IP",
-                    "ap_name": "关联 AP",
-                    "ssid": "SSID",
-                    "radio_id": "Radio",
-                    "wlan_id": "WLAN ID",
-                    "vlan_id": "VLAN ID",
-                },
-                extra_indices={
-                    "station_mac": 0,
-                    "station_ip": 1,
-                    "ap_name": 2,
-                    "ssid": 3,
-                    "hostname": 4,
-                    "radio_id": 5,
-                    "wlan_id": 6,
-                    "vlan_id": 7,
-                    "Value": 8,
-                },
-                extra_excludes={
-                    "source_type": True,
-                    "measurement_type": True,
-                    "component_class": True,
-                    "source_id": True,
-                    "sensor_key": True,
-                    "window": True,
-                    "unit": True,
-                    "device_id": True,
-                    "instance": True,
-                    "site_name": True,
-                    "vendor": True,
-                    "role": True,
-                    "ap_id": True,
-                    "platform": True,
-                    "discovery_status": True,
-                    "lifecycle_status": True,
-                    "job": True,
-                    "rule_version": True,
-                },
-            ),
-            extra_value_mappings={"在线状态": [{"type": "value", "options": {"1": {"text": "在线", "color": HEALTHY_COLOR}}}]},
-            extra_color_mapped_cells={"在线状态": "color-text"},
-            description="显示 AC 当前采集到的在线终端及 AP 归属，仅展示 MAC/IP/SSID 和无线接口字段，不含用户名。",
         ),
         row_panel(906, "无线专网流量", 50),
         stat_panel(
@@ -4465,6 +4394,7 @@ def main():
         path = DASHBOARDS_DIR / fname
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
+            f.write("\n")
         print(f"Generated {path}")
 
 if __name__ == "__main__":

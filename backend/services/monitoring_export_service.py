@@ -21,7 +21,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from database import get_db_connection
-from services.metric_provider import VictoriaMetricsMetricProvider
+from services.metric_provider import VictoriaMetricsMetricProvider, normalized_hardware_metric_query
 
 logger = logging.getLogger(__name__)
 
@@ -439,7 +439,6 @@ def fetch_devices_report_data(
         tenant_filter = "WHERE COALESCE(d.tenant_id, 'tenant-default') = ?" if tenant_id else ""
         query = f"""
             SELECT d.id, d.hostname, d.ip_address, d.vendor, d.platform, d.role, d.status,
-                   d.cpu_usage, d.memory_usage, d.temp as temperature,
                    COALESCE(s.site_name, d.site, '默认站点') as site_name
               FROM devices d
               LEFT JOIN sites s ON d.site_id = s.id
@@ -451,9 +450,9 @@ def fetch_devices_report_data(
         if should_close:
             conn.close()
 
-    cpu_map = _query_vm_instant_safe("cpu_usage_percent or cpmCPUTotal1minRev or hh3cEntityExtCpuUsage or hwEntityCpuUsage or ruijieCpuCostRate")
-    mem_map = _query_vm_instant_safe("memory_usage_percent or hh3cEntityExtMemUsage or hwEntityMemUsage or ruijieMemoryPoolCurrentUtilization")
-    temp_map = _query_vm_instant_safe("temperature_celsius or hh3cEntityExtTemperature or hwEntityTemperature")
+    cpu_map = _query_vm_instant_safe(normalized_hardware_metric_query("cpu_usage_percent"))
+    mem_map = _query_vm_instant_safe(normalized_hardware_metric_query("memory_usage_percent"))
+    temp_map = _query_vm_instant_safe(normalized_hardware_metric_query("temperature_celsius"))
 
     hostname_counts: dict[str, int] = {}
     for row in rows:
@@ -495,18 +494,13 @@ def fetch_devices_report_data(
         cpu_live = current_value(cpu_map)
         mem_live = current_value(mem_map)
         temp_live = current_value(temp_map)
-        cpu_snapshot = float(r["cpu_usage"]) if r["cpu_usage"] is not None else None
-        mem_snapshot = float(r["memory_usage"]) if r["memory_usage"] is not None else None
-        temp_snapshot = float(r["temperature"]) if r["temperature"] is not None else None
-        cpu = cpu_live if cpu_live is not None else cpu_snapshot
-        mem = mem_live if mem_live is not None else mem_snapshot
-        temp = temp_live if temp_live is not None else temp_snapshot
+        cpu = cpu_live
+        mem = mem_live
+        temp = temp_live
         live_values = [value for value in (cpu_live, mem_live) if value is not None]
-        has_snapshot = any(value is not None for value in (cpu_snapshot, mem_snapshot, temp_snapshot))
         sample_quality = (
             "current" if cpu_live is not None and mem_live is not None
             else "partial" if live_values
-            else "stale" if has_snapshot
             else "no_data"
         )
         sample_times = [
@@ -518,10 +512,7 @@ def fetch_devices_report_data(
         sample_time = max(sample_times) if sample_times else None
         temp_str = f"{temp:.1f} °C" if temp is not None else "--"
 
-        if sample_quality == "stale":
-            risk = "STALE"
-            advice = "仅有 CMDB 缓存值，当前没有有效实时资源样本"
-        elif sample_quality == "no_data":
+        if sample_quality == "no_data":
             risk = "NO_DATA"
             advice = "当前没有有效资源样本，请检查设备采集状态"
         elif (cpu_live is not None and cpu_live >= 85.0) or (mem_live is not None and mem_live >= 90.0):
@@ -552,9 +543,9 @@ def fetch_devices_report_data(
             "sample_quality": sample_quality,
             "sample_time": sample_time,
             "metric_sources": {
-                "cpu_usage": "victoriametrics" if cpu_live is not None else "cmdb_snapshot" if cpu_snapshot is not None else "none",
-                "memory_usage": "victoriametrics" if mem_live is not None else "cmdb_snapshot" if mem_snapshot is not None else "none",
-                "temperature": "victoriametrics" if temp_live is not None else "cmdb_snapshot" if temp_snapshot is not None else "none",
+                "cpu_usage": "victoriametrics" if cpu_live is not None else "none",
+                "memory_usage": "victoriametrics" if mem_live is not None else "none",
+                "temperature": "victoriametrics" if temp_live is not None else "none",
             },
         })
 

@@ -86,17 +86,33 @@ def test_network_monitoring_list_is_server_paginated_and_server_devices_are_excl
     assert search_page["items"][0]["hostname"] == "edge-064"
 
 
-def test_network_monitoring_realtime_returns_only_up_interfaces(isolated_db) -> None:
+def test_network_monitoring_realtime_returns_only_up_interfaces_and_never_uses_legacy_hardware(isolated_db, monkeypatch) -> None:
+    from api import monitoring
     from api.monitoring import monitoring_device_realtime
     from database import get_db_connection
+
+    class _EmptyHardwareProvider:
+        def instant(self, *, query, asset_id=None, metric_key=None):
+            return {"status": "success", "data": []}
+
+    monkeypatch.setattr(
+        monitoring,
+        "provider_from_environment",
+        lambda *, mode=None: _EmptyHardwareProvider(),
+    )
 
     sampled_at = (datetime.now(timezone.utc) - timedelta(seconds=10)).isoformat()
     invalid_sampled_at = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
     conn = get_db_connection()
     try:
         conn.execute(
-            "INSERT INTO devices (id, hostname, ip_address, platform, status) VALUES (?, ?, ?, ?, ?)",
-            ("realtime-device", "edge-realtime", "192.0.2.250", "h3c_comware", "online"),
+            """
+            INSERT INTO devices
+                (id, hostname, ip_address, platform, status,
+                 cpu_usage, memory_usage, temp, fan_status, psu_status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("realtime-device", "edge-realtime", "192.0.2.250", "h3c_comware", "online", 91, 87, 72, "ok", "ok"),
         )
         conn.executemany(
             """
@@ -141,6 +157,11 @@ def test_network_monitoring_realtime_returns_only_up_interfaces(isolated_db) -> 
 
     payload = monitoring_device_realtime("realtime-device", window_minutes=15, limit=100)
 
+    assert payload["device"]["cpu_usage"] is None
+    assert payload["device"]["memory_usage"] is None
+    assert payload["device"]["temp"] is None
+    assert payload["device"]["fan_status"] is None
+    assert payload["device"]["psu_status"] is None
     assert [item["interface_name"] for item in payload["latest_interfaces"]] == ["GigabitEthernet1/0/1", "GigabitEthernet1/0/2"]
     assert all("LoopBack" not in item["interface_name"] and "Tunnel" not in item["interface_name"] for item in payload["latest_interfaces"])
     assert payload["summary"]["in_bps"] == 10

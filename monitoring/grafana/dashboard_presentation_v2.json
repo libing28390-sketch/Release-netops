@@ -6876,56 +6876,6 @@
             "overrides": []
           }
         },
-        "16": {
-          "title": "AP 下在线终端明细",
-          "type": "table",
-          "fieldConfig": {
-            "defaults": {
-              "unit": "none",
-              "noValue": "暂无采集数据",
-              "color": {
-                "mode": "thresholds"
-              },
-              "custom": {
-                "filterable": true
-              }
-            },
-            "overrides": [
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "在线状态"
-                },
-                "properties": [
-                  {
-                    "id": "mappings",
-                    "value": [
-                      {
-                        "type": "value",
-                        "options": {
-                          "1": {
-                            "text": "在线",
-                            "color": "#22C55E"
-                          }
-                        }
-                      }
-                    ]
-                  },
-                  {
-                    "id": "custom.cellOptions",
-                    "value": {
-                      "type": "color-text"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        },
-        "905": {
-          "title": "AP 下在线终端",
-          "type": "row"
-        },
         "17": {
           "title": "AC 接口入向流量",
           "type": "stat",

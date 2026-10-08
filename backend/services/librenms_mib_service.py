@@ -332,11 +332,12 @@ def _source_manifest_entries(mibs_path: Path) -> dict[str, tuple[str, int]] | No
     """Read the pinned bundle manifest used as the source snapshot identity.
 
     The bundled source manifest records the inventory of the pinned MIB
-    snapshot.  The cache check separately hashes the current files because a
-    local bundle can be edited without changing the upstream commit.  A
-    missing or malformed manifest deliberately disables the fast path; the
-    importer then falls back to its existing full scan and can create a new
-    authoritative run.
+    snapshot. The cache check separately hashes the current files because a
+    local bundle can be edited without changing the upstream commit. A
+    missing or malformed manifest disables the cache fast path. The fixed
+    bundled directory also fails closed during import instead of scanning
+    files that are not listed in its pinned manifest; caller-supplied MIB
+    directories retain their existing scan behavior.
     """
     manifest_path = mibs_path.parent / "source-manifest.json"
     try:
@@ -367,6 +368,22 @@ def _source_manifest_entries(mibs_path: Path) -> dict[str, tuple[str, int]] | No
             return None
         entries[relative_path] = (file_hash, file_size)
     return entries or None
+
+
+def _manifest_whitelisted_files(
+    mibs_path: Path,
+    files: list[Path],
+    manifest_entries: dict[str, tuple[str, int]],
+) -> tuple[list[Path], int, list[str]]:
+    """Keep only files explicitly present in the pinned bundle manifest."""
+    allowed_paths = set(manifest_entries)
+    discovered_paths = {relative_mib_path(path, mibs_path) for path in files}
+    selected = [
+        path for path in files
+        if relative_mib_path(path, mibs_path) in allowed_paths
+    ]
+    missing_paths = sorted(allowed_paths - discovered_paths)
+    return selected, len(files) - len(selected), missing_paths
 
 
 def _row_value(row: Any, index: int, key: str | None = None) -> Any:
@@ -602,6 +619,40 @@ def import_mibs_from_directory(
         if value
     }
     all_files = iter_mib_files(mibs_path)
+    if mibs_path.resolve() == MIBS_DIR.resolve():
+        bundle_manifest = _source_manifest_entries(mibs_path)
+        if not bundle_manifest:
+            logger.error("Pinned LibreNMS MIB bundle has no valid source manifest")
+            return {
+                "success": False,
+                "imported": 0,
+                "errors": 1,
+                "message": "Pinned LibreNMS MIB manifest missing or invalid",
+            }
+        all_files, ignored_unlisted, missing_listed = _manifest_whitelisted_files(
+            mibs_path,
+            all_files,
+            bundle_manifest,
+        )
+        if missing_listed:
+            logger.error(
+                "Pinned LibreNMS MIB bundle is incomplete: %d manifest file(s) are missing",
+                len(missing_listed),
+            )
+            return {
+                "success": False,
+                "imported": 0,
+                "errors": 1,
+                "message": (
+                    "Pinned LibreNMS MIB bundle is incomplete: "
+                    f"{len(missing_listed)} manifest file(s) are missing"
+                ),
+            }
+        if ignored_unlisted:
+            logger.warning(
+                "Ignoring %d MIB file(s) absent from the pinned LibreNMS source manifest",
+                ignored_unlisted,
+            )
     files = [
         path
         for path in all_files

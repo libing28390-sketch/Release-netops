@@ -5,7 +5,7 @@ import asyncio
 from backend.tests.pg_test_utils import postgresql_test_driver
 import zipfile
 import pytest
-from fastapi import HTTPException, UploadFile
+from fastapi import BackgroundTasks, HTTPException, UploadFile
 
 from database import get_db_connection
 from services.snmp_mib_service import (
@@ -28,16 +28,15 @@ def _isolated_snmp_database(isolated_db):
     """Give repository tests the same fresh schema as the application."""
     yield isolated_db
 from services.snmp_preset_service import (
-    list_preset_profiles,
     seed_builtin_mibs,
 )
 from api.devices import (
     get_snmp_mibs,
     search_snmp_mib_nodes,
-    get_official_model_presets,
     get_snmp_mib_detail,
     remove_snmp_mib,
     upload_snmp_mib_file,
+    reject_local_snmp_model_presets,
 )
 
 
@@ -214,49 +213,12 @@ def test_mib_store_and_search_workflow() -> None:
         conn.close()
 
 
-def test_official_presets_service_and_api() -> None:
-    presets = list_preset_profiles()
-    assert len(presets) == 23
-    assert {item["vendor"] for item in presets} == {"H3C", "Huawei", "ZTE", "Cisco"}
-    assert sum(1 for item in presets if item.get("testable", True)) == 22
-    assert all(item.get("source_oids") for item in presets if item.get("testable", True))
-    assert {item["model"] for item in presets if item["vendor"] == "H3C"} >= {
-        "S5000", "S5110", "S5120", "S5130", "S5135", "S5170", "S5500", "S5800",
-        "S6300", "S6500", "S6800", "S10500", "S10500 (V5)",
-    }
-    assert {item["model"] for item in presets if item["vendor"] == "Huawei"} == {
-        "S3700", "S5700", "S6700", "S7700", "S8700", "S9700", "S12700", "S16700",
-    }
-    assert not any(item["model"] == "Catalyst 9300" for item in presets)
-    assert not any("Nexus" in item["model"] for item in presets)
-    assert not any(item["vendor"] in {"Ruijie", "Juniper", "Fortinet", "Raisecom"} for item in presets)
+def test_local_snmp_model_preset_routes_are_retired() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        reject_local_snmp_model_presets(user={"role": "Viewer"})
 
-    h3c = next(p for p in presets if p["vendor"] == "H3C")
-    assert h3c["metric_definitions"]["cpu"]["oid"] == "1.3.6.1.4.1.25506.2.6.1.1.1.1.6"
-    assert h3c["metric_definitions"]["memory"]["oid"] == "1.3.6.1.4.1.25506.2.6.1.1.1.1.8"
-    assert "1.3.6.1.4.1.25506.2.6.1.1.1.1.19" in h3c["source_oids"]["system"]
-
-    huawei = next(p for p in presets if p["vendor"] == "Huawei")
-    assert huawei["metric_definitions"]["cpu"]["oid"] == "1.3.6.1.4.1.2011.5.25.31.1.1.1.1.5"
-    assert huawei["metric_definitions"]["fan"]["oid"] == "1.3.6.1.4.1.2011.5.25.31.1.1.10.1.7"
-
-    zte = next(p for p in presets if p["vendor"] == "ZTE")
-    assert zte["metric_definitions"]["uptime"]["oid"] == "1.3.6.1.2.1.1.3"
-    assert "1.3.6.1.4.1.3902.3.600.2.1.1.3.0.0.1.0" in zte["source_oids"]["system"]
-    assert "1.3.6.1.4.1.3902.1082.30.40.2.4.1.2" in zte["source_oids"]["optical"]
-    assert "1.3.6.1.4.1.3902.1082.30.40.2.4.1.8" in zte["source_oids"]["optical"]
-    assert "IF-MIB::ifName / ifDescr by ifIndex" in zte["source_oids"]["optical_index_lookup"]
-
-    cisco = next(p for p in presets if p["vendor"] == "Cisco")
-    assert cisco["metric_definitions"]["cpu"]["oid"] == "1.3.6.1.4.1.9.9.109.1.1.1.1.3"
-    assert cisco["metric_definitions"]["memory"]["used_oid"] == "1.3.6.1.4.1.9.9.48.1.1.1.5"
-    assert cisco["metric_definitions"]["memory"]["free_oid"] == "1.3.6.1.4.1.9.9.48.1.1.1.6"
-    assert "CISCO-PROCESS-MIB::cpmCPUTotal5sec" in cisco["source_oids"]["system"]
-
-    # Test API endpoint
-    api_res = get_official_model_presets(user={"role": "Viewer"})
-    assert api_res["success"] is True
-    assert api_res["total"] == 23
+    assert exc_info.value.status_code == 410
+    assert exc_info.value.detail["code"] == "LIBRENMS_RULES_ONLY"
 
 
 def test_manual_mib_upload_can_be_disabled_explicitly(monkeypatch) -> None:
@@ -322,19 +284,29 @@ def test_manual_mib_zip_upload_imports_supported_members(monkeypatch) -> None:
     assert response["data"][0]["name"] == "SAMPLE-TEST-MIB"
 
 
-def test_manual_large_zip_archive_upload_triggers_background_indexing(monkeypatch, tmp_path) -> None:
+def test_manual_large_zip_archive_upload_triggers_background_indexing(monkeypatch) -> None:
     monkeypatch.setattr(settings, "SNMP_MIB_MANUAL_UPLOAD_ENABLED", True)
+    sync_state = {
+        "running": False,
+        "progress": "idle",
+        "run_id": None,
+        "started_at": None,
+    }
+    monkeypatch.setattr(devices_api, "_librenms_sync_state", sync_state)
+    monkeypatch.setattr(devices_api, "list_platform_vendor_names", lambda *_args: ["Cisco"])
+    monkeypatch.setattr(
+        devices_api,
+        "extract_mib_archive_to_repo",
+        lambda *_args, **_kwargs: (12, ["Cisco"]),
+    )
 
-    # Mock import_mibs_from_directory
-    mock_called = False
-    def mock_import(mibs_dir=None, target_vendors=None):
-        nonlocal mock_called
-        mock_called = True
+    import_result = {}
+
+    def mock_import(**kwargs):
+        import_result.update(kwargs)
         return {"success": True, "imported": 12, "nodes": 100, "run_id": "test-run-123"}
 
-    import services.librenms_mib_service as sync_module
-    monkeypatch.setattr(sync_module, "import_mibs_from_directory", mock_import)
-    monkeypatch.setattr(sync_module, "MIBS_DIR", str(tmp_path / "mibs"))
+    monkeypatch.setattr(devices_api, "import_mibs_from_directory", mock_import)
 
     archive = io.BytesIO()
     with zipfile.ZipFile(archive, "w") as zip_file:
@@ -343,11 +315,13 @@ def test_manual_large_zip_archive_upload_triggers_background_indexing(monkeypatc
     archive.seek(0)
 
     upload = UploadFile(filename="all-mibs.zip", file=archive)
+    background_tasks = BackgroundTasks()
     response = asyncio.run(
         upload_snmp_mib_file(
             file=upload,
             vendor="",
             description="",
+            background_tasks=background_tasks,
             user={"role": "Operator"},
         )
     )
@@ -356,6 +330,22 @@ def test_manual_large_zip_archive_upload_triggers_background_indexing(monkeypatc
     assert response["async"] is True
     assert response["extracted"] == 12
     assert response["vendors"] == ["Cisco"]
+    assert response["state"] is sync_state
+    assert response["state"]["progress"] == "idle"
+    assert import_result == {}
+
+    asyncio.run(background_tasks())
+
+    assert import_result["target_vendors"] == ["Cisco", "Standard"]
+    assert import_result["retire_missing_files"] is False
+    assert sync_state["running"] is False
+    assert sync_state["run_id"] == "test-run-123"
+    assert sync_state["progress"] == "Finished: 12 MIBs imported, 100 OID nodes"
+
+    status = devices_api.get_sync_librenms_mibs_status(user={"role": "Viewer"})
+    assert status["success"] is True
+    assert status["data"]["progress"] == sync_state["progress"]
+    assert status["data"]["librenms_rule_count"] == 0
 
 
 def test_zip_member_failure_does_not_abort_other_members(monkeypatch) -> None:
@@ -432,32 +422,3 @@ def test_builtin_mibs_seeder() -> None:
         assert duplicate_builtin_rows == []
     finally:
         conn.close()
-
-
-def test_auto_match_model_mibs() -> None:
-    from api.devices import auto_match_model_mibs
-
-    cases = [
-        ("H3C", "S5130S-52S-EI", "md-h3c-comware-v7"),
-        ("华为", "S5720-28P-PWR-LI-AC", "md-huawei-vrp-switch"),
-        ("中兴", "ZXR10-某系列", "md-zte-zxr10-switch"),
-        ("Cisco", "C9300-48P-A", "md-cisco-catalyst-categraf"),
-    ]
-    for vendor, model, expected_id in cases:
-        matched = auto_match_model_mibs(vendor=vendor, model=model, user={"role": "Viewer"})
-        assert matched["matched"] is True
-        assert matched["data"]["preset"]["family_id"] == expected_id
-
-    unsupported = auto_match_model_mibs(
-        vendor="Ruijie",
-        model="RG-S5750",
-        user={"role": "Viewer"},
-    )
-    assert unsupported["matched"] is False
-
-    unsupported_nexus = auto_match_model_mibs(
-        vendor="Cisco",
-        model="Nexus 93180YC-FX",
-        user={"role": "Viewer"},
-    )
-    assert unsupported_nexus["matched"] is False

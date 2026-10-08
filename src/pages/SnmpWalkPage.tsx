@@ -1,10 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { Activity, CheckCircle2, Database, Search, ShieldCheck, X } from 'lucide-react';
+import { Activity, CheckCircle2, Search, ShieldCheck } from 'lucide-react';
 import PageHero from '../components/PageHero';
 import { LiveWalkInspector } from '../components/SnmpMib/components/LiveWalkInspector';
 import CmdbDevicePicker, { type CmdbDeviceCandidate } from '../components/SnmpMib/CmdbDevicePicker';
-import MibNodeBrowser from '../components/SnmpMib/MibNodeBrowser';
-import { useEscapeClose } from '../hooks/useEscapeClose';
 
 interface SnmpWalkPageProps {
   language: 'zh' | 'en';
@@ -12,11 +10,9 @@ interface SnmpWalkPageProps {
   showToast: (message: string, type?: string) => void;
 }
 
-const DEFAULT_DIAGNOSTIC_OID = '1.3.6.1.2.1.1';
-
 const SnmpWalkPage: React.FC<SnmpWalkPageProps> = ({ language, currentUserRole, showToast }) => {
   const zh = language === 'zh';
-  const canRunWalk = ['administrator', 'operator'].includes(String(currentUserRole || '').trim().toLowerCase());
+  const canRunProbe = ['administrator', 'operator'].includes(String(currentUserRole || '').trim().toLowerCase());
   const initialIp = useMemo(() => {
     try {
       return new URLSearchParams(window.location.search).get('ip') || '';
@@ -26,14 +22,10 @@ const SnmpWalkPage: React.FC<SnmpWalkPageProps> = ({ language, currentUserRole, 
   }, []);
   const [selectedTarget, setSelectedTarget] = useState<CmdbDeviceCandidate | null>(null);
   const [devicePickerOpen, setDevicePickerOpen] = useState(false);
-  const [mibCatalogOpen, setMibCatalogOpen] = useState(false);
-  const [walkOid, setWalkOid] = useState(DEFAULT_DIAGNOSTIC_OID);
   const targetIp = selectedTarget?.ip_address || initialIp;
   const inspectorKey = selectedTarget
     ? `device:${selectedTarget.device_id}:${selectedTarget.ip_address || ''}`
     : `ip:${initialIp}`;
-
-  useEscapeClose(mibCatalogOpen, () => setMibCatalogOpen(false));
 
   const handleSelectTarget = (device: CmdbDeviceCandidate) => {
     setSelectedTarget(device);
@@ -46,24 +38,14 @@ const SnmpWalkPage: React.FC<SnmpWalkPageProps> = ({ language, currentUserRole, 
     );
   };
 
-  const handleSelectOid = (oid: string, nodeName?: string) => {
-    setWalkOid(oid);
-    showToast(
-      zh ? `已将 ${nodeName || 'OID'} 填入 Walk：${oid}` : `Loaded ${nodeName || 'OID'} into Walk: ${oid}`,
-      'success',
-    );
-    document.getElementById('snmp-walk-diagnostic-tool')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  };
-
   return (
-    <>
     <div className="flex h-full min-h-0 flex-col overflow-hidden" style={{ background: 'var(--main-bg)' }}>
       <PageHero
         icon={Activity}
         title={zh ? 'SNMP 诊断' : 'SNMP Diagnostics'}
         subtitle={zh
-          ? '确认设备、凭据和 OID 是否正常返回，再判断 Grafana 无数据发生在哪一层。'
-          : 'Verify the device, credentials, and OID responses to locate where Grafana data is missing.'}
+          ? '设备识别、硬件发现和即时诊断统一执行固定版本的 LibreNMS 规则。'
+          : 'Device identification, hardware discovery, and on-demand diagnostics all use the pinned LibreNMS rules.'}
       />
       <div className="min-h-0 flex-1 overflow-y-auto p-4 md:p-5">
         <div className="mx-auto w-full max-w-[1680px] space-y-3.5 2xl:max-w-[1760px]">
@@ -72,11 +54,11 @@ const SnmpWalkPage: React.FC<SnmpWalkPageProps> = ({ language, currentUserRole, 
               <ShieldCheck size={17} />
             </span>
             <div className="min-w-0 flex-1">
-              <div className="text-xs font-semibold">{zh ? '诊断思路' : 'Diagnostic flow'}</div>
+              <div className="text-xs font-semibold">{zh ? '统一规则来源' : 'Single rule source'}</div>
               <p className="mt-0.5 text-[11px] leading-5 text-sky-900/75 dark:text-sky-100/75">
                 {zh
-                  ? '选择设备后，可通过 SNMPWALK 查询接口和 LLDP，通过系统信息读取设备名称、软件平台及版本，通过硬件指标查看传感器读数。'
-                  : 'Select a device: use SNMP Walk for interfaces and LLDP, System Info for device identity and software, and Hardware Metrics for sensor readings.'}
+                  ? '诊断不再接受任意 OID、厂商快捷项或自定义预设；服务端按设备身份匹配 LibreNMS 规则，并展示命中规则及源文件。'
+                  : 'Diagnostics no longer accept arbitrary OIDs, vendor shortcuts, or custom presets. The server matches LibreNMS rules to device identity and shows the matched source file.'}
               </p>
             </div>
             <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-sky-200/80 bg-white/80 px-2.5 py-1 text-[10px] font-medium text-sky-800/80 dark:border-sky-800 dark:bg-sky-950/60 dark:text-sky-200/80">
@@ -85,7 +67,7 @@ const SnmpWalkPage: React.FC<SnmpWalkPageProps> = ({ language, currentUserRole, 
             </span>
           </div>
 
-          {!canRunWalk ? (
+          {!canRunProbe ? (
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/25 dark:text-amber-200">
               {zh ? 'SNMP 诊断需要 Operator 或 Administrator 权限。' : 'SNMP diagnostics require Operator or Administrator access.'}
             </div>
@@ -109,7 +91,7 @@ const SnmpWalkPage: React.FC<SnmpWalkPageProps> = ({ language, currentUserRole, 
                       )}
                     </div>
                     <p className="mt-1 text-[11px] leading-4 text-black/50 dark:text-white/50">
-                      {zh ? '指定探测目标；SNMP 凭据由服务端从 CMDB 读取。' : 'Sets the probe target; SNMP credentials are read from CMDB on the server.'}
+                      {zh ? '指定 CMDB 设备；凭据和探测 OID 均由服务端及 LibreNMS 规则确定。' : 'Select a CMDB device; credentials and probe OIDs are resolved server-side from LibreNMS rules.'}
                     </p>
                   </div>
                 </div>
@@ -136,90 +118,20 @@ const SnmpWalkPage: React.FC<SnmpWalkPageProps> = ({ language, currentUserRole, 
                   key={inspectorKey}
                   zh={zh}
                   initialIp={targetIp}
-                  initialWalkOid={walkOid}
                   selectedDevice={selectedTarget || undefined}
                   candidateDevices={[]}
                   showCandidateSelector={false}
                   showHardwareValidationTab
                   showSystemInfoTab
-                  librenmsHardwareDiscoveryTest
-                  diagnosticPresetOnly
-                  hideMaxRowsSelector
-                  publicSummaryOnly
-                  metrics={[]}
                   initialTab="snmpwalk"
                   showToast={showToast}
                 />
               </div>
-
-              <section className="overflow-hidden rounded-xl border border-black/8 bg-[var(--card-bg)] shadow-sm dark:border-white/10">
-                <button
-                  type="button"
-                  onClick={() => setMibCatalogOpen(true)}
-                  aria-haspopup="dialog"
-                  className="flex w-full items-center justify-between gap-4 px-4 py-3.5 text-left transition hover:bg-violet-500/[.025] dark:hover:bg-violet-400/[.04]"
-                >
-                  <span className="flex min-w-0 items-center gap-2.5">
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-500/10 text-violet-700 dark:text-violet-300"><Database size={17} /></span>
-                    <span className="min-w-0">
-                      <span className="flex items-center gap-2 text-sm font-semibold text-black/80 dark:text-white/85">
-                        {zh ? '高级 OID 查找' : 'Advanced OID lookup'}
-                        <span className="rounded-full bg-violet-500/10 px-2 py-0.5 text-[9px] font-medium text-violet-700 dark:text-violet-300">{zh ? '可选' : 'Optional'}</span>
-                      </span>
-                      <span className="mt-0.5 block truncate text-[11px] text-black/45 dark:text-white/45">{zh ? '查找快捷项以外的公共或厂商 OID；选择后填入第 2 步，不会立即执行。' : 'Find additional standard or vendor OIDs; selection fills step 2 without running it.'}</span>
-                    </span>
-                  </span>
-                  <span className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-violet-500/20 bg-violet-500/[.06] px-3 py-2 text-xs font-semibold text-violet-700 transition hover:bg-violet-500/10 dark:text-violet-300">
-                    <Search size={13} />
-                    {zh ? '查找 OID' : 'Find OID'}
-                  </span>
-                </button>
-              </section>
             </>
           )}
         </div>
       </div>
     </div>
-    {mibCatalogOpen && (
-      <div
-        className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/55 p-3 backdrop-blur-sm sm:p-5"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="snmp-mib-search-title"
-        onClick={event => {
-          if (event.target === event.currentTarget) setMibCatalogOpen(false);
-        }}
-      >
-        <div className="flex max-h-[calc(100vh-1.5rem)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-white/60 bg-white shadow-2xl shadow-slate-950/25 dark:border-slate-700 dark:bg-slate-900 sm:max-h-[calc(100vh-2.5rem)]">
-          <div className="flex items-start justify-between gap-4 border-b border-black/7 px-5 py-4 dark:border-white/8 sm:px-6">
-            <div className="flex min-w-0 items-start gap-3">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-500/10 text-violet-700 dark:text-violet-300"><Database size={18} /></span>
-              <div className="min-w-0">
-                <h2 id="snmp-mib-search-title" className="text-base font-semibold text-black/85 dark:text-white/90">{zh ? '高级 OID 查找' : 'Advanced OID lookup'}</h2>
-                <p className="mt-1 text-xs leading-5 text-black/50 dark:text-white/50">{zh ? '搜索公共标准或厂商私有 MIB。选择 OID 后会填入第 2 步；探测需要手动执行。' : 'Search standard or vendor MIBs. Selecting an OID fills step 2; run the probe when ready.'}</p>
-              </div>
-            </div>
-            <button type="button" onClick={() => setMibCatalogOpen(false)} aria-label={zh ? '关闭 OID 查找' : 'Close OID lookup'} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-black/45 transition hover:bg-black/[.05] hover:text-black/80 dark:text-white/45 dark:hover:bg-white/[.08] dark:hover:text-white/85">
-              <X size={17} />
-            </button>
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
-            <MibNodeBrowser
-              language={language}
-              deviceId={selectedTarget?.device_id}
-              assetVendor={selectedTarget?.vendor}
-              showHeader={false}
-              pageSize={10}
-              onSelectOid={(oid, node) => {
-                setMibCatalogOpen(false);
-                handleSelectOid(oid, node.node_name);
-              }}
-            />
-          </div>
-        </div>
-      </div>
-    )}
-    </>
   );
 };
 

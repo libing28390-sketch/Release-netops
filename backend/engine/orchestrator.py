@@ -104,7 +104,7 @@ class TelemetryOrchestrator:
         self.a_loop_task = None
         self.b_loop_task = None
         self.snmp_hardware_loop_task = None
-        self.native_hardware_loop_task = None
+        self.snmp_hardware_discovery_loop_task = None
         self.initialized = True
 
     async def a_loop(self):
@@ -178,60 +178,24 @@ class TelemetryOrchestrator:
                 logger.error(f"[Orchestrator B-Loop] Error: {e}")
             await asyncio.sleep(60)
 
-    async def native_hardware_loop(self):
-        """Refresh Nexora's projection from LibreNMS-owned hardware samples."""
-        import asyncio
-
-        logger.info("[Orchestrator] Starting LibreNMS native hardware sync loop")
-        concurrency = asyncio.Semaphore(4)
-        while True:
-            try:
-                from services.background_monitor_service import _db_quick
-                from services.librenms_native_sync_service import sync_bound_device_hardware
-
-                bindings = await asyncio.to_thread(
-                    _db_quick,
-                    """
-                    SELECT b.device_id
-                      FROM librenms_device_bindings AS b
-                      JOIN librenms_instances AS i ON i.id = b.instance_id
-                     WHERE b.desired_state = 'enabled'
-                       AND b.librenms_device_id IS NOT NULL
-                       AND i.enabled = TRUE
-                     ORDER BY b.device_id
-                    """,
-                    fetchall=True,
-                )
-
-                async def sync_one(row):
-                    device_id = str(row.get("device_id") or "") if isinstance(row, dict) else str(row[0] or "")
-                    if not device_id:
-                        return
-                    async with concurrency:
-                        result = await sync_bound_device_hardware(device_id)
-                    if result.get("status") in {"failed", "binding_conflict"}:
-                        logger.warning(
-                            "LibreNMS hardware sync for device %s failed with code %s",
-                            device_id,
-                            str(result.get("error_code") or result.get("status"))[:80],
-                        )
-
-                await asyncio.gather(*(sync_one(row) for row in bindings or []))
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                # Keep ordinary device reachability/interface polling running
-                # if the optional native integration is not yet configured.
-                logger.warning("LibreNMS native hardware sync cycle failed: %s", type(exc).__name__)
-            await asyncio.sleep(60)
-
     async def snmp_hardware_loop(self):
-        """Run Nexora's local SNMP hardware discovery and polling scheduler."""
+        """Sample discovered OIDs without waiting for full discovery walks."""
+        await self._run_snmp_hardware_loop(discovery_only=False)
+
+    async def snmp_hardware_discovery_loop(self):
+        """Refresh rule-derived inventory independently of frequent samples."""
+        await self._run_snmp_hardware_loop(discovery_only=True)
+
+    async def _run_snmp_hardware_loop(self, *, discovery_only: bool):
         import asyncio
 
-        logger.info("[Orchestrator] Starting Nexora SNMP hardware collection loop")
-        concurrency = asyncio.Semaphore(4)
+        operation = "discovery" if discovery_only else "sampling"
+        logger.info("[Orchestrator] Starting LibreNMS-rule SNMP %s loop", operation)
+        concurrency = asyncio.Semaphore(2 if discovery_only else 4)
+        tick_seconds = 60 if discovery_only else 10
+        loop = asyncio.get_running_loop()
         while True:
+            cycle_started = loop.time()
             try:
                 from services.background_monitor_service import _db_quick
                 from services.snmp_hardware_poller_service import collect_device_hardware
@@ -252,13 +216,16 @@ class TelemetryOrchestrator:
                 async def collect_one(device):
                     async with concurrency:
                         try:
-                            return await collect_device_hardware(device)
+                            return await collect_device_hardware(
+                                device, discovery_only=discovery_only, poll_only=not discovery_only,
+                            )
                         except asyncio.CancelledError:
                             raise
                         except Exception as exc:
                             device_id = device.get("id") if isinstance(device, dict) else "unknown"
                             logger.warning(
-                                "Nexora SNMP hardware collection failed for device %s (%s)",
+                                "LibreNMS-rule SNMP %s failed for device %s (%s)",
+                                operation,
                                 device_id,
                                 type(exc).__name__,
                             )
@@ -268,8 +235,11 @@ class TelemetryOrchestrator:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                logger.warning("Nexora SNMP hardware collection cycle failed: %s", type(exc).__name__)
-            await asyncio.sleep(60)
+                logger.warning("LibreNMS-rule SNMP %s cycle failed: %s", operation, type(exc).__name__)
+            # Account for execution time instead of adding a fixed sleep to
+            # every cycle. Discovery has its own semaphore and task, so it
+            # cannot block a device's otherwise healthy sampling schedule.
+            await asyncio.sleep(max(0.1, tick_seconds - (loop.time() - cycle_started)))
 
     def start_loops(self):
         import asyncio
@@ -279,8 +249,8 @@ class TelemetryOrchestrator:
             self.b_loop_task = asyncio.create_task(self.b_loop())
         if not self.snmp_hardware_loop_task:
             self.snmp_hardware_loop_task = asyncio.create_task(self.snmp_hardware_loop())
-        if not self.native_hardware_loop_task:
-            self.native_hardware_loop_task = asyncio.create_task(self.native_hardware_loop())
+        if not self.snmp_hardware_discovery_loop_task:
+            self.snmp_hardware_discovery_loop_task = asyncio.create_task(self.snmp_hardware_discovery_loop())
 
     def stop_loops(self):
         if self.a_loop_task:
@@ -292,9 +262,9 @@ class TelemetryOrchestrator:
         if self.snmp_hardware_loop_task:
             self.snmp_hardware_loop_task.cancel()
             self.snmp_hardware_loop_task = None
-        if self.native_hardware_loop_task:
-            self.native_hardware_loop_task.cancel()
-            self.native_hardware_loop_task = None
+        if self.snmp_hardware_discovery_loop_task:
+            self.snmp_hardware_discovery_loop_task.cancel()
+            self.snmp_hardware_discovery_loop_task = None
 
 def get_telemetry_orchestrator() -> TelemetryOrchestrator:
     return TelemetryOrchestrator()

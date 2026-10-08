@@ -2,114 +2,138 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
 from typing import Any
 
-import database
 from services import librenms_diagnostic_service as diagnostics
-
-
-class _Rows:
-    def __init__(self, rows: list[dict[str, Any]]) -> None:
-        self._rows = rows
-
-    def fetchall(self) -> list[dict[str, Any]]:
-        return list(self._rows)
+from services import snmp_hardware_poller_service as poller
+from services.librenms_source_policy import PINNED_LIBRENMS_COMMIT
 
 
 class _Connection:
-    def __init__(self, binding: dict[str, Any]) -> None:
-        self.binding = binding
-        self.closed = False
-
-    def execute(self, sql: str, params: tuple[Any, ...] = ()) -> _Rows:
-        assert "librenms_device_bindings" in sql
-        assert params == ("device-1",)
-        return _Rows([self.binding])
+    closed = False
 
     def close(self) -> None:
         self.closed = True
 
 
-def _binding() -> dict[str, Any]:
-    return {
-        "binding_id": "binding-1",
-        "tenant_id": "tenant-1",
-        "asset_id": "asset-1",
-        "device_id": "device-1",
-        "instance_id": "instance-1",
-        "librenms_device_id": "17",
-        "librenms_hostname": "edge-01",
-        "collector_id": "collector-1",
-        "poller_group": "default",
-        "desired_state": "enabled",
-        "sync_status": "synced",
-        "last_sync_at": None,
-        "last_discovery_at": None,
-        "last_poll_at": None,
-        "last_error_code": None,
-        "instance_name": "LibreNMS primary",
-        "base_url": "http://librenms",
-        "instance_enabled": True,
-        "engine_version": "26.9",
-        "engine_commit": "abc123",
-        "instance_health_state": "healthy",
-        "token_credential_id": "credential-1",
-        "credential_type": "api_token",
-        "encrypted_password": "ciphertext",
-    }
-
-
-def _install_client(monkeypatch, snapshot: SimpleNamespace, binding: dict[str, Any] | None = None) -> _Connection:
-    connection = _Connection(binding or _binding())
-    monkeypatch.setattr(diagnostics, "get_db_connection", lambda: connection)
-    monkeypatch.setattr(diagnostics, "_local_hardware_snapshot", lambda _device: None)
-    monkeypatch.setattr(diagnostics, "decrypt_credential", lambda _value: "unit-test-token")
-
-    class FakeClient:
-        def __init__(self, base_url: str, token: str) -> None:
-            assert base_url == "http://librenms"
-            assert token == "unit-test-token"
-
-        async def __aenter__(self) -> "FakeClient":
-            return self
-
-        async def __aexit__(self, *_args: Any) -> None:
-            return None
-
-        async def read_device_snapshot(self, native_device_id: str) -> SimpleNamespace:
-            assert native_device_id == "17"
-            return snapshot
-
-        async def get_system_info(self) -> dict[str, str]:
-            return {"local_ver": "26.9", "local_sha": "abc123"}
-
-    monkeypatch.setattr(diagnostics, "LibreNMSRuntimeClient", FakeClient)
-    return connection
-
-
-def test_diagnostic_reads_local_snmp_inventory_before_optional_librenms(monkeypatch) -> None:
-    from services import snmp_hardware_inventory_service as inventory
-
-    connection = SimpleNamespace(close=lambda: None)
-    sample_time = datetime.now(timezone.utc) - timedelta(seconds=10)
-    monkeypatch.setattr(diagnostics, "get_db_connection", lambda: connection)
-    monkeypatch.setattr(inventory, "list_hardware_sensors", lambda *_args, **_kwargs: [{
+def _sensor(**overrides: Any) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    sensor = {
         "sensor_key": "cpu-0",
+        "source_type": "librenms_rule",
+        "source_id": "cisco_ios",
         "component_class": "processor",
         "measurement_type": "cpu_usage_percent",
         "index": [0],
         "index_labels": {},
         "data_origin": "legacy_snmp",
+        "rule_version": PINNED_LIBRENMS_COMMIT,
+        "metadata": {
+            "collection_version": poller.DISCOVERY_VERSION,
+            "source_path": "resources/definitions/os_discovery/ciscosb.yaml",
+            "source_commit": PINNED_LIBRENMS_COMMIT,
+            "poll_interval_seconds": 300,
+        },
         "enabled": True,
-        "oid": "1.3.6.1.4.1.25506.2.6.1.1.1.1.1",
+        "lifecycle_status": "active",
+        "discovery_status": "present",
+        "presence_status": "present",
+        "oid": "1.3.6.1.4.1.9.9.109.1.1.1.1.6",
         "sensor_name": "CPU 0",
         "unit": "percent",
         "last_value": 35.5,
+        "last_raw_value": "35.5",
         "last_quality": "good",
-        "last_success": sample_time,
-    }])
-    monkeypatch.setattr(inventory, "list_hardware_capabilities", lambda *_args: [])
+        "last_success": now - timedelta(seconds=10),
+        "last_sample_at": now - timedelta(seconds=10),
+        "thresholds": {"warning": 80},
+        "states": {},
+    }
+    sensor.update(overrides)
+    return sensor
+
+
+def test_diagnostic_exposes_current_rule_inventory_provenance_and_lifecycle(monkeypatch) -> None:
+    from services import snmp_hardware_inventory_service as inventory
+
+    connection = _Connection()
+    sample_time = datetime.now(timezone.utc) - timedelta(seconds=10)
+    current_sensor = _sensor(last_success=sample_time, last_sample_at=sample_time)
+    retired_sensor = _sensor(
+        sensor_key="cpu-retired",
+        enabled=False,
+        lifecycle_status="retired",
+        discovery_status="missing",
+        presence_status="missing",
+        last_value=10,
+        last_quality="good",
+    )
+    external_sensor = _sensor(
+        sensor_key="external-cpu",
+        source_type="librenms_native",
+        data_origin="librenms_native",
+    )
+    old_collection_sensor = _sensor(
+        sensor_key="old-cpu",
+        source_type="standard_mib",
+        metadata={
+            "collection_version": "old-collector",
+            "source_path": "resources/definitions/os_discovery/ciscosb.yaml",
+            "source_commit": PINNED_LIBRENMS_COMMIT,
+            "poll_interval_seconds": 300,
+        },
+    )
+    untrusted_current_sensor = _sensor(
+        sensor_key="untrusted-cpu",
+        metadata={
+            "collection_version": poller.DISCOVERY_VERSION,
+            "source_path": "resources/definitions/os_discovery/not-verified.yaml",
+            "source_commit": PINNED_LIBRENMS_COMMIT,
+            "poll_interval_seconds": 300,
+        },
+    )
+    monkeypatch.setattr(diagnostics, "get_db_connection", lambda: connection)
+    monkeypatch.setattr(inventory, "list_hardware_sensors", lambda *_args, **_kwargs: [
+        current_sensor, retired_sensor, external_sensor, old_collection_sensor, untrusted_current_sensor,
+    ])
+    monkeypatch.setattr(inventory, "list_hardware_capabilities", lambda *_args: [
+        {
+            "source_type": "librenms_rule",
+            "component_class": "processor",
+            "discovery_version": poller.DISCOVERY_VERSION,
+            "last_status": "success",
+            "coverage_complete": True,
+            "active_sensor_count": 1,
+            "last_discovered_count": 1,
+            "rule_version": PINNED_LIBRENMS_COMMIT,
+            "artifact_version": "resources/definitions/os_discovery/ciscosb.yaml",
+        },
+        {
+            "source_type": "librenms_rule",
+            "component_class": "temperature",
+            "discovery_version": "old-collector",
+            "last_status": "failed",
+        },
+        {
+            "source_type": "librenms_native",
+            "component_class": "temperature",
+            "discovery_version": poller.DISCOVERY_VERSION,
+            "last_status": "failed",
+        },
+        {
+            "source_type": "h3c_wireless",
+            "component_class": "wireless_radio",
+            "discovery_version": poller.DISCOVERY_VERSION,
+            "last_status": "success",
+        },
+    ])
+    monkeypatch.setattr(poller, "hardware_sample_interval_seconds", lambda: 75)
+    monkeypatch.setattr(
+        poller,
+        "hardware_stale_after_seconds",
+        lambda sensor: 900 if (sensor or {}).get("metadata", {}).get("poll_interval_seconds") == 300 else 225,
+        raising=False,
+    )
 
     result = asyncio.run(diagnostics.diagnose_librenms_hardware({
         "id": "device-1", "hostname": "edge-01", "ip_address": "192.0.2.10",
@@ -117,45 +141,51 @@ def test_diagnostic_reads_local_snmp_inventory_before_optional_librenms(monkeypa
 
     assert result["source"] == "nexora_snmp"
     assert result["state"] == "available"
-    assert result["sensor_count"] == 1
-    assert result["processor_sensors"][0]["sensor_current"] == 35.5
-    assert result["processor_sensors"][0]["freshness"] == "fresh"
+    assert result["sensor_count"] == 2
+    assert result["active_sensor_count"] == 1
+    assert len(result["capabilities"]) == 1
+    assert result["collection"]["poll_interval_seconds"] == 75
+    assert result["collection"]["stale_after_seconds"] == 900
     assert result["collection"]["sync_status"] == "not_applicable"
+    by_id = {row["sensor_id"]: row for row in result["processor_sensors"]}
+    current = by_id["cpu-0"]
+    assert current["source"] == "librenms_rule"
+    assert current["source_id"] == "cisco_ios"
+    assert current["source_path"] == "resources/definitions/os_discovery/ciscosb.yaml"
+    assert current["source_commit"] == PINNED_LIBRENMS_COMMIT
+    assert current["rule_version"] == PINNED_LIBRENMS_COMMIT
+    assert current["quality"] == "good"
+    assert current["poll_interval_seconds"] == 75
+    assert current["registered_poll_interval_seconds"] == 300
+    assert current["enabled"] is True
+    assert current["lifecycle_status"] == "active"
+    assert current["sensor_current"] == 35.5
+    assert by_id["cpu-retired"]["enabled"] is False
+    assert by_id["cpu-retired"]["lifecycle_status"] == "retired"
+    assert not any(row["source_type"] == "librenms_native" for row in result["processor_sensors"])
+    assert connection.closed is True
 
 
-def test_no_enabled_librenms_instance_reports_local_collection_state(monkeypatch) -> None:
-    from services import librenms_binding_service, vault_service
+def test_diagnostic_waits_for_current_local_rule_inventory_without_instance_fallback(monkeypatch) -> None:
+    from services import snmp_hardware_inventory_service as inventory
 
-    monkeypatch.setattr(diagnostics, "_local_hardware_snapshot", lambda _device: None)
-    monkeypatch.setattr(diagnostics, "_binding_for_device", lambda _device: None)
-    monkeypatch.setattr(librenms_binding_service, "_load_enabled_instances", lambda: [])
-    monkeypatch.setattr(vault_service, "resolve_collector_credentials", lambda _device: {
-        "snmp": {"community": "mock-community"},
-    })
+    connection = _Connection()
+    monkeypatch.setattr(diagnostics, "get_db_connection", lambda: connection)
+    monkeypatch.setattr(inventory, "list_hardware_sensors", lambda *_args, **_kwargs: [
+        _sensor(metadata={
+            "collection_version": "old-collector",
+            "source_path": "resources/definitions/os_discovery/ciscosb.yaml",
+            "source_commit": PINNED_LIBRENMS_COMMIT,
+            "poll_interval_seconds": 300,
+        }),
+    ])
+    monkeypatch.setattr(inventory, "list_hardware_capabilities", lambda *_args: [])
 
-    result = asyncio.run(diagnostics.diagnose_librenms_hardware({
-        "id": "device-1", "hostname": "edge-01", "ip_address": "192.0.2.10",
-    }))
+    def fail_external_dependency(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("local diagnostics must not access external bindings or credentials")
 
-    assert result["source"] == "nexora_snmp"
-    assert result["state"] == "pending"
-    assert "无需配置 LibreNMS" in result["message"]
-
-
-def test_uncollected_snmpv3_device_waits_for_nexora_local_collection(monkeypatch) -> None:
-    from services import librenms_binding_service, vault_service
-
-    monkeypatch.setattr(diagnostics, "_local_hardware_snapshot", lambda _device: None)
-    monkeypatch.setattr(diagnostics, "_binding_for_device", lambda _device: None)
-    monkeypatch.setattr(librenms_binding_service, "_load_enabled_instances", lambda: [])
-    monkeypatch.setattr(vault_service, "resolve_collector_credentials", lambda _device: {
-        "snmp": {
-            "version": "3",
-            "username": "poller-user",
-            "configured": True,
-            "community": "",
-        },
-    })
+    monkeypatch.setattr(diagnostics, "decrypt_credential", fail_external_dependency, raising=False)
+    monkeypatch.setattr(diagnostics, "_binding_for_device", fail_external_dependency, raising=False)
 
     result = asyncio.run(diagnostics.diagnose_librenms_hardware({
         "id": "device-v3", "hostname": "edge-v3", "ip_address": "192.0.2.30",
@@ -163,166 +193,27 @@ def test_uncollected_snmpv3_device_waits_for_nexora_local_collection(monkeypatch
 
     assert result["source"] == "nexora_snmp"
     assert result["state"] == "pending"
-    assert "无法开始本地硬件采集" not in result["message"]
-
-
-def _snapshot(*, processor: dict[str, Any], memory_pool: dict[str, Any]) -> SimpleNamespace:
-    return SimpleNamespace(
-        device={
-            "device_id": "17", "hostname": "edge-01", "os": "comware",
-            "poller_interval": 60, "last_polled": "2026-10-07 10:00:00",
-        },
-        sensors=[{
-            "device_id": 17, "sensor_class": "temperature", "sensor_current": "41.5",
-            "sensor_descr": "Chassis", "lastupdate": "2026-10-07T10:00:00Z",
-        }],
-        wireless_sensors=[],
-        transceivers=[],
-        processor_sensors=[processor],
-        memory_pools=[memory_pool],
-        health_graphs={
-            "processor": [{"sensor_id": 3, "desc": "Processor"}],
-            "mempool": [{"sensor_id": 4, "desc": "Memory"}],
-            "storage": [],
-        },
-    )
-
-
-def test_diagnostic_exposes_librenms_processor_and_mempool_samples_with_native_times(monkeypatch) -> None:
-    processor_time = datetime.now(timezone.utc) - timedelta(seconds=45)
-    memory_time = datetime.now(timezone.utc) - timedelta(seconds=300)
-    snapshot = _snapshot(
-        processor={
-            "processor_id": 3, "device_id": 17, "processor_usage": "37.25",
-            "processor_descr": "CPU 1", "processor_type": "hr-device", "processor_index": "1",
-            "lastupdate": processor_time.isoformat(),
-        },
-        memory_pool={
-            "mempool_id": 4, "device_id": 17, "mempool_perc": "62",
-            "mempool_descr": "System Memory", "mempool_class": "system",
-            "mempool_used": 630, "mempool_free": 370, "mempool_total": 1000,
-            "mempool_precision": 1024, "lastupdate": memory_time.isoformat(),
-        },
-    )
-    connection = _install_client(monkeypatch, snapshot)
-
-    result = asyncio.run(diagnostics.diagnose_librenms_hardware({
-        "id": "device-1", "asset_id": "asset-1", "tenant_id": "tenant-1",
-        "hostname": "edge-01", "ip_address": "192.0.2.10",
-    }))
-
-    assert result["source"] == "librenms_native"
-    assert result["state"] == "available"
-    assert result["processor_sensors"] == [{
-        "processor_id": 3, "device_id": 17, "processor_usage": "37.25",
-        "processor_type": "hr-device", "processor_index": "1", "processor_descr": "CPU 1",
-        "sensor_id": 3, "sensor_descr": "CPU 1", "sensor_class": "processor",
-        "sensor_current": 37.25, "unit": None, "lastupdate": processor_time.isoformat(),
-        "data_origin": "librenms_native", "value_status": "available", "freshness": "fresh",
-        "sample_age_seconds": 45.0, "observed_at": processor_time.isoformat(),
-    }]
-    memory = result["memory_pools"][0]
-    assert memory["sensor_id"] == 4
-    assert memory["sensor_descr"] == "System Memory"
-    assert memory["sensor_class"] == "mempool"
-    assert memory["sensor_current"] == 62.0
-    assert memory["mempool_used"] == 630
-    assert memory["mempool_total"] == 1000
-    assert memory["mempool_precision"] == 1024
-    assert memory["unit"] is None
-    assert memory["freshness"] == "stale"
-    assert memory["observed_at"] == memory_time.isoformat()
-    assert result["health_graphs"] == [
-        {"health_type": "processor", "desc": "Processor"},
-        {"health_type": "mempool", "desc": "Memory"},
-    ]
-    assert {item["key"] for item in result["metric_summary"]} >= {"processor", "mempool", "temperature"}
-    assert result["generated_at"] != processor_time.isoformat()
-    assert "observed_at" not in result["collection"]
+    assert "不触发即时采集" in result["message"]
+    assert result["hardware_sensors"] == []
+    assert result["processor_sensors"] == []
+    assert result["collection"]["engine_status"] == "local"
     assert connection.closed is True
 
 
-def test_processor_and_mempool_without_sample_timestamps_remain_freshness_unknown(monkeypatch) -> None:
-    snapshot = _snapshot(
-        processor={
-            "processor_id": 3, "processor_usage": "8", "processor_descr": "CPU",
-        },
-        memory_pool={
-            "mempool_id": 4, "mempool_perc": "50", "mempool_descr": "Memory",
-            "mempool_total": 2048, "mempool_precision": 1024,
-        },
+def test_diagnostic_returns_local_unavailable_state_when_inventory_read_fails(monkeypatch) -> None:
+    from services import snmp_hardware_inventory_service as inventory
+
+    monkeypatch.setattr(diagnostics, "get_db_connection", lambda: _Connection())
+    monkeypatch.setattr(
+        inventory,
+        "list_hardware_sensors",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("database down")),
     )
-    _install_client(monkeypatch, snapshot)
+    monkeypatch.setattr(diagnostics.logger, "warning", lambda *_args, **_kwargs: None)
 
-    result = asyncio.run(diagnostics.diagnose_librenms_hardware({
-        "id": "device-1", "asset_id": "asset-1", "tenant_id": "tenant-1",
-    }))
+    result = asyncio.run(diagnostics.diagnose_librenms_hardware({"id": "device-1"}))
 
-    processor = result["processor_sensors"][0]
-    memory = result["memory_pools"][0]
-    assert processor["sensor_current"] == 8
-    assert processor["lastupdate"] is None
-    assert processor["observed_at"] is None
-    assert processor["sample_age_seconds"] is None
-    assert processor["freshness"] == "unknown"
-    assert memory["sensor_current"] == 50
-    assert memory["mempool_total"] == 2048
-    assert memory["mempool_precision"] == 1024
-    assert memory["observed_at"] is None
-    assert memory["freshness"] == "unknown"
-    assert result["metric_summary"][-2]["status"] == "unknown"
-    assert result["metric_summary"][-1]["status"] == "unknown"
-
-
-def test_native_snapshot_remains_readable_while_projection_sync_is_pending(monkeypatch) -> None:
-    snapshot = _snapshot(
-        processor={"processor_id": 3, "processor_usage": "8", "processor_descr": "CPU"},
-        memory_pool={"mempool_id": 4, "mempool_perc": "50", "mempool_descr": "Memory"},
-    )
-    pending_binding = _binding()
-    pending_binding["sync_status"] = "pending"
-    _install_client(monkeypatch, snapshot, pending_binding)
-
-    result = asyncio.run(diagnostics.diagnose_librenms_hardware({
-        "id": "device-1", "asset_id": "asset-1", "tenant_id": "tenant-1",
-    }))
-
-    assert result["state"] == "available"
-    assert result["collection"]["sync_status"] == "pending"
-    assert result["processor_sensors"][0]["sensor_current"] == 8
-    assert result["memory_pools"][0]["sensor_current"] == 50
-
-
-def test_binding_lookup_uses_canonical_default_tenant_when_device_row_is_unscoped(isolated_db, monkeypatch) -> None:
-    conn = database.get_db_connection()
-    try:
-        conn.execute(
-            """INSERT INTO physical_assets (id, asset_type, created_at, updated_at)
-               VALUES ('asset-unscoped', 'network_device', '2026-01-01', '2026-01-01')"""
-        )
-        conn.execute(
-            """INSERT INTO devices (id, hostname, asset_id, tenant_id)
-               VALUES ('device-unscoped', 'edge-unscoped', 'asset-unscoped', NULL)"""
-        )
-        conn.execute(
-            """INSERT INTO librenms_instances (id, display_name, base_url, enabled, health_state)
-               VALUES ('instance-unscoped', 'LibreNMS', 'https://librenms.example', TRUE, 'healthy')"""
-        )
-        conn.execute(
-            """INSERT INTO librenms_device_bindings
-               (id, tenant_id, asset_id, device_id, instance_id, librenms_device_id, sync_status)
-               VALUES ('binding-unscoped', 'tenant-default', 'asset-unscoped', 'device-unscoped',
-                       'instance-unscoped', '17', 'pending')"""
-        )
-        conn.commit()
-    finally:
-        conn.close()
-    monkeypatch.setattr(diagnostics, "get_db_connection", database.get_db_connection)
-
-    binding = diagnostics._binding_for_device({
-        "id": "device-unscoped", "asset_id": "asset-unscoped", "tenant_id": "",
-    })
-
-    assert binding is not None
-    assert binding["binding_id"] == "binding-unscoped"
-    assert binding["tenant_id"] == "tenant-default"
+    assert result["source"] == "nexora_snmp"
+    assert result["state"] == "unavailable"
+    assert result["collection"]["engine_status"] == "error"
+    assert result["binding"] is None

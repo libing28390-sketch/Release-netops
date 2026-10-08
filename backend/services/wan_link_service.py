@@ -1,8 +1,8 @@
 """P0 internet egress link monitoring service.
 
-This service deliberately reuses the existing IF-MIB collector.  It stores
-raw counters and derived values together so a failed SNMP poll never turns a
-valid previous rate into a misleading zero.
+This service stores raw counters and derived values together so a failed
+collection never turns a valid previous rate into a misleading zero. It does
+not poll interface OIDs until a pinned LibreNMS YAML rule supports them.
 """
 
 from __future__ import annotations
@@ -20,9 +20,6 @@ from typing import Any
 
 from database import _USE_PG, get_db_connection
 from services.snmp_counter_service import calculate_counter_delta
-from services.snmp_metric_profile_service import resolve_metric_profiles
-from services.snmp_service import collect_interface_data_detailed
-from services.vault_service import resolve_collector_credentials
 
 
 logger = logging.getLogger(__name__)
@@ -417,14 +414,6 @@ async def _collect_link(link: dict[str, Any], collected: dict[str, Any] | None =
     conn = get_db_connection()
     try:
         _ensure_alert_rules(conn, link, sampled_at)
-        device_row = conn.execute("SELECT * FROM devices WHERE id = ?", (link["device_id"],)).fetchone()
-        device = _row_dict(device_row) or {}
-        credential = resolve_collector_credentials(device)
-        snmp = credential.get("snmp") or {}
-        snmp_ip = str(snmp.get("server") or device.get("ip_address") or "").strip()
-        community = str(snmp.get("community") or "").strip()
-        port = int(snmp.get("port") or device.get("snmp_port") or 161)
-        interface_config = resolve_metric_profiles(device).get('interface') or None
         previous_row = conn.execute(f"SELECT * FROM {_sample_table()} WHERE link_id = ? ORDER BY sampled_at DESC LIMIT 1", (link["id"],)).fetchone()
         previous = _row_dict(previous_row)
         item: dict[str, Any] | None = None
@@ -435,29 +424,22 @@ async def _collect_link(link: dict[str, Any], collected: dict[str, Any] | None =
             quality_flags["measurement_scope_shared_interface"] = True
         if link.get("measurement_scope_version") not in (None, ""):
             quality_flags["measurement_scope_version"] = link.get("measurement_scope_version")
-        if not snmp_ip or not community:
-            collection_status = "not_configured"
-            quality_flags["reason"] = "SNMP credentials are not configured"
-        else:
-            detail = collected
-            if detail is None:
-                detail = await collect_interface_data_detailed(
-                    snmp_ip,
-                    community,
-                    port,
-                    interface_config,
-                    template_only=True,
-                )
-            collection_status = str(detail.get("status") or "timeout")
-            items = detail.get("items") or []
-            item = _match_interface(link, items)
-            if collection_status == "success" and not item:
-                collection_status = "interface_not_found"
-                quality_flags["reason"] = "Configured interface was not returned by IF-MIB"
-            if detail.get("error_code"):
-                quality_flags["error_code"] = detail.get("error_code")
-            if detail.get("error_message"):
-                quality_flags["error_message"] = detail.get("error_message")
+        detail = collected or {
+            "status": "unsupported",
+            "error_code": "librenms_interface_rule_unsupported",
+            "error_message": "No supported interface rule exists in the pinned LibreNMS YAML bundle; profile-derived OIDs are not polled.",
+            "items": [],
+        }
+        collection_status = str(detail.get("status") or "unsupported")
+        items = detail.get("items") or []
+        item = _match_interface(link, items)
+        if collection_status == "success" and not item:
+            collection_status = "interface_not_found"
+            quality_flags["reason"] = "Configured interface was not returned by the supplied LibreNMS collection"
+        if detail.get("error_code"):
+            quality_flags["error_code"] = detail.get("error_code")
+        if detail.get("error_message"):
+            quality_flags["error_message"] = detail.get("error_message")
 
         current: dict[str, Any] = {
             "in_octets": item.get("in_octets") if item else None,
@@ -998,38 +980,19 @@ async def test_wan_link_collection(link_id: str) -> dict[str, Any] | None:
         link = _row_dict(conn.execute("SELECT * FROM wan_links WHERE id = ?", (link_id,)).fetchone())
         if not link:
             return None
-        device = _row_dict(conn.execute("SELECT * FROM devices WHERE id = ?", (link["device_id"],)).fetchone()) or {}
     finally:
         conn.close()
-    credential = resolve_collector_credentials(device)
-    snmp = credential.get("snmp") or {}
-    ip = str(snmp.get("server") or device.get("ip_address") or "").strip()
-    community = str(snmp.get("community") or "").strip()
-    port = int(snmp.get("port") or device.get("snmp_port") or 161)
-    if not ip or not community:
-        return {"link_id": link_id, "status": "not_configured", "error_code": "not_configured", "items": []}
-    interface_config = resolve_metric_profiles(device).get('interface') or None
-    detail = await collect_interface_data_detailed(
-        ip,
-        community,
-        port,
-        interface_config,
-        template_only=True,
-    )
-    matched = _match_interface(link, detail.get("items") or [])
-    if detail.get("status") == "success" and not matched:
-        return {"link_id": link_id, "status": "interface_not_found", "error_code": "interface_not_found", "items": []}
-    return {"link_id": link_id, "status": detail.get("status"), "error_code": detail.get("error_code"), "items": [matched] if matched else []}
+    return {
+        "link_id": link_id,
+        "status": "unsupported",
+        "error_code": "librenms_interface_rule_unsupported",
+        "error_message": "No supported interface rule exists in the pinned LibreNMS YAML bundle; profile-derived OIDs are not polled.",
+        "items": [],
+    }
 
 
 async def test_wan_link_configuration(payload: dict[str, Any]) -> dict[str, Any]:
-    """Run a read-only collection test for an unsaved WAN binding.
-
-    The configuration form must prove the selected device/interface before a
-    write is accepted.  This path intentionally reuses the same credential
-    resolver and IF-MIB matcher as the periodic collector, but never creates a
-    link, baseline, or sample.
-    """
+    """Validate a WAN binding and report whether pinned SNMP rules can test it."""
     device_id = str(payload.get("device_id") or "").strip()
     interface_id = str(payload.get("interface_id") or "").strip()
     if not device_id or not interface_id:
@@ -1049,33 +1012,13 @@ async def test_wan_link_configuration(payload: dict[str, Any]) -> dict[str, Any]
                 return {"status": "invalid_configuration", "error_code": "device_site_mismatch", "items": []}
     finally:
         conn.close()
-    credential = resolve_collector_credentials(device or {})
-    snmp = credential.get("snmp") or {}
-    ip = str(snmp.get("server") or (device or {}).get("ip_address") or "").strip()
-    community = str(snmp.get("community") or "").strip()
-    port = int(snmp.get("port") or (device or {}).get("snmp_port") or 161)
-    if not ip or not community:
-        return {"status": "not_configured", "error_code": "not_configured", "items": []}
-    interface_config = resolve_metric_profiles(device or {}).get("interface") or None
-    detail = await collect_interface_data_detailed(
-        ip,
-        community,
-        port,
-        interface_config,
-        template_only=True,
-    )
-    match = _match_interface(
-        {"if_index": iface.get("if_index"), "interface_name": iface.get("interface_name")},
-        detail.get("items") or [],
-    )
-    if detail.get("status") == "success" and not match:
-        return {"status": "interface_not_found", "error_code": "interface_not_found", "items": []}
     return {
-        "status": detail.get("status"),
-        "error_code": detail.get("error_code"),
-        "items": [match] if match else [],
-        "complete_items": detail.get("complete_items"),
-        "total_items": detail.get("total_items"),
+        "status": "unsupported",
+        "error_code": "librenms_interface_rule_unsupported",
+        "error_message": "No supported interface rule exists in the pinned LibreNMS YAML bundle; profile-derived OIDs are not polled.",
+        "items": [],
+        "complete_items": 0,
+        "total_items": 0,
     }
 
 
@@ -1284,36 +1227,12 @@ def run_wan_collection_once() -> dict[str, Any]:
     if not links:
         return {"success": True, "total": 0, "results": []}
     async def _run() -> list[dict[str, Any]]:
-        grouped: dict[tuple[str, str, int], list[dict[str, Any]]] = {}
-        for link in links:
-            grouped.setdefault((str(link.get("device_id")), str(link.get("snmp_server") or ""), int(link.get("snmp_port") or 161)), []).append(link)
-
-        async def collect_group(group: list[dict[str, Any]]) -> list[dict[str, Any]]:
-            first = group[0]
-            conn = get_db_connection()
-            try:
-                device_row = conn.execute("SELECT * FROM devices WHERE id = ?", (first["device_id"],)).fetchone()
-                device = _row_dict(device_row) or {}
-            finally:
-                conn.close()
-            credential = resolve_collector_credentials(device)
-            snmp = credential.get("snmp") or {}
-            ip = str(snmp.get("server") or device.get("ip_address") or "").strip()
-            community = str(snmp.get("community") or "").strip()
-            port = int(snmp.get("port") or device.get("snmp_port") or 161)
-            interface_config = resolve_metric_profiles(device).get('interface') or None
-            detail = {"status": "not_configured", "items": [], "error_code": "not_configured", "error_message": "SNMP credentials are not configured"}
-            if ip and community:
-                detail = await collect_interface_data_detailed(
-                    ip,
-                    community,
-                    port,
-                    interface_config,
-                    template_only=True,
-                )
-            return await asyncio.gather(*[_collect_link(link, detail) for link in group])
-
-        grouped_results = await asyncio.gather(*[collect_group(group) for group in grouped.values()])
-        return [item for group in grouped_results for item in group]
+        unsupported = {
+            "status": "unsupported",
+            "error_code": "librenms_interface_rule_unsupported",
+            "error_message": "No supported interface rule exists in the pinned LibreNMS YAML bundle; profile-derived OIDs are not polled.",
+            "items": [],
+        }
+        return await asyncio.gather(*[_collect_link(link, unsupported) for link in links])
     results = asyncio.run(_run())
     return {"success": True, "total": len(results), "results": results}

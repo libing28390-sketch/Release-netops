@@ -138,7 +138,7 @@ def test_netops_bypasses_proxy_for_internal_seaweedfs_s3_endpoint():
         assert "nexora-seaweedfs" in entry
 
 
-def test_static_vmagent_and_generic_ifmib_contract():
+def test_static_vmagent_and_disabled_snmp_exporter_contract():
     scrape = yaml.safe_load((ROOT / "monitoring" / "vmagent" / "scrape.yml").read_text(encoding="utf-8"))
     jobs_by_name = {job["job_name"]: job for job in scrape["scrape_configs"]}
     assert jobs_by_name["platform_grafana"]["metrics_path"] == "/grafana/metrics"
@@ -151,30 +151,8 @@ def test_static_vmagent_and_generic_ifmib_contract():
     exporter = yaml.safe_load((ROOT / "monitoring" / "snmp-exporter" / "snmp.yml").read_text(encoding="utf-8"))
     assert exporter["auths"]["bootstrap_disabled_v2"]["version"] == 2
     assert exporter["auths"]["bootstrap_disabled_v2"]["community"] == "__nexora_bootstrap_disabled__"
-    walk = exporter["modules"]["generic_ifmib_interface_std"]["walk"]
-    assert "1.3.6.1.2.1.2.2" in walk
-    assert "1.3.6.1.2.1.31.1.1" in walk
-    assert "1.3.6.1.2.1.10.7.2.1" in walk
-    assert "ifHCInOctets" not in str(walk)  # OIDs are intentionally module-owned, not raw label text
-    assert not {"source_indexes", "lookup"} & {
-        key
-        for module in exporter["modules"].values()
-        for metric in module.get("metrics", [])
-        for lookup in metric.get("lookups", [])
-        for key in lookup
-    }
-    generic_metrics = {item["name"] for item in exporter["modules"]["generic_ifmib_interface_std"]["metrics"]}
-    assert {"ifHCInUcastPkts", "ifHCInMulticastPkts", "ifHCOutUcastPkts", "ifPhysAddress"} <= generic_metrics
-    assert {"h3c_common_std", "huawei_common_std", "cisco_common_std"} <= set(exporter["modules"])
-    assert all(exporter["modules"][key].get("metrics") for key in ("h3c_common_std", "huawei_common_std", "cisco_common_std"))
-    h3c_metrics = {item["name"] for item in exporter["modules"]["h3c_common_std"]["metrics"]}
-    assert {"hh3cDevMFanStatus", "hh3cDevMPowerStatus", "hh3cFlhPartSpace", "hh3cEntityExtMacAddressCount"} <= h3c_metrics
-    h3c_metric_types = {item["name"]: item["type"] for item in exporter["modules"]["h3c_common_std"]["metrics"]}
-    assert h3c_metric_types["hh3cEntityExtOperStatus"] == "EnumAsInfo"
-    assert h3c_metric_types["hh3cEntityExtErrorStatus"] == "EnumAsInfo"
-    h3c = exporter["modules"]["h3c_common_std"]
-    assert {"1.3.6.1.4.1.25506.2.6.1.2.1.1", "1.3.6.1.4.1.25506.2.5.1.1.4.1.1", "1.3.6.1.4.1.25506.8.35.9.1.1.1", "1.3.6.1.4.1.25506.8.35.9.1.2.1"} <= set(h3c["walk"])
-    assert h3c["retries"] == 3 and h3c["timeout"] == "5s"
+    assert exporter["modules"] == {}
+
 
 
 def test_shared_runtime_path_is_used_by_the_compiled_scrape_config():

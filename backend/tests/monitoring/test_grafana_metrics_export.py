@@ -246,6 +246,8 @@ def test_metrics_export_includes_normalized_hardware_and_capability_without_addr
     from database.migrations.m0260_snmp_hardware_inventory import upgrade
     from database.migrations.m0277_librenms_native_bindings import upgrade as upgrade_native_bindings
     from database.migrations.m0278_librenms_native_inventory_projection import upgrade as upgrade_native_projection
+    from services.librenms_source_policy import PINNED_LIBRENMS_COMMIT
+    from services.snmp_hardware_poller_service import DISCOVERY_VERSION
 
     conn = database.get_db_connection()
     upgrade(conn.cursor(), use_pg=True)
@@ -301,10 +303,10 @@ def test_metrics_export_includes_normalized_hardware_and_capability_without_addr
         artifact_version="26.9",
     )
     assert outcome["results"][0]["active_sensor_count"] == 1
-    local_outcome = upsert_discovery_run(
+    legacy_outcome = upsert_discovery_run(
         conn,
         "grafana-hardware-device",
-        "grafana-hardware-run-local-1",
+        "grafana-hardware-run-legacy-1",
         "h3c-rules-v1",
         [{
             "source_type": "h3c_comware",
@@ -331,7 +333,47 @@ def test_metrics_export_includes_normalized_hardware_and_capability_without_addr
         discovery_version="nexora-native-snmp-hardware-v1",
         artifact_version="h3c-wx5540h",
     )
-    assert local_outcome["results"][0]["active_sensor_count"] == 1
+    assert legacy_outcome["results"][0]["active_sensor_count"] == 1
+    rule_path = "resources/definitions/os_discovery/comware.yaml"
+    rule_outcome = upsert_discovery_run(
+        conn,
+        "grafana-hardware-device",
+        "grafana-hardware-run-upstream-1",
+        PINNED_LIBRENMS_COMMIT,
+        [{
+            "source_type": "librenms_rule",
+            "source_id": "comware:processor:0",
+            "component_class": "processor",
+            "measurement_type": "cpu_usage_percent",
+            "index": [0],
+            "oid": "1.3.6.1.4.1.25506.2.6.1.1.1.1.6.0",
+            "unit": "percent",
+            "sensor_name": "Board 1",
+            "group_name": "processor",
+            "value": 26.5,
+            "raw_value": "26.5",
+            "quality": "good",
+            "sample_at": sampled_at,
+            "rule_version": PINNED_LIBRENMS_COMMIT,
+            "metadata": {
+                "source_commit": PINNED_LIBRENMS_COMMIT,
+                "source_path": rule_path,
+                "collection_version": DISCOVERY_VERSION,
+                "poll_interval_seconds": 60,
+                "window": "unknown",
+            },
+        }],
+        [{
+            "source_type": "librenms_rule",
+            "component_class": "processor",
+            "status": "success",
+            "coverage_complete": True,
+        }],
+        sampled_at,
+        discovery_version=DISCOVERY_VERSION,
+        artifact_version=rule_path,
+    )
+    assert rule_outcome["results"][0]["active_sensor_count"] == 1
     conn.commit()
     conn.close()
     monkeypatch.setattr(grafana_metrics, "get_db_connection", database.get_db_connection)
@@ -345,28 +387,22 @@ def test_metrics_export_includes_normalized_hardware_and_capability_without_addr
     for label in (
         'asset_id="asset-hw-01"',
         'component_class="processor"',
-        'data_origin="librenms_native"',
+        'data_origin="legacy_snmp"',
         'device_id="grafana-hardware-device"',
-        'native_device_id="native-device-17"',
-        'native_entity_id="processor:3"',
-        'native_instance_id="librenms-test-instance"',
     ):
         assert label in cpu_line
     assert cpu_line.endswith(" 26.5")
-    local_line = next(
-        line for line in body.splitlines()
-        if line.startswith("nexora_hw_temperature_celsius{")
-    )
-    assert 'data_origin="legacy_snmp"' in local_line
-    assert 'device_id="grafana-hardware-device"' in local_line
-    assert local_line.endswith(" 41")
+    assert not any(
+        line.startswith("nexora_hw_temperature_celsius{")
+        for line in body.splitlines()
+    ), "unversioned legacy vendor samples must not be exported as current LibreNMS hardware"
     assert 'hostname="router-hw-01"' in body
     assert 'window="unknown"' in body
     assert 'nexora_hw_sensor_quality{' in body and 'quality="good"' in body
     assert 'nexora_hw_capability_status{' in body and 'status="success"' in body
     assert 'nexora_hw_capability_active_sensor_count{' in body and '} 1' in body
     assert 'nexora_hw_capability_last_discovered_count{' in body and '} 1' in body
-    assert 'artifact_version="26.9"' in body
+    assert f'artifact_version="{rule_path}"' in body
     assert 'nexora_hw_capability_info{' in body
     assert 'nexora_hw_capability_last_success_timestamp_seconds{' in body
     assert 'nexora_hw_sensor_render_errors 0' in body

@@ -118,7 +118,16 @@ describe('HardwareDiagnosticSummary', () => {
           source: 'nexora_snmp',
           state: 'available',
           message: '已读取 Nexora 本地 SNMP 硬件采集结果',
-          hardware_sensors: [sensor({ data_origin: 'legacy_snmp', sensor_descr: 'Chassis temperature' })],
+          collection: { ...result().collection, poll_interval_seconds: 60 },
+          hardware_sensors: [sensor({
+            data_origin: 'legacy_snmp',
+            sensor_descr: 'Chassis temperature',
+            source_type: 'librenms_rule',
+            source_path: 'resources/definitions/os_discovery/comware.yaml',
+            source_commit: '6c26b4fe4a40f7b392c19c36a44257212736e38c',
+            poll_interval_seconds: 60,
+            last_quality: 'good',
+          })],
           metric_summary: [metric({ source: 'nexora_snmp', key: 'temperature' })],
         })}
       />,
@@ -129,6 +138,10 @@ describe('HardwareDiagnosticSummary', () => {
     expect(screen.getByText('本地传感器分类汇总')).toBeTruthy();
     expect(screen.queryByText('LibreNMS 绑定')).toBeNull();
     expect(screen.queryByText(/请先.*配置.*LibreNMS/)).toBeNull();
+    expect(screen.getByText(/resources\/definitions\/os_discovery\/comware\.yaml/)).toBeTruthy();
+    expect(screen.queryByText(/\.php/i)).toBeNull();
+    expect(screen.getByText(/6c26b4fe4a40/)).toBeTruthy();
+    expect(screen.getAllByText(/60s/).length).toBeGreaterThan(0);
   });
 
   it('renders native sensor class aggregates and freshness without guessing units', () => {

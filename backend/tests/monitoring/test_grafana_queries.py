@@ -41,7 +41,7 @@ def test_all_generated_dashboards_validate_the_complete_panel_catalog(catalog):
         panel_count += len(panels)
         validate_dashboard(filename, dashboard)
 
-    assert panel_count == 263
+    assert panel_count == 261
 
 
 @pytest.mark.parametrize(
@@ -119,9 +119,11 @@ def test_overview_and_wireless_share_the_client_query_without_zero_fallback(cata
     wireless_query = wireless[4]["targets"][0]["expr"]
 
     assert overview_query == wireless_query
+    assert 'source_type="librenms_rule"' in overview_query
     assert 'component_class="wireless_controller",sensor_class="clients"' in overview_query
     assert 'component_class="wireless_ssid",sensor_class="clients"' in overview_query
-    assert "unless on(site_name,vendor,role,hostname)" in overview_query
+    assert "or on(site_name,vendor,role,hostname)" in overview_query
+    assert "unless on(site_name,vendor,role,hostname)" not in overview_query
     assert "vector(0)" not in overview_query
 
 

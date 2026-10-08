@@ -678,10 +678,9 @@ def _collect_delivery(lines: list[str], conn: Any, cutoff_24h: str) -> None:
 
 
 def _hardware_stale_after_seconds(sensor: dict[str, Any]) -> float:
-    metadata = sensor.get("metadata") if isinstance(sensor.get("metadata"), dict) else {}
-    interval = _numeric(metadata.get("poll_interval_seconds"), 60.0)
-    configured = _numeric(os.environ.get("SNMP_HARDWARE_STALE_SECONDS"), 180.0)
-    return max(3.0 * max(1.0, interval), max(180.0, configured))
+    from services.snmp_hardware_poller_service import hardware_stale_after_seconds
+
+    return hardware_stale_after_seconds(sensor)
 
 
 def _collect_hardware(lines: list[str], conn: Any, now: datetime) -> dict[str, Any]:
@@ -690,13 +689,17 @@ def _collect_hardware(lines: list[str], conn: Any, now: datetime) -> dict[str, A
         list_hardware_metric_rows,
         render_hardware_metrics,
     )
+    from services.librenms_source_policy import is_trusted_hardware_sensor
+    from services.snmp_hardware_poller_service import DISCOVERY_VERSION
 
     timings: dict[str, float] = {}
-    rows = list_hardware_metric_rows(conn, timings=timings)
+    rows = list_hardware_metric_rows(conn, timings=timings, collection_version=DISCOVERY_VERSION)
 
     preparation_started = time.perf_counter()
     by_device: dict[str, tuple[dict[str, Any], list[dict[str, Any]]]] = {}
     for row in rows:
+        if not is_trusted_hardware_sensor(row):
+            continue
         device_id = str(row.get("device_id") or "")
         if not device_id:
             continue
@@ -755,9 +758,11 @@ def _collect_hardware(lines: list[str], conn: Any, now: datetime) -> dict[str, A
           JOIN devices d ON d.id = c.device_id
           LEFT JOIN physical_assets pa ON pa.id = d.asset_id
          LEFT JOIN sites s ON s.id = COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''))
-         WHERE c.source_type = 'librenms_native'
+         WHERE c.discovery_version = ?
+           AND c.source_type = 'librenms_rule'
          ORDER BY c.device_id, c.component_class, c.source_type
         """,
+        (DISCOVERY_VERSION,),
     )
     timings["capability_query_ms"] = (time.perf_counter() - capability_query_started) * 1000
     if capability_rows is None:

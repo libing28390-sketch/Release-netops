@@ -4008,7 +4008,7 @@ def import_assets(
                     key: identity_result.get(key)
                     for key in (
                         'status', 'message', 'detected_vendor', 'detected_platform',
-                        'detected_model', 'identity_source', 'profile_id', 'profile_name',
+                        'detected_model', 'identity_source',
                     )
                     if identity_result.get(key) is not None
                 }
@@ -4057,23 +4057,11 @@ def import_assets(
                 'profile_applied': bool(enrollment_result.get('profile_applied')),
             })
         identified_identity_statuses = {
-            'profile_bound',
-            'profile_already_bound',
-            'profile_no_match',
-            'profile_ambiguous',
-            'profile_unverified',
-            'profile_incomplete',
-            'profile_incompatible',
+            'identified',
         }
         identified_count = sum(
             1 for item in snmp_identification_results
             if item.get('detected_vendor') or item.get('status') in identified_identity_statuses
-        )
-        profile_bound_count = sum(
-            1 for item in snmp_identification_results if item.get('status') == 'profile_bound'
-        )
-        profile_resolved_count = profile_bound_count + sum(
-            1 for item in snmp_identification_results if item.get('status') == 'profile_already_bound'
         )
         response = {
             'created': created,
@@ -4096,8 +4084,7 @@ def import_assets(
             'snmp_identification': {
                 'total': len(snmp_identification_results),
                 'identified': identified_count,
-                'profile_bound': profile_bound_count,
-                'unresolved': len(snmp_identification_results) - profile_resolved_count,
+                'unresolved': len(snmp_identification_results) - identified_count,
                 'items': snmp_identification_results,
             },
         }

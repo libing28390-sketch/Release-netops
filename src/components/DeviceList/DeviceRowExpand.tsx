@@ -38,22 +38,6 @@ const DeviceRowExpand: React.FC<DeviceRowExpandProps> = ({
   const check = deviceConnectionChecks[device.id];
   const badge = check ? (CHECK_BADGE[check.status] || CHECK_BADGE.fail) : null;
   const h = HEALTH_CFG[device.health_status || 'unknown'] || HEALTH_CFG.unknown;
-  const snmpProfile = device.snmp_metric_profile;
-  const profileStatus = snmpProfile?.status || 'none';
-  const profileSource = snmpProfile?.source || 'template_not_applied';
-  const profileStatusLabel = zh
-    ? ({ verified: '已验证', unverified: '待验证', failed: '验证失败', none: '未配置' } as Record<string, string>)[profileStatus] || profileStatus
-    : ({ verified: 'Verified', unverified: 'Pending', failed: 'Failed', none: 'Not configured' } as Record<string, string>)[profileStatus] || profileStatus;
-  const profileSourceLabel = zh
-    ? ({ snmp_template: 'SNMP 型号模板', model_profile: '型号模板', device_override: '旧版单台覆盖（已忽略）', mixed: 'SNMP 型号模板', template_blocked: '模板未生效', template_not_applied: '未应用 SNMP 模板', builtin_default: '已停用的内置默认' } as Record<string, string>)[profileSource] || profileSource
-    : ({ snmp_template: 'SNMP model template', model_profile: 'Model template', device_override: 'Legacy device override (ignored)', mixed: 'SNMP model template', template_blocked: 'Template blocked', template_not_applied: 'SNMP template not applied', builtin_default: 'Disabled built-in default' } as Record<string, string>)[profileSource] || profileSource;
-  const healthMetricLabels: Record<string, string> = zh
-    ? { cpu: 'CPU', memory: '内存', temperature: '温度', fan: '风扇', power_supply: '电源' }
-    : { cpu: 'CPU', memory: 'Memory', temperature: 'Temp', fan: 'Fan', power_supply: 'PSU' };
-  const healthMetrics = (snmpProfile?.metric_keys || []).map((key) => healthMetricLabels[key] || key).join(' / ');
-  const profileName = snmpProfile?.id
-    ? [snmpProfile.vendor, snmpProfile.model].filter(Boolean).join(' · ') || snmpProfile.id
-    : (zh ? '未关联型号模板' : 'No model template');
   const actualSoftwareMajor = extractSoftwareMajorVersion(device.version);
   const adaptation = getDevicePlatformAdaptation(device, zh ? 'zh' : 'en');
   const bindingMismatch = adaptation.explicit
@@ -62,7 +46,7 @@ const DeviceRowExpand: React.FC<DeviceRowExpandProps> = ({
     && actualSoftwareMajor !== adaptation.major;
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-5 gap-x-6 gap-y-3 px-6 py-4
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-3 px-6 py-4
       bg-black/[.015] dark:bg-white/[.02] border-t border-black/4 dark:border-white/6 text-[11px]">
 
       {/* Col 1: Hardware */}
@@ -134,28 +118,7 @@ const DeviceRowExpand: React.FC<DeviceRowExpandProps> = ({
         </div>
       </div>
 
-      {/* Col 4: SNMP health template association */}
-      <div>
-        <span className="text-[9px] uppercase tracking-wider font-semibold text-black/30 dark:text-white/25 block mb-1.5">
-          {zh ? 'SNMP 健康模板' : 'SNMP Health Template'}
-        </span>
-        <div className="space-y-0.5">
-          <p className="truncate text-black/65 dark:text-white/65" title={profileName}>
-            {zh ? '关联' : 'Profile'}: <span className="font-medium">{profileName}</span>
-          </p>
-          <p className="text-black/65 dark:text-white/65">
-            {zh ? '来源' : 'Source'}: <span className="font-medium">{profileSourceLabel}</span>
-          </p>
-          <p className="text-black/65 dark:text-white/65">
-            {zh ? '状态' : 'Status'}: <span className={`font-semibold ${profileStatus === 'verified' ? 'text-emerald-600 dark:text-emerald-400' : profileStatus === 'failed' ? 'text-red-500 dark:text-red-400' : 'text-amber-600 dark:text-amber-400'}`}>{profileStatusLabel}</span>
-          </p>
-          <p className="truncate text-[10px] text-black/40 dark:text-white/35" title={healthMetrics || (zh ? '使用厂商内置健康采集' : 'Built-in health collector')}>
-            {healthMetrics || (zh ? '内置健康指标' : 'Built-in health metrics')}
-          </p>
-        </div>
-      </div>
-
-      {/* Col 5: Trends & Uptime */}
+      {/* Col 4: Trends & Uptime */}
       <div>
         <span className="text-[9px] uppercase tracking-wider font-semibold text-black/30 dark:text-white/25 block mb-1.5">
           {zh ? '趋势' : 'Trends'}

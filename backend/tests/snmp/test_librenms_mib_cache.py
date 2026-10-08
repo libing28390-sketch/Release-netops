@@ -125,6 +125,46 @@ def test_marker_allows_crlf_size_difference_and_stable_unresolved_nodes(isolated
     assert marker == {"run_id": "mib-run-cache-test", "nodes": 2, "zero_node": 0}
 
 
+def test_manifest_whitelist_excludes_unlisted_bundle_files(tmp_path):
+    mibs_dir, mib_path = _bundle(tmp_path)
+    unlisted = mibs_dir / "cisco" / "TEST-MIB-UNLISTED"
+    unlisted.write_text(
+        "TEST-MIB-UNLISTED DEFINITIONS ::= BEGIN END",
+        encoding="utf-8",
+    )
+    manifest_entries = mib_service._source_manifest_entries(mibs_dir)
+
+    assert manifest_entries is not None
+    selected, ignored, missing = mib_service._manifest_whitelisted_files(
+        mibs_dir,
+        [mib_path, unlisted],
+        manifest_entries,
+    )
+
+    assert selected == [mib_path]
+    assert ignored == 1
+    assert missing == []
+
+
+def test_incomplete_pinned_bundle_fails_before_database_access(tmp_path, monkeypatch):
+    mibs_dir, mib_path = _bundle(tmp_path)
+    mib_path.unlink()
+    monkeypatch.setattr(mib_service, "MIBS_DIR", mibs_dir)
+    monkeypatch.setattr(
+        mib_service,
+        "get_db_connection",
+        lambda: (_ for _ in ()).throw(AssertionError("database must not be touched")),
+    )
+
+    result = mib_service.import_mibs_from_directory(
+        mibs_dir=mibs_dir,
+        target_vendors=["Cisco"],
+    )
+
+    assert result["success"] is False
+    assert "1 manifest file(s) are missing" in result["message"]
+
+
 def test_marker_rejects_missing_node_record(isolated_db, tmp_path):
     mibs_dir, mib_path = _bundle(tmp_path)
     conn = isolated_db["module"].get_db_connection()

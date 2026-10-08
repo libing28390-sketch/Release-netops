@@ -865,21 +865,33 @@ def monitoring_device_realtime(
         tenant_clause, tenant_params = _monitoring_tenant_scope(user)
         device = conn.execute(
             "SELECT id, hostname, ip_address, platform, status, device_category, "
-            "sys_name, cpu_usage, memory_usage, temp, fan_status, psu_status, asset_id FROM devices WHERE id = ?" + tenant_clause,
+            "sys_name, asset_id FROM devices WHERE id = ?" + tenant_clause,
             (device_id, *tenant_params),
         ).fetchone()
         if not device:
             raise HTTPException(status_code=404, detail='Device not found')
         device = dict(device)
+        # Hardware columns on ``devices`` are legacy snapshots without a
+        # verifiable LibreNMS rule source. Never present them as current
+        # telemetry when the normalized hardware inventory has no sample.
+        device.update({
+            'cpu_usage': None,
+            'memory_usage': None,
+            'temp': None,
+            'fan_status': None,
+            'psu_status': None,
+        })
         device['interface_data'] = [
             item for item in (fetch_interface_data(conn, device['id']) or [])
             if not _is_virtual_interface_name(item.get('interface_name') or item.get('name'))
         ]
 
-        # Resolve real-time hardware telemetry from provider if VM/Shadow mode
+        # Resolve current hardware values through the same normalized metric
+        # contract for every backend. Missing or failed queries remain empty;
+        # legacy device columns are not a fallback source.
         provider_name = provider.strip().lower() if isinstance(provider, str) and provider.strip() else None
         selected_backend = (provider_name or os.environ.get("MONITORING_METRIC_BACKEND", "native")).strip().lower()
-        if selected_backend in {"victoriametrics", "shadow"}:
+        if selected_backend in {"native", "victoriametrics", "shadow"}:
             try:
                 target_asset_id = str(device.get('asset_id') or device.get('id') or device_id)
                 lookup_id = (

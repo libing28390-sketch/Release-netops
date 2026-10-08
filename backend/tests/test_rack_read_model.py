@@ -339,7 +339,6 @@ def test_health_route_returns_scoped_devices_as_items(isolated_db, monkeypatch: 
         return devices
 
     monkeypatch.setattr(device_health_api, 'load_devices_for_health', _load_devices)
-    monkeypatch.setattr(device_health_api, 'annotate_devices_with_snmp_profile', lambda rows: rows)
     monkeypatch.setattr(device_health_api, 'annotate_devices_with_health', lambda _conn, rows: rows)
     monkeypatch.setattr(
         device_health_api,

@@ -1,4 +1,4 @@
-"""SNMP identity and metric-profile selection performed after asset import."""
+"""SNMP identity detection performed after asset import."""
 
 from __future__ import annotations
 
@@ -15,10 +15,6 @@ from services.config_vendor_platform_service import (
 )
 from services.librenms_rule_service import ensure_rules_available, resolve_rule
 from services.snmp_discovery_service import resolve_snmp_vendor_identity
-from services.snmp_metric_profile_service import (
-    bind_model_metric_profile,
-    resolve_metric_profile_candidate,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +24,6 @@ IDENTITY_OIDS = {
     "sys_name": "1.3.6.1.2.1.1.5.0",
 }
 
-_VERIFIED_PROFILE_STATUSES = {"tested", "published", "verified", "passed", "approved"}
 _SNMPV3_AUTH_METHODS = {"md5": "md5", "sha": "sha1"}
 _SNMPV3_PRIV_METHODS = {"aes": "aes", "des": "des"}
 _PLATFORM_FAMILY_ALIASES = {
@@ -191,7 +186,7 @@ def _safe_result(item: Mapping[str, Any], status: str, message: str, **details: 
 
 
 async def identify_imported_device(item: Mapping[str, Any], semaphore: Any) -> dict[str, Any]:
-    """Probe one committed device, enrich only blank identity fields, and bind a safe profile."""
+    """Probe one committed device and enrich its LibreNMS-derived identity fields."""
     device_id = str(item.get("device_id") or "").strip()
     if not device_id:
         return _safe_result(item, "device_missing", "导入结果中缺少设备记录")
@@ -259,7 +254,7 @@ async def identify_imported_device(item: Mapping[str, Any], semaphore: Any) -> d
             return _safe_result(
                 item,
                 "rule_ambiguous",
-                "多条 LibreNMS 识别规则同分匹配，未自动选择 Profile",
+                "多条 LibreNMS 识别规则同分匹配，未自动选择设备身份",
                 detected_vendor=str((rule or {}).get("vendor") or ""),
                 detected_platform=str((rule or {}).get("platform") or ""),
                 identity_source="librenms",
@@ -283,7 +278,7 @@ async def identify_imported_device(item: Mapping[str, Any], semaphore: Any) -> d
             return _safe_result(
                 item,
                 "identity_conflict",
-                "SNMP 识别到的厂商与导入填写的厂商不一致，未覆盖资产信息或绑定 Profile",
+                "SNMP 识别到的厂商与导入填写的厂商不一致，未覆盖资产信息",
                 detected_vendor=detected_vendor,
                 detected_model=str(identity.get("model") or ""),
                 identity_source=str(identity.get("source") or ""),
@@ -299,16 +294,6 @@ async def identify_imported_device(item: Mapping[str, Any], semaphore: Any) -> d
         detected_platform = _canonical_detected_platform(detected_vendor, identity.get("platform") or declared_platform)
         detected_model = str(identity.get("model") or declared_model or "").strip()
         detected_version = str(identity.get("software_version") or "").strip()
-        match_identity = {
-            "id": device_id,
-            "vendor": detected_vendor,
-            "platform": detected_platform,
-            "model": detected_model,
-            "version": detected_version or str(device.get("version") or ""),
-            "os_version": detected_version or str(device.get("os_version") or ""),
-            "firmware_version": detected_version or str(device.get("firmware_version") or ""),
-        }
-
         # The importer may fill a default platform before the first probe. Use
         # the explicit input snapshot to distinguish that default from a
         # platform the operator deliberately selected.
@@ -329,92 +314,20 @@ async def identify_imported_device(item: Mapping[str, Any], semaphore: Any) -> d
                 (next_vendor, next_platform, next_model, asset_id),
             )
 
-        existing_profile_id = str(device.get("snmp_metric_profile_id") or "").strip()
-        if existing_profile_id:
-            conn.commit()
-            return _safe_result(
-                item,
-                "profile_already_bound",
-                "设备已有手动绑定的 SNMP 指标 Profile，保留现有绑定",
-                detected_vendor=detected_vendor,
-                detected_platform=detected_platform,
-                detected_model=detected_model,
-                identity_source=str(identity.get("source") or ""),
-                profile_id=existing_profile_id,
-            )
-
-        candidate = resolve_metric_profile_candidate(match_identity)
-        candidate_status = str(candidate.get("status") or "no_match")
-        base_details = {
-            "detected_vendor": detected_vendor,
-            "detected_platform": detected_platform,
-            "detected_model": detected_model,
-            "identity_source": str(identity.get("source") or ""),
-        }
-        if candidate_status == "ambiguous":
-            conn.commit()
-            return _safe_result(
-                item,
-                "profile_ambiguous",
-                "设备身份已识别，但有多个同等匹配的 SNMP 指标 Profile，未自动绑定",
-                **base_details,
-            )
-        if candidate_status != "matched":
-            conn.commit()
-            return _safe_result(item, "profile_no_match", "设备身份已识别，但没有兼容的 SNMP 指标 Profile", **base_details)
-
-        profile = candidate.get("profile") or {}
-        profile_name = str(profile.get("template_name") or candidate.get("profile_id") or "")
-        profile_status = str(profile.get("profile_status") or "unverified").casefold()
-        if profile_status not in _VERIFIED_PROFILE_STATUSES:
-            conn.commit()
-            return _safe_result(
-                item,
-                "profile_unverified",
-                "唯一匹配的 SNMP 指标 Profile 尚未验证，未自动绑定",
-                **base_details,
-                profile_name=profile_name,
-            )
-        metric_keys = {str(key).casefold() for key in (profile.get("metrics") or {})}
-        if not {"cpu", "memory"}.issubset(metric_keys):
-            conn.commit()
-            return _safe_result(
-                item,
-                "profile_incomplete",
-                "唯一匹配的 SNMP 指标 Profile 缺少 CPU 或内存定义，未自动绑定",
-                **base_details,
-                profile_name=profile_name,
-            )
-
-        try:
-            bind_model_metric_profile(conn, str(candidate.get("profile_id") or ""), [device_id])
-        except ValueError as exc:
-            conn.commit()
-            logger.info(
-                "Automatic SNMP profile binding skipped for device %s (%s)",
-                device_id,
-                str(exc).split(":", 1)[0],
-            )
-            return _safe_result(
-                item,
-                "profile_incompatible",
-                "识别结果与资产已有厂商、平台或型号字段不兼容，未自动绑定",
-                **base_details,
-                profile_name=profile_name,
-            )
         conn.commit()
         return _safe_result(
             item,
-            "profile_bound",
-            "已按 SNMP 身份自动绑定唯一且已验证的 CPU/内存指标 Profile",
-            **base_details,
-            profile_id=str(candidate.get("profile_id") or ""),
-            profile_name=profile_name,
+            "identified",
+            "已按 LibreNMS 设备身份规则识别厂商、平台和型号；硬件采集由对应 LibreNMS YAML 规则决定",
+            detected_vendor=detected_vendor,
+            detected_platform=detected_platform,
+            detected_model=detected_model,
+            identity_source=str(identity.get("source") or ""),
         )
     except Exception as exc:
         conn.rollback()
         logger.warning("Asset import SNMP identity resolution failed for device %s (%s)", device_id, type(exc).__name__)
-        return _safe_result(item, "identification_failed", "SNMP 身份识别或 Profile 绑定失败，资产数据已保留")
+        return _safe_result(item, "identification_failed", "SNMP 身份识别失败，资产数据已保留")
     finally:
         conn.close()
 

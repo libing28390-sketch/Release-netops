@@ -91,6 +91,66 @@ def test_offline_reachability_does_not_replace_native_hardware_values_with_zero(
     assert "memory_usage" not in offline_update
 
 
+def test_background_interface_poll_does_not_resolve_or_send_profile_oids(monkeypatch):
+    from services import snmp_metric_profile_service, snmp_service
+
+    profile_calls = []
+    transport_calls = []
+    collection_results = []
+
+    class Limiter:
+        @asynccontextmanager
+        async def async_probe(self):
+            yield
+
+    async def reachable(_ip: str, _port: int):
+        return True, "test"
+
+    async def uptime(*_args, **_kwargs):
+        return "123"
+
+    async def collect_interfaces(*args, **kwargs):
+        transport_calls.append((args, kwargs))
+        return []
+
+    def resolve_profile(device):
+        profile_calls.append(device)
+        return {"interface": {"in_octets_oid": "1.3.6.1.4.1.55555.10"}}
+
+    monkeypatch.setattr(background_monitor_service, "get_network_access_limiter", lambda: Limiter())
+    monkeypatch.setattr(background_monitor_service, "_probe_device_reachability", reachable)
+    monkeypatch.setattr(background_monitor_service, "resolve_collector_credentials", lambda _device: {
+        "snmp": {"server": "192.0.2.30", "community": "simulator-community", "port": 161},
+    })
+    monkeypatch.setattr(background_monitor_service, "record_collection_result", lambda *args, **kwargs: collection_results.append((args, kwargs)))
+    monkeypatch.setattr(background_monitor_service, "resolve_alert_rule", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(background_monitor_service, "set_alert_state", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(background_monitor_service, "_db_quick", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(snmp_metric_profile_service, "resolve_health_metric_profiles", resolve_profile)
+    monkeypatch.setattr(snmp_service, "_snmp_get", uptime)
+    monkeypatch.setattr(snmp_service, "collect_interface_data", collect_interfaces)
+    monkeypatch.setattr(background_monitor_service, "resolve_health_metric_profiles", resolve_profile, raising=False)
+    monkeypatch.setattr(background_monitor_service, "collect_interface_data", collect_interfaces, raising=False)
+
+    device = {
+        "id": "profile-oids-disabled", "hostname": "core-edge", "role": "core",
+        "ip_address": "192.0.2.30", "status": "online", "platform": "cisco_ios",
+        "cpu_history": "[]", "memory_history": "[]", "model": "simulator", "version": "1",
+        "snmp_metric_profile_id": "custom-profile",
+        "snmp_metric_profile": {"interface": {"in_octets_oid": "1.3.6.1.4.1.55555.10"}},
+    }
+
+    asyncio.run(background_monitor_service._process_device_raw(device, cycle_tick=1))
+
+    assert profile_calls == []
+    assert transport_calls == []
+    interface_status = next(
+        kwargs for args, kwargs in collection_results if args[1] == "snmp_interfaces"
+    )
+    assert interface_status["status"] == "unsupported"
+    assert interface_status["error_code"] == "librenms_interface_rule_unsupported"
+
+
 def test_a_loop_offloads_device_snapshot_and_keeps_loop_responsive(monkeypatch):
     loop_thread_id = threading.get_ident()
     entered = threading.Event()
@@ -258,53 +318,33 @@ def test_b_loop_offloads_snapshot_and_maintenance_after_twelve_successful_cycles
     asyncio.run(scenario())
 
 
-def test_native_hardware_loop_syncs_only_enabled_bindings_and_is_cancellable(monkeypatch):
+@pytest.mark.parametrize(
+    ("loop_name", "discovery_only", "expected_tick"),
+    [
+        ("snmp_hardware_loop", False, 10),
+        ("snmp_hardware_discovery_loop", True, 60),
+    ],
+)
+def test_local_hardware_sampling_and_discovery_use_separate_loops(
+    monkeypatch, loop_name, discovery_only, expected_tick,
+):
     query_calls: list[tuple[str, dict]] = []
-    synced_devices: list[str] = []
-
-    def fetch_bindings(sql, **kwargs):
-        query_calls.append((sql, kwargs))
-        return [{"device_id": "device-1"}, {"device_id": "device-2"}]
-
-    async def sync_device(device_id: str):
-        synced_devices.append(device_id)
-        return {"status": "synced"}
-
-    async def stop_after_one_cycle(_seconds: float):
-        raise asyncio.CancelledError
-
-    monkeypatch.setattr(background_monitor_service, "_db_quick", fetch_bindings)
-    monkeypatch.setattr(
-        "services.librenms_native_sync_service.sync_bound_device_hardware",
-        sync_device,
-    )
-    monkeypatch.setattr(asyncio, "sleep", stop_after_one_cycle)
-
-    with pytest.raises(asyncio.CancelledError):
-        asyncio.run(TelemetryOrchestrator().native_hardware_loop())
-
-    assert len(query_calls) == 1
-    query, kwargs = query_calls[0]
-    assert "FROM librenms_device_bindings" in query
-    assert "b.desired_state = 'enabled'" in query
-    assert "i.enabled = TRUE" in query
-    assert kwargs == {"fetchall": True}
-    assert sorted(synced_devices) == ["device-1", "device-2"]
-
-
-def test_local_snmp_hardware_loop_loads_asset_type_and_calls_collector(monkeypatch):
-    query_calls: list[tuple[str, dict]] = []
-    collected_devices: list[str] = []
+    collection_calls: list[tuple[str, dict]] = []
+    sleep_delays: list[float] = []
 
     def fetch_devices(sql, **kwargs):
         query_calls.append((sql, kwargs))
-        return [{"id": "switch-1", "asset_type": "network_device"}]
+        return [{"id": "device-1", "asset_type": "network_device"}]
 
-    async def collect_device(device):
-        collected_devices.append(device["id"])
+    async def collect_device(device, *, discovery_only, poll_only):
+        collection_calls.append((device["id"], {
+            "discovery_only": discovery_only,
+            "poll_only": poll_only,
+        }))
         return {"status": "collected"}
 
-    async def stop_after_one_cycle(_seconds: float):
+    async def stop_after_one_cycle(seconds: float):
+        sleep_delays.append(seconds)
         raise asyncio.CancelledError
 
     monkeypatch.setattr(background_monitor_service, "_db_quick", fetch_devices)
@@ -312,10 +352,17 @@ def test_local_snmp_hardware_loop_loads_asset_type_and_calls_collector(monkeypat
     monkeypatch.setattr(asyncio, "sleep", stop_after_one_cycle)
 
     with pytest.raises(asyncio.CancelledError):
-        asyncio.run(TelemetryOrchestrator().snmp_hardware_loop())
+        asyncio.run(getattr(TelemetryOrchestrator(), loop_name)())
 
+    assert len(query_calls) == 1
     query, kwargs = query_calls[0]
     assert "LEFT JOIN physical_assets AS pa" in query
     assert "AS asset_type" in query
+    assert "d.status = 'online'" in query
     assert kwargs == {"fetchall": True}
-    assert collected_devices == ["switch-1"]
+    assert collection_calls == [(
+        "device-1",
+        {"discovery_only": discovery_only, "poll_only": not discovery_only},
+    )]
+    assert len(sleep_delays) == 1
+    assert sleep_delays[0] >= expected_tick - 1

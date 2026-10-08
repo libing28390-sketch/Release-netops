@@ -36,43 +36,39 @@ def test_allowed_metrics_includes_wireless():
     assert "wireless_client_online_count" in ALLOWED_METRICS
 
 
-def test_promql_selector_domestic_vendors():
+def test_promql_selector_hardware_uses_only_normalized_librenms_series():
     selector = VictoriaMetricsMetricProvider._selector("cpu_usage_percent", "device-123")
-    assert "zteCpuRate" in selector
-    assert "mpCpuUtilization5Min" in selector
-    assert "dptechCpuUsage" in selector
-    assert "hillstoneCPUUtilization" in selector
-    assert "sangforCpuUsage" in selector
-    assert "dcnCpuUsage" in selector
+    assert selector == 'nexora_hw_cpu_usage_percent{asset_id="device-123",source_type="librenms_rule"}'
+    assert all(name not in selector for name in (
+        "zteCpuRate", "mpCpuUtilization5Min", "dptechCpuUsage",
+        "hillstoneCPUUtilization", "sangforCpuUsage", "dcnCpuUsage",
+    ))
 
     mem_selector = VictoriaMetricsMetricProvider._selector("memory_usage_percent", "device-123")
-    assert "zteMemRate" in mem_selector
-    assert "mpMemoryUtilization" in mem_selector
-    assert "dptechMemUsage" in mem_selector
-    assert "hillstoneMemoryUtilization" in mem_selector
-    assert "sangforMemUsage" in mem_selector
-    assert "dcnMemUsage" in mem_selector
+    assert mem_selector == 'nexora_hw_memory_usage_percent{asset_id="device-123",source_type="librenms_rule"}'
+    assert all(name not in mem_selector for name in (
+        "zteMemRate", "mpMemoryUtilization", "dptechMemUsage",
+        "hillstoneMemoryUtilization", "sangforMemUsage", "dcnMemUsage",
+    ))
 
 
 def test_promql_selector_wireless_metrics():
     ap_selector = VictoriaMetricsMetricProvider._selector("wireless_ap_online_count", "wlc-1")
-    assert "hh3cDot11CurrOnlineAPNum" in ap_selector
-    assert "ruijieApcOnlineApNum" in ap_selector
-    assert "cLApTotalUpAPs" in ap_selector
-    assert "wlsxSysExtAccessPointsNum" in ap_selector
-    assert "ruckusZDTotalNumAP" in ap_selector
-    assert "hwWlanCurJointApNum" in ap_selector
-    assert "hwWlanCurOnlineApNum" not in ap_selector
+    assert 'nexora_wireless_sensor_value{asset_id="wlc-1"' in ap_selector
+    assert 'component_class="wireless_controller"' in ap_selector
+    assert 'sensor_class="ap-count"' in ap_selector
+    assert 'source_type="librenms_rule"' in ap_selector
+    assert all(name not in ap_selector for name in (
+        "hh3cDot11", "ruijieApc", "cLApTotal", "wlsxSysExt", "ruckusZD", "hwWlan",
+    ))
 
     client_selector = VictoriaMetricsMetricProvider._selector("wireless_client_online_count", "wlc-1")
-    assert "hwWlanSsid2gStaCnt" in client_selector
-    assert "hwWlanSsid5gStaCnt" in client_selector
-    assert "hwWlanCurAssocUserNum" not in client_selector
-    assert "hh3cDot11CurrAssocUserNum" in client_selector
-    assert "ruijieApcTotalStaNum" in client_selector
-    assert "cLSysTotalNumOfClients" in client_selector
-    assert "wlsxSysExtStationsNum" in client_selector
-    assert "ruckusZDTotalNumSta" in client_selector
+    assert 'nexora_wireless_sensor_value{asset_id="wlc-1"' in client_selector
+    assert 'sensor_class="clients"' in client_selector
+    assert 'source_type="librenms_rule"' in client_selector
+    assert all(name not in client_selector for name in (
+        "hwWlan", "hh3cDot11", "ruijieApc", "cLSysTotal", "wlsxSysExt", "ruckusZD",
+    ))
 
 
 def test_oid_catalog_has_domestic_and_wireless():
@@ -289,15 +285,15 @@ def test_wireless_dashboard_uses_hardware_inventory_job_and_joins_by_device():
         "Radio 利用率 Top 10",
         "AP 无线单元（BSS）客户端 Top 20",
         "SSID 客户端 Top 20",
-        "AP 下在线终端明细",
     ):
         expression = query(title)
         assert 'job="platform_hardware_inventory"' in expression
+        assert 'source_type="librenms_rule"' in expression
         assert 'job="network_snmp"' not in expression
 
     wireless_sensor_panel = panels["无线传感器明细"]
     wireless_sensor_query = wireless_sensor_panel["targets"][0]["expr"]
-    assert 'data_origin=~"^(legacy_snmp|librenms_native)$"' in wireless_sensor_query
+    assert 'source_type="librenms_rule"' in wireless_sensor_query
     assert 'component_class=~"wireless_.*"' in wireless_sensor_query
     assert wireless_sensor_panel["gridPos"] == {"h": 9, "w": 24, "x": 0, "y": 68}
     assert "不推断 AP 或 Radio 归属" in wireless_sensor_panel["description"]
@@ -314,15 +310,20 @@ def test_wireless_dashboard_uses_hardware_inventory_job_and_joins_by_device():
     assert 'or on(site_name,vendor,role,hostname,ssid)' in ssid_query
 
     online_ap_expression = query("在线 AP")
-    assert 'job="network_snmp"' in online_ap_expression
     assert 'job="platform_hardware_inventory"' in online_ap_expression
+    assert 'source_type="librenms_rule"' in online_ap_expression
+    assert 'job="network_snmp"' not in online_ap_expression
     assert "unless on(site_name,vendor,role,hostname)" in online_ap_expression
     assert "or on(site_name,vendor,role,hostname)" in online_ap_expression
 
     clients_expression = query("在线终端数")
-    assert 'job="network_snmp"' in clients_expression
     assert 'job="platform_hardware_inventory"' in clients_expression
-    assert "unless on(site_name,vendor,role,hostname)" in clients_expression
+    assert 'job="network_snmp"' not in clients_expression
+    assert 'source_type="librenms_rule"' in clients_expression
+    assert 'component_class="wireless_controller",sensor_class="clients"' in clients_expression
+    assert 'component_class="wireless_ssid",sensor_class="clients"' in clients_expression
+    assert "or on(site_name,vendor,role,hostname)" in clients_expression
+    assert "unless on(site_name,vendor,role,hostname)" not in clients_expression
 
     variables = {item["name"]: item for item in dashboard["templating"]["list"]}
     assert variables["device"]["label"] == "AC 控制器"
@@ -352,29 +353,6 @@ def test_wireless_dashboard_uses_hardware_inventory_job_and_joins_by_device():
     assert "* 0" in offline_ac_query
     assert "* 0" in online_ac_query  # Existing but fully-down AC targets show 0.
 
-    station_panel = panels["AP 下在线终端明细"]
-    assert 'nexora_wireless_station_info{' in station_panel["targets"][0]["expr"]
-    assert 'hostname=~"$device"' in station_panel["targets"][0]["expr"]
-    assert "username" not in station_panel["targets"][0]["expr"].lower()
-    assert station_panel["transformations"][0]["options"]["renameByName"]["hostname"] == "所属 AC"
-    assert station_panel["transformations"][0]["options"]["renameByName"]["station_mac"] == "终端 MAC"
-    station_excluded_fields = station_panel["transformations"][0]["options"]["excludeByName"]
-    assert all(station_excluded_fields[field] for field in ("site_name", "vendor", "role", "instance", "rule_version"))
-    station_status_overrides = station_panel["fieldConfig"]["overrides"]
-    assert any(
-        override.get("matcher") == {"id": "byName", "options": "在线状态"}
-        and any(
-            prop.get("id") == "custom.cellOptions" and prop.get("value") == {"type": "color-text"}
-            for prop in override.get("properties", [])
-        )
-        for override in station_status_overrides
-    )
-    assert any(
-        override.get("matcher") == {"id": "byName", "options": "在线状态"}
-        and override.get("properties", [{}])[0].get("id") == "mappings"
-        and override["properties"][0]["value"][0]["options"]["1"] == {"text": "在线", "color": HEALTHY_COLOR}
-        for override in station_status_overrides
-    )
     panels_by_id = {panel["id"]: panel for panel in dashboard["panels"]}
     for panel_id in (9, 10):
         assert panels_by_id[panel_id]["transformations"][0]["options"]["renameByName"]["hostname"] == "所属 AC"
@@ -404,7 +382,9 @@ def test_wireless_dashboard_homepage_groups_actual_metrics_by_wireless_layer():
     assert panels[15]["title"] == "在线 AC"
     assert panels[14]["title"] == "离线 AC"
     assert "纳管 AC" not in [panel["title"] for panel in dashboard["panels"]]
-    assert panels[16]["type"] == "table"
+    # Rule-based collection exposes aggregate client counts, not station identity rows.
+    assert 16 not in panels
+    assert 905 not in panels
 
     assert panels[5]["title"] == "高利用率 Radio"
     assert 'sensor_class="utilization"' in panels[5]["targets"][0]["expr"]
@@ -440,7 +420,6 @@ def test_wireless_dashboard_homepage_groups_actual_metrics_by_wireless_layer():
         "AP 明细",
         "Radio 热点",
         "SSID / BSS 客户端明细",
-        "AP 下在线终端",
         "无线专网流量",
     }
     assert "无线控制器" not in " ".join(panel["title"] for panel in dashboard["panels"])
@@ -597,8 +576,12 @@ def test_wireless_and_interface_dashboards_share_reference_semantic_colors():
     assert overview_client_expr == wireless_client_expr
     assert 'component_class="wireless_controller",sensor_class="clients"' in overview_client_expr
     assert 'component_class="wireless_ssid",sensor_class="clients"' in overview_client_expr
-    assert "unless on(site_name,vendor,role,hostname)" in overview_client_expr
+    assert 'source_type="librenms_rule"' in overview_client_expr
+    assert "or on(site_name,vendor,role,hostname)" in overview_client_expr
+    assert "unless on(site_name,vendor,role,hostname)" not in overview_client_expr
     assert "or vector(0)" not in overview_client_expr
+    assert 'source_type="librenms_rule"' in overview[8]["targets"][1]["expr"]
+    assert 'component_class="wireless_controller",sensor_class="ap-count"' in overview[8]["targets"][1]["expr"]
     assert overview[4]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == CLIENT_COLOR
     assert overview[8]["targets"][0]["expr"] == overview_client_expr
 

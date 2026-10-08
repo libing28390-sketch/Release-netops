@@ -9,22 +9,6 @@ export interface ConfigVersion {
   description: string;
 }
 
-export interface SnmpMetricProfileAssociation {
-  id?: string | null;
-  vendor?: string | null;
-  model?: string | null;
-  name?: string | null;
-  status?: string;
-  source?: string;
-  template_source?: string;
-  official_preset_id?: string | null;
-  metric_keys?: string[];
-  metric_sources?: Record<string, string>;
-  interface_source?: string;
-  interface_status?: string;
-  collection_mode?: string;
-}
-
 /** Concrete command/parser profile selected for automation.
  *
  * This is intentionally separate from ``Device.version``: the latter is the
@@ -118,13 +102,6 @@ export interface Device {
   snmp_community?: string;
   snmp_configured?: boolean;
   snmp_port?: number;
-  /** Optional device-specific OIDs that return CPU/memory usage percentages. */
-  snmp_cpu_oid?: string;
-  snmp_memory_oid?: string;
-  /** Explicitly selected SNMP metric template; empty means not applied. */
-  snmp_metric_profile_id?: string | null;
-  /** Effective vendor/model SNMP template association used by health polling. */
-  snmp_metric_profile?: SnmpMetricProfileAssociation;
   management_port?: number;
   /** True when the linked asset has at least one enabled HTTP(S) entry. */
   web_access_enabled?: boolean;

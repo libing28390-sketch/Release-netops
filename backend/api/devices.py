@@ -22,7 +22,6 @@ from core.crypto import encrypt_credential, decrypt_credential
 from core.config import settings
 from core.rbac import authorize_resource, require_role
 from services.vault_service import resolve_device_credentials, resolve_collector_credentials, write_credentials as vault_write, vault_available
-from services.snmp_service import normalize_metric_oid
 from services.snmp_mib_service import (
     list_mibs_page,
     get_mib_repository_stats,
@@ -44,36 +43,10 @@ from services.librenms_mib_service import (
     MIBS_DIR,
 )
 from services.librenms_rule_service import sync_rules_from_repository
-from services.snmp_discovery_service import resolve_snmp_vendor_identity
 from services.snmp_vendor_registry import ASSET_NETWORK_VENDORS, ASSET_SECURITY_VENDORS
 from services.snmp_preset_service import (
-    list_preset_profiles,
     seed_builtin_mibs,
     reset_builtin_mibs,
-    match_profile_for_model,
-)
-from services.snmp_metric_profile_service import (
-    apply_official_model_preset,
-    bind_model_metric_profile,
-    create_model_metric_profile,
-    delete_model_metric_profile,
-    get_model_metric_profile_mapping,
-    list_model_metric_profile_devices,
-    list_model_metric_profiles_page,
-    mark_model_metric_profile_test,
-    normalize_model_key,
-    normalize_vendor_key,
-    profile_interface_config,
-    profile_metric_definitions,
-    profile_scope_match,
-    validate_metric_definitions,
-    SUPPORTED_METRIC_KEYS,
-    annotate_devices_with_snmp_profile,
-    resolve_health_metric_profiles,
-    resolve_metric_profile_candidate,
-    normalize_platform_key,
-    unbind_model_metric_profile,
-    update_model_metric_profile,
 )
 from drivers.ssh_compat import (
     build_ssh_error_guidance,
@@ -86,15 +59,39 @@ _logger = logging.getLogger(__name__)
 logger = _logger
 
 
-def _normalize_device_metric_oid(value: object, field_name: str) -> str:
-    """Validate an optional device-level CPU/memory metric OID."""
-    try:
-        return normalize_metric_oid(value)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=f'{field_name}: {exc}') from exc
-
-
 router = APIRouter()
+
+
+@router.api_route(
+    "/platform-registry/snmp-metric-profiles",
+    methods=["GET", "POST", "PUT", "DELETE"],
+)
+@router.api_route(
+    "/platform-registry/snmp-metric-profiles/{legacy_path:path}",
+    methods=["GET", "POST", "PUT", "DELETE"],
+)
+def reject_custom_snmp_metric_profiles(legacy_path: str = "", user=require_role("Operator")):
+    """Prevent local OID profiles from becoming an alternate collection rule source."""
+    raise HTTPException(
+        status_code=410,
+        detail={
+            "code": "LIBRENMS_RULES_ONLY",
+            "message": "Custom SNMP metric profiles are retired; collection uses only the pinned LibreNMS rule bundle.",
+        },
+    )
+
+
+@router.get("/platform-registry/mibs/presets/models")
+@router.get("/platform-registry/mibs/auto-match")
+def reject_local_snmp_model_presets(user=require_role("Viewer")):
+    """Retire static Nexora OID presets and identity-based local matching."""
+    raise HTTPException(
+        status_code=410,
+        detail={
+            "code": "LIBRENMS_RULES_ONLY",
+            "message": "Local SNMP model presets are retired; use the pinned LibreNMS rule diagnostic.",
+        },
+    )
 
 
 def _snmp_request_transport(
@@ -1076,8 +1073,6 @@ def read_devices(
             select_clause = (
                 'd.id, d.hostname, d.ip_address, d.platform, d.status, d.compliance, d.sn, d.model, d.version, '
                 'd.role, d.site, d.uptime, d.connection_method, d.cpu_usage, d.memory_usage, d.temp, '
-                'd.snmp_cpu_oid, d.snmp_memory_oid, '
-                'd.snmp_metric_profile_id, '
                 'd.site_id, d.fan_status, d.psu_status, d.sys_name, d.sys_location, d.sys_contact, d.asset_id, d.vendor, '
                 'd.device_category, d.management_port, d.lifecycle_status, d.ssh_algorithm_profile, '
                 'd.platform_profile_id, d.platform_source, d.platform_locked'
@@ -1097,7 +1092,7 @@ def read_devices(
                 interface_data = _fetch_interface_data_by_device_ids(conn, [str(d['id']) for d in devices])
                 items = [_normalize_device_row(d, conn, interface_data.get(str(d['id']), [])) for d in devices]
             items = _annotate_devices_with_platform_binding(conn, items)
-            items = annotate_devices_with_snmp_profile(_annotate_devices_with_tags(conn, items))
+            items = _annotate_devices_with_tags(conn, items)
             return annotate_devices_with_health(conn, items)
 
         total_row = conn.execute(
@@ -1126,7 +1121,7 @@ def read_devices(
             items = [_normalize_device_row(d, conn, interface_data.get(str(d['id']), [])) for d in devices]
 
         items = _annotate_devices_with_platform_binding(conn, items)
-        items = annotate_devices_with_snmp_profile(_annotate_devices_with_tags(conn, items))
+        items = _annotate_devices_with_tags(conn, items)
         return {
             'items': annotate_devices_with_health(conn, items),
             'total': total,
@@ -1218,1204 +1213,6 @@ def read_devices_summary(
     finally:
         conn.close()
 
-
-@router.get("/platform-registry/snmp-metric-profiles")
-def list_snmp_metric_profiles(
-    search: Optional[str] = Query(default=None),
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=100),
-    user=require_role("Viewer"),
-):
-    """List model-scoped SNMP metric templates for the management UI."""
-    conn = get_db_connection()
-    try:
-        result = list_model_metric_profiles_page(
-            conn,
-            search or '',
-            page=page,
-            page_size=page_size,
-        )
-        return {
-            "success": True,
-            "data": result["items"],
-            "total": result["total"],
-            "page": result["page"],
-            "page_size": result["page_size"],
-            "total_pages": result["total_pages"],
-        }
-    finally:
-        conn.close()
-
-
-def _prepare_snmp_walk_target(row: dict[str, Any], *, asset_only: bool = False) -> dict[str, Any]:
-    """Normalize a device/asset row for the SNMP walk credential resolver.
-
-    Asset management stores the management address as ``management_ip`` while
-    the collector contract expects ``ip_address``.  Keep that translation
-    server-side so the UI never has to read or submit SNMP credentials.
-    """
-    target = dict(row)
-    if asset_only:
-        target['ip_address'] = str(target.get('management_ip') or '').strip()
-    elif str(target.get('_asset_management_ip') or '').strip():
-        target['ip_address'] = str(target.get('_asset_management_ip') or '').strip()
-    elif not str(target.get('ip_address') or '').strip():
-        target['ip_address'] = str(target.get('_asset_management_ip') or '').strip()
-    if not str(target.get('vendor') or '').strip():
-        target['vendor'] = str(target.get('_asset_vendor') or '').strip()
-    if not str(target.get('platform') or '').strip():
-        target['platform'] = str(target.get('_asset_platform') or '').strip()
-    if not str(target.get('model') or '').strip():
-        target['model'] = str(target.get('_asset_model') or '').strip()
-    asset_hostname = str(target.get('_asset_hostname') or '').strip()
-    if asset_hostname:
-        target['hostname'] = asset_hostname
-    elif not str(target.get('hostname') or '').strip():
-        target['hostname'] = asset_hostname
-    return target
-
-
-def _snmp_walk_tenant_id(user: Any) -> str | None:
-    if not isinstance(user, dict) or str(user.get('role') or '') == 'Administrator':
-        return None
-    return str(user.get('tenant_id') or 'tenant-default').strip() or 'tenant-default'
-
-
-def _find_snmp_walk_targets(
-    *,
-    device_id: str = '',
-    target_query: str = '',
-    user: Any = None,
-) -> list[dict[str, Any]]:
-    """Find SNMP test targets from the asset/device registry.
-
-    Exact matching is attempted first.  If it does not identify a single
-    target, a case-insensitive SQL ``LIKE`` search provides the requested
-    fuzzy/regex-style input behavior while remaining compatible with both the
-    PostgreSQL and SQLite database adapters used by the project.
-    """
-    tenant_id = _snmp_walk_tenant_id(user)
-    tenant_clause = "" if tenant_id is None else " AND COALESCE(d.tenant_id, 'tenant-default') = ?"
-    tenant_params = () if tenant_id is None else (tenant_id,)
-    conn = get_db_connection()
-    try:
-        if device_id:
-            device_row = conn.execute(
-                '''SELECT d.*, pa.management_ip AS _asset_management_ip,
-                          pa.hostname AS _asset_hostname, pa.vendor AS _asset_vendor,
-                          pa.platform AS _asset_platform, pa.model AS _asset_model
-                   FROM devices d
-                   LEFT JOIN physical_assets pa ON pa.id = d.asset_id
-                   WHERE d.id = ?''' + tenant_clause + ' LIMIT 1',
-                (device_id, *tenant_params),
-            ).fetchone()
-            if device_row:
-                return [_prepare_snmp_walk_target(dict(device_row))]
-            if tenant_id is not None:
-                return []
-            asset_row = conn.execute('SELECT * FROM physical_assets WHERE id = ? LIMIT 1', (device_id,)).fetchone()
-            if asset_row:
-                return [_prepare_snmp_walk_target(dict(asset_row), asset_only=True)]
-            return []
-
-        query = target_query.strip()
-        if not query:
-            return []
-
-        exact_sql = '''
-            SELECT d.*, pa.management_ip AS _asset_management_ip,
-                   pa.hostname AS _asset_hostname, pa.vendor AS _asset_vendor,
-                   pa.platform AS _asset_platform, pa.model AS _asset_model
-            FROM devices d
-            LEFT JOIN physical_assets pa ON pa.id = d.asset_id
-            WHERE (LOWER(COALESCE(d.ip_address, '')) = LOWER(?)
-               OR LOWER(COALESCE(d.hostname, '')) = LOWER(?)
-               OR LOWER(COALESCE(pa.management_ip, '')) = LOWER(?)
-               OR LOWER(COALESCE(pa.hostname, '')) = LOWER(?))
-            ''' + tenant_clause + '''
-            ORDER BY COALESCE(NULLIF(d.hostname, ''), pa.hostname, ''), d.id
-            LIMIT 20
-        '''
-        exact_rows = [
-            _prepare_snmp_walk_target(dict(row))
-            for row in conn.execute(exact_sql, (query, query, query, query, *tenant_params)).fetchall()
-        ]
-        if exact_rows:
-            return exact_rows
-
-        pattern = f'%{query}%'
-        fuzzy_sql = '''
-            SELECT d.*, pa.management_ip AS _asset_management_ip,
-                   pa.hostname AS _asset_hostname, pa.vendor AS _asset_vendor,
-                   pa.platform AS _asset_platform, pa.model AS _asset_model
-            FROM devices d
-            LEFT JOIN physical_assets pa ON pa.id = d.asset_id
-            WHERE (LOWER(COALESCE(d.ip_address, '')) LIKE LOWER(?)
-               OR LOWER(COALESCE(d.hostname, '')) LIKE LOWER(?)
-               OR LOWER(COALESCE(pa.management_ip, '')) LIKE LOWER(?)
-               OR LOWER(COALESCE(pa.hostname, '')) LIKE LOWER(?))
-            ''' + tenant_clause + '''
-            ORDER BY COALESCE(NULLIF(d.hostname, ''), pa.hostname, ''), d.id
-            LIMIT 20
-        '''
-        targets = [
-            _prepare_snmp_walk_target(dict(row))
-            for row in conn.execute(fuzzy_sql, (pattern, pattern, pattern, pattern, *tenant_params)).fetchall()
-        ]
-
-        # An asset may exist before a network-device row is linked.  It is
-        # still a valid source of SNMP credentials and management IP.
-        if not targets and tenant_id is None:
-            asset_sql = '''
-                SELECT pa.*
-                FROM physical_assets pa
-                WHERE NOT EXISTS (SELECT 1 FROM devices d WHERE d.asset_id = pa.id)
-                  AND (LOWER(COALESCE(pa.management_ip, '')) LIKE LOWER(?)
-                    OR LOWER(COALESCE(pa.hostname, '')) LIKE LOWER(?)
-                    OR LOWER(COALESCE(pa.asset_tag, '')) LIKE LOWER(?))
-                ORDER BY COALESCE(NULLIF(pa.hostname, ''), pa.management_ip, ''), pa.id
-                LIMIT 20
-            '''
-            targets = [
-                _prepare_snmp_walk_target(dict(row), asset_only=True)
-                for row in conn.execute(asset_sql, (pattern, pattern, pattern)).fetchall()
-            ]
-
-        # If the input contains regular-expression syntax (for example
-        # ``10\\.254\\.\\d+\\.\\d+``), apply it to the same registry fields.
-        # Invalid expressions fall back to a literal, case-insensitive search;
-        # this keeps a typo from turning into an unsafe database expression.
-        if not targets and len(query) <= 128:
-            try:
-                matcher = re.compile(query, re.IGNORECASE)
-            except re.error:
-                matcher = re.compile(re.escape(query), re.IGNORECASE)
-
-            candidate_sql = '''
-                SELECT d.*, pa.management_ip AS _asset_management_ip,
-                       pa.hostname AS _asset_hostname, pa.vendor AS _asset_vendor,
-                       pa.platform AS _asset_platform, pa.model AS _asset_model
-                FROM devices d
-                LEFT JOIN physical_assets pa ON pa.id = d.asset_id
-                WHERE 1 = 1
-                ''' + tenant_clause + '''
-                ORDER BY COALESCE(NULLIF(d.hostname, ''), pa.hostname, ''), d.id
-                LIMIT 5000
-            '''
-            for row in conn.execute(candidate_sql, tenant_params).fetchall():
-                item = _prepare_snmp_walk_target(dict(row))
-                values = (item.get('ip_address'), item.get('hostname'), item.get('_asset_management_ip'), item.get('_asset_hostname'))
-                if any(matcher.search(str(value or '')) for value in values):
-                    targets.append(item)
-            if not targets and tenant_id is None:
-                asset_candidates = conn.execute('SELECT * FROM physical_assets LIMIT 5000').fetchall()
-                for row in asset_candidates:
-                    item = _prepare_snmp_walk_target(dict(row), asset_only=True)
-                    values = (item.get('management_ip'), item.get('hostname'), item.get('asset_tag'))
-                    if any(matcher.search(str(value or '')) for value in values):
-                        targets.append(item)
-        return targets
-    finally:
-        conn.close()
-
-
-def _find_exact_snmp_walk_target(ip: str, *, user: Any = None) -> dict[str, Any] | None:
-    """Resolve one exact management IP from asset management.
-
-    The confirmation field is deliberately exact: it must not use the broad
-    inventory search endpoint, whose result count can include related asset
-    rows.  Returning the first deterministic row also keeps legacy databases
-    with duplicate device records usable while the browser only receives the
-    confirmed address and identifiers.
-    """
-    query = ip.strip()
-    if not query:
-        return None
-    tenant_id = _snmp_walk_tenant_id(user)
-    tenant_clause = "" if tenant_id is None else " AND COALESCE(d.tenant_id, 'tenant-default') = ?"
-    tenant_params = () if tenant_id is None else (tenant_id,)
-    conn = get_db_connection()
-    try:
-        linked_row = conn.execute(
-            '''SELECT d.*, pa.management_ip AS _asset_management_ip,
-                      pa.hostname AS _asset_hostname, pa.vendor AS _asset_vendor,
-                      pa.platform AS _asset_platform, pa.model AS _asset_model
-               FROM devices d
-               LEFT JOIN physical_assets pa ON pa.id = d.asset_id
-               WHERE COALESCE(pa.asset_type, 'network_device') = 'network_device'
-                 AND (LOWER(TRIM(COALESCE(pa.management_ip, ''))) = LOWER(TRIM(?))
-                   OR LOWER(TRIM(COALESCE(d.ip_address, ''))) = LOWER(TRIM(?)))''' + tenant_clause + '''
-               ORDER BY CASE WHEN LOWER(TRIM(COALESCE(pa.management_ip, ''))) = LOWER(TRIM(?)) THEN 0 ELSE 1 END,
-                        CASE WHEN LOWER(TRIM(COALESCE(d.status, ''))) = 'online' THEN 0 ELSE 1 END,
-                        d.id
-               LIMIT 1''',
-            (query, query, *tenant_params, query),
-        ).fetchone()
-        if linked_row:
-            return _prepare_snmp_walk_target(dict(linked_row))
-
-        if tenant_id is not None:
-            return None
-        asset_row = conn.execute(
-            '''SELECT pa.*
-               FROM physical_assets pa
-               WHERE pa.asset_type = 'network_device'
-                 AND LOWER(TRIM(COALESCE(pa.management_ip, ''))) = LOWER(TRIM(?))
-                 AND NOT EXISTS (SELECT 1 FROM devices d WHERE d.asset_id = pa.id)
-               ORDER BY pa.id
-               LIMIT 1''',
-            (query,),
-        ).fetchone()
-        if asset_row:
-            return _prepare_snmp_walk_target(dict(asset_row), asset_only=True)
-        return None
-    finally:
-        conn.close()
-
-
-@router.get("/platform-registry/snmp-walk-target")
-def resolve_snmp_walk_target(
-    ip: str = Query(..., min_length=1, max_length=255),
-    user=require_role("Operator"),
-):
-    """Confirm an exact asset-management IP before running SNMP WALK."""
-    target = _find_exact_snmp_walk_target(ip, user=user)
-    if not target:
-        raise HTTPException(status_code=404, detail='IP not found in asset management')
-    resolved_ip = str(target.get('_asset_management_ip') or target.get('management_ip') or target.get('ip_address') or '').strip()
-    if not resolved_ip:
-        raise HTTPException(status_code=404, detail='The matched asset has no management IP')
-    return {
-        'success': True,
-        'data': {
-            'ip': resolved_ip,
-            'device_id': str(target.get('id') or ''),
-            'hostname': str(target.get('hostname') or ''),
-        },
-    }
-
-
-@router.post("/platform-registry/snmp-walk-vendor-detect")
-async def detect_snmp_walk_vendor(payload: dict = Body(default={}), user=require_role("Operator")):
-    """Identify a managed device from fresh, read-only SNMP system OIDs."""
-    requested_device_id = str(payload.get("device_id") or "").strip()
-    if not requested_device_id:
-        raise HTTPException(status_code=400, detail="device_id is required")
-
-    targets = _find_snmp_walk_targets(device_id=requested_device_id, user=user)
-    if not targets:
-        raise HTTPException(status_code=404, detail="Device is not visible in asset management")
-    if len(targets) > 1:
-        raise HTTPException(status_code=409, detail="Target matches multiple assets; use a specific device_id")
-
-    matched_device = targets[0]
-    collector_credentials = resolve_collector_credentials(matched_device) or {}
-    snmp_credentials = collector_credentials.get("snmp") or {}
-    host = str(snmp_credentials.get("server") or matched_device.get("ip_address") or "").strip()
-    if not host:
-        raise HTTPException(status_code=400, detail="Matched asset has no SNMP address configured")
-    version, community = _snmp_request_transport(snmp_credentials)
-    try:
-        port = int(snmp_credentials.get("port") or matched_device.get("snmp_port") or 161)
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail="SNMP port must be an integer") from exc
-    if not 1 <= port <= 65535:
-        raise HTTPException(status_code=400, detail="SNMP port must be between 1 and 65535")
-
-    # The browser submits only device_id.  Prefer the server-resolved
-    # credential/device value and keep payload values as a compatibility
-    # fallback for older callers.
-    from services.snmp_service import _snmp_get_versioned
-
-    try:
-        import asyncio
-
-        sys_name, sys_descr, sys_object_id = await asyncio.gather(
-            _snmp_get_versioned(host, community, "1.3.6.1.2.1.1.5.0", port, version),
-            _snmp_get_versioned(host, community, "1.3.6.1.2.1.1.1.0", port, version),
-            _snmp_get_versioned(host, community, "1.3.6.1.2.1.1.2.0", port, version),
-        )
-    except Exception as exc:
-        logger.warning("SNMP vendor detection failed for %s: %s", host, type(exc).__name__)
-        raise HTTPException(status_code=502, detail="SNMP identity request failed") from exc
-
-    def _resolve_identity_with_connection() -> dict[str, Any]:
-        conn = get_db_connection()
-        try:
-            return resolve_snmp_vendor_identity(
-                conn,
-                sys_object_id=sys_object_id,
-                sys_descr=sys_descr,
-                sys_name=sys_name,
-                asset_vendor=(matched_device.get("vendor") or matched_device.get("asset_vendor") or ""),
-                asset_platform=matched_device.get("platform") or "",
-                asset_model=matched_device.get("model") or "",
-            )
-        finally:
-            conn.close()
-
-    identity = await asyncio.to_thread(_resolve_identity_with_connection)
-
-    return {
-        "success": True,
-        "data": {
-            "device_id": requested_device_id,
-            "status": identity["status"],
-            "vendor": identity["vendor"],
-            "asset_vendor": identity["asset_vendor"],
-            "source": identity["source"],
-            "platform": identity["platform"],
-            "sys_object_id": identity["sys_object_id"],
-            "model": identity["model"],
-            "reason": identity["reason"],
-        },
-    }
-
-
-@router.post("/platform-registry/snmp-walk-test")
-async def test_snmp_walk(payload: dict = Body(default={}), user=require_role("Operator")):
-    """Run one read-only SNMP WALK for the template editor.
-
-    The endpoint deliberately accepts structured values instead of an
-    arbitrary shell command.  This keeps the test path independent of
-    ``snmpwalk.exe`` and prevents command injection while still matching the
-    common ``snmpwalk -v2c -c COMMUNITY HOST OID`` workflow (v1 and bound
-    SNMPv3 profiles are also accepted).
-    """
-    host = str(payload.get('ip') or payload.get('host') or '').strip()
-    community = str(payload.get('community') or '').strip()
-    snmp_credentials: Mapping[str, Any] = {}
-    requested_device_id = str(payload.get('device_id') or '').strip()
-    target_query = str(payload.get('target_query') or '').strip()
-    matched_device: dict[str, Any] | None = None
-    target_source = 'manual'
-
-    # A template test normally supplies target_query/device_id.  Resolve the
-    # actual host and community from asset-management credentials on the
-    # server; the browser never receives the secret.  The legacy structured
-    # ip+community form remains available for API compatibility.
-    if requested_device_id or target_query:
-        targets = _find_snmp_walk_targets(device_id=requested_device_id, target_query=target_query, user=user)
-        if not targets:
-            raise HTTPException(status_code=404, detail='No matching managed asset was found')
-        if len(targets) > 1:
-            raise HTTPException(status_code=409, detail='Target matches multiple assets; enter a more specific IP or hostname')
-        matched_device = targets[0]
-        collector_credentials = resolve_collector_credentials(matched_device)
-        snmp_credentials = collector_credentials.get('snmp') or {}
-        host = str(snmp_credentials.get('server') or matched_device.get('ip_address') or '').strip()
-        community = str(snmp_credentials.get('community') or '').strip()
-        port = snmp_credentials.get('port') or 161
-        target_source = 'asset'
-
-    raw_oid = payload.get('oid')
-    if not host:
-        raise HTTPException(status_code=400, detail='SNMP address is required')
-    if matched_device:
-        version, transport_credentials = _snmp_request_transport(snmp_credentials, payload.get('version') or payload.get('snmp_version'))
-    else:
-        if not community:
-            raise HTTPException(status_code=400, detail='SNMP community is required for a manual target')
-        version, transport_credentials = _snmp_request_transport(
-            {'version': '2c', 'community': community, 'configured': True},
-            payload.get('version') or payload.get('snmp_version'),
-        )
-    try:
-        oid = normalize_metric_oid(raw_oid)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=f'oid: {exc}') from exc
-    if not oid:
-        raise HTTPException(status_code=400, detail='OID is required')
-
-    try:
-        port = int(port if matched_device else (payload.get('port') or 161))
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail='SNMP port must be an integer') from exc
-    if not 1 <= port <= 65535:
-        raise HTTPException(status_code=400, detail='SNMP port must be between 1 and 65535')
-    try:
-        timeout = float(payload.get('timeout') or 5)
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail='SNMP timeout must be a number') from exc
-    if timeout <= 0 or timeout > 60:
-        raise HTTPException(status_code=400, detail='SNMP timeout must be between 0 and 60 seconds')
-    try:
-        max_rows = int(payload.get('max_rows') or 2000)
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail='max_rows must be an integer') from exc
-    if not 1 <= max_rows <= 10000:
-        raise HTTPException(status_code=400, detail='max_rows must be between 1 and 10000')
-
-    from services.snmp_service import SnmpWalkTimeoutError, _snmp_walk
-
-    walk_status = 'ok'
-    walk_message = 'SNMP WALK succeeded'
-    try:
-        rows = await _snmp_walk(
-            host,
-            transport_credentials,
-            oid,
-            port=port,
-            timeout=timeout,
-            max_rows=max_rows,
-            version=version,
-            raise_on_error=True,
-        )
-    except SnmpWalkTimeoutError as exc:
-        if not exc.partial_results:
-            raise HTTPException(
-                status_code=504,
-                detail='SNMP device did not respond before timeout; check reachability, UDP/161, community/version, and device ACLs',
-            ) from exc
-        rows = exc.partial_results
-        walk_status = 'partial_timeout'
-        walk_message = 'SNMP WALK timed out after partial data; returned values may be incomplete'
-    except Exception as exc:
-        logger.warning('SNMP WALK test failed for %s %s: %s', host, oid, type(exc).__name__)
-        raise HTTPException(status_code=502, detail='SNMP WALK request failed') from exc
-
-    formatted_rows = [
-        {'oid': f"{oid}.{suffix}" if str(suffix).strip('.') else oid, 'value': value}
-        for suffix, value in rows
-    ]
-    if bool(payload.get('resolve_mib')) and formatted_rows:
-        mib_conn = None
-        try:
-            mib_conn = get_db_connection()
-            resolved_nodes = resolve_mib_nodes_for_oids(
-                mib_conn,
-                [row['oid'] for row in formatted_rows],
-                vendor=str((matched_device or {}).get('vendor') or ''),
-            )
-            for row in formatted_rows:
-                row.update(resolved_nodes.get(row['oid'], {}))
-        except Exception as exc:
-            logger.debug('SNMP WALK MIB resolution unavailable: %s', type(exc).__name__)
-        finally:
-            if mib_conn is not None:
-                mib_conn.close()
-    return {
-        'success': bool(formatted_rows) and walk_status == 'ok',
-        'data': {
-            'host': host,
-            'oid': oid,
-            'version': version,
-            'port': port,
-            'status': walk_status if formatted_rows else 'no_data',
-            'message': walk_message if formatted_rows else 'No rows returned; check OID, view permissions, and reachability',
-            'row_count': len(formatted_rows),
-            'truncated': len(formatted_rows) >= max_rows,
-            'rows': formatted_rows,
-            'target_source': target_source,
-            'matched_device_id': str(matched_device.get('id')) if matched_device else None,
-            'matched_hostname': str(matched_device.get('hostname') or '') if matched_device else '',
-        },
-    }
-
-
-@router.post("/platform-registry/snmp-hardware-test")
-async def test_snmp_hardware_metrics(payload: dict = Body(default={}), user=require_role("Operator")):
-    """Display persisted hardware samples without triggering an immediate poll.
-
-    The scheduled Nexora SNMP collector owns discovery and sampling; an
-    optional external LibreNMS snapshot remains supported for compatibility.
-    """
-    requested_device_id = str(payload.get('device_id') or '').strip()
-    if not requested_device_id:
-        raise HTTPException(status_code=400, detail='A managed device_id is required')
-
-    targets = _find_snmp_walk_targets(device_id=requested_device_id, user=user)
-    if not targets:
-        raise HTTPException(status_code=404, detail='No matching managed asset was found')
-    if len(targets) > 1:
-        raise HTTPException(status_code=409, detail='Target matches multiple assets')
-
-    from services.librenms_diagnostic_service import diagnose_librenms_hardware
-
-    diagnostic = await diagnose_librenms_hardware(targets[0])
-    metric_rows: dict[str, dict[str, Any]] = {}
-    for group_name, rows in (
-        ('processor', diagnostic.get('processor_sensors') or []),
-        ('memory', diagnostic.get('memory_pools') or []),
-        ('sensor', diagnostic.get('hardware_sensors') or []),
-        ('wireless', diagnostic.get('wireless_sensors') or []),
-    ):
-        for position, row in enumerate(rows):
-            if not isinstance(row, Mapping):
-                continue
-            name = str(
-                row.get('sensor_descr') or row.get('processor_descr') or row.get('mempool_descr')
-                or row.get('sensor_id') or f'{group_name}_{position + 1}'
-            )
-            current = row.get('sensor_current')
-            status = 'ok' if row.get('value_status') == 'available' and row.get('freshness') == 'fresh' else str(
-                row.get('freshness') or row.get('value_status') or 'unknown'
-            )
-            metric_rows[f'{group_name}:{name}'] = {
-                'value': current,
-                'raw_value': current,
-                'status': status,
-                'message': str(row.get('observed_at') or row.get('freshness') or ''),
-                'source': 'librenms_native',
-            }
-
-    state = str(diagnostic.get('state') or 'unknown')
-    return {
-        'success': True,
-        'data': {
-            'host': str((diagnostic.get('identity') or {}).get('hostname') or targets[0].get('hostname') or ''),
-            'status': 'ok' if state == 'available' else state,
-            'message': str(diagnostic.get('message') or ''),
-            'metric_count': len(metric_rows),
-            'metrics': metric_rows,
-            'hardware_collection_status': state,
-            'native_hardware': diagnostic,
-        },
-    }
-
-@router.post("/platform-registry/snmp-hardware-discovery-test")
-async def test_snmp_hardware_discovery(payload: dict = Body(default={}), user=require_role("Operator")):
-    """Read the latest hardware values already sampled by Nexora or LibreNMS."""
-    requested_device_id = str(payload.get('device_id') or '').strip()
-    if not requested_device_id:
-        raise HTTPException(status_code=400, detail='A managed device_id is required')
-
-    targets = _find_snmp_walk_targets(device_id=requested_device_id, user=user)
-    if not targets:
-        raise HTTPException(status_code=404, detail='No matching managed asset was found')
-    if len(targets) > 1:
-        raise HTTPException(status_code=409, detail='Target matches multiple assets')
-
-    device = targets[0]
-    from services.librenms_diagnostic_service import diagnose_librenms_hardware
-
-    diagnostic = await diagnose_librenms_hardware(device)
-    return {
-        'success': True,
-        'data': diagnostic,
-    }
-
-
-@router.post("/platform-registry/snmp-system-info-test")
-async def test_snmp_system_info(payload: dict = Body(default={}), user=require_role("Operator")):
-    """Read standard SNMP system identity fields without changing asset data."""
-    requested_device_id = str(payload.get('device_id') or '').strip()
-    if not requested_device_id:
-        raise HTTPException(status_code=400, detail='A managed device_id is required')
-
-    targets = _find_snmp_walk_targets(device_id=requested_device_id, user=user)
-    if not targets:
-        raise HTTPException(status_code=404, detail='No matching managed asset was found')
-    if len(targets) > 1:
-        raise HTTPException(status_code=409, detail='Target matches multiple assets')
-
-    device = targets[0]
-    collector_credentials = resolve_collector_credentials(device) or {}
-    snmp_credentials = collector_credentials.get('snmp') or {}
-    host = str(snmp_credentials.get('server') or device.get('ip_address') or '').strip()
-    if not host:
-        raise HTTPException(status_code=400, detail='Matched asset has no SNMP address configured')
-    version, transport_credentials = _snmp_request_transport(
-        snmp_credentials,
-        payload.get('version') or payload.get('snmp_version'),
-    )
-    try:
-        port = int(snmp_credentials.get('port') or 161)
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail='SNMP port must be an integer') from exc
-    if not 1 <= port <= 65535:
-        raise HTTPException(status_code=400, detail='SNMP port must be between 1 and 65535')
-
-    import asyncio
-
-    from services.snmp_discovery_service import classify_identity
-    from services.snmp_service import SYS_DESCR, SYS_NAME, SYS_OBJECT_ID, SYS_UPTIME, _snmp_get_versioned
-
-    try:
-        sys_name, sys_descr, sys_object_id, sys_uptime = await asyncio.gather(
-            _snmp_get_versioned(host, transport_credentials, SYS_NAME, port, version),
-            _snmp_get_versioned(host, transport_credentials, SYS_DESCR, port, version),
-            _snmp_get_versioned(host, transport_credentials, SYS_OBJECT_ID, port, version),
-            _snmp_get_versioned(host, transport_credentials, SYS_UPTIME, port, version),
-        )
-    except Exception as exc:
-        logger.warning('SNMP system information test failed for %s: %s', host, type(exc).__name__)
-        raise HTTPException(status_code=502, detail='SNMP system information test failed') from exc
-
-    if not any(value is not None and str(value).strip() for value in (sys_name, sys_descr, sys_object_id, sys_uptime)):
-        raise HTTPException(status_code=504, detail='No SNMP system objects were returned; check reachability, credentials, version, and SNMP access rules')
-
-    def resolve_observed_identity() -> dict[str, Any]:
-        conn = get_db_connection()
-        try:
-            return resolve_snmp_vendor_identity(
-                conn, sys_name=sys_name, sys_descr=sys_descr, sys_object_id=sys_object_id,
-            )
-        finally:
-            conn.close()
-
-    observed_identity = await asyncio.to_thread(resolve_observed_identity)
-    identity = classify_identity(
-        sys_name=sys_name,
-        sys_descr=sys_descr,
-        sys_object_id=sys_object_id,
-    )
-    system_fields = {
-        'vendor': observed_identity.get('vendor'),
-        'platform': observed_identity.get('platform'),
-        'model': observed_identity.get('model'),
-        'software_version': identity.get('software_version'),
-    }
-    field_sources = {}
-    for field, value in system_fields.items():
-        fallback = device.get('version' if field == 'software_version' else field)
-        field_sources[field] = 'snmp_identity' if value else 'asset' if fallback else 'missing'
-        system_fields[field] = str(value or fallback or '')
-    return {
-        'success': True,
-        'data': {
-            'host': host,
-            'port': port,
-            'version': version,
-            'matched_device_id': str(device.get('id') or ''),
-            'matched_hostname': str(device.get('hostname') or device.get('ip_address') or ''),
-            'sys_name': str(identity.get('sys_name') or ''),
-            'sys_descr': str(identity.get('sys_descr') or ''),
-            'sys_object_id': str(identity.get('sys_object_id') or ''),
-            'sys_uptime': str(sys_uptime) if sys_uptime is not None else '',
-            'identity_status': str(observed_identity.get('status') or ''),
-            **system_fields,
-            'field_sources': field_sources,
-            'identity_reason': str(observed_identity.get('reason') or ''),
-        },
-    }
-
-
-@router.post("/platform-registry/snmp-interface-test")
-async def test_snmp_interface_oids(payload: dict = Body(default={}), user=require_role("Operator")):
-    """Validate the draft interface MIB mapping against a managed device.
-
-    This endpoint deliberately tests only the submitted interface definition.
-    It never falls back to SSH or the hardware collector, and it returns a
-    small sample for each reachable OID instead of an unbounded OID walk.
-    """
-    requested_device_id = str(payload.get('device_id') or '').strip()
-    target_query = str(payload.get('target_query') or '').strip()
-    if not requested_device_id and not target_query:
-        raise HTTPException(status_code=400, detail='A managed device_id or target_query is required')
-
-    targets = _find_snmp_walk_targets(device_id=requested_device_id, target_query=target_query, user=user)
-    if not targets:
-        raise HTTPException(status_code=404, detail='No matching managed asset was found')
-    if len(targets) > 1:
-        raise HTTPException(status_code=409, detail='Target matches multiple assets; enter a more specific IP or hostname')
-
-    raw_config = payload.get('interface_config')
-    if raw_config is None:
-        raw_config = payload.get('interface')
-    if not isinstance(raw_config, dict):
-        raise HTTPException(status_code=400, detail='interface_config must be an object')
-
-    from services.snmp_service import normalize_interface_config, probe_interface_definition
-
-    try:
-        interface_config = normalize_interface_config(raw_config)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if not interface_config:
-        raise HTTPException(status_code=400, detail='interface_config cannot be empty')
-    if not interface_config.get('enabled', True):
-        raise HTTPException(status_code=400, detail='Enable the interface template before testing its OIDs')
-
-    device = targets[0]
-    collector_credentials = resolve_collector_credentials(device)
-    snmp_credentials = collector_credentials.get('snmp') or {}
-    host = str(snmp_credentials.get('server') or device.get('ip_address') or '').strip()
-    if not host:
-        raise HTTPException(status_code=400, detail='Matched asset has no SNMP address configured')
-    version, transport_credentials = _snmp_request_transport(
-        snmp_credentials,
-        payload.get('version') or payload.get('snmp_version'),
-    )
-    try:
-        port = int(snmp_credentials.get('port') or 161)
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail='SNMP port must be an integer') from exc
-    if not 1 <= port <= 65535:
-        raise HTTPException(status_code=400, detail='SNMP port must be between 1 and 65535')
-
-    try:
-        probe = await probe_interface_definition(
-            host,
-            transport_credentials,
-            interface_config,
-            port=port,
-            version=version,
-        )
-    except Exception as exc:
-        logger.warning('SNMP interface OID test failed for %s: %s', host, type(exc).__name__)
-        raise HTTPException(status_code=502, detail='SNMP interface OID test failed') from exc
-
-    return {
-        'success': True,
-        'data': {
-            **probe,
-            'host': host,
-            'version': version,
-            'port': port,
-            'target_source': 'asset',
-            'matched_device_id': str(device.get('id') or ''),
-            'matched_hostname': str(device.get('hostname') or device.get('ip_address') or ''),
-        },
-    }
-
-
-@router.post("/platform-registry/snmp-metric-profiles")
-def create_snmp_metric_profile(payload: dict = Body(...), user=require_role("Operator")):
-    conn = get_db_connection()
-    try:
-        profile = create_model_metric_profile(
-            conn,
-            payload,
-            updated_by=user.get('username', 'system'),
-        )
-        conn.commit()
-        log_audit_event(
-            conn=conn,
-            event_type='snmp_metric_profile.create',
-            category='configuration',
-            severity='info',
-            status='success',
-            summary=f"Created SNMP metric profile for {payload.get('vendor', '')}/{payload.get('model', '')}",
-            actor_username=user.get('username', ''),
-            actor_role=user.get('role', ''),
-            target_type='snmp_metric_profile',
-            target_id=profile.get('id', ''),
-            details={'vendor': profile.get('vendor_name', ''), 'model': profile.get('model_name', '')},
-        )
-        conn.commit()
-        return {"success": True, "data": profile}
-    except ValueError as exc:
-        conn.rollback()
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    finally:
-        conn.close()
-
-
-@router.post("/platform-registry/snmp-metric-profiles/apply-preset")
-def apply_snmp_metric_preset(payload: dict = Body(...), user=require_role("Operator")):
-    conn = get_db_connection()
-    preset_id = str(payload.get("preset_id") or "").strip()
-    try:
-        profile = apply_official_model_preset(
-            conn,
-            preset_id,
-            updated_by=user.get("username", "system"),
-        )
-        conn.commit()
-        log_audit_event(
-            conn=conn,
-            event_type="snmp_metric_profile.apply_preset",
-            category="configuration",
-            severity="info",
-            status="success",
-            summary=f"Applied official SNMP preset {preset_id}",
-            actor_username=user.get("username", ""),
-            actor_role=user.get("role", ""),
-            target_type="snmp_metric_profile",
-            target_id=profile.get("id", ""),
-            details={
-                "preset_id": preset_id,
-                "vendor": profile.get("vendor_name", ""),
-                "model": profile.get("model_name", ""),
-                "applied_mode": profile.get("applied_mode", ""),
-            },
-        )
-        conn.commit()
-        return {"success": True, "data": profile}
-    except ValueError as exc:
-        conn.rollback()
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    finally:
-        conn.close()
-
-
-@router.get("/platform-registry/snmp-metric-profiles/resolve")
-def resolve_snmp_metric_profile(
-    device_id: str = Query(default="", max_length=128),
-    vendor: str = Query(default="", max_length=128),
-    model: str = Query(default="", max_length=256),
-    platform: str = Query(default="", max_length=128),
-    software_version: str = Query(default="", max_length=256),
-    user=require_role("Viewer"),
-):
-    """Preview the deterministic vendor/platform/model/version resolution."""
-
-    device: dict[str, Any] = {
-        "vendor": vendor,
-        "model": model,
-        "platform": platform,
-        "version": software_version,
-        "software_version": software_version,
-    }
-    conn = get_db_connection()
-    try:
-        if device_id:
-            row = conn.execute(
-                "SELECT id, vendor, platform, model, version, os_version, firmware_version "
-                "FROM devices WHERE id = ?",
-                (device_id,),
-            ).fetchone()
-            if not row:
-                raise HTTPException(status_code=404, detail="Device not found")
-            device.update(dict(row))
-        result = resolve_metric_profile_candidate(device)
-        profile = result.get("profile") or {}
-        profile_summary = None
-        if profile:
-            profile_summary = {
-                "profile_id": profile.get("profile_id"),
-                "vendor": profile.get("profile_vendor"),
-                "model": profile.get("profile_model"),
-                "template_name": profile.get("template_name"),
-                "source": profile.get("source"),
-                "scope": profile_scope_match(profile, device).get("scope") or {},
-            }
-        return {
-            "success": True,
-            "data": {
-                "status": result.get("status"),
-                "profile_id": result.get("profile_id") or None,
-                "reason": result.get("reason") or "",
-                "score": result.get("score") or 0,
-                "profile": profile_summary,
-                "candidates": result.get("candidates") or [],
-            },
-        }
-    finally:
-        conn.close()
-
-
-@router.get("/platform-registry/snmp-metric-profiles/{profile_id}/bindings")
-def list_snmp_metric_profile_bindings(profile_id: str, user=require_role("Viewer")):
-    conn = get_db_connection()
-    try:
-        rule_count = conn.execute("SELECT COUNT(*) AS count FROM snmp_librenms_rules").fetchone()
-        return {
-            "success": True,
-            "data": {
-                "profile_id": profile_id,
-                "devices": list_model_metric_profile_devices(conn, profile_id),
-            },
-        }
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    finally:
-        conn.close()
-
-
-@router.post("/platform-registry/snmp-metric-profiles/{profile_id}/bindings")
-def bind_snmp_metric_profile_devices(
-    profile_id: str,
-    payload: dict = Body(...),
-    user=require_role("Operator"),
-):
-    conn = get_db_connection()
-    try:
-        result = bind_model_metric_profile(conn, profile_id, payload.get("device_ids"))
-        conn.commit()
-        log_audit_event(
-            conn=conn,
-            event_type="snmp_metric_profile.bind",
-            category="configuration",
-            severity="info",
-            status="success",
-            summary=f"Bound SNMP metric profile {profile_id} to devices",
-            actor_username=user.get("username", ""),
-            actor_role=user.get("role", ""),
-            target_type="snmp_metric_profile",
-            target_id=profile_id,
-            details={
-                "device_count": len(result.get("devices") or []),
-                "device_ids": [device.get("device_id") for device in result.get("devices") or []],
-            },
-        )
-        conn.commit()
-        return {"success": True, "data": result}
-    except ValueError as exc:
-        conn.rollback()
-        status_code = 409 if "incompatible" in str(exc).casefold() else 400
-        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
-    finally:
-        conn.close()
-
-
-@router.post("/platform-registry/snmp-metric-profiles/{profile_id}/bindings/unbind")
-def unbind_snmp_metric_profile_devices(
-    profile_id: str,
-    payload: dict = Body(...),
-    user=require_role("Operator"),
-):
-    conn = get_db_connection()
-    try:
-        result = unbind_model_metric_profile(conn, profile_id, payload.get("device_ids"))
-        conn.commit()
-        log_audit_event(
-            conn=conn,
-            event_type="snmp_metric_profile.unbind",
-            category="configuration",
-            severity="info",
-            status="success",
-            summary=f"Unbound SNMP metric profile {profile_id} from devices",
-            actor_username=user.get("username", ""),
-            actor_role=user.get("role", ""),
-            target_type="snmp_metric_profile",
-            target_id=profile_id,
-            details={
-                "remaining_device_count": len(result.get("devices") or []),
-                "device_ids": [device.get("device_id") for device in result.get("devices") or []],
-            },
-        )
-        conn.commit()
-        return {"success": True, "data": result}
-    except ValueError as exc:
-        conn.rollback()
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    finally:
-        conn.close()
-
-
-@router.put("/platform-registry/snmp-metric-profiles/{profile_id}")
-def update_snmp_metric_profile(profile_id: str, payload: dict = Body(...), user=require_role("Operator")):
-    conn = get_db_connection()
-    try:
-        profile = update_model_metric_profile(
-            conn,
-            profile_id,
-            payload,
-            updated_by=user.get('username', 'system'),
-        )
-        conn.commit()
-        log_audit_event(
-            conn=conn,
-            event_type='snmp_metric_profile.update',
-            category='configuration',
-            severity='info',
-            status='success',
-            summary=f"Updated SNMP metric profile {profile_id}",
-            actor_username=user.get('username', ''),
-            actor_role=user.get('role', ''),
-            target_type='snmp_metric_profile',
-            target_id=profile_id,
-            details={'vendor': profile.get('vendor_name', ''), 'model': profile.get('model_name', '')},
-        )
-        conn.commit()
-        return {"success": True, "data": profile}
-    except ValueError as exc:
-        conn.rollback()
-        status_code = 409 if "read-only" in str(exc).casefold() else 400
-        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
-    finally:
-        conn.close()
-
-
-@router.delete("/platform-registry/snmp-metric-profiles/{profile_id}")
-def delete_snmp_metric_profile(profile_id: str, user=require_role("Operator")):
-    conn = get_db_connection()
-    try:
-        delete_model_metric_profile(conn, profile_id)
-        conn.commit()
-        log_audit_event(
-            conn=conn,
-            event_type='snmp_metric_profile.delete',
-            category='configuration',
-            severity='info',
-            status='success',
-            summary=f"Deleted SNMP metric profile {profile_id}",
-            actor_username=user.get('username', ''),
-            actor_role=user.get('role', ''),
-            target_type='snmp_metric_profile',
-            target_id=profile_id,
-        )
-        conn.commit()
-        return {"success": True, "data": {"profile_id": profile_id}}
-    except ValueError as exc:
-        conn.rollback()
-        status_code = 409 if "still bound" in str(exc).casefold() else 404
-        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
-    finally:
-        conn.close()
-
-
-@router.get("/platform-registry/snmp-metric-profiles/{profile_id}/mapping-validation")
-def validate_snmp_metric_profile_mapping(profile_id: str, user=require_role("Viewer")):
-    """Report which devices explicitly selected this template."""
-    conn = get_db_connection()
-    try:
-        return {
-            "success": True,
-            "data": get_model_metric_profile_mapping(conn, profile_id),
-        }
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    finally:
-        conn.close()
-
-
-@router.post("/platform-registry/snmp-metric-profiles/{profile_id}/test")
-async def test_snmp_metric_profile(
-    profile_id: str,
-    payload: dict = Body(default={}),
-    user=require_role("Operator"),
-):
-    """Live-test a model profile against one selected device.
-
-    Hardware and interface definitions are verified independently.  A custom
-    interface mapping is activated only after its identity table and selected
-    paired counter width pass. Verification is quality metadata and does not
-    create or remove an explicit device binding.
-    """
-    conn = get_db_connection()
-    try:
-        profile_row = conn.execute(
-            'SELECT * FROM snmp_metric_profiles WHERE id = ?',
-            (profile_id,),
-        ).fetchone()
-        if not profile_row:
-            raise HTTPException(status_code=404, detail='Model OID profile not found')
-        profile = dict(profile_row)
-        requested_device_id = str(payload.get('device_id') or '').strip()
-        if requested_device_id:
-            candidate_rows = conn.execute(
-                'SELECT * FROM devices WHERE id = ?',
-                (requested_device_id,),
-            ).fetchall()
-        else:
-            candidate_rows = conn.execute(
-                "SELECT * FROM devices WHERE LOWER(TRIM(COALESCE(model, ''))) = LOWER(TRIM(?)) "
-                "ORDER BY CASE WHEN LOWER(TRIM(COALESCE(status, ''))) = 'online' THEN 0 ELSE 1 END, "
-                "CASE WHEN COALESCE(TRIM(ip_address), '') <> '' THEN 0 ELSE 1 END, hostname",
-                (profile['model_name'],),
-            ).fetchall()
-    finally:
-        conn.close()
-
-    if requested_device_id:
-        # An operator may test a draft against the exact device selected in
-        # the binding dialog.  Manual binding is deliberately not restricted
-        # by vendor/model heuristics.
-        matching = [dict(row) for row in candidate_rows]
-        if matching and not profile_scope_match(dict(profile_row), matching[0]).get("matched"):
-            raise HTTPException(status_code=409, detail="Selected device is incompatible with this vendor/platform/model/version template")
-    else:
-        matching = [
-            dict(row) for row in candidate_rows
-            if normalize_model_key(row['model']) == str(profile['model_key'] or '')
-            and normalize_vendor_key(row['vendor'], row['platform']) == str(profile['vendor_key'] or '')
-            and profile_scope_match(dict(profile_row), dict(row)).get("matched")
-        ]
-    if not matching:
-        raise HTTPException(status_code=400, detail='No device matches this vendor/model profile')
-
-    device = matching[0]
-    configured = profile_metric_definitions(profile)
-    interface_config = profile_interface_config(profile)
-    hardware_configured = bool(configured)
-    interface_configured = bool(interface_config)
-    test_results: dict[str, dict] = {}
-    native_hardware: dict[str, Any] = {}
-    interface_result: dict[str, Any] = {}
-    # Hardware profile OIDs are no longer executed by Nexora. Read the native
-    # LibreNMS snapshot for diagnostics, while keeping interface validation on
-    # the independent IF-MIB path.
-    hardware_passed: bool | None = None
-    interface_passed: bool | None = None if not interface_configured else False
-    message_parts: list[str] = []
-    if hardware_configured:
-        try:
-            from services.librenms_diagnostic_service import diagnose_librenms_hardware
-
-            native_hardware = await diagnose_librenms_hardware(device)
-        except Exception as exc:
-            native_hardware = {
-                'source': 'librenms_native',
-                'state': 'error',
-                'message': type(exc).__name__,
-            }
-        message_parts.append('Hardware collection is delegated to the bound LibreNMS runtime')
-
-    if interface_configured:
-        collector_credentials = resolve_collector_credentials(device)
-        snmp_credentials = collector_credentials.get('snmp') or {}
-        ip = snmp_credentials.get('server') or device.get('ip_address') or ''
-        try:
-            version, community = _snmp_request_transport(
-                snmp_credentials,
-                payload.get('version') or payload.get('snmp_version'),
-            )
-        except HTTPException as exc:
-            version, community = str(snmp_credentials.get('version') or '2c'), ''
-            credential_error = exc.detail
-        else:
-            credential_error = ''
-        port = snmp_credentials.get('port') or 161
-        if not ip or not community or credential_error:
-            interface_passed = False
-            interface_result = {
-                'passed': False,
-                'status': 'credentials_missing',
-                'message': str(credential_error or 'SNMP address or credentials are not configured on the sample device'),
-                'checks': {},
-                'counter_mode': interface_config.get('counter_mode', 'auto'),
-                'interfaces': 0,
-                'counter_supported': 0,
-            }
-        else:
-            from services.snmp_service import probe_interface_definition
-
-            interface_result = await probe_interface_definition(
-                ip, community, interface_config, int(port), version=version,
-            )
-            interface_passed = bool(interface_result.get('passed'))
-        message_parts.append('interface OIDs passed' if interface_passed else 'interface OIDs failed')
-
-    message = '; '.join(message_parts) or 'No configured definitions to test'
-    passed = bool(interface_configured and interface_passed)
-
-    conn = get_db_connection()
-    try:
-        updated_profile = mark_model_metric_profile_test(
-            conn,
-            profile_id,
-            str(device['id']),
-            None,
-            message,
-            hardware_passed=hardware_passed,
-            interface_passed=interface_passed,
-            interface_message=str(interface_result.get('message') or message),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-    return {
-        'success': True,
-        'data': {
-            'passed': passed,
-            'hardware_passed': hardware_passed,
-            'interface_passed': interface_passed,
-            'message': message,
-            'profile_id': profile_id,
-            'verification_status': updated_profile.get('verification_status'),
-            'interface_verification_status': updated_profile.get('interface_verification_status'),
-            'sample_device_id': str(device['id']),
-            'sample_hostname': device.get('hostname') or device.get('ip_address') or str(device['id']),
-            'metrics': test_results,
-            'hardware_collection_status': str(native_hardware.get('state') or 'delegated_to_librenms') if hardware_configured else 'not_configured',
-            'native_hardware': native_hardware,
-            'interface': interface_result,
-        },
-    }
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -2558,44 +1355,6 @@ def list_snmp_mib_nodes(
         conn.close()
 
 
-@router.get("/platform-registry/mibs/presets/models")
-def get_official_model_presets(user=require_role("Viewer")):
-    """List official pre-built model metric profile templates."""
-    presets = list_preset_profiles()
-    return {
-        "success": True,
-        "data": presets,
-        "total": len(presets),
-    }
-
-
-@router.get("/platform-registry/mibs/auto-match")
-def auto_match_model_mibs(
-    vendor: Annotated[str, Query(max_length=64)] = "",
-    model: Annotated[str, Query(max_length=128)] = "",
-    platform: Annotated[str, Query(max_length=128)] = "",
-    software_version: Annotated[str, Query(max_length=256)] = "",
-    user=require_role("Viewer"),
-):
-    """Auto-match and recommend OIDs using the full device identity scope."""
-    match_result = match_profile_for_model(
-        vendor=vendor,
-        model=model,
-        platform=platform,
-        software_version=software_version,
-    )
-    if not match_result:
-        return {
-            "success": True,
-            "matched": False,
-            "message": "No matching pre-built series found for this model",
-            "data": None,
-        }
-    return {
-        "success": True,
-        "matched": True,
-        "data": match_result,
-    }
 
 
 _librenms_sync_state: dict[str, Any] = {
@@ -2683,6 +1442,7 @@ def get_sync_librenms_mibs_status(user=require_role("Viewer")):
     """Get the current progress status of LibreNMS MIB synchronization."""
     conn = get_db_connection()
     try:
+        rule_count = conn.execute("SELECT COUNT(*) AS count FROM snmp_librenms_rules").fetchone()
         allowed_vendors = [*list_platform_vendor_names(conn), "Standard"]
         return {
             "success": True,
@@ -2924,12 +1684,6 @@ def create_device(device: dict = Body(...), user=require_role("Operator")):
     except HTTPException:
         conn.close()
         raise
-    try:
-        snmp_cpu_oid = _normalize_device_metric_oid(device.get('snmp_cpu_oid'), 'snmp_cpu_oid')
-        snmp_memory_oid = _normalize_device_metric_oid(device.get('snmp_memory_oid'), 'snmp_memory_oid')
-    except HTTPException:
-        conn.close()
-        raise
     cred_source = (device.get('credential_source') or 'local').lower()
     vault_path = device.get('vault_path', '')
 
@@ -3025,10 +1779,6 @@ def create_device(device: dict = Body(...), user=require_role("Operator")):
         conn.execute(
             'UPDATE devices SET ssh_algorithm_profile = ? WHERE id = ?',
             (normalize_ssh_algorithm_profile(device.get('ssh_algorithm_profile')), device_id),
-        )
-        conn.execute(
-            'UPDATE devices SET snmp_cpu_oid = ?, snmp_memory_oid = ? WHERE id = ?',
-            (snmp_cpu_oid, snmp_memory_oid, device_id),
         )
         tag_service.sync_device_status_tag(conn, device_id, device.get('status', 'pending'))
         # Plan-A: auto-create linked physical_assets record
@@ -3159,19 +1909,6 @@ def update_device(device_id: str, device: dict = Body(...)):
             raise HTTPException(status_code=404, detail='Device not found')
 
         existing_device = dict(existing_row)
-        try:
-            snmp_cpu_oid = (
-                _normalize_device_metric_oid(device.get('snmp_cpu_oid'), 'snmp_cpu_oid')
-                if 'snmp_cpu_oid' in device
-                else str(existing_device.get('snmp_cpu_oid') or '')
-            )
-            snmp_memory_oid = (
-                _normalize_device_metric_oid(device.get('snmp_memory_oid'), 'snmp_memory_oid')
-                if 'snmp_memory_oid' in device
-                else str(existing_device.get('snmp_memory_oid') or '')
-            )
-        except HTTPException:
-            raise
         clear_platform_binding = (
             'platform_profile_id' in device
             and device.get('platform_profile_id') in (None, '')
@@ -3260,8 +1997,7 @@ def update_device(device_id: str, device: dict = Body(...)):
                 username = ?, password = ?, current_config = ?, config_history = ?, snmp_community = ?, snmp_port = ?, 
                 lifecycle_status = ?, enable_password = ?, priv_username = ?, credential_source = ?, vault_path = ?,
                 normal_username = ?, normal_password = ?, admin_username = ?, admin_password = ?, auth_model = ?,
-                device_category = ?, function = ?, zone = ?, power_watts = ?, credential_id = ?,
-                snmp_cpu_oid = ?, snmp_memory_oid = ?
+                device_category = ?, function = ?, zone = ?, power_watts = ?, credential_id = ?
             WHERE id = ?
         ''', (
             effective_hostname,
@@ -3294,8 +2030,6 @@ def update_device(device_id: str, device: dict = Body(...)):
             device.get('zone', 'Unknown') or 'Unknown',
             int(device.get('power_watts') or 0),
             credential_id,
-            snmp_cpu_oid,
-            snmp_memory_oid,
             device_id
         ))
         conn.execute(
@@ -4021,255 +2755,219 @@ def import_devices(payload: dict = Body(...), user=require_role("Operator")):
 
 
 @router.post("/devices/{device_id}/snmp-test")
-async def snmp_test(device_id: str):
-    """Test SNMP reachability and sync system identity plus explicit interface data."""
-    import time, re as _re, json as _json
+async def snmp_test(device_id: str, user=require_role("Operator")):
+    """Run an on-demand probe through the pinned LibreNMS rule executor only."""
     conn = get_db_connection()
     try:
-        device = conn.execute('SELECT * FROM devices WHERE id = ?', (device_id,)).fetchone()
+        row = conn.execute("SELECT * FROM devices WHERE id = ?", (device_id,)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    device = dict(row)
+    _assert_snmp_diagnostic_device_scope(user, device)
+    from services.snmp_hardware_poller_service import inspect_librenms_hardware_rules
+    from services.librenms_source_policy import is_trusted_hardware_sensor, verify_bundled_rule
+
+    probe = await inspect_librenms_hardware_rules(device)
+    identity = probe.get("identity") if isinstance(probe.get("identity"), Mapping) else {}
+    rule = probe.get("rule") if isinstance(probe.get("rule"), Mapping) else None
+    if not verify_bundled_rule(rule or {}):
+        rule = None
+    sensors = [
+        sensor for sensor in (probe.get("sensors") or [])
+        if isinstance(sensor, Mapping) and is_trusted_hardware_sensor(sensor)
+    ]
+    reachable = any(str(identity.get(key) or "").strip() for key in ("sys_name", "sys_descr", "sys_object_id"))
+    return {
+        "success": reachable,
+        "ip": str(device.get("ip_address") or ""),
+        "sys_name": str(identity.get("sys_name") or ""),
+        "sys_descr": str(identity.get("sys_descr") or ""),
+        "sys_object_id": str(identity.get("sys_object_id") or ""),
+        "response_ms": None,
+        "error": "No SNMP system identity was returned" if not reachable else None,
+        "hardware_metrics": {},
+        "metric_details": {},
+        "hardware_collection_status": str(probe.get("status") or "unknown"),
+        "snmp_discovery_status": "matched" if rule else "unsupported",
+        "collection_mode": "pinned_librenms_rule_diagnostic",
+        "rule": rule,
+        "rule_source_path": str((rule or {}).get("source_path") or ""),
+        "rule_source_commit": str((rule or {}).get("source_commit") or ""),
+        "sensor_count": len(sensors),
+        "sensors": sensors,
+        "category_results": probe.get("category_results") or [],
+    }
+
+
+def _assert_snmp_diagnostic_device_scope(user: dict, device: dict) -> None:
+    """Require tenant and asset-view scope before any credential-backed probe."""
+    if not isinstance(user, dict):
+        raise HTTPException(status_code=403, detail="Authenticated device scope is required")
+    if user.get("role") == "Administrator":
+        return
+
+    user_tenant = str(user.get("tenant_id") or "").strip()
+    device_tenant = str(device.get("site_tenant_id") or device.get("tenant_id") or "").strip()
+    if not user_tenant or not device_tenant or user_tenant != device_tenant:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "RESOURCE_SCOPE_DENIED", "message": "Device belongs to another or unscoped tenant"},
+        )
+    if not authorize_resource(
+        user,
+        "asset",
+        "view",
+        tenant_id=device_tenant,
+        site_id=str(device.get("resolved_site_id") or device.get("site_id") or device.get("site") or "").strip(),
+        device_group_id=str(device.get("device_group_id") or "").strip(),
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "RESOURCE_SCOPE_DENIED", "message": "Insufficient permission for this device scope"},
+        )
+
+
+def _find_snmp_walk_targets(
+    *,
+    device_id: str = "",
+    ip: str = "",
+    user: dict | None = None,
+) -> list[dict[str, Any]]:
+    """Resolve only exact, CMDB-managed device IDs or addresses."""
+    normalized_device_id = str(device_id or "").strip()
+    normalized_ip = str(ip or "").strip()
+    if bool(normalized_device_id) == bool(normalized_ip):
+        return []
+    where_sql = "d.id = ?" if normalized_device_id else "(d.ip_address = ? OR pa.management_ip = ?)"
+    params = (normalized_device_id,) if normalized_device_id else (normalized_ip, normalized_ip)
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            f"""SELECT d.*, COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, '')) AS resolved_site_id,
+                       s.tenant_id AS site_tenant_id
+                  FROM devices d
+                  LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+                  LEFT JOIN sites s ON s.id = COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''))
+                 WHERE {where_sql}
+                 ORDER BY d.id
+                 LIMIT 2""",
+            params,
+        ).fetchall()
     finally:
         conn.close()
 
-    if not device:
-        raise HTTPException(status_code=404, detail="Device not found")
+    targets = [dict(row) for row in rows]
+    for target in targets:
+        if user is not None:
+            _assert_snmp_diagnostic_device_scope(user, target)
+    return targets
 
-    device_data = dict(device)
-    collector_credentials = resolve_collector_credentials(device_data)
-    ip = device_data['ip_address']
-    snmp_credentials = collector_credentials.get('snmp') or {}
-    snmp_ip = snmp_credentials.get('server') or ip
-    port = snmp_credentials.get('port') or 161
-    try:
-        snmp_version, community = _snmp_request_transport(snmp_credentials)
-    except HTTPException:
-        community = ''
-        snmp_version = str(snmp_credentials.get('version') or '2c')
-    # Do not load the legacy discovery snapshot here: this route is limited
-    # to reachability and an explicitly saved interface profile. The native
-    # LibreNMS runtime owns hardware discovery and polling.
-    profile_device = {
-        key: value for key, value in device_data.items()
-        if key not in {'id', 'snmp_discovery'}
+
+@router.get("/platform-registry/snmp-walk-target")
+def resolve_snmp_walk_target(ip: str = Query(..., min_length=1, max_length=128), user=require_role("Operator")):
+    """Resolve a manually entered IP to exactly one visible CMDB device."""
+    targets = _find_snmp_walk_targets(ip=ip.strip(), user=user)
+    if not targets:
+        raise HTTPException(status_code=404, detail={"code": "DEVICE_NOT_FOUND", "message": "IP not found in managed devices"})
+    if len(targets) != 1:
+        raise HTTPException(status_code=409, detail={"code": "DEVICE_IP_AMBIGUOUS", "message": "IP resolves to more than one managed device"})
+    target = targets[0]
+    return {"success": True, "data": {
+        "ip": str(target.get("ip_address") or ip).strip(),
+        "device_id": str(target.get("id") or ""),
+        "hostname": str(target.get("hostname") or ""),
+    }}
+
+
+@router.post("/platform-registry/snmp-librenms-rule-test")
+async def test_librenms_rule_probe(payload: dict = Body(...), user=require_role("Operator")):
+    """Probe one managed device with the pinned LibreNMS YAML rule executor."""
+    if not isinstance(payload, dict) or set(payload) != {"device_id"} or not str(payload.get("device_id") or "").strip():
+        raise HTTPException(status_code=400, detail={
+            "code": "MANUAL_OID_PROBE_DISABLED",
+            "message": "Only a managed device_id is accepted; custom OIDs and target credentials are disabled.",
+        })
+    targets = _find_snmp_walk_targets(device_id=str(payload["device_id"]).strip(), user=user)
+    if not targets:
+        raise HTTPException(status_code=404, detail={"code": "DEVICE_NOT_FOUND", "message": "Managed device not found"})
+    device = targets[0]
+    from services.snmp_hardware_poller_service import inspect_librenms_hardware_rules
+    from services.librenms_source_policy import is_trusted_hardware_sensor, verify_bundled_rule
+
+    probe = await inspect_librenms_hardware_rules(device)
+    rule = probe.get("rule") if isinstance(probe.get("rule"), Mapping) else None
+    if not verify_bundled_rule(rule or {}):
+        rule = None
+    sensors = [
+        sensor for sensor in (probe.get("sensors") or [])
+        if isinstance(sensor, Mapping) and is_trusted_hardware_sensor(sensor)
+    ]
+    identity = probe.get("identity") if isinstance(probe.get("identity"), Mapping) else {}
+    data = {
+        "status": str(probe.get("status") or "unknown"),
+        "message": str(probe.get("reason") or probe.get("message") or ""),
+        "identity": dict(identity),
+        "rule": dict(rule) if rule else None,
+        "rule_source_path": str((rule or {}).get("source_path") or ""),
+        "rule_source_commit": str((rule or {}).get("source_commit") or ""),
+        "sensor_count": len(sensors),
+        "sensors": sensors,
+        "category_results": probe.get("category_results") or [],
     }
-    has_explicit_profile = bool(
-        "snmp_metric_profile_id" in device_data
-        and str(device_data.get("snmp_metric_profile_id") or "").strip()
-    )
-    if has_explicit_profile:
-        resolved_metrics = resolve_health_metric_profiles(profile_device)
-    else:
-        resolved_metrics = {
-            "profile_id": "",
-            "profile_status": "none",
-            "profile_source": "template_not_applied",
-            "metric_sources": {},
-            "interface": {},
-        }
+    return {"success": bool(rule), "data": data}
 
-    if not snmp_ip:
-        return {
-            "success": False,
-            "error": "No IP address configured",
-            "hardware_metrics": {},
-            "metric_details": {},
-            "hardware_collection_status": "delegated_to_librenms",
-            "collection_mode": "connectivity_interface_only",
-        }
-    if not community:
-        from services.collection_status_service import record_collection_result
-        record_collection_result(
-            device_id,
-            'snmp_metrics',
-            status='not_configured',
-            transport='udp',
-            source='snmp',
-            error_code='snmp_not_configured',
-            error_message='SNMP credentials are not configured',
-        )
-        return {
-            "success": False,
-            "error": "SNMP credentials are not configured",
-            "error_code": "snmp_not_configured",
-            "metric_profile_id": resolved_metrics.get('profile_id') or None,
-            "metric_profile_status": resolved_metrics.get('profile_status') or 'none',
-            "metric_profile_source": resolved_metrics.get('profile_source') or 'template_not_applied',
-            "metric_sources": resolved_metrics.get('metric_sources') or {},
-            "hardware_metrics": {},
-            "metric_details": {},
-            "hardware_collection_status": "delegated_to_librenms",
-            "collection_mode": "connectivity_interface_only",
-        }
 
-    import asyncio as _aio
-    from services.snmp_service import _snmp_get, _snmp_walk, collect_device_info, collect_interface_health
+@router.post("/platform-registry/snmp-hardware-discovery-test")
+async def test_snmp_hardware_discovery(payload: dict = Body(...), user=require_role("Operator")):
+    """Read saved hardware inventory; values must pass pinned-rule provenance checks."""
+    if not isinstance(payload, dict) or set(payload) != {"device_id"} or not str(payload.get("device_id") or "").strip():
+        raise HTTPException(status_code=400, detail={"code": "DEVICE_ID_REQUIRED", "message": "A managed device_id is required"})
+    targets = _find_snmp_walk_targets(device_id=str(payload["device_id"]).strip(), user=user)
+    if not targets:
+        raise HTTPException(status_code=404, detail={"code": "DEVICE_NOT_FOUND", "message": "Managed device not found"})
+    from services.librenms_diagnostic_service import diagnose_librenms_hardware
+    return {"success": True, "data": await diagnose_librenms_hardware(targets[0])}
 
-    results = {"success": False, "ip": snmp_ip, "port": port,
-               "sys_name": None, "sys_descr": None, "response_ms": None, "error": None,
-               "sys_object_id": None,
-               "snmp_discovery_status": "delegated_to_librenms",
-               "snmp_discovery_reason": "Hardware discovery is handled by the bound LibreNMS runtime",
-               "synced": False,
-               "hardware_metrics": {}, "metric_details": {},
-               "hardware_collection_status": "delegated_to_librenms",
-               "metric_profile_id": resolved_metrics.get('profile_id') or None,
-               "metric_profile_status": resolved_metrics.get('profile_status') or 'none',
-               "metric_profile_source": resolved_metrics.get('profile_source') or 'template_not_applied',
-               "metric_sources": resolved_metrics.get('metric_sources') or {},
-               "collection_mode": "connectivity_interface_only"}
 
-    start = time.monotonic()
-    try:
-        # Step 1: 标准 System MIB（sysName + sysDescr）并行查询
-        if snmp_version == '2c':
-            sys_name, sys_descr = await _aio.gather(
-                _snmp_get(snmp_ip, community, '1.3.6.1.2.1.1.5.0', port, timeout=3),
-                _snmp_get(snmp_ip, community, '1.3.6.1.2.1.1.1.0', port, timeout=3),
-            )
-        else:
-            sys_name, sys_descr = await _aio.gather(
-                _snmp_get(snmp_ip, community, '1.3.6.1.2.1.1.5.0', port, timeout=3, version=snmp_version),
-                _snmp_get(snmp_ip, community, '1.3.6.1.2.1.1.1.0', port, timeout=3, version=snmp_version),
-            )
-        elapsed = round((time.monotonic() - start) * 1000)
-        results['response_ms'] = elapsed
+def test_snmp_walk(payload: dict = Body(default={}), user=require_role("Operator")):
+    """Reject arbitrary SNMP walks; diagnostics are tied to LibreNMS rules."""
+    raise HTTPException(status_code=410, detail={
+        "code": "MANUAL_OID_WALK_REMOVED",
+        "message": "Arbitrary OID walks are retired; use the pinned LibreNMS rule diagnostic.",
+    })
 
-        if sys_name or sys_descr:
-            results['success'] = True
-            results['sys_name'] = sys_name
-            results['sys_descr'] = sys_descr
-        else:
-            # Step 2: ifName (ifXTable) — 部分设备/SNMP view 不含 system MIB
-            if snmp_version == '2c':
-                if_rows = await _snmp_walk(snmp_ip, community, '1.3.6.1.2.1.31.1.1.1.1', port, timeout=3, max_rows=3)
-            else:
-                if_rows = await _snmp_walk(snmp_ip, community, '1.3.6.1.2.1.31.1.1.1.1', port, timeout=3, max_rows=3, version=snmp_version)
-            if not if_rows:
-                # Step 3: ifDescr (基础 IF-MIB RFC 1213) — 最广泛兼容
-                if snmp_version == '2c':
-                    if_rows = await _snmp_walk(snmp_ip, community, '1.3.6.1.2.1.2.2.1.2', port, timeout=3, max_rows=3)
-                else:
-                    if_rows = await _snmp_walk(snmp_ip, community, '1.3.6.1.2.1.2.2.1.2', port, timeout=3, max_rows=3, version=snmp_version)
-            elapsed = round((time.monotonic() - start) * 1000)
-            results['response_ms'] = elapsed
-            if if_rows:
-                results['success'] = True
-                results['sys_descr'] = f"System MIBs not in SNMP view – reachable via IF-MIB ({len(if_rows)} interfaces found)"
-            else:
-                results['error'] = 'No SNMP response – verify community string, UDP 161 and device SNMP config'
-    except Exception as e:
-        elapsed = round((time.monotonic() - start) * 1000)
-        results['response_ms'] = elapsed
-        results['error'] = str(e)
 
-    from services.collection_status_service import record_collection_result
-    record_collection_result(
-        device_id,
-        'snmp_metrics',
-        status='success' if results['success'] else 'failed',
-        transport='udp',
-        source='snmp',
-        duration_ms=results.get('response_ms'),
-        coverage_total=2,
-        coverage_supported=int(bool(results.get('sys_name'))) + int(bool(results.get('sys_descr'))),
-        error_code='' if results['success'] else 'snmp_no_response',
-        error_message='' if results['success'] else str(results.get('error') or 'No SNMP response'),
+@router.post("/platform-registry/snmp-walk-test")
+def _retired_snmp_walk_route(payload: dict = Body(default={}), user=require_role("Operator")):
+    return test_snmp_walk(payload, user)
+
+
+def test_snmp_hardware_metrics(payload: dict = Body(default={}), user=require_role("Operator")):
+    raise HTTPException(status_code=410, detail={"code": "LIBRENMS_RULES_ONLY", "message": "Custom SNMP OID definitions are retired."})
+
+
+def detect_snmp_walk_vendor(payload: dict = Body(default={}), user=require_role("Operator")):
+    raise HTTPException(status_code=410, detail={"code": "LIBRENMS_RULES_ONLY", "message": "Vendor detection uses the pinned LibreNMS OS rules."})
+
+
+def test_snmp_system_info(payload: dict = Body(default={}), user=require_role("Operator")):
+    raise HTTPException(status_code=410, detail={"code": "LIBRENMS_RULES_ONLY", "message": "System information is read through the pinned LibreNMS rule diagnostic."})
+
+
+def test_snmp_interface_oids(payload: dict = Body(default={}), user=require_role("Operator")):
+    raise HTTPException(status_code=410, detail={"code": "LIBRENMS_RULES_ONLY", "message": "Custom interface OID probes are retired."})
+
+
+for _retired_path in ("/platform-registry/snmp-hardware-test", "/platform-registry/snmp-system-info-test"):
+    router.add_api_route(
+        _retired_path,
+        test_snmp_hardware_metrics if "hardware" in _retired_path else test_snmp_system_info,
+        methods=["POST"],
     )
 
-    # ── Keep system identity and explicit IF-MIB synchronization separate from hardware collection. ──
-    if results['success']:
-        async def _background_sync():
-            try:
-                if snmp_version == '2c':
-                    dev_info, intf_data = await _aio.gather(
-                        collect_device_info(snmp_ip, community, port),
-                        collect_interface_health(
-                            snmp_ip,
-                            community,
-                            port,
-                            resolved_metrics.get('interface') or None,
-                            template_only=True,
-                        ),
-                    )
-                else:
-                    dev_info, intf_data = await _aio.gather(
-                        collect_device_info(snmp_ip, community, port, version=snmp_version),
-                        collect_interface_health(
-                            snmp_ip,
-                            community,
-                            port,
-                            resolved_metrics.get('interface') or None,
-                            template_only=True,
-                            version=snmp_version,
-                        ),
-                    )
-
-                updates: dict = {}
-
-                if dev_info.get('sys_name'):
-                    updates['sys_name'] = dev_info['sys_name']
-                if dev_info.get('sys_descr'):
-                    descr = dev_info['sys_descr']
-                    if not device['model']:
-                        first_line = descr.split('\r\n')[0].split('\n')[0].strip()
-                        if first_line:
-                            updates['model'] = first_line[:80]
-                    if not device['version']:
-                        ver_match = _re.search(r'[Vv]ersion\s+([\w\.\(\)\-/]+)', descr)
-                        if ver_match:
-                            updates['version'] = ver_match.group(1)
-                if dev_info.get('uptime'):
-                    updates['uptime'] = dev_info['uptime']
-                if dev_info.get('sys_location'):
-                    updates['sys_location'] = dev_info['sys_location']
-
-                conn2 = get_db_connection()
-                try:
-                    if updates:
-                        set_clause = ', '.join(f'{k} = ?' for k in updates)
-                        conn2.execute(f'UPDATE devices SET {set_clause} WHERE id = ?',
-                                      (*updates.values(), device_id))
-                    
-                    if intf_data:
-                        for iface in intf_data:
-                            iname = iface['name']
-                            desc = iface.get('description', '')
-                            status = iface.get('status', 'down')
-                            speed_mbps = float(iface.get('speed_mbps') or 0.0)
-                            speed_bps = speed_mbps * 1_000_000.0
-                            
-                            conn2.execute('''
-                                INSERT INTO interfaces (
-                                    id, device_id, interface_name, if_index, description, admin_status, oper_status,
-                                    mac_address, speed, bandwidth, duplex, interface_type, switchport_mode, ip_enabled
-                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                ON CONFLICT(device_id, interface_name) DO UPDATE SET
-                                    if_index = excluded.if_index,
-                                    description = excluded.description,
-                                    admin_status = excluded.admin_status,
-                                    oper_status = excluded.oper_status,
-                                    speed = excluded.speed,
-                                    bandwidth = excluded.bandwidth
-                            ''', (f"intf-{uuid.uuid4().hex[:12]}", device_id, iname, iface.get('if_index'), desc, status, status, '', speed_bps, speed_bps, 'auto', 'physical', 'access', 0))
-                    conn2.commit()
-                finally:
-                    conn2.close()
-                record_collection_result(
-                    device_id,
-                    'snmp_interfaces',
-                    status='success' if intf_data else 'failed',
-                    transport='udp',
-                    source='snmp',
-                    coverage_total=len(intf_data or []),
-                    coverage_supported=len(intf_data or []),
-                    error_code='' if intf_data else 'snmp_interface_table_empty',
-                    error_message='' if intf_data else 'SNMP interface table is empty',
-                )
-            except Exception:
-                pass  # 后台同步失败不影响测试结果
-
-        _aio.create_task(_background_sync())
-
-    return results
 
 
 @router.post("/devices/{device_id}/operational-data")

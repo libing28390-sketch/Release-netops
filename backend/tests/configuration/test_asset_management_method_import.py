@@ -122,7 +122,7 @@ def test_batch_import_binds_snmp_credential_name_to_asset_and_device(isolated_db
     assert listed["items"][0]["snmp_community_set"] is True
 
 
-def test_batch_import_auto_identifies_device_and_binds_verified_cpu_memory_profile(isolated_db, monkeypatch):
+def test_batch_import_auto_identifies_device_without_custom_metric_profile_binding(isolated_db, monkeypatch):
     with get_db_connection() as conn:
         conn.execute(
             """INSERT INTO credentials (
@@ -132,30 +132,6 @@ def test_batch_import_auto_identifies_device_and_binds_verified_cpu_memory_profi
                 "cred-import-auto-profile",
                 "import-auto-profile",
                 encrypt_credential("identity-probe-secret"),
-                "2026-10-08T00:00:00+00:00",
-            ),
-        )
-        conn.execute(
-            """INSERT INTO snmp_metric_profiles (
-                   id, vendor_key, vendor_name, model_key, model_name,
-                   platform_key, platform_scope_json, model_pattern,
-                   metric_definitions_json, verification_status,
-                   template_name, source, created_at, updated_at
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                "profile-auto-h3c-ap",
-                "h3c",
-                "H3C",
-                "wa6320-hcl",
-                "WA6320-HCL",
-                "h3c_comware",
-                '["h3c_comware"]',
-                "WA6320-HCL",
-                '{"cpu":{"mode":"direct_percent","oid":"1.3.6.1.4.1.1"},"memory":{"mode":"direct_percent","oid":"1.3.6.1.4.1.2"}}',
-                "verified",
-                "H3C WA6320-HCL health",
-                "custom",
-                "2026-10-08T00:00:00+00:00",
                 "2026-10-08T00:00:00+00:00",
             ),
         )
@@ -188,13 +164,10 @@ def test_batch_import_auto_identifies_device_and_binds_verified_cpu_memory_profi
             "source": "librenms",
         },
     )
-    from services.snmp_metric_profile_service import invalidate_metric_profile_cache
-    invalidate_metric_profile_cache()
-
     result = assets.import_assets([
         assets.AssetCreate(
             asset_type="network_device",
-            asset_tag="AUTO-SNMP-PROFILE-1",
+            asset_tag="AUTO-SNMP-IDENTITY-1",
             hostname="ap-import-placeholder",
             management_ip="192.0.2.91",
             vendor="H3C",
@@ -207,85 +180,32 @@ def test_batch_import_auto_identifies_device_and_binds_verified_cpu_memory_profi
     assert result["created"] == 1
     identified = result["snmp_identification"]
     assert identified["identified"] == 1
-    assert identified["profile_bound"] == 1
     assert identified["unresolved"] == 0
     item = identified["items"][0]
-    assert item["status"] == "profile_bound"
+    assert item["status"] == "identified"
     assert item["detected_vendor"] == "H3C"
     assert item["detected_platform"] == "h3c_comware"
-    assert item["profile_id"] == "profile-auto-h3c-ap"
-    assert item["profile_name"] == "H3C WA6320-HCL health"
+    assert "profile_bound" not in identified
+    assert "profile_id" not in item
     assert "identity-probe-secret" not in str(result)
 
     with get_db_connection() as conn:
         asset = conn.execute(
             "SELECT vendor, platform, model FROM physical_assets WHERE asset_tag = ?",
-            ("AUTO-SNMP-PROFILE-1",),
+            ("AUTO-SNMP-IDENTITY-1",),
         ).fetchone()
         device = conn.execute(
             """SELECT vendor, platform, model, version, snmp_metric_profile_id
                  FROM devices WHERE asset_id = (
                      SELECT id FROM physical_assets WHERE asset_tag = ?
                  )""",
-            ("AUTO-SNMP-PROFILE-1",),
+            ("AUTO-SNMP-IDENTITY-1",),
         ).fetchone()
     assert (asset["vendor"], asset["platform"], asset["model"]) == (
         "H3C", "h3c_comware", "WA6320-HCL"
     )
-    assert device["snmp_metric_profile_id"] == "profile-auto-h3c-ap"
+    assert device["snmp_metric_profile_id"] == ""
     assert device["version"] == "7.1.070"
-
-    with get_db_connection() as conn:
-        conn.execute(
-            """INSERT INTO snmp_metric_profiles (
-                   id, vendor_key, vendor_name, model_key, model_name,
-                   platform_key, platform_scope_json, model_pattern,
-                   metric_definitions_json, verification_status,
-                   template_name, source, created_at, updated_at
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                "profile-auto-h3c-ap-tie",
-                "h3c",
-                "H3C",
-                "wa6320-hcl",
-                "WA6320-HCL",
-                "h3c_comware",
-                '["h3c_comware"]',
-                "WA6320-HCL",
-                '{"cpu":{"mode":"direct_percent","oid":"1.3.6.1.4.1.1"},"memory":{"mode":"direct_percent","oid":"1.3.6.1.4.1.2"}}',
-                "verified",
-                "H3C WA6320-HCL health duplicate",
-                "custom",
-                "2026-10-08T00:00:00+00:00",
-                "2026-10-08T00:00:00+00:00",
-            ),
-        )
-        conn.commit()
-    invalidate_metric_profile_cache()
-
-    ambiguous = assets.import_assets([
-        assets.AssetCreate(
-            asset_type="network_device",
-            asset_tag="AUTO-SNMP-PROFILE-2",
-            hostname="second-ap-placeholder",
-            management_ip="192.0.2.92",
-            vendor="H3C",
-            model="",
-            platform="",
-            snmp_credential_name="import-auto-profile",
-        )
-    ])
-    assert ambiguous["snmp_identification"]["items"][0]["status"] == "profile_ambiguous"
-    assert ambiguous["snmp_identification"]["profile_bound"] == 0
-    assert ambiguous["snmp_identification"]["unresolved"] == 1
-    with get_db_connection() as conn:
-        ambiguous_binding = conn.execute(
-            """SELECT snmp_metric_profile_id FROM devices WHERE asset_id = (
-                     SELECT id FROM physical_assets WHERE asset_tag = ?
-                 )""",
-            ("AUTO-SNMP-PROFILE-2",),
-        ).fetchone()
-    assert ambiguous_binding["snmp_metric_profile_id"] == ""
 
 
 def test_import_commits_asset_then_enrolls_with_bound_snmpv3_profile(isolated_db, monkeypatch):

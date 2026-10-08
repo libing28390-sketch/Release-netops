@@ -1,6 +1,6 @@
 /**
  * Read-only view of persisted hardware results from Nexora's local SNMP
- * collector or an optional bound LibreNMS integration. It contains no secrets.
+ * collector executing the bundled LibreNMS rules. It contains no secrets.
  */
 export type LibreNMSHardwareState =
   | 'not_bound'
@@ -62,6 +62,7 @@ export interface LibreNMSHardwareCollection {
   last_discovered: string | null;
   last_polled: string | null;
   stale_after_seconds: number | null;
+  poll_interval_seconds?: number | null;
   error_code?: string | null;
 }
 
@@ -72,6 +73,12 @@ export interface LibreNMSHealthGraphMetadata {
 }
 
 export interface LibreNMSHardwareSensor {
+  source_type?: string;
+  source_path?: string;
+  source_commit?: string;
+  poll_interval_seconds?: number | null;
+  last_quality?: string;
+  lifecycle_status?: string;
   sensor_id?: number | string;
   sensor_class?: string;
   device_id?: number | string;
@@ -100,6 +107,12 @@ export interface LibreNMSHardwareSensor {
 
 /** Current values from local or LibreNMS processor/memory rows, never graph metadata. */
 export interface LibreNMSHardwareNativeSample {
+  source_type?: string;
+  source_path?: string;
+  source_commit?: string;
+  poll_interval_seconds?: number | null;
+  last_quality?: string;
+  lifecycle_status?: string;
   sensor_id?: number | string;
   sensor_descr?: string;
   sensor_current?: number | null;

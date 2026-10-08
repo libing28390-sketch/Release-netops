@@ -12,6 +12,7 @@ from services.monitoring_export_service import (
     fetch_devices_report_data,
     fetch_outbound_report_data,
 )
+from services import monitoring_export_service
 
 
 class DummyCursor:
@@ -34,6 +35,11 @@ class DummyConnection:
 
     def close(self):
         pass
+
+
+@pytest.fixture(autouse=True)
+def disable_external_metric_queries(monkeypatch):
+    monkeypatch.setattr(monitoring_export_service, "_query_vm_instant_safe", lambda _query: {})
 
 
 MOCK_INTERFACES = [
@@ -180,3 +186,81 @@ def test_fetch_devices_and_outbound_data():
     res_out = fetch_outbound_report_data(conn=conn_out)
     assert res_out["summary"]["total_probes"] == 1
     assert res_out["items"][0]["isp"] == "中国电信"
+
+
+def test_fetch_devices_report_reads_normalized_hardware_metrics_only(monkeypatch):
+    queries = []
+    values_by_family = {
+        'nexora_hw_cpu_usage_percent{source_type="librenms_rule"}': {"asset:dev-1": 36.2},
+        'nexora_hw_memory_usage_percent{source_type="librenms_rule"}': {"asset:dev-1": 43.1},
+        'nexora_hw_temperature_celsius{source_type="librenms_rule"}': {"asset:dev-1": 37.5},
+    }
+
+    def query_metric(query):
+        queries.append(query)
+        return values_by_family[query]
+
+    monkeypatch.setattr(monitoring_export_service, "_query_vm_instant_safe", query_metric)
+
+    class RecordingConnection(DummyConnection):
+        def __init__(self, table_data=None):
+            super().__init__(table_data)
+            self.statements = []
+
+        def execute(self, query, params=()):
+            self.statements.append(query)
+            return super().execute(query, params)
+
+    connection = RecordingConnection(MOCK_DEVICES)
+    result = fetch_devices_report_data(conn=connection)
+
+    item = result["items"][0]
+    assert queries == [
+        'nexora_hw_cpu_usage_percent{source_type="librenms_rule"}',
+        'nexora_hw_memory_usage_percent{source_type="librenms_rule"}',
+        'nexora_hw_temperature_celsius{source_type="librenms_rule"}',
+    ]
+    assert "d.cpu_usage" not in connection.statements[0]
+    assert "d.memory_usage" not in connection.statements[0]
+    assert "d.temp" not in connection.statements[0]
+    assert item["cpu_usage"] == 36.2
+    assert item["memory_usage"] == 43.1
+    assert item["temperature"] == 37.5
+    assert item["sample_quality"] == "current"
+    assert item["metric_sources"] == {
+        "cpu_usage": "victoriametrics",
+        "memory_usage": "victoriametrics",
+        "temperature": "victoriametrics",
+    }
+
+
+def test_fetch_devices_report_does_not_fallback_to_device_hardware_snapshot(monkeypatch):
+    queries = []
+
+    def no_hardware_samples(query):
+        queries.append(query)
+        return {}
+
+    monkeypatch.setattr(monitoring_export_service, "_query_vm_instant_safe", no_hardware_samples)
+
+    result = fetch_devices_report_data(conn=DummyConnection(MOCK_DEVICES))
+    item = result["items"][0]
+
+    assert queries == [
+        'nexora_hw_cpu_usage_percent{source_type="librenms_rule"}',
+        'nexora_hw_memory_usage_percent{source_type="librenms_rule"}',
+        'nexora_hw_temperature_celsius{source_type="librenms_rule"}',
+    ]
+    assert item["cpu_usage"] is None
+    assert item["memory_usage"] is None
+    assert item["temperature"] is None
+    assert item["temperature_str"] == "--"
+    assert item["sample_quality"] == "no_data"
+    assert item["risk_level"] == "NO_DATA"
+    assert item["metric_sources"] == {
+        "cpu_usage": "none",
+        "memory_usage": "none",
+        "temperature": "none",
+    }
+    assert result["summary"]["no_data_devices"] == 1
+    assert result["summary"]["stale_devices"] == 0

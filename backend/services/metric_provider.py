@@ -31,11 +31,11 @@ ALLOWED_METRICS = {
 
 CANONICAL_PROMQL = {
     "device_uptime_seconds": "sysUpTime",
-    "cpu_usage_percent": "cpu_usage_percent",
-    "memory_usage_percent": "memory_usage_percent",
-    "temperature_celsius": "temperature_celsius",
-    "wireless_ap_online_count": "wireless_ap_online_count",
-    "wireless_client_online_count": "wireless_client_online_count",
+    "cpu_usage_percent": "nexora_hw_cpu_usage_percent",
+    "memory_usage_percent": "nexora_hw_memory_usage_percent",
+    "temperature_celsius": "nexora_hw_temperature_celsius",
+    "wireless_ap_online_count": "nexora_wireless_sensor_value",
+    "wireless_client_online_count": "nexora_wireless_sensor_value",
     "interface_admin_status": "ifAdminStatus",
     "interface_oper_status": "ifOperStatus",
     "interface_speed_bps": "ifHighSpeed * 1000000",
@@ -46,6 +46,51 @@ CANONICAL_PROMQL = {
     "interface_in_discards_rate": "rate(ifInDiscards[5m])",
     "interface_out_discards_rate": "rate(ifOutDiscards[5m])",
 }
+HARDWARE_METRIC_KEYS = frozenset({
+    "cpu_usage_percent", "memory_usage_percent", "temperature_celsius",
+})
+NORMALIZED_PROVIDER_METRIC_KEYS = HARDWARE_METRIC_KEYS | frozenset({
+    "wireless_ap_online_count", "wireless_client_online_count",
+})
+LIBRENMS_RULE_SOURCE_MATCHER = 'source_type="librenms_rule"'
+LEGACY_HARDWARE_METRIC_NAMES = frozenset({
+    "cpmCPUTotal1minRev", "hh3cEntityExtCpuUsage", "hwEntityCpuUsage",
+    "ruijieCpuCostRate", "jnxOperatingCPU", "fnSysCpuUsage", "zteCpuRate",
+    "mpCpuUtilization5Min", "dptechCpuUsage", "hillstoneCPUUtilization",
+    "sangforCpuUsage", "dcnCpuUsage", "hh3cEntityExtMemUsage",
+    "hwEntityMemUsage", "ruijieMemoryPoolCurrentUtilization",
+    "jnxOperatingBuffer", "fnSysMemUsage", "zteMemRate", "mpMemoryUtilization",
+    "dptechMemUsage", "hillstoneMemoryUtilization", "sangforMemUsage",
+    "dcnMemUsage", "hh3cEntityExtTemperature", "hwEntityTemperature",
+    "ruijieDeviceTemperature", "jnxOperatingTemp", "entSensorValue",
+    "zteTemperature", "mpTemperature", "dptechTemperature",
+    "dcnTemperature", "hwWlanCurJointApNum", "hh3cDot11CurrOnlineAPNum",
+    "ruijieApcOnlineApNum", "ruijieApcTotalApNum", "cLApTotalUpAPs",
+    "wlsxSysExtAccessPointsNum", "ruckusZDTotalNumAP",
+    "hh3cDot11CurrAssocUserNum", "ruijieApcTotalStaNum",
+    "cLSysTotalNumOfClients", "wlsxSysExtStationsNum", "ruckusZDTotalNumSta",
+    "hwWlanSsid2gStaCnt", "hwWlanSsid5gStaCnt",
+})
+
+
+def _uses_normalized_external_metric(metric_key: str) -> bool:
+    return (
+        metric_key in NORMALIZED_PROVIDER_METRIC_KEYS
+        or metric_key.startswith(("nexora_hw_", "nexora_wireless_"))
+    )
+
+
+def normalized_hardware_metric_query(metric_key: str, *, asset_id: str | None = None) -> str:
+    metric_name = CANONICAL_PROMQL.get(metric_key, metric_key)
+    if not isinstance(metric_name, str) or not re.fullmatch(r"nexora_hw_[A-Za-z0-9_]+", metric_name):
+        raise ValueError("Unsupported normalized hardware metric")
+    matchers: list[str] = []
+    if asset_id:
+        escaped_asset_id = str(asset_id).replace("\\", "\\\\").replace('"', '\\"')
+        match_op = "=~" if "|" in str(asset_id) else "="
+        matchers.append(f'asset_id{match_op}"{escaped_asset_id}"')
+    matchers.append(LIBRENMS_RULE_SOURCE_MATCHER)
+    return f"{metric_name}{{{','.join(matchers)}}}"
 
 
 def counter_delta(current: int | float | None, previous: int | float | None, *, bits: int = 64) -> int | None:
@@ -148,8 +193,8 @@ class NativeMetricProvider(MetricProvider):
             raise ValueError(f"Unsupported metric key: {metric}")
         if metric in {"wireless_ap_online_count", "wireless_client_online_count"}:
             return "wireless", metric
-        if metric in {"cpu_usage_percent", "memory_usage_percent", "temperature_celsius"}:
-            return "device", {"cpu_usage_percent": "cpu_usage", "memory_usage_percent": "memory_usage", "temperature_celsius": "temp"}[metric]
+        if metric in HARDWARE_METRIC_KEYS:
+            return "hardware", CANONICAL_PROMQL[metric]
         mapping = {
             "in_bps": "avg_in_bps", "interface_rx_bps": "avg_in_bps",
             "out_bps": "avg_out_bps", "interface_tx_bps": "avg_out_bps",
@@ -163,7 +208,10 @@ class NativeMetricProvider(MetricProvider):
 
     def instant(self, *, query: str, asset_id: str | None = None, metric_key: str | None = None) -> dict[str, Any]:
         key = metric_key or query
-        if key in {"wireless_ap_online_count", "wireless_client_online_count"}:
+        if _uses_normalized_external_metric(key):
+            # Native device columns are historical snapshots with no verified
+            # LibreNMS-rule provenance. These values come from the normalized
+            # Nexora metric families exported to VictoriaMetrics only.
             return {"provider": self.name, "metric_key": key, "data": []}
         if key in {"interface_admin_status", "interface_oper_status", "interface_speed_bps"}:
             if not asset_id:
@@ -187,23 +235,19 @@ class NativeMetricProvider(MetricProvider):
             return {"provider": self.name, "metric_key": key, "data": []}
         conn = self.connection_factory()
         try:
-            if source == "device":
-                row = conn.execute(f"SELECT id, {column} AS value FROM devices WHERE id = ?", (asset_id,)).fetchone()
-                data = [] if not row else [{"asset_id": asset_id, "value": _float(row["value"] if hasattr(row, "keys") else row[1])}]
-            else:
-                # Keep the lookup bounded and use the latest native rollup.
-                row = conn.execute(
-                    f"SELECT device_id, ts_minute, {column} AS value FROM interface_telemetry_1m WHERE device_id = ? ORDER BY ts_minute DESC LIMIT 1",
-                    (asset_id,),
-                ).fetchone()
-                data = [] if not row else [{"asset_id": asset_id, "timestamp": row["ts_minute"], "value": _float(row["value"])}]
+            # Keep the lookup bounded and use the latest native rollup.
+            row = conn.execute(
+                f"SELECT device_id, ts_minute, {column} AS value FROM interface_telemetry_1m WHERE device_id = ? ORDER BY ts_minute DESC LIMIT 1",
+                (asset_id,),
+            ).fetchone()
+            data = [] if not row else [{"asset_id": asset_id, "timestamp": row["ts_minute"], "value": _float(row["value"])}]
             return {"provider": self.name, "metric_key": key, "data": data}
         finally:
             conn.close()
 
     def range(self, *, query: str, start: datetime, end: datetime, step_seconds: int, asset_id: str | None = None, metric_key: str | None = None) -> dict[str, Any]:
         key = metric_key or query
-        if key in {"wireless_ap_online_count", "wireless_client_online_count"}:
+        if _uses_normalized_external_metric(key):
             return {"provider": self.name, "metric_key": key, "step_seconds": step_seconds, "data": []}
         if key in {"interface_admin_status", "interface_oper_status", "interface_speed_bps"}:
             return self.instant(query=key, asset_id=asset_id, metric_key=key)
@@ -213,25 +257,19 @@ class NativeMetricProvider(MetricProvider):
         conn = self.connection_factory()
         try:
             start_s, end_s = _utc(start).isoformat(), _utc(end).isoformat()
-            if source == "device":
-                # Device snapshots are not historically dense; current values
-                # are still returned as a single point for provider parity.
-                row = conn.execute(f"SELECT id, {column} AS value FROM devices WHERE id = ?", (asset_id,)).fetchone()
-                data = [] if not row else [{"asset_id": asset_id, "timestamp": end_s, "value": _float(row["value"])}]
-            else:
-                rows = conn.execute(
-                    f"SELECT device_id, ts_minute, {column} AS value FROM interface_telemetry_1m WHERE device_id = ? AND ts_minute >= ? AND ts_minute <= ? ORDER BY ts_minute ASC",
-                    (asset_id, start_s, end_s),
-                ).fetchall()
-                rate_metric = key in {
-                    "interface_in_errors_rate", "interface_out_errors_rate",
-                    "interface_in_discards_rate", "interface_out_discards_rate",
-                }
-                data = [{
-                    "asset_id": asset_id,
-                    "timestamp": row["ts_minute"],
-                    "value": (_float(row["value"]) / max(1, int(step_seconds))) if rate_metric and _float(row["value"]) is not None else _float(row["value"]),
-                } for row in rows]
+            rows = conn.execute(
+                f"SELECT device_id, ts_minute, {column} AS value FROM interface_telemetry_1m WHERE device_id = ? AND ts_minute >= ? AND ts_minute <= ? ORDER BY ts_minute ASC",
+                (asset_id, start_s, end_s),
+            ).fetchall()
+            rate_metric = key in {
+                "interface_in_errors_rate", "interface_out_errors_rate",
+                "interface_in_discards_rate", "interface_out_discards_rate",
+            }
+            data = [{
+                "asset_id": asset_id,
+                "timestamp": row["ts_minute"],
+                "value": (_float(row["value"]) / max(1, int(step_seconds))) if rate_metric and _float(row["value"]) is not None else _float(row["value"]),
+            } for row in rows]
             return {"provider": self.name, "metric_key": key, "step_seconds": step_seconds, "data": data}
         finally:
             conn.close()
@@ -300,84 +338,40 @@ class VictoriaMetricsMetricProvider(MetricProvider):
         match_op = "=~" if is_regex else "="
         selector = f'{{asset_id{match_op}"{escaped}"}}' if asset_id else ""
 
-        if key == "cpu_usage_percent":
-            candidates = (
-                "cpmCPUTotal1minRev",
-                "hh3cEntityExtCpuUsage",
-                "hwEntityCpuUsage",
-                "ruijieCpuCostRate",
-                "jnxOperatingCPU",
-                "fnSysCpuUsage",
-                "zteCpuRate",
-                "mpCpuUtilization5Min",
-                "dptechCpuUsage",
-                "hillstoneCPUUtilization",
-                "sangforCpuUsage",
-                "dcnCpuUsage",
-                "cpu_usage_percent",
-            )
-            return " or ".join(f"{name}{selector}" for name in candidates)
+        if key in LEGACY_HARDWARE_METRIC_NAMES:
+            raise ValueError("Raw vendor hardware metrics are unsupported; use normalized Nexora metrics")
 
-        if key == "memory_usage_percent":
-            candidates = (
-                "hh3cEntityExtMemUsage",
-                "hwEntityMemUsage",
-                "ruijieMemoryPoolCurrentUtilization",
-                "jnxOperatingBuffer",
-                "fnSysMemUsage",
-                "zteMemRate",
-                "mpMemoryUtilization",
-                "dptechMemUsage",
-                "hillstoneMemoryUtilization",
-                "sangforMemUsage",
-                "dcnMemUsage",
-                "memory_usage_percent",
-            )
-            return " or ".join(f"{name}{selector}" for name in candidates)
+        if key in HARDWARE_METRIC_KEYS or key.startswith("nexora_hw_"):
+            return normalized_hardware_metric_query(key, asset_id=asset_id)
 
-        if key == "temperature_celsius":
-            candidates = (
-                "hh3cEntityExtTemperature",
-                "hwEntityTemperature",
-                "ruijieDeviceTemperature",
-                "jnxOperatingTemp",
-                "entSensorValue",
-                "zteTemperature",
-                "mpTemperature",
-                "dptechTemperature",
-                "dcnTemperature",
-                "temperature_celsius",
-            )
-            return " or ".join(f"{name}{selector}" for name in candidates)
+        def normalized_wireless_selector(component_class: str, sensor_class: str) -> str:
+            matchers = [selector[1:-1]] if asset_id else []
+            matchers.extend((
+                f'component_class="{component_class}"',
+                f'sensor_class="{sensor_class}"',
+                LIBRENMS_RULE_SOURCE_MATCHER,
+            ))
+            return f"nexora_wireless_sensor_value{{{','.join(matchers)}}}"
 
         if key == "wireless_ap_online_count":
-            candidates = (
-                "hwWlanCurJointApNum",
-                "hh3cDot11CurrOnlineAPNum",
-                "ruijieApcOnlineApNum",
-                "ruijieApcTotalApNum",
-                "cLApTotalUpAPs",
-                "wlsxSysExtAccessPointsNum",
-                "ruckusZDTotalNumAP",
-                "wireless_ap_online_count",
-            )
-            return " or ".join(f"{name}{selector}" for name in candidates)
+            ap_count = normalized_wireless_selector("wireless_controller", "ap-count")
+            return f"sum by (asset_id) ({ap_count})"
 
         if key == "wireless_client_online_count":
-            candidates = (
-                "hh3cDot11CurrAssocUserNum",
-                "ruijieApcTotalStaNum",
-                "cLSysTotalNumOfClients",
-                "wlsxSysExtStationsNum",
-                "ruckusZDTotalNumSta",
-                "wireless_client_online_count",
-            )
-            legacy = " or ".join(f"{name}{selector}" for name in candidates)
-            huawei_clients = (
-                f"(sum by (asset_id) (hwWlanSsid2gStaCnt{selector}) "
-                f"+ on (asset_id) sum by (asset_id) (hwWlanSsid5gStaCnt{selector}))"
-            )
-            return f"({legacy}) or ({huawei_clients})"
+            controller_clients = normalized_wireless_selector("wireless_controller", "clients")
+            ssid_clients = normalized_wireless_selector("wireless_ssid", "clients")
+            controller_total = f"sum by (asset_id) ({controller_clients})"
+            ssid_total = f"sum by (asset_id) ({ssid_clients})"
+            return f"({controller_total}) or on (asset_id) ({ssid_total})"
+
+        if key.startswith("nexora_wireless_"):
+            if not re.fullmatch(r"nexora_wireless_[A-Za-z0-9_]+", key):
+                raise ValueError("Metric query contains unsupported characters")
+            if key != "nexora_wireless_sensor_value":
+                raise ValueError("Unsupported normalized wireless metric")
+            metric_matchers = [selector[1:-1]] if asset_id else []
+            metric_matchers.append(LIBRENMS_RULE_SOURCE_MATCHER)
+            return f"{key}{{{','.join(metric_matchers)}}}"
 
         metric = CANONICAL_PROMQL.get(key)
         if metric is None:
@@ -444,6 +438,13 @@ class ShadowMetricProvider(MetricProvider):
         return comparison
 
     def instant(self, *, query: str, asset_id: str | None = None, metric_key: str | None = None) -> dict[str, Any]:
+        key = metric_key or query
+        if _uses_normalized_external_metric(key):
+            # These metrics have no trustworthy native-device snapshot source;
+            # the normalized exporter is their only current provider.
+            result = self.shadow.instant(query=query, asset_id=asset_id, metric_key=metric_key)
+            result["provider"] = self.name
+            return result
         native = self.primary.instant(query=query, asset_id=asset_id, metric_key=metric_key)
         vm = self.shadow.instant(query=query, asset_id=asset_id, metric_key=metric_key)
         comparison = self._compare(native, vm, asset_id=asset_id, metric_key=metric_key or query)
@@ -452,6 +453,18 @@ class ShadowMetricProvider(MetricProvider):
         return native
 
     def range(self, *, query: str, start: datetime, end: datetime, step_seconds: int, asset_id: str | None = None, metric_key: str | None = None) -> dict[str, Any]:
+        key = metric_key or query
+        if _uses_normalized_external_metric(key):
+            result = self.shadow.range(
+                query=query,
+                start=start,
+                end=end,
+                step_seconds=step_seconds,
+                asset_id=asset_id,
+                metric_key=metric_key,
+            )
+            result["provider"] = self.name
+            return result
         native = self.primary.range(query=query, start=start, end=end, step_seconds=step_seconds, asset_id=asset_id, metric_key=metric_key)
         vm = self.shadow.range(query=query, start=start, end=end, step_seconds=step_seconds, asset_id=asset_id, metric_key=metric_key)
         comparison = self._compare(native, vm, asset_id=asset_id, metric_key=metric_key or query)

@@ -67,10 +67,11 @@ def test_native_binding_migration_is_registered_idempotent_and_has_expected_shap
         _reset_and_apply(conn)
 
         registered = discover_migrations()
-        assert registered[-2].VERSION == 277
-        assert registered[-2].NAME == "librenms_native_bindings"
-        assert registered[-1].VERSION == 278
-        assert registered[-1].NAME == "librenms_native_inventory_projection"
+        by_version = {migration.VERSION: migration for migration in registered}
+        assert by_version[277].NAME == "librenms_native_bindings"
+        assert by_version[278].NAME == "librenms_native_inventory_projection"
+        assert by_version[279].NAME == "retire_custom_snmp_metric_profiles"
+        assert [migration.VERSION for migration in registered] == sorted(by_version)
 
         instance_columns = pg_catalog.table_columns(conn, "librenms_instances")
         binding_columns = pg_catalog.table_columns(conn, "librenms_device_bindings")

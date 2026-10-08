@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
-import threading
 from pathlib import Path
 
 from services import librenms_rule_service as rules
+from services import librenms_source_policy as source_policy
 from services import snmp_hardware_inventory_service as inventory
 from services import snmp_hardware_probe_service as probe
+from services import snmp_service
 
 
 def _walk_from(mapping):
@@ -17,137 +17,170 @@ def _walk_from(mapping):
     return walk
 
 
-def test_standard_hardware_keeps_every_cpu_and_only_ram_storage_rows():
-    oids = probe
-    rows = {
-        oids._HR_PROCESSOR_LOAD_OID: [("1", "21"), ("2", "47")],
-        oids._HR_STORAGE_TYPE_OID: [
-            ("6", oids._HR_STORAGE_RAM_TYPE),
-            ("7", "1.3.6.1.2.1.25.2.1.3"),
-        ],
-        oids._HR_STORAGE_DESCR_OID: [("6", "Physical Memory"), ("7", "Swap Space")],
-        oids._HR_STORAGE_UNITS_OID: [("6", "1024"), ("7", "1024")],
-        oids._HR_STORAGE_SIZE_OID: [("6", "1048576"), ("7", "2048")],
-        oids._HR_STORAGE_USED_OID: [("6", "524288"), ("7", "512")],
-        oids._ENTITY_NAME_OID: [("1", "CPU 1"), ("2", "CPU 2"), ("6", "RAM"), ("10", "Chassis Temperature")],
-        oids._ENTITY_CLASS_OID: [("10", "8")],
-        oids._ENTITY_SENSOR_SCALE_OID: [("10", "9"), ("11", "9"), ("12", "9")],
-        oids._ENTITY_SENSOR_PRECISION_OID: [("10", "1"), ("11", "1"), ("12", "0")],
-        oids._ENTITY_SENSOR_VALUE_OID: [("10", "255"), ("11", "180"), ("12", "500")],
-        oids._ENTITY_SENSOR_STATUS_OID: [("10", "1"), ("11", "3"), ("12", "1")],
-        oids._ENTITY_SENSOR_TYPE_OID: [("10", "8"), ("11", "8"), ("12", "9")],
-    }
+def _accept_fixture_rule(monkeypatch):
+    """Isolate rule-execution tests from the production provenance gate."""
+    monkeypatch.setattr(probe, "verify_bundled_rule", lambda _rule: True)
+    monkeypatch.setattr(probe, "_pinned_hardware_definition_matches", lambda _rule: True)
 
-    result = asyncio.run(probe.probe_standard_hardware(
-        "192.0.2.1", "test-only-community", 161, walk_func=_walk_from(rows),
+
+def test_unverified_librenms_rule_fails_before_device_reads(monkeypatch):
+    walked = []
+    monkeypatch.setattr(probe, "get_db_connection", lambda: (_ for _ in ()).throw(AssertionError("database must not be opened")))
+
+    async def walk(*args):
+        walked.append(args)
+        return []
+
+    result = asyncio.run(probe.probe_librenms_hardware(
+        "192.0.2.50", "test-only-community", 161,
+        rule={
+            "id": "unverified", "os_key": "example", "vendor": "Example",
+            "source_commit": "untrusted", "source_path": "custom.yaml",
+            "discovery_source_path": "custom.yaml",
+            "hardware_definitions": {"processors": [], "mempools": [], "sensors": []},
+        },
+        identity={"vendor": "Example"}, walk_func=walk,
     ))
 
-    cpu = [item for item in result["sensors"] if item["measurement_type"] == "cpu_usage_percent"]
-    assert [item["index"] for item in cpu] == [[1], [2]]
-    assert [item["value"] for item in cpu] == [21.0, 47.0]
+    assert result["sensors"] == []
+    assert result["category_results"] == [{
+        "source_type": "librenms_rule", "component_class": "source",
+        "status": "unsupported", "coverage_complete": False,
+        "reason_code": "unverified_librenms_rule",
+        "reason": "The OS rule source or parsed hardware definitions do not match the pinned LibreNMS bundle.",
+    }]
+    assert walked == []
 
-    memory = [item for item in result["sensors"] if item["component_class"] == "memory_pool"]
-    assert len(memory) == 3
-    assert {item["measurement_type"] for item in memory} == {
-        "memory_used_bytes", "memory_total_bytes", "memory_usage_percent",
-    }
-    assert all(item["index"] == [6] for item in memory)
-    assert next(item for item in memory if item["measurement_type"] == "memory_usage_percent")["value"] == 50.0
 
-    temperature = next(
-        item for item in result["sensors"]
-        if item["measurement_type"] == "temperature_celsius" and item["index"] == [10]
+def test_verified_rule_without_supported_yaml_definitions_fails_closed(monkeypatch):
+    _accept_fixture_rule(monkeypatch)
+    walked = []
+    monkeypatch.setattr(
+        probe,
+        "get_db_connection",
+        lambda: (_ for _ in ()).throw(AssertionError("database must not be opened")),
     )
-    assert temperature["value"] == 25.5
-    assert temperature["sensor_name"] == "Chassis Temperature"
-    unavailable_temperature = next(
-        item for item in result["sensors"]
-        if item["measurement_type"] == "temperature_celsius" and item["index"] == [11]
+
+    async def walk(*args):
+        walked.append(args)
+        return []
+
+    result = asyncio.run(probe.probe_librenms_hardware(
+        "192.0.2.53", "test-only-community", 161,
+        rule={
+            "id": "unsupported-method-only", "os_key": "example", "vendor": "Example",
+            "hardware_definitions": {"processors": [], "mempools": [], "sensors": []},
+        },
+        identity={"vendor": "Example"}, walk_func=walk,
+    ))
+
+    assert result["sensors"] == []
+    assert result["category_results"] == [{
+        "source_type": "librenms_rule", "component_class": "source",
+        "status": "unsupported", "coverage_complete": False,
+        "reason_code": "unsupported_librenms_rule",
+        "reason": "The pinned LibreNMS YAML rule has no hardware definitions supported by this executor.",
+    }]
+    assert walked == []
+
+
+def test_hardware_definition_payload_must_match_pinned_yaml():
+    os_key = "vrp"
+    source_path = f"resources/definitions/os_discovery/{os_key}.yaml"
+    discovery, diagnostics = rules._load_yaml_result(
+        source_policy.LIBRENMS_BUNDLE_ROOT / source_path,
     )
-    assert unavailable_temperature["quality"] == "missing"
-    assert unavailable_temperature["value"] is None
-    assert not any(item["index"] == [12] for item in result["sensors"])
-    environmental = next(
-        item for item in result["category_results"]
-        if item["component_class"] == "environmental_sensor"
-    )
-    assert environmental["status"] == "partial"
+    hardware = rules._parse_hardware_definitions(discovery, source_path=source_path)
+    if diagnostics:
+        hardware["compatibility"]["diagnostics"].extend(diagnostics)
+        source_errors = [
+            item for item in diagnostics
+            if item.get("code") != "yaml_recovered_upstream_format"
+        ]
+        if source_errors and hardware["compatibility"]["level"] == "supported":
+            hardware["compatibility"]["level"] = "partial"
+    rule = {"os_key": os_key, "hardware_definitions": hardware}
+
+    assert probe._pinned_hardware_definition_matches(rule)
+    changed = json.loads(json.dumps(hardware))
+    changed["processors"][0]["num_oid"] = "1.3.6.1.4.1.55555.99.{{ $index }}"
+    assert not probe._pinned_hardware_definition_matches({
+        "os_key": os_key, "hardware_definitions": changed,
+    })
 
 
-def test_entity_sensor_poll_uses_rfc_scale_and_precision_and_checks_sensor_type(monkeypatch):
-    import database
+def test_definition_oid_prefers_explicit_value_and_fails_closed(monkeypatch):
+    resolved_symbols = {"TEST-MIB::sampleValue": "1.3.6.1.4.1.55555.9.1"}
+    seen = []
 
-    writes = []
-    persistence_thread_ids = []
-    event_loop_thread_id = threading.get_ident()
+    def resolve(_conn, token, *, vendor="", cache=None):
+        seen.append(str(token))
+        return resolved_symbols.get(str(token), "")
+
+    monkeypatch.setattr(probe, "_resolve_mib_symbol", resolve)
+    assert probe._resolve_definition_oid(
+        None,
+        {"value_oid": "TEST-MIB::sampleValue", "num_oid": "1.3.6.1.4.1.55555.1"},
+        vendor="Example",
+    ) == "1.3.6.1.4.1.55555.9.1"
+    assert seen == ["TEST-MIB::sampleValue"]
+
+    assert probe._resolve_definition_oid(
+        None,
+        {"value_oid": "UNKNOWN-MIB::missing", "num_oid": "1.3.6.1.4.1.55555.1", "table_oid": "1.3.6.1.4.1.55555.2"},
+        vendor="Example",
+    ) == ""
+    assert probe._resolve_definition_oid(
+        None,
+        {"num_oid": "1.3.6.1.4.1.55555.1"},
+        vendor="Example",
+    ) == "1.3.6.1.4.1.55555.1"
+
+
+def test_entity_physical_name_template_resolves_full_module_symbol(monkeypatch):
+    _accept_fixture_rule(monkeypatch)
+    sensor_oid = "1.3.6.1.4.1.55555.11.1"
+    entity_name_oid = probe._ENTITY_NAME_OID
+    requested_symbols = []
 
     class Connection:
-        def commit(self):
-            pass
-
-        def rollback(self):
-            pass
-
         def close(self):
             pass
 
-    connection = Connection()
-    monkeypatch.setattr(database, "get_db_connection", lambda: connection)
-    monkeypatch.setattr(
-        inventory,
-        "record_sensor_samples_batch",
-        lambda _conn, samples: (
-            persistence_thread_ids.append(threading.get_ident()),
-            writes.extend(
-                (sample["device_id"], sample["sensor_key"], sample["value"],
-                 sample["raw_value"], sample["quality"])
-                for sample in samples
-            ),
-        ),
-    )
-    oids = probe
-    rows = {
-        oids._ENTITY_SENSOR_VALUE_OID: [("10", "425"), ("11", "500")],
-        oids._ENTITY_SENSOR_TYPE_OID: [("10", "8"), ("11", "9")],
-        oids._ENTITY_SENSOR_SCALE_OID: [("10", "9"), ("11", "9")],
-        oids._ENTITY_SENSOR_PRECISION_OID: [("10", "1"), ("11", "0")],
-        oids._ENTITY_SENSOR_STATUS_OID: [("10", "1"), ("11", "1")],
-    }
-    sensors = [
-        {
-            "device_id": "device-1", "sensor_key": "temperature-10",
-            "component_class": "temperature", "measurement_type": "temperature_celsius",
-            "index": [10], "states": {}, "metadata": {"poll_plan": {
-                "kind": "entity_sensor", "index": "10", "expected_type": 8,
-                "value_oid": oids._ENTITY_SENSOR_VALUE_OID,
-                "type_oid": oids._ENTITY_SENSOR_TYPE_OID,
-                "scale_oid": oids._ENTITY_SENSOR_SCALE_OID,
-                "precision_oid": oids._ENTITY_SENSOR_PRECISION_OID,
-                "status_oid": oids._ENTITY_SENSOR_STATUS_OID,
-            }},
-        },
-        {
-            "device_id": "device-1", "sensor_key": "temperature-11",
-            "component_class": "temperature", "measurement_type": "temperature_celsius",
-            "index": [11], "states": {}, "metadata": {"poll_plan": {
-                "kind": "entity_sensor", "index": "11", "expected_type": 8,
-                "value_oid": oids._ENTITY_SENSOR_VALUE_OID,
-                "type_oid": oids._ENTITY_SENSOR_TYPE_OID,
-                "scale_oid": oids._ENTITY_SENSOR_SCALE_OID,
-                "precision_oid": oids._ENTITY_SENSOR_PRECISION_OID,
-                "status_oid": oids._ENTITY_SENSOR_STATUS_OID,
-            }},
-        },
-    ]
+    def resolve(_conn, token, *, vendor="", cache=None):
+        requested_symbols.append(str(token))
+        return entity_name_oid if str(token) == "ENTITY-MIB::entPhysicalName" else ""
 
-    result = asyncio.run(probe.poll_hardware_inventory(
-        "192.0.2.3", "test-only-community", 161, "2c", sensors, walk_func=_walk_from(rows),
+    monkeypatch.setattr(probe, "get_db_connection", lambda: Connection())
+    monkeypatch.setattr(probe, "_resolve_mib_symbol", resolve)
+    rule = {
+        "id": "entity-name-template", "os_key": "example", "vendor": "Example",
+        "hardware_definitions": {
+            "processors": [], "mempools": [],
+            "sensors": [{
+                "source_module": "sensors", "source_class": "temperature",
+                "component_class": "temperature", "measurement_type": "temperature",
+                "numeric_oid_prefix": sensor_oid, "num_oid": sensor_oid,
+                "unit": "celsius", "descr": "{{ ENTITY-MIB::entPhysicalName:2 }} {{ $subindex1 }}",
+                "raw": {"num_oid": sensor_oid, "unit": "celsius"}, "limits": {},
+            }],
+        },
+    }
+    result = asyncio.run(probe.probe_librenms_hardware(
+        "192.0.2.51", "test-only-community", 161, rule=rule,
+        identity={"vendor": "Example"},
+        walk_func=_walk_from({
+            sensor_oid: [("1.2", "41")],
+            entity_name_oid: [("1", "Chassis"), ("2", "Line card")],
+        }),
     ))
 
-    assert result == {"good": 1, "missing": 0, "invalid": 0, "unsupported_mapping": 1}
-    assert persistence_thread_ids and persistence_thread_ids[0] != event_loop_thread_id
-    assert writes[0][2:] == (42.5, "425", "good")
-    assert writes[1][2:] == (None, "500", "unsupported_mapping")
+    assert "ENTITY-MIB::entPhysicalName" in requested_symbols
+    assert next(item for item in result["sensors"] if item["component_class"] == "temperature")["sensor_name"] == "Line card 2"
+
+
+
+
 
 
 def test_librenms_state_generic_integer_codes_are_normalized():
@@ -169,6 +202,7 @@ def test_librenms_state_generic_integer_codes_are_normalized():
 
 
 def test_librenms_probe_retains_all_rows_and_marks_unknown_cpu_window(monkeypatch):
+    _accept_fixture_rule(monkeypatch)
     monkeypatch.setattr(probe, "get_db_connection", lambda: None)
     cpu_oid = "1.3.6.1.4.1.55555.1.1"
     temp_oid = "1.3.6.1.4.1.55555.2.1"
@@ -214,12 +248,15 @@ def test_librenms_probe_retains_all_rows_and_marks_unknown_cpu_window(monkeypatc
     assert len(temp) == 2
     assert {tuple(item["index"]) for item in temp} == {(101,), (102,)}
     assert all(item["quality"] == "good" for item in temp)
+    assert all(item["source_type"] == "librenms_rule" for item in [*cpu, *temp])
+    assert {item["source_type"] for item in result["category_results"]} == {"librenms_rule"}
     assert all(item["coverage_complete"] for item in result["category_results"])
 
 
 def test_vrp_fixture_executes_external_and_self_oid_skip_conditions(monkeypatch):
     import database
 
+    _accept_fixture_rule(monkeypatch)
     fixture_root = Path(__file__).parent / "fixtures" / "librenms_rule_service"
     rule = next(item for item in rules.parse_rules(fixture_root) if item["os_key"] == "vrp")
     cpu_oid = "1.3.6.1.4.1.2011.5.25.31.1.1.1.1.5"
@@ -231,6 +268,7 @@ def test_vrp_fixture_executes_external_and_self_oid_skip_conditions(monkeypatch)
     temperature_oid = "1.3.6.1.4.1.2011.5.25.31.1.1.3.1.5"
     mode_oid = "1.3.6.1.4.1.2011.5.25.31.1.1.3.1.99"
     symbol_oids = {
+        "hwEntityCpuUsage": cpu_oid,
         "hwEntityOperStatus": status_oid,
         "hwEntityCpuUsageThreshold": threshold_oid,
         "hwEntityMemoryUsage": used_oid,
@@ -308,6 +346,7 @@ def test_vrp_fixture_executes_external_and_self_oid_skip_conditions(monkeypatch)
 
 
 def test_comware_fixture_maps_integer_state_codes_and_scalar_zero_skip(monkeypatch):
+    _accept_fixture_rule(monkeypatch)
     fixture_root = Path(__file__).parent / "fixtures" / "librenms_rule_service"
     rule = next(item for item in rules.parse_rules(fixture_root) if item["os_key"] == "comware")
     fan_oid = "1.3.6.1.4.1.25506.8.35.9.1.1.1.2"
@@ -324,6 +363,15 @@ def test_comware_fixture_maps_integer_state_codes_and_scalar_zero_skip(monkeypat
             pass
 
     monkeypatch.setattr(probe, "get_db_connection", lambda: Connection())
+    symbol_oids = {
+        "hh3cDevMFanStatus": fan_oid,
+        "hh3cDevMPowerStatus": power_oid,
+        "hh3cEntityExtCurrentPower": watts_oid,
+    }
+    monkeypatch.setattr(
+        probe, "_resolve_mib_symbol",
+        lambda _conn, token, vendor="", cache=None: symbol_oids.get(str(token).rsplit("::", 1)[-1], ""),
+    )
 
     result = asyncio.run(probe.probe_librenms_hardware(
         "192.0.2.11", "test-only-community", 161, rule=rule,
@@ -339,109 +387,10 @@ def test_comware_fixture_maps_integer_state_codes_and_scalar_zero_skip(monkeypat
     assert [(item["index"], item["value"]) for item in watts] == [([2], 1.5)]
 
 
-def test_pinned_librenms_comware_sources_match_manifest():
-    bundle_root = Path(__file__).resolve().parents[2] / "vendor" / "librenms"
-    manifest = json.loads((bundle_root / "source-manifest.json").read_text(encoding="utf-8"))
-    expected_commit = "6c26b4fe4a40f7b392c19c36a44257212736e38c"
-    assert manifest["upstream_commit"] == expected_commit
-    sources = manifest["upstream_adapter_sources"]
-    assert {item["upstream_path"] for item in sources} == {
-        "LibreNMS/OS/Comware.php",
-        "includes/discovery/sensors/dbm/comware.inc.php",
-        "includes/discovery/sensors/temperature/comware.inc.php",
-        "includes/discovery/sensors/voltage/comware.inc.php",
-        "includes/discovery/sensors/current/comware.inc.php",
-    }
-    helpers = manifest["upstream_runtime_helper_sources"]
-    assert {item["upstream_path"] for item in helpers} == {
-        "app/Models/Mempool.php",
-        "LibreNMS/Util/Number.php",
-        "includes/common.php",
-    }
-    for item in [*sources, *helpers]:
-        source = bundle_root / item["bundle_path"]
-        content = source.read_bytes()
-        assert len(content) == item["size_bytes"]
-        assert hashlib.sha256(content).hexdigest() == item["sha256"]
-    license_item = manifest["upstream_license"]
-    license_content = (bundle_root / license_item["bundle_path"]).read_bytes()
-    assert len(license_content) == license_item["size_bytes"]
-    assert hashlib.sha256(license_content).hexdigest() == license_item["sha256"]
 
 
-def test_comware_adapters_follow_pinned_librenms_cpu_memory_and_temperature_rules():
-    rule = {
-        "id": "h3c-comware",
-        "os_key": "comware",
-        "source_commit": "6c26b4fe4a40f7b392c19c36a44257212736e38c",
-    }
-    rows = {
-        probe._H3C_ENTITY_CPU_USAGE_OID: [("1", "17"), ("2", "0"), ("3", "101")],
-        probe._H3C_ENTITY_MEM_USAGE_OID: [("1", "25"), ("2", "0"), ("3", "50"), ("6", "150")],
-        probe._H3C_ENTITY_MEM_SIZE_OID: [("1", "1000")],
-        probe._ENTITY_CLASS_OID: [
-            ("1", "module(9)"), ("2", "module"), ("3", "module"),
-            ("4", "sensor(8)"), ("5", "fan(7)"), ("6", "module"),
-        ],
-        probe._ENTITY_NAME_OID: [
-            ("1", "Main module"), ("2", "Zero module"), ("3", "Memory module"),
-            ("4", "Inlet temperature"), ("5", "Fan module"), ("6", "Large percentage module"),
-        ],
-        probe._H3C_ENTITY_TEMPERATURE_OID: [
-            ("1", "44"), ("2", "65535"), ("4", "48"), ("5", "53"),
-        ],
-        probe._H3C_ENTITY_TEMPERATURE_THRESHOLD_OID: [
-            ("1", "60"), ("2", "65535"), ("4", "65535"), ("5", "70"),
-        ],
-    }
 
-    result = asyncio.run(probe._probe_h3c_comware_cpu_memory(
-        "192.0.2.14", "test-only-community", 161, rule=rule,
-        version="2c", walk_func=_walk_from(rows),
-    ))
 
-    cpu = [item for item in result["sensors"] if item["component_class"] == "processor"]
-    assert [(item["index"], item["value"]) for item in cpu] == [([1], 17.0), ([3], 101.0)]
-    assert all(item["metadata"]["source_path"] == "LibreNMS/OS/Comware.php" for item in cpu)
-
-    memory = [item for item in result["sensors"] if item["component_class"] == "memory_pool"]
-    by_index = {}
-    for item in memory:
-        by_index.setdefault(tuple(item["index"]), {})[item["measurement_type"]] = item
-    assert set(by_index[(1,)]) == {
-        "memory_used_bytes", "memory_total_bytes", "memory_usage_percent",
-    }
-    assert by_index[(1,)]["memory_used_bytes"]["value"] == 250.0
-    assert by_index[(1,)]["memory_total_bytes"]["value"] == 1000.0
-    assert by_index[(1,)]["memory_usage_percent"]["value"] == 25.0
-    # LibreNMS fillUsage() creates a 100-unit denominator when size is absent,
-    # and normalizePercent() scales values above 100 by powers of ten.
-    assert set(by_index[(3,)]) == {
-        "memory_used_bytes", "memory_total_bytes", "memory_usage_percent",
-    }
-    assert by_index[(3,)]["memory_used_bytes"]["value"] == 50.0
-    assert by_index[(3,)]["memory_total_bytes"]["value"] == 100.0
-    assert by_index[(3,)]["memory_usage_percent"]["value"] == 50.0
-    assert by_index[(6,)]["memory_used_bytes"]["value"] == 15.0
-    assert by_index[(6,)]["memory_total_bytes"]["value"] == 100.0
-    assert by_index[(6,)]["memory_usage_percent"]["value"] == 15.0
-    assert by_index[(1,)]["memory_usage_percent"]["metadata"]["source_path"] == (
-        "LibreNMS/OS/Comware.php"
-    )
-
-    temperatures = [
-        item for item in result["sensors"]
-        if item["component_class"] == "temperature"
-    ]
-    assert {tuple(item["index"]) for item in temperatures} == {(1,), (4,)}
-    module_temperature = next(item for item in temperatures if item["index"] == [1])
-    assert module_temperature["value"] == 44.0
-    assert module_temperature["thresholds"] == {"high_limit": 60.0}
-    assert module_temperature["metadata"]["source_path"] == (
-        "includes/discovery/sensors/temperature/comware.inc.php"
-    )
-    sensor_temperature = next(item for item in temperatures if item["index"] == [4])
-    assert sensor_temperature["thresholds"] == {}
 
 
 def test_mempool_values_match_librenms_percent_only_and_overflow_normalization():
@@ -461,87 +410,8 @@ def test_mempool_values_match_librenms_percent_only_and_overflow_normalization()
     assert fractional == {"used": 50.24, "total": 100.0, "percent_used": 50.0}
 
 
-def test_comware_transceiver_metrics_follow_pinned_librenms_filters_and_scales():
-    rule = {
-        "id": "h3c-comware",
-        "os_key": "comware",
-        "source_commit": "6c26b4fe4a40f7b392c19c36a44257212736e38c",
-    }
-    table_oid = probe._H3C_TRANSCEIVER_TABLE_OID
-    table_rows = [
-        ("8.1", "false"), ("9.1", "1500"), ("12.1", "2000"),
-        ("15.1", "42"), ("16.1", "330"), ("17.1", "1000"),
-        ("31.1", "1000"), ("33.1", "2000"), ("32.1", "3000"), ("30.1", "4000"),
-        ("35.1", "12345"), ("37.1", "20000"), ("36.1", "30000"), ("34.1", "40000"),
-        ("19.1", "1000"), ("21.1", "2000"), ("20.1", "3000"), ("18.1", "45000"),
-        ("23.1", "20000"), ("25.1", "25000"), ("24.1", "30000"), ("22.1", "35000"),
-        ("27.1", "10000"), ("29.1", "15000"), ("28.1", "20000"), ("26.1", "25000"),
-        # An administratively down interface, an unresolved port, a row without
-        # the diagnostic column, and a LibreNMS sentinel value are all excluded.
-        ("8.2", "false"), ("9.2", "1000"),
-        ("8.3", "false"), ("9.3", "1000"),
-        ("9.4", "1000"),
-        ("8.5", "false"), ("9.5", "2147483647"),
-    ]
-    rows = {
-        table_oid: table_rows,
-        probe._IF_NAME_OID: [("1", "GigabitEthernet1/0/1"), ("2", "GigabitEthernet1/0/2"), ("4", "GigabitEthernet1/0/4"), ("5", "GigabitEthernet1/0/5")],
-        probe._IF_ADMIN_STATUS_OID: [("1", "1"), ("2", "2"), ("3", "1"), ("4", "1"), ("5", "1")],
-    }
-
-    result = asyncio.run(probe._probe_h3c_comware_transceivers(
-        "192.0.2.14", "test-only-community", 161, rule=rule,
-        identity={"vendor": "H3C"}, version="2c", walk_func=_walk_from(rows),
-    ))
-
-    assert {item["measurement_type"] for item in result["sensors"]} == {
-        "optical_power_dbm", "temperature_celsius", "voltage_volts", "current_amperes",
-    }
-    assert {tuple(item["index"]) for item in result["sensors"]} == {(1,)}
-    tx = next(item for item in result["sensors"] if item["oid"].endswith(".9"))
-    rx = next(item for item in result["sensors"] if item["oid"].endswith(".12"))
-    assert tx["value"] == 15.0
-    assert tx["thresholds"]["low_alarm"] == -10.0
-    assert rx["value"] == 20.0
-    assert rx["thresholds"]["low_alarm"] == 0.91
-    voltage = next(item for item in result["sensors"] if item["measurement_type"] == "voltage_volts")
-    assert voltage["value"] == 3.3
-    assert voltage["thresholds"]["high_alarm"] == 3.5
-    current = next(item for item in result["sensors"] if item["measurement_type"] == "current_amperes")
-    assert current["value"] == 0.01
-    assert current["thresholds"]["high_alarm"] == 0.025
-    assert all(item["metadata"]["source_commit"] == rule["source_commit"] for item in result["sensors"])
-    expected_source_paths = {
-        "optical_power": "includes/discovery/sensors/dbm/comware.inc.php",
-        "temperature": "includes/discovery/sensors/temperature/comware.inc.php",
-        "voltage": "includes/discovery/sensors/voltage/comware.inc.php",
-        "current": "includes/discovery/sensors/current/comware.inc.php",
-    }
-    assert all(
-        item["metadata"]["source_path"] == expected_source_paths[item["component_class"]]
-        and item["metadata"]["adapter_source_files"] == [item["metadata"]["source_path"]]
-        for item in result["sensors"]
-    )
 
 
-def test_comware_wx_does_not_emit_nexora_only_wireless_hardware(monkeypatch):
-    async def empty_adapter(*_args, **_kwargs):
-        return {"sensors": [], "category_results": []}
-
-    monkeypatch.setattr(probe, "get_db_connection", lambda: None)
-    monkeypatch.setattr(probe, "_probe_h3c_comware_cpu_memory", empty_adapter)
-    monkeypatch.setattr(probe, "_probe_h3c_comware_transceivers", empty_adapter)
-
-    identity = {"vendor": "H3C", "model": "H3C WX5540H", "role": "network_device"}
-    result = asyncio.run(probe.probe_librenms_hardware(
-        "192.0.2.14", "test-only-community", 161,
-        rule={"vendor": "H3C", "os_key": "comware", "hardware_definitions": {}},
-        identity=identity, walk_func=_walk_from({}),
-    ))
-
-    assert not any(item["source_type"] == "h3c_wireless" for item in result["sensors"])
-    assert not any(item["source_type"] == "h3c_wireless" for item in result["category_results"])
-    assert probe._wireless_controller_scope(identity) is False
 
 
 def test_skip_value_supports_librenms_string_regex_exists_and_index_operators():
@@ -610,6 +480,7 @@ def test_skip_values_resolve_librenms_device_hardware_and_version_from_identity(
 
 
 def test_librenms_device_version_filter_is_snapshotted_into_poll_plan(monkeypatch):
+    _accept_fixture_rule(monkeypatch)
     monkeypatch.setattr(probe, "get_db_connection", lambda: None)
     temp_oid = "1.3.6.1.4.1.55555.7.1"
     rule = {
@@ -644,6 +515,7 @@ def test_librenms_device_version_filter_is_snapshotted_into_poll_plan(monkeypatc
 
 
 def test_unifi_mempool_with_missing_frogfoot_mib_is_explicitly_unsupported(monkeypatch):
+    _accept_fixture_rule(monkeypatch)
     monkeypatch.setattr(probe, "get_db_connection", lambda: None)
     monkeypatch.setattr(probe, "_get_many", lambda *_args: asyncio.sleep(0, result={}))
     source = rules.source_root() / "resources/definitions/os_discovery/unifi.yaml"
@@ -661,12 +533,14 @@ def test_unifi_mempool_with_missing_frogfoot_mib_is_explicitly_unsupported(monke
     ))
 
     assert result["sensors"] == []
+    assert {item["source_type"] for item in result["category_results"]} == {"librenms_rule"}
     memory = next(item for item in result["category_results"] if item["component_class"] == "memory_pool")
     assert memory["status"] == "unsupported"
     assert memory["reason_code"] == "unsupported_definition"
 
 
 def test_librenms_skip_conditions_handle_missing_rows_and_fixed_oid_indexes(monkeypatch):
+    _accept_fixture_rule(monkeypatch)
     temp_oid = "1.3.6.1.4.1.55555.1.1"
     voltage_oid = "1.3.6.1.4.1.55555.2.1"
     status_oid = "1.3.6.1.4.1.55555.3.1"
@@ -730,6 +604,7 @@ def test_librenms_skip_conditions_handle_missing_rows_and_fixed_oid_indexes(monk
 def test_unimplemented_librenms_user_func_never_exports_raw_as_canonical(monkeypatch):
     import database
 
+    _accept_fixture_rule(monkeypatch)
     temp_oid = "1.3.6.1.4.1.55555.5.1"
     rule = {
         "id": "librenms-user-func-test", "os_key": "example", "vendor": "Example",
@@ -784,3 +659,33 @@ def test_unimplemented_librenms_user_func_never_exports_raw_as_canonical(monkeyp
     ))
     assert poll_result == {"good": 0, "missing": 0, "invalid": 0, "unsupported_mapping": 1}
     assert writes == [(None, "86", "unsupported_mapping")]
+
+
+def test_poll_batches_exact_instance_oids_without_table_walks(monkeypatch):
+    base_oid = "1.3.6.1.4.1.55555.20.1"
+    requested_batches = []
+    persisted = []
+
+    async def get_many(_ip, _community, oids, _port, _version):
+        requested_batches.append(list(oids))
+        return {oid: "420" for oid in oids}
+
+    monkeypatch.setattr(snmp_service, "_snmp_get_many_versioned", get_many)
+    monkeypatch.setattr(probe, "_persist_hardware_sensor_samples", lambda samples: persisted.extend(samples))
+    result = asyncio.run(probe.poll_hardware_inventory(
+        "192.0.2.52", "test-only-community", 161, "2c",
+        [{
+            "device_id": "device-get-batch", "sensor_key": "temperature-17",
+            "measurement_type": "temperature_celsius", "lifecycle_status": "active",
+            "enabled": True,
+            "metadata": {"poll_plan": {
+                "kind": "direct", "oid": base_oid, "index": "17",
+                "factor": 0.1, "offset": 0.0,
+            }},
+        }],
+    ))
+
+    assert requested_batches == [[f"{base_oid}.17"]]
+    assert result == {"good": 1, "missing": 0, "invalid": 0, "unsupported_mapping": 0}
+    assert persisted[0]["raw_value"] == "420"
+    assert persisted[0]["value"] == 42.0

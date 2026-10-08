@@ -179,38 +179,6 @@ const localizeHealthText = (value: unknown, language: string) => {
   return raw;
 };
 
-const SNMP_PROFILE_STATUS_ZH: Record<string, string> = {
-  verified: '已验证',
-  unverified: '待验证',
-  failed: '验证失败',
-  none: '未配置',
-};
-const SNMP_PROFILE_SOURCE_ZH: Record<string, string> = {
-  snmp_template: 'SNMP 型号模板',
-  official: '官方内置模板',
-  custom: '自定义模板',
-  legacy: '迁移的旧模板',
-  model_profile: '型号模板',
-  device_override: '旧版单台覆盖（已忽略）',
-  mixed: 'SNMP 型号模板',
-  template_blocked: '模板未生效',
-  template_not_applied: '未应用 SNMP 模板',
-  builtin_default: '已停用的内置默认',
-};
-const SNMP_PROFILE_SOURCE_EN: Record<string, string> = {
-  snmp_template: 'SNMP model template',
-  official: 'Official built-in template',
-  custom: 'Custom template',
-  legacy: 'Migrated legacy template',
-  none: 'No template selected',
-  model_profile: 'Model template',
-  device_override: 'Legacy device override (ignored)',
-  mixed: 'SNMP model template',
-  template_blocked: 'Template blocked',
-  template_not_applied: 'SNMP template not applied',
-  builtin_default: 'Disabled built-in default',
-};
-
 const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
   language,
   t,
@@ -237,18 +205,6 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
   const [selectedPlatformProfileId, setSelectedPlatformProfileId] = useState(viewingDevice.platform_profile_id || '');
   const [lockPlatformBinding, setLockPlatformBinding] = useState(Boolean(viewingDevice.platform_locked));
   const isAdministrator = currentUserRole === 'Administrator';
-  const snmpProfile = viewingDevice.snmp_metric_profile;
-  const snmpProfileStatus = snmpProfile?.status || 'none';
-  const snmpProfileSource = snmpProfile?.template_source || snmpProfile?.source || 'template_not_applied';
-  const snmpProfileName = snmpProfile?.id
-    ? snmpProfile.name || [snmpProfile.vendor, snmpProfile.model].filter(Boolean).join(' · ') || snmpProfile.id
-    : (language === 'zh' ? '未关联型号模板' : 'No model template');
-  const snmpMetricLabels: Record<string, string> = language === 'zh'
-    ? { cpu: 'CPU', memory: '内存', temperature: '温度', fan: '风扇', power_supply: '电源' }
-    : { cpu: 'CPU', memory: 'Memory', temperature: 'Temp', fan: 'Fan', power_supply: 'PSU' };
-  const snmpHealthMetrics = (snmpProfile?.metric_keys || [])
-    .map((key) => snmpMetricLabels[key] || key)
-    .join(' / ');
   const identificationVersion = String(platformResult?.version || viewingDevice.version || '').trim();
   const platformAlreadyBound = Boolean(viewingDevice.platform_profile_id);
   const deviceVendor = inferPlatformVendor(viewingDevice.vendor, viewingDevice.platform);
@@ -619,16 +575,6 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-cyan-100 bg-cyan-50/50 p-3">
-                <h4 className="mb-2 text-[10px] font-bold uppercase tracking-widest text-cyan-900/60">{language === 'zh' ? 'SNMP 健康模板' : 'SNMP Health Template'}</h4>
-                <div className="space-y-1.5 text-sm">
-                  <div className="flex justify-between gap-3"><span className="text-cyan-900/50">{language === 'zh' ? '关联模板' : 'Profile'}</span><span className="max-w-[190px] truncate text-right font-medium text-cyan-950" title={snmpProfileName}>{snmpProfileName}</span></div>
-                  <div className="flex justify-between gap-3"><span className="text-cyan-900/50">{language === 'zh' ? '来源' : 'Source'}</span><span className="text-right font-medium text-cyan-950">{language === 'zh' ? SNMP_PROFILE_SOURCE_ZH[snmpProfileSource] || snmpProfileSource : SNMP_PROFILE_SOURCE_EN[snmpProfileSource] || snmpProfileSource}</span></div>
-                  <div className="flex justify-between gap-3"><span className="text-cyan-900/50">{language === 'zh' ? '模板 ID' : 'Template ID'}</span><span className="max-w-[190px] truncate text-right font-mono text-[11px] font-medium text-cyan-950" title={viewingDevice.snmp_metric_profile_id || ''}>{viewingDevice.snmp_metric_profile_id || '—'}</span></div>
-                  <div className="flex justify-between gap-3"><span className="text-cyan-900/50">{language === 'zh' ? '状态' : 'Status'}</span><span className={`text-right font-semibold ${snmpProfileStatus === 'verified' ? 'text-emerald-700' : snmpProfileStatus === 'failed' ? 'text-red-600' : 'text-amber-700'}`}>{language === 'zh' ? SNMP_PROFILE_STATUS_ZH[snmpProfileStatus] || snmpProfileStatus : snmpProfileStatus}</span></div>
-                  <div className="flex justify-between gap-3"><span className="text-cyan-900/50">{language === 'zh' ? '健康指标' : 'Health metrics'}</span><span className="max-w-[190px] truncate text-right font-medium text-cyan-950" title={snmpHealthMetrics || 'No template metrics'}>{snmpHealthMetrics || (language === 'zh' ? '未配置模板指标' : 'No template metrics')}</span></div>
-                </div>
-              </div>
             </div>
 
           </div>

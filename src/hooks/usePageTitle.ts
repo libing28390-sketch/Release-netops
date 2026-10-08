@@ -85,7 +85,7 @@ export const usePageTitle = ({
     if (activeTab === 'storage-files') return language === 'zh' ? '文件浏览' : 'File Browser';
     if (activeTab === 'email-settings') return language === 'zh' ? '邮件通知' : 'Email Notifications';
     if (activeTab === 'platform-registry') return language === 'zh' ? '平台注册' : 'Platform Registry';
-    if (activeTab === 'snmp-metric-templates') return language === 'zh' ? 'SNMP 指标模板' : 'SNMP Metric Templates';
+    if (activeTab === 'snmp-metric-templates') return language === 'zh' ? 'LibreNMS 采集规则' : 'LibreNMS Collection Rules';
     if (activeTab === 'snmp-walk') return language === 'zh' ? 'SNMP 诊断' : 'SNMP Diagnostics';
     if (activeTab === 'alerts') return language === 'zh' ? '告警信息' : 'Alert Desk';
     if (activeTab === 'alert-history') return language === 'zh' ? '历史告警' : 'Alert History';
