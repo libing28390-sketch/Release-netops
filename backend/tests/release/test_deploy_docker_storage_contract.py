@@ -99,6 +99,7 @@ def test_deploy_service_selection_includes_resource_limited_support_containers(t
         "db",
         "netops",
         "victoriametrics",
+        "postgres-exporter",
         "snmp-exporter",
         "vmagent",
         "grafana",

@@ -1144,6 +1144,7 @@ def render_vmagent_config(
             ("platform_snmp_exporter", "snmp-exporter:9116"),
             ("platform_grafana", "grafana:3000"),
             ("platform_cadvisor", "cadvisor:8080"),
+            ("platform_postgres_exporter", "postgres-exporter:9187"),
         ):
             scrape_configs.append({
                 "job_name": job_name,

@@ -1,3 +1,4 @@
+import argparse
 import json
 import os
 from copy import deepcopy
@@ -3231,7 +3232,7 @@ def build_platform_health_dashboard():
         stat_panel(
             2,
             "平台指标端点失败数",
-            f"count({platform_up} == 0)",
+            f"sum({platform_up} == bool 0)",
             4,
             0,
             4,
@@ -3241,7 +3242,7 @@ def build_platform_health_dashboard():
                 {"color": NEUTRAL_COLOR, "value": None},
                 {"color": CRITICAL_COLOR, "value": 1},
             ],
-            description=None,
+            description="有端点采集样本时统计失败数；0 表示当前无失败，无样本时仍显示暂无数据。",
         ),
         stat_panel(
             3,
@@ -3517,7 +3518,7 @@ def build_platform_health_dashboard():
         table_panel(
             20,
             "Docker 容器采集观测清单",
-            'max by (name) (container_last_seen{name!=""})',
+            'max by (name) (container_last_seen{name!=""}) * 1000',
             4,
             40,
             20,
@@ -3570,6 +3571,296 @@ def build_platform_health_dashboard():
         "title": "10 监控平台健康（Monitoring Platform Health）",
         "description": "覆盖平台服务可用性、remote-write 队列、VictoriaMetrics 存储和应用容器资源。数据库连接来自 API SELECT 1；Docker API 仅通过内网只读代理供 cAdvisor 获取容器元数据，cAdvisor 仅只读访问宿主 /sys cgroup，不挂载宿主根目录。",
         "uid": "nexora-platform-health",
+        "version": DASHBOARD_VERSION,
+    }
+
+
+# PostgreSQL Database Performance Dashboard
+def build_postgres_performance_dashboard():
+    exporter_job = 'job="platform_postgres_exporter"'
+    statement_selector = (
+        f'{exporter_job},datname=~"$datname",user=~"$db_user"'
+    )
+    database_selector = f'{exporter_job},datname=~"$datname"'
+    calls_rate = f'sum(rate(pg_stat_statements_calls_total{{{statement_selector}}}[5m]))'
+    execution_time_rate = (
+        f'sum(rate(pg_stat_statements_seconds_total{{{statement_selector}}}[5m]))'
+    )
+    average_latency_ms = (
+        '1000 * '
+        f'{execution_time_rate} / '
+        f'sum(rate(pg_stat_statements_calls_total{{{statement_selector}}}[5m]))'
+    )
+    rows_rate = f'sum(rate(pg_stat_statements_rows_total{{{statement_selector}}}[5m]))'
+    cache_hits = (
+        f'sum(rate(pg_stat_database_blks_hit{{{database_selector}}}[5m]))'
+    )
+    cache_reads = (
+        f'sum(rate(pg_stat_database_blks_read{{{database_selector}}}[5m]))'
+    )
+    cache_hit_percent = f'100 * {cache_hits} / ({cache_hits} + {cache_reads})'
+    collector_success = (
+        f'min(pg_scrape_collector_success{{{exporter_job},collector="stat_statements"}})'
+    )
+    statement_group = 'datname, user, queryid'
+    execution_time_rate_by_statement = (
+        f'sum by ({statement_group}) '
+        f'(rate(pg_stat_statements_seconds_total{{{statement_selector}}}[5m]))'
+    )
+    calls_rate_by_statement = (
+        f'sum by ({statement_group}) '
+        f'(rate(pg_stat_statements_calls_total{{{statement_selector}}}[5m]))'
+    )
+    top_execution_time = f'topk(10, {execution_time_rate_by_statement})'
+    top_average_latency = (
+        'topk(10, '
+        f'(1000 * {execution_time_rate_by_statement} / {calls_rate_by_statement}) '
+        f'and on({statement_group}) ({calls_rate_by_statement} > 0))'
+    )
+    table_columns = {
+        "Time": True,
+        "__name__": True,
+        "job": True,
+        "instance": True,
+    }
+    def top_table_transformations(value_name):
+        return [{
+            "id": "organize",
+            "options": {
+                "excludeByName": table_columns,
+                "indexByName": {"datname": 0, "user": 1, "queryid": 2, "Value": 3},
+                "renameByName": {
+                    "datname": "数据库",
+                    "user": "数据库用户",
+                    "queryid": "Query ID",
+                    "Value": value_name,
+                },
+            },
+        }]
+    health_mappings = [
+        {
+            "type": "value",
+            "options": {
+                "1": {"text": "正常", "color": HEALTHY_COLOR},
+                "0": {"text": "失败", "color": CRITICAL_COLOR},
+            },
+        }
+    ]
+    panels = [
+        row_panel(900, "采集健康与性能概览", 0),
+        stat_panel(
+            1,
+            "Exporter 抓取状态",
+            f'min(up{{{exporter_job}}})',
+            0,
+            1,
+            unit="none",
+            color=HEALTHY_COLOR,
+            thresholds=[
+                {"color": NEUTRAL_COLOR, "value": None},
+                {"color": CRITICAL_COLOR, "value": 0},
+                {"color": HEALTHY_COLOR, "value": 1},
+            ],
+            value_mappings=health_mappings,
+            description="1 表示 exporter 可抓取，0 表示抓取失败；无样本表示采集状态未知。",
+        ),
+        stat_panel(
+            2,
+            "pg_stat_statements 采集状态",
+            collector_success,
+            4,
+            1,
+            unit="none",
+            color=HEALTHY_COLOR,
+            thresholds=[
+                {"color": NEUTRAL_COLOR, "value": None},
+                {"color": CRITICAL_COLOR, "value": 0},
+                {"color": HEALTHY_COLOR, "value": 1},
+            ],
+            value_mappings=health_mappings,
+            description=(
+                "取 exporter 对 stat_statements collector 的成功状态；该 collector 默认关闭，"
+                "无样本时显示未知。"
+            ),
+        ),
+        stat_panel(
+            3,
+            "SQL 调用速率",
+            calls_rate,
+            8,
+            1,
+            unit="short",
+            color=INFO_COLOR,
+            description="所选数据库和用户的调用速率，按 5 分钟窗口计算。",
+        ),
+        stat_panel(
+            4,
+            "执行耗时速率（秒执行时间 / 秒）",
+            execution_time_rate,
+            12,
+            1,
+            unit="short",
+            color=INFO_COLOR,
+            description=(
+                "pg_stat_statements 累计执行秒数的 5 分钟速率；并发执行时该值可以大于 1。"
+            ),
+        ),
+        stat_panel(
+            5,
+            "平均单次执行耗时",
+            average_latency_ms,
+            16,
+            1,
+            unit="ms",
+            color=INFO_COLOR,
+            description="累计执行耗时速率除以调用速率，得到按调用数加权的平均毫秒数。",
+        ),
+        stat_panel(
+            6,
+            "Rows 速率",
+            rows_rate,
+            20,
+            1,
+            unit="short",
+            color=INFO_COLOR,
+            description="SQL 返回或影响的行数速率；它不表示扫描行数。",
+        ),
+        stat_panel(
+            7,
+            "数据库 Shared Buffer 命中率",
+            cache_hit_percent,
+            0,
+            5,
+            w=6,
+            unit="percent",
+            color=INFO_COLOR,
+            description=(
+                "基于 pg_stat_database 的 shared buffer block hit/read 速率计算，"
+                "范围为所选数据库，与单条 SQL 的命中率无关。"
+            ),
+        ),
+        row_panel(901, "整体性能趋势", 10),
+        timeseries_panel(
+            8,
+            "SQL 调用速率趋势",
+            [{
+                "expr": calls_rate,
+                "legendFormat": "Calls / sec",
+                "refId": "A",
+            }],
+            0,
+            11,
+            12,
+            8,
+            unit="short",
+            color_overrides=[timeseries_color_override("byName", "Calls / sec", INFO_COLOR)],
+            legend_display_mode="list",
+            legend_placement="bottom",
+            legend_calcs=["lastNotNull", "max"],
+        ),
+        timeseries_panel(
+            9,
+            "SQL 执行耗时速率趋势",
+            [{
+                "expr": execution_time_rate,
+                "legendFormat": "Execution seconds / sec",
+                "refId": "A",
+            }],
+            12,
+            11,
+            12,
+            8,
+            unit="short",
+            color_overrides=[
+                timeseries_color_override(
+                    "byName", "Execution seconds / sec", INFO_COLOR
+                )
+            ],
+            legend_display_mode="list",
+            legend_placement="bottom",
+            legend_calcs=["lastNotNull", "max"],
+        ),
+        row_panel(902, "Top SQL（按 Query ID 汇总，不读取 SQL 文本）", 20),
+        table_panel(
+            10,
+            "执行耗时速率 Top 10",
+            top_execution_time,
+            0,
+            21,
+            12,
+            8,
+            value_col_name="执行耗时速率（秒 / 秒）",
+            transformations=top_table_transformations("执行耗时速率（秒 / 秒）"),
+            description=(
+                "最多显示 10 个 Query ID。SQL 文本不会作为 label 或查询条件使用；"
+                "速率按 datname/user/queryid 分组。"
+            ),
+        ),
+        table_panel(
+            11,
+            "平均单次执行耗时 Top 10",
+            top_average_latency,
+            12,
+            21,
+            12,
+            8,
+            unit="ms",
+            value_col_name="平均执行耗时（毫秒）",
+            transformations=top_table_transformations("平均执行耗时（毫秒）"),
+            description=(
+                "最多显示 10 个 Query ID，按每次调用的加权平均执行时间排序。"
+            ),
+        ),
+        row_panel(903, "统计重置说明", 30),
+        {
+            "id": 12,
+            "title": "pg_stat_statements 计数器说明",
+            "type": "text",
+            "gridPos": {"h": 4, "w": 24, "x": 0, "y": 31},
+            "options": {
+                "mode": "markdown",
+                "content": (
+                    "面板使用 `rate()` 计算 5 分钟速率，Prometheus 会处理可观测到的计数器下降。\n\n"
+                    "执行 `pg_stat_statements_reset()` 等统计重置会重置累计值；"
+                    "postgres_exporter v0.20.1 的 stat_statements 指标不包含该扩展的重置时间，"
+                    "因此本页无法显示具体重置时点。"
+                ),
+            },
+        },
+    ]
+    return {
+        "annotations": {"list": []},
+        "editable": false,
+        "fiscalYearStartMonth": 0,
+        "graphTooltip": 1,
+        "id": None,
+        "links": [],
+        "panels": panels,
+        "refresh": "30s",
+        "schemaVersion": 39,
+        "tags": ["nexora", "postgresql", "database", "performance"],
+        "templating": {
+            "list": [
+                make_query_variable(
+                    "datname",
+                    "数据库",
+                    f'label_values(pg_stat_statements_calls_total{{{exporter_job}}}, datname)',
+                ),
+                make_query_variable(
+                    "db_user",
+                    "数据库用户",
+                    f'label_values(pg_stat_statements_calls_total{{{exporter_job},datname=~"$datname"}}, user)',
+                ),
+            ]
+        },
+        "time": {"from": "now-1h", "to": "now"},
+        "timezone": "browser",
+        "title": "13 PostgreSQL 数据库性能（PostgreSQL Database Performance）",
+        "description": (
+            "展示 postgres_exporter 的 pg_stat_statements counters 与数据库级 shared buffer 命中率。"
+            "Top SQL 按 Query ID 识别，不使用或展示 SQL 文本。"
+        ),
+        "uid": "nexora-postgres-performance",
         "version": DASHBOARD_VERSION,
     }
 
@@ -4424,19 +4715,35 @@ def build_dashboard_catalog():
         ("nexora-platform-health.json", build_platform_health_dashboard()),
         ("nexora-outbound-probe-quality.json", build_outbound_probe_quality_dashboard()),
         ("nexora-alert-operations.json", build_alert_operations_dashboard()),
+        ("nexora-postgres-performance.json", build_postgres_performance_dashboard()),
     ]
-    assert len(dashboards) == 12, "dashboard catalog must contain exactly 12 dashboards"
+    assert len(dashboards) == 13, "dashboard catalog must contain exactly 13 dashboards"
     uids = [data.get("uid") for _, data in dashboards]
     assert len(uids) == len(set(uids)), "dashboard catalog contains duplicate UIDs"
     apply_v2_presentation(dashboards)
     return dashboards
 
 
-def main():
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Generate Nexora Grafana dashboards")
+    parser.add_argument(
+        "--dashboard",
+        help="Generate only the dashboard with this UID; validate the full catalog first",
+    )
+    args = parser.parse_args(argv)
+
     DASHBOARDS_DIR.mkdir(parents=True, exist_ok=True)
     dashboards = build_dashboard_catalog()
     for fname, data in dashboards:
         validate_dashboard(fname, data)
+    if args.dashboard:
+        dashboards = [
+            (fname, data)
+            for fname, data in dashboards
+            if data.get("uid") == args.dashboard
+        ]
+        if not dashboards:
+            raise ValueError(f"Unknown dashboard UID: {args.dashboard}")
     for fname, data in dashboards:
         path = DASHBOARDS_DIR / fname
         with open(path, "w", encoding="utf-8") as f:

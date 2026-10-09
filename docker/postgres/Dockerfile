@@ -13,4 +13,10 @@ RUN apt-get update \
     && echo "Asia/Shanghai" > /etc/timezone \
     && rm -rf /var/lib/apt/lists/*
 
+# Create the extension automatically for newly initialized data directories.
+# Existing persistent volumes need CREATE EXTENSION once after the server is
+# restarted with pg_stat_statements in shared_preload_libraries.
+COPY 20-pg-stat-statements.sql /docker-entrypoint-initdb.d/20-pg-stat-statements.sql
+COPY --chmod=0755 21-postgres-exporter-role.sh /docker-entrypoint-initdb.d/21-postgres-exporter-role.sh
+
 ENV TZ=Asia/Shanghai

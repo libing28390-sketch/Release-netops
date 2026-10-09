@@ -174,11 +174,12 @@
       },
       "targets": [
         {
-          "expr": "count(up{job=~\"platform_api|platform_victoriametrics|platform_vmagent|platform_snmp_exporter|platform_grafana|platform_cadvisor\"} == 0)",
+          "expr": "sum(up{job=~\"platform_api|platform_victoriametrics|platform_vmagent|platform_snmp_exporter|platform_grafana|platform_cadvisor\"} == bool 0)",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "有端点采集样本时统计失败数；0 表示当前无失败，无样本时仍显示暂无数据。"
     },
     {
       "id": 3,
@@ -1568,7 +1569,7 @@
       },
       "targets": [
         {
-          "expr": "max by (name) (container_last_seen{name!=\"\"})",
+          "expr": "max by (name) (container_last_seen{name!=\"\"}) * 1000",
           "format": "table",
           "instant": true,
           "refId": "A"

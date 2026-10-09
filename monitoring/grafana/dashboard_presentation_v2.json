@@ -11786,6 +11786,511 @@
           }
         }
       }
+    },
+    "nexora-postgres-performance": {
+      "title": "13 PostgreSQL 数据库性能（PostgreSQL Database Performance）",
+      "panels": {
+        "900": {
+          "title": "采集健康与性能概览",
+          "type": "row"
+        },
+        "1": {
+          "title": "Exporter 抓取状态",
+          "type": "stat",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "#64748B",
+                    "value": null
+                  },
+                  {
+                    "color": "#F43F5E",
+                    "value": 0
+                  },
+                  {
+                    "color": "#22C55E",
+                    "value": 1
+                  }
+                ]
+              },
+              "mappings": [
+                {
+                  "type": "value",
+                  "options": {
+                    "1": {
+                      "text": "正常",
+                      "color": "#22C55E"
+                    },
+                    "0": {
+                      "text": "失败",
+                      "color": "#F43F5E"
+                    }
+                  }
+                },
+                {
+                  "type": "special",
+                  "options": {
+                    "match": "null",
+                    "result": {
+                      "text": "暂无采集数据",
+                      "color": "#64748B"
+                    }
+                  }
+                },
+                {
+                  "type": "special",
+                  "options": {
+                    "match": "nan",
+                    "result": {
+                      "text": "暂无采集数据",
+                      "color": "#64748B"
+                    }
+                  }
+                }
+              ]
+            },
+            "overrides": []
+          }
+        },
+        "2": {
+          "title": "pg_stat_statements 采集状态",
+          "type": "stat",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "#64748B",
+                    "value": null
+                  },
+                  {
+                    "color": "#F43F5E",
+                    "value": 0
+                  },
+                  {
+                    "color": "#22C55E",
+                    "value": 1
+                  }
+                ]
+              },
+              "mappings": [
+                {
+                  "type": "value",
+                  "options": {
+                    "1": {
+                      "text": "正常",
+                      "color": "#22C55E"
+                    },
+                    "0": {
+                      "text": "失败",
+                      "color": "#F43F5E"
+                    }
+                  }
+                },
+                {
+                  "type": "special",
+                  "options": {
+                    "match": "null",
+                    "result": {
+                      "text": "暂无采集数据",
+                      "color": "#64748B"
+                    }
+                  }
+                },
+                {
+                  "type": "special",
+                  "options": {
+                    "match": "nan",
+                    "result": {
+                      "text": "暂无采集数据",
+                      "color": "#64748B"
+                    }
+                  }
+                }
+              ]
+            },
+            "overrides": []
+          }
+        },
+        "3": {
+          "title": "SQL 调用速率",
+          "type": "stat",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "#3B82F6",
+                    "value": null
+                  }
+                ]
+              },
+              "mappings": [
+                {
+                  "type": "special",
+                  "options": {
+                    "match": "null",
+                    "result": {
+                      "text": "暂无采集数据",
+                      "color": "#64748B"
+                    }
+                  }
+                },
+                {
+                  "type": "special",
+                  "options": {
+                    "match": "nan",
+                    "result": {
+                      "text": "暂无采集数据",
+                      "color": "#64748B"
+                    }
+                  }
+                }
+              ]
+            },
+            "overrides": []
+          }
+        },
+        "4": {
+          "title": "执行耗时速率（秒执行时间 / 秒）",
+          "type": "stat",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "#3B82F6",
+                    "value": null
+                  }
+                ]
+              },
+              "mappings": [
+                {
+                  "type": "special",
+                  "options": {
+                    "match": "null",
+                    "result": {
+                      "text": "暂无采集数据",
+                      "color": "#64748B"
+                    }
+                  }
+                },
+                {
+                  "type": "special",
+                  "options": {
+                    "match": "nan",
+                    "result": {
+                      "text": "暂无采集数据",
+                      "color": "#64748B"
+                    }
+                  }
+                }
+              ]
+            },
+            "overrides": []
+          }
+        },
+        "5": {
+          "title": "平均单次执行耗时",
+          "type": "stat",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "#3B82F6",
+                    "value": null
+                  }
+                ]
+              },
+              "mappings": [
+                {
+                  "type": "special",
+                  "options": {
+                    "match": "null",
+                    "result": {
+                      "text": "暂无采集数据",
+                      "color": "#64748B"
+                    }
+                  }
+                },
+                {
+                  "type": "special",
+                  "options": {
+                    "match": "nan",
+                    "result": {
+                      "text": "暂无采集数据",
+                      "color": "#64748B"
+                    }
+                  }
+                }
+              ]
+            },
+            "overrides": []
+          }
+        },
+        "6": {
+          "title": "Rows 速率",
+          "type": "stat",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "#3B82F6",
+                    "value": null
+                  }
+                ]
+              },
+              "mappings": [
+                {
+                  "type": "special",
+                  "options": {
+                    "match": "null",
+                    "result": {
+                      "text": "暂无采集数据",
+                      "color": "#64748B"
+                    }
+                  }
+                },
+                {
+                  "type": "special",
+                  "options": {
+                    "match": "nan",
+                    "result": {
+                      "text": "暂无采集数据",
+                      "color": "#64748B"
+                    }
+                  }
+                }
+              ]
+            },
+            "overrides": []
+          }
+        },
+        "7": {
+          "title": "数据库 Shared Buffer 命中率",
+          "type": "stat",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "#3B82F6",
+                    "value": null
+                  }
+                ]
+              },
+              "mappings": [
+                {
+                  "type": "special",
+                  "options": {
+                    "match": "null",
+                    "result": {
+                      "text": "暂无采集数据",
+                      "color": "#64748B"
+                    }
+                  }
+                },
+                {
+                  "type": "special",
+                  "options": {
+                    "match": "nan",
+                    "result": {
+                      "text": "暂无采集数据",
+                      "color": "#64748B"
+                    }
+                  }
+                }
+              ]
+            },
+            "overrides": []
+          }
+        },
+        "901": {
+          "title": "整体性能趋势",
+          "type": "row"
+        },
+        "8": {
+          "title": "SQL 调用速率趋势",
+          "type": "timeseries",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "lineWidth": 2,
+                "fillOpacity": 10,
+                "gradientMode": "none",
+                "showPoints": "never"
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Calls / sec"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#3B82F6"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "9": {
+          "title": "SQL 执行耗时速率趋势",
+          "type": "timeseries",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "lineWidth": 2,
+                "fillOpacity": 10,
+                "gradientMode": "none",
+                "showPoints": "never"
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Execution seconds / sec"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#3B82F6"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "902": {
+          "title": "Top SQL（按 Query ID 汇总，不读取 SQL 文本）",
+          "type": "row"
+        },
+        "10": {
+          "title": "执行耗时速率 Top 10",
+          "type": "table",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "filterable": true
+              }
+            },
+            "overrides": []
+          }
+        },
+        "11": {
+          "title": "平均单次执行耗时 Top 10",
+          "type": "table",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "filterable": true
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "平均执行耗时（毫秒）"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "ms"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "903": {
+          "title": "统计重置说明",
+          "type": "row"
+        },
+        "12": {
+          "title": "pg_stat_statements 计数器说明",
+          "type": "text"
+        }
+      }
     }
   }
 }

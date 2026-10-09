@@ -36,6 +36,7 @@ EXPECTED_DASHBOARD_UIDS = {
     "nexora-platform-health",
     "nexora-outbound-probe-quality",
     "nexora-alert-operations",
+    "nexora-postgres-performance",
 }
 
 IF_OPER_STATUS = {
@@ -154,10 +155,10 @@ def test_catalog_covers_the_complete_v2_dashboard_set(catalog):
     ]
     row_count = sum(panel.get("type") == "row" for panel in panels)
     stat_count = sum(panel.get("type") == "stat" for panel in panels)
-    assert len(panels) == 266
-    assert row_count == 55
-    assert len(panels) - row_count == 211
-    assert stat_count == 94
+    assert len(panels) == 282
+    assert row_count == 59
+    assert len(panels) - row_count == 223
+    assert stat_count == 101
 
 
 def test_generated_catalog_uses_every_effective_source_field_config(
@@ -190,7 +191,7 @@ def test_all_stat_panels_render_null_and_nan_as_gray_no_data(catalog):
         for panel in iter_panels(dashboard.get("panels", []))
         if panel.get("type") == "stat"
     ]
-    assert len(stat_panels) == 94
+    assert len(stat_panels) == 101
 
     for panel in stat_panels:
         defaults = panel.get("fieldConfig", {}).get("defaults", {})

@@ -95,6 +95,31 @@ def test_postgres_session_and_log_timezone_follow_the_shanghai_default():
         "timezone=${TZ:-Asia/Shanghai}",
         "-c",
         "log_timezone=${TZ:-Asia/Shanghai}",
+        "-c",
+        "compute_query_id=auto",
+        "-c",
+        "pg_stat_statements.max=${PG_STAT_STATEMENTS_MAX:-5000}",
+        "-c",
+        "pg_stat_statements.track=${PG_STAT_STATEMENTS_TRACK:-top}",
+        "-c",
+        "pg_stat_statements.track_planning=${PG_STAT_STATEMENTS_TRACK_PLANNING:-off}",
+        "-c",
+        "shared_preload_libraries=${POSTGRES_SHARED_PRELOAD_LIBRARIES:-pg_stat_statements}",
     ]
     assert "TZ: ${TZ:-Asia/Shanghai}" in COMPOSE.read_text(encoding="utf-8")
     assert "REDIS_URL=redis://nexora@redis:6379/0" in env_example
+
+
+def test_postgres_exporter_is_limited_and_uses_a_dedicated_monitor_role():
+    compose = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
+    exporter = compose["services"]["postgres-exporter"]
+    assert exporter["image"] == "quay.io/prometheuscommunity/postgres-exporter:v0.20.1"
+    assert exporter["command"] == [
+        "--collector.stat_statements",
+        "--collector.stat_statements.limit=${PG_STAT_STATEMENTS_EXPORT_LIMIT:-100}",
+    ]
+    assert any("nexora_metrics" in value for value in exporter["environment"])
+    assert "POSTGRES_EXPORTER_PASSWORD" in " ".join(exporter["environment"])
+    assert "--collector.stat_statements.include_query" not in exporter["command"]
+    assert "GRANT pg_monitor" in (ROOT / "docker" / "postgres" / "21-postgres-exporter-role.sh").read_text(encoding="utf-8")
+    assert "quay.io/prometheuscommunity/postgres-exporter:v0.20.1" in (ROOT / "scripts" / "deploy-docker.sh").read_text(encoding="utf-8")

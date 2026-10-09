@@ -824,6 +824,7 @@ def verify_bundled_rule(rule: Mapping[str, Any]) -> bool:
 
 __all__ = [
     "PINNED_LIBRENMS_COMMIT",
+    "hardware_sensor_trust_cache_key",
     "is_trusted_hardware_sensor",
     "verify_librenms_os_rule",
     "verify_librenms_mib_rule",

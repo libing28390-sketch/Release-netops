@@ -156,6 +156,7 @@ def test_platform_scrape_targets_are_added_only_to_local_collector():
         "platform_snmp_exporter": "snmp-exporter:9116",
         "platform_grafana": "grafana:3000",
         "platform_cadvisor": "cadvisor:8080",
+        "platform_postgres_exporter": "postgres-exporter:9187",
     }
 
     local_jobs = render_vmagent_config(collector_id="collector-local")["scrape_configs"]
@@ -180,6 +181,28 @@ def test_platform_scrape_targets_are_added_only_to_local_collector():
         if name not in {"platform_grafana", "platform_hardware_inventory"}
     )
     assert not any(job["job_name"].startswith("platform_") for job in remote_jobs)
+
+
+def test_postgres_exporter_target_is_compiled_only_for_local_collector():
+    local_artifact = compile_artifact([], collector_id="collector-local", config_version=1)
+    local_scrape = yaml.safe_load(local_artifact["files"]["vmagent/scrape.yml"])
+    local_jobs = {job["job_name"]: job for job in local_scrape["scrape_configs"]}
+
+    assert local_jobs["platform_postgres_exporter"] == {
+        "job_name": "platform_postgres_exporter",
+        "scrape_interval": "30s",
+        "scrape_timeout": "10s",
+        "metrics_path": "/metrics",
+        "static_configs": [{"targets": ["postgres-exporter:9187"]}],
+    }
+    assert validate_artifact(local_artifact)["valid"] is True
+
+    remote_artifact = compile_artifact([], collector_id="collector-remote", config_version=1)
+    remote_scrape = yaml.safe_load(remote_artifact["files"]["vmagent/scrape.yml"])
+    assert not any(
+        job["job_name"] == "platform_postgres_exporter"
+        for job in remote_scrape["scrape_configs"]
+    )
 
 
 def test_monitoring_extension_reuses_device_collection_policy():

@@ -25,12 +25,25 @@ services:
       - timezone=${TZ:-Asia/Shanghai}
       - -c
       - log_timezone=${TZ:-Asia/Shanghai}
+      # pg_stat_statements needs shared memory initialized at server start.
+      - -c
+      - compute_query_id=auto
+      - -c
+      - pg_stat_statements.max=${PG_STAT_STATEMENTS_MAX:-5000}
+      - -c
+      - pg_stat_statements.track=${PG_STAT_STATEMENTS_TRACK:-top}
+      - -c
+      - pg_stat_statements.track_planning=${PG_STAT_STATEMENTS_TRACK_PLANNING:-off}
+      - -c
+      - shared_preload_libraries=${POSTGRES_SHARED_PRELOAD_LIBRARIES:-pg_stat_statements}
     environment:
       # These variables can be overridden in the .env file
       - TZ=${TZ:-Asia/Shanghai}
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set to a non-default secret}
       - POSTGRES_DB=${POSTGRES_DB:-netops}
+      - POSTGRES_EXPORTER_USER=${POSTGRES_EXPORTER_USER:-nexora_metrics}
+      - POSTGRES_EXPORTER_PASSWORD=${POSTGRES_EXPORTER_PASSWORD:?POSTGRES_EXPORTER_PASSWORD must be set to a non-default secret}
     volumes:
       - nexora-pgdata:/var/lib/postgresql
     shm_size: 256m
@@ -238,6 +251,28 @@ services:
       timeout: 5s
       retries: 5
 
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.20.1
+    container_name: nexora-postgres-exporter
+    mem_limit: ${POSTGRES_EXPORTER_MEM_LIMIT:-128m}
+    cpus: "${POSTGRES_EXPORTER_CPUS:-0.5}"
+    pids_limit: 128
+    command:
+      - --collector.stat_statements
+      - --collector.stat_statements.limit=${PG_STAT_STATEMENTS_EXPORT_LIMIT:-100}
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      - DATA_SOURCE_URI=db:5432/${POSTGRES_DB:-netops}?sslmode=disable
+      - DATA_SOURCE_USER=${POSTGRES_EXPORTER_USER:-nexora_metrics}
+      - DATA_SOURCE_PASS=${POSTGRES_EXPORTER_PASSWORD:?POSTGRES_EXPORTER_PASSWORD must be set to a non-default secret}
+    expose:
+      - "9187"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *container-logging
+
   vmagent:
     image: victoriametrics/vmagent:v1.103.0
     container_name: nexora-vmagent
@@ -255,8 +290,8 @@ services:
       - http_proxy=
       - https_proxy=
       - all_proxy=
-      - NO_PROXY=localhost,127.0.0.1,netops,victoriametrics,snmp-exporter,vmagent,grafana,cadvisor
-      - no_proxy=localhost,127.0.0.1,netops,victoriametrics,snmp-exporter,vmagent,grafana,cadvisor
+      - NO_PROXY=localhost,127.0.0.1,netops,victoriametrics,snmp-exporter,postgres-exporter,vmagent,grafana,cadvisor
+      - no_proxy=localhost,127.0.0.1,netops,victoriametrics,snmp-exporter,postgres-exporter,vmagent,grafana,cadvisor
     command:
       - "-promscrape.config=/etc/nexora-collector/runtime/vmagent/scrape.yml"
       - "-remoteWrite.url=http://victoriametrics:8428/api/v1/write"
@@ -279,6 +314,8 @@ services:
         condition: service_healthy
       snmp-exporter:
         condition: service_healthy
+      postgres-exporter:
+        condition: service_started
       cadvisor:
         condition: service_started
     restart: unless-stopped

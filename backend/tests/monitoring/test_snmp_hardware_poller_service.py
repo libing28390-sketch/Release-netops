@@ -17,6 +17,93 @@ def test_older_hardware_discovery_version_is_refreshed(monkeypatch) -> None:
     assert poller._discovery_due("device-old-hardware-plan", now) is True
 
 
+def test_active_sensor_loading_reuses_trust_checks_by_provenance(monkeypatch) -> None:
+    from services import librenms_source_policy
+
+    class Connection:
+        def close(self) -> None:
+            pass
+
+    def sensor(sensor_key: str, rule_key: str, source_type: str = "librenms_mib_rule") -> dict:
+        return {
+            "sensor_key": sensor_key,
+            "enabled": True,
+            "metadata": {
+                "collection_version": poller.DISCOVERY_VERSION,
+                "source_type": source_type,
+                "source_commit": "pinned-commit",
+                "source_path": "includes/discovery/sensors.inc.php",
+                "rule_key": rule_key,
+                "mib_source_files": ["mibs/IF-MIB.mib"],
+            },
+        }
+
+    rows = [
+        sensor("sensor-a", "source-a"),
+        sensor("sensor-b", "source-a"),
+        sensor("sensor-c", "source-b"),
+        sensor("sensor-d", "invalid-source", source_type="untrusted"),
+        sensor("sensor-e", "invalid-source", source_type="untrusted"),
+        sensor("sensor-disabled", "source-a") | {"enabled": False},
+        sensor("sensor-old-version", "source-a") | {
+            "metadata": {"collection_version": "old-version"},
+        },
+    ]
+    trust_calls: list[str] = []
+    monkeypatch.setattr(poller, "get_db_connection", lambda: Connection())
+    monkeypatch.setattr(
+        poller,
+        "list_hardware_sensors",
+        lambda *_args, **_kwargs: rows,
+    )
+
+    def is_trusted(row: dict) -> bool:
+        trust_calls.append(row["sensor_key"])
+        return row["metadata"]["source_type"] == "librenms_mib_rule"
+
+    monkeypatch.setattr(librenms_source_policy, "is_trusted_hardware_sensor", is_trusted)
+
+    active = poller._load_active_sensors("device-1")
+
+    assert [row["sensor_key"] for row in active] == ["sensor-a", "sensor-b", "sensor-c"]
+    assert trust_calls == ["sensor-a", "sensor-c", "sensor-d"]
+
+
+def test_device_sensor_poll_state_uses_current_version_and_sample_cutoff(monkeypatch) -> None:
+    class Cursor:
+        def fetchone(self):
+            return {"has_active": True, "has_due": False}
+
+    class Connection:
+        def __init__(self) -> None:
+            self.query = ""
+            self.params = ()
+            self.closed = False
+
+        def execute(self, query, params):
+            self.query = query
+            self.params = params
+            return Cursor()
+
+        def close(self) -> None:
+            self.closed = True
+
+    now = datetime(2026, 10, 9, 12, 0, tzinfo=timezone.utc)
+    connection = Connection()
+    monkeypatch.setattr(poller, "get_db_connection", lambda: connection)
+    monkeypatch.setattr(poller, "hardware_sample_interval_seconds", lambda: 60)
+
+    assert poller._device_sensor_poll_state("device-1", now) == (True, False)
+    assert "metadata_json->>'collection_version' = ?" in connection.query
+    assert "BOOL_OR(last_sample_at IS NULL OR last_sample_at <= ?)" in connection.query
+    assert connection.params == (
+        now - timedelta(seconds=60),
+        "device-1",
+        poller.DISCOVERY_VERSION,
+    )
+    assert connection.closed is True
+
+
 def test_collect_device_hardware_runs_due_discovery_and_sample(monkeypatch) -> None:
     from services import snmp_hardware_probe_service, vault_service
 
@@ -289,6 +376,7 @@ def test_poll_only_run_skips_discovery_and_samples_due_inventory(monkeypatch) ->
         "enabled": True,
     }
     sample_calls: list[tuple] = []
+    monkeypatch.setattr(poller, "_device_sensor_poll_state", lambda *_args: (True, True))
     monkeypatch.setattr(vault_service, "resolve_collector_credentials", lambda _device: {
         "snmp": {"server": "192.0.2.41", "community": "test-community", "port": 161, "version": "2c"},
     })
@@ -311,6 +399,33 @@ def test_poll_only_run_skips_discovery_and_samples_due_inventory(monkeypatch) ->
     assert result["status"] == "collected"
     assert len(sample_calls) == 1
     assert sample_calls[0][-1] == [sensor]
+
+
+def test_poll_only_run_skips_sensor_decode_and_credentials_until_due(monkeypatch) -> None:
+    from services import vault_service
+
+    monkeypatch.setattr(poller, "_device_sensor_poll_state", lambda *_args: (True, False))
+    monkeypatch.setattr(
+        vault_service,
+        "resolve_collector_credentials",
+        lambda _device: (_ for _ in ()).throw(AssertionError("credentials should not be resolved before poll due")),
+    )
+    monkeypatch.setattr(
+        poller,
+        "_load_active_sensors",
+        lambda _device_id: (_ for _ in ()).throw(AssertionError("sensor JSON should not be loaded before poll due")),
+    )
+
+    result = asyncio.run(poller.collect_device_hardware(
+        {"id": "device-not-due", "ip_address": "192.0.2.42", "platform": "comware"},
+        poll_only=True,
+    ))
+
+    assert result == {
+        "status": "idle",
+        "discovery": None,
+        "sample": {"good": 0, "missing": 0, "invalid": 0, "unsupported_mapping": 0},
+    }
 
 
 def test_staleness_threshold_covers_three_configured_poll_intervals(monkeypatch) -> None:

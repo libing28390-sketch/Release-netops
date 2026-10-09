@@ -127,7 +127,7 @@ compose() {
 }
 
 compose_service_args() {
-  printf '%s\n' db netops victoriametrics snmp-exporter vmagent grafana nginx docker-socket-proxy cadvisor
+    printf '%s\n' db netops postgres-exporter victoriametrics snmp-exporter vmagent grafana nginx docker-socket-proxy cadvisor
     if storage_backend_is_s3; then
         printf '%s\n' seaweedfs
     fi
@@ -205,6 +205,12 @@ initialize_env() {
 
     if is_placeholder "$(env_value POSTGRES_PASSWORD)"; then
         set_env_value POSTGRES_PASSWORD "$(openssl rand -hex 16)"
+    fi
+    if [[ -z "$(env_value POSTGRES_EXPORTER_USER)" ]]; then
+        set_env_value POSTGRES_EXPORTER_USER nexora_metrics
+    fi
+    if is_placeholder "$(env_value POSTGRES_EXPORTER_PASSWORD)"; then
+        set_env_value POSTGRES_EXPORTER_PASSWORD "$(openssl rand -hex 24)"
     fi
     if is_placeholder "$(env_value SECRET_KEY)"; then
         set_env_value SECRET_KEY "$(openssl rand -hex 32)"
@@ -487,6 +493,7 @@ build_and_start() {
     # the application container starts its migrations.
     compose build "${build_args[@]}"
     start_compose_services build "${service_args[@]}"
+    ensure_postgres_monitoring_objects
     start_deferred_vmagent
     stop_disabled_redis
     if ! prune_legacy_grafana_dashboard; then
@@ -512,6 +519,31 @@ start_deferred_vmagent() {
         sleep 2
     done
     log "SNMP exporter is not healthy after the bounded startup wait; vmagent remains deferred until the exporter recovers"
+}
+
+ensure_postgres_monitoring_objects() {
+    local db_user db_name
+    db_user="$(env_value POSTGRES_USER)"
+    db_name="$(env_value POSTGRES_DB)"
+    db_user="${db_user:-postgres}"
+    db_name="${db_name:-netops}"
+    log "Ensuring pg_stat_statements and the restricted postgres_exporter role are ready"
+    compose exec -T db psql --username "$db_user" --dbname "$db_name" --set=ON_ERROR_STOP=1 <<'SQL'
+\getenv exporter_user POSTGRES_EXPORTER_USER
+\getenv exporter_password POSTGRES_EXPORTER_PASSWORD
+
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+
+SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'exporter_user', :'exporter_password')
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'exporter_user');
+\gexec
+
+SELECT format('ALTER ROLE %I WITH LOGIN PASSWORD %L', :'exporter_user', :'exporter_password');
+\gexec
+
+SELECT format('GRANT pg_monitor TO %I', :'exporter_user');
+\gexec
+SQL
 }
 
 prune_legacy_grafana_dashboard() {
@@ -631,6 +663,7 @@ required_images() {
         "victoriametrics/victoria-metrics:v1.103.0" \
         "victoriametrics/vmagent:v1.103.0" \
         "prom/snmp-exporter:v0.26.0" \
+        "quay.io/prometheuscommunity/postgres-exporter:v0.20.1" \
         "grafana/grafana:12.1.0"
     if [[ "${NETOPS_REDIS_ENABLED:-1}" != "0" ]]; then
         printf '%s\n' "redis:7.4.2-alpine"
@@ -684,6 +717,7 @@ start_offline() {
     local service_args=()
     mapfile -t service_args < <(compose_service_args)
     start_compose_services offline "${service_args[@]}"
+    ensure_postgres_monitoring_objects
     stop_disabled_redis
     if ! prune_legacy_grafana_dashboard; then
         log "Warning: legacy Grafana dashboard cleanup did not complete; retry with 'bash scripts/deploy-docker.sh prune-legacy-dashboard'"

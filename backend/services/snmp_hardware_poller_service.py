@@ -10,7 +10,7 @@ import asyncio
 import logging
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 
 from database import get_db_connection
@@ -141,17 +141,30 @@ def _discovery_due(device_id: str, now: datetime) -> bool:
 
 
 def _load_active_sensors(device_id: str) -> list[dict[str, Any]]:
-    from services.librenms_source_policy import is_trusted_hardware_sensor
+    from services.librenms_source_policy import (
+        hardware_sensor_trust_cache_key,
+        is_trusted_hardware_sensor,
+    )
 
     conn = get_db_connection()
     try:
         rows = list_hardware_sensors(conn, device_id, include_retired=False)
-        return [
-            row for row in rows
-            if row.get("enabled") is not False
-            and (row.get("metadata") or {}).get("collection_version") == DISCOVERY_VERSION
-            and is_trusted_hardware_sensor(row)
-        ]
+        trust_by_provenance: dict[tuple[Any, ...], bool] = {}
+        active_sensors: list[dict[str, Any]] = []
+        for row in rows:
+            if row.get("enabled") is False:
+                continue
+            if (row.get("metadata") or {}).get("collection_version") != DISCOVERY_VERSION:
+                continue
+
+            trust_key = hardware_sensor_trust_cache_key(row)
+            trusted = trust_by_provenance.get(trust_key)
+            if trusted is None:
+                trusted = is_trusted_hardware_sensor(row)
+                trust_by_provenance[trust_key] = trusted
+            if trusted:
+                active_sensors.append(row)
+        return active_sensors
     finally:
         conn.close()
 
@@ -164,6 +177,33 @@ def _poll_due(sensors: list[Mapping[str, Any]], now: datetime) -> bool:
         if age is None or age >= hardware_sample_interval_seconds():
             return True
     return False
+
+
+def _device_sensor_poll_state(device_id: str, now: datetime) -> tuple[bool, bool]:
+    """Check whether current inventory has any sensor and whether one is due.
+
+    The frequent sampling loop uses this narrow aggregate query to avoid
+    decoding every sensor's JSON metadata and resolving credentials on ticks
+    where no sample is due.
+    """
+    cutoff = now - timedelta(seconds=hardware_sample_interval_seconds())
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) > 0 AS has_active,
+                   COALESCE(BOOL_OR(last_sample_at IS NULL OR last_sample_at <= ?), FALSE) AS has_due
+              FROM snmp_hardware_sensors
+             WHERE device_id = ?
+               AND enabled IS TRUE
+               AND metadata_json->>'collection_version' = ?
+            """,
+            (cutoff, device_id, DISCOVERY_VERSION),
+        ).fetchone()
+        values = _as_dict(row)
+        return bool(values.get("has_active")), bool(values.get("has_due"))
+    finally:
+        conn.close()
 
 
 def _resolve_identity_and_rule(
@@ -528,6 +568,23 @@ async def collect_device_hardware(
     device_id = str(device.get("id") or "").strip()
     if not device_id or _is_server_asset(device):
         return {"status": "skipped"}
+
+    if poll_only:
+        try:
+            has_active_sensors, has_due_sensors = await asyncio.to_thread(
+                _device_sensor_poll_state,
+                device_id,
+                datetime.now(timezone.utc),
+            )
+        except Exception as exc:
+            logger.warning("SNMP hardware poll schedule lookup failed for device %s (%s)", device_id, type(exc).__name__)
+            return {"status": "poll_failed", "discovery": None}
+        if not has_active_sensors or not has_due_sensors:
+            return {
+                "status": "idle",
+                "discovery": None,
+                "sample": {"good": 0, "missing": 0, "invalid": 0, "unsupported_mapping": 0},
+            }
 
     try:
         from services.vault_service import resolve_collector_credentials

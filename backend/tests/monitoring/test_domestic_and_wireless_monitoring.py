@@ -713,7 +713,7 @@ def test_dashboard_device_variables_use_current_up_targets():
 
 def test_all_grafana_dashboards_have_consistent_kpi_and_section_layout():
     catalog = build_dashboard_catalog()
-    assert len(catalog) == 12
+    assert len(catalog) == 13
 
     by_uid = {}
     for filename, dashboard in catalog:
