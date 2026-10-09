@@ -139,7 +139,7 @@ def _local_hardware_snapshot(device: Mapping[str, Any]) -> dict[str, Any]:
         capability for capability in capabilities
         if str(capability.get("discovery_version") or "") == DISCOVERY_VERSION
         and str(capability.get("source_type") or "").casefold() in {
-            "librenms_rule", "nexora_snmp",
+            "librenms_rule", "librenms_os_rule", "librenms_mib_rule", "nexora_snmp",
         }
     ]
 

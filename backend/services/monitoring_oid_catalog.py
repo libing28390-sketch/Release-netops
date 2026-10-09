@@ -232,6 +232,8 @@ def _module(
     walk_fingerprint: str,
     description: str,
     variant: dict[str, Any],
+    *,
+    enabled: bool = True,
 ) -> dict[str, Any]:
     return {
         "id": module_id,
@@ -243,7 +245,7 @@ def _module(
         "metric_group": metric_group,
         "walk_fingerprint": walk_fingerprint,
         "description": description,
-        "enabled": True,
+        "enabled": enabled,
         "built_in": True,
         "variant": variant,
     }
@@ -914,8 +916,9 @@ BUILTIN_OID_CATALOG: tuple[dict[str, Any], ...] = (
         "wireless",
         "wireless",
         "huawei-wlan:1.3.6.1.4.1.2011.6.139",
-        "华为 VRP WLAN AP 数与按 SSID/频段采集的关联客户端数，规则来自固定 LibreNMS Vrp.php。",
-        _variant("variant-huawei-wireless-std", "huawei_wireless_std", "华为无线标准规则", HUAWEI_WIRELESS_CONFIG, mib_bundle_id="huawei-wlan-2024", supported_platforms=["huawei_vrp", "huawei_wlan", "huawei"], supported_models=["AC6", "AC9", "AirEngine"]),
+        "历史 SNMP Exporter 规则已停用；无线数据改由 Python 适配器按固定 LibreNMS VRP 无线规则采集。",
+        _variant("variant-huawei-wireless-std", "huawei_wireless_std", "华为无线旧版规则（已停用）", HUAWEI_WIRELESS_CONFIG, mib_bundle_id="huawei-wlan-2024", supported_platforms=["huawei_vrp", "huawei_wlan", "huawei"], supported_models=["AC6", "AC9", "AirEngine"], status="DRAFT", enabled=False),
+        enabled=False,
     ),
     _module(
         "module-h3c-wireless",
@@ -926,8 +929,9 @@ BUILTIN_OID_CATALOG: tuple[dict[str, Any], ...] = (
         "wireless",
         "wireless",
         "h3c-dot11:1.3.6.1.4.1.25506.2.75",
-        "华三 Comware 无线 AC/AP/Radio 与关联客户端遥测，客户端映射 IP、用户名、TxRateSet 和 SSID。",
-        _variant("variant-h3c-wireless-std", "h3c_wireless_std", "华三无线标准版本", H3C_WIRELESS_CONFIG, mib_bundle_id="hh3c-dot11-2024", supported_platforms=["h3c_comware_v7", "h3c_comware_v5", "h3c_wlan", "h3c"], supported_models=["WX", "MSG", "WAP"]),
+        "历史 SNMP Exporter 规则已停用；Comware 无 LibreNMS 无线采集器，当前由明确标注的 Python MIB 适配器读取已固定的 LibreNMS H3C MIB。",
+        _variant("variant-h3c-wireless-std", "h3c_wireless_std", "华三无线旧版规则（已停用）", H3C_WIRELESS_CONFIG, mib_bundle_id="hh3c-dot11-2024", supported_platforms=["h3c_comware_v7", "h3c_comware_v5", "h3c_wlan", "h3c"], supported_models=["WX", "MSG", "WAP"], status="DRAFT", enabled=False),
+        enabled=False,
     ),
     _module(
         "module-ruijie-wireless",
@@ -938,8 +942,9 @@ BUILTIN_OID_CATALOG: tuple[dict[str, Any], ...] = (
         "wireless",
         "wireless",
         "ruijie-wlan:1.3.6.1.4.1.4881.1.1.10.2.75",
-        "固定 LibreNMS 快照未提供 Ruijie 无线 handler，仓库亦无对应厂商 WLAN MIB；保持草稿禁用，等待按具体型号核验。",
-        _variant("variant-ruijie-wireless-std", "ruijie_wireless_std", "锐捷无线待核验规则", RUIJIE_WIRELESS_CONFIG, mib_bundle_id="ruijie-wlan-unverified", supported_platforms=["ruijie_rgos", "ruijie_wlan", "ruijie"], supported_models=["RG-WS", "WS6", "RG-M"], status="DRAFT", enabled=False),
+        "LibreNMS 固定快照无 Ruijie 无线采集器；未经核验的旧规则保持停用。",
+        _variant("variant-ruijie-wireless-std", "ruijie_wireless_std", "锐捷无线旧版规则（已停用）", RUIJIE_WIRELESS_CONFIG, mib_bundle_id="ruijie-wlan-unverified", supported_platforms=["ruijie_rgos", "ruijie_wlan", "ruijie"], supported_models=["RG-WS", "WS6", "RG-M"], status="DRAFT", enabled=False),
+        enabled=False,
     ),
     _module(
         "module-cisco-wireless",
@@ -950,8 +955,9 @@ BUILTIN_OID_CATALOG: tuple[dict[str, Any], ...] = (
         "wireless",
         "wireless",
         "cisco-lwapp:1.3.6.1.4.1.9.9.513",
-        "思科 AireOS / Catalyst 9800 WLC 在线 AP 总数与无线客户端总数。",
-        _variant("variant-cisco-wireless-std", "cisco_wireless_std", "思科无线标准规则", CISCO_WIRELESS_CONFIG, mib_bundle_id="cisco-lwapp-2024", supported_platforms=["cisco_iosxe", "cisco_aireos", "cisco_wlc", "cisco"], supported_models=["Catalyst 9800", "AIR-CT", "WLC"]),
+        "历史 SNMP Exporter 规则已停用；无线数据改由 Python 适配器按固定 LibreNMS Cisco 无线规则采集。",
+        _variant("variant-cisco-wireless-std", "cisco_wireless_std", "思科无线旧版规则（已停用）", CISCO_WIRELESS_CONFIG, mib_bundle_id="cisco-lwapp-2024", supported_platforms=["cisco_iosxe", "cisco_aireos", "cisco_wlc", "cisco"], supported_models=["Catalyst 9800", "AIR-CT", "WLC"], status="DRAFT", enabled=False),
+        enabled=False,
     ),
     _module(
         "module-aruba-wireless",
@@ -962,8 +968,9 @@ BUILTIN_OID_CATALOG: tuple[dict[str, Any], ...] = (
         "wireless",
         "wireless",
         "aruba-wlsx:1.3.6.1.4.1.14823.2.2.1",
-        "Aruba Mobility Controller 在线 AP 数与活跃无线客户端站点数。",
-        _variant("variant-aruba-wireless-std", "aruba_wireless_std", "Aruba 无线标准规则", ARUBA_WIRELESS_CONFIG, mib_bundle_id="aruba-wlsx-2024", supported_platforms=["aruba_arubaos", "arubaos", "aruba"], supported_models=["Aruba 7", "Aruba 9", "Controller"]),
+        "历史 SNMP Exporter 规则已停用；无线数据改由 Python 适配器按固定 LibreNMS Aruba 规则采集。",
+        _variant("variant-aruba-wireless-std", "aruba_wireless_std", "Aruba 无线旧版规则（已停用）", ARUBA_WIRELESS_CONFIG, mib_bundle_id="aruba-wlsx-2024", supported_platforms=["aruba_arubaos", "arubaos", "aruba"], supported_models=["Aruba 7", "Aruba 9", "Controller"], status="DRAFT", enabled=False),
+        enabled=False,
     ),
     _module(
         "module-ruckus-wireless",
@@ -974,8 +981,9 @@ BUILTIN_OID_CATALOG: tuple[dict[str, Any], ...] = (
         "wireless",
         "wireless",
         "ruckus-zd:1.3.6.1.4.1.25053.1",
-        "Ruckus 优科 ZoneDirector / SmartZone 控制器纳管 AP 总数与无线终端数。",
-        _variant("variant-ruckus-wireless-std", "ruckus_wireless_std", "优科无线标准规则", RUCKUS_WIRELESS_CONFIG, mib_bundle_id="ruckus-zd-2024", supported_platforms=["ruckus_smartzone", "smartzone", "ruckus"], supported_models=["ZoneDirector", "SmartZone", "SZ-", "ZD-"]),
+        "历史 SNMP Exporter 规则已停用；无线数据改由 Python 适配器按固定 LibreNMS Ruckus 规则采集。",
+        _variant("variant-ruckus-wireless-std", "ruckus_wireless_std", "优科无线旧版规则（已停用）", RUCKUS_WIRELESS_CONFIG, mib_bundle_id="ruckus-zd-2024", supported_platforms=["ruckus_smartzone", "smartzone", "ruckus"], supported_models=["ZoneDirector", "SmartZone", "SZ-", "ZD-"], status="DRAFT", enabled=False),
+        enabled=False,
     ),
 )
 

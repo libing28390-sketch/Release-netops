@@ -51,8 +51,14 @@ HARDWARE_METRIC_KEYS = frozenset({
 })
 NORMALIZED_PROVIDER_METRIC_KEYS = HARDWARE_METRIC_KEYS | frozenset({
     "wireless_ap_online_count", "wireless_client_online_count",
+    # sysUpTime is scraped by the generic SNMP system module.  It has no
+    # trusted PostgreSQL snapshot source, so native mode must leave it empty
+    # and shadow mode must query VictoriaMetrics.
+    "device_uptime_seconds",
 })
-LIBRENMS_RULE_SOURCE_MATCHER = 'source_type="librenms_rule"'
+LIBRENMS_WIRELESS_SOURCE_MATCHER = 'source_type=~"librenms_rule|librenms_mib_rule"'
+LIBRENMS_HARDWARE_SOURCE_MATCHER = 'source_type=~"librenms_rule|librenms_os_rule|librenms_mib_rule"'
+SYSUPTIME_LOOKBACK = "20m"
 LEGACY_HARDWARE_METRIC_NAMES = frozenset({
     "cpmCPUTotal1minRev", "hh3cEntityExtCpuUsage", "hwEntityCpuUsage",
     "ruijieCpuCostRate", "jnxOperatingCPU", "fnSysCpuUsage", "zteCpuRate",
@@ -89,7 +95,7 @@ def normalized_hardware_metric_query(metric_key: str, *, asset_id: str | None = 
         escaped_asset_id = str(asset_id).replace("\\", "\\\\").replace('"', '\\"')
         match_op = "=~" if "|" in str(asset_id) else "="
         matchers.append(f'asset_id{match_op}"{escaped_asset_id}"')
-    matchers.append(LIBRENMS_RULE_SOURCE_MATCHER)
+    matchers.append(LIBRENMS_HARDWARE_SOURCE_MATCHER)
     return f"{metric_name}{{{','.join(matchers)}}}"
 
 
@@ -344,12 +350,26 @@ class VictoriaMetricsMetricProvider(MetricProvider):
         if key in HARDWARE_METRIC_KEYS or key.startswith("nexora_hw_"):
             return normalized_hardware_metric_query(key, asset_id=asset_id)
 
+        if key == "device_uptime_seconds":
+            # SNMPv2-MIB::sysUpTime is a TimeTicks value in centiseconds.
+            # generic_system_std is sampled every 15 minutes, longer than the
+            # PromQL instant-selector lookback. Read its latest sample within a
+            # bounded window and advance the TimeTicks value by its sample age
+            # before converting to seconds, so uptime remains both visible and
+            # current between scheduled SNMP scrapes.
+            uptime_sample = (
+                f"last_over_time(sysUpTime{selector}[{SYSUPTIME_LOOKBACK}])"
+                if selector
+                else f"last_over_time(sysUpTime[{SYSUPTIME_LOOKBACK}])"
+            )
+            return f"({uptime_sample} + (time() - timestamp({uptime_sample})) * 100) / 100"
+
         def normalized_wireless_selector(component_class: str, sensor_class: str) -> str:
             matchers = [selector[1:-1]] if asset_id else []
             matchers.extend((
                 f'component_class="{component_class}"',
                 f'sensor_class="{sensor_class}"',
-                LIBRENMS_RULE_SOURCE_MATCHER,
+                LIBRENMS_WIRELESS_SOURCE_MATCHER,
             ))
             return f"nexora_wireless_sensor_value{{{','.join(matchers)}}}"
 
@@ -360,9 +380,16 @@ class VictoriaMetricsMetricProvider(MetricProvider):
         if key == "wireless_client_online_count":
             controller_clients = normalized_wireless_selector("wireless_controller", "clients")
             ssid_clients = normalized_wireless_selector("wireless_ssid", "clients")
+            radio_clients = normalized_wireless_selector("wireless_radio", "clients")
+            access_point_clients = normalized_wireless_selector("wireless_access_point", "clients")
             controller_total = f"sum by (asset_id) ({controller_clients})"
             ssid_total = f"sum by (asset_id) ({ssid_clients})"
-            return f"({controller_total}) or on (asset_id) ({ssid_total})"
+            radio_total = f"sum by (asset_id) ({radio_clients})"
+            access_point_total = f"sum by (asset_id) ({access_point_clients})"
+            return (
+                f"({controller_total}) or on (asset_id) (({ssid_total}) or on (asset_id) "
+                f"(({radio_total}) or on (asset_id) ({access_point_total})))"
+            )
 
         if key.startswith("nexora_wireless_"):
             if not re.fullmatch(r"nexora_wireless_[A-Za-z0-9_]+", key):
@@ -370,7 +397,7 @@ class VictoriaMetricsMetricProvider(MetricProvider):
             if key != "nexora_wireless_sensor_value":
                 raise ValueError("Unsupported normalized wireless metric")
             metric_matchers = [selector[1:-1]] if asset_id else []
-            metric_matchers.append(LIBRENMS_RULE_SOURCE_MATCHER)
+            metric_matchers.append(LIBRENMS_WIRELESS_SOURCE_MATCHER)
             return f"{key}{{{','.join(metric_matchers)}}}"
 
         metric = CANONICAL_PROMQL.get(key)

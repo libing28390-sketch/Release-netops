@@ -115,6 +115,28 @@ def test_diagnostic_exposes_current_rule_inventory_provenance_and_lifecycle(monk
             "last_status": "failed",
         },
         {
+            "source_type": "librenms_os_rule",
+            "component_class": "memory_pool",
+            "discovery_version": poller.DISCOVERY_VERSION,
+            "last_status": "success",
+            "coverage_complete": True,
+            "active_sensor_count": 1,
+            "last_discovered_count": 1,
+            "rule_version": PINNED_LIBRENMS_COMMIT,
+            "artifact_version": "LibreNMS/OS/Comware.php",
+        },
+        {
+            "source_type": "librenms_mib_rule",
+            "component_class": "wireless_controller",
+            "discovery_version": poller.DISCOVERY_VERSION,
+            "last_status": "success",
+            "coverage_complete": True,
+            "active_sensor_count": 1,
+            "last_discovered_count": 1,
+            "rule_version": PINNED_LIBRENMS_COMMIT,
+            "artifact_version": "LibreNMS/OS/Arubaos.php",
+        },
+        {
             "source_type": "librenms_native",
             "component_class": "temperature",
             "discovery_version": poller.DISCOVERY_VERSION,
@@ -143,7 +165,9 @@ def test_diagnostic_exposes_current_rule_inventory_provenance_and_lifecycle(monk
     assert result["state"] == "available"
     assert result["sensor_count"] == 2
     assert result["active_sensor_count"] == 1
-    assert len(result["capabilities"]) == 1
+    assert {item["source_type"] for item in result["capabilities"]} == {
+        "librenms_rule", "librenms_os_rule", "librenms_mib_rule",
+    }
     assert result["collection"]["poll_interval_seconds"] == 75
     assert result["collection"]["stale_after_seconds"] == 900
     assert result["collection"]["sync_status"] == "not_applicable"

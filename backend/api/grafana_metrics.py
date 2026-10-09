@@ -759,7 +759,7 @@ def _collect_hardware(lines: list[str], conn: Any, now: datetime) -> dict[str, A
           LEFT JOIN physical_assets pa ON pa.id = d.asset_id
          LEFT JOIN sites s ON s.id = COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''))
          WHERE c.discovery_version = ?
-           AND c.source_type = 'librenms_rule'
+           AND c.source_type IN ('librenms_rule', 'librenms_os_rule', 'librenms_mib_rule')
          ORDER BY c.device_id, c.component_class, c.source_type
         """,
         (DISCOVERY_VERSION,),

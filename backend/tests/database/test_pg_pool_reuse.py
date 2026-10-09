@@ -55,6 +55,25 @@ def test_reused_pg_connection_rolls_back_uncommitted_work(isolated_db, monkeypat
         close_database_pool()
 
 
+def test_pg_pool_resets_autocommit_before_reusing_connection(isolated_db, monkeypatch):
+    _configure_pool(monkeypatch, 1)
+    connection = get_db_connection()
+    connection.autocommit = True
+    connection.close()
+
+    reused = get_db_connection()
+    try:
+        assert reused.autocommit is False
+        reused.execute("CREATE TABLE test_pool_autocommit (value INTEGER)")
+        reused.execute("INSERT INTO test_pool_autocommit VALUES (1)")
+        reused.commit()
+        row = reused.execute("SELECT value FROM test_pool_autocommit FOR UPDATE").fetchone()
+        assert row["value"] == 1
+    finally:
+        reused.close()
+        close_database_pool()
+
+
 def test_pg_pool_replaces_a_disconnected_idle_connection(isolated_db, monkeypatch):
     _configure_pool(monkeypatch, 1)
     connection = get_db_connection()

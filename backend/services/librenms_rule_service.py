@@ -636,11 +636,24 @@ def _compile_identity(detection: Mapping[str, Any], *, source_path: str = "") ->
 
 
 def _sensor_component_class(sensor_class: str, definition: Mapping[str, Any]) -> tuple[str, str]:
+    group = str(definition.get("group") or "").strip().casefold()
     token = " ".join(
         str(definition.get(key) or "")
         for key in ("state_name", "descr", "oid", "value", "index")
     ).casefold()
     if sensor_class == "state":
+        if group == "cluster aps" or "access point" in token or "wlanap" in token:
+            return "wireless_access_point", "state"
+        if group == "cluster radios" or "radio" in group or "wireless" in group or "cellular status" in group:
+            return "wireless_radio", "state"
+        if any(value in token for value in ("hwwlancluster", "hwclusterac")):
+            return "wireless_controller", "state"
+        if any(value in token for value in (
+            "mtxrwl60gconnected", "mtxrwl60gmode", "gpssync", "gpsstatus",
+            "gpsfix", "gpsdimension", "satlock", "stationconnected",
+            "modulationrate", "curtxmodrate",
+        )):
+            return "wireless_radio", "state"
         if "fan" in token:
             return "fan_state", "state"
         if any(word in token for word in ("power", "supply", "psu")):
@@ -1132,6 +1145,7 @@ def sync_rules(conn: Any, root: Path | None = None) -> dict[str, Any]:
             "rule_contract_version": rule["rule_contract_version"],
             "compatibility": rule["compatibility"],
             "raw_discovery": rule["detection"].get("discovery", []),
+            "discovery_source_path": rule["discovery_source_path"],
         }
         conn.execute(
             """
@@ -1824,6 +1838,7 @@ def resolve_rule(conn: Any, identity: Mapping[str, Any]) -> dict[str, Any] | Non
                 "diagnostics": [*match.get("diagnostics", []), *((hardware.get("compatibility") or {}).get("diagnostics", []))],
             }
         item["detection"] = dict(detection)
+        item["discovery_source_path"] = str(detection.get("discovery_source_path") or "")
         item["identity_match"] = {**dict(identity_definition), **match}
         item["hardware_definitions"] = dict(hardware)
         item["rule_contract_version"] = str(

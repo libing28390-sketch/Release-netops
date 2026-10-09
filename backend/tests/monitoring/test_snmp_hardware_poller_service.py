@@ -6,6 +6,17 @@ from datetime import datetime, timedelta, timezone
 from services import snmp_hardware_poller_service as poller
 
 
+def test_older_hardware_discovery_version_is_refreshed(monkeypatch) -> None:
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(poller, "_latest_discovery", lambda _device_id: {
+        "last_status": "success",
+        "last_attempt_at": now,
+        "discovery_version": "nexora-librenms-rules-hardware-v6",
+    })
+
+    assert poller._discovery_due("device-old-hardware-plan", now) is True
+
+
 def test_collect_device_hardware_runs_due_discovery_and_sample(monkeypatch) -> None:
     from services import snmp_hardware_probe_service, vault_service
 

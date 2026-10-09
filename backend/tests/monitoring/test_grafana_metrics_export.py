@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta, timezone
 
 import database
@@ -246,7 +247,7 @@ def test_metrics_export_includes_normalized_hardware_and_capability_without_addr
     from database.migrations.m0260_snmp_hardware_inventory import upgrade
     from database.migrations.m0277_librenms_native_bindings import upgrade as upgrade_native_bindings
     from database.migrations.m0278_librenms_native_inventory_projection import upgrade as upgrade_native_projection
-    from services.librenms_source_policy import PINNED_LIBRENMS_COMMIT
+    from services.librenms_source_policy import LIBRENMS_BUNDLE_ROOT, PINNED_LIBRENMS_COMMIT
     from services.snmp_hardware_poller_service import DISCOVERY_VERSION
 
     conn = database.get_db_connection()
@@ -374,6 +375,86 @@ def test_metrics_export_includes_normalized_hardware_and_capability_without_addr
         artifact_version=rule_path,
     )
     assert rule_outcome["results"][0]["active_sensor_count"] == 1
+    manifest_path = LIBRENMS_BUNDLE_ROOT / "source-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    os_rule_source = next(
+        item for item in manifest["os_rule_sources"] if item["os_key"] == "comware"
+    )
+    os_rule_metadata = {
+        "source_type": "librenms_os_rule",
+        "source_commit": PINNED_LIBRENMS_COMMIT,
+        "os_key": "comware",
+        "source_path": os_rule_source["source_path"],
+        "adapter_source_files": os_rule_source["adapter_source_files"],
+        "mib_source_files": os_rule_source["mib_source_files"],
+        "collection_version": DISCOVERY_VERSION,
+        "poll_interval_seconds": 60,
+        "window": "unknown",
+    }
+    os_rule_outcome = upsert_discovery_run(
+        conn,
+        "grafana-hardware-device",
+        "grafana-hardware-run-os-rule-1",
+        PINNED_LIBRENMS_COMMIT,
+        [
+            {
+                "source_type": "librenms_os_rule",
+                "source_id": "comware:processor:0",
+                "component_class": "processor",
+                "measurement_type": "cpu_usage_percent",
+                "index": [0],
+                "oid": "1.3.6.1.4.1.55555.1.1",
+                "unit": "percent",
+                "sensor_name": "CPU 1",
+                "group_name": "processor",
+                "value": 26.5,
+                "raw_value": "26.5",
+                "quality": "good",
+                "sample_at": sampled_at,
+                "metadata": os_rule_metadata,
+            },
+            {
+                "source_type": "librenms_os_rule",
+                "source_id": "comware:memory_pool:0",
+                "component_class": "memory_pool",
+                "measurement_type": "memory_usage_percent",
+                "index": [0],
+                "oid": "1.3.6.1.4.1.55555.1.2",
+                "unit": "percent",
+                "sensor_name": "Memory pool 1",
+                "group_name": "memory_pool",
+                "value": 44.2,
+                "raw_value": "44.2",
+                "quality": "good",
+                "sample_at": sampled_at,
+                "metadata": os_rule_metadata,
+            },
+        ],
+        [
+            {
+                "source_type": "librenms_os_rule",
+                "component_class": "processor",
+                "status": "success",
+                "coverage_complete": True,
+            },
+            {
+                "source_type": "librenms_os_rule",
+                "component_class": "memory_pool",
+                "status": "success",
+                "coverage_complete": True,
+            },
+            {
+                "source_type": "librenms_mib_rule",
+                "component_class": "wireless_controller",
+                "status": "success",
+                "coverage_complete": True,
+            },
+        ],
+        sampled_at,
+        discovery_version=DISCOVERY_VERSION,
+        artifact_version=os_rule_source["source_path"],
+    )
+    assert os_rule_outcome["results"][0]["active_sensor_count"] == 1
     conn.commit()
     conn.close()
     monkeypatch.setattr(grafana_metrics, "get_db_connection", database.get_db_connection)
@@ -392,6 +473,18 @@ def test_metrics_export_includes_normalized_hardware_and_capability_without_addr
     ):
         assert label in cpu_line
     assert cpu_line.endswith(" 26.5")
+    assert any(
+        line.startswith("nexora_hw_cpu_usage_percent{")
+        and 'source_type="librenms_os_rule"' in line
+        and line.endswith(" 26.5")
+        for line in body.splitlines()
+    )
+    assert any(
+        line.startswith("nexora_hw_memory_usage_percent{")
+        and 'source_type="librenms_os_rule"' in line
+        and line.endswith(" 44.2")
+        for line in body.splitlines()
+    )
     assert not any(
         line.startswith("nexora_hw_temperature_celsius{")
         for line in body.splitlines()
@@ -405,6 +498,8 @@ def test_metrics_export_includes_normalized_hardware_and_capability_without_addr
     assert f'artifact_version="{rule_path}"' in body
     assert 'nexora_hw_capability_info{' in body
     assert 'nexora_hw_capability_last_success_timestamp_seconds{' in body
+    assert 'nexora_hw_capability_status{' in body and 'source_type="librenms_os_rule"' in body
+    assert 'nexora_hw_capability_status{' in body and 'source_type="librenms_mib_rule"' in body
     assert 'nexora_hw_sensor_render_errors 0' in body
     assert "192.0.2." not in body
     assert 'ip_address=' not in body

@@ -41,7 +41,7 @@ def test_all_generated_dashboards_validate_the_complete_panel_catalog(catalog):
         panel_count += len(panels)
         validate_dashboard(filename, dashboard)
 
-    assert panel_count == 261
+    assert panel_count == 266
 
 
 @pytest.mark.parametrize(
@@ -119,7 +119,7 @@ def test_overview_and_wireless_share_the_client_query_without_zero_fallback(cata
     wireless_query = wireless[4]["targets"][0]["expr"]
 
     assert overview_query == wireless_query
-    assert 'source_type="librenms_rule"' in overview_query
+    assert 'source_type=~"librenms_rule|librenms_mib_rule"' in overview_query
     assert 'component_class="wireless_controller",sensor_class="clients"' in overview_query
     assert 'component_class="wireless_ssid",sensor_class="clients"' in overview_query
     assert "or on(site_name,vendor,role,hostname)" in overview_query
@@ -189,6 +189,8 @@ def test_device_hardware_trends_use_compact_legends_and_keep_sensor_query_scope(
         11: "nexora_hw_fan_speed_rpm",
         12: "nexora_hw_power_watts",
         27: "nexora_hw_optical_power_dbm",
+        30: "nexora_hw_voltage_volts",
+        31: "nexora_hw_current_amperes",
     }
 
     for panel_id, metric in expected_metrics.items():
@@ -216,3 +218,27 @@ def test_device_hardware_trends_use_compact_legends_and_keep_sensor_query_scope(
             assert "{{window}}" in target["legendFormat"]
         else:
             assert query.startswith("max by (")
+
+
+def test_uptime_and_if_last_change_queries_cover_the_900_second_system_scrape(catalog):
+    device = _panels_by_id(catalog["nexora-network-device"][1])
+    uptime_query = device[2]["targets"][0]["expr"]
+    assert "last_over_time(sysUpTime{" in uptime_query
+    assert "[20m])" in uptime_query
+    assert "time() - timestamp(last_over_time(sysUpTime{" in uptime_query
+    assert "* 100) / 100" in uptime_query
+
+    for dashboard_name in ("nexora-network-interface", "nexora-interface-detail"):
+        expressions = [
+            target.get("expr", "")
+            for panel in _panels_by_id(catalog[dashboard_name][1]).values()
+            for target in panel.get("targets", [])
+            if "sysUpTime" in target.get("expr", "")
+        ]
+        assert expressions, dashboard_name
+        assert all(
+            "last_over_time(sysUpTime{" in expr
+            and "[20m])" in expr
+            and "time() - timestamp(last_over_time(sysUpTime{" in expr
+            for expr in expressions
+        )

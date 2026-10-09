@@ -190,10 +190,11 @@ def test_fetch_devices_and_outbound_data():
 
 def test_fetch_devices_report_reads_normalized_hardware_metrics_only(monkeypatch):
     queries = []
+    source_matcher = 'source_type=~"librenms_rule|librenms_os_rule|librenms_mib_rule"'
     values_by_family = {
-        'nexora_hw_cpu_usage_percent{source_type="librenms_rule"}': {"asset:dev-1": 36.2},
-        'nexora_hw_memory_usage_percent{source_type="librenms_rule"}': {"asset:dev-1": 43.1},
-        'nexora_hw_temperature_celsius{source_type="librenms_rule"}': {"asset:dev-1": 37.5},
+        f'nexora_hw_cpu_usage_percent{{{source_matcher}}}': {"asset:dev-1": 36.2},
+        f'nexora_hw_memory_usage_percent{{{source_matcher}}}': {"asset:dev-1": 43.1},
+        f'nexora_hw_temperature_celsius{{{source_matcher}}}': {"asset:dev-1": 37.5},
     }
 
     def query_metric(query):
@@ -216,9 +217,9 @@ def test_fetch_devices_report_reads_normalized_hardware_metrics_only(monkeypatch
 
     item = result["items"][0]
     assert queries == [
-        'nexora_hw_cpu_usage_percent{source_type="librenms_rule"}',
-        'nexora_hw_memory_usage_percent{source_type="librenms_rule"}',
-        'nexora_hw_temperature_celsius{source_type="librenms_rule"}',
+        f'nexora_hw_cpu_usage_percent{{{source_matcher}}}',
+        f'nexora_hw_memory_usage_percent{{{source_matcher}}}',
+        f'nexora_hw_temperature_celsius{{{source_matcher}}}',
     ]
     assert "d.cpu_usage" not in connection.statements[0]
     assert "d.memory_usage" not in connection.statements[0]
@@ -236,6 +237,7 @@ def test_fetch_devices_report_reads_normalized_hardware_metrics_only(monkeypatch
 
 def test_fetch_devices_report_does_not_fallback_to_device_hardware_snapshot(monkeypatch):
     queries = []
+    source_matcher = 'source_type=~"librenms_rule|librenms_os_rule|librenms_mib_rule"'
 
     def no_hardware_samples(query):
         queries.append(query)
@@ -247,9 +249,9 @@ def test_fetch_devices_report_does_not_fallback_to_device_hardware_snapshot(monk
     item = result["items"][0]
 
     assert queries == [
-        'nexora_hw_cpu_usage_percent{source_type="librenms_rule"}',
-        'nexora_hw_memory_usage_percent{source_type="librenms_rule"}',
-        'nexora_hw_temperature_celsius{source_type="librenms_rule"}',
+        f'nexora_hw_cpu_usage_percent{{{source_matcher}}}',
+        f'nexora_hw_memory_usage_percent{{{source_matcher}}}',
+        f'nexora_hw_temperature_celsius{{{source_matcher}}}',
     ]
     assert item["cpu_usage"] is None
     assert item["memory_usage"] is None

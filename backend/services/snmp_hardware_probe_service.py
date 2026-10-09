@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import json
 import logging
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Awaitable, Callable, Mapping
@@ -29,6 +30,8 @@ from services.librenms_user_functions import (
 )
 from services.librenms_source_policy import (
     LIBRENMS_BUNDLE_ROOT,
+    PINNED_LIBRENMS_COMMIT,
+    verified_librenms_mib_source_entries,
     verify_bundled_rule,
 )
 
@@ -54,6 +57,7 @@ class WalkResult:
     rows: list[tuple[str, str]]
     complete: bool
     reason: str = ""
+    octet_values: dict[str, bytes] = field(default_factory=dict)
 
 
 def _clean_oid(value: Any) -> str:
@@ -95,36 +99,61 @@ def _resolve_mib_symbol(
         if cache is not None:
             cache[cache_key] = numeric
         return numeric
-    symbol = raw.rsplit("::", 1)[-1].strip()
+    module_name = ""
+    symbol = raw
+    if "::" in raw:
+        module_name, symbol = raw.rsplit("::", 1)
+        module_name = module_name.strip()
+    symbol = symbol.strip()
     if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", symbol):
+        if cache is not None:
+            cache[cache_key] = ""
+        return ""
+    if conn is None:
         if cache is not None:
             cache[cache_key] = ""
         return ""
     try:
         rows = conn.execute(
             """
-            SELECT n.oid, m.vendor, n.node_name
+            SELECT n.oid, m.relative_path, m.sha256
               FROM snmp_mib_nodes n
               JOIN snmp_mibs m ON m.id = n.mib_id
-             WHERE m.is_active = 1 AND LOWER(n.node_name) = LOWER(?)
+             WHERE m.is_active = 1 AND m.source_type = 'librenms'
+               AND m.source_commit = ? AND LOWER(n.node_name) = LOWER(?)
                AND TRIM(COALESCE(n.oid, '')) <> ''
-             ORDER BY CASE WHEN LOWER(TRIM(COALESCE(m.vendor, ''))) = LOWER(?) THEN 0
-                           WHEN LOWER(TRIM(COALESCE(m.vendor, ''))) = 'standard' THEN 1
-                           ELSE 2 END,
-                      m.name
-             LIMIT 8
             """,
-            (symbol, vendor),
+            (PINNED_LIBRENMS_COMMIT, symbol),
         ).fetchall()
     except Exception:
         if cache is not None:
             cache[cache_key] = ""
         return ""
-    if not rows:
+
+    resolved_oids: set[str] = set()
+    for row in rows or []:
+        try:
+            oid_value, relative_path, file_hash = row[0], row[1], row[2]
+        except (TypeError, IndexError, KeyError):
+            continue
+        verified_entries = verified_librenms_mib_source_entries(
+            module_name=module_name,
+            relative_path=str(relative_path or ""),
+            sha256=str(file_hash or ""),
+        )
+        if len(verified_entries) != 1:
+            continue
+        resolved = _numeric_oid(oid_value)
+        if resolved:
+            resolved_oids.add(resolved)
+
+    # If an unqualified symbol is shared by multiple pinned MIBs, accept it
+    # only when every verified source resolves to the same numeric OID.
+    if len(resolved_oids) != 1:
         if cache is not None:
             cache[cache_key] = ""
         return ""
-    resolved = _numeric_oid(rows[0][0])
+    resolved = next(iter(resolved_oids))
     if cache is not None:
         cache[cache_key] = resolved
     return resolved
@@ -179,15 +208,16 @@ async def _walk(
 
             rows = await _snmp_walk(
                 ip, community, oid, port, timeout=5, max_rows=2000,
-                version=version, raise_on_error=True,
+                version=version, raise_on_error=True, preserve_octets=True,
             )
+        octet_values = dict(getattr(rows, "octet_values", {}) or {})
         normalized: list[tuple[str, str]] = []
         for suffix, raw in rows or []:
             suffix_text = str(suffix or "").strip().strip(".")
             normalized.append((suffix_text, str(raw)))
         # The walker caps row counts.  Reaching its cap cannot establish full
         # table coverage, so absence retirement stays disabled for this run.
-        return WalkResult(normalized, len(normalized) < 2000)
+        return WalkResult(normalized, len(normalized) < 2000, octet_values=octet_values)
     except Exception as exc:
         partial = getattr(exc, "partial_results", []) or []
         return WalkResult(
@@ -250,6 +280,30 @@ def _number(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return number if math.isfinite(number) else None
+
+
+def _wireless_channel_frequency(value: Any, *, aruba_instant_encoding: bool = False) -> float | None:
+    raw = str(value or "").strip()
+    if aruba_instant_encoding:
+        digits = re.sub(r"\D", "", raw)
+        if not digits:
+            return None
+        channel = int(digits) & 0xFF
+    else:
+        number = _number(raw)
+        if number is None:
+            match = re.search(r"\((-?\d+(?:\.\d+)?)\)\s*$", raw)
+            number = _number(match.group(1)) if match else None
+        if number is None or not number.is_integer() or number <= 0:
+            return None
+        channel = int(number) & 0xFF
+    if channel == 14:
+        return 2484.0
+    if 1 <= channel <= 13:
+        return float(2407 + 5 * channel)
+    if 32 <= channel <= 196:
+        return float(5000 + 5 * channel)
+    return None
 
 
 def _index_parts(suffix: Any) -> list[int] | None:
@@ -533,6 +587,809 @@ def _pinned_hardware_definition_matches(rule: Mapping[str, Any]) -> bool:
     return isinstance(pinned, Mapping) and dict(hardware) == pinned
 
 
+@functools.lru_cache(maxsize=1)
+def _librenms_source_manifest() -> dict[str, Any]:
+    path = LIBRENMS_BUNDLE_ROOT / "source-manifest.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return payload if isinstance(payload, dict) else {}
+
+
+def _librenms_os_rule_lineage(os_key: str) -> dict[str, Any] | None:
+    manifest = _librenms_source_manifest()
+    source_commit = str(manifest.get("upstream_commit") or "")
+    if os_key == "ios":
+        primary = "LibreNMS/OS/Ios.php"
+        adapters = [primary, "LibreNMS/OS/Shared/Cisco.php"]
+        mib_sources = [
+            "mibs/cisco/CISCO-ENHANCED-MEMPOOL-MIB",
+            "mibs/cisco/CISCO-ENTITY-QFP-MIB",
+            "mibs/cisco/CISCO-MEMORY-POOL-MIB",
+            "mibs/cisco/CISCO-PROCESS-MIB",
+            "mibs/cisco/OLD-CISCO-CPU-MIB",
+            "mibs/ENTITY-MIB",
+        ]
+    elif os_key == "comware":
+        primary = "LibreNMS/OS/Comware.php"
+        adapters = [
+            primary,
+            "includes/discovery/sensors/temperature/comware.inc.php",
+            "includes/discovery/sensors/dbm/comware.inc.php",
+            "includes/discovery/sensors/voltage/comware.inc.php",
+            "includes/discovery/sensors/current/comware.inc.php",
+        ]
+        mib_sources = [
+            "mibs/comware/HH3C-ENTITY-EXT-MIB",
+            "mibs/comware/HH3C-TRANSCEIVER-INFO-MIB",
+            "mibs/ENTITY-MIB",
+            "mibs/IF-MIB",
+        ]
+    else:
+        return None
+    return {
+        "source_commit": source_commit,
+        "source_path": primary,
+        "os_key": os_key,
+        "adapter_source_files": adapters,
+        "mib_source_files": mib_sources,
+    }
+
+
+def _resolve_pinned_librenms_mib_symbol(
+    conn: Any,
+    upstream_path: str,
+    symbol: str,
+    *,
+    cache: dict[tuple[str, str], str] | None = None,
+) -> str:
+    """Resolve a symbol only from the exact verified MIB file in the pinned bundle."""
+    key = (str(upstream_path), str(symbol).casefold())
+    if cache is not None and key in cache:
+        return cache[key]
+    if conn is None:
+        return ""
+    try:
+        entries = verified_librenms_mib_source_entries(upstream_path=upstream_path)
+        if len(entries) != 1:
+            return ""
+        entry = entries[0]
+        bundle_path = str(entry.get("bundle_path") or "").replace("\\", "/")
+        relative_path = bundle_path[5:] if bundle_path.startswith("mibs/") else bundle_path
+        expected_hash = str(entry.get("sha256") or "")
+        source_commit = str(_librenms_source_manifest().get("upstream_commit") or "")
+        if not relative_path or len(expected_hash) != 64 or not source_commit:
+            return ""
+        row = conn.execute(
+            """
+            SELECT n.oid
+              FROM snmp_mib_nodes n
+              JOIN snmp_mibs m ON m.id = n.mib_id
+             WHERE m.source_type = 'librenms' AND m.is_active = 1
+               AND m.source_commit = ? AND m.relative_path = ? AND m.sha256 = ?
+               AND LOWER(n.node_name) = LOWER(?)
+               AND TRIM(COALESCE(n.oid, '')) <> ''
+             ORDER BY m.updated_at DESC
+             LIMIT 1
+            """,
+            (source_commit, relative_path, expected_hash, symbol),
+        ).fetchone()
+        resolved = _numeric_oid(row[0]) if row else ""
+    except Exception:
+        resolved = ""
+    if cache is not None:
+        cache[key] = resolved
+    return resolved
+
+
+def _snmp_numeric(value: Any) -> float | None:
+    number = _number(value)
+    if number is not None:
+        return number
+    text = str(value or "").strip()
+    if ":" in text:
+        text = text.split(":", 1)[1].strip()
+    number = _number(text)
+    if number is not None:
+        return number
+    match = re.fullmatch(
+        r"(?:INTEGER(?:32)?|Gauge32|Unsigned32|Counter(?:32|64)?|CounterBasedGauge64):\\s*([-+]?(?:\\d+(?:\\.\\d*)?|\\.\\d+))",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return _number(match.group(1)) if match else None
+
+
+def _snmp_true(value: Any) -> bool:
+    token = str(value or "").strip().casefold()
+    return token in {"1", "true", "true(1)", "yes"}
+
+
+def _snmp_interface_admin_up(value: Any) -> bool:
+    token = str(value or "").strip().casefold().replace(" ", "")
+    return token in {"1", "up", "up(1)"}
+
+
+def _microwatt_to_dbm(value: Any) -> float | None:
+    """Convert the microwatt value produced by LibreNMS' Comware /10 step."""
+    microwatts = _snmp_numeric(value)
+    if microwatts is None or microwatts <= 0:
+        return None
+    return 10.0 * math.log10(microwatts / 1000.0)
+
+
+def _lineage_sensor_metadata(lineage: Mapping[str, Any], **extra: Any) -> dict[str, Any]:
+    return {**dict(lineage), "collection_engine": "librenms_os_rule", **extra}
+
+
+async def probe_librenms_os_hardware(
+    ip: str,
+    community: str | Mapping[str, Any],
+    port: int,
+    *,
+    rule: Mapping[str, Any],
+    identity: Mapping[str, Any],
+    version: str = "2c",
+    walk_func: Callable[..., Awaitable[list[tuple[str, str]]]] | None = None,
+) -> dict[str, Any]:
+    """Collect pinned LibreNMS OS-class and sensor-discovery hardware rules."""
+    from services.librenms_source_policy import verify_librenms_os_rule
+
+    os_key = str(rule.get("os_key") or "").strip().casefold()
+    lineage = _librenms_os_rule_lineage(os_key)
+    if (
+        lineage is None
+        or not verify_bundled_rule(rule)
+        or not verify_librenms_os_rule({"source_type": "librenms_os_rule", **lineage})
+    ):
+        return {
+            "sensors": [],
+            "category_results": [_category_result(
+                "nexora_snmp", "librenms_os_rule", status="unsupported",
+                reason_code="unverified_librenms_os_rule",
+                reason="The LibreNMS OS class and its MIB dependencies do not match the pinned bundle.",
+            )],
+        }
+
+    mib_paths = {str(item).rsplit("/", 1)[-1]: item for item in lineage["mib_source_files"]}
+    symbols: dict[str, str] = {}
+    missing_symbols: list[str] = []
+    missing_comware_symbols: dict[str, list[str]] = {}
+    db_conn = None
+    try:
+        db_conn = get_db_connection()
+    except Exception:
+        db_conn = None
+    try:
+        requests: dict[str, tuple[str, str]] = {}
+        if os_key == "ios":
+            requests = {
+                "cpu_rev": (mib_paths["CISCO-PROCESS-MIB"], "cpmCPUTotal5minRev"),
+                "cpu_5min": (mib_paths["CISCO-PROCESS-MIB"], "cpmCPUTotal5min"),
+                "cpu_physical": (mib_paths["CISCO-PROCESS-MIB"], "cpmCPUTotalPhysicalIndex"),
+                "cpu_core": (mib_paths["CISCO-PROCESS-MIB"], "cpmCore5min"),
+                "cpu_mem_free": (mib_paths["CISCO-PROCESS-MIB"], "cpmCPUMemoryFree"),
+                "cpu_mem_used": (mib_paths["CISCO-PROCESS-MIB"], "cpmCPUMemoryUsed"),
+                "cpu_mem_hc_used": (mib_paths["CISCO-PROCESS-MIB"], "cpmCPUMemoryHCUsed"),
+                "cpu_mem_hc_free": (mib_paths["CISCO-PROCESS-MIB"], "cpmCPUMemoryHCFree"),
+                "old_cpu": (mib_paths["OLD-CISCO-CPU-MIB"], "avgBusy5"),
+                "cemp_used": (mib_paths["CISCO-ENHANCED-MEMPOOL-MIB"], "cempMemPoolUsed"),
+                "cemp_valid": (mib_paths["CISCO-ENHANCED-MEMPOOL-MIB"], "cempMemPoolValid"),
+                "cemp_name": (mib_paths["CISCO-ENHANCED-MEMPOOL-MIB"], "cempMemPoolName"),
+                "cemp_hc_used": (mib_paths["CISCO-ENHANCED-MEMPOOL-MIB"], "cempMemPoolHCUsed"),
+                "cemp_free": (mib_paths["CISCO-ENHANCED-MEMPOOL-MIB"], "cempMemPoolFree"),
+                "cemp_hc_free": (mib_paths["CISCO-ENHANCED-MEMPOOL-MIB"], "cempMemPoolHCFree"),
+                "cmp_used": (mib_paths["CISCO-MEMORY-POOL-MIB"], "ciscoMemoryPoolUsed"),
+                "cmp_free": (mib_paths["CISCO-MEMORY-POOL-MIB"], "ciscoMemoryPoolFree"),
+                "cmp_name": (mib_paths["CISCO-MEMORY-POOL-MIB"], "ciscoMemoryPoolName"),
+                "qfp_cpu": (mib_paths["CISCO-ENTITY-QFP-MIB"], "ceqfpUtilProcessingLoad"),
+                "entity_name": (mib_paths["ENTITY-MIB"], "entPhysicalName"),
+            }
+        else:
+            requests = {
+                "h3c_cpu": (mib_paths["HH3C-ENTITY-EXT-MIB"], "hh3cEntityExtCpuUsage"),
+                "h3c_mem": (mib_paths["HH3C-ENTITY-EXT-MIB"], "hh3cEntityExtMemUsage"),
+                "h3c_mem_size": (mib_paths["HH3C-ENTITY-EXT-MIB"], "hh3cEntityExtMemSize"),
+                "h3c_temp": (mib_paths["HH3C-ENTITY-EXT-MIB"], "hh3cEntityExtTemperature"),
+                "h3c_temp_threshold": (mib_paths["HH3C-ENTITY-EXT-MIB"], "hh3cEntityExtTemperatureThreshold"),
+                "entity_name": (mib_paths["ENTITY-MIB"], "entPhysicalName"),
+                "entity_class": (mib_paths["ENTITY-MIB"], "entPhysicalClass"),
+                "if_admin": (mib_paths["IF-MIB"], "ifAdminStatus"),
+                "if_name": (mib_paths["IF-MIB"], "ifName"),
+                "if_descr": (mib_paths["IF-MIB"], "ifDescr"),
+                "xcvr_temp": (mib_paths["HH3C-TRANSCEIVER-INFO-MIB"], "hh3cTransceiverTemperature"),
+                "xcvr_diagnostic": (mib_paths["HH3C-TRANSCEIVER-INFO-MIB"], "hh3cTransceiverDiagnostic"),
+                "xcvr_temp_hi_alarm": (mib_paths["HH3C-TRANSCEIVER-INFO-MIB"], "hh3cTransceiverTempHiAlarm"),
+                "xcvr_temp_lo_alarm": (mib_paths["HH3C-TRANSCEIVER-INFO-MIB"], "hh3cTransceiverTempLoAlarm"),
+                "xcvr_temp_hi_warn": (mib_paths["HH3C-TRANSCEIVER-INFO-MIB"], "hh3cTransceiverTempHiWarn"),
+                "xcvr_temp_lo_warn": (mib_paths["HH3C-TRANSCEIVER-INFO-MIB"], "hh3cTransceiverTempLoWarn"),
+                "xcvr_rx_power": (mib_paths["HH3C-TRANSCEIVER-INFO-MIB"], "hh3cTransceiverCurRXPower"),
+                "xcvr_tx_power": (mib_paths["HH3C-TRANSCEIVER-INFO-MIB"], "hh3cTransceiverCurTXPower"),
+                "xcvr_rx_hi_alarm": (mib_paths["HH3C-TRANSCEIVER-INFO-MIB"], "hh3cTransceiverRcvPwrHiAlarm"),
+                "xcvr_rx_lo_alarm": (mib_paths["HH3C-TRANSCEIVER-INFO-MIB"], "hh3cTransceiverRcvPwrLoAlarm"),
+                "xcvr_rx_hi_warn": (mib_paths["HH3C-TRANSCEIVER-INFO-MIB"], "hh3cTransceiverRcvPwrHiWarn"),
+                "xcvr_rx_lo_warn": (mib_paths["HH3C-TRANSCEIVER-INFO-MIB"], "hh3cTransceiverRcvPwrLoWarn"),
+                "xcvr_tx_hi_alarm": (mib_paths["HH3C-TRANSCEIVER-INFO-MIB"], "hh3cTransceiverPwrOutHiAlarm"),
+                "xcvr_tx_lo_alarm": (mib_paths["HH3C-TRANSCEIVER-INFO-MIB"], "hh3cTransceiverPwrOutLoAlarm"),
+                "xcvr_tx_hi_warn": (mib_paths["HH3C-TRANSCEIVER-INFO-MIB"], "hh3cTransceiverPwrOutHiWarn"),
+                "xcvr_tx_lo_warn": (mib_paths["HH3C-TRANSCEIVER-INFO-MIB"], "hh3cTransceiverPwrOutLoWarn"),
+                "xcvr_voltage": (mib_paths["HH3C-TRANSCEIVER-INFO-MIB"], "hh3cTransceiverVoltage"),
+                "xcvr_voltage_hi_alarm": (mib_paths["HH3C-TRANSCEIVER-INFO-MIB"], "hh3cTransceiverVccHiAlarm"),
+                "xcvr_voltage_lo_alarm": (mib_paths["HH3C-TRANSCEIVER-INFO-MIB"], "hh3cTransceiverVccLoAlarm"),
+                "xcvr_voltage_hi_warn": (mib_paths["HH3C-TRANSCEIVER-INFO-MIB"], "hh3cTransceiverVccHiWarn"),
+                "xcvr_voltage_lo_warn": (mib_paths["HH3C-TRANSCEIVER-INFO-MIB"], "hh3cTransceiverVccLoWarn"),
+                "xcvr_bias_current": (mib_paths["HH3C-TRANSCEIVER-INFO-MIB"], "hh3cTransceiverBiasCurrent"),
+                "xcvr_current_hi_alarm": (mib_paths["HH3C-TRANSCEIVER-INFO-MIB"], "hh3cTransceiverBiasHiAlarm"),
+                "xcvr_current_lo_alarm": (mib_paths["HH3C-TRANSCEIVER-INFO-MIB"], "hh3cTransceiverBiasLoAlarm"),
+                "xcvr_current_hi_warn": (mib_paths["HH3C-TRANSCEIVER-INFO-MIB"], "hh3cTransceiverBiasHiWarn"),
+                "xcvr_current_lo_warn": (mib_paths["HH3C-TRANSCEIVER-INFO-MIB"], "hh3cTransceiverBiasLoWarn"),
+            }
+        mib_cache: dict[tuple[str, str], str] = {}
+        for key, (mib_path, symbol) in requests.items():
+            oid = _resolve_pinned_librenms_mib_symbol(db_conn, mib_path, symbol, cache=mib_cache)
+            if oid:
+                symbols[key] = oid
+            else:
+                missing_item = f"{mib_path}::{symbol}"
+                if os_key == "comware":
+                    sensor_groups = {"temperature", "optical_power", "voltage", "current"}
+                    if key == "h3c_cpu":
+                        groups = {"processor"}
+                    elif key in {"h3c_mem", "h3c_mem_size", "entity_class"}:
+                        groups = {"memory_pool", "temperature"} if key == "entity_class" else {"memory_pool"}
+                    elif key == "entity_name":
+                        groups = {"memory_pool", "temperature"}
+                    elif key in {"if_admin", "if_name", "if_descr", "xcvr_diagnostic"}:
+                        groups = sensor_groups
+                    elif key.startswith(("h3c_temp", "xcvr_temp")):
+                        groups = {"temperature"}
+                    elif key.startswith(("xcvr_rx", "xcvr_tx")):
+                        groups = {"optical_power"}
+                    elif key.startswith("xcvr_voltage"):
+                        groups = {"voltage"}
+                    elif key.startswith(("xcvr_current", "xcvr_bias")):
+                        groups = {"current"}
+                    else:
+                        groups = {"hardware"}
+                    for group in groups:
+                        missing_comware_symbols.setdefault(group, []).append(missing_item)
+                else:
+                    missing_symbols.append(missing_item)
+    finally:
+        if db_conn is not None:
+            try:
+                db_conn.close()
+            except Exception:
+                pass
+
+    if not symbols:
+        return {
+            "sensors": [],
+            "category_results": [_category_result(
+                "librenms_os_rule", "source", status="unsupported",
+                reason_code="pinned_mib_symbols_unavailable",
+                reason="The pinned LibreNMS MIB files are verified, but their symbol indexes are unavailable.",
+            )],
+        }
+
+    reads = await _walk_many(
+        ip, community,
+        {oid for key, oid in symbols.items() if key != "old_cpu"},
+        port, version, walk_func=walk_func,
+    )
+    rows = {key: _row_map(reads.get(oid)) for key, oid in symbols.items()}
+    walk_complete = {
+        key: bool(reads.get(oid) and reads[oid].complete and not reads[oid].reason)
+        for key, oid in symbols.items()
+    }
+    entity_names = rows.get("entity_name", {})
+    sensors: list[dict[str, Any]] = []
+    category_results: list[dict[str, Any]] = []
+
+    def add_sensor(
+        *, component_class: str, measurement_type: str, source_id: str,
+        oid: str, suffix: str, raw_value: Any, value: float | None,
+        name: str, metadata: Mapping[str, Any], poll_plan: Mapping[str, Any],
+        unit: str = "percent", thresholds: Mapping[str, Any] | None = None,
+        index_labels: Mapping[str, Any] | None = None,
+        entity_name: str = "", group_name: str = "",
+    ) -> None:
+        sensor = _sensor(
+            source_type="librenms_os_rule", source_id=source_id,
+            component_class=component_class, measurement_type=measurement_type,
+            oid=oid, suffix=suffix, raw_value=raw_value, value=value,
+            unit=unit, sensor_name=name, entity_name=entity_name,
+            group_name=group_name, quality="good" if value is not None else "missing",
+            thresholds=thresholds,
+            metadata=_lineage_sensor_metadata(lineage, **dict(metadata)),
+            poll_plan=poll_plan,
+        )
+        if sensor:
+            if index_labels:
+                sensor["index_labels"].update(dict(index_labels))
+            sensors.append(sensor)
+
+    if os_key == "comware":
+        cpu_rows = rows.get("h3c_cpu", {})
+        for suffix, raw in sorted(cpu_rows.items()):
+            value = _snmp_numeric(raw)
+            if value is None or value == 0:
+                continue
+            name = entity_names.get(suffix) or f"Processor {suffix}"
+            add_sensor(
+                component_class="processor", measurement_type="cpu_usage_percent",
+                source_id=f"comware:processor:{suffix}", oid=symbols["h3c_cpu"],
+                suffix=suffix, raw_value=raw, value=value, name=name,
+                entity_name=name, group_name="processor",
+                metadata={"librenms_mempool_type": "comware", "window": "unknown"},
+                poll_plan={"kind": "direct", "oid": symbols["h3c_cpu"], "index": suffix},
+            )
+        cpu_ok = bool(walk_complete.get("h3c_cpu"))
+        category_results.append(_category_result(
+            "librenms_os_rule", "processor",
+            status="success" if cpu_ok and any(s.get("component_class") == "processor" for s in sensors) else "not_found" if cpu_ok else "partial",
+            complete=cpu_ok,
+            reason_code="librenms_comware_cpu" if cpu_ok else "librenms_comware_cpu_walk_incomplete",
+            reason="LibreNMS Comware CPU values exclude zero rows." if cpu_ok else "The Comware CPU walk did not complete.",
+        ))
+
+        mem_rows = rows.get("h3c_mem", {})
+        mem_size = rows.get("h3c_mem_size", {})
+        entity_classes = rows.get("entity_class", {})
+        memory_count = 0
+        for suffix, raw in sorted(mem_rows.items()):
+            usage = _snmp_numeric(raw)
+            class_value = str(entity_classes.get(suffix) or "").strip().casefold()
+            class_is_module = class_value in {"9", "module", "module(9)"}
+            if usage is None or usage <= 0 or not class_is_module:
+                continue
+            name = entity_names.get(suffix) or f"Entity {suffix}"
+            add_sensor(
+                component_class="memory_pool", measurement_type="memory_usage_percent",
+                source_id=f"comware:mempool:{suffix}", oid=symbols["h3c_mem"],
+                suffix=suffix, raw_value=raw, value=usage, name=name,
+                entity_name=name, group_name="system",
+                metadata={
+                    "librenms_mempool_type": "comware",
+                    "librenms_mem_size_bytes": mem_size.get(suffix),
+                    "librenms_entity_class": class_value,
+                },
+                poll_plan={"kind": "direct", "oid": symbols["h3c_mem"], "index": suffix},
+            )
+            memory_count += 1
+        memory_complete = all(walk_complete.get(key, False) for key in ("h3c_mem", "h3c_mem_size", "entity_name", "entity_class"))
+        category_results.append(_category_result(
+            "librenms_os_rule", "memory_pool",
+            status="success" if memory_count and memory_complete else "partial" if memory_count else "not_found" if memory_complete else "failed",
+            complete=memory_complete,
+            reason_code="librenms_comware_mempool" if memory_count else "no_comware_module_memory" if memory_complete else "librenms_comware_mempool_walk_incomplete",
+            reason="LibreNMS Comware memory requires module entities with nonzero usage." if memory_count else "No Comware module entity returned nonzero memory usage." if memory_complete else "The Comware memory/entity walks did not complete.",
+        ))
+
+        # LibreNMS keeps Comware sensor discovery in separate PHP rule files.
+        # Python follows those fixed sources; it never executes the PHP files.
+        sensor_class_values = {"8", "9", "sensor", "sensor(8)", "module", "module(9)"}
+        temperature_count = 0
+        entity_temperatures = rows.get("h3c_temp", {})
+        entity_temp_thresholds = rows.get("h3c_temp_threshold", {})
+        for suffix, raw in sorted(entity_temperatures.items()):
+            value = _snmp_numeric(raw)
+            entity_class = str(entity_classes.get(suffix) or "").strip().casefold()
+            if value is None or value == 65535 or entity_class not in sensor_class_values:
+                continue
+            name = entity_names.get(suffix) or f"Entity {suffix}"
+            upper = _snmp_numeric(entity_temp_thresholds.get(suffix))
+            add_sensor(
+                component_class="temperature", measurement_type="temperature_celsius",
+                source_id=f"comware:temperature:entity:{suffix}", oid=symbols["h3c_temp"],
+                suffix=suffix, raw_value=raw, value=value, name=name, entity_name=name,
+                group_name="chassis", unit="celsius",
+                thresholds={"critical_upper": upper} if upper is not None and upper != 65535 else {},
+                metadata={"librenms_sensor_source": "HH3C-ENTITY-EXT-MIB::hh3cEntityExtTemperature"},
+                poll_plan={"kind": "direct", "oid": symbols["h3c_temp"], "index": suffix},
+            )
+            temperature_count += 1
+
+        admin_rows = rows.get("if_admin", {})
+        if_name_rows = rows.get("if_name", {})
+        if_descr_rows = rows.get("if_descr", {})
+        diagnostic_rows = rows.get("xcvr_diagnostic", {})
+
+        def active_transceiver_indices(value_key: str) -> list[str]:
+            return [
+                suffix for suffix, raw in sorted(rows.get(value_key, {}).items())
+                if _snmp_numeric(raw) is not None
+                and _snmp_numeric(raw) != 2147483647
+                and suffix in diagnostic_rows
+                and _snmp_interface_admin_up(admin_rows.get(suffix))
+            ]
+
+        def interface_label(suffix: str) -> str:
+            return str(if_name_rows.get(suffix) or if_descr_rows.get(suffix) or f"Port {suffix}")[:300]
+
+        def threshold_values(
+            suffix: str,
+            *,
+            low_alarm: str,
+            low_warn: str,
+            high_warn: str,
+            high_alarm: str,
+            divisor: float,
+        ) -> dict[str, float]:
+            result: dict[str, float] = {}
+            for field, row_key in (
+                ("critical_lower", low_alarm), ("warning_lower", low_warn),
+                ("warning_upper", high_warn), ("critical_upper", high_alarm),
+            ):
+                number = _snmp_numeric(rows.get(row_key, {}).get(suffix))
+                if number is not None and number != 2147483647:
+                    result[field] = number / divisor
+            return result
+
+        transceiver_categories: dict[str, tuple[str, str, str, str, float]] = {
+            "temperature": ("xcvr_temp", "temperature_celsius", "celsius", "transceiver", 1.0),
+            "optical_power": ("xcvr_rx_power", "optical_power_dbm", "dBm", "rx", 100.0),
+            "voltage": ("xcvr_voltage", "voltage_volts", "volts", "transceiver", 100.0),
+            "current": ("xcvr_bias_current", "current_amperes", "amperes", "transceiver", 100000.0),
+        }
+        for category, (value_key, measurement, unit, variant, divisor) in transceiver_categories.items():
+            if category == "temperature":
+                threshold_fields = (
+                    "xcvr_temp_lo_alarm", "xcvr_temp_lo_warn",
+                    "xcvr_temp_hi_warn", "xcvr_temp_hi_alarm",
+                )
+                threshold_divisor = 1000.0
+            elif category == "optical_power":
+                threshold_fields = (
+                    "xcvr_rx_lo_alarm", "xcvr_rx_lo_warn",
+                    "xcvr_rx_hi_warn", "xcvr_rx_hi_alarm",
+                )
+                threshold_divisor = 1.0
+            elif category == "voltage":
+                threshold_fields = (
+                    "xcvr_voltage_lo_alarm", "xcvr_voltage_lo_warn",
+                    "xcvr_voltage_hi_warn", "xcvr_voltage_hi_alarm",
+                )
+                threshold_divisor = 10000.0
+            else:
+                threshold_fields = (
+                    "xcvr_current_lo_alarm", "xcvr_current_lo_warn",
+                    "xcvr_current_hi_warn", "xcvr_current_hi_alarm",
+                )
+                threshold_divisor = 1000000.0
+
+            indices = (
+                sorted(set(active_transceiver_indices("xcvr_rx_power")) | set(active_transceiver_indices("xcvr_tx_power")))
+                if category == "optical_power"
+                else active_transceiver_indices(value_key)
+            )
+            for suffix in indices:
+                if category == "optical_power":
+                    for rx_tx, current_key, threshold_prefix in (
+                        ("rx", "xcvr_rx_power", "xcvr_rx"),
+                        ("tx", "xcvr_tx_power", "xcvr_tx"),
+                    ):
+                        tx_number = _snmp_numeric(rows.get(current_key, {}).get(suffix))
+                        if tx_number is None or tx_number == 2147483647:
+                            continue
+                        port_name = interface_label(suffix)
+                        thresholds = threshold_values(
+                            suffix,
+                            low_alarm=f"{threshold_prefix}_lo_alarm",
+                            low_warn=f"{threshold_prefix}_lo_warn",
+                            high_warn=f"{threshold_prefix}_hi_warn",
+                            high_alarm=f"{threshold_prefix}_hi_alarm",
+                            divisor=10.0,
+                        )
+                        thresholds = {
+                            threshold: _microwatt_to_dbm(value)
+                            for threshold, value in thresholds.items()
+                        }
+                        thresholds = {key: value for key, value in thresholds.items() if value is not None}
+                        sensor_value = tx_number / divisor
+                        add_sensor(
+                            component_class="optical_power", measurement_type=measurement,
+                            source_id=f"comware:transceiver:{rx_tx}:{suffix}",
+                            oid=symbols[current_key], suffix=suffix, raw_value=rows[current_key][suffix],
+                            value=sensor_value, name=f"{port_name} {'Receive' if rx_tx == 'rx' else 'Transmit'} Power",
+                            entity_name=port_name, group_name="transceiver", unit=unit,
+                            thresholds=thresholds,
+                            metadata={
+                                "librenms_sensor_source": f"HH3C-TRANSCEIVER-INFO-MIB::{('hh3cTransceiverCurRXPower' if rx_tx == 'rx' else 'hh3cTransceiverCurTXPower')}",
+                                "series_variant": rx_tx,
+                                "ent_physical_index_measured": "ports",
+                            },
+                            index_labels={"ifindex": suffix, "series_variant": rx_tx},
+                            poll_plan={"kind": "direct", "oid": symbols[current_key], "index": suffix, "factor": 0.01},
+                        )
+                    continue
+                raw = rows[value_key][suffix]
+                number = _snmp_numeric(raw)
+                if number is None or number == 2147483647:
+                    continue
+                port_name = interface_label(suffix)
+                if category == "temperature":
+                    thresholds = threshold_values(
+                        suffix,
+                        low_alarm=threshold_fields[0], low_warn=threshold_fields[1],
+                        high_warn=threshold_fields[2], high_alarm=threshold_fields[3],
+                        divisor=threshold_divisor,
+                    )
+                    sensor_name = f"{port_name} Module"
+                else:
+                    thresholds = threshold_values(
+                        suffix,
+                        low_alarm=threshold_fields[0], low_warn=threshold_fields[1],
+                        high_warn=threshold_fields[2], high_alarm=threshold_fields[3],
+                        divisor=threshold_divisor,
+                    )
+                    sensor_name = f"{port_name} {'Supply Voltage' if category == 'voltage' else 'Bias Current'}"
+                add_sensor(
+                    component_class="temperature" if category == "temperature" else category,
+                    measurement_type=measurement, source_id=f"comware:transceiver:{category}:{suffix}",
+                    oid=symbols[value_key], suffix=suffix, raw_value=raw,
+                    value=number / divisor, name=sensor_name, entity_name=port_name,
+                    group_name="transceiver", unit=unit, thresholds=thresholds,
+                    metadata={
+                        "librenms_sensor_source": f"HH3C-TRANSCEIVER-INFO-MIB::{value_key}",
+                        "ent_physical_index_measured": "ports",
+                    },
+                    index_labels={"ifindex": suffix},
+                    poll_plan={"kind": "direct", "oid": symbols[value_key], "index": suffix, "factor": 1.0 / divisor},
+                )
+
+            if category == "optical_power":
+                # The PHP discovery file checks TX and RX independently. Count
+                # each valid direction when reporting discovery completeness.
+                category_sensor_count = sum(
+                    1 for sensor in sensors
+                    if sensor.get("source_id", "").startswith("comware:transceiver:rx:")
+                    or sensor.get("source_id", "").startswith("comware:transceiver:tx:")
+                )
+                complete_keys = (
+                    "if_admin", "if_name", "if_descr", "xcvr_diagnostic",
+                    "xcvr_rx_power", "xcvr_tx_power", "xcvr_rx_hi_alarm", "xcvr_rx_lo_alarm",
+                    "xcvr_rx_hi_warn", "xcvr_rx_lo_warn", "xcvr_tx_hi_alarm", "xcvr_tx_lo_alarm",
+                    "xcvr_tx_hi_warn", "xcvr_tx_lo_warn",
+                )
+            else:
+                category_sensor_count = sum(
+                    1 for sensor in sensors
+                    if sensor.get("source_id", "").startswith(f"comware:transceiver:{category}:")
+                    or (category == "temperature" and sensor.get("source_id", "").startswith("comware:temperature:entity:"))
+                )
+                complete_keys = {
+                    "temperature": (
+                        "h3c_temp", "h3c_temp_threshold", "entity_name", "entity_class",
+                        "if_admin", "if_name", "if_descr", "xcvr_diagnostic", "xcvr_temp",
+                        "xcvr_temp_hi_alarm", "xcvr_temp_lo_alarm", "xcvr_temp_hi_warn", "xcvr_temp_lo_warn",
+                    ),
+                    "voltage": (
+                        "if_admin", "if_name", "if_descr", "xcvr_diagnostic", "xcvr_voltage",
+                        "xcvr_voltage_hi_alarm", "xcvr_voltage_lo_alarm", "xcvr_voltage_hi_warn", "xcvr_voltage_lo_warn",
+                    ),
+                    "current": (
+                        "if_admin", "if_name", "if_descr", "xcvr_diagnostic", "xcvr_bias_current",
+                        "xcvr_current_hi_alarm", "xcvr_current_lo_alarm", "xcvr_current_hi_warn", "xcvr_current_lo_warn",
+                    ),
+                }[category]
+            is_complete = all(walk_complete.get(key, False) for key in complete_keys)
+            category_result = _category_result(
+                "librenms_os_rule", category,
+                status="success" if category_sensor_count and is_complete else "partial" if category_sensor_count else "not_found" if is_complete else "failed",
+                complete=is_complete,
+                reason_code=f"librenms_comware_{category}" if category_sensor_count else f"no_comware_{category}_sensors" if is_complete else f"librenms_comware_{category}_walk_incomplete",
+                reason=f"LibreNMS Comware {category} discovery returned {category_sensor_count} sensor(s)." if category_sensor_count else f"No Comware {category} sensors were returned by the pinned LibreNMS OID chain." if is_complete else f"One or more Comware {category} walks did not complete.",
+            )
+            if category in missing_comware_symbols:
+                category_result["status"] = "partial" if category_sensor_count else "failed"
+                category_result["coverage_complete"] = False
+                category_result["reason_code"] = "pinned_mib_symbols_incomplete"
+                category_result["reason"] = f"Pinned MIB symbol resolution is incomplete ({len(missing_comware_symbols[category])} symbol(s))."
+            category_results.append(category_result)
+    else:
+        cpu_indices = set(rows.get("cpu_rev", {})) | set(rows.get("cpu_5min", {}))
+        cpu_indices |= set(rows.get("cpu_physical", {}))
+        cpu_indices |= set(rows.get("cpu_mem_free", {}))
+        core_rows = rows.get("cpu_core", {})
+        for suffix in sorted(cpu_indices):
+            rev = rows.get("cpu_rev", {}).get(suffix)
+            fallback = rows.get("cpu_5min", {}).get(suffix)
+            raw = rev if _snmp_numeric(rev) is not None else fallback
+            value = _snmp_numeric(raw)
+            if value is None:
+                continue
+            physical_index = str(rows.get("cpu_physical", {}).get(suffix) or suffix).strip()
+            name = entity_names.get(physical_index) or f"Processor {suffix}"
+            cores = [
+                (core_suffix, core_raw)
+                for core_suffix, core_raw in sorted(core_rows.items())
+                if core_suffix.startswith(f"{suffix}.") and _snmp_numeric(core_raw) is not None
+            ]
+            if cores:
+                for core_suffix, core_raw in cores:
+                    core_index = core_suffix.split(".", 1)[1]
+                    core_value = _snmp_numeric(core_raw)
+                    add_sensor(
+                        component_class="processor", measurement_type="cpu_usage_percent",
+                        source_id=f"ios:processor:core:{core_suffix}", oid=symbols["cpu_core"],
+                        suffix=core_suffix, raw_value=core_raw, value=core_value,
+                        name=f"{name}: Core {core_index}", entity_name=name, group_name="processor",
+                        metadata={"librenms_processor_index": suffix, "librenms_core_index": core_index, "window": "5m"},
+                        poll_plan={"kind": "direct", "oid": symbols["cpu_core"], "index": core_suffix},
+                    )
+            else:
+                cpu_oid = symbols["cpu_rev"] if _snmp_numeric(rev) is not None else symbols["cpu_5min"]
+                add_sensor(
+                    component_class="processor", measurement_type="cpu_usage_percent",
+                    source_id=f"ios:processor:{suffix}", oid=cpu_oid,
+                    suffix=suffix, raw_value=raw, value=value, name=name,
+                    entity_name=name, group_name="processor",
+                    metadata={"librenms_processor_index": suffix, "librenms_physical_index": physical_index, "window": "5m"},
+                    poll_plan={"kind": "direct", "oid": cpu_oid, "index": suffix},
+                )
+
+        cpu_complete = all(walk_complete.get(key, False) for key in ("cpu_rev", "cpu_5min", "cpu_physical", "cpu_core", "qfp_cpu"))
+        if not any(s.get("component_class") == "processor" for s in sensors) and symbols.get("old_cpu"):
+            scalar_oid = f"{symbols['old_cpu']}.0"
+            scalar = await _get_many(ip, community, {scalar_oid}, port, version)
+            raw = scalar.get(scalar_oid)
+            value = _snmp_numeric(raw)
+            if value is not None:
+                add_sensor(
+                    component_class="processor", measurement_type="cpu_usage_percent",
+                    source_id="ios:processor:avgBusy5", oid=scalar_oid, suffix="0",
+                    raw_value=raw, value=value, name="Processor", entity_name="Processor",
+                    group_name="processor", metadata={"librenms_fallback": "OLD-CISCO-CPU-MIB::avgBusy5", "window": "5m"},
+                    poll_plan={"kind": "get", "oid": scalar_oid},
+                )
+
+        for suffix, raw in sorted(rows.get("qfp_cpu", {}).items()):
+            parts = _index_parts(suffix)
+            value = _snmp_numeric(raw)
+            if not parts or len(parts) < 2 or parts[-1] != 3 or value is None:
+                continue
+            entity_index = str(parts[0])
+            name = entity_names.get(entity_index) or f"QFP {entity_index}"
+            add_sensor(
+                component_class="processor", measurement_type="cpu_usage_percent",
+                source_id=f"ios:processor:qfp:{suffix}", oid=symbols["qfp_cpu"],
+                suffix=suffix, raw_value=raw, value=value, name=f"{name}: QFP",
+                entity_name=name, group_name="processor",
+                metadata={"librenms_qfp_interval": "fiveMinutes", "librenms_physical_index": entity_index, "window": "5m"},
+                poll_plan={"kind": "direct", "oid": symbols["qfp_cpu"], "index": suffix},
+            )
+        cpu_sensors = [s for s in sensors if s.get("component_class") == "processor"]
+        category_results.append(_category_result(
+            "librenms_os_rule", "processor",
+            status="success" if cpu_sensors and cpu_complete else "partial" if cpu_sensors else "not_found" if cpu_complete else "failed",
+            complete=cpu_complete,
+            reason_code="librenms_cisco_cpu" if cpu_sensors else "no_cisco_processor_rows" if cpu_complete else "librenms_cisco_cpu_walk_incomplete",
+            reason="LibreNMS Cisco CPU selection prefers five-minute process/core and QFP data, then avgBusy5." if cpu_sensors else "No Cisco CPU row was returned by the pinned LibreNMS OID chain." if cpu_complete else "One or more Cisco CPU walks did not complete.",
+        ))
+
+        memory_sensors: list[dict[str, Any]] = []
+
+        def add_memory(
+            *, pool_type: str, suffix: str, name: str,
+            used_oid: str, free_oid: str, used_raw: Any, free_raw: Any,
+            mib: str,
+        ) -> None:
+            used_value = _snmp_numeric(used_raw)
+            free_value = _snmp_numeric(free_raw)
+            ratio = None
+            if used_value is not None and free_value is not None and used_value >= 0 and free_value >= 0 and used_value + free_value > 0:
+                ratio = normalize_percentage(100.0 * used_value / (used_value + free_value))
+            sensor_start = len(sensors)
+            add_sensor(
+                component_class="memory_pool", measurement_type="memory_usage_percent",
+                source_id=f"ios:mempool:{pool_type}:{suffix}", oid=used_oid,
+                suffix=suffix, raw_value=used_raw, value=ratio, name=name,
+                entity_name=name, group_name="system",
+                metadata={"librenms_mempool_type": pool_type, "librenms_memory_mib": mib},
+                poll_plan={
+                    "kind": "memory_ratio",
+                    "used": {"oid": used_oid, "index": suffix, "factor": 1.0, "offset": 0.0},
+                    "free": {"oid": free_oid, "index": suffix, "factor": 1.0, "offset": 0.0},
+                },
+            )
+            if len(sensors) > sensor_start:
+                memory_sensors.append(sensors[-1])
+
+        cemp_rows = rows.get("cemp_used", {})
+        cemp_valid = rows.get("cemp_valid", {})
+        accepted_cemp: list[str] = []
+        for suffix, raw in sorted(cemp_rows.items()):
+            if _snmp_numeric(raw) is None or not _snmp_true(cemp_valid.get(suffix)):
+                continue
+            accepted_cemp.append(suffix)
+        if accepted_cemp:
+            for suffix in accepted_cemp:
+                used_map = rows.get("cemp_hc_used", {})
+                free_map = rows.get("cemp_hc_free", {})
+                used_oid = symbols["cemp_hc_used"] if suffix in used_map else symbols["cemp_used"]
+                free_oid = symbols["cemp_hc_free"] if suffix in free_map else symbols["cemp_free"]
+                used_raw = used_map.get(suffix) if suffix in used_map else rows.get("cemp_used", {}).get(suffix)
+                free_raw = free_map.get(suffix) if suffix in free_map else rows.get("cemp_free", {}).get(suffix)
+                pool_name = str(rows.get("cemp_name", {}).get(suffix) or "Memory")
+                physical_index = suffix.split(".", 1)[0]
+                entity = entity_names.get(physical_index) or ""
+                label = " - ".join(item for item in (entity, pool_name) if item).strip() or f"Memory pool {suffix}"
+                add_memory(
+                    pool_type="cemp", suffix=suffix, name=label,
+                    used_oid=used_oid, free_oid=free_oid, used_raw=used_raw,
+                    free_raw=free_raw, mib="CISCO-ENHANCED-MEMPOOL-MIB",
+                )
+        else:
+            cmp_rows = rows.get("cmp_used", {})
+            accepted_cmp = [suffix for suffix, raw in cmp_rows.items() if _snmp_numeric(raw) is not None and _index_parts(suffix)]
+            if accepted_cmp:
+                for suffix in sorted(accepted_cmp):
+                    name = str(rows.get("cmp_name", {}).get(suffix) or f"Memory pool {suffix}")
+                    add_memory(
+                        pool_type="cmp", suffix=suffix, name=name,
+                        used_oid=symbols["cmp_used"], free_oid=symbols["cmp_free"],
+                        used_raw=cmp_rows.get(suffix), free_raw=rows.get("cmp_free", {}).get(suffix),
+                        mib="CISCO-MEMORY-POOL-MIB",
+                    )
+            else:
+                free_map = rows.get("cpu_mem_free", {})
+                hc_used_map = rows.get("cpu_mem_hc_used", {})
+                hc_free_map = rows.get("cpu_mem_hc_free", {})
+                used_map = rows.get("cpu_mem_used", {})
+                for suffix, free_raw in sorted(free_map.items()):
+                    if _snmp_numeric(free_raw) is None or not _index_parts(suffix):
+                        continue
+                    hc_used = _snmp_numeric(hc_used_map.get(suffix))
+                    hc_free = _snmp_numeric(hc_free_map.get(suffix))
+                    use_hc = bool(hc_used)
+                    free_hc = bool(hc_free)
+                    used_oid = symbols["cpu_mem_hc_used"] if use_hc else symbols["cpu_mem_used"]
+                    selected_free_oid = symbols["cpu_mem_hc_free"] if free_hc else symbols["cpu_mem_free"]
+                    used_raw = hc_used_map.get(suffix) if use_hc else used_map.get(suffix)
+                    selected_free_raw = hc_free_map.get(suffix) if free_hc else free_raw
+                    physical_index = str(rows.get("cpu_physical", {}).get(suffix) or suffix)
+                    entity = entity_names.get(physical_index) or f"Processor {suffix}"
+                    add_memory(
+                        pool_type="cpm", suffix=suffix, name=f"{entity} Memory",
+                        used_oid=used_oid, free_oid=selected_free_oid,
+                        used_raw=used_raw, free_raw=selected_free_raw,
+                        mib="CISCO-PROCESS-MIB",
+                    )
+
+        if memory_sensors:
+            mem_complete = all(
+                walk_complete.get(key, False)
+                for key in ("cemp_used", "cemp_valid", "cemp_name", "cemp_hc_used", "cemp_free", "cemp_hc_free")
+            ) if accepted_cemp else all(
+                walk_complete.get(key, False)
+                for key in ("cmp_used", "cmp_free", "cmp_name")
+            ) if any(s.get("metadata", {}).get("librenms_mempool_type") == "cmp" for s in memory_sensors) else all(
+                walk_complete.get(key, False)
+                for key in ("cpu_mem_free", "cpu_mem_used", "cpu_mem_hc_used", "cpu_mem_hc_free")
+            )
+            mem_status = "success" if mem_complete else "partial"
+        else:
+            mem_complete = all(walk_complete.get(key, False) for key in (
+                "cemp_used", "cemp_valid", "cemp_name", "cemp_hc_used",
+                "cemp_free", "cemp_hc_free", "cmp_used", "cmp_free",
+                "cmp_name", "cpu_mem_free", "cpu_mem_used",
+                "cpu_mem_hc_used", "cpu_mem_hc_free",
+            ))
+            mem_status = "not_found" if mem_complete else "failed"
+        category_results.append(_category_result(
+            "librenms_os_rule", "memory_pool", status=mem_status,
+            complete=mem_complete,
+            reason_code="librenms_cisco_mempool" if memory_sensors else "no_cisco_memory_pool" if mem_complete else "librenms_cisco_mempool_walk_incomplete",
+            reason="LibreNMS Cisco memory priority is CEMP, Cisco Memory Pool MIB, then processor memory." if memory_sensors else "No Cisco memory-pool rows were returned by the pinned LibreNMS OID chain." if mem_complete else "One or more Cisco memory walks did not complete.",
+        ))
+
+    if missing_symbols:
+        for result in category_results:
+            result["coverage_complete"] = False
+            result["reason_code"] = "pinned_mib_symbols_incomplete"
+            result["reason"] = f"Pinned MIB symbol resolution is incomplete ({len(missing_symbols)} symbol(s))."
+    return {"sensors": sensors, "category_results": category_results}
+
+
 
 
 def _memory_relation_definition(value: Any) -> dict[str, Any] | None:
@@ -753,7 +1610,12 @@ def _mapped_state(raw_value: Any, states: Any) -> tuple[float | None, dict[str, 
             if raw is not None and generic_code is not None:
                 mapping[str(raw)] = generic_code
     elif isinstance(states, Mapping):
-        for raw, generic_value in states.items():
+        for raw, state_value in states.items():
+            generic_value = (
+                state_value.get("generic")
+                if isinstance(state_value, Mapping)
+                else state_value
+            )
             generic_code = _generic_state_code(generic_value)
             if generic_code is not None:
                 mapping[str(raw)] = generic_code
@@ -762,6 +1624,17 @@ def _mapped_state(raw_value: Any, states: Any) -> tuple[float | None, dict[str, 
         None,
     )
     return (float(value) if value is not None else None), mapping, "good" if value is not None else "unsupported_mapping"
+
+
+def _mapped_numeric_value(raw_value: Any, value_map: Any) -> float | None:
+    """Normalize a direct numeric sensor through an explicit raw-value map."""
+    if not isinstance(value_map, Mapping) or raw_value is None:
+        return None
+    raw_token = str(raw_value).strip().casefold()
+    for raw, mapped in value_map.items():
+        if raw_token == str(raw).strip().casefold():
+            return _number(mapped)
+    return None
 
 
 def _state_description(raw_value: Any, states: Any) -> str:
@@ -1879,8 +2752,67 @@ async def poll_hardware_inventory(
                     "extract_percent": bool(plan.get("extract_percent", False)),
                     "integer_truncate": bool(plan.get("integer_truncate", False)),
                     "invert_processor_idle": bool(plan.get("invert_processor_idle", False)),
+                    "value_map": plan.get("value_map"),
+                    "value_transform": str(plan.get("value_transform") or "").strip().casefold(),
+                    "value_max": _number(plan.get("value_max")),
                     "raw_definition": plan.get("raw_definition", metadata.get("raw_definition", {})),
                     "index_suffix": plan.get("index_suffix") or plan.get("index") or "",
+                }
+        elif kind == "table_value":
+            oid = _clean_oid(plan.get("oid"))
+            index = str(plan.get("index") or ".".join(map(str, sensor.get("index") or []))).strip().strip(".")
+            if oid and re.fullmatch(r"\d+(?:\.\d+)*", index):
+                plans[str(sensor.get("sensor_key") or "")] = {
+                    "kind": kind,
+                    "oid": oid,
+                    "index": index,
+                    "factor": _number(plan.get("factor")) if _number(plan.get("factor")) is not None else 1.0,
+                    "offset": _number(plan.get("offset")) if _number(plan.get("offset")) is not None else 0.0,
+                    "fallback_value": _number(plan.get("fallback_value")),
+                    "skip_values": plan.get("skip_values", metadata.get("skip_values")),
+                    "skip_conditions_supported": plan.get("skip_conditions_supported", metadata.get("skip_conditions_supported", True)),
+                    "transform_supported": plan.get("transform_supported", metadata.get("native_transform_supported", True)),
+                }
+        elif kind in {"table_count", "table_group_count", "table_sum", "table_group_sum"}:
+            oid = _clean_oid(plan.get("oid"))
+            if oid:
+                raw_label_oids = plan.get("label_oids") if isinstance(plan.get("label_oids"), Mapping) else {}
+                label_oids = {
+                    str(name): clean_oid
+                    for name, label_oid in raw_label_oids.items()
+                    if (clean_oid := _clean_oid(label_oid))
+                }
+                raw_group_labels = plan.get("group_labels") if isinstance(plan.get("group_labels"), Mapping) else {}
+                factor = _number(plan.get("factor"))
+                plans[str(sensor.get("sensor_key") or "")] = {
+                    "kind": kind,
+                    "oid": oid,
+                    "label_oids": label_oids,
+                    "group_value": str(plan.get("group_value") or ""),
+                    "group_labels": {
+                        str(name): str(label).strip()
+                        for name, label in raw_group_labels.items()
+                        if label is not None
+                    },
+                    "factor": factor if factor is not None else 1.0,
+                }
+        elif kind == "table_multi_sum":
+            # Wireless rules such as LibreNMS VRP pass an OID list to the
+            # `sum` sensor and use the same encoded table index across bands.
+            raw_oids = plan.get("oids") if isinstance(plan.get("oids"), (list, tuple, set)) else []
+            oids = list(dict.fromkeys(
+                clean_oid for raw_oid in raw_oids
+                if (clean_oid := _clean_oid(raw_oid))
+            ))
+            raw_index = plan.get("index") if "index" in plan else ".".join(map(str, sensor.get("index") or []))
+            index = str(raw_index or "").strip().strip(".")
+            factor = _number(plan.get("factor"))
+            if oids and (not index or re.fullmatch(r"\d+(?:\.\d+)*", index)):
+                plans[str(sensor.get("sensor_key") or "")] = {
+                    "kind": kind,
+                    "oids": oids,
+                    "index": index,
+                    "factor": factor if factor is not None else 1.0,
                 }
         elif kind == "memory_pool":
             relations = plan.get("relations") if isinstance(plan.get("relations"), Mapping) else {}
@@ -1933,6 +2865,13 @@ async def poll_hardware_inventory(
 
 
     requested_instances: dict[str, set[tuple[str, str]]] = {}
+    table_walk_oids: set[str] = set()
+    for plan in plans.values():
+        if plan["kind"] in {"table_value", "table_count", "table_group_count", "table_sum", "table_group_sum"}:
+            table_walk_oids.add(plan["oid"])
+            table_walk_oids.update(plan.get("label_oids", {}).values())
+        elif plan["kind"] == "table_multi_sum":
+            table_walk_oids.update(plan["oids"])
 
     def request_instance(base_oid: Any, suffix: Any = "") -> None:
         oid = _clean_oid(base_oid)
@@ -1993,6 +2932,7 @@ async def poll_hardware_inventory(
     if walk_func is not None:
         # Keep the injectable walker contract for deterministic table fixtures.
         oids = {base_oid for pairs in requested_instances.values() for base_oid, _ in pairs}
+        oids.update(table_walk_oids)
         reads = await _walk_many(ip, community, oids, port, version, walk_func=walk_func)
         maps = {oid: _row_map(read) for oid, read in reads.items()}
         complete_oids = {
@@ -2039,6 +2979,24 @@ async def poll_hardware_inventory(
             for base_oid, instance_oids in requested_by_base.items()
             if instance_oids and all(raw_instances.get(instance_oid) is not None for instance_oid in instance_oids)
         }
+        # Aggregate LibreNMS wireless tables need a full walk on every poll;
+        # their row set can change independently of the discovery snapshot.
+        if table_walk_oids:
+            table_reads = await _walk_many(ip, community, table_walk_oids, port, version)
+            maps.update({oid: _row_map(read) for oid, read in table_reads.items()})
+            complete_oids.update(
+                oid for oid, read in table_reads.items()
+                if read.complete and not read.reason
+            )
+    elif table_walk_oids:
+        # A table-only poll still walks dynamically even though there are no
+        # exact-instance GETs to issue.
+        table_reads = await _walk_many(ip, community, table_walk_oids, port, version)
+        maps.update({oid: _row_map(read) for oid, read in table_reads.items()})
+        complete_oids.update(
+            oid for oid, read in table_reads.items()
+            if read.complete and not read.reason
+        )
     now = datetime.now(timezone.utc)
     good = missing = invalid = unsupported = 0
     samples_to_persist: list[dict[str, Any]] = []
@@ -2051,12 +3009,14 @@ async def poll_hardware_inventory(
             value: float | None = None
             raw_value: str | None = None
             try:
-                if plan["kind"] in {"direct", "get"}:
-                    raw_value = (
-                        scalar_values.get(plan["oid"])
-                        if plan["kind"] == "get"
-                        else maps.get(plan["oid"], {}).get(plan["index"])
-                    )
+                if plan["kind"] in {"direct", "get", "table_value"}:
+                    if plan["kind"] == "get":
+                        raw_value = scalar_values.get(plan["oid"])
+                    else:
+                        table_complete = plan["kind"] != "table_value" or plan["oid"] in complete_oids
+                        raw_value = maps.get(plan["oid"], {}).get(plan["index"]) if table_complete else None
+                        if plan["kind"] == "table_value" and table_complete and raw_value is None and plan.get("fallback_value") is not None:
+                            raw_value = str(plan["fallback_value"])
                     quality = _skip_sample_quality(
                         raw_value, plan.get("skip_values"),
                         conditions_supported=bool(plan.get("skip_conditions_supported", True)),
@@ -2084,31 +3044,128 @@ async def poll_hardware_inventory(
                             if quality == "good":
                                 value, _states, quality = _mapped_state(state_input, sensor.get("states"))
                         else:
-                            if plan.get("extract_percent") and raw_value is not None:
-                                match = re.search(r"([0-9]+.[0-9]+)%", str(raw_value))
-                                number = _number(match.group(1)) if match else None
-                                if number is None:
-                                    quality = "invalid"
+                            if plan.get("value_map") is not None:
+                                value = _mapped_numeric_value(raw_value, plan.get("value_map"))
+                                if value is None:
+                                    quality = "unsupported_mapping"
                             else:
-                                number = _number(raw_value)
-                            if number is not None and plan.get("integer_truncate"):
-                                number = float(int(number))
-                            if number is not None:
-                                value = normalize_scaled_value(number, plan["factor"], plan["offset"])
-                                if value is not None and plan.get("invert_processor_idle"):
-                                    value = 100.0 - value
-                                if plan.get("user_func"):
-                                    value = apply_librenms_user_func(
-                                        plan["user_func"], value, raw_value=raw_value,
-                                        index_suffix=plan.get("index_suffix"),
-                                        definition=plan.get("raw_definition") if isinstance(plan.get("raw_definition"), Mapping) else {},
-                                        now=now,
-                                    )
-                                    if value is None:
+                                value_transform = str(plan.get("value_transform") or "")
+                                if value_transform == "channel_to_frequency":
+                                    number = _wireless_channel_frequency(raw_value)
+                                    if number is None:
                                         quality = "invalid"
-                            else:
-                                if quality == "good":
+                                elif value_transform == "aruba_instant_channel_to_frequency":
+                                    number = _wireless_channel_frequency(raw_value, aruba_instant_encoding=True)
+                                    if number is None:
+                                        quality = "invalid"
+                                elif value_transform:
+                                    number = None
+                                    quality = "unsupported_mapping"
+                                elif plan.get("extract_percent") and raw_value is not None:
+                                    match = re.search(r"([0-9]+.[0-9]+)%", str(raw_value))
+                                    number = _number(match.group(1)) if match else None
+                                    if number is None:
+                                        quality = "invalid"
+                                else:
+                                    number = _number(raw_value)
+                                if number is not None and plan.get("integer_truncate"):
+                                    number = float(int(number))
+                                if number is not None:
+                                    value = normalize_scaled_value(number, plan["factor"], plan["offset"])
+                                    if value is not None and plan.get("value_max") is not None:
+                                        value = min(value, plan["value_max"])
+                                    if value is not None and plan.get("invert_processor_idle"):
+                                        value = 100.0 - value
+                                    if plan.get("user_func"):
+                                        value = apply_librenms_user_func(
+                                            plan["user_func"], value, raw_value=raw_value,
+                                            index_suffix=plan.get("index_suffix"),
+                                            definition=plan.get("raw_definition") if isinstance(plan.get("raw_definition"), Mapping) else {},
+                                            now=now,
+                                        )
+                                        if value is None:
+                                            quality = "invalid"
+                                elif quality == "good":
                                     quality = "missing"
+                elif plan["kind"] == "table_multi_sum":
+                    # Recompute the LibreNMS OID-list sum on every poll. A
+                    # missing row in one complete source table contributes no
+                    # value; incomplete walks must never produce a subtotal.
+                    source_oids = set(plan["oids"])
+                    if not source_oids.issubset(complete_oids):
+                        quality = "missing"
+                    else:
+                        index = str(plan.get("index") or "")
+                        if index:
+                            raw_values = [
+                                maps.get(oid, {}).get(index)
+                                for oid in plan["oids"]
+                                if maps.get(oid, {}).get(index) is not None
+                            ]
+                        else:
+                            raw_values = [
+                                raw
+                                for oid in plan["oids"]
+                                for raw in maps.get(oid, {}).values()
+                            ]
+                        if not raw_values:
+                            quality = "missing"
+                        else:
+                            numbers = [_number(raw) for raw in raw_values]
+                            if any(number is None for number in numbers):
+                                quality = "invalid"
+                            else:
+                                total = sum(number for number in numbers if number is not None)
+                                raw_value = str(total)
+                                value = normalize_scaled_value(total, plan["factor"], 0.0)
+                                if value is None:
+                                    quality = "invalid"
+                elif plan["kind"] in {"table_count", "table_group_count", "table_sum", "table_group_sum"}:
+                    required_oids = {plan["oid"], *plan.get("label_oids", {}).values()}
+                    if not required_oids.issubset(complete_oids):
+                        # Partial table results are never recorded as good
+                        # aggregates, even when their observed subtotal is valid.
+                        quality = "missing"
+                    elif plan["kind"] == "table_count":
+                        row_count = len(maps.get(plan["oid"], {}))
+                        raw_value = str(row_count)
+                        value = float(row_count)
+                    elif plan["kind"] == "table_group_count":
+                        group_value = str(plan.get("group_value") or "")
+                        row_count = sum(
+                            1 for raw in maps.get(plan["oid"], {}).values()
+                            if str(raw).strip() == group_value
+                        )
+                        raw_value = str(row_count)
+                        value = float(row_count)
+                    else:
+                        table_rows = maps.get(plan["oid"], {})
+                        group_labels = plan.get("group_labels", {})
+                        label_oids = plan.get("label_oids", {})
+                        matched_count = 0
+                        numeric_values: list[float] = []
+                        for row_suffix, raw in table_rows.items():
+                            matches = True
+                            if plan["kind"] == "table_group_sum":
+                                for label_name, expected_label in group_labels.items():
+                                    # LibreNMS wireless profiles use the row
+                                    # suffix when a companion label row is absent.
+                                    actual_label = maps.get(label_oids.get(label_name, ""), {}).get(row_suffix, row_suffix)
+                                    if str(actual_label).strip().casefold() != str(expected_label).strip().casefold():
+                                        matches = False
+                                        break
+                            if not matches:
+                                continue
+                            matched_count += 1
+                            number = _number(raw)
+                            if number is not None:
+                                numeric_values.append(number)
+                        if matched_count and not numeric_values:
+                            quality = "invalid"
+                        else:
+                            raw_total = sum(numeric_values)
+                            raw_value = str(raw_total)
+                            value = normalize_scaled_value(raw_total, plan["factor"], 0.0)
                 elif plan["kind"] == "memory_pool":
                     relation_values: dict[str, Any] = {}
                     for name, dependency in plan.get("relations", {}).items():
@@ -2283,4 +3340,4 @@ def _persist_hardware_sensor_samples(samples: list[dict[str, Any]]) -> None:
         conn.close()
 
 
-__all__ = ["probe_librenms_hardware", "poll_hardware_inventory"]
+__all__ = ["probe_librenms_hardware", "probe_librenms_os_hardware", "poll_hardware_inventory"]

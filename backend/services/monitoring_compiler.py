@@ -18,6 +18,13 @@ from typing import Any, Iterable, Mapping
 
 import yaml
 
+from .monitoring_oid_catalog import (
+    OID_CATALOG_VERSION,
+    STANDARD_INTERFACE_CONFIG,
+    STANDARD_SYSTEM_CONFIG,
+    exporter_config_from_variant,
+)
+
 
 class CompileError(ValueError):
     """A configuration cannot safely be applied to a collector."""
@@ -31,9 +38,38 @@ _DURATION_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([smh]?)\s*$", re.I)
 _NUMERIC_OID_RE = re.compile(r"^\.?\d+(?:\.\d+)+$")
 _MIB_OID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*::[A-Za-z][A-Za-z0-9_-]*(?:\.\d+)*$")
 _METRIC_NAME_RE = re.compile(r"^[a-zA-Z_:][a-zA-Z0-9_:]*$")
+_COMPILER_VERSION = "monitoring-compiler-1.1.0"
 _LEGACY_LOOKUP_METADATA = {
     "ifName": ("1.3.6.1.2.1.31.1.1.1.1", "DisplayString"),
     "ifDescr": ("1.3.6.1.2.1.2.2.1.2", "DisplayString"),
+}
+
+# These two generic modules are based on standard IETF MIBs and are required
+# for baseline device/interface telemetry. They are independent of the pinned
+# LibreNMS vendor hardware rules, whose collection path is handled separately.
+# Keep their definitions compiler-owned so database edits cannot change the
+# OID provenance or silently replace the exporter module contents.
+_BASELINE_EXPORTER_VARIANTS: dict[str, dict[str, Any]] = {
+    "generic_ifmib_interface_std": {
+        "id": "variant-generic-if-mib-std",
+        "variant_key": "generic_ifmib_interface_std",
+        "oid_config": STANDARD_INTERFACE_CONFIG,
+        "mib_bundle_id": "if-mib-rfc2863",
+        "generator_version": f"snmp_exporter-config-v1/{OID_CATALOG_VERSION}",
+        "max_repetitions": 25,
+        "retries": 2,
+        "request_timeout_ms": 3000,
+    },
+    "generic_system_std": {
+        "id": "variant-generic-system-std",
+        "variant_key": "generic_system_std",
+        "oid_config": STANDARD_SYSTEM_CONFIG,
+        "mib_bundle_id": "snmpv2-mib-rfc3418",
+        "generator_version": f"snmp_exporter-config-v1/{OID_CATALOG_VERSION}",
+        "max_repetitions": 10,
+        "retries": 2,
+        "request_timeout_ms": 3000,
+    },
 }
 
 def _valid_oid_token(value: str) -> bool:
@@ -241,16 +277,14 @@ def render_exporter_modules(
     modules: Iterable[Mapping[str, Any]] = (),
     variants: Iterable[Mapping[str, Any]] = (),
 ) -> dict[str, dict[str, Any]]:
-    """Validate persisted OID definitions without enabling exporter polling.
+    """Render verified baseline modules and validate, but do not enable, others.
 
-    Monitoring V1 has no pinned LibreNMS-source mapping for its snmp_exporter
-    variants. Until such provenance is available, neither built-in generic
-    modules nor database-defined vendor/custom modules may become device
-    polling requests. Plan validation still parses supplied OID definitions
-    so malformed persisted configuration is reported to its caller.
+    System and interface polling use the compiler-owned RFC 3418 and RFC 2863
+    definitions above. Vendor/custom variants still require separately
+    verified source mappings before they can become snmp_exporter modules.
     """
 
-    del modules  # Module metadata cannot establish LibreNMS source provenance.
+    del modules  # Database module metadata cannot establish OID provenance.
     variant_rows: dict[str, dict[str, Any]] = {}
     for item in variants:
         row = _row(item)
@@ -263,19 +297,30 @@ def render_exporter_modules(
         if _row(item).get("enabled", True) is not False
     ]
     selected_keys = {str(item.get("variant_key") or "") for item in selected_rows}
+    output: dict[str, dict[str, Any]] = {}
     for variant_key in sorted(selected_keys):
-        variant = variant_rows.get(variant_key) or {}
-        raw = variant.get("oid_config") or variant.get("oid_config_json")
-        if not raw and variant_key in {"generic_ifmib_interface_std", "generic_system_std"}:
-            # Legacy baseline rows used compiler-owned fallback definitions.
-            # They are recognized for validation compatibility but never emitted.
-            continue
+        baseline_variant = _BASELINE_EXPORTER_VARIANTS.get(variant_key)
+        variant = baseline_variant or variant_rows.get(variant_key) or {}
+        raw = baseline_variant.get("oid_config") if baseline_variant else (
+            variant.get("oid_config") or variant.get("oid_config_json")
+        )
         if not raw:
             raise CompileError(f"OID_CONFIG_MISSING:{variant_key}")
         config = _parse_variant_oid_config(raw)
         if not config:
             raise CompileError(f"OID_CONFIG_MISSING:{variant_key}")
-    return {}
+        if not baseline_variant:
+            # A valid database OID definition is not enough to establish its
+            # source provenance. Keep vendor/custom modules fail-closed.
+            continue
+        exporter_config = exporter_config_from_variant({}, {"oid_config": config})
+        exporter_config = _parse_variant_oid_config(exporter_config, include_unit=False)
+        exporter_config["max_repetitions"] = int(variant.get("max_repetitions") or 25)
+        exporter_config["retries"] = int(variant.get("retries") or 2)
+        timeout_ms = int(variant.get("request_timeout_ms") or 3000)
+        exporter_config["timeout"] = f"{timeout_ms / 1000:g}s"
+        output[variant_key] = exporter_config
+    return output
 
 
 def duration_seconds(value: Any, *, field: str) -> int:
@@ -1169,19 +1214,25 @@ def compile_artifact(
     servers: Iterable[Mapping[str, Any]] = (),
     interface_profiles: Iterable[Mapping[str, Any]] = (),
     output_root: str | Path | None = None,
-    compiler_version: str = "monitoring-compiler-1.0.0",
+    compiler_version: str = _COMPILER_VERSION,
 ) -> dict[str, Any]:
     """Build a versioned artifact; writes atomically only when ``output_root`` is supplied."""
     candidates = [a for a in assignments if str(a.get("collector_id")) == collector_id and a.get("enabled", True) is not False]
     credential_rows = list(credentials)
     module_rows = list(modules)
     variant_rows = list(variants)
-    # The pinned LibreNMS source manifest currently proves OS hardware-rule
-    # inputs, but does not prove any Monitoring V1 exporter module definition.
-    # Fail closed at the artifact boundary: no assignment can become a device
-    # SNMP target until a source-verified module mapping exists.
+    # Keep RFC-backed system/interface baseline polling active. The pinned
+    # LibreNMS hardware rules are a separate collection path; vendor/custom
+    # exporter assignments remain excluded until their module provenance is
+    # verified.
     selected: list[Mapping[str, Any]] = []
-    excluded_assignments = candidates
+    excluded_assignments: list[Mapping[str, Any]] = []
+    for assignment in candidates:
+        variant_key = str(_row(assignment).get("variant_key") or "")
+        if variant_key in _BASELINE_EXPORTER_VARIANTS:
+            selected.append(assignment)
+        else:
+            excluded_assignments.append(assignment)
     snapshot = render_target_snapshot(selected, collector_id=collector_id)
     target_yaml = yaml.safe_dump(snapshot, allow_unicode=True, sort_keys=False)
     vmagent_yaml = yaml.safe_dump(render_vmagent_config(interface_profiles=interface_profiles, collector_id=collector_id), allow_unicode=True, sort_keys=False)
@@ -1210,7 +1261,7 @@ def compile_artifact(
                 variant_index[str(key)] = row
     module_manifest = []
     for variant_key, config in sorted(exporter_modules.items()):
-        variant = variant_index.get(variant_key) or {}
+        variant = _BASELINE_EXPORTER_VARIANTS.get(variant_key) or variant_index.get(variant_key) or {}
         raw_config = variant.get("oid_config") or variant.get("oid_config_json") or {}
         try:
             normalized_config = _parse_variant_oid_config(raw_config)
@@ -1358,11 +1409,29 @@ def validate_artifact(artifact: Mapping[str, Any] | str | Path) -> dict[str, Any
         yaml.safe_load(files["vmagent/scrape.yml"])
         targets = yaml.safe_load(files["vmagent/targets/snmp_targets.yml"])
         yaml.safe_load(files["snmp_exporter/auth/auth.yml"])
-        yaml.safe_load(files["snmp_exporter/snmp.yml"])
+        exporter_config = yaml.safe_load(files["snmp_exporter/snmp.yml"])
     except yaml.YAMLError as exc:
         raise CompileError("ARTIFACT_YAML_INVALID") from exc
     if not isinstance(targets, list):
         raise CompileError("TARGET_SNAPSHOT_INVALID")
+    if not isinstance(exporter_config, Mapping):
+        raise CompileError("EXPORTER_CONFIG_INVALID")
+    exporter_modules = exporter_config.get("modules") or {}
+    exporter_auths = exporter_config.get("auths") or {}
+    if not isinstance(exporter_modules, Mapping) or not isinstance(exporter_auths, Mapping):
+        raise CompileError("EXPORTER_CONFIG_INVALID")
+    for target_group in targets:
+        if not isinstance(target_group, Mapping):
+            raise CompileError("TARGET_GROUP_INVALID")
+        labels = target_group.get("labels") or {}
+        if not isinstance(labels, Mapping):
+            raise CompileError("TARGET_LABELS_INVALID")
+        module_name = str(labels.get("nexora_module") or "")
+        auth_name = str(labels.get("nexora_auth") or "")
+        if not module_name or module_name not in exporter_modules:
+            raise CompileError(f"TARGET_MODULE_NOT_FOUND:{module_name or 'missing'}")
+        if not auth_name or auth_name not in exporter_auths:
+            raise CompileError(f"TARGET_AUTH_NOT_FOUND:{auth_name or 'missing'}")
     return {"valid": True, "checked_files": checked, "manifest": manifest}
 
 
@@ -1389,7 +1458,7 @@ class AuthAliasRenderer:
 class ConfigCompiler:
     """Object facade around the pure compiler functions."""
 
-    def __init__(self, *, compiler_version: str = "monitoring-compiler-1.0.0"):
+    def __init__(self, *, compiler_version: str = _COMPILER_VERSION):
         self.compiler_version = compiler_version
 
     def assignments(self, devices, plans, modules, variants, collectors, *, credential_aliases=None):

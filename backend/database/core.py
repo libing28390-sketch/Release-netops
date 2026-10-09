@@ -313,10 +313,20 @@ if _USE_PG:
                 return
             self._raw = None
             self._conn = None
+            healthy = True
             try:
                 raw.rollback()
             except Exception:
-                pass
+                healthy = False
+            try:
+                # Pool connections must not retain caller transaction settings.
+                # init_db temporarily enables autocommit for bootstrap DDL; if
+                # that state leaks back into the pool, later SELECT ... FOR
+                # UPDATE statements fail with NoActiveSqlTransaction.
+                if raw.autocommit:
+                    raw.autocommit = False
+            except Exception:
+                healthy = False
             if self._overflow:
                 # 溢出连接不属于池，直接关闭，避免占用池容量
                 try:
@@ -327,7 +337,7 @@ if _USE_PG:
                     _release_pg_overflow()
             else:
                 try:
-                    _pg_pool.putconn(raw)
+                    _pg_pool.putconn(raw, close=not healthy)
                 except Exception:
                     try:
                         raw.close()

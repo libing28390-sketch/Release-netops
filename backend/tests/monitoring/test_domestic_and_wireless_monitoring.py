@@ -38,14 +38,20 @@ def test_allowed_metrics_includes_wireless():
 
 def test_promql_selector_hardware_uses_only_normalized_librenms_series():
     selector = VictoriaMetricsMetricProvider._selector("cpu_usage_percent", "device-123")
-    assert selector == 'nexora_hw_cpu_usage_percent{asset_id="device-123",source_type="librenms_rule"}'
+    assert selector == (
+        'nexora_hw_cpu_usage_percent{asset_id="device-123",'
+        'source_type=~"librenms_rule|librenms_os_rule|librenms_mib_rule"}'
+    )
     assert all(name not in selector for name in (
         "zteCpuRate", "mpCpuUtilization5Min", "dptechCpuUsage",
         "hillstoneCPUUtilization", "sangforCpuUsage", "dcnCpuUsage",
     ))
 
     mem_selector = VictoriaMetricsMetricProvider._selector("memory_usage_percent", "device-123")
-    assert mem_selector == 'nexora_hw_memory_usage_percent{asset_id="device-123",source_type="librenms_rule"}'
+    assert mem_selector == (
+        'nexora_hw_memory_usage_percent{asset_id="device-123",'
+        'source_type=~"librenms_rule|librenms_os_rule|librenms_mib_rule"}'
+    )
     assert all(name not in mem_selector for name in (
         "zteMemRate", "mpMemoryUtilization", "dptechMemUsage",
         "hillstoneMemoryUtilization", "sangforMemUsage", "dcnMemUsage",
@@ -57,7 +63,7 @@ def test_promql_selector_wireless_metrics():
     assert 'nexora_wireless_sensor_value{asset_id="wlc-1"' in ap_selector
     assert 'component_class="wireless_controller"' in ap_selector
     assert 'sensor_class="ap-count"' in ap_selector
-    assert 'source_type="librenms_rule"' in ap_selector
+    assert 'source_type=~"librenms_rule|librenms_mib_rule"' in ap_selector
     assert all(name not in ap_selector for name in (
         "hh3cDot11", "ruijieApc", "cLApTotal", "wlsxSysExt", "ruckusZD", "hwWlan",
     ))
@@ -65,7 +71,7 @@ def test_promql_selector_wireless_metrics():
     client_selector = VictoriaMetricsMetricProvider._selector("wireless_client_online_count", "wlc-1")
     assert 'nexora_wireless_sensor_value{asset_id="wlc-1"' in client_selector
     assert 'sensor_class="clients"' in client_selector
-    assert 'source_type="librenms_rule"' in client_selector
+    assert 'source_type=~"librenms_rule|librenms_mib_rule"' in client_selector
     assert all(name not in client_selector for name in (
         "hwWlan", "hh3cDot11", "ruijieApc", "cLSysTotal", "wlsxSysExt", "ruckusZD",
     ))
@@ -288,12 +294,12 @@ def test_wireless_dashboard_uses_hardware_inventory_job_and_joins_by_device():
     ):
         expression = query(title)
         assert 'job="platform_hardware_inventory"' in expression
-        assert 'source_type="librenms_rule"' in expression
+        assert 'source_type=~"librenms_rule|librenms_mib_rule"' in expression
         assert 'job="network_snmp"' not in expression
 
     wireless_sensor_panel = panels["无线传感器明细"]
     wireless_sensor_query = wireless_sensor_panel["targets"][0]["expr"]
-    assert 'source_type="librenms_rule"' in wireless_sensor_query
+    assert 'source_type=~"librenms_rule|librenms_mib_rule"' in wireless_sensor_query
     assert 'component_class=~"wireless_.*"' in wireless_sensor_query
     assert wireless_sensor_panel["gridPos"] == {"h": 9, "w": 24, "x": 0, "y": 68}
     assert "不推断 AP 或 Radio 归属" in wireless_sensor_panel["description"]
@@ -311,7 +317,7 @@ def test_wireless_dashboard_uses_hardware_inventory_job_and_joins_by_device():
 
     online_ap_expression = query("在线 AP")
     assert 'job="platform_hardware_inventory"' in online_ap_expression
-    assert 'source_type="librenms_rule"' in online_ap_expression
+    assert 'source_type=~"librenms_rule|librenms_mib_rule"' in online_ap_expression
     assert 'job="network_snmp"' not in online_ap_expression
     assert "unless on(site_name,vendor,role,hostname)" in online_ap_expression
     assert "or on(site_name,vendor,role,hostname)" in online_ap_expression
@@ -319,9 +325,10 @@ def test_wireless_dashboard_uses_hardware_inventory_job_and_joins_by_device():
     clients_expression = query("在线终端数")
     assert 'job="platform_hardware_inventory"' in clients_expression
     assert 'job="network_snmp"' not in clients_expression
-    assert 'source_type="librenms_rule"' in clients_expression
+    assert 'source_type=~"librenms_rule|librenms_mib_rule"' in clients_expression
     assert 'component_class="wireless_controller",sensor_class="clients"' in clients_expression
     assert 'component_class="wireless_ssid",sensor_class="clients"' in clients_expression
+    assert 'component_class="wireless_radio",sensor_class="clients"' in clients_expression
     assert "or on(site_name,vendor,role,hostname)" in clients_expression
     assert "unless on(site_name,vendor,role,hostname)" not in clients_expression
 
@@ -576,11 +583,12 @@ def test_wireless_and_interface_dashboards_share_reference_semantic_colors():
     assert overview_client_expr == wireless_client_expr
     assert 'component_class="wireless_controller",sensor_class="clients"' in overview_client_expr
     assert 'component_class="wireless_ssid",sensor_class="clients"' in overview_client_expr
-    assert 'source_type="librenms_rule"' in overview_client_expr
+    assert 'component_class="wireless_radio",sensor_class="clients"' in overview_client_expr
+    assert 'source_type=~"librenms_rule|librenms_mib_rule"' in overview_client_expr
     assert "or on(site_name,vendor,role,hostname)" in overview_client_expr
     assert "unless on(site_name,vendor,role,hostname)" not in overview_client_expr
     assert "or vector(0)" not in overview_client_expr
-    assert 'source_type="librenms_rule"' in overview[8]["targets"][1]["expr"]
+    assert 'source_type=~"librenms_rule|librenms_mib_rule"' in overview[8]["targets"][1]["expr"]
     assert 'component_class="wireless_controller",sensor_class="ap-count"' in overview[8]["targets"][1]["expr"]
     assert overview[4]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == CLIENT_COLOR
     assert overview[8]["targets"][0]["expr"] == overview_client_expr

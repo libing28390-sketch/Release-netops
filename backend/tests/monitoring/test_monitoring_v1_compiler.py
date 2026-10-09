@@ -52,22 +52,94 @@ def _device(**overrides):
     return value
 
 
-def test_compiler_excludes_generic_oid_assignment_without_verified_source_mapping():
-    assignments = build_assignments([_device()], PLANS, MODULES, VARIANTS, COLLECTORS, credential_aliases={"cred-1": "auth_opaque"})
-    artifact = compile_artifact(assignments, collector_id="collector-local", config_version=7, credentials=[{"id": "cred-1", "credential_type": "snmpv2", "community": "private"}])
+def test_compiler_emits_generic_baselines_and_excludes_vendor_and_custom_assignments():
+    baseline_keys = {"generic_ifmib_interface_std", "generic_system_std"}
+    catalog = iter_builtin_catalog()
+    modules = [{key: value for key, value in item.items() if key != "variant"} for item in catalog]
+    variants = []
+    for item in catalog:
+        variant = dict(item["variant"])
+        variant["module_id"] = item["id"]
+        variants.append(variant)
 
-    assert assignments[0]["auth_alias"] == "auth_opaque"
-    assert assignments[0]["selection_reason"] == "generic baseline"
-    assert yaml.safe_load(artifact["files"]["vmagent/targets/snmp_targets.yml"]) == []
-    assert yaml.safe_load(artifact["files"]["snmp_exporter/auth/auth.yml"])["auths"] == {}
+    plan = {
+        "id": "plan-baseline",
+        "cli_platform": "*",
+        "config_json": {"modules": [
+            {"module": "generic_ifmib_interface", "variant": "generic_ifmib_interface_std", "interval": "30s", "scrape_timeout": "20s"},
+            {"module": "generic_system", "variant": "generic_system_std", "interval": "900s", "scrape_timeout": "30s"},
+        ]},
+    }
+    assignments = build_assignments(
+        [_device()], [plan], modules, variants, COLLECTORS,
+        credential_aliases={"cred-1": "auth_opaque"},
+    )
+    assert {item["variant_key"] for item in assignments} == baseline_keys
+    assert all(item["selection_reason"] == "generic baseline" for item in assignments)
+
+    custom_config = {
+        "walk": ["1.3.6.1.2.1.1"],
+        "metrics": [{
+            "name": "sysName",
+            "oid": "1.3.6.1.2.1.1.5",
+            "type": "DisplayString",
+            "help": "System name",
+        }],
+    }
+    modules.append({"id": "module-custom", "module_key": "custom_module", "walk": custom_config["walk"]})
+    variants.append({
+        "id": "variant-custom",
+        "module_id": "module-custom",
+        "module_key": "custom_module",
+        "variant_key": "custom_variant",
+        "oid_config": custom_config,
+    })
+    for asset_id, target, variant_key in (
+        ("vendor-asset", "192.0.2.20", "h3c_common_std"),
+        ("custom-asset", "192.0.2.30", "custom_variant"),
+    ):
+        assignments.append({
+            "collector_id": "collector-local",
+            "asset_id": asset_id,
+            "target": target,
+            "variant_key": variant_key,
+            "credential_id": "cred-1",
+            "auth_alias": "auth_opaque",
+            "interval_seconds": 60,
+            "scrape_timeout_seconds": 20,
+            "enabled": True,
+        })
+
+    artifact = compile_artifact(
+        assignments,
+        collector_id="collector-local",
+        config_version=7,
+        credentials=[{"id": "cred-1", "credential_type": "snmpv2", "community": "test-community"}],
+        modules=modules,
+        variants=variants,
+    )
+
+    target_groups = yaml.safe_load(artifact["files"]["vmagent/targets/snmp_targets.yml"])
+    emitted_modules = {group["labels"]["nexora_module"] for group in target_groups}
+    assert emitted_modules == baseline_keys
+    assert {group["targets"][0] for group in target_groups} == {"192.0.2.10"}
+    assert yaml.safe_load(artifact["files"]["snmp_exporter/auth/auth.yml"])["auths"] == {
+        "auth_opaque": {"version": 2, "community": "test-community"},
+    }
     snmp_config = yaml.safe_load(artifact["files"]["snmp_exporter/snmp.yml"])
-    assert snmp_config["modules"] == {}
+    assert set(snmp_config["modules"]) == baseline_keys
+    assert all(config.get("walk") or config.get("get") for config in snmp_config["modules"].values())
+    assert all(config.get("metrics") for config in snmp_config["modules"].values())
     assert artifact["manifest"]["config_version"] == 7
-    assert artifact["manifest"]["assignment_count"] == 0
-    assert artifact["manifest"]["excluded_nonbaseline_assignment_count"] == 1
-    assert artifact["manifest"]["excluded_nonbaseline_variant_keys"] == ["generic_ifmib_interface_std"]
-    assert artifact["manifest"]["modules"] == []
-    assert "snmp_exporter/modules/generic_ifmib_interface_std.yml" not in artifact["files"]
+    assert artifact["manifest"]["assignment_count"] == 2
+    assert artifact["manifest"]["module_count"] == 2
+    assert artifact["manifest"]["excluded_nonbaseline_assignment_count"] == 2
+    assert set(artifact["manifest"]["excluded_nonbaseline_variant_keys"]) == {"h3c_common_std", "custom_variant"}
+    assert {item["variant_key"] for item in artifact["manifest"]["modules"]} == baseline_keys
+    assert len(artifact["manifest"]["modules"]) == 2
+    assert all(f"snmp_exporter/modules/{key}.yml" in artifact["files"] for key in baseline_keys)
+    assert "snmp_exporter/modules/h3c_common_std.yml" not in artifact["files"]
+    assert "snmp_exporter/modules/custom_variant.yml" not in artifact["files"]
     assert "snmp_exporter/modules/modules.yml" in artifact["files"]
     assert validate_artifact(artifact)["valid"] is True
     artifact["files"]["vmagent/scrape.yml"] += "# tampered\n"
@@ -199,7 +271,7 @@ def test_collection_health_uses_assignment_interval_not_device_status():
     assert classify_collection_health({"id": "a", "asset_id": "asset-1", "interval_seconds": 30, "last_success_at": now.isoformat(), "last_attempt_at": now.isoformat(), "duration_ms": 12, "consecutive_failures": 2})["consecutive_failures"] == 2
 
 
-def test_compiler_excludes_all_generic_and_vendor_oid_assignments_across_the_catalog():
+def test_compiler_emits_only_generic_baselines_across_the_catalog():
     catalog = iter_builtin_catalog()
     modules = []
     variants = []
@@ -232,15 +304,20 @@ def test_compiler_excludes_all_generic_and_vendor_oid_assignments_across_the_cat
         modules=modules,
         variants=variants,
     )
+    baseline_keys = {"generic_ifmib_interface_std", "generic_system_std"}
     exporter_config = yaml.safe_load(artifact["files"]["snmp_exporter/snmp.yml"])
-    assert exporter_config["modules"] == {}
-    assert yaml.safe_load(artifact["files"]["vmagent/targets/snmp_targets.yml"]) == []
-    assert artifact["manifest"]["assignment_count"] == 0
-    assert artifact["manifest"]["module_count"] == 0
-    assert artifact["manifest"]["modules"] == []
-    assert artifact["manifest"]["excluded_nonbaseline_assignment_count"] == candidate_count
-    assert "generic_ifmib_interface_std" in artifact["manifest"]["excluded_nonbaseline_variant_keys"]
-    assert "generic_system_std" in artifact["manifest"]["excluded_nonbaseline_variant_keys"]
+    assert set(exporter_config["modules"]) == baseline_keys
+    assert all(config.get("walk") or config.get("get") for config in exporter_config["modules"].values())
+    assert all(config.get("metrics") for config in exporter_config["modules"].values())
+    target_groups = yaml.safe_load(artifact["files"]["vmagent/targets/snmp_targets.yml"])
+    assert {group["labels"]["nexora_module"] for group in target_groups} == baseline_keys
+    assert len(target_groups) == 2
+    assert artifact["manifest"]["assignment_count"] == 2
+    assert artifact["manifest"]["module_count"] == 2
+    assert {item["variant_key"] for item in artifact["manifest"]["modules"]} == baseline_keys
+    assert len(artifact["manifest"]["modules"]) == 2
+    assert artifact["manifest"]["excluded_nonbaseline_assignment_count"] == candidate_count - 2
+    assert not (baseline_keys & set(artifact["manifest"]["excluded_nonbaseline_variant_keys"]))
     assert "h3c_common_std" in artifact["manifest"]["excluded_nonbaseline_variant_keys"]
     assert "huawei_common_std" in artifact["manifest"]["excluded_nonbaseline_variant_keys"]
     assert "cisco_common_std" in artifact["manifest"]["excluded_nonbaseline_variant_keys"]

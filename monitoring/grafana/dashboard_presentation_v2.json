@@ -2178,6 +2178,80 @@
             },
             "overrides": []
           }
+        },
+        "30": {
+          "title": "电压传感器走势",
+          "type": "timeseries",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "volt",
+              "noValue": "暂无采集数据",
+              "color": {"mode": "palette-classic"},
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "lineWidth": 2,
+                "fillOpacity": 12,
+                "gradientMode": "none",
+                "showPoints": "never"
+              }
+            },
+            "overrides": []
+          }
+        },
+        "31": {
+          "title": "电流传感器走势",
+          "type": "timeseries",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "amp",
+              "noValue": "暂无采集数据",
+              "color": {"mode": "palette-classic"},
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "linear",
+                "lineWidth": 2,
+                "fillOpacity": 12,
+                "gradientMode": "none",
+                "showPoints": "never"
+              }
+            },
+            "overrides": []
+          }
+        },
+        "32": {
+          "title": "电压传感器当前读数",
+          "type": "table",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "noValue": "暂无采集数据",
+              "color": {"mode": "thresholds"},
+              "custom": {"filterable": true}
+            },
+            "overrides": [
+              {"matcher": {"id": "byName", "options": "电压"}, "properties": [{"id": "unit", "value": "volt"}]}
+            ]
+          }
+        },
+        "33": {
+          "title": "电流传感器当前读数",
+          "type": "table",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "noValue": "暂无采集数据",
+              "color": {"mode": "thresholds"},
+              "custom": {"filterable": true}
+            },
+            "overrides": [
+              {"matcher": {"id": "byName", "options": "电流"}, "properties": [{"id": "unit", "value": "amp"}]}
+            ]
+          }
+        },
+        "905": {
+          "title": "电压与电流传感器",
+          "type": "row"
         }
       }
     },

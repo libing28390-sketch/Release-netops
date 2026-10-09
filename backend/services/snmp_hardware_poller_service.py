@@ -25,7 +25,7 @@ DISCOVERY_INTERVAL_SECONDS = 24 * 60 * 60
 PARTIAL_DISCOVERY_RETRY_SECONDS = 60 * 60
 FAILED_DISCOVERY_RETRY_SECONDS = 15 * 60
 SAMPLE_INTERVAL_SECONDS = 60
-DISCOVERY_VERSION = "nexora-librenms-rules-hardware-v2"
+DISCOVERY_VERSION = "nexora-librenms-rules-hardware-v8"
 
 
 def hardware_sample_interval_seconds() -> int:
@@ -292,6 +292,7 @@ async def _discover_device(
     from services.librenms_rule_service import ensure_rules_available
     from services.snmp_hardware_probe_service import (
         probe_librenms_hardware,
+        probe_librenms_os_hardware,
     )
     from services.snmp_service import (
         SYS_DESCR,
@@ -341,6 +342,57 @@ async def _discover_device(
                 "reason_code": "rule_hardware_probe_error",
                 "reason": f"Rule-based hardware discovery failed: {type(exc).__name__}",
             })
+        if str(rule.get("os_key") or "").strip().casefold() in {"ios", "comware"}:
+            try:
+                os_hardware = await probe_librenms_os_hardware(
+                    ip,
+                    community,
+                    port,
+                    rule=rule,
+                    identity=identity,
+                    version=version,
+                )
+                sensors.extend(os_hardware.get("sensors") or [])
+                category_results.extend(os_hardware.get("category_results") or [])
+            except Exception as exc:
+                logger.warning("LibreNMS OS hardware discovery failed for device %s (%s)", device.get("id"), type(exc).__name__)
+                probe_errors.append(type(exc).__name__)
+                category_results.append({
+                    "source_type": "nexora_snmp",
+                    "component_class": "librenms_os_rule",
+                    "status": "failed",
+                    "coverage_complete": False,
+                    "reason_code": "librenms_os_hardware_probe_error",
+                    "reason": f"LibreNMS OS hardware discovery failed: {type(exc).__name__}",
+                })
+
+        from services.librenms_wireless_rule_service import WIRELESS_RULE_OS_KEYS
+
+        if str(rule.get("os_key") or "").strip().casefold() in WIRELESS_RULE_OS_KEYS:
+            try:
+                from services.librenms_wireless_rule_service import probe_librenms_wireless_hardware
+
+                wireless = await probe_librenms_wireless_hardware(
+                    ip,
+                    community,
+                    port,
+                    rule=rule,
+                    identity=identity,
+                    version=version,
+                )
+                sensors.extend(wireless.get("sensors") or [])
+                category_results.extend(wireless.get("category_results") or [])
+            except Exception as exc:
+                logger.warning("LibreNMS wireless discovery failed for device %s (%s)", device.get("id"), type(exc).__name__)
+                probe_errors.append(type(exc).__name__)
+                category_results.append({
+                    "source_type": "nexora_snmp",
+                    "component_class": "wireless_access_point",
+                    "status": "failed",
+                    "coverage_complete": False,
+                    "reason_code": "librenms_mib_wireless_probe_error",
+                    "reason": f"LibreNMS MIB wireless discovery failed: {type(exc).__name__}",
+                })
 
     from services.librenms_source_policy import is_trusted_hardware_sensor
     sensors = [sensor for sensor in sensors if is_trusted_hardware_sensor(sensor)]

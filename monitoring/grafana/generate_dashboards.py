@@ -201,7 +201,7 @@ WIRELESS_DEVICE_LABELS = "site_name,vendor,role,hostname"
 
 
 def wireless_clients_by_device(inventory_selector):
-    """Return only LibreNMS-rule-backed controller/SSID counts by device.
+    """Return only LibreNMS-rule-backed controller/SSID/radio counts by device.
 
     Missing normalized inventory remains No data. Raw vendor OIDs from the
     separate snmp_exporter path are not a fallback source.
@@ -216,8 +216,14 @@ def wireless_clients_by_device(inventory_selector):
         f"nexora_wireless_sensor_value{{{inventory_selector},"
         'component_class="wireless_ssid",sensor_class="clients"})'
     )
+    radio_clients = (
+        f"sum by ({WIRELESS_DEVICE_LABELS}) ("
+        f"nexora_wireless_sensor_value{{{inventory_selector},"
+        'component_class="wireless_radio",sensor_class="clients"})'
+    )
     inventory_clients = (
-        f"({controller_clients} or on({WIRELESS_DEVICE_LABELS}) {ssid_clients})"
+        f"({controller_clients} or on({WIRELESS_DEVICE_LABELS}) "
+        f"({ssid_clients} or on({WIRELESS_DEVICE_LABELS}) {radio_clients}))"
     )
     expression = inventory_clients
     # Keep the query contract executable and reviewable: this guard catches a
@@ -225,7 +231,8 @@ def wireless_clients_by_device(inventory_selector):
     assert f"sum by ({WIRELESS_DEVICE_LABELS})" in expression
     assert 'component_class="wireless_controller",sensor_class="clients"' in expression
     assert 'component_class="wireless_ssid",sensor_class="clients"' in expression
-    assert 'source_type="librenms_rule"' in expression
+    assert 'component_class="wireless_radio",sensor_class="clients"' in expression
+    assert 'source_type=~"librenms_rule|librenms_mib_rule"' in expression
     assert "vector(0)" not in expression
     assert "hwWlan" not in expression and "hh3cDot11" not in expression
     return expression
@@ -986,7 +993,7 @@ def build_overview_dashboard():
     sel = f'{NETWORK_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
     target_sel = f'{NETWORK_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
     inventory_sel = f'{HARDWARE_INVENTORY_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
-    wireless_inventory_sel = f'{inventory_sel},source_type="librenms_rule"'
+    wireless_inventory_sel = f'{inventory_sel},source_type=~"librenms_rule|librenms_mib_rule"'
     target_site_sel = f'{NETWORK_JOB},site_name!="",site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
     in_rate = counter_rate_expr("ifHCInOctets", "ifInOctets", sel)
     out_rate = counter_rate_expr("ifHCOutOctets", "ifOutOctets", sel)
@@ -1192,6 +1199,12 @@ def build_overview_dashboard():
     }
 
 # 2. Network Device Detail Dashboard
+def _current_sys_uptime_ticks(selector: str) -> str:
+    """Return the latest sampled sysUpTime advanced to the query evaluation time."""
+    sample = f"last_over_time(sysUpTime{{{selector}}}[20m])"
+    return f"({sample} + (time() - timestamp({sample})) * 100)"
+
+
 def build_device_dashboard():
     dev_sel = f'{NETWORK_JOB},asset_id="$asset_id",asset_id!=""'
     in_rate = counter_rate_expr("ifHCInOctets", "ifInOctets", dev_sel)
@@ -1235,6 +1248,8 @@ def build_device_dashboard():
     component_state = hardware_metric("nexora_hw_component_state")
     component_present = hardware_metric("nexora_hw_component_present")
     power = hardware_metric("nexora_hw_power_watts")
+    voltage = hardware_metric("nexora_hw_voltage_volts")
+    current = hardware_metric("nexora_hw_current_amperes")
     optical_power = hardware_metric("nexora_hw_optical_power_dbm")
     generic_sensor = hardware_metric("nexora_hw_sensor_value")
     quality = hardware_metric("nexora_hw_sensor_quality")
@@ -1715,7 +1730,7 @@ def build_device_dashboard():
     panels = [
         identity_panel,
         stat_panel(
-            2, "系统运行时长", f"sysUpTime{{{dev_sel}}} / 100", 0, 3, 4, 3,
+            2, "系统运行时长", f"{_current_sys_uptime_ticks(dev_sel)} / 100", 0, 3, 4, 3,
             unit="dtdhms", color=NEUTRAL_COLOR, graph_mode="none",
         ),
         cpu_gauge,
@@ -1891,6 +1906,36 @@ def build_device_dashboard():
             value_name="当前值",
             description="单位尚未统一，数值按设备原始单位显示。",
         ),
+        timeseries_panel(
+            30, "电压传感器走势", [{
+                "expr": f"max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class) ({voltage})",
+                "legendFormat": "{{sensor_name}} · {{group}}",
+                "refId": "A",
+            }],
+            0, 86, 12, 8, unit="volt",
+            legend_display_mode="list", legend_placement="bottom", legend_calcs=[],
+            description=None,
+        ),
+        timeseries_panel(
+            31, "电流传感器走势", [{
+                "expr": f"max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class) ({current})",
+                "legendFormat": "{{sensor_name}} · {{group}}",
+                "refId": "A",
+            }],
+            12, 86, 12, 8, unit="amp",
+            legend_display_mode="list", legend_placement="bottom", legend_calcs=[],
+            description=None,
+        ),
+        current_table(
+            32, "电压传感器当前读数", voltage, 0, 94, 12,
+            unit="volt", value_name="电压",
+            description=None,
+        ),
+        current_table(
+            33, "电流传感器当前读数", current, 12, 94, 12,
+            unit="amp", value_name="电流",
+            description=None,
+        ),
     ]
     # Reserve one additional grid row for the identity table and move all
     # following panels down with it, preserving the dashboard's row spacing.
@@ -1905,6 +1950,7 @@ def build_device_dashboard():
             ("硬件部件当前读数", 31),
             ("发现状态与采集质量", 55),
             ("接口诊断", 71),
+            ("电压与电流传感器", 87),
         ],
     )
     panels = normalize_summary_cards(panels)
@@ -1979,7 +2025,7 @@ def build_device_dashboard():
 def build_wireless_dashboard():
     sel = f'{NETWORK_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
     inventory_sel = f'{HARDWARE_INVENTORY_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
-    wireless_inventory_sel = f'{inventory_sel},source_type="librenms_rule"'
+    wireless_inventory_sel = f'{inventory_sel},source_type=~"librenms_rule|librenms_mib_rule"'
     ac_sel = f'{NETWORK_JOB},role="wireless_controller",site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
     wireless_interface_sel = f'{NETWORK_JOB},role="wireless_controller",site_name=~"$site",vendor=~"$vendor",hostname=~"$device"'
     wireless_interface_meta_sel = f'{wireless_interface_sel},ifName!=""'
@@ -2342,7 +2388,7 @@ def build_interface_dashboard():
     # the elapsed seconds non-negative across one wrap (sampling gaps still
     # limit the flap count resolution).
     last_change_age_raw = (
-        f"(((sysUpTime{{{sel}}} - on(instance) group_right(ifIndex, ifName, ifAlias, interface_role, "
+        f"((({_current_sys_uptime_ticks(sel)} - on(instance) group_right(ifIndex, ifName, ifAlias, interface_role, "
         f"utilization_warn_pct, utilization_high_pct, utilization_critical_pct) ifLastChange{{{if_filter}}}) "
         f"+ 4294967296) % 4294967296) / 100"
     )
@@ -2570,8 +2616,9 @@ def build_interface_detail_dashboard():
     )
     flap_24h = f"changes(ifOperStatus{{{sel}}}[24h]) {join}"
     flap_7d = f"changes(ifOperStatus{{{sel}}}[7d]) {join}"
+    uptime_sel = f'{NETWORK_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
     last_change_age = (
-        f"(((sysUpTime{{{NETWORK_JOB},site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}} "
+        f"((({_current_sys_uptime_ticks(uptime_sel)} "
         f"- on(instance) group_right(ifIndex, ifName, ifAlias, interface_role, utilization_warn_pct, utilization_high_pct, utilization_critical_pct) ifLastChange{{{sel}}}) "
         f"+ 4294967296) % 4294967296) / 100"
     )

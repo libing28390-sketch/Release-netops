@@ -12,6 +12,7 @@ import { useChartTheme } from '../hooks/useChartTheme';
 import { useMonitoringStore } from '../store/monitoringStore';
 import { VirtualizedDeviceList } from './VirtualizedDeviceList';
 import type { TableExportData } from './ui/TableExportMenu';
+import { formatUptimeSeconds } from '../utils/formatUptimeSeconds';
 
 interface NetworkMonitoringProps {
   language: 'zh' | 'en';
@@ -640,8 +641,10 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({
     if (status === true || status === 1) return zh ? '正常' : 'OK';
     if (status === false || status === 0) return zh ? '故障' : 'FAIL';
     const s = String(status).toLowerCase();
+    if (s === 'warning' || s === 'warn' || s === 'degraded') return zh ? '警告' : 'WARN';
     if (s === 'fail' || s === 'failed' || s === 'error' || s === 'down') return zh ? '故障' : 'FAIL';
     if (s === 'ok' || s === 'normal' || s === 'up' || s === 'healthy' || s === 'true' || s === '1') return zh ? '正常' : 'OK';
+    if (s === 'unknown' || s === 'unavailable' || s === 'unsupported') return zh ? '未知' : 'Unknown';
     if (s === 'false' || s === '0') return zh ? '故障' : 'FAIL';
     return String(status).toUpperCase();
   };
@@ -651,8 +654,10 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({
     if (status === true || status === 1) return zh ? '正常' : 'OK';
     if (status === false || status === 0) return zh ? '故障' : 'FAIL';
     const s = String(status).toLowerCase();
+    if (s === 'warning' || s === 'warn' || s === 'degraded') return zh ? '警告' : 'WARN';
     if (s === 'fail' || s === 'failed' || s === 'error' || s === 'down') return zh ? '故障' : 'FAIL';
     if (s === 'ok' || s === 'normal' || s === 'up' || s === 'healthy' || s === 'true' || s === '1') return zh ? '正常' : 'OK';
+    if (s === 'unknown' || s === 'unavailable' || s === 'unsupported') return zh ? '未知' : 'Unknown';
     if (s === 'false' || s === '0') return zh ? '故障' : 'FAIL';
     return String(status).toUpperCase();
   };
@@ -663,6 +668,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({
     if (status === false || status === 0) return 'text-red-500';
     const normalized = String(status).toLowerCase();
     if (['fail', 'failed', 'error', 'down', 'false', '0'].includes(normalized)) return 'text-red-500';
+    if (['warning', 'warn', 'degraded'].includes(normalized)) return 'text-amber-500';
     if (['ok', 'normal', 'up', 'healthy', 'true', '1'].includes(normalized)) return 'text-emerald-500';
     return 'text-slate-500';
   };
@@ -1044,7 +1050,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({
                     {zh ? '最新整机状态快照' : 'Latest Hardware Status Snapshot'}
                   </h3>
                 </div>
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
                   <div className="flex flex-col items-center justify-center p-3.5 rounded-xl border border-gray-100 dark:border-zinc-800 bg-gray-50/70 dark:bg-zinc-800/40">
                     <Cpu size={18} className="text-blue-500 mb-1.5" />
                     <span className="text-[10px] font-semibold text-gray-400">{zh ? 'CPU 使用率' : 'CPU'}</span>
@@ -1082,6 +1088,14 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({
                     <span className="text-[10px] font-semibold text-gray-400">{zh ? '电源状态' : 'Power (PSU)'}</span>
                     <p className={`text-xs font-bold mt-1 px-2 py-0.5 rounded-md ${hardwareStatusTone(snapshotDevice?.psu_status)}`}>
                       {getPsuStatusLabel(snapshotDevice?.psu_status)}
+                    </p>
+                  </div>
+
+                  <div className="flex flex-col items-center justify-center p-3.5 rounded-xl border border-gray-100 dark:border-zinc-800 bg-gray-50/70 dark:bg-zinc-800/40">
+                    <Clock size={18} className="text-cyan-500 mb-1.5" />
+                    <span className="text-[10px] font-semibold text-gray-400">{zh ? '系统运行时长' : 'System Uptime'}</span>
+                    <p className="text-sm font-extrabold text-gray-900 dark:text-white mt-1 font-mono">
+                      {formatUptimeSeconds(snapshotDevice?.uptime_seconds, zh ? 'zh' : 'en')}
                     </p>
                   </div>
                 </div>

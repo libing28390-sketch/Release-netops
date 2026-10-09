@@ -154,9 +154,9 @@ def test_catalog_covers_the_complete_v2_dashboard_set(catalog):
     ]
     row_count = sum(panel.get("type") == "row" for panel in panels)
     stat_count = sum(panel.get("type") == "stat" for panel in panels)
-    assert len(panels) == 261
-    assert row_count == 54
-    assert len(panels) - row_count == 207
+    assert len(panels) == 266
+    assert row_count == 55
+    assert len(panels) - row_count == 211
     assert stat_count == 94
 
 

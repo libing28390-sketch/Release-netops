@@ -1138,11 +1138,15 @@ def render_hardware_metrics(sensors: Sequence[Mapping[str, Any]], device_labels:
         base["window"] = _clean_text(explicit_window, field="window", limit=100) or "unknown"
 
         info_labels = dict(base)
+        # Keep the metadata metric below VictoriaMetrics' default label cap.
+        # These fields are redundant here: window belongs to value samples,
+        # group is the normalized alias for group_name, and index_labels are
+        # already promoted to individual AP/entity labels above.
+        info_labels.pop("window", None)
         for label_name, field_name in (
             ("source_id", "source_id"),
             ("sensor_name", "sensor_name"),
             ("entity_name", "entity_name"),
-            ("group_name", "group_name"),
             ("unit", "unit"),
             ("discovery_status", "discovery_status"),
             ("lifecycle_status", "lifecycle_status"),
@@ -1151,8 +1155,6 @@ def render_hardware_metrics(sensors: Sequence[Mapping[str, Any]], device_labels:
         info_labels["group"] = sensor.get("group_name", "")
         index_value = _decode_json_field(sensor.get("index", sensor.get("index_json")), fallback=[])
         info_labels["index"] = _json_text(index_value)
-        if isinstance(index_labels, dict):
-            info_labels["index_labels"] = _json_text(index_labels)
         add("nexora_hw_sensor_info", info_labels, "1")
 
         quality = str(sensor.get("last_quality") or "missing").lower()

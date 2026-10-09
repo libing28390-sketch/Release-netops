@@ -51,6 +51,48 @@ def test_comware_fixture_preserves_oid_prefix_and_hardware_states():
     assert definitions["sensors"][2]["skip_values"] == [0]
 
 
+def test_aruba_instant_yaml_separates_ap_and_radio_component_states():
+    parsed = {item["os_key"]: item for item in rules.parse_rules()}
+    sensors = parsed["aruba-instant"]["hardware_definitions"]["sensors"]
+    wireless_states = [
+        item for item in sensors
+        if item.get("source_class") == "state"
+        and item.get("group") in {"Cluster APs", "Cluster Radios"}
+    ]
+
+    assert [item["component_class"] for item in wireless_states] == [
+        "wireless_access_point", "wireless_radio",
+    ]
+    assert [item["measurement_type"] for item in wireless_states] == ["state", "state"]
+
+    vrp_wlan_states = [
+        item for item in parsed["vrp"]["hardware_definitions"]["sensors"]
+        if "hwwlancluster" in str(item.get("state_name") or "").casefold()
+    ]
+    yunshan_wlan_states = [
+        item for item in parsed["yunshan"]["hardware_definitions"]["sensors"]
+        if "hwwlancluster" in str(item.get("state_name") or "").casefold()
+    ]
+    assert vrp_wlan_states and all(item["component_class"] == "wireless_controller" for item in vrp_wlan_states)
+    assert yunshan_wlan_states and all(item["component_class"] == "wireless_controller" for item in yunshan_wlan_states)
+
+    routeros_radio_states = [
+        item for item in parsed["routeros"]["hardware_definitions"]["sensors"]
+        if "mtxrwl60g" in str(item.get("state_name") or "").casefold()
+    ]
+    timos_cellular_states = [
+        item for item in parsed["timos"]["hardware_definitions"]["sensors"]
+        if str(item.get("group") or "").casefold() == "cellular status"
+    ]
+    airos_af_states = [
+        item for item in parsed["airos-af"]["hardware_definitions"]["sensors"]
+        if any(token in str(item.get("state_name") or "").casefold() for token in ("gpssync", "curtxmodrate"))
+    ]
+    assert routeros_radio_states and all(item["component_class"] == "wireless_radio" for item in routeros_radio_states)
+    assert timos_cellular_states and all(item["component_class"] == "wireless_radio" for item in timos_cellular_states)
+    assert airos_af_states and all(item["component_class"] == "wireless_radio" for item in airos_af_states)
+
+
 def test_vrp_fixture_preserves_processor_mempool_and_sensor_semantics():
     vrp = _fixture_rules()["vrp"]
     definition = vrp["hardware_definitions"]
@@ -230,6 +272,7 @@ def test_sync_and_resolve_keep_legacy_candidates_and_return_structured_contract(
         assert resolved["identity_match"]["matched_by"][0]["field"] == "sysObjectID"
         assert resolved["hardware_definitions"]["contract"] == rules.HARDWARE_CONTRACT
         assert isinstance(resolved["oid_candidates"], list)
+        assert resolved["discovery_source_path"] == "resources/definitions/os_discovery/comware.yaml"
 
         stored = json.loads(
             conn.execute(
@@ -237,5 +280,6 @@ def test_sync_and_resolve_keep_legacy_candidates_and_return_structured_contract(
             ).fetchone()["detection_json"]
         )
         assert stored["hardware_definitions"]["sensors"][0]["component_class"] == "fan_state"
+        assert stored["discovery_source_path"] == "resources/definitions/os_discovery/comware.yaml"
     finally:
         conn.close()

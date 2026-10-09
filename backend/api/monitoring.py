@@ -4,6 +4,7 @@ import asyncio
 import heapq
 import json
 import logging
+import math
 import os
 import threading
 import time
@@ -57,6 +58,95 @@ def _monitoring_tenant_scope(user: Any, *, device_alias: str | None = None) -> t
     return f" AND COALESCE({tenant_column}, 'tenant-default') = ?", (str(user.get('tenant_id') or 'tenant-default'),)
 
 _SERVER_PLATFORMS = {'linux', 'ubuntu', 'centos', 'debian', 'redhat'}
+
+
+def _parse_hardware_sample_time(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    elif value not in (None, ''):
+        try:
+            parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+        except (TypeError, ValueError):
+            return None
+    else:
+        return None
+    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+
+
+def _summarize_hardware_component_statuses(
+    sensors: list[dict[str, Any]],
+    *,
+    now: datetime | None = None,
+) -> dict[str, str | None]:
+    """Summarize fresh, trusted LibreNMS component states for the monitoring UI.
+
+    The Python LibreNMS rule interpreter stores generic state codes as
+    0=healthy, 1=warning, 2=critical, 3=unknown.  Do not pass those numbers to
+    the legacy UI status contract, where numeric 0/1 means false/true.
+    """
+    from services.librenms_source_policy import is_trusted_hardware_sensor
+    from services.snmp_hardware_poller_service import (
+        DISCOVERY_VERSION,
+        hardware_stale_after_seconds,
+    )
+
+    current_time = now or datetime.now(timezone.utc)
+    if current_time.tzinfo is None:
+        current_time = current_time.replace(tzinfo=timezone.utc)
+    current_time = current_time.astimezone(timezone.utc)
+    status_codes = {0: 'ok', 1: 'warning', 2: 'failed', 3: 'unknown'}
+    priorities = {'ok': 0, 'unknown': 1, 'warning': 2, 'failed': 3}
+    by_component: dict[str, list[str]] = {'fan_state': [], 'power_supply_state': []}
+
+    for sensor in sensors:
+        if not isinstance(sensor, dict):
+            continue
+        component_class = str(sensor.get('component_class') or '').casefold()
+        if component_class not in by_component:
+            continue
+        metadata = sensor.get('metadata') if isinstance(sensor.get('metadata'), dict) else {}
+        if (
+            not bool(sensor.get('enabled'))
+            or str(sensor.get('lifecycle_status') or '').casefold() != 'active'
+            or str(sensor.get('last_quality') or '').casefold() != 'good'
+            or str(sensor.get('measurement_type') or '').casefold() != 'component_state'
+            or str(metadata.get('collection_version') or '') != DISCOVERY_VERSION
+            or not is_trusted_hardware_sensor(sensor)
+        ):
+            continue
+        last_success = _parse_hardware_sample_time(sensor.get('last_success'))
+        if last_success is None:
+            continue
+        if (current_time - last_success).total_seconds() > hardware_stale_after_seconds(sensor):
+            continue
+        try:
+            numeric_state = float(sensor.get('last_value'))
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(numeric_state) or not numeric_state.is_integer():
+            continue
+        status = status_codes.get(int(numeric_state))
+        if status:
+            by_component[component_class].append(status)
+
+    def combine(values: list[str]) -> str | None:
+        return max(values, key=lambda value: priorities[value]) if values else None
+
+    return {
+        'fan_status': combine(by_component['fan_state']),
+        'psu_status': combine(by_component['power_supply_state']),
+    }
+
+
+def _current_hardware_component_statuses(conn: Any, device_id: str) -> dict[str, str | None]:
+    try:
+        from services.snmp_hardware_inventory_service import list_hardware_sensors
+
+        sensors = list_hardware_sensors(conn, device_id, include_retired=False)
+        return _summarize_hardware_component_statuses(sensors)
+    except Exception as exc:
+        logger.debug('Unable to read trusted hardware component statuses for %s (%s)', device_id, type(exc).__name__)
+        return {'fan_status': None, 'psu_status': None}
 
 
 def _is_virtual_interface_name(name: object) -> bool:
@@ -880,15 +970,19 @@ def monitoring_device_realtime(
             'temp': None,
             'fan_status': None,
             'psu_status': None,
+            'uptime_seconds': None,
         })
+        device.update(_current_hardware_component_statuses(conn, device_id))
         device['interface_data'] = [
             item for item in (fetch_interface_data(conn, device['id']) or [])
             if not _is_virtual_interface_name(item.get('interface_name') or item.get('name'))
         ]
 
-        # Resolve current hardware values through the same normalized metric
-        # contract for every backend. Missing or failed queries remain empty;
-        # legacy device columns are not a fallback source.
+        # Hardware inventory samples and standard sysUpTime are exported only
+        # by the normalized VictoriaMetrics families. The native provider has
+        # no provenance-backed equivalent, so native mode uses VictoriaMetrics
+        # for these current hardware values while keeping legacy device columns
+        # out of the response.
         provider_name = provider.strip().lower() if isinstance(provider, str) and provider.strip() else None
         selected_backend = (provider_name or os.environ.get("MONITORING_METRIC_BACKEND", "native")).strip().lower()
         if selected_backend in {"native", "victoriametrics", "shadow"}:
@@ -899,7 +993,9 @@ def monitoring_device_realtime(
                     if device.get('asset_id') and device.get('id') and str(device['asset_id']) != str(device['id'])
                     else target_asset_id
                 )
-                provider_inst = provider_from_environment(mode=selected_backend)
+                provider_inst = provider_from_environment(
+                    mode="victoriametrics" if selected_backend == "native" else selected_backend
+                )
 
                 cpu_payload = provider_inst.instant(query="cpu_usage_percent", asset_id=lookup_id, metric_key="cpu_usage_percent")
                 cpu_val = extract_instant_metric_value(cpu_payload.get("data"))
@@ -915,6 +1011,15 @@ def monitoring_device_realtime(
                 temp_val = extract_instant_metric_value(temp_payload.get("data"))
                 if temp_val is not None:
                     device['temp'] = temp_val
+
+                uptime_payload = provider_inst.instant(
+                    query="device_uptime_seconds",
+                    asset_id=lookup_id,
+                    metric_key="device_uptime_seconds",
+                )
+                uptime_val = extract_instant_metric_value(uptime_payload.get("data"))
+                if uptime_val is not None:
+                    device['uptime_seconds'] = uptime_val
             except Exception as vm_err:
                 logger.debug("Failed to query real-time hardware metrics from provider for %s: %s", device_id, vm_err)
 
@@ -950,6 +1055,7 @@ def monitoring_device_realtime(
                     'temp': device['temp'],
                     'fan_status': device['fan_status'],
                     'psu_status': device['psu_status'],
+                    'uptime_seconds': device['uptime_seconds'],
                 },
                 'is_server': True,
                 'series': series,
@@ -1097,6 +1203,7 @@ def monitoring_device_realtime(
                 'temp': device['temp'],
                 'fan_status': device['fan_status'],
                 'psu_status': device['psu_status'],
+                'uptime_seconds': device['uptime_seconds'],
             },
             'latest_interfaces': latest_interfaces[:200],
             'summary': summary,

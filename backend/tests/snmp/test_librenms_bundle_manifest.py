@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 import re
 
@@ -35,6 +36,66 @@ def test_pinned_sources_disable_git_line_ending_conversion() -> None:
 
     assert "backend/vendor/librenms/resources/definitions/** -text" in attributes
     assert "backend/vendor/librenms/mibs/** -text" in attributes
+    assert "backend/vendor/librenms/LibreNMS/**/*.php -text" in attributes
+
+
+def test_wireless_dispatcher_is_pinned_and_manifest_lists_upstream_vendor_rules() -> None:
+    manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    source_path = "LibreNMS/Modules/Wireless.php"
+    dispatcher = manifest["wireless_discovery"]
+    assert dispatcher["dispatcher_path"] == source_path
+    assert len(dispatcher["rule_keys"]) == 20
+    assert "wireless_cisco_iosxe_cellular" in dispatcher["rule_keys"]
+    assert "wireless_stellar" in dispatcher["rule_keys"]
+    assert "wireless_h3c_comware" not in dispatcher["rule_keys"]
+
+    entry = next(item for item in manifest["adapter_files"] if item["upstream_path"] == source_path)
+    payload = (MANIFEST_PATH.parent / entry["bundle_path"]).read_bytes()
+    assert len(manifest["adapter_files"]) == 29
+    assert entry["size_bytes"] == len(payload)
+    assert entry["sha256"] == hashlib.sha256(payload).hexdigest()
+
+
+def test_cisco_cellular_trait_is_pinned_as_an_adapter_source() -> None:
+    manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    source_path = "LibreNMS/OS/Traits/CiscoCellular.php"
+
+    entry = next(
+        item for item in manifest["adapter_files"]
+        if item["upstream_path"] == source_path
+    )
+    payload = (MANIFEST_PATH.parent / entry["bundle_path"]).read_bytes()
+
+    assert entry["bundle_path"] == source_path
+    assert entry["size_bytes"] == len(payload)
+    assert entry["sha256"] == hashlib.sha256(payload).hexdigest()
+
+
+def test_wireless_rule_mibs_are_within_the_existing_vendored_mib_manifest() -> None:
+    manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    upstream_mib_paths = {entry["upstream_path"] for entry in manifest["mibs"]}
+    policy_path = REPOSITORY_ROOT / "backend" / "services" / "librenms_source_policy.py"
+    source_policy = policy_path.read_text(encoding="utf-8")
+    service_path = REPOSITORY_ROOT / "backend" / "services" / "librenms_wireless_rule_service.py"
+    wireless_service = service_path.read_text(encoding="utf-8")
+
+    for source in (source_policy, wireless_service):
+        for line in source.splitlines():
+            if '"mibs/' not in line:
+                continue
+            for quoted in re.findall(r'"(mibs/[^" ]+)"', line):
+                if "{module}" in quoted:
+                    prefix, suffix = quoted.split("{module}", 1)
+                    assert any(
+                        path.startswith(prefix) and path.endswith(suffix)
+                        for path in upstream_mib_paths
+                    ), quoted
+                    continue
+                if quoted not in upstream_mib_paths:
+                    assert quoted.startswith("mibs/standard/") and any(
+                        entry["upstream_path"] == quoted.removeprefix("mibs/standard/")
+                        for entry in manifest["mibs"]
+                    ), quoted
 
 
 def test_manifest_documents_hp_and_fiberstore_cross_scope_mappings() -> None:
@@ -89,7 +150,7 @@ def test_manifest_explains_upstream_directory_count_vs_platform_vendor_scope() -
     def folder_name(scope: str) -> str:
         return re.sub(r"[^a-z0-9]+", "-", scope.casefold()).strip("-")
 
-    assert len(upstream_vendor_dirs) == 35
+    assert len(upstream_vendor_dirs) == 36
     assert len(platform_scopes - {"Standard"}) == 23
     assert {folder_name(scope) for scope in platform_scopes} == bundle_dirs
     assert len(manifest["asset_network_vendors"]) == 26

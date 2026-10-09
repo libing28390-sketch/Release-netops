@@ -4,7 +4,7 @@
   "upstream_commit": "6c26b4fe4a40f7b392c19c36a44257212736e38c",
   "upstream_commit_date": "2026-09-29T08:08:05+01:00",
   "generated_at_utc": "2026-10-08T14:07:38+00:00",
-  "scope": "Network-asset OS identity and hardware sensor sources only; interface monitoring provenance is outside this manifest.",
+  "scope": "Network-asset OS identity, hardware sensor sources, and audited wireless AP polling sources; interface monitoring provenance is outside this manifest.",
   "asset_network_vendors": [
     "Cisco",
     "Huawei",
@@ -20758,6 +20758,241 @@
       "upstream_path": "mibs/zte/ZXR10-MIB",
       "sha256": "6da118c571ae05918cac6f5d1993d53863d9d602b703c6165c2ff5e94c14fcf0",
       "size_bytes": 121378
+    },
+    {
+      "module": "HIPATH-WIRELESS-DOT11-EXTNS-MIB",
+      "platform_vendor_scope": "Extreme Networks",
+      "bundle_path": "mibs/extreme-networks/_upstream/ewc/HIPATH-WIRELESS-DOT11-EXTNS-MIB",
+      "upstream_path": "mibs/ewc/HIPATH-WIRELESS-DOT11-EXTNS-MIB",
+      "sha256": "73a68c03ced22757f8927b7aa27704a6f97902ebb927771a13956546dd4c68ba",
+      "size_bytes": 68705
+    },
+    {
+      "module": "HIPATH-WIRELESS-HWC-MIB",
+      "platform_vendor_scope": "Extreme Networks",
+      "bundle_path": "mibs/extreme-networks/_upstream/ewc/HIPATH-WIRELESS-HWC-MIB",
+      "upstream_path": "mibs/ewc/HIPATH-WIRELESS-HWC-MIB",
+      "sha256": "77c2ca19f778630528c583725639708ffe50b3b5f6436d3075f3abe38d6c0fb4",
+      "size_bytes": 578059
+    },
+    {
+      "module": "HIPATH-WIRELESS-SMI",
+      "platform_vendor_scope": "Extreme Networks",
+      "bundle_path": "mibs/extreme-networks/_upstream/ewc/HIPATH-WIRELESS-SMI",
+      "upstream_path": "mibs/ewc/HIPATH-WIRELESS-SMI",
+      "sha256": "86f67952b5f594036da596a15071439019cc02967a5f73d5bdb6e7370cb77324",
+      "size_bytes": 2100
+    }
+  ],
+  "adapter_files": [
+    {
+      "bundle_path": "LibreNMS/Modules/Wireless.php",
+      "upstream_path": "LibreNMS/Modules/Wireless.php",
+      "sha256": "177cb0e4ac9b41f6719de735557b1566a3d4da1fc119bcbea4c3f650e05d652c",
+      "size_bytes": 9306
+    },
+    {
+      "bundle_path": "LibreNMS/OS/Airos.php",
+      "upstream_path": "LibreNMS/OS/Airos.php",
+      "sha256": "5f9bd628f6f74e07f9a55675db77039d136814a945d30f6e73a1cd8bcea2e314",
+      "size_bytes": 9461
+    },
+    {
+      "bundle_path": "LibreNMS/OS/AirosAf.php",
+      "upstream_path": "LibreNMS/OS/AirosAf.php",
+      "sha256": "cda3061be04b4e65458f6a9743d4a3a42c5568c49260cb8bd9d2d24391502a69",
+      "size_bytes": 4518
+    },
+    {
+      "bundle_path": "LibreNMS/OS/AirosAf60.php",
+      "upstream_path": "LibreNMS/OS/AirosAf60.php",
+      "sha256": "0cc67dc44f4939e9b076ed0dd133b73772c11700fa956d9a4a153235fe5a74b9",
+      "size_bytes": 4360
+    },
+    {
+      "bundle_path": "LibreNMS/OS/AirosAfLtu.php",
+      "upstream_path": "LibreNMS/OS/AirosAfLtu.php",
+      "sha256": "29f433c09cec0d25a755b9058a14c8fa9b86b594f595dede56857b94d4b23939",
+      "size_bytes": 6460
+    },
+    {
+      "bundle_path": "LibreNMS/OS/ArubaInstant.php",
+      "upstream_path": "LibreNMS/OS/ArubaInstant.php",
+      "sha256": "3c241b3339ec7d6696544f7147f4d6807950fb53bc4eaa885a4f95c4957d0ec0",
+      "size_bytes": 15409
+    },
+    {
+      "bundle_path": "LibreNMS/OS/Arubaos.php",
+      "upstream_path": "LibreNMS/OS/Arubaos.php",
+      "sha256": "2acc10bc1a25e94532704a2d5ddb53416d17781a3722e951484f44c27ae2fde9",
+      "size_bytes": 7709
+    },
+    {
+      "bundle_path": "LibreNMS/OS/Ciscosat.php",
+      "upstream_path": "LibreNMS/OS/Ciscosat.php",
+      "sha256": "3227c4353dab31998972904244b29b125d91cd48329c4ca6f53bc4ca7fb9ad8e",
+      "size_bytes": 2881
+    },
+    {
+      "bundle_path": "LibreNMS/OS/Ciscowlc.php",
+      "upstream_path": "LibreNMS/OS/Ciscowlc.php",
+      "sha256": "264880c1aae5e48c2d0e79497986ea2b434f26974f52a97e3b7c8eb0f46b13c0",
+      "size_bytes": 9269
+    },
+    {
+      "bundle_path": "LibreNMS/OS/Comware.php",
+      "upstream_path": "LibreNMS/OS/Comware.php",
+      "sha256": "3b78b1520b61d22ddf205e4afbbe21de3df50ca55632e1ba3f51e039925bf26d",
+      "size_bytes": 5603
+    },
+    {
+      "bundle_path": "LibreNMS/OS/Ewc.php",
+      "upstream_path": "LibreNMS/OS/Ewc.php",
+      "sha256": "636707b2cc179d4f6b3188c8f163378f7dc8b1f10b466dda4c5af8cace34ea7c",
+      "size_bytes": 10736
+    },
+    {
+      "bundle_path": "LibreNMS/OS/Ios.php",
+      "upstream_path": "LibreNMS/OS/Ios.php",
+      "sha256": "2aae730c82b518a338b18e80865403e82aa30f085fa546469e75c9a9e4017fd8",
+      "size_bytes": 4599
+    },
+    {
+      "bundle_path": "LibreNMS/OS/Iosxe.php",
+      "upstream_path": "LibreNMS/OS/Iosxe.php",
+      "sha256": "01428a733030f8783876803d654c4dce1bf40a4ced2a895bd47b47bed5791143",
+      "size_bytes": 6453
+    },
+    {
+      "bundle_path": "LibreNMS/OS/Routeros.php",
+      "upstream_path": "LibreNMS/OS/Routeros.php",
+      "sha256": "929a6931ab0644309d2e1af44109bc8df214f9a59ad83846f8a5b0a4cc59b874",
+      "size_bytes": 29497
+    },
+    {
+      "bundle_path": "LibreNMS/OS/Ruckuswireless.php",
+      "upstream_path": "LibreNMS/OS/Ruckuswireless.php",
+      "sha256": "dd5bc2adf00e9280f7a4b8601ed37a0d012bbd383446b8802120024671790a8b",
+      "size_bytes": 2417
+    },
+    {
+      "bundle_path": "LibreNMS/OS/RuckuswirelessHotzone.php",
+      "upstream_path": "LibreNMS/OS/RuckuswirelessHotzone.php",
+      "sha256": "76e0a78ce1087d4f002c9b329fb76de42536459f521bcb2cc9a4b856979f2f2a",
+      "size_bytes": 3061
+    },
+    {
+      "bundle_path": "LibreNMS/OS/RuckuswirelessSz.php",
+      "upstream_path": "LibreNMS/OS/RuckuswirelessSz.php",
+      "sha256": "9c0bc688bdc6fd17da700797e3fe7b26e53c77db5381cecefbb67d83ebaa1417",
+      "size_bytes": 4204
+    },
+    {
+      "bundle_path": "LibreNMS/OS/RuckuswirelessUnleashed.php",
+      "upstream_path": "LibreNMS/OS/RuckuswirelessUnleashed.php",
+      "sha256": "cd9c3eef0fa24bf467d37332c788e253a686231ed3766ff47c59448b23a496eb",
+      "size_bytes": 1066
+    },
+    {
+      "bundle_path": "LibreNMS/OS/Shared/Cisco.php",
+      "upstream_path": "LibreNMS/OS/Shared/Cisco.php",
+      "sha256": "e18f5a4886fcaa8e1cb321a73ce1fac62fcf4a068384f12c049b55d2b54fee0a",
+      "size_bytes": 57983
+    },
+    {
+      "bundle_path": "LibreNMS/OS/Stellar.php",
+      "upstream_path": "LibreNMS/OS/Stellar.php",
+      "sha256": "e5b9964bdda2fa9281f7a56c68738574a2083754e4d08907b079d21d6aab4d89",
+      "size_bytes": 2148
+    },
+    {
+      "bundle_path": "LibreNMS/OS/Timos.php",
+      "upstream_path": "LibreNMS/OS/Timos.php",
+      "sha256": "9693fd15084a9b9b8acae0d096fd2be1deedaddd4ad02043daac00b6b9086c71",
+      "size_bytes": 54605
+    },
+    {
+      "bundle_path": "LibreNMS/OS/Traits/CiscoCellular.php",
+      "upstream_path": "LibreNMS/OS/Traits/CiscoCellular.php",
+      "sha256": "a65d79151dc28e8139fa0812d9173c50480f97b3477cab6d92d07b790b9aea73",
+      "size_bytes": 6633
+    },
+    {
+      "bundle_path": "LibreNMS/OS/Unifi.php",
+      "upstream_path": "LibreNMS/OS/Unifi.php",
+      "sha256": "0b54b141652295731c51132d8eee5b07e695a6263ef246b2c735254b497452a8",
+      "size_bytes": 12678
+    },
+    {
+      "bundle_path": "LibreNMS/OS/Vrp.php",
+      "upstream_path": "LibreNMS/OS/Vrp.php",
+      "sha256": "0557c53448631123a371baee49a1c8075d28889a092cbd7d9440dcad1aa93eaf",
+      "size_bytes": 34337
+    },
+    {
+      "bundle_path": "includes/discovery/sensors/current/comware.inc.php",
+      "upstream_path": "includes/discovery/sensors/current/comware.inc.php",
+      "sha256": "ac4df3ad7902aa3fffcf64fa8baf584c3e1d9be1784954befb13c0f14e8bdd8e",
+      "size_bytes": 2499
+    },
+    {
+      "bundle_path": "includes/discovery/sensors/dbm/comware.inc.php",
+      "upstream_path": "includes/discovery/sensors/dbm/comware.inc.php",
+      "sha256": "6f332a6f620c2882a11376a7af33f15c8f0b8404201db16097996e56d59ab9ef",
+      "size_bytes": 3581
+    },
+    {
+      "bundle_path": "includes/discovery/sensors/temperature/comware.inc.php",
+      "upstream_path": "includes/discovery/sensors/temperature/comware.inc.php",
+      "sha256": "674d109438cfd2c4315e1225e173dc533718024d4321716dc5cb99dc00d73f29",
+      "size_bytes": 3839
+    },
+    {
+      "bundle_path": "includes/discovery/sensors/voltage/comware.inc.php",
+      "upstream_path": "includes/discovery/sensors/voltage/comware.inc.php",
+      "sha256": "59cc6ecb1ca2d4ac34ba9481fcfe1f61b194de07f1c700fe2e0c9223faa04c6c",
+      "size_bytes": 2162
+    },
+    {
+      "bundle_path": "includes/polling/aruba-controller.inc.php",
+      "upstream_path": "includes/polling/aruba-controller.inc.php",
+      "sha256": "94c0de122d7a8bd68cdedbc66a7f000f056e8a5d8fbe0c86253679737f37da79",
+      "size_bytes": 4925
+    }
+  ],
+  "os_rule_sources": [
+    {
+      "os_key": "ios",
+      "source_path": "LibreNMS/OS/Ios.php",
+      "adapter_source_files": [
+        "LibreNMS/OS/Ios.php",
+        "LibreNMS/OS/Shared/Cisco.php"
+      ],
+      "mib_source_files": [
+        "mibs/cisco/CISCO-ENHANCED-MEMPOOL-MIB",
+        "mibs/cisco/CISCO-ENTITY-QFP-MIB",
+        "mibs/cisco/CISCO-MEMORY-POOL-MIB",
+        "mibs/cisco/CISCO-PROCESS-MIB",
+        "mibs/cisco/OLD-CISCO-CPU-MIB",
+        "mibs/ENTITY-MIB"
+      ]
+    },
+    {
+      "os_key": "comware",
+      "source_path": "LibreNMS/OS/Comware.php",
+      "adapter_source_files": [
+        "LibreNMS/OS/Comware.php",
+        "includes/discovery/sensors/current/comware.inc.php",
+        "includes/discovery/sensors/dbm/comware.inc.php",
+        "includes/discovery/sensors/temperature/comware.inc.php",
+        "includes/discovery/sensors/voltage/comware.inc.php"
+      ],
+      "mib_source_files": [
+        "mibs/ENTITY-MIB",
+        "mibs/IF-MIB",
+        "mibs/comware/HH3C-ENTITY-EXT-MIB",
+        "mibs/comware/HH3C-TRANSCEIVER-INFO-MIB"
+      ]
     }
   ],
   "upstream_license": {
@@ -20766,14 +21001,15 @@
     "size_bytes": 35337
   },
   "notes": [
-    "This bundle includes every MIB file from 35 distinct upstream mibs/ vendor directories grouped into 23 Nexora vendor-scope directories, plus the standard directory and 16 upstream root MIB dependencies. The 35 upstream directory names are source paths, not Nexora-supported-vendor count; the manifest separately lists 26 asset vendors and 25 vendors with upstream OS profiles. Arista and Edgecore have OS profiles but no vendor-specific MIB directory in this bundle; DPtech remains in the asset-vendor list but has neither an upstream OS profile nor a vendor-specific MIB directory, so this bundle makes no claim of LibreNMS hardware-rule coverage for DPtech. Other LibreNMS runtime and repository content is not included.",
+    "This bundle includes every MIB file from 36 distinct upstream mibs/ vendor directories grouped into 23 Nexora vendor-scope directories, plus the standard directory and 16 upstream root MIB dependencies. These upstream directory names are source paths, not Nexora-supported-vendor counts; the manifest separately lists 26 asset vendors and 25 vendors with upstream OS profiles. Arista and Edgecore have OS profiles but no vendor-specific MIB directory in this bundle; DPtech remains in the asset-vendor list but has neither an upstream OS profile nor a vendor-specific MIB directory, so this bundle makes no claim of LibreNMS hardware-rule coverage for DPtech. Other LibreNMS runtime and repository content is not included.",
     "The upstream commit and path identify each source; sha256 and size_bytes describe the bundled file bytes. Windows checkout settings may materialize CRLF line endings; content is verified against pinned Git blobs after line-ending normalization.",
     "MIBs are grouped under platform_vendor_scope for offline indexing; this is a Nexora asset-vendor bucket, not the upstream MIB owner. Root standard MIB definitions are grouped under mibs/standard/.",
     "Hardware collection reads the pinned LibreNMS OS detection and discovery YAML. Nexora parses those definitions and executes SNMP requests in Python; it does not run LibreNMS PHP modules. This subset is not the full LibreNMS runtime and does not establish PHP-rule parity. Fourteen pinned OS profiles have no hardware discovery YAML and do not fall back to Nexora vendor OIDs.",
     "LibreNMS source files are distributed under the upstream license included as LICENSE.txt; preserve each source file's copyright header.",
     "The complete Huawei MIB directory is included under mibs/huawei/_upstream/huawei and is shared by Huawei and Yunshan.",
     "Shared tree mapping follows current profiles: Nokia aos6/aos7/stellar files are scoped to Alcatel-Lucent Enterprise and other Nokia files to Nokia; NORTEL-OPTICAL files are scoped to Ciena and other Nortel files to Extreme Networks; Radlan files use the Alcatel-Lucent Enterprise scope, with RADLAN-rndMng additionally mapped to Allied Telesis. Root UPS-MIB remains scoped to Huawei.",
-    "The HP ProCurve and Fiberstore/Ruijie cross-scope trees and their associated OS profiles are recorded in mib_scope_mappings. Other shared-directory mappings are documented in these notes; upstream_path remains the authoritative source location."
+    "The HP ProCurve and Fiberstore/Ruijie cross-scope trees and their associated OS profiles are recorded in mib_scope_mappings. Other shared-directory mappings are documented in these notes; upstream_path remains the authoritative source location.",
+    "The pinned EWC wireless OS adapter adds the exact upstream mibs/ewc/HIPATH-WIRELESS-HWC-MIB, mibs/ewc/HIPATH-WIRELESS-DOT11-EXTNS-MIB, and mibs/ewc/HIPATH-WIRELESS-SMI under the Extreme Networks bundle scope; IEEE802dot11-MIB is pinned at its upstream root path."
   ],
   "mib_manifest_schema_version": 2,
   "mib_scope_contract": {
@@ -20795,6 +21031,17 @@
       "reason": "Nexora groups this legacy Profile under Aruba for its asset-vendor index. The upstream source remains mibs/hp; the full upstream tree is retained, not pruned to direct YAML references."
     },
     {
+      "platform_vendor_scope": "Extreme Networks",
+      "upstream_tree": "mibs/ewc",
+      "bundle_tree": "mibs/extreme-networks/_upstream/ewc",
+      "mib_count": 3,
+      "os_profiles": [
+        "ewc"
+      ],
+      "profile_label": "Extreme Wireless Controller",
+      "reason": "The pinned EWC OS class uses HIPATH-WIRELESS-HWC-MIB and HIPATH-WIRELESS-DOT11-EXTNS-MIB for AP/radio telemetry; both resolve the upstream HIPATH-WIRELESS-SMI and IEEE802dot11-MIB dependencies from the pinned bundle."
+    },
+    {
       "platform_vendor_scope": "Ruijie",
       "upstream_tree": "mibs/fs",
       "bundle_tree": "mibs/ruijie/_upstream/fs",
@@ -20805,5 +21052,31 @@
       "profile_label": "Fiberstore (Ruijie)",
       "reason": "Nexora groups this FS/Fiberstore Profile under Ruijie for its asset-vendor index. The upstream source remains mibs/fs; the full upstream tree is retained."
     }
-  ]
+  ],
+  "wireless_discovery": {
+    "dispatcher_path": "LibreNMS/Modules/Wireless.php",
+    "rule_keys": [
+      "wireless_aruba_instant",
+      "wireless_arubaos",
+      "wireless_cisco_ios",
+      "wireless_cisco_iosxe_cellular",
+      "wireless_cisco_satellite",
+      "wireless_cisco_wlc",
+      "wireless_extreme_ewc",
+      "wireless_huawei_vrp",
+      "wireless_mikrotik",
+      "wireless_nokia_timos",
+      "wireless_stellar",
+      "wireless_ruckus_hotzone",
+      "wireless_ruckus_sz",
+      "wireless_ruckus_unleashed",
+      "wireless_ruckus_zd",
+      "wireless_ubiquiti_airfiber",
+      "wireless_ubiquiti_airfiber_60",
+      "wireless_ubiquiti_airfiber_ltu",
+      "wireless_ubiquiti_airos",
+      "wireless_ubiquiti_unifi"
+    ],
+    "notes": "This generic module dispatches discovery to OS classes only when they implement the matching wireless sensor interface. The Python wireless rule set references only MIB inputs already recorded in this bundle. IOS-XE extends Ciscowlc and inherits its AP/client methods; its cellular metrics are adapted from the pinned CiscoCellular trait. Stellar discovery creates client sensors with empty OIDs, while its pinned polling interface reads apClientWlanService and groups by the MIB value; Python reproduces that behavior from the Alcatel-Lucent Enterprise vendor bucket. The Comware OS class has no wireless discovery interface; Comware wireless MIB polling is a separately identified Nexora Python adapter."
+  }
 }

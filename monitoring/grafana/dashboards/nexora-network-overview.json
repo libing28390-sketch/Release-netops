@@ -323,7 +323,7 @@
       },
       "targets": [
         {
-          "expr": "sum((sum by (site_name,vendor,role,hostname) (nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",source_type=\"librenms_rule\",component_class=\"wireless_controller\",sensor_class=\"clients\"}) or on(site_name,vendor,role,hostname) sum by (site_name,vendor,role,hostname) (nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",source_type=\"librenms_rule\",component_class=\"wireless_ssid\",sensor_class=\"clients\"})))",
+          "expr": "sum((sum by (site_name,vendor,role,hostname) (nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",source_type=~\"librenms_rule|librenms_mib_rule\",component_class=\"wireless_controller\",sensor_class=\"clients\"}) or on(site_name,vendor,role,hostname) (sum by (site_name,vendor,role,hostname) (nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",source_type=~\"librenms_rule|librenms_mib_rule\",component_class=\"wireless_ssid\",sensor_class=\"clients\"}) or on(site_name,vendor,role,hostname) sum by (site_name,vendor,role,hostname) (nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",source_type=~\"librenms_rule|librenms_mib_rule\",component_class=\"wireless_radio\",sensor_class=\"clients\"}))))",
           "refId": "A",
           "instant": true
         }
@@ -670,12 +670,12 @@
       },
       "targets": [
         {
-          "expr": "sum((sum by (site_name,vendor,role,hostname) (nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",source_type=\"librenms_rule\",component_class=\"wireless_controller\",sensor_class=\"clients\"}) or on(site_name,vendor,role,hostname) sum by (site_name,vendor,role,hostname) (nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",source_type=\"librenms_rule\",component_class=\"wireless_ssid\",sensor_class=\"clients\"})))",
+          "expr": "sum((sum by (site_name,vendor,role,hostname) (nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",source_type=~\"librenms_rule|librenms_mib_rule\",component_class=\"wireless_controller\",sensor_class=\"clients\"}) or on(site_name,vendor,role,hostname) (sum by (site_name,vendor,role,hostname) (nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",source_type=~\"librenms_rule|librenms_mib_rule\",component_class=\"wireless_ssid\",sensor_class=\"clients\"}) or on(site_name,vendor,role,hostname) sum by (site_name,vendor,role,hostname) (nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",source_type=~\"librenms_rule|librenms_mib_rule\",component_class=\"wireless_radio\",sensor_class=\"clients\"}))))",
           "legendFormat": "控制器统计的在线终端",
           "refId": "A"
         },
         {
-          "expr": "sum(nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",source_type=\"librenms_rule\",component_class=\"wireless_controller\",sensor_class=\"ap-count\"})",
+          "expr": "sum(nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",source_type=~\"librenms_rule|librenms_mib_rule\",component_class=\"wireless_controller\",sensor_class=\"ap-count\"})",
           "legendFormat": "在线 AP 总数",
           "refId": "B"
         }

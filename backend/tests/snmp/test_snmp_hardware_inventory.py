@@ -84,6 +84,13 @@ def test_component_state_exports_raw_description_and_explicit_presence():
             {"value": 1, "descr": "active", "generic": 0},
             {"value": 3, "descr": "not-install", "generic": 3},
         ],
+        index_labels={
+            "ap_id": "AP-ID-1",
+            "ap_name": "AP_12",
+            "ap_model": "WA6320-HCL",
+            "radio_id": "1",
+        },
+        metadata={"window": "15m"},
         last_quality="good",
         last_value=3,
         last_raw_value="3",
@@ -96,6 +103,16 @@ def test_component_state_exports_raw_description_and_explicit_presence():
     assert 'raw_state="3"' in text
     assert 'state_description="not-install"' in text
     assert 'rule_version="librenms-commit-1"' in text
+    info_line = next(line for line in text.splitlines() if line.startswith("nexora_hw_sensor_info{"))
+    assert 'ap_name="AP_12"' in info_line
+    assert 'group="chassis"' in info_line
+    assert 'rule_version="librenms-commit-1"' in info_line
+    assert "index_labels=" not in info_line
+    assert "group_name=" not in info_line
+    assert 'window="15m"' not in info_line
+    assert 'window="15m"' in next(
+        line for line in text.splitlines() if line.startswith("nexora_hw_component_state{")
+    )
     assert 'nexora_hw_component_present{' in text
     presence_line = next(line for line in text.splitlines() if line.startswith("nexora_hw_component_present{"))
     assert 'state_description="not-install"' in presence_line

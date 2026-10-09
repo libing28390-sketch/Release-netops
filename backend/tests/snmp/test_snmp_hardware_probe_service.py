@@ -137,6 +137,71 @@ def test_definition_oid_prefers_explicit_value_and_fails_closed(monkeypatch):
     ) == "1.3.6.1.4.1.55555.1"
 
 
+def test_symbol_resolution_requires_a_verified_pinned_librenms_mib(monkeypatch):
+    expected_path = "h3c/_upstream/comware/HH3C-DOT11-ACMT-MIB"
+    expected_hash = "a" * 64
+    queries = []
+
+    class Result:
+        def fetchall(self):
+            return [
+                ("1.3.6.1.4.1.25506.2.75.1.1.2.21", expected_path, expected_hash),
+                ("1.3.6.1.4.1.99999.1", "untrusted/HH3C-DOT11-ACMT-MIB", "b" * 64),
+            ]
+
+    class Connection:
+        def execute(self, query, params):
+            queries.append((query, params))
+            return Result()
+
+    verified = []
+
+    def verify(**kwargs):
+        verified.append(kwargs)
+        return [object()] if (
+            kwargs.get("module_name") == "HH3C-DOT11-ACMT-MIB"
+            and kwargs.get("relative_path") == expected_path
+            and kwargs.get("sha256") == expected_hash
+        ) else []
+
+    monkeypatch.setattr(probe, "verified_librenms_mib_source_entries", verify)
+    resolved = probe._resolve_mib_symbol(
+        Connection(), "HH3C-DOT11-ACMT-MIB::hh3cDot11TotalAPconnected", vendor="H3C",
+    )
+
+    assert resolved == "1.3.6.1.4.1.25506.2.75.1.1.2.21"
+    assert "m.source_type = 'librenms'" in queries[0][0]
+    assert "m.source_commit = ?" in queries[0][0]
+    assert verified == [
+        {
+            "module_name": "HH3C-DOT11-ACMT-MIB",
+            "relative_path": expected_path,
+            "sha256": expected_hash,
+        },
+        {
+            "module_name": "HH3C-DOT11-ACMT-MIB",
+            "relative_path": "untrusted/HH3C-DOT11-ACMT-MIB",
+            "sha256": "b" * 64,
+        },
+    ]
+
+
+def test_unqualified_symbol_with_conflicting_verified_oids_fails_closed(monkeypatch):
+    class Result:
+        def fetchall(self):
+            return [
+                ("1.3.6.1.4.1.1", "h3c/_upstream/mib-a", "a" * 64),
+                ("1.3.6.1.4.1.2", "huawei/_upstream/mib-b", "b" * 64),
+            ]
+
+    class Connection:
+        def execute(self, _query, _params):
+            return Result()
+
+    monkeypatch.setattr(probe, "verified_librenms_mib_source_entries", lambda **_kwargs: [object()])
+    assert probe._resolve_mib_symbol(Connection(), "ambiguousSymbol", vendor="H3C") == ""
+
+
 def test_entity_physical_name_template_resolves_full_module_symbol(monkeypatch):
     _accept_fixture_rule(monkeypatch)
     sensor_oid = "1.3.6.1.4.1.55555.11.1"
@@ -199,6 +264,9 @@ def test_librenms_state_generic_integer_codes_are_normalized():
     assert failed == (2.0, {"1": 0, "2": 2, "3": 3}, "good")
     assert absent == (3.0, {"1": 0, "2": 2, "3": 3}, "good")
     assert unsupported == (None, {"1": 0, "2": 2, "3": 3}, "unsupported_mapping")
+
+    nested = probe._mapped_state("5", {"5": {"generic": "ok", "descr": "run"}})
+    assert nested == (0.0, {"5": 0}, "good")
 
 
 def test_librenms_probe_retains_all_rows_and_marks_unknown_cpu_window(monkeypatch):
@@ -689,3 +757,675 @@ def test_poll_batches_exact_instance_oids_without_table_walks(monkeypatch):
     assert result == {"good": 1, "missing": 0, "invalid": 0, "unsupported_mapping": 0}
     assert persisted[0]["raw_value"] == "420"
     assert persisted[0]["value"] == 42.0
+
+
+def test_poll_table_sum_records_zero_for_a_complete_empty_table(monkeypatch):
+    oid = "1.3.6.1.4.1.55555.41"
+    persisted = []
+    monkeypatch.setattr(probe, "_persist_hardware_sensor_samples", lambda samples: persisted.extend(samples))
+
+    result = asyncio.run(probe.poll_hardware_inventory(
+        "192.0.2.54", "test-only-community", 161, "2c",
+        [{
+            "device_id": "device-empty-table-sum", "sensor_key": "wireless-client-total",
+            "measurement_type": "wireless_sensor_value", "lifecycle_status": "active",
+            "enabled": True,
+            "metadata": {"poll_plan": {"kind": "table_sum", "oid": oid}},
+        }],
+        walk_func=_walk_from({oid: []}),
+    ))
+
+    assert result == {"good": 1, "missing": 0, "invalid": 0, "unsupported_mapping": 0}
+    assert persisted[0]["value"] == 0.0
+    assert persisted[0]["quality"] == "good"
+
+
+def test_poll_table_count_records_complete_table_row_count(monkeypatch):
+    oid = "1.3.6.1.4.1.55555.48"
+    persisted = []
+    monkeypatch.setattr(probe, "_persist_hardware_sensor_samples", lambda samples: persisted.extend(samples))
+
+    result = asyncio.run(probe.poll_hardware_inventory(
+        "192.0.2.58", "test-only-community", 161, "2c",
+        [{
+            "device_id": "device-table-count", "sensor_key": "wireless-client-count",
+            "measurement_type": "wireless_sensor_value", "lifecycle_status": "active",
+            "enabled": True,
+            "metadata": {"poll_plan": {"kind": "table_count", "oid": oid}},
+        }],
+        walk_func=_walk_from({oid: [("1", "12"), ("2", "7"), ("3", "0")]}),
+    ))
+
+    assert result == {"good": 1, "missing": 0, "invalid": 0, "unsupported_mapping": 0}
+    assert persisted[0]["value"] == 3.0
+    assert persisted[0]["raw_value"] == "3"
+    assert persisted[0]["quality"] == "good"
+
+
+def test_poll_table_count_records_zero_for_complete_empty_table(monkeypatch):
+    oid = "1.3.6.1.4.1.55555.49"
+    persisted = []
+    monkeypatch.setattr(probe, "_persist_hardware_sensor_samples", lambda samples: persisted.extend(samples))
+
+    result = asyncio.run(probe.poll_hardware_inventory(
+        "192.0.2.59", "test-only-community", 161, "2c",
+        [{
+            "device_id": "device-empty-table-count", "sensor_key": "wireless-client-count-empty",
+            "measurement_type": "wireless_sensor_value", "lifecycle_status": "active",
+            "enabled": True,
+            "metadata": {"poll_plan": {"kind": "table_count", "oid": oid}},
+        }],
+        walk_func=_walk_from({oid: []}),
+    ))
+
+    assert result == {"good": 1, "missing": 0, "invalid": 0, "unsupported_mapping": 0}
+    assert persisted[0]["value"] == 0.0
+    assert persisted[0]["raw_value"] == "0"
+
+
+def test_poll_table_count_marks_incomplete_walk_missing(monkeypatch):
+    oid = "1.3.6.1.4.1.55555.50"
+    persisted = []
+    monkeypatch.setattr(probe, "_persist_hardware_sensor_samples", lambda samples: persisted.extend(samples))
+
+    class PartialWalkError(Exception):
+        partial_results = [("1", "15")]
+
+    async def partial_walk(_ip, _community, requested_oid, _port, _version):
+        assert requested_oid == oid
+        raise PartialWalkError("incomplete table")
+
+    result = asyncio.run(probe.poll_hardware_inventory(
+        "192.0.2.60", "test-only-community", 161, "2c",
+        [{
+            "device_id": "device-partial-table-count", "sensor_key": "wireless-client-count-partial",
+            "measurement_type": "wireless_sensor_value", "lifecycle_status": "active",
+            "enabled": True,
+            "metadata": {"poll_plan": {"kind": "table_count", "oid": oid}},
+        }],
+        walk_func=partial_walk,
+    ))
+
+    assert result == {"good": 0, "missing": 1, "invalid": 0, "unsupported_mapping": 0}
+    assert persisted[0]["value"] is None
+    assert persisted[0]["quality"] == "missing"
+
+
+def test_poll_table_value_applies_offset_and_uses_fallback_only_after_complete_walk(monkeypatch):
+    oid = "1.3.6.1.4.1.55555.52"
+    persisted = []
+    monkeypatch.setattr(probe, "_persist_hardware_sensor_samples", lambda samples: persisted.extend(samples))
+    result = asyncio.run(probe.poll_hardware_inventory(
+        "192.0.2.62", "test-only-community", 161, "2c",
+        [
+            {
+                "device_id": "device-table-value", "sensor_key": "wireless-interference-present",
+                "measurement_type": "wireless_sensor_value", "lifecycle_status": "active",
+                "enabled": True,
+                "metadata": {"poll_plan": {
+                    "kind": "table_value", "oid": oid, "index": "1.1.36",
+                    "offset": 128.0, "fallback_value": -128.0,
+                }},
+            },
+            {
+                "device_id": "device-table-value", "sensor_key": "wireless-interference-absent",
+                "measurement_type": "wireless_sensor_value", "lifecycle_status": "active",
+                "enabled": True,
+                "metadata": {"poll_plan": {
+                    "kind": "table_value", "oid": oid, "index": "1.1.44",
+                    "offset": 128.0, "fallback_value": -128.0,
+                }},
+            },
+        ],
+        walk_func=_walk_from({oid: [("1.1.36", "-80")]}),
+    ))
+
+    assert result == {"good": 2, "missing": 0, "invalid": 0, "unsupported_mapping": 0}
+    assert sorted(sample["value"] for sample in persisted) == [0.0, 48.0]
+    assert all(sample["quality"] == "good" for sample in persisted)
+
+
+def test_poll_wireless_channel_transforms_keep_frequency_units_and_limits(monkeypatch):
+    observations = {
+        "1.3.6.1.4.1.55555.61": "36",
+        "1.3.6.1.4.1.55555.62": "116e",
+        "1.3.6.1.4.1.55555.63": "1150",
+    }
+    persisted = []
+    monkeypatch.setattr(probe, "_persist_hardware_sensor_samples", lambda samples: persisted.extend(samples))
+
+    result = asyncio.run(probe.poll_hardware_inventory(
+        "192.0.2.62", "test-only-community", 161, "2c",
+        [{
+            "device_id": "wireless-transform-device",
+            "sensor_key": f"wireless-transform-{index}",
+            "measurement_type": "wireless_sensor_value",
+            "lifecycle_status": "active",
+            "enabled": True,
+            "metadata": {"poll_plan": {
+                "kind": "direct", "oid": oid, "index": "1",
+                "value_transform": transform, "factor": factor,
+                "value_max": value_max,
+            }},
+        } for index, (oid, transform, factor, value_max) in enumerate((
+            ("1.3.6.1.4.1.55555.61", "channel_to_frequency", 1.0, None),
+            ("1.3.6.1.4.1.55555.62", "aruba_instant_channel_to_frequency", 1.0, None),
+            ("1.3.6.1.4.1.55555.63", "", 0.1, 100.0),
+        ))],
+        walk_func=_walk_from({
+            oid: [("1", raw)] for oid, raw in observations.items()
+        }),
+    ))
+
+    assert result == {"good": 3, "missing": 0, "invalid": 0, "unsupported_mapping": 0}
+    assert sorted(sample["value"] for sample in persisted) == [100.0, 5180.0, 5580.0]
+
+
+def test_poll_table_group_sum_filters_labels_and_applies_factor(monkeypatch):
+    value_oid = "1.3.6.1.4.1.55555.42"
+    ssid_oid = "1.3.6.1.4.1.55555.43"
+    radio_oid = "1.3.6.1.4.1.55555.44"
+    persisted = []
+    monkeypatch.setattr(probe, "_persist_hardware_sensor_samples", lambda samples: persisted.extend(samples))
+    rows = {
+        value_oid: [("1.1", "30"), ("1.2", "40"), ("2.1", "100")],
+        ssid_oid: [("1.1", "Corp"), ("1.2", "Corp"), ("2.1", "Guest")],
+        radio_oid: [("1.1", "radio0"), ("1.2", "radio0"), ("2.1", "radio0")],
+    }
+
+    result = asyncio.run(probe.poll_hardware_inventory(
+        "192.0.2.55", "test-only-community", 161, "2c",
+        [{
+            "device_id": "device-group-table-sum", "sensor_key": "wireless-client-total-corp-radio0",
+            "measurement_type": "wireless_sensor_value", "lifecycle_status": "active",
+            "enabled": True,
+            "metadata": {"poll_plan": {
+                "kind": "table_group_sum", "oid": value_oid,
+                "label_oids": {"ssid": ssid_oid, "radio": radio_oid},
+                "group_labels": {"ssid": "Corp", "radio": "radio0"},
+                "factor": 0.1,
+            }},
+        }],
+        walk_func=_walk_from(rows),
+    ))
+
+    assert result == {"good": 1, "missing": 0, "invalid": 0, "unsupported_mapping": 0}
+    assert persisted[0]["value"] == 7.0
+    assert persisted[0]["raw_value"] == "70.0"
+
+
+def test_poll_table_multi_sum_joins_same_index_and_sums_all_tables(monkeypatch):
+    clients_2g_oid = "1.3.6.1.4.1.55555.47"
+    clients_5g_oid = "1.3.6.1.4.1.55555.48"
+    corp_index = "4.67.111.114.112"
+    only_2g_index = "6.79.110.108.121.50"
+    only_5g_index = "5.79.110.108.121"
+    persisted = []
+    monkeypatch.setattr(probe, "_persist_hardware_sensor_samples", lambda samples: persisted.extend(samples))
+
+    def sensor(sensor_key, index):
+        return {
+            "device_id": "device-huawei-multi-table-sum",
+            "sensor_key": sensor_key,
+            "measurement_type": "wireless_sensor_value",
+            "lifecycle_status": "active",
+            "enabled": True,
+            "metadata": {"poll_plan": {
+                "kind": "table_multi_sum",
+                "oids": [clients_2g_oid, clients_5g_oid],
+                "index": index,
+            }},
+        }
+
+    result = asyncio.run(probe.poll_hardware_inventory(
+        "192.0.2.57", "test-only-community", 161, "2c",
+        [
+            sensor("huawei-corp-all-bands", corp_index),
+            sensor("huawei-only-2g", only_2g_index),
+            sensor("huawei-only-5g", only_5g_index),
+            sensor("huawei-total-clients", ""),
+        ],
+        walk_func=_walk_from({
+            clients_2g_oid: [(corp_index, "4"), (only_2g_index, "2")],
+            clients_5g_oid: [(corp_index, "3"), (only_5g_index, "5")],
+        }),
+    ))
+
+    assert result == {"good": 4, "missing": 0, "invalid": 0, "unsupported_mapping": 0}
+    samples = {sample["sensor_key"]: sample for sample in persisted}
+    assert samples["huawei-corp-all-bands"]["value"] == 7.0
+    assert samples["huawei-only-2g"]["value"] == 2.0
+    assert samples["huawei-only-5g"]["value"] == 5.0
+    assert samples["huawei-total-clients"]["value"] == 14.0
+    assert all(sample["quality"] == "good" for sample in samples.values())
+
+
+def test_poll_table_multi_sum_requires_complete_walks_from_every_source(monkeypatch):
+    clients_2g_oid = "1.3.6.1.4.1.55555.49"
+    clients_5g_oid = "1.3.6.1.4.1.55555.50"
+    persisted = []
+    monkeypatch.setattr(probe, "_persist_hardware_sensor_samples", lambda samples: persisted.extend(samples))
+
+    async def partial_walk(_ip, _community, oid, _port, _version):
+        if oid == clients_2g_oid:
+            return [("4.67.111.114.112", "4")]
+        raise TimeoutError("5 GHz table walk incomplete")
+
+    result = asyncio.run(probe.poll_hardware_inventory(
+        "192.0.2.57", "test-only-community", 161, "2c",
+        [{
+            "device_id": "device-huawei-partial-multi-table-sum",
+            "sensor_key": "huawei-corp-partial",
+            "measurement_type": "wireless_sensor_value",
+            "lifecycle_status": "active",
+            "enabled": True,
+            "metadata": {"poll_plan": {
+                "kind": "table_multi_sum",
+                "oids": [clients_2g_oid, clients_5g_oid],
+                "index": "4.67.111.114.112",
+            }},
+        }],
+        walk_func=partial_walk,
+    ))
+
+    assert result == {"good": 0, "missing": 1, "invalid": 0, "unsupported_mapping": 0}
+    assert persisted[0]["value"] is None
+    assert persisted[0]["raw_value"] is None
+    assert persisted[0]["quality"] == "missing"
+
+
+def test_poll_table_group_sum_falls_back_to_row_suffix_when_label_row_is_missing(monkeypatch):
+    value_oid = "1.3.6.1.4.1.55555.45"
+    label_oid = "1.3.6.1.4.1.55555.46"
+    persisted = []
+    monkeypatch.setattr(probe, "_persist_hardware_sensor_samples", lambda samples: persisted.extend(samples))
+
+    result = asyncio.run(probe.poll_hardware_inventory(
+        "192.0.2.56", "test-only-community", 161, "2c",
+        [{
+            "device_id": "device-group-table-fallback", "sensor_key": "wireless-client-suffix-group",
+            "measurement_type": "wireless_sensor_value", "lifecycle_status": "active",
+            "enabled": True,
+            "metadata": {"poll_plan": {
+                "kind": "table_group_sum", "oid": value_oid,
+                "label_oids": {"ssid": label_oid},
+                "group_labels": {"ssid": "2.1"},
+            }},
+        }],
+        walk_func=_walk_from({
+            value_oid: [("1.1", "30"), ("2.1", "12")],
+            label_oid: [("1.1", "Corp")],
+        }),
+    ))
+
+    assert result == {"good": 1, "missing": 0, "invalid": 0, "unsupported_mapping": 0}
+    assert persisted[0]["value"] == 12.0
+    assert persisted[0]["quality"] == "good"
+
+
+def test_poll_table_group_count_counts_string_rows_matching_ssid(monkeypatch):
+    oid = "1.3.6.1.4.1.55555.51"
+    persisted = []
+    monkeypatch.setattr(probe, "_persist_hardware_sensor_samples", lambda samples: persisted.extend(samples))
+
+    result = asyncio.run(probe.poll_hardware_inventory(
+        "192.0.2.61", "test-only-community", 161, "2c",
+        [{
+            "device_id": "device-stellar-ssid-count", "sensor_key": "wireless-stellar-corp",
+            "measurement_type": "wireless_sensor_value", "lifecycle_status": "active",
+            "enabled": True,
+            "metadata": {"poll_plan": {"kind": "table_group_count", "oid": oid, "group_value": "Corp"}},
+        }],
+        walk_func=_walk_from({oid: [("1", "Corp"), ("2", "Guest"), ("3", "Corp")]}),
+    ))
+
+    assert result == {"good": 1, "missing": 0, "invalid": 0, "unsupported_mapping": 0}
+    assert persisted[0]["value"] == 2.0
+    assert persisted[0]["raw_value"] == "2"
+    assert persisted[0]["quality"] == "good"
+
+
+def test_poll_table_group_count_records_zero_for_complete_empty_table(monkeypatch):
+    oid = "1.3.6.1.4.1.55555.52"
+    persisted = []
+    monkeypatch.setattr(probe, "_persist_hardware_sensor_samples", lambda samples: persisted.extend(samples))
+
+    result = asyncio.run(probe.poll_hardware_inventory(
+        "192.0.2.62", "test-only-community", 161, "2c",
+        [{
+            "device_id": "device-stellar-empty-ssid-count", "sensor_key": "wireless-stellar-empty",
+            "measurement_type": "wireless_sensor_value", "lifecycle_status": "active",
+            "enabled": True,
+            "metadata": {"poll_plan": {"kind": "table_group_count", "oid": oid, "group_value": "Corp"}},
+        }],
+        walk_func=_walk_from({oid: []}),
+    ))
+
+    assert result == {"good": 1, "missing": 0, "invalid": 0, "unsupported_mapping": 0}
+    assert persisted[0]["value"] == 0.0
+    assert persisted[0]["raw_value"] == "0"
+
+
+def test_poll_table_group_count_marks_incomplete_walk_missing(monkeypatch):
+    oid = "1.3.6.1.4.1.55555.53"
+    persisted = []
+    monkeypatch.setattr(probe, "_persist_hardware_sensor_samples", lambda samples: persisted.extend(samples))
+
+    class PartialWalkError(Exception):
+        partial_results = [("1", "Corp")]
+
+    async def partial_walk(_ip, _community, _oid, _port, _version, **_kwargs):
+        raise PartialWalkError("timeout")
+
+    result = asyncio.run(probe.poll_hardware_inventory(
+        "192.0.2.63", "test-only-community", 161, "2c",
+        [{
+            "device_id": "device-stellar-partial-ssid-count", "sensor_key": "wireless-stellar-partial",
+            "measurement_type": "wireless_sensor_value", "lifecycle_status": "active",
+            "enabled": True,
+            "metadata": {"poll_plan": {"kind": "table_group_count", "oid": oid, "group_value": "Corp"}},
+        }],
+        walk_func=partial_walk,
+    ))
+
+    assert result == {"good": 0, "missing": 1, "invalid": 0, "unsupported_mapping": 0}
+    assert persisted[0]["value"] is None
+    assert persisted[0]["quality"] == "missing"
+
+
+def test_poll_table_sum_marks_incomplete_walk_missing_instead_of_good(monkeypatch):
+    oid = "1.3.6.1.4.1.55555.47"
+    persisted = []
+    monkeypatch.setattr(probe, "_persist_hardware_sensor_samples", lambda samples: persisted.extend(samples))
+
+    class PartialWalkError(Exception):
+        partial_results = [("1", "15")]
+
+    async def partial_walk(_ip, _community, requested_oid, _port, _version):
+        assert requested_oid == oid
+        raise PartialWalkError("incomplete table")
+
+    result = asyncio.run(probe.poll_hardware_inventory(
+        "192.0.2.57", "test-only-community", 161, "2c",
+        [{
+            "device_id": "device-partial-table-sum", "sensor_key": "wireless-client-partial",
+            "measurement_type": "wireless_sensor_value", "lifecycle_status": "active",
+            "enabled": True,
+            "metadata": {"poll_plan": {"kind": "table_sum", "oid": oid}},
+        }],
+        walk_func=partial_walk,
+    ))
+
+    assert result == {"good": 0, "missing": 1, "invalid": 0, "unsupported_mapping": 0}
+    assert persisted[0]["value"] is None
+    assert persisted[0]["raw_value"] is None
+    assert persisted[0]["quality"] == "missing"
+
+
+def test_poll_applies_explicit_value_map_to_truth_value_enum(monkeypatch):
+    oid = "1.3.6.1.4.1.55555.30"
+    persisted = []
+    monkeypatch.setattr(
+        probe, "_persist_hardware_sensor_samples",
+        lambda samples: persisted.extend(samples),
+    )
+
+    result = asyncio.run(probe.poll_hardware_inventory(
+        "192.0.2.53", "test-only-community", 161, "2c",
+        [{
+            "device_id": "device-radio-admin",
+            "sensor_key": "radio-admin-1",
+            "measurement_type": "wireless_sensor_value",
+            "lifecycle_status": "active",
+            "enabled": True,
+            "metadata": {"poll_plan": {
+                "kind": "direct",
+                "oid": oid,
+                "index": "1.50.1",
+                "value_map": {"1": 1, "true(1)": 1, "2": 0, "false(2)": 0},
+            }},
+        }],
+        walk_func=_walk_from({oid: [("1.50.1", "false(2)")]}),
+    ))
+
+    assert result == {"good": 1, "missing": 0, "invalid": 0, "unsupported_mapping": 0}
+    assert persisted[0]["raw_value"] == "false(2)"
+    assert persisted[0]["value"] == 0.0
+
+
+def _prepare_librenms_os_hardware_probe(monkeypatch):
+    symbols: dict[tuple[str, str], str] = {}
+
+    class Connection:
+        def close(self):
+            pass
+
+    def map_oid(mib_path, symbol):
+        key = (str(mib_path), str(symbol))
+        if key not in symbols:
+            symbols[key] = f"1.3.6.1.4.1.55555.{len(symbols) + 1}"
+        return symbols[key]
+
+    def resolve(_conn, mib_path, symbol, *, cache=None):
+        return map_oid(mib_path, symbol)
+
+    monkeypatch.setattr(probe, "verify_bundled_rule", lambda _rule: True)
+    monkeypatch.setattr(source_policy, "verify_librenms_os_rule", lambda _rule: True)
+    monkeypatch.setattr(probe, "get_db_connection", lambda: Connection())
+    monkeypatch.setattr(probe, "_resolve_pinned_librenms_mib_symbol", resolve)
+
+    def oid(mib_path: str, symbol: str) -> str:
+        return map_oid(mib_path, symbol)
+
+    return oid
+
+
+def test_librenms_comware_os_rule_uses_entity_class_and_nonzero_filters(monkeypatch):
+    oid = _prepare_librenms_os_hardware_probe(monkeypatch)
+    h3c_mib = "mibs/comware/HH3C-ENTITY-EXT-MIB"
+    entity_mib = "mibs/ENTITY-MIB"
+    rows = {
+        (h3c_mib, "hh3cEntityExtCpuUsage"): [("25", "15"), ("26", "0")],
+        (h3c_mib, "hh3cEntityExtMemUsage"): [("25", "75"), ("26", "12"), ("27", "0")],
+        (h3c_mib, "hh3cEntityExtMemSize"): [("25", "8192"), ("26", "512"), ("27", "2048")],
+        (entity_mib, "entPhysicalName"): [("25", "Board 1"), ("26", "Port 1"), ("27", "Board 2")],
+        (entity_mib, "entPhysicalClass"): [("25", "module"), ("26", "port"), ("27", "module")],
+    }
+
+    result = asyncio.run(probe.probe_librenms_os_hardware(
+        "192.0.2.80", "test-only-community", 161,
+        rule={"os_key": "comware", "source_commit": source_policy.PINNED_LIBRENMS_COMMIT},
+        identity={"vendor": "H3C"},
+        walk_func=_walk_from({oid(*key): values for key, values in rows.items()}),
+    ))
+
+    cpu = [item for item in result["sensors"] if item["component_class"] == "processor"]
+    memory = [item for item in result["sensors"] if item["component_class"] == "memory_pool"]
+    assert [(item["index"], item["value"]) for item in cpu] == [([25], 15.0)]
+    assert [(item["index"], item["value"], item["entity_name"]) for item in memory] == [([25], 75.0, "Board 1")]
+    assert all(item["source_type"] == "librenms_os_rule" for item in result["sensors"])
+    assert memory[0]["metadata"]["librenms_entity_class"] == "module"
+    assert memory[0]["metadata"]["poll_plan"]["kind"] == "direct"
+    assert cpu[0]["metadata"]["window"] == "unknown"
+    assert {item["status"] for item in result["category_results"]} == {"success", "not_found"}
+
+
+def test_librenms_comware_sensor_rules_cover_chassis_and_transceiver_hardware(monkeypatch):
+    oid = _prepare_librenms_os_hardware_probe(monkeypatch)
+    h3c_mib = "mibs/comware/HH3C-ENTITY-EXT-MIB"
+    entity_mib = "mibs/ENTITY-MIB"
+    if_mib = "mibs/IF-MIB"
+    transceiver_mib = "mibs/comware/HH3C-TRANSCEIVER-INFO-MIB"
+    rows = {
+        (h3c_mib, "hh3cEntityExtTemperature"): [("100", "47"), ("101", "65535")],
+        (h3c_mib, "hh3cEntityExtTemperatureThreshold"): [("100", "65"), ("101", "70")],
+        (entity_mib, "entPhysicalName"): [("100", "Chassis Sensor"), ("101", "Invalid Sensor")],
+        (entity_mib, "entPhysicalClass"): [("100", "sensor"), ("101", "sensor")],
+        (if_mib, "ifAdminStatus"): [("2", "up(1)"), ("3", "2"), ("4", "1"), ("5", "1"), ("6", "1")],
+        (if_mib, "ifName"): [("2", "Ten-GigabitEthernet1/0/2"), ("3", "Ten-GigabitEthernet1/0/3"), ("4", "Ten-GigabitEthernet1/0/4"), ("5", "Ten-GigabitEthernet1/0/5"), ("6", "Ten-GigabitEthernet1/0/6")],
+        (if_mib, "ifDescr"): [],
+        (transceiver_mib, "hh3cTransceiverDiagnostic"): [("2", "1"), ("3", "1"), ("4", "1"), ("5", "1"), ("6", "1")],
+        (transceiver_mib, "hh3cTransceiverTemperature"): [("2", "42"), ("3", "43"), ("4", "2147483647")],
+        (transceiver_mib, "hh3cTransceiverTempHiAlarm"): [("2", "90000")],
+        (transceiver_mib, "hh3cTransceiverTempLoAlarm"): [("2", "-10000")],
+        (transceiver_mib, "hh3cTransceiverTempHiWarn"): [("2", "80000")],
+        (transceiver_mib, "hh3cTransceiverTempLoWarn"): [("2", "0")],
+        (transceiver_mib, "hh3cTransceiverCurRXPower"): [("2", "-1250"), ("3", "-900"), ("6", "2147483647")],
+        (transceiver_mib, "hh3cTransceiverCurTXPower"): [("2", "-500"), ("3", "-600"), ("5", "-420")],
+        (transceiver_mib, "hh3cTransceiverRcvPwrHiAlarm"): [("2", "100000")],
+        (transceiver_mib, "hh3cTransceiverRcvPwrLoAlarm"): [("2", "10")],
+        (transceiver_mib, "hh3cTransceiverRcvPwrHiWarn"): [("2", "50000")],
+        (transceiver_mib, "hh3cTransceiverRcvPwrLoWarn"): [("2", "50")],
+        (transceiver_mib, "hh3cTransceiverPwrOutHiAlarm"): [("2", "100000")],
+        (transceiver_mib, "hh3cTransceiverPwrOutLoAlarm"): [("2", "10")],
+        (transceiver_mib, "hh3cTransceiverPwrOutHiWarn"): [("2", "50000")],
+        (transceiver_mib, "hh3cTransceiverPwrOutLoWarn"): [("2", "50")],
+        (transceiver_mib, "hh3cTransceiverVoltage"): [("2", "330")],
+        (transceiver_mib, "hh3cTransceiverVccHiAlarm"): [("2", "36000")],
+        (transceiver_mib, "hh3cTransceiverVccLoAlarm"): [("2", "30000")],
+        (transceiver_mib, "hh3cTransceiverVccHiWarn"): [("2", "35000")],
+        (transceiver_mib, "hh3cTransceiverVccLoWarn"): [("2", "31000")],
+        (transceiver_mib, "hh3cTransceiverBiasCurrent"): [("2", "12000")],
+        (transceiver_mib, "hh3cTransceiverBiasHiAlarm"): [("2", "200000")],
+        (transceiver_mib, "hh3cTransceiverBiasLoAlarm"): [("2", "10000")],
+        (transceiver_mib, "hh3cTransceiverBiasHiWarn"): [("2", "150000")],
+        (transceiver_mib, "hh3cTransceiverBiasLoWarn"): [("2", "20000")],
+    }
+
+    result = asyncio.run(probe.probe_librenms_os_hardware(
+        "192.0.2.84", "test-only-community", 161,
+        rule={"os_key": "comware", "source_commit": source_policy.PINNED_LIBRENMS_COMMIT},
+        identity={"vendor": "H3C"},
+        walk_func=_walk_from({oid(*key): values for key, values in rows.items()}),
+    ))
+
+    sensors = result["sensors"]
+    by_source = {sensor["source_id"]: sensor for sensor in sensors}
+    assert by_source["comware:temperature:entity:100"]["value"] == 47.0
+    assert by_source["comware:temperature:entity:100"]["thresholds"] == {"critical_upper": 65.0}
+    assert by_source["comware:transceiver:temperature:2"]["value"] == 42.0
+    assert by_source["comware:transceiver:rx:2"]["value"] == -12.5
+    assert by_source["comware:transceiver:tx:2"]["value"] == -5.0
+    assert by_source["comware:transceiver:tx:5"]["value"] == -4.2
+    assert "comware:transceiver:rx:5" not in by_source
+    assert by_source["comware:transceiver:voltage:2"]["value"] == 3.3
+    assert by_source["comware:transceiver:current:2"]["value"] == 0.12
+    assert not any(sensor["source_id"].endswith(":3") for sensor in sensors)
+    assert not any(sensor["source_id"].endswith(":4") for sensor in sensors)
+    assert not any(sensor["source_id"].endswith(":6") for sensor in sensors)
+    assert all(sensor["source_type"] == "librenms_os_rule" for sensor in sensors)
+    assert {item["component_class"] for item in result["category_results"]} >= {
+        "temperature", "optical_power", "voltage", "current",
+    }
+    assert all(
+        item["status"] == "success"
+        for item in result["category_results"]
+        if item["component_class"] in {"temperature", "optical_power", "voltage", "current"}
+    )
+
+
+def test_librenms_cisco_os_rule_prefers_process_cores_qfp_and_cemp(monkeypatch):
+    oid = _prepare_librenms_os_hardware_probe(monkeypatch)
+    process_mib = "mibs/cisco/CISCO-PROCESS-MIB"
+    cemp_mib = "mibs/cisco/CISCO-ENHANCED-MEMPOOL-MIB"
+    cmp_mib = "mibs/cisco/CISCO-MEMORY-POOL-MIB"
+    qfp_mib = "mibs/cisco/CISCO-ENTITY-QFP-MIB"
+    entity_mib = "mibs/ENTITY-MIB"
+    rows = {
+        (process_mib, "cpmCPUTotal5minRev"): [("1", "22")],
+        (process_mib, "cpmCPUTotal5min"): [("1", "30"), ("2", "12")],
+        (process_mib, "cpmCPUTotalPhysicalIndex"): [("1", "101"), ("2", "102")],
+        (process_mib, "cpmCore5min"): [("1.1", "4"), ("1.2", "5")],
+        (qfp_mib, "ceqfpUtilProcessingLoad"): [("101.3", "7"), ("101.2", "8")],
+        (entity_mib, "entPhysicalName"): [("101", "Route Processor"), ("102", "Switch Processor")],
+        (cemp_mib, "cempMemPoolUsed"): [("101.1", "100")],
+        (cemp_mib, "cempMemPoolValid"): [("101.1", "true")],
+        (cemp_mib, "cempMemPoolName"): [("101.1", "Processor Pool")],
+        (cemp_mib, "cempMemPoolHCUsed"): [("101.1", "400")],
+        (cemp_mib, "cempMemPoolFree"): [("101.1", "900")],
+        (cemp_mib, "cempMemPoolHCFree"): [("101.1", "600")],
+        (cmp_mib, "ciscoMemoryPoolUsed"): [("1", "900")],
+        (cmp_mib, "ciscoMemoryPoolFree"): [("1", "100")],
+        (cmp_mib, "ciscoMemoryPoolName"): [("1", "Ignored fallback")],
+    }
+
+    result = asyncio.run(probe.probe_librenms_os_hardware(
+        "192.0.2.81", "test-only-community", 161,
+        rule={"os_key": "ios", "source_commit": source_policy.PINNED_LIBRENMS_COMMIT},
+        identity={"vendor": "Cisco"},
+        walk_func=_walk_from({oid(*key): values for key, values in rows.items()}),
+    ))
+
+    cpu = [item for item in result["sensors"] if item["component_class"] == "processor"]
+    memory = [item for item in result["sensors"] if item["component_class"] == "memory_pool"]
+    assert {(tuple(item["index"]), item["value"]) for item in cpu} == {
+        ((1, 1), 4.0), ((1, 2), 5.0), ((2,), 12.0), ((101, 3), 7.0),
+    }
+    assert len(memory) == 1
+    assert memory[0]["value"] == 40.0
+    assert memory[0]["metadata"]["librenms_mempool_type"] == "cemp"
+    assert memory[0]["metadata"]["poll_plan"]["kind"] == "memory_ratio"
+    assert memory[0]["metadata"]["poll_plan"]["used"]["oid"] == oid(cemp_mib, "cempMemPoolHCUsed")
+    assert {item["metadata"]["window"] for item in cpu} == {"5m"}
+    assert all(item["source_type"] == "librenms_os_rule" for item in result["sensors"])
+
+
+def test_librenms_cisco_os_rule_falls_back_to_avg_busy_and_processor_memory(monkeypatch):
+    oid = _prepare_librenms_os_hardware_probe(monkeypatch)
+    process_mib = "mibs/cisco/CISCO-PROCESS-MIB"
+    cmp_mib = "mibs/cisco/CISCO-MEMORY-POOL-MIB"
+    cemp_mib = "mibs/cisco/CISCO-ENHANCED-MEMPOOL-MIB"
+    process_rows = {
+        (process_mib, "cpmCPUMemoryFree"): [("3", "50")],
+        (process_mib, "cpmCPUMemoryUsed"): [("3", "50")],
+    }
+
+    async def get_many(_ip, _community, oids, _port, _version):
+        return {item: "10" for item in oids}
+
+    monkeypatch.setattr(probe, "_get_many", get_many)
+    result = asyncio.run(probe.probe_librenms_os_hardware(
+        "192.0.2.82", "test-only-community", 161,
+        rule={"os_key": "ios", "source_commit": source_policy.PINNED_LIBRENMS_COMMIT},
+        identity={"vendor": "Cisco"},
+        walk_func=_walk_from({oid(*key): values for key, values in process_rows.items()}),
+    ))
+
+    cpu = next(item for item in result["sensors"] if item["component_class"] == "processor")
+    memory = next(item for item in result["sensors"] if item["component_class"] == "memory_pool")
+    assert cpu["value"] == 10.0
+    assert cpu["metadata"]["librenms_fallback"] == "OLD-CISCO-CPU-MIB::avgBusy5"
+    assert cpu["metadata"]["window"] == "5m"
+    assert memory["value"] == 50.0
+    assert memory["metadata"]["librenms_mempool_type"] == "cpm"
+    assert memory["metadata"]["librenms_memory_mib"] == "CISCO-PROCESS-MIB"
+
+
+def test_librenms_cisco_memory_ratio_plan_polls_used_and_free(monkeypatch):
+    used_oid = "1.3.6.1.4.1.9.9.221.1.1.1.1.18"
+    free_oid = "1.3.6.1.4.1.9.9.221.1.1.1.1.20"
+    persisted = []
+    monkeypatch.setattr(probe, "_persist_hardware_sensor_samples", lambda samples: persisted.extend(samples))
+
+    result = asyncio.run(probe.poll_hardware_inventory(
+        "192.0.2.83", "test-only-community", 161, "2c",
+        [{
+            "device_id": "device-cisco-memory",
+            "sensor_key": "cisco-memory-pool-101-1",
+            "measurement_type": "memory_usage_percent",
+            "lifecycle_status": "active",
+            "enabled": True,
+            "metadata": {"poll_plan": {
+                "kind": "memory_ratio",
+                "used": {"oid": used_oid, "index": "101.1", "factor": 1.0, "offset": 0.0},
+                "free": {"oid": free_oid, "index": "101.1", "factor": 1.0, "offset": 0.0},
+            }},
+        }],
+        walk_func=_walk_from({
+            used_oid: [("101.1", "400")],
+            free_oid: [("101.1", "600")],
+        }),
+    ))
+
+    assert result == {"good": 1, "missing": 0, "invalid": 0, "unsupported_mapping": 0}
+    assert [(sample["value"], sample["raw_value"], sample["quality"]) for sample in persisted] == [(40.0, "400", "good")]

@@ -4,6 +4,9 @@ backend/data/librenms_repo/mibs/** filter=lfs diff=lfs merge=lfs -text
 # values in source-manifest.json. Do not let core.autocrlf rewrite their bytes.
 backend/vendor/librenms/resources/definitions/** -text
 backend/vendor/librenms/mibs/** -text
+backend/vendor/librenms/LibreNMS/**/*.php -text
+backend/vendor/librenms/includes/discovery/sensors/**/*.php -text
+backend/vendor/librenms/includes/polling/**/*.php -text
 
 # Container entrypoint and deployment scripts must keep POSIX LF endings even
 # when a Windows checkout has core.autocrlf enabled.
