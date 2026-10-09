@@ -1,6 +1,19 @@
 # Nexora v1.0.9
 
-> 发布内容更新日期：2026-10-05
+> 发布内容更新日期：2026-10-09
+
+## 2026-10-09 补充交付
+
+### LibreNMS SNMP 硬件与无线采集
+
+- 扩展已纳入 `backend/vendor/librenms` 的厂商 MIB 与规则适配，由 Python 采集适配器执行；补充 Comware 等厂商的硬件和无线指标路径，并支持 SNMPv3 设备认证。
+- 改进硬件指标导出中的重复规则校验复用，降低设备传感器较多时的采集处理开销。
+
+### PostgreSQL 性能看板
+
+- 新增 Grafana PostgreSQL 性能看板，并通过 `pg_stat_statements` 与受限权限的 postgres_exporter 采集语句统计。
+- 看板展示按 Query ID 排名的 Top SQL、调用速率、执行耗时、平均单次耗时、返回行数和数据库级共享缓存命中率；不采集或展示 SQL 正文。
+- Docker 更新流程会重建 PostgreSQL 容器但保留数据卷，并配置 `pg_stat_statements` 与监控账号；无需为此清空数据库数据。
 
 ## 2026-10-05 补充交付
 
