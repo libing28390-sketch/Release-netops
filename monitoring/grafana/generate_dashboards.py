@@ -3678,10 +3678,7 @@ def build_postgres_performance_dashboard():
                 {"color": HEALTHY_COLOR, "value": 1},
             ],
             value_mappings=health_mappings,
-            description=(
-                "取 exporter 对 stat_statements collector 的成功状态；该 collector 默认关闭，"
-                "无样本时显示未知。"
-            ),
+            description="取 exporter 对 stat_statements collector 的抓取状态；无样本表示未知。",
         ),
         stat_panel(
             3,
@@ -3734,10 +3731,7 @@ def build_postgres_performance_dashboard():
             w=6,
             unit="percent",
             color=INFO_COLOR,
-            description=(
-                "基于 pg_stat_database 的 shared buffer block hit/read 速率计算，"
-                "范围为所选数据库，与单条 SQL 的命中率无关。"
-            ),
+            description="按所选数据库统计 shared buffer 命中率；该指标不属于单条 SQL。",
         ),
         row_panel(901, "整体性能趋势", 10),
         timeseries_panel(
@@ -3791,10 +3785,7 @@ def build_postgres_performance_dashboard():
             8,
             value_col_name="执行耗时速率（秒 / 秒）",
             transformations=top_table_transformations("执行耗时速率（秒 / 秒）"),
-            description=(
-                "最多显示 10 个 Query ID。SQL 文本不会作为 label 或查询条件使用；"
-                "速率按 datname/user/queryid 分组。"
-            ),
+            description="按数据库、用户和 Query ID 汇总 Top 10，不读取 SQL 文本。",
         ),
         table_panel(
             11,
