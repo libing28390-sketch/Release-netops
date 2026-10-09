@@ -56,6 +56,8 @@ runs:
           --env "POSTGRES_DB=$POSTGRES_DB" \
           --env "POSTGRES_USER=$POSTGRES_USER" \
           --env "POSTGRES_PASSWORD=$POSTGRES_PASSWORD" \
+          --env "POSTGRES_EXPORTER_USER=nexora_metrics_ci" \
+          --env "POSTGRES_EXPORTER_PASSWORD=ci-only-postgres-exporter-password" \
           "$POSTGRES_IMAGE"
 
         for attempt in $(seq 1 60); do
