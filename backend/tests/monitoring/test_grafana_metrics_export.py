@@ -140,6 +140,81 @@ def test_metrics_export_contains_only_aggregate_allowlisted_labels(monkeypatch):
     assert connection.closed is True
 
 
+def test_hardware_export_reuses_source_checks_without_dropping_sensor_rows(monkeypatch):
+    from services import librenms_source_policy, snmp_hardware_inventory_service
+
+    pinned_source = {
+        "source_type": "librenms_mib_rule",
+        "source_commit": "pinned-commit",
+        "rule_key": "test-hardware",
+        "source_path": "mibs/test-hardware",
+        "mib_source_files": ["mibs/test-hardware"],
+        "adapter_source_files": ["backend/test-adapter.py"],
+    }
+    rows = [
+        {**pinned_source, "device_id": "device-1", "sensor_key": "cpu-1"},
+        {**pinned_source, "device_id": "device-1", "sensor_key": "cpu-2"},
+        {
+            **pinned_source,
+            "source_commit": "different-commit",
+            "device_id": "device-1",
+            "sensor_key": "cpu-untrusted",
+        },
+        {
+            **pinned_source,
+            "source_type": "legacy_vendor_adapter",
+            "device_id": "device-1",
+            "sensor_key": "temperature-untrusted",
+        },
+    ]
+    monkeypatch.setattr(
+        snmp_hardware_inventory_service,
+        "list_hardware_metric_rows",
+        lambda conn, **kwargs: rows,
+    )
+    monkeypatch.setattr(
+        snmp_hardware_inventory_service,
+        "render_hardware_metrics",
+        lambda sensors, labels: "\n".join(
+            f'nexora_hw_test_sensor{{sensor_key="{sensor["sensor_key"]}"}} 1'
+            for sensor in sensors
+        ),
+    )
+    trust_checks = []
+
+    def trusted_sensor(sensor):
+        trust_checks.append(sensor["sensor_key"])
+        return (
+            sensor.get("source_type") == "librenms_mib_rule"
+            and sensor.get("source_commit") == "pinned-commit"
+        )
+
+    monkeypatch.setattr(
+        librenms_source_policy,
+        "is_trusted_hardware_sensor",
+        trusted_sensor,
+    )
+
+    class EmptyConnection:
+        def execute(self, sql, params=()):
+            return _Result([])
+
+    lines = []
+    stats = grafana_metrics._collect_hardware(
+        lines,
+        EmptyConnection(),
+        datetime.now(timezone.utc),
+    )
+
+    assert trust_checks == ["cpu-1", "cpu-untrusted", "temperature-untrusted"]
+    assert stats["trust_cache_hits"] == 1
+    assert stats["trust_cache_misses"] == 3
+    assert 'sensor_key="cpu-1"' in "\n".join(lines)
+    assert 'sensor_key="cpu-2"' in "\n".join(lines)
+    assert "cpu-untrusted" not in "\n".join(lines)
+    assert "temperature-untrusted" not in "\n".join(lines)
+
+
 def test_metrics_export_omits_unavailable_optional_source_instead_of_zero(monkeypatch):
     connection = _MetricsConnection(outbound_available=False)
     monkeypatch.setattr(grafana_metrics, "get_db_connection", lambda: connection)

@@ -689,7 +689,10 @@ def _collect_hardware(lines: list[str], conn: Any, now: datetime) -> dict[str, A
         list_hardware_metric_rows,
         render_hardware_metrics,
     )
-    from services.librenms_source_policy import is_trusted_hardware_sensor
+    from services.librenms_source_policy import (
+        hardware_sensor_trust_cache_key,
+        is_trusted_hardware_sensor,
+    )
     from services.snmp_hardware_poller_service import DISCOVERY_VERSION
 
     timings: dict[str, float] = {}
@@ -697,8 +700,22 @@ def _collect_hardware(lines: list[str], conn: Any, now: datetime) -> dict[str, A
 
     preparation_started = time.perf_counter()
     by_device: dict[str, tuple[dict[str, Any], list[dict[str, Any]]]] = {}
+    trust_cache: dict[tuple[Any, ...], bool] = {}
+    trust_cache_hits = 0
+    trust_cache_misses = 0
+    trust_validation_seconds = 0.0
     for row in rows:
-        if not is_trusted_hardware_sensor(row):
+        trust_started = time.perf_counter()
+        trust_key = hardware_sensor_trust_cache_key(row)
+        trusted = trust_cache.get(trust_key)
+        if trusted is None:
+            trusted = is_trusted_hardware_sensor(row)
+            trust_cache[trust_key] = trusted
+            trust_cache_misses += 1
+        else:
+            trust_cache_hits += 1
+        trust_validation_seconds += time.perf_counter() - trust_started
+        if not trusted:
             continue
         device_id = str(row.get("device_id") or "")
         if not device_id:
@@ -721,6 +738,7 @@ def _collect_hardware(lines: list[str], conn: Any, now: datetime) -> dict[str, A
             if (now - last_success).total_seconds() > _hardware_stale_after_seconds(sensor):
                 sensor["last_quality"] = "stale"
         by_device[device_id][1].append(sensor)
+    timings["source_validation_ms"] = trust_validation_seconds * 1000
     timings["group_and_stale_ms"] = (time.perf_counter() - preparation_started) * 1000
 
     render_started = time.perf_counter()
@@ -822,6 +840,8 @@ def _collect_hardware(lines: list[str], conn: Any, now: datetime) -> dict[str, A
         "device_count": len(by_device),
         "capability_rows": len(capability_rows),
         "render_errors": render_errors,
+        "trust_cache_hits": trust_cache_hits,
+        "trust_cache_misses": trust_cache_misses,
     }
 
 
@@ -899,6 +919,7 @@ def grafana_hardware_metrics() -> Response:
     logger.info(
         "Grafana hardware metrics scrape sensor_rows=%d devices=%d capabilities=%d "
         "render_errors=%d sensor_query_ms=%.1f sensor_decode_ms=%.1f "
+        "source_validation_ms=%.1f trust_cache_hits=%d trust_cache_misses=%d "
         "group_stale_ms=%.1f device_render_ms=%.1f capability_query_ms=%.1f "
         "capability_render_ms=%.1f total_ms=%.1f response_bytes=%d",
         int(scrape_stats.get("sensor_rows", 0)),
@@ -907,6 +928,9 @@ def grafana_hardware_metrics() -> Response:
         int(scrape_stats.get("render_errors", 0)),
         float(scrape_stats.get("sensor_query_ms", 0.0)),
         float(scrape_stats.get("sensor_decode_ms", 0.0)),
+        float(scrape_stats.get("source_validation_ms", 0.0)),
+        int(scrape_stats.get("trust_cache_hits", 0)),
+        int(scrape_stats.get("trust_cache_misses", 0)),
         float(scrape_stats.get("group_and_stale_ms", 0.0)),
         float(scrape_stats.get("device_render_ms", 0.0)),
         float(scrape_stats.get("capability_query_ms", 0.0)),

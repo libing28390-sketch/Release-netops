@@ -393,6 +393,63 @@ def _provenance_documents(value: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     return documents
 
 
+def _freeze_provenance_value(value: Any) -> Any:
+    """Convert JSON-shaped provenance values into stable, hashable values."""
+    if isinstance(value, Mapping):
+        return tuple(
+            sorted(
+                (str(key), _freeze_provenance_value(item))
+                for key, item in value.items()
+            )
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_provenance_value(item) for item in value)
+    if isinstance(value, (set, frozenset)):
+        return tuple(sorted((_freeze_provenance_value(item) for item in value), key=repr))
+    try:
+        hash(value)
+    except TypeError:
+        return repr(value)
+    return value
+
+
+def hardware_sensor_trust_cache_key(sensor: Mapping[str, Any]) -> tuple[Any, ...]:
+    """Return the complete provenance identity used by hardware trust checks.
+
+    Sensor readings and identity labels are intentionally excluded so a scrape
+    can reuse an unchanged source proof across many sensors from the same rule.
+    Every field read by ``is_trusted_hardware_sensor`` and its provenance
+    verifiers remains part of the key, including conflicts across nested source
+    documents.
+    """
+    if not isinstance(sensor, Mapping):
+        return ("invalid_sensor", _freeze_provenance_value(sensor))
+
+    provenance_fields = (
+        "adapter_source_files",
+        "commit",
+        "mib_source_files",
+        "os_key",
+        "rule_key",
+        "source_commit",
+        "source_path",
+        "source_type",
+    )
+    documents = _provenance_documents(sensor)
+    document_key = tuple(
+        tuple(
+            (field, _freeze_provenance_value(document[field]))
+            for field in provenance_fields
+            if field in document
+        )
+        for document in documents
+    )
+    legacy_rule_version = sensor.get("rule_version")
+    if not isinstance(legacy_rule_version, str):
+        legacy_rule_version = None
+    return (document_key, ("legacy_rule_version", legacy_rule_version))
+
+
 def _consistent_provenance_field(
     documents: list[Mapping[str, Any]],
     field: str,
