@@ -1,0 +1,13 @@
+Value SLOT (\d+)
+Value FAN_ID (\d+)
+Value ONLINE (\S+)
+Value STATUS (\S+)
+Value SPEED (\S+)
+Value MODE (\S+)
+Value AIRFLOW (\S+)
+Value AUTO_MIN_SPEED (\S+)
+
+Start
+  ^\s*${SLOT}\s+${FAN_ID}\s+${ONLINE}\s+${STATUS}\s+${SPEED}\s+${MODE}\s+${AIRFLOW}\s+${AUTO_MIN_SPEED}\s*$$ -> Record
+  ^\s*Slot\s+FanID\s+Online
+  ^\s*-+

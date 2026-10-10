@@ -1,0 +1,9 @@
+<Sysname> display ospf peer
+OSPF Process 1 with Router ID 2.2.2.2
+                     Neighbor Brief Information
+ Area: 0.0.0.0
+ Router ID       Address       Pri Dead-Time Interface       State
+ 47.47.47.47     1.1.5.5       1   40        Vlan600         Full/BDR
+ Area: 0.0.0.2
+ Router ID       Address       Pri Dead-Time Interface       State
+ 192.168.1.48    1.1.3.2       1   38        Vlan900         Full/DR

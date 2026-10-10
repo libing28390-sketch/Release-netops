@@ -1,0 +1,24 @@
+Value Filldown SLOT (\d+)
+Value Required DEVICE_ID (\d+)
+Value Required STATUS (\S+)
+Value AIRFLOW (.+)
+
+Start
+  ^\s*Device\s+Info\s+on\s+Slot\s+${SLOT}
+  ^\s*Device\s+ID\.\s+Status -> TabularFan
+  ^\s*Fan\s+${DEVICE_ID}: -> VerboseFan
+  ^.*
+
+TabularFan
+  ^\s*${DEVICE_ID}\s+${STATUS}\s*$$ -> Record
+  ^\s*Device\s+Info\s+on\s+Slot\s+${SLOT}
+  ^\s*Device\s+ID\.\s+Status
+  ^\s*$$
+  ^.*
+
+VerboseFan
+  ^\s*Fan\s+${DEVICE_ID}: -> VerboseFan
+  ^\s*State\s*:\s*${STATUS}
+  ^\s*Airflow\s+Direction\s*:\s*${AIRFLOW} -> Record Start
+  ^\s*$$
+  ^.*

@@ -1,0 +1,15 @@
+Value TOTAL_PREFIXES (\d+)
+Value ACTIVE_PREFIXES (\d+)
+Value PROTO (\S+)
+Value TOTAL (\d+|-)
+Value ACTIVE (\d+|-)
+Value ADDED (\d+|-)
+Value DELETED (\d+|-)
+Value FREED (\d+|-)
+
+Start
+  ^\s*Total\s+prefixes:\s+${TOTAL_PREFIXES}\s+Active\s+prefixes:\s+${ACTIVE_PREFIXES}\s*$$
+  ^\s*Proto\s+[Rr]outes?\s+[Aa]ctive\s+[Aa]dded\s+[Dd]eleted(?:\s+[Ff]reed)?\s*$$
+  ^\s*${PROTO}\s+${TOTAL}\s+${ACTIVE}\s+${ADDED}\s+${DELETED}(?:\s+${FREED})?\s*$$ -> Record
+  ^\s*-+$$
+  ^\s*$$

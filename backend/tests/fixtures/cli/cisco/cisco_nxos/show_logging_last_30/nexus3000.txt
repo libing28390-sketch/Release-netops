@@ -1,0 +1,4 @@
+Device# show logging last 30
+2013 Mar 15 19:13:05 n3k-202-194-4 %VMAN-2-ACTIVATION_STATE: Successfully activated virtual service 'n3k'
+2013 Mar 15 19:13:23 n3k-202-194-4 %VMAN-5-VIRT_INST: VIRTUAL SERVICE n3k LOG: Error: Didn't get initial config when booting up
+2013 Mar 15 19:13:54 n3k-202-194-4 %VSHD-5-VSHD_SYSLOG_CONFIG_I: Configured from vty by admin on console0

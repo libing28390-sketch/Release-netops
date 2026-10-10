@@ -1,0 +1,32 @@
+# nexora-action-code: get_arp_table
+Value PROTOCOL (Internet|IP|IPv4|\S+)
+Value Required IP_ADDRESS (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})
+Value AGE (-|\d+|\d+:\d+(?::\d+)?|N\/A|\S+)
+Value MAC_ADDRESS ([0-9a-fA-F]{4}\.[0-9a-fA-F]{4}\.[0-9a-fA-F]{4}|[0-9a-fA-F]{2}(?:[:-][0-9a-fA-F]{2}){5}|[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}|[0-9a-fA-F]{6}-[0-9a-fA-F]{6}|[iI]ncomplete|\S+)
+Value TYPE (\S+)
+Value VLAN (\d+|--)
+Value INTERFACE (.+?)
+
+Start
+  ^.*#\s*show\s+ -> Next
+  ^Protocol\s+Address -> Table
+  ^(?:IP\s+)?Address\s+ -> Table
+  ^IP-Address\s+ -> Table
+  ^\s*$$
+  ^. -> Next
+
+Table
+  ^-+ -> Next
+  # 1. 完整列：Protocol IP Age MAC Type Interface
+  ^\s*${PROTOCOL}\s+${IP_ADDRESS}\s+${AGE}\s+${MAC_ADDRESS}\s+${TYPE}\s+${INTERFACE}\s*$$ -> Record
+  # 2. 无 Age 列：Protocol IP MAC Type Interface
+  ^\s*${PROTOCOL}\s+${IP_ADDRESS}\s+${MAC_ADDRESS}\s+${TYPE}\s+${INTERFACE}\s*$$ -> Record
+  # 3. 无 Protocol 列：IP Age MAC Type Interface
+  ^\s*${IP_ADDRESS}\s+${AGE}\s+${MAC_ADDRESS}\s+${TYPE}\s+${INTERFACE}\s*$$ -> Record
+  # 4. 简略表：IP MAC Type Interface
+  ^\s*${IP_ADDRESS}\s+${MAC_ADDRESS}\s+${TYPE}\s+${INTERFACE}\s*$$ -> Record
+  # 5. 含 VLAN 列：IP MAC Type Interface VLAN Age
+  ^\s*${IP_ADDRESS}\s+${MAC_ADDRESS}\s+${TYPE}\s+${INTERFACE}\s+${VLAN}\s+${AGE}\s*$$ -> Record
+  ^\s*Total -> Next
+  ^\s*$$
+  ^. -> Next

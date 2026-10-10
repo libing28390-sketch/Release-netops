@@ -1,0 +1,10 @@
+Value INDEX (\d+)
+Value LOCAL_INTERFACE (\S+)
+Value HOLDTIME (\d+)
+Value CAPABILITY ([A-Z,\s]+)
+Value NEIGHBOR_INTERFACE (\S+)
+Value NEIGHBOR (\S+)
+
+Start
+  ^Index\s+Local\s+Intf\s+Hold-time
+  ^${INDEX}\s+${LOCAL_INTERFACE}\s+${HOLDTIME}\s+${CAPABILITY}\s+${NEIGHBOR_INTERFACE}\s+${NEIGHBOR}\s*$$ -> Record

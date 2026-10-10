@@ -1,0 +1,9 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://support.huawei.com/enterprise/en/doc/EDOC1100419271/be8e56cf/configuration-examples-for-arp",
+  "vendor": "Huawei",
+  "platform": "VRP8",
+  "model_family": "NetEngine 8000 M1A",
+  "command": "display arp all",
+  "source_note": "Official ARP configuration example, verification output for static ARP entries."
+}

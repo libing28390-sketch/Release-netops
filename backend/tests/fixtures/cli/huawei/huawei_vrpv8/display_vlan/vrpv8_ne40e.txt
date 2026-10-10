@@ -1,0 +1,6 @@
+[~CE] display vlan
+The total number of vlans is : 2
+VID  Type     Status  Property  MAC-LRN STAT    BC  MC  UC  Description
+--------------------------------------------------------------------------------
+   2 common   enable  default   enable  disable FWD FWD FWD VLAN 0002
+   3 common   enable  default   enable  disable FWD FWD FWD VLAN 0003

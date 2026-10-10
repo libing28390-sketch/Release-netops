@@ -1,0 +1,11 @@
+Value Required FAN_ID (\d+)
+Value ONLINE (\S+)
+Value STATUS (\S+)
+Value DESCRIPTION (.*)
+Value SPEED_RATE (\d+%)
+
+Start
+  ^\s*System FAN Information\(Fan\s+${FAN_ID}\s+-\s+${ONLINE}\)
+  ^\s*Status:\s+${STATUS}
+  ^\s*Description:\s+${DESCRIPTION}
+  ^\s*Speed Rate:\s+${SPEED_RATE} -> Record

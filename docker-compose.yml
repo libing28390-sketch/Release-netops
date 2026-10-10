@@ -1,0 +1,778 @@
+name: nexora
+
+# Keep container stdout/stderr bounded even when a service enters a restart
+# loop. The local driver is compact and rotates without retaining an
+# unbounded JSON log file.
+x-container-logging: &container-logging
+  driver: local
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  db:
+    image: nexora-postgres:latest
+    build:
+      context: ./docker/postgres
+      dockerfile: Dockerfile
+    container_name: nexora-db
+    mem_limit: ${POSTGRES_MEM_LIMIT:-1g}
+    cpus: "${POSTGRES_CPUS:-2.0}"
+    pids_limit: 256
+    command:
+      - postgres
+      - -c
+      - timezone=${TZ:-Asia/Shanghai}
+      - -c
+      - log_timezone=${TZ:-Asia/Shanghai}
+      # pg_stat_statements needs shared memory initialized at server start.
+      - -c
+      - compute_query_id=auto
+      - -c
+      - pg_stat_statements.max=${PG_STAT_STATEMENTS_MAX:-5000}
+      - -c
+      - pg_stat_statements.track=${PG_STAT_STATEMENTS_TRACK:-top}
+      - -c
+      - pg_stat_statements.track_planning=${PG_STAT_STATEMENTS_TRACK_PLANNING:-off}
+      - -c
+      - shared_preload_libraries=${POSTGRES_SHARED_PRELOAD_LIBRARIES:-pg_stat_statements}
+    environment:
+      # These variables can be overridden in the .env file
+      - TZ=${TZ:-Asia/Shanghai}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set to a non-default secret}
+      - POSTGRES_DB=${POSTGRES_DB:-netops}
+      - POSTGRES_EXPORTER_USER=${POSTGRES_EXPORTER_USER:-nexora_metrics}
+      - POSTGRES_EXPORTER_PASSWORD=${POSTGRES_EXPORTER_PASSWORD:?POSTGRES_EXPORTER_PASSWORD must be set to a non-default secret}
+    volumes:
+      - nexora-pgdata:/var/lib/postgresql
+    shm_size: 256m
+    stop_grace_period: 60s
+    restart: unless-stopped
+    logging: *container-logging
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-netops}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  netops:
+    image: nexora-netops
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nexora-netops
+    # Keep the backend runtime configuration in sync with the deployment
+    # .env. Explicit entries in `environment` below override host-specific
+    # values that must be different inside Docker (for example DATABASE_URL
+    # and ENVIRONMENT).
+    env_file:
+      - .env
+    init: true
+    mem_limit: ${NETOPS_MEM_LIMIT:-2304m}
+    cpus: "${NETOPS_CPUS:-2.0}"
+    pids_limit: 512
+    stop_grace_period: 30s
+    expose:
+      - "8003"
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      - NODE_ENV=production
+      # Docker Compose is the production deployment profile. The AI
+      # temporary test mode is controlled at runtime and no longer depends on
+      # switching ENVIRONMENT in .env.
+      - ENVIRONMENT=production
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set to a non-default secret}@db:5432/${POSTGRES_DB:-netops}
+      # Docker runs the Prometheus-compatible VictoriaMetrics path by default;
+      # local development keeps its native PostgreSQL provider unless opted in.
+      - MONITORING_METRIC_BACKEND=${MONITORING_METRIC_BACKEND:-victoriametrics}
+      - VICTORIAMETRICS_URL=${VICTORIAMETRICS_URL:-http://victoriametrics:8428}
+      - VICTORIAMETRICS_ALLOWED_HOSTS=${VICTORIAMETRICS_ALLOWED_HOSTS:-victoriametrics}
+      # Keep Docker-internal object storage calls off any inherited HTTP proxy.
+      # External S3-compatible endpoints can still use the configured proxy.
+      - "NO_PROXY=${NO_PROXY:-localhost,127.0.0.1},seaweedfs,nexora-seaweedfs"
+      - "no_proxy=${no_proxy:-localhost,127.0.0.1},seaweedfs,nexora-seaweedfs"
+      - MONITORING_ARTIFACT_ROOT=/app/artifacts/monitoring
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY must be set to a non-default secret}
+      - CREDENTIAL_ENCRYPTION_KEY=${CREDENTIAL_ENCRYPTION_KEY:?CREDENTIAL_ENCRYPTION_KEY must be set to a non-default secret}
+      # AI settings are passed through from the existing .env contract. The
+      # temporary test mode itself is runtime-controlled from /ai/security.
+      - AI_ENABLED=${AI_ENABLED:-0}
+      - EXTERNAL_AI_ENABLED=${EXTERNAL_AI_ENABLED:-0}
+      - AI_KILL_SWITCH=${AI_KILL_SWITCH:-0}
+      - AI_SECURITY_VAULT_TTL_SECONDS=${AI_SECURITY_VAULT_TTL_SECONDS:-3600}
+      - AI_MAX_PAYLOAD_BYTES=${AI_MAX_PAYLOAD_BYTES:-256000}
+      - AI_PROVIDER_ALLOWLIST=${AI_PROVIDER_ALLOWLIST:-deepseek,openai,openai_compatible,azure_openai,ollama,local,qwen}
+      - AI_DEBUG_PAYLOAD=${AI_DEBUG_PAYLOAD:-0}
+      - AI_OUTBOUND_PROXY_URL=${AI_OUTBOUND_PROXY_URL:-}
+      - AI_PROVIDER_MAX_CONCURRENCY=${AI_PROVIDER_MAX_CONCURRENCY:-8}
+      - AI_TENANT_MAX_CONCURRENCY=${AI_TENANT_MAX_CONCURRENCY:-4}
+      - AI_USER_MAX_CONCURRENCY=${AI_USER_MAX_CONCURRENCY:-2}
+      - AI_CONCURRENCY_ACQUIRE_TIMEOUT_SECONDS=${AI_CONCURRENCY_ACQUIRE_TIMEOUT_SECONDS:-10}
+      - AI_CIRCUIT_FAILURE_THRESHOLD=${AI_CIRCUIT_FAILURE_THRESHOLD:-3}
+      - AI_CIRCUIT_COOLDOWN_SECONDS=${AI_CIRCUIT_COOLDOWN_SECONDS:-30}
+      - AI_HEALTH_BACKOFF_SECONDS=${AI_HEALTH_BACKOFF_SECONDS:-30}
+      - AI_DAILY_BUDGET_USD=${AI_DAILY_BUDGET_USD:-0}
+      - AI_EMBEDDING_MODE=${AI_EMBEDDING_MODE:-local}
+      - AI_EMBEDDING_DIMENSIONS=${AI_EMBEDDING_DIMENSIONS:-1536}
+      - AI_RETRIEVAL_CACHE_ENABLED=${AI_RETRIEVAL_CACHE_ENABLED:-0}
+      - AI_RETRIEVAL_TRGM_THRESHOLD=${AI_RETRIEVAL_TRGM_THRESHOLD:-0.35}
+      - REQUEST_BODY_MAX_BYTES=${REQUEST_BODY_MAX_BYTES:-157286400}
+      - STORAGE_BACKEND=${STORAGE_BACKEND:-local}
+      - STORAGE_LOCAL_ROOT=${STORAGE_LOCAL_ROOT:-/app/data/storage}
+      - STORAGE_SPOOL_ROOT=${STORAGE_SPOOL_ROOT:-/app/data/spool}
+      - STORAGE_RETRY_INTERVAL_SECONDS=${STORAGE_RETRY_INTERVAL_SECONDS:-60}
+      # Set S3_ENDPOINT_URL=http://seaweedfs:8333 when the object-storage
+      # profile is enabled; the default keeps local mode harmless.
+      - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-http://seaweedfs:8333}
+      - S3_BUCKET=${S3_BUCKET:-nexora}
+      - S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID:-}
+      - S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY:-}
+      - S3_FORCE_PATH_STYLE=${S3_FORCE_PATH_STYLE:-true}
+      - S3_VERIFY_TLS=${S3_VERIFY_TLS:-true}
+      - S3_CONNECT_TIMEOUT_SECONDS=${S3_CONNECT_TIMEOUT_SECONDS:-5}
+      - S3_READ_TIMEOUT_SECONDS=${S3_READ_TIMEOUT_SECONDS:-60}
+      - CORS_ORIGINS=${CORS_ORIGINS:-}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_FILE_MAX_BYTES=${LOG_FILE_MAX_BYTES:-10485760}
+      - LOG_FILE_BACKUP_COUNT=${LOG_FILE_BACKUP_COUNT:-5}
+      # A Windows browser can download its local Agent from this release URL
+      # while the Nexora server itself runs in Linux/Docker.
+      - TERMINAL_AGENT_WINDOWS_URL=${TERMINAL_AGENT_WINDOWS_URL:-https://github.com/libing28390-sketch/Release-netops/releases/latest/download/NexoraTerminalAgent.exe}
+      # Optional integration. Empty means /api/templates reads PostgreSQL
+      # directly instead of waiting on an external private-network endpoint.
+      - CONFIG_MANAGEMENT_URL=${CONFIG_MANAGEMENT_URL:-}
+      - CONFIG_MANAGEMENT_TIMEOUT_SECONDS=${CONFIG_MANAGEMENT_TIMEOUT_SECONDS:-1}
+      - DB_POOL_SIZE=${DB_POOL_SIZE:-16}
+      - DB_POOL_MIN_SIZE=${DB_POOL_MIN_SIZE:-${DB_POOL_SIZE:-16}}
+      - DB_POOL_OVERFLOW_MAX=${DB_POOL_OVERFLOW_MAX:-4}
+      - DB_POOL_ACQUIRE_TIMEOUT_SECONDS=${DB_POOL_ACQUIRE_TIMEOUT_SECONDS:-10}
+      - TEMPLATES_CACHE_TTL_SECONDS=${TEMPLATES_CACHE_TTL_SECONDS:-2}
+      - SCHEDULER_MISFIRE_GRACE_SECONDS=${SCHEDULER_MISFIRE_GRACE_SECONDS:-30}
+      # Keep one worker by default because the lifespan-owned telemetry loops
+      # must run once per deployment, not once per Uvicorn worker process.
+      - WORKERS=${WORKERS:-1}
+      # LibreNMS secrets are sourced from this shared .env file for the
+      # optional runtime services below. Explicitly clear them in the Nexora
+      # container so the broad env_file contract cannot expose them to the
+      # backend process.
+      - LIBRENMS_APP_KEY=
+      - LIBRENMS_DB_PASSWORD=
+      - LIBRENMS_DB_ROOT_PASSWORD=
+      - LIBRENMS_REDIS_PASSWORD=
+    volumes:
+      - nexora-data:/app/data
+      - nexora-backup:/app/backup
+      - nexora-dist:/app/dist
+      - nexora-monitoring-artifacts:/app/artifacts/monitoring
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - default
+      - librenms_control
+    restart: unless-stopped
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    logging: *container-logging
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.build_opener(urllib.request.ProxyHandler({})).open('http://127.0.0.1:8003/api/health/live', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.103.0
+    container_name: nexora-victoriametrics
+    mem_limit: ${VICTORIAMETRICS_MEM_LIMIT:-768m}
+    cpus: "${VICTORIAMETRICS_CPUS:-2.0}"
+    pids_limit: 256
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+    command:
+      - "-storageDataPath=/storage"
+      - "-retentionPeriod=${VM_RETENTION_PERIOD:-30d}"
+      # LibreNMS native Influx output probes/creates its database through the
+      # Influx v1 API. VictoriaMetrics uses this list for SHOW DATABASES.
+      - "-influx.databaseNames=librenms"
+      # Stop accepting samples before this filesystem falls below 10 GiB free.
+      - "-storage.minFreeDiskSpaceBytes=${VM_MIN_FREE_DISK_SPACE_BYTES:-10737418240}"
+      - "-httpListenAddr=:8428"
+    volumes:
+      - nexora-vmdata:/storage
+    expose:
+      - "8428"
+    networks:
+      - default
+      - librenms_metrics
+    restart: unless-stopped
+    logging: *container-logging
+    healthcheck:
+      test: ["CMD", "wget", "-Y", "off", "-qO-", "http://127.0.0.1:8428/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  snmp-exporter:
+    image: prom/snmp-exporter:v0.26.0
+    container_name: nexora-snmp-exporter
+    mem_limit: ${SNMP_EXPORTER_MEM_LIMIT:-128m}
+    cpus: "${SNMP_EXPORTER_CPUS:-1.0}"
+    pids_limit: 128
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+    # Start immediately with the checked-in, credential-free bootstrap config.
+    # The control plane atomically replaces this runtime file when a collector
+    # plan is published, then asks the exporter to reload it.  Waiting for
+    # current_version.json here would make a fresh deployment look unhealthy
+    # and would block vmagent even though an empty-target config is valid.
+    entrypoint:
+      - /bin/sh
+      - -ec
+    command:
+      - |
+        exec /bin/snmp_exporter --config.file=/etc/snmp_exporter/runtime/snmp_exporter/snmp.yml --web.listen-address=:9116
+    volumes:
+      - nexora-monitoring-artifacts:/etc/snmp_exporter:ro
+    expose:
+      - "9116"
+    restart: unless-stopped
+    depends_on:
+      netops:
+        condition: service_healthy
+    logging: *container-logging
+    healthcheck:
+      test: ["CMD", "wget", "-Y", "off", "-qO-", "http://127.0.0.1:9116/metrics"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.20.1
+    container_name: nexora-postgres-exporter
+    mem_limit: ${POSTGRES_EXPORTER_MEM_LIMIT:-128m}
+    cpus: "${POSTGRES_EXPORTER_CPUS:-0.5}"
+    pids_limit: 128
+    command:
+      - --collector.stat_statements
+      - --collector.stat_statements.limit=${PG_STAT_STATEMENTS_EXPORT_LIMIT:-100}
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      - DATA_SOURCE_URI=db:5432/${POSTGRES_DB:-netops}?sslmode=disable
+      - DATA_SOURCE_USER=${POSTGRES_EXPORTER_USER:-nexora_metrics}
+      - DATA_SOURCE_PASS=${POSTGRES_EXPORTER_PASSWORD:?POSTGRES_EXPORTER_PASSWORD must be set to a non-default secret}
+    expose:
+      - "9187"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *container-logging
+
+  vmagent:
+    image: victoriametrics/vmagent:v1.103.0
+    container_name: nexora-vmagent
+    mem_limit: ${VMAGENT_MEM_LIMIT:-192m}
+    cpus: "${VMAGENT_CPUS:-1.0}"
+    pids_limit: 128
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      # All platform scrape and remote-write targets are Docker-internal.
+      # Do not let host-wide proxy variables turn service DNS names into
+      # external proxy requests.
+      - HTTP_PROXY=
+      - HTTPS_PROXY=
+      - ALL_PROXY=
+      - http_proxy=
+      - https_proxy=
+      - all_proxy=
+      - NO_PROXY=localhost,127.0.0.1,netops,victoriametrics,snmp-exporter,postgres-exporter,vmagent,grafana,cadvisor
+      - no_proxy=localhost,127.0.0.1,netops,victoriametrics,snmp-exporter,postgres-exporter,vmagent,grafana,cadvisor
+    command:
+      - "-promscrape.config=/etc/nexora-collector/runtime/vmagent/scrape.yml"
+      - "-remoteWrite.url=http://victoriametrics:8428/api/v1/write"
+      - "-remoteWrite.tmpDataPath=/var/lib/vmagent"
+      # Bound retry buffering when VictoriaMetrics enters read-only mode.
+      - "-remoteWrite.maxDiskUsagePerURL=${VMAGENT_MAX_DISK_USAGE:-1GB}"
+      - "-httpListenAddr=:8429"
+    volumes:
+      - nexora-monitoring-artifacts:/etc/nexora-collector:ro
+      - nexora-vmagent-queue:/var/lib/vmagent
+    expose:
+      - "8429"
+    networks:
+      - default
+      - monitoring_internal
+    depends_on:
+      netops:
+        condition: service_healthy
+      victoriametrics:
+        condition: service_healthy
+      snmp-exporter:
+        condition: service_healthy
+      postgres-exporter:
+        condition: service_started
+      cadvisor:
+        condition: service_started
+    restart: unless-stopped
+    logging: *container-logging
+    healthcheck:
+      test: ["CMD", "wget", "-Y", "off", "-qO-", "http://127.0.0.1:8429/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  docker-socket-proxy:
+    image: ghcr.io/tecnativa/docker-socket-proxy:v0.4.2
+    container_name: nexora-docker-socket-proxy
+    mem_limit: ${DOCKER_SOCKET_PROXY_MEM_LIMIT:-64m}
+    cpus: "${DOCKER_SOCKET_PROXY_CPUS:-0.25}"
+    pids_limit: 64
+    environment:
+      CONTAINERS: "1"
+      EVENTS: "1"
+      INFO: "1"
+      PING: "1"
+      VERSION: "1"
+      POST: "0"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    expose:
+      - "2375"
+    networks:
+      - monitoring_internal
+    restart: unless-stopped
+    logging: *container-logging
+
+  cadvisor:
+    image: ghcr.io/google/cadvisor:v0.60.6
+    container_name: nexora-cadvisor
+    mem_limit: ${CADVISOR_MEM_LIMIT:-128m}
+    cpus: "${CADVISOR_CPUS:-0.5}"
+    pids_limit: 128
+    environment:
+      # cAdvisor talks to the Docker API through the internal socket proxy.
+      - HTTP_PROXY=
+      - HTTPS_PROXY=
+      - ALL_PROXY=
+      - http_proxy=
+      - https_proxy=
+      - all_proxy=
+      - NO_PROXY=localhost,127.0.0.1,docker-socket-proxy
+      - no_proxy=localhost,127.0.0.1,docker-socket-proxy
+    command:
+      - "--docker=tcp://docker-socket-proxy:2375"
+      - "--docker_only=true"
+      - "--housekeeping_interval=30s"
+      - "--store_container_labels=false"
+      - "--disable_metrics=percpu,sched,process,hugetlb,resctrl,tcp,udp,network,referenced_memory"
+    volumes:
+      - /sys:/sys:ro
+      # cAdvisor maps Docker API container IDs to overlay2 metadata through
+      # DockerRootDir. Keep the host data read-only and make the source path
+      # configurable for daemons that do not use Docker's default directory.
+      - type: bind
+        source: ${CADVISOR_DOCKER_ROOT_DIR:-/var/lib/docker}
+        target: /var/lib/docker
+        read_only: true
+        bind:
+          create_host_path: false
+    expose:
+      - "8080"
+    networks:
+      - monitoring_internal
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    depends_on:
+      docker-socket-proxy:
+        condition: service_started
+    restart: unless-stopped
+    logging: *container-logging
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    container_name: nexora-grafana
+    mem_limit: ${GRAFANA_MEM_LIMIT:-384m}
+    cpus: "${GRAFANA_CPUS:-1.0}"
+    pids_limit: 256
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      - GF_DATE_FORMATS_DEFAULT_TIMEZONE=${GRAFANA_DEFAULT_TIMEZONE:-Asia/Shanghai}
+      - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-%(protocol)s://%(domain)s/grafana/}
+      # Grafana handles the /grafana subpath; Nginx preserves it when proxying.
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+      - GF_SECURITY_ALLOW_EMBEDDING=${GRAFANA_ALLOW_EMBEDDING:-true}
+      - GF_AUTH_ANONYMOUS_ENABLED=${GRAFANA_ANONYMOUS_ENABLED:-false}
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_AUTH_PROXY_ENABLED=true
+      - GF_AUTH_PROXY_HEADER_NAME=X-WEBAUTH-USER
+      - GF_AUTH_PROXY_HEADER_PROPERTY=username
+      - GF_AUTH_PROXY_AUTO_SIGN_UP=true
+      - GF_AUTH_PROXY_HEADERS=Role:X-WEBAUTH-ROLE
+      - GF_AUTH_PROXY_ENABLE_LOGIN_TOKEN=false
+      - GF_AUTH_PROXY_WHITELIST=${GRAFANA_AUTH_PROXY_SUBNET:-172.30.254.0/29}
+      - GF_USERS_AUTO_ASSIGN_ORG_ROLE=Viewer
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD must be set}
+      # Grafana's Prometheus datasource is an internal Docker request. Do not
+      # let host-wide proxy variables turn victoriametrics:8428 into an
+      # external proxy request (which returns 502 for private service names).
+      - HTTP_PROXY=
+      - HTTPS_PROXY=
+      - ALL_PROXY=
+      - http_proxy=
+      - https_proxy=
+      - all_proxy=
+      - NO_PROXY=localhost,127.0.0.1,victoriametrics,grafana,snmp-exporter,vmagent
+      - no_proxy=localhost,127.0.0.1,victoriametrics,grafana,snmp-exporter,vmagent
+    volumes:
+      - nexora-grafana-data:/var/lib/grafana
+      # Mount only the directories owned by this release. Mounting the whole
+      # provisioning directory hides Grafana's image-provided plugins,
+      # alerting, and access-control directories and produces misleading
+      # "directory not found" startup errors.
+      - ./monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    expose:
+      - "3000"
+    depends_on:
+      victoriametrics:
+        condition: service_healthy
+    networks:
+      default: {}
+      grafana_auth:
+        aliases:
+          - grafana-auth
+    restart: unless-stopped
+    logging: *container-logging
+    healthcheck:
+      # Grafana's official 12.1.0 image includes curl. Use a fail-fast probe
+      # so a missing/failed HTTP request is reflected in the container state.
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3000/api/health >/dev/null"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  nginx:
+    image: nexora-nginx
+    build:
+      context: ./nginx
+    container_name: nexora-nginx
+    init: true
+    mem_limit: ${NGINX_MEM_LIMIT:-256m}
+    cpus: "${NGINX_CPUS:-1.0}"
+    pids_limit: 128
+    stop_grace_period: 15s
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      - TLS_COMMON_NAME=${TLS_COMMON_NAME:-localhost}
+      - NGINX_WORKER_PROCESSES=${NGINX_WORKER_PROCESSES:-1}
+      # Production does not need an outbound proxy for the reverse proxy.
+      # Explicitly clear host/Docker-injected proxy variables so internal
+      # health checks never get sent to an external proxy.
+      - HTTP_PROXY=
+      - HTTPS_PROXY=
+      - ALL_PROXY=
+      - http_proxy=
+      - https_proxy=
+      - all_proxy=
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - nexora-dist:/usr/share/nginx/html:ro
+      # The entrypoint generates a fallback self-signed certificate when absent.
+      # Existing trusted certificates are preserved and used as-is.
+      - ./nginx/ssl:/etc/nginx/ssl
+    depends_on:
+      netops:
+        condition: service_healthy
+    networks:
+      default: {}
+      grafana_auth: {}
+    restart: unless-stopped
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    logging: *container-logging
+    healthcheck:
+      test: ["CMD", "wget", "-Y", "off", "-qO-", "http://netops:8003/api/health/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  redis:
+    image: redis:7.4.2-alpine
+    container_name: nexora-redis
+    # Keep room above Redis's 512 MB data limit for persistence and buffers.
+    mem_limit: ${REDIS_MEM_LIMIT:-1g}
+    cpus: "${REDIS_CPUS:-1.0}"
+    pids_limit: 128
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    entrypoint:
+      - /bin/sh
+      - -ec
+    # Keep the complete shell program in one argv element. A scalar command can
+    # be split into `umask`, `077`, ... by Compose, causing `sh -ec` to execute
+    # only `umask` (which prints 0022) and exit without starting Redis.
+    command:
+      - |
+        umask 077
+        if [ -n "$$REDIS_PASSWORD" ]; then
+          password_hash="$(printf '%s' "$$REDIS_PASSWORD" | sha256sum | awk '{print $$1}')"
+          printf 'user default off\nuser nexora on #%s ~nexora:* ~ai:ratelimit:* +ping +get +set +incr +del +eval +scan\n' "$$password_hash" > /data/nexora-users.acl
+        else
+          printf 'user default off\nuser nexora on nopass ~nexora:* ~ai:ratelimit:* +ping +get +set +incr +del +eval +scan\n' > /data/nexora-users.acl
+        fi
+        exec /usr/local/bin/docker-entrypoint.sh redis-server --appendonly yes --maxmemory 512mb \
+          --maxmemory-policy allkeys-lru --protected-mode yes --aclfile /data/nexora-users.acl
+    ports:
+      - "${REDIS_BIND_ADDRESS:-127.0.0.1}:6379:6379"
+    volumes:
+      - nexora-redis-data:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          if [ -n "$${REDIS_PASSWORD}" ]; then
+          redis-cli --user nexora -a "$${REDIS_PASSWORD}" ping | grep -q PONG;
+          else redis-cli --user nexora ping | grep -q PONG; fi
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging: *container-logging
+
+  # Optional single-node S3-compatible object storage.  The application stays
+  # on local storage unless STORAGE_BACKEND=s3 and this profile is enabled.
+  # `weed mini` is intentionally isolated on the internal Compose network;
+  # expose it only when an operator explicitly needs the S3 endpoint.
+  seaweedfs:
+    image: chrislusf/seaweedfs:latest
+    profiles: ["object-storage"]
+    container_name: nexora-seaweedfs
+    mem_limit: ${SEAWEEDFS_MEM_LIMIT:-512m}
+    cpus: "${SEAWEEDFS_CPUS:-1.0}"
+    pids_limit: 256
+    command: ["mini", "-dir=/data"]
+    environment:
+      # Use the same values as the netops S3 client. deploy-docker.sh fills
+      # placeholders before starting the object-storage profile; keeping the
+      # interpolation identical prevents the two services from drifting.
+      - AWS_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY:-}
+      - S3_BUCKET=${S3_BUCKET:-nexora}
+    volumes:
+      - nexora-seaweedfs-data:/data
+    expose:
+      - "8333"
+    restart: unless-stopped
+    logging: *container-logging
+
+  # Optional full LibreNMS runtime. The profile is deliberately opt-in; the
+  # dispatcher is the only service with a route to the configured device
+  # management network. These services never use Nexora PostgreSQL/Redis.
+  librenms-db:
+    image: mariadb:11.8.9@sha256:6422478cb8e159f080fb1d8ccf65101e26fe51385787fde7d16c3b165a331f15
+    profiles: ["librenms-native"]
+    container_name: nexora-librenms-db
+    command:
+      - mysqld
+      - --innodb-file-per-table=1
+      - --lower-case-table-names=0
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      MARIADB_ROOT_PASSWORD: ${LIBRENMS_DB_ROOT_PASSWORD:-}
+      MARIADB_DATABASE: librenms
+      MARIADB_USER: librenms
+      MARIADB_PASSWORD: ${LIBRENMS_DB_PASSWORD:-}
+    volumes:
+      - nexora-librenms-dbdata:/var/lib/mysql
+      - ./monitoring/librenms/mariadb-entrypoint.sh:/run/nexora/librenms/mariadb-entrypoint.sh:ro
+    entrypoint: ["/bin/sh", "/run/nexora/librenms/mariadb-entrypoint.sh"]
+    networks:
+      - librenms_internal
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    stop_grace_period: 60s
+    restart: unless-stopped
+    logging: *container-logging
+
+  librenms-redis:
+    image: redis:7.4.11-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+    profiles: ["librenms-native"]
+    container_name: nexora-librenms-redis
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      REDIS_PASSWORD: ${LIBRENMS_REDIS_PASSWORD:-}
+    entrypoint: ["/bin/sh", "/run/nexora/librenms/redis-entrypoint.sh"]
+    volumes:
+      - nexora-librenms-redis-data:/data
+      - ./monitoring/librenms/redis-entrypoint.sh:/run/nexora/librenms/redis-entrypoint.sh:ro
+    networks:
+      - librenms_internal
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - redis-cli --no-auth-warning -a "$${REDIS_PASSWORD}" ping | grep -q PONG
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+    logging: *container-logging
+
+  librenms:
+    image: librenms/librenms:26.9.1.1@sha256:814e3fb8d837c65ac51c1d9659ca5f551ed8ea47661ea7de6afbe2081207909b
+    profiles: ["librenms-native"]
+    container_name: nexora-librenms
+    hostname: librenms
+    environment: &librenms-runtime-environment
+      TZ: ${TZ:-Asia/Shanghai}
+      PUID: "1000"
+      PGID: "1000"
+      APP_KEY: ${LIBRENMS_APP_KEY:-}
+      DB_HOST: librenms-db
+      DB_PORT: "3306"
+      DB_NAME: librenms
+      DB_USER: librenms
+      DB_PASSWORD: ${LIBRENMS_DB_PASSWORD:-}
+      DB_TIMEOUT: "60"
+      REDIS_HOST: librenms-redis
+      REDIS_PORT: "6379"
+      REDIS_SCHEME: tcp
+      REDIS_PASSWORD: ${LIBRENMS_REDIS_PASSWORD:-}
+      REDIS_DB: "0"
+      REDIS_CACHE_DB: "1"
+      CACHE_DRIVER: redis
+      SESSION_DRIVER: redis
+      LIBRENMS_WEATHERMAP: "false"
+    entrypoint: ["/bin/sh", "/run/nexora/librenms/runtime-guard.sh"]
+    volumes:
+      - nexora-librenms-data:/data
+      - ./monitoring/librenms/runtime-guard.sh:/run/nexora/librenms/runtime-guard.sh:ro
+    expose:
+      - "8000"
+    # Local-only bootstrap access for the initial admin account. No public
+    # interface is bound; remote setup should use an SSH tunnel.
+    ports:
+      - "127.0.0.1:18000:8000"
+    networks:
+      - librenms_control
+      - librenms_internal
+    depends_on:
+      librenms-db:
+        condition: service_healthy
+      librenms-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- --timeout=5 http://127.0.0.1:8000/ >/dev/null"]
+      interval: 20s
+      timeout: 6s
+      retries: 5
+      start_period: 120s
+    stop_grace_period: 60s
+    restart: unless-stopped
+    logging: *container-logging
+
+  librenms-dispatcher:
+    image: librenms/librenms:26.9.1.1@sha256:814e3fb8d837c65ac51c1d9659ca5f551ed8ea47661ea7de6afbe2081207909b
+    profiles: ["librenms-native"]
+    container_name: nexora-librenms-dispatcher
+    hostname: librenms-dispatcher
+    environment:
+      <<: *librenms-runtime-environment
+      DISPATCHER_NODE_ID: nexora-librenms-dispatcher-1
+      SIDECAR_DISPATCHER: "1"
+    entrypoint: ["/bin/sh", "/run/nexora/librenms/runtime-guard.sh"]
+    volumes:
+      - nexora-librenms-data:/data
+      - ./monitoring/librenms/runtime-guard.sh:/run/nexora/librenms/runtime-guard.sh:ro
+    cap_add:
+      - NET_RAW
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - librenms_internal
+      - librenms_device_management
+      - librenms_metrics
+    depends_on:
+      librenms:
+        condition: service_healthy
+      librenms-db:
+        condition: service_healthy
+      librenms-redis:
+        condition: service_healthy
+      victoriametrics:
+        condition: service_healthy
+    stop_grace_period: 60s
+    restart: unless-stopped
+    logging: *container-logging
+
+volumes:
+  nexora-data:
+    name: nexora-data
+  nexora-backup:
+    name: nexora-backup
+  nexora-pgdata:
+    name: nexora-pgdata
+  nexora-dist:
+    name: nexora-dist
+  nexora-redis-data:
+    name: nexora-redis-data
+  nexora-vmdata:
+    name: nexora-vmdata
+  nexora-vmagent-queue:
+    name: nexora-vmagent-queue
+  nexora-monitoring-artifacts:
+    name: nexora-monitoring-artifacts
+  nexora-grafana-data:
+    name: nexora-grafana-data
+  nexora-seaweedfs-data:
+    name: nexora-seaweedfs-data
+  nexora-librenms-data:
+    name: nexora-librenms-data
+  nexora-librenms-dbdata:
+    name: nexora-librenms-dbdata
+  nexora-librenms-redis-data:
+    name: nexora-librenms-redis-data
+
+networks:
+  monitoring_internal:
+    internal: true
+  librenms_control:
+    internal: true
+  librenms_internal:
+    internal: true
+  librenms_metrics:
+    internal: true
+  # This external, non-internal network must already be attached/routed to the
+  # device-management network. It is not the isolated monitoring_internal net.
+  librenms_device_management:
+    name: ${LIBRENMS_DEVICE_NETWORK_NAME:-nexora-librenms-device-management}
+    external: true
+  grafana_auth:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${GRAFANA_AUTH_PROXY_SUBNET:-172.30.254.0/29}

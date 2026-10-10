@@ -1,0 +1,9 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://support.huawei.com/enterprise/en/doc/EDOC1100333876/94ef2802/displaying-optical-module-information",
+  "vendor": "Huawei",
+  "platform": "VRP8",
+  "model_family": "Huawei Ethernet switches",
+  "command": "display transceiver interface GigabitEthernet 3/0/0 verbose",
+  "source_note": "Official optical module information example; the fixture keeps the common information block."
+}

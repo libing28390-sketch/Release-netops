@@ -1,0 +1,1031 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "id": 900,
+      "title": "采集健康与性能概览",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "id": 1,
+      "title": "Exporter 抓取状态",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#64748B",
+                "value": null
+              },
+              {
+                "color": "#F43F5E",
+                "value": 0
+              },
+              {
+                "color": "#22C55E",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "正常",
+                  "color": "#22C55E"
+                },
+                "0": {
+                  "text": "失败",
+                  "color": "#F43F5E"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "min(up{job=\"platform_postgres_exporter\"})",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "1 表示 exporter 可抓取，0 表示抓取失败；无样本表示采集状态未知。"
+    },
+    {
+      "id": 2,
+      "title": "pg_stat_statements 采集状态",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#64748B",
+                "value": null
+              },
+              {
+                "color": "#F43F5E",
+                "value": 0
+              },
+              {
+                "color": "#22C55E",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "正常",
+                  "color": "#22C55E"
+                },
+                "0": {
+                  "text": "失败",
+                  "color": "#F43F5E"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "min(pg_scrape_collector_success{job=\"platform_postgres_exporter\",collector=\"stat_statements\"})",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "取 exporter 对 stat_statements collector 的抓取状态；无样本表示未知。"
+    },
+    {
+      "id": 3,
+      "title": "SQL 调用速率",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#3B82F6",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(pg_stat_statements_calls_total{job=\"platform_postgres_exporter\",datname=~\"$datname\",user=~\"$db_user\"}[5m]))",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "所选数据库和用户的调用速率，按 5 分钟窗口计算。"
+    },
+    {
+      "id": 4,
+      "title": "执行耗时速率（秒执行时间 / 秒）",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#3B82F6",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(pg_stat_statements_seconds_total{job=\"platform_postgres_exporter\",datname=~\"$datname\",user=~\"$db_user\"}[5m]))",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "pg_stat_statements 累计执行秒数的 5 分钟速率；并发执行时该值可以大于 1。"
+    },
+    {
+      "id": 5,
+      "title": "平均单次执行耗时",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#3B82F6",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "1000 * sum(rate(pg_stat_statements_seconds_total{job=\"platform_postgres_exporter\",datname=~\"$datname\",user=~\"$db_user\"}[5m])) / sum(rate(pg_stat_statements_calls_total{job=\"platform_postgres_exporter\",datname=~\"$datname\",user=~\"$db_user\"}[5m]))",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "累计执行耗时速率除以调用速率，得到按调用数加权的平均毫秒数。"
+    },
+    {
+      "id": 6,
+      "title": "Rows 速率",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#3B82F6",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(pg_stat_statements_rows_total{job=\"platform_postgres_exporter\",datname=~\"$datname\",user=~\"$db_user\"}[5m]))",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "SQL 返回或影响的行数速率；它不表示扫描行数。"
+    },
+    {
+      "id": 7,
+      "title": "数据库 Shared Buffer 命中率",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#3B82F6",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "暂无采集数据",
+                  "color": "#64748B"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "100 * sum(rate(pg_stat_database_blks_hit{job=\"platform_postgres_exporter\",datname=~\"$datname\"}[5m])) / (sum(rate(pg_stat_database_blks_hit{job=\"platform_postgres_exporter\",datname=~\"$datname\"}[5m])) + sum(rate(pg_stat_database_blks_read{job=\"platform_postgres_exporter\",datname=~\"$datname\"}[5m])))",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "按所选数据库统计 shared buffer 命中率；该指标不属于单条 SQL。"
+    },
+    {
+      "id": 901,
+      "title": "整体性能趋势",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 10
+      },
+      "panels": []
+    },
+    {
+      "id": 8,
+      "title": "SQL 调用速率趋势",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 11
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Calls / sec"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3B82F6"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(pg_stat_statements_calls_total{job=\"platform_postgres_exporter\",datname=~\"$datname\",user=~\"$db_user\"}[5m]))",
+          "legendFormat": "Calls / sec",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "SQL 执行耗时速率趋势",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 11
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Execution seconds / sec"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3B82F6"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(pg_stat_statements_seconds_total{job=\"platform_postgres_exporter\",datname=~\"$datname\",user=~\"$db_user\"}[5m]))",
+          "legendFormat": "Execution seconds / sec",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 902,
+      "title": "Top SQL（按 Query ID 汇总，不读取 SQL 文本）",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
+      "panels": []
+    },
+    {
+      "id": 10,
+      "title": "执行耗时速率 Top 10",
+      "type": "table",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 21
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "footer": {
+          "show": false
+        },
+        "enablePagination": true
+      },
+      "targets": [
+        {
+          "expr": "topk(10, sum by (datname, user, queryid) (rate(pg_stat_statements_seconds_total{job=\"platform_postgres_exporter\",datname=~\"$datname\",user=~\"$db_user\"}[5m])))",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "job": true,
+              "instance": true
+            },
+            "indexByName": {
+              "datname": 0,
+              "user": 1,
+              "queryid": 2,
+              "Value": 3
+            },
+            "renameByName": {
+              "datname": "数据库",
+              "user": "数据库用户",
+              "queryid": "Query ID",
+              "Value": "执行耗时速率（秒 / 秒）"
+            }
+          }
+        }
+      ],
+      "description": "按数据库、用户和 Query ID 汇总 Top 10，不读取 SQL 文本。"
+    },
+    {
+      "id": 11,
+      "title": "平均单次执行耗时 Top 10",
+      "type": "table",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 21
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "平均执行耗时（毫秒）"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "footer": {
+          "show": false
+        },
+        "enablePagination": true
+      },
+      "targets": [
+        {
+          "expr": "topk(10, (1000 * sum by (datname, user, queryid) (rate(pg_stat_statements_seconds_total{job=\"platform_postgres_exporter\",datname=~\"$datname\",user=~\"$db_user\"}[5m])) / sum by (datname, user, queryid) (rate(pg_stat_statements_calls_total{job=\"platform_postgres_exporter\",datname=~\"$datname\",user=~\"$db_user\"}[5m]))) and on(datname, user, queryid) (sum by (datname, user, queryid) (rate(pg_stat_statements_calls_total{job=\"platform_postgres_exporter\",datname=~\"$datname\",user=~\"$db_user\"}[5m])) > 0))",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "job": true,
+              "instance": true
+            },
+            "indexByName": {
+              "datname": 0,
+              "user": 1,
+              "queryid": 2,
+              "Value": 3
+            },
+            "renameByName": {
+              "datname": "数据库",
+              "user": "数据库用户",
+              "queryid": "Query ID",
+              "Value": "平均执行耗时（毫秒）"
+            }
+          }
+        }
+      ],
+      "description": "最多显示 10 个 Query ID，按每次调用的加权平均执行时间排序。"
+    },
+    {
+      "id": 903,
+      "title": "统计重置说明",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 30
+      },
+      "panels": []
+    },
+    {
+      "id": 12,
+      "title": "pg_stat_statements 计数器说明",
+      "type": "text",
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 31
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "面板使用 `rate()` 计算 5 分钟速率，Prometheus 会处理可观测到的计数器下降。\n\n执行 `pg_stat_statements_reset()` 等统计重置会重置累计值；postgres_exporter v0.20.1 的 stat_statements 指标不包含该扩展的重置时间，因此本页无法显示具体重置时点。"
+      }
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": [
+    "nexora",
+    "postgresql",
+    "database",
+    "performance"
+  ],
+  "templating": {
+    "list": [
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "label_values(pg_stat_statements_calls_total{job=\"platform_postgres_exporter\"}, datname)",
+        "includeAll": true,
+        "label": "数据库",
+        "multi": true,
+        "name": "datname",
+        "options": [],
+        "query": {
+          "query": "label_values(pg_stat_statements_calls_total{job=\"platform_postgres_exporter\"}, datname)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "label_values(pg_stat_statements_calls_total{job=\"platform_postgres_exporter\",datname=~\"$datname\"}, user)",
+        "includeAll": true,
+        "label": "数据库用户",
+        "multi": true,
+        "name": "db_user",
+        "options": [],
+        "query": {
+          "query": "label_values(pg_stat_statements_calls_total{job=\"platform_postgres_exporter\",datname=~\"$datname\"}, user)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "13 PostgreSQL 数据库性能（PostgreSQL Database Performance）",
+  "description": "展示 postgres_exporter 的 pg_stat_statements counters 与数据库级 shared buffer 命中率。Top SQL 按 Query ID 识别，不使用或展示 SQL 文本。",
+  "uid": "nexora-postgres-performance",
+  "version": 30
+}
