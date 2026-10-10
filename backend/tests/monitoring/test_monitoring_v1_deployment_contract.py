@@ -160,3 +160,25 @@ def test_shared_runtime_path_is_used_by_the_compiled_scrape_config():
     snapshot_path = scrape["scrape_configs"][0]["file_sd_configs"][0]["files"][0]
     assert snapshot_path == "/etc/nexora-collector/runtime/vmagent/targets/snmp_targets.yml"
     assert (ROOT / "Dockerfile").read_text(encoding="utf-8").count("/app/artifacts/monitoring/runtime") >= 1
+
+
+def test_sync_frontend_dist_preserves_versioned_scrape_config_and_target_fallbacks():
+    script = (ROOT / "scripts" / "sync-frontend-dist.sh").read_text(encoding="utf-8")
+    runtime_bootstrap = script.split("# Seed the shared collector runtime", 1)[1].split(
+        "# Existing named volumes", 1
+    )[0]
+
+    assert 'if [ ! -f "$MONITORING_RUNTIME/current_version.json" ]; then' in runtime_bootstrap
+    assert 'cp -a "$MONITORING_DEFAULTS/." "$MONITORING_RUNTIME/"' in runtime_bootstrap
+    assert (
+        'cp -f "$MONITORING_DEFAULTS/vmagent/scrape.yml" '
+        '"$MONITORING_RUNTIME/vmagent/scrape.yml"'
+    ) not in runtime_bootstrap
+
+    for platform in ("linux", "windows"):
+        target = f'vmagent/targets/{platform}_targets.yml'
+        assert (
+            f'if [ ! -f "$MONITORING_RUNTIME/{target}" ] '
+            f'&& [ -f "$MONITORING_DEFAULTS/{target}" ]; then'
+        ) in runtime_bootstrap
+        assert f'cp -f "$MONITORING_DEFAULTS/{target}" "$MONITORING_RUNTIME/{target}"' in runtime_bootstrap

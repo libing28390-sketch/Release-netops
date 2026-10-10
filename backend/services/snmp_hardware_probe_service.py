@@ -38,6 +38,11 @@ from services.librenms_source_policy import (
 logger = logging.getLogger(__name__)
 
 _ENTITY_NAME_OID = "1.3.6.1.2.1.47.1.1.1.1.7"
+_POLL_EXCLUDED_MEASUREMENT_TYPES = frozenset({
+    "voltage_volts",
+    "current_amperes",
+    "sensor_value",
+})
 
 _GENERIC_STATE_VALUE = {
     "ok": 0, "normal": 0, "good": 0, "running": 0, "up": 0,
@@ -2729,6 +2734,16 @@ async def poll_hardware_inventory(
     walk_func: Callable[..., Awaitable[list[tuple[str, str]]]] | None = None,
 ) -> dict[str, int]:
     """Poll every active sensor with exact-instance GET batches, then persist samples."""
+    sensors = [
+        sensor for sensor in sensors
+        if (
+            str(sensor.get("measurement_type") or "").strip().casefold()
+            not in _POLL_EXCLUDED_MEASUREMENT_TYPES
+        )
+    ]
+    if not sensors:
+        return {"good": 0, "missing": 0, "invalid": 0, "unsupported_mapping": 0}
+
     plans: dict[str, dict[str, Any]] = {}
     for sensor in sensors:
         if str(sensor.get("lifecycle_status") or "active") == "retired" or sensor.get("enabled") is False:

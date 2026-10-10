@@ -2435,6 +2435,8 @@ async def _collect_device_observations(
                 snmp_community,
                 port=snmp_port,
                 version=snmp_version,
+                timeout=30.0,
+                max_rows=None,
             )
             if snmp_records is not None:
                 raw_snmp_records = list(snmp_records)

@@ -305,15 +305,13 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
     const headers = topologyAuthHeaders();
     if (!enabled || !isAuthenticated || !headers.Authorization) return;
 
-    // The topology canvas is intentionally capped at the backend's normal
-    // graph page size; requesting 10k rows only increases payload and render
-    // work for a view that already filters to one site when needed.
-    const params = new URLSearchParams({ limit: '5000' });
+    // LLDP discovery must remain visible end to end; omit `limit` so the
+    // topology APIs return every collected link and graph row.
+    const params = new URLSearchParams();
     params.set('include_stale', hideStaleLinks ? 'false' : 'true');
     if (topologySiteFilter !== 'all') params.set('site_id', topologySiteFilter);
     const graphParams = new URLSearchParams({
       view: topologyGraphView,
-      limit: '5000',
       include_stale: hideStaleLinks ? 'false' : 'true',
     });
     if (topologySiteFilter !== 'all') graphParams.set('site_id', topologySiteFilter);

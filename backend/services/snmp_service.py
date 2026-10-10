@@ -369,6 +369,36 @@ def _val_to_str(val) -> str:
     return str(val).strip()
 
 
+def parse_snmp_uptime_seconds(value: Any) -> Optional[float]:
+    """Normalize SNMP TimeTicks and common timedelta text into seconds."""
+    if value is None or isinstance(value, bool):
+        return None
+
+    raw_value = str(value).strip()
+    if not raw_value:
+        return None
+
+    tick_match = re.search(r'\(\s*(\d+)\s*(?:ticks?)?\s*\)', raw_value, re.IGNORECASE)
+    if tick_match:
+        return int(tick_match.group(1)) / 100.0
+
+    duration_match = re.fullmatch(
+        r'(?:(?P<days>\d+)\s+days?,?\s*)?(?P<hours>\d+):(?P<minutes>[0-5]\d):(?P<seconds>[0-5]\d(?:\.\d+)?)',
+        raw_value,
+        re.IGNORECASE,
+    )
+    if duration_match:
+        days = int(duration_match.group('days') or 0)
+        hours = int(duration_match.group('hours'))
+        minutes = int(duration_match.group('minutes'))
+        seconds = float(duration_match.group('seconds'))
+        return float(days * 86400 + hours * 3600 + minutes * 60) + seconds
+
+    if re.fullmatch(r'\d+(?:\.\d+)?', raw_value):
+        return float(raw_value) / 100.0
+    return None
+
+
 _SNMP_TRANSPORT_TIMEOUT_SECONDS = 1
 _SNMP_TRANSPORT_RETRIES = 2
 
@@ -658,7 +688,7 @@ async def _snmp_walk(
     oid: str,
     port: int = 161,
     timeout: float = 5,
-    max_rows: int = 200,
+    max_rows: Optional[int] = 200,
     version: str = '2c',
     raise_on_error: bool = False,
     preserve_octets: bool = False,
@@ -700,7 +730,7 @@ async def _snmp_walk(
             results.append((suffix, v))
             if preserve_octets and isinstance(varbind.value, (bytes, bytearray)):
                 results.octet_values[suffix] = bytes(varbind.value)
-            if len(results) >= max_rows:
+            if max_rows is not None and len(results) >= max_rows:
                 results.truncated = True
                 return
 
@@ -1031,7 +1061,7 @@ async def collect_snmp_lldp_neighbors(
     port: int = 161,
     version: str = '2c',
     timeout: float = 30.0,
-    max_rows: int = 10000,
+    max_rows: Optional[int] = 10000,
 ) -> list[dict[str, Any]]:
     """Collect LLDP neighbor relationships via the standard IEEE 802.1AB LLDP-MIB.
 
@@ -1058,7 +1088,7 @@ async def collect_snmp_lldp_neighbors(
             collection_status: str,
             *,
             truncated_oids: Optional[list[str]] = None,
-            max_rows: int = 10000,
+            max_rows: Optional[int] = 10000,
         ) -> None:
             super().__init__(records)
             self.collection_status = collection_status

@@ -231,7 +231,7 @@ async def trigger_discovery(
 
 @router.get('/topology/links')
 def get_links(
-    limit: int = Query(default=5000, ge=1, le=20000),
+    limit: int | None = Query(default=None, ge=1, le=20000),
     site_id: str | None = Query(default=None),
     rack_id: str | None = Query(default=None, max_length=128),
     include_stale: bool = Query(default=False),
@@ -239,9 +239,10 @@ def get_links(
 ):
     """Return current topology links, optionally including stale evidence.
 
-    The default 5000 cap protects against meshed-DC blowups; the Topology
-    canvas asks explicitly for stale links when the historical-evidence toggle
-    is enabled. Current topology must not silently render expired neighbors.
+    An explicit limit bounds the response for callers that need pagination-like
+    behavior. Omitting it returns the complete authorized link set. The
+    Topology canvas asks explicitly for stale links when the historical-evidence
+    toggle is enabled. Current topology must not silently render expired neighbors.
     """
     # v3 invalidates responses generated before the physical-link read model
     # started carrying aggregation parent/member fields.
@@ -360,8 +361,9 @@ def get_links(
             if link_key and link_key not in existing_link_keys:
                 managed_links.append(link)
                 existing_link_keys.add(link_key)
-    links_truncated = len(managed_links) > limit
-    managed_links = managed_links[:limit]
+    links_truncated = limit is not None and len(managed_links) > limit
+    if limit is not None:
+        managed_links = managed_links[:limit]
     unmanaged_links = unmanaged.get('unmanaged_links', [])
     decorated_links = decorate_topology_link_evidence([*managed_links, *unmanaged_links])
     managed_links = decorated_links[:len(managed_links)]
@@ -379,7 +381,7 @@ def get_links(
         ),
         'unmanaged_nodes': unmanaged.get('unmanaged_nodes', []),
         'unmanaged_links': unmanaged_links,
-        'truncated': links_truncated or len(managed_links) >= limit,
+        'truncated': links_truncated or (limit is not None and len(managed_links) >= limit),
         'limit': limit,
         'graph_read_model': graph_read_model,
     }
@@ -556,7 +558,7 @@ def get_evidence_graph(
     request: Request,
     view: str = Query(default='all', pattern='^(all|physical|l2|l3|logical|site|external|oob)$'),
     site_id: str | None = Query(default=None),
-    limit: int = Query(default=5000, ge=1, le=20000),
+    limit: int | None = Query(default=None, ge=1, le=20000),
     include_stale: bool = Query(default=False),
     tenant_id: str | None = Query(default=None),
 ):

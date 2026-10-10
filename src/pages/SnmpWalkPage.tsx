@@ -44,28 +44,42 @@ const SnmpWalkPage: React.FC<SnmpWalkPageProps> = ({ language, currentUserRole, 
         icon={Activity}
         title={zh ? 'SNMP 诊断' : 'SNMP Diagnostics'}
         subtitle={zh
-          ? '设备识别、硬件发现和即时诊断统一执行固定版本的 LibreNMS 规则。'
-          : 'Device identification, hardware discovery, and on-demand diagnostics all use the pinned LibreNMS rules.'}
+          ? '查看设备系统信息、LLDP 邻居和硬件规则诊断。'
+          : 'View device system information, LLDP neighbors, and hardware rule diagnostics.'}
       />
       <div className="min-h-0 flex-1 overflow-y-auto p-4 md:p-5">
         <div className="mx-auto w-full max-w-[1680px] space-y-3.5 2xl:max-w-[1760px]">
-          <div className="flex flex-wrap items-center gap-3 rounded-xl border border-sky-200/90 bg-gradient-to-r from-sky-50 to-white px-4 py-3 text-sky-950 shadow-sm dark:border-sky-900/70 dark:from-sky-950/35 dark:to-slate-900/60 dark:text-sky-100">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-sky-100 text-sky-700 dark:bg-sky-900/60 dark:text-sky-300">
-              <ShieldCheck size={17} />
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className="text-xs font-semibold">{zh ? '统一规则来源' : 'Single rule source'}</div>
-              <p className="mt-0.5 text-[11px] leading-5 text-sky-900/75 dark:text-sky-100/75">
-                {zh
-                  ? '诊断不再接受任意 OID、厂商快捷项或自定义预设；服务端按设备身份匹配 LibreNMS 规则，并展示命中规则及源文件。'
-                  : 'Diagnostics no longer accept arbitrary OIDs, vendor shortcuts, or custom presets. The server matches LibreNMS rules to device identity and shows the matched source file.'}
-              </p>
+          <section className="rounded-xl border border-sky-200/90 bg-gradient-to-r from-sky-50 to-white px-4 py-3.5 text-sky-950 shadow-sm dark:border-sky-900/70 dark:from-sky-950/35 dark:to-slate-900/60 dark:text-sky-100">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="flex min-w-0 items-start gap-2.5">
+                <ShieldCheck size={17} className="mt-0.5 shrink-0 text-sky-700 dark:text-sky-300" />
+                <div className="min-w-0">
+                  <h2 className="text-xs font-semibold">{zh ? '三步完成设备诊断' : 'Device diagnostics in three steps'}</h2>
+                  <p className="mt-0.5 text-[11px] leading-5 text-sky-900/70 dark:text-sky-100/70">
+                    {zh ? '只读查询标准系统信息和 LLDP 邻居；不会修改设备配置。凭据由服务端从设备档案读取。' : 'Read standard system information and LLDP neighbors without changing device configuration. Credentials are resolved server-side.'}
+                  </p>
+                </div>
+              </div>
+              <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-sky-200/80 bg-white/80 px-2.5 py-1 text-[10px] font-medium text-sky-800/80 dark:border-sky-800 dark:bg-sky-950/60 dark:text-sky-200/80">
+                <ShieldCheck size={11} />
+                {zh ? '安全只读' : 'Read-only'}
+              </span>
             </div>
-            <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-sky-200/80 bg-white/80 px-2.5 py-1 text-[10px] font-medium text-sky-800/80 dark:border-sky-800 dark:bg-sky-950/60 dark:text-sky-200/80">
-              <ShieldCheck size={11} />
-              {zh ? '只读探测 · 凭据保留在服务端' : 'Read-only · credentials stay server-side'}
-            </span>
-          </div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-3">
+              <div className="flex items-center gap-2 rounded-lg border border-sky-200/60 bg-white/65 px-2.5 py-2 text-[10px] dark:border-sky-900/60 dark:bg-black/10">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-sky-100 font-semibold text-sky-800 dark:bg-sky-900/70 dark:text-sky-200">1</span>
+                <span>{zh ? '选择已纳管设备' : 'Choose a managed device'}</span>
+              </div>
+              <div className="flex items-center gap-2 rounded-lg border border-sky-200/60 bg-white/65 px-2.5 py-2 text-[10px] dark:border-sky-900/60 dark:bg-black/10">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-sky-100 font-semibold text-sky-800 dark:bg-sky-900/70 dark:text-sky-200">2</span>
+                <span>{zh ? '查询系统信息与 LLDP' : 'Query system information and LLDP'}</span>
+              </div>
+              <div className="flex items-center gap-2 rounded-lg border border-sky-200/60 bg-white/65 px-2.5 py-2 text-[10px] dark:border-sky-900/60 dark:bg-black/10">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-sky-100 font-semibold text-sky-800 dark:bg-sky-900/70 dark:text-sky-200">3</span>
+                <span>{zh ? '按需展开技术详情' : 'Expand technical details when needed'}</span>
+              </div>
+            </div>
+          </section>
 
           {!canRunProbe ? (
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/25 dark:text-amber-200">
@@ -91,7 +105,7 @@ const SnmpWalkPage: React.FC<SnmpWalkPageProps> = ({ language, currentUserRole, 
                       )}
                     </div>
                     <p className="mt-1 text-[11px] leading-4 text-black/50 dark:text-white/50">
-                      {zh ? '指定 CMDB 设备；凭据和探测 OID 均由服务端及 LibreNMS 规则确定。' : 'Select a CMDB device; credentials and probe OIDs are resolved server-side from LibreNMS rules.'}
+                      {zh ? '系统信息与邻居数据通过只读诊断查询。' : 'System and neighbor data are queried through read-only diagnostics.'}
                     </p>
                   </div>
                 </div>
@@ -123,7 +137,7 @@ const SnmpWalkPage: React.FC<SnmpWalkPageProps> = ({ language, currentUserRole, 
                   showCandidateSelector={false}
                   showHardwareValidationTab
                   showSystemInfoTab
-                  initialTab="snmpwalk"
+                  initialTab="system"
                   showToast={showToast}
                 />
               </div>

@@ -2932,6 +2932,208 @@ async def test_snmp_hardware_discovery(payload: dict = Body(...), user=require_r
     return {"success": True, "data": await diagnose_librenms_hardware(targets[0])}
 
 
+@router.post("/platform-registry/snmp-system-lldp-test")
+async def test_snmp_system_lldp(payload: dict = Body(...), user=require_role("Operator")):
+    """Read standard MIB-2 system scalars and LLDP for one scoped CMDB device."""
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != {"device_id"}
+        or not isinstance(payload.get("device_id"), str)
+        or not payload["device_id"].strip()
+    ):
+        raise HTTPException(status_code=400, detail={
+            "code": "DEVICE_ID_REQUIRED",
+            "message": "Only a managed device_id is accepted for this diagnostic.",
+        })
+
+    device_id = payload["device_id"].strip()
+    targets = _find_snmp_walk_targets(device_id=device_id, user=user)
+    if not targets:
+        raise HTTPException(status_code=404, detail={
+            "code": "DEVICE_NOT_FOUND",
+            "message": "Managed device not found",
+        })
+    device = targets[0]
+
+    from services.snmp_service import (
+        SYS_CONTACT,
+        SYS_DESCR,
+        SYS_LOCATION,
+        SYS_NAME,
+        SYS_OBJECT_ID,
+        SYS_UPTIME,
+        _snmp_get_versioned,
+        collect_snmp_lldp_neighbors,
+        parse_snmp_uptime_seconds,
+    )
+
+    hostname = str(device.get("hostname") or "").strip()
+    system_info: dict[str, Any] = {
+        "sys_name": None,
+        "sys_descr": None,
+        "sys_object_id": None,
+        "sys_uptime": None,
+        "uptime": None,
+        "uptime_seconds": None,
+        "sys_location": None,
+        "sys_contact": None,
+    }
+    lldp: dict[str, Any] = {
+        "status": "unsupported",
+        "neighbors": [],
+        "truncated_oids": [],
+        "max_rows": None,
+        "message": "Bound SNMP credentials are unavailable.",
+    }
+    data: dict[str, Any] = {
+        "device_id": str(device.get("id") or device_id),
+        "hostname": hostname,
+        "host": str(device.get("ip_address") or "").strip(),
+        "version": None,
+        "status": "unsupported",
+        "system_info": system_info,
+        "lldp": lldp,
+    }
+
+    try:
+        credentials = resolve_collector_credentials(device)
+        snmp_credentials = credentials.get("snmp") if isinstance(credentials, Mapping) else None
+        if not isinstance(snmp_credentials, Mapping):
+            raise ValueError("SNMP credential profile is unavailable")
+        host = str(snmp_credentials.get("server") or device.get("ip_address") or "").strip()
+        data["host"] = host
+        try:
+            version, transport_credentials = _snmp_request_transport(snmp_credentials)
+        except HTTPException:
+            # An unconfigured or invalid bound profile is not a successful probe,
+            # but return the stable diagnostic contract without exposing details.
+            configured_version = str(snmp_credentials.get("version") or "").strip().casefold()
+            version_aliases = {
+                "1": "1", "v1": "1",
+                "2": "2c", "2c": "2c", "v2c": "2c",
+                "3": "3", "v3": "3", "snmpv3": "3",
+            }
+            data["version"] = version_aliases.get(configured_version)
+            return {"success": True, "data": data}
+
+        data["version"] = version
+        port = int(snmp_credentials.get("port") or 161)
+        if not host:
+            data["status"] = "failed"
+            lldp.update({"status": "failed", "message": "The bound SNMP target is unavailable."})
+            return {"success": True, "data": data}
+
+        import asyncio
+
+        scalar_specs = (
+            ("sys_name", SYS_NAME),
+            ("sys_descr", SYS_DESCR),
+            ("sys_object_id", SYS_OBJECT_ID),
+            ("sys_uptime", SYS_UPTIME),
+            ("sys_location", SYS_LOCATION),
+            ("sys_contact", SYS_CONTACT),
+        )
+
+        async def read_system_scalar(name: str, oid: str) -> tuple[str, Optional[str]]:
+            try:
+                value = await asyncio.wait_for(
+                    _snmp_get_versioned(host, transport_credentials, oid, port, version),
+                    timeout=3.5,
+                )
+                return name, str(value).strip() if value is not None and str(value).strip() else None
+            except Exception:
+                return name, None
+
+        scalar_results = await asyncio.gather(
+            *(read_system_scalar(name, oid) for name, oid in scalar_specs)
+        )
+        system_info.update(dict(scalar_results))
+
+        raw_uptime = system_info["sys_uptime"]
+        if raw_uptime:
+            uptime_seconds = parse_snmp_uptime_seconds(raw_uptime)
+            system_info["uptime_seconds"] = uptime_seconds
+            if uptime_seconds is not None:
+                whole_seconds = int(uptime_seconds)
+                days, remainder = divmod(whole_seconds, 86400)
+                hours, remainder = divmod(remainder, 3600)
+                minutes, seconds = divmod(remainder, 60)
+                system_info["uptime"] = f"{days}d {hours}h {minutes}m {seconds}s"
+            else:
+                system_info["uptime"] = raw_uptime
+
+        neighbor_result = None
+        try:
+            neighbor_result = await asyncio.wait_for(
+                collect_snmp_lldp_neighbors(
+                    host,
+                    transport_credentials,
+                    port=port,
+                    version=version,
+                    timeout=30.0,
+                    max_rows=None,
+                ),
+                timeout=35.0,
+            )
+            neighbors = [dict(item) for item in neighbor_result if isinstance(item, Mapping)]
+            lldp_status = str(getattr(neighbor_result, "collection_status", "success") or "success")
+            if lldp_status not in {"success", "partial", "unsupported", "failed"}:
+                lldp_status = "success"
+            lldp.update({
+                "status": lldp_status,
+                "neighbors": neighbors,
+                "truncated_oids": list(getattr(neighbor_result, "truncated_oids", []) or []),
+                "max_rows": None,
+                "message": (
+                    "LLDP collection was partial because one or more walks failed or timed out."
+                    if lldp_status == "partial"
+                    else "LLDP collection completed; no neighbors were returned."
+                    if not neighbors
+                    else ""
+                ),
+            })
+        except Exception as exc:
+            exception_text = str(exc).casefold()
+            timed_out = (
+                isinstance(exc, TimeoutError)
+                or type(exc).__name__.casefold() == "timeouterror"
+                or "timeout" in exception_text
+                or "timed out" in exception_text
+            )
+            lldp.update({
+                "status": "failed",
+                "neighbors": [],
+                "truncated_oids": [],
+                "message": (
+                    "LLDP collection timed out before all LLDP tables were read."
+                    if timed_out
+                    else "LLDP collection failed (" + type(exc).__name__ + ")."
+                ),
+            })
+
+        system_values = [system_info.get(key) for key in ("sys_name", "sys_descr", "sys_object_id")]
+        if all(value is not None for value in system_values):
+            system_status = "success"
+        elif any(value is not None for value in system_values):
+            system_status = "partial"
+        else:
+            system_status = "failed"
+
+        if system_status == "success" and lldp["status"] == "success":
+            data["status"] = "success"
+        elif system_status in {"success", "partial"} or lldp["status"] in {"success", "partial"}:
+            data["status"] = "partial"
+        else:
+            data["status"] = "failed"
+    except Exception:
+        # Credential resolution errors are intentionally generic so vault or
+        # transport details cannot be reflected to the diagnostic caller.
+        data["status"] = "failed"
+        lldp.update({"status": "failed", "message": "Bound SNMP credentials could not be resolved."})
+
+    return {"success": True, "data": data}
+
+
 def test_snmp_walk(payload: dict = Body(default={}), user=require_role("Operator")):
     """Reject arbitrary SNMP walks; diagnostics are tied to LibreNMS rules."""
     raise HTTPException(status_code=410, detail={

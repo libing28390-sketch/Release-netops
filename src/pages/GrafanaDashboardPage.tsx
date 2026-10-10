@@ -115,6 +115,14 @@ export const GRAFANA_DASHBOARDS = [
     descEn: 'Alert age, MTTA/MTTR, duplicate open events and notification outcomes',
     icon: Activity,
   },
+  {
+    uid: 'nexora-postgres-performance',
+    titleZh: '13 PostgreSQL 数据库性能',
+    titleEn: '13 PostgreSQL Database Performance',
+    descZh: 'pg_stat_statements 采集状态、Top SQL 调用速率/执行耗时/Rows 与数据库级 Shared Buffer 命中率；按 Query ID 展示，不含 SQL 文本',
+    descEn: 'pg_stat_statements collection, Top SQL call rate/execution time/rows and database-level shared buffer hit rate; identified by Query ID without SQL text',
+    icon: HardDrive,
+  },
 ];
 
 const TIME_RANGES = [

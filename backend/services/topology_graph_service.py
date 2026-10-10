@@ -1157,7 +1157,7 @@ def _graph_rows(
     tenant_id: str,
     view: str,
     site_id: str | None,
-    limit: int,
+    limit: int | None,
     include_stale: bool,
     device_ids: list[str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -1192,11 +1192,15 @@ def _graph_rows(
         device_placeholders = ",".join("?" for _ in normalized_device_ids)
         node_where.append(f"device_id IN ({device_placeholders})")
         node_params.extend(normalized_device_ids)
-    rows = conn.execute(
+    node_query = (
         "SELECT id, tenant_id, node_type, canonical_key, display_name, device_id, site_id, role_identity, function, zone, status, metadata_json, layout_override_json, first_seen, last_seen FROM topology_nodes WHERE "
-        + " AND ".join(node_where) + " ORDER BY display_name LIMIT ?",
-        (*node_params, limit),
-    ).fetchall()
+        + " AND ".join(node_where) + " ORDER BY display_name"
+    )
+    node_query_params = list(node_params)
+    if limit is not None:
+        node_query += " LIMIT ?"
+        node_query_params.append(limit)
+    rows = conn.execute(node_query, tuple(node_query_params)).fetchall()
     nodes = []
     for row in rows:
         item = dict(row)
@@ -1234,11 +1238,15 @@ def _graph_rows(
         relation_placeholders = ",".join("?" for _ in relation_types)
         edge_where.append(f"relation_type IN ({relation_placeholders})")
         edge_params.extend(sorted(relation_types))
-    edge_rows = conn.execute(
+    edge_query = (
         "SELECT topology_edges.id, source_node_id, target_node_id, source_interface, target_interface, relation_type, direction, existence, existence_confidence, semantic_confidence, status, is_manual, manual_confirmed, semantic_relation, metadata_json, first_seen, last_seen, stale_at, COALESCE(evidence_counts.evidence_count, 0) AS evidence_count FROM topology_edges LEFT JOIN (SELECT edge_id, COUNT(*) AS evidence_count FROM topology_edge_evidence GROUP BY edge_id) AS evidence_counts ON evidence_counts.edge_id = topology_edges.id WHERE "
-        + " AND ".join(edge_where) + " ORDER BY last_seen DESC LIMIT ?",
-        (*edge_params, limit),
-    ).fetchall()
+        + " AND ".join(edge_where) + " ORDER BY last_seen DESC"
+    )
+    edge_query_params = list(edge_params)
+    if limit is not None:
+        edge_query += " LIMIT ?"
+        edge_query_params.append(limit)
+    edge_rows = conn.execute(edge_query, tuple(edge_query_params)).fetchall()
     edges = []
     for row in edge_rows:
         item = dict(row)
@@ -1262,11 +1270,11 @@ def get_graph(
     tenant_id: str = "tenant-default",
     view: str = "all",
     site_id: str | None = None,
-    limit: int = 5000,
+    limit: int | None = None,
     include_stale: bool = False,
     device_ids: list[str] | None = None,
 ) -> dict[str, Any]:
-    safe_limit = max(1, min(int(limit), 20_000))
+    safe_limit = None if limit is None else max(1, min(int(limit), 20_000))
     with get_db_connection() as conn:
         nodes, edges = _graph_rows(conn, tenant_id, view, site_id, safe_limit, include_stale, device_ids)
         graph = {"nodes": nodes, "edges": edges}
@@ -1298,17 +1306,20 @@ def get_graph(
                     group_params.extend(normalized_device_ids)
                     member_scope_sql = f" AND n_scope.device_id IN ({device_placeholders})"
                     member_scope_params.extend(normalized_device_ids)
-            group_rows = conn.execute(
+            group_query = (
                 "SELECT id, node_id, group_type, display_name, status, metadata_json "
-                f"FROM topology_groups WHERE {group_where} LIMIT ?",
-                (*group_params, safe_limit),
-            ).fetchall()
+                f"FROM topology_groups WHERE {group_where}"
+            )
+            group_query_params = list(group_params)
+            if safe_limit is not None:
+                group_query += " LIMIT ?"
+                group_query_params.append(safe_limit)
+            group_rows = conn.execute(group_query, tuple(group_query_params)).fetchall()
             for row in group_rows:
                 item = dict(row)
                 item["metadata"] = _json_load(item.pop("metadata_json", None), {}) or {}
                 groups.append(item)
-            member_rows = conn.execute(
-                f"""
+            member_query = f"""
                 SELECT m.group_id, m.node_id, m.member_role, m.status, m.metadata_json
                 FROM topology_group_members m
                 JOIN topology_groups g ON g.id = m.group_id AND g.tenant_id = m.tenant_id
@@ -1316,10 +1327,12 @@ def get_graph(
                   ON n_scope.id = m.node_id AND n_scope.tenant_id = m.tenant_id
                 WHERE m.tenant_id = ? AND m.status = 'active' AND g.status = 'active'
                 {member_scope_sql}
-                LIMIT ?
-                """,
-                (tenant_id, *member_scope_params, safe_limit),
-            ).fetchall()
+                """
+            member_query_params: list[Any] = [tenant_id, *member_scope_params]
+            if safe_limit is not None:
+                member_query += " LIMIT ?"
+                member_query_params.append(safe_limit)
+            member_rows = conn.execute(member_query, tuple(member_query_params)).fetchall()
             for row in member_rows:
                 item = dict(row)
                 item["metadata"] = _json_load(item.pop("metadata_json", None), {}) or {}
@@ -1340,7 +1353,7 @@ def get_graph(
             "layout": layout_graph(graph),
             "view": view,
             "include_stale": include_stale,
-            "truncated": len(nodes) >= safe_limit or len(edges) >= safe_limit,
+            "truncated": safe_limit is not None and (len(nodes) >= safe_limit or len(edges) >= safe_limit),
         }
 
 
@@ -1502,7 +1515,7 @@ def get_physical_links(
     *,
     tenant_id: str = "tenant-default",
     site_id: str | None = None,
-    limit: int = 5000,
+    limit: int | None = None,
     include_stale: bool = False,
     device_ids: list[str] | None = None,
 ) -> list[dict[str, Any]]:

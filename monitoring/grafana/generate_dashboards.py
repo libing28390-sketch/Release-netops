@@ -1249,17 +1249,7 @@ def build_device_dashboard():
     component_state = hardware_metric("nexora_hw_component_state")
     component_present = hardware_metric("nexora_hw_component_present")
     power = hardware_metric("nexora_hw_power_watts")
-    voltage = hardware_metric("nexora_hw_voltage_volts")
-    current = hardware_metric("nexora_hw_current_amperes")
     optical_power = hardware_metric("nexora_hw_optical_power_dbm")
-    generic_sensor = hardware_metric("nexora_hw_sensor_value")
-    quality = hardware_metric("nexora_hw_sensor_quality")
-    component_state_quality = hardware_metric(
-        "nexora_hw_sensor_quality", raw_extra_filters=',measurement_type="component_state"'
-    )
-    last_success_age = (
-        f"(time() - {hardware_metric('nexora_hw_sensor_last_success_timestamp_seconds')})"
-    )
 
     optical_filter = ',group=~"(?i).*(transceiver|optical).*"'
     non_optical_filter = ',group!~"(?i).*(transceiver|optical).*"'
@@ -1560,12 +1550,8 @@ def build_device_dashboard():
                 "format": "table", "instant": True, "refId": "A",
             },
             {
-                "expr": f"max by ({component_state_identity}, quality) ({component_state_quality})",
-                "format": "table", "instant": True, "refId": "B",
-            },
-            {
                 "expr": component_presence_expr,
-                "format": "table", "instant": True, "refId": "C",
+                "format": "table", "instant": True, "refId": "B",
             },
         ],
         transformations=[
@@ -1581,21 +1567,19 @@ def build_device_dashboard():
                         "measurement_type": True,
                         "hostname": True, "site_name": True, "vendor": True,
                         "platform": True, "role": True, "window": True,
-                        "Value #B": True,
                     },
                     "indexByName": {
                         "asset_id": 0, "sensor_name": 1, "group": 2,
                         "component_class": 3, "raw_state": 4,
                         "state_description": 5, "Value #A": 6,
-                        "quality": 7, "Value #C": 8,
+                        "Value #B": 7,
                     },
                     "renameByName": {
                         "asset_id": "资产 ID", "sensor_name": "部件名称",
                         "group": "分组",
                         "component_class": "部件类别",
                         "raw_state": "原始状态", "state_description": "状态说明",
-                        "Value #A": "规范状态", "quality": "采集质量",
-                        "Value #C": "明确存在性",
+                        "Value #A": "规范状态", "Value #B": "明确存在性",
                     },
                 },
             },
@@ -1610,124 +1594,6 @@ def build_device_dashboard():
         "matcher": {"id": "byName", "options": "明确存在性"},
         "properties": [{"id": "custom.cellOptions", "value": {"type": "color-text"}}],
     })
-    capability_selector = 'asset_id="$asset_id",asset_id!=""'
-    capability_identity = "tenant_id, asset_id, device_id, source_type, component_class"
-    capability_status_expr = (
-        f"max by ({capability_identity}, status, coverage_complete) "
-        f"(nexora_hw_capability_status{{{capability_selector}}})"
-    )
-    capability_active_expr = (
-        f"max by ({capability_identity}) "
-        f"(nexora_hw_capability_active_sensor_count{{{capability_selector}}})"
-    )
-    capability_discovered_expr = (
-        f"max by ({capability_identity}) "
-        f"(nexora_hw_capability_last_discovered_count{{{capability_selector}}})"
-    )
-    capability_info_expr = (
-        f"max by ({capability_identity}, reason, reason_code) "
-        f"(nexora_hw_capability_info{{{capability_selector}}})"
-    )
-    capability_success_age_expr = (
-        f"(max by ({capability_identity}) "
-        f"(time() - nexora_hw_capability_last_success_timestamp_seconds{{{capability_selector}}}) "
-        f"or on({capability_identity}) "
-        f"(max by ({capability_identity}) "
-        f"(nexora_hw_capability_info{{{capability_selector}}}) * 0 - 1))"
-    )
-    capability_status_mappings = [{
-        "type": "value",
-        "options": {
-            "success": {"text": "成功", "color": HEALTHY_COLOR},
-            "partial": {"text": "部分成功", "color": WARNING_COLOR},
-            "failed": {"text": "失败", "color": CRITICAL_COLOR},
-            "unsupported": {"text": "不支持", "color": NEUTRAL_COLOR},
-            "not_found": {"text": "未发现", "color": NEUTRAL_COLOR},
-            "unknown": {"text": "未知", "color": NEUTRAL_COLOR},
-        },
-    }]
-    capability_complete_mappings = [{
-        "type": "value",
-        "options": {
-            "true": {"text": "完整", "color": HEALTHY_COLOR},
-            "false": {"text": "不完整", "color": WARNING_COLOR},
-        },
-    }]
-    capability_table = table_panel(
-        20,
-        "硬件发现能力与数量",
-        capability_status_expr,
-        0,
-        54,
-        24,
-        8,
-        targets=[
-            {"expr": capability_status_expr, "format": "table", "instant": True, "refId": "A"},
-            {"expr": capability_active_expr, "format": "table", "instant": True, "refId": "B"},
-            {"expr": capability_discovered_expr, "format": "table", "instant": True, "refId": "C"},
-            {"expr": capability_info_expr, "format": "table", "instant": True, "refId": "D"},
-            {"expr": capability_success_age_expr, "format": "table", "instant": True, "refId": "E"},
-        ],
-        transformations=[
-            {
-                "id": "joinByLabels",
-                "options": {"labels": [
-                    "tenant_id", "asset_id", "device_id", "source_type", "component_class",
-                ]},
-            },
-            {
-                "id": "organize",
-                "options": {
-                    "excludeByName": {
-                        "Time": True, "__name__": True, "tenant_id": True,
-                        "device_id": True, "source_type": True,
-                        "rule_version": True, "discovery_version": True,
-                        "artifact_version": True,
-                        "Value #A": True, "Value #D": True,
-                    },
-                    "indexByName": {
-                        "asset_id": 0, "component_class": 1,
-                        "status": 2, "coverage_complete": 3, "Value #B": 4,
-                        "Value #C": 5, "reason_code": 6, "reason": 7,
-                        "Value #E": 8,
-                    },
-                    "renameByName": {
-                        "asset_id": "资产 ID", "component_class": "硬件类别",
-                        "status": "发现状态",
-                        "coverage_complete": "覆盖完整性",
-                        "Value #B": "活动传感器数", "Value #C": "最近发现数",
-                        "reason_code": "原因码", "reason": "原因说明",
-                        "Value #E": "距最近成功（秒）",
-                    },
-                },
-            },
-        ],
-        value_col_name="距最近成功（秒）",
-        unit="s",
-        extra_value_mappings={
-            "发现状态": capability_status_mappings,
-            "覆盖完整性": capability_complete_mappings,
-            "距最近成功（秒）": [{
-                "type": "value",
-                "options": {"-1": {"text": "无成功记录", "color": NEUTRAL_COLOR}},
-            }],
-        },
-        description="显示各类硬件的发现状态、数量和最近采集时间。",
-    )
-    capability_table["fieldConfig"]["overrides"].extend([
-        {
-            "matcher": {"id": "byName", "options": "发现状态"},
-            "properties": [{"id": "custom.cellOptions", "value": {"type": "color-text"}}],
-        },
-        {
-            "matcher": {"id": "byName", "options": "覆盖完整性"},
-            "properties": [{"id": "custom.cellOptions", "value": {"type": "color-text"}}],
-        },
-        {
-            "matcher": {"id": "byName", "options": "距最近成功（秒）"},
-            "properties": [{"id": "custom.cellOptions", "value": {"type": "color-text"}}],
-        },
-    ])
     panels = [
         identity_panel,
         stat_panel(
@@ -1843,30 +1709,10 @@ def build_device_dashboard():
             unit="watt", value_name="功率",
             description="功率读数不代表电源状态。",
         ),
-        capability_table,
-        current_table(
-            21, "传感器数据质量", quality, 0, 62, 8,
-            value_name="质量值",
-            description="显示设备返回的采集质量值，系统不解释未确认的代码。",
-        ),
-        current_table(
-            22, "距最近一次成功采集", last_success_age, 8, 62, 8,
-            unit="s", value_name="距上次成功",
-            description=None,
-        ),
-        stat_panel(
-            24, "全局硬件指标渲染错误数", "nexora_hw_sensor_render_errors",
-            16, 62, 8, 8,
-            unit="short", thresholds=[
-                {"color": NEUTRAL_COLOR, "value": None},
-                {"color": CRITICAL_COLOR, "value": 1},
-            ], graph_mode="none",
-            description="这是全局 Grafana 硬件指标渲染错误数，不随当前设备筛选变化；0 表示当前无渲染错误。",
-        ),
         table_panel(
             23, "设备端口实时状态清单",
             f"ifOperStatus{{{dev_sel}}} {dev_if_join}",
-            0, 70, 12, 8,
+            0, 54, 12, 8,
             transformations=clean_organize_transformation(
                 "运行状态", interface_description_label="ifAlias"
             ),
@@ -1890,7 +1736,7 @@ def build_device_dashboard():
                     "refId": "B",
                 },
             ],
-            12, 70, 12, 8, unit="bps",
+            12, 54, 12, 8, unit="bps",
             color_overrides=[
                 timeseries_color_override("byRegexp", ".*入流量$", INBOUND_COLOR),
                 timeseries_color_override("byRegexp", ".*出流量$", OUTBOUND_COLOR),
@@ -1898,43 +1744,8 @@ def build_device_dashboard():
             description=None,
         ),
         current_table(
-            28, "光模块功率当前读数（dBm）", optical_power, 0, 78, 12,
+            28, "光模块功率当前读数（dBm）", optical_power, 0, 62, 12,
             unit="dBm", value_name="光功率",
-            description=None,
-        ),
-        current_table(
-            29, "其他 LibreNMS 传感器读数", generic_sensor, 12, 78, 12,
-            value_name="当前值",
-            description="单位尚未统一，数值按设备原始单位显示。",
-        ),
-        timeseries_panel(
-            30, "电压传感器走势", [{
-                "expr": f"max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class) ({voltage})",
-                "legendFormat": "{{sensor_name}} · {{group}}",
-                "refId": "A",
-            }],
-            0, 86, 12, 8, unit="volt",
-            legend_display_mode="list", legend_placement="bottom", legend_calcs=[],
-            description=None,
-        ),
-        timeseries_panel(
-            31, "电流传感器走势", [{
-                "expr": f"max by (tenant_id, asset_id, sensor_key, sensor_name, group, index, component_class) ({current})",
-                "legendFormat": "{{sensor_name}} · {{group}}",
-                "refId": "A",
-            }],
-            12, 86, 12, 8, unit="amp",
-            legend_display_mode="list", legend_placement="bottom", legend_calcs=[],
-            description=None,
-        ),
-        current_table(
-            32, "电压传感器当前读数", voltage, 0, 94, 12,
-            unit="volt", value_name="电压",
-            description=None,
-        ),
-        current_table(
-            33, "电流传感器当前读数", current, 12, 94, 12,
-            unit="amp", value_name="电流",
             description=None,
         ),
     ]
@@ -1949,11 +1760,12 @@ def build_device_dashboard():
             ("设备身份与健康摘要", 0),
             ("硬件部件趋势", 7),
             ("硬件部件当前读数", 31),
-            ("发现状态与采集质量", 55),
-            ("接口诊断", 71),
-            ("电压与电流传感器", 87),
+            ("接口诊断", 55),
         ],
     )
+    for panel in panels:
+        if panel.get("type") == "row" and panel.get("title") == "接口诊断":
+            panel["id"] = 904
     panels = normalize_summary_cards(panels)
 
     asset_query = (

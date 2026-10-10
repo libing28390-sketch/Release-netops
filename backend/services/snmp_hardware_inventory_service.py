@@ -17,6 +17,11 @@ _DISCOVERY_STATUSES = {"success", "partial", "failed", "unsupported", "not_found
 _QUALITY_VALUES = {"good", "missing", "invalid", "stale", "unsupported_mapping"}
 _PRESENCE_VALUES = {"present", "not_present"}
 _SENSOR_SAMPLE_BATCH_SIZE = 500
+_METRIC_EXPORT_EXCLUDED_MEASUREMENT_TYPES = frozenset({
+    "voltage_volts",
+    "current_amperes",
+    "sensor_value",
+})
 _METRIC_FAMILIES = {
     "cpu_usage_percent": "nexora_hw_cpu_usage_percent",
     "memory_used_bytes": "nexora_hw_memory_used_bytes",
@@ -1105,6 +1110,9 @@ def render_hardware_metrics(sensors: Sequence[Mapping[str, Any]], device_labels:
     for sensor in sensors:
         if not isinstance(sensor, Mapping):
             raise HardwareInventoryError("each renderer sensor must be a mapping")
+        measurement_type = str(sensor.get("measurement_type") or "").strip().casefold()
+        if measurement_type in _METRIC_EXPORT_EXCLUDED_MEASUREMENT_TYPES:
+            continue
         lifecycle = str(sensor.get("lifecycle_status") or "active")
         if lifecycle == "retired" or sensor.get("enabled") is False:
             continue
@@ -1172,7 +1180,6 @@ def render_hardware_metrics(sensors: Sequence[Mapping[str, Any]], device_labels:
                 _metric_value(success_timestamp) or "0",
             )
 
-        measurement_type = str(sensor.get("measurement_type") or "").lower()
         family = _METRIC_FAMILIES.get(measurement_type)
         if family and quality == "good":
             value = _metric_value(sensor.get("last_value"))

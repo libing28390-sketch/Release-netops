@@ -26,6 +26,11 @@ PARTIAL_DISCOVERY_RETRY_SECONDS = 60 * 60
 FAILED_DISCOVERY_RETRY_SECONDS = 15 * 60
 SAMPLE_INTERVAL_SECONDS = 60
 DISCOVERY_VERSION = "nexora-librenms-rules-hardware-v8"
+_POLL_EXCLUDED_MEASUREMENT_TYPES = frozenset({
+    "voltage_volts",
+    "current_amperes",
+    "sensor_value",
+})
 
 
 def hardware_sample_interval_seconds() -> int:
@@ -154,6 +159,9 @@ def _load_active_sensors(device_id: str) -> list[dict[str, Any]]:
         for row in rows:
             if row.get("enabled") is False:
                 continue
+            measurement_type = str(row.get("measurement_type") or "").strip().casefold()
+            if measurement_type in _POLL_EXCLUDED_MEASUREMENT_TYPES:
+                continue
             if (row.get("metadata") or {}).get("collection_version") != DISCOVERY_VERSION:
                 continue
 
@@ -173,6 +181,9 @@ def _poll_due(sensors: list[Mapping[str, Any]], now: datetime) -> bool:
     if not sensors:
         return False
     for sensor in sensors:
+        measurement_type = str(sensor.get("measurement_type") or "").strip().casefold()
+        if measurement_type in _POLL_EXCLUDED_MEASUREMENT_TYPES:
+            continue
         age = _seconds_since(sensor.get("last_sample_at"), now)
         if age is None or age >= hardware_sample_interval_seconds():
             return True
@@ -196,6 +207,9 @@ def _device_sensor_poll_state(device_id: str, now: datetime) -> tuple[bool, bool
               FROM snmp_hardware_sensors
              WHERE device_id = ?
                AND enabled IS TRUE
+               AND LOWER(TRIM(COALESCE(measurement_type, ''))) NOT IN (
+                   'voltage_volts', 'current_amperes', 'sensor_value'
+               )
                AND metadata_json->>'collection_version' = ?
             """,
             (cutoff, device_id, DISCOVERY_VERSION),

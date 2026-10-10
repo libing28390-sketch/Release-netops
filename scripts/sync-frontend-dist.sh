@@ -21,18 +21,14 @@ index_tmp="$SHARED_DIST/.index.html.$$"
 cp -a "$SOURCE_DIST/index.html" "$index_tmp"
 mv -f "$index_tmp" "$SHARED_DIST/index.html"
 
-# Seed or refresh the shared collector runtime when no versioned artifact is published.
-# A published artifact replaces this directory atomically with current_version.json;
-# never overwrite a versioned artifact, but keep default baseline in sync with code updates.
+# Seed the shared collector runtime before the first versioned artifact is published.
+# Once current_version.json exists, the published scrape config is authoritative.
+# Only backfill missing target files, preserving any materialized targets.
 if [ ! -f "$MONITORING_RUNTIME/current_version.json" ]; then
     mkdir -p "$MONITORING_RUNTIME"
     cp -a "$MONITORING_DEFAULTS/." "$MONITORING_RUNTIME/"
 else
-    # Keep vmagent scrape config in sync while preserving materialized targets
     mkdir -p "$MONITORING_RUNTIME/vmagent/targets"
-    if [ -f "$MONITORING_DEFAULTS/vmagent/scrape.yml" ]; then
-        cp -f "$MONITORING_DEFAULTS/vmagent/scrape.yml" "$MONITORING_RUNTIME/vmagent/scrape.yml"
-    fi
     if [ ! -f "$MONITORING_RUNTIME/vmagent/targets/linux_targets.yml" ] && [ -f "$MONITORING_DEFAULTS/vmagent/targets/linux_targets.yml" ]; then
         cp -f "$MONITORING_DEFAULTS/vmagent/targets/linux_targets.yml" "$MONITORING_RUNTIME/vmagent/targets/linux_targets.yml"
     fi
