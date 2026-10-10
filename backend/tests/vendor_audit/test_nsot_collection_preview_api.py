@@ -101,8 +101,9 @@ def test_operation_catalog_and_scheduled_preview_share_nsot_template_operations(
     collector_keys = {item["collector_key"] for item in catalog_data["operations"]}
     assert "mac_table" in collector_keys
     assert "vlan" in collector_keys
-    assert "eigrp" not in collector_keys
-    assert "rip" not in collector_keys
+    # The profile catalog exposes dynamic routing operations; the device's
+    # layer2_switch plan below must still keep them out of its active preview.
+    assert {"eigrp", "rip"} <= collector_keys
     assert all(isinstance(item.get("action_bound"), bool) for item in catalog_data["operations"])
     assert all(
         "action_code" in command

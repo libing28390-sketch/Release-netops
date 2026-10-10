@@ -66,7 +66,7 @@ def test_snmp_first_collection_upserts_l2_and_l3_interfaces(mock_device, monkeyp
         return mock_snmp_data
 
     monkeypatch.setattr(
-        "services.snmp_service.collect_interface_data",
+        "services.snmp_service.collect_interface_status_data",
         mock_collect_interface_data,
     )
 
@@ -168,8 +168,8 @@ def test_on_demand_wan_interface_refresh_collects_and_persists_one_device(monkey
     monkeypatch.setattr(interface_collection_service, "_load_device", lambda device_id: device)
     monkeypatch.setattr("services.vault_service.resolve_collector_credentials", lambda _device: credentials)
 
-    async def fake_collect(ip, community, port):
-        calls["collector"] = (ip, community, port)
+    async def fake_collect(ip, community, port, version='2c'):
+        calls["collector"] = (ip, community, port, version)
         return collected
 
     monkeypatch.setattr("services.snmp_service.collect_interface_inventory", fake_collect)
@@ -184,6 +184,6 @@ def test_on_demand_wan_interface_refresh_collects_and_persists_one_device(monkey
     result = interface_collection_service.refresh_snmp_interface_inventory("wan-refresh-device")
 
     assert result == {"device_id": "wan-refresh-device", "interface_count": 1, "updated_count": 1}
-    assert calls["collector"] == ("192.0.2.11", "test-only-community", 1161)
+    assert calls["collector"] == ("192.0.2.11", "test-only-community", 1161, "2c")
     assert calls["upsert"][0] is device
     assert calls["upsert"][1][0]["if_index"] == 42

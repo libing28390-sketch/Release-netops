@@ -37,7 +37,7 @@ def _patch_collector(monkeypatch, devices, arp_entries, mac_records):
         'get_arp_table',
         lambda: {'entries': list(arp_entries)},
     )
-    monkeypatch.setattr(ip_locator_service, '_load_eligible_devices', lambda: list(devices))
+    monkeypatch.setattr(ip_locator_service, '_load_eligible_devices', lambda **_kwargs: list(devices))
     monkeypatch.setattr(
         ip_locator_service,
         'filter_devices',
@@ -47,11 +47,15 @@ def _patch_collector(monkeypatch, devices, arp_entries, mac_records):
     monkeypatch.setattr(
         ip_locator_service,
         '_collect_full_mac_table_from_device',
-        lambda device: [
-            dict(record)
-            for record in mac_records
-            if str(record.get('switch_id') or '') == str(device.get('id') or '')
-        ],
+        lambda device: {
+            'success': True,
+            'transport': 'snmp',
+            'records': [
+                dict(record)
+                for record in mac_records
+                if str(record.get('switch_id') or '') == str(device.get('id') or '')
+            ],
+        },
     )
     monkeypatch.setattr(
         ip_locator_service,
@@ -152,7 +156,14 @@ def test_collector_leaves_unassigned_device_site_empty(isolated_db, monkeypatch)
                 'interface': 'Vlan30',
             },
         ],
-        [],
+        [{
+            'mac': '00aabbccddee',
+            'switch_id': 'device-unassigned',
+            'switch_name': 'SW-UNASSIGNED',
+            'port': 'Gi1/0/30',
+            'vlan': '30',
+            'type': 'dynamic',
+        }],
     )
 
     ip_locator_service.run_endpoint_collector()
@@ -184,7 +195,14 @@ def test_collector_refreshes_site_id_after_device_site_move(isolated_db, monkeyp
             'interface': 'Vlan40',
         },
     ]
-    _patch_collector(monkeypatch, devices, arp_entries, [])
+    _patch_collector(monkeypatch, devices, arp_entries, [{
+        'mac': '00deadbeef01',
+        'switch_id': 'device-move',
+        'switch_name': 'SW-MOVE',
+        'port': 'Gi1/0/40',
+        'vlan': '40',
+        'type': 'dynamic',
+    }])
 
     ip_locator_service.run_endpoint_collector()
     assert _endpoint_rows()[0]['site'] == 'site-before'

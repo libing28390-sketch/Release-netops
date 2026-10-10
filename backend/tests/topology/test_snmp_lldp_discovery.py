@@ -99,6 +99,7 @@ def test_topology_service_collects_snmp_first_without_cli_probe(platform):
     resolved_credentials = {
         'ssh': {'username': 'operator', 'password': 'test-only'},
         'snmp': {
+            'configured': True,
             'server': '10.20.30.40',
             'community': 'asset-template-community',
             'port': 1161,
@@ -144,6 +145,8 @@ def test_topology_service_collects_snmp_first_without_cli_probe(platform):
         'asset-template-community',
         port=1161,
         version='2c',
+        timeout=30.0,
+        max_rows=None,
     )
 
 
@@ -157,7 +160,7 @@ def test_topology_service_returns_normal_empty_snmp_snapshot_without_cli():
     }
     resolved_credentials = {
         'ssh': {'username': 'operator', 'password': 'test-only'},
-        'snmp': {'server': '10.20.30.40', 'community': 'test-only', 'port': 161, 'version': '2c'},
+        'snmp': {'configured': True, 'server': '10.20.30.40', 'community': 'test-only', 'port': 161, 'version': '2c'},
     }
     attempted_methods = []
 
@@ -203,7 +206,7 @@ def test_topology_service_falls_back_to_cli_after_snmp_exception():
     }], 'success')
     resolved_credentials = {
         'ssh': {'username': 'operator', 'password': 'test-only'},
-        'snmp': {'server': '10.20.30.40', 'community': 'test-only', 'port': 161, 'version': '2c'},
+        'snmp': {'configured': True, 'server': '10.20.30.40', 'community': 'test-only', 'port': 161, 'version': '2c'},
     }
     attempted_methods = []
 
@@ -247,7 +250,7 @@ def test_topology_service_falls_back_to_cli_for_unusable_snmp_records():
     }], 'success')
     resolved_credentials = {
         'ssh': {'username': 'operator', 'password': 'test-only'},
-        'snmp': {'server': '10.20.30.40', 'community': 'test-only', 'port': 161, 'version': '2c'},
+        'snmp': {'configured': True, 'server': '10.20.30.40', 'community': 'test-only', 'port': 161, 'version': '2c'},
     }
     attempted_methods = []
     unusable_snmp_records = [{
@@ -303,7 +306,7 @@ def test_topology_service_keeps_snmp_neighbor_with_management_ip_but_no_name():
     }])
     resolved_credentials = {
         'ssh': {},
-        'snmp': {'server': '10.20.30.40', 'community': 'public', 'port': 161, 'version': '2c'},
+        'snmp': {'configured': True, 'server': '10.20.30.40', 'community': 'public', 'port': 161, 'version': '2c'},
     }
 
     with patch('services.topology_service.resolve_collector_credentials', return_value=resolved_credentials):
@@ -341,7 +344,7 @@ def test_topology_service_combines_partial_snmp_with_complete_ssh_snapshot():
     }], 'success')
     resolved_credentials = {
         'ssh': {'username': 'operator', 'password': 'test-only'},
-        'snmp': {'server': '10.254.0.1', 'community': 'test-only', 'port': 161, 'version': '2c'},
+        'snmp': {'configured': True, 'server': '10.254.0.1', 'community': 'test-only', 'port': 161, 'version': '2c'},
     }
     attempted_methods = []
 
@@ -409,7 +412,7 @@ def test_topology_service_preserves_partial_snmp_when_ssh_fallback_fails():
     }], 'partial')
     resolved_credentials = {
         'ssh': {'username': 'operator', 'password': 'test-only'},
-        'snmp': {'server': '10.254.0.1', 'community': 'test-only', 'port': 161, 'version': '2c'},
+        'snmp': {'configured': True, 'server': '10.254.0.1', 'community': 'test-only', 'port': 161, 'version': '2c'},
     }
 
     with patch('services.topology_service.resolve_collector_credentials', return_value=resolved_credentials):

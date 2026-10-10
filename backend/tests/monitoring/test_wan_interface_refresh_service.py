@@ -29,8 +29,8 @@ def test_refresh_snmp_interface_inventory_persists_only_valid_indexed_ports(monk
     collection_calls = []
     persisted = []
 
-    async def fake_collect(ip, community, port):
-        collection_calls.append((ip, community, port))
+    async def fake_collect(ip, community, port, version='2c'):
+        collection_calls.append((ip, community, port, version))
         return [
             {"name": "GigabitEthernet0/0", "if_index": 17},
             {"name": "GigabitEthernet0/1", "if_index": 0},
@@ -45,7 +45,7 @@ def test_refresh_snmp_interface_inventory_persists_only_valid_indexed_ports(monk
 
     result = interface_collection_service.refresh_snmp_interface_inventory("device-a")
 
-    assert collection_calls == [("192.0.2.25", "read-only-test", 1161)]
+    assert collection_calls == [("192.0.2.25", "read-only-test", 1161, "2c")]
     assert result == {"device_id": "device-a", "interface_count": 1, "updated_count": 1}
     assert [row["if_index"] for row in persisted] == [17]
 
@@ -56,7 +56,8 @@ def test_refresh_snmp_interface_inventory_reports_poll_failure_without_secret(mo
     device = {"id": "device-a", "ip_address": "192.0.2.10"}
     _configured_device_credentials(monkeypatch, device)
 
-    async def fail_collect(_ip, community, _port):
+    async def fail_collect(_ip, community, _port, version='2c'):
+        del version
         raise TimeoutError(f"poll timeout for {community}")
 
     monkeypatch.setattr(snmp_service, "collect_interface_inventory", fail_collect)
@@ -75,10 +76,11 @@ def test_refresh_snmp_interface_inventory_rejects_empty_or_invalid_interface_dat
     device = {"id": "device-a", "ip_address": "192.0.2.10"}
     _configured_device_credentials(monkeypatch, device)
 
-    async def no_valid_interfaces(ip, community, port):
+    async def no_valid_interfaces(ip, community, port, version='2c'):
         assert ip == "192.0.2.25"
         assert community == "read-only-test"
         assert port == 1161
+        assert version == "2c"
         return [{"name": "GigabitEthernet0/0", "if_index": 0}]
 
     monkeypatch.setattr(snmp_service, "collect_interface_inventory", no_valid_interfaces)

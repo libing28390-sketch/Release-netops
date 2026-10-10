@@ -199,14 +199,15 @@ def test_unified_nsot_sync_runs_route_collection_with_collection_policy(monkeypa
     ip_locator_service.run_unified_nsot_sync(device_ids=["device-1"])
 
     assert ("arp", {"device_ids": {"device-1"}}) in calls
-    assert ("endpoint", {"refresh_arp": False, "device_ids": {"device-1"}}) in calls
-    assert ("routes", {"respect_collection_policy": True, "device_ids": {"device-1"}}) in calls
-    assert ("neighbors", {
+    assert ("endpoint", {
+        "refresh_arp": False,
         "device_ids": {"device-1"},
-        "disabled_protocols": {"eigrp", "rip"},
+        "sync_inventory": False,
     }) in calls
+    assert ("routes", {"respect_collection_policy": True, "device_ids": {"device-1"}}) in calls
+    assert ("neighbors", {"device_ids": {"device-1"}}) in calls
     assert ("bgp", {"device_ids": {"device-1"}}) in calls
-    assert ("topology", {"device_ids": {"device-1"}}) in calls
+    assert ("topology", {"device_ids": {"device-1"}, "collect_interfaces": False}) in calls
     assert ("interface_status", {"target_device_ids": {"device-1"}}) in calls
 
 
@@ -604,7 +605,7 @@ def test_locator_does_not_report_lag_as_host_port_when_trace_is_incomplete(monke
 
     monkeypatch.setattr(ip_locator_service, "_get_ip_locator_context", lambda *_args: {})
     monkeypatch.setattr(ip_locator_service, "_get_ip_network_role", lambda *_args: None)
-    monkeypatch.setattr(ip_locator_service, "_load_eligible_devices", lambda: devices)
+    monkeypatch.setattr(ip_locator_service, "_load_eligible_devices", lambda **_kwargs: devices)
     monkeypatch.setattr(ip_locator_service, "_load_realtime_arp_devices", lambda _devices: [devices[0]])
     monkeypatch.setattr(ip_locator_service, "_get_cached_arp", lambda _ip: None)
     monkeypatch.setattr(ip_locator_service, "_get_cached_endpoint", lambda _ip: None)
@@ -745,7 +746,7 @@ def test_locator_live_status_enrichment_reads_only_the_target_access_port(monkey
     monkeypatch.setattr(
         ip_locator_service,
         "_load_eligible_devices",
-        lambda: [{"id": "device-locator-switch", "hostname": "LSW4", "platform": "huawei_vrp"}],
+        lambda **_kwargs: [{"id": "device-locator-switch", "hostname": "LSW4", "platform": "huawei_vrp"}],
     )
     monkeypatch.setattr(
         "services.read_only_collection_adapter.collect_read_only_evidence",
@@ -1074,12 +1075,14 @@ Total matching items on slot 0 displayed = 1
 """
     monkeypatch.setattr(ip_locator_service, "_send_command", lambda *_args: output)
 
-    records = ip_locator_service._collect_full_mac_table_from_device({
+    result = ip_locator_service._collect_full_mac_table_from_device({
         **DEVICE,
         "platform": "huawei_vrp",
     })
 
-    assert records == [{
+    assert result["success"] is True
+    assert result["transport"] == "ssh"
+    assert result["records"] == [{
         "mac": "4c1fcc3c7de1",
         "vlan": "20",
         "port": "GE0/0/4",
@@ -1101,11 +1104,16 @@ def test_endpoint_mac_records_are_persisted_for_cmdb_and_offline_lookup(isolated
         conn.close()
 
     persisted = ip_locator_service._persist_mac_table_records([{
-        "switch_id": "device-mac-1",
-        "mac": "4c1f-cc3c-7de1",
-        "vlan": "20",
-        "port": "GE0/0/4",
-        "type": "dynamic",
+        "device_id": "device-mac-1",
+        "success": True,
+        "transport": "snmp",
+        "records": [{
+            "switch_id": "device-mac-1",
+            "mac": "4c1f-cc3c-7de1",
+            "vlan": "20",
+            "port": "GE0/0/4",
+            "type": "dynamic",
+        }],
     }])
 
     conn = isolated_db["module"].get_db_connection()
@@ -1181,6 +1189,7 @@ def test_full_arp_collection_uses_normalized_records_and_raw_fallback(monkeypatc
                 {
                     "key": "arp",
                     "success": True,
+                    "parse_status": "matched",
                     "commands": ["show arp"],
                     "parser": "ntc-templates",
                     "records": [
@@ -1287,7 +1296,7 @@ def test_arp_sweep_device_selection_uses_bounded_cursor_batch(monkeypatch):
         {"id": f"device-{index}", "role": "router", "ip_address": f"10.0.0.{index}"}
         for index in range(5)
     ]
-    monkeypatch.setattr(ip_locator_service, "_load_eligible_devices", lambda: devices)
+    monkeypatch.setattr(ip_locator_service, "_load_eligible_devices", lambda **_kwargs: devices)
     monkeypatch.setattr(ip_locator_service, "_load_svi_evidence", lambda: set())
     monkeypatch.setattr(ip_locator_service, "_load_arp_collection_state", lambda: {})
     monkeypatch.setattr(ip_locator_service, "ARP_MAX_DEVICES_PER_SWEEP", 2)

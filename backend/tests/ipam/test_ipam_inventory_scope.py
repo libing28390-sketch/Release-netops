@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 import ipaddress
+from datetime import datetime, timedelta, timezone
 
 from database import get_db_connection
 from services.ipam_service import create_address, create_subnet, get_ipam_reconciliation, list_ip_inventory
@@ -32,14 +33,15 @@ def _device(*, tenant: str = 'tenant-default', site: str = 'site-scope-a', devic
         conn.commit()
 
 
-def _endpoint(*, address: str = '10.254.120.10', vrf: str = 'BLUE', site: str = 'SW-NAME-IS-NOT-A-SITE', device: str = 'device-scope', hostname: str = 'observed-host') -> None:
+def _endpoint(*, address: str = '10.254.120.10', vrf: str = 'BLUE', site: str = 'SW-NAME-IS-NOT-A-SITE', device: str = 'device-scope', hostname: str = 'observed-host', seen_at: datetime | None = None) -> None:
+    observed_at = (seen_at or datetime.now(timezone.utc)).isoformat()
     with get_db_connection() as conn:
         conn.execute(
             '''INSERT INTO network_endpoints
                    (id, ip, mac, hostname, switch_id, switch_port, vrf, site, first_seen, last_seen, is_active)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)''',
-            (f'endpoint-{address}', address, '00:11:22:33:44:55', hostname, device, 'Ethernet1', vrf, site,
-             '2026-10-02T00:00:00+00:00', '2026-10-02T00:00:00+00:00'),
+            (f'endpoint-{address}-{vrf}-{device}', address, '00:11:22:33:44:55', hostname, device, 'Ethernet1', vrf, site,
+            observed_at, observed_at),
         )
         conn.commit()
 
@@ -78,10 +80,12 @@ def test_reconciliation_preserves_both_vrf_records_and_finding_identity(isolated
     _seed_scope(vrf='vrf-scope-b', vrf_name='RED')
     _device()
     first = create_address(_prefix()['id'], address='10.254.120.10', hostname='documented-a')
-    second = create_address(_prefix(vrf='vrf-scope-b')['id'], address='10.254.120.10', hostname='documented-b')
+    second = create_address(_prefix(vrf='vrf-scope-b')['id'], address='10.254.120.11', hostname='documented-b')
 
     empty_observation = get_ipam_reconciliation()
-    assert {item['id'] for item in empty_observation['stale_ip_addresses']} == {first['id'], second['id']}
+    assert empty_observation['stale_ip_addresses'] == []
+    old_observation = datetime.now(timezone.utc) - timedelta(days=8)
+    _endpoint(address='10.254.120.11', vrf='RED', seen_at=old_observation)
     _endpoint()
     result = get_ipam_reconciliation()
     assert [item['id'] for item in result['stale_ip_addresses']] == [second['id']]
@@ -103,7 +107,7 @@ def test_same_vrf_name_in_two_tenants_does_not_merge_addresses(isolated_db) -> N
     items = {item['id']: item for item in list_ip_inventory()['items']}
     assert items[first['id']]['source'] == 'manual'
     assert items[second['id']]['source'] == 'manual+discovered'
-    assert [item['id'] for item in get_ipam_reconciliation()['stale_ip_addresses']] == [first['id']]
+    assert get_ipam_reconciliation()['stale_ip_addresses'] == []
 
 
 @pytest.mark.parametrize('observed_vrf', ['', 'UNKNOWN-VRF'])
@@ -121,9 +125,13 @@ def test_unknown_or_global_observation_does_not_merge_named_vrf_records(isolated
     discovered = next(item for item in inventory['items'] if item['is_discovered'])
     assert discovered['subnet_id'] == ''
     result = get_ipam_reconciliation()
-    assert len(result['stale_ip_addresses']) == 2
-    assert len(result['undocumented_endpoints']) == 1
-    assert result['undocumented_endpoints'][0]['subnet_id'] == ''
+    assert result['stale_ip_addresses'] == []
+    if observed_vrf:
+        assert result['undocumented_endpoints'] == []
+        assert result['summary']['total_unscoped'] == 1
+    else:
+        assert len(result['undocumented_endpoints']) == 1
+        assert result['undocumented_endpoints'][0]['subnet_id'] == ''
 
 
 def test_longest_prefix_match_stays_in_endpoint_vrf(isolated_db) -> None:
@@ -190,9 +198,15 @@ def test_orphan_endpoint_cannot_assume_default_tenant_and_enrich_same_ip(isolate
     discovered = next(item for item in inventory['items'] if item['is_discovered'])
     assert discovered['tenant_id'] == ''
     assert discovered['subnet_id'] == ''
-    assert get_ipam_reconciliation()['summary'] == {
-        'total_undocumented': 1, 'total_stale': 2, 'total_mismatched': 0,
-    }
+    summary = get_ipam_reconciliation()['summary']
+    assert {
+        key: summary[key]
+        for key in ('total_undocumented', 'total_stale', 'total_mismatched', 'total_unscoped')
+    } == {'total_undocumented': 0, 'total_stale': 0, 'total_mismatched': 0, 'total_unscoped': 1}
+    assert summary['endpoint_cache_fresh'] is True
+    assert summary['latest_endpoint_seen']
+    assert summary['current_window_minutes'] == 15
+    assert summary['stale_after_days'] == 7
 
 
 def test_missing_parent_keeps_address_vrf_while_global_parent_remains_global() -> None:
@@ -237,7 +251,9 @@ def test_equal_prefixes_without_known_site_are_not_assigned_arbitrarily(isolated
     item = list_ip_inventory()['items'][0]
     assert item['subnet_id'] == ''
     assert item['site_id'] == ''
-    assert get_ipam_reconciliation()['undocumented_endpoints'][0]['subnet_id'] == ''
+    reconciliation = get_ipam_reconciliation()
+    assert reconciliation['undocumented_endpoints'] == []
+    assert reconciliation['summary']['total_unscoped'] == 1
 
 
 def test_ipv6_scoped_matching_normalizes_address_text(isolated_db) -> None:
@@ -256,5 +272,12 @@ def test_ipv6_scoped_matching_normalizes_address_text(isolated_db) -> None:
 def test_empty_inventory_and_reconciliation_keep_response_shape(isolated_db) -> None:
     assert list_ip_inventory()['total'] == 0
     assert get_ipam_reconciliation()['summary'] == {
-        'total_undocumented': 0, 'total_stale': 0, 'total_mismatched': 0,
+        'total_undocumented': 0,
+        'total_stale': 0,
+        'total_mismatched': 0,
+        'total_unscoped': 0,
+        'endpoint_cache_fresh': False,
+        'latest_endpoint_seen': '',
+        'current_window_minutes': 15,
+        'stale_after_days': 7,
     }

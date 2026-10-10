@@ -45,7 +45,7 @@ def _truncated_batch():
 
 def _credentials(*, ssh=False):
     return {
-        'snmp': {'server': '10.0.0.1', 'community': 'synthetic-only', 'port': 161, 'version': '2c'},
+        'snmp': {'configured': True, 'server': '10.0.0.1', 'community': 'synthetic-only', 'port': 161, 'version': '2c'},
         'ssh': {
             'username': 'test-operator' if ssh else '',
             'password': 'synthetic-only' if ssh else '',

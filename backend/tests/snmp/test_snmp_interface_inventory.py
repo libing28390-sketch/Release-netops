@@ -8,7 +8,8 @@ from services import snmp_service
 def test_interface_inventory_reads_only_if_name_table(monkeypatch) -> None:
     calls = []
 
-    async def fake_bulk_walk(ip, community, oid, port):
+    async def fake_bulk_walk(ip, community, oid, port=161, *, version='2c'):
+        assert version == '2c'
         calls.append((ip, community, oid, port))
         return [("17", "GigabitEthernet0/0"), ("18", "GigabitEthernet0/1")]
 
@@ -26,7 +27,8 @@ def test_interface_inventory_reads_only_if_name_table(monkeypatch) -> None:
 def test_interface_inventory_falls_back_to_if_descr_and_drops_invalid_indexes(monkeypatch) -> None:
     calls = []
 
-    async def fake_bulk_walk(ip, community, oid, port):
+    async def fake_bulk_walk(ip, community, oid, port=161, *, version='2c'):
+        assert version == '2c'
         calls.append(oid)
         if oid == snmp_service.IF_NAME:
             return []

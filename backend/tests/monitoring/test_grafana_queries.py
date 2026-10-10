@@ -41,7 +41,7 @@ def test_all_generated_dashboards_validate_the_complete_panel_catalog(catalog):
         panel_count += len(panels)
         validate_dashboard(filename, dashboard)
 
-    assert panel_count == 282
+    assert panel_count == 271
 
 
 @pytest.mark.parametrize(
@@ -260,9 +260,9 @@ def test_device_hardware_trends_use_compact_legends_and_keep_sensor_query_scope(
         11: "nexora_hw_fan_speed_rpm",
         12: "nexora_hw_power_watts",
         27: "nexora_hw_optical_power_dbm",
-        30: "nexora_hw_voltage_volts",
-        31: "nexora_hw_current_amperes",
     }
+    assert 30 not in device
+    assert 31 not in device
 
     for panel_id, metric in expected_metrics.items():
         panel = device[panel_id]

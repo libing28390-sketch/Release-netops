@@ -38,11 +38,15 @@ def test_interface_snapshot_clears_missing_current_rows(monkeypatch):
         CREATE TABLE interfaces (
             id TEXT PRIMARY KEY, device_id TEXT, interface_name TEXT, description TEXT,
             admin_status TEXT, oper_status TEXT, primary_ip TEXT,
-            ip_address TEXT, ip_prefix_length INTEGER, is_l3 BOOLEAN,
+            ip_address TEXT, ip_prefix_length INTEGER, ip_version INTEGER, is_l3 BOOLEAN,
             ip_enabled INTEGER, switchport_mode TEXT, interface_type TEXT,
             last_seen TEXT
         );
-        INSERT INTO interfaces VALUES
+        INSERT INTO interfaces (
+            id, device_id, interface_name, description, admin_status, oper_status,
+            primary_ip, ip_address, ip_prefix_length, is_l3, ip_enabled,
+            switchport_mode, interface_type, last_seen
+        ) VALUES
             ('old', 'dev-1', 'Ethernet0/2', '', 'up', 'up', '10.0.0.2', '10.0.0.2', 24, TRUE, 1, 'routed', 'physical', NULL),
             ('current', 'dev-1', 'LoopBack0', '', 'down', 'down', '10.0.0.9', '10.0.0.9', 32, TRUE, 1, 'routed', 'physical', NULL);
         """
@@ -80,11 +84,15 @@ def test_interface_snapshot_uses_boolean_flags_for_postgresql_compatibility(monk
         CREATE TABLE interfaces (
             id TEXT PRIMARY KEY, device_id TEXT, interface_name TEXT, description TEXT,
             admin_status TEXT, oper_status TEXT, primary_ip TEXT,
-            ip_address TEXT, ip_prefix_length INTEGER, is_l3 BOOLEAN,
+            ip_address TEXT, ip_prefix_length INTEGER, ip_version INTEGER, is_l3 BOOLEAN,
             ip_enabled INTEGER, switchport_mode TEXT, interface_type TEXT,
             last_seen TEXT
         );
-        INSERT INTO interfaces VALUES
+        INSERT INTO interfaces (
+            id, device_id, interface_name, description, admin_status, oper_status,
+            primary_ip, ip_address, ip_prefix_length, is_l3, ip_enabled,
+            switchport_mode, interface_type, last_seen
+        ) VALUES
             ('old', 'dev-1', 'Ethernet0/2', '', 'up', 'up', '10.0.0.2', '10.0.0.2', 24, TRUE, 1, 'routed', 'physical', NULL),
             ('current', 'dev-1', 'LoopBack0', '', 'down', 'down', '10.0.0.9', '10.0.0.9', 32, TRUE, 1, 'routed', 'physical', NULL);
         """

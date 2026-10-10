@@ -115,18 +115,15 @@ def test_all_zero_attached_table_is_authoritative_empty_snapshot(monkeypatch):
 
 def test_ifname_can_fall_back_to_ifdescr(monkeypatch):
     tables = _base_tables()
+    tables[service.IF_DESCR_OID] = list(tables[service.IF_NAME_OID])
     tables[service.IF_NAME_OID] = []
-    tables[service.IF_DESCR_OID] = [
-        ("50", "GigabitEthernet1/0/1"),
-        ("5130", "Bridge-Aggregation12"),
-    ]
     tables[service.ATTACHED_AGG_ID_OID] = [("50", "5130")]
     _install_walk(monkeypatch, tables)
 
     result = collect()
 
     assert result["status"] == "success"
-    assert result["records"][0]["member_interface"] == "GigabitEthernet1/0/1"
+    assert result["records"][0]["member_interface"] == "Ten-GigabitEthernet1/0/1"
 
 
 def test_missing_optional_status_and_speed_remain_unknown(monkeypatch):

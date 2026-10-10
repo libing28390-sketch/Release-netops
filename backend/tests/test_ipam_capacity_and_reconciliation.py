@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from backend.tests.pg_test_utils import postgresql_test_driver
 from services import ipam_service
 
@@ -7,8 +9,9 @@ from services import ipam_service
 def _connection() -> postgresql_test_driver.Connection:
     conn = postgresql_test_driver.connect()
     conn.row_factory = postgresql_test_driver.Row
+    endpoint_seen_at = datetime.now(timezone.utc).isoformat()
     conn.executescript(
-        '''
+        f'''
         CREATE TABLE sites (
             id TEXT PRIMARY KEY,
             site_name TEXT,
@@ -20,7 +23,10 @@ def _connection() -> postgresql_test_driver.Connection:
             name TEXT,
             status TEXT,
             site_id TEXT,
-            network_type TEXT
+            network_type TEXT,
+            gateway TEXT DEFAULT '',
+            gateway_device_id TEXT DEFAULT '',
+            gateway_interface_id TEXT DEFAULT ''
         );
         CREATE TABLE ip_addresses (
             id TEXT PRIMARY KEY,
@@ -32,7 +38,15 @@ def _connection() -> postgresql_test_driver.Connection:
             status TEXT,
             device_type TEXT,
             interface_name TEXT,
+            interface_id TEXT,
+            site_id TEXT,
+            purpose TEXT,
             created_at TEXT
+        );
+        CREATE TABLE interfaces (
+            id TEXT PRIMARY KEY,
+            interface_type TEXT,
+            interface_role TEXT
         );
         CREATE TABLE devices (
             id TEXT PRIMARY KEY,
@@ -84,7 +98,7 @@ def _connection() -> postgresql_test_driver.Connection:
         INSERT INTO network_endpoints VALUES (
             'endpoint-1', '10.0.0.20', 'aa:bb:cc:dd:ee:20', 'host-20', 'Example',
             'device-1', 'Gi1/0/20', '100', 'default', 'SHA',
-            '2026-07-28T08:00:00+00:00', 'arp', '95%', 1
+            '{endpoint_seen_at}', 'arp', '95%', 1
         );
 
         CREATE TABLE vrfs (id TEXT PRIMARY KEY, vrf_name TEXT, tenant_id TEXT);
@@ -143,7 +157,7 @@ def test_ip_inventory_merges_discovered_endpoints_by_site_and_prefix(monkeypatch
 
     data = ipam_service.list_ip_inventory(prefix_id='prefix-capacity')
 
-    assert data['summary'] == {'total': 2, 'discovered': 1, 'manual': 1, 'prefixes': 4}
+    assert data['summary'] == {'total': 2, 'discovered': 1, 'manual': 1, 'gateways': 0, 'prefixes': 4}
     assert {item['address'] for item in data['items']} == {'10.0.0.10', '10.0.0.20'}
     discovered = next(item for item in data['items'] if item['address'] == '10.0.0.20')
     assert discovered['is_discovered'] is True
