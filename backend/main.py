@@ -264,11 +264,13 @@ async def lifespan(app: FastAPI):
         'interval', seconds=2, id='ip_locator_cache_invalidation',
         replace_existing=True, max_instances=1, coalesce=True,
     )
+    # New locator runs are woken directly by the API; this short non-blocking
+    # poll recovers queued runs and leases left behind by a worker restart.
     scheduler.add_job(
         synchronized_scheduler_job('ip_locator_run_worker', expire_seconds=60)(
             process_pending_locator_runs
         ),
-        'interval', seconds=2, id='ip_locator_run_worker',
+        'interval', seconds=5, id='ip_locator_run_worker',
         replace_existing=True, max_instances=1, coalesce=True,
     )
     scheduler.add_job(
@@ -404,11 +406,21 @@ async def lifespan(app: FastAPI):
     
     reschedule_backup(schedule_cfg)
     
-    # NSOT collection is intentionally not registered as several independent
-    # high-frequency system jobs.  The dynamic ``nsot`` scheduled action runs
-    # the same ordered workflow as the manual NSOT trigger once per day.  This
-    # avoids overlapping ARP, endpoint, route, topology, neighbor, and BGP
-    # collectors while keeping the manual trigger available.
+    # Keep ARP tables fresh on the configured low-frequency interval. A
+    # service-level lease serializes this job with manual and NSOT sweeps.
+    from services.ip_locator_service import ARP_SWEEP_INTERVAL_SECONDS, run_arp_sweep
+    scheduler.add_job(
+        synchronized_scheduler_job(
+            'arp_sweep_scheduler',
+            expire_seconds=max(60, ARP_SWEEP_INTERVAL_SECONDS * 2),
+        )(run_arp_sweep),
+        'interval', seconds=ARP_SWEEP_INTERVAL_SECONDS,
+        id='arp_sweep_scheduler', replace_existing=True,
+        max_instances=1, coalesce=True,
+    )
+
+    # Other NSOT collectors remain in the ordered daily workflow and the
+    # manual NSOT trigger.
     from services.topology_service import TOPOLOGY_AUTOMATIC_INTERVAL_SECONDS
     from services.prefix_discovery_service import run_prefix_discovery_job
     scheduler.add_job(

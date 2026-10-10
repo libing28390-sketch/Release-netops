@@ -28,6 +28,7 @@ from typing import Any
 from netmiko import ConnectHandler, NetmikoAuthenticationException
 
 from database import get_db_connection, _SERIAL_PK, _USE_PG, init_db
+from core.scheduler_lock import acquire_scheduler_lock
 from core.crypto import decrypt_credential
 from services.vault_service import resolve_device_credentials
 from services.network_access_limiter import limited_connect_handler
@@ -70,15 +71,12 @@ def _calc_ssh_workers(device_count: int) -> int:
         return max(1, min(MAX_SSH_WORKERS_MIN, device_count))
     return max(1, min(MAX_SSH_WORKERS_MAX, max(MAX_SSH_WORKERS_MIN, device_count // 3)))
 
-# ARP 缓存：按 target_ip 懒加载，不做全网全量预采集
-# 二级缓存架构：L1 = 进程内 dict（热数据快速命中）, L2 = 配置数据库（持久化跨重启）
-# 采集间隔 5 分钟，TTL 10 分钟，保证在下次采集到来前始终有有效缓存
-ARP_SWEEP_INTERVAL_SECONDS = 300   # 后台全量采集间隔：5 分钟
-ARP_CACHE_TTL_SECONDS = 600        # 缓存有效期：10 分钟（2 倍采集间隔，保证覆盖）
-ARP_CACHE_MAX_ENTRIES = 5000
-ENDPOINT_CACHE_TTL_SECONDS = 600
+# ARP 缓存：按 target_ip 懒加载，不做全网全量预采集。
+# 周期全量扫描默认每 10 分钟执行一次；缓存至少保留两个扫描周期。
 ARP_SWEEP_INTERVAL_SECONDS = max(300, int(os.environ.get('ARP_SWEEP_INTERVAL_SECONDS', '600')))
 ARP_CACHE_TTL_SECONDS = max(ARP_SWEEP_INTERVAL_SECONDS * 2, 600)
+ARP_CACHE_MAX_ENTRIES = 5000
+ENDPOINT_CACHE_TTL_SECONDS = 600
 ENDPOINT_FACT_INTERVAL_SECONDS = max(900, int(os.environ.get('ENDPOINT_FACT_INTERVAL_SECONDS', '1800')))
 ROUTE_SWEEP_INTERVAL_SECONDS = max(300, int(os.environ.get('ROUTE_SWEEP_INTERVAL_SECONDS', '300')))
 ARP_MAX_DEVICES_PER_SWEEP = max(0, int(os.environ.get('ARP_MAX_DEVICES_PER_SWEEP', '500')))
@@ -783,11 +781,12 @@ def _load_eligible_devices(
     role_filter: list[str] | None = None,
     diagnostics: dict[str, int] | None = None,
     *,
+    allow_snmp_only: bool = False,
     tenant_id: str | None = None,
     site_id: str | None = None,
     device_ids: list[str] | None = None,
 ) -> list[dict]:
-    """加载在线且有 SSH 凭据的设备列表，可按 role 过滤。
+    """加载在线采集设备；可选接纳仅配置 SNMP 凭据的设备。
 
     Callers that need an eligibility explanation may pass ``diagnostics``.
     Ordinary collector calls retain the narrower online-only query.
@@ -847,6 +846,11 @@ def _load_eligible_devices(
         if platform in _ARP_UNSUPPORTED_PLATFORMS:
             counters['unsupported_platform'] += 1
             continue
+        if role_filter:
+            dev_role = (d.get('role') or '').lower().strip()
+            if dev_role not in role_filter:
+                counters['role_filtered'] += 1
+                continue
         creds = resolve_device_credentials(d)
         auth_model = (d.get('auth_model') or 'single').lower()
 
@@ -855,13 +859,22 @@ def _load_eligible_devices(
         # for dual-auth devices whose normal account is unavailable.
         credential_attempts = _credential_attempts(creds, auth_model)
         if not credential_attempts:
-            counters['no_credentials'] += 1
-            continue
-        if role_filter:
-            dev_role = (d.get('role') or '').lower().strip()
-            if dev_role not in role_filter:
-                counters['role_filtered'] += 1
+            snmp_only_ready = False
+            if allow_snmp_only:
+                try:
+                    snmp_only_ready = bool(
+                        (resolve_collector_credentials(d).get('snmp') or {}).get('configured')
+                    )
+                except Exception:
+                    snmp_only_ready = False
+            if not snmp_only_ready:
+                counters['no_credentials'] += 1
                 continue
+            d['_ssh_username'], d['_ssh_password'] = '', ''
+            d['_ssh_fallback_credentials'] = []
+            d['_ssh_enable'] = ''
+            devices.append(d)
+            continue
         # 把解析好的登录凭据写回 dict，供 _build_ssh_params 直接使用
         d['_ssh_username'], d['_ssh_password'] = credential_attempts[0]
         d['_ssh_fallback_credentials'] = credential_attempts[1:]
@@ -3512,8 +3525,8 @@ def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
         except Exception as e:
             logger.debug(f"[IPLocator] ip_inventory check error: {e}")
 
-    # ── 一次性加载所有有 SSH 凭据的在线设备 ──
-    all_eligible = _load_eligible_devices()
+    # ── 一次性加载可通过 SNMP 或 SSH 采集的在线设备 ──
+    all_eligible = _load_eligible_devices(allow_snmp_only=True)
     if not all_eligible:
         result['errors'].append('没有可用的设备用于查询')
         return result
@@ -4261,7 +4274,7 @@ def _load_arp_sweep_devices(
     device_ids: set[str] | None = None,
 ) -> tuple[list[dict], int, int]:
     """Select ARP-capable devices and skip devices in retry backoff."""
-    all_eligible = _load_eligible_devices()
+    all_eligible = _load_eligible_devices(allow_snmp_only=True)
     if device_ids is not None:
         all_eligible = [device for device in all_eligible if str(device.get('id') or '') in device_ids]
     svi_devices = _load_svi_evidence()
@@ -4321,7 +4334,48 @@ def _arp_retry_delay(failure_class: str, failure_count: int) -> int:
 
 
 def _collect_full_arp_result(device_info: dict) -> dict[str, Any]:
-    """从单台设备采集完整 ARP 表，返回解析后的条目列表。"""
+    """用完整 SNMP walk 优先采集 ARP，失败或数据不可用时回退 CLI。"""
+    try:
+        from services.vault_service import resolve_collector_credentials
+        from services.snmp_service import collect_arp_table
+
+        resolved = resolve_collector_credentials(device_info)
+        snmp_profile = resolved.get('snmp') or {}
+        if snmp_profile.get('configured'):
+            version = str(snmp_profile.get('version') or '2c').strip().casefold()
+            is_v3 = version in {'3', 'v3', 'snmpv3'}
+            community_or_profile = dict(snmp_profile) if is_v3 else str(snmp_profile.get('community') or '')
+            target_ip = str(snmp_profile.get('server') or device_info.get('ip_address') or '').strip()
+            if target_ip and (is_v3 or community_or_profile):
+                snmp_records = asyncio.run(
+                    collect_arp_table(
+                        target_ip,
+                        community=community_or_profile,
+                        port=int(snmp_profile.get('port') or 161),
+                        version=version,
+                    )
+                )
+                entries = [
+                    normalized
+                    for record in snmp_records
+                    if (normalized := _normalize_arp_record(record, device_info))
+                ]
+                if entries and len(entries) == len(snmp_records):
+                    return {
+                        'entries': entries,
+                        'status': 'success',
+                        'failure_class': '',
+                        'error_message': '',
+                        'transport': 'snmp',
+                    }
+                raise RuntimeError('SNMP ARP table contained rows that could not be normalized')
+    except Exception as exc:
+        logger.info(
+            "SNMP ARP collection for %s failed (%s); falling back to CLI",
+            device_info.get('hostname') or device_info.get('ip_address'),
+            type(exc).__name__,
+        )
+
     try:
         payload = collect_operational_data(
             device_info,
@@ -4339,6 +4393,7 @@ def _collect_full_arp_result(device_info: dict) -> dict[str, Any]:
             'status': 'failed',
             'failure_class': _classify_arp_failure(exc),
             'error_message': str(exc),
+            'transport': 'ssh',
         }
 
     entries = []
@@ -4361,19 +4416,30 @@ def _collect_full_arp_result(device_info: dict) -> dict[str, Any]:
             error_message = str(cat.get('error') or 'ARP command failed')
             continue
 
-        for rec in cat.get('records', []):
-            normalized = _normalize_arp_record(rec, device_info)
-            if normalized:
-                entries.append(normalized)
+        parse_status = str(cat.get('parse_status') or '').strip().lower()
+        category_entries = []
+        category_records = cat.get('records') or []
+        if parse_status == 'matched' and category_records:
+            category_entries = [
+                normalized
+                for rec in category_records
+                if (normalized := _normalize_arp_record(rec, device_info))
+            ]
+            if len(category_entries) != len(category_records):
+                failure_class = 'parse_incomplete'
+                error_message = 'ARP parser returned rows that could not be normalized'
+                continue
 
         # NTC/TextFSM records are normalized first.  If a platform's command
         # output is valid but its template is incomplete, use the conservative
         # vendor-neutral row parser as a fallback.
-        if not entries:
+        if not category_entries and parse_status not in {'failed', 'device_error', 'timeout', 'unsupported_by_platform'}:
             for raw_output in cat.get('raw_outputs') or []:
-                entries.extend(_parse_arp_output_fallback(raw_output.get('output', ''), device_info))
+                category_entries.extend(_parse_arp_output_fallback(raw_output.get('output', ''), device_info))
 
-        if not entries:
+        entries.extend(category_entries)
+
+        if not category_entries:
             command = ', '.join(cat.get('commands') or []) or 'unknown'
             raw_size = sum(len(str(item.get('output') or '')) for item in (cat.get('raw_outputs') or []))
             logger.warning(
@@ -4383,6 +4449,8 @@ def _collect_full_arp_result(device_info: dict) -> dict[str, Any]:
                 cat.get('parser') or 'unknown',
                 raw_size,
             )
+            failure_class = failure_class or 'parse_incomplete'
+            error_message = error_message or 'ARP command completed without a complete, parseable snapshot'
 
     # A device should not produce duplicate IP/MAC rows when both a custom
     # template and the raw fallback recognize the same line.
@@ -4396,6 +4464,7 @@ def _collect_full_arp_result(device_info: dict) -> dict[str, Any]:
             'status': 'failed',
             'failure_class': 'unsupported',
             'error_message': 'ARP category was not collected for this device',
+            'transport': 'ssh',
         }
     if failure_class:
         return {
@@ -4403,8 +4472,23 @@ def _collect_full_arp_result(device_info: dict) -> dict[str, Any]:
             'status': 'failed',
             'failure_class': failure_class,
             'error_message': error_message,
+            'transport': 'ssh',
         }
-    return {'entries': entries, 'status': 'success', 'failure_class': '', 'error_message': ''}
+    if not entries:
+        return {
+            'entries': [],
+            'status': 'failed',
+            'failure_class': 'parse_incomplete',
+            'error_message': 'ARP collection produced no complete records',
+            'transport': 'ssh',
+        }
+    return {
+        'entries': entries,
+        'status': 'success',
+        'failure_class': '',
+        'error_message': '',
+        'transport': 'ssh',
+    }
 
 
 def _collect_full_arp_from_device(device_info: dict) -> list[dict]:
@@ -4547,10 +4631,10 @@ def _persist_arp_device_entries(device_info: dict, entries: list[dict]) -> dict[
     return {'entry_count': len(normalized_entries), 'mac_changes': len(mac_changes)}
 
 
-def run_arp_sweep(device_ids: set[str] | None = None) -> dict[str, Any]:
+def _run_arp_sweep_locked(device_ids: set[str] | None = None) -> dict[str, Any]:
     """
-    后台全量 ARP 采集：并发 SSH 到所有网关设备，采集完整 ARP 表并写入缓存。
-    由 APScheduler 定时调度（每 5 分钟）。
+    后台全量 ARP 采集：优先完整 SNMP walk，失败后回退 SSH CLI，并写入缓存。
+    调用方必须持有 ARP sweep 的共享数据库租约。
     """
     logger.info("[ARP Sweep] Starting full ARP table collection...")
     t0 = time.time()
@@ -4594,6 +4678,7 @@ def run_arp_sweep(device_ids: set[str] | None = None) -> dict[str, Any]:
                 result_status = result.get('status') or 'failed'
                 failure_class = result.get('failure_class') or ''
                 error_message = result.get('error_message') or ''
+                transport = str(result.get('transport') or 'ssh')
                 all_entries.extend(entries)
                 if result_status == 'success' and entries and dev.get('id'):
                     successful_device_ids.add(str(dev['id']))
@@ -4613,7 +4698,7 @@ def run_arp_sweep(device_ids: set[str] | None = None) -> dict[str, Any]:
                     'device_id': str(dev.get('id') or ''),
                     'collector': 'arp',
                     'status': 'success' if result_status == 'success' else 'failed',
-                    'transport': 'ssh',
+                    'transport': transport,
                     'source': 'arp_sweep',
                     'coverage_total': len(entries),
                     'coverage_supported': 1 if result_status == 'success' else 0,
@@ -4632,6 +4717,7 @@ def run_arp_sweep(device_ids: set[str] | None = None) -> dict[str, Any]:
                     'device_id': dev.get('id'),
                     'device': dev.get('hostname') or dev.get('ip_address'),
                     'entry_count': len(entries),
+                    'transport': transport,
                     'status': 'success' if result_status == 'success' and entries else (
                         'no_data' if result_status == 'success' else 'failed'
                     ),
@@ -4671,6 +4757,7 @@ def run_arp_sweep(device_ids: set[str] | None = None) -> dict[str, Any]:
                     'device_id': dev.get('id'),
                     'device': dev.get('hostname') or dev.get('ip_address'),
                     'entry_count': 0,
+                    'transport': 'ssh',
                     'status': 'failed',
                     'failure_class': failure_class,
                 })
@@ -4867,8 +4954,32 @@ def run_arp_sweep(device_ids: set[str] | None = None) -> dict[str, Any]:
     }
 
 
+def run_arp_sweep(device_ids: set[str] | None = None) -> dict[str, Any]:
+    """Acquire a cross-process lease shared by scheduled, manual, and NSOT sweeps."""
+    lease_seconds = max(60, ARP_SWEEP_INTERVAL_SECONDS * 2)
+    lease = acquire_scheduler_lock('arp_sweep_collection', expire_seconds=lease_seconds)
+    if lease is None:
+        logger.info("[ARP Sweep] Collection lease unavailable or another sweep is active; skipping this trigger.")
+        return {
+            'eligible_devices': 0,
+            'total_eligible_devices': 0,
+            'skipped_backoff_devices': 0,
+            'collection_run_id': None,
+            'batch_size': 0,
+            'max_batch_size': ARP_MAX_DEVICES_PER_SWEEP,
+            'devices_with_entries': 0,
+            'collected_entries': 0,
+            'device_results': [],
+            'skipped': True,
+            'skip_reason': 'already_running_or_lock_unavailable',
+        }
+
+    with lease:
+        return _run_arp_sweep_locked(device_ids=device_ids)
+
+
 async def run_arp_sweep_async():
-    """异步包装，供 APScheduler 调度。"""
+    """Run the synchronous sweep in a worker thread for HTTP callers."""
     return await asyncio.to_thread(run_arp_sweep)
 
 
@@ -5284,8 +5395,65 @@ def _set_cached_endpoint(
 
 # ── 全量 MAC 表采集 ─────────────────────────────────────────
 
-def _collect_full_mac_table_from_device(device_info: dict) -> list[dict]:
-    """从单台交换机采集完整的 MAC 地址表（所有 VLAN）。"""
+def _normalize_mac_table_snapshot(records: list[dict], device_info: dict) -> list[dict] | None:
+    """Normalize a complete MAC/FDB result; reject the whole snapshot on partial rows."""
+    normalized_records = []
+    device_id = str(device_info.get('id') or '')
+    device_name = device_info.get('hostname') or device_info.get('ip_address')
+    if not device_id:
+        return None
+    for record in records:
+        if not isinstance(record, dict):
+            return None
+        mac = re.sub(r'[^0-9a-f]', '', str(_record_value(record, 'mac', 'mac_address') or '').lower())
+        port = str(_record_value(record, 'port', 'interface', 'destination_port') or '').strip()
+        if len(mac) != 12 or not port:
+            return None
+        normalized_records.append({
+            'mac': mac,
+            'vlan': str(_record_value(record, 'vlan', 'vlan_id') or '').strip(),
+            'port': port,
+            'type': str(_record_value(record, 'type', 'entry_type') or '').strip(),
+            'switch_id': device_id,
+            'switch_name': device_name,
+        })
+    return normalized_records or None
+
+
+def _collect_full_mac_table_from_device(device_info: dict) -> dict[str, Any]:
+    """Collect one switch's complete MAC table, preferring SNMP and falling back to CLI/TextFSM."""
+    device_label = device_info.get('hostname') or device_info.get('ip_address')
+    try:
+        from services.vault_service import resolve_collector_credentials
+        from services.snmp_service import collect_bridge_mac_table
+
+        resolved = resolve_collector_credentials(device_info)
+        snmp_profile = resolved.get('snmp') or {}
+        if snmp_profile.get('configured'):
+            version = str(snmp_profile.get('version') or '2c').strip().casefold()
+            is_v3 = version in {'3', 'v3', 'snmpv3'}
+            community_or_profile = dict(snmp_profile) if is_v3 else str(snmp_profile.get('community') or '')
+            target_ip = str(snmp_profile.get('server') or device_info.get('ip_address') or '').strip()
+            if target_ip and (is_v3 or community_or_profile):
+                snmp_records = asyncio.run(
+                    collect_bridge_mac_table(
+                        target_ip,
+                        community_or_profile,
+                        port=int(snmp_profile.get('port') or 161),
+                        version=version,
+                    )
+                )
+                normalized_records = _normalize_mac_table_snapshot(snmp_records, device_info)
+                if normalized_records and len(normalized_records) == len(snmp_records):
+                    return {'success': True, 'records': normalized_records, 'transport': 'snmp'}
+                raise RuntimeError('SNMP bridge table returned incomplete or unusable MAC records')
+    except Exception as exc:
+        logger.info(
+            "SNMP MAC/FDB collection for %s failed (%s); falling back to platform CLI",
+            device_info.get('hostname') or device_info.get('ip_address'),
+            type(exc).__name__,
+        )
+
     if device_info.get('platform_profile_id'):
         try:
             from services.platform_registry_service import execute_platform_action
@@ -5299,20 +5467,24 @@ def _collect_full_mac_table_from_device(device_info: dict) -> list[dict]:
                     'tenant_id': device_info.get('tenant_id') or '',
                 },
             )
-            return [
-                {
-                    'mac': str(_record_value(record, 'mac', 'mac_address') or '').strip(),
-                    'vlan': str(_record_value(record, 'vlan', 'vlan_id') or '').strip(),
-                    'port': str(_record_value(record, 'interface', 'destination_port', 'port') or '').strip(),
-                    'type': str(_record_value(record, 'type', 'entry_type') or '').strip(),
-                    'switch_id': device_info.get('id'),
-                    'switch_name': device_info.get('hostname') or device_info.get('ip_address'),
-                }
-                for record in (result.get('records') or [] if result.get('success') else [])
-            ]
+            records = result.get('records') or []
+            normalized_records = _normalize_mac_table_snapshot(records, device_info)
+            if (
+                result.get('success')
+                and str(result.get('parse_status') or '').strip().lower() == 'matched'
+                and normalized_records
+                and len(normalized_records) == len(records)
+            ):
+                return {'success': True, 'records': normalized_records, 'transport': 'ssh'}
+            return {
+                'success': False,
+                'records': [],
+                'transport': 'ssh',
+                'error': str(result.get('error') or 'MAC CLI/TextFSM result was empty or incomplete'),
+            }
         except Exception as exc:
             logger.debug("[MAC Collector] Registry collection failed: %s", exc)
-            return []
+            return {'success': False, 'records': [], 'transport': 'ssh', 'error': str(exc)}
     platform = str(device_info.get('platform') or 'cisco_ios').lower()
     if platform in ('huawei_vrp', 'h3c_comware'):
         cmd = 'display mac-address'
@@ -5325,7 +5497,7 @@ def _collect_full_mac_table_from_device(device_info: dict) -> list[dict]:
         output = _send_command(device_info, cmd)
     except Exception as exc:
         logger.debug(f"[MAC Collector] Failed from {device_info.get('ip_address')}: {exc}")
-        return []
+        return {'success': False, 'records': [], 'transport': 'ssh', 'error': str(exc)}
 
     records = []
     dev_id = device_info.get('id', '')
@@ -5349,49 +5521,72 @@ def _collect_full_mac_table_from_device(device_info: dict) -> list[dict]:
             'switch_id': dev_id,
             'switch_name': dev_name,
         })
-    return records
+    normalized_records = _normalize_mac_table_snapshot(records, device_info)
+    if normalized_records and len(normalized_records) == len(records):
+        return {'success': True, 'records': normalized_records, 'transport': 'ssh'}
+    return {
+        'success': False,
+        'records': [],
+        'transport': 'ssh',
+        'error': 'MAC CLI output produced no complete, parseable snapshot',
+    }
 
 
-def _persist_mac_table_records(records: list[dict]) -> int:
-    """Persist the latest parsed MAC observations for downstream consumers."""
-    if not records:
+def _persist_mac_table_records(device_snapshots: list[dict]) -> int:
+    """Replace only devices with complete MAC snapshots; retain last-known rows on failures."""
+    if not device_snapshots:
         return 0
 
     last_updated = _beijing_now_iso()
     persisted = 0
     conn = get_db_connection()
     try:
-        for record in records:
-            device_id = str(record.get('switch_id') or record.get('device_id') or '').strip()
-            mac = _normalize_mac(str(record.get('mac') or record.get('mac_address') or ''))
-            interface_name = str(record.get('port') or record.get('interface') or '').strip()
-            vlan_text = str(record.get('vlan') or record.get('vlan_id') or '').strip()
-            vlan_id = int(vlan_text) if vlan_text.isdigit() else None
-            if not device_id or not mac or not interface_name:
+        complete_snapshots = []
+        for snapshot in device_snapshots:
+            if not snapshot.get('success'):
                 continue
-
-            row_id = f'{device_id}_{mac}_{interface_name}_{vlan_text}'
-            conn.execute(
-                '''INSERT INTO mac_table
-                   (id, device_id, mac_address, interface_name, vlan_id, entry_type, last_updated)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(id) DO UPDATE SET
-                       interface_name = excluded.interface_name,
-                       vlan_id = excluded.vlan_id,
-                       entry_type = excluded.entry_type,
-                       last_updated = excluded.last_updated''',
-                (
-                    row_id,
+            records = snapshot.get('records') or []
+            device_id = str(snapshot.get('device_id') or (records[0].get('switch_id') if records else '') or '').strip()
+            if not device_id or not records:
+                continue
+            prepared = []
+            for record in records:
+                mac = _normalize_mac(str(record.get('mac') or record.get('mac_address') or ''))
+                interface_name = str(record.get('port') or record.get('interface') or '').strip()
+                vlan_text = str(record.get('vlan') or record.get('vlan_id') or '').strip()
+                if str(record.get('switch_id') or device_id).strip() != device_id or not mac or not interface_name:
+                    prepared = []
+                    break
+                prepared.append((
+                    f'{device_id}_{mac}_{interface_name}_{vlan_text}',
                     device_id,
                     mac,
                     interface_name,
-                    vlan_id,
+                    int(vlan_text) if vlan_text.isdigit() else None,
                     str(record.get('type') or record.get('entry_type') or '').strip(),
-                    last_updated,
-                ),
-            )
-            persisted += 1
+                ))
+            if prepared and len(prepared) == len(records):
+                complete_snapshots.append((device_id, prepared))
+
+        for device_id, records in complete_snapshots:
+            conn.execute('DELETE FROM mac_table WHERE device_id = ?', (device_id,))
+            for row_id, row_device_id, mac, interface_name, vlan_id, entry_type in records:
+                conn.execute(
+                    '''INSERT INTO mac_table
+                       (id, device_id, mac_address, interface_name, vlan_id, entry_type, last_updated)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(id) DO UPDATE SET
+                           interface_name = excluded.interface_name,
+                           vlan_id = excluded.vlan_id,
+                           entry_type = excluded.entry_type,
+                           last_updated = excluded.last_updated''',
+                    (row_id, row_device_id, mac, interface_name, vlan_id, entry_type, last_updated),
+                )
+                persisted += 1
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
     return persisted
@@ -5825,10 +6020,53 @@ def _parse_detailed_interface_ips(output: str, platform: str, device_info: dict)
 
 
 def _collect_device_interface_ips(device_info: dict) -> list[dict]:
-    """从设备采集所有本地接口 IP（Loopback/物理接口/VLAN 等），用于 ip_inventory 同步。"""
+    """先通过 IP-MIB 采集接口地址，缺少可用 SNMP 快照时再回退 CLI。"""
     platform = str(device_info.get('platform') or 'cisco_ios').lower()
     if platform in _ARP_UNSUPPORTED_PLATFORMS:
         return []
+
+    try:
+        from services.vault_service import resolve_collector_credentials
+        from services.snmp_service import collect_interface_ip_addresses
+
+        snmp_profile = (resolve_collector_credentials(device_info).get('snmp') or {})
+        if snmp_profile.get('configured'):
+            version = str(snmp_profile.get('version') or '2c').strip().casefold()
+            is_v3 = version in {'3', 'v3', 'snmpv3'}
+            community_or_profile = dict(snmp_profile) if is_v3 else str(snmp_profile.get('community') or '')
+            target_ip = str(snmp_profile.get('server') or device_info.get('ip_address') or '').strip()
+            if target_ip and (is_v3 or community_or_profile):
+                snmp_records = asyncio.run(
+                    collect_interface_ip_addresses(
+                        target_ip,
+                        community_or_profile,
+                        port=int(snmp_profile.get('port') or 161),
+                        version=version,
+                    )
+                )
+                ipv4_records = [
+                    {
+                        'ip': str(record.get('ip_address') or '').strip(),
+                        'mask': _int_to_netmask(int(record.get('prefix_length'))),
+                        'interface': str(record.get('interface') or '').strip(),
+                        'device_id': device_info.get('id'),
+                        'device_name': device_info.get('hostname') or device_info.get('ip_address'),
+                    }
+                    for record in snmp_records
+                    if str(record.get('ip_version') or '').strip().lower() in {'4', 'ipv4'}
+                    and record.get('ip_address')
+                    and record.get('interface')
+                    and str(record.get('prefix_length') or '').isdigit()
+                ]
+                if ipv4_records:
+                    return ipv4_records
+    except Exception as exc:
+        logger.info(
+            "SNMP interface address collection for %s failed (%s); falling back to CLI",
+            device_info.get('hostname') or device_info.get('ip_address'),
+            type(exc).__name__,
+        )
+
     if device_info.get('platform_profile_id'):
         try:
             from services.platform_registry_service import execute_platform_action
@@ -5950,7 +6188,7 @@ def _sync_prefixes_from_current_interfaces(device_ids: set[str] | None = None) -
     return totals
 
 
-def _sync_ip_inventory_impl():
+def _sync_ip_inventory_impl(*, collect_device_interfaces: bool = True):
     """从已登记的 IPAM (ip_addresses) 与设备接口配置中同步 Loopback/物理接口 IP 到 ip_inventory。"""
     logger.info("[IP Inventory Sync] Starting sync from ip_addresses and device interfaces...")
     total_ipam = 0
@@ -6017,9 +6255,13 @@ def _sync_ip_inventory_impl():
     except Exception as e:
         logger.error(f"[IP Inventory Sync] Phase 1 (IPAM) failed: {e}")
 
+    if not collect_device_interfaces:
+        logger.info("[IP Inventory Sync] Skipping legacy device CLI collection; SNMP-first interface collector owns that domain.")
+        return
+
     # ── Phase 2: Auto-discover interface IPs from online devices ──
     try:
-        all_devices = _load_eligible_devices()
+        all_devices = _load_eligible_devices(allow_snmp_only=True)
         if all_devices:
             workers = min(5, len(all_devices))
             device_ips: list[dict] = []
@@ -6124,15 +6366,24 @@ def run_unified_nsot_sync(device_ids: list[str] | set[str] | None = None) -> dic
     prefix_result: dict[str, int] = {"devices": 0, "created": 0, "updated": 0, "failed": 0}
     try:
         run_arp_sweep(device_ids=target_device_ids)
-        run_endpoint_collector(refresh_arp=False, device_ids=target_device_ids)
-        run_route_collector(respect_collection_policy=True, device_ids=target_device_ids)
-        sync_routing_neighbors_job(
+        run_endpoint_collector(
+            refresh_arp=False,
             device_ids=target_device_ids,
-            disabled_protocols={"eigrp", "rip"},
+            sync_inventory=False,
         )
+        run_route_collector(respect_collection_policy=True, device_ids=target_device_ids)
+        sync_routing_neighbors_job(device_ids=target_device_ids)
         sync_bgp_routes_job(device_ids=target_device_ids)
-        topology_result = sync_topology_and_interfaces_job(device_ids=target_device_ids) or {}
+        topology_result = sync_topology_and_interfaces_job(
+            device_ids=target_device_ids,
+            collect_interfaces=False,
+        ) or {}
         interface_status_result = collect_interface_status_for_online_devices(target_device_ids=target_device_ids)
+        if target_device_ids is None:
+            # Preserve the legacy IPAM-registration projection into ip_inventory
+            # without rerunning the old device CLI address collector. The new
+            # interface collector already refreshed the device-derived snapshot.
+            _sync_ip_inventory_impl(collect_device_interfaces=False)
     finally:
         # Even if an auxiliary collector fails, project the latest interface
         # snapshots only for devices whose effective template permits it.
@@ -6161,6 +6412,7 @@ def run_endpoint_collector(
     *,
     refresh_arp: bool = True,
     device_ids: set[str] | None = None,
+    sync_inventory: bool = True,
 ):
     """
     后台终端事实库同步任务：
@@ -6186,14 +6438,14 @@ def run_endpoint_collector(
         logger.info("[Endpoint Collector] No active ARP entries found; continuing with eligible L2 MAC collection.")
 
     # 2. 获取所有在线交换机
-    all_eligible = _load_eligible_devices()
+    all_eligible = _load_eligible_devices(allow_snmp_only=True)
     if device_ids is not None:
         all_eligible = [device for device in all_eligible if str(device.get('id') or '') in device_ids]
     _MAC_EXCLUDED_ROLES = frozenset({'router', 'firewall', 'gateway', 'server', 'linux', 'windows'})
     switch_devices = [d for d in filter_devices(all_eligible, "mac_table") if should_collect(d, "endpoint_location")]
     if not switch_devices:
         logger.info("[Endpoint Collector] No eligible switch devices found.")
-        if device_ids is None:
+        if device_ids is None and sync_inventory:
             try:
                 sync_ip_inventory()
             except Exception as e:
@@ -6201,25 +6453,69 @@ def run_endpoint_collector(
         return
 
     workers = min(3, len(switch_devices))
+    mac_device_snapshots: list[dict[str, Any]] = []
     all_mac_records: list[dict] = []
     with ThreadPoolExecutor(max_workers=workers) as executor:
         future_map = {executor.submit(_collect_full_mac_table_from_device, dev): dev for dev in switch_devices}
         for future in as_completed(future_map):
             dev = future_map[future]
             try:
-                records = future.result()
-                all_mac_records.extend(records)
+                result = future.result()
+                snapshot = {
+                    'device_id': str(dev.get('id') or ''),
+                    'success': bool(result.get('success')),
+                    'records': result.get('records') or [],
+                    'transport': result.get('transport') or 'ssh',
+                    'error': result.get('error') or '',
+                }
+                mac_device_snapshots.append(snapshot)
+                if snapshot['success']:
+                    all_mac_records.extend(snapshot['records'])
+                else:
+                    logger.warning(
+                        "[Endpoint Collector] Incomplete MAC snapshot from %s via %s: %s",
+                        dev.get('hostname') or dev.get('ip_address'),
+                        snapshot['transport'],
+                        snapshot['error'] or 'no complete records',
+                    )
             except Exception as exc:
                 logger.debug(f"[Endpoint Collector] MAC collection error from {dev.get('ip_address')}: {exc}")
+                mac_device_snapshots.append({
+                    'device_id': str(dev.get('id') or ''),
+                    'success': False,
+                    'records': [],
+                    'transport': 'ssh',
+                    'error': str(exc),
+                })
+
+    try:
+        persisted_count = _persist_mac_table_records(mac_device_snapshots)
+        logger.info("[Endpoint Collector] Replaced complete MAC snapshots with %d observations.", persisted_count)
+    except Exception as exc:
+        logger.error("[Endpoint Collector] Error writing MAC observations to mac_table: %s", exc)
+        return
+
+    incomplete_devices = [snapshot for snapshot in mac_device_snapshots if not snapshot.get('success')]
+    if incomplete_devices:
+        logger.warning(
+            "[Endpoint Collector] Preserving endpoint locations because %d/%d switch MAC snapshots are incomplete.",
+            len(incomplete_devices), len(switch_devices),
+        )
+        if device_ids is None and sync_inventory:
+            try:
+                sync_ip_inventory()
+            except Exception as exc:
+                logger.error("[Endpoint Collector] Error syncing IP Inventory after partial MAC collection: %s", exc)
+        return
 
     if not all_mac_records:
-        logger.warning("[Endpoint Collector] No MAC entries collected from switches. Proceeding with fallback logic.")
-    else:
-        try:
-            persisted_count = _persist_mac_table_records(all_mac_records)
-            logger.info("[Endpoint Collector] Persisted %d MAC observations to mac_table.", persisted_count)
-        except Exception as exc:
-            logger.error("[Endpoint Collector] Error writing MAC observations to mac_table: %s", exc)
+        logger.warning("[Endpoint Collector] No complete MAC observations were collected; preserving endpoint locations.")
+        if device_ids is None and sync_inventory:
+            try:
+                sync_ip_inventory()
+            except Exception as exc:
+                logger.error("[Endpoint Collector] Error syncing IP Inventory after empty MAC collection: %s", exc)
+        return
 
     # 3. 收集 LLDP 邻居以判定上联口
     conn = get_db_connection()
@@ -6393,7 +6689,7 @@ def run_endpoint_collector(
     # Inventory reconciliation currently scans the whole CMDB. Keep it limited
     # to the unscoped full refresh; the scoped NSOT runner performs a scoped
     # Prefix projection separately.
-    if device_ids is None:
+    if device_ids is None and sync_inventory:
         try:
             sync_ip_inventory()
         except Exception as e:
@@ -6704,7 +7000,10 @@ def run_route_collector(
     t0 = time.time()
 
     inventory_diagnostics: dict[str, int] = {}
-    all_eligible = _load_eligible_devices(diagnostics=inventory_diagnostics)
+    all_eligible = _load_eligible_devices(
+        diagnostics=inventory_diagnostics,
+        allow_snmp_only=True,
+    )
     if device_ids is not None:
         all_eligible = [device for device in all_eligible if str(device.get('id') or '') in device_ids]
     route_devices, eligibility = _select_route_devices(
@@ -6733,11 +7032,121 @@ def run_route_collector(
 
     workers = min(5, len(route_devices))
     all_routes_to_save = []
-    successful_device_ids: set[str] = set()
-    failed_device_ids: set[str] = set()
+    successful_device_vrfs: set[tuple[str, str]] = set()
+    failed_device_vrfs: set[tuple[str, str]] = set()
 
-    def collect_device_routes(dev: dict) -> tuple[list[dict], bool]:
+    # Known non-default VRFs come from the CMDB and prior route snapshots.
+    # This avoids opening SSH just to rediscover VRFs on every SNMP-capable
+    # device. Newly discovered VRFs can still be collected through the CLI
+    # fallback when a device has no usable SNMP route table.
+    known_vrfs_by_device: dict[str, set[str]] = {}
+    selected_device_ids = [str(device.get('id') or '') for device in route_devices]
+    selected_device_ids = [device_id for device_id in selected_device_ids if device_id]
+    if selected_device_ids:
+        vrf_conn = get_db_connection()
+        try:
+            for start in range(0, len(selected_device_ids), 500):
+                device_id_batch = selected_device_ids[start:start + 500]
+                placeholders = ','.join('?' for _ in device_id_batch)
+                vrf_rows = vrf_conn.execute(
+                    f'''
+                    SELECT i.device_id, v.vrf_name
+                    FROM interfaces i
+                    JOIN vrfs v ON v.id = i.vrf_id
+                    WHERE i.device_id IN ({placeholders})
+                      AND COALESCE(v.vrf_name, '') <> ''
+                    UNION
+                    SELECT device_id, vrf_name FROM route_table
+                    WHERE device_id IN ({placeholders})
+                      AND COALESCE(vrf_name, '') <> ''
+                    UNION
+                    SELECT device_id, vrf_name FROM route_cache
+                    WHERE device_id IN ({placeholders})
+                      AND COALESCE(vrf_name, '') <> ''
+                    ''',
+                    tuple(device_id_batch) * 3,
+                ).fetchall()
+                for row in vrf_rows:
+                    device_id = str(row['device_id'] or '')
+                    vrf_name = str(row['vrf_name'] or '').strip()
+                    if device_id and vrf_name and vrf_name.casefold() != 'default':
+                        known_vrfs_by_device.setdefault(device_id, set()).add(vrf_name)
+        finally:
+            vrf_conn.close()
+
+    def normalize_snmp_routes(dev: dict, records: list[dict], vrf_name: str = 'default') -> list[dict]:
+        normalized: list[dict] = []
+        for record in records:
+            route_prefix = str(record.get('prefix') or record.get('destination') or '').strip()
+            if '/' not in route_prefix:
+                raise RuntimeError('SNMP IP-FORWARD-MIB returned a route without a prefix length')
+            address, mask = route_prefix.rsplit('/', 1)
+            normalized.append({
+                'device_id': dev['id'],
+                'vrf_name': vrf_name,
+                'prefix': address,
+                'mask': mask,
+                'next_hop': str(record.get('next_hop') or '').strip(),
+                'protocol': str(record.get('protocol') or '').strip(),
+                'interface': str(record.get('interface') or '').strip(),
+                'metric': record.get('metric') if record.get('metric') is not None else 0,
+                'preference': record.get('preference'),
+            })
+        if not normalized:
+            raise RuntimeError('SNMP IP-FORWARD-MIB returned no usable route records')
+        return normalized
+
+    def _route_command(platform: str, vrf: str) -> str:
+        if vrf == 'default':
+            if any(token in platform for token in ('huawei', 'vrp', 'comware', 'h3c', 'hp')):
+                return 'display ip routing-table'
+            if platform == 'juniper_junos':
+                return 'show route'
+            return 'show ip route'
+        if any(token in platform for token in ('huawei', 'vrp', 'comware', 'h3c', 'hp')):
+            return f'display ip routing-table vpn-instance {vrf}'
+        if platform == 'juniper_junos':
+            return f'show route table {vrf}.inet.0'
+        return f'show ip route vrf {vrf}'
+
+    def _try_snmp_routes_for_vrf(dev: dict, vrf: str) -> list[dict] | None:
+        """Return one complete SNMP route context, or None when it needs CLI fallback."""
+        from services.vault_service import resolve_collector_credentials
+        from services.snmp_service import collect_ip_forward_table
+
+        snmp_profile = (resolve_collector_credentials(dev).get('snmp') or {})
+        if not snmp_profile.get('configured'):
+            return None
+        version = str(snmp_profile.get('version') or '2c').strip().casefold()
+        is_v3 = version in {'3', 'v3', 'snmpv3'}
+        profile_context = str(snmp_profile.get('context_name') or '').strip()
+        if vrf.casefold() == 'default':
+            if profile_context and profile_context.casefold() != 'default':
+                return None
+            credentials: str | dict = dict(snmp_profile) if is_v3 else str(snmp_profile.get('community') or '')
+        else:
+            # VRF names are not portable SNMPv2c community suffixes. SNMPv3
+            # supports contexts, so try the explicit matching context or the
+            # conventional VRF-name context before opening an SSH session.
+            if not is_v3 or (profile_context and profile_context.casefold() not in {'default', vrf.casefold()}):
+                return None
+            credentials = dict(snmp_profile)
+            credentials['context_name'] = vrf
+        target_ip = str(snmp_profile.get('server') or dev.get('ip_address') or '').strip()
+        if not target_ip or (not is_v3 and not credentials):
+            return None
+        records = asyncio.run(collect_ip_forward_table(
+            target_ip,
+            credentials,
+            port=int(snmp_profile.get('port') or 161),
+            version=version,
+            timeout=120,
+        ))
+        return normalize_snmp_routes(dev, records, vrf)
+
+    def collect_device_routes(dev: dict) -> tuple[list[dict], set[str], set[str]]:
         if dev.get('platform_profile_id'):
+            configured_vrf = str(dev.get('vrf') or dev.get('vrf_name') or 'default').strip() or 'default'
             from services.platform_registry_service import execute_platform_action
             registry_user = {
                 'id': f"route-collector:{dev.get('id')}",
@@ -6745,10 +7154,25 @@ def run_route_collector(
                 'role': 'Operator',
                 'tenant_id': dev.get('tenant_id') or '',
             }
-            vrfs = [str(dev.get('vrf') or 'default')]
+            device_id = str(dev.get('id') or '')
+            vrfs = sorted(known_vrfs_by_device.get(device_id, set()) | {configured_vrf, 'default'})
             all_device_routes: list[dict] = []
-            collection_succeeded = True
+            successful_vrfs: set[str] = set()
+            failed_vrfs: set[str] = set()
             for vrf in vrfs:
+                try:
+                    snmp_routes = _try_snmp_routes_for_vrf(dev, vrf)
+                except Exception as exc:
+                    logger.info(
+                        '[Route Collector] SNMP route collection for %s/%s failed (%s); using platform action',
+                        dev.get('hostname') or dev.get('ip_address'), vrf, type(exc).__name__,
+                    )
+                    snmp_routes = None
+                if snmp_routes is not None:
+                    all_device_routes.extend(snmp_routes)
+                    successful_vrfs.add(vrf)
+                    continue
+
                 action_code = 'get_route_table_vrf' if vrf != 'default' else 'get_route_table'
                 try:
                     result = execute_platform_action(
@@ -6756,14 +7180,24 @@ def run_route_collector(
                         user=registry_user,
                         parameters={'vrf': vrf} if vrf != 'default' else None,
                     )
-                    if not result.get('success'):
-                        collection_succeeded = False
+                    records = result.get('records') or []
+                    if (
+                        not result.get('success')
+                        or str(result.get('parse_status') or '').strip().lower() != 'matched'
+                        or not records
+                    ):
+                        failed_vrfs.add(vrf)
                         continue
-                    for record in result.get('records') or []:
+                    normalized_routes = []
+                    for record in records:
+                        if not isinstance(record, dict):
+                            normalized_routes = []
+                            break
                         prefix = str(record.get('prefix') or record.get('destination') or '').strip()
                         if not prefix:
-                            continue
-                        all_device_routes.append({
+                            normalized_routes = []
+                            break
+                        normalized_routes.append({
                             'device_id': dev['id'],
                             'vrf_name': vrf,
                             'prefix': prefix.split('/', 1)[0],
@@ -6774,101 +7208,140 @@ def run_route_collector(
                             'metric': record.get('metric') or 0,
                             'preference': record.get('preference'),
                         })
+                    if not normalized_routes or len(normalized_routes) != len(records):
+                        failed_vrfs.add(vrf)
+                        continue
+                    all_device_routes.extend(normalized_routes)
+                    successful_vrfs.add(vrf)
                 except Exception as exc:
-                    collection_succeeded = False
+                    failed_vrfs.add(vrf)
                     logger.debug(
                         "[Route Collector] Registry route collection failed for %s/%s: %s",
                         dev.get('hostname') or dev.get('ip_address'), vrf, exc,
                     )
-            return all_device_routes, collection_succeeded
+            return all_device_routes, successful_vrfs, failed_vrfs
 
         ip = dev.get('ip_address')
-        port = int(dev.get('port') or dev.get('management_port') or 22)
-        from drivers.ssh_compat import is_ssh_port_open
-        if not is_ssh_port_open(ip, port):
-            logger.warning("[Route Collector] SSH port %s is closed/unreachable for %s", port, dev.get('hostname') or ip)
-            return [], False
-
         platform = str(dev.get('platform') or 'cisco_ios').lower()
-        vrfs = _collect_device_vrfs(dev)
-        if not vrfs:
-            logger.warning("[Route Collector] No VRF was discovered for %s", dev.get('hostname') or ip)
-            return [], False
-        all_device_routes = []
-        collection_succeeded = True
-        
-        for vrf in vrfs:
-            if vrf == 'default':
-                if any(p in platform for p in ('huawei', 'vrp', 'comware', 'h3c', 'hp')):
-                    cmd = "display ip routing-table"
-                elif platform in ('juniper_junos',):
-                    cmd = "show route"
-                else:
-                    cmd = "show ip route"
-            else:
-                if any(p in platform for p in ('huawei', 'vrp', 'comware', 'h3c', 'hp')):
-                    cmd = f"display ip routing-table vpn-instance {vrf}"
-                elif platform in ('juniper_junos',):
-                    cmd = f"show route table {vrf}.inet.0"
-                else:
-                    cmd = f"show ip route vrf {vrf}"
-                    
+        device_id = str(dev.get('id') or '')
+        known_vrfs = sorted(known_vrfs_by_device.get(device_id, set()))
+
+        all_device_routes: list[dict] = []
+        successful_vrfs: set[str] = set()
+        failed_vrfs: set[str] = set()
+        snmp_default_succeeded = False
+
+        # Query each known context independently. A successful default table
+        # remains usable even if another VRF is unsupported by SNMP and its
+        # CLI fallback fails.
+        for vrf in ['default', *known_vrfs]:
             try:
-                output = _send_command(dev, cmd)
-                if not output or not output.strip():
-                    collection_succeeded = False
-                    logger.debug(
-                        "[Route Collector] Empty route output for %s/%s; preserving its previous facts.",
-                        dev.get('hostname') or dev.get('ip_address'),
-                        vrf,
-                    )
-                    continue
-                parsed = parse_routing_table(output, platform)
-                for r in parsed:
-                    r['device_id'] = dev['id']
-                    r['vrf_name'] = vrf
-                all_device_routes.extend(parsed)
-            except Exception as e:
-                collection_succeeded = False
-                logger.debug(f"[Route Collector] Failed to collect routes for VRF {vrf} from {dev.get('hostname') or dev.get('ip_address')}: {e}")
-                
-        return all_device_routes, collection_succeeded
+                snmp_routes = _try_snmp_routes_for_vrf(dev, vrf)
+            except Exception as exc:
+                logger.info(
+                    '[Route Collector] SNMP route collection for %s/%s failed (%s); using CLI fallback for this VRF',
+                    dev.get('hostname') or ip, vrf, type(exc).__name__,
+                )
+                snmp_routes = None
+            if snmp_routes is not None:
+                all_device_routes.extend(snmp_routes)
+                successful_vrfs.add(vrf)
+                if vrf == 'default':
+                    snmp_default_succeeded = True
+                continue
+            failed_vrfs.add(vrf)
+
+        # If the default SNMP table was unavailable, retain live VRF discovery
+        # through the existing CLI path. Otherwise, only the already-known
+        # contexts that SNMP could not read need SSH.
+        cli_vrfs = set(known_vrfs) - successful_vrfs
+        if not snmp_default_succeeded:
+            try:
+                cli_vrfs.update(_collect_device_vrfs(dev) or ['default'])
+            except Exception as exc:
+                logger.info(
+                    '[Route Collector] CLI VRF discovery failed for %s (%s)',
+                    dev.get('hostname') or ip, type(exc).__name__,
+                )
+                cli_vrfs.add('default')
+        cli_vrfs = sorted(cli_vrfs | ({'default'} if 'default' in failed_vrfs else set()))
+        if cli_vrfs:
+            from drivers.ssh_compat import is_ssh_port_open
+            port = int(dev.get('port') or dev.get('management_port') or 22)
+            if not is_ssh_port_open(ip, port):
+                logger.warning(
+                    '[Route Collector] SSH port %s is closed/unreachable for %s; retaining successful SNMP VRFs %s',
+                    port, dev.get('hostname') or ip, sorted(successful_vrfs),
+                )
+            else:
+                for vrf in cli_vrfs:
+                    try:
+                        output = _send_command(dev, _route_command(platform, vrf))
+                        if not output or not output.strip():
+                            failed_vrfs.add(vrf)
+                            logger.debug(
+                                '[Route Collector] Empty route output for %s/%s; preserving previous facts.',
+                                dev.get('hostname') or ip, vrf,
+                            )
+                            continue
+                        parsed = parse_routing_table(output, platform)
+                        if not parsed:
+                            failed_vrfs.add(vrf)
+                            logger.debug(
+                                '[Route Collector] Route output for %s/%s was not parsed; preserving previous facts.',
+                                dev.get('hostname') or ip, vrf,
+                            )
+                            continue
+                        for route in parsed:
+                            route['device_id'] = dev['id']
+                            route['vrf_name'] = vrf
+                        all_device_routes.extend(parsed)
+                        successful_vrfs.add(vrf)
+                        failed_vrfs.discard(vrf)
+                    except Exception as exc:
+                        failed_vrfs.add(vrf)
+                        logger.debug(
+                            '[Route Collector] Failed to collect routes for VRF %s from %s: %s',
+                            vrf, dev.get('hostname') or ip, exc,
+                        )
+
+        return all_device_routes, successful_vrfs, failed_vrfs
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
         future_map = {executor.submit(collect_device_routes, dev): dev for dev in route_devices}
         for future in as_completed(future_map):
             dev = future_map[future]
             try:
-                device_routes, collection_succeeded = future.result()
+                device_routes, successful_vrfs, failed_vrfs = future.result()
                 device_id = str(dev.get('id') or '')
-                if collection_succeeded and device_id:
-                    successful_device_ids.add(device_id)
+                if device_id:
+                    successful_device_vrfs.update((device_id, vrf) for vrf in successful_vrfs)
+                    failed_device_vrfs.update((device_id, vrf) for vrf in failed_vrfs)
                     all_routes_to_save.extend(device_routes)
-                elif device_id:
-                    failed_device_ids.add(device_id)
             except Exception as exc:
                 device_id = str(dev.get('id') or '')
                 if device_id:
-                    failed_device_ids.add(device_id)
+                    failed_device_vrfs.add((device_id, 'unknown'))
                 logger.debug(f"[Route Collector] Error from {dev.get('ip_address')}: {exc}")
 
-    if successful_device_ids:
+    if successful_device_vrfs:
         try:
             conn = get_db_connection()
             try:
-                device_placeholders = ','.join('?' for _ in successful_device_ids)
-                device_params = tuple(successful_device_ids)
-                conn.execute(
-                    f"DELETE FROM route_cache WHERE device_id IN ({device_placeholders})",
-                    device_params,
-                )
-                conn.execute(
-                    f"DELETE FROM route_table WHERE device_id IN ({device_placeholders})",
-                    device_params,
-                )
+                for device_id, vrf_name in sorted(successful_device_vrfs):
+                    conn.execute(
+                        "DELETE FROM route_cache WHERE device_id = ? AND COALESCE(vrf_name, 'default') = ?",
+                        (device_id, vrf_name),
+                    )
+                    conn.execute(
+                        "DELETE FROM route_table WHERE device_id = ? AND COALESCE(vrf_name, 'default') = ?",
+                        (device_id, vrf_name),
+                    )
                 last_update = _beijing_now_iso()
                 for r in all_routes_to_save:
                     vrf_val = r.get('vrf_name') or 'default'
+                    if (str(r.get('device_id') or ''), str(vrf_val)) not in successful_device_vrfs:
+                        continue
                     rid = f"{r['device_id']}_{vrf_val}_{r['prefix']}_{r['mask']}_{r['next_hop']}_{r['interface']}"
                     conn.execute(
                         '''INSERT INTO route_cache (id, device_id, vrf_name, prefix, mask, next_hop, protocol, interface, metric, last_update)
@@ -6921,11 +7394,10 @@ def run_route_collector(
                     )
                 conn.commit()
                 logger.info(
-                    "[Route Collector] Synced %s routes from %s/%s devices; preserved existing facts for %s failed devices.",
+                    "[Route Collector] Synced %s routes across %s successful device/VRF tables; preserved previous facts for %s failed tables.",
                     len(all_routes_to_save),
-                    len(successful_device_ids),
-                    len(route_devices),
-                    len(failed_device_ids),
+                    len(successful_device_vrfs),
+                    len(failed_device_vrfs),
                 )
             finally:
                 conn.close()
@@ -6933,7 +7405,7 @@ def run_route_collector(
             logger.error(f"[Route Collector] Error writing routes: {e}")
     else:
         logger.warning(
-            "[Route Collector] No device completed route collection; existing route facts were preserved."
+            "[Route Collector] No device/VRF table completed route collection; existing route facts were preserved."
         )
 
     elapsed = round(time.time() - t0, 1)

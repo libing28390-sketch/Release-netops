@@ -379,7 +379,9 @@ async def api_trigger_arp_sweep(user=require_role("Operator")):
         device_results = (sweep or {}).get('device_results') or []
         failed = sum(1 for item in device_results if item.get('status') == 'failed')
         no_data = sum(1 for item in device_results if item.get('status') == 'no_data')
-        if collected:
+        if (sweep or {}).get('skipped'):
+            message = '已有 ARP 采集正在运行或当前无法获取采集锁，本次触发已跳过；请稍后刷新或重试。'
+        elif collected:
             suffix = f'其中 {failed} 台失败、{no_data} 台无条目。' if failed or no_data else ''
             message = f'本次从 {eligible} 台设备采集到 {collected} 条 ARP 记录，当前共 {table["total"]} 条。{suffix}'
         elif eligible:

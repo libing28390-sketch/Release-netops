@@ -147,6 +147,104 @@ def _normalize_address(address: str) -> str:
         raise ValueError(f"Invalid IP address: {exc}") from exc
 
 
+def _configured_prefix_gateway(prefix: dict) -> str:
+    """Return a usable gateway only when it belongs to the prefix."""
+    raw_gateway = str(prefix.get('gateway') or '').strip()
+    if not raw_gateway:
+        return ''
+    try:
+        network = ipaddress.ip_network(str(prefix.get('prefix') or ''), strict=False)
+        gateway = ipaddress.ip_address(raw_gateway)
+    except ValueError:
+        return ''
+    if gateway.version != network.version or gateway not in network:
+        return ''
+    if network.version == 4 and network.prefixlen < 31:
+        if gateway in (network.network_address, network.broadcast_address):
+            return ''
+    return str(gateway)
+
+
+def _count_prefix_used_ips(conn, prefix: dict) -> int:
+    """Count distinct manually registered addresses and the configured gateway."""
+    prefix_id = str(prefix.get('id') or '')
+    rows = conn.execute(
+        f"""SELECT address FROM ip_addresses WHERE subnet_id = {_PH}
+             AND COALESCE(status, 'active') NOT IN ('released', 'available')""",
+        (prefix_id,),
+    ).fetchall()
+    used: set[str] = set()
+    for row in rows:
+        try:
+            used.add(_normalize_address(row['address'] or ''))
+        except ValueError:
+            continue
+    gateway = _configured_prefix_gateway(prefix)
+    if gateway:
+        used.add(gateway)
+    return len(used)
+
+
+def _mark_prefix_gateway_item(item: dict, prefix: dict, *, virtual: bool = False) -> dict:
+    """Annotate one inventory row as the gateway configured on its prefix."""
+    item['is_prefix_gateway'] = True
+    item['is_virtual_gateway'] = virtual
+    item['gateway_device_name'] = prefix.get('gateway_device_name') or ''
+    item['device_type'] = 'gateway'
+    item['purpose'] = item.get('purpose') or 'infrastructure'
+    if not item.get('device_id') and prefix.get('gateway_device_id'):
+        item['device_id'] = prefix['gateway_device_id']
+    if not item.get('bound_device_hostname'):
+        item['bound_device_hostname'] = prefix.get('gateway_device_name') or ''
+    if item.get('status') in ('available', 'released', None, ''):
+        item['status'] = 'active'
+    return item
+
+
+def _build_prefix_gateway_item(prefix: dict, gateway: str) -> dict:
+    """Build a read-only inventory view for a gateway not in ip_addresses."""
+    item = {
+        'id': f"prefix-gateway-{prefix['id']}",
+        'subnet_id': prefix['id'],
+        'tenant_id': prefix.get('tenant_id') or 'tenant-default',
+        'vrf_id': prefix.get('vrf_id') or '',
+        'address': gateway,
+        'hostname': prefix.get('gateway_device_name') or '',
+        'device_id': prefix.get('gateway_device_id') or '',
+        'interface_name': '',
+        'mac_address': '',
+        'device_type': 'gateway',
+        'purpose': 'infrastructure',
+        'status': 'active',
+        'description': '',
+        'last_seen': '',
+        'created_at': '',
+        'updated_at': '',
+        'subnet_prefix': prefix.get('prefix') or '',
+        'subnet_name': prefix.get('name') or '',
+        'network_type': prefix.get('network_type') or '',
+        'site_id': prefix.get('site_id') or '',
+        'site_name': prefix.get('site_name') or '未分配站点',
+        'source': 'prefix_gateway',
+        'is_discovered': False,
+        'discovered_last_seen': '',
+        'switch_name': '',
+        'switch_port': '',
+        'vlan': '',
+    }
+    return _mark_prefix_gateway_item(item, prefix, virtual=True)
+
+
+def _address_matches_pool(address: str, pool: dict) -> bool:
+    try:
+        candidate = ipaddress.ip_address(address)
+        start = ipaddress.ip_address(str(pool.get('start_ip') or '').strip())
+        end = ipaddress.ip_address(str(pool.get('end_ip') or '').strip())
+    except (TypeError, ValueError):
+        return False
+    return candidate.version == start.version == end.version and start <= candidate <= end
+
+
 def _validate_address_policy(subnet, address: str, *, device_type: str = '', purpose: str = '') -> None:
     """Reject addresses that are structurally or administratively unavailable.
 
@@ -458,7 +556,6 @@ def list_subnets(*, site: str = 'all', status: str = 'all', q: str = '', family:
             sql += f' LIMIT {_PH} OFFSET {_PH}'
             params.extend([normalized_page_size, (normalized_page - 1) * normalized_page_size])
         rows = conn.execute(sql, tuple(params)).fetchall()
-
         result = []
         for r in rows:
             item = dict(r)
@@ -467,23 +564,23 @@ def list_subnets(*, site: str = 'all', status: str = 'all', q: str = '', family:
             total_ips = _calculate_total_ips(prefix_str)
             item['total_ips'] = total_ips
 
-            # Count used IPs (allocated in ip_addresses table)
-            count = conn.execute(
-                f"""SELECT COUNT(*) as cnt FROM ip_addresses WHERE subnet_id = {_PH}
-                    AND COALESCE(status, 'active') NOT IN ('released', 'available')""",
-                (r['id'],),
-            ).fetchone()
-            used_ips = count['cnt'] if count else 0
+            # A configured gateway consumes an address even before an operator
+            # creates a separate IPAM address record for it.
+            used_ips = _count_prefix_used_ips(conn, item)
             item['used_ips'] = used_ips
 
             # Count active endpoints from network_endpoints if table exists
             try:
+                gateway = _configured_prefix_gateway(item)
+                gateway_clause = f' OR ip = {_PH}' if gateway else ''
+                endpoint_params = (r['id'], gateway) if gateway else (r['id'],)
                 active = conn.execute(
                     f'''SELECT COUNT(DISTINCT ip) as cnt FROM network_endpoints
-                        WHERE is_active = 1 AND ip IN (
+                        WHERE is_active = 1 AND (ip IN (
                             SELECT address FROM ip_addresses WHERE subnet_id = {_PH}
-                        )''',
-                    (r['id'],),
+                              AND COALESCE(status, 'active') NOT IN ('released', 'available')
+                        ){gateway_clause})''',
+                    endpoint_params,
                 ).fetchone()
                 item['active_ips'] = active['cnt'] if active else 0
             except Exception:
@@ -546,7 +643,12 @@ def _interface_prefix_candidate_id(prefix: str, tenant_id: str, site_id: str, vr
     return f'{prefix}|{tenant_id or "tenant-default"}|{site_id or ""}|{vrf_id or ""}'
 
 
-def _load_interface_prefix_candidates(conn) -> dict:
+def _load_interface_prefix_candidates(
+    conn,
+    *,
+    include_all_interfaces: bool = False,
+    skipped_sample_limit: int = 25,
+) -> dict:
     """Build IPAM candidates from the current L3 interface collection.
 
     ``interfaces`` is the authoritative current interface source.  ``ip_inventory``
@@ -600,7 +702,15 @@ def _load_interface_prefix_candidates(conn) -> dict:
 
     candidates: dict[str, dict] = {}
     skipped: list[dict] = []
+    skipped_count = 0
     interface_count = 0
+
+    def record_skipped(item: dict) -> None:
+        nonlocal skipped_count
+        skipped_count += 1
+        if len(skipped) < skipped_sample_limit:
+            skipped.append(item)
+
     for row in interface_rows:
         interface_count += 1
         raw_address = str(row['primary_ip'] or row['ip_address'] or '').strip()
@@ -608,7 +718,7 @@ def _load_interface_prefix_candidates(conn) -> dict:
         try:
             ip_obj = ipaddress.ip_address(address)
         except ValueError:
-            skipped.append({
+            record_skipped({
                 'interface_id': row['id'],
                 'device_name': row['hostname'],
                 'interface_name': row['interface_name'],
@@ -626,7 +736,7 @@ def _load_interface_prefix_candidates(conn) -> dict:
         if prefix_len is None:
             prefix_len = _loopback_prefix_length(row['interface_name'], ip_obj)
         if prefix_len is None or (ip_obj.version == 4 and prefix_len > 32):
-            skipped.append({
+            record_skipped({
                 'interface_id': row['id'],
                 'device_name': row['hostname'],
                 'interface_name': row['interface_name'],
@@ -638,7 +748,7 @@ def _load_interface_prefix_candidates(conn) -> dict:
         try:
             network = ipaddress.ip_interface(f'{address}/{prefix_len}').network
         except ValueError:
-            skipped.append({
+            record_skipped({
                 'interface_id': row['id'],
                 'device_name': row['hostname'],
                 'interface_name': row['interface_name'],
@@ -667,14 +777,15 @@ def _load_interface_prefix_candidates(conn) -> dict:
         })
         item['interface_count'] += 1
         item['ip_count'] += 1
-        item['interfaces'].append({
-            'interface_id': row['id'],
-            'device_id': row['device_id'],
-            'device_name': row['hostname'],
-            'device_ip': row['device_ip'],
-            'interface_name': row['interface_name'],
-            'address': address,
-        })
+        if include_all_interfaces or len(item['interfaces']) < 3:
+            item['interfaces'].append({
+                'interface_id': row['id'],
+                'device_id': row['device_id'],
+                'device_name': row['hostname'],
+                'device_ip': row['device_ip'],
+                'interface_name': row['interface_name'],
+                'address': address,
+            })
 
     result_candidates = sorted(candidates.values(), key=lambda item: item['prefix'])
     return {
@@ -684,22 +795,58 @@ def _load_interface_prefix_candidates(conn) -> dict:
         'candidate_count': len(result_candidates),
         'existing_count': sum(1 for item in result_candidates if item['status'] == 'existing'),
         'to_create_count': sum(1 for item in result_candidates if item['status'] == 'to_create'),
-        'skipped_count': len(skipped),
+        'skipped_count': skipped_count,
         'candidates': result_candidates,
         'skipped': skipped,
+        'skipped_truncated_count': skipped_count - len(skipped),
     }
 
 
-def preview_interface_prefixes() -> dict:
+def preview_interface_prefixes(*, page: int = 1, page_size: int = 25, status: str = 'all') -> dict:
     """Preview canonical prefixes that can be generated from current interfaces."""
+    if page < 1:
+        raise ValueError('page 必须大于等于 1')
+    if page_size < 1 or page_size > 100:
+        raise ValueError('page_size 必须在 1 到 100 之间')
+    if status not in {'all', 'to_create', 'existing'}:
+        raise ValueError('status 必须为 all、to_create 或 existing')
+
     conn = get_db_connection()
     try:
-        return _load_interface_prefix_candidates(conn)
+        preview = _load_interface_prefix_candidates(conn, skipped_sample_limit=25)
     finally:
         conn.close()
 
+    filtered_candidates = [
+        item for item in preview['candidates']
+        if status == 'all' or item['status'] == status
+    ]
+    filtered_count = len(filtered_candidates)
+    start = (page - 1) * page_size
+    total_pages = (filtered_count + page_size - 1) // page_size
+    return {
+        'source': preview['source'],
+        'source_label': preview['source_label'],
+        'candidate_count': preview['candidate_count'],
+        'existing_count': preview['existing_count'],
+        'to_create_count': preview['to_create_count'],
+        'interface_count': preview['interface_count'],
+        'skipped_count': preview['skipped_count'],
+        'page': page,
+        'page_size': page_size,
+        'filtered_count': filtered_count,
+        'total_pages': total_pages,
+        'candidates': filtered_candidates[start:start + page_size],
+        'skipped': preview['skipped'],
+        'skipped_truncated_count': preview['skipped_truncated_count'],
+    }
 
-def generate_interface_prefixes(candidate_ids: Optional[list[str]] = None) -> dict:
+
+def generate_interface_prefixes(
+    candidate_ids: Optional[list[str]] = None,
+    *,
+    all_pending: bool = False,
+) -> dict:
     """Create canonical prefixes and interface IP records from current interfaces.
 
     The operation is idempotent: existing prefixes and addresses are preserved,
@@ -713,12 +860,28 @@ def generate_interface_prefixes(candidate_ids: Optional[list[str]] = None) -> di
     existing_addresses = 0
     skipped_addresses: list[dict] = []
     try:
-        preview = _load_interface_prefix_candidates(conn)
-        requested = {str(value) for value in (candidate_ids or []) if str(value).strip()}
-        selected = [
-            item for item in preview['candidates']
-            if not requested or item['candidate_id'] in requested
-        ]
+        preview = _load_interface_prefix_candidates(conn, include_all_interfaces=True)
+        if all_pending and candidate_ids is not None:
+            raise ValueError('candidate_ids 与 all_pending 不能同时提供')
+        if all_pending:
+            selected = [item for item in preview['candidates'] if item['status'] == 'to_create']
+        elif candidate_ids is None:
+            raise ValueError('请提供非空 candidate_ids，或显式设置 all_pending=true')
+        else:
+            requested = {str(value).strip() for value in candidate_ids if str(value).strip()}
+            if not requested:
+                raise ValueError('candidate_ids 不能为空；如需一键生成待创建网段，请显式设置 all_pending=true')
+            current_ids = {item['candidate_id'] for item in preview['candidates']}
+            unknown_ids = sorted(requested - current_ids)
+            if unknown_ids:
+                sample = ', '.join(unknown_ids[:5])
+                remainder = len(unknown_ids) - min(len(unknown_ids), 5)
+                suffix = f' 等 {remainder} 项' if remainder else ''
+                raise ValueError(f'候选已不存在或已变化，请刷新预览后重试：{sample}{suffix}')
+            selected = [
+                item for item in preview['candidates']
+                if item['candidate_id'] in requested
+            ]
         now = _utc_now()
         prefix_ids: dict[str, str] = {}
 
@@ -1165,11 +1328,34 @@ def list_ip_inventory(*, site_id: str = 'all', prefix_id: str = '', q: str = '',
             }
             all_items.append(item)
 
+        # Prefix gateway configuration is authoritative even when no IPAM row
+        # or discovery fact exists for the address. Reuse an existing inventory
+        # row when present; otherwise expose one explicit read-only view row.
+        for prefix in prefix_catalog:
+            gateway = _configured_prefix_gateway(prefix)
+            if not gateway:
+                continue
+            matching_items = []
+            for item in all_items:
+                if str(item.get('subnet_id') or '') != str(prefix['id']):
+                    continue
+                try:
+                    item_address = _normalize_address(str(item.get('address') or ''))
+                except ValueError:
+                    continue
+                if item_address == gateway:
+                    matching_items.append(item)
+            if matching_items:
+                for item in matching_items:
+                    _mark_prefix_gateway_item(item, prefix)
+            else:
+                all_items.append(_build_prefix_gateway_item(prefix, gateway))
+
         for item in all_items:
             if prefix_id and str(item.get('subnet_id') or '') != prefix_id:
                 continue
             site_key = str(item.get('site_id') or '')
-            if site_key in sites:
+            if site_key in sites and not item.get('is_virtual_gateway'):
                 sites[site_key]['ip_count'] += 1
 
         normalized_query = q.strip().lower()
@@ -1192,10 +1378,13 @@ def list_ip_inventory(*, site_id: str = 'all', prefix_id: str = '', q: str = '',
                 haystack = ' '.join(str(item.get(key) or '') for key in (
                     'address', 'hostname', 'interface_name', 'description', 'site_name',
                     'subnet_prefix', 'subnet_name', 'mac_address', 'switch_name', 'vlan',
-                    'purpose', 'bound_device_hostname', 'asset_tag', 'asset_serial_number',
+                    'purpose', 'device_type', 'source', 'gateway_device_name',
+                    'bound_device_hostname', 'asset_tag', 'asset_serial_number',
                     'asset_hostname', 'asset_vendor', 'asset_model', 'asset_management_ip',
                     'asset_business_ip',
                 )).lower()
+                if item.get('is_prefix_gateway'):
+                    haystack += ' prefix gateway 前缀网关 网关'
                 if normalized_query not in haystack:
                     continue
             items.append(item)
@@ -1216,9 +1405,12 @@ def list_ip_inventory(*, site_id: str = 'all', prefix_id: str = '', q: str = '',
             'has_more': start + normalized_page_size < total,
             'sites': list(sites.values()),
             'summary': {
-                'total': total,
+                # Virtual gateways are visible inventory rows, but not persisted
+                # IPAM/discovery records and are counted separately.
+                'total': sum(1 for item in items if not item.get('is_virtual_gateway')),
                 'discovered': sum(1 for item in items if item.get('is_discovered')),
-                'manual': sum(1 for item in items if not item.get('is_discovered')),
+                'manual': sum(1 for item in items if str(item.get('source') or '').startswith('manual')),
+                'gateways': sum(1 for item in items if item.get('is_prefix_gateway')),
                 'prefixes': len(prefix_catalog),
             },
         }
@@ -1549,22 +1741,20 @@ def ipam_summary() -> dict:
         addresses = conn.execute('SELECT COUNT(*) as cnt FROM ip_addresses').fetchone()
 
         # Calculate total capacity dynamically
-        all_prefixes = conn.execute('SELECT prefix, status FROM prefixes').fetchall()
+        all_prefixes = conn.execute('SELECT id, prefix, status, gateway, tenant_id FROM prefixes').fetchall()
         capacity_prefixes = [
             row for row in all_prefixes
             if _is_capacity_prefix(row['prefix'], row['status'])
         ]
         total_capacity = sum(_calculate_total_ips(r['prefix']) for r in capacity_prefixes)
 
-        total_used = conn.execute(
-            "SELECT COUNT(*) as total FROM ip_addresses WHERE COALESCE(status, 'active') NOT IN ('released', 'available')"
-        ).fetchone()
+        total_used = sum(_count_prefix_used_ips(conn, dict(prefix_row)) for prefix_row in all_prefixes)
 
         return {
             'total_subnets': subnets['cnt'] if subnets else 0,
             'total_addresses': addresses['cnt'] if addresses else 0,
             'total_capacity': total_capacity,
-            'total_used': total_used['total'] if total_used else 0,
+            'total_used': total_used,
             'capacity_prefixes_count': len(capacity_prefixes),
             'excluded_prefixes_count': len(all_prefixes) - len(capacity_prefixes),
             'high_utilization_subnets': [],
@@ -1583,7 +1773,7 @@ def get_utilization_analytics() -> dict:
     try:
         # ── Per-prefix utilization ──────────────────────────
         rows = conn.execute(
-            '''SELECT p.id, p.prefix, p.name, p.status, p.site_id,
+            '''SELECT p.id, p.prefix, p.name, p.status, p.site_id, p.gateway, p.tenant_id,
                       s.site_name, s.site_code
                FROM prefixes p
                LEFT JOIN sites s ON p.site_id = s.id'''
@@ -1600,12 +1790,7 @@ def get_utilization_analytics() -> dict:
             total = _calculate_total_ips(r['prefix'])
             exclusion_reason = _capacity_exclusion_reason(r['prefix'], r['status'])
             capacity_eligible = not exclusion_reason
-            used_row = conn.execute(
-                f"""SELECT COUNT(*) as cnt FROM ip_addresses WHERE subnet_id = {_PH}
-                    AND COALESCE(status, 'active') NOT IN ('released', 'available')""",
-                (r['id'],),
-            ).fetchone()
-            used_count = used_row['cnt'] if used_row else 0
+            used_count = _count_prefix_used_ips(conn, dict(r))
 
             if capacity_eligible:
                 total_ips_sum += total
@@ -1751,11 +1936,7 @@ def get_subnets_tree() -> list[dict]:
             item = dict(r)
             total_ips = _calculate_total_ips(item.get('prefix', ''))
             item['total_ips'] = total_ips
-            used = conn.execute(
-                f'SELECT COUNT(*) as cnt FROM ip_addresses WHERE subnet_id = {_PH}',
-                (r['id'],),
-            ).fetchone()
-            used_ips = used['cnt'] if used else 0
+            used_ips = _count_prefix_used_ips(conn, item)
             item['used_ips'] = used_ips
             item['utilization'] = round(used_ips / total_ips * 100, 1) if total_ips > 0 else 0
             item['vlan_id'] = item.get('vlan_number') or item.get('vlan_id')
@@ -1779,9 +1960,63 @@ def get_subnets_tree() -> list[dict]:
 # IP Pools CRUD
 # ══════════════════════════════════════════════════════════
 
-def list_pools(*, q: str = '', status: str = '', page: int | None = None, page_size: int = 20) -> list[dict] | dict:
+def _validate_pool_range(
+    conn,
+    *,
+    prefix_id: str,
+    start_ip: str,
+    end_ip: str,
+    exclude_pool_id: str = '',
+) -> tuple[str, str]:
+    """Validate a pool's CIDR bounds and reject inclusive range overlaps."""
+    prefix_id = str(prefix_id or '').strip()
+    if not prefix_id:
+        raise ValueError('An IP pool must belong to a prefix')
+    prefix_row = conn.execute(
+        f'SELECT id, prefix FROM prefixes WHERE id = {_PH} FOR UPDATE',
+        (prefix_id,),
+    ).fetchone()
+    if not prefix_row:
+        raise ValueError('The selected prefix does not exist')
+    try:
+        network = ipaddress.ip_network(str(prefix_row['prefix']), strict=False)
+        start = ipaddress.ip_address(str(start_ip).strip())
+        end = ipaddress.ip_address(str(end_ip).strip())
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f'Invalid pool address range: {exc}') from exc
+    if start.version != end.version or start.version != network.version:
+        raise ValueError('Pool start, end, and prefix must use the same IP version')
+    if int(start) > int(end):
+        raise ValueError('Pool start address must not be greater than end address')
+    if start not in network or end not in network:
+        raise ValueError('Both pool endpoints must be inside the selected prefix')
+
+    overlap_clause = ''
+    params: list[str] = [prefix_id]
+    if exclude_pool_id:
+        overlap_clause = f' AND id <> {_PH}'
+        params.append(exclude_pool_id)
+    existing_rows = conn.execute(
+        f'''SELECT id, start_ip, end_ip FROM ipam_pools
+             WHERE prefix_id = {_PH}{overlap_clause}''',
+        tuple(params),
+    ).fetchall()
+    for row in existing_rows:
+        try:
+            existing_start = ipaddress.ip_address(str(row['start_ip']).strip())
+            existing_end = ipaddress.ip_address(str(row['end_ip']).strip())
+        except (TypeError, ValueError):
+            continue
+        if existing_start.version != start.version or existing_end.version != start.version:
+            continue
+        if int(start) <= int(existing_end) and int(existing_start) <= int(end):
+            raise ValueError(f'Pool range overlaps existing pool {row["id"]}')
+    return str(start), str(end)
+
+def list_pools(*, q: str = '', status: str = '', prefix_id: str = '', page: int | None = None, page_size: int = 20) -> list[dict] | dict:
     conn = get_db_connection()
     try:
+        prefix_id = str(prefix_id or '').strip()
         clauses: list[str] = []
         params: list[str] = []
         if q.strip():
@@ -1791,6 +2026,9 @@ def list_pools(*, q: str = '', status: str = '', page: int | None = None, page_s
         if status and status.lower() != 'all':
             clauses.append("LOWER(COALESCE(p.status, '')) = ?")
             params.append(status.lower())
+        if prefix_id.strip():
+            clauses.append('p.prefix_id = ?')
+            params.append(prefix_id.strip())
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ''
         count_row = conn.execute(
             f'''SELECT COUNT(*) AS total
@@ -1814,7 +2052,34 @@ def list_pools(*, q: str = '', status: str = '', page: int | None = None, page_s
             {where}
             ORDER BY p.name{page_clause}
         ''', tuple(params + page_params)).fetchall()
-        
+
+        pools_by_prefix: dict[str, list[dict]] = {}
+        used_by_pool: dict[str, set[str]] = {}
+        for pool in (dict(row) for row in rows):
+            pool_id_value = str(pool.get('id') or '')
+            pool_id_prefix = str(pool.get('prefix_id') or '')
+            used_by_pool[pool_id_value] = set()
+            pools_by_prefix.setdefault(pool_id_prefix, []).append(pool)
+
+        prefix_ids = sorted({prefix_id for prefix_id in pools_by_prefix if prefix_id})
+        if prefix_ids:
+            manual_rows = conn.execute(
+                f"""SELECT subnet_id, address FROM ip_addresses
+                     WHERE subnet_id IN ({_ph(len(prefix_ids))})
+                       AND COALESCE(status, 'active') NOT IN ('released', 'available')""",
+                tuple(prefix_ids),
+            ).fetchall()
+            for manual_row in manual_rows:
+                scope_pools = pools_by_prefix.get(str(manual_row['subnet_id'] or ''), [])
+                try:
+                    address = _normalize_address(manual_row['address'] or '')
+                except ValueError:
+                    continue
+                for pool in scope_pools:
+                    pool_id_value = str(pool.get('id') or '')
+                    if _address_matches_pool(address, pool):
+                        used_by_pool.setdefault(pool_id_value, set()).add(address)
+
         pools = []
         for r in rows:
             p_dict = dict(r)
@@ -1836,25 +2101,7 @@ def list_pools(*, q: str = '', status: str = '', page: int | None = None, page_s
             
             p_dict['total_ips'] = total_ips
             
-            prefix_id = p_dict.get('prefix_id')
-            if prefix_id and total_ips > 0:
-                addr_rows = conn.execute('''
-                    SELECT address FROM ip_addresses WHERE subnet_id = ?
-                ''', (prefix_id,)).fetchall()
-                
-                try:
-                    start = ipaddress.ip_address(start_ip_str)
-                    end = ipaddress.ip_address(end_ip_str)
-                    for ar in addr_rows:
-                        addr_str = ar['address']
-                        try:
-                            addr_obj = ipaddress.ip_address(addr_str)
-                            if start <= addr_obj <= end:
-                                used_ips += 1
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
+            used_ips = len(used_by_pool.get(str(p_dict.get('id') or ''), set()))
             
             p_dict['used_ips'] = used_ips
             p_dict['utilization'] = round((used_ips / total_ips * 100), 1) if total_ips > 0 else 0
@@ -1885,6 +2132,10 @@ def create_pool(
 ) -> dict:
     conn = get_db_connection()
     try:
+        prefix_id = str(prefix_id or '').strip()
+        start_ip, end_ip = _validate_pool_range(
+            conn, prefix_id=prefix_id, start_ip=start_ip, end_ip=end_ip,
+        )
         pool_id = f"pool-{uuid.uuid4().hex[:12]}"
         now = _utc_now()
         conn.execute(
@@ -1903,10 +2154,21 @@ def update_pool(pool_id: str, **fields) -> bool:
     conn = get_db_connection()
     try:
         row = conn.execute(
-            f'SELECT id FROM ipam_pools WHERE id = {_PH}', (pool_id,)
+            f'SELECT id, prefix_id, start_ip, end_ip FROM ipam_pools WHERE id = {_PH}', (pool_id,)
         ).fetchone()
         if not row:
             return False
+        fields = dict(fields)
+        if any(name in fields for name in ('prefix_id', 'start_ip', 'end_ip')):
+            prefix_id = str(fields.get('prefix_id', row['prefix_id']) or '').strip()
+            start_ip, end_ip = _validate_pool_range(
+                conn,
+                prefix_id=prefix_id,
+                start_ip=fields.get('start_ip', row['start_ip']),
+                end_ip=fields.get('end_ip', row['end_ip']),
+                exclude_pool_id=pool_id,
+            )
+            fields.update({'prefix_id': prefix_id, 'start_ip': start_ip, 'end_ip': end_ip})
         updates = []
         params = []
         for f in ('name', 'prefix_id', 'start_ip', 'end_ip', 'description', 'status', 'tenant_id'):
@@ -1947,9 +2209,10 @@ def delete_pool(pool_id: str) -> bool:
 # VIP CRUD
 # ══════════════════════════════════════════════════════════
 
-def list_vips(*, q: str = '', vip_type: str = '', status: str = '', page: int | None = None, page_size: int = 20) -> list[dict] | dict:
+def list_vips(*, q: str = '', vip_type: str = '', status: str = '', prefix_id: str = '', page: int | None = None, page_size: int = 20) -> list[dict] | dict:
     conn = get_db_connection()
     try:
+        prefix_id = str(prefix_id or '').strip()
         clauses: list[str] = []
         params: list[str] = []
         if q.strip():
@@ -1962,13 +2225,28 @@ def list_vips(*, q: str = '', vip_type: str = '', status: str = '', page: int | 
         if status and status.lower() != 'all':
             clauses.append("LOWER(COALESCE(vip.status, '')) = ?")
             params.append(status.lower())
+        if prefix_id.strip():
+            prefix_row = conn.execute(
+                f"SELECT prefix, COALESCE(tenant_id, 'tenant-default') AS tenant_id FROM prefixes WHERE id = {_PH}",
+                (prefix_id.strip(),),
+            ).fetchone()
+            if not prefix_row:
+                return _empty_ipam_page(page=page, page_size=page_size)
+            try:
+                network = ipaddress.ip_network(str(prefix_row['prefix']), strict=False)
+            except (KeyError, TypeError, ValueError):
+                return _empty_ipam_page(page=page, page_size=page_size)
+            clauses.append('vip.address::inet <<= CAST(? AS cidr)')
+            params.append(str(network))
+            clauses.append("COALESCE(vip.tenant_id, 'tenant-default') = ?")
+            params.append(str(prefix_row['tenant_id'] or 'tenant-default'))
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ''
+        safe_page = max(int(page or 1), 1)
+        safe_page_size = min(max(int(page_size or 20), 1), 100)
         count_row = conn.execute(
             f'''SELECT COUNT(*) AS total FROM ipam_vips vip{where}''', tuple(params)
         ).fetchone()
         total = int(count_row['total'] or 0) if count_row else 0
-        safe_page = max(int(page or 1), 1)
-        safe_page_size = min(max(int(page_size or 20), 1), 100)
         page_clause = '' if page is None else ' LIMIT ? OFFSET ?'
         page_params = [] if page is None else [safe_page_size, (safe_page - 1) * safe_page_size]
         rows = conn.execute(f'''
@@ -1990,6 +2268,42 @@ def list_vips(*, q: str = '', vip_type: str = '', status: str = '', page: int | 
         conn.close()
 
 
+def _empty_ipam_page(*, page: int | None, page_size: int) -> list[dict] | dict:
+    if page is None:
+        return []
+    safe_page = max(int(page or 1), 1)
+    safe_page_size = min(max(int(page_size or 20), 1), 100)
+    return {
+        'items': [],
+        'total': 0,
+        'page': safe_page,
+        'page_size': safe_page_size,
+        'total_pages': 1,
+    }
+
+
+def _validate_vip_prefix_scope(conn, *, prefix_id: str, address: str, tenant_id: str) -> None:
+    """Ensure a VIP being edited in a prefix-scoped workflow belongs to that scope."""
+    if not prefix_id:
+        return
+    row = conn.execute(
+        f"SELECT prefix, COALESCE(tenant_id, 'tenant-default') AS tenant_id FROM prefixes WHERE id = {_PH}",
+        (prefix_id,),
+    ).fetchone()
+    if not row:
+        raise ValueError('Selected prefix was not found')
+    try:
+        network = ipaddress.ip_network(str(row['prefix']), strict=False)
+        ip_address = ipaddress.ip_address(address)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError('Selected prefix or VIP address is invalid') from exc
+    if ip_address.version != network.version or ip_address not in network:
+        raise ValueError(f'VIP {address} is outside selected prefix {network}')
+    prefix_tenant_id = str(row['tenant_id'] or 'tenant-default')
+    if str(tenant_id or 'tenant-default') != prefix_tenant_id:
+        raise ValueError('VIP tenant must match the selected prefix tenant')
+
+
 def create_vip(
     *,
     address: str,
@@ -2001,10 +2315,13 @@ def create_vip(
     real_servers: str = '',
     status: str = 'active',
     tenant_id: str = 'tenant-default',
+    prefix_id: str | None = None,
 ) -> dict:
     address = _normalize_address(address)
+    prefix_id = str(prefix_id or '').strip()
     conn = get_db_connection()
     try:
+        _validate_vip_prefix_scope(conn, prefix_id=prefix_id, address=address, tenant_id=tenant_id)
         existing_ip = conn.execute(
             f"""SELECT ip.id FROM ip_addresses ip
                 LEFT JOIN prefixes p ON p.id = ip.subnet_id
@@ -2041,10 +2358,18 @@ def update_vip(vip_id: str, **fields) -> bool:
     conn = get_db_connection()
     try:
         row = conn.execute(
-            f'SELECT id FROM ipam_vips WHERE id = {_PH}', (vip_id,)
+            f'SELECT id, address, tenant_id FROM ipam_vips WHERE id = {_PH}', (vip_id,)
         ).fetchone()
         if not row:
             return False
+        prefix_id = str(fields.get('prefix_id') or '').strip()
+        if prefix_id:
+            _validate_vip_prefix_scope(
+                conn,
+                prefix_id=prefix_id,
+                address=_normalize_address(fields.get('address') or row['address']),
+                tenant_id=str(fields.get('tenant_id') or row['tenant_id'] or 'tenant-default'),
+            )
         updates = []
         params = []
         for f in ('address', 'vip_type', 'device_id', 'backup_device_id',
@@ -2106,7 +2431,7 @@ def list_leases(*, q: str = '', state: str = '', page: int | None = None, page_s
         page_clause = '' if page is None else ' LIMIT ? OFFSET ?'
         page_params = [] if page is None else [safe_page_size, (safe_page - 1) * safe_page_size]
         rows = conn.execute(f'SELECT * FROM ipam_dhcp_leases{where} ORDER BY address{page_clause}', tuple(params + page_params)).fetchall()
-        items = [dict(r) for r in rows]
+        items = [dict(row) for row in rows]
         if page is None:
             return items
         return {'items': items, 'total': total, 'page': safe_page, 'page_size': safe_page_size, 'total_pages': max(1, (total + safe_page_size - 1) // safe_page_size)}
@@ -2323,29 +2648,95 @@ def get_next_available_prefix(subnet_id: str, prefix_len: int) -> Optional[str]:
 
 
 def get_ipam_reconciliation(*, active_tab: str = '', q: str = '', page: int | None = None, page_size: int = 20) -> dict:
-    """Compare documented IPAM records against discovered active hosts in network_endpoints.
-    Detect:
-      - undocumented_endpoints: present in network_endpoints (is_active=1) but NOT in ip_addresses.
-      - stale_ip_addresses: present in ip_addresses but NOT active in network_endpoints.
-      - mismatched_endpoints: present in both but with different MAC address or hostname.
-    """
+    """Compare current endpoint observations with authoritative IPAM records."""
     conn = get_db_connection()
     try:
         prefixes_list, sites, vrfs = load_inventory_catalog(conn)
+        now = datetime.now(timezone.utc)
+        current_window = timedelta(minutes=15)
+        stale_window = timedelta(days=7)
+
+        def parse_seen(value) -> datetime | None:
+            if value is None or not str(value).strip():
+                return None
+            try:
+                parsed = datetime.fromisoformat(str(value).strip().replace('Z', '+00:00'))
+            except (TypeError, ValueError):
+                return None
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone(timedelta(hours=8)))
+            return parsed.astimezone(timezone.utc)
+
+        def normalized_ip(value) -> str:
+            try:
+                return str(ipaddress.ip_address(str(value or '').strip()))
+            except (TypeError, ValueError):
+                return ''
+
+        def resolve_site_value(value) -> tuple[str, bool]:
+            raw = str(value or '').strip()
+            if not raw:
+                return '', False
+            if raw in sites:
+                return raw, False
+            matching_ids = [
+                site_id for site_id, site in sites.items()
+                if raw in (str(site.get('name') or ''), str(site.get('code') or ''))
+            ]
+            if len(matching_ids) == 1:
+                return matching_ids[0], False
+            return '', True
+
+        def get_endpoint_site(endpoint: dict) -> tuple[str, bool]:
+            resolved = endpoint_site_id(endpoint, sites)
+            if resolved:
+                return resolved, False
+            fields = (
+                ('asset_site_id', 'device_site_id', 'device_site')
+                if endpoint.get('cmdb_device_id') else ('site',)
+            )
+            for field in fields:
+                raw = str(endpoint.get(field) or '').strip()
+                if raw:
+                    return resolve_site_value(raw)
+            return '', False
+
+        def get_ipam_site(ipam: dict) -> tuple[str, bool]:
+            resolved_sites: set[str] = set()
+            for field in ('ip_site_id', 'prefix_site_id'):
+                raw = str(ipam.get(field) or '').strip()
+                if not raw:
+                    continue
+                resolved, ambiguous = resolve_site_value(raw)
+                if ambiguous or not resolved:
+                    return '', True
+                resolved_sites.add(resolved)
+            if len(resolved_sites) > 1:
+                return '', True
+            return (next(iter(resolved_sites)) if resolved_sites else ''), False
+
+        def site_name(site_id: str) -> str:
+            return str(sites.get(site_id, {}).get('name') or sites.get(site_id, {}).get('code') or '')
 
         ip_rows = conn.execute(f'''
             SELECT ip.id, ip.address, ip.hostname, ip.mac_address, ip.subnet_id, ip.status,
-                   ip.device_type, ip.interface_name, ip.tenant_id, ip.vrf_id,
+                   ip.device_type, ip.interface_name, ip.interface_id,
+                   ip.purpose, ip.site_id AS ip_site_id, ip.tenant_id, ip.vrf_id,
                    p.tenant_id AS prefix_tenant_id, p.vrf_id AS prefix_vrf_id,
-                   p.prefix AS subnet_prefix, p.name AS subnet_name, p.network_type
+                   p.site_id AS prefix_site_id, p.prefix AS subnet_prefix,
+                   p.name AS subnet_name, p.network_type,
+                   i.interface_type AS linked_interface_type,
+                   i.interface_role AS linked_interface_role
             FROM ip_addresses ip
             LEFT JOIN prefixes p ON ip.subnet_id = p.id
+            LEFT JOIN interfaces i ON i.id = ip.interface_id
+            ORDER BY ip.id
         ''').fetchall()
-        
+
         endpoint_rows = conn.execute('''
             SELECT ne.id, ne.ip, ne.mac, ne.hostname, ne.vendor,
                    ne.switch_id, ne.switch_port, ne.vlan, ne.vrf, ne.site,
-                   ne.last_seen, ne.source_type, ne.confidence,
+                   ne.last_seen, ne.is_active, ne.source_type, ne.confidence,
                    d.tenant_id AS device_tenant_id, d.site_id AS device_site_id,
                    d.id AS cmdb_device_id,
                    d.site AS device_site, pa.site_id AS asset_site_id,
@@ -2353,111 +2744,309 @@ def get_ipam_reconciliation(*, active_tab: str = '', q: str = '', page: int | No
             FROM network_endpoints ne
             LEFT JOIN devices d ON d.id = ne.switch_id
             LEFT JOIN physical_assets pa ON pa.id = d.asset_id
-            WHERE ne.is_active = 1 AND ne.ip IS NOT NULL AND ne.ip != ''
+            ORDER BY ne.id
         ''').fetchall()
-        
+
         def normalize_mac(mac_str: Optional[str]) -> str:
             if not mac_str:
                 return ''
-            return mac_str.replace(':', '').replace('-', '').replace('.', '').strip().lower()
+            return str(mac_str).replace(':', '').replace('-', '').replace('.', '').strip().lower()
 
         ipam_records = [dict(row) for row in ip_rows]
-        ipam_by_scope: dict[tuple, list[dict]] = {}
-        endpoints_by_scope: dict[tuple, list[dict]] = {}
+        ipam_by_scope: dict[tuple[str, str, str], list[dict]] = {}
+        ipam_by_id: dict[str, dict] = {}
         for item in ipam_records:
-            ipam_by_scope.setdefault(manual_address_key(item), []).append(item)
+            address = normalized_ip(item.get('address'))
+            if not address:
+                item['_base_key'] = None
+                item['_site_id'], item['_site_ambiguous'] = get_ipam_site(item)
+                continue
+            manual_key = manual_address_key(item)
+            base_key = (str(manual_key[0]), str(manual_key[1]), address)
+            item['_base_key'] = base_key
+            item['_site_id'], item['_site_ambiguous'] = get_ipam_site(item)
+            ipam_by_scope.setdefault(base_key, []).append(item)
+            ipam_by_id[str(item.get('id') or '')] = item
+
+        endpoint_records = []
+        latest_endpoint_seen: datetime | None = None
         for row in endpoint_rows:
             endpoint = dict(row)
-            key = endpoint_address_key(endpoint, vrfs)
-            if key is not None:
-                endpoints_by_scope.setdefault(key, []).append(endpoint)
-        
+            seen_at = parse_seen(endpoint.get('last_seen'))
+            if seen_at and (latest_endpoint_seen is None or seen_at > latest_endpoint_seen):
+                latest_endpoint_seen = seen_at
+            address = normalized_ip(endpoint.get('ip'))
+            endpoint_key = endpoint_address_key(endpoint, vrfs) if address else None
+            endpoint['_seen_at'] = seen_at
+            endpoint['_base_key'] = (
+                (str(endpoint_key[0]), str(endpoint_key[1]), address)
+                if endpoint_key is not None else None
+            )
+            endpoint['_site_id'], endpoint['_site_ambiguous'] = get_endpoint_site(endpoint)
+            endpoint_records.append(endpoint)
+
+        endpoint_cache_fresh = bool(
+            latest_endpoint_seen
+            and now - current_window <= latest_endpoint_seen <= now
+        )
+        latest_endpoint_seen_value = latest_endpoint_seen.isoformat() if latest_endpoint_seen else ''
+
+        def is_stale_eligible_address(ipam: dict) -> bool:
+            role_values = (
+                ipam.get('purpose'), ipam.get('device_type'), ipam.get('network_type'),
+                ipam.get('interface_type'), ipam.get('linked_interface_type'),
+                ipam.get('linked_interface_role'),
+            )
+            special_roles = {
+                'loopback', 'vip', 'virtual', 'virtual_ip', 'virtual-ip', 'virtual ip',
+            }
+            if any(str(value or '').strip().lower() in special_roles for value in role_values):
+                return False
+            interface_name = str(ipam.get('interface_name') or '').strip().lower()
+            if (
+                interface_name.startswith('loopback')
+                or (interface_name.startswith('lo') and not interface_name.startswith('local'))
+            ):
+                return False
+            return True
+
+        def ipam_status(ipam: dict) -> str:
+            return str(ipam.get('status') or 'active').strip().lower()
+
+        def preferred_ipam_candidates(candidates: list[dict]) -> list[dict]:
+            non_idle = [
+                item for item in candidates
+                if ipam_status(item) not in {'available', 'released'}
+            ]
+            return non_idle or candidates
+
+        def prefix_for_endpoint(endpoint: dict) -> tuple[dict | None, bool]:
+            """Resolve the best prefix locally, reporting unresolved site overlap."""
+            base_key = endpoint.get('_base_key')
+            if not base_key:
+                return None, False
+            try:
+                address = ipaddress.ip_address(base_key[2])
+            except ValueError:
+                return None, False
+            scoped_prefixes = [
+                prefix for prefix in prefixes_list
+                if prefix.get('tenant_id') == base_key[0]
+                and prefix.get('vrf_id') == base_key[1]
+                and address.version == prefix['network'].version
+                and address in prefix['network']
+            ]
+            candidates = [prefix for prefix in scoped_prefixes if not prefix.get('invalid_site_assignment')]
+            if not candidates:
+                return None, bool(scoped_prefixes)
+            longest = max(prefix['network'].prefixlen for prefix in candidates)
+            if any(
+                prefix.get('invalid_site_assignment')
+                and prefix['network'].prefixlen >= longest
+                for prefix in scoped_prefixes
+            ):
+                return None, True
+            best = [prefix for prefix in candidates if prefix['network'].prefixlen == longest]
+            endpoint_site = endpoint.get('_site_id') or ''
+            if endpoint_site:
+                at_site = [prefix for prefix in best if prefix.get('site_id') == endpoint_site]
+                if at_site:
+                    best = at_site
+                else:
+                    unassigned = [prefix for prefix in best if not prefix.get('site_id')]
+                    if unassigned:
+                        best = unassigned
+                    else:
+                        return None, True
+            elif len({str(prefix.get('site_id') or '') for prefix in best}) > 1:
+                return None, True
+            if len(best) > 1 and len({str(prefix.get('site_id') or '') for prefix in best}) > 1:
+                return None, True
+            return sorted(best, key=lambda prefix: str(prefix.get('id') or ''))[0], False
+
+        def select_ipam_candidate(candidates: list[dict], endpoint: dict) -> tuple[dict | None, bool]:
+            if not candidates:
+                return None, False
+            if endpoint.get('_site_ambiguous') or any(item.get('_site_ambiguous') for item in candidates):
+                return None, True
+            if len(candidates) == 1:
+                return candidates[0], False
+            endpoint_site = endpoint.get('_site_id') or ''
+            if not endpoint_site:
+                return None, True
+            exact = [item for item in candidates if item.get('_site_id') == endpoint_site]
+            if len(exact) == 1:
+                return exact[0], False
+            return None, True
+
+        def history_matches_ipam(endpoint: dict, ipam: dict, candidates: list[dict]) -> bool:
+            if endpoint.get('_site_ambiguous') or ipam.get('_site_ambiguous'):
+                return False
+            if len(candidates) > 1:
+                selected, ambiguous = select_ipam_candidate(candidates, endpoint)
+                return not ambiguous and selected is ipam
+            endpoint_site = endpoint.get('_site_id') or ''
+            ipam_site = ipam.get('_site_id') or ''
+            return not (endpoint_site and ipam_site and endpoint_site != ipam_site)
+
         undocumented_endpoints = []
         stale_ip_addresses = []
         mismatched_endpoints = []
-        
-        for row in endpoint_rows:
-            ep = dict(row)
-            ip = ep['ip']
-            key = endpoint_address_key(ep, vrfs)
-            resolved_site_id = endpoint_site_id(ep, sites)
-            if key is None or not ipam_by_scope.get(key):
-                p = match_inventory_prefix(ip, key, resolved_site_id, prefixes_list)
-                undocumented_endpoints.append({
-                    'ip': ip,
-                    'mac': ep['mac'],
-                    'hostname': ep['hostname'] or '',
-                    'vendor': ep['vendor'] or '',
-                    'switch_id': ep['switch_id'] or '',
-                    'switch_name': ep['switch_name'] or ep['switch_id'] or '',
-                    'switch_port': ep['switch_port'] or '',
-                    'vlan': ep['vlan'] or '',
-                    'vrf': ep['vrf'] or '',
-                    'site': sites[resolved_site_id]['name'] if resolved_site_id else '',
-                    'last_seen': ep['last_seen'] or '',
-                    'source_type': ep['source_type'] or '',
-                    'confidence': ep['confidence'] or '',
-                    'subnet_id': p['id'] if p else '',
-                    'subnet_prefix': p['prefix'] if p else '',
-                    'subnet_name': p['name'] if p else (p['prefix'] if p else '')
-                })
-                
-        for ipam in ipam_records:
-            ip = ipam['address']
-            key = manual_address_key(ipam)
-            matches = endpoints_by_scope.get(key, [])
-            if not matches:
-                # Exclude loopbacks and VIPs because they don't have switch port endpoints/ARP
-                is_loopback_or_vip = (
-                    (ipam.get('device_type') or '').lower() in ('loopback', 'vip') or
-                    (ipam.get('interface_name') or '').lower().startswith('loopback') or
-                    (ipam.get('network_type') or '').lower() in ('loopback', 'vip')
-                )
-                if is_loopback_or_vip:
-                    continue
 
-                stale_ip_addresses.append({
-                    'id': ipam['id'],
-                    'address': ip,
-                    'hostname': ipam['hostname'] or '',
-                    'mac_address': ipam['mac_address'] or '',
-                    'subnet_id': ipam['subnet_id'] or '',
-                    'subnet_prefix': ipam['subnet_prefix'] or '',
-                    'subnet_name': ipam['subnet_name'] or '',
-                    'status': ipam['status'] or 'active'
+        total_unscoped = 0
+        unscoped_endpoint_ids: set[str] = set()
+
+        def mark_unscoped(endpoint: dict) -> None:
+            nonlocal total_unscoped
+            marker = str(endpoint.get('id') or '')
+            if marker and marker in unscoped_endpoint_ids:
+                return
+            if marker:
+                unscoped_endpoint_ids.add(marker)
+            total_unscoped += 1
+
+        fresh_endpoints_by_scope: dict[tuple[str, str, str], dict] = {}
+        fresh_base_scopes: set[tuple[str, str, str]] = set()
+        for endpoint in endpoint_records:
+            seen_at = endpoint.get('_seen_at')
+            if not endpoint.get('is_active') or not seen_at or not (now - current_window <= seen_at <= now):
+                continue
+            base_key = endpoint.get('_base_key')
+            if base_key:
+                fresh_base_scopes.add(base_key)
+            if not base_key or endpoint.get('_site_ambiguous'):
+                mark_unscoped(endpoint)
+                continue
+            existing = fresh_endpoints_by_scope.get(base_key)
+            if existing is None or (seen_at, str(endpoint.get('id') or '')) > (
+                existing['_seen_at'], str(existing.get('id') or '')
+            ):
+                fresh_endpoints_by_scope[base_key] = endpoint
+
+        fresh_matches_by_ipam_id: dict[str, dict] = {}
+        for base_key, endpoint in sorted(fresh_endpoints_by_scope.items(), key=lambda entry: entry[0]):
+            candidates = preferred_ipam_candidates(ipam_by_scope.get(base_key, []))
+            if not candidates:
+                prefix, site_ambiguous = prefix_for_endpoint(endpoint)
+                if site_ambiguous:
+                    mark_unscoped(endpoint)
+                    continue
+                undocumented_endpoints.append({
+                    'ip': endpoint.get('ip') or '',
+                    'mac': endpoint.get('mac') or '',
+                    'hostname': endpoint.get('hostname') or '',
+                    'vendor': endpoint.get('vendor') or '',
+                    'switch_id': endpoint.get('switch_id') or '',
+                    'switch_name': endpoint.get('switch_name') or endpoint.get('switch_id') or '',
+                    'switch_port': endpoint.get('switch_port') or '',
+                    'vlan': endpoint.get('vlan') or '',
+                    'vrf': endpoint.get('vrf') or '',
+                    'site': site_name(endpoint.get('_site_id') or ''),
+                    'last_seen': endpoint.get('last_seen') or '',
+                    'source_type': endpoint.get('source_type') or '',
+                    'confidence': endpoint.get('confidence') or '',
+                    'subnet_id': prefix['id'] if prefix else '',
+                    'subnet_prefix': prefix['prefix'] if prefix else '',
+                    'subnet_name': prefix['name'] if prefix else (prefix['prefix'] if prefix else '')
                 })
-            else:
-                # A scope can have historical duplicate authoritative rows;
-                # each retains its own finding identity instead of being lost.
-                ep = matches[0]
-                mac_mismatch = False
-                hostname_mismatch = False
-                
-                norm_ipam_mac = normalize_mac(ipam['mac_address'])
-                norm_ep_mac = normalize_mac(ep['mac'])
-                if norm_ipam_mac and norm_ep_mac and norm_ipam_mac != norm_ep_mac:
-                    mac_mismatch = True
-                    
-                ipam_host = (ipam['hostname'] or '').strip().lower()
-                ep_host = (ep['hostname'] or '').strip().lower()
-                if ipam_host and ep_host and ipam_host != ep_host:
-                    hostname_mismatch = True
-                    
-                if mac_mismatch or hostname_mismatch:
-                    mismatched_endpoints.append({
-                        'ip': ip,
-                        'ipam_address_id': ipam['id'],
-                        'ipam_hostname': ipam['hostname'] or '',
-                        'endpoint_hostname': ep['hostname'] or '',
-                        'ipam_mac': ipam['mac_address'] or '',
-                        'endpoint_mac': ep['mac'] or '',
-                        'subnet_id': ipam['subnet_id'] or '',
-                        'subnet_prefix': ipam['subnet_prefix'] or '',
-                        'subnet_name': ipam['subnet_name'] or '',
-                        'mac_mismatch': mac_mismatch,
-                        'hostname_mismatch': hostname_mismatch
-                    })
-                    
+
+            selected, ambiguous = select_ipam_candidate(candidates, endpoint)
+            if ambiguous:
+                mark_unscoped(endpoint)
+                continue
+            if selected is not None:
+                ipam_id = str(selected.get('id') or '')
+                existing = fresh_matches_by_ipam_id.get(ipam_id)
+                if existing is None or (endpoint['_seen_at'], str(endpoint.get('id') or '')) > (
+                    existing['_seen_at'], str(existing.get('id') or '')
+                ):
+                    fresh_matches_by_ipam_id[ipam_id] = endpoint
+
+        for ipam_id, endpoint in fresh_matches_by_ipam_id.items():
+            ipam = ipam_by_id[ipam_id]
+            ipam_site = ipam.get('_site_id') or ''
+            endpoint_site = endpoint.get('_site_id') or ''
+            site_mismatch = bool(ipam_site and endpoint_site and ipam_site != endpoint_site)
+            status_value = ipam_status(ipam)
+            status_mismatch = status_value in {'available', 'released'}
+            ipam_mac = str(ipam.get('mac_address') or '')
+            endpoint_mac = str(endpoint.get('mac') or '')
+            mac_mismatch = bool(
+                normalize_mac(ipam_mac) and normalize_mac(endpoint_mac)
+                and normalize_mac(ipam_mac) != normalize_mac(endpoint_mac)
+            )
+            ipam_host = str(ipam.get('hostname') or '').strip().lower()
+            endpoint_host = str(endpoint.get('hostname') or '').strip().lower()
+            hostname_mismatch = bool(ipam_host and endpoint_host and ipam_host != endpoint_host)
+            if mac_mismatch or hostname_mismatch or site_mismatch or status_mismatch:
+                mismatched_endpoints.append({
+                    'ip': ipam.get('address') or endpoint.get('ip') or '',
+                    'ipam_address_id': ipam.get('id') or '',
+                    'ipam_hostname': ipam.get('hostname') or '',
+                    'endpoint_hostname': endpoint.get('hostname') or '',
+                    'ipam_mac': ipam_mac,
+                    'endpoint_mac': endpoint_mac,
+                    'subnet_id': ipam.get('subnet_id') or '',
+                    'subnet_prefix': ipam.get('subnet_prefix') or '',
+                    'subnet_name': ipam.get('subnet_name') or '',
+                    'mac_mismatch': mac_mismatch,
+                    'hostname_mismatch': hostname_mismatch,
+                    'site_mismatch': site_mismatch,
+                    'status_mismatch': status_mismatch,
+                    'ipam_status': status_value,
+                    'ipam_site': site_name(ipam_site),
+                    'endpoint_site': site_name(endpoint_site),
+                })
+
+        latest_seen_by_ipam_id: dict[str, dict] = {}
+        history_by_scope: dict[tuple[str, str, str], list[dict]] = {}
+        for endpoint in endpoint_records:
+            if endpoint.get('_base_key') and endpoint.get('_seen_at'):
+                history_by_scope.setdefault(endpoint['_base_key'], []).append(endpoint)
+
+        stale_cutoff = now - stale_window
+        for ipam in ipam_records:
+            base_key = ipam.get('_base_key')
+            status = ipam_status(ipam)
+            if (
+                not base_key
+                or status not in {'active', 'allocated'}
+                or not is_stale_eligible_address(ipam)
+                or base_key in fresh_base_scopes
+            ):
+                continue
+            candidates = preferred_ipam_candidates(ipam_by_scope.get(base_key, []))
+            matching_history = [
+                endpoint for endpoint in history_by_scope.get(base_key, [])
+                if history_matches_ipam(endpoint, ipam, candidates)
+            ]
+            if not matching_history:
+                continue
+            latest_seen = max(
+                matching_history,
+                key=lambda endpoint: (endpoint['_seen_at'], str(endpoint.get('id') or '')),
+            )
+            last_seen_at = latest_seen['_seen_at']
+            if last_seen_at > stale_cutoff:
+                continue
+            latest_seen_by_ipam_id[str(ipam.get('id') or '')] = latest_seen
+
+        for ipam_id, endpoint in latest_seen_by_ipam_id.items():
+            ipam = ipam_by_id[ipam_id]
+            last_seen_at = endpoint['_seen_at']
+            stale_ip_addresses.append({
+                'id': ipam.get('id') or '',
+                'address': ipam.get('address') or '',
+                'hostname': ipam.get('hostname') or '',
+                'mac_address': ipam.get('mac_address') or '',
+                'subnet_id': ipam.get('subnet_id') or '',
+                'subnet_prefix': ipam.get('subnet_prefix') or '',
+                'subnet_name': ipam.get('subnet_name') or '',
+                'status': ipam.get('status') or 'active',
+                'last_seen': endpoint.get('last_seen') or '',
+                'days_since_seen': round((now - last_seen_at).total_seconds() / 86400, 1),
+            })
+
         result = {
             'undocumented_endpoints': undocumented_endpoints,
             'stale_ip_addresses': stale_ip_addresses,
@@ -2465,7 +3054,12 @@ def get_ipam_reconciliation(*, active_tab: str = '', q: str = '', page: int | No
             'summary': {
                 'total_undocumented': len(undocumented_endpoints),
                 'total_stale': len(stale_ip_addresses),
-                'total_mismatched': len(mismatched_endpoints)
+                'total_mismatched': len(mismatched_endpoints),
+                'total_unscoped': total_unscoped,
+                'endpoint_cache_fresh': endpoint_cache_fresh,
+                'latest_endpoint_seen': latest_endpoint_seen_value,
+                'current_window_minutes': 15,
+                'stale_after_days': 7,
             }
         }
         if page is None:

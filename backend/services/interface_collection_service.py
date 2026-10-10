@@ -1,11 +1,8 @@
-"""Collect IP-bearing interface state for the CMDB interface view.
+"""Collect interface state for the CMDB interface view.
 
-The automation "Interfaces" quick query is the source of truth for the
-device-side state.  This worker reuses its command catalog and TextFSM parser,
-then enriches the parsed state with NSOT's ``ip_inventory`` so the CMDB
-interface projection keeps its historical IP-bearing contract.  Topology
-discovery maintains any additional physical/member interface rows it needs
-for link identity separately.
+IF-MIB provides interface identity, status, speed, alias, MAC address, and MTU.
+IP-MIB and Q-BRIDGE-MIB provide address and VLAN facts when their complete
+SNMP snapshots are available; the existing CLI categories fill missing domains.
 """
 
 from __future__ import annotations
@@ -134,7 +131,7 @@ def _looks_like_interface_name(value: Any) -> bool:
 
 
 def _status_record(record: dict[str, Any], ip_by_interface: dict[str, str]) -> tuple[str, str, int | None, str, str]:
-    interface_name = _record_value(record, "INTERFACE", "interface", "PORT", "IFNAME")
+    interface_name = _record_value(record, "INTERFACE", "interface", "PORT", "IFNAME", "NAME")
     key = normalize_interface_name(interface_name)
     raw_ip_field = _record_value(record, "IP_ADDRESS", "PRIMARY_IP", "MAIN_IP", "IP", "ADDRESS")
     raw_mask_field = _record_value(record, "MASK", "NETMASK", "PREFIX_LENGTH", "PREFIX_LEN", "SUBNET_MASK", "PREFIX")
@@ -151,8 +148,8 @@ def _status_record(record: dict[str, Any], ip_by_interface: dict[str, str]) -> t
     # The Playbook/TextFSM families use different field names:
     # Cisco: STATUS + PROTO, Huawei: PHY + PROTOCOL, H3C: LINK + PROTOCOL.
     # Note: In H3C bridge mode, only LINK is present (no PROTOCOL).
-    admin_value = _record_value(record, "STATUS", "LINK", "PHY", "ADMIN_STATUS", "LINK_STATUS")
-    oper_value = _record_value(record, "PROTO", "PROTOCOL", "OPER_STATUS", "OPERATE_STATUS")
+    admin_value = _record_value(record, "ADMIN_STATUS", "LINK_STATUS", "LINK", "PHY", "STATUS")
+    oper_value = _record_value(record, "OPER_STATUS", "OPERATE_STATUS", "PROTO", "PROTOCOL", "STATUS")
 
     admin_norm = _normalize_status(admin_value)
     oper_norm = _normalize_status(oper_value)
@@ -178,31 +175,48 @@ def _build_interface_status_rows(
     records: list[dict[str, Any]],
     inventory: dict[str, dict[str, Any]],
     descriptions: dict[str, dict[str, str]],
+    address_records: list[dict[str, Any]] | None = None,
+    *,
+    address_snapshot_available: bool = False,
 ) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
     """Build the historical IP-bearing interface snapshot.
 
     ``display interface brief`` contains L2 ports as well as L3 interfaces,
     but this CMDB collector is intentionally an IP inventory projection.  A
-    successful command response containing direct IPs is authoritative; for
-    status-only vendor output, retain the known IP-bearing rows from
-    ``ip_inventory``.  Topology link discovery is responsible for creating
-    physical endpoint rows when it needs them.
+    a complete IP-MIB snapshot is authoritative; for status-only output,
+    retain known IP-bearing rows from ``ip_inventory``. Topology link discovery
+    is responsible for creating physical endpoint rows when it needs them.
     """
     inventory_ips = {key: value.get("ip", "") for key, value in inventory.items()}
+    address_ips: dict[str, str] = {}
+    address_prefixes: dict[str, int | None] = {}
+    for address in address_records or []:
+        if not isinstance(address, dict):
+            continue
+        key = normalize_interface_name(address.get("interface"))
+        ip_address = _normalize_ip(address.get("ip_address"))
+        if key and ip_address:
+            address_ips.setdefault(key, ip_address)
+            address_prefixes.setdefault(key, _normalize_prefix_length(address.get("prefix_length")))
+    ip_by_interface = address_ips if address_snapshot_available else inventory_ips
     parsed_by_interface: dict[str, dict[str, Any]] = {}
     parser_ip_keys: set[str] = set()
 
     for record in records:
         if not isinstance(record, dict):
             continue
-        interface_name, direct_ip, direct_prefix_len, admin_status, oper_status = _status_record(record, {})
+        interface_name, direct_ip, direct_prefix_len, admin_status, oper_status = _status_record(record, ip_by_interface)
         if not _looks_like_interface_name(interface_name):
             continue
         key = normalize_interface_name(interface_name)
         if not key:
             continue
 
-        interface_ip = direct_ip or inventory_ips.get(key, "")
+        if address_snapshot_available and key in address_ips:
+            direct_ip = address_ips[key]
+            direct_prefix_len = address_prefixes.get(key)
+
+        interface_ip = direct_ip or ip_by_interface.get(key, "")
         if direct_ip:
             parser_ip_keys.add(key)
         if not interface_ip:
@@ -212,7 +226,7 @@ def _build_interface_status_rows(
             {
                 "interface_name": interface_name,
                 "interface_ip": interface_ip,
-                "prefix_length": direct_prefix_len,
+                "prefix_length": direct_prefix_len if direct_prefix_len is not None else address_prefixes.get(key),
                 "admin_status": "unknown",
                 "oper_status": "unknown",
                 "description": None,
@@ -226,17 +240,20 @@ def _build_interface_status_rows(
             parsed["prefix_length"] = direct_prefix_len
         parsed["admin_status"] = _prefer_status(parsed["admin_status"], admin_status)
         parsed["oper_status"] = _prefer_status(parsed["oper_status"], oper_status)
-        if descriptions.get(key, {}).get("description") is not None:
+        record_description = _record_value(record, "DESCRIPTION", "ALIAS", "IF_ALIAS")
+        if record_description:
+            parsed["description"] = record_description
+        elif descriptions.get(key, {}).get("description") is not None:
             parsed["description"] = descriptions[key]["description"]
 
     # If the vendor response includes direct IPs, it is the current snapshot;
     # otherwise keep the previously discovered IP-bearing inventory rows.
-    current_keys = parser_ip_keys or set(inventory)
+    current_keys = set(address_ips) if address_snapshot_available else (parser_ip_keys or set(inventory))
     rows: list[dict[str, Any]] = []
     for key in sorted(current_keys):
         item = inventory.get(key, {})
         parsed = parsed_by_interface.get(key, {})
-        interface_ip = parsed.get("interface_ip") or item.get("ip", "")
+        interface_ip = parsed.get("interface_ip") or ip_by_interface.get(key, "") or item.get("ip", "")
         if not interface_ip:
             continue
         resolved_prefix_length = parsed.get("prefix_length")
@@ -333,12 +350,43 @@ def _friendly_collection_error(exc: BaseException) -> str:
 def _load_device(device_id: str) -> dict[str, Any]:
     conn = get_db_connection()
     try:
-        row = conn.execute("SELECT * FROM devices WHERE id = ?", (device_id,)).fetchone()
+        row = conn.execute(
+            """SELECT d.*,
+                      COALESCE(NULLIF(pa.asset_type, ''), 'network_device') AS canonical_asset_type,
+                      COALESCE(NULLIF(d.device_category, ''), NULLIF(pa.device_category, ''), '') AS canonical_device_category,
+                      COALESCE(NULLIF(d.platform, ''), NULLIF(pa.platform, ''), '') AS canonical_platform,
+                      COALESCE(NULLIF(d.role, ''), NULLIF(pa.device_role, ''), '') AS canonical_role
+               FROM devices d
+               LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+               WHERE d.id = ?""",
+            (device_id,),
+        ).fetchone()
         if not row:
             raise ValueError("设备不存在")
         return dict(row)
     finally:
         conn.close()
+
+
+def is_online_network_device_for_interface_collection(device: dict[str, Any]) -> bool:
+    """Apply the CMDB asset type and shared server classification to manual targets."""
+    if str(device.get("status") or "").strip().casefold() != "online":
+        return False
+    asset_type = str(
+        device.get("canonical_asset_type") or device.get("asset_type") or "network_device"
+    ).strip().casefold()
+    if asset_type != "network_device":
+        return False
+
+    from services.device_classification_service import is_server_device
+
+    classification_device = {
+        **device,
+        "device_category": device.get("canonical_device_category") or device.get("device_category"),
+        "platform": device.get("canonical_platform") or device.get("platform"),
+        "role": device.get("canonical_role") or device.get("role"),
+    }
+    return not is_server_device(classification_device)
 
 
 def _load_ip_inventory(device_id: str) -> dict[str, dict[str, Any]]:
@@ -347,7 +395,8 @@ def _load_ip_inventory(device_id: str) -> dict[str, dict[str, Any]]:
         rows = conn.execute(
             """SELECT ip, mask, interface, type, last_seen
                FROM ip_inventory
-               WHERE device_id = ? AND COALESCE(ip, '') <> ''""",
+               WHERE device_id = ? AND COALESCE(ip, '') <> ''
+               ORDER BY interface, ip""",
             (device_id,),
         ).fetchall()
         result: dict[str, dict[str, Any]] = {}
@@ -356,45 +405,190 @@ def _load_ip_inventory(device_id: str) -> dict[str, dict[str, Any]]:
             key = normalize_interface_name(item.get("interface"))
             ip_value = _normalize_ip(item.get("ip"))
             if key and ip_value:
-                result[key] = {
+                candidate = {
                     **item,
                     "ip": ip_value,
                     "prefix_length": _normalize_prefix_length(item.get("mask")),
                 }
+                previous = result.get(key)
+                candidate_rank = (ipaddress.ip_address(ip_value).version, ip_value)
+                previous_rank = (
+                    ipaddress.ip_address(previous["ip"]).version,
+                    previous["ip"],
+                ) if previous else None
+                if previous_rank is None or candidate_rank < previous_rank:
+                    result[key] = candidate
         return result
     finally:
         conn.close()
 
 
-def _collect_snmp_interfaces(device: dict[str, Any]) -> list[dict[str, Any]] | None:
-    """Collect full interface table using standard IF-MIB via SNMP if configured."""
+def _collect_snmp_interface_domains(
+    device: dict[str, Any],
+    *,
+    collect_interfaces: bool,
+    collect_vlans: bool,
+) -> dict[str, Any]:
+    """Collect independent IF-MIB, IP-MIB, and Q-BRIDGE-MIB fact domains."""
+    result: dict[str, Any] = {
+        "configured": False,
+        "interfaces": None,
+        "addresses": None,
+        "vlan_data": None,
+        "complete": {
+            "interface_status": False,
+            "interface_description": False,
+            "interface_mac": False,
+            "interface_mtu": False,
+            "interface_addresses": False,
+            "vlan": False,
+        },
+        "errors": {},
+        "version": None,
+    }
     try:
         from services.vault_service import resolve_collector_credentials
-        from services.snmp_service import collect_interface_data
+        from services.snmp_service import (
+            collect_interface_ip_addresses,
+            collect_interface_status_data,
+            collect_qbridge_interface_vlan_data,
+        )
 
         creds = resolve_collector_credentials(device)
         snmp_cred = creds.get("snmp") or {}
-        if not snmp_cred.get("configured") or not snmp_cred.get("community"):
+        if not snmp_cred.get("configured"):
+            result["errors"]["credentials"] = "not_configured"
+            return result
+
+        target_ip = snmp_cred.get("server") or str(device.get("ip_address") or "").strip()
+        if not target_ip:
+            result["errors"]["credentials"] = "target_missing"
+            return result
+
+        version = str(snmp_cred.get("version") or "2c").strip().casefold()
+        is_v3 = version in {"3", "v3", "snmpv3"}
+        community_or_profile = dict(snmp_cred) if is_v3 else str(snmp_cred.get("community") or "")
+        if not is_v3 and not community_or_profile:
+            result["errors"]["credentials"] = "community_missing"
+            return result
+        port = int(snmp_cred.get("port") or 161)
+        result.update({"configured": True, "version": version})
+
+        interfaces: list[dict[str, Any]] | None = None
+        interface_names_by_index: dict[int, str] = {}
+        if collect_interfaces:
+            try:
+                collected = _run_async(collect_interface_status_data(
+                    target_ip,
+                    community=community_or_profile,
+                    port=port,
+                    version=version,
+                    timeout=8,
+                ))
+                if not isinstance(collected, list) or not collected:
+                    raise RuntimeError("IF-MIB returned no interface rows")
+                interfaces = [item for item in collected if isinstance(item, dict)]
+                if not interfaces:
+                    raise RuntimeError("IF-MIB returned no usable interface rows")
+                for item in interfaces:
+                    try:
+                        if_index = int(item.get("if_index"))
+                    except (TypeError, ValueError, OverflowError):
+                        continue
+                    name = str(item.get("name") or "").strip()
+                    if if_index > 0 and name:
+                        interface_names_by_index[if_index] = name
+                result["interfaces"] = interfaces
+                result["complete"]["interface_status"] = True
+                result["complete"]["interface_description"] = all(
+                    item.get("description_available") is not False for item in interfaces
+                )
+                result["complete"]["interface_mac"] = all(
+                    item.get("mac_address_available") is True for item in interfaces
+                )
+                result["complete"]["interface_mtu"] = all(
+                    item.get("mtu_available") is True for item in interfaces
+                )
+            except Exception as exc:
+                result["errors"]["interface_status"] = type(exc).__name__
+
+        if collect_interfaces:
+            try:
+                addresses = _run_async(collect_interface_ip_addresses(
+                    target_ip,
+                    community_or_profile,
+                    interface_names_by_index,
+                    port,
+                    version=version,
+                    timeout=8,
+                ))
+                if not isinstance(addresses, list) or not addresses:
+                    raise RuntimeError("IP-MIB returned no usable interface addresses")
+                result["addresses"] = addresses
+                result["complete"]["interface_addresses"] = True
+            except Exception as exc:
+                result["errors"]["interface_addresses"] = type(exc).__name__
+
+        if collect_vlans:
+            try:
+                vlan_data = _run_async(collect_qbridge_interface_vlan_data(
+                    target_ip,
+                    community_or_profile,
+                    interface_names_by_index or None,
+                    port,
+                    version=version,
+                    timeout=8,
+                ))
+                if not isinstance(vlan_data, dict) or not vlan_data.get("vlans") or not vlan_data.get("interfaces"):
+                    raise RuntimeError("Q-BRIDGE returned no complete VLAN membership rows")
+                result["vlan_data"] = vlan_data
+                result["complete"]["vlan"] = True
+            except Exception as exc:
+                result["errors"]["vlan"] = type(exc).__name__
+        return result
+    except Exception as exc:
+        # Credential resolution and address/profile errors make every requested
+        # domain unavailable; callers retain prior snapshots and use fallback.
+        for domain in ("interface_status", "interface_addresses", "vlan"):
+            if (collect_interfaces and domain.startswith("interface_")) or (collect_vlans and domain == "vlan"):
+                result["errors"].setdefault(domain, type(exc).__name__)
+        return result
+
+
+def _collect_snmp_interfaces(device: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Collect the lightweight IF-MIB interface snapshot when SNMP is configured."""
+    try:
+        from services.vault_service import resolve_collector_credentials
+        from services.snmp_service import collect_interface_status_data
+
+        creds = resolve_collector_credentials(device)
+        snmp_cred = creds.get("snmp") or {}
+        if not snmp_cred.get("configured"):
             return None
 
         target_ip = snmp_cred.get("server") or str(device.get("ip_address") or "").strip()
         if not target_ip:
             return None
 
-        community = str(snmp_cred["community"])
-        port = int(snmp_cred.get("port") or 161)
-
-        interfaces = _run_async(
-            collect_interface_data(target_ip, community=community, port=port, template_only=False)
-        )
-        if not interfaces or not isinstance(interfaces, list):
+        version = str(snmp_cred.get("version") or "2c").strip().casefold()
+        is_v3 = version in {"3", "v3", "snmpv3"}
+        community_or_profile = dict(snmp_cred) if is_v3 else str(snmp_cred.get("community") or "")
+        if not is_v3 and not community_or_profile:
             return None
-        return interfaces
+        port = int(snmp_cred.get("port") or 161)
+        interfaces = _run_async(collect_interface_status_data(
+            target_ip,
+            community=community_or_profile,
+            port=port,
+            version=version,
+            timeout=8,
+        ))
+        return interfaces if isinstance(interfaces, list) and interfaces else None
     except Exception as exc:
         logger.info(
             "SNMP interface collection for %s failed (%s), falling back to CLI",
             device.get("hostname") or device.get("id"),
-            exc,
+            type(exc).__name__,
         )
         return None
 
@@ -418,7 +612,7 @@ def refresh_snmp_interface_inventory(device_id: str) -> dict[str, Any]:
         ) from exc
 
     snmp_credentials = (credentials or {}).get("snmp") or {}
-    if not snmp_credentials.get("configured") or not snmp_credentials.get("community"):
+    if not snmp_credentials.get("configured"):
         raise InterfaceInventorySyncError(
             "snmp_not_configured",
             "该设备尚未配置可用的 SNMP 只读凭据。",
@@ -435,11 +629,17 @@ def refresh_snmp_interface_inventory(device_id: str) -> dict[str, Any]:
     try:
         from services.snmp_service import collect_interface_inventory
 
+        version = str(snmp_credentials.get("version") or "2c").strip().casefold()
+        is_v3 = version in {"3", "v3", "snmpv3"}
+        community_or_profile = dict(snmp_credentials) if is_v3 else str(snmp_credentials.get("community") or "")
+        if not is_v3 and not community_or_profile:
+            raise ValueError("SNMP community is missing")
         collected = _run_async(
             collect_interface_inventory(
                 target_ip,
-                community=str(snmp_credentials["community"]),
+                community=community_or_profile,
                 port=port,
+                version=version,
             )
         )
     except Exception as exc:
@@ -519,6 +719,12 @@ def _upsert_snmp_interfaces(device: dict[str, Any], snmp_interfaces: list[dict[s
                 speed_bps = None
 
             description = str(item.get("description") or "").strip()
+            mac_address = str(item.get("mac_address") or "").strip().lower()
+            try:
+                mtu_value = int(item.get("mtu"))
+                mtu_value = mtu_value if mtu_value > 0 else None
+            except (TypeError, ValueError, OverflowError):
+                mtu_value = None
             if_index = item.get("if_index", item.get("index"))
             try:
                 parsed_if_index = int(if_index) if str(if_index or "").isdigit() else 0
@@ -534,6 +740,8 @@ def _upsert_snmp_interfaces(device: dict[str, Any], snmp_interfaces: list[dict[s
                                admin_status = CASE WHEN ? <> 'unknown' THEN ? ELSE admin_status END,
                                oper_status = CASE WHEN ? <> 'unknown' THEN ? ELSE oper_status END,
                                speed = COALESCE(?, speed),
+                               mac_address = CASE WHEN ? <> '' THEN ? ELSE mac_address END,
+                               mtu = CASE WHEN ? IS NOT NULL THEN ? ELSE mtu END,
                                description = CASE WHEN ? <> '' THEN ? ELSE description END,
                                if_index = COALESCE(?, if_index),
                                last_seen = ?
@@ -542,6 +750,8 @@ def _upsert_snmp_interfaces(device: dict[str, Any], snmp_interfaces: list[dict[s
                             admin_stat, admin_stat,
                             oper_stat, oper_stat,
                             speed_bps,
+                            mac_address, mac_address,
+                            mtu_value, mtu_value,
                             description, description,
                             if_index_val,
                             observed_at,
@@ -557,21 +767,25 @@ def _upsert_snmp_interfaces(device: dict[str, Any], snmp_interfaces: list[dict[s
                 new_id = f"intf-{device['id']}-{re.sub(r'[^a-zA-Z0-9]+', '-', raw_name).strip('-').lower()}"
                 conn.execute(
                     """INSERT INTO interfaces (
-                           id, device_id, interface_name, description,
+                           id, device_id, interface_name, description, mac_address, mtu,
                            admin_status, oper_status, speed, if_index,
                            interface_type, switchport_mode, is_l3, ip_enabled, last_seen
-                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, FALSE, 0, ?)
+                       ) VALUES (?, ?, ?, ?, ?, COALESCE(?, 1500), ?, ?, ?, ?, ?, ?, FALSE, 0, ?)
                        ON CONFLICT(id) DO UPDATE SET
                            admin_status = excluded.admin_status,
                            oper_status = excluded.oper_status,
                            speed = COALESCE(excluded.speed, interfaces.speed),
+                           mac_address = CASE WHEN excluded.mac_address <> '' THEN excluded.mac_address ELSE interfaces.mac_address END,
+                           mtu = CASE WHEN ? IS NOT NULL THEN excluded.mtu ELSE interfaces.mtu END,
+                           if_index = COALESCE(excluded.if_index, interfaces.if_index),
                            description = CASE WHEN excluded.description <> '' THEN excluded.description ELSE interfaces.description END,
                            last_seen = excluded.last_seen""",
                     (
-                        new_id, device["id"], raw_name, description,
+                        new_id, device["id"], raw_name, description, mac_address, mtu_value,
                         admin_stat, oper_stat, speed_bps,
                         if_index_val,
                         detected_type, default_mode, observed_at,
+                        mtu_value,
                     ),
                 )
                 existing_by_key.setdefault(key, []).append({"id": new_id, "interface_name": raw_name})
@@ -579,6 +793,206 @@ def _upsert_snmp_interfaces(device: dict[str, Any], snmp_interfaces: list[dict[s
 
         conn.commit()
         return updated
+    finally:
+        conn.close()
+
+
+def _upsert_snmp_ip_inventory(device_id: str, addresses: list[dict[str, Any]]) -> int:
+    """Replace one complete IP-MIB snapshot without flattening multi-address ports."""
+    if not addresses:
+        raise ValueError("An empty IP-MIB snapshot is not authoritative")
+    normalized_by_ip: dict[str, dict[str, Any]] = {}
+    for item in addresses:
+        ip_value = _normalize_ip(item.get("ip_address"))
+        interface_name = str(item.get("interface") or "").strip()
+        if not ip_value or not interface_name:
+            raise ValueError("IP-MIB snapshot contains an invalid address or interface")
+        current = normalized_by_ip.get(ip_value)
+        if current and normalize_interface_name(current["interface"]) != normalize_interface_name(interface_name):
+            raise ValueError("ip_inventory cannot represent one IP assigned to multiple interfaces")
+        normalized_by_ip[ip_value] = {**item, "ip_address": ip_value, "interface": interface_name}
+
+    conn = get_db_connection()
+    try:
+        observed_at = _now()
+        conn.execute("DELETE FROM ip_inventory WHERE device_id = ?", (device_id,))
+        for ip_value, item in sorted(normalized_by_ip.items()):
+            address = ipaddress.ip_address(ip_value)
+            prefix_length = _normalize_prefix_length(item.get("prefix_length"))
+            if prefix_length is not None and prefix_length > address.max_prefixlen:
+                raise ValueError("IP-MIB snapshot contains a prefix outside its address family")
+            if prefix_length is None:
+                mask = ""
+            elif address.version == 4:
+                mask = str(ipaddress.IPv4Network(f"0.0.0.0/{prefix_length}").netmask)
+            else:
+                # The existing IPAM mask column is textual and readers accept
+                # either a prefix length or a netmask for IPv6.
+                mask = str(prefix_length)
+            interface_type = infer_interface_type(item["interface"]) or "physical"
+            cursor = conn.execute(
+                """INSERT INTO ip_inventory (ip, mask, device_id, interface, type, last_seen)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(ip) DO UPDATE SET
+                       mask = excluded.mask,
+                       interface = excluded.interface,
+                       type = excluded.type,
+                       last_seen = excluded.last_seen
+                   WHERE ip_inventory.device_id = excluded.device_id""",
+                (ip_value, mask, device_id, item["interface"], interface_type, observed_at),
+            )
+            if getattr(cursor, "rowcount", 1) == 0:
+                raise ValueError("ip_inventory already assigns this IP to another device")
+        conn.commit()
+        return len(normalized_by_ip)
+    finally:
+        conn.close()
+
+
+def _upsert_qbridge_vlan_data(device_id: str, data: dict[str, Any]) -> dict[str, int]:
+    """Persist a complete Q-BRIDGE snapshot using the existing VLAN projection."""
+    vlan_records = data.get("vlans") or []
+    interface_records = data.get("interfaces") or []
+    if not vlan_records or not interface_records:
+        raise ValueError("An incomplete Q-BRIDGE snapshot is not authoritative")
+
+    from services.vlan_discovery_service import is_system_default_vlan
+
+    conn = get_db_connection()
+    try:
+        device_row = conn.execute(
+            "SELECT site_id, site, tenant_id, platform, vendor FROM devices WHERE id = ?",
+            (device_id,),
+        ).fetchone()
+        if not device_row:
+            raise ValueError("VLAN snapshot device does not exist")
+        site_id = str(device_row["site_id"] or device_row["site"] or "")
+        site_scope = site_id or None
+        tenant_id = str(device_row["tenant_id"] or "tenant-default")
+        platform = str(device_row["platform"] or device_row["vendor"] or "")
+        observed_at = _now()
+        vlan_count = 0
+        for item in vlan_records:
+            try:
+                vlan_number = int(item.get("vlan_id"))
+            except (TypeError, ValueError, OverflowError):
+                raise ValueError("Q-BRIDGE snapshot contains an invalid VLAN ID")
+            if not 1 <= vlan_number <= 4094:
+                raise ValueError("Q-BRIDGE snapshot contains a VLAN ID outside 1..4094")
+            vlan_name = str(item.get("vlan_name") or f"VLAN {vlan_number}").strip()
+            if is_system_default_vlan(
+                vlan_number,
+                vlan_name,
+                platform=platform,
+                discovery_source="qbridge_snmp",
+            ):
+                continue
+            existing = conn.execute(
+                "SELECT id, name FROM vlans WHERE COALESCE(site_id, '') = ? AND vlan_id = ? LIMIT 1",
+                (site_id, vlan_number),
+            ).fetchone()
+            if existing:
+                old_name = str(existing["name"] or "").strip()
+                if not old_name or old_name.casefold() == f"vlan {vlan_number}".casefold():
+                    conn.execute(
+                        "UPDATE vlans SET name = ?, last_discovered_at = ? WHERE id = ?",
+                        (vlan_name, observed_at, existing["id"]),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE vlans SET last_discovered_at = ? WHERE id = ?",
+                        (observed_at, existing["id"]),
+                    )
+            else:
+                conn.execute(
+                    """INSERT INTO vlans
+                       (id, vlan_id, name, site_id, status, tenant_id, discovery_source,
+                        first_discovered_at, last_discovered_at, discovery_run_id)
+                       VALUES (?, ?, ?, ?, 'active', ?, 'qbridge_snmp', ?, ?, '')""",
+                    (
+                        f"vlan-{uuid.uuid4().hex[:12]}", vlan_number, vlan_name,
+                        site_scope, tenant_id, observed_at, observed_at,
+                    ),
+                )
+            vlan_count += 1
+
+        rows = conn.execute(
+            "SELECT id, interface_name FROM interfaces WHERE device_id = ?",
+            (device_id,),
+        ).fetchall()
+        interfaces_by_key: dict[str, list[str]] = {}
+        for row in rows:
+            key = normalize_interface_name(row["interface_name"])
+            if key:
+                interfaces_by_key.setdefault(key, []).append(row["id"])
+
+        updated_interfaces = 0
+        inferred_modes = 0
+        for item in interface_records:
+            interface_name = str(item.get("interface") or "").strip()
+            interface_key = normalize_interface_name(interface_name)
+            try:
+                if_index = int(item.get("if_index"))
+                pvid = int(item.get("pvid"))
+            except (TypeError, ValueError, OverflowError):
+                raise ValueError("Q-BRIDGE port snapshot contains an invalid ifIndex or PVID")
+            if not interface_name or not interface_key or if_index <= 0 or not 1 <= pvid <= 4094:
+                raise ValueError("Q-BRIDGE port snapshot contains an invalid interface row")
+
+            try:
+                tagged = {int(value) for value in (item.get("tagged_vlans") or [])}
+                untagged = {int(value) for value in (item.get("untagged_vlans") or [])}
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError("Q-BRIDGE port snapshot contains an invalid VLAN membership") from exc
+            if any(not 1 <= value <= 4094 for value in tagged | untagged):
+                raise ValueError("Q-BRIDGE port snapshot contains a VLAN membership outside 1..4094")
+
+            matching_ids = interfaces_by_key.get(interface_key, [])
+            if not matching_ids:
+                detected_type = infer_interface_type(interface_name) or "physical"
+                slug = re.sub(r"[^a-zA-Z0-9]+", "-", interface_name).strip("-").lower()
+                new_id = f"intf-{device_id}-{slug}"
+                conn.execute(
+                    """INSERT INTO interfaces
+                       (id, device_id, interface_name, admin_status, oper_status, interface_type,
+                        switchport_mode, vlan_mode, if_index, ip_enabled, is_l3, last_seen)
+                       VALUES (?, ?, ?, 'unknown', 'unknown', ?, 'unknown', 'unknown', ?, 0, FALSE, ?)""",
+                    (new_id, device_id, interface_name, detected_type, if_index, observed_at),
+                )
+                matching_ids = [new_id]
+                interfaces_by_key[interface_key] = matching_ids
+
+            access = (tagged | untagged) == {pvid} and tagged == set() and untagged == {pvid}
+            native_vlan = next(iter(untagged)) if len(untagged) == 1 and untagged == {pvid} else None
+            trunk = bool(tagged) and len(untagged) <= 1 and (not untagged or untagged == {pvid})
+            for interface_id in matching_ids:
+                if access:
+                    conn.execute(
+                        """UPDATE interfaces SET if_index = ?, switchport_mode = 'access', vlan_mode = 'access',
+                               access_vlan = ?, native_vlan = NULL, allowed_vlans = '', last_seen = ?
+                           WHERE id = ?""",
+                        (if_index, pvid, observed_at, interface_id),
+                    )
+                    inferred_modes += 1
+                elif trunk:
+                    allowed_vlans = ",".join(str(value) for value in sorted(tagged))
+                    conn.execute(
+                        """UPDATE interfaces SET if_index = ?, switchport_mode = 'trunk', vlan_mode = 'trunk',
+                               access_vlan = NULL, native_vlan = ?, allowed_vlans = ?, last_seen = ?
+                           WHERE id = ?""",
+                        (if_index, native_vlan, allowed_vlans, observed_at, interface_id),
+                    )
+                    inferred_modes += 1
+                else:
+                    # PVID plus incomplete/ambiguous membership does not prove
+                    # access or trunk. Retain prior mode/VLAN configuration.
+                    conn.execute(
+                        "UPDATE interfaces SET if_index = ?, last_seen = ? WHERE id = ?",
+                        (if_index, observed_at, interface_id),
+                    )
+                updated_interfaces += 1
+        conn.commit()
+        return {"vlans": vlan_count, "interfaces": updated_interfaces, "mode_inferred": inferred_modes}
     finally:
         conn.close()
 
@@ -617,7 +1031,7 @@ def _upsert_interfaces(device: dict[str, Any], interface_rows: list[dict[str, An
             if normalize_interface_name(row["interface_name"]) not in current_keys:
                 conn.execute(
                     """UPDATE interfaces SET
-                           primary_ip = '', ip_address = '', ip_prefix_length = NULL,
+                           primary_ip = '', ip_address = '', ip_prefix_length = NULL, ip_version = NULL,
                            is_l3 = FALSE, ip_enabled = 0,
                            last_seen = ?
                        WHERE id = ?""",
@@ -626,6 +1040,7 @@ def _upsert_interfaces(device: dict[str, Any], interface_rows: list[dict[str, An
         for item in interface_rows:
             detected_interface_type = infer_interface_type(item.get("interface_name"))
             interface_ip = item.get("interface_ip") or ""
+            ip_version = ipaddress.ip_address(interface_ip).version if interface_ip else None
             l3_enabled = bool(interface_ip) or detected_interface_type in {
                 "svi", "loopback", "tunnel", "sub_interface"
             }
@@ -643,7 +1058,7 @@ def _upsert_interfaces(device: dict[str, Any], interface_rows: list[dict[str, An
                                oper_status = CASE WHEN ? <> 'unknown' THEN ? ELSE oper_status END,
                                primary_ip = ?, ip_address = ?, is_l3 = ?,
                                ip_enabled = ?,
-                               ip_prefix_length = ?,
+                               ip_prefix_length = ?, ip_version = ?,
                                interface_type = CASE
                                    WHEN ? IN ('svi', 'loopback', 'tunnel', 'sub_interface', 'port_channel') THEN ?
                                    ELSE interface_type
@@ -659,7 +1074,7 @@ def _upsert_interfaces(device: dict[str, Any], interface_rows: list[dict[str, An
                             item["admin_status"], item["admin_status"],
                             item["oper_status"], item["oper_status"],
                             interface_ip,
-                            interface_ip, l3_enabled, ip_enabled, item.get("prefix_length"),
+                            interface_ip, l3_enabled, ip_enabled, item.get("prefix_length"), ip_version,
                             detected_interface_type, detected_interface_type, detected_interface_type,
                             default_mode, observed_at, existing_id,
                         ),
@@ -671,13 +1086,13 @@ def _upsert_interfaces(device: dict[str, Any], interface_rows: list[dict[str, An
                            id, device_id, interface_name, description,
                            admin_status, oper_status, interface_type,
                            switchport_mode, primary_ip, ip_address, ip_prefix_length,
-                           is_l3, ip_enabled, last_seen
-                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                           ip_version, is_l3, ip_enabled, last_seen
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         f"intf-{device['id']}-{re.sub(r'[^a-zA-Z0-9]+', '-', item['interface_name']).strip('-').lower()}",
                         device["id"], item["interface_name"], item.get("description") or '', item["admin_status"],
                         item["oper_status"], detected_interface_type, default_mode, interface_ip,
-                        interface_ip, item.get("prefix_length"), l3_enabled, ip_enabled, observed_at,
+                        interface_ip, item.get("prefix_length"), ip_version, l3_enabled, ip_enabled, observed_at,
                     ),
                 )
                 new_id = f"intf-{device['id']}-{re.sub(r'[^a-zA-Z0-9]+', '-', item['interface_name']).strip('-').lower()}"
@@ -689,20 +1104,49 @@ def _upsert_interfaces(device: dict[str, Any], interface_rows: list[dict[str, An
         conn.close()
 
 
-def collect_interface_status_target(device_id: str) -> dict[str, Any]:
+def _merge_cli_interface_addresses(
+    snmp_interfaces: list[dict[str, Any]],
+    cli_interfaces: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Fill missing IP fields from the combined legacy CLI interface category."""
+    merged = [dict(item) for item in snmp_interfaces if isinstance(item, dict)]
+    by_key = {
+        normalize_interface_name(item.get("name")):
+        index
+        for index, item in enumerate(merged)
+        if normalize_interface_name(item.get("name"))
+    }
+    for record in cli_interfaces:
+        if not isinstance(record, dict):
+            continue
+        interface_name, interface_ip, prefix_length, _admin, _oper = _status_record(record, {})
+        key = normalize_interface_name(interface_name)
+        if not key or not interface_ip:
+            continue
+        index = by_key.get(key)
+        if index is None:
+            continue
+        merged[index]["ip_address"] = interface_ip
+        if prefix_length is not None:
+            merged[index]["prefix_length"] = prefix_length
+    return merged
+
+
+def collect_interface_status_target(
+    device_id: str,
+    *,
+    require_online_network_device: bool = False,
+) -> dict[str, Any]:
     """Collect one device's interface status and project it into IPAM Prefixes."""
     device = _load_device(device_id)
+    if require_online_network_device and not is_online_network_device_for_interface_collection(device):
+        raise RuntimeError("接口采集目标已离线或不再属于网络设备")
     inventory = _load_ip_inventory(device_id)
     from services.collection_plan_service import should_collect
 
     collect_interfaces = should_collect(device, 'interface_status')
     collect_vlans = should_collect(device, 'vlan')
-    categories = []
-    if collect_interfaces:
-        categories.extend(['interfaces', 'interface_description'])
-    if collect_vlans:
-        categories.append('vlan')
-    if not categories:
+    if not collect_interfaces and not collect_vlans:
         return {
             'success': True,
             'device_id': device_id,
@@ -715,52 +1159,112 @@ def collect_interface_status_target(device_id: str) -> dict[str, Any]:
             'prefix_sync': {'ok': True, 'skipped': True},
         }
 
-    # ── SNMP-First: Collect authoritative physical and operational port states ──
+    domains = _collect_snmp_interface_domains(
+        device,
+        collect_interfaces=collect_interfaces,
+        collect_vlans=collect_vlans,
+    )
+    snmp_interfaces = domains.get("interfaces") if domains["complete"]["interface_status"] else None
+    snmp_addresses = domains.get("addresses") if domains["complete"]["interface_addresses"] else None
+    snmp_vlan_data = domains.get("vlan_data") if domains["complete"]["vlan"] else None
+    snmp_used = bool(snmp_interfaces)
     snmp_updated = 0
-    snmp_interfaces = None
-    if collect_interfaces:
+    address_updated = 0
+    vlan_projection = {"vlans": 0, "interfaces": 0}
+
+    if snmp_interfaces:
         try:
-            snmp_interfaces = _collect_snmp_interfaces(device)
-            if snmp_interfaces:
-                snmp_updated = _upsert_snmp_interfaces(device, snmp_interfaces)
-                logger.info(
-                    "SNMP-First successfully synchronized %d interfaces for %s",
-                    len(snmp_interfaces),
-                    device.get("hostname") or device_id,
-                )
-        except Exception as snmp_exc:
-            logger.info("SNMP interface collection for %s skipped/failed: %s", device_id, snmp_exc)
+            snmp_updated = _upsert_snmp_interfaces(device, snmp_interfaces)
+        except Exception as exc:
+            logger.warning("IF-MIB interface persistence failed for %s (%s)", device_id, type(exc).__name__, exc_info=True)
+            domains.setdefault("persisted", {})["interface_status"] = False
+        else:
+            domains.setdefault("persisted", {})["interface_status"] = True
+
+    if snmp_addresses:
+        try:
+            address_updated = _upsert_snmp_ip_inventory(device_id, snmp_addresses)
+        except Exception as exc:
+            # A failed domain write is not an empty snapshot. Keep the previous
+            # ip_inventory rows and do not let this failure erase interface IPs.
+            logger.warning("IP-MIB snapshot persistence failed for %s (%s)", device_id, type(exc).__name__, exc_info=True)
+            domains.setdefault("persisted", {})["interface_addresses"] = False
+        else:
+            domains.setdefault("persisted", {})["interface_addresses"] = True
+
+    if snmp_vlan_data:
+        try:
+            vlan_projection = _upsert_qbridge_vlan_data(device_id, snmp_vlan_data)
+            domains.setdefault("persisted", {})["vlan"] = True
+        except Exception as exc:
+            logger.warning("Q-BRIDGE VLAN persistence failed for %s (%s)", device_id, type(exc).__name__, exc_info=True)
+            vlan_projection = {"vlans": 0, "interfaces": 0, "error": str(exc)}
+            domains.setdefault("persisted", {})["vlan"] = False
+
+    categories: list[str] = []
+    if collect_interfaces and (
+        not domains["complete"]["interface_status"]
+        or not domains["complete"]["interface_addresses"]
+    ):
+        categories.append("interfaces")
+    if collect_interfaces and not domains["complete"]["interface_description"]:
+        categories.append("interface_description")
+    if collect_vlans and not domains["complete"]["vlan"]:
+        categories.append("vlan")
 
     payload = {"categories": [], "collected_at": _now()}
-    try:
-        # Status and description use separate vendor TextFSM grammars. The
-        # dedicated description command is authoritative for this field.
-        payload = collect_read_only_evidence(
-            device,
-            categories=categories,
-            auth_role="auto",
-        )
-    except Exception as exc:
-        if not snmp_interfaces:
-            message = _friendly_collection_error(exc)
-            logger.warning("Interface status collection failed for %s: %s", device.get("hostname") or device_id, message, exc_info=True)
-            raise RuntimeError(message) from exc
-        logger.info("CLI evidence collection failed for %s (%s), but preserved SNMP interface data", device.get("hostname") or device_id, exc)
+    cli_collection_error = None
+    if categories:
+        try:
+            payload = collect_read_only_evidence(device, categories=categories, auth_role="auto")
+        except Exception as exc:
+            cli_collection_error = exc
+            logger.info("Targeted interface fallback failed for %s (%s)", device_id, type(exc).__name__)
 
-    category = next((item for item in payload.get("categories", []) if item.get("key") == "interfaces"), {})
-    if collect_interfaces and not category.get("success", False) and not snmp_interfaces:
-        raise RuntimeError(str(category.get("error") or "接口状态采集失败"))
+    cli_interface_category = next(
+        (item for item in payload.get("categories", []) if item.get("key") == "interfaces"),
+        {},
+    )
+    cli_interfaces_complete = (
+        cli_interface_category.get("success") is True
+        and cli_interface_category.get("parse_status") == "matched"
+    )
+    cli_interface_records = cli_interface_category.get("records") or []
+    if collect_interfaces and not domains["complete"]["interface_status"]:
+        if not cli_interfaces_complete:
+            failure = cli_collection_error or RuntimeError(str(cli_interface_category.get("error") or "接口状态采集失败"))
+            message = _friendly_collection_error(failure)
+            logger.warning("Interface status collection failed for %s: %s", device.get("hostname") or device_id, message, exc_info=cli_collection_error is not None)
+            raise RuntimeError(message) from failure
+        category = cli_interface_category
+    elif snmp_interfaces:
+        # IF-MIB remains the status source when CLI ran only to fill its IP gap.
+        category = {
+            "key": "interfaces",
+            "success": True,
+            "parse_status": "matched",
+            "records": snmp_interfaces,
+            "commands": [],
+        }
+    else:
+        category = cli_interface_category
+
+    if snmp_interfaces and cli_interfaces_complete and not domains["complete"]["interface_addresses"]:
+        status_records = _merge_cli_interface_addresses(snmp_interfaces, cli_interface_records)
+    else:
+        status_records = category.get("records") or []
     description_category = next(
         (item for item in payload.get("categories", []) if item.get("key") == "interface_description"),
         {},
     )
-    descriptions = _description_records(description_category) if description_category.get("success") else {}
+    descriptions = _description_records(description_category) if (
+        description_category.get("success") and description_category.get("parse_status") == "matched"
+    ) else {}
     vlan_category = next(
         (item for item in payload.get("categories", []) if item.get("key") == "vlan"),
         {},
     )
-    vlan_projection = {"vlans": 0, "interfaces": 0}
-    if vlan_category.get("success") and vlan_category.get("parse_status") == "matched":
+    if not snmp_vlan_data and vlan_category.get("success") and vlan_category.get("parse_status") == "matched":
         try:
             from services.vlan_discovery_service import project_vlan_records
             vlan_projection = project_vlan_records(device_id, vlan_category.get("records") or [])
@@ -768,10 +1272,13 @@ def collect_interface_status_target(device_id: str) -> dict[str, Any]:
             logger.warning("VLAN member projection failed for %s: %s", device_id, vlan_exc, exc_info=True)
             vlan_projection = {"vlans": 0, "interfaces": 0, "error": str(vlan_exc)}
 
-    parsed_by_interface, rows = (
-        _build_interface_status_rows(category.get("records") or [], inventory, descriptions)
-        if collect_interfaces else ({}, [])
-    )
+    parsed_by_interface, rows = _build_interface_status_rows(
+        status_records,
+        inventory,
+        descriptions,
+        snmp_addresses,
+        address_snapshot_available=bool(snmp_addresses),
+    ) if collect_interfaces else ({}, [])
 
     updated = _upsert_interfaces(device, rows) if collect_interfaces else 0
     description_updated = 0
@@ -814,14 +1321,21 @@ def collect_interface_status_target(device_id: str) -> dict[str, Any]:
         "interface_count": len(rows) if rows else (len(snmp_interfaces) if snmp_interfaces else 0),
         "updated_count": updated + snmp_updated,
         "snmp_updated_count": snmp_updated,
-        "snmp_used": bool(snmp_interfaces),
+        "snmp_address_count": address_updated,
+        "snmp_used": snmp_used,
+        "snmp_domains": {
+            "requested": {"interfaces": collect_interfaces, "vlans": collect_vlans},
+            "complete": dict(domains["complete"]),
+            "persisted": dict(domains.get("persisted") or {}),
+            "errors": dict(domains.get("errors") or {}),
+        },
         "description_updated_count": description_updated,
         "vlan_projection": vlan_projection,
         "unknown_status_count": unknown,
         "parsed_count": len(parsed_by_interface),
         "ip_bearing_count": sum(1 for row in rows if row["interface_ip"]),
         "status_only_count": sum(1 for row in rows if not row["interface_ip"]),
-        "parser": "snmp+textfsm" if snmp_interfaces else "textfsm",
+        "parser": "snmp" if snmp_used else "textfsm",
         "command": (category.get("commands") or [""])[0],
         "collected_at": payload.get("collected_at") or _now(),
         "prefix_sync": prefix_sync,

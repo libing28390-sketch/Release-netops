@@ -17,8 +17,10 @@ from core.interface_utils import normalize_interface_name
 
 
 SOURCE = "snmp"
-MAX_ROWS = 4096
-WALK_TIMEOUT_SECONDS = 3.0
+# ``MAX_ROWS`` is retained as a compatibility sentinel for existing callers;
+# complete inventory walks do not stop at a row count.
+MAX_ROWS = None
+WALK_TIMEOUT_SECONDS = 30.0
 
 IF_NAME_OID = "1.3.6.1.2.1.31.1.1.1.1"
 IF_DESCR_OID = "1.3.6.1.2.1.2.2.1.2"
@@ -45,37 +47,40 @@ class _AggregationCollectionError(RuntimeError):
 
 async def latebound_snmp_walk(
     ip: str,
-    community: str,
+    community: str | dict[str, Any],
     oid: str,
     *,
     port: int,
     version: str,
-    max_rows: int = MAX_ROWS,
+    max_rows: int | None = MAX_ROWS,
     timeout: float = WALK_TIMEOUT_SECONDS,
 ) -> list[tuple[str, str]]:
-    """Call the shared SNMP walker at runtime and reject bounded truncation.
+    """Call the shared complete SNMP walker at runtime without row caps.
 
     Importing the transport lazily keeps this collector cheap to import and
-    lets tests replace the shared walker without opening a connection.  The
-    shared walker truncates at ``max_rows`` without returning a marker, so a
-    result reaching the bound is treated conservatively as incomplete.
+    lets callers replace the shared walker without opening a connection.
+    ``max_rows`` is ignored for compatibility with older internal callers.
     """
 
-    from services.snmp_service import _snmp_walk
+    from services.snmp_service import _snmp_bulk_walk_complete, _snmp_text_value
 
-    rows = await _snmp_walk(
+    rows = await _snmp_bulk_walk_complete(
         ip,
         community,
         oid,
         port=port,
         timeout=timeout,
-        max_rows=max_rows,
         version=version,
-        raise_on_error=True,
     )
-    if len(rows) >= max_rows:
-        raise _AggregationCollectionError("SNMP_WALK_TRUNCATED")
-    return rows
+    def stringify(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, (bytes, bytearray, memoryview)):
+            return _snmp_text_value(value)
+        # Preserve integer zero: it means "not attached" in the LAG MIB.
+        return str(value).strip()
+
+    return [(str(index), stringify(value)) for index, value in rows]
 
 
 def _result(
@@ -102,17 +107,18 @@ def _normalized_version(value: Any) -> str | None:
         return "1"
     if version in {"2", "2c", "v2c"}:
         return "2c"
+    if version in {"3", "v3", "snmpv3"}:
+        return "3"
     return None
 
 
 def _validated_target(
     device: dict[str, Any],
     collector_credentials: dict[str, Any] | None,
-) -> tuple[str, str, int, str] | None:
+) -> tuple[str, str | dict[str, Any], int, str] | None:
     snmp = (collector_credentials or {}).get("snmp") or {}
     ip = str(snmp.get("server") or device.get("ip_address") or "").strip()
-    community = str(snmp.get("community") or "").strip()
-    if not ip or not community:
+    if not ip:
         return None
 
     raw_port = snmp.get("port", 161)
@@ -127,6 +133,13 @@ def _validated_target(
 
     version = _normalized_version(snmp.get("version", "2c"))
     if version is None:
+        return None
+    if version == "3":
+        if not snmp.get("configured") or not str(snmp.get("username") or "").strip():
+            return None
+        return ip, dict(snmp), port, version
+    community = str(snmp.get("community") or "").strip()
+    if not community:
         return None
     return ip, community, port, version
 
@@ -355,6 +368,8 @@ async def collect_snmp_aggregation_inventory(
     named_indexes = set(names) | set(descriptions)
     if not named_indexes.issubset(types):
         return _result("partial", detail="SNMP_IF_TYPE_INDEX_MISSING")
+    if not set(types).issubset(named_indexes):
+        return _result("partial", detail="SNMP_INTERFACE_NAME_INDEX_MISSING")
     if not names and not descriptions:
         return _result("partial", detail="SNMP_INTERFACE_NAMES_MISSING")
 

@@ -13,6 +13,7 @@ export interface IconInputFieldProps
   onChange: React.ChangeEventHandler<HTMLInputElement>;
   error?: string;
   theme?: IconInputFieldTheme;
+  labelClassName?: string;
 }
 
 /** Shared labelled input with a leading icon and a consistent validation state. */
@@ -24,6 +25,7 @@ export const IconInputField: React.FC<IconInputFieldProps> = ({
   onChange,
   error,
   theme = 'light',
+  labelClassName,
   className,
   type = 'text',
   'aria-describedby': ariaDescribedBy,
@@ -41,6 +43,7 @@ export const IconInputField: React.FC<IconInputFieldProps> = ({
         className={cn(
           'mb-1.5 block text-[11px] font-medium',
           isDark ? 'text-white/50' : 'text-slate-600',
+          labelClassName,
         )}
       >
         {label}

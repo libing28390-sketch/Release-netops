@@ -81,7 +81,8 @@ class ReleaseRequest(BaseModel):
 
 
 class InterfacePrefixGenerateRequest(BaseModel):
-    candidate_ids: list[str] = []
+    candidate_ids: list[str] | None = None
+    all_pending: bool = False
 
 
 def _prefix_scope(subnet_id: str) -> dict:
@@ -126,9 +127,14 @@ def api_list_subnets(
 
 
 @router.get('/ipam/prefixes/interface-candidates')
-def api_preview_interface_prefixes(_user=require_role("Viewer")):
+def api_preview_interface_prefixes(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100),
+    status: str = Query('all', pattern='^(all|to_create|existing)$'),
+    _user=require_role("Viewer"),
+):
     """Preview prefixes derived from current L3 interface collection only."""
-    return preview_interface_prefixes()
+    return preview_interface_prefixes(page=page, page_size=page_size, status=status)
 
 
 @router.get('/ipam/prefixes/classification-summary')
@@ -141,8 +147,22 @@ def api_generate_interface_prefixes(
     body: InterfacePrefixGenerateRequest,
     user=require_permission('prefix', 'create'),
 ):
+    if body.all_pending and body.candidate_ids is not None:
+        raise HTTPException(
+            status_code=422,
+            detail='candidate_ids 与 all_pending 不能同时提供',
+        )
+    if not body.all_pending and not body.candidate_ids:
+        raise HTTPException(
+            status_code=422,
+            detail='请提供非空 candidate_ids，或显式设置 all_pending=true',
+        )
+
     try:
-        result = generate_interface_prefixes(body.candidate_ids)
+        result = generate_interface_prefixes(
+            candidate_ids=body.candidate_ids,
+            all_pending=body.all_pending,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
 
@@ -479,11 +499,12 @@ def api_release_address(address_id: str, body: ReleaseRequest | None = None, use
 def api_list_pools(
     q: str = Query('', description='Search pool name, prefix or description'),
     status: str = Query('', description='Filter pool status'),
+    prefix_id: str = Query('', description='Filter pools within a prefix'),
     page: int | None = Query(None, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     _user=require_role("Viewer"),
 ):
-    return list_pools(q=q, status=status, page=page, page_size=page_size)
+    return list_pools(q=q, status=status, prefix_id=prefix_id, page=page, page_size=page_size)
 
 
 @router.post('/ipam/pools', status_code=201)
@@ -491,7 +512,7 @@ def api_create_pool(body: IPPoolCreate, user=require_role("Operator")):
     try:
         result = create_pool(
             name=body.name,
-            prefix_id=body.prefix_id,
+            prefix_id=body.prefix_id or '',
             start_ip=body.start_ip,
             end_ip=body.end_ip,
             description=body.description,
@@ -519,8 +540,11 @@ def api_create_pool(body: IPPoolCreate, user=require_role("Operator")):
 @router.put('/ipam/pools/{pool_id}')
 def api_update_pool(pool_id: str, body: IPPoolUpdate, user=require_role("Operator")):
     fields = body.model_dump(exclude_none=True)
-    if not update_pool(pool_id, **fields):
-        raise HTTPException(status_code=404, detail='IP Pool not found')
+    try:
+        if not update_pool(pool_id, **fields):
+            raise HTTPException(status_code=404, detail='IP Pool not found')
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
     log_audit_event(
         event_type="ipam.pool.update",
@@ -563,11 +587,12 @@ def api_list_vips(
     q: str = Query('', description='Search VIP address or description'),
     vip_type: str = Query('', description='Filter VIP type'),
     status: str = Query('', description='Filter VIP status'),
+    prefix_id: str = Query('', description='Filter VIPs within a prefix'),
     page: int | None = Query(None, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     _user=require_role("Viewer"),
 ):
-    return list_vips(q=q, vip_type=vip_type, status=status, page=page, page_size=page_size)
+    return list_vips(q=q, vip_type=vip_type, status=status, prefix_id=prefix_id, page=page, page_size=page_size)
 
 
 @router.post('/ipam/vips', status_code=201)
@@ -583,6 +608,7 @@ def api_create_vip(body: VIPCreate, user=require_role("Operator")):
             real_servers=body.real_servers,
             status=body.status,
             tenant_id=body.tenant_id,
+            prefix_id=body.prefix_id,
         )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -605,8 +631,11 @@ def api_create_vip(body: VIPCreate, user=require_role("Operator")):
 @router.put('/ipam/vips/{vip_id}')
 def api_update_vip(vip_id: str, body: VIPUpdate, user=require_role("Operator")):
     fields = body.model_dump(exclude_none=True)
-    if not update_vip(vip_id, **fields):
-        raise HTTPException(status_code=404, detail='VIP not found')
+    try:
+        if not update_vip(vip_id, **fields):
+            raise HTTPException(status_code=404, detail='VIP not found')
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
     log_audit_event(
         event_type="ipam.vip.update",

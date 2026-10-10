@@ -223,6 +223,18 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
 
   const isActive = (child: typeof visibleChildren[0]) => checkChildActive(child, pathname);
 
+  const navigateInModule = (path: string) => {
+    const destination = new URL(path, window.location.origin);
+    const currentPrefixId = new URLSearchParams(location.search).get('prefix_id');
+    if (
+      currentPrefixId &&
+      ['/ipam/ips', '/ipam/pools', '/ipam/vips'].includes(destination.pathname)
+    ) {
+      destination.searchParams.set('prefix_id', currentPrefixId);
+    }
+    navigate(`${destination.pathname}${destination.search}${destination.hash}`);
+  };
+
   const groupLabel = zh ? currentGroup.label : (currentGroup.labelEn || currentGroup.label);
   const GroupIcon = currentGroup.icon ? iconMap[currentGroup.icon] : undefined;
 
@@ -279,7 +291,7 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
             return (
               <button
                 key={child.id}
-                onClick={() => navigate(child.path)}
+                onClick={() => navigateInModule(child.path)}
                 title={label}
                 className="w-full flex items-center justify-center rounded-lg mb-1 transition-all relative"
                 style={{
@@ -354,7 +366,7 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
                       return (
                         <button
                           key={nestedChild.id}
-                          onClick={() => navigate(nestedChild.path)}
+                          onClick={() => navigateInModule(nestedChild.path)}
                           className="group relative w-full flex items-center gap-2 pl-3 pr-2 py-1.5 rounded-md text-[12px] transition-all mb-0.5"
                           style={{
                             color: nestedIsActive ? ACCENT : 'var(--body-text)',
@@ -394,7 +406,7 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
           return (
             <button
               key={child.id}
-              onClick={() => navigate(child.path)}
+              onClick={() => navigateInModule(child.path)}
               className="group relative w-full flex items-center gap-2.5 pl-3 pr-2.5 py-2 rounded-lg text-[13px] transition-all mb-0.5"
               style={{
                 color: active ? ACCENT : 'var(--body-text)',

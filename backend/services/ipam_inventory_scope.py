@@ -19,7 +19,11 @@ def load_inventory_catalog(conn) -> tuple[list[dict], dict[str, dict], dict[tupl
 
     prefixes = []
     for row in conn.execute(
-        'SELECT id, prefix, name, tenant_id, vrf_id, site_id, network_type FROM prefixes'
+        '''SELECT p.id, p.prefix, p.name, p.tenant_id, p.vrf_id, p.site_id,
+                  p.network_type, p.gateway, p.gateway_device_id,
+                  p.gateway_interface_id, d.hostname AS gateway_device_name
+           FROM prefixes p
+           LEFT JOIN devices d ON d.id = p.gateway_device_id'''
     ).fetchall():
         item = dict(row)
         try:

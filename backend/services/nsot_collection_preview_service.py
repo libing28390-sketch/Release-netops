@@ -22,25 +22,27 @@ class NSOTPreviewPermissionError(PermissionError):
 # These are the categories actually reached by run_unified_nsot_sync. The
 # separate reachability and SNMP health samplers are not scheduled by NSOT.
 _OPERATION_SPECS: tuple[dict[str, Any], ...] = (
-    {"collector_key": "interface_status", "quick_ops_category": "interfaces", "label": "接口状态", "transport": "cli", "category": "interfaces", "action_code": "get_interface_brief"},
-    {"collector_key": "interface_status", "quick_ops_category": "interface_description", "label": "接口描述", "transport": "cli", "category": "interface_description", "action_code": "get_interface_description"},
-    {"collector_key": "interface_ip", "quick_ops_category": "interfaces", "label": "接口详情", "transport": "cli", "category": "interfaces", "action_code": "get_interfaces"},
-    {"collector_key": "interface_ip", "quick_ops_category": "interfaces", "label": "接口 IP", "transport": "cli", "category": "interfaces", "action_code": "get_ip_interfaces"},
-    {"collector_key": "lldp", "quick_ops_category": "neighbors", "label": "LLDP 邻居", "transport": "cli", "category": "neighbors", "action_code": "get_lldp_neighbors"},
-    {"collector_key": "arp", "quick_ops_category": "arp", "label": "ARP 表", "transport": "cli", "category": "arp", "action_code": "get_arp_table"},
-    {"collector_key": "mac_table", "quick_ops_category": "mac_table", "label": "MAC 地址表", "transport": "cli", "category": "mac_table", "action_code": "get_mac_table"},
-    {"collector_key": "vlan", "quick_ops_category": "vlan", "label": "VLAN", "transport": "cli", "category": "vlan", "action_code": "get_vlan_table"},
-    {"collector_key": "routes", "quick_ops_category": "routing_table", "label": "路由表", "transport": "cli", "category": "routing_table", "action_code": "get_route_table"},
-    {"collector_key": "bgp", "quick_ops_category": "bgp", "label": "BGP 邻居", "transport": "cli", "category": "bgp", "action_code": "get_bgp_neighbors"},
-    {"collector_key": "bgp", "quick_ops_category": "bgp", "label": "BGP 路由", "transport": "cli", "category": "bgp_routes", "action_code": "get_bgp_routes"},
-    {"collector_key": "ospf", "quick_ops_category": "ospf", "label": "OSPF 邻居", "transport": "cli", "category": "ospf", "action_code": "get_ospf_neighbors"},
-    {"collector_key": "isis", "quick_ops_category": "isis", "label": "IS-IS 邻居", "transport": "cli", "category": "isis", "action_code": "get_isis_neighbors"},
+    {"collector_key": "interface_status", "quick_ops_category": "interfaces", "label": "接口状态", "transport": "SNMP 优先（CLI 回退）", "category": "interfaces", "action_code": "get_interface_brief"},
+    {"collector_key": "interface_status", "quick_ops_category": "interface_description", "label": "接口描述", "transport": "SNMP IF-MIB 优先（CLI 回退）", "category": "interface_description", "action_code": "get_interface_description"},
+    {"collector_key": "interface_ip", "quick_ops_category": "interfaces", "label": "接口详情", "transport": "IF-MIB 优先（CLI 回退）", "category": "interfaces", "action_code": "get_interfaces"},
+    {"collector_key": "interface_ip", "quick_ops_category": "interfaces", "label": "接口 IP", "transport": "IP-MIB 优先（CLI 回退）", "category": "interfaces", "action_code": "get_ip_interfaces"},
+    {"collector_key": "lldp", "quick_ops_category": "neighbors", "label": "LLDP 邻居", "transport": "SNMP 优先（CLI 回退）", "category": "neighbors", "action_code": "get_lldp_neighbors"},
+    {"collector_key": "arp", "quick_ops_category": "arp", "label": "ARP 表", "transport": "SNMP 优先（CLI 回退）", "category": "arp", "action_code": "get_arp_table"},
+    {"collector_key": "mac_table", "quick_ops_category": "mac_table", "label": "MAC 地址表", "transport": "Q-BRIDGE-MIB 优先（CLI 回退）", "category": "mac_table", "action_code": "get_mac_table"},
+    {"collector_key": "vlan", "quick_ops_category": "vlan", "label": "VLAN", "transport": "Q-BRIDGE-MIB 优先（CLI 回退）", "category": "vlan", "action_code": "get_vlan_table"},
+    {"collector_key": "routes", "quick_ops_category": "routing_table", "label": "路由表", "transport": "IP-FORWARD-MIB 优先（VRF 按设备能力回退 CLI）", "category": "routing_table", "action_code": "get_route_table"},
+    {"collector_key": "bgp", "quick_ops_category": "bgp", "label": "BGP 邻居", "transport": "SNMP 优先（CLI 回退）", "category": "bgp", "action_code": "get_bgp_neighbors"},
+    {"collector_key": "bgp", "quick_ops_category": "bgp", "label": "BGP 路由", "transport": "CLI/TextFSM（缺少等价的完整 RIB SNMP 数据）", "category": "bgp_routes", "action_code": "get_bgp_routes"},
+    {"collector_key": "ospf", "quick_ops_category": "ospf", "label": "OSPF 邻居", "transport": "SNMP 优先（CLI 回退）", "category": "ospf", "action_code": "get_ospf_neighbors"},
+    {"collector_key": "eigrp", "quick_ops_category": "eigrp", "label": "EIGRP 邻居", "transport": "Cisco CISCO-EIGRP-MIB 优先（CLI 回退）", "category": "eigrp", "action_code": None},
+    {"collector_key": "isis", "quick_ops_category": "isis", "label": "IS-IS 邻居", "transport": "SNMP 优先（CLI 回退）", "category": "isis", "action_code": "get_isis_neighbors"},
+    {"collector_key": "rip", "quick_ops_category": "rip", "label": "RIP 邻居", "transport": "RIPv2-MIB 优先（CLI 回退）", "category": "rip", "action_code": None},
     {"collector_key": "endpoint_location", "quick_ops_category": None, "label": "终端定位", "transport": "database", "category": None, "action_code": None},
     {"collector_key": "prefix_projection", "quick_ops_category": None, "label": "Prefix 投影", "transport": "database", "category": None, "action_code": None},
 )
 
 _COLLECTOR_LABELS = {
-    "interface_status": "接口状态与流量",
+    "interface_status": "接口状态",
     "interface_ip": "接口 IP/Loopback",
     "lldp": "LLDP 邻居",
     "arp": "ARP 表",
@@ -49,13 +51,15 @@ _COLLECTOR_LABELS = {
     "routes": "路由表",
     "bgp": "BGP",
     "ospf": "OSPF",
+    "eigrp": "EIGRP",
     "isis": "IS-IS",
+    "rip": "RIP",
     "endpoint_location": "终端定位",
     "prefix_projection": "Prefix 投影",
 }
 
 _NSOT_POLICY_COLLECTORS = tuple(_COLLECTOR_LABELS)
-_DYNAMIC_PROTOCOLS = ("bgp", "ospf", "isis")
+_DYNAMIC_PROTOCOLS = ("bgp", "ospf", "eigrp", "isis", "rip")
 
 
 def _asset_view_scope(conn, user: dict[str, Any]):
@@ -613,11 +617,25 @@ def build_nsot_collection_preview(conn, job: dict[str, Any], user: dict[str, Any
             if key in collector_conditions:
                 conditions.append(collector_conditions[key])
             if key == "routes":
+                conditions.append("默认路由和可用 SNMP context 优先采集；未支持的 VRF 才回退到该 VRF 的 CLI")
                 conditions.append("实际路由采集还要求设备角色/L3 证据、凭据及已启用策略")
-            elif key in _DYNAMIC_PROTOCOLS:
-                conditions.append("协议邻居采集会受当前路由表协议发现及设备能力影响")
+            elif key == "interface_status":
+                conditions.append("SNMP IF-MIB 优先采集；设备未配置/不支持或完整 walk 失败时回退接口状态 CLI")
+            elif key == "interface_ip":
+                conditions.append("IP-MIB 地址/前缀按 ifIndex 优先合并；映射缺项时才回退接口 IP CLI")
             elif key == "arp":
-                conditions.append("ARP 扫描受设备资格、凭据、重试退避和批次上限影响")
+                conditions.append("SNMP IP-MIB 优先采集；设备未配置/不支持或完整 walk 失败时回退 CLI")
+                conditions.append("ARP 扫描还受设备资格、凭据、重试退避和批次上限影响")
+            elif key in _DYNAMIC_PROTOCOLS:
+                if key == "bgp":
+                    conditions.append("BGP 邻居优先使用 SNMP；完整 BGP RIB 保留 CLI/TextFSM，以保留每条路径属性")
+                elif key == "eigrp":
+                    conditions.append("Cisco 设备先读取 CISCO-EIGRP-MIB；其他平台或 MIB 不完整时回退 CLI")
+                elif key == "rip":
+                    conditions.append("RIPv2 邻居先读取可选 RIPv2-MIB peer 表；未实现或数据不完整时回退 CLI")
+                else:
+                    conditions.append("OSPFv2/v3、IS-IS 邻居优先使用各自 MIB；对应 MIB 不可用时回退 CLI")
+                conditions.append("协议邻居采集会受当前路由表协议发现及设备能力影响")
             elif key in {"interface_status", "interface_ip", "lldp", "mac_table", "vlan"}:
                 conditions.append("设备能力、只读权限和连接状态可能改变实际命令")
             elif key in {"endpoint_location", "prefix_projection"}:
@@ -650,7 +668,15 @@ def build_nsot_collection_preview(conn, job: dict[str, Any], user: dict[str, Any
             collector = {
                 "key": key,
                 "label": _COLLECTOR_LABELS.get(key, key),
-                "transport": "database" if key in {"endpoint_location", "prefix_projection"} else "cli",
+                "transport": (
+                    "database"
+                    if key in {"endpoint_location", "prefix_projection"}
+                    else "邻居 SNMP 优先；完整 RIB 使用 CLI/TextFSM"
+                    if key == "bgp"
+                    else "SNMP 优先（CLI 按事实范围回退）"
+                    if key in {"interface_status", "interface_ip", "lldp", "arp", "mac_table", "routes", "ospf", "eigrp", "isis", "rip"}
+                    else "cli"
+                ),
                 "status": collector_status,
                 "conditional": bool(conditions) or collector_status in {"partial", "parser_missing", "unsupported"},
                 "commands": unique_commands,

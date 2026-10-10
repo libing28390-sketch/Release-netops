@@ -304,7 +304,7 @@ const ResourceSearchTab: React.FC<Props> = ({ language = 'zh' }) => {
   };
 
   return (
-    <div className="min-h-[calc(100vh-132px)] bg-slate-50/70 p-4 md:p-6">
+    <div className="min-h-full min-w-0 w-full bg-slate-50/70 p-4 md:p-6">
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
         <div>
           <div className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700">
@@ -328,7 +328,7 @@ const ResourceSearchTab: React.FC<Props> = ({ language = 'zh' }) => {
         </div>
       )}
 
-      <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <section className="mb-4 min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <button
             type="button"
@@ -401,7 +401,7 @@ const ResourceSearchTab: React.FC<Props> = ({ language = 'zh' }) => {
         )}
        </section>
 
-      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <section className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
           <div className="flex items-center gap-2 text-sm font-bold text-slate-800"><Server size={15} className="text-cyan-600" />{zh ? '资源检索结果' : 'Resource search results'}<span className="rounded-full bg-cyan-50 px-2 py-0.5 text-[11px] text-cyan-700">{total}</span></div>
           <div className="flex items-center gap-3 text-[11px] text-slate-400">
@@ -424,7 +424,7 @@ const ResourceSearchTab: React.FC<Props> = ({ language = 'zh' }) => {
             />
           </div>
         </div>
-        <div className="min-h-[360px] overflow-x-auto">
+        <div className="min-h-[360px] min-w-0 overflow-x-auto">
           <table ref={tableRef} className="nx-data-table min-w-[1180px] text-left text-xs">
             <thead className="bg-slate-50 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
               <tr>

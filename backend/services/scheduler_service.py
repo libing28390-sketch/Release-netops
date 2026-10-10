@@ -1267,7 +1267,56 @@ def parse_mac_table_regex(output: str) -> list[dict]:
     return entries
 
 
-def _collect_registry_interfaces(device: dict) -> list[dict]:
+def _interface_detail_rows_from_snmp(records: list[dict]) -> list[dict]:
+    """Shape IF-MIB rows like the legacy interface-detail parsers."""
+    rows = []
+    for record in records:
+        name = str(record.get('name') or record.get('interface') or '').strip()
+        if not name:
+            continue
+        try:
+            speed_bps = float(record.get('speed_mbps') or 0) * 1_000_000
+        except (TypeError, ValueError, OverflowError):
+            speed_bps = 0.0
+        rows.append({
+            'interface': name,
+            'description': str(record.get('description') or ''),
+            'link_status': record.get('admin_status') or 'unknown',
+            'protocol_status': record.get('status') or 'unknown',
+            'address': str(record.get('mac_address') or ''),
+            'mtu': record.get('mtu') or 1500,
+            'bandwidth': speed_bps,
+            'duplex': 'auto',
+        })
+    return rows
+
+
+def _persistable_snmp_interfaces(device_id: str, records: list[dict]) -> list[dict]:
+    """Build interface rows when IF-MIB succeeded but CLI enrichment did not."""
+    rows = []
+    for item in _interface_detail_rows_from_snmp(records):
+        rows.append({
+            'device_id': device_id,
+            'name': item['interface'],
+            'description': item['description'],
+            'admin_status': normalize_collected_interface_status(item['link_status']),
+            'oper_status': normalize_collected_interface_status(item['protocol_status']),
+            'primary_ip': None,
+            'ip_address': None,
+            'is_l3': None,
+            'mac_address': item['address'],
+            'mtu': item['mtu'],
+            'speed': normalize_collected_interface_rate(item['bandwidth']),
+            'bandwidth': normalize_collected_interface_rate(item['bandwidth']),
+            'duplex': item['duplex'],
+            'switchport_mode': None,
+            'access_vlan': None,
+            '_preserve_switch_attrs': True,
+        })
+    return rows
+
+
+def _collect_registry_interfaces(device: dict, *, snmp_interfaces: list[dict] | None = None) -> list[dict]:
     """Collect interface inventory through the published platform actions."""
     from services.platform_registry_service import execute_platform_action
 
@@ -1278,7 +1327,12 @@ def _collect_registry_interfaces(device: dict) -> list[dict]:
         'tenant_id': device.get('tenant_id') or '',
     }
     action_records: dict[str, list[dict]] = {}
-    for action_code in ('get_interfaces', 'get_interface_brief', 'get_ip_interfaces'):
+    action_codes = (
+        ('get_interface_brief', 'get_ip_interfaces')
+        if snmp_interfaces
+        else ('get_interfaces', 'get_interface_brief', 'get_ip_interfaces')
+    )
+    for action_code in action_codes:
         try:
             result = execute_platform_action(str(device['id']), action_code, user=user)
         except Exception as exc:
@@ -1290,9 +1344,9 @@ def _collect_registry_interfaces(device: dict) -> list[dict]:
                 device.get('hostname') or device.get('id'), action_code,
                 error_code or type(exc).__name__,
             )
-            # All three actions use the same transport and credentials. Once
-            # the connection itself fails, retrying the remaining actions only
-            # repeats the same banner/auth/timeout error and delays the sweep.
+            # These actions share a transport and credentials. Once the
+            # connection itself fails, retrying the remaining actions repeats
+            # the same banner/auth/timeout error and delays the sweep.
             if error_code:
                 break
             continue
@@ -1302,7 +1356,7 @@ def _collect_registry_interfaces(device: dict) -> list[dict]:
     merged: dict[str, dict] = {}
 
     def merge_record(record: dict, *, source: str) -> None:
-        name = str(record.get('interface') or record.get('local_interface') or '').strip()
+        name = str(record.get('interface') or record.get('local_interface') or record.get('name') or '').strip()
         if not name:
             return
         key = normalize_interface_name(name).lower()
@@ -1320,21 +1374,45 @@ def _collect_registry_interfaces(device: dict) -> list[dict]:
             'speed': 0.0,
             'bandwidth': 0.0,
             'duplex': 'auto',
-            'switchport_mode': 'l3',
+            'switchport_mode': None if snmp_interfaces else 'l3',
             'access_vlan': None,
         })
         item['name'] = item.get('name') or name
-        if source == 'get_interfaces':
+        if source in {'get_interfaces', 'snmp'}:
             item['description'] = str(record.get('description') or item['description'] or '')
             item['mac_address'] = str(record.get('mac_address') or item['mac_address'] or '')
-            rate = normalize_collected_interface_rate(record.get('speed'))
-            item['speed'] = rate
-            item['bandwidth'] = rate
-        if source in {'get_interface_brief', 'get_ip_interfaces'}:
-            if record.get('admin_status') not in (None, ''):
+            try:
+                mtu = int(record.get('mtu') or 0)
+            except (TypeError, ValueError, OverflowError):
+                mtu = 0
+            if mtu > 0:
+                item['mtu'] = mtu
+            speed_value = (
+                float(record.get('speed_mbps') or 0) * 1_000_000
+                if source == 'snmp'
+                else record.get('speed')
+            )
+            rate = normalize_collected_interface_rate(speed_value)
+            if rate > 0:
+                item['speed'] = rate
+                item['bandwidth'] = rate
+            if source == 'snmp':
                 item['admin_status'] = normalize_collected_interface_status(record.get('admin_status'))
-            if record.get('oper_status') not in (None, ''):
+                item['oper_status'] = normalize_collected_interface_status(record.get('status'))
+        if source in {'get_interface_brief', 'get_ip_interfaces'}:
+            if not snmp_interfaces and record.get('admin_status') not in (None, ''):
+                item['admin_status'] = normalize_collected_interface_status(record.get('admin_status'))
+            if not snmp_interfaces and record.get('oper_status') not in (None, ''):
                 item['oper_status'] = normalize_collected_interface_status(record.get('oper_status'))
+        switchport_mode = str(record.get('switchport_mode') or '').strip().lower()
+        if switchport_mode:
+            item['switchport_mode'] = switchport_mode
+        raw_vlan = record.get('access_vlan', record.get('vlan'))
+        if raw_vlan not in (None, ''):
+            try:
+                item['access_vlan'] = int(raw_vlan)
+            except (TypeError, ValueError, OverflowError):
+                pass
         ip_value = str(record.get('ip_address') or record.get('ip') or '').strip()
         if ip_value:
             item['primary_ip'] = ip_value
@@ -1342,17 +1420,32 @@ def _collect_registry_interfaces(device: dict) -> list[dict]:
             item['is_l3'] = True
             item['switchport_mode'] = 'l3'
 
+    for record in snmp_interfaces or []:
+        merge_record(record, source='snmp')
     for action_code, records in action_records.items():
         for record in records:
             merge_record(record, source=action_code)
     for item in merged.values():
-        if item['is_l3'] is None:
+        if item['is_l3'] is None and not snmp_interfaces:
             item['is_l3'] = False
             item['switchport_mode'] = 'access'
+        item['_preserve_switch_attrs'] = bool(
+            snmp_interfaces and not item.get('switchport_mode')
+        )
     return list(merged.values())
 
-def sync_topology_and_interfaces_job(device_ids: set[str] | None = None):
-    """System periodic task: Collect interfaces and topology LLDP neighbors."""
+def sync_topology_and_interfaces_job(
+    device_ids: set[str] | None = None,
+    *,
+    collect_interfaces: bool = True,
+):
+    """Collect topology LLDP neighbors and optionally the legacy interface snapshot.
+
+    The unified NSOT refresh collects interface facts through
+    ``collect_interface_status_for_online_devices`` after this job. It disables
+    this legacy interface path so each device is queried once, through the
+    domain-aware SNMP-first collector.
+    """
     logger.info("[Scheduler Job] Starting sync_topology_and_interfaces_job...")
     conn = get_db_connection()
     try:
@@ -1368,7 +1461,7 @@ def sync_topology_and_interfaces_job(device_ids: set[str] | None = None):
         logger.info("[Scheduler Job] No online devices found for interface and topology sync.")
         return _aggregate_topology_device_results([])
 
-    interface_devices = filter_devices(devices, "interface_ip")
+    interface_devices = filter_devices(devices, "interface_ip") if collect_interfaces else []
     topology_devices = filter_devices(devices, "lldp")
     topology_device_ids = {str(device.get('id') or '') for device in topology_devices}
     skipped_topology_devices = [
@@ -1383,16 +1476,39 @@ def sync_topology_and_interfaces_job(device_ids: set[str] | None = None):
     
     def collect_device_interfaces(device: dict) -> list[dict]:
         if device.get('platform_profile_id'):
-            return _collect_registry_interfaces(device)
+            try:
+                from services.interface_collection_service import _collect_snmp_interfaces
+
+                snmp_interfaces = _collect_snmp_interfaces(device) or []
+            except Exception as exc:
+                logger.info(
+                    "SNMP interface collection for %s is unavailable (%s); retaining CLI collection",
+                    device.get('hostname') or device.get('id'),
+                    type(exc).__name__,
+                )
+                snmp_interfaces = []
+            return _collect_registry_interfaces(device, snmp_interfaces=snmp_interfaces or None)
 
         ip = device.get('ip_address')
         port = int(device.get('management_port') or device.get('port') or 22)
+        try:
+            from services.interface_collection_service import _collect_snmp_interfaces
+
+            snmp_interfaces = _collect_snmp_interfaces(device) or []
+        except Exception as exc:
+            logger.info(
+                "SNMP interface collection for %s is unavailable (%s); retaining CLI collection",
+                device.get('hostname') or device.get('id'),
+                type(exc).__name__,
+            )
+            snmp_interfaces = []
+
+        dev_id = device['id']
         from drivers.ssh_compat import is_ssh_port_open
         if not is_ssh_port_open(ip, port):
             logger.warning("Failed to collect interfaces for device %s: SSH port %s is closed/unreachable", device.get('hostname'), port)
-            return []
+            return _persistable_snmp_interfaces(dev_id, snmp_interfaces) if snmp_interfaces else []
 
-        dev_id = device['id']
         from core.platform_utils import normalize_device_platform
         platform = normalize_device_platform(device.get('vendor'), device.get('platform'))
         creds = resolve_device_credentials(device)
@@ -1418,13 +1534,29 @@ def sync_topology_and_interfaces_job(device_ids: set[str] | None = None):
 
         commands = []
         if 'cisco' in platform:
-            commands = ['show interfaces', 'show interfaces status', 'show ip interface brief']
+            commands = (
+                ['show interfaces status', 'show ip interface brief']
+                if snmp_interfaces
+                else ['show interfaces', 'show interfaces status', 'show ip interface brief']
+            )
         elif 'huawei' in platform or 'h3c' in platform:
-            commands = ['display interface', 'display ip interface brief']
+            commands = (
+                ['display ip interface brief']
+                if snmp_interfaces
+                else ['display interface', 'display ip interface brief']
+            )
         elif 'juniper' in platform:
-            commands = ['show interfaces', 'show interfaces terse']
+            commands = (
+                ['show interfaces terse']
+                if snmp_interfaces
+                else ['show interfaces', 'show interfaces terse']
+            )
         else:
-            commands = ['show interfaces', 'show ip interface brief']
+            commands = (
+                ['show ip interface brief']
+                if snmp_interfaces
+                else ['show interfaces', 'show ip interface brief']
+            )
 
         try:
             with limited_connect_handler(device, ConnectHandler, **netmiko_device) as client:
@@ -1442,8 +1574,8 @@ def sync_topology_and_interfaces_job(device_ids: set[str] | None = None):
                 parsed_interfaces = []
                 if 'cisco' in platform:
                     show_int_output = outputs.get('show interfaces', '')
-                    parsed_show_int = parse_cisco_interfaces(show_int_output)
-                    if not parsed_show_int:
+                    parsed_show_int = _interface_detail_rows_from_snmp(snmp_interfaces) if snmp_interfaces else parse_cisco_interfaces(show_int_output)
+                    if not parsed_show_int and not snmp_interfaces:
                         parsed_show_int = parse_cisco_interfaces_regex(show_int_output)
                         
                     show_status_output = outputs.get('show interfaces status', '')
@@ -1494,13 +1626,14 @@ def sync_topology_and_interfaces_job(device_ids: set[str] | None = None):
                             'speed': normalize_collected_interface_rate(item.get('bandwidth', 0.0)),
                             'bandwidth': normalize_collected_interface_rate(item.get('bandwidth', 0.0)),
                             'duplex': item.get('duplex', 'auto'),
-                            'switchport_mode': mode,
+                            'switchport_mode': mode if status_item or not snmp_interfaces else None,
                             'access_vlan': access_vlan,
+                            '_preserve_switch_attrs': bool(snmp_interfaces and not status_item),
                         })
                 elif 'huawei' in platform or 'h3c' in platform:
                     disp_int_output = outputs.get('display interface', '')
-                    parsed_disp_int = parse_huawei_interfaces(disp_int_output)
-                    if not parsed_disp_int:
+                    parsed_disp_int = _interface_detail_rows_from_snmp(snmp_interfaces) if snmp_interfaces else parse_huawei_interfaces(disp_int_output)
+                    if not parsed_disp_int and not snmp_interfaces:
                         parsed_disp_int = parse_huawei_interfaces_regex(disp_int_output)
 
                     disp_ip_brief_output = outputs.get('display ip interface brief', '')
@@ -1536,8 +1669,9 @@ def sync_topology_and_interfaces_job(device_ids: set[str] | None = None):
                             'speed': normalize_collected_interface_rate(item.get('bandwidth', 0.0)),
                             'bandwidth': normalize_collected_interface_rate(item.get('bandwidth', 0.0)),
                             'duplex': item.get('duplex', 'auto'),
-                            'switchport_mode': 'l3' if ip_addr else 'access',
+                            'switchport_mode': ('l3' if ip_addr else None) if snmp_interfaces else ('l3' if ip_addr else 'access'),
                             'access_vlan': None,
+                            '_preserve_switch_attrs': bool(snmp_interfaces and not ip_addr),
                         })
 
                     if ip_brief_available:
@@ -1561,11 +1695,12 @@ def sync_topology_and_interfaces_job(device_ids: set[str] | None = None):
                                     'duplex': 'auto',
                                     'switchport_mode': 'l3',
                                     'access_vlan': None,
+                                    '_preserve_switch_attrs': False,
                                 })
                 else:
                     show_int_output = outputs.get(commands[0], '')
-                    parsed_show_int = parse_cisco_interfaces_regex(show_int_output)
-                    show_ip_output = outputs.get(commands[1], '') if len(commands) > 1 else ''
+                    parsed_show_int = _interface_detail_rows_from_snmp(snmp_interfaces) if snmp_interfaces else parse_cisco_interfaces_regex(show_int_output)
+                    show_ip_output = outputs.get(commands[-1], '') if snmp_interfaces else (outputs.get(commands[1], '') if len(commands) > 1 else '')
                     parsed_ip_brief = parse_generic_ip_interface_brief(show_ip_output)
                     ip_brief_available = bool(parsed_ip_brief)
                     ip_by_name = {
@@ -1598,8 +1733,9 @@ def sync_topology_and_interfaces_job(device_ids: set[str] | None = None):
                             'speed': normalize_collected_interface_rate(item.get('bandwidth', 0.0)),
                             'bandwidth': normalize_collected_interface_rate(item.get('bandwidth', 0.0)),
                             'duplex': item.get('duplex', 'auto'),
-                            'switchport_mode': 'l3' if ip_addr else 'access',
+                            'switchport_mode': ('l3' if ip_addr else None) if snmp_interfaces else ('l3' if ip_addr else 'access'),
                             'access_vlan': None,
+                            '_preserve_switch_attrs': bool(snmp_interfaces and not ip_addr),
                         })
 
                     if ip_brief_available:
@@ -1623,11 +1759,12 @@ def sync_topology_and_interfaces_job(device_ids: set[str] | None = None):
                                     'duplex': 'auto',
                                     'switchport_mode': 'l3',
                                     'access_vlan': None,
+                                    '_preserve_switch_attrs': False,
                                 })
                 return parsed_interfaces
         except Exception as e:
             logger.error("Failed to collect interfaces for device %s: %s", device.get('hostname'), e)
-            return []
+            return _persistable_snmp_interfaces(dev_id, snmp_interfaces) if snmp_interfaces else []
 
     # Collect interfaces in parallel
     all_interfaces = []
@@ -1657,35 +1794,55 @@ def sync_topology_and_interfaces_job(device_ids: set[str] | None = None):
                 existing_id = existing_by_name.get((iface['device_id'], normalized_name))
                 values = (
                     iface['description'], iface['admin_status'], iface['oper_status'],
-                    iface['mac_address'], iface['speed'], iface['bandwidth'], iface['duplex'],
+                    iface['mac_address'], iface['mtu'], iface['speed'], iface['bandwidth'], iface['duplex'],
                     iface['switchport_mode'], iface['access_vlan'],
                     iface.get('primary_ip'), iface.get('ip_address'),
                     None if iface.get('is_l3') is None else bool(iface.get('is_l3')),
                 )
                 if existing_id:
-                    db_conn.execute('''
-                        UPDATE interfaces SET
-                            description = ?, admin_status = ?, oper_status = ?,
-                            mac_address = ?, speed = ?, bandwidth = ?, duplex = ?,
-                            switchport_mode = ?, access_vlan = ?, primary_ip = COALESCE(?, primary_ip),
-                            ip_address = COALESCE(?, ip_address), is_l3 = COALESCE(?, is_l3)
-                        WHERE id = ?
-                    ''', values + (existing_id,))
+                    if iface.get('_preserve_switch_attrs'):
+                        db_conn.execute('''
+                            UPDATE interfaces SET
+                                description = ?, admin_status = ?, oper_status = ?,
+                                mac_address = COALESCE(NULLIF(?, ''), mac_address),
+                                mtu = COALESCE(NULLIF(?, 0), mtu),
+                                speed = COALESCE(NULLIF(?, 0), speed),
+                                bandwidth = COALESCE(NULLIF(?, 0), bandwidth),
+                                duplex = COALESCE(NULLIF(NULLIF(?, ''), 'auto'), duplex),
+                                switchport_mode = COALESCE(?, switchport_mode),
+                                access_vlan = COALESCE(?, access_vlan),
+                                primary_ip = COALESCE(?, primary_ip),
+                                ip_address = COALESCE(?, ip_address), is_l3 = COALESCE(?, is_l3)
+                            WHERE id = ?
+                        ''', values + (existing_id,))
+                    else:
+                        db_conn.execute('''
+                            UPDATE interfaces SET
+                                description = ?, admin_status = ?, oper_status = ?,
+                                mac_address = COALESCE(NULLIF(?, ''), mac_address),
+                                mtu = COALESCE(NULLIF(?, 0), mtu),
+                                speed = COALESCE(NULLIF(?, 0), speed),
+                                bandwidth = COALESCE(NULLIF(?, 0), bandwidth),
+                                duplex = COALESCE(NULLIF(NULLIF(?, ''), 'auto'), duplex),
+                                switchport_mode = ?, access_vlan = ?, primary_ip = COALESCE(?, primary_ip),
+                                ip_address = COALESCE(?, ip_address), is_l3 = COALESCE(?, is_l3)
+                            WHERE id = ?
+                        ''', values + (existing_id,))
                 else:
                     new_id = f"intf-{uuid.uuid4().hex[:12]}"
-                    # Keep nullable integer fields as NULL. Converting every
-                    # None to an empty string makes PostgreSQL reject inserts
-                    # for access_vlan and is_l3 with an integer syntax error.
+                    # Preserve unknown switch mode and nullable VLAN/L3 fields.
+                    # Converting None to an empty string breaks PostgreSQL's
+                    # integer and boolean columns and invents SNMP-only facts.
                     insert_values = tuple(
-                        value if value is not None or index in {8, 11} else ''
+                        value if value is not None or index in {8, 9, 12} else ''
                         for index, value in enumerate(values)
                     )
                     db_conn.execute('''
                         INSERT INTO interfaces (
                             id, device_id, interface_name, description, admin_status, oper_status,
-                            mac_address, speed, bandwidth, duplex, interface_type, switchport_mode,
+                            mac_address, mtu, speed, bandwidth, duplex, interface_type, switchport_mode,
                             access_vlan, primary_ip, ip_address, is_l3
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'physical', ?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'physical', ?, ?, ?, ?, ?)
                     ''', (
                         new_id, iface['device_id'], iface['name'],
                         *insert_values
@@ -1816,6 +1973,64 @@ def poll_endpoints_job():
     def collect_device_mac(device: dict) -> list[dict]:
         ip = device.get('ip_address')
         port = int(device.get('management_port') or device.get('port') or 22)
+
+        try:
+            from services.vault_service import resolve_collector_credentials
+            from services.snmp_service import collect_bridge_mac_table
+
+            snmp_credentials = (resolve_collector_credentials(device).get('snmp') or {})
+            snmp_version = str(snmp_credentials.get('version') or '2c').strip()
+            snmp_is_v3 = snmp_version.casefold() in {'3', 'v3', 'snmpv3'}
+            snmp_profile = dict(snmp_credentials) if snmp_is_v3 else str(snmp_credentials.get('community') or '')
+            snmp_ip = str(snmp_credentials.get('server') or ip or '').strip()
+            try:
+                snmp_port = int(snmp_credentials.get('port') or 161)
+            except (TypeError, ValueError, OverflowError):
+                snmp_port = 161
+
+            if (
+                snmp_credentials.get('configured')
+                and snmp_ip
+                and (snmp_is_v3 or snmp_profile)
+            ):
+                snmp_records = asyncio.run(collect_bridge_mac_table(
+                    snmp_ip,
+                    snmp_profile,
+                    snmp_port,
+                    version=snmp_version,
+                ))
+                if not isinstance(snmp_records, list) or not snmp_records:
+                    raise RuntimeError('SNMP bridge FDB helper returned no complete rows')
+
+                parsed_snmp_records = []
+                for record in snmp_records:
+                    if not isinstance(record, dict):
+                        raise RuntimeError('SNMP bridge FDB helper returned a malformed row')
+                    mac_hex = re.sub(r'[^0-9a-fA-F]', '', str(record.get('mac') or ''))
+                    interface = str(record.get('port') or record.get('interface') or '').strip()
+                    try:
+                        vlan = int(record.get('vlan'))
+                    except (TypeError, ValueError, OverflowError) as exc:
+                        raise RuntimeError('SNMP bridge FDB row has an invalid VLAN') from exc
+                    entry_type = str(record.get('type') or '').strip().lower()
+                    if len(mac_hex) != 12 or not interface or not 1 <= vlan <= 4094 or not entry_type:
+                        raise RuntimeError('SNMP bridge FDB helper returned an incomplete row')
+                    mac = ':'.join(mac_hex[index:index + 2] for index in range(0, 12, 2)).lower()
+                    parsed_snmp_records.append({
+                        'device_id': device['id'],
+                        'mac': mac,
+                        'interface': interface,
+                        'vlan': vlan,
+                        'type': entry_type,
+                    })
+                return parsed_snmp_records
+        except Exception as exc:
+            logger.info(
+                "SNMP MAC/FDB collection for %s is unavailable (%s); falling back to CLI",
+                device.get('hostname') or device.get('id'),
+                type(exc).__name__,
+            )
+
         from drivers.ssh_compat import is_ssh_port_open
         if not is_ssh_port_open(ip, port):
             logger.warning("Failed to collect MAC for device %s: SSH port %s is closed/unreachable", device.get('hostname'), port)
@@ -1984,7 +2199,7 @@ def _persist_routing_neighbor_results(db_conn, results: list[dict], last_update:
             neighbor_id = str(item.get('neighbor_id') or '').strip()
             local_interface = str(item.get('local_interface') or '').strip()
             protocol = str(item.get('protocol') or '').strip().lower()
-            if not protocol:
+            if not protocol or protocol not in protocols:
                 continue
             uid = f"{device_id}_{protocol}_{neighbor_ip or neighbor_id}_{local_interface}"
             db_conn.execute('''
@@ -2133,125 +2348,327 @@ def sync_routing_neighbors_job(
         if not categories:
             return base_result
 
-        ip = dev.get('ip_address')
-        port = int(dev.get('management_port') or dev.get('port') or 22)
-        from drivers.ssh_compat import is_ssh_port_open
-        if not is_ssh_port_open(ip, port):
-            logger.warning("Failed to collect routing neighbors for device %s: SSH port %s is closed/unreachable", dev.get('hostname'), port)
-            return base_result
-
-        res = []
+        neighbors: list[dict] = []
         successful_protocols: set[str] = set()
+        cli_categories: list[str] = []
+
+        snmp_credentials = {}
         try:
-            payload = collect_operational_data(
-                dev,
-                categories=categories,
-                policy_override_categories=policy_override_categories.get(str(dev_id)),
+            from services.vault_service import resolve_collector_credentials
+
+            snmp_credentials = (resolve_collector_credentials(dev).get('snmp') or {})
+        except Exception as exc:
+            logger.info(
+                "SNMP routing credentials for %s are unavailable (%s); using protocol-specific CLI fallback",
+                dev.get('hostname') or dev_id,
+                type(exc).__name__,
             )
-            for cat_res in payload.get('categories', []):
-                key = cat_res.get('key')
-                parse_status = str(cat_res.get('parse_status') or '').strip().lower()
-                if (
-                    cat_res.get('success')
-                    and parse_status not in {'failed', 'unsupported_by_platform'}
-                    and key in {'bgp', 'ospf', 'eigrp', 'isis', 'rip'}
-                ):
-                    successful_protocols.add(str(key).lower())
-                records = cat_res.get('records', [])
-                if key == 'bgp':
-                    for r in records:
-                        neigh_ip = _routing_record_value(
-                            r, 'bgp_neigh', 'bgp_neighbor', 'neighbor',
-                            'peer_address', 'peer', 'neighbor_ip', 'peer_ip',
-                        )
-                        if not neigh_ip:
-                            continue
-                        
-                        remote_as = None
-                        for k in ['neigh_as', 'asn', 'as', 'peer_as', 'remote_as', 'neighbor_as']:
-                            value = _routing_record_value(r, k)
-                            if value not in (None, ''):
-                                try:
-                                    remote_as = int(value)
-                                    break
-                                except Exception:
-                                    pass
-                        
+
+        snmp_ip = str(snmp_credentials.get('server') or dev.get('ip_address') or '').strip()
+        snmp_version = str(snmp_credentials.get('version') or '2c').strip()
+        snmp_is_v3 = snmp_version.casefold() in {'3', 'v3', 'snmpv3'}
+        snmp_profile = dict(snmp_credentials) if snmp_is_v3 else str(snmp_credentials.get('community') or '')
+        try:
+            snmp_port = int(snmp_credentials.get('port') or 161)
+        except (TypeError, ValueError, OverflowError):
+            snmp_port = 161
+        snmp_configured = bool(
+            snmp_credentials.get('configured')
+            and snmp_ip
+            and (snmp_is_v3 or snmp_profile)
+        )
+
+        snmp_protocols = {'bgp', 'ospf', 'isis', 'rip'}
+        for protocol in categories:
+            can_try_snmp = protocol in snmp_protocols
+            if protocol == 'eigrp':
+                from core.platform_utils import normalize_device_platform
+                normalized_platform = normalize_device_platform(
+                    str(dev.get('vendor') or ''), str(dev.get('platform') or ''),
+                )
+                # CISCO-EIGRP-MIB is a Cisco enterprise MIB; other vendors
+                # keep their platform-specific CLI fallback.
+                can_try_snmp = normalized_platform.startswith('cisco_')
+            if not can_try_snmp or not snmp_configured:
+                cli_categories.append(protocol)
+                continue
+
+            protocol_variants = ('ospf', 'ospfv3') if protocol == 'ospf' else (protocol,)
+            variant_records: list[dict] = []
+            failed_variants: list[str] = []
+            successful_variants: set[str] = set()
+            for variant in protocol_variants:
+                try:
+                    from services.snmp_service import collect_snmp_routing_neighbors
+
+                    records = asyncio.run(collect_snmp_routing_neighbors(
+                        snmp_ip,
+                        snmp_profile,
+                        variant,
+                        snmp_port,
+                        version=snmp_version,
+                    ))
+                    if not isinstance(records, list):
+                        raise RuntimeError('SNMP routing-neighbor helper returned an invalid result')
+                    collection_status = str(getattr(records, 'collection_status', 'success') or 'success')
+                    if collection_status not in {'success', 'no_neighbors'}:
+                        raise RuntimeError('SNMP routing-neighbor helper returned an incomplete result')
+                    if not records and collection_status != 'no_neighbors':
+                        raise RuntimeError('SNMP routing-neighbor helper returned no complete rows')
+                    successful_variants.add(variant)
+                    variant_records.extend(records)
+                except Exception as exc:
+                    failed_variants.append(variant)
+                    logger.info(
+                        "SNMP %s neighbor collection for %s failed (%s); trying remaining source",
+                        variant,
+                        dev.get('hostname') or dev_id,
+                        type(exc).__name__,
+                    )
+
+            if failed_variants:
+                cli_categories.append(protocol)
+            elif successful_variants == set(protocol_variants):
+                # A verified empty MIB table is a successful current snapshot;
+                # do not open SSH just to confirm it.
+                successful_protocols.add(protocol)
+
+            protocol_neighbors: list[dict] = []
+            for record in variant_records:
+                if not isinstance(record, dict):
+                    continue
+                if protocol == 'bgp':
+                    neighbor_ip = str(record.get('neighbor_ip') or record.get('peer_ip') or '').strip()
+                    if not neighbor_ip:
+                        continue
+                    neighbor_id = str(record.get('router_id') or neighbor_ip).strip()
+                    try:
+                        remote_as = int(record.get('remote_as') or 0)
+                    except (TypeError, ValueError, OverflowError):
+                        remote_as = 0
+                    try:
+                        local_as = int(record.get('local_as') or 0)
+                    except (TypeError, ValueError, OverflowError):
                         local_as = 0
-                        for k in ['local_as', 'local_as_num', 'local_as_number', 'my_as']:
-                            value = _routing_record_value(r, k)
-                            if value not in (None, ''):
-                                try:
-                                    local_as = int(value)
-                                    break
-                                except Exception:
-                                    pass
-                        
-                        state_raw = _routing_record_value(
-                            r, 'state_pfxrcd', 'state', 'pfx_rcd', 'status'
+                    uptime_seconds = record.get('uptime_seconds')
+                    protocol_neighbors.append({
+                        'device_id': dev_id,
+                        'protocol': 'bgp',
+                        'neighbor_id': neighbor_id,
+                        'neighbor_ip': neighbor_ip,
+                        'state': str(record.get('state') or ''),
+                        'uptime': str(uptime_seconds) if uptime_seconds is not None else '',
+                        'local_as': local_as,
+                        'remote_as': remote_as,
+                        'area_id': '',
+                        'local_interface': str(record.get('interface') or ''),
+                    })
+                else:
+                    neighbor_ip = str(record.get('neighbor_ip') or record.get('peer_ip') or '').strip()
+                    if protocol == 'isis':
+                        neighbor_id = str(
+                            record.get('neighbor_system_id')
+                            or record.get('neighbor_id')
+                            or record.get('system_id')
+                            or ''
+                        ).strip()
+                    else:
+                        neighbor_id = str(
+                            record.get('router_id')
+                            or record.get('neighbor_id')
+                            or neighbor_ip
+                        ).strip()
+                    if not neighbor_id and not neighbor_ip:
+                        continue
+                    try:
+                        local_as = int(record.get('local_as') or 0)
+                    except (TypeError, ValueError, OverflowError):
+                        local_as = 0
+                    try:
+                        remote_as = int(record.get('remote_as') or 0)
+                    except (TypeError, ValueError, OverflowError):
+                        remote_as = 0
+                    protocol_neighbors.append({
+                        'device_id': dev_id,
+                        'protocol': protocol,
+                        'neighbor_id': neighbor_id or neighbor_ip,
+                        'neighbor_ip': neighbor_ip or (neighbor_id if protocol != 'isis' else ''),
+                        'state': str(record.get('state') or ''),
+                        'uptime': '',
+                        'local_as': local_as,
+                        'remote_as': remote_as,
+                        'area_id': str(record.get('area_id') or ('0.0.0.0' if protocol == 'ospf' else '')),
+                        'local_interface': str(record.get('interface') or ''),
+                    })
+
+            complete_empty_snapshot = (
+                not variant_records
+                and not failed_variants
+                and successful_variants == set(protocol_variants)
+            )
+            if failed_variants:
+                # The CLI category represents the complete protocol snapshot;
+                # do not mix rows from only one successful SNMP MIB variant
+                # with that fallback result.
+                successful_protocols.discard(protocol)
+                continue
+            if len(protocol_neighbors) != len(variant_records):
+                successful_protocols.discard(protocol)
+                if protocol not in cli_categories:
+                    cli_categories.append(protocol)
+                logger.info(
+                    "SNMP %s neighbor snapshot for %s contained rows that could not be normalized; trying CLI fallback",
+                    protocol,
+                    dev.get('hostname') or dev_id,
+                )
+                continue
+            if not protocol_neighbors and not complete_empty_snapshot:
+                successful_protocols.discard(protocol)
+                if protocol not in cli_categories:
+                    cli_categories.append(protocol)
+                continue
+            neighbors.extend(protocol_neighbors)
+
+        if cli_categories:
+            ip = dev.get('ip_address')
+            port = int(dev.get('management_port') or dev.get('port') or 22)
+            from drivers.ssh_compat import is_ssh_port_open
+            if not is_ssh_port_open(ip, port):
+                logger.warning(
+                    "CLI fallback for routing protocols on %s skipped: SSH port %s is closed/unreachable",
+                    dev.get('hostname') or dev_id,
+                    port,
+                )
+            else:
+                cli_overrides = policy_override_categories.get(dev_id, set()) & set(cli_categories)
+                try:
+                    payload = collect_operational_data(
+                        dev,
+                        categories=cli_categories,
+                        policy_override_categories=cli_overrides or None,
+                    )
+                except Exception as exc:
+                    logger.debug(
+                        "CLI routing-neighbor fallback failed for %s (%s)",
+                        dev.get('hostname') or dev_id,
+                        type(exc).__name__,
+                    )
+                    payload = {}
+
+                for cat_res in payload.get('categories', []):
+                    key = str(cat_res.get('key') or '').strip().lower()
+                    if key not in cli_categories or key not in {'bgp', 'ospf', 'eigrp', 'isis', 'rip'}:
+                        continue
+                    parse_status = str(cat_res.get('parse_status') or '').strip().lower()
+                    records = cat_res.get('records') or []
+                    cli_neighbors: list[dict] = []
+                    if key == 'bgp':
+                        for record in records:
+                            neighbor_ip = _routing_record_value(
+                                record, 'bgp_neigh', 'bgp_neighbor', 'neighbor',
+                                'peer_address', 'peer', 'neighbor_ip', 'peer_ip',
+                            )
+                            if not neighbor_ip:
+                                continue
+
+                            remote_as = 0
+                            for field in ('neigh_as', 'asn', 'as', 'peer_as', 'remote_as', 'neighbor_as'):
+                                value = _routing_record_value(record, field)
+                                if value not in (None, ''):
+                                    try:
+                                        remote_as = int(value)
+                                        break
+                                    except (TypeError, ValueError, OverflowError):
+                                        continue
+
+                            local_as = 0
+                            for field in ('local_as', 'local_as_num', 'local_as_number', 'my_as'):
+                                value = _routing_record_value(record, field)
+                                if value not in (None, ''):
+                                    try:
+                                        local_as = int(value)
+                                        break
+                                    except (TypeError, ValueError, OverflowError):
+                                        continue
+
+                            state_raw = _routing_record_value(
+                                record, 'state_pfxrcd', 'state', 'pfx_rcd', 'status'
+                            )
+                            state = 'Established'
+                            if state_raw:
+                                if str(state_raw).isdigit():
+                                    state = 'Established'
+                                elif str(state_raw).lower() in ('established', 'established/established'):
+                                    state = 'Established'
+                                else:
+                                    state = str(state_raw)
+
+                            uptime = _routing_record_value(
+                                record, 'up_down', 'uptime', 'elapsed_time', 'time'
+                            )
+                            cli_neighbors.append({
+                                'device_id': dev_id,
+                                'protocol': 'bgp',
+                                'neighbor_id': str(neighbor_ip),
+                                'neighbor_ip': str(neighbor_ip),
+                                'state': state,
+                                'uptime': str(uptime),
+                                'local_as': local_as,
+                                'remote_as': remote_as,
+                                'area_id': '',
+                                'local_interface': '',
+                            })
+                    else:
+                        for record in records:
+                            neighbor_id = _routing_record_value(
+                                record, 'neighbor_id', 'router_id', 'system_id', 'peer', 'neighbor'
+                            )
+                            neighbor_ip = _routing_record_value(
+                                record, 'address', 'ip_address', 'neighbor_address',
+                                'neighbor_ip', 'peer_ip', 'peer_address', 'next_hop'
+                            )
+                            if not neighbor_id and not neighbor_ip:
+                                continue
+
+                            state = _routing_record_value(record, 'state', 'status')
+                            local_interface = _routing_record_value(
+                                record, 'interface', 'interface_name', 'local_interface', 'ifname'
+                            )
+                            area_id = _routing_record_value(record, 'area_id') or ('0.0.0.0' if key == 'ospf' else '')
+                            cli_neighbors.append({
+                                'device_id': dev_id,
+                                'protocol': key,
+                                'neighbor_id': neighbor_id or neighbor_ip,
+                                'neighbor_ip': neighbor_ip or neighbor_id,
+                                'state': state,
+                                'uptime': '',
+                                'local_as': 0,
+                                'remote_as': 0,
+                                'area_id': area_id,
+                                'local_interface': local_interface,
+                            })
+
+                    if (
+                        cat_res.get('success')
+                        and parse_status == 'matched'
+                        and records
+                        and len(cli_neighbors) == len(records)
+                    ):
+                        successful_protocols.add(key)
+                        neighbors.extend(cli_neighbors)
+                    else:
+                        successful_protocols.discard(key)
+                        logger.info(
+                            "CLI %s neighbor snapshot for %s was empty or incomplete; preserving the last good snapshot",
+                            key,
+                            dev.get('hostname') or dev_id,
                         )
-                        state = 'Established'
-                        if state_raw:
-                            if str(state_raw).isdigit():
-                                state = 'Established'
-                            elif str(state_raw).lower() in ('established', 'established/established'):
-                                state = 'Established'
-                            else:
-                                state = str(state_raw)
-                        
-                        uptime = _routing_record_value(
-                            r, 'up_down', 'uptime', 'elapsed_time', 'time'
-                        )
-                        
-                        res.append({
-                            'device_id': dev_id,
-                            'protocol': 'bgp',
-                            'neighbor_id': neigh_ip,
-                            'neighbor_ip': neigh_ip,
-                            'state': state,
-                            'uptime': str(uptime),
-                            'local_as': local_as,
-                            'remote_as': remote_as or 0,
-                            'area_id': '',
-                            'local_interface': ''
-                        })
-                elif key in {'ospf', 'eigrp', 'isis', 'rip'}:
-                    for r in records:
-                        neigh_id = _routing_record_value(
-                            r, 'neighbor_id', 'router_id', 'system_id', 'peer', 'neighbor'
-                        )
-                        neigh_ip = _routing_record_value(
-                            r, 'address', 'ip_address', 'neighbor_address',
-                            'neighbor_ip', 'peer_ip', 'peer_address', 'next_hop'
-                        )
-                        if not neigh_id and not neigh_ip:
-                            continue
-                        
-                        state = _routing_record_value(r, 'state', 'status')
-                        local_intf = _routing_record_value(
-                            r, 'interface', 'interface_name', 'local_interface', 'ifname'
-                        )
-                        area_id = _routing_record_value(r, 'area_id') or ('0.0.0.0' if key == 'ospf' else '')
-                        
-                        res.append({
-                            'device_id': dev_id,
-                            'protocol': key,
-                            'neighbor_id': neigh_id or neigh_ip,
-                            'neighbor_ip': neigh_ip or neigh_id,
-                            'state': state,
-                            'uptime': '',
-                            'remote_as': 0,
-                            'area_id': area_id,
-                            'local_interface': local_intf
-                        })
-        except Exception as e:
-            logger.debug(f"[Scheduler Job] Failed to collect routing neighbors from {dev.get('hostname') or dev.get('ip_address')}: {e}")
-            return base_result
+
         return {
             'device_id': dev_id,
             'success': bool(successful_protocols),
             'protocols': sorted(successful_protocols),
-            'neighbors': res,
+            'neighbors': neighbors,
         }
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -2317,9 +2734,30 @@ def sync_bgp_routes_job(device_ids: set[str] | None = None):
         ).fetchall()
         bgp_route_device_ids = {str(row['device_id']) for row in bgp_route_rows if row['device_id']}
 
-        # Load VRF names from CMDB
-        vrf_rows = conn.execute("SELECT vrf_name FROM vrfs ORDER BY vrf_name").fetchall()
-        cmdb_vrfs = [dict(r)['vrf_name'] for r in vrf_rows if dict(r).get('vrf_name')]
+        # Scope each VRF to its actual device. The old global VRF list sent
+        # every configured VRF to every BGP device, opening needless SSH
+        # sessions and producing false failures on unrelated devices.
+        vrf_rows = conn.execute(
+            """
+            SELECT i.device_id, v.vrf_name
+            FROM interfaces i
+            JOIN vrfs v ON v.id = i.vrf_id
+            WHERE COALESCE(v.vrf_name, '') <> ''
+            UNION
+            SELECT device_id, vrf_name FROM route_table
+            WHERE COALESCE(vrf_name, '') <> ''
+            UNION
+            SELECT device_id, vrf_name FROM bgp_route_table
+            WHERE COALESCE(vrf_name, '') <> ''
+            ORDER BY device_id, vrf_name
+            """
+        ).fetchall()
+        vrfs_by_device: dict[str, set[str]] = {}
+        for row in vrf_rows:
+            device_id = str(row['device_id'] or '')
+            vrf_name = str(row['vrf_name'] or '').strip()
+            if device_id and vrf_name and vrf_name.casefold() != 'default':
+                vrfs_by_device.setdefault(device_id, set()).add(vrf_name)
     finally:
         conn.close()
 
@@ -2357,8 +2795,9 @@ def sync_bgp_routes_job(device_ids: set[str] | None = None):
         logger.info("[Scheduler Job] No eligible L3 routing devices found.")
         return
 
+    scoped_vrfs = sorted({vrf for values in vrfs_by_device.values() for vrf in values})
     logger.info(f"[Scheduler Job] BGP sync: {len(l3_devices)} devices, "
-                f"VRFs from CMDB: {cmdb_vrfs or ['(none)']}")
+                f"device-scoped VRFs: {scoped_vrfs or ['(none)']}")
     if auto_bgp_devices:
         logger.info(
             "[Scheduler Job] Auto-enabled BGP route collection from route evidence for: %s",
@@ -2377,6 +2816,8 @@ def sync_bgp_routes_job(device_ids: set[str] | None = None):
 
     workers = min(5, len(l3_devices))
     all_routes = []
+    successful_device_vrfs: set[tuple[str, str]] = set()
+    failed_device_vrfs: set[tuple[str, str]] = set()
 
     # ── Platform → VRF BGP command mapping ─────────────────
     VRF_BGP_CMD = {
@@ -2441,14 +2882,22 @@ def sync_bgp_routes_job(device_ids: set[str] | None = None):
             })
         return res
 
-    def collect_bgp_routes(dev: dict) -> list[dict]:
+    def collect_bgp_routes(dev: dict) -> tuple[list[dict], set[str], set[str]]:
         dev_id = dev['id']
         from core.platform_utils import normalize_device_platform
         platform = normalize_device_platform(dev.get('vendor'), dev.get('platform'))
         res = []
+        successful_vrfs: set[str] = set()
+        failed_vrfs: set[str] = set()
         local_as = 0
 
         # ── 1. Collect default/global BGP table and BGP summary via standard flow ──
+        # Keep the full BGP RIB on the existing platform CLI/TextFSM path for
+        # now. The integrated SNMP neighbor collector describes sessions, and
+        # IP-FORWARD-MIB describes selected forwarding routes; neither is an
+        # equivalent snapshot for this table's per-path AS path, local
+        # preference, weight, and best-path fields. Projecting either as a
+        # complete BGP RIB would silently change this fact table's meaning.
         try:
             auto_bgp = str(dev.get('id')) in bgp_route_device_ids and not should_collect(dev, 'bgp')
             payload = collect_operational_data(
@@ -2458,10 +2907,12 @@ def sync_bgp_routes_job(device_ids: set[str] | None = None):
             )
             bgp_records = []
             bgp_routes_records = []
+            bgp_routes_result = None
             for cat_res in payload.get('categories', []):
                 if cat_res.get('key') == 'bgp':
                     bgp_records = cat_res.get('records', [])
                 elif cat_res.get('key') == 'bgp_routes':
+                    bgp_routes_result = cat_res
                     bgp_routes_records = cat_res.get('records', [])
 
             if bgp_records:
@@ -2469,15 +2920,29 @@ def sync_bgp_routes_job(device_ids: set[str] | None = None):
                     bgp_records[0], 'local_as', 'local_as_number', 'local_as_num'
                 ) or 0
 
-            res.extend(_normalize_records(
+            normalized_bgp_routes = _normalize_records(
                 bgp_routes_records, dev_id, 'default', local_as
-            ))
+            )
+            parse_status = str((bgp_routes_result or {}).get('parse_status') or '').strip().lower()
+            if (
+                bgp_routes_result
+                and bgp_routes_result.get('success')
+                and parse_status == 'matched'
+                and bgp_routes_records
+                and len(normalized_bgp_routes) == len(bgp_routes_records)
+            ):
+                res.extend(normalized_bgp_routes)
+                successful_vrfs.add('default')
+            else:
+                failed_vrfs.add('default')
         except Exception as e:
+            failed_vrfs.add('default')
             logger.debug(f"[Scheduler Job] Default BGP collection failed for "
                          f"{dev.get('hostname')}: {e}")
 
         # ── 2. Collect per-VRF BGP tables ──────────────────────────
-        if cmdb_vrfs:
+        device_vrfs = sorted(vrfs_by_device.get(str(dev_id), set()))
+        if device_vrfs:
             if dev.get('platform_profile_id'):
                 from services.platform_registry_service import execute_platform_action
                 registry_user = {
@@ -2486,7 +2951,7 @@ def sync_bgp_routes_job(device_ids: set[str] | None = None):
                     'role': 'Operator',
                     'tenant_id': dev.get('tenant_id') or '',
                 }
-                for vrf_name in cmdb_vrfs:
+                for vrf_name in device_vrfs:
                     try:
                         result = execute_platform_action(
                             str(dev_id),
@@ -2494,14 +2959,25 @@ def sync_bgp_routes_job(device_ids: set[str] | None = None):
                             user=registry_user,
                             parameters={'vrf': vrf_name},
                         )
-                        if result.get('success'):
-                            res.extend(_normalize_records(result.get('records') or [], dev_id, vrf_name, local_as))
+                        records = result.get('records') or []
+                        normalized_records = _normalize_records(records, dev_id, vrf_name, local_as)
+                        if (
+                            result.get('success')
+                            and str(result.get('parse_status') or '').strip().lower() == 'matched'
+                            and records
+                            and len(normalized_records) == len(records)
+                        ):
+                            res.extend(normalized_records)
+                            successful_vrfs.add(vrf_name)
+                        else:
+                            failed_vrfs.add(vrf_name)
                     except Exception as exc:
+                        failed_vrfs.add(vrf_name)
                         logger.debug(
                             "[Scheduler Job] Registry BGP VRF collection failed for %s/%s: %s",
                             dev.get('hostname'), vrf_name, exc,
                         )
-                return res
+                return res, successful_vrfs, failed_vrfs
             vrf_cmd_template = VRF_BGP_CMD.get(platform, VRF_BGP_CMD['cisco_ios'])
             try:
                 conn_params = _build_connection_params(dev)
@@ -2512,7 +2988,7 @@ def sync_bgp_routes_job(device_ids: set[str] | None = None):
                         except Exception:
                             pass
 
-                    for vrf_name in cmdb_vrfs:
+                    for vrf_name in device_vrfs:
                         try:
                             cmd = vrf_cmd_template.format(vrf=vrf_name)
                             output = client.send_command(
@@ -2523,6 +2999,7 @@ def sync_bgp_routes_job(device_ids: set[str] | None = None):
                                 read_timeout=30,
                             )
                             if not output or not output.strip():
+                                failed_vrfs.add(vrf_name)
                                 continue
                             # Skip error responses
                             lowered = output.strip().lower()
@@ -2530,35 +3007,50 @@ def sync_bgp_routes_job(device_ids: set[str] | None = None):
                                 '% invalid', 'not exist', 'not found',
                                 'no matching', 'address family not',
                              )):
+                                failed_vrfs.add(vrf_name)
                                 continue
 
                             records = _parse_bgp_routes_raw(output, platform)
-                            res.extend(_normalize_records(records, dev_id, vrf_name, local_as))
-                            if records:
+                            normalized_records = _normalize_records(records, dev_id, vrf_name, local_as)
+                            if not records or len(normalized_records) != len(records):
+                                failed_vrfs.add(vrf_name)
+                                continue
+                            res.extend(normalized_records)
+                            successful_vrfs.add(vrf_name)
+                            failed_vrfs.discard(vrf_name)
+                            if normalized_records:
                                 logger.debug(
                                     f"[Scheduler Job] {dev.get('hostname')}: "
-                                    f"VRF {vrf_name} → {len(records)} BGP routes"
+                                    f"VRF {vrf_name} → {len(normalized_records)} BGP routes"
                                 )
                         except Exception as vrf_err:
+                            failed_vrfs.add(vrf_name)
                             logger.debug(
                                 f"[Scheduler Job] VRF {vrf_name} BGP failed on "
                                 f"{dev.get('hostname')}: {vrf_err}"
                             )
             except Exception as conn_err:
+                failed_vrfs.update(device_vrfs)
                 logger.debug(
                     f"[Scheduler Job] VRF SSH connection failed for "
                     f"{dev.get('hostname')}: {conn_err}"
                 )
 
-        return res
+        return res, successful_vrfs, failed_vrfs
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
         future_map = {executor.submit(collect_bgp_routes, dev): dev for dev in l3_devices}
         for future in as_completed(future_map):
+            dev = future_map[future]
+            dev_id = str(dev.get('id') or '')
             try:
-                res = future.result()
+                res, successful_vrfs, failed_vrfs = future.result()
                 all_routes.extend(res)
+                successful_device_vrfs.update((dev_id, vrf) for vrf in successful_vrfs if dev_id)
+                failed_device_vrfs.update((dev_id, vrf) for vrf in failed_vrfs if dev_id)
             except Exception as e:
+                if dev_id:
+                    failed_device_vrfs.add((dev_id, 'unknown'))
                 logger.debug(f"[Scheduler Job] ThreadPool error during BGP routes collection: {e}")
 
     # Multiple valid paths can share prefix/next-hop/AS path. Preserve paths
@@ -2571,12 +3063,18 @@ def sync_bgp_routes_job(device_ids: set[str] | None = None):
 
     db_conn = get_db_connection()
     try:
-        if device_ids is None:
-            db_conn.execute("DELETE FROM bgp_route_table")
-        # Scoped collection may be partial, so preserve previous routes that
-        # were not returned this time. Full refresh retains its replace semantics.
+        # Replace only protocol tables confirmed complete for their own
+        # device/VRF. A failed device or VRF keeps its last good snapshot,
+        # including during an unscoped refresh.
+        for device_id, vrf_name in sorted(successful_device_vrfs):
+            db_conn.execute(
+                "DELETE FROM bgp_route_table WHERE device_id = ? AND COALESCE(vrf_name, 'default') = ?",
+                (device_id, vrf_name),
+            )
         last_update = _beijing_now_iso()
         for item in all_routes:
+            if (str(item.get('device_id') or ''), str(item.get('vrf_name') or 'default')) not in successful_device_vrfs:
+                continue
             uid = '_'.join(_bgp_route_identity(item))
             db_conn.execute('''
                 INSERT INTO bgp_route_table (
@@ -2611,10 +3109,14 @@ def sync_bgp_routes_job(device_ids: set[str] | None = None):
         # Count by VRF for informative logging
         vrf_counts = {}
         for item in all_routes:
+            if (str(item.get('device_id') or ''), str(item.get('vrf_name') or 'default')) not in successful_device_vrfs:
+                continue
             vrf_counts[item['vrf_name']] = vrf_counts.get(item['vrf_name'], 0) + 1
         vrf_summary = ', '.join(f"{k}={v}" for k, v in sorted(vrf_counts.items()))
-        logger.info(f"Successfully synced {len(all_routes)} BGP routes to DB. "
-                    f"VRF breakdown: {vrf_summary or 'none'}")
+        logger.info(
+            "Synced %s BGP routes across %s successful device/VRF tables; preserved previous facts for %s failed tables. VRF breakdown: %s",
+            sum(vrf_counts.values()), len(successful_device_vrfs), len(failed_device_vrfs), vrf_summary or 'none',
+        )
     except Exception as db_err:
         logger.error("Failed to write BGP routes to DB: %s", db_err)
     finally:

@@ -385,7 +385,7 @@ def api_trigger_cmdb_interface_sync(
     background_tasks: BackgroundTasks,
     user=require_role("Operator"),
 ):
-    """Queue a durable, device-level TextFSM interface status collection."""
+    """Queue interface collection for online network devices only."""
     conn = get_db_connection()
     try:
         active = conn.execute(
@@ -406,19 +406,34 @@ def api_trigger_cmdb_interface_sync(
             }
 
         devices = conn.execute(
-            """SELECT id, site_id, vendor FROM devices
-               WHERE status = 'online'
-               ORDER BY hostname, ip_address"""
+            """SELECT d.id, d.site_id, d.vendor, d.status,
+                      COALESCE(NULLIF(pa.asset_type, ''), 'network_device') AS canonical_asset_type,
+                      COALESCE(NULLIF(d.device_category, ''), NULLIF(pa.device_category, ''), '') AS canonical_device_category,
+                      COALESCE(NULLIF(d.platform, ''), NULLIF(pa.platform, ''), '') AS canonical_platform,
+                      COALESCE(NULLIF(d.role, ''), NULLIF(pa.device_role, ''), '') AS canonical_role
+               FROM devices d
+               LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+               WHERE d.status = 'online'
+               ORDER BY d.hostname, d.ip_address"""
         ).fetchall()
     finally:
         conn.close()
 
-    targets = [
-        {"target_id": row['id'], "target_type": "device", "site_id": row['site_id'], "vendor": row['vendor']}
-        for row in devices
-    ]
+    from services.interface_collection_service import is_online_network_device_for_interface_collection
+
+    targets = []
+    for row in devices:
+        device = dict(row)
+        if not is_online_network_device_for_interface_collection(device):
+            continue
+        targets.append({
+            "target_id": device['id'],
+            "target_type": "device",
+            "site_id": device['site_id'],
+            "vendor": device['vendor'],
+        })
     if not targets:
-        raise HTTPException(status_code=409, detail="当前没有在线设备可采集接口状态")
+        raise HTTPException(status_code=409, detail="当前没有在线网络设备可采集接口状态")
 
     from core.config import settings
     from services.job_worker import run_job

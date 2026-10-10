@@ -52,6 +52,8 @@ interface StaleIPAddress {
   subnet_prefix: string;
   subnet_name: string;
   status: string;
+  last_seen: string;
+  days_since_seen: number;
 }
 
 interface MismatchedEndpoint {
@@ -66,6 +68,11 @@ interface MismatchedEndpoint {
   subnet_name: string;
   mac_mismatch: boolean;
   hostname_mismatch: boolean;
+  site_mismatch?: boolean;
+  ipam_site?: string;
+  endpoint_site?: string;
+  status_mismatch?: boolean;
+  ipam_status?: string;
 }
 
 interface ReconciliationData {
@@ -76,8 +83,146 @@ interface ReconciliationData {
     total_undocumented: number;
     total_stale: number;
     total_mismatched: number;
+    total_unscoped: number;
+    endpoint_cache_fresh: boolean;
+    latest_endpoint_seen: string;
+    current_window_minutes: number;
+    stale_after_days: number;
   };
 }
+
+const DEFAULT_CURRENT_WINDOW_MINUTES = 15;
+const DEFAULT_STALE_AFTER_DAYS = 7;
+
+const createEmptyReconciliationData = (): ReconciliationData => ({
+  undocumented_endpoints: [],
+  stale_ip_addresses: [],
+  mismatched_endpoints: [],
+  summary: {
+    total_undocumented: 0,
+    total_stale: 0,
+    total_mismatched: 0,
+    total_unscoped: 0,
+    endpoint_cache_fresh: false,
+    latest_endpoint_seen: '',
+    current_window_minutes: DEFAULT_CURRENT_WINDOW_MINUTES,
+    stale_after_days: DEFAULT_STALE_AFTER_DAYS,
+  },
+});
+
+const asRecord = (value: unknown): Record<string, unknown> | null =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+
+const asString = (value: unknown): string => typeof value === 'string' ? value : '';
+
+const hasLastSeenEvidence = (value: unknown): value is string => {
+  if (typeof value !== 'string' || !value.trim()) return false;
+  return !['unknown', 'n/a', 'none', 'null', 'never', '-'].includes(value.trim().toLowerCase());
+};
+
+const asNonNegativeNumber = (value: unknown, fallback = 0): number => {
+  const parsed = typeof value === 'number' ? value : typeof value === 'string' && value.trim() ? Number(value) : NaN;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+};
+
+const asPositiveNumber = (value: unknown, fallback: number): number => {
+  const parsed = asNonNegativeNumber(value, fallback);
+  return parsed > 0 ? parsed : fallback;
+};
+
+const normalizeReconciliationData = (payload: unknown): ReconciliationData => {
+  const root = asRecord(payload) || {};
+  const rawSummary = asRecord(root.summary) || {};
+  const staleAfterDays = asPositiveNumber(rawSummary.stale_after_days, DEFAULT_STALE_AFTER_DAYS);
+  const records = (value: unknown): Record<string, unknown>[] =>
+    Array.isArray(value) ? value.map(asRecord).filter((item): item is Record<string, unknown> => item !== null) : [];
+
+  const undocumentedEndpoints = records(root.undocumented_endpoints)
+    .filter((item) => asString(item.ip).trim())
+    .map((item): UndocumentedEndpoint => ({
+      ip: asString(item.ip),
+      mac: asString(item.mac),
+      hostname: asString(item.hostname),
+      vendor: asString(item.vendor),
+      switch_id: asString(item.switch_id),
+      switch_name: asString(item.switch_name),
+      switch_port: asString(item.switch_port),
+      vlan: asString(item.vlan),
+      vrf: asString(item.vrf),
+      site: asString(item.site),
+      last_seen: asString(item.last_seen),
+      source_type: asString(item.source_type),
+      confidence: asString(item.confidence),
+      subnet_id: asString(item.subnet_id),
+      subnet_prefix: asString(item.subnet_prefix),
+      subnet_name: asString(item.subnet_name),
+    }));
+
+  const staleIpAddresses = records(root.stale_ip_addresses)
+    .map((item): StaleIPAddress | null => {
+      const lastSeen = asString(item.last_seen).trim();
+      const daysSinceSeen = asNonNegativeNumber(item.days_since_seen, -1);
+      if (!asString(item.id).trim() || !asString(item.address).trim() || !hasLastSeenEvidence(lastSeen) || daysSinceSeen < staleAfterDays) return null;
+      return {
+        id: asString(item.id),
+        address: asString(item.address),
+        hostname: asString(item.hostname),
+        mac_address: asString(item.mac_address),
+        subnet_id: asString(item.subnet_id),
+        subnet_prefix: asString(item.subnet_prefix),
+        subnet_name: asString(item.subnet_name),
+        status: asString(item.status),
+        last_seen: lastSeen,
+        days_since_seen: daysSinceSeen,
+      };
+    })
+    .filter((item): item is StaleIPAddress => item !== null);
+
+  const mismatchedEndpoints = records(root.mismatched_endpoints)
+    .filter((item) => asString(item.ip).trim())
+    .map((item): MismatchedEndpoint => ({
+      ip: asString(item.ip),
+      ipam_address_id: asString(item.ipam_address_id),
+      ipam_hostname: asString(item.ipam_hostname),
+      endpoint_hostname: asString(item.endpoint_hostname),
+      ipam_mac: asString(item.ipam_mac),
+      endpoint_mac: asString(item.endpoint_mac),
+      subnet_id: asString(item.subnet_id),
+      subnet_prefix: asString(item.subnet_prefix),
+      subnet_name: asString(item.subnet_name),
+      mac_mismatch: item.mac_mismatch === true,
+      hostname_mismatch: item.hostname_mismatch === true,
+      site_mismatch: item.site_mismatch === true,
+      ipam_site: asString(item.ipam_site),
+      endpoint_site: asString(item.endpoint_site),
+      status_mismatch: item.status_mismatch === true,
+      ipam_status: asString(item.ipam_status),
+    }));
+
+  return {
+    undocumented_endpoints: undocumentedEndpoints,
+    stale_ip_addresses: staleIpAddresses,
+    mismatched_endpoints: mismatchedEndpoints,
+    summary: {
+      total_undocumented: asNonNegativeNumber(rawSummary.total_undocumented),
+      total_stale: asNonNegativeNumber(rawSummary.total_stale),
+      total_mismatched: asNonNegativeNumber(rawSummary.total_mismatched),
+      total_unscoped: asNonNegativeNumber(rawSummary.total_unscoped),
+      endpoint_cache_fresh: rawSummary.endpoint_cache_fresh === true,
+      latest_endpoint_seen: asString(rawSummary.latest_endpoint_seen),
+      current_window_minutes: asPositiveNumber(rawSummary.current_window_minutes, DEFAULT_CURRENT_WINDOW_MINUTES),
+      stale_after_days: staleAfterDays,
+    },
+  };
+};
+
+const getAuthorizationErrorMessage = (status: number, zh: boolean): string => {
+  if (status === 401) return zh ? '登录状态已失效，请重新登录。' : 'Your session has expired. Please sign in again.';
+  if (status === 403) return zh ? '当前账号没有权限访问此 IPAM 操作。' : 'Your account does not have permission for this IPAM action.';
+  return '';
+};
 
 interface IPReconciliationTabProps {
   language: string;
@@ -87,12 +232,7 @@ interface IPReconciliationTabProps {
 const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }) => {
   const tableRef = useRef<HTMLTableElement>(null);
   const zh = language === 'zh';
-  const [data, setData] = useState<ReconciliationData>({
-    undocumented_endpoints: [],
-    stale_ip_addresses: [],
-    mismatched_endpoints: [],
-    summary: { total_undocumented: 0, total_stale: 0, total_mismatched: 0 },
-  });
+  const [data, setData] = useState<ReconciliationData>(createEmptyReconciliationData);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'undocumented' | 'stale' | 'mismatched'>('undocumented');
   const [search, setSearch] = useState('');
@@ -133,6 +273,10 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
   const loadData = useCallback(async () => {
     setLoading(true);
     setApiError('');
+    setData((current) => ({
+      ...current,
+      summary: { ...current.summary, endpoint_cache_fresh: false },
+    }));
     try {
       const hdrs = authHeaders();
       const params = new URLSearchParams({
@@ -144,11 +288,24 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
       const res = await fetch(`/api/ipam/reconciliation?${params.toString()}`, { headers: hdrs });
       if (res.ok) {
         const payload = await res.json();
-        setData(payload);
+        const normalizedData = normalizeReconciliationData(payload);
+        setData(normalizedData);
         const summaryKey = activeTab === 'undocumented' ? 'total_undocumented' : activeTab === 'stale' ? 'total_stale' : 'total_mismatched';
-        setResultTotal(Number(payload.result_total ?? payload.summary?.[summaryKey] ?? 0));
+        const result = asRecord(payload);
+        setResultTotal(asNonNegativeNumber(result?.result_total, normalizedData.summary[summaryKey]));
       } else {
-        setApiError(zh ? '获取对账数据失败' : 'Failed to fetch reconciliation data');
+        const authorizationError = getAuthorizationErrorMessage(res.status, zh);
+        setApiError(authorizationError || (zh ? '获取对账数据失败' : 'Failed to fetch reconciliation data'));
+        if (authorizationError) {
+          setData(createEmptyReconciliationData());
+          setResultTotal(0);
+          setSubnets([]);
+        } else {
+          setData((current) => ({
+            ...current,
+            summary: { ...current.summary, endpoint_cache_fresh: false },
+          }));
+        }
       }
 
       // Fetch subnets for the fallback select
@@ -156,9 +313,15 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
       if (subRes.ok) {
         const payload = await subRes.json();
         setSubnets(Array.isArray(payload) ? payload : (payload?.items || payload?.data?.items || payload?.data || []));
+      } else if (subRes.status === 401 || subRes.status === 403) {
+        setApiError(getAuthorizationErrorMessage(subRes.status, zh));
       }
     } catch (e) {
-      setApiError(`Network error: ${e instanceof Error ? e.message : String(e)}`);
+      setApiError(zh ? '网络错误，无法刷新对账数据。' : 'Network error while refreshing reconciliation data.');
+      setData((current) => ({
+        ...current,
+        summary: { ...current.summary, endpoint_cache_fresh: false },
+      }));
     } finally {
       setLoading(false);
     }
@@ -210,7 +373,7 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
         loadData();
       } else {
         const err = await res.json();
-        setApiError(err.detail || (zh ? '登记失败' : 'Registration failed'));
+        setApiError(getAuthorizationErrorMessage(res.status, zh) || err.detail || (zh ? '登记失败' : 'Registration failed'));
       }
     } catch (e) {
       setApiError(zh ? '网络请求出错' : 'Network request error');
@@ -232,7 +395,7 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
         loadData();
       } else {
         const err = await res.json();
-        setApiError(err.detail || (zh ? '释放 IP 失败' : 'Failed to release IP'));
+        setApiError(getAuthorizationErrorMessage(res.status, zh) || err.detail || (zh ? '释放 IP 失败' : 'Failed to release IP'));
       }
     } catch (e) {
       setApiError(zh ? '网络请求出错' : 'Network request error');
@@ -242,6 +405,17 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
   const submitSync = async () => {
     if (!syncingItem) return;
     setApiError('');
+    const updates: { hostname?: string; mac_address?: string } = {};
+    const endpointHostname = syncingItem.endpoint_hostname.trim();
+    const endpointMac = syncingItem.endpoint_mac.trim();
+    if (syncingItem.hostname_mismatch && endpointHostname) updates.hostname = endpointHostname;
+    if (syncingItem.mac_mismatch && endpointMac) updates.mac_address = endpointMac;
+    if (Object.keys(updates).length === 0) {
+      setApiError(zh
+        ? '没有可安全提交的主机名或 MAC 值，请复核端点缓存证据。'
+        : 'No non-empty hostname or MAC value can be safely submitted. Review the cached endpoint evidence.');
+      return;
+    }
     try {
       const res = await fetch(`/api/ipam/addresses/${syncingItem.ipam_address_id}`, {
         method: 'PUT',
@@ -249,18 +423,15 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
           'Content-Type': 'application/json',
           ...authHeaders(),
         },
-        body: JSON.stringify({
-          hostname: syncingItem.endpoint_hostname,
-          mac_address: syncingItem.endpoint_mac,
-        }),
+        body: JSON.stringify(updates),
       });
       if (res.ok) {
         setSyncingItem(null);
-        triggerSuccess(zh ? `已将 IP ${syncingItem.ip} 同步为发现的真实数据` : `Successfully synced IP ${syncingItem.ip} with active data`);
+        triggerSuccess(zh ? `已将 IP ${syncingItem.ip} 校准为端点缓存中的发现信息` : `Aligned IP ${syncingItem.ip} with cached endpoint evidence`);
         loadData();
       } else {
         const err = await res.json();
-        setApiError(err.detail || (zh ? '同步失败' : 'Failed to sync info'));
+        setApiError(getAuthorizationErrorMessage(res.status, zh) || err.detail || (zh ? '同步失败' : 'Failed to sync info'));
       }
     } catch (e) {
       setApiError(zh ? '网络请求出错' : 'Network request error');
@@ -284,7 +455,9 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
           item.address.includes(q) ||
           (item.hostname || '').toLowerCase().includes(q) ||
           (item.mac_address || '').toLowerCase().includes(q) ||
-          (item.subnet_prefix || '').toLowerCase().includes(q)
+          (item.subnet_prefix || '').toLowerCase().includes(q) ||
+          item.last_seen.toLowerCase().includes(q) ||
+          String(item.days_since_seen).includes(q)
       );
     } else {
       return data.mismatched_endpoints.filter(
@@ -293,7 +466,11 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
           (item.ipam_hostname || '').toLowerCase().includes(q) ||
           (item.endpoint_hostname || '').toLowerCase().includes(q) ||
           (item.ipam_mac || '').toLowerCase().includes(q) ||
-          (item.endpoint_mac || '').toLowerCase().includes(q)
+          (item.endpoint_mac || '').toLowerCase().includes(q) ||
+          (item.ipam_site || '').toLowerCase().includes(q) ||
+          (item.endpoint_site || '').toLowerCase().includes(q) ||
+          (item.ipam_status || '').toLowerCase().includes(q) ||
+          String(item.status_mismatch).includes(q)
       );
     }
   }, [data, activeTab, search]);
@@ -321,24 +498,29 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
         { header: zh ? '网段名称' : 'Subnet Name', value: (item) => item.subnet_name || '-' },
         { header: zh ? '发现来源' : 'Source Type', value: (item) => item.source_type || '-' },
         { header: zh ? '置信度' : 'Confidence', value: (item) => item.confidence || '-' },
-        { header: zh ? '最后活跃时间' : 'Last Seen', value: (item) => item.last_seen || '-' },
+        { header: zh ? '最后发现时间' : 'Last Seen', value: (item) => item.last_seen || '-' },
       ], matchingItems);
     }
     if (activeTab === 'stale') {
       const allItems = await fetchAllIpamReconciliationItems<StaleIPAddress>('/api/ipam/reconciliation', params, activeTab);
       const query = search.trim().toLowerCase();
-      const matchingItems = allItems.filter((item) => !query
+      const matchingItems = allItems.filter((item) => hasLastSeenEvidence(item.last_seen)
+        && asNonNegativeNumber(item.days_since_seen, -1) >= data.summary.stale_after_days).filter((item) => !query
         || item.address.includes(query)
         || (item.hostname || '').toLowerCase().includes(query)
         || (item.mac_address || '').toLowerCase().includes(query)
-        || (item.subnet_prefix || '').toLowerCase().includes(query));
+        || (item.subnet_prefix || '').toLowerCase().includes(query)
+        || item.last_seen.toLowerCase().includes(query)
+        || String(item.days_since_seen).includes(query));
       return buildVisibleIpamExportData(tableRef.current, [
         { header: zh ? 'IP地址' : 'IP Address', value: (item) => item.address },
         { header: zh ? '登记 MAC' : 'Documented MAC', value: (item) => item.mac_address || '-' },
         { header: zh ? '登记主机名' : 'Hostname', value: (item) => item.hostname || '-' },
         { header: zh ? '网段前缀' : 'Prefix', value: (item) => item.subnet_prefix || '-' },
         { header: zh ? '网段名称' : 'Subnet Name', value: (item) => item.subnet_name || '-' },
-        { header: zh ? '登记状态' : 'Status', value: (item) => item.status.toUpperCase() },
+        { header: zh ? '最后发现时间' : 'Last Seen', value: (item) => item.last_seen },
+        { header: zh ? '未发现天数' : 'Days Since Seen', value: (item) => item.days_since_seen },
+        { header: zh ? '登记状态' : 'Status', value: (item) => String(item.status || '').toUpperCase() || '-' },
       ], matchingItems);
     }
 
@@ -349,17 +531,26 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
       || (item.ipam_hostname || '').toLowerCase().includes(query)
       || (item.endpoint_hostname || '').toLowerCase().includes(query)
       || (item.ipam_mac || '').toLowerCase().includes(query)
-      || (item.endpoint_mac || '').toLowerCase().includes(query));
+      || (item.endpoint_mac || '').toLowerCase().includes(query)
+      || (item.ipam_site || '').toLowerCase().includes(query)
+      || (item.endpoint_site || '').toLowerCase().includes(query)
+      || (item.ipam_status || '').toLowerCase().includes(query)
+      || String(item.status_mismatch).includes(query));
     return buildVisibleIpamExportData(tableRef.current, [
       { header: zh ? 'IP地址' : 'IP Address', value: (item) => item.ip },
       { header: zh ? '登记 MAC' : 'IPAM MAC', value: (item) => item.ipam_mac || '(Empty)' },
       { header: zh ? '发现 MAC' : 'Discovered MAC', value: (item) => item.endpoint_mac || '(Empty)' },
       { header: zh ? '登记主机名' : 'IPAM Hostname', value: (item) => item.ipam_hostname || '(Empty)' },
       { header: zh ? '发现主机名' : 'Discovered Hostname', value: (item) => item.endpoint_hostname || '(Empty)' },
+      { header: zh ? '登记站点' : 'IPAM Site', value: (item) => item.ipam_site || '-' },
+      { header: zh ? '发现站点' : 'Discovered Site', value: (item) => item.endpoint_site || '-' },
+      { header: zh ? 'IPAM 状态' : 'IPAM Status', value: (item) => item.ipam_status || '-' },
+      { header: zh ? '状态冲突' : 'Status Mismatch', value: (item) => item.status_mismatch ? (zh ? '是' : 'Yes') : (zh ? '否' : 'No') },
+      { header: zh ? '缓存观测证据' : 'Cached Observation Evidence', value: (item) => item.status_mismatch ? (zh ? '缓存中有端点观测' : 'Endpoint observed in cache') : '-' },
       { header: zh ? '网段前缀' : 'Prefix', value: (item) => item.subnet_prefix || '-' },
       { header: zh ? '网段名称' : 'Subnet Name', value: (item) => item.subnet_name || '-' },
     ], matchingItems);
-  }, [activeTab, search, zh]);
+  }, [activeTab, search, zh, data.summary.stale_after_days]);
 
   useEffect(() => {
     setPage(1);
@@ -370,7 +561,7 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
       <PageHero
         icon={ClipboardCheck}
         title={zh ? 'IPAM 对账中心' : 'IP Reconciliation Center'}
-        subtitle={zh ? '自动比对 IPAM 登记数据与网络中实际在线主机的 ARP/MAC 映射表，对审计差异进行闭环处理' : 'Automated comparison of documented IP allocations against discovered online network hosts.'}
+        subtitle={zh ? '分配状态以 IPAM 台账为准；设备发现缓存用于比对。' : 'IPAM is the allocation baseline; cached device discoveries provide comparison evidence.'}
         actions={
           <button
             onClick={loadData}
@@ -378,7 +569,7 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
             className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white rounded-xl text-xs font-bold shadow-lg shadow-cyan-500/20 active:scale-95 transition-all cursor-pointer disabled:opacity-55"
           >
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-            {zh ? '重新对账' : 'Re-Audit'}
+            {zh ? '刷新结果' : 'Refresh results'}
           </button>
         }
       />
@@ -404,8 +595,35 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
         </div>
       )}
 
+      <div
+        className={"flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border px-4 py-2.5 text-xs " + (
+          data.summary.endpoint_cache_fresh
+            ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+            : 'bg-amber-50 border-amber-200 text-amber-800'
+        )}
+      >
+        <Database className="w-4 h-4 flex-shrink-0" />
+        <span className="font-semibold">{zh ? '发现缓存' : 'Discovery cache'}</span>
+        <span className={"px-2 py-0.5 rounded-full text-[10px] font-bold " + (
+          data.summary.endpoint_cache_fresh ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'
+        )}>
+          {data.summary.endpoint_cache_fresh
+            ? (zh ? '窗口内有观测' : 'Observed within window')
+            : (zh ? '观测超窗或未知' : 'Stale or unknown')}
+        </span>
+        <span>
+          {zh ? '最新观测' : 'Latest seen'}:
+          <span className="ml-1 font-mono">{data.summary.latest_endpoint_seen || (zh ? '未知' : 'Unknown')}</span>
+        </span>
+        <span>
+          {zh ? '判定窗口' : 'Window'}: {data.summary.current_window_minutes} {zh ? '分钟' : 'min'}
+        </span>
+        {!data.summary.endpoint_cache_fresh && (
+          <span className="font-semibold">{zh ? '结果可能不完整' : 'Results may be incomplete'}</span>
+        )}
+      </div>
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         {/* Undocumented */}
         <div
           onClick={() => setActiveTab('undocumented')}
@@ -417,16 +635,13 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
         >
           <div className="flex justify-between items-start">
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">{zh ? '未登记活跃设备' : 'Undocumented Active Hosts'}</p>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">{zh ? '发现但未登记的端点' : 'Undocumented Discovered Endpoints'}</p>
               <h3 className="text-2xl font-black mt-1 text-[#00172D] font-mono">{data.summary.total_undocumented}</h3>
             </div>
             <div className={`p-2.5 rounded-2xl ${activeTab === 'undocumented' ? 'bg-cyan-500 text-white' : 'bg-cyan-50 text-cyan-600'}`}>
               <Plus size={18} />
             </div>
           </div>
-          <p className="text-[10px] text-gray-400 mt-2.5 leading-relaxed">
-            {zh ? '真实在线但 IPAM 尚未建档的终端设备，可能存在管理盲区。' : 'Active IP endpoints not recorded in IPAM database.'}
-          </p>
         </div>
 
         {/* Stale */}
@@ -440,16 +655,13 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
         >
           <div className="flex justify-between items-start">
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">{zh ? '离线已登记IP (僵尸IP)' : 'Stale/Zombie IP Addresses'}</p>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">{zh ? `长期未发现的已分配 IP（${data.summary.stale_after_days}天+）` : `Allocated IPs unseen for ${data.summary.stale_after_days} days+`}</p>
               <h3 className="text-2xl font-black mt-1 text-[#00172D] font-mono">{data.summary.total_stale}</h3>
             </div>
             <div className={`p-2.5 rounded-2xl ${activeTab === 'stale' ? 'bg-amber-500 text-white' : 'bg-amber-50 text-amber-600'}`}>
               <WifiOff size={18} />
             </div>
           </div>
-          <p className="text-[10px] text-gray-400 mt-2.5 leading-relaxed">
-            {zh ? '已建档但在网络中长时间不活跃的 IP 地址，可释放回收。' : 'Documented IP allocations with no recent network activity.'}
-          </p>
         </div>
 
         {/* Mismatched */}
@@ -463,16 +675,25 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
         >
           <div className="flex justify-between items-start">
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">{zh ? '信息不一致设备' : 'Mismatched Configurations'}</p>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">{zh ? 'IPAM 与缓存发现信息不一致' : 'IPAM vs Cached Endpoint Mismatches'}</p>
               <h3 className="text-2xl font-black mt-1 text-[#00172D] font-mono">{data.summary.total_mismatched}</h3>
             </div>
             <div className={`p-2.5 rounded-2xl ${activeTab === 'mismatched' ? 'bg-rose-500 text-white' : 'bg-rose-50 text-rose-600'}`}>
               <ShieldAlert size={18} />
             </div>
           </div>
-          <p className="text-[10px] text-gray-400 mt-2.5 leading-relaxed">
-            {zh ? '建档信息与发现的真实主机名或 MAC 地址不吻合，建议校准。' : 'IPAM records mismatching actual discovered hostnames/MACs.'}
-          </p>
+        </div>
+
+        <div className="p-4 rounded-3xl border bg-white border-black/5">
+          <div className="flex justify-between items-start">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">{zh ? '无法安全归属范围' : 'Unscoped Discoveries'}</p>
+              <h3 className="text-2xl font-black mt-1 text-[#00172D] font-mono">{data.summary.total_unscoped}</h3>
+            </div>
+            <div className="p-2.5 rounded-2xl bg-violet-50 text-violet-600">
+              <Info size={18} />
+            </div>
+          </div>
         </div>
       </div>
 
@@ -481,9 +702,9 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
         {/* Table Toolbar */}
         <div className="px-6 py-4 bg-gray-50/40 border-b border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-3 select-none flex-shrink-0">
           <h4 className="text-xs font-bold text-gray-700 uppercase tracking-widest">
-            {activeTab === 'undocumented' && (zh ? '未登记的活跃主机列表' : 'Undocumented Active Hosts')}
-            {activeTab === 'stale' && (zh ? '已建档离线的主机列表 (僵尸IP)' : 'Stale/Offline Documented IPs')}
-            {activeTab === 'mismatched' && (zh ? 'MAC或主机名不一致的IP列表' : 'Mismatched Hostnames / MACs')}
+            {activeTab === 'undocumented' && (zh ? '缓存发现但未登记的端点' : 'Undocumented Cached Endpoints')}
+            {activeTab === 'stale' && (zh ? `长期未发现的已分配 IP（${data.summary.stale_after_days}天+）` : `Allocated IPs unseen for ${data.summary.stale_after_days} days+`)}
+            {activeTab === 'mismatched' && (zh ? '主机名、MAC、站点或状态不一致的 IP 列表' : 'Hostname, MAC, Site, or Status Mismatches')}
           </h4>
 
           {/* Search */}
@@ -507,7 +728,7 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
           {loading ? (
             <div className="h-full flex items-center justify-center text-xs text-gray-400 font-semibold gap-2">
               <RefreshCw className="w-4 h-4 animate-spin text-cyan-500" />
-              {zh ? '正在执行网络对账分析...' : 'Auditing databases...'}
+              {zh ? '正在基于端点缓存重新计算结果...' : 'Recomputing results from the endpoint cache...'}
             </div>
           ) : (
             <table ref={tableRef} className="nx-data-table text-left">
@@ -526,7 +747,7 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
                       <th className="px-4 py-4">{zh ? '网段名称' : 'Subnet Name'}</th>
                       <th className="px-4 py-4">{zh ? '发现来源' : 'Source Type'}</th>
                       <th className="px-4 py-4">{zh ? '置信度' : 'Confidence'}</th>
-                      <th className="px-4 py-4">{zh ? '最后活跃时间' : 'Last Seen'}</th>
+                      <th className="px-4 py-4">{zh ? '最后发现时间' : 'Last Seen'}</th>
                       <TableActionHeader className="pr-6 py-4 text-right">{zh ? '操作' : 'Actions'}</TableActionHeader>
                     </tr>
                   </thead>
@@ -558,7 +779,7 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
                     ) : (
                       <tr>
                         <td colSpan={12} className="py-12 text-center text-xs text-gray-400 font-medium">
-                          {zh ? '暂无未登记的在线活跃主机' : 'No undocumented active endpoints found'}
+                          {zh ? '缓存中没有发现未登记端点' : 'No undocumented endpoints found in the cache'}
                         </td>
                       </tr>
                     )}
@@ -576,6 +797,8 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
                       <th className="px-4 py-4">{zh ? '登记主机名' : 'Hostname'}</th>
                       <th className="px-4 py-4">{zh ? '网段前缀' : 'Prefix'}</th>
                       <th className="px-4 py-4">{zh ? '网段名称' : 'Subnet Name'}</th>
+                      <th className="px-4 py-4">{zh ? '最后发现时间' : 'Last Seen'}</th>
+                      <th className="px-4 py-4">{zh ? '未发现天数' : 'Days Since Seen'}</th>
                       <th className="px-4 py-4">{zh ? '登记状态' : 'Status'}</th>
                       <TableActionHeader className="pr-6 py-4 text-right">{zh ? '操作' : 'Actions'}</TableActionHeader>
                     </tr>
@@ -589,6 +812,8 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
                           <td className="px-4 py-4 text-xs font-semibold text-gray-500">{node.hostname || '-'}</td>
                           <td className="px-4 py-4 text-xs font-mono text-gray-600 font-semibold">{node.subnet_prefix || '-'}</td>
                           <td className="px-4 py-4 text-xs text-gray-500">{node.subnet_name || '-'}</td>
+                          <td className="px-4 py-4 text-xs font-mono text-gray-500">{node.last_seen}</td>
+                          <td className="px-4 py-4 text-xs font-semibold text-amber-700">{node.days_since_seen} {zh ? '天' : 'days'}</td>
                           <td className="px-4 py-4 text-xs">
                             <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-600 border border-amber-500/10`}>
                               {node.status.toUpperCase()}
@@ -606,8 +831,8 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
                       ))
                     ) : (
                       <tr>
-                        <td colSpan={7} className="py-12 text-center text-xs text-gray-400 font-medium">
-                          {zh ? '暂无长时间离线的僵尸IP' : 'No stale documented IPs discovered'}
+                        <td colSpan={9} className="py-12 text-center text-xs text-gray-400 font-medium">
+                          {zh ? '暂无达到未发现天数阈值的已分配 IP' : 'No allocated IPs meet the unseen-day threshold'}
                         </td>
                       </tr>
                     )}
@@ -625,6 +850,8 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
                       <th className="px-4 py-4">{zh ? '发现 MAC' : 'Discovered MAC'}</th>
                       <th className="px-4 py-4">{zh ? '登记主机名' : 'IPAM Hostname'}</th>
                       <th className="px-4 py-4">{zh ? '发现主机名' : 'Discovered Hostname'}</th>
+                      <th className="px-4 py-4">{zh ? '站点（登记 → 缓存发现）' : 'Site (IPAM → Cached Discovery)'}</th>
+                      <th className="px-4 py-4">{zh ? 'IPAM 状态 / 端点旁证' : 'IPAM Status / Endpoint Evidence'}</th>
                       <th className="px-4 py-4">{zh ? '网段前缀' : 'Prefix'}</th>
                       <th className="px-4 py-4">{zh ? '网段名称' : 'Subnet Name'}</th>
                       <TableActionHeader className="pr-6 py-4 text-right">{zh ? '操作' : 'Actions'}</TableActionHeader>
@@ -639,22 +866,42 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
                           <td className={`px-4 py-4 text-xs font-mono ${node.mac_mismatch ? 'text-emerald-600 font-bold' : 'text-gray-500'}`}>{node.endpoint_mac || '(Empty)'}</td>
                           <td className={`px-4 py-4 text-xs ${node.hostname_mismatch ? 'text-rose-600 line-through' : 'text-gray-500'}`}>{node.ipam_hostname || '(Empty)'}</td>
                           <td className={`px-4 py-4 text-xs ${node.hostname_mismatch ? 'text-emerald-600 font-bold' : 'text-gray-500'}`}>{node.endpoint_hostname || '(Empty)'}</td>
+                          <td className={`px-4 py-4 text-xs ${node.site_mismatch ? 'text-rose-600 font-bold' : 'text-gray-500'}`}>
+                            {node.site_mismatch
+                              ? <>{node.ipam_site || '(Empty)'} <ArrowRight size={10} className="inline mx-1" /> {node.endpoint_site || '(Empty)'}</>
+                              : (node.ipam_site || node.endpoint_site || '-')}
+                          </td>
+                          <td className={`px-4 py-4 text-xs ${node.status_mismatch ? 'text-rose-600 font-bold' : 'text-gray-500'}`}>
+                            {node.status_mismatch
+                              ? <>{node.ipam_status || (zh ? '未知状态' : 'Unknown status')} <ArrowRight size={10} className="inline mx-1" /> {zh ? '端点缓存有观测' : 'Endpoint observed in cache'}</>
+                              : (node.ipam_status || '-')}
+                          </td>
                           <td className="px-4 py-4 text-xs font-mono text-gray-600 font-semibold">{node.subnet_prefix || '-'}</td>
                           <td className="px-4 py-4 text-xs text-gray-500">{node.subnet_name || '-'}</td>
                           <TableActionCell className="pr-6 py-4 text-right">
-                            <ActionIconButton
-                              icon={RefreshCw}
-                              label={zh ? '校准同步' : 'Sync Info'}
-                              variant="accent"
-                              onClick={() => setSyncingItem(node)}
-                            />
+                            {(node.site_mismatch || node.status_mismatch) && !node.mac_mismatch && !node.hostname_mismatch ? (
+                              <span className="text-[10px] text-gray-400">
+                                {node.site_mismatch && node.status_mismatch
+                                  ? (zh ? '请核对站点归属与 IPAM 生命周期状态' : 'Review site assignment and IPAM lifecycle status')
+                                  : node.site_mismatch
+                                    ? (zh ? '请核对站点资产归属' : 'Review site asset assignment')
+                                    : (zh ? '请核对 IPAM 生命周期状态' : 'Review IPAM lifecycle status')}
+                              </span>
+                            ) : (
+                              <ActionIconButton
+                                icon={RefreshCw}
+                                label={zh ? '校准同步' : 'Sync Info'}
+                                variant="accent"
+                                onClick={() => setSyncingItem(node)}
+                              />
+                            )}
                           </TableActionCell>
                         </tr>
                       ))
                     ) : (
                       <tr>
-                        <td colSpan={8} className="py-12 text-center text-xs text-gray-400 font-medium">
-                          {zh ? '暂无建档信息不吻合的IP' : 'No mismatched IPs discovered'}
+                        <td colSpan={10} className="py-12 text-center text-xs text-gray-400 font-medium">
+                          {zh ? '缓存发现证据中暂无建档信息不一致的 IP' : 'No mismatches found in cached endpoint evidence'}
                         </td>
                       </tr>
                     )}
@@ -836,9 +1083,15 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
               className="bg-white w-full max-w-md rounded-3xl overflow-hidden shadow-2xl border border-black/5"
             >
               <div className="p-6">
-                <h3 className="text-base font-bold text-gray-900 mb-2">{zh ? '释放离线僵尸 IP 登记吗？' : 'Release Offline IP address?'}</h3>
+                <h3 className="text-base font-bold text-gray-900 mb-2">
+                  {zh
+                    ? `释放长期未发现的已分配 IP（${data.summary.stale_after_days}天+）？`
+                    : `Release IP unseen for ${data.summary.stale_after_days} days+?`}
+                </h3>
                 <p className="text-xs text-gray-500 leading-relaxed">
-                  {zh ? `您确认要从 IPAM 数据库中释放 IP 地址 ${releasingItem.address} 吗？释放后此 IP 将变为空闲可分配状态，原有绑定数据将被清理。` : `Are you sure you want to release documented IP ${releasingItem.address}? It is currently offline and will be marked as free.`}
+                  {zh
+                    ? `IP ${releasingItem.address} 最后发现于 ${releasingItem.last_seen}，已 ${releasingItem.days_since_seen} 天未发现。确认后会从 IPAM 释放该分配，使其可重新分配。`
+                    : `IP ${releasingItem.address} was last seen at ${releasingItem.last_seen}, ${releasingItem.days_since_seen} days ago. Releasing it removes the IPAM allocation and makes it available for reassignment.`}
                 </p>
               </div>
               <div className="px-6 py-4 bg-gray-50 flex items-center justify-end gap-3 border-t border-gray-100">
@@ -874,8 +1127,8 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
                 <h3 className="text-base font-bold text-gray-900 mb-2">{zh ? '执行 IP 资产信息校准？' : 'Align IP asset information?'}</h3>
                 <p className="text-xs text-gray-500 leading-relaxed mb-4">
                   {zh
-                    ? `是否使用网络扫描发现的真实数据，来更新 IP ${syncingItem.ip} 在 IPAM 中的登记信息？`
-                    : `Do you want to update the IPAM registration details for IP ${syncingItem.ip} using discovered network parameters?`}
+                  ? `是否使用端点缓存中的发现数据，来更新 IP ${syncingItem.ip} 在 IPAM 中的登记信息？`
+                  : `Do you want to update the IPAM registration details for IP ${syncingItem.ip} using cached endpoint evidence?`}
                 </p>
                 <div className="space-y-2.5 p-3 rounded-2xl bg-cyan-50/50 border border-cyan-500/10 text-xs">
                   {syncingItem.hostname_mismatch && (
@@ -896,7 +1149,33 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
                       </span>
                     </div>
                   )}
+                  {syncingItem.site_mismatch && (
+                    <div className="flex justify-between items-center gap-3">
+                      <span className="text-gray-400 flex-shrink-0">{zh ? '站点校准' : 'Site'}</span>
+                      <span className="font-bold text-gray-800 text-right">
+                        {syncingItem.ipam_site || '(Empty)'} <ArrowRight size={10} className="inline mx-1" />{' '}
+                        {syncingItem.endpoint_site || '(Empty)'}
+                        <span className="block text-[10px] text-gray-400 font-normal">
+                          {zh ? '登记站点 → 缓存发现站点' : 'IPAM site → cached endpoint site'}
+                        </span>
+                      </span>
+                    </div>
+                  )}
+                  {syncingItem.status_mismatch && (
+                    <div className="flex justify-between items-center gap-3">
+                      <span className="text-gray-400 flex-shrink-0">{zh ? 'IPAM 生命周期状态' : 'IPAM lifecycle status'}</span>
+                      <span className="font-bold text-gray-800 text-right">
+                        {syncingItem.ipam_status || (zh ? '未知状态' : 'Unknown status')} <ArrowRight size={10} className="inline mx-1" />{' '}
+                        {zh ? '端点缓存有观测' : 'Endpoint observed in cache'}
+                      </span>
+                    </div>
+                  )}
                 </div>
+                <p className="mt-2 text-[10px] text-gray-400">
+                  {zh
+                    ? '此校准操作只同步主机名和 MAC；不会修改 IPAM 生命周期状态或站点归属。IPAM 台账仍是状态基准，缓存只作旁证。'
+                    : 'This action only syncs hostname and MAC; it does not change IPAM lifecycle status or site assignment. The IPAM ledger remains authoritative; cache data is corroborating evidence.'}
+                </p>
               </div>
               <div className="px-6 py-4 bg-gray-50 flex items-center justify-end gap-3 border-t border-gray-100">
                 <button

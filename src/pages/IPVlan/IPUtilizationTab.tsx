@@ -208,21 +208,21 @@ const IPUtilizationTab: React.FC<IPUtilizationTabProps> = ({ language, t }) => {
       <PageHero
         icon={TrendingUp}
         title={zh ? 'IP 利用率与水位分析' : 'IPAM Capacity Analytics'}
-        subtitle={zh ? '按可分配容量网段统计水位，容器前缀、点到点网段和主机路由不计入容量分母。' : 'Capacity is calculated from allocatable prefixes; containers, point-to-point links, and host routes are excluded.'}
+        subtitle={zh ? '查看容量网段分配量、整体利用率和站点分布。' : 'Review allocated capacity, network-wide utilization, and site distribution.'}
       />
 
       {/* Grid Dashboard */}
       <div className="flex-1 overflow-y-auto space-y-4 pr-1">
         
         {/* 1. Overview Cards */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {/* Total Prefixes */}
-          <div className="bg-white p-5 rounded-[24px] border border-black/5 shadow-sm flex items-center gap-4 hover:shadow-md transition-shadow">
+          <div className="min-w-0 rounded-2xl border border-slate-200/70 bg-white p-4 shadow-sm transition-shadow hover:shadow-md sm:p-5 flex items-center gap-4">
             <div className="w-12 h-12 rounded-2xl bg-cyan-50 flex items-center justify-center text-cyan-500">
               <Layers size={22} />
             </div>
-            <div>
-              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{zh ? '容量网段数' : 'Capacity Prefixes'}</p>
+            <div className="min-w-0">
+              <p className="truncate text-[10px] font-bold text-gray-400 uppercase tracking-wider">{zh ? '容量网段数' : 'Capacity Prefixes'}</p>
               <h3 className="text-xl font-extrabold text-gray-900 mt-0.5">
                 {overview.capacity_prefixes_count}
                 <span className="ml-1 text-[10px] font-semibold text-gray-400">
@@ -233,12 +233,12 @@ const IPUtilizationTab: React.FC<IPUtilizationTabProps> = ({ language, t }) => {
           </div>
 
           {/* Allocated IPs */}
-          <div className="bg-white p-5 rounded-[24px] border border-black/5 shadow-sm flex items-center gap-4 hover:shadow-md transition-shadow">
+          <div className="min-w-0 rounded-2xl border border-slate-200/70 bg-white p-4 shadow-sm transition-shadow hover:shadow-md sm:p-5 flex items-center gap-4">
             <div className="w-12 h-12 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-500">
               <Activity size={22} />
             </div>
-            <div>
-              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{zh ? '已分配 IP 数' : 'Allocated IPs'}</p>
+            <div className="min-w-0">
+              <p className="truncate text-[10px] font-bold text-gray-400 uppercase tracking-wider">{zh ? '已分配 IP 数' : 'Allocated IPs'}</p>
               <h3 className="text-xl font-extrabold text-gray-900 mt-0.5">
                 {overview.used_ips} <span className="text-xs font-semibold text-gray-400">/ {overview.total_ips}</span>
               </h3>
@@ -246,12 +246,12 @@ const IPUtilizationTab: React.FC<IPUtilizationTabProps> = ({ language, t }) => {
           </div>
 
           {/* Dynamic Pools & VIPs */}
-          <div className="bg-white p-5 rounded-[24px] border border-black/5 shadow-sm flex items-center gap-4 hover:shadow-md transition-shadow">
+          <div className="min-w-0 rounded-2xl border border-slate-200/70 bg-white p-4 shadow-sm transition-shadow hover:shadow-md sm:p-5 flex items-center gap-4">
             <div className="w-12 h-12 rounded-2xl bg-emerald-50 flex items-center justify-center text-emerald-500">
               <CheckCircle size={22} />
             </div>
-            <div>
-              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{zh ? '动态池与 VIP 数' : 'Pools & VIPs'}</p>
+            <div className="min-w-0">
+              <p className="truncate text-[10px] font-bold text-gray-400 uppercase tracking-wider">{zh ? '动态池与 VIP 数' : 'Pools & VIPs'}</p>
               <h3 className="text-xl font-extrabold text-gray-900 mt-0.5">
                 {overview.pools_count} <span className="text-xs font-semibold text-gray-400">P / {overview.vips_count} V</span>
               </h3>
@@ -259,25 +259,27 @@ const IPUtilizationTab: React.FC<IPUtilizationTabProps> = ({ language, t }) => {
           </div>
 
           {/* Global Utilization */}
-          <div className="bg-white p-5 rounded-[24px] border border-black/5 shadow-sm flex items-center gap-4 hover:shadow-md transition-shadow">
+          <div className="min-w-0 rounded-2xl border border-slate-200/70 bg-white p-4 shadow-sm transition-shadow hover:shadow-md sm:p-5 flex items-center gap-4">
             <div className={`w-12 h-12 rounded-2xl flex items-center justify-center border ${getUtilColor(overview.utilization_rate)}`}>
               <TrendingUp size={22} />
             </div>
-            <div>
-              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{zh ? '全网IP利用率' : 'Utilization Rate'}</p>
+            <div className="min-w-0">
+              <p className="truncate text-[10px] font-bold text-gray-400 uppercase tracking-wider">{zh ? '全网IP利用率' : 'Utilization Rate'}</p>
               <h3 className="text-xl font-extrabold text-gray-900 mt-0.5">{overview.utilization_rate}%</h3>
             </div>
           </div>
         </div>
 
         {/* 2. Visual Graphs Section */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-3">
           
           {/* Top Utilized Prefixes */}
-          <div className="bg-white p-6 rounded-[28px] border border-black/5 shadow-sm lg:col-span-2 flex flex-col min-h-[300px]">
+          <div className={"flex min-w-0 flex-col rounded-2xl border border-slate-200/70 bg-white p-4 shadow-sm sm:p-5 " + (
+            forecast_trend.length > 0 ? 'lg:col-span-2 min-h-[300px]' : 'lg:col-span-3 min-h-[260px]'
+          )}>
             <div className="flex items-center justify-between mb-4">
               <h4 className="text-sm font-bold text-gray-900 flex items-center gap-2">
-                <AlertOctagon size={16} className="text-rose-500 animate-pulse" />
+                <AlertOctagon size={16} className="text-rose-500" />
                 {zh ? '容量网段利用率 Top 5' : 'Capacity Prefix Utilization (Top 5)'}
               </h4>
               <span className="px-2 py-0.5 rounded-md text-[9px] font-bold bg-slate-50 text-slate-500 border border-slate-200">
@@ -285,25 +287,32 @@ const IPUtilizationTab: React.FC<IPUtilizationTabProps> = ({ language, t }) => {
               </span>
             </div>
 
-            <div className="flex-1 space-y-4">
+            <div className="flex-1 space-y-3">
               {top_utilized_prefixes.length > 0 ? (
-                top_utilized_prefixes.map((item) => (
-                  <div key={item.id} className="space-y-1">
-                    <div className="flex justify-between text-xs">
-                      <span className="font-mono font-bold text-gray-800">{item.prefix}</span>
-                      <span className="font-semibold text-gray-400">{item.name || '-'}</span>
-                      <span className="font-bold text-cyan-600">{item.utilization}% ({item.used_ips}/{item.total_ips} IPs)</span>
+                top_utilized_prefixes.map((item) => {
+                  const utilization = Math.max(0, Math.min(Number(item.utilization) || 0, 100));
+                  return (
+                    <div key={item.id} className="rounded-xl border border-slate-100 px-3 py-2.5">
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                        <div className="flex min-w-0 flex-1 items-center gap-2">
+                          <span className="shrink-0 font-mono text-xs font-bold text-slate-800">{item.prefix}</span>
+                          {item.name && <span className="truncate text-[10px] font-medium text-slate-400">{item.name}</span>}
+                        </div>
+                        <span className="shrink-0 text-[11px] font-bold text-cyan-700">
+                          {item.utilization}% <span className="font-medium text-slate-400">({item.used_ips}/{item.total_ips})</span>
+                        </span>
+                      </div>
+                      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                        <div
+                          className={"h-full rounded-full " + getUtilBarColor(utilization)}
+                          style={{ width: `${utilization}%` }}
+                        />
+                      </div>
                     </div>
-                    <div className="w-full h-2 bg-gray-50 rounded-full overflow-hidden border border-gray-100/50">
-                      <div 
-                        className={`h-full rounded-full ${getUtilBarColor(item.utilization)}`} 
-                        style={{ width: `${item.utilization}%` }}
-                      />
-                    </div>
-                  </div>
-                ))
+                  );
+                })
               ) : (
-                <div className="h-full flex items-center justify-center text-xs text-gray-400 font-medium">
+                <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-slate-200 text-xs font-medium text-gray-400">
                   {zh ? '尚无可计算容量的网段' : 'No allocatable capacity prefixes are available.'}
                 </div>
               )}
@@ -311,25 +320,25 @@ const IPUtilizationTab: React.FC<IPUtilizationTabProps> = ({ language, t }) => {
           </div>
 
           {/* Allocation forecast trend */}
-          <div className="bg-white p-6 rounded-[28px] border border-black/5 shadow-sm flex flex-col">
-            <div className="mb-4">
-              <h4 className="text-sm font-bold text-gray-900 flex items-center gap-2">
+          {forecast_trend.length > 0 && (
+            <div className="flex min-w-0 flex-col rounded-2xl border border-slate-200/70 bg-white p-4 shadow-sm sm:p-5">
+              <h4 className="mb-3 flex items-center gap-2 text-sm font-bold text-gray-900">
                 <Sparkles size={16} className="text-cyan-500" />
-                {zh ? '容量分配历史趋势' : 'Capacity Allocation Trend'}
+                {zh ? '容量分配趋势' : 'Capacity Allocation Trend'}
               </h4>
-              <p className="text-[10px] text-gray-400 mt-0.5">{zh ? '仅统计可分配容量网段中的有效分配记录' : 'Only active allocations in capacity-eligible prefixes are included.'}</p>
+              <div className="flex min-h-[180px] flex-1 items-center justify-center">
+                {renderSVGChart(forecast_trend)}
+              </div>
             </div>
-            
-            <div className="flex-1 flex items-center justify-center min-h-[160px]">
-              {forecast_trend.length > 0 ? renderSVGChart(forecast_trend) : (
-                <div className="px-6 text-center">
-                  <p className="text-xs font-semibold text-gray-500">{zh ? '尚无历史分配样本' : 'No historical allocation samples yet'}</p>
-                  <p className="mt-1 text-[10px] text-gray-400">{zh ? '产生带时间戳的有效 IP 分配后将显示趋势。' : 'The trend appears after timestamped allocations are recorded.'}</p>
-                </div>
-              )}
-            </div>
-          </div>
+          )}
         </div>
+        {forecast_trend.length === 0 && (
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-dashed border-slate-200 bg-white px-4 py-3 text-xs text-slate-500">
+            <Sparkles size={15} className="text-cyan-500" />
+            <span className="font-semibold">{zh ? '容量分配趋势' : 'Capacity Allocation Trend'}</span>
+            <span>{zh ? '暂无历史样本' : 'No historical samples yet'}</span>
+          </div>
+        )}
 
         {/* 3. Site breakdowns */}
         <div className="bg-white p-6 rounded-[28px] border border-black/5 shadow-sm">
@@ -338,14 +347,21 @@ const IPUtilizationTab: React.FC<IPUtilizationTabProps> = ({ language, t }) => {
             <h4 className="text-sm font-bold text-gray-900">{zh ? '站点物理分区利用率概览' : 'IP Allocation by Site'}</h4>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div
+            className="grid gap-3"
+            style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))' }}
+          >
             {site_breakdown.map((siteItem, index) => (
-              <div key={index} className="p-4 rounded-2xl bg-gray-55/30 border border-gray-100 flex flex-col gap-2 hover:bg-gray-50 transition-colors">
+              <div key={index} className="min-w-0 rounded-xl border border-slate-100 bg-slate-50/60 p-4 transition-colors hover:bg-slate-50">
                 <div className="flex justify-between items-start">
-                  <span className="text-xs font-bold text-gray-700 truncate max-w-[100px]">{siteItem.site}</span>
-                  <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
-                    siteItem.utilization < 60 ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
-                  }`}>
+                  <span className="min-w-0 flex-1 truncate pr-2 text-xs font-bold text-gray-700">{siteItem.site}</span>
+                  <span className={"shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold " + (
+                    siteItem.utilization < 60
+                      ? 'bg-emerald-50 text-emerald-600'
+                      : siteItem.utilization < 80
+                        ? 'bg-amber-50 text-amber-600'
+                        : 'bg-rose-50 text-rose-600'
+                  )}>
                     {siteItem.utilization}%
                   </span>
                 </div>
@@ -354,10 +370,10 @@ const IPUtilizationTab: React.FC<IPUtilizationTabProps> = ({ language, t }) => {
                     <span>{zh ? '分配' : 'Used'}: {siteItem.used_ips}</span>
                     <span>{zh ? '总容量' : 'Total'}: {siteItem.total_ips}</span>
                   </div>
-                  <div className="w-full h-1 bg-gray-100 rounded-full overflow-hidden">
-                    <div 
-                      className={`h-full rounded-full ${getUtilBarColor(siteItem.utilization)}`} 
-                      style={{ width: `${siteItem.utilization}%` }}
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+                    <div
+                      className={"h-full rounded-full " + getUtilBarColor(Math.max(0, Math.min(Number(siteItem.utilization) || 0, 100)))}
+                      style={{ width: `${Math.max(0, Math.min(Number(siteItem.utilization) || 0, 100))}%` }}
                     />
                   </div>
                 </div>

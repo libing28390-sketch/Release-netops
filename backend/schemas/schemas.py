@@ -1516,6 +1516,7 @@ class IPPoolUpdate(BaseModel):
 class VIPCreate(BaseModel):
     address: str
     vip_type: str
+    prefix_id: Optional[str] = None
     device_id: Optional[str] = None
     backup_device_id: Optional[str] = None
     interface_name: str = ''
@@ -1534,6 +1535,7 @@ class VIPCreate(BaseModel):
 class VIPUpdate(BaseModel):
     address: Optional[str] = None
     vip_type: Optional[str] = None
+    prefix_id: Optional[str] = None
     device_id: Optional[str] = None
     backup_device_id: Optional[str] = None
     interface_name: Optional[str] = None

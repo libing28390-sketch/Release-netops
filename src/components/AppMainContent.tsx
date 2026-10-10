@@ -1352,11 +1352,7 @@ const AppMainContent: React.FC = () => {
 
       {activeTab === 'ipam' && (
         <Suspense fallback={lazyPanelFallback}>
-          {ipamPage === 'locate' ? (
-            <IPLocatorPage language={language} t={t} mode="toolbox" />
-          ) : (
-            <IPAMManagementTab language={language} t={t} ipamPage={ipamPage} />
-          )}
+          <IPAMManagementTab language={language} t={t} ipamPage={ipamPage} />
         </Suspense>
       )}
 

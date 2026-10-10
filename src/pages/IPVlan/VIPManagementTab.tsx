@@ -37,9 +37,11 @@ interface VIP {
 interface VIPManagementTabProps {
   language: string;
   t: (key: string) => string;
+  prefixId?: string;
+  prefixScope?: { id: string; prefix: string; name?: string; tenant_id?: string | null } | null;
 }
 
-const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t }) => {
+const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefixId = '', prefixScope = null }) => {
   const zh = language === 'zh';
   const tableRef = useRef<HTMLTableElement>(null);
 
@@ -83,8 +85,15 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t }) => {
     setLoading(true);
     const hdrs = authHeaders();
     try {
+      const vipQuery = new URLSearchParams({
+        q: search.trim(),
+        vip_type: typeFilter,
+        page: String(page),
+        page_size: String(pageSize),
+      });
+      if (prefixId) vipQuery.set('prefix_id', prefixId);
       const [vipRes, devRes, tenantRes] = await Promise.all([
-        fetch(`/api/ipam/vips?q=${encodeURIComponent(search.trim())}&vip_type=${encodeURIComponent(typeFilter)}&page=${page}&page_size=${pageSize}`, { headers: hdrs }),
+        fetch(`/api/ipam/vips?${vipQuery.toString()}`, { headers: hdrs }),
         fetch('/api/devices?mode=light', { headers: hdrs }),
         fetch('/api/cmdb/tenants', { headers: hdrs }),
       ]);
@@ -104,11 +113,15 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t }) => {
     } finally {
       setLoading(false);
     }
-  }, [authHeaders, page, pageSize, search, typeFilter]);
+  }, [authHeaders, page, pageSize, prefixId, search, typeFilter]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [prefixId]);
 
   const openForm = (vipItem: VIP | null = null) => {
     setErrorMsg('');
@@ -136,7 +149,7 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t }) => {
         real_servers: '',
         description: '',
         status: 'active',
-        tenant_id: 'tenant-default',
+        tenant_id: prefixScope?.tenant_id || 'tenant-default',
       });
     }
     setShowAddEdit(true);
@@ -154,6 +167,7 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t }) => {
       device_id: form.device_id || null,
       backup_device_id: form.backup_device_id || null,
       tenant_id: form.tenant_id || 'tenant-default',
+      ...(prefixId ? { prefix_id: prefixId } : {}),
     };
 
     try {
@@ -205,6 +219,7 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t }) => {
 
   const exportData = useCallback(async () => {
     const params = new URLSearchParams({ q: search.trim(), vip_type: typeFilter, status: 'all' });
+    if (prefixId) params.set('prefix_id', prefixId);
     const allVips = await fetchAllIpamExportItems<VIP>('/api/ipam/vips', params);
     const deviceName = (id: string | null, suppliedName: string | null) => suppliedName || (id ? devices.find((device) => device.id === id)?.hostname || '-' : '-');
     return buildVisibleIpamExportData(tableRef.current, [
@@ -218,7 +233,7 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t }) => {
       { header: zh ? '状态' : 'Status', value: (vip) => vip.status.toUpperCase() },
       { header: zh ? '备注说明' : 'Description', value: (vip) => vip.description || '-' },
     ], allVips);
-  }, [devices, search, typeFilter, zh]);
+  }, [devices, prefixId, search, typeFilter, zh]);
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden px-6 py-5 space-y-4">
@@ -231,6 +246,8 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t }) => {
             <TableExportMenu tableRef={tableRef} exportData={exportData} filename="ipam-vips" language={zh ? 'zh' : 'en'} disabled={loading || paginatedVips.length === 0} />
             <button
               onClick={() => openForm(null)}
+              disabled={Boolean(prefixId && !prefixScope)}
+              title={prefixId && !prefixScope ? (zh ? '正在加载当前网段…' : 'Loading current prefix…') : undefined}
               className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white rounded-xl text-xs font-bold shadow-lg shadow-cyan-500/20 active:scale-95 transition-all"
             >
               <Plus size={14} />
@@ -415,6 +432,11 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t }) => {
                       placeholder="e.g. 10.1.1.100"
                       className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                     />
+                    {prefixScope && (
+                      <p className="ml-1 text-[10px] text-cyan-700">
+                        {zh ? `当前工作网段：${prefixScope.prefix}；VIP 地址需要位于该网段内` : `Current prefix: ${prefixScope.prefix}; the VIP address must be within this range`}
+                      </p>
+                    )}
                   </div>
 
                   {/* VIP Type Select */}

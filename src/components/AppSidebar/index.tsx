@@ -140,12 +140,21 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
 
   /* ─────────── Navigation ─────────── */
   const handleNav = useCallback((path: string) => {
-    if (onNavigate) {
-      onNavigate(path);
-    } else {
-      navigate(path);
+    const destination = new URL(path, window.location.origin);
+    const currentPrefixId = new URLSearchParams(location.search).get('prefix_id');
+    if (
+      currentPrefixId &&
+      ['/ipam/ips', '/ipam/pools', '/ipam/vips'].includes(destination.pathname)
+    ) {
+      destination.searchParams.set('prefix_id', currentPrefixId);
     }
-  }, [onNavigate, navigate]);
+    const nextPath = `${destination.pathname}${destination.search}${destination.hash}`;
+    if (onNavigate) {
+      onNavigate(nextPath);
+    } else {
+      navigate(nextPath);
+    }
+  }, [onNavigate, navigate, location.search]);
 
   /* ─────────── Active detection ─────────── */
   const isActive = useCallback((item: NavChild): boolean => {

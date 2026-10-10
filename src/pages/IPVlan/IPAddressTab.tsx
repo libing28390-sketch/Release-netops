@@ -44,8 +44,10 @@ interface IPAddress {
   subnet_prefix?: string;
   subnet_name?: string;
   network_type?: string;
-  source?: 'manual' | 'manual+discovered' | 'discovered';
+  source?: 'manual' | 'manual+discovered' | 'discovered' | 'prefix_gateway';
   is_discovered?: boolean;
+  is_prefix_gateway?: boolean;
+  is_virtual_gateway?: boolean;
   discovered_last_seen?: string;
   available_after?: string;
   switch_name?: string;
@@ -60,6 +62,22 @@ interface IPAddress {
   asset_model?: string;
   asset_management_ip?: string;
   asset_business_ip?: string;
+}
+
+function sourceLabel(address: IPAddress, zh: boolean): string {
+  if (address.source === 'manual+discovered') return zh ? 'IPAM + 采集' : 'IPAM + Discovery';
+  if (address.source === 'prefix_gateway' || address.is_prefix_gateway) return zh ? '前缀网关' : 'Prefix gateway';
+  if (address.source === 'discovered' || address.is_discovered) return zh ? '自动发现' : 'Discovered';
+  if (address.source === 'manual') return zh ? '手工登记' : 'Manual';
+  return address.is_virtual_gateway ? (zh ? '前缀配置' : 'Prefix config') : (zh ? '手工登记' : 'Manual');
+}
+
+function assetInfoLabel(address: IPAddress, zh: boolean): string {
+  const values = [
+    address.asset_tag ? `${zh ? '编号' : 'Tag'}: ${address.asset_tag}` : '',
+    address.asset_serial_number ? `${zh ? '序列号' : 'Serial'}: ${address.asset_serial_number}` : '',
+  ].filter(Boolean);
+  return values.join(' · ') || '-';
 }
 
 interface DeviceCandidate {
@@ -427,8 +445,10 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
   const [addresses, setAddresses] = useState<IPAddress[]>([]);
   const [prefixes, setPrefixes] = useState<Prefix[]>([]);
   const [sites, setSites] = useState<SiteSummary[]>([]);
-  const [inventorySummary, setInventorySummary] = useState({ total: 0, discovered: 0, manual: 0, prefixes: 0 });
+  const [inventorySummary, setInventorySummary] = useState({ total: 0, discovered: 0, manual: 0, gateways: 0, prefixes: 0 });
   const [loading, setLoading] = useState(true);
+  const [inventoryError, setInventoryError] = useState('');
+  const inventoryRequest = useRef<AbortController | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
@@ -449,6 +469,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
   const [editingIP, setEditingIP] = useState<IPAddress | null>(null);
   const [isQuickAllocation, setIsQuickAllocation] = useState(false);
   const [showAdvancedFields, setShowAdvancedFields] = useState(false);
+  const hasLoadedInventory = useRef(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
   useEscapeClose(showAddEdit, () => { setShowAddEdit(false); setEditingIP(null); });
   useEscapeClose(Boolean(showDeleteConfirm), () => setShowDeleteConfirm(null));
@@ -501,39 +522,109 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
   }, [authHeaders, prefixIdParam]);
 
   const loadData = useCallback(async () => {
-    setLoading(true);
+    inventoryRequest.current?.abort();
+    const controller = new AbortController();
+    inventoryRequest.current = controller;
+    if (!hasLoadedInventory.current) setLoading(true);
+    setInventoryError('');
     const hdrs = authHeaders();
+    let loadSucceeded = false;
     try {
       const query = new URLSearchParams({
         site_id: selectedSiteId,
-        page: String(page),
-        page_size: String(isMatrixView ? 1000 : pageSize),
+        page: String(isMatrixView ? 1 : page),
+        page_size: String(isMatrixView ? 100 : pageSize),
       });
       if (selectedPrefixId) query.set('prefix_id', selectedPrefixId);
       if (search.trim()) query.set('q', search.trim());
       if (statusFilter !== 'all' && (!isMatrixView || statusFilter !== 'available')) query.set('status', statusFilter);
       if (typeFilter !== 'all' && (!isMatrixView || statusFilter !== 'available')) query.set('device_type', typeFilter);
       if (purposeFilter !== 'all' && (!isMatrixView || statusFilter !== 'available')) query.set('purpose', purposeFilter);
-      const res = await fetch(`/api/ipam/addresses?${query.toString()}`, { headers: hdrs });
-      if (res.ok) {
-        const data = await res.json();
-        setAddresses(Array.isArray(data) ? data : (data.items || []));
-        if (!Array.isArray(data)) {
-          setTotalItems(Number(data.total || 0));
-          setSites(data.sites || []);
-          setInventorySummary(data.summary || { total: 0, discovered: 0, manual: 0, prefixes: 0 });
+      const loadedItems: IPAddress[] = [];
+      let responseTotal = 0;
+      let firstPageData: {
+        items?: IPAddress[];
+        total?: number;
+        has_more?: boolean;
+        sites?: SiteSummary[];
+        summary?: { total?: number; discovered?: number; manual?: number; gateways?: number; prefixes?: number };
+      } | null = null;
+      let queryFailed = false;
+      let currentPage = isMatrixView ? 1 : page;
+      while (true) {
+        const requestQuery = new URLSearchParams(query);
+        requestQuery.set('page', String(currentPage));
+        const res = await fetch(`/api/ipam/addresses?${requestQuery.toString()}`, { headers: hdrs, signal: controller.signal });
+        if (!res.ok) {
+          queryFailed = true;
+          setInventoryError(res.status === 401
+            ? (zh ? '登录已过期，请重新登录后重试。' : 'Your session has expired. Sign in and retry.')
+            : res.status === 403
+              ? (zh ? '当前账号没有查看 IP 清单的权限。' : 'You do not have permission to view the IP inventory.')
+              : (zh ? '加载 IP 地址库存失败，请重试。' : 'Failed to load IP inventory. Please retry.'));
+          break;
         }
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          loadedItems.push(...data);
+          responseTotal = data.length;
+          break;
+        }
+        if (!firstPageData) firstPageData = data;
+        const pageItems: IPAddress[] = data.items || [];
+        loadedItems.push(...pageItems);
+        responseTotal = Number(data.total || 0);
+        if (!isMatrixView || !data.has_more || pageItems.length === 0 || loadedItems.length >= responseTotal) break;
+        currentPage += 1;
+      }
+      if (queryFailed) {
+        if (!hasLoadedInventory.current) {
+          setAddresses([]);
+          setTotalItems(0);
+          setInventorySummary({ total: 0, discovered: 0, manual: 0, gateways: 0, prefixes: 0 });
+        }
+        return;
+      }
+      loadSucceeded = true;
+      setAddresses(loadedItems);
+      setTotalItems(responseTotal);
+      if (firstPageData) {
+        setSites(firstPageData.sites || []);
+        setInventorySummary({
+          total: Number(firstPageData.summary?.total || 0),
+          discovered: Number(firstPageData.summary?.discovered || 0),
+          manual: Number(firstPageData.summary?.manual || 0),
+          gateways: Number(firstPageData.summary?.gateways || 0),
+          prefixes: Number(firstPageData.summary?.prefixes || 0),
+        });
       }
     } catch (e) {
+      if (controller.signal.aborted) return;
       console.error(e);
+      if (!hasLoadedInventory.current) {
+        setAddresses([]);
+        setTotalItems(0);
+        setInventorySummary({ total: 0, discovered: 0, manual: 0, gateways: 0, prefixes: 0 });
+      }
+      setInventoryError(zh ? '加载 IP 地址库存失败，请重试。' : 'Failed to load IP inventory. Please retry.');
     } finally {
-      setLoading(false);
+      if (inventoryRequest.current === controller) {
+        inventoryRequest.current = null;
+        if (loadSucceeded) hasLoadedInventory.current = true;
+        setLoading(false);
+      }
     }
-  }, [selectedPrefixId, selectedSiteId, search, statusFilter, typeFilter, purposeFilter, page, isMatrixView, authHeaders]);
+  }, [selectedPrefixId, selectedSiteId, search, statusFilter, typeFilter, purposeFilter, page, isMatrixView, authHeaders, zh]);
 
   useEffect(() => {
     fetchLookups();
   }, [fetchLookups]);
+
+  useEffect(() => () => {
+    const activeRequest = inventoryRequest.current;
+    inventoryRequest.current = null;
+    activeRequest?.abort();
+  }, []);
 
   useEffect(() => {
     loadData();
@@ -586,6 +677,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
       setActivePrefix(target);
       navigate(`/ipam/ips?prefix_id=${target.id}`);
     }
+    setPage(1);
     setIsMatrixView(true);
   };
 
@@ -615,7 +707,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
       registeredMap.set(addr.address, addr);
     });
 
-    const list: Array<{ ip: string; data: IPAddress | null; status: string; systemReason?: string }> = [];
+    const list: Array<{ ip: string; data: IPAddress | null; status: string; systemReason?: string; isGateway: boolean }> = [];
     const isReusableRecord = (item: IPAddress | undefined) => {
       if (!item || !['available', 'released'].includes(item.status)) return false;
       if (!item.available_after) return true;
@@ -632,15 +724,13 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
       const registeredData = allRegisteredMap.get(ipStr);
       const occupiedData = isReusableRecord(registeredData) ? null : (registeredData || null);
       const isNetworkOrBroadcast = mask < 31 && (i === 0 || i === numHosts - 1);
-      const isGateway = Boolean(gateway && gateway === ipStr);
+      const isGateway = Boolean(gateway && gateway === ipStr && !isNetworkOrBroadcast);
       const systemReason = isNetworkOrBroadcast
         ? (i === 0 ? (zh ? '网络地址' : 'Network address') : (zh ? '广播地址' : 'Broadcast address'))
-        : isGateway
-        ? (zh ? '网关地址' : 'Gateway address')
         : '';
       const systemReserved = !occupiedData && Boolean(systemReason);
       if (statusFilter === 'available') {
-        if (occupiedData || systemReserved || (search.trim() && !ipStr.includes(search.trim()))) continue;
+        if (occupiedData || isGateway || systemReserved || (search.trim() && !ipStr.includes(search.trim()))) continue;
       }
       const filteredData = registeredMap.get(ipStr);
       const matchedData = statusFilter === 'available' || isReusableRecord(filteredData)
@@ -651,6 +741,8 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
       let status = 'available';
       if (matchedData) {
         status = matchedData.status;
+      } else if (isGateway) {
+        status = 'active';
       } else if (systemReserved) {
         status = 'system';
       }
@@ -660,6 +752,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
         data: matchedData,
         status,
         systemReason,
+        isGateway,
       });
     }
     return list;
@@ -702,7 +795,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
   const openForm = (ipItem: IPAddress | null = null, quickAllocation = false) => {
     setErrorMsg('');
     setIsQuickAllocation(quickAllocation && !ipItem?.id);
-    setShowAdvancedFields(false);
+    setShowAdvancedFields(Boolean(ipItem?.id));
     const inheritedPurpose = inferIpPurpose(ipItem?.network_type || activePrefix?.network_type);
     if (ipItem?.id) {
       setEditingIP(ipItem);
@@ -816,7 +909,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden px-6 py-5 space-y-4">
+    <div className="flex-1 flex min-w-0 flex-col h-full overflow-hidden px-4 py-4 lg:px-6 lg:py-5 space-y-4">
       <PageHero
         icon={MapPin}
         title={zh ? 'IP地址分配管理' : 'IP Address Management'}
@@ -839,118 +932,138 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
           </div>
         }
         extras={
-          <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
-            {/* Site scope */}
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">{zh ? '站点' : 'Site'}</span>
+          <div className="w-full space-y-3">
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-[minmax(220px,0.9fr)_minmax(280px,1.1fr)_auto]">
+              {/* Site scope */}
+              <label className="flex min-w-0 items-center gap-2">
+                <span className="shrink-0 text-xs font-bold uppercase tracking-wider text-gray-400">{zh ? '站点' : 'Site'}</span>
+                <select
+                  value={selectedSiteId}
+                  onChange={(e) => handleSiteChange(e.target.value)}
+                  className="min-w-0 flex-1 rounded-xl border border-black/5 bg-white px-3 py-2 text-xs font-semibold text-gray-600 outline-none transition-all"
+                >
+                  <option value="all">{zh ? `全部站点 (${inventorySummary.prefixes} 个网段)` : `All Sites (${inventorySummary.prefixes} prefixes)`}</option>
+                  {sites.map((site) => (
+                    <option key={site.id} value={site.id}>{site.name} ({site.count} {zh ? '个网段' : 'prefixes'})</option>
+                  ))}
+                </select>
+              </label>
+
+              {/* Prefix Selector */}
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="shrink-0 text-xs font-bold uppercase tracking-wider text-gray-400">{zh ? '网段' : 'Prefix'}</span>
+                <div className="min-w-0 flex-1">
+                  <PrefixSearchSelect
+                    prefixes={siteScopedPrefixes}
+                    value={selectedPrefixId}
+                    onChange={handlePrefixChange}
+                    zh={zh}
+                  />
+                </div>
+              </div>
+
+              <div className="flex min-h-9 flex-wrap items-center gap-2 text-[10px] text-gray-400 sm:col-span-2 xl:col-span-1 xl:justify-end">
+                <span className="rounded-full bg-cyan-50 px-2.5 py-1 font-bold text-cyan-600">{zh ? `IP记录 ${inventorySummary.total}` : `${inventorySummary.total} IPs`}</span>
+                <span className="rounded-full bg-emerald-50 px-2.5 py-1 font-bold text-emerald-600">{zh ? `自动发现 ${inventorySummary.discovered}` : `${inventorySummary.discovered} discovered`}</span>
+                {inventorySummary.gateways > 0 && <span className="rounded-full bg-amber-50 px-2.5 py-1 font-bold text-amber-700">{zh ? `前缀网关 ${inventorySummary.gateways}` : `${inventorySummary.gateways} gateways`}</span>}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-[repeat(3,minmax(0,0.75fr))_minmax(220px,1.35fr)_auto]">
+              {/* Filters */}
               <select
-                value={selectedSiteId}
-                onChange={(e) => handleSiteChange(e.target.value)}
-                className="min-w-[150px] px-3 py-1.5 rounded-xl border border-black/5 bg-white text-xs font-semibold text-gray-500 outline-none transition-all"
+                aria-label={zh ? '按状态筛选 IP 地址' : 'Filter IP addresses by status'}
+                value={statusFilter}
+                onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
+                className="w-full min-w-0 rounded-xl border border-black/5 bg-white px-3 py-2 text-xs font-semibold text-gray-600 outline-none transition-all"
               >
-                <option value="all">{zh ? `全部站点 (${inventorySummary.prefixes} 个网段)` : `All Sites (${inventorySummary.prefixes} prefixes)`}</option>
-                {sites.map((site) => (
-                  <option key={site.id} value={site.id}>{site.name} ({site.count} {zh ? '个网段' : 'prefixes'})</option>
+                <option value="all">{zh ? '所有状态' : 'All Status'}</option>
+                {STATUS_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{zh ? o.zh : o.en}</option>
                 ))}
               </select>
-            </div>
 
-            {/* Prefix Selector */}
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">{zh ? '网段' : 'Prefix'}</span>
-              <PrefixSearchSelect
-                prefixes={siteScopedPrefixes}
-                value={selectedPrefixId}
-                onChange={handlePrefixChange}
-                zh={zh}
-              />
-            </div>
-
-            <div className="flex items-center gap-2 text-[10px] text-gray-400">
-              <span className="rounded-full bg-cyan-50 px-2 py-1 font-bold text-cyan-600">{zh ? `IP记录 ${inventorySummary.total}` : `${inventorySummary.total} IPs`}</span>
-              <span className="rounded-full bg-emerald-50 px-2 py-1 font-bold text-emerald-600">{zh ? `自动发现 ${inventorySummary.discovered}` : `${inventorySummary.discovered} discovered`}</span>
-            </div>
-
-            {/* Filters */}
-            <select
-              value={statusFilter}
-              onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
-              className="px-3 py-1.5 rounded-xl border border-black/5 bg-white text-xs font-semibold text-gray-500 outline-none transition-all"
-            >
-              <option value="all">{zh ? '所有状态' : 'All Status'}</option>
-              {STATUS_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>{zh ? o.zh : o.en}</option>
-              ))}
-            </select>
-
-            <select
-              value={typeFilter}
-              onChange={(e) => { setTypeFilter(e.target.value); setPage(1); }}
-              className="px-3 py-1.5 rounded-xl border border-black/5 bg-white text-xs font-semibold text-gray-500 outline-none transition-all"
-            >
-              <option value="all">{zh ? '所有类型' : 'All Types'}</option>
-              {ROLE_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>{zh ? o.zh : o.en}</option>
-              ))}
-            </select>
-
-            <select
-              value={purposeFilter}
-              onChange={(e) => { setPurposeFilter(e.target.value); setPage(1); }}
-              className="px-3 py-1.5 rounded-xl border border-black/5 bg-white text-xs font-semibold text-gray-500 outline-none transition-all"
-            >
-              <option value="all">{zh ? '所有用途' : 'All Purposes'}</option>
-              {IP_PURPOSE_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>{zh ? o.zh : o.en}</option>
-              ))}
-            </select>
-
-            {/* Search Input */}
-            <div className="relative w-full md:w-56">
-              <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
-              <input
-                type="search"
-                value={search}
-                onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-                placeholder={zh ? '搜索IP、主机名、接口...' : 'Search IP, hostname...'}
-                className="w-full pl-10 pr-4 py-1.5 text-xs rounded-xl border border-black/5 bg-gray-50/50 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium"
-              />
-            </div>
-
-            {/* View Switcher Toggle */}
-            <div className="flex items-center border border-black/5 bg-gray-50 rounded-xl p-0.5 ml-1">
-              <button
-                onClick={() => setIsMatrixView(false)}
-                className={`px-3 py-1 text-[10px] font-bold rounded-lg transition-all ${
-                  !isMatrixView 
-                    ? 'bg-white shadow-sm text-cyan-600' 
-                    : 'text-gray-450 hover:text-gray-600'
-                }`}
+              <select
+                aria-label={zh ? '按类型筛选 IP 地址' : 'Filter IP addresses by role type'}
+                value={typeFilter}
+                onChange={(e) => { setTypeFilter(e.target.value); setPage(1); }}
+                className="w-full min-w-0 rounded-xl border border-black/5 bg-white px-3 py-2 text-xs font-semibold text-gray-600 outline-none transition-all"
               >
-                {zh ? '列表' : 'List'}
-              </button>
-              <button
-                disabled={!matrixPrefixCandidate}
-                onClick={handleMatrixClick}
-                title={!matrixPrefixCandidate ? (zh ? '当前站点没有可用的 IPv4 /24 - /30 网段' : 'No IPv4 /24-/30 prefix is available for the current site') : (zh ? '矩阵按单个网段展示' : 'Matrix view is scoped to one prefix')}
-                className={`px-3 py-1 text-[10px] font-bold rounded-lg transition-all ${
-                  isMatrixView 
-                    ? 'bg-white shadow-sm text-cyan-600' 
-                    : !matrixPrefixCandidate
-                    ? 'text-gray-250 cursor-not-allowed opacity-50'
-                    : 'text-gray-450 hover:text-gray-600'
-                }`}
+                <option value="all">{zh ? '所有类型' : 'All Types'}</option>
+                {ROLE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{zh ? o.zh : o.en}</option>
+                ))}
+              </select>
+
+              <select
+                aria-label={zh ? '按用途筛选 IP 地址' : 'Filter IP addresses by purpose'}
+                value={purposeFilter}
+                onChange={(e) => { setPurposeFilter(e.target.value); setPage(1); }}
+                className="w-full min-w-0 rounded-xl border border-black/5 bg-white px-3 py-2 text-xs font-semibold text-gray-600 outline-none transition-all"
               >
-                {zh ? '矩阵' : 'Matrix'}
-              </button>
+                <option value="all">{zh ? '所有用途' : 'All Purposes'}</option>
+                {IP_PURPOSE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{zh ? o.zh : o.en}</option>
+                ))}
+              </select>
+
+              {/* Search Input */}
+              <div className="relative min-w-0">
+                <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="search"
+                  value={search}
+                  onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                  aria-label={zh ? '搜索 IP、主机名、接口' : 'Search IP, hostname, or interface'}
+                  placeholder={zh ? '搜索 IP、主机名、接口...' : 'Search IP, hostname...'}
+                  className="w-full min-w-0 rounded-xl border border-black/5 bg-gray-50/50 py-2 pl-10 pr-4 text-xs font-medium outline-none transition-all focus:border-cyan-400 focus:bg-white"
+                />
+              </div>
+
+              {/* View Switcher Toggle */}
+              <div className="flex w-fit items-center justify-self-start rounded-xl border border-black/5 bg-gray-50 p-0.5 sm:col-span-2 xl:col-span-1 xl:justify-self-end">
+                <button
+                  onClick={() => { setPage(1); setIsMatrixView(false); }}
+                  className={`px-3 py-1 text-[10px] font-bold rounded-lg transition-all ${
+                    !isMatrixView
+                      ? 'bg-white shadow-sm text-cyan-600'
+                      : 'text-gray-450 hover:text-gray-600'
+                  }`}
+                >
+                  {zh ? '列表' : 'List'}
+                </button>
+                <button
+                  disabled={!matrixPrefixCandidate}
+                  onClick={handleMatrixClick}
+                  title={!matrixPrefixCandidate ? (zh ? '当前站点没有可用的 IPv4 /24 - /30 网段' : 'No IPv4 /24-/30 prefix is available for the current site') : (zh ? '矩阵按单个网段展示' : 'Matrix view is scoped to one prefix')}
+                  className={`px-3 py-1 text-[10px] font-bold rounded-lg transition-all ${
+                    isMatrixView
+                      ? 'bg-white shadow-sm text-cyan-600'
+                      : !matrixPrefixCandidate
+                      ? 'text-gray-250 cursor-not-allowed opacity-50'
+                      : 'text-gray-450 hover:text-gray-600'
+                  }`}
+                >
+                  {zh ? '矩阵' : 'Matrix'}
+                </button>
+              </div>
             </div>
           </div>
         }
       />
 
+      {inventoryError && (
+        <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-semibold text-rose-700">
+          <span>{inventoryError}</span>
+          <button type="button" onClick={loadData} className="rounded-lg bg-white px-3 py-1.5 text-rose-700 shadow-sm hover:bg-rose-100">
+            {zh ? '重试' : 'Retry'}
+          </button>
+        </div>
+      )}
+
       {/* Main Table Card */}
-      <div className="flex-1 min-h-0 bg-white rounded-[28px] border border-black/5 shadow-[0_16px_36px_rgba(11,35,64,0.06)] overflow-hidden flex flex-col">
-        <div className="flex-1 overflow-auto">
+      <div className="flex-1 min-h-0 min-w-0 bg-white rounded-[28px] border border-black/5 shadow-[0_16px_36px_rgba(11,35,64,0.06)] overflow-hidden flex flex-col">
+        <div className="flex-1 min-h-0 min-w-0 overflow-auto">
           {loading ? (
             <div className="h-full flex items-center justify-center text-xs text-gray-400 font-semibold">
               {zh ? '加载中...' : 'Loading IP allocations...'}
@@ -967,6 +1080,10 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                   <div className="flex items-center gap-1.5">
                     <span className="w-3.5 h-3.5 rounded-lg bg-emerald-500" />
                     <span>{zh ? '使用中 (Active)' : 'Active'}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="rounded border border-amber-300 px-1 text-[9px] font-bold text-amber-700">GW</span>
+                    <span>{zh ? '前缀网关' : 'Prefix gateway'}</span>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <span className="w-3.5 h-3.5 rounded-lg bg-amber-500" />
@@ -1002,6 +1119,8 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                   const lastOctet = cell.ip.split('.').pop() || '';
                   const tooltip = cell.status === 'system'
                     ? `${cell.ip} (${cell.systemReason})`
+                    : cell.isGateway
+                    ? `${cell.ip} (${zh ? '前缀网关' : 'Prefix gateway'})`
                     : cell.data
                     ? `${cell.ip} (${cell.data.hostname || (zh ? '无域名' : 'No Hostname')}) - ${roleLabel(cell.data.device_type, zh)} [${statusLabel(cell.data.status, zh)}]`
                     : `${cell.ip} (${zh ? '空闲' : 'Available'})`;
@@ -1011,6 +1130,10 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                       key={cell.ip}
                       onClick={() => {
                         if (cell.status === 'system') return;
+                        if (cell.isGateway) {
+                          navigate(`/ipam/locate?ip=${encodeURIComponent(cell.ip)}`);
+                          return;
+                        }
                         if (cell.data) {
                           navigate(`/ipam/locate?ip=${encodeURIComponent(cell.ip)}`);
                         } else {
@@ -1036,67 +1159,85 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                       className={`h-14 w-14 rounded-lg border flex flex-col items-center justify-center text-sm font-bold font-mono transition-all duration-150 cursor-pointer active:scale-95 select-none ${bgClass}`}
                     >
                       <span>.{lastOctet}</span>
+                      {cell.isGateway && <span className="text-[8px] leading-none font-black tracking-wide">GW</span>}
                     </div>
                   );
                 })}
               </div>
             </div>
           ) : (
-            <table ref={addressTableRef} className="nx-data-table text-left">
+            <table ref={addressTableRef} style={{ minWidth: 1613, tableLayout: 'fixed' }} className="nx-data-table w-full min-w-[1613px] table-fixed text-left [&_thead_th]:!px-2 [&_thead_th]:!py-2 [&_tbody_td]:!px-2 [&_tbody_td]:!py-2">
+              <colgroup>
+                <col className="w-[77px]" />
+                <col className="w-[97px]" />
+                <col className="w-[222px]" />
+                <col className="w-[102px]" />
+                <col className="w-[92px]" />
+                <col className="w-[117px]" />
+                <col className="w-[117px]" />
+                <col className="w-[127px]" />
+                <col className="w-[97px]" />
+                <col className="w-[137px]" />
+                <col className="w-[102px]" />
+                <col className="w-[112px]" />
+                <col className="w-[137px]" />
+                <col className="w-[77px]" />
+              </colgroup>
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50/40 text-[10px] font-bold text-gray-400 uppercase tracking-wider select-none">
-                  <th className="pl-6 py-4">{zh ? '站点' : 'Site'}</th>
-                  <th className="px-4 py-4">{zh ? '网段' : 'Prefix'}</th>
-                  <th className="pl-6 py-4">{zh ? 'IP地址' : 'IP Address'}</th>
-                  <th className="px-4 py-4">{zh ? '用途' : 'Purpose'}</th>
-                  <th className="px-4 py-4">{zh ? '类型' : 'Role Type'}</th>
-                  <th className="px-4 py-4">{zh ? '主机名 / 域名' : 'DNS Hostname'}</th>
-                  <th className="px-4 py-4">{zh ? '关联设备' : 'Linked Device'}</th>
-                  <th className="px-4 py-4">{zh ? '资产编号' : 'Asset Tag'}</th>
-                  <th className="px-4 py-4">{zh ? '资产序列号' : 'Asset Serial'}</th>
-                  <th className="px-4 py-4">{zh ? '接口' : 'Interface'}</th>
-                  <th className="px-4 py-4">{zh ? 'MAC地址' : 'MAC Address'}</th>
-                  <th className="px-4 py-4">{zh ? '状态' : 'Status'}</th>
-                  <th className="px-4 py-4">{zh ? '备注描述' : 'Description'}</th>
-                  <th className="px-4 py-4">{zh ? '发现时间' : 'Last Seen'}</th>
-                  <TableActionHeader className="pr-6 py-4 text-right">{zh ? '操作' : 'Actions'}</TableActionHeader>
+                  <th className="whitespace-nowrap px-3 py-3">{zh ? '站点' : 'Site'}</th>
+                  <th className="whitespace-nowrap px-3 py-3">{zh ? '网段' : 'Prefix'}</th>
+                  <th className="whitespace-nowrap px-3 py-3">{zh ? 'IP地址' : 'IP Address'}</th>
+                  <th className="whitespace-nowrap px-3 py-3">{zh ? '用途' : 'Purpose'}</th>
+                  <th className="whitespace-nowrap px-3 py-3">{zh ? '类型' : 'Role Type'}</th>
+                  <th className="whitespace-nowrap px-3 py-3">{zh ? '主机名 / 域名' : 'DNS Hostname'}</th>
+                  <th className="whitespace-nowrap px-3 py-3">{zh ? '关联设备' : 'Linked Device'}</th>
+                  <th className="whitespace-nowrap px-3 py-3">{zh ? '资产信息' : 'Asset Info'}</th>
+                  <th className="whitespace-nowrap px-3 py-3">{zh ? '接口' : 'Interface'}</th>
+                  <th className="whitespace-nowrap px-3 py-3">{zh ? 'MAC地址' : 'MAC Address'}</th>
+                  <th className="whitespace-nowrap px-3 py-3">{zh ? '状态' : 'Status'}</th>
+                  <th className="whitespace-nowrap px-3 py-3">{zh ? '备注描述' : 'Description'}</th>
+                  <th className="whitespace-nowrap px-3 py-3">{zh ? '发现时间' : 'Last Seen'}</th>
+                  <TableActionHeader className="whitespace-nowrap px-3 py-3 text-right">{zh ? '操作' : 'Actions'}</TableActionHeader>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="whitespace-nowrap">
                 {paginatedAddresses.length > 0 ? (
                   paginatedAddresses.map((node) => (
                     <tr 
                       key={node.id} 
                       className="hover:bg-gray-50/50 transition-colors border-b border-gray-100 group"
                     >
-                      <td className="pl-6 py-4 min-w-[120px] text-xs font-bold text-cyan-700">{node.site_name || '-'}</td>
-                      <td className="px-4 py-4 min-w-[130px] font-mono text-[10px] text-gray-500">{node.subnet_prefix || '-'}</td>
-                      <td className="pl-6 py-4 font-mono font-bold text-xs text-gray-800">
+                      <td className="px-3 py-3 text-xs font-bold text-cyan-700"><span className="block max-w-[60px] truncate" title={node.site_name || '-'}>{node.site_name || '-'}</span></td>
+                      <td className="px-3 py-3 font-mono text-[10px] text-gray-500"><span className="block max-w-[80px] truncate" title={node.subnet_prefix || '-'}>{node.subnet_prefix || '-'}</span></td>
+                      <td className="px-3 py-3 font-mono font-bold text-xs text-gray-800">
                         <button
                           type="button"
                           onClick={() => navigate(`/ipam/locate?ip=${encodeURIComponent(node.address)}`)}
-                          title={zh ? '点击查看 IP 定位详情' : 'View IP locator details'}
-                          className="text-cyan-700 hover:text-cyan-500 hover:underline transition-colors"
+                          title={`${node.address} · ${zh ? '点击查看 IP 定位详情' : 'View IP locator details'}`}
+                          className="inline-block max-w-[206px] truncate align-bottom whitespace-nowrap text-cyan-700 hover:text-cyan-500 hover:underline transition-colors"
                         >
                           {node.address}
                         </button>
                         <span className={`mt-1 inline-flex rounded-full px-1.5 py-0.5 text-[9px] font-bold ${
-                          node.is_discovered
-                            ? 'bg-cyan-50 text-cyan-600'
-                            : node.source === 'manual+discovered'
+                          node.source === 'manual+discovered'
                             ? 'bg-emerald-50 text-emerald-600'
+                            : node.source === 'prefix_gateway' || (!node.source && node.is_prefix_gateway)
+                            ? 'bg-amber-50 text-amber-700'
+                            : node.is_discovered || node.source === 'discovered'
+                            ? 'bg-cyan-50 text-cyan-600'
                             : 'bg-slate-50 text-slate-500'
                         }`}>
-                          {node.is_discovered ? (zh ? '自动发现' : 'Discovered') : node.source === 'manual+discovered' ? (zh ? 'IPAM + 采集' : 'IPAM + Discovery') : (zh ? '手工登记' : 'Manual')}
+                          <span className="whitespace-nowrap">{sourceLabel(node, zh)}</span>
                         </span>
                       </td>
-                      <td className="px-4 py-4">
-                        <span className="inline-flex rounded-full border border-cyan-500/10 bg-cyan-50 px-2.5 py-0.5 text-[10px] font-bold text-cyan-700">
+                      <td className="px-3 py-3">
+                        <span className="inline-flex max-w-[86px] truncate whitespace-nowrap rounded-full border border-cyan-500/10 bg-cyan-50 px-2 py-0.5 text-[10px] font-bold text-cyan-700" title={purposeLabel(node.purpose || inferIpPurpose(node.network_type), zh)}>
                           {purposeLabel(node.purpose || inferIpPurpose(node.network_type), zh)}
                         </span>
                       </td>
-                      <td className="px-4 py-4">
-                        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                      <td className="px-3 py-3">
+                        <span className={`inline-block max-w-[76px] truncate whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-bold ${
                           node.device_type === 'gateway' 
                             ? 'bg-amber-50 text-amber-600 border border-amber-500/10' 
                             : node.device_type === 'server' 
@@ -1108,54 +1249,53 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                             : node.device_type === 'loopback'
                             ? 'bg-cyan-50 text-cyan-600 border border-cyan-500/10'
                             : 'bg-emerald-50 text-emerald-600 border border-emerald-500/10'
-                        }`}>
+                        }`} title={roleLabel(node.device_type, zh)}>
                           {roleLabel(node.device_type, zh)}
                         </span>
                       </td>
-                      <td className="px-4 py-4 text-xs font-semibold text-gray-500">{node.hostname || '-'}</td>
-                      <td className="px-4 py-4 text-xs text-cyan-600 font-bold hover:underline cursor-pointer">{node.switch_name || node.bound_device_hostname || (node.device_id ? getDeviceName(node.device_id) : '-')}</td>
-                      <td className="px-4 py-4 text-xs text-gray-500 font-medium">{node.asset_tag || '-'}</td>
-                      <td className="px-4 py-4 text-xs text-gray-500 font-mono">{node.asset_serial_number || '-'}</td>
-                      <td className="px-4 py-4 text-xs text-gray-600 font-semibold">{node.switch_port || node.interface_name || '-'}</td>
-                      <td className="px-4 py-4 font-mono text-xs text-gray-500">{formatMacAddress(node.mac_address) || '-'}</td>
-                      <td className="px-4 py-4">
-                        <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                      <td className="px-3 py-3 text-xs font-semibold text-gray-500"><span className="block max-w-[101px] truncate" title={node.hostname || '-'}>{node.hostname || '-'}</span></td>
+                      <td className="px-3 py-3 text-xs font-bold text-cyan-600 hover:underline cursor-pointer"><span className="block max-w-[101px] truncate" title={node.switch_name || node.bound_device_hostname || (node.device_id ? getDeviceName(node.device_id) : '-')}>{node.switch_name || node.bound_device_hostname || (node.device_id ? getDeviceName(node.device_id) : '-')}</span></td>
+                      <td className="px-3 py-3 text-xs font-medium text-gray-500"><span className="block max-w-[111px] truncate" title={assetInfoLabel(node, zh)}>{assetInfoLabel(node, zh)}</span></td>
+                      <td className="px-3 py-3 text-xs font-semibold text-gray-600"><span className="block max-w-[81px] truncate" title={node.switch_port || node.interface_name || '-'}>{node.switch_port || node.interface_name || '-'}</span></td>
+                      <td className="px-3 py-3 font-mono text-xs text-gray-500">{formatMacAddress(node.mac_address) || '-'}</td>
+                      <td className="px-3 py-3">
+                        <span className={`inline-flex max-w-[86px] items-center gap-1 truncate whitespace-nowrap px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
                           node.status === 'active' 
                             ? 'bg-emerald-50 text-emerald-600 border border-emerald-500/10' 
                             : node.status === 'reserved' 
                             ? 'bg-amber-50 text-amber-600 border border-amber-500/10' 
                             : 'bg-rose-50 text-rose-600 border border-rose-500/10'
-                        }`}>
+                        }`} title={statusLabel(node.status, zh)}>
                           <span className={`w-1 h-1 rounded-full ${
                             node.status === 'active' ? 'bg-emerald-500' : node.status === 'reserved' ? 'bg-amber-500' : 'bg-rose-500'
                           }`} />
                           {statusLabel(node.status, zh)}
                         </span>
                       </td>
-                      <td className="px-4 py-4 text-xs text-gray-400 font-medium max-w-[150px] truncate">{node.description || '-'}</td>
-                      <td className="px-4 py-4 font-mono text-[10px] text-gray-400">{(node.discovered_last_seen || node.last_seen) ? (node.discovered_last_seen || node.last_seen).replace('T', ' ').slice(0, 19) : '-'}</td>
-                      <TableActionCell className="pr-6 py-4 text-right">
-                        {!node.is_discovered ? (
+                      <td className="px-3 py-3 text-xs font-medium text-gray-400"><span className="block max-w-[96px] truncate" title={node.description || '-'}>{node.description || '-'}</span></td>
+                      <td className="px-3 py-3 font-mono text-[10px] text-gray-400">{(node.discovered_last_seen || node.last_seen) ? (node.discovered_last_seen || node.last_seen).replace('T', ' ').slice(0, 19) : '-'}</td>
+                      <TableActionCell className="px-3 py-3 text-right">
+                        {!node.is_discovered && !node.is_virtual_gateway ? (
                           <ActionIconGroup label={zh ? '地址操作' : 'Address actions'} className="opacity-0 transition-opacity group-hover:opacity-100">
                             <ActionIconButton
                               icon={Pencil}
                               label={zh ? '编辑' : 'Edit'}
                               onClick={() => openForm(node)}
                             />
-                            <ActionIconButton
+                            {!node.is_prefix_gateway && <ActionIconButton
                               icon={Trash2}
                               label={zh ? '删除' : 'Delete'}
                               variant="danger"
                               onClick={() => setShowDeleteConfirm(node.id)}
-                            />
+                            />}
                           </ActionIconGroup>
-                        ) : <span className="text-[10px] font-semibold text-cyan-500">{zh ? '只读采集' : 'Read-only'}</span>}
+                        ) : <span className="text-[10px] font-semibold text-cyan-500">{node.is_virtual_gateway ? (zh ? '只读前缀配置' : 'Read-only prefix config') : (zh ? '只读采集' : 'Read-only')}</span>}
                       </TableActionCell>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={12} className="py-12 text-center text-xs text-gray-400 font-medium">
+                    <td colSpan={14} className="py-12 text-center text-xs text-gray-400 font-medium">
                       {zh ? '当前筛选范围暂无 IP 记录' : 'No IP record in the current scope'}
                     </td>
                   </tr>
@@ -1186,9 +1326,9 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
         {showAddEdit && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
             <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
               className="bg-white w-full max-w-lg rounded-3xl overflow-hidden shadow-2xl border border-black/5 flex flex-col max-h-[90vh]"
             >
               {/* Header */}
@@ -1199,7 +1339,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                   </div>
                   <div>
                     <h3 className="font-bold text-gray-900">{editingIP ? (zh ? '编辑IP记录' : 'Edit IP Address') : isQuickAllocation ? (zh ? '快速分配 IP' : 'Quick Allocate IP') : (zh ? '分配IP地址' : 'Allocate IP Address')}</h3>
-                    <p className="text-xs text-gray-500 mt-0.5">{isQuickAllocation ? (zh ? '矩阵已选定 IP，仅填写常用信息即可完成分配' : 'The matrix already selected the IP. Fill in the essentials to allocate it.') : (zh ? '登记 IP 用途与生命周期，并可与资产、网络设备及接口绑定' : 'Register IP purpose and lifecycle, then bind it to an asset, device, or interface.')}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">{isQuickAllocation ? (zh ? '矩阵已选定 IP；填写主机名即可，其他信息可按需补充' : 'The matrix selected the IP. Add a hostname now and other details only if needed.') : (zh ? '填写 IP 和主机名即可；设备、接口等信息按需补充' : 'Enter the IP and hostname; add device and interface details only when needed.')}</p>
                   </div>
                 </div>
                 <button onClick={() => setShowAddEdit(false)} className="p-1.5 rounded-lg hover:bg-gray-50 transition-colors text-gray-400">
@@ -1294,6 +1434,8 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                     />
                   </div>
 
+                  {showAdvancedFields && (
+                    <>
                   {/* Bound Device (searchable) */}
                   <div className="space-y-1.5">
                     <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '关联资产 / 设备' : 'Linked Asset / Device'}</label>
@@ -1320,8 +1462,6 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                     />
                   </div>
 
-                  {(!isQuickAllocation || showAdvancedFields) && (
-                    <>
                   {/* MAC Address */}
                   <div className="space-y-1.5">
                     <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? 'MAC地址' : 'MAC Address'}</label>
@@ -1333,8 +1473,6 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                       className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                     />
                   </div>
-                    </>
-                  )}
 
                   {/* Device Type Select */}
                   <div className="space-y-1.5">
@@ -1350,8 +1488,6 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                     </select>
                   </div>
 
-                  {(!isQuickAllocation || showAdvancedFields) && (
-                    <>
                   {/* Status Select */}
                   <div className="space-y-1.5">
                     <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? 'IP 地址状态' : 'IP Status'}</label>
@@ -1393,15 +1529,17 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                   )}
                 </div>
 
-                {isQuickAllocation && (
-                  <button
-                    type="button"
-                    onClick={() => setShowAdvancedFields((current) => !current)}
-                    className="w-full rounded-xl border border-dashed border-cyan-200 bg-cyan-50/40 px-3 py-2 text-[10px] font-bold text-cyan-700 hover:bg-cyan-50 transition-colors"
-                  >
-                    {showAdvancedFields ? (zh ? '收起高级字段' : 'Hide advanced fields') : (zh ? '展开高级字段（MAC、状态、到期时间、备注）' : 'Show advanced fields (MAC, status, expiry, notes)')}
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => setShowAdvancedFields((current) => !current)}
+                  className="w-full rounded-xl border border-dashed border-gray-200 bg-gray-50 px-3 py-2.5 text-xs font-semibold text-gray-600 hover:border-cyan-200 hover:bg-cyan-50/40 hover:text-cyan-700 transition-colors"
+                  aria-expanded={showAdvancedFields}
+                >
+                  {showAdvancedFields
+                    ? (zh ? '收起更多属性' : 'Hide additional fields')
+                    : (zh ? '其他信息：关联设备、接口、MAC、角色、状态、到期时间和备注' : 'More details: device, interface, MAC, role, status, expiry and notes')}
+                </button>
+
               </div>
 
               {/* Actions */}

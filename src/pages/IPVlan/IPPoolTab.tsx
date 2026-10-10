@@ -38,29 +38,34 @@ interface Prefix {
   id: string;
   prefix: string;
   name: string;
+  tenant_id?: string;
 }
 
 interface IPPoolTabProps {
   language: string;
   t: (key: string) => string;
+  prefixId?: string;
+  embedded?: boolean;
 }
 
-const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t }) => {
+const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t, prefixId = '', embedded = false }) => {
   const zh = language === 'zh';
   const tableRef = useRef<HTMLTableElement>(null);
 
   const [pools, setPools] = useState<IPPool[]>([]);
   const [prefixes, setPrefixes] = useState<Prefix[]>([]);
-  const [tenants, setTenants] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const hasLoadedPools = useRef(false);
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [totalPools, setTotalPools] = useState(0);
+  const [loadError, setLoadError] = useState('');
 
   // Modals
   const [showAddEdit, setShowAddEdit] = useState(false);
   const [editingPool, setEditingPool] = useState<IPPool | null>(null);
+  const [showAdvancedFields, setShowAdvancedFields] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
   useEscapeClose(showAddEdit, () => { setShowAddEdit(false); setEditingPool(null); });
   useEscapeClose(Boolean(showDeleteConfirm), () => setShowDeleteConfirm(null));
@@ -83,36 +88,55 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t }) => {
   }, []);
 
   const loadData = useCallback(async () => {
-    setLoading(true);
+    if (!hasLoadedPools.current) setLoading(true);
+    setLoadError('');
     const hdrs = authHeaders();
+    let poolsLoaded = false;
     try {
-      const [poolRes, prefRes, tenantRes] = await Promise.all([
-        fetch(`/api/ipam/pools?q=${encodeURIComponent(search.trim())}&page=${page}&page_size=${pageSize}`, { headers: hdrs }),
+      const poolQuery = new URLSearchParams({
+        q: search.trim(),
+        page: String(page),
+        page_size: String(pageSize),
+      });
+      if (prefixId) poolQuery.set('prefix_id', prefixId);
+      const [poolRes, prefRes] = await Promise.all([
+        fetch(`/api/ipam/pools?${poolQuery.toString()}`, { headers: hdrs }),
         fetch('/api/ipam/subnets', { headers: hdrs }),
-        fetch('/api/cmdb/tenants', { headers: hdrs }),
       ]);
-      const unwrap = (j: any) => (Array.isArray(j) ? j : (j?.data ?? j?.items ?? []));
-      if (poolRes.ok) {
+      if (!poolRes.ok) {
+        setLoadError(poolRes.status === 401
+          ? (zh ? '登录已过期，请重新登录后重试。' : 'Your session has expired. Sign in and retry.')
+          : poolRes.status === 403
+            ? (zh ? '当前账号没有查看地址池的权限。' : 'You do not have permission to view IP pools.')
+            : (zh ? '加载地址池失败，请重试。' : 'Failed to load IP pools. Please retry.'));
+      } else {
         const payload = await poolRes.json();
         const data = payload?.data && !Array.isArray(payload.data) ? payload.data : payload;
         setPools(Array.isArray(data) ? data : (data?.items || []));
         setTotalPools(Array.isArray(data) ? data.length : Number(data?.total || 0));
+        poolsLoaded = true;
       }
       if (prefRes.ok) setPrefixes(await prefRes.json());
-      if (tenantRes.ok) setTenants(unwrap(await tenantRes.json()));
     } catch (e) {
       console.error(e);
+      setLoadError(zh ? '加载地址池失败，请检查网络后重试。' : 'Failed to load IP pools. Check the connection and retry.');
     } finally {
+      if (poolsLoaded) hasLoadedPools.current = true;
       setLoading(false);
     }
-  }, [authHeaders, page, pageSize, search]);
+  }, [authHeaders, page, pageSize, prefixId, search, zh]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
 
+  useEffect(() => {
+    setPage(1);
+  }, [prefixId]);
+
   const openForm = (poolItem: IPPool | null = null) => {
     setErrorMsg('');
+    setShowAdvancedFields(Boolean(poolItem));
     if (poolItem) {
       setEditingPool(poolItem);
       setForm({
@@ -128,7 +152,7 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t }) => {
       setEditingPool(null);
       setForm({
         name: '',
-        prefix_id: prefixes[0]?.id || '',
+        prefix_id: prefixId || '',
         start_ip: '',
         end_ip: '',
         description: '',
@@ -155,7 +179,10 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t }) => {
           'Content-Type': 'application/json',
           ...authHeaders(),
         },
-        body: JSON.stringify(form),
+        body: JSON.stringify({
+          ...form,
+          tenant_id: prefixes.find((item) => item.id === form.prefix_id)?.tenant_id || form.tenant_id || 'tenant-default',
+        }),
       });
 
       if (res.ok) {
@@ -191,6 +218,7 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t }) => {
 
   const exportData = useCallback(async () => {
     const params = new URLSearchParams({ q: search.trim() });
+    if (prefixId) params.set('prefix_id', prefixId);
     const allPools = await fetchAllIpamExportItems<IPPool>('/api/ipam/pools', params);
     return buildVisibleIpamExportData(tableRef.current, [
       { header: zh ? '地址池名称' : 'Pool Name', value: (pool) => pool.name },
@@ -203,7 +231,7 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t }) => {
       { header: zh ? '状态' : 'Status', value: (pool) => pool.status.toUpperCase() },
       { header: zh ? '利用率' : 'Utilization', value: (pool) => `${pool.utilization}%` },
     ], allPools);
-  }, [search, zh]);
+  }, [prefixId, search, zh]);
 
   const getUtilColor = (util: number) => {
     if (util < 60) return 'from-emerald-400 to-green-500';
@@ -212,39 +240,82 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t }) => {
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden px-6 py-5 space-y-4">
-      <PageHero
-        icon={Package}
-        title={zh ? 'IP地址池管理' : 'IP Pool Management'}
-        subtitle={zh ? '定义网段内的连续IP范围（如办公网DHCP池、动态分配池），监控各地址池的实时水位与利用率' : 'Manage IP range sub-allocations like DHCP dynamic pools or server range pools.'}
-        actions={
-          <div className="flex items-center gap-2">
-            <TableExportMenu tableRef={tableRef} exportData={exportData} filename="ipam-address-pools" language={zh ? 'zh' : 'en'} disabled={loading || paginatedPools.length === 0} />
-            <button
-              onClick={() => openForm(null)}
-              className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white rounded-xl text-xs font-bold shadow-lg shadow-cyan-500/20 active:scale-95 transition-all"
-            >
-              <Plus size={14} />
-              {zh ? '创建地址池' : 'Create Pool'}
-            </button>
+    <div className={embedded ? 'w-full min-h-0 flex flex-col gap-3' : 'flex-1 flex flex-col h-full overflow-hidden px-6 py-5 space-y-4'}>
+      {embedded ? (
+        <div className="shrink-0 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-bold text-gray-900">{zh ? '地址池 / 分配范围' : 'Address Pools / Allocation Ranges'}</h3>
+              <p className="mt-1 text-[10px] text-gray-500">
+                {zh ? '管理当前网段中的连续地址范围。' : 'Manage contiguous address ranges within this prefix.'}
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <TableExportMenu tableRef={tableRef} exportData={exportData} filename="ipam-address-pools" language={zh ? 'zh' : 'en'} disabled={loading || paginatedPools.length === 0} />
+              <button
+                type="button"
+                onClick={() => openForm(null)}
+                className="flex items-center gap-1.5 px-3 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white rounded-xl text-xs font-bold shadow-lg shadow-cyan-500/20 active:scale-95 transition-all"
+              >
+                <Plus size={14} />
+                {zh ? '创建地址池' : 'Create Pool'}
+              </button>
+            </div>
           </div>
-        }
-        extras={
-          <div className="relative w-full md:w-64">
+          <div className="relative w-full md:w-72">
             <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
               type="search"
               value={search}
               onChange={(e) => { setSearch(e.target.value); setPage(1); }}
               placeholder={zh ? '搜索地址池名称、网段...' : 'Search pools...'}
-              className="w-full pl-10 pr-4 py-1.5 text-xs rounded-xl border border-black/5 bg-gray-50/50 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium"
+              className="w-full pl-10 pr-4 py-2 text-xs rounded-xl border border-black/5 bg-gray-50/50 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium"
             />
           </div>
-        }
-      />
+        </div>
+      ) : (
+        <PageHero
+          icon={Package}
+          title={zh ? 'IP地址池管理' : 'IP Pool Management'}
+          subtitle={zh ? '登记网段内的连续 IP 范围并查看利用率；此处不配置或下发 DHCP 租约' : 'Record IP ranges and utilization; DHCP lease assignment is not configured here.'}
+          actions={
+            <div className="flex items-center gap-2">
+              <TableExportMenu tableRef={tableRef} exportData={exportData} filename="ipam-address-pools" language={zh ? 'zh' : 'en'} disabled={loading || paginatedPools.length === 0} />
+              <button
+                onClick={() => openForm(null)}
+                className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white rounded-xl text-xs font-bold shadow-lg shadow-cyan-500/20 active:scale-95 transition-all"
+              >
+                <Plus size={14} />
+                {zh ? '创建地址池' : 'Create Pool'}
+              </button>
+            </div>
+          }
+          extras={
+            <div className="relative w-full md:w-64">
+              <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="search"
+                value={search}
+                onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                placeholder={zh ? '搜索地址池名称、网段...' : 'Search pools...'}
+                className="w-full pl-10 pr-4 py-1.5 text-xs rounded-xl border border-black/5 bg-gray-50/50 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium"
+              />
+            </div>
+          }
+        />
+      )}
+
+      {loadError && (
+        <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-semibold text-rose-700">
+          <span>{loadError}</span>
+          <button type="button" onClick={loadData} className="shrink-0 rounded-lg bg-white px-3 py-1.5 text-rose-700 shadow-sm hover:bg-rose-100">
+            {zh ? '重试' : 'Retry'}
+          </button>
+        </div>
+      )}
 
       {/* Main Table Card */}
-      <div className="flex-1 min-h-0 bg-white rounded-[28px] border border-black/5 shadow-[0_16px_36px_rgba(11,35,64,0.06)] overflow-hidden flex flex-col">
+      <div className={`flex-1 min-h-0 bg-white ${embedded ? 'rounded-2xl' : 'rounded-[28px]'} border border-black/5 shadow-[0_16px_36px_rgba(11,35,64,0.06)] overflow-hidden flex flex-col`}>
         <div className="flex-1 overflow-auto">
           {loading ? (
             <div className="h-full flex items-center justify-center text-xs text-gray-400 font-semibold">
@@ -317,7 +388,7 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t }) => {
                 ) : (
                   <tr>
                     <td colSpan={10} className="py-12 text-center text-xs text-gray-400 font-medium">
-                      {zh ? '暂无动态分配地址池记录' : 'No IP pools configured'}
+                      {zh ? '暂无地址范围记录' : 'No address ranges configured'}
                     </td>
                   </tr>
                 )}
@@ -345,9 +416,9 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t }) => {
         {showAddEdit && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
             <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
               className="bg-white w-full max-w-lg rounded-3xl overflow-hidden shadow-2xl border border-black/5 flex flex-col max-h-[90vh]"
             >
               <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
@@ -357,7 +428,7 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t }) => {
                   </div>
                   <div>
                     <h3 className="font-bold text-gray-900">{editingPool ? (zh ? '编辑地址池' : 'Edit IP Pool') : (zh ? '新建地址池' : 'Create IP Pool')}</h3>
-                    <p className="text-xs text-gray-500 mt-0.5">{zh ? '划定前缀段内的起始与结束IP范围用作特定池' : 'Define start/end IP ranges for dedicated pools.'}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">{zh ? '登记一个 IP 地址范围并统计使用情况' : 'Record an IP range and track its utilization.'}</p>
                   </div>
                 </div>
                 <button onClick={() => setShowAddEdit(false)} className="p-1.5 rounded-lg hover:bg-gray-50 transition-colors text-gray-400">
@@ -373,6 +444,12 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t }) => {
                 )}
 
                 <div className="grid grid-cols-2 gap-4">
+                  <div className="col-span-2 rounded-xl border border-cyan-100 bg-cyan-50/60 px-3.5 py-3 text-xs leading-relaxed text-cyan-900">
+                    {zh
+                      ? '这里记录地址范围和利用率，不会向客户端下发 DHCP 地址，也不会限制手工分配 IP。'
+                      : 'This records a range and its utilization. It does not provide DHCP leases or restrict manual IP allocation.'}
+                  </div>
+
                   {/* Name */}
                   <div className="space-y-1.5 col-span-2">
                     <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '地址池名称 *' : 'Pool Name *'}</label>
@@ -380,25 +457,47 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t }) => {
                       type="text"
                       value={form.name}
                       onChange={(e) => setForm({ ...form, name: e.target.value })}
-                      placeholder="e.g. DHCP Range Pool"
+                      placeholder={zh ? '例如：办公区静态分配范围' : 'e.g. Office static allocation range'}
                       className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                     />
                   </div>
 
                   {/* Prefix Select */}
-                  <div className="space-y-1.5 col-span-2">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '归属前缀网段 *' : 'Belongs to Prefix *'}</label>
-                    <select
-                      value={form.prefix_id}
-                      onChange={(e) => setForm({ ...form, prefix_id: e.target.value })}
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
-                    >
-                      <option value="">{zh ? '请选择前缀网段' : 'Select Prefix'}</option>
-                      {prefixes.map((item) => (
-                        <option key={item.id} value={item.id}>{item.prefix} {item.name ? `(${item.name})` : ''}</option>
-                      ))}
-                    </select>
-                  </div>
+                  {!prefixId && (
+                    <div className="space-y-1.5 col-span-2">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '所属网段 *' : 'Prefix *'}</label>
+                      <select
+                        value={form.prefix_id}
+                        onChange={(e) => {
+                          const selectedPrefix = prefixes.find((item) => item.id === e.target.value);
+                          setForm({
+                            ...form,
+                            prefix_id: e.target.value,
+                            tenant_id: selectedPrefix?.tenant_id || 'tenant-default',
+                          });
+                        }}
+                        className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
+                      >
+                        <option value="">{zh ? '请选择网段' : 'Select a prefix'}</option>
+                        {prefixes.map((item) => (
+                          <option key={item.id} value={item.id}>{item.prefix} {item.name ? `(${item.name})` : ''}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  {prefixId && (
+                    <div className="col-span-2 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
+                      <div className="text-[10px] font-semibold text-gray-400">{zh ? '所属网段' : 'Prefix'}</div>
+                      <div className="mt-1 font-mono text-sm font-bold text-gray-800">
+                        {prefixes.find((item) => item.id === prefixId)?.prefix || prefixId}
+                        {prefixes.find((item) => item.id === prefixId)?.name && (
+                          <span className="ml-2 font-sans text-xs font-medium text-gray-500">
+                            {prefixes.find((item) => item.id === prefixId)?.name}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Start IP */}
                   <div className="space-y-1.5">
@@ -424,45 +523,46 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t }) => {
                     />
                   </div>
 
-                  {/* Tenant Select */}
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '归属租户' : 'Tenant'}</label>
-                    <select
-                      value={form.tenant_id}
-                      onChange={(e) => setForm({ ...form, tenant_id: e.target.value })}
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
-                    >
-                      {tenants.map((item) => (
-                        <option key={item.id} value={item.id}>{item.name}</option>
-                      ))}
-                    </select>
-                  </div>
+                  {showAdvancedFields && (
+                    <>
+                      {/* Status */}
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '状态' : 'Status'}</label>
+                        <select
+                          value={form.status}
+                          onChange={(e) => setForm({ ...form, status: e.target.value })}
+                          className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
+                        >
+                          <option value="active">{zh ? '启用' : 'Active'}</option>
+                          <option value="reserved">{zh ? '保留' : 'Reserved'}</option>
+                        </select>
+                      </div>
 
-                  {/* Status */}
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '状态' : 'Status'}</label>
-                    <select
-                      value={form.status}
-                      onChange={(e) => setForm({ ...form, status: e.target.value })}
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
-                    >
-                      <option value="active">ACTIVE</option>
-                      <option value="reserved">RESERVED</option>
-                    </select>
-                  </div>
-
-                  {/* Description */}
-                  <div className="space-y-1.5 col-span-2">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '说明备注描述' : 'Description'}</label>
-                    <textarea
-                      value={form.description}
-                      onChange={(e) => setForm({ ...form, description: e.target.value })}
-                      placeholder={zh ? '在此输入地址池的主要分配角色用途...' : 'Allocations usage...'}
-                      rows={2}
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50 resize-none"
-                    />
-                  </div>
+                      {/* Description */}
+                      <div className="space-y-1.5 col-span-2">
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '备注' : 'Notes'}</label>
+                        <textarea
+                          value={form.description}
+                          onChange={(e) => setForm({ ...form, description: e.target.value })}
+                          placeholder={zh ? '可补充说明该地址范围的用途' : 'Optional notes about this range'}
+                          rows={2}
+                          className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50 resize-none"
+                        />
+                      </div>
+                    </>
+                  )}
                 </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowAdvancedFields((current) => !current)}
+                  className="w-full rounded-xl border border-dashed border-gray-200 bg-gray-50 px-3 py-2.5 text-xs font-semibold text-gray-600 hover:border-cyan-200 hover:bg-cyan-50/40 hover:text-cyan-700 transition-colors"
+                  aria-expanded={showAdvancedFields}
+                >
+                  {showAdvancedFields
+                    ? (zh ? '收起可选设置' : 'Hide optional settings')
+                    : (zh ? '可选设置：状态、备注' : 'Optional settings: status and notes')}
+                </button>
               </div>
 
               <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 flex items-center justify-end gap-3 flex-shrink-0">
@@ -491,7 +591,7 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t }) => {
               <div className="p-6">
                 <h3 className="text-base font-bold text-gray-900 mb-2">{zh ? '删除地址池？' : 'Delete IP Pool?'}</h3>
                 <p className="text-xs text-gray-500 leading-relaxed">
-                  {zh ? '确定要删除此动态地址池划定吗？删除后，池内的分配范围记录将被移除，但不会物理释放网段里已登记的静态IP地址。' : 'Are you sure you want to delete this dynamic pool range? Nested IP addresses will not be deleted.'}
+                  {zh ? '确定要删除此地址范围记录吗？删除后只会移除范围记录，不会删除网段中已登记的 IP 地址。' : 'Delete this address range record? Only the range will be removed; registered IP addresses in the prefix remain.'}
                 </p>
               </div>
               <div className="px-6 py-4 bg-gray-50 flex items-center justify-end gap-3 border-t border-gray-100">

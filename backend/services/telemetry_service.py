@@ -8,7 +8,7 @@ from services.inspection_service import _execute_shell_script
 
 logger = logging.getLogger(__name__)
 
-# Server platforms (Linux)
+# Explicit Linux platforms supported by the Bash-based telemetry script.
 _SERVER_PLATFORMS = {'linux', 'ubuntu', 'centos', 'debian', 'redhat'}
 
 def record_device_telemetry_snapshot() -> dict:
@@ -29,15 +29,14 @@ def record_device_telemetry_snapshot() -> dict:
             return {'success': False, 'message': 'insp_linux_full script not found'}
         script_content = script_row['content']
 
-        # Query online Linux devices
-        # platform field is text, check case-insensitively
+        # This script is Bash/Linux-only. Do not use the generic `server`
+        # category as a fallback: it also includes Windows and unknown OSes.
         devices = []
         rows = conn.execute("SELECT * FROM devices WHERE status = 'online'").fetchall()
         for r in rows:
             d = dict(r)
             plat = str(d.get('platform') or '').lower()
-            category = str(d.get('device_category') or '').lower()
-            if plat in _SERVER_PLATFORMS or 'server' in category:
+            if plat in _SERVER_PLATFORMS:
                 devices.append(d)
 
         if not devices:

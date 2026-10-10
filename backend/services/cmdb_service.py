@@ -176,10 +176,47 @@ def _distinct_interface_counts(conn) -> dict[str, int]:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def list_cmdb_devices(conn) -> list[dict]:
-    """Return devices as CMDB skeleton nodes with asset and relationship counts."""
+    """Return network devices as CMDB skeleton nodes with relationship counts."""
+    # A few older/read-only database shapes do not expose the full physical
+    # asset metadata set. Probe the available columns so optional classification
+    # fields can be used without making the CMDB skeleton depend on migrations
+    # that are not present in those shapes.
+    physical_asset_columns = {
+        str(column[0])
+        for column in (conn.execute("SELECT * FROM physical_assets LIMIT 0").description or [])
+    }
+    device_columns = {
+        str(column[0])
+        for column in (conn.execute("SELECT * FROM devices LIMIT 0").description or [])
+    }
+
+    def first_nonempty_sql(sources: list[str]) -> str:
+        candidates = [f"NULLIF(BTRIM({source}), '')" for source in sources]
+        return "COALESCE(" + ", ".join([*candidates, "''"]) + ")"
+
+    asset_type_expr = (
+        "COALESCE(NULLIF(BTRIM(pa.asset_type), ''), 'network_device')"
+        if 'asset_type' in physical_asset_columns else "'network_device'"
+    )
+    device_category_sources = []
+    if 'device_category' in device_columns:
+        device_category_sources.append('d.device_category')
+    if 'device_category' in physical_asset_columns:
+        device_category_sources.append('pa.device_category')
+    platform_sources = []
+    if 'platform' in device_columns:
+        platform_sources.append('d.platform')
+    if 'platform' in physical_asset_columns:
+        platform_sources.append('pa.platform')
+    role_sources = []
+    if 'role' in device_columns:
+        role_sources.append('d.role')
+    if 'device_role' in physical_asset_columns:
+        role_sources.append('pa.device_role')
+
     interface_counts = _distinct_interface_counts(conn)
     rows = conn.execute(
-        """
+        f"""
         SELECT
             d.id,
             d.hostname,
@@ -191,6 +228,10 @@ def list_cmdb_devices(conn) -> list[dict]:
             d.vendor,
             d.lifecycle_status,
             d.asset_id,
+            {asset_type_expr} AS _cmdb_asset_type,
+            {first_nonempty_sql(device_category_sources)} AS _cmdb_device_category,
+            {first_nonempty_sql(platform_sources)} AS _cmdb_platform,
+            {first_nonempty_sql(role_sources)} AS _cmdb_role,
             pa.asset_tag,
             pa.serial_number,
             COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''), '') AS site_id,
@@ -233,9 +274,21 @@ def list_cmdb_devices(conn) -> list[dict]:
         ORDER BY COALESCE(d.hostname, ''), COALESCE(d.ip_address, '')
         """
     ).fetchall()
+    from services.device_classification_service import is_server_device
+
     items = []
     for row in rows:
         item = _row_to_dict(row)
+        asset_type = str(item.pop('_cmdb_asset_type', '') or 'network_device').strip().casefold()
+        if asset_type != 'network_device':
+            continue
+        classification = {
+            'device_category': item.pop('_cmdb_device_category', ''),
+            'platform': item.pop('_cmdb_platform', ''),
+            'role': item.pop('_cmdb_role', ''),
+        }
+        if is_server_device(classification):
+            continue
         item['interface_count'] = interface_counts.get(str(item.get('id') or ''), 0)
         items.append(item)
     return items

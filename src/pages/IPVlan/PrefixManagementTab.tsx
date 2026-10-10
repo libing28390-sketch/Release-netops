@@ -12,6 +12,7 @@ import {
   PlusCircle,
   Eye,
   Info,
+  Package,
   RefreshCw,
   Check,
   AlertTriangle,
@@ -27,6 +28,7 @@ import { buildVisibleIpamExportData, fetchAllIpamExportItems } from './ipamExpor
 import { useEscapeClose } from '../../hooks/useEscapeClose';
 import { useNavigate } from 'react-router-dom';
 import { isValidIPv4, isValidIPv6, toNum } from './helpers';
+import IPPoolTab from './IPPoolTab';
 
 import { TableActionCell, TableActionHeader } from '../../components/ui/TableActionColumn';
 interface Prefix {
@@ -93,6 +95,23 @@ interface InterfacePrefixCandidate {
   }>;
 }
 
+type InterfaceCandidateFilter = 'to_create' | 'existing' | 'all';
+
+interface InterfaceCandidateSummary {
+  candidate_count: number;
+  existing_count: number;
+  to_create_count: number;
+  interface_count: number;
+  skipped_count: number;
+}
+
+interface InterfaceCandidatePage {
+  page: number;
+  page_size: number;
+  filtered_count: number;
+  total_pages: number;
+}
+
 interface PrefixClassificationSummary {
   total: number;
   auto_count: number;
@@ -136,12 +155,14 @@ function prefixStatusLabel(status: string, zh: boolean): string {
 const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }) => {
   const treeTableRef = useRef<HTMLTableElement>(null);
   const prefixTableRef = useRef<HTMLTableElement>(null);
+  const hasLoadedPrefixDataRef = useRef(false);
   const navigate = useNavigate();
   const zh = language === 'zh';
   
   const [prefixes, setPrefixes] = useState<Prefix[]>([]);
   const [classificationSummary, setClassificationSummary] = useState<PrefixClassificationSummary | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [search, setSearch] = useState('');
   const [viewMode, setViewMode] = useState<'table' | 'tree'>('table');
   const [familyFilter, setFamilyFilter] = useState<'all' | 'ipv4' | 'ipv6'>('all');
@@ -163,17 +184,37 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
   const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
   const [showInterfaceGeneration, setShowInterfaceGeneration] = useState(false);
+  const [poolManagerPrefix, setPoolManagerPrefix] = useState<Prefix | null>(null);
   useEscapeClose(showAddEdit, () => { setShowAddEdit(false); setEditingPrefix(null); });
   useEscapeClose(Boolean(showDeleteConfirm), () => setShowDeleteConfirm(null));
   useEscapeClose(showBatchDeleteConfirm, () => setShowBatchDeleteConfirm(false));
   useEscapeClose(showInterfaceGeneration, () => setShowInterfaceGeneration(false));
+  useEscapeClose(Boolean(poolManagerPrefix), () => setPoolManagerPrefix(null));
   const [interfaceCandidates, setInterfaceCandidates] = useState<InterfacePrefixCandidate[]>([]);
   const [selectedInterfaceCandidates, setSelectedInterfaceCandidates] = useState<Set<string>>(new Set());
   const [interfaceSkipped, setInterfaceSkipped] = useState<Array<{ device_name: string; interface_name: string; address: string; reason: string }>>([]);
+  const [interfaceCandidateSummary, setInterfaceCandidateSummary] = useState<InterfaceCandidateSummary>({
+    candidate_count: 0,
+    existing_count: 0,
+    to_create_count: 0,
+    interface_count: 0,
+    skipped_count: 0,
+  });
+  const [interfaceCandidatePage, setInterfaceCandidatePage] = useState<InterfaceCandidatePage>({
+    page: 1,
+    page_size: 25,
+    filtered_count: 0,
+    total_pages: 0,
+  });
+  const [interfaceCandidateFilter, setInterfaceCandidateFilter] = useState<InterfaceCandidateFilter>('to_create');
   const [interfaceGenerationLoading, setInterfaceGenerationLoading] = useState(false);
+  const [interfaceCandidatesLoading, setInterfaceCandidatesLoading] = useState(false);
   const [interfaceGenerationError, setInterfaceGenerationError] = useState('');
   const [interfaceGenerationResult, setInterfaceGenerationResult] = useState('');
   const [showSkippedDetails, setShowSkippedDetails] = useState(false);
+  const [showGenerateAllPendingConfirm, setShowGenerateAllPendingConfirm] = useState(false);
+  const interfaceCandidateRequestId = useRef(0);
+  useEscapeClose(showGenerateAllPendingConfirm, () => setShowGenerateAllPendingConfirm(false));
 
   // Form State
   const [form, setForm] = useState({
@@ -194,6 +235,9 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   const [errorMsg, setErrorMsg] = useState('');
   const [parentSubnetId, setParentSubnetId] = useState('');
   const [desiredPrefixLen, setDesiredPrefixLen] = useState(24);
+  const [showSubnetRecommendation, setShowSubnetRecommendation] = useState(false);
+  const [showIpPlanningHelper, setShowIpPlanningHelper] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [excludeNetBroadcast, setExcludeNetBroadcast] = useState(true);
   const [excludeGateway, setExcludeGateway] = useState(true);
   const [page, setPage] = useState(1);
@@ -464,8 +508,10 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
     }
   }, [authHeaders]);
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
+  const loadData = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = options?.silent === true || hasLoadedPrefixDataRef.current;
+    if (!silent) setLoading(true);
+    setLoadError('');
     try {
       const headers = authHeaders();
       const prefixQuery = new URLSearchParams({
@@ -484,33 +530,80 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
         const payload = await prefixRes.json();
         setPrefixes(Array.isArray(payload) ? payload : (payload.items || []));
         setTotalPrefixes(Array.isArray(payload) ? payload.length : Number(payload.total || 0));
+        hasLoadedPrefixDataRef.current = true;
+      } else {
+        setLoadError(prefixRes.status === 401
+          ? (zh ? '登录已过期，请重新登录后重试。' : 'Your session has expired. Sign in and retry.')
+          : prefixRes.status === 403
+            ? (zh ? '当前账号没有查看网段的权限。' : 'You do not have permission to view prefixes.')
+            : (zh ? '加载网段列表失败，请重试。' : 'Failed to load prefixes. Please retry.'));
       }
       if (summaryRes.ok) setClassificationSummary(await summaryRes.json());
+      else if (prefixRes.ok) {
+        setLoadError(summaryRes.status === 401 || summaryRes.status === 403
+          ? (zh ? '当前账号无法读取网段分类汇总。' : 'You do not have permission to view the prefix summary.')
+          : (zh ? '加载网段分类汇总失败。' : 'Failed to load prefix classification summary.'));
+      }
     } catch (e) {
       console.error(e);
+      setLoadError(zh ? '加载网段信息失败，请检查网络后重试。' : 'Failed to load prefix data. Check the connection and retry.');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
-  }, [search, siteFilter, statusFilter, familyFilter, page, pageSize, authHeaders]);
+  }, [search, siteFilter, statusFilter, familyFilter, page, pageSize, authHeaders, zh]);
 
-  const openInterfaceGeneration = async (clearResult = true) => {
-    setInterfaceGenerationLoading(true);
+  const loadInterfaceCandidates = async (requestedPage = 1, status: InterfaceCandidateFilter = interfaceCandidateFilter) => {
+    const requestId = ++interfaceCandidateRequestId.current;
+    setInterfaceCandidatesLoading(true);
     setInterfaceGenerationError('');
-    if (clearResult) setInterfaceGenerationResult('');
-    setShowInterfaceGeneration(true);
     try {
-      const res = await fetch('/api/ipam/prefixes/interface-candidates', { headers: authHeaders() });
+      const query = new URLSearchParams({ page: String(requestedPage), page_size: '25', status });
+      const res = await fetch(`/api/ipam/prefixes/interface-candidates?${query.toString()}`, { headers: authHeaders() });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.detail || (zh ? '无法读取当前接口采集结果' : 'Unable to load interface collection'));
-      const candidates = Array.isArray(data?.candidates) ? data.candidates : [];
-      setInterfaceCandidates(candidates);
+      if (!res.ok) {
+        const message = res.status === 401
+          ? (zh ? '登录已过期，请重新登录后重试。' : 'Your session has expired. Sign in and retry.')
+          : res.status === 403
+            ? (zh ? '当前账号没有读取接口候选项的权限。' : 'You do not have permission to read interface candidates.')
+            : data?.detail || (zh ? '无法读取当前接口采集结果。' : 'Unable to load interface collection.');
+        throw new Error(message);
+      }
+      if (requestId !== interfaceCandidateRequestId.current) return;
+
+      setInterfaceCandidates(Array.isArray(data?.candidates) ? data.candidates : []);
       setInterfaceSkipped(Array.isArray(data?.skipped) ? data.skipped : []);
-      setSelectedInterfaceCandidates(new Set(candidates.filter((item: InterfacePrefixCandidate) => item.status === 'to_create').map((item: InterfacePrefixCandidate) => item.candidate_id)));
+      setInterfaceCandidateSummary({
+        candidate_count: Number(data?.candidate_count || 0),
+        existing_count: Number(data?.existing_count || 0),
+        to_create_count: Number(data?.to_create_count || 0),
+        interface_count: Number(data?.interface_count || 0),
+        skipped_count: Number(data?.skipped_count || 0),
+      });
+      setInterfaceCandidatePage({
+        page: Number(data?.page || requestedPage),
+        page_size: Number(data?.page_size || 25),
+        filtered_count: Number(data?.filtered_count || 0),
+        total_pages: Number(data?.total_pages || 0),
+      });
     } catch (error) {
-      setInterfaceGenerationError(error instanceof Error ? error.message : String(error));
+      if (requestId === interfaceCandidateRequestId.current) {
+        setInterfaceGenerationError(error instanceof Error ? error.message : String(error));
+      }
     } finally {
-      setInterfaceGenerationLoading(false);
+      if (requestId === interfaceCandidateRequestId.current) setInterfaceCandidatesLoading(false);
     }
+  };
+
+  const openInterfaceGeneration = async () => {
+    setInterfaceGenerationError('');
+    setInterfaceGenerationResult('');
+    setSelectedInterfaceCandidates(new Set());
+    setInterfaceCandidateFilter('to_create');
+    setInterfaceCandidatePage((current) => ({ ...current, page: 1 }));
+    setShowSkippedDetails(false);
+    setShowGenerateAllPendingConfirm(false);
+    setShowInterfaceGeneration(true);
+    await loadInterfaceCandidates(1, 'to_create');
   };
 
   const toggleInterfaceCandidate = (candidateId: string) => {
@@ -520,26 +613,50 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
     setSelectedInterfaceCandidates(next);
   };
 
-  const generateFromInterfaces = async () => {
-    if (selectedInterfaceCandidates.size === 0) return;
+  const selectVisibleInterfaceCandidates = () => {
+    const visibleIds = interfaceCandidates.map((candidate) => candidate.candidate_id);
+    const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((candidateId) => selectedInterfaceCandidates.has(candidateId));
+    const next = new Set(selectedInterfaceCandidates);
+    visibleIds.forEach((candidateId) => {
+      if (allVisibleSelected) next.delete(candidateId);
+      else next.add(candidateId);
+    });
+    setSelectedInterfaceCandidates(next);
+  };
+
+  const generateFromInterfaces = async (allPending = false) => {
+    if (allPending ? interfaceCandidateSummary.to_create_count === 0 : selectedInterfaceCandidates.size === 0) return;
     setInterfaceGenerationLoading(true);
     setInterfaceGenerationError('');
     try {
       const res = await fetch('/api/ipam/prefixes/generate-from-interfaces', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ candidate_ids: Array.from(selectedInterfaceCandidates) }),
+        body: JSON.stringify(allPending
+          ? { all_pending: true }
+          : { candidate_ids: Array.from(selectedInterfaceCandidates) }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.detail || (zh ? '生成前缀失败' : 'Prefix generation failed'));
+      if (!res.ok) {
+        const message = res.status === 401
+          ? (zh ? '登录已过期，请重新登录后重试。' : 'Your session has expired. Sign in and retry.')
+          : res.status === 403
+            ? (zh ? '当前账号没有生成 IPAM 网段的权限。' : 'You do not have permission to generate IPAM prefixes.')
+            : data?.detail || (zh ? '生成前缀失败' : 'Prefix generation failed');
+        throw new Error(message);
+      }
       setInterfaceGenerationResult(
         zh
           ? `已创建 ${data.created_prefixes || 0} 个网段，并登记 ${data.created_addresses || 0} 个接口 IP`
           : `Created ${data.created_prefixes || 0} prefixes and ${data.created_addresses || 0} interface IPs`,
       );
-      await loadData();
-      await openInterfaceGeneration(false);
+      setShowGenerateAllPendingConfirm(false);
+      setSelectedInterfaceCandidates(new Set());
+      setInterfaceCandidateFilter('to_create');
+      await loadData({ silent: true });
+      await loadInterfaceCandidates(1, 'to_create');
     } catch (error) {
+      setShowGenerateAllPendingConfirm(false);
       setInterfaceGenerationError(error instanceof Error ? error.message : String(error));
     } finally {
       setInterfaceGenerationLoading(false);
@@ -587,6 +704,9 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
     setErrorMsg('');
     setParentSubnetId('');
     setDesiredPrefixLen(24);
+    setShowSubnetRecommendation(false);
+    setShowIpPlanningHelper(false);
+    setIsSaving(false);
     setExcludeNetBroadcast(true);
     setExcludeGateway(true);
     if (prefixItem) {
@@ -648,6 +768,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   };
 
   const handleSave = async () => {
+    if (isSaving) return;
     setErrorMsg('');
     if (!form.prefix) {
       setErrorMsg(zh ? 'Prefix网段是必填项' : 'Prefix CIDR is required');
@@ -661,9 +782,10 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
       site_id: form.site_id || null,
       tenant_id: form.tenant_id || 'tenant-default',
       gateway_device_id: form.gateway_device_id || null,
-      gateway_interface_id: form.gateway_interface_id || null,
+      gateway_interface_id: editingPrefix?.gateway_interface_id || null,
     };
 
+    setIsSaving(true);
     try {
       const url = editingPrefix ? `/api/ipam/subnets/${editingPrefix.id}` : '/api/ipam/subnets';
       const method = editingPrefix ? 'PUT' : 'POST';
@@ -678,13 +800,19 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
 
       if (res.ok) {
         setShowAddEdit(false);
-        loadData();
+        await loadData({ silent: true });
       } else {
-        const err = await res.json();
-        setErrorMsg(err.detail || (zh ? '操作失败' : 'Operation failed'));
+        const err = await res.json().catch(() => ({}));
+        setErrorMsg(res.status === 401
+          ? (zh ? '登录已过期，请重新登录后重试。' : 'Your session has expired. Sign in and retry.')
+          : res.status === 403
+            ? (zh ? '当前账号没有保存网段的权限。' : 'You do not have permission to save this prefix.')
+            : err.detail || (zh ? '操作失败' : 'Operation failed'));
       }
     } catch (e) {
       setErrorMsg(zh ? '网络请求出错' : 'Network request error');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -810,7 +938,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
               </button>
             </div>
           </td>
-          <td className="px-4 py-4 text-xs font-semibold text-gray-500">{node.name || '-'}</td>
+          <td className="px-4 py-4 text-xs font-semibold text-gray-500">{node.name || node.prefix}</td>
           <td className="px-4 py-4">
             {(() => {
               const nt = NETWORK_TYPES[node.network_type] || NETWORK_TYPES['unclassified'];
@@ -819,11 +947,11 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
               const hasDhcp = addressRoles.some((role) => role.address_role === 'dhcp_lease');
               return (
                 <div className="flex flex-wrap gap-1 items-center">
-                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${nt.color}`}>
+                <span className={`whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-bold border ${nt.color}`}>
                     {zh ? nt.labelZh : nt.label}
                   </span>
-                  {hasVip ? <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-pink-50 text-pink-700 border border-pink-200">VIP</span> : null}
-                  {hasDhcp ? <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-sky-50 text-sky-700 border border-sky-200">DHCP</span> : null}
+                {hasVip ? <span className="whitespace-nowrap px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-pink-50 text-pink-700 border border-pink-200">VIP</span> : null}
+                {hasDhcp ? <span className="whitespace-nowrap px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-sky-50 text-sky-700 border border-sky-200">DHCP</span> : null}
                 </div>
               );
             })()}
@@ -843,7 +971,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
           <td className="px-4 py-4 text-xs text-gray-600 font-semibold">{node.site_name || node.site_code || '-'}</td>
           <td className="px-4 py-4 text-xs text-gray-500 whitespace-nowrap">{formatPrefixTimestamp(node.created_at, language)}</td>
           <td className="px-4 py-4">
-            <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+            <span className={`inline-flex items-center gap-1.5 whitespace-nowrap px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
               node.status === 'active' 
                 ? 'bg-emerald-50 text-emerald-600 border border-emerald-500/10' 
                 : node.status === 'reserved' 
@@ -862,6 +990,11 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
           <td className="px-4 py-4 text-xs font-semibold text-gray-600 tabular-nums">{node.utilization}%</td>
           <td className="pr-6 py-4 text-right">
             <ActionIconGroup label={zh ? '前缀操作' : 'Prefix actions'} className="opacity-0 transition-opacity group-hover:opacity-100">
+              <ActionIconButton
+                icon={Package}
+                label={zh ? '分配范围 / 地址池' : 'Allocation ranges / pools'}
+                onClick={() => setPoolManagerPrefix(node)}
+              />
               <ActionIconButton
                 icon={Pencil}
                 label={zh ? '编辑' : 'Edit'}
@@ -882,13 +1015,14 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden px-6 py-5 space-y-4">
+    <div className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden space-y-4 px-4 py-4 sm:px-6 sm:py-5">
       <PageHero
         icon={Network}
         title={zh ? 'Prefix前缀网段管理' : 'Prefix Management'}
         subtitle={zh ? '管理全局IP前缀与网段的层次树结构，并绑定所属的VRF、VLAN与物理站点' : 'Manage global IP prefixes, hierarchical routing network blocks, and CMDB associations.'}
+        className="[&>div:first-child]:flex-wrap [&>div:first-child>div:last-child]:max-w-full"
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <TableExportMenu tableRef={viewMode === 'tree' ? treeTableRef : prefixTableRef} exportData={exportData} filename="ipam-prefixes" language={zh ? 'zh' : 'en'} disabled={loading} />
             <ActionButton
               icon={Plus}
@@ -982,7 +1116,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
             </div>
 
             {/* Search Input */}
-            <div className="relative flex-1 md:w-64">
+            <div className="relative min-w-[220px] flex-1 md:w-64">
               <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
               <input
                 type="search"
@@ -1000,8 +1134,17 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
         }
       />
 
+      {loadError && (
+        <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-semibold text-rose-700">
+          <span>{loadError}</span>
+          <button type="button" onClick={() => loadData()} className="shrink-0 rounded-lg bg-white px-3 py-1.5 text-rose-700 shadow-sm hover:bg-rose-100">
+            {zh ? '重试' : 'Retry'}
+          </button>
+        </div>
+      )}
+
       {classificationSummary && (
-        <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
           {[
             { label: zh ? '自动分类' : 'Auto', value: classificationSummary.auto_count, tone: 'text-cyan-700 bg-cyan-50' },
             { label: zh ? '人工保护' : 'Manual', value: classificationSummary.manual_count, tone: 'text-violet-700 bg-violet-50' },
@@ -1019,15 +1162,15 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
       )}
 
       {/* Main Table Card */}
-      <div className="flex-1 min-h-0 bg-white rounded-[28px] border border-black/5 shadow-[0_16px_36px_rgba(11,35,64,0.06)] overflow-hidden flex flex-col">
-        <div className="flex-1 overflow-auto">
+      <div className="flex-1 min-h-0 min-w-0 w-full bg-white rounded-[28px] border border-black/5 shadow-[0_16px_36px_rgba(11,35,64,0.06)] overflow-hidden flex flex-col">
+        <div className="min-h-0 min-w-0 flex-1 overflow-auto overscroll-contain">
           {loading ? (
             <div className="h-full flex items-center justify-center text-xs text-gray-400 font-semibold">
               {zh ? '加载中...' : 'Loading prefixes data...'}
             </div>
           ) : viewMode === 'tree' ? (
-            <table ref={treeTableRef} className="nx-data-table text-left">
-              <thead>
+            <table ref={treeTableRef} className="nx-data-table min-w-[1800px] text-left">
+              <thead className="sticky top-0 z-20">
                 <tr className="border-b border-gray-100 bg-gray-50/40 text-[10px] font-bold text-gray-400 uppercase tracking-wider select-none">
                   <th className="pl-6 py-4">{zh ? 'Prefix网段' : 'Prefix / CIDR'}</th>
                   <th className="px-4 py-4">{zh ? '网段名称' : 'Name'}</th>
@@ -1060,8 +1203,8 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
               </tbody>
             </table>
           ) : (
-            <table ref={prefixTableRef} className="nx-data-table text-left">
-              <thead>
+            <table ref={prefixTableRef} className="nx-data-table min-w-[1900px] text-left">
+              <thead className="sticky top-0 z-20">
                 <tr className="border-b border-gray-100 bg-gray-50/40 text-[10px] font-bold text-gray-400 uppercase tracking-wider select-none">
                   <th className="pl-6 py-4 w-10">
                     <input
@@ -1135,12 +1278,12 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                         <td className="px-4 py-4">
                           <button
                             onClick={() => navigate(`/ipam/ips?prefix_id=${node.id}`)}
-                            className="text-sm font-semibold text-cyan-600 hover:text-cyan-700 hover:underline"
+                            className="whitespace-nowrap text-sm font-semibold text-cyan-600 hover:text-cyan-700 hover:underline"
                           >
                             {node.prefix}
                           </button>
                         </td>
-                        <td className="px-4 py-4 text-xs font-semibold text-gray-500">{node.name || '-'}</td>
+                        <td className="max-w-[180px] truncate px-4 py-4 text-xs font-semibold text-gray-500" title={node.name || node.prefix}>{node.name || node.prefix}</td>
                         <td className="px-4 py-4">
                           {(() => {
                             const nt = NETWORK_TYPES[node.network_type] || NETWORK_TYPES['unclassified'];
@@ -1149,23 +1292,23 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                             const hasDhcp = addressRoles.some((role) => role.address_role === 'dhcp_lease');
                             return (
                               <div className="flex flex-wrap gap-1 items-center">
-                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${nt.color}`}>
+                                <span className={`whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-bold border ${nt.color}`}>
                                   {zh ? nt.labelZh : nt.label}
                                 </span>
-                                {hasVip ? <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-pink-50 text-pink-700 border border-pink-200">VIP</span> : null}
-                                {hasDhcp ? <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-sky-50 text-sky-700 border border-sky-200">DHCP</span> : null}
+                                {hasVip ? <span className="whitespace-nowrap px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-pink-50 text-pink-700 border border-pink-200">VIP</span> : null}
+                                {hasDhcp ? <span className="whitespace-nowrap px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-sky-50 text-sky-700 border border-sky-200">DHCP</span> : null}
                                 {node.manual_override ? (
-                                  <span title={zh ? '人工覆盖，自动分类不会改写' : 'Manual override protected from automatic rewrite'} className="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-violet-50 text-violet-700 border border-violet-200">
+                                  <span title={zh ? '人工覆盖，自动分类不会改写' : 'Manual override protected from automatic rewrite'} className="whitespace-nowrap px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-violet-50 text-violet-700 border border-violet-200">
                                     {zh ? '人工' : 'Manual'}
                                   </span>
                                 ) : null}
                                 {node.mixed_network ? (
-                                  <span title={zh ? '同一网段存在多种接口角色，需要确认' : 'Multiple interface roles detected; review required'} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                                  <span title={zh ? '同一网段存在多种接口角色，需要确认' : 'Multiple interface roles detected; review required'} className="inline-flex items-center gap-0.5 whitespace-nowrap px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
                                     <AlertTriangle size={10} />{zh ? '混合' : 'Mixed'}
                                   </span>
                                 ) : null}
                                 {node.conflict_status ? (
-                                  <span title={zh ? '同租户同前缀跨站点冲突' : 'Same tenant/prefix appears across sites'} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                                  <span title={zh ? '同租户同前缀跨站点冲突' : 'Same tenant/prefix appears across sites'} className="inline-flex items-center gap-0.5 whitespace-nowrap px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
                                     <AlertTriangle size={10} />{zh ? '冲突' : 'Conflict'}
                                   </span>
                                 ) : null}
@@ -1173,22 +1316,22 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                             );
                           })()}
                         </td>
-                        <td className="px-4 py-4 text-xs font-medium text-gray-600">{node.vrf_name || '-'}</td>
+                          <td className="whitespace-nowrap px-4 py-4 text-xs font-medium text-gray-600">{node.vrf_name || '-'}</td>
                         <td className="px-4 py-4">
                           {node.vlan_id ? (
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-600 border border-indigo-500/10">
+                            <span className="whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-600 border border-indigo-500/10">
                               VLAN {node.vlan_id}
                             </span>
                           ) : (
                             '-'
                           )}
                         </td>
-                        <td className="px-4 py-4 text-xs font-mono font-bold text-gray-700">{node.gateway || '-'}</td>
-                        <td className="px-4 py-4 text-xs text-gray-600 font-medium">{node.gateway_device_name || '-'}</td>
-                        <td className="px-4 py-4 text-xs text-gray-600 font-semibold">{node.site_name || node.site_code || '-'}</td>
+                        <td className="whitespace-nowrap px-4 py-4 text-xs font-mono font-bold text-gray-700">{node.gateway || '-'}</td>
+                        <td className="whitespace-nowrap px-4 py-4 text-xs text-gray-600 font-medium">{node.gateway_device_name || '-'}</td>
+                        <td className="whitespace-nowrap px-4 py-4 text-xs text-gray-600 font-semibold">{node.site_name || node.site_code || '-'}</td>
                         <td className="px-4 py-4 text-xs text-gray-500 whitespace-nowrap">{formatPrefixTimestamp(node.created_at, language)}</td>
                         <td className="px-4 py-4">
-                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                          <span className={`inline-flex items-center gap-1.5 whitespace-nowrap px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
                             node.status === 'active' 
                               ? 'bg-emerald-50 text-emerald-600 border border-emerald-500/10' 
                               : node.status === 'reserved' 
@@ -1207,6 +1350,11 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                         <td className="px-4 py-4 text-xs font-semibold text-gray-600 tabular-nums">{node.utilization}%</td>
                         <TableActionCell className="pr-6 py-4 text-right">
                           <ActionIconGroup label={zh ? '前缀操作' : 'Prefix actions'} className="opacity-0 transition-opacity group-hover:opacity-100">
+                            <ActionIconButton
+                              icon={Package}
+                              label={zh ? '分配范围 / 地址池' : 'Allocation ranges / pools'}
+                              onClick={() => setPoolManagerPrefix(node)}
+                            />
                             <ActionIconButton
                               icon={Pencil}
                               label={zh ? '编辑' : 'Edit'}
@@ -1238,7 +1386,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
 
         {/* Pagination */}
         {viewMode === 'table' && (
-          <div className="px-6 py-4 border-t border-gray-100">
+          <div className="shrink-0 border-t border-gray-100 px-3 py-3 sm:px-6 sm:py-4">
             <Pagination
               currentPage={page}
               totalItems={totalPrefixes}
@@ -1255,123 +1403,237 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
       {/* Generate canonical IPAM data from current interface collection */}
       <AnimatePresence>
         {showInterfaceGeneration && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 backdrop-blur-sm sm:p-5">
             <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white w-full max-w-3xl rounded-3xl overflow-hidden shadow-2xl border border-black/5 flex flex-col max-h-[88vh]"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              role="dialog"
+              aria-modal="true"
+              aria-label={zh ? '从接口采集生成 IPAM 网段' : 'Generate IPAM Prefixes from Interfaces'}
+              className="flex h-[88vh] max-h-[820px] w-full max-w-5xl flex-col overflow-hidden rounded-3xl border border-black/5 bg-white shadow-2xl"
             >
-              <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
-                <div>
+              <div className="flex shrink-0 items-center justify-between gap-3 border-b border-gray-100 px-4 py-4 sm:px-6">
+                <div className="min-w-0">
                   <h3 className="font-bold text-gray-900">{zh ? '从接口采集生成 IPAM 网段' : 'Generate IPAM Prefixes from Interfaces'}</h3>
-                  <p className="text-xs text-gray-500 mt-1">{zh ? '来源为当前接口采集结果；不会读取或恢复旧 IPAM 前缀。' : 'Uses current interface collection only; legacy IPAM prefixes are never restored.'}</p>
+                  <p className="mt-1 text-xs text-gray-500">{zh ? '来源为当前接口采集结果；按精确 CIDR 生成，不合并相邻网段。' : 'Uses current interface collection and preserves each exact CIDR without merging adjacent prefixes.'}</p>
                 </div>
-                <div className="flex items-center gap-2">
-                  {interfaceCandidates.length > 0 && <TableExportMenu
-                    filename="ipam-interface-prefix-candidates"
-                    language={zh ? 'zh' : 'en'}
-                    disabled={interfaceGenerationLoading}
-                    exportData={{
-                      headers: [zh ? '候选前缀' : 'Candidate Prefix', zh ? '接口数' : 'Interfaces', zh ? '状态' : 'Status'],
-                      rows: interfaceCandidates.map(candidate => [
-                        candidate.prefix,
-                        candidate.interface_count,
-                        candidate.status === 'existing' ? (zh ? '已存在' : 'Existing') : (zh ? '新建项' : 'New'),
-                      ]),
-                    }}
-                  />}
-                  <button onClick={() => setShowInterfaceGeneration(false)} className="p-1.5 rounded-lg hover:bg-gray-50 text-gray-400">
+                <div className="flex shrink-0 items-center gap-1.5">
+                  {interfaceCandidates.length > 0 && <>
+                    <span className="hidden text-[10px] text-gray-400 sm:inline">{zh ? '导出当前页' : 'Export current page'}</span>
+                    <TableExportMenu
+                      filename="ipam-interface-prefix-candidates"
+                      language={zh ? 'zh' : 'en'}
+                      disabled={interfaceGenerationLoading || interfaceCandidatesLoading}
+                      exportData={{
+                        headers: [zh ? '候选前缀' : 'Candidate Prefix', zh ? '接口数' : 'Interfaces', zh ? '状态' : 'Status'],
+                        rows: interfaceCandidates.map(candidate => [
+                          candidate.prefix,
+                          candidate.interface_count,
+                          candidate.status === 'existing' ? (zh ? '已存在' : 'Existing') : (zh ? '新建项' : 'New'),
+                        ]),
+                      }}
+                    />
+                  </>}
+                  <button
+                    type="button"
+                    onClick={() => loadInterfaceCandidates(interfaceCandidatePage.page, interfaceCandidateFilter)}
+                    disabled={interfaceCandidatesLoading || interfaceGenerationLoading}
+                    aria-label={zh ? '刷新候选项' : 'Refresh candidates'}
+                    className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-gray-50 hover:text-cyan-600 disabled:opacity-50"
+                  >
+                    <RefreshCw size={15} className={interfaceCandidatesLoading ? 'animate-spin' : ''} />
+                  </button>
+                  <button type="button" onClick={() => setShowInterfaceGeneration(false)} aria-label={zh ? '关闭' : 'Close'} className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-gray-50">
                     <X size={16} />
                   </button>
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 sm:p-5">
                 {interfaceGenerationError && (
-                  <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs font-semibold text-rose-600">{interfaceGenerationError}</div>
-                )}
-                {interfaceGenerationResult && (
-                  <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs font-semibold text-emerald-700">{interfaceGenerationResult}</div>
-                )}
-                {interfaceGenerationLoading && interfaceCandidates.length === 0 ? (
-                  <div className="py-12 text-center text-xs text-gray-400">{zh ? '正在读取接口采集结果…' : 'Loading interface collection…'}</div>
-                ) : interfaceCandidates.length === 0 ? (
-                  <div className="py-12 text-center text-xs text-gray-400">{zh ? '没有可生成的接口 IP。请先完成接口采集。' : 'No interface IP candidates. Run interface collection first.'}</div>
-                ) : (
-                  <div className="border border-gray-100 rounded-2xl overflow-hidden">
-                    <div className="grid grid-cols-[32px_1fr_100px_100px] gap-3 px-4 py-3 bg-gray-50 text-[10px] font-bold text-gray-400 uppercase">
-                      <span />
-                      <span>{zh ? '候选网段' : 'Candidate Prefix'}</span>
-                      <span>{zh ? '接口数' : 'Interfaces'}</span>
-                      <span>{zh ? '状态' : 'Status'}</span>
-                    </div>
-                    {interfaceCandidates.map((candidate) => (
-                      <label key={candidate.candidate_id} className="grid grid-cols-[32px_1fr_100px_100px] gap-3 items-center px-4 py-3 border-t border-gray-100 hover:bg-cyan-50/30 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={selectedInterfaceCandidates.has(candidate.candidate_id)}
-                          onChange={() => toggleInterfaceCandidate(candidate.candidate_id)}
-                          className="rounded border-gray-300 text-cyan-600 focus:ring-cyan-500"
-                        />
-                        <div>
-                          <div className="font-mono text-sm font-bold text-gray-800">{candidate.prefix}</div>
-                          <div className="text-[10px] text-gray-400 mt-1 truncate">
-                            {candidate.interfaces.slice(0, 3).map((item) => `${item.device_name} · ${item.interface_name} · ${item.address}`).join('；')}
-                            {candidate.interfaces.length > 3 ? ` … +${candidate.interfaces.length - 3}` : ''}
-                          </div>
-                        </div>
-                        <span className="text-xs text-gray-600">{candidate.interface_count}</span>
-                        <span className={`inline-flex items-center gap-1 text-[10px] font-bold ${candidate.status === 'existing' ? 'text-emerald-600' : 'text-cyan-600'}`}>
-                          {candidate.status === 'existing' ? <Check size={13} /> : <Plus size={13} />}
-                          {candidate.status === 'existing' ? (zh ? '已存在' : 'Existing') : (zh ? '待创建' : 'New')}
-                        </span>
-                      </label>
-                    ))}
+                  <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-700">
+                    <span>{interfaceGenerationError}</span>
+                    <button type="button" onClick={() => loadInterfaceCandidates(interfaceCandidatePage.page, interfaceCandidateFilter)} disabled={interfaceCandidatesLoading} className="shrink-0 rounded-lg bg-white px-3 py-1.5 text-rose-700 shadow-sm hover:bg-rose-100 disabled:opacity-50">
+                      {zh ? '重试' : 'Retry'}
+                    </button>
                   </div>
                 )}
-                {interfaceSkipped.length > 0 && (
-                  <div className="p-3.5 rounded-2xl bg-amber-50/50 border border-amber-200/60 text-xs text-amber-800">
-                    <div className="flex items-center justify-between font-bold mb-1.5">
-                      <div className="flex items-center gap-1.5">
-                        <AlertTriangle size={14} className="text-amber-500" />
-                        <span>{zh ? `有 ${interfaceSkipped.length} 个接口未纳入` : `${interfaceSkipped.length} interfaces skipped`}</span>
-                      </div>
-                      <button 
-                        onClick={() => setShowSkippedDetails(!showSkippedDetails)}
-                        className="text-[10px] text-amber-600 hover:text-amber-700 underline font-medium"
-                      >
-                        {showSkippedDetails ? (zh ? '收起' : '展开全部') : (zh ? '展开全部' : 'Show All')}
-                      </button>
+                {interfaceGenerationResult && (
+                  <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-semibold text-emerald-700">{interfaceGenerationResult}</div>
+                )}
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+                  {[
+                    { label: zh ? '候选网段' : 'Candidates', value: interfaceCandidateSummary.candidate_count },
+                    { label: zh ? '待创建' : 'To create', value: interfaceCandidateSummary.to_create_count },
+                    { label: zh ? '已存在' : 'Existing', value: interfaceCandidateSummary.existing_count },
+                    { label: zh ? '接口 IP' : 'Interface IPs', value: interfaceCandidateSummary.interface_count },
+                    { label: zh ? '未纳入接口' : 'Skipped interfaces', value: interfaceCandidateSummary.skipped_count },
+                  ].map((item) => (
+                    <div key={item.label} className="rounded-xl border border-gray-100 bg-gray-50/70 px-3 py-2.5">
+                      <div className="text-[10px] font-semibold text-gray-500">{item.label}</div>
+                      <div className="mt-0.5 text-sm font-extrabold tabular-nums text-gray-800">{item.value.toLocaleString()}</div>
                     </div>
-                    {showSkippedDetails ? (
-                      <div className="mt-2 space-y-1 max-h-32 overflow-y-auto pr-1">
-                        {interfaceSkipped.map((item, idx) => (
-                          <div key={idx} className="flex items-center justify-between gap-2 p-1.5 rounded-lg bg-white/70 border border-amber-100/60 text-[10px]">
-                            <span className="font-semibold text-slate-700">{item.device_name}/{item.interface_name}</span>
-                            <span className="text-amber-600 font-medium">{item.reason}</span>
+                  ))}
+                  </div>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap gap-1.5" role="tablist" aria-label={zh ? '候选状态筛选' : 'Candidate status filter'}>
+                    {([
+                      ['to_create', zh ? '待创建' : 'To create', interfaceCandidateSummary.to_create_count],
+                      ['existing', zh ? '已存在' : 'Existing', interfaceCandidateSummary.existing_count],
+                      ['all', zh ? '全部候选' : 'All candidates', interfaceCandidateSummary.candidate_count],
+                    ] as Array<[InterfaceCandidateFilter, string, number]>).map(([status, label, count]) => (
+                      <button
+                        key={status}
+                        type="button"
+                        role="tab"
+                        aria-selected={interfaceCandidateFilter === status}
+                        disabled={interfaceGenerationLoading}
+                        onClick={() => {
+                          setInterfaceCandidateFilter(status);
+                          loadInterfaceCandidates(1, status);
+                        }}
+                        className={`rounded-lg px-3 py-2 text-[11px] font-bold transition-colors disabled:cursor-wait disabled:opacity-50 ${interfaceCandidateFilter === status ? 'bg-cyan-50 text-cyan-700 ring-1 ring-cyan-200' : 'text-gray-500 hover:bg-gray-50'}`}
+                      >
+                        {label} <span className="ml-1 tabular-nums opacity-75">{count.toLocaleString()}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-2 text-[10px] text-gray-500">
+                    <span>{interfaceCandidatesLoading
+                      ? (zh ? '正在更新候选项…' : 'Updating candidates…')
+                      : (zh ? `当前筛选 ${interfaceCandidatePage.filtered_count.toLocaleString()} 项` : `${interfaceCandidatePage.filtered_count.toLocaleString()} filtered`)}</span>
+                    <button type="button" onClick={selectVisibleInterfaceCandidates} disabled={interfaceCandidates.length === 0 || interfaceCandidatesLoading || interfaceGenerationLoading} className="rounded-lg border border-gray-200 px-2.5 py-1.5 font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+                      {interfaceCandidates.length > 0 && interfaceCandidates.every((candidate) => selectedInterfaceCandidates.has(candidate.candidate_id))
+                        ? (zh ? '取消本页选择' : 'Clear page selection')
+                        : (zh ? '选择本页' : 'Select page')}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="min-h-[220px] overflow-x-auto rounded-2xl border border-gray-100">
+                  <div className="grid min-w-[500px] grid-cols-[34px_minmax(200px,1fr)_70px_70px_82px] gap-2 bg-gray-50 px-3 py-3 text-[10px] font-bold uppercase text-gray-400 sm:grid-cols-[42px_minmax(260px,1fr)_88px_88px_100px] sm:gap-3 sm:px-4">
+                    <span aria-label={zh ? '选择' : 'Select'} />
+                    <span>{zh ? '精确候选网段与接口样例' : 'Exact candidate prefix and interface samples'}</span>
+                    <span>{zh ? '接口数' : 'Interfaces'}</span>
+                    <span>{zh ? 'IP 数' : 'IPs'}</span>
+                    <span>{zh ? '状态' : 'Status'}</span>
+                  </div>
+                  {interfaceCandidatesLoading && interfaceCandidates.length === 0 ? (
+                    <div role="status" className="py-16 text-center text-xs font-semibold text-gray-400">{zh ? '正在读取接口候选项…' : 'Loading interface candidates…'}</div>
+                  ) : interfaceCandidates.length === 0 ? (
+                    <div className="py-16 text-center text-xs text-gray-400">
+                      {interfaceCandidateSummary.candidate_count === 0
+                        ? (zh ? '没有可生成的接口 IP。请先完成接口采集。' : 'No interface IP candidates. Run interface collection first.')
+                        : (zh ? '此状态下没有候选网段。' : 'No candidates match this status.')}
+                    </div>
+                  ) : (
+                    <div className="max-h-[340px] min-w-[500px] overflow-y-auto">
+                      {interfaceCandidates.map((candidate) => (
+                        <label key={candidate.candidate_id} className="grid grid-cols-[34px_minmax(200px,1fr)_70px_70px_82px] items-center gap-2 border-t border-gray-100 px-3 py-3 hover:bg-cyan-50/30 sm:grid-cols-[42px_minmax(260px,1fr)_88px_88px_100px] sm:gap-3 sm:px-4">
+                          <input
+                            type="checkbox"
+                            checked={selectedInterfaceCandidates.has(candidate.candidate_id)}
+                            onChange={() => toggleInterfaceCandidate(candidate.candidate_id)}
+                            disabled={interfaceCandidatesLoading || interfaceGenerationLoading || Boolean(interfaceGenerationError)}
+                            aria-label={`${zh ? '选择网段' : 'Select prefix'} ${candidate.prefix}`}
+                            className="rounded border-gray-300 text-cyan-600 focus:ring-cyan-500"
+                          />
+                          <div className="min-w-0">
+                            <div className="truncate font-mono text-xs font-bold text-gray-800 sm:text-sm">{candidate.prefix}</div>
+                            <div className="mt-1 space-y-0.5 text-[10px] text-gray-500">
+                              {candidate.interfaces.slice(0, 3).map((item, index) => (
+                                <div key={`${item.interface_id}-${index}`} className="truncate">{item.device_name} · {item.interface_name} · {item.address}</div>
+                              ))}
+                              {candidate.interface_count > candidate.interfaces.length && <div className="text-gray-400">{zh ? `另有 ${candidate.interface_count - candidate.interfaces.length} 个接口` : `${candidate.interface_count - candidate.interfaces.length} more interfaces`}</div>}
+                            </div>
+                          </div>
+                          <span className="text-xs tabular-nums text-gray-600">{candidate.interface_count.toLocaleString()}</span>
+                          <span className="text-xs tabular-nums text-gray-600">{candidate.ip_count.toLocaleString()}</span>
+                          <span className={`inline-flex items-center gap-1 text-[10px] font-bold ${candidate.status === 'existing' ? 'text-emerald-600' : 'text-cyan-600'}`}>
+                            {candidate.status === 'existing' ? <Check size={13} /> : <Plus size={13} />}
+                            {candidate.status === 'existing' ? (zh ? '已存在' : 'Existing') : (zh ? '待创建' : 'To create')}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-between gap-3 text-[10px] text-gray-500">
+                  <span>{zh ? `第 ${interfaceCandidatePage.page} / ${Math.max(interfaceCandidatePage.total_pages, 1)} 页` : `Page ${interfaceCandidatePage.page} of ${Math.max(interfaceCandidatePage.total_pages, 1)}`}</span>
+                  <div className="flex items-center gap-2">
+                    <button type="button" onClick={() => loadInterfaceCandidates(interfaceCandidatePage.page - 1)} disabled={interfaceCandidatesLoading || interfaceGenerationLoading || interfaceCandidatePage.page <= 1} className="rounded-lg border border-gray-200 px-3 py-1.5 font-semibold hover:bg-gray-50 disabled:opacity-40">{zh ? '上一页' : 'Previous'}</button>
+                    <button type="button" onClick={() => loadInterfaceCandidates(interfaceCandidatePage.page + 1)} disabled={interfaceCandidatesLoading || interfaceGenerationLoading || interfaceCandidatePage.page >= interfaceCandidatePage.total_pages} className="rounded-lg border border-gray-200 px-3 py-1.5 font-semibold hover:bg-gray-50 disabled:opacity-40">{zh ? '下一页' : 'Next'}</button>
+                  </div>
+                </div>
+
+                {(interfaceCandidateSummary.skipped_count > 0 || interfaceSkipped.length > 0) && (
+                  <div className="rounded-2xl border border-amber-200/70 bg-amber-50/60 p-3.5 text-xs text-amber-800">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 font-bold">
+                        <AlertTriangle size={14} className="text-amber-500" />
+                        <span>{zh ? `${interfaceCandidateSummary.skipped_count.toLocaleString()} 个接口未纳入，显示 ${interfaceSkipped.length} 条样例` : `${interfaceCandidateSummary.skipped_count.toLocaleString()} interfaces skipped; showing ${interfaceSkipped.length} examples`}</span>
+                      </div>
+                      {interfaceSkipped.length > 0 && <button type="button" onClick={() => setShowSkippedDetails(!showSkippedDetails)} className="text-[10px] font-semibold text-amber-700 underline">
+                        {showSkippedDetails ? (zh ? '收起样例' : 'Hide examples') : (zh ? '查看样例' : 'Show examples')}
+                      </button>}
+                    </div>
+                    {showSkippedDetails && interfaceSkipped.length > 0 && (
+                      <div className="mt-2 max-h-28 space-y-1 overflow-y-auto pr-1">
+                        {interfaceSkipped.slice(0, 10).map((item, index) => (
+                          <div key={`${item.device_name}-${item.interface_name}-${index}`} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-100/60 bg-white/70 p-1.5 text-[10px]">
+                            <span className="font-semibold text-slate-700">{item.device_name}/{item.interface_name}{item.address ? ` · ${item.address}` : ''}</span>
+                            <span className="font-medium text-amber-700">{item.reason}</span>
                           </div>
                         ))}
-                      </div>
-                    ) : (
-                      <div className="mt-1 text-[10px] text-amber-750 truncate">
-                        {interfaceSkipped.slice(0, 3).map((item) => `${item.device_name}/${item.interface_name}`).join(', ')}
-                        {interfaceSkipped.length > 3 && ' ...'}
                       </div>
                     )}
                   </div>
                 )}
               </div>
 
-              <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 flex items-center justify-between">
-                <span className="text-xs text-gray-500">{zh ? `已选择 ${selectedInterfaceCandidates.size} 个候选网段` : `${selectedInterfaceCandidates.size} prefixes selected`}</span>
-                <div className="flex items-center gap-3">
-                  <button onClick={() => setShowInterfaceGeneration(false)} className="px-4 py-2 text-xs text-gray-500 hover:bg-gray-100 rounded-xl font-semibold">{zh ? '取消' : 'Cancel'}</button>
-                  <button onClick={generateFromInterfaces} disabled={interfaceGenerationLoading || selectedInterfaceCandidates.size === 0} className="px-4 py-2 bg-cyan-500 hover:bg-cyan-600 disabled:opacity-50 text-white rounded-xl text-xs font-bold">
-                    {interfaceGenerationLoading ? (zh ? '处理中…' : 'Processing…') : (zh ? '确认生成' : 'Generate')}
+              <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-gray-100 bg-gray-50 px-4 py-3 sm:px-6 sm:py-4">
+                <span className="text-xs text-gray-600">{zh ? `已明确选择 ${selectedInterfaceCandidates.size.toLocaleString()} 个网段` : `${selectedInterfaceCandidates.size.toLocaleString()} prefixes explicitly selected`}</span>
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <button type="button" onClick={() => setShowGenerateAllPendingConfirm(true)} disabled={interfaceGenerationLoading || interfaceCandidatesLoading || Boolean(interfaceGenerationError) || interfaceCandidateSummary.to_create_count === 0} className="rounded-xl border border-cyan-200 bg-white px-3 py-2 text-[11px] font-bold text-cyan-700 hover:bg-cyan-50 disabled:opacity-50">
+                    {zh ? `生成全部待创建项 (${interfaceCandidateSummary.to_create_count.toLocaleString()})` : `Generate all pending (${interfaceCandidateSummary.to_create_count.toLocaleString()})`}
+                  </button>
+                  <button type="button" onClick={() => setShowInterfaceGeneration(false)} className="rounded-xl px-3 py-2 text-xs font-semibold text-gray-500 hover:bg-gray-100">{zh ? '关闭' : 'Close'}</button>
+                  <button type="button" onClick={() => generateFromInterfaces(false)} disabled={interfaceGenerationLoading || interfaceCandidatesLoading || Boolean(interfaceGenerationError) || selectedInterfaceCandidates.size === 0} className="rounded-xl bg-cyan-500 px-4 py-2 text-xs font-bold text-white hover:bg-cyan-600 disabled:opacity-50">
+                    {interfaceGenerationLoading ? (zh ? '处理中…' : 'Processing…') : (zh ? `生成所选 (${selectedInterfaceCandidates.size})` : `Generate selected (${selectedInterfaceCandidates.size})`)}
                   </button>
                 </div>
               </div>
+
+              <AnimatePresence>
+                {showGenerateAllPendingConfirm && (
+                  <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      role="alertdialog"
+                      aria-modal="true"
+                      aria-labelledby="generate-all-pending-title"
+                      className="w-full max-w-md rounded-2xl border border-black/5 bg-white p-5 shadow-2xl"
+                    >
+                      <h4 id="generate-all-pending-title" className="text-sm font-bold text-gray-900">{zh ? '生成全部待创建网段？' : 'Generate all pending prefixes?'}</h4>
+                      <p className="mt-2 text-xs leading-relaxed text-gray-600">
+                        {zh
+                          ? `将处理全部 ${interfaceCandidateSummary.to_create_count.toLocaleString()} 个待创建候选网段，并按原始 CIDR 登记接口 IP。已有网段不会在本次全量操作中补齐。`
+                          : `This will process all ${interfaceCandidateSummary.to_create_count.toLocaleString()} pending prefixes and register their interface IPs using the exact CIDRs. Existing prefixes are not included in this bulk action.`}
+                      </p>
+                      <div className="mt-5 flex justify-end gap-2">
+                        <button type="button" onClick={() => setShowGenerateAllPendingConfirm(false)} className="rounded-lg px-3 py-2 text-xs font-semibold text-gray-500 hover:bg-gray-100">{zh ? '取消' : 'Cancel'}</button>
+                        <button type="button" onClick={() => generateFromInterfaces(true)} disabled={interfaceGenerationLoading || Boolean(interfaceGenerationError) || interfaceCandidateSummary.to_create_count === 0} className="rounded-lg bg-cyan-600 px-3 py-2 text-xs font-bold text-white hover:bg-cyan-700 disabled:opacity-50">
+                          {interfaceGenerationLoading ? (zh ? '处理中…' : 'Processing…') : (zh ? '确认生成全部' : 'Confirm all')}
+                        </button>
+                      </div>
+                    </motion.div>
+                  </div>
+                )}
+              </AnimatePresence>
             </motion.div>
           </div>
         )}
@@ -1382,81 +1644,39 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
         {showAddEdit && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
             <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white w-full max-w-2xl rounded-3xl overflow-hidden shadow-2xl border border-black/5 flex flex-col max-h-[90vh]"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="prefix-form-title"
+              className="flex h-[90vh] max-h-[850px] w-full max-w-3xl flex-col overflow-hidden rounded-3xl border border-black/5 bg-white shadow-2xl"
             >
               {/* Header */}
-              <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
+              <div className="flex shrink-0 items-center justify-between border-b border-gray-100 px-5 py-4 sm:px-6 sm:py-5">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-2xl bg-cyan-50 flex items-center justify-center text-cyan-600">
                     <PlusCircle size={20} />
                   </div>
                   <div>
-                    <h3 className="font-bold text-gray-900">{editingPrefix ? (zh ? '编辑前缀网段' : 'Edit Prefix') : (zh ? '新增前缀网段' : 'Add Prefix')}</h3>
-                    <p className="text-xs text-gray-500 mt-0.5">{zh ? '在企业地址空间中声明一个新的CIDR前缀' : 'Allocate a new IP space prefix.'}</p>
+                    <h3 id="prefix-form-title" className="font-bold text-gray-900">{editingPrefix ? (zh ? '编辑网段' : 'Edit Prefix') : (zh ? '新增网段' : 'Add Prefix')}</h3>
+                    <p className="mt-0.5 text-xs text-gray-500">{zh ? '只需先填写 CIDR；名称、网关及其他信息均可选，也可以稍后补充。' : 'Start with the CIDR. Name, gateway and other details are optional and can be added later.'}</p>
                   </div>
                 </div>
-                <button onClick={() => setShowAddEdit(false)} className="p-1.5 rounded-lg hover:bg-gray-50 transition-colors text-gray-400">
+                <button type="button" onClick={() => setShowAddEdit(false)} aria-label={zh ? '关闭网段表单' : 'Close prefix form'} className="p-1.5 rounded-lg hover:bg-gray-50 transition-colors text-gray-400">
                   <X size={16} />
                 </button>
               </div>
 
               {/* Form Content */}
-              <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 sm:p-6">
                 {errorMsg && (
                   <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-xs font-semibold text-rose-600">
                     {errorMsg}
                   </div>
                 )}
 
-                <div className="grid grid-cols-2 gap-4">
-                  {/* Recommend from Parent Prefix (Only for creating new prefix) */}
-                  {!editingPrefix && (
-                    <div className="col-span-2 p-4 bg-gray-50 rounded-2xl border border-gray-150 space-y-3">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-cyan-600">
-                        {zh ? '智能子网推荐 (从父网段切分)' : 'Subnet Recommendation (Split from Parent)'}
-                      </p>
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="space-y-1">
-                          <label className="text-[9px] font-bold text-gray-400">{zh ? '选择父网段' : 'Parent Subnet'}</label>
-                          <select
-                            value={parentSubnetId}
-                            onChange={(e) => setParentSubnetId(e.target.value)}
-                            className="w-full px-3 py-1.5 text-xs rounded-xl border border-gray-250 bg-white outline-none focus:border-cyan-400"
-                          >
-                            <option value="">{zh ? '— 请选择 —' : '— Select —'}</option>
-                            {prefixes.map((p) => (
-                              <option key={p.id} value={p.id}>
-                                {p.prefix} {p.name ? `(${p.name})` : ''}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[9px] font-bold text-gray-400">{zh ? '期望子网掩码长度' : 'Desired Prefix Length'}</label>
-                          <div className="flex gap-2">
-                            <input
-                              type="number"
-                              value={desiredPrefixLen}
-                              onChange={(e) => setDesiredPrefixLen(parseInt(e.target.value, 10) || 24)}
-                              min={1}
-                              max={128}
-                              className="w-20 px-3 py-1.5 text-xs rounded-xl border border-gray-250 bg-white outline-none focus:border-cyan-400"
-                            />
-                            <button
-                              type="button"
-                              onClick={handleGetSuggestedPrefix}
-                              className="flex-1 px-3 py-1.5 bg-cyan-500 hover:bg-cyan-600 text-white rounded-xl text-[10px] font-bold transition-all active:scale-95 cursor-pointer text-center"
-                            >
-                              {zh ? '推荐可用网段' : 'Find Free'}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
 
                   {/* CIDR Prefix */}
                   <div className="space-y-1.5 col-span-2">
@@ -1484,7 +1704,20 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                       className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                       disabled={editingPrefix !== null}
                     />
-                    {usableIpDetails && (
+                    <button
+                      type="button"
+                      onClick={() => setShowIpPlanningHelper((visible) => !visible)}
+                      disabled={!usableIpDetails}
+                      aria-expanded={showIpPlanningHelper && !!usableIpDetails}
+                      className="mt-1 inline-flex items-center gap-2 rounded-lg border border-cyan-100 bg-cyan-50/50 px-3 py-2 text-[11px] font-semibold text-cyan-700 transition-colors hover:bg-cyan-50 disabled:cursor-not-allowed disabled:border-gray-100 disabled:bg-gray-50 disabled:text-gray-400"
+                    >
+                      <Info size={13} />
+                      <span>{usableIpDetails
+                        ? (showIpPlanningHelper ? (zh ? '收起 IP 规划助手' : 'Hide IP planning helper') : (zh ? '查看 IP 规划助手' : 'View IP planning helper'))
+                        : (zh ? '输入有效 CIDR 后可查看 IP 规划' : 'Enter a valid CIDR to view IP planning')}</span>
+                      {usableIpDetails && <ChevronDown size={13} className={`transition-transform ${showIpPlanningHelper ? 'rotate-180' : ''}`} />}
+                    </button>
+                    {showIpPlanningHelper && usableIpDetails && (
                       <div className="col-span-2 p-4 bg-cyan-50/30 rounded-2xl border border-cyan-500/10 mt-1 space-y-3">
                         <div className="flex items-center justify-between">
                           <span className="text-[10px] font-bold text-cyan-600 uppercase tracking-wider flex items-center gap-1.5">
@@ -1583,30 +1816,6 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                     )}
                   </div>
 
-                  {/* Name */}
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '网段名称' : 'Name'}</label>
-                    <input
-                      type="text"
-                      value={form.name}
-                      onChange={(e) => setForm({ ...form, name: e.target.value })}
-                      placeholder={zh ? '例如：生产应用服务器网段' : 'e.g. Prod App Servers'}
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
-                    />
-                  </div>
-
-                  {/* Gateway */}
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '默认网关' : 'Gateway'}</label>
-                    <input
-                      type="text"
-                      value={form.gateway}
-                      onChange={(e) => setForm({ ...form, gateway: e.target.value })}
-                      placeholder="e.g. 10.1.1.1"
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
-                    />
-                  </div>
-
                   {/* Network Type (Role) */}
                   <div className="space-y-1.5">
                     <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '网络用途 (Role)' : 'Network Role'}</label>
@@ -1619,6 +1828,84 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                         <option key={key} value={key}>{zh ? val.labelZh : val.label}</option>
                       ))}
                     </select>
+                  </div>
+
+                  {!editingPrefix && (
+                    <div className="sm:col-span-2">
+                      <button
+                        type="button"
+                        aria-expanded={showSubnetRecommendation}
+                        onClick={() => setShowSubnetRecommendation((visible) => !visible)}
+                        className="flex w-full items-center justify-between rounded-xl border border-gray-150 bg-gray-50 px-4 py-3 text-left text-xs font-semibold text-gray-600 transition-colors hover:bg-gray-100"
+                      >
+                        <span>{zh ? '父网段切分推荐（可选）' : 'Parent subnet recommendation (optional)'}</span>
+                        <ChevronDown size={15} className={`text-gray-400 transition-transform ${showSubnetRecommendation ? 'rotate-180' : ''}`} />
+                      </button>
+                      {showSubnetRecommendation && (
+                        <div className="mt-2 space-y-3 rounded-2xl border border-gray-150 bg-gray-50 p-4">
+                          <p className="text-[10px] leading-relaxed text-gray-500">
+                            {zh ? '按父网段和目标前缀长度查找一个可用子网；推荐结果会填入上方 CIDR。' : 'Find an available child subnet under a parent prefix; the suggestion fills the CIDR field above.'}
+                          </p>
+                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-semibold text-gray-500">{zh ? '选择父网段' : 'Parent subnet'}</label>
+                              <select
+                                value={parentSubnetId}
+                                onChange={(e) => setParentSubnetId(e.target.value)}
+                                className="w-full rounded-xl border border-gray-250 bg-white px-3 py-2 text-xs outline-none focus:border-cyan-400"
+                              >
+                                <option value="">{zh ? '— 请选择 —' : '— Select —'}</option>
+                                {prefixes.map((p) => (
+                                  <option key={p.id} value={p.id}>{p.prefix} {p.name ? `(${p.name})` : ''}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-semibold text-gray-500">{zh ? '期望前缀长度' : 'Desired prefix length'}</label>
+                              <div className="flex gap-2">
+                                <input
+                                  type="number"
+                                  value={desiredPrefixLen}
+                                  onChange={(e) => setDesiredPrefixLen(parseInt(e.target.value, 10) || 24)}
+                                  min={1}
+                                  max={128}
+                                  className="w-24 rounded-xl border border-gray-250 bg-white px-3 py-2 text-xs outline-none focus:border-cyan-400"
+                                />
+                                <button type="button" onClick={handleGetSuggestedPrefix} className="flex-1 rounded-xl bg-cyan-500 px-3 py-2 text-[10px] font-bold text-white transition-colors hover:bg-cyan-600">
+                                  {zh ? '推荐可用网段' : 'Find available subnet'}
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Name */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '网段名称' : 'Name'}</label>
+                    <input
+                      type="text"
+                      value={form.name}
+                      onChange={(e) => setForm({ ...form, name: e.target.value })}
+                      placeholder={zh ? '可选识别名称；留空使用 CIDR' : 'Optional label; leave blank to use the CIDR'}
+                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
+                    />
+                    <p className="text-[10px] leading-relaxed text-gray-400">{zh ? '这是便于识别的展示别名；留空时界面以 CIDR 显示。' : 'Optional display alias; the CIDR is shown when this is left blank.'}</p>
+                  </div>
+
+                  {/* Gateway */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '默认网关 IP（可选）' : 'Default gateway IP (optional)'}</label>
+                    <input
+                      type="text"
+                      value={form.gateway}
+                      onChange={(e) => setForm({ ...form, gateway: e.target.value })}
+                      placeholder="e.g. 10.1.1.1"
+                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
+                    />
+                    <p className="text-[10px] leading-relaxed text-gray-400">{zh ? '若位于此子网，它会从可分配地址中排除；这不是设备关联。' : 'When inside this subnet, the IP is excluded from assignable addresses; it is separate from the device association.'}</p>
                   </div>
 
                   {/* Gateway Device */}
@@ -1634,18 +1921,25 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                         <option key={d.id} value={d.id}>{d.hostname} ({d.ip_address})</option>
                       ))}
                     </select>
+                    <p className="text-[10px] leading-relaxed text-gray-400">{zh ? '可选 CMDB 设备关联，用于 IP 定位和 ARP 上下文；不会代填网关 IP。' : 'Optional CMDB device association for IP location and ARP context; it does not set the gateway IP.'}</p>
                   </div>
 
+                  <div className="sm:col-span-2">
+                    <details className="overflow-hidden rounded-2xl border border-gray-150 bg-gray-50/60">
+                      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-xs font-bold text-gray-700 marker:hidden">
+                        <span>{zh ? '高级设置' : 'Advanced settings'}</span>
+                        <span className="text-[10px] font-medium text-gray-400">{zh ? '作用域、状态、描述与追踪' : 'Scope, status, description and traceability'}</span>
+                      </summary>
+                      <div className="grid grid-cols-1 gap-4 border-t border-gray-100 p-4 sm:grid-cols-2">
                   {/* Gateway Interface */}
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '网关接口' : 'Gateway Interface'}</label>
-                    <input
-                      type="text"
-                      value={form.gateway_interface_id}
-                      onChange={(e) => setForm({ ...form, gateway_interface_id: e.target.value })}
-                      placeholder={zh ? '例如：Vlan67, GigabitEthernet0/1' : 'e.g. Vlan67, Gi0/1'}
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
-                    />
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '已保存的接口关联 ID' : 'Saved interface association ID'}</label>
+                    <div className="w-full rounded-xl border border-gray-150 bg-gray-100/70 px-4 py-2.5 font-mono text-xs text-gray-500" aria-readonly="true">
+                      {editingPrefix?.gateway_interface_id || (zh ? '无' : 'None')}
+                    </div>
+                    <p className="text-[10px] leading-relaxed text-gray-400">
+                      {zh ? '此处需要数据库接口 ID；当前表单未加载接口 ID 选项，因此只读保留已有值，新建时留空。' : 'This field requires a database interface ID. Since interface ID options are not loaded here, existing values are preserved read-only and new prefixes leave it empty.'}
+                    </p>
                   </div>
 
                   {/* VRF Select */}
@@ -1722,7 +2016,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                   </div>
 
                   {/* Description */}
-                  <div className="space-y-1.5 col-span-2">
+                  <div className="space-y-1.5 sm:col-span-2">
                     <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '备注描述说明' : 'Description'}</label>
                     <textarea
                       value={form.description}
@@ -1734,7 +2028,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                   </div>
 
                   {/* Traceable Toggle */}
-                  <div className="col-span-2 flex items-center justify-between rounded-xl border border-gray-150 bg-gray-50/50 px-4 py-3">
+                  <div className="flex items-center justify-between rounded-xl border border-gray-150 bg-gray-50/50 px-4 py-3 sm:col-span-2">
                     <div>
                       <p className="text-xs font-bold text-gray-700">{zh ? '可追踪 (Traceable)' : 'Traceable'}</p>
                       <p className="text-[10px] text-gray-400 mt-0.5">
@@ -1756,22 +2050,28 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                       />
                     </button>
                   </div>
+                      </div>
+                    </details>
+                  </div>
                 </div>
               </div>
 
               {/* Actions */}
-              <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 flex items-center justify-end gap-3 flex-shrink-0">
+              <div className="flex shrink-0 items-center justify-end gap-3 border-t border-gray-100 bg-gray-50 px-4 py-3 sm:px-6 sm:py-4">
                 <button
+                  type="button"
                   onClick={() => setShowAddEdit(false)}
                   className="px-4 py-2 text-xs font-bold text-gray-500 hover:bg-gray-100 rounded-xl transition-all"
                 >
                   {zh ? '取消' : 'Cancel'}
                 </button>
                 <button
+                  type="button"
                   onClick={handleSave}
-                  className="px-6 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white text-xs font-extrabold rounded-xl shadow-md transition-all active:scale-95"
+                  disabled={isSaving}
+                  className="rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-6 py-2 text-xs font-extrabold text-white shadow-md transition-all hover:from-cyan-600 hover:to-blue-700 disabled:cursor-wait disabled:opacity-60"
                 >
-                  {zh ? '确定保存' : 'Save'}
+                  {isSaving ? (zh ? '保存中…' : 'Saving…') : (zh ? '确定保存' : 'Save')}
                 </button>
               </div>
             </motion.div>
@@ -1831,6 +2131,42 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                 <button onClick={handleBatchDelete} className="px-4 py-1.5 text-xs bg-rose-500 hover:bg-rose-600 text-white rounded-lg font-bold transition-colors">
                   {zh ? '确定批量删除' : 'Batch Delete'}
                 </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {poolManagerPrefix && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 backdrop-blur-sm sm:p-5">
+            <motion.div
+              initial={{ scale: 0.97, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.97, opacity: 0 }}
+              role="dialog"
+              aria-modal="true"
+              aria-label={zh ? '网段地址池管理' : 'Prefix pool management'}
+              className="flex h-[88vh] max-h-[900px] w-full max-w-6xl flex-col overflow-hidden rounded-3xl border border-black/5 bg-white shadow-2xl"
+            >
+              <div className="flex shrink-0 items-center justify-between gap-4 border-b border-gray-100 px-5 py-4 sm:px-6">
+                <div className="min-w-0">
+                  <h2 className="text-sm font-bold text-gray-900">{zh ? '网段分配范围 / 地址池' : 'Prefix Allocation Ranges / Pools'}</h2>
+                  <p className="mt-1 truncate font-mono text-xs text-cyan-700">
+                    {poolManagerPrefix.prefix}{poolManagerPrefix.name ? ` · ${poolManagerPrefix.name}` : ''}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPoolManagerPrefix(null)}
+                  aria-label={zh ? '关闭地址池管理' : 'Close pool management'}
+                  className="shrink-0 rounded-lg p-2 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <div className="flex-1 min-h-0 overflow-hidden p-3 sm:p-5">
+                <IPPoolTab language={language} t={t} prefixId={poolManagerPrefix.id} embedded />
               </div>
             </motion.div>
           </div>

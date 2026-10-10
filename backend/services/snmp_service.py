@@ -61,6 +61,8 @@ def _set_result_cache(key: str, value):
 
 # Standard IF-MIB OIDs (all vendors)
 IF_DESCR       = '1.3.6.1.2.1.2.2.1.2'
+IF_MTU         = '1.3.6.1.2.1.2.2.1.4'
+IF_PHYS_ADDRESS = '1.3.6.1.2.1.2.2.1.6'
 IF_ADMIN_STATUS = '1.3.6.1.2.1.2.2.1.7'
 IF_OPER_STATUS = '1.3.6.1.2.1.2.2.1.8'
 IF_SPEED       = '1.3.6.1.2.1.2.2.1.5'
@@ -71,11 +73,92 @@ IF_HC_OUT      = '1.3.6.1.2.1.31.1.1.1.10'
 IF_ALIAS       = '1.3.6.1.2.1.31.1.1.1.18'
 IF_NAME        = '1.3.6.1.2.1.31.1.1.1.1'
 
+# Standard IP-MIB address rows.  ``ipAddressIfIndex`` joins the address
+# table to IF-MIB's ifIndex; ``ipAddressPrefix`` points at the corresponding
+# row in ipAddressPrefixTable (whose index ends with the prefix length).
+IP_ADDRESS_IF_INDEX = '1.3.6.1.2.1.4.34.1.3'
+IP_ADDRESS_TYPE = '1.3.6.1.2.1.4.34.1.4'
+IP_ADDRESS_PREFIX = '1.3.6.1.2.1.4.34.1.5'
+IP_ADDRESS_STATUS = '1.3.6.1.2.1.4.34.1.7'
+IP_ADDRESS_PREFIX_ENTRY = '1.3.6.1.2.1.4.32.1'
+
+# Q-BRIDGE-MIB current membership is indexed by TimeMark and VLAN ID.  Its
+# PortLists use dot1dBasePort numbers, which must be translated to ifIndex.
+DOT1Q_VLAN_CURRENT_EGRESS_PORTS = '1.3.6.1.2.1.17.7.1.4.2.1.4'
+DOT1Q_VLAN_CURRENT_UNTAGGED_PORTS = '1.3.6.1.2.1.17.7.1.4.2.1.5'
+DOT1Q_VLAN_STATIC_NAME = '1.3.6.1.2.1.17.7.1.4.3.1.1'
+DOT1Q_PORT_PVID = '1.3.6.1.2.1.17.7.1.4.5.1.1'
+
 # IF-MIB high-speed (for >=10G interfaces)
 IF_HIGH_SPEED     = '1.3.6.1.2.1.31.1.1.1.15'   # ifHighSpeed (Mbps)
 
 # ifLastChange: sysUpTime when oper status last changed (hundredths of sec)
 IF_LAST_CHANGE    = '1.3.6.1.2.1.2.2.1.9'        # ifLastChange (TimeTicks)
+
+# Standard IP-MIB IPv4 address translation (ARP) table.
+IP_NET_TO_MEDIA_PHYS_ADDRESS = '1.3.6.1.2.1.4.22.1.2'
+IP_NET_TO_MEDIA_TYPE = '1.3.6.1.2.1.4.22.1.4'
+
+# Standard Q-BRIDGE-MIB forwarding and VLAN-to-FDB tables.
+DOT1Q_TP_FDB_PORT = '1.3.6.1.2.1.17.7.1.2.2.1.2'
+DOT1Q_TP_FDB_STATUS = '1.3.6.1.2.1.17.7.1.2.2.1.3'
+DOT1Q_VLAN_FDB_ID = '1.3.6.1.2.1.17.7.1.4.2.1.3'
+DOT1D_BASE_PORT_IF_INDEX = '1.3.6.1.2.1.17.1.4.1.2'
+
+
+# IP-FORWARD-MIB inetCidrRouteTable.  The index is shared by all columns;
+# only columns with MAX-ACCESS other than not-accessible can be walked.
+INET_CIDR_ROUTE_IF_INDEX = '1.3.6.1.2.1.4.24.7.1.7'
+INET_CIDR_ROUTE_TYPE = '1.3.6.1.2.1.4.24.7.1.8'
+INET_CIDR_ROUTE_PROTO = '1.3.6.1.2.1.4.24.7.1.9'
+INET_CIDR_ROUTE_AGE = '1.3.6.1.2.1.4.24.7.1.10'
+INET_CIDR_ROUTE_NEXT_HOP_AS = '1.3.6.1.2.1.4.24.7.1.11'
+INET_CIDR_ROUTE_METRIC1 = '1.3.6.1.2.1.4.24.7.1.12'
+INET_CIDR_ROUTE_METRIC2 = '1.3.6.1.2.1.4.24.7.1.13'
+INET_CIDR_ROUTE_METRIC3 = '1.3.6.1.2.1.4.24.7.1.14'
+INET_CIDR_ROUTE_METRIC4 = '1.3.6.1.2.1.4.24.7.1.15'
+INET_CIDR_ROUTE_METRIC5 = '1.3.6.1.2.1.4.24.7.1.16'
+INET_CIDR_ROUTE_STATUS = '1.3.6.1.2.1.4.24.7.1.17'
+
+# Standard routing-protocol neighbor tables (RFC 4273, RFC 4750, RFC 5643,
+# and RFC 4444 respectively).
+BGP4_PEER_IDENTIFIER = '1.3.6.1.2.1.15.3.1.1'
+BGP4_LOCAL_AS = '1.3.6.1.2.1.15.2.0'
+BGP4_PEER_STATE = '1.3.6.1.2.1.15.3.1.2'
+BGP4_PEER_ADMIN_STATUS = '1.3.6.1.2.1.15.3.1.3'
+BGP4_PEER_LOCAL_ADDRESS = '1.3.6.1.2.1.15.3.1.5'
+BGP4_PEER_REMOTE_ADDRESS = '1.3.6.1.2.1.15.3.1.7'
+BGP4_PEER_REMOTE_AS = '1.3.6.1.2.1.15.3.1.9'
+BGP4_PEER_FSM_ESTABLISHED_TIME = '1.3.6.1.2.1.15.3.1.16'
+RIP2_PEER_ADDRESS = '1.3.6.1.2.1.23.4.1.1'
+RIP2_PEER_DOMAIN = '1.3.6.1.2.1.23.4.1.2'
+RIP2_PEER_LAST_UPDATE = '1.3.6.1.2.1.23.4.1.3'
+RIP2_PEER_VERSION = '1.3.6.1.2.1.23.4.1.4'
+RIP2_PEER_BAD_PACKETS = '1.3.6.1.2.1.23.4.1.5'
+RIP2_PEER_BAD_ROUTES = '1.3.6.1.2.1.23.4.1.6'
+EIGRP_PEER_ADDRESS_TYPE = '1.3.6.1.4.1.9.9.449.1.4.1.1.2'
+EIGRP_PEER_ADDRESS = '1.3.6.1.4.1.9.9.449.1.4.1.1.3'
+EIGRP_PEER_IF_INDEX = '1.3.6.1.4.1.9.9.449.1.4.1.1.4'
+EIGRP_PEER_HOLD_TIME = '1.3.6.1.4.1.9.9.449.1.4.1.1.5'
+OSPF_NBR_ROUTER_ID = '1.3.6.1.2.1.14.10.1.3'
+OSPF_NBR_PRIORITY = '1.3.6.1.2.1.14.10.1.5'
+OSPF_NBR_STATE = '1.3.6.1.2.1.14.10.1.6'
+OSPF_NBR_EVENTS = '1.3.6.1.2.1.14.10.1.7'
+OSPF_NBR_RETRANS_QUEUE = '1.3.6.1.2.1.14.10.1.8'
+OSPFV3_NBR_ADDRESS_TYPE = '1.3.6.1.2.1.191.1.9.1.4'
+OSPFV3_NBR_ADDRESS = '1.3.6.1.2.1.191.1.9.1.5'
+OSPFV3_NBR_PRIORITY = '1.3.6.1.2.1.191.1.9.1.7'
+OSPFV3_NBR_STATE = '1.3.6.1.2.1.191.1.9.1.8'
+OSPFV3_NBR_EVENTS = '1.3.6.1.2.1.191.1.9.1.9'
+ISIS_CIRC_IF_INDEX = '1.3.6.1.2.1.138.1.3.2.1.2'
+ISIS_ADJ_STATE = '1.3.6.1.2.1.138.1.6.1.1.2'
+ISIS_ADJ_THREE_WAY_STATE = '1.3.6.1.2.1.138.1.6.1.1.3'
+ISIS_ADJ_SNPA_ADDRESS = '1.3.6.1.2.1.138.1.6.1.1.4'
+ISIS_ADJ_NEIGHBOR_TYPE = '1.3.6.1.2.1.138.1.6.1.1.5'
+ISIS_ADJ_NEIGHBOR_SYSTEM_ID = '1.3.6.1.2.1.138.1.6.1.1.6'
+ISIS_ADJ_USAGE = '1.3.6.1.2.1.138.1.6.1.1.8'
+ISIS_ADJ_HOLD_TIMER = '1.3.6.1.2.1.138.1.6.1.1.9'
+ISIS_ADJ_NEIGHBOR_PRIORITY = '1.3.6.1.2.1.138.1.6.1.1.10'
 
 # Interface error/discard/packet counters (RFC 1213)
 IF_IN_ERRORS    = '1.3.6.1.2.1.2.2.1.14'
@@ -938,7 +1021,12 @@ async def _snmp_bulk_walk_typed(
         from puresnmp import ObjectIdentifier
 
         client = _build_versioned_snmp_client(ip, community, port, version_key)
-        async for varbind in client.bulkwalk([ObjectIdentifier(base_oid)], bulk_size=max_repetitions):
+        walker = (
+            client.walk(ObjectIdentifier(base_oid))
+            if version_key in {'v1', '1'}
+            else client.bulkwalk([ObjectIdentifier(base_oid)], bulk_size=max_repetitions)
+        )
+        async for varbind in walker:
             oid_str = str(varbind.oid)
             suffix = oid_str[len(base_oid) + 1:] if oid_str.startswith(base_oid + ".") else oid_str
             typed = _typed_value_from_raw(varbind.value)
@@ -987,8 +1075,14 @@ async def _snmp_bulk_walk(
         from puresnmp import PyWrapper
         version_key = str(version or '2c').strip().lower()
         client = PyWrapper(_build_versioned_snmp_client(ip, community, port, version_key))
-        # bulkwalk significantly reduces UDP round-trips
-        async for varbind in client.bulkwalk([base_oid], bulk_size=max_repetitions):
+        # GETBULK significantly reduces UDP round-trips. SNMPv1 only supports
+        # GETNEXT, so use the library's regular walk implementation there.
+        walker = (
+            client.walk(base_oid)
+            if version_key in {'v1', '1'}
+            else client.bulkwalk([base_oid], bulk_size=max_repetitions)
+        )
+        async for varbind in walker:
             oid_str = str(varbind.oid)
             suffix = oid_str[len(base_oid) + 1:] if oid_str.startswith(base_oid + '.') else oid_str
             v = _val_to_str(varbind.value)
@@ -1010,6 +1104,1719 @@ async def _snmp_bulk_walk(
         logger.debug(f"SNMP BULK_WALK returned no results for {ip} {oid}. Falling back to standard WALK.")
         results = await _snmp_walk(ip, community, oid, port, timeout=timeout, version=version)
     return results
+
+
+async def _snmp_bulk_walk_complete(
+    ip: str,
+    community_or_profile: str | Mapping[str, Any],
+    oid: str,
+    port: int = 161,
+    *,
+    timeout: float = 30,
+    max_repetitions: int = 20,
+    version: str = '2c',
+) -> list[tuple[str, Any]]:
+    """Walk an entire subtree and propagate failures instead of returning partial rows.
+
+    Unlike the general telemetry walkers, this helper is for replacing current
+    inventory snapshots. A timeout or protocol error must not look like a
+    successful, shorter table to the caller.
+    """
+    base_oid = oid.strip('.')
+    if not base_oid:
+        raise ValueError('SNMP walk OID is required')
+    results: list[tuple[str, Any]] = []
+
+    async def _collect() -> None:
+        from puresnmp import ObjectIdentifier
+
+        client = _build_versioned_snmp_client(ip, community_or_profile, port, version)
+        version_key = str(version or '2c').strip().casefold()
+        # SNMPv1 has no GETBULK PDU. Keep the same uncapped/full-walk contract
+        # by using GETNEXT for v1 and GETBULK for v2c/v3.
+        walker = (
+            client.walk(ObjectIdentifier(base_oid))
+            if version_key in {'v1', '1'}
+            else client.bulkwalk(
+                [ObjectIdentifier(base_oid)],
+                bulk_size=max(1, int(max_repetitions)),
+            )
+        )
+        async for varbind in walker:
+            oid_str = str(varbind.oid).strip('.')
+            if oid_str == base_oid or not oid_str.startswith(base_oid + '.'):
+                # The walk has reached the next MIB subtree; all rows below
+                # the requested OID have already been returned.
+                break
+            raw_value = varbind.value
+            if 'endofmibview' in type(raw_value).__name__.casefold():
+                break
+            results.append((oid_str[len(base_oid) + 1:], getattr(raw_value, 'value', raw_value)))
+
+    try:
+        async with get_network_access_limiter().async_snmp():
+            await asyncio.wait_for(_collect(), timeout=max(1.0, float(timeout)))
+    except asyncio.TimeoutError as exc:
+        raise TimeoutError(f'SNMP walk timed out for OID {base_oid}') from exc
+    except Exception as exc:
+        raise RuntimeError(f'SNMP walk failed for OID {base_oid} ({type(exc).__name__})') from exc
+    return results
+
+
+def _snmp_text_value(value: Any) -> str:
+    """Decode SNMP text/octet values without exposing binary bytes as replacement text."""
+    if isinstance(value, memoryview):
+        value = value.tobytes()
+    if isinstance(value, bytearray):
+        value = bytes(value)
+    if isinstance(value, bytes):
+        return value.decode('utf-8', errors='replace').strip('\r\n \x00')
+    return str(value or '').strip()
+
+
+def _snmp_integer_value(value: Any) -> int | None:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return parsed
+
+
+def _interface_status_from_if_mib(value: Any) -> str:
+    status = _snmp_integer_value(value)
+    if status == 1:
+        return 'up'
+    if status in {2, 7}:
+        return 'down'
+    return 'unknown'
+
+
+async def collect_interface_status_data(
+    ip: str,
+    community: str | Mapping[str, Any] = 'public',
+    port: int = 161,
+    *,
+    version: str = '2c',
+    timeout: float = 30,
+) -> list[dict[str, Any]]:
+    """Read IF-MIB identity, status, speed, alias, physical address, and MTU.
+
+    This intentionally avoids counters: telemetry sampling owns traffic and
+    error counters, while this collector maintains the CMDB projection. Every
+    required table walk is complete before any returned rows are used.
+    """
+    try:
+        name_rows = await _snmp_bulk_walk_complete(
+            ip, community, IF_NAME, port, timeout=timeout, version=version,
+        )
+    except Exception:
+        name_rows = []
+    if not name_rows:
+        name_rows = await _snmp_bulk_walk_complete(
+            ip, community, IF_DESCR, port, timeout=timeout, version=version,
+        )
+    if not name_rows:
+        raise RuntimeError('IF-MIB returned no interface names')
+
+    interface_names: dict[str, str] = {}
+    for suffix, raw_name in name_rows:
+        try:
+            if_index = int(suffix)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        name = _snmp_text_value(raw_name)
+        if if_index > 0 and name:
+            interface_names[str(if_index)] = name
+    if not interface_names:
+        raise RuntimeError('IF-MIB returned no usable interface names')
+
+    admin_rows, oper_rows = await asyncio.gather(
+        _snmp_bulk_walk_complete(
+            ip, community, IF_ADMIN_STATUS, port, timeout=timeout, version=version,
+        ),
+        _snmp_bulk_walk_complete(
+            ip, community, IF_OPER_STATUS, port, timeout=timeout, version=version,
+        ),
+    )
+    admin_by_index = {str(index): value for index, value in admin_rows}
+    oper_by_index = {str(index): value for index, value in oper_rows}
+    if not admin_by_index or not oper_by_index:
+        raise RuntimeError('IF-MIB status tables returned no rows')
+    if set(admin_by_index) != set(oper_by_index):
+        raise RuntimeError('IF-MIB admin and operational status tables do not match')
+
+    missing_names = set(admin_by_index) - set(interface_names)
+    if missing_names:
+        descr_rows = await _snmp_bulk_walk_complete(
+            ip, community, IF_DESCR, port, timeout=timeout, version=version,
+        )
+        for suffix, raw_name in descr_rows:
+            if str(suffix) in missing_names:
+                name = _snmp_text_value(raw_name)
+                if name:
+                    interface_names[str(suffix)] = name
+    if set(admin_by_index) - set(interface_names):
+        raise RuntimeError('IF-MIB names did not cover the complete status table')
+
+    missing_status = set(interface_names) - set(admin_by_index)
+    if missing_status:
+        raise RuntimeError('IF-MIB status tables did not cover the complete interface index')
+
+    optional_results = await asyncio.gather(
+        _snmp_bulk_walk_complete(
+            ip, community, IF_HIGH_SPEED, port, timeout=timeout, version=version,
+        ),
+        _snmp_bulk_walk_complete(
+            ip, community, IF_SPEED, port, timeout=timeout, version=version,
+        ),
+        _snmp_bulk_walk_complete(
+            ip, community, IF_ALIAS, port, timeout=timeout, version=version,
+        ),
+        _snmp_bulk_walk_complete(
+            ip, community, IF_PHYS_ADDRESS, port, timeout=timeout, version=version,
+        ),
+        _snmp_bulk_walk_complete(
+            ip, community, IF_MTU, port, timeout=timeout, version=version,
+        ),
+        return_exceptions=True,
+    )
+    high_speed_rows, speed_rows, alias_rows, phys_address_rows, mtu_rows = [
+        result if isinstance(result, list) else [] for result in optional_results
+    ]
+    high_speed_by_index = dict(high_speed_rows)
+    speed_by_index = dict(speed_rows)
+    alias_by_index = dict(alias_rows)
+    phys_address_by_index = dict(phys_address_rows)
+    mtu_by_index = dict(mtu_rows)
+    interface_index_set = {int(index) for index in interface_names}
+    alias_table_available = (
+        isinstance(optional_results[2], list)
+        and interface_index_set <= {int(index) for index in alias_by_index if str(index).isdigit()}
+    )
+    phys_address_complete = (
+        isinstance(optional_results[3], list)
+        and interface_index_set <= {int(index) for index in phys_address_by_index if str(index).isdigit()}
+    )
+    mtu_complete = (
+        isinstance(optional_results[4], list)
+        and interface_index_set <= {int(index) for index in mtu_by_index if str(index).isdigit()}
+    )
+
+    interfaces: list[dict[str, Any]] = []
+    for if_index, name in interface_names.items():
+        high_speed = _snmp_integer_value(high_speed_by_index.get(if_index))
+        speed_bps = _snmp_integer_value(speed_by_index.get(if_index))
+        speed_mbps = float(high_speed) if high_speed and high_speed > 0 else (
+            float(speed_bps) / 1_000_000 if speed_bps and speed_bps > 0 else 0.0
+        )
+        raw_phys_address = phys_address_by_index.get(if_index)
+        if isinstance(raw_phys_address, memoryview):
+            raw_phys_address = raw_phys_address.tobytes()
+        elif isinstance(raw_phys_address, bytearray):
+            raw_phys_address = bytes(raw_phys_address)
+        if isinstance(raw_phys_address, bytes):
+            mac_address = ':'.join(f'{octet:02x}' for octet in raw_phys_address) if raw_phys_address else ''
+        else:
+            mac_address = _snmp_text_value(raw_phys_address)
+        interfaces.append({
+            'name': name,
+            'if_index': int(if_index),
+            'status': _interface_status_from_if_mib(oper_by_index[if_index]),
+            'admin_status': _interface_status_from_if_mib(admin_by_index[if_index]),
+            'speed_mbps': speed_mbps,
+            'description': _snmp_text_value(alias_by_index.get(if_index)),
+            'description_available': alias_table_available,
+            'mac_address': mac_address,
+            'mac_address_available': phys_address_complete,
+            'mtu': _snmp_integer_value(mtu_by_index.get(if_index)),
+            'mtu_available': mtu_complete,
+        })
+    return interfaces
+
+
+def _parse_ip_mib_address_index(suffix: Any) -> tuple[int, str]:
+    """Decode the RFC 4001 InetAddressType/length/octet table index."""
+    import ipaddress
+
+    try:
+        parts = [int(part) for part in str(suffix).strip('.').split('.')]
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise RuntimeError('IP-MIB address table has a non-numeric index') from exc
+    if len(parts) < 3:
+        raise RuntimeError('IP-MIB address table index is incomplete')
+    address_type, address_length = parts[:2]
+    octets = parts[2:]
+    if address_length != len(octets) or any(octet < 0 or octet > 255 for octet in octets):
+        raise RuntimeError('IP-MIB address table index has an invalid InetAddress length')
+    if address_type == 1 and address_length == 4:
+        return address_type, str(ipaddress.IPv4Address(bytes(octets)))
+    if address_type == 2 and address_length == 16:
+        return address_type, str(ipaddress.IPv6Address(bytes(octets)))
+    # The interface/IPAM schema has no IPv6 zone identifier.  Reject zoned
+    # and non-IP InetAddress forms so they take the targeted CLI fallback
+    # instead of being silently flattened or written under an ambiguous IP.
+    raise RuntimeError('IP-MIB address uses an address form unsupported by the interface inventory')
+
+
+def _ip_mib_prefix_length(
+    raw_pointer: Any,
+    if_index: int,
+    address_type: int,
+    address: str,
+) -> int | None:
+    """Resolve ipAddressPrefix's RowPointer to its indexed prefix length."""
+    import ipaddress
+
+    pointer = _snmp_text_value(raw_pointer).strip().strip('.')
+    if pointer in {'', '0.0', '0.0.0.0'}:
+        return None
+    try:
+        parts = [int(part) for part in pointer.split('.')]
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise RuntimeError('IP-MIB address has an invalid prefix RowPointer') from exc
+    root = [int(part) for part in IP_ADDRESS_PREFIX_ENTRY.split('.')]
+    if parts[:len(root)] != root:
+        raise RuntimeError('IP-MIB address prefix pointer does not reference ipAddressPrefixTable')
+    suffix = parts[len(root):]
+    if len(suffix) < 7:
+        raise RuntimeError('IP-MIB address prefix pointer has an incomplete row index')
+    prefix_if_index, prefix_type, prefix_octet_count = suffix[:3]
+    prefix_octets = suffix[3:-1]
+    prefix_length = suffix[-1]
+    expected_octet_count = 4 if address_type == 1 else 16
+    if (
+        prefix_if_index != if_index
+        or prefix_type != address_type
+        or prefix_octet_count != expected_octet_count
+        or len(prefix_octets) != expected_octet_count
+        or any(octet < 0 or octet > 255 for octet in prefix_octets)
+        or not 0 <= prefix_length <= expected_octet_count * 8
+    ):
+        raise RuntimeError('IP-MIB address prefix pointer does not match its interface/address family')
+    prefix_address = ipaddress.ip_address(bytes(prefix_octets))
+    network = ipaddress.ip_network(f'{prefix_address}/{prefix_length}', strict=False)
+    if ipaddress.ip_address(address) not in network:
+        raise RuntimeError('IP-MIB address is outside the prefix referenced by its row')
+    return prefix_length
+
+
+async def collect_interface_ip_addresses(
+    ip: str,
+    community_or_profile: str | Mapping[str, Any],
+    interface_names_by_index: Mapping[int, str] | None = None,
+    port: int = 161,
+    *,
+    version: str = '2c',
+    timeout: float = 30,
+) -> list[dict[str, Any]]:
+    """Collect IP-MIB IPv4/IPv6 assignments and join them through ifIndex.
+
+    This collector intentionally treats an empty/unsupported table as an
+    incomplete domain.  The caller can then run the existing interface IP
+    CLI fallback without clearing the previous address snapshot.
+    """
+    columns = await _snmp_walk_columns_complete(
+        ip,
+        community_or_profile,
+        {
+            'if_index': IP_ADDRESS_IF_INDEX,
+            'address_type': IP_ADDRESS_TYPE,
+            'prefix': IP_ADDRESS_PREFIX,
+            'status': IP_ADDRESS_STATUS,
+        },
+        port,
+        version=version,
+        timeout=timeout,
+    )
+    status_names = {1: 'preferred', 2: 'deprecated', 3: 'invalid', 4: 'inaccessible', 5: 'unknown', 6: 'tentative', 7: 'duplicate'}
+    names_by_index = {int(index): str(name) for index, name in (interface_names_by_index or {}).items()}
+    required_if_indexes = {
+        parsed_if_index
+        for suffix in columns['if_index']
+        for parsed_if_index in [_snmp_integer_value(columns['if_index'][suffix])]
+        if parsed_if_index is not None and parsed_if_index > 0
+    }
+    missing_if_indexes = required_if_indexes - set(names_by_index)
+    if missing_if_indexes:
+        names_by_index.update(await _snmp_map_if_indexes(
+            ip, community_or_profile, missing_if_indexes, port,
+            version=version, timeout=timeout,
+        ))
+
+    records: list[dict[str, Any]] = []
+    for suffix in sorted(columns['if_index']):
+        address_type, address = _parse_ip_mib_address_index(suffix)
+        if_index = _snmp_integer_value(columns['if_index'][suffix])
+        mib_address_type = _snmp_integer_value(columns['address_type'][suffix])
+        status = _snmp_integer_value(columns['status'][suffix])
+        if if_index is None or if_index <= 0 or mib_address_type not in {1, 2, 3}:
+            raise RuntimeError('IP-MIB address row has an invalid interface or address type')
+        if if_index not in names_by_index:
+            raise RuntimeError('IP-MIB address row references an ifIndex absent from IF-MIB')
+        if status not in status_names:
+            raise RuntimeError('IP-MIB address row has an unknown address status')
+        if status not in {1, 2, 5}:
+            # Invalid, inaccessible, tentative, and duplicate addresses are
+            # not current usable interface assignments.
+            continue
+        records.append({
+            'if_index': if_index,
+            'interface': names_by_index[if_index],
+            'ip_address': address,
+            'ip_version': address_type,
+            'prefix_length': _ip_mib_prefix_length(
+                columns['prefix'][suffix], if_index, address_type, address,
+            ),
+            'address_status': status_names[status],
+            'address_type': mib_address_type,
+        })
+    if not records:
+        raise RuntimeError('IP-MIB address table returned no usable IPv4/IPv6 assignments')
+    records.sort(key=lambda item: (
+        item['interface'].casefold(), item['ip_version'], item['ip_address'],
+    ))
+    return records
+
+
+def _snmp_port_list(value: Any) -> set[int]:
+    if isinstance(value, memoryview):
+        value = value.tobytes()
+    elif isinstance(value, bytearray):
+        value = bytes(value)
+    if isinstance(value, bytes):
+        octets = value
+    elif not _snmp_text_value(value):
+        octets = b''
+    else:
+        octets = _snmp_octets_value(value, 'Q-BRIDGE port list')
+    ports: set[int] = set()
+    for byte_index, octet in enumerate(octets):
+        for bit_index in range(8):
+            if octet & (1 << (7 - bit_index)):
+                ports.add(byte_index * 8 + bit_index + 1)
+    return ports
+
+
+async def collect_qbridge_interface_vlan_data(
+    ip: str,
+    community_or_profile: str | Mapping[str, Any],
+    interface_names_by_index: Mapping[int, str] | None = None,
+    port: int = 161,
+    *,
+    version: str = '2c',
+    timeout: float = 30,
+) -> dict[str, list[dict[str, Any]]]:
+    """Collect complete Q-BRIDGE VLAN memberships, PVIDs, and port mappings.
+
+    Egress/untagged PortLists are mapped through dot1dBasePortIfIndex, then
+    joined to IF-MIB names. PVID is preserved as raw evidence; callers must
+    combine it with complete membership before inferring access/trunk mode.
+    """
+    egress_rows, untagged_rows, pvid_rows, bridge_if_rows = await asyncio.gather(
+        _snmp_bulk_walk_complete(
+            ip, community_or_profile, DOT1Q_VLAN_CURRENT_EGRESS_PORTS, port,
+            timeout=timeout, version=version,
+        ),
+        _snmp_bulk_walk_complete(
+            ip, community_or_profile, DOT1Q_VLAN_CURRENT_UNTAGGED_PORTS, port,
+            timeout=timeout, version=version,
+        ),
+        _snmp_bulk_walk_complete(
+            ip, community_or_profile, DOT1Q_PORT_PVID, port,
+            timeout=timeout, version=version,
+        ),
+        _snmp_bulk_walk_complete(
+            ip, community_or_profile, DOT1D_BASE_PORT_IF_INDEX, port,
+            timeout=timeout, version=version,
+        ),
+    )
+    if not egress_rows or not untagged_rows or not pvid_rows or not bridge_if_rows:
+        raise RuntimeError('Q-BRIDGE VLAN membership or port mapping table returned no rows')
+
+    def _indexed_values(rows: list[tuple[str, Any]], label: str) -> dict[str, Any]:
+        values: dict[str, Any] = {}
+        for suffix, value in rows:
+            normalized = str(suffix).strip('.')
+            if not normalized or normalized in values:
+                raise RuntimeError(f'Q-BRIDGE {label} table has an invalid or duplicate row index')
+            values[normalized] = value
+        return values
+
+    egress_by_suffix = _indexed_values(egress_rows, 'egress-port')
+    untagged_by_suffix = _indexed_values(untagged_rows, 'untagged-port')
+    if set(egress_by_suffix) != set(untagged_by_suffix):
+        raise RuntimeError('Q-BRIDGE egress and untagged VLAN tables do not match')
+
+    bridge_port_to_if_index: dict[int, int] = {}
+    if_index_to_bridge_port: dict[int, int] = {}
+    for suffix, raw_if_index in bridge_if_rows:
+        try:
+            bridge_port = int(str(suffix).strip('.'))
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise RuntimeError('Q-BRIDGE bridge-port mapping has an invalid port index') from exc
+        if_index = _snmp_integer_value(raw_if_index)
+        if bridge_port <= 0 or if_index is None or if_index <= 0:
+            raise RuntimeError('Q-BRIDGE bridge-port mapping has an invalid ifIndex')
+        if bridge_port in bridge_port_to_if_index or if_index in if_index_to_bridge_port:
+            raise RuntimeError('Q-BRIDGE bridge-port mapping is not one-to-one')
+        bridge_port_to_if_index[bridge_port] = if_index
+        if_index_to_bridge_port[if_index] = bridge_port
+
+    pvid_by_bridge_port: dict[int, int] = {}
+    for suffix, raw_pvid in pvid_rows:
+        try:
+            bridge_port = int(str(suffix).strip('.'))
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise RuntimeError('Q-BRIDGE PVID table has an invalid bridge-port index') from exc
+        pvid = _snmp_integer_value(raw_pvid)
+        if bridge_port <= 0 or pvid is None or not 1 <= pvid <= 4094:
+            raise RuntimeError('Q-BRIDGE PVID table has an invalid port or VLAN identifier')
+        if bridge_port in pvid_by_bridge_port:
+            raise RuntimeError('Q-BRIDGE PVID table contains a duplicate bridge port')
+        pvid_by_bridge_port[bridge_port] = pvid
+    if set(pvid_by_bridge_port) != set(bridge_port_to_if_index):
+        raise RuntimeError('Q-BRIDGE PVID and bridge-port mapping tables do not match')
+
+    required_if_indexes = set(bridge_port_to_if_index.values())
+    names_by_index = dict(interface_names_by_index or {})
+    missing_if_indexes = required_if_indexes - set(names_by_index)
+    if missing_if_indexes:
+        resolved_names = await _snmp_map_if_indexes(
+            ip, community_or_profile, missing_if_indexes, port,
+            version=version, timeout=timeout,
+        )
+        names_by_index.update(resolved_names)
+    if required_if_indexes - set(names_by_index):
+        raise RuntimeError('Q-BRIDGE bridge ports did not map to complete IF-MIB names')
+
+    vlan_members: dict[int, dict[str, set[int]]] = {}
+    for suffix, raw_egress in egress_by_suffix.items():
+        parts = suffix.split('.')
+        if len(parts) != 2:
+            raise RuntimeError('Q-BRIDGE current VLAN index must contain TimeMark and VLAN ID')
+        try:
+            time_mark, vlan_id = (int(part) for part in parts)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise RuntimeError('Q-BRIDGE current VLAN index contains non-numeric values') from exc
+        if time_mark < 0 or not 1 <= vlan_id <= 4094 or vlan_id in vlan_members:
+            raise RuntimeError('Q-BRIDGE current VLAN index is invalid or duplicated')
+        egress_ports = _snmp_port_list(raw_egress)
+        untagged_ports = _snmp_port_list(untagged_by_suffix[suffix])
+        if not untagged_ports <= egress_ports:
+            raise RuntimeError('Q-BRIDGE untagged membership is not a subset of VLAN egress membership')
+        if (egress_ports | untagged_ports) - set(bridge_port_to_if_index):
+            raise RuntimeError('Q-BRIDGE VLAN PortList references an unmapped bridge port')
+        vlan_members[vlan_id] = {
+            'egress': egress_ports,
+            'untagged': untagged_ports,
+        }
+
+    if not vlan_members:
+        raise RuntimeError('Q-BRIDGE current VLAN table returned no VLANs')
+
+    try:
+        name_rows = await _snmp_bulk_walk_complete(
+            ip, community_or_profile, DOT1Q_VLAN_STATIC_NAME, port,
+            timeout=timeout, version=version,
+        )
+    except Exception:
+        # VLAN names are descriptive. Complete membership/PVID facts remain
+        # usable when a device omits the optional static-name table.
+        name_rows = []
+    names_by_vlan: dict[int, str] = {}
+    for suffix, raw_name in name_rows:
+        try:
+            vlan_id = int(str(suffix).strip('.'))
+        except (TypeError, ValueError, OverflowError):
+            continue
+        name = _snmp_text_value(raw_name)
+        if 1 <= vlan_id <= 4094 and name:
+            names_by_vlan[vlan_id] = name
+
+    tagged_by_if_index: dict[int, set[int]] = {}
+    untagged_by_if_index: dict[int, set[int]] = {}
+    vlan_records: list[dict[str, Any]] = []
+    for vlan_id, membership in sorted(vlan_members.items()):
+        tagged_if_indexes = sorted(
+            bridge_port_to_if_index[bridge_port]
+            for bridge_port in membership['egress'] - membership['untagged']
+        )
+        untagged_if_indexes = sorted(
+            bridge_port_to_if_index[bridge_port]
+            for bridge_port in membership['untagged']
+        )
+        for if_index in tagged_if_indexes:
+            tagged_by_if_index.setdefault(if_index, set()).add(vlan_id)
+        for if_index in untagged_if_indexes:
+            untagged_by_if_index.setdefault(if_index, set()).add(vlan_id)
+        vlan_records.append({
+            'vlan_id': vlan_id,
+            'vlan_name': names_by_vlan.get(vlan_id) or f'VLAN {vlan_id}',
+            'tagged_interfaces': [str(names_by_index[index]) for index in tagged_if_indexes],
+            'untagged_interfaces': [str(names_by_index[index]) for index in untagged_if_indexes],
+        })
+
+    interface_records: list[dict[str, Any]] = []
+    for bridge_port, if_index in sorted(bridge_port_to_if_index.items()):
+        interface_records.append({
+            'bridge_port': bridge_port,
+            'if_index': if_index,
+            'interface': str(names_by_index[if_index]),
+            'pvid': pvid_by_bridge_port[bridge_port],
+            'tagged_vlans': sorted(tagged_by_if_index.get(if_index, set())),
+            'untagged_vlans': sorted(untagged_by_if_index.get(if_index, set())),
+        })
+    return {'vlans': vlan_records, 'interfaces': interface_records}
+
+
+async def collect_arp_table(
+    ip: str,
+    community: str | Mapping[str, Any] = 'public',
+    port: int = 161,
+    *,
+    version: str = '2c',
+    timeout: float = 120,
+) -> list[dict[str, Any]]:
+    """Collect a complete IPv4 IP-MIB ARP table and map ifIndex to IF-MIB names."""
+    phys_rows, type_rows = await asyncio.gather(
+        _snmp_bulk_walk_complete(
+            ip, community, IP_NET_TO_MEDIA_PHYS_ADDRESS, port,
+            timeout=timeout, version=version,
+        ),
+        _snmp_bulk_walk_complete(
+            ip, community, IP_NET_TO_MEDIA_TYPE, port,
+            timeout=timeout, version=version,
+        ),
+    )
+    if not phys_rows and not type_rows:
+        raise RuntimeError('IP-MIB ARP table returned no rows')
+
+    type_by_index: dict[str, int] = {}
+    for suffix, raw_type in type_rows:
+        parsed_type = _snmp_integer_value(raw_type)
+        if parsed_type is not None:
+            type_by_index[suffix] = parsed_type
+
+    if_name_rows: list[tuple[str, Any]] = []
+    try:
+        if_name_rows = await _snmp_bulk_walk_complete(
+            ip, community, IF_NAME, port, timeout=timeout, version=version,
+        )
+    except Exception:
+        if_name_rows = []
+    if not if_name_rows:
+        try:
+            if_name_rows = await _snmp_bulk_walk_complete(
+                ip, community, IF_DESCR, port, timeout=timeout, version=version,
+            )
+        except Exception:
+            if_name_rows = []
+    interface_by_index = {
+        str(suffix): _snmp_text_value(raw_name)
+        for suffix, raw_name in if_name_rows
+        if str(suffix).isdigit() and _snmp_text_value(raw_name)
+    }
+
+    entries: list[dict[str, Any]] = []
+    phys_suffixes = {suffix for suffix, _ in phys_rows}
+    if phys_suffixes - set(type_by_index):
+        raise RuntimeError('IP-MIB ARP type table did not cover the complete MAC table')
+
+    for suffix, raw_mac in phys_rows:
+        parts = str(suffix).split('.')
+        if len(parts) != 5:
+            raise RuntimeError('IP-MIB ARP row has an invalid IPv4 index')
+        if_index, *address_octets = parts
+        if not if_index.isdigit() or any(not octet.isdigit() for octet in address_octets):
+            raise RuntimeError('IP-MIB ARP row has an invalid interface/address index')
+        try:
+            import ipaddress
+            ip_address = str(ipaddress.IPv4Address(bytes(int(octet) for octet in address_octets)))
+        except ValueError as exc:
+            raise RuntimeError('IP-MIB ARP row has an invalid IPv4 address') from exc
+
+        entry_type = type_by_index.get(str(suffix))
+        # RFC 1213 defines invalid(2); omit invalidated entries but retain
+        # valid static and dynamic mappings (and implementation-specific other).
+        if entry_type == 2:
+            continue
+
+        if isinstance(raw_mac, memoryview):
+            raw_mac = raw_mac.tobytes()
+        elif isinstance(raw_mac, bytearray):
+            raw_mac = bytes(raw_mac)
+        if isinstance(raw_mac, bytes):
+            mac = ':'.join(f'{octet:02x}' for octet in raw_mac)
+        else:
+            mac = _snmp_text_value(raw_mac)
+        if not mac:
+            raise RuntimeError('IP-MIB ARP row has no physical address')
+
+        interface_name = interface_by_index.get(if_index, '')
+        if not interface_name:
+            raise RuntimeError('IF-MIB did not map an ARP row to an interface name')
+
+        type_label = {3: 'dynamic', 4: 'static', 1: 'other'}.get(entry_type, str(entry_type))
+        entries.append({
+            'ip_address': ip_address,
+            'mac_address': mac,
+            'interface': interface_name,
+            'type': type_label,
+        })
+    if not entries:
+        raise RuntimeError('IP-MIB ARP table had no usable IPv4 mappings')
+    return entries
+
+
+async def collect_bridge_mac_table(
+    ip: str,
+    community_or_profile: str | Mapping[str, Any],
+    port: int = 161,
+    *,
+    version: str = '2c',
+    timeout: float = 120,
+) -> list[dict[str, Any]]:
+    """Collect a complete Q-BRIDGE-MIB unicast FDB and resolve its VLANs/ports.
+
+    All walks use the uncapped full-walk helper.  Any missing table, malformed
+    index, stale-but-invalid entry, or unresolved bridge/IF-MIB mapping makes
+    this snapshot unsuitable for replacement and is reported to the caller as
+    an exception so it can use its configured fallback.
+    """
+    fdb_port_rows, fdb_status_rows, vlan_fdb_rows, bridge_if_rows = await asyncio.gather(
+        _snmp_bulk_walk_complete(
+            ip, community_or_profile, DOT1Q_TP_FDB_PORT, port,
+            timeout=timeout, version=version,
+        ),
+        _snmp_bulk_walk_complete(
+            ip, community_or_profile, DOT1Q_TP_FDB_STATUS, port,
+            timeout=timeout, version=version,
+        ),
+        _snmp_bulk_walk_complete(
+            ip, community_or_profile, DOT1Q_VLAN_FDB_ID, port,
+            timeout=timeout, version=version,
+        ),
+        _snmp_bulk_walk_complete(
+            ip, community_or_profile, DOT1D_BASE_PORT_IF_INDEX, port,
+            timeout=timeout, version=version,
+        ),
+    )
+    if not fdb_port_rows or not fdb_status_rows:
+        raise RuntimeError('Q-BRIDGE-MIB FDB table returned no rows')
+    if not vlan_fdb_rows:
+        raise RuntimeError('Q-BRIDGE-MIB VLAN-to-FDB table returned no rows')
+    if not bridge_if_rows:
+        raise RuntimeError('BRIDGE-MIB bridge-port map returned no rows')
+
+    vlan_ids_by_fdb: dict[int, set[int]] = {}
+    fdb_by_vlan: dict[int, int] = {}
+    for suffix, raw_fdb_id in vlan_fdb_rows:
+        parts = str(suffix).strip('.').split('.')
+        if len(parts) != 2:
+            raise RuntimeError('Q-BRIDGE-MIB VLAN-to-FDB row has an invalid index')
+        try:
+            time_mark, vlan_id = (int(part) for part in parts)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise RuntimeError('Q-BRIDGE-MIB VLAN-to-FDB row has a non-numeric index') from exc
+        fdb_id = _snmp_integer_value(raw_fdb_id)
+        if time_mark < 0 or vlan_id <= 0 or vlan_id == 4095 or fdb_id is None or fdb_id < 0:
+            raise RuntimeError('Q-BRIDGE-MIB VLAN-to-FDB row has an invalid VLAN/FDB identifier')
+        existing_fdb_id = fdb_by_vlan.get(vlan_id)
+        if existing_fdb_id is not None and existing_fdb_id != fdb_id:
+            raise RuntimeError('Q-BRIDGE-MIB VLAN maps to conflicting FDB identifiers')
+        fdb_by_vlan[vlan_id] = fdb_id
+        vlan_ids_by_fdb.setdefault(fdb_id, set()).add(vlan_id)
+
+    bridge_port_to_if_index: dict[int, int] = {}
+    for suffix, raw_if_index in bridge_if_rows:
+        try:
+            bridge_port = int(str(suffix).strip('.'))
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise RuntimeError('BRIDGE-MIB bridge-port row has an invalid index') from exc
+        if_index = _snmp_integer_value(raw_if_index)
+        if bridge_port <= 0 or if_index is None or if_index <= 0:
+            raise RuntimeError('BRIDGE-MIB bridge-port row has an invalid ifIndex mapping')
+        previous_if_index = bridge_port_to_if_index.get(bridge_port)
+        if previous_if_index is not None and previous_if_index != if_index:
+            raise RuntimeError('BRIDGE-MIB bridge port maps to conflicting ifIndex values')
+        bridge_port_to_if_index[bridge_port] = if_index
+
+    required_if_indexes = set(bridge_port_to_if_index.values())
+    if_name_rows: list[tuple[str, Any]] = []
+    try:
+        if_name_rows = await _snmp_bulk_walk_complete(
+            ip, community_or_profile, IF_NAME, port,
+            timeout=timeout, version=version,
+        )
+    except Exception:
+        # IF-MIB::ifDescr is the standard fallback for agents without ifName.
+        if_name_rows = []
+    if_name_by_index: dict[int, str] = {}
+    for suffix, raw_name in if_name_rows:
+        try:
+            if_index = int(str(suffix).strip('.'))
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise RuntimeError('IF-MIB ifName row has an invalid index') from exc
+        name = _snmp_text_value(raw_name)
+        if if_index <= 0:
+            raise RuntimeError('IF-MIB ifName row has an invalid interface index')
+        if name:
+            if_name_by_index[if_index] = name
+
+    missing_if_indexes = required_if_indexes - set(if_name_by_index)
+    if missing_if_indexes:
+        try:
+            if_descr_rows = await _snmp_bulk_walk_complete(
+                ip, community_or_profile, IF_DESCR, port,
+                timeout=timeout, version=version,
+            )
+        except Exception as exc:
+            raise RuntimeError('IF-MIB could not resolve every bridge port to an interface name') from exc
+        for suffix, raw_name in if_descr_rows:
+            try:
+                if_index = int(str(suffix).strip('.'))
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise RuntimeError('IF-MIB ifDescr row has an invalid index') from exc
+            name = _snmp_text_value(raw_name)
+            if if_index <= 0:
+                raise RuntimeError('IF-MIB ifDescr row has an invalid interface index')
+            if name:
+                if_name_by_index.setdefault(if_index, name)
+    if required_if_indexes - set(if_name_by_index):
+        raise RuntimeError('IF-MIB did not map every bridge port to an interface name')
+
+    fdb_port_by_suffix: dict[str, int] = {}
+    fdb_status_by_suffix: dict[str, int] = {}
+    for suffix, raw_value in fdb_port_rows:
+        normalized_suffix = str(suffix).strip('.')
+        if normalized_suffix in fdb_port_by_suffix:
+            raise RuntimeError('Q-BRIDGE-MIB FDB port table contains a duplicate row')
+        bridge_port = _snmp_integer_value(raw_value)
+        if bridge_port is None or bridge_port < 0:
+            raise RuntimeError('Q-BRIDGE-MIB FDB row has an invalid bridge-port value')
+        fdb_port_by_suffix[normalized_suffix] = bridge_port
+
+    status_codes = {'other': 1, 'invalid': 2, 'learned': 3, 'self': 4, 'mgmt': 5}
+    for suffix, raw_value in fdb_status_rows:
+        normalized_suffix = str(suffix).strip('.')
+        if normalized_suffix in fdb_status_by_suffix:
+            raise RuntimeError('Q-BRIDGE-MIB FDB status table contains a duplicate row')
+        status_code = _snmp_integer_value(raw_value)
+        if status_code is None:
+            status_text = _snmp_text_value(raw_value).strip().casefold()
+            status_code = status_codes.get(status_text)
+            if status_code is None:
+                match = re.search(r'\((\d+)\)\s*$', status_text)
+                status_code = int(match.group(1)) if match else None
+        if status_code not in status_codes.values():
+            raise RuntimeError('Q-BRIDGE-MIB FDB row has an unknown status')
+        fdb_status_by_suffix[normalized_suffix] = status_code
+
+    if set(fdb_port_by_suffix) != set(fdb_status_by_suffix):
+        raise RuntimeError('Q-BRIDGE-MIB FDB port and status tables do not match')
+
+    status_to_type = {1: 'other', 3: 'dynamic', 4: 'self', 5: 'static'}
+    records: list[dict[str, Any]] = []
+    for suffix, bridge_port in fdb_port_by_suffix.items():
+        status_code = fdb_status_by_suffix[suffix]
+        # invalid(2) rows have already aged out and are not current FDB facts.
+        if status_code == 2:
+            continue
+
+        parts = suffix.split('.')
+        if len(parts) != 7:
+            raise RuntimeError('Q-BRIDGE-MIB FDB row has an invalid FDB/MAC index')
+        try:
+            fdb_id = int(parts[0])
+            mac_octets = [int(part) for part in parts[1:]]
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise RuntimeError('Q-BRIDGE-MIB FDB row has a non-numeric FDB/MAC index') from exc
+        if fdb_id < 0 or any(octet < 0 or octet > 255 for octet in mac_octets):
+            raise RuntimeError('Q-BRIDGE-MIB FDB row has an invalid FDB/MAC index')
+        vlan_ids = vlan_ids_by_fdb.get(fdb_id)
+        if not vlan_ids:
+            raise RuntimeError('Q-BRIDGE-MIB FDB row has no matching VLAN-to-FDB mapping')
+        if bridge_port <= 0:
+            raise RuntimeError('Q-BRIDGE-MIB FDB row does not identify a bridge port')
+        if_index = bridge_port_to_if_index.get(bridge_port)
+        if if_index is None:
+            raise RuntimeError('BRIDGE-MIB did not map an FDB bridge port to ifIndex')
+        interface_name = if_name_by_index.get(if_index)
+        if not interface_name:
+            raise RuntimeError('IF-MIB did not map an FDB ifIndex to an interface name')
+
+        mac = ':'.join(f'{octet:02x}' for octet in mac_octets)
+        entry_type = status_to_type.get(status_code)
+        if not entry_type:
+            raise RuntimeError('Q-BRIDGE-MIB FDB row has an unsupported status')
+        for vlan_id in sorted(vlan_ids):
+            records.append({
+                'mac': mac,
+                'vlan': vlan_id,
+                'port': interface_name,
+                'if_index': if_index,
+                'type': entry_type,
+            })
+
+    if not records:
+        raise RuntimeError('Q-BRIDGE-MIB FDB table had no usable MAC mappings')
+    records.sort(key=lambda item: (item['vlan'], item['mac'], item['if_index']))
+    return records
+
+
+async def collect_ip_forward_table(
+    ip: str,
+    community_or_profile: str | Mapping[str, Any],
+    port: int = 161,
+    *,
+    version: str = '2c',
+    timeout: float = 120,
+) -> list[dict[str, Any]]:
+    """Collect a complete IPv4/IPv6 IP-FORWARD-MIB inetCidrRouteTable.
+
+    Each accessible column is walked in full and must contain exactly the same
+    route indexes.  Index decoding follows the InetAddress/OBJECT IDENTIFIER
+    length-prefixed SNMP index encoding.  Any unsupported or incomplete walk,
+    malformed index/value, or unresolved non-zero ifIndex raises so callers
+    can preserve their CLI fallback path.
+    """
+    import ipaddress
+
+    metric_oids = {
+        'metric1': INET_CIDR_ROUTE_METRIC1,
+        'metric2': INET_CIDR_ROUTE_METRIC2,
+        'metric3': INET_CIDR_ROUTE_METRIC3,
+        'metric4': INET_CIDR_ROUTE_METRIC4,
+        'metric5': INET_CIDR_ROUTE_METRIC5,
+    }
+    column_oids = {
+        'if_index': INET_CIDR_ROUTE_IF_INDEX,
+        'type': INET_CIDR_ROUTE_TYPE,
+        'protocol': INET_CIDR_ROUTE_PROTO,
+        'age': INET_CIDR_ROUTE_AGE,
+        'next_hop_as': INET_CIDR_ROUTE_NEXT_HOP_AS,
+        **metric_oids,
+        'status': INET_CIDR_ROUTE_STATUS,
+    }
+    walked_columns = await asyncio.gather(*(
+        _snmp_bulk_walk_complete(
+            ip, community_or_profile, oid, port,
+            timeout=timeout, version=version,
+        )
+        for oid in column_oids.values()
+    ))
+
+    values_by_column: dict[str, dict[str, Any]] = {}
+    route_suffixes: set[str] | None = None
+    for (column, _oid), rows in zip(column_oids.items(), walked_columns):
+        if not rows:
+            raise RuntimeError(f'IP-FORWARD-MIB {column} column returned no rows')
+        value_by_suffix: dict[str, Any] = {}
+        for suffix, value in rows:
+            normalized_suffix = str(suffix).strip('.')
+            if not normalized_suffix or normalized_suffix in value_by_suffix:
+                raise RuntimeError(f'IP-FORWARD-MIB {column} column has an invalid or duplicate route index')
+            value_by_suffix[normalized_suffix] = value
+        suffixes = set(value_by_suffix)
+        if route_suffixes is None:
+            route_suffixes = suffixes
+        elif suffixes != route_suffixes:
+            raise RuntimeError('IP-FORWARD-MIB columns do not cover the same complete route set')
+        values_by_column[column] = value_by_suffix
+
+    if not route_suffixes:
+        raise RuntimeError('IP-FORWARD-MIB route table returned no rows')
+
+    address_type_names = {0: 'unknown', 1: 'ipv4', 2: 'ipv6', 3: 'ipv4z', 4: 'ipv6z'}
+
+    def _read_index_integer(parts: list[str], offset: int, label: str) -> tuple[int, int]:
+        if offset >= len(parts):
+            raise RuntimeError(f'IP-FORWARD-MIB route index is missing {label}')
+        try:
+            value = int(parts[offset])
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise RuntimeError(f'IP-FORWARD-MIB route index has an invalid {label}') from exc
+        return value, offset + 1
+
+    def _read_inet_address(
+        parts: list[str], offset: int, address_type: int, label: str,
+    ) -> tuple[str, int | None, int]:
+        length, offset = _read_index_integer(parts, offset, f'{label} length')
+        if length < 0 or offset + length > len(parts):
+            raise RuntimeError(f'IP-FORWARD-MIB route index has an invalid {label} length')
+        try:
+            octets = [int(part) for part in parts[offset:offset + length]]
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise RuntimeError(f'IP-FORWARD-MIB route index has non-numeric {label} octets') from exc
+        if any(octet < 0 or octet > 255 for octet in octets):
+            raise RuntimeError(f'IP-FORWARD-MIB route index has out-of-range {label} octets')
+        offset += length
+
+        if address_type == 0:
+            if octets:
+                raise RuntimeError(f'IP-FORWARD-MIB unknown {label} must have a zero-length address')
+            return '', None, offset
+        address_spec = {1: (4, 4), 2: (16, 16), 3: (4, 8), 4: (16, 20)}.get(address_type)
+        if address_spec is None:
+            raise RuntimeError(f'IP-FORWARD-MIB route uses unsupported {label} type {address_type}')
+        address_length, encoded_length = address_spec
+        if len(octets) != encoded_length:
+            raise RuntimeError(f'IP-FORWARD-MIB route index has an invalid {label} address size')
+        address = str(ipaddress.ip_address(bytes(octets[:address_length])))
+        zone = int.from_bytes(bytes(octets[address_length:]), 'big') if encoded_length > address_length else None
+        return address, zone, offset
+
+    parsed_indexes: dict[str, dict[str, Any]] = {}
+    for suffix in route_suffixes:
+        parts = suffix.split('.')
+        if any(not part for part in parts):
+            raise RuntimeError('IP-FORWARD-MIB route index contains an empty subidentifier')
+        offset = 0
+        destination_type, offset = _read_index_integer(parts, offset, 'destination type')
+        if destination_type not in {1, 2, 3, 4}:
+            raise RuntimeError(f'IP-FORWARD-MIB route has unsupported destination type {destination_type}')
+        destination, destination_zone, offset = _read_inet_address(
+            parts, offset, destination_type, 'destination',
+        )
+        prefix_length, offset = _read_index_integer(parts, offset, 'prefix length')
+        address_bits = 32 if destination_type in {1, 3} else 128
+        if prefix_length < 0 or prefix_length > address_bits:
+            raise RuntimeError('IP-FORWARD-MIB route has an out-of-range prefix length')
+
+        policy_length, offset = _read_index_integer(parts, offset, 'policy OID length')
+        if policy_length < 2 or offset + policy_length > len(parts):
+            raise RuntimeError('IP-FORWARD-MIB route has an invalid policy OID index')
+        try:
+            policy_arcs = [int(part) for part in parts[offset:offset + policy_length]]
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise RuntimeError('IP-FORWARD-MIB route has a non-numeric policy OID index') from exc
+        if (
+            any(arc < 0 or arc > 0xFFFFFFFF for arc in policy_arcs)
+            or policy_arcs[0] not in {0, 1, 2}
+            or (policy_arcs[0] < 2 and policy_arcs[1] > 39)
+        ):
+            raise RuntimeError('IP-FORWARD-MIB route has an invalid policy OID subidentifier')
+        offset += policy_length
+
+        next_hop_type, offset = _read_index_integer(parts, offset, 'next-hop type')
+        if next_hop_type not in address_type_names:
+            raise RuntimeError(f'IP-FORWARD-MIB route has unsupported next-hop type {next_hop_type}')
+        next_hop, next_hop_zone, offset = _read_inet_address(
+            parts, offset, next_hop_type, 'next-hop',
+        )
+        if offset != len(parts):
+            raise RuntimeError('IP-FORWARD-MIB route index has trailing subidentifiers')
+
+        try:
+            network = ipaddress.ip_network(f'{destination}/{prefix_length}', strict=True)
+        except ValueError as exc:
+            raise RuntimeError('IP-FORWARD-MIB route destination is inconsistent with its prefix length') from exc
+        parsed_indexes[suffix] = {
+            'prefix': str(network),
+            'destination': str(network),
+            'destination_type': address_type_names[destination_type],
+            'destination_zone': destination_zone,
+            'policy': '.'.join(str(arc) for arc in policy_arcs),
+            'next_hop': next_hop,
+            'next_hop_type': address_type_names[next_hop_type],
+            'next_hop_zone': next_hop_zone,
+        }
+
+    numeric_columns: dict[str, dict[str, int]] = {}
+    for column, values in values_by_column.items():
+        parsed: dict[str, int] = {}
+        for suffix, raw_value in values.items():
+            value = _snmp_integer_value(raw_value)
+            if value is None:
+                text_value = _snmp_text_value(raw_value)
+                match = re.search(r'\((-?\d+)\)\s*$', text_value)
+                value = int(match.group(1)) if match else None
+            if value is None:
+                raise RuntimeError(f'IP-FORWARD-MIB {column} column contains a non-integer value')
+            parsed[suffix] = value
+        numeric_columns[column] = parsed
+
+    route_type_names = {1: 'other', 2: 'reject', 3: 'local', 4: 'remote', 5: 'blackhole'}
+    protocol_names = {
+        1: 'other', 2: 'local', 3: 'netmgmt', 4: 'icmp', 5: 'egp', 6: 'ggp',
+        7: 'hello', 8: 'rip', 9: 'isis', 10: 'esis', 11: 'igrp',
+        12: 'bbn_spf_igp', 13: 'ospf', 14: 'bgp', 15: 'idpr', 16: 'eigrp',
+        17: 'dvmrp', 18: 'rpl',
+    }
+    route_status_names = {
+        1: 'active', 2: 'not_in_service', 3: 'not_ready',
+        4: 'create_and_go', 5: 'create_and_wait', 6: 'destroy',
+    }
+    if_indexes: set[int] = set()
+    for suffix in route_suffixes:
+        if_index = numeric_columns['if_index'][suffix]
+        route_type = numeric_columns['type'][suffix]
+        status = numeric_columns['status'][suffix]
+        if if_index < 0:
+            raise RuntimeError('IP-FORWARD-MIB route has an invalid ifIndex')
+        if route_type not in route_type_names:
+            raise RuntimeError('IP-FORWARD-MIB route has an unknown route type')
+        if status not in route_status_names:
+            raise RuntimeError('IP-FORWARD-MIB route has an unknown row status')
+        if_indexes.add(if_index)
+        for metric_name in metric_oids:
+            metric = numeric_columns[metric_name][suffix]
+            if metric < -1:
+                raise RuntimeError(f'IP-FORWARD-MIB route has an invalid {metric_name} value')
+        if numeric_columns['age'][suffix] < 0 or numeric_columns['next_hop_as'][suffix] < 0:
+            raise RuntimeError('IP-FORWARD-MIB route has an invalid age or next-hop AS number')
+
+    if_name_by_index: dict[int, str] = {}
+    try:
+        if_name_rows = await _snmp_bulk_walk_complete(
+            ip, community_or_profile, IF_NAME, port,
+            timeout=timeout, version=version,
+        )
+    except Exception:
+        if_name_rows = []
+    for suffix, raw_name in if_name_rows:
+        try:
+            if_index = int(str(suffix).strip('.'))
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise RuntimeError('IF-MIB ifName row has an invalid index') from exc
+        if if_index <= 0:
+            raise RuntimeError('IF-MIB ifName row has an invalid interface index')
+        name = _snmp_text_value(raw_name)
+        if name:
+            if if_index in if_name_by_index:
+                raise RuntimeError('IF-MIB ifName table contains a duplicate interface index')
+            if_name_by_index[if_index] = name
+
+    missing_if_indexes = (if_indexes - {0}) - set(if_name_by_index)
+    if missing_if_indexes:
+        try:
+            if_descr_rows = await _snmp_bulk_walk_complete(
+                ip, community_or_profile, IF_DESCR, port,
+                timeout=timeout, version=version,
+            )
+        except Exception as exc:
+            raise RuntimeError('IF-MIB could not resolve every route ifIndex') from exc
+        for suffix, raw_name in if_descr_rows:
+            try:
+                if_index = int(str(suffix).strip('.'))
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise RuntimeError('IF-MIB ifDescr row has an invalid index') from exc
+            if if_index <= 0:
+                raise RuntimeError('IF-MIB ifDescr row has an invalid interface index')
+            name = _snmp_text_value(raw_name)
+            if name:
+                if if_index in if_name_by_index and if_index not in missing_if_indexes:
+                    continue
+                if if_index in if_name_by_index and if_index in missing_if_indexes:
+                    raise RuntimeError('IF-MIB ifDescr table contains a duplicate interface index')
+                if_name_by_index.setdefault(if_index, name)
+    if (if_indexes - {0}) - set(if_name_by_index):
+        raise RuntimeError('IF-MIB did not map every route ifIndex to an interface name')
+
+    records: list[dict[str, Any]] = []
+    for suffix in sorted(route_suffixes):
+        status = numeric_columns['status'][suffix]
+        if status != 1:
+            continue
+        route_index = parsed_indexes[suffix]
+        if_index = numeric_columns['if_index'][suffix]
+        raw_metrics = {name: numeric_columns[name][suffix] for name in metric_oids}
+        metrics = {name: (None if value == -1 else value) for name, value in raw_metrics.items()}
+        metric = metrics['metric1']
+        protocol_code = numeric_columns['protocol'][suffix]
+        route_type_code = numeric_columns['type'][suffix]
+        records.append({
+            **route_index,
+            'interface': if_name_by_index.get(if_index, '') if if_index else '',
+            'if_index': if_index,
+            'protocol': protocol_names.get(protocol_code, f'protocol_{protocol_code}'),
+            'protocol_code': protocol_code,
+            'type': route_type_names[route_type_code],
+            'route_type': route_type_names[route_type_code],
+            'route_type_code': route_type_code,
+            'metric': metric,
+            # IP-FORWARD-MIB exposes protocol-specific metrics, not a generic
+            # administrative distance/preference value.
+            'preference': None,
+            'metrics': metrics,
+            'age': numeric_columns['age'][suffix],
+            'next_hop_as': numeric_columns['next_hop_as'][suffix],
+            'status': route_status_names[status],
+        })
+
+    if not records:
+        raise RuntimeError('IP-FORWARD-MIB route table had no active IPv4/IPv6 routes')
+    records.sort(key=lambda item: (item['prefix'], item['next_hop'], item['if_index']))
+    return records
+
+
+async def _snmp_walk_columns_complete(
+    ip: str,
+    community_or_profile: str | Mapping[str, Any],
+    columns: Mapping[str, str],
+    port: int,
+    *,
+    version: str,
+    timeout: float,
+) -> dict[str, dict[str, Any]]:
+    """Walk related table columns and require exact, non-empty row coverage."""
+    names = list(columns)
+    walked = await asyncio.gather(*(
+        _snmp_bulk_walk_complete(
+            ip, community_or_profile, columns[name], port,
+            timeout=timeout, version=version,
+        )
+        for name in names
+    ))
+    expected_suffixes: set[str] | None = None
+    values_by_column: dict[str, dict[str, Any]] = {}
+    for name, rows in zip(names, walked):
+        values: dict[str, Any] = {}
+        for suffix, value in rows:
+            normalized_suffix = str(suffix).strip('.')
+            if not normalized_suffix or normalized_suffix in values:
+                raise RuntimeError(f'SNMP {name} table column has an invalid or duplicate row index')
+            values[normalized_suffix] = value
+        suffixes = set(values)
+        if expected_suffixes is None:
+            expected_suffixes = suffixes
+        elif suffixes != expected_suffixes:
+            raise RuntimeError(f'SNMP {name} table column does not cover the same complete row set')
+        values_by_column[name] = values
+    if not expected_suffixes:
+        raise RuntimeError('SNMP protocol neighbor table returned no rows')
+    return values_by_column
+
+
+def _snmp_octets_value(value: Any, label: str) -> bytes:
+    if isinstance(value, memoryview):
+        value = value.tobytes()
+    if isinstance(value, bytearray):
+        value = bytes(value)
+    if isinstance(value, bytes):
+        return value
+    text_value = str(value or '').strip()
+    if text_value:
+        compact = re.sub(r'[. :\-_]', '', text_value)
+        if len(compact) % 2 == 0 and re.fullmatch(r'[0-9a-fA-F]+', compact):
+            return bytes.fromhex(compact)
+    raise RuntimeError(f'SNMP {label} value is not an octet string')
+
+
+def _snmp_ipv4_value(value: Any, label: str) -> str:
+    import ipaddress
+
+    if isinstance(value, memoryview):
+        value = value.tobytes()
+    if isinstance(value, bytearray):
+        value = bytes(value)
+    try:
+        if isinstance(value, bytes):
+            if len(value) != 4:
+                raise ValueError('IPv4 octet string must contain four octets')
+            return str(ipaddress.IPv4Address(value))
+        return str(ipaddress.IPv4Address(str(value).strip()))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f'SNMP {label} value is not a valid IPv4 address') from exc
+
+
+async def _snmp_map_if_indexes(
+    ip: str,
+    community_or_profile: str | Mapping[str, Any],
+    if_indexes: set[int],
+    port: int,
+    *,
+    version: str,
+    timeout: float,
+) -> dict[int, str]:
+    required = {index for index in if_indexes if index > 0}
+    if not required:
+        return {}
+    names: dict[int, str] = {}
+    try:
+        name_rows = await _snmp_bulk_walk_complete(
+            ip, community_or_profile, IF_NAME, port,
+            timeout=timeout, version=version,
+        )
+    except Exception:
+        name_rows = []
+    for suffix, raw_name in name_rows:
+        try:
+            if_index = int(str(suffix).strip('.'))
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise RuntimeError('IF-MIB ifName table has an invalid index') from exc
+        name = _snmp_text_value(raw_name)
+        if if_index <= 0:
+            raise RuntimeError('IF-MIB ifName table has an invalid interface index')
+        if name:
+            if if_index in names:
+                raise RuntimeError('IF-MIB ifName table contains a duplicate interface index')
+            names[if_index] = name
+
+    missing = required - set(names)
+    if missing:
+        try:
+            descr_rows = await _snmp_bulk_walk_complete(
+                ip, community_or_profile, IF_DESCR, port,
+                timeout=timeout, version=version,
+            )
+        except Exception as exc:
+            raise RuntimeError('IF-MIB could not resolve every protocol neighbor ifIndex') from exc
+        descriptions: dict[int, str] = {}
+        for suffix, raw_name in descr_rows:
+            try:
+                if_index = int(str(suffix).strip('.'))
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise RuntimeError('IF-MIB ifDescr table has an invalid index') from exc
+            name = _snmp_text_value(raw_name)
+            if if_index <= 0:
+                raise RuntimeError('IF-MIB ifDescr table has an invalid interface index')
+            if name:
+                if if_index in descriptions:
+                    raise RuntimeError('IF-MIB ifDescr table contains a duplicate interface index')
+                descriptions[if_index] = name
+        for if_index in missing:
+            if if_index in descriptions:
+                names[if_index] = descriptions[if_index]
+    if required - set(names):
+        raise RuntimeError('IF-MIB did not map every protocol neighbor ifIndex to a name')
+    return names
+
+
+async def collect_snmp_routing_neighbors(
+    ip: str,
+    community_or_profile: str | Mapping[str, Any],
+    protocol: str,
+    port: int = 161,
+    *,
+    version: str = '2c',
+    timeout: float = 120,
+) -> list[dict[str, Any]]:
+    """Collect one routing protocol's neighbors from its standard/vendor MIB.
+
+    Supported protocols are BGP4-MIB (IPv4 peers), RIPv2-MIB, Cisco's
+    CISCO-EIGRP-MIB, OSPF-MIB (OSPFv2), OSPFV3-MIB, and ISIS-MIB. All required
+    columns are completely walked and cross-checked. Unsupported MIBs, empty
+    tables, or incomplete mappings raise so the caller can run its CLI fallback.
+    """
+    import ipaddress
+
+    protocol_key = re.sub(r'[-_\s]', '', str(protocol or '').casefold())
+    aliases = {
+        'bgp': 'bgp', 'bgp4': 'bgp', 'bgp4mib': 'bgp',
+        'rip': 'rip', 'rip2': 'rip', 'ripv2': 'rip', 'ripv2mib': 'rip',
+        'eigrp': 'eigrp', 'ciscoeigrp': 'eigrp', 'ciscoeigrpmib': 'eigrp',
+        'ospf': 'ospf', 'ospfv2': 'ospf', 'ospfmib': 'ospf',
+        'ospfv3': 'ospfv3', 'ospfv3mib': 'ospfv3',
+        'isis': 'isis', 'isisv1': 'isis', 'isismib': 'isis',
+    }
+    normalized_protocol = aliases.get(protocol_key)
+    if not normalized_protocol:
+        raise ValueError(f'Unsupported standard SNMP routing protocol: {protocol}')
+
+    if normalized_protocol == 'bgp':
+        columns = await _snmp_walk_columns_complete(
+            ip, community_or_profile,
+            {
+                'peer_identifier': BGP4_PEER_IDENTIFIER,
+                'state': BGP4_PEER_STATE,
+                'admin_status': BGP4_PEER_ADMIN_STATUS,
+                'local_address': BGP4_PEER_LOCAL_ADDRESS,
+                'remote_address': BGP4_PEER_REMOTE_ADDRESS,
+                'remote_as': BGP4_PEER_REMOTE_AS,
+            },
+            port, version=version, timeout=timeout,
+        )
+        try:
+            established_time_rows = await _snmp_bulk_walk_complete(
+                ip, community_or_profile, BGP4_PEER_FSM_ESTABLISHED_TIME, port,
+                timeout=timeout, version=version,
+            )
+        except Exception:
+            established_time_rows = []
+        established_time_by_suffix = {
+            str(suffix).strip('.'): value for suffix, value in established_time_rows
+        }
+        state_names = {
+            1: 'idle', 2: 'connect', 3: 'active',
+            4: 'opensent', 5: 'openconfirm', 6: 'established',
+        }
+        admin_names = {1: 'stopped', 2: 'started'}
+        local_as_raw = await _snmp_get(
+            ip, community_or_profile, BGP4_LOCAL_AS, port,
+            timeout=min(3.0, max(1.0, float(timeout))), version=version,
+        )
+        local_as = _snmp_integer_value(local_as_raw)
+        if local_as is not None and local_as < 0:
+            local_as = None
+        records: list[dict[str, Any]] = []
+        for suffix in sorted(columns['state']):
+            parts = suffix.split('.')
+            if len(parts) != 4:
+                raise RuntimeError('BGP4-MIB peer index is not an IPv4 address')
+            try:
+                peer_ip = str(ipaddress.IPv4Address(bytes(int(part) for part in parts)))
+            except (ValueError, OverflowError) as exc:
+                raise RuntimeError('BGP4-MIB peer index contains invalid IPv4 octets') from exc
+            state = _snmp_integer_value(columns['state'][suffix])
+            admin_status = _snmp_integer_value(columns['admin_status'][suffix])
+            remote_as = _snmp_integer_value(columns['remote_as'][suffix])
+            if state not in state_names or admin_status not in admin_names:
+                raise RuntimeError('BGP4-MIB peer has an unknown state or administrative status')
+            if remote_as is None or remote_as < 0:
+                raise RuntimeError('BGP4-MIB peer has an invalid remote AS number')
+            indexed_peer_ip = _snmp_ipv4_value(columns['remote_address'][suffix], 'BGP peer remote address')
+            if indexed_peer_ip != peer_ip:
+                raise RuntimeError('BGP4-MIB remote-address column conflicts with its peer index')
+            records.append({
+                'protocol': 'bgp',
+                'neighbor_ip': peer_ip,
+                'peer_ip': peer_ip,
+                'router_id': _snmp_ipv4_value(columns['peer_identifier'][suffix], 'BGP peer identifier'),
+                'local_ip': _snmp_ipv4_value(columns['local_address'][suffix], 'BGP peer local address'),
+                'local_as': local_as,
+                'remote_as': remote_as,
+                'uptime_seconds': _snmp_integer_value(established_time_by_suffix.get(suffix)),
+                'state': state_names[state],
+                'admin_status': admin_names[admin_status],
+                'if_index': None,
+                'interface': None,
+            })
+        return records
+
+    if normalized_protocol == 'rip':
+        columns = await _snmp_walk_columns_complete(
+            ip, community_or_profile,
+            {
+                'peer_address': RIP2_PEER_ADDRESS,
+                'peer_domain': RIP2_PEER_DOMAIN,
+                'last_update': RIP2_PEER_LAST_UPDATE,
+                'version': RIP2_PEER_VERSION,
+                'bad_packets': RIP2_PEER_BAD_PACKETS,
+                'bad_routes': RIP2_PEER_BAD_ROUTES,
+            },
+            port, version=version, timeout=timeout,
+        )
+        records = []
+        for suffix in sorted(columns['peer_address']):
+            parts = suffix.split('.')
+            if len(parts) != 6:
+                raise RuntimeError('RIPv2-MIB peer index is not an IPv4 address/domain pair')
+            try:
+                index_octets = [int(part) for part in parts]
+                address_octets = index_octets[:4]
+                domain_octets = index_octets[4:]
+                if any(octet < 0 or octet > 255 for octet in index_octets):
+                    raise ValueError('RIPv2 peer index is outside its valid range')
+                peer_ip = str(ipaddress.IPv4Address(bytes(address_octets)))
+                domain = int.from_bytes(bytes(domain_octets), 'big')
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise RuntimeError('RIPv2-MIB peer index contains invalid values') from exc
+            indexed_peer_ip = _snmp_ipv4_value(columns['peer_address'][suffix], 'RIP peer address')
+            version_value = _snmp_integer_value(columns['version'][suffix])
+            last_update = _snmp_integer_value(columns['last_update'][suffix])
+            bad_packets = _snmp_integer_value(columns['bad_packets'][suffix])
+            bad_routes = _snmp_integer_value(columns['bad_routes'][suffix])
+            if indexed_peer_ip != peer_ip:
+                raise RuntimeError('RIPv2-MIB peer-address column conflicts with its table index')
+            if version_value not in {1, 2} or last_update is None or last_update < 0:
+                raise RuntimeError('RIPv2-MIB peer has an invalid version or last-update time')
+            if bad_packets is None or bad_packets < 0 or bad_routes is None or bad_routes < 0:
+                raise RuntimeError('RIPv2-MIB peer has invalid error counters')
+            domain_value = _snmp_octets_value(columns['peer_domain'][suffix], 'RIP peer domain')
+            if len(domain_value) != 2:
+                raise RuntimeError('RIPv2-MIB peer domain must contain two octets')
+            indexed_domain = int.from_bytes(domain_value, 'big')
+            if indexed_domain != domain:
+                raise RuntimeError('RIPv2-MIB peer-domain column conflicts with its table index')
+            records.append({
+                'protocol': 'rip',
+                'neighbor_id': peer_ip,
+                'neighbor_ip': peer_ip,
+                'state': 'active',
+                'rip_domain': domain,
+                'rip_version': version_value,
+                'last_update_ticks': last_update,
+                'bad_packets': bad_packets,
+                'bad_routes': bad_routes,
+                'interface': '',
+            })
+        return records
+
+    if normalized_protocol == 'eigrp':
+        columns = await _snmp_walk_columns_complete(
+            ip, community_or_profile,
+            {
+                'address_type': EIGRP_PEER_ADDRESS_TYPE,
+                'address': EIGRP_PEER_ADDRESS,
+                'if_index': EIGRP_PEER_IF_INDEX,
+                'hold_time': EIGRP_PEER_HOLD_TIME,
+            },
+            port, version=version, timeout=timeout,
+        )
+        parsed_rows: list[tuple[str, str, int, int]] = []
+        interface_indexes: set[int] = set()
+        for suffix in sorted(columns['address']):
+            index_parts = suffix.split('.')
+            if len(index_parts) != 3:
+                raise RuntimeError('CISCO-EIGRP-MIB peer index is not a VPN/AS/handle tuple')
+            try:
+                vpn_id, autonomous_system, peer_handle = (int(part) for part in index_parts)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise RuntimeError('CISCO-EIGRP-MIB peer index contains non-numeric values') from exc
+            if vpn_id < 0 or autonomous_system <= 0 or peer_handle <= 0:
+                raise RuntimeError('CISCO-EIGRP-MIB peer index contains invalid values')
+            address_type = _snmp_integer_value(columns['address_type'][suffix])
+            raw_address = _snmp_octets_value(columns['address'][suffix], 'EIGRP peer address')
+            if address_type == 1 and len(raw_address) == 4:
+                peer_ip = str(ipaddress.IPv4Address(raw_address))
+            elif address_type == 2 and len(raw_address) == 16:
+                peer_ip = str(ipaddress.IPv6Address(raw_address))
+            else:
+                raise RuntimeError('CISCO-EIGRP-MIB peer address has an unsupported type or length')
+            if_index = _snmp_integer_value(columns['if_index'][suffix])
+            hold_time = _snmp_integer_value(columns['hold_time'][suffix])
+            if if_index is None or if_index < 0 or hold_time is None or hold_time < 0:
+                raise RuntimeError('CISCO-EIGRP-MIB peer has an invalid ifIndex or hold timer')
+            if if_index:
+                interface_indexes.add(if_index)
+            parsed_rows.append((suffix, peer_ip, if_index, autonomous_system))
+
+        interface_names = await _snmp_map_if_indexes(
+            ip, community_or_profile, interface_indexes, port,
+            version=version, timeout=timeout,
+        )
+        records = []
+        for suffix, peer_ip, if_index, autonomous_system in parsed_rows:
+            if if_index and if_index not in interface_names:
+                raise RuntimeError('CISCO-EIGRP-MIB did not map every peer ifIndex')
+            records.append({
+                'protocol': 'eigrp',
+                'neighbor_id': f'{peer_ip}/AS{autonomous_system}',
+                'neighbor_ip': peer_ip,
+                'state': 'up',
+                'local_as': autonomous_system,
+                'hold_time': _snmp_integer_value(columns['hold_time'][suffix]),
+                'if_index': if_index or None,
+                'interface': interface_names.get(if_index, ''),
+                'vpn_id': int(suffix.split('.')[0]),
+            })
+        return records
+
+    if normalized_protocol == 'ospf':
+        columns = await _snmp_walk_columns_complete(
+            ip, community_or_profile,
+            {
+                'router_id': OSPF_NBR_ROUTER_ID,
+                'priority': OSPF_NBR_PRIORITY,
+                'state': OSPF_NBR_STATE,
+                'events': OSPF_NBR_EVENTS,
+                'retransmit_queue': OSPF_NBR_RETRANS_QUEUE,
+            },
+            port, version=version, timeout=timeout,
+        )
+        state_names = {
+            1: 'down', 2: 'attempt', 3: 'init', 4: 'two_way',
+            5: 'exchange_start', 6: 'exchange', 7: 'loading', 8: 'full',
+        }
+        parsed_rows: list[tuple[str, str, int, int, int, int]] = []
+        interface_indexes: set[int] = set()
+        for suffix in sorted(columns['state']):
+            parts = suffix.split('.')
+            if len(parts) != 5:
+                raise RuntimeError('OSPF-MIB neighbor index has an invalid IPv4/interface shape')
+            try:
+                address_octets = [int(part) for part in parts[:4]]
+                if any(octet < 0 or octet > 255 for octet in address_octets):
+                    raise ValueError('neighbor IPv4 octet out of range')
+                neighbor_ip = str(ipaddress.IPv4Address(bytes(address_octets)))
+                addressless_if_index = int(parts[4])
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise RuntimeError('OSPF-MIB neighbor index contains invalid values') from exc
+            router_id = _snmp_ipv4_value(columns['router_id'][suffix], 'OSPF neighbor router ID')
+            priority = _snmp_integer_value(columns['priority'][suffix])
+            state = _snmp_integer_value(columns['state'][suffix])
+            events = _snmp_integer_value(columns['events'][suffix])
+            retransmit_queue = _snmp_integer_value(columns['retransmit_queue'][suffix])
+            if addressless_if_index < 0 or priority is None or not 0 <= priority <= 255:
+                raise RuntimeError('OSPF-MIB neighbor has an invalid interface index or priority')
+            if state not in state_names or events is None or events < 0 or retransmit_queue is None or retransmit_queue < 0:
+                raise RuntimeError('OSPF-MIB neighbor has an invalid state or counter')
+            interface_indexes.add(addressless_if_index)
+            parsed_rows.append((suffix, neighbor_ip, addressless_if_index, router_id, priority, state))
+        interface_names = await _snmp_map_if_indexes(
+            ip, community_or_profile, interface_indexes, port,
+            version=version, timeout=timeout,
+        )
+        return [{
+            'protocol': 'ospf',
+            'neighbor_ip': neighbor_ip,
+            'peer_ip': neighbor_ip,
+            'router_id': router_id,
+            'state': state_names[state],
+            'priority': priority,
+            'events': _snmp_integer_value(columns['events'][suffix]),
+            'retransmit_queue_length': _snmp_integer_value(columns['retransmit_queue'][suffix]),
+            # OSPF-MIB's addressless index is zero on addressed interfaces;
+            # in that case the standard table does not expose a local ifIndex.
+            'if_index': addressless_if_index or None,
+            'interface': interface_names.get(addressless_if_index),
+        } for suffix, neighbor_ip, addressless_if_index, router_id, priority, state in parsed_rows]
+
+    if normalized_protocol == 'ospfv3':
+        columns = await _snmp_walk_columns_complete(
+            ip, community_or_profile,
+            {
+                'address_type': OSPFV3_NBR_ADDRESS_TYPE,
+                'address': OSPFV3_NBR_ADDRESS,
+                'priority': OSPFV3_NBR_PRIORITY,
+                'state': OSPFV3_NBR_STATE,
+                'events': OSPFV3_NBR_EVENTS,
+            },
+            port, version=version, timeout=timeout,
+        )
+        state_names = {
+            1: 'down', 2: 'attempt', 3: 'init', 4: 'two_way',
+            5: 'exchange_start', 6: 'exchange', 7: 'loading', 8: 'full',
+        }
+        parsed_rows: list[tuple[str, str, int, int, int, int, int]] = []
+        interface_indexes: set[int] = set()
+        for suffix in sorted(columns['state']):
+            parts = suffix.split('.')
+            if len(parts) != 3:
+                raise RuntimeError('OSPFV3-MIB neighbor index has an invalid shape')
+            try:
+                if_index, instance_id, router_id_value = (int(part) for part in parts)
+                router_id = str(ipaddress.IPv4Address(router_id_value))
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise RuntimeError('OSPFV3-MIB neighbor index contains invalid values') from exc
+            address_type = _snmp_integer_value(columns['address_type'][suffix])
+            address_bytes = _snmp_octets_value(columns['address'][suffix], 'OSPFv3 neighbor address')
+            if if_index <= 0 or instance_id < 0 or instance_id > 255 or router_id_value <= 0:
+                raise RuntimeError('OSPFV3-MIB neighbor index has an invalid interface, instance, or router ID')
+            if address_type != 2 or len(address_bytes) != 16:
+                raise RuntimeError('OSPFV3-MIB neighbor address is not an IPv6 address')
+            neighbor_ip = str(ipaddress.IPv6Address(address_bytes))
+            priority = _snmp_integer_value(columns['priority'][suffix])
+            state = _snmp_integer_value(columns['state'][suffix])
+            events = _snmp_integer_value(columns['events'][suffix])
+            if priority is None or not 0 <= priority <= 255 or state not in state_names or events is None or events < 0:
+                raise RuntimeError('OSPFV3-MIB neighbor has an invalid priority, state, or event counter')
+            interface_indexes.add(if_index)
+            parsed_rows.append((suffix, neighbor_ip, if_index, instance_id, router_id_value, priority, state))
+        interface_names = await _snmp_map_if_indexes(
+            ip, community_or_profile, interface_indexes, port,
+            version=version, timeout=timeout,
+        )
+        return [{
+            'protocol': 'ospfv3',
+            'neighbor_ip': neighbor_ip,
+            'peer_ip': neighbor_ip,
+            'router_id': str(ipaddress.IPv4Address(router_id_value)),
+            'state': state_names[state],
+            'priority': priority,
+            'events': _snmp_integer_value(columns['events'][suffix]),
+            'instance_id': instance_id,
+            'if_index': if_index,
+            'interface': interface_names[if_index],
+        } for suffix, neighbor_ip, if_index, instance_id, router_id_value, priority, state in parsed_rows]
+
+    columns = await _snmp_walk_columns_complete(
+        ip, community_or_profile,
+        {
+            'state': ISIS_ADJ_STATE,
+            'three_way_state': ISIS_ADJ_THREE_WAY_STATE,
+            'snpa_address': ISIS_ADJ_SNPA_ADDRESS,
+            'neighbor_type': ISIS_ADJ_NEIGHBOR_TYPE,
+            'neighbor_system_id': ISIS_ADJ_NEIGHBOR_SYSTEM_ID,
+            'usage': ISIS_ADJ_USAGE,
+            'hold_timer': ISIS_ADJ_HOLD_TIMER,
+            'priority': ISIS_ADJ_NEIGHBOR_PRIORITY,
+        },
+        port, version=version, timeout=timeout,
+    )
+    circuit_rows = await _snmp_bulk_walk_complete(
+        ip, community_or_profile, ISIS_CIRC_IF_INDEX, port,
+        timeout=timeout, version=version,
+    )
+    if not circuit_rows:
+        raise RuntimeError('ISIS-MIB circuit-to-ifIndex table returned no rows')
+    circuit_if_indexes: dict[int, int] = {}
+    for suffix, raw_if_index in circuit_rows:
+        try:
+            circuit_index = int(str(suffix).strip('.'))
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise RuntimeError('ISIS-MIB circuit table has an invalid circuit index') from exc
+        if_index = _snmp_integer_value(raw_if_index)
+        if circuit_index <= 0 or if_index is None or if_index <= 0:
+            raise RuntimeError('ISIS-MIB circuit table has an invalid interface mapping')
+        if circuit_index in circuit_if_indexes:
+            raise RuntimeError('ISIS-MIB circuit table contains a duplicate circuit index')
+        circuit_if_indexes[circuit_index] = if_index
+
+    state_names = {1: 'down', 2: 'initializing', 3: 'up', 4: 'failed'}
+    three_way_state_names = {0: 'up', 1: 'initializing', 2: 'down', 3: 'failed'}
+    neighbor_type_names = {1: 'level1', 2: 'level2', 3: 'level1_and_level2', 4: 'unknown'}
+    usage_names = {1: 'level1', 2: 'level2', 3: 'level1_and_level2'}
+    parsed_rows: list[dict[str, Any]] = []
+    interface_indexes: set[int] = set()
+    for suffix in sorted(columns['state']):
+        parts = suffix.split('.')
+        if len(parts) != 2:
+            raise RuntimeError('ISIS-MIB adjacency index has an invalid circuit/neighbor shape')
+        try:
+            circuit_index, adjacency_index = (int(part) for part in parts)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise RuntimeError('ISIS-MIB adjacency index contains non-numeric values') from exc
+        if circuit_index <= 0 or adjacency_index <= 0:
+            raise RuntimeError('ISIS-MIB adjacency index contains a non-positive value')
+        if_index = circuit_if_indexes.get(circuit_index)
+        if if_index is None:
+            raise RuntimeError('ISIS-MIB did not map an adjacency circuit to ifIndex')
+        state = _snmp_integer_value(columns['state'][suffix])
+        three_way_state = _snmp_integer_value(columns['three_way_state'][suffix])
+        neighbor_type = _snmp_integer_value(columns['neighbor_type'][suffix])
+        usage = _snmp_integer_value(columns['usage'][suffix])
+        hold_timer = _snmp_integer_value(columns['hold_timer'][suffix])
+        priority = _snmp_integer_value(columns['priority'][suffix])
+        if state not in state_names or three_way_state not in three_way_state_names:
+            raise RuntimeError('ISIS-MIB adjacency has an unknown state')
+        if neighbor_type not in neighbor_type_names or usage not in usage_names:
+            raise RuntimeError('ISIS-MIB adjacency has an unknown level/type')
+        if hold_timer is None or hold_timer < 0 or priority is None or not 0 <= priority <= 127:
+            raise RuntimeError('ISIS-MIB adjacency has an invalid hold timer or priority')
+        system_id_octets = _snmp_octets_value(columns['neighbor_system_id'][suffix], 'IS-IS neighbor system ID')
+        if len(system_id_octets) != 6:
+            raise RuntimeError('ISIS-MIB neighbor system ID must contain six octets')
+        system_hex = system_id_octets.hex()
+        system_id = '.'.join(system_hex[offset:offset + 4] for offset in range(0, 12, 4))
+        snpa_octets = _snmp_octets_value(columns['snpa_address'][suffix], 'IS-IS neighbor SNPA')
+        snpa = snpa_octets.hex(':') if snpa_octets else ''
+        interface_indexes.add(if_index)
+        parsed_rows.append({
+            'protocol': 'isis',
+            'neighbor_id': system_id,
+            'neighbor_system_id': system_id,
+            'neighbor_ip': None,
+            'peer_ip': None,
+            'state': state_names[state],
+            'three_way_state': three_way_state_names[three_way_state],
+            'neighbor_type': neighbor_type_names[neighbor_type],
+            'level': usage_names[usage],
+            'hold_time': hold_timer,
+            'priority': priority,
+            'snpa': snpa,
+            'circuit_index': circuit_index,
+            'adjacency_index': adjacency_index,
+            'if_index': if_index,
+        })
+    interface_names = await _snmp_map_if_indexes(
+        ip, community_or_profile, interface_indexes, port,
+        version=version, timeout=timeout,
+    )
+    for record in parsed_rows:
+        record['interface'] = interface_names[record['if_index']]
+    return parsed_rows
 
 
 async def collect_device_info(
@@ -1057,7 +2864,7 @@ async def collect_device_info(
 
 async def collect_snmp_lldp_neighbors(
     ip: str,
-    community: str,
+    community: str | Mapping[str, Any],
     port: int = 161,
     version: str = '2c',
     timeout: float = 30.0,
@@ -1077,8 +2884,14 @@ async def collect_snmp_lldp_neighbors(
     # LLDP discovery must use the credential resolved for the target asset.
     # Never silently probe with the well-known ``public`` community: callers
     # that do not have an SNMP secret should skip this path and use their
-    # configured fallback (for example, SSH) instead.
-    if not str(community or '').strip():
+    # configured fallback (for example, SSH) instead. SNMPv3 uses the resolved
+    # profile mapping in the same transport helper as the other collectors.
+    version_key = str(version or '2c').strip().casefold()
+    if version_key in {'3', 'v3', 'snmpv3'}:
+        if not isinstance(community, Mapping):
+            raise ValueError('SNMPv3 profile is required for LLDP discovery')
+        _snmpv3_credentials(community)
+    elif not str(community or '').strip():
         raise ValueError('SNMP community is required for LLDP discovery')
 
     class _SnmpLLDPBatch(list[dict[str, Any]]):
@@ -1388,18 +3201,24 @@ async def collect_snmp_lldp_neighbors(
 
 async def collect_interface_inventory(
     ip: str,
-    community: str = 'public',
+    community: str | Mapping[str, Any] = 'public',
     port: int = 161,
     interface_config: Mapping[str, Any] | None = None,
+    *,
+    version: str = '2c',
 ) -> list[dict[str, Any]]:
     """Read only interface names and IF-MIB indexes for a device inventory refresh."""
     config = normalize_interface_config(interface_config) if interface_config else dict(DEFAULT_INTERFACE_CONFIG)
     if not config.get('enabled', True):
         config = dict(DEFAULT_INTERFACE_CONFIG)
 
-    name_rows = await _snmp_bulk_walk(ip, community, config.get('if_name_oid') or '', port) if config.get('if_name_oid') else []
+    name_rows = await _snmp_bulk_walk(
+        ip, community, config.get('if_name_oid') or '', port, version=version,
+    ) if config.get('if_name_oid') else []
     if not name_rows and config.get('if_descr_oid'):
-        name_rows = await _snmp_bulk_walk(ip, community, config['if_descr_oid'], port)
+        name_rows = await _snmp_bulk_walk(
+            ip, community, config['if_descr_oid'], port, version=version,
+        )
 
     interfaces: list[dict[str, Any]] = []
     for raw_index, raw_name in name_rows:

@@ -4,6 +4,7 @@ import { Search, MapPin, ArrowRight, Loader2, Server, Monitor, Network, AlertCir
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
 import { ActionButton } from '../components/ui/ActionIconButton';
+import { IconInputField } from '../components/ui/IconInputField';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import { formatMacAddress } from '../utils/resourceFormatters';
 import {
@@ -1502,14 +1503,14 @@ ${rep.repair_commands}
       : 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-200/70 dark:border-amber-500/20';
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className="flex h-full w-full min-w-0 flex-col overflow-hidden">
       <PageHero
         icon={mode === 'diagnose-only' ? ShieldAlert : mode === 'nsot-only' ? Database : MapPin}
         title={mode === 'diagnose-only' ? (zh ? 'NPA 智能路径诊断' : 'NPA Path Diagnostics') : mode === 'nsot-only' ? (zh ? '网络事实库' : 'Network Source of Truth') : (zh ? 'IP 定位' : 'IP Locator')}
         subtitle={mode === 'diagnose-only' ? (zh ? '网络协议与路径全链条故障排查与一键式诊断' : 'End-to-end network protocol and path diagnostics') : mode === 'nsot-only' ? (zh ? '全网终端事实库、IP 资产明细与路由缓存离线数据库' : 'IP endpoints, inventory assets, and route cache database') : (zh ? 'IP 地址定位 · 连通性探测 · 全链路诊断' : 'IP Locate · Connectivity Probe · Full-path Diagnostics')}
       />
 
-      <div className="flex-1 overflow-auto px-6 py-5 space-y-5">
+      <div className={`flex-1 min-h-0 px-6 py-5 space-y-5 ${activeTab === 'arp-table' ? 'flex flex-col overflow-hidden' : 'overflow-auto'}`}>
       {/* ── Tab Bar ── */}
       {mode !== 'diagnose-only' && mode !== 'nsot-only' && (
         <div className="flex gap-1 bg-black/[0.03] dark:bg-white/[0.04] rounded-xl p-1 w-fit">
@@ -2239,38 +2240,44 @@ ${rep.repair_commands}
       {/* ────────────────────────────────────── */}
       {/* TAB: ARP Table                         */}
       {/* ────────────────────────────────────── */}
-      {activeTab === 'arp-table' && (<>
+      {activeTab === 'arp-table' && (
+      <div className="flex min-h-0 flex-1 flex-col gap-4">
 
       {/* ── Controls ── */}
-      <div className="bg-white rounded-2xl border border-black/5 shadow-sm p-5">
-        <div className="flex items-center gap-3 flex-wrap">
-          <div className="relative flex-1 max-w-md">
-            <Filter size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-black/30" />
-            <input
+      <div className="shrink-0 rounded-2xl border border-black/5 bg-white p-4 shadow-sm sm:p-5">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="w-full min-w-0 flex-1 sm:w-auto sm:min-w-[18rem] sm:max-w-md">
+            <IconInputField
+              id="arp-table-filter"
+              label={zh ? '搜索 ARP 表' : 'Search ARP table'}
+              labelClassName="sr-only"
+              icon={Filter}
               type="search"
               value={arpFilter}
               onChange={e => { setArpFilter(e.target.value); setArpPage(1); }}
               placeholder={zh ? '搜索 IP / MAC / 厂商 / 设备 / 接口...' : 'Filter by IP / MAC / vendor / device / interface...'}
-              className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-black/10 text-sm bg-white focus:ring-2 focus:ring-[#06b6d4]/30 focus:border-[#06b6d4] outline-none transition-all placeholder:text-black/30"
             />
           </div>
-          <button
+          <ActionButton
+            icon={RotateCcw}
+            size="md"
             onClick={fetchArpTable}
             disabled={arpLoading}
-            className="px-4 py-2.5 rounded-xl border border-black/10 text-sm text-black/50 hover:bg-black/[0.03] disabled:opacity-40 transition-all flex items-center gap-1.5"
+            iconClassName={arpLoading ? 'animate-spin' : undefined}
           >
-            <RotateCcw size={13} className={arpLoading ? 'animate-spin' : ''} />
             {zh ? '刷新' : 'Refresh'}
-          </button>
-          <button
+          </ActionButton>
+          <ActionButton
+            icon={arpSweeping ? Loader2 : RefreshCw}
+            variant="primary"
+            size="md"
             onClick={triggerArpSweep}
             disabled={arpSweeping || arpLoading}
             title={zh ? '立即从所有网关设备采集全量 ARP 数据' : 'Collect full ARP data from all gateways now'}
-            className="px-4 py-2.5 rounded-xl bg-[#0891b2] text-white text-sm font-semibold hover:bg-[#0e7490] disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-1.5 shadow-sm"
+            iconClassName={arpSweeping ? 'animate-spin' : undefined}
           >
-            {arpSweeping ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
             {zh ? '立即采集' : 'Sweep Now'}
-          </button>
+          </ActionButton>
         </div>
 
         {/* Stats bar */}
@@ -2321,7 +2328,7 @@ ${rep.repair_commands}
 
       {/* ── Empty state ── */}
       {!arpLoading && !arpError && arpTable && arpTable.total === 0 && (
-        <div className="bg-white rounded-2xl border border-black/5 shadow-sm p-8 text-center">
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center rounded-2xl border border-black/5 bg-white p-8 text-center shadow-sm">
           <Database size={32} className="mx-auto text-black/15 dark:text-white/15 mb-3" />
           <p className="text-sm text-black/40 dark:text-white/40">{zh ? '暂无 ARP 数据。点击「立即采集」从在线设备获取 ARP 表。' : 'No ARP data. Click "Sweep Now" to collect from online devices.'}</p>
         </div>
@@ -2329,10 +2336,9 @@ ${rep.repair_commands}
 
       {/* ── ARP Table ── */}
       {!arpLoading && arpTable && arpTable.total > 0 && (
-        <div className="bg-white rounded-2xl border border-black/5 dark:border-white/5 shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-black/5 bg-white shadow-sm dark:border-white/5">
+          <div className="min-h-0 flex-1 overflow-auto overscroll-contain">
             <DataTable
-              unstyled
               exportConfig={{
                 filename: 'ip-locator-arp-table',
                 language: zh ? 'zh' : 'en',
@@ -2350,41 +2356,50 @@ ${rep.repair_commands}
                   ]),
                 }),
               }}
-              className="block min-w-[760px] border-collapse text-left"
+              className="min-w-[1000px] table-fixed text-left text-xs"
             >
-              <thead className="block">
-                <tr className="grid grid-cols-[1fr_1fr_5rem_6rem_6rem_10rem_8rem] gap-2 px-5 py-2.5 text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-wider border-b border-black/5 dark:border-white/8 bg-black/[0.01] dark:bg-white/[0.02]">
-                  <th scope="col" className="block text-left font-bold">IP</th>
-                  <th scope="col" className="block text-left font-bold">MAC</th>
-                  <th scope="col" className="block text-left font-bold">VLAN</th>
-                  <th scope="col" className="block text-left font-bold">{zh ? '厂商' : 'Vendor'}</th>
-                  <th scope="col" className="block text-left font-bold">{zh ? '接口' : 'Interface'}</th>
-                  <th scope="col" className="block text-left font-bold">{zh ? '来源设备' : 'Device'}</th>
-                  <th scope="col" className="block text-left font-bold">{zh ? '采集时间' : 'Collected'}</th>
+              <colgroup>
+                <col className="w-[16%]" />
+                <col className="w-[21%]" />
+                <col className="w-[7%]" />
+                <col className="w-[11%]" />
+                <col className="w-[13%]" />
+                <col className="w-[17%]" />
+                <col className="w-[15%]" />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th scope="col">IP</th>
+                  <th scope="col">MAC</th>
+                  <th scope="col">VLAN</th>
+                  <th scope="col">{zh ? '厂商' : 'Vendor'}</th>
+                  <th scope="col">{zh ? '接口' : 'Interface'}</th>
+                  <th scope="col">{zh ? '来源设备' : 'Device'}</th>
+                  <th scope="col">{zh ? '采集时间' : 'Collected'}</th>
                 </tr>
               </thead>
-              <tbody className="block">
+              <tbody>
                 {filteredArpEntries.length === 0 ? (
-                  <tr className="block">
-                    <td colSpan={7} className="block px-5 py-6 text-center text-xs text-black/30">
+                  <tr>
+                    <td colSpan={7} className="text-center text-[var(--ops-muted)]">
                       {zh ? `未找到匹配 "${arpFilter}" 的记录` : `No entries matching "${arpFilter}"`}
                     </td>
                   </tr>
                 ) : (
-                  pageArpEntries.map((entry, idx) => (
+                  pageArpEntries.map(entry => (
                     <tr
                       key={entry.ip}
-                      className={`grid grid-cols-[1fr_1fr_5rem_6rem_6rem_10rem_8rem] gap-2 px-5 py-2 text-xs items-center border-b border-black/[0.03] dark:border-white/[0.05] hover:bg-[#ecfeff]/30 dark:hover:bg-cyan-500/5 transition-colors cursor-pointer ${idx % 2 ? 'bg-black/[0.008] dark:bg-white/[0.015]' : ''}`}
+                      className="cursor-pointer"
                       onClick={() => { setIp(entry.ip); setActiveTab('locate'); }}
                       title={zh ? '点击定位此 IP' : 'Click to locate this IP'}
                     >
-                      <td className="block font-mono font-semibold text-[#164e63]">{entry.ip}</td>
-                      <td className="block font-mono text-black/50">{formatMacAddress(entry.mac)}</td>
-                      <td className="block font-mono text-cyan-700 dark:text-cyan-400">{entry.vlan || '-'}</td>
-                      <td className="block text-black/45 truncate" title={entry.vendor}>{entry.vendor || '-'}</td>
-                      <td className="block text-black/45 truncate" title={entry.interface}>{entry.interface || '-'}</td>
-                      <td className="block text-[#0891b2] truncate font-medium" title={entry.device}>{entry.device || '-'}</td>
-                      <td className={entry.freshness === 'stale' ? 'block text-amber-600' : 'block text-black/30'} title={`${entry.cached_at} · ${entry.vlan_source || 'unknown VLAN source'}`}>
+                      <td className="whitespace-nowrap font-mono font-semibold text-[#164e63]" title={entry.ip}>{entry.ip}</td>
+                      <td className="whitespace-nowrap font-mono text-[var(--ops-muted)]" title={formatMacAddress(entry.mac)}>{formatMacAddress(entry.mac)}</td>
+                      <td className="whitespace-nowrap font-mono text-cyan-700 dark:text-cyan-400" title={entry.vlan || '-'}>{entry.vlan || '-'}</td>
+                      <td className="max-w-0 truncate text-[var(--ops-muted)]" title={entry.vendor}>{entry.vendor || '-'}</td>
+                      <td className="max-w-0 truncate text-[var(--ops-muted)]" title={entry.interface}>{entry.interface || '-'}</td>
+                      <td className="max-w-0 truncate font-medium text-[#0891b2]" title={entry.device}>{entry.device || '-'}</td>
+                      <td className={`whitespace-nowrap ${entry.freshness === 'stale' ? 'text-amber-600' : 'text-[var(--ops-muted)]'}`} title={`${entry.cached_at} · ${entry.vlan_source || 'unknown VLAN source'}`}>
                         {formatRelativeTime(entry.cached_at, zh)}{entry.freshness === 'stale' ? (zh ? ' · 已过期' : ' · stale') : ''}
                       </td>
                     </tr>
@@ -2404,7 +2419,8 @@ ${rep.repair_commands}
         </div>
       )}
 
-      </>)}
+      </div>
+      )}
 
       {/* ────────────────────────────────────── */}
       {/* TAB: MAC Changes                       */}

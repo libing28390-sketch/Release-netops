@@ -103,6 +103,7 @@ export const usePageTitle = ({
         vips: language === 'zh' ? 'VIP管理' : 'VIP Management',
         dhcp: language === 'zh' ? 'DHCP租约' : 'DHCP Leases',
         utilization: language === 'zh' ? '利用率分析' : 'IP Utilization Analysis',
+        reconciliation: language === 'zh' ? 'IP对账中心' : 'IP Reconciliation',
       };
       return map[ipamPage] || (language === 'zh' ? 'IPAM管理' : 'IPAM Management');
     }

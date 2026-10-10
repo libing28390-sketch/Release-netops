@@ -100,14 +100,32 @@ export const navConfig: NavGroup[] = [
     labelEn: 'IPAM',
     icon: 'Globe',
     children: [
-      { id: 'ipam-locate',   label: 'IP定位',       labelEn: 'IP Locator',      path: '/ipam/locate',        icon: 'MapPin' },
-      { id: 'ipam-prefixes', label: 'Prefix管理',  labelEn: 'Prefixes',       path: '/ipam/prefixes',     icon: 'Network' },
-      { id: 'ipam-ips',      label: 'IP地址',     labelEn: 'IP Addresses',   path: '/ipam/ips',          icon: 'MapPin' },
-      { id: 'ipam-pools',    label: '地址池',     labelEn: 'IP Pools',       path: '/ipam/pools',        icon: 'Package' },
-      { id: 'ipam-vips',     label: 'VIP管理',    labelEn: 'VIP Mgmt',       path: '/ipam/vips',         icon: 'ShieldCheck' },
-      { id: 'ipam-dhcp',     label: 'DHCP租约',   labelEn: 'DHCP Leases',    path: '/ipam/dhcp',         icon: 'Clock' },
-      { id: 'ipam-util',     label: '利用率分析',  labelEn: 'Utilization',    path: '/ipam/utilization',  icon: 'TrendingUp' },
-      { id: 'ipam-reconciliation', label: 'IP对账中心', labelEn: 'IP Reconciliation', path: '/ipam/reconciliation', icon: 'ClipboardCheck' },
+      {
+        id: 'ipam-address-space',
+        label: '地址空间',
+        labelEn: 'Address Space',
+        path: '/ipam/prefixes',
+        activeMatch: '/ipam/prefixes,/ipam/ips,/ipam/pools,/ipam/vips',
+        icon: 'Globe',
+        children: [
+          { id: 'ipam-prefixes', label: '网段', labelEn: 'Prefixes', path: '/ipam/prefixes', icon: 'Globe' },
+          { id: 'ipam-ips', label: 'IP 地址', labelEn: 'IP Addresses', path: '/ipam/ips', icon: 'Globe' },
+          { id: 'ipam-vips', label: 'VIP', labelEn: 'VIPs', path: '/ipam/vips', icon: 'ShieldCheck' },
+        ],
+      },
+      {
+        id: 'ipam-workbench',
+        label: 'IPAM 工作台',
+        labelEn: 'IPAM Workspace',
+        path: '/ipam/utilization',
+        activeMatch: '/ipam/utilization,/ipam/reconciliation,/ipam/locate',
+        icon: 'Activity',
+        children: [
+          { id: 'ipam-utilization', label: '利用率', labelEn: 'Utilization', path: '/ipam/utilization', icon: 'BarChart2' },
+          { id: 'ipam-locate', label: 'IP 定位', labelEn: 'IP Locator', path: '/ipam/locate', icon: 'Globe' },
+          { id: 'ipam-reconciliation', label: 'IP 对账', labelEn: 'IP Reconciliation', path: '/ipam/reconciliation', icon: 'ClipboardList' },
+        ],
+      },
     ]
   },
   {

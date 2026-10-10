@@ -46,6 +46,7 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [totalLeases, setTotalLeases] = useState(0);
+  const [loadError, setLoadError] = useState('');
 
   // Modals
   const [showAddEdit, setShowAddEdit] = useState(false);
@@ -73,21 +74,30 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
 
   const loadData = useCallback(async () => {
     setLoading(true);
+    setLoadError('');
     const hdrs = authHeaders();
     try {
       const res = await fetch(`/api/ipam/leases?q=${encodeURIComponent(search.trim())}&state=${encodeURIComponent(stateFilter)}&page=${page}&page_size=${pageSize}`, { headers: hdrs });
-      if (res.ok) {
-        const payload = await res.json();
-        const data = payload?.data && !Array.isArray(payload.data) ? payload.data : payload;
-        setLeases(Array.isArray(data) ? data : (data?.items || []));
-        setTotalLeases(Array.isArray(data) ? data.length : Number(data?.total || 0));
+      if (!res.ok) {
+        setLoadError(res.status === 401
+          ? (zh ? '登录已过期，请重新登录后重试。' : 'Your session has expired. Sign in and retry.')
+          : res.status === 403
+            ? (zh ? '当前账号没有查看 DHCP 租约的权限。' : 'You do not have permission to view DHCP leases.')
+            : (zh ? '加载 DHCP 租约失败，请重试。' : 'Failed to load DHCP leases. Please retry.'));
+        return;
       }
+      const payload = await res.json();
+      const data = payload?.data && !Array.isArray(payload.data) ? payload.data : payload;
+      const items = Array.isArray(payload) ? payload : Array.isArray(payload?.data) ? payload.data : Array.isArray(data) ? data : (data?.items || []);
+      setLeases(items);
+      setTotalLeases(Array.isArray(data) ? items.length : Number(data?.total || payload?.total || items.length));
     } catch (e) {
       console.error(e);
+      setLoadError(zh ? '加载 DHCP 租约失败，请检查网络后重试。' : 'Failed to load DHCP leases. Check the connection and retry.');
     } finally {
       setLoading(false);
     }
-  }, [authHeaders, page, pageSize, search, stateFilter]);
+  }, [authHeaders, page, pageSize, search, stateFilter, zh]);
 
   useEffect(() => {
     loadData();
@@ -230,6 +240,15 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
           </div>
         }
       />
+
+      {loadError && (
+        <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-semibold text-rose-700">
+          <span>{loadError}</span>
+          <button type="button" onClick={loadData} className="shrink-0 rounded-lg bg-white px-3 py-1.5 text-rose-700 shadow-sm hover:bg-rose-100">
+            {zh ? '重试' : 'Retry'}
+          </button>
+        </div>
+      )}
 
       {/* Main Table Card */}
       <div className="flex-1 min-h-0 bg-white rounded-[28px] border border-black/5 shadow-[0_16px_36px_rgba(11,35,64,0.06)] overflow-hidden flex flex-col">

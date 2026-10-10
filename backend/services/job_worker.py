@@ -30,7 +30,10 @@ def _execute_target(job: dict, target: dict) -> dict:
         return result
     if job_type == 'interface_collection':
         from services.interface_collection_service import collect_interface_status_target
-        return collect_interface_status_target(target['target_id'])
+        return collect_interface_status_target(
+            target['target_id'],
+            require_online_network_device=True,
+        )
     raise RuntimeError(f"No worker handler registered for job_type '{job_type}'")
 
 

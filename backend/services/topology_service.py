@@ -1957,17 +1957,6 @@ def _sync_aggregation_inventory(device: dict[str, Any], platform_action_session=
     if str(os.environ.get('TOPOLOGY_AGGREGATION_DISCOVERY_ENABLED', '1')).strip().lower() in {'0', 'false', 'no'}:
         return {'parents': 0, 'members': 0}
     device_id = str(device.get('id') or '')
-    if device_id:
-        conn = get_db_connection()
-        try:
-            has_lag = conn.execute(
-                "SELECT 1 FROM interfaces WHERE device_id = ? AND parent_interface_id IS NOT NULL AND parent_interface_id <> '' LIMIT 1",
-                (device_id,)
-            ).fetchone()
-            if has_lag:
-                return {'parents': 0, 'members': 0}
-        finally:
-            conn.close()
     try:
         from services.operational_data_service import collect_operational_data
 
@@ -1981,7 +1970,11 @@ def _sync_aggregation_inventory(device: dict[str, Any], platform_action_session=
             _platform_action_session=platform_action_session,
         )
         category = next((item for item in payload.get('categories', []) if item.get('key') == 'eth_trunk'), None)
-        records = list(category.get('records') or []) if category else []
+        records = (
+            list(category.get('records') or [])
+            if category and str(category.get('parse_status') or '').lower() == 'matched'
+            else []
+        )
     except Exception as exc:  # noqa: BLE001
         logger.info('Aggregation inventory skipped for %s: %s', device.get('hostname'), exc)
         return {'parents': 0, 'members': 0}
@@ -2386,6 +2379,10 @@ async def _collect_device_observations(
     snmp_credentials = collector_credentials.get('snmp') or {}
     snmp_ip = str(snmp_credentials.get('server') or ip or '').strip()
     snmp_community = str(snmp_credentials.get('community') or '').strip()
+    snmp_version_key = str(snmp_credentials.get('version') or '2c').strip().casefold()
+    snmp_is_v3 = snmp_version_key in {'3', 'v3', 'snmpv3'}
+    snmp_auth = dict(snmp_credentials) if snmp_is_v3 else snmp_community
+    snmp_configured = bool(snmp_credentials.get('configured')) and (snmp_is_v3 or bool(snmp_community))
     snmp_port_error = str(snmp_credentials.get('configuration_error') or '').strip()
     # Preserve the resolver contract for older cached credential payloads that
     # predate the explicit ``port`` field. An explicit malformed value still
@@ -2425,14 +2422,14 @@ async def _collect_device_observations(
             device.get('hostname'),
             snmp_port_error,
         )
-    elif snmp_community and snmp_ip:
+    elif snmp_configured and snmp_ip:
         if attempted_methods is not None:
             attempted_methods.append('snmp')
         try:
             from services.snmp_service import collect_snmp_lldp_neighbors
             snmp_records = await collect_snmp_lldp_neighbors(
                 snmp_ip,
-                snmp_community,
+                snmp_auth,
                 port=snmp_port,
                 version=snmp_version,
                 timeout=30.0,
@@ -3640,19 +3637,36 @@ async def discover_device_neighbors(
         aggregation_summary = {'parents': 0, 'members': 0, 'status': 'not_attempted'}
         if str(os.environ.get('TOPOLOGY_AGGREGATION_DISCOVERY_ENABLED', '1')).strip().lower() not in {'0', 'false', 'no'}:
             try:
-                if method == 'snmp':
-                    from services.topology_aggregation_inventory_service import sync_snmp_aggregation_inventory
+                from services.topology_aggregation_inventory_service import sync_snmp_aggregation_inventory
 
-                    aggregation_summary = await sync_snmp_aggregation_inventory(
-                        device, collector_credentials, snapshot_generation=snapshot_generation,
-                    )
-                    logger.info(
-                        'SNMP aggregation inventory for %s: status=%s parents=%s members=%s',
-                        device.get('hostname') or device_id, aggregation_summary.get('status'),
-                        aggregation_summary.get('parents', 0), aggregation_summary.get('members', 0),
-                    )
-                elif has_ssh:
-                    aggregation_summary = await asyncio.to_thread(_sync_aggregation_inventory, device)
+                aggregation_summary = await sync_snmp_aggregation_inventory(
+                    device, collector_credentials, snapshot_generation=snapshot_generation,
+                )
+                aggregation_status = str(aggregation_summary.get('status') or '').lower()
+                if aggregation_status in {'unavailable', 'failed', 'partial'} and has_ssh:
+                    snmp_detail = str(aggregation_summary.get('detail') or aggregation_status)
+                    cli_summary = await asyncio.to_thread(_sync_aggregation_inventory, device)
+                    if int(cli_summary.get('parents') or 0) > 0 and int(cli_summary.get('members') or 0) > 0:
+                        aggregation_summary = {
+                            **cli_summary,
+                            'status': 'success',
+                            'source': 'cli',
+                            'detail': f'SNMP fallback: {snmp_detail}',
+                        }
+                    else:
+                        aggregation_summary = {
+                            'status': 'unavailable',
+                            'source': 'cli',
+                            'parents': 0,
+                            'members': 0,
+                            'detail': f'SNMP fallback: {snmp_detail}; CLI returned no complete membership records',
+                        }
+                logger.info(
+                    'Aggregation inventory for %s: source=%s status=%s parents=%s members=%s',
+                    device.get('hostname') or device_id, aggregation_summary.get('source'),
+                    aggregation_summary.get('status'), aggregation_summary.get('parents', 0),
+                    aggregation_summary.get('members', 0),
+                )
             except Exception as aggregation_exc:
                 aggregation_summary = {'parents': 0, 'members': 0, 'status': 'unavailable'}
                 logger.debug('Topology aggregation unavailable for %s (%s)', device_id, type(aggregation_exc).__name__)

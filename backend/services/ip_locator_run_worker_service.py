@@ -21,6 +21,7 @@ from services.ip_locator_task_service import (
 from services.ip_locator_trace_service import add_legacy_compatibility, trace_ip
 
 logger = logging.getLogger(__name__)
+_active_locator_run_tasks: set[asyncio.Task[Any]] = set()
 
 
 def _worker_id() -> str:
@@ -147,6 +148,16 @@ def _run_claimed(run: dict[str, Any]) -> dict[str, Any] | None:
         heartbeat_thread.join(timeout=1)
 
 
+def _on_locator_run_task_done(task: asyncio.Task[Any]) -> None:
+    _active_locator_run_tasks.discard(task)
+    if task.cancelled():
+        return
+    try:
+        task.result()
+    except Exception as exc:
+        logger.error("[IPLocatorV2] dispatched run task failed (%s)", type(exc).__name__)
+
+
 def run_locator_run_by_id(run_id: str) -> None:
     """Wake a queued run immediately; PostgreSQL still arbitrates ownership."""
     worker = _worker_id()
@@ -161,7 +172,7 @@ def run_locator_run_by_id(run_id: str) -> None:
 
 
 async def process_pending_locator_runs() -> int:
-    """Claim a bounded batch so runs stranded by a restart are recovered."""
+    """Dispatch a bounded batch without making the scheduler await CLI work."""
     capacity = max(1, int(getattr(settings, "IP_LOCATOR_CLI_GLOBAL_CONCURRENCY", 5)))
     worker = _worker_id()
     claimed = await asyncio.to_thread(
@@ -173,7 +184,15 @@ async def process_pending_locator_runs() -> int:
     )
     if not claimed:
         return 0
-    await asyncio.gather(*(asyncio.to_thread(_run_claimed, run) for run in claimed))
+
+    for run in claimed:
+        run_id = str(run.get("id") or "")
+        task = asyncio.create_task(
+            asyncio.to_thread(_run_claimed, run),
+            name=f"ip-locator-run:{run_id or 'unknown'}",
+        )
+        _active_locator_run_tasks.add(task)
+        task.add_done_callback(_on_locator_run_task_done)
     return len(claimed)
 
 

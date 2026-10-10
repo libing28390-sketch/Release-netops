@@ -575,7 +575,7 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
   };
 
   return (
-    <div className="min-h-[calc(100vh-132px)] bg-slate-50/70 p-4 md:p-6">
+    <div className="min-h-full min-w-0 w-full bg-slate-50/70 p-4 md:p-6">
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
           <div className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700">
@@ -609,7 +609,7 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
           </button>
         </div>
       )}
-      <div className={`grid items-stretch gap-4 ${treeCollapsed ? "xl:grid-cols-[56px_minmax(0,1fr)]" : "xl:grid-cols-[290px_minmax(0,1fr)]"}`}>
+      <div className={`grid min-w-0 items-stretch gap-4 ${treeCollapsed ? "xl:grid-cols-[56px_minmax(0,1fr)]" : "xl:grid-cols-[290px_minmax(0,1fr)]"}`}>
         <aside className={`min-h-[calc(100vh-250px)] rounded-2xl border border-slate-200 bg-white shadow-sm ${treeCollapsed ? "p-2" : "p-3"}`}>
           <div className={`mb-3 flex items-center border-b border-slate-100 pb-3 ${treeCollapsed ? "justify-center px-0" : "justify-between px-2"}`}>
             {!treeCollapsed && (
@@ -796,7 +796,7 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
               {total} {zh ? "条资产" : "assets"}
             </span>
           </div>
-          <div className="min-h-0 flex-1 overflow-auto">
+          <div className="min-h-0 min-w-0 flex-1 overflow-auto">
             <table ref={assetTableRef} className="nx-data-table min-w-[920px] text-left text-xs">
               <thead className="sticky top-0 z-10 bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
                 <tr>
