@@ -80,7 +80,7 @@ describe('LiveWalkInspector LibreNMS rule flow', () => {
 
     expect(screen.queryByPlaceholderText(/OID/i)).toBeNull();
     expect(screen.queryByRole('button', { name: /查找 OID|从 MIB 库|常用 OID/i })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: '执行 LibreNMS 规则探测' }));
+    fireEvent.click(screen.getByRole('button', { name: '运行硬件规则诊断' }));
 
     await screen.findAllByText('resources/definitions/os_discovery/comware.yaml');
     expect(screen.getByText('CPU 0')).toBeTruthy();
@@ -123,7 +123,7 @@ describe('LiveWalkInspector LibreNMS rule flow', () => {
       />,
     );
 
-    expect(screen.getByRole('button', { name: '执行 LibreNMS 规则探测' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '运行硬件规则诊断' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /验证接口 OID/i })).toBeNull();
     expect(screen.queryByPlaceholderText(/OID/i)).toBeNull();
   });
