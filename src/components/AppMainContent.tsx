@@ -89,6 +89,7 @@ const AppMainContent: React.FC = () => {
 
   const { isFeatureEnabled } = useSystem();
   const assetsTotal = useInventoryStore(state => state.assetsTotal);
+  const assetsOnlineTotal = useInventoryStore(state => state.assetsOnlineTotal);
   const assetsTotalError = useInventoryStore(state => state.assetsTotalError);
   const fetchAssetsTotal = useInventoryStore(state => state.fetchAssetsTotal);
   const resetAssetsTotal = useInventoryStore(state => state.resetAssetsTotal);
@@ -525,6 +526,7 @@ const AppMainContent: React.FC = () => {
             setActiveTab={setActiveTab}
             navigate={navigate}
             assetsTotal={assetsTotal}
+            assetsOnlineTotal={assetsOnlineTotal}
             assetsTotalError={assetsTotalError}
           />
         </Suspense>

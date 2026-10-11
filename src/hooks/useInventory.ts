@@ -3,7 +3,9 @@ import type { Device } from '../types';
 import { displaySiteLabel } from '../utils/deviceUtils';
 import { authHeaders } from '../api/http';
 
-export type DeviceFetchMode = 'light' | 'full' | 'paged-light';
+export type DeviceFetchMode = 'light' | 'full' | 'paged-light' | 'all-light';
+
+const ALL_LIGHT_PAGE_SIZE = 200;
 
 export const useInventory = (deviceFetchMode: DeviceFetchMode = 'full') => {
   const [devices, setDevices] = useState<Device[]>([]);
@@ -82,34 +84,83 @@ export const useInventory = (deviceFetchMode: DeviceFetchMode = 'full') => {
     const fetchId = ++lastFetchId.current;
     setDevicesError(null);
     try {
-      const requestMode = deviceFetchMode === 'paged-light' ? 'light' : deviceFetchMode;
+      const requestMode = deviceFetchMode === 'paged-light' || deviceFetchMode === 'all-light'
+        ? 'light'
+        : deviceFetchMode;
       const params = new URLSearchParams({ mode: requestMode });
       if (deviceFetchMode === 'paged-light') {
         params.set('page', '1');
         params.set('page_size', '30');
+      }
+      if (deviceFetchMode === 'all-light') {
+        params.set('page', '1');
+        params.set('page_size', String(ALL_LIGHT_PAGE_SIZE));
       }
       if (assetType !== 'all') {
         params.set('asset_type', assetType);
       } else if (deviceFetchMode === 'paged-light') {
         params.set('asset_type', 'network_device');
       }
-      
-      const devicesRes = await fetch(`/api/devices?${params.toString()}`, { headers: authHeaders() });
-      if (!devicesRes.ok) {
-        const errorBody = await devicesRes.json().catch(() => null);
-        const detail = typeof errorBody?.detail === 'string' ? errorBody.detail : '';
-        throw new Error(detail || (devicesRes.status === 401
-          ? '登录已过期，请重新登录后重试'
-          : devicesRes.status === 403
-            ? '当前账号无权查看网络设备'
-            : `加载网络设备失败（${devicesRes.status}）`));
+
+      const fetchDevicePage = async (page?: number) => {
+        const requestParams = new URLSearchParams(params);
+        if (page !== undefined) requestParams.set('page', String(page));
+        const response = await fetch(`/api/devices?${requestParams.toString()}`, { headers: authHeaders() });
+        if (!response.ok) {
+          const errorBody = await response.json().catch(() => null);
+          const detail = typeof errorBody?.detail === 'string' ? errorBody.detail : '';
+          throw new Error(detail || (response.status === 401
+            ? '登录已过期，请重新登录后重试'
+            : response.status === 403
+              ? '当前账号无权查看网络设备'
+              : `加载网络设备失败（${response.status}）`));
+        }
+        return response.json();
+      };
+
+      let devs: any[];
+      if (deviceFetchMode === 'all-light') {
+        const firstPage = await fetchDevicePage(1);
+        if (fetchId !== lastFetchId.current) return;
+        if (!Array.isArray(firstPage?.items)) {
+          throw new Error('设备列表响应格式无效');
+        }
+        const total = firstPage.total;
+        if (typeof total !== 'number' || !Number.isSafeInteger(total) || total < 0) {
+          throw new Error('设备列表总数响应无效');
+        }
+
+        devs = [...firstPage.items];
+        const totalPages = Math.ceil(total / ALL_LIGHT_PAGE_SIZE);
+        for (let page = 2; page <= totalPages; page += 1) {
+          if (fetchId !== lastFetchId.current) return;
+          const nextPage = await fetchDevicePage(page);
+          if (fetchId !== lastFetchId.current) return;
+          if (!Array.isArray(nextPage?.items)) {
+            throw new Error('设备列表分页响应无效');
+          }
+          if (nextPage.total !== total) {
+            throw new Error('设备列表在加载期间发生变化，请刷新重试');
+          }
+          if (nextPage.items.length === 0) {
+            throw new Error('设备列表分页响应不完整，请刷新重试');
+          }
+          devs.push(...nextPage.items);
+        }
+
+        const deviceIds = new Set(devs.map((device) => String(device?.id || '')));
+        if (devs.length !== total || deviceIds.size !== total || deviceIds.has('')) {
+          throw new Error('设备列表分页响应不完整，请刷新重试');
+        }
+      } else {
+        const payload = await fetchDevicePage();
+        devs = Array.isArray(payload) ? payload : Array.isArray(payload?.items) ? payload.items : [];
       }
-      const devs = await devicesRes.json();
       
       // Safety Check: Prevent older or mismatched mode requests from overwriting state
       if (fetchId !== lastFetchId.current) return;
 
-      setDevices((Array.isArray(devs) ? devs : []).map((d: any) => {
+      setDevices(devs.map((d: any) => {
         const normalized = normalizeDeviceRecord(d);
         if (deviceFetchMode !== 'full') {
           return {

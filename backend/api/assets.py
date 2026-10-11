@@ -16,7 +16,7 @@ from pathlib import Path
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, Field, field_validator
 from database import get_db_connection
@@ -3378,6 +3378,7 @@ def import_assets(
     items: list[AssetCreate],
     atomic: bool = False,
     detailed: bool = False,
+    background_tasks: BackgroundTasks = None,
     _user=require_role("Operator"),
 ):
     conn = get_db_connection()
@@ -3715,7 +3716,9 @@ def import_assets(
                     skipped += 1
                 row_results.append(result)
                 if detailed and not atomic:
-                    conn.execute(f'RELEASE SAVEPOINT {savepoint}')
+                    # The normal import mode is partial-success: commit each
+                    # valid row so a later validation failure cannot undo it.
+                    conn.commit()
             except Exception as exc:
                 if atomic:
                     conn.rollback()
@@ -3743,384 +3746,450 @@ def import_assets(
                 raise
         conn.commit()
 
+        active_device_ids = {
+            str(item.get('device_id') or '')
+            for item in row_results
+            if item.get('status') in {'created', 'skipped'} and item.get('device_id')
+        }
         imported_device_ids = {
             str(item.get('device_id') or '')
             for item in row_results
             if item.get('status') == 'created' and item.get('device_id')
         }
+        pending_hostname_sync = [
+            item for item in pending_hostname_sync
+            if str(item.get('device_id') or '') in active_device_ids
+        ]
+        pending_librenms_enrollment = [
+            item for item in pending_librenms_enrollment
+            if str(item.get('device_id') or '') in active_device_ids
+        ]
         pending_snmp_identification = [
             item for item in pending_snmp_identification
             if str(item.get('device_id') or '') in imported_device_ids
         ]
-        identified_device_ids = {
-            str(item.get('device_id') or '') for item in pending_snmp_identification
-        }
-        pending_hostname_sync = [
-            item for item in pending_hostname_sync
-            if str(item.get('device_id') or '') not in identified_device_ids
-        ]
 
-        librenms_enrollment_results: list[dict] = []
-        if pending_librenms_enrollment:
-            import asyncio as _aio
-            unique_enrollment_targets: dict[str, dict] = {}
-            for item in pending_librenms_enrollment:
-                grouped = unique_enrollment_targets.setdefault(
-                    item['device_id'],
-                    {**item, 'rows': []},
-                )
-                if item.get('row') not in grouped['rows']:
-                    grouped['rows'].append(item.get('row'))
-            pending_librenms_enrollment = list(unique_enrollment_targets.values())
+        def _finish_import_post_commit() -> dict:
+            nonlocal pending_hostname_sync, pending_librenms_enrollment, pending_snmp_identification
+            imported_device_ids = {
+                str(item.get('device_id') or '')
+                for item in row_results
+                if item.get('status') == 'created' and item.get('device_id')
+            }
+            pending_snmp_identification = [
+                item for item in pending_snmp_identification
+                if str(item.get('device_id') or '') in imported_device_ids
+            ]
+            identified_device_ids = {
+                str(item.get('device_id') or '') for item in pending_snmp_identification
+            }
+            pending_hostname_sync = [
+                item for item in pending_hostname_sync
+                if str(item.get('device_id') or '') not in identified_device_ids
+            ]
 
-            async def _enroll_imported_device(item: dict, semaphore) -> dict:
-                from services.librenms_enrollment_service import enroll_imported_network_device
+            librenms_enrollment_results: list[dict] = []
+            if pending_librenms_enrollment:
+                import asyncio as _aio
+                unique_enrollment_targets: dict[str, dict] = {}
+                for item in pending_librenms_enrollment:
+                    grouped = unique_enrollment_targets.setdefault(
+                        item['device_id'],
+                        {**item, 'rows': []},
+                    )
+                    if item.get('row') not in grouped['rows']:
+                        grouped['rows'].append(item.get('row'))
+                pending_librenms_enrollment = list(unique_enrollment_targets.values())
 
+                async def _enroll_imported_device(item: dict, semaphore) -> dict:
+                    from services.librenms_enrollment_service import enroll_imported_network_device
+
+                    try:
+                        async with semaphore:
+                            result = await enroll_imported_network_device(item['device_id'], actor=_user)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            'LibreNMS enrollment failed for imported device %s (%s)',
+                            item['device_id'],
+                            type(exc).__name__,
+                        )
+                        result = {
+                            'status': 'api_failed',
+                            'message': 'LibreNMS 纳管暂时失败；资产已保存，可重新导入该行重试',
+                        }
+                    return {
+                        **item,
+                        'status': str(result.get('status') or 'api_failed'),
+                        'message': str(result.get('message') or ''),
+                        'profile_applied': bool(result.get('profile_applied')),
+                    }
+
+                async def _enroll_all_imported_devices() -> list:
+                    semaphore = _aio.Semaphore(min(5, len(pending_librenms_enrollment)))
+                    return await _aio.gather(
+                        *(_enroll_imported_device(item, semaphore) for item in pending_librenms_enrollment),
+                        return_exceptions=True,
+                    )
+
+                enrollment_outputs = _aio.run(_enroll_all_imported_devices())
+                for item, output in zip(pending_librenms_enrollment, enrollment_outputs):
+                    if isinstance(output, BaseException):
+                        logger.warning(
+                            'LibreNMS enrollment task failed for imported device %s (%s)',
+                            item['device_id'],
+                            type(output).__name__,
+                        )
+                        librenms_enrollment_results.append({
+                            **item,
+                            'status': 'api_failed',
+                            'message': 'LibreNMS 纳管暂时失败；资产已保存，可重新导入该行重试',
+                            'profile_applied': False,
+                        })
+                    else:
+                        librenms_enrollment_results.append(output)
+
+                enrollment_by_row: dict[int, dict] = {}
+                for enrollment_result in librenms_enrollment_results:
+                    covered_rows = enrollment_result.get('rows') or [enrollment_result.get('row')]
+                    for covered_row in covered_rows:
+                        if covered_row is not None:
+                            enrollment_by_row[int(covered_row)] = enrollment_result
+                for row_result in row_results:
+                    enrollment_result = enrollment_by_row.get(int(row_result.get('row') or 0))
+                    if enrollment_result:
+                        row_result['librenms_enrollment'] = {
+                            'status': enrollment_result['status'],
+                            'message': enrollment_result['message'],
+                            'profile_applied': enrollment_result['profile_applied'],
+                        }
+
+            async def _sync_imported_hostname(item: dict, semaphore) -> dict:
+                result = {
+                    **item,
+                    'status': 'failed',
+                    'error': '',
+                }
+
+                conn_read = get_db_connection()
                 try:
+                    device_row = conn_read.execute(
+                        'SELECT * FROM devices WHERE id = ?', (item['device_id'],)
+                    ).fetchone()
+                    if not device_row:
+                        result['error'] = '设备记录不存在'
+                        return result
+                    device = dict(device_row)
+                finally:
+                    conn_read.close()
+
+                result['previous_hostname'] = str(device.get('hostname') or '')
+                try:
+                    credentials = resolve_collector_credentials(device)
+                    snmp = credentials.get('snmp') or {}
+                    snmp_ip = str(snmp.get('server') or device.get('ip_address') or '').strip()
+                    community = str(snmp.get('community') or '').strip()
+                    port = int(snmp.get('port') or 161)
+                    if not snmp_ip:
+                        result['error'] = '缺少管理 IP'
+                        return result
+                    result['ip'] = snmp_ip
+                    if not snmp.get('configured'):
+                        result['error'] = '未配置可用的 SNMP 凭据'
+                        return result
+
+                    from services.snmp_service import _snmp_get, _snmp_get_v3
                     async with semaphore:
-                        result = await enroll_imported_network_device(item['device_id'], actor=_user)
-                except Exception as exc:  # noqa: BLE001
+                        if str(snmp.get('version') or '').strip().casefold() in {'3', 'v3', 'snmpv3'}:
+                            raw_sys_name = await _snmp_get_v3(
+                                snmp_ip,
+                                str(snmp.get('username') or ''),
+                                '1.3.6.1.2.1.1.5.0',
+                                port,
+                                timeout=3,
+                                auth_password=str(snmp.get('auth_password') or ''),
+                                auth_protocol=str(snmp.get('auth_protocol') or ''),
+                                priv_password=str(snmp.get('priv_password') or ''),
+                                priv_protocol=str(snmp.get('priv_protocol') or ''),
+                                context_name=str(snmp.get('context_name') or ''),
+                                security_level=str(snmp.get('security_level') or ''),
+                            )
+                        else:
+                            if not community:
+                                result['error'] = '未配置可用的 SNMP 凭据'
+                                return result
+                            raw_sys_name = await _snmp_get(
+                                snmp_ip,
+                                community,
+                                '1.3.6.1.2.1.1.5.0',
+                                port,
+                                timeout=3,
+                            )
+                    if not str(raw_sys_name or '').strip():
+                        result['error'] = '设备未返回 SNMP sysName.0'
+                        return result
+                except Exception as exc:
                     logger.warning(
-                        'LibreNMS enrollment failed for imported device %s (%s)',
+                        'Asset import SNMP hostname read failed for device %s (%s)',
                         item['device_id'],
                         type(exc).__name__,
                     )
-                    result = {
-                        'status': 'api_failed',
-                        'message': 'LibreNMS 纳管暂时失败；资产已保存，可重新导入该行重试',
-                    }
-                return {
-                    **item,
-                    'status': str(result.get('status') or 'api_failed'),
-                    'message': str(result.get('message') or ''),
-                    'profile_applied': bool(result.get('profile_applied')),
-                }
+                    result['error'] = f'SNMP 主机名读取失败（{type(exc).__name__}）'
+                    return result
 
-            async def _enroll_all_imported_devices() -> list:
-                semaphore = _aio.Semaphore(min(5, len(pending_librenms_enrollment)))
-                return await _aio.gather(
-                    *(_enroll_imported_device(item, semaphore) for item in pending_librenms_enrollment),
-                    return_exceptions=True,
+                from services.hostname_sync_service import (
+                    clean_system_hostname,
+                    schedule_monitoring_target_sync_if_hostname_changed,
+                    sync_device_hostname_metadata,
                 )
-
-            enrollment_outputs = _aio.run(_enroll_all_imported_devices())
-            for item, output in zip(pending_librenms_enrollment, enrollment_outputs):
-                if isinstance(output, BaseException):
-                    logger.warning(
-                        'LibreNMS enrollment task failed for imported device %s (%s)',
-                        item['device_id'],
-                        type(output).__name__,
-                    )
-                    librenms_enrollment_results.append({
-                        **item,
-                        'status': 'api_failed',
-                        'message': 'LibreNMS 纳管暂时失败；资产已保存，可重新导入该行重试',
-                        'profile_applied': False,
-                    })
-                else:
-                    librenms_enrollment_results.append(output)
-
-            enrollment_by_row: dict[int, dict] = {}
-            for enrollment_result in librenms_enrollment_results:
-                covered_rows = enrollment_result.get('rows') or [enrollment_result.get('row')]
-                for covered_row in covered_rows:
-                    if covered_row is not None:
-                        enrollment_by_row[int(covered_row)] = enrollment_result
-            for row_result in row_results:
-                enrollment_result = enrollment_by_row.get(int(row_result.get('row') or 0))
-                if enrollment_result:
-                    row_result['librenms_enrollment'] = {
-                        'status': enrollment_result['status'],
-                        'message': enrollment_result['message'],
-                        'profile_applied': enrollment_result['profile_applied'],
-                    }
-
-        async def _sync_imported_hostname(item: dict, semaphore) -> dict:
-            result = {
-                **item,
-                'status': 'failed',
-                'error': '',
-            }
-
-            conn_read = get_db_connection()
-            try:
-                device_row = conn_read.execute(
-                    'SELECT * FROM devices WHERE id = ?', (item['device_id'],)
-                ).fetchone()
-                if not device_row:
-                    result['error'] = '设备记录不存在'
-                    return result
-                device = dict(device_row)
-            finally:
-                conn_read.close()
-
-            result['previous_hostname'] = str(device.get('hostname') or '')
-            try:
-                credentials = resolve_collector_credentials(device)
-                snmp = credentials.get('snmp') or {}
-                snmp_ip = str(snmp.get('server') or device.get('ip_address') or '').strip()
-                community = str(snmp.get('community') or '').strip()
-                port = int(snmp.get('port') or 161)
-                if not snmp_ip:
-                    result['error'] = '缺少管理 IP'
-                    return result
-                result['ip'] = snmp_ip
-                if not snmp.get('configured'):
-                    result['error'] = '未配置可用的 SNMP 凭据'
+                clean_name = clean_system_hostname(raw_sys_name)
+                if not clean_name:
+                    result['error'] = '设备未返回有效的 SNMP sysName.0'
                     return result
 
-                from services.snmp_service import _snmp_get, _snmp_get_v3
-                async with semaphore:
-                    if str(snmp.get('version') or '').strip().casefold() in {'3', 'v3', 'snmpv3'}:
-                        raw_sys_name = await _snmp_get_v3(
-                            snmp_ip,
-                            str(snmp.get('username') or ''),
-                            '1.3.6.1.2.1.1.5.0',
-                            port,
-                            timeout=3,
-                            auth_password=str(snmp.get('auth_password') or ''),
-                            auth_protocol=str(snmp.get('auth_protocol') or ''),
-                            priv_password=str(snmp.get('priv_password') or ''),
-                            priv_protocol=str(snmp.get('priv_protocol') or ''),
-                            context_name=str(snmp.get('context_name') or ''),
-                            security_level=str(snmp.get('security_level') or ''),
-                        )
-                    else:
-                        if not community:
-                            result['error'] = '未配置可用的 SNMP 凭据'
-                            return result
-                        raw_sys_name = await _snmp_get(
-                            snmp_ip,
-                            community,
-                            '1.3.6.1.2.1.1.5.0',
-                            port,
-                            timeout=3,
-                        )
-                if not str(raw_sys_name or '').strip():
-                    result['error'] = '设备未返回 SNMP sysName.0'
-                    return result
-            except Exception as exc:
-                logger.warning(
-                    'Asset import SNMP hostname read failed for device %s (%s)',
-                    item['device_id'],
-                    type(exc).__name__,
-                )
-                result['error'] = f'SNMP 主机名读取失败（{type(exc).__name__}）'
-                return result
-
-            from services.hostname_sync_service import (
-                clean_system_hostname,
-                schedule_monitoring_target_sync_if_hostname_changed,
-                sync_device_hostname_metadata,
-            )
-            clean_name = clean_system_hostname(raw_sys_name)
-            if not clean_name:
-                result['error'] = '设备未返回有效的 SNMP sysName.0'
-                return result
-
-            conn_write = get_db_connection()
-            try:
-                sync_result = sync_device_hostname_metadata(conn_write, item['device_id'], raw_sys_name)
-                if not sync_result:
+                conn_write = get_db_connection()
+                try:
+                    sync_result = sync_device_hostname_metadata(conn_write, item['device_id'], raw_sys_name)
+                    if not sync_result:
+                        conn_write.rollback()
+                        result['error'] = '主机名无法写回 CMDB：设备记录不存在'
+                        return result
+                    conn_write.commit()
+                except Exception as exc:
                     conn_write.rollback()
-                    result['error'] = '主机名无法写回 CMDB：设备记录不存在'
+                    logger.warning(
+                        'Asset import hostname write failed for device %s (%s)',
+                        item['device_id'],
+                        type(exc).__name__,
+                    )
+                    result['error'] = 'SNMP 主机名无法写回 CMDB'
                     return result
-                conn_write.commit()
-            except Exception as exc:
-                conn_write.rollback()
-                logger.warning(
-                    'Asset import hostname write failed for device %s (%s)',
-                    item['device_id'],
-                    type(exc).__name__,
-                )
-                result['error'] = 'SNMP 主机名无法写回 CMDB'
+                finally:
+                    conn_write.close()
+
+                schedule_monitoring_target_sync_if_hostname_changed(sync_result)
+                result.update({
+                    'status': 'synced',
+                    'hostname': clean_name,
+                    'error': '',
+                })
                 return result
-            finally:
-                conn_write.close()
 
-            schedule_monitoring_target_sync_if_hostname_changed(sync_result)
-            result.update({
-                'status': 'synced',
-                'hostname': clean_name,
-                'error': '',
-            })
-            return result
+            hostname_sync_results: list[dict] = []
+            if pending_hostname_sync:
+                import asyncio as _aio
+                pending_hostname_sync = list({item['device_id']: item for item in pending_hostname_sync}.values())
 
-        hostname_sync_results: list[dict] = []
-        if pending_hostname_sync:
-            import asyncio as _aio
-            pending_hostname_sync = list({item['device_id']: item for item in pending_hostname_sync}.values())
-
-            async def _sync_all_imported_hostnames() -> list:
-                semaphore = _aio.Semaphore(min(10, len(pending_hostname_sync)))
-                return await _aio.gather(
-                    *(_sync_imported_hostname(item, semaphore) for item in pending_hostname_sync),
-                    return_exceptions=True,
-                )
-
-            sync_outputs = _aio.run(_sync_all_imported_hostnames())
-            for item, output in zip(pending_hostname_sync, sync_outputs):
-                if isinstance(output, BaseException):
-                    logger.warning(
-                        'Asset import hostname sync failed for device %s (%s)',
-                        item['device_id'],
-                        type(output).__name__,
+                async def _sync_all_imported_hostnames() -> list:
+                    semaphore = _aio.Semaphore(min(10, len(pending_hostname_sync)))
+                    return await _aio.gather(
+                        *(_sync_imported_hostname(item, semaphore) for item in pending_hostname_sync),
+                        return_exceptions=True,
                     )
-                    hostname_sync_results.append({
-                        **item,
-                        'status': 'failed',
-                        'error': f'主机名同步任务异常（{type(output).__name__}）',
-                    })
-                else:
-                    hostname_sync_results.append(output)
 
-        snmp_identification_results: list[dict] = []
-        if pending_snmp_identification:
-            import asyncio as _aio
-            from services.snmp_import_identification_service import identify_imported_device
-
-            async def _identify_all_imported_devices() -> list:
-                semaphore = _aio.Semaphore(min(5, len(pending_snmp_identification)))
-                return await _aio.gather(
-                    *(identify_imported_device(item, semaphore) for item in pending_snmp_identification),
-                    return_exceptions=True,
-                )
-
-            identity_outputs = _aio.run(_identify_all_imported_devices())
-            for item, output in zip(pending_snmp_identification, identity_outputs):
-                if isinstance(output, BaseException):
-                    logger.warning(
-                        'Asset import SNMP identity task failed for device %s (%s)',
-                        item['device_id'],
-                        type(output).__name__,
-                    )
-                    snmp_identification_results.append({
-                        **{key: item.get(key) for key in ('device_id', 'row', 'asset_tag', 'hostname', 'ip')},
-                        'status': 'identification_failed',
-                        'message': 'SNMP 身份识别失败，资产已保存',
-                    })
-                    hostname_sync_results.append({
-                        **item,
-                        'status': 'failed',
-                        'hostname': '',
-                        'error': f'主机名同步任务异常（{type(output).__name__}）',
-                    })
-                else:
-                    hostname_result = output.get('hostname_sync')
-                    if isinstance(hostname_result, dict):
+                sync_outputs = _aio.run(_sync_all_imported_hostnames())
+                for item, output in zip(pending_hostname_sync, sync_outputs):
+                    if isinstance(output, BaseException):
+                        logger.warning(
+                            'Asset import hostname sync failed for device %s (%s)',
+                            item['device_id'],
+                            type(output).__name__,
+                        )
                         hostname_sync_results.append({
                             **item,
-                            **hostname_result,
-                            'previous_hostname': hostname_result.get('previous_hostname') or item.get('hostname') or '',
+                            'status': 'failed',
+                            'error': f'主机名同步任务异常（{type(output).__name__}）',
                         })
-                    snmp_identification_results.append({
-                        key: value for key, value in output.items() if key != 'hostname_sync'
-                    })
+                    else:
+                        hostname_sync_results.append(output)
 
-        hostname_sync_by_device = {
-            item['device_id']: item for item in hostname_sync_results
-        }
-        for row_result in row_results:
-            hostname_result = hostname_sync_by_device.get(row_result.get('device_id'))
-            if hostname_result:
-                row_result['hostname_sync'] = {
-                    'status': hostname_result['status'],
-                    'hostname': hostname_result.get('hostname') or '',
-                    'error': hostname_result.get('error') or '',
-                }
-                if hostname_result['status'] == 'synced':
-                    row_result['hostname'] = hostname_result['hostname']
+            snmp_identification_results: list[dict] = []
+            if pending_snmp_identification:
+                import asyncio as _aio
+                from services.snmp_import_identification_service import identify_imported_device
 
-        snmp_identification_by_device = {
-            item['device_id']: item for item in snmp_identification_results
-        }
-        for row_result in row_results:
-            identity_result = snmp_identification_by_device.get(row_result.get('device_id'))
-            if identity_result:
-                row_result['snmp_identification'] = {
-                    key: identity_result.get(key)
-                    for key in (
-                        'status', 'message', 'detected_vendor', 'detected_platform',
-                        'detected_model', 'identity_source',
+                async def _identify_all_imported_devices() -> list:
+                    semaphore = _aio.Semaphore(min(5, len(pending_snmp_identification)))
+                    return await _aio.gather(
+                        *(identify_imported_device(item, semaphore) for item in pending_snmp_identification),
+                        return_exceptions=True,
                     )
-                    if identity_result.get(key) is not None
-                }
 
-        if created > 0:
-            try:
-                from services.collector_sync_service import trigger_async_monitoring_sync
-                trigger_async_monitoring_sync()
-            except Exception:
-                pass
-        hostname_sync_failures = [
-            item for item in hostname_sync_results if item['status'] == 'failed'
-        ]
-        enrollment_success_statuses = {
-            'added_and_bound',
-            'profile_updated_and_bound',
-            'found_after_retry_and_bound',
-            'profile_updated_after_retry_and_bound',
-        }
-        enrollment_local_statuses = {'local_snmp'}
-        enrollment_failures = [
-            item for item in librenms_enrollment_results
-            if item['status'] not in enrollment_success_statuses | enrollment_local_statuses
-        ]
-        librenms_enrollment_items: list[dict] = []
-        for row_result in row_results:
-            row_number = int(row_result.get('row') or 0)
-            if not row_number or str(getattr(items[row_number - 1], 'asset_type', '') or '') != 'network_device':
-                continue
-            enrollment_result = row_result.get('librenms_enrollment') or {}
-            row_status = str(row_result.get('status') or '')
-            default_enrollment_status = (
-                'not_attempted_import_failed' if row_status == 'failed'
-                else 'skipped' if row_status == 'skipped'
-                else 'not_attempted'
+                identity_outputs = _aio.run(_identify_all_imported_devices())
+                for item, output in zip(pending_snmp_identification, identity_outputs):
+                    if isinstance(output, BaseException):
+                        logger.warning(
+                            'Asset import SNMP identity task failed for device %s (%s)',
+                            item['device_id'],
+                            type(output).__name__,
+                        )
+                        snmp_identification_results.append({
+                            **{key: item.get(key) for key in ('device_id', 'row', 'asset_tag', 'hostname', 'ip')},
+                            'status': 'identification_failed',
+                            'message': 'SNMP 身份识别失败，资产已保存',
+                        })
+                        hostname_sync_results.append({
+                            **item,
+                            'status': 'failed',
+                            'hostname': '',
+                            'error': f'主机名同步任务异常（{type(output).__name__}）',
+                        })
+                    else:
+                        hostname_result = output.get('hostname_sync')
+                        if isinstance(hostname_result, dict):
+                            hostname_sync_results.append({
+                                **item,
+                                **hostname_result,
+                                'previous_hostname': hostname_result.get('previous_hostname') or item.get('hostname') or '',
+                            })
+                        snmp_identification_results.append({
+                            key: value for key, value in output.items() if key != 'hostname_sync'
+                        })
+
+            hostname_sync_by_device = {
+                item['device_id']: item for item in hostname_sync_results
+            }
+            for row_result in row_results:
+                hostname_result = hostname_sync_by_device.get(row_result.get('device_id'))
+                if hostname_result:
+                    row_result['hostname_sync'] = {
+                        'status': hostname_result['status'],
+                        'hostname': hostname_result.get('hostname') or '',
+                        'error': hostname_result.get('error') or '',
+                    }
+                    if hostname_result['status'] == 'synced':
+                        row_result['hostname'] = hostname_result['hostname']
+
+            snmp_identification_by_device = {
+                item['device_id']: item for item in snmp_identification_results
+            }
+            for row_result in row_results:
+                identity_result = snmp_identification_by_device.get(row_result.get('device_id'))
+                if identity_result:
+                    row_result['snmp_identification'] = {
+                        key: identity_result.get(key)
+                        for key in (
+                            'status', 'message', 'detected_vendor', 'detected_platform',
+                            'detected_model', 'identity_source',
+                        )
+                        if identity_result.get(key) is not None
+                    }
+
+            if created > 0:
+                try:
+                    from services.collector_sync_service import trigger_async_monitoring_sync
+                    trigger_async_monitoring_sync()
+                except Exception:
+                    pass
+            hostname_sync_failures = [
+                item for item in hostname_sync_results if item['status'] == 'failed'
+            ]
+            enrollment_success_statuses = {
+                'added_and_bound',
+                'profile_updated_and_bound',
+                'found_after_retry_and_bound',
+                'profile_updated_after_retry_and_bound',
+            }
+            enrollment_local_statuses = {'local_snmp'}
+            enrollment_failures = [
+                item for item in librenms_enrollment_results
+                if item['status'] not in enrollment_success_statuses | enrollment_local_statuses
+            ]
+            librenms_enrollment_items: list[dict] = []
+            for row_result in row_results:
+                row_number = int(row_result.get('row') or 0)
+                if not row_number or str(getattr(items[row_number - 1], 'asset_type', '') or '') != 'network_device':
+                    continue
+                enrollment_result = row_result.get('librenms_enrollment') or {}
+                row_status = str(row_result.get('status') or '')
+                default_enrollment_status = (
+                    'not_attempted_import_failed' if row_status == 'failed'
+                    else 'skipped' if row_status == 'skipped'
+                    else 'not_attempted'
+                )
+                librenms_enrollment_items.append({
+                    'row': row_number,
+                    'device_id': row_result.get('device_id') or '',
+                    'asset_tag': row_result.get('asset_tag') or '',
+                    'hostname': row_result.get('hostname') or '',
+                    'ip': str(getattr(items[row_number - 1], 'management_ip', '') or ''),
+                    'asset_status': row_status,
+                    'status': enrollment_result.get('status') or default_enrollment_status,
+                    'message': enrollment_result.get('message') or row_result.get('message') or '',
+                    'profile_applied': bool(enrollment_result.get('profile_applied')),
+                })
+            identified_identity_statuses = {
+                'identified',
+            }
+            identified_count = sum(
+                1 for item in snmp_identification_results
+                if item.get('detected_vendor') or item.get('status') in identified_identity_statuses
             )
-            librenms_enrollment_items.append({
-                'row': row_number,
-                'device_id': row_result.get('device_id') or '',
-                'asset_tag': row_result.get('asset_tag') or '',
-                'hostname': row_result.get('hostname') or '',
-                'ip': str(getattr(items[row_number - 1], 'management_ip', '') or ''),
-                'asset_status': row_status,
-                'status': enrollment_result.get('status') or default_enrollment_status,
-                'message': enrollment_result.get('message') or row_result.get('message') or '',
-                'profile_applied': bool(enrollment_result.get('profile_applied')),
-            })
-        identified_identity_statuses = {
-            'identified',
-        }
-        identified_count = sum(
-            1 for item in snmp_identification_results
-            if item.get('detected_vendor') or item.get('status') in identified_identity_statuses
+            response = {
+                'created': created,
+                'skipped': skipped,
+                'skipped_items': skipped_items,
+                'hostname_sync': {
+                    'total': len(hostname_sync_results),
+                    'succeeded': len(hostname_sync_results) - len(hostname_sync_failures),
+                    'failed': len(hostname_sync_failures),
+                    'failed_items': hostname_sync_failures,
+                },
+                'librenms_enrollment': {
+                    'total': len(librenms_enrollment_results),
+                    'succeeded': sum(1 for item in librenms_enrollment_results if item['status'] in enrollment_success_statuses),
+                    'local_snmp': sum(1 for item in librenms_enrollment_results if item['status'] in enrollment_local_statuses),
+                    'failed': len(enrollment_failures),
+                    'failed_items': enrollment_failures,
+                    'items': librenms_enrollment_items,
+                },
+                'snmp_identification': {
+                    'total': len(snmp_identification_results),
+                    'identified': identified_count,
+                    'unresolved': len(snmp_identification_results) - identified_count,
+                    'items': snmp_identification_results,
+                },
+            }
+            return response
+        has_pending_network_work = bool(
+            pending_hostname_sync or pending_librenms_enrollment or pending_snmp_identification
         )
-        response = {
-            'created': created,
-            'skipped': skipped,
-            'skipped_items': skipped_items,
-            'hostname_sync': {
-                'total': len(hostname_sync_results),
-                'succeeded': len(hostname_sync_results) - len(hostname_sync_failures),
-                'failed': len(hostname_sync_failures),
-                'failed_items': hostname_sync_failures,
-            },
-            'librenms_enrollment': {
-                'total': len(librenms_enrollment_results),
-                'succeeded': sum(1 for item in librenms_enrollment_results if item['status'] in enrollment_success_statuses),
-                'local_snmp': sum(1 for item in librenms_enrollment_results if item['status'] in enrollment_local_statuses),
-                'failed': len(enrollment_failures),
-                'failed_items': enrollment_failures,
-                'items': librenms_enrollment_items,
-            },
-            'snmp_identification': {
-                'total': len(snmp_identification_results),
-                'identified': identified_count,
-                'unresolved': len(snmp_identification_results) - identified_count,
-                'items': snmp_identification_results,
-            },
-        }
+        if background_tasks is not None and (has_pending_network_work or created > 0):
+            def _run_import_post_commit_safely() -> None:
+                try:
+                    _finish_import_post_commit()
+                except Exception:
+                    logger.exception('Asset import post-commit enrichment failed for batch %s', batch_id)
+
+            background_tasks.add_task(_run_import_post_commit_safely)
+            pending_hostname_ids = {str(item.get("device_id") or "") for item in pending_hostname_sync}
+            pending_hostname_ids.update(str(item.get("device_id") or "") for item in pending_snmp_identification)
+            pending_enrollment_by_device = {str(item.get("device_id") or ""): item for item in pending_librenms_enrollment}
+            pending_snmp_by_device = {str(item.get("device_id") or ""): item for item in pending_snmp_identification}
+            for row_result in row_results:
+                device_id = str(row_result.get("device_id") or "")
+                if not device_id:
+                    continue
+                if device_id in pending_hostname_ids:
+                    row_result["hostname_sync"] = {"status": "pending", "hostname": "", "error": ""}
+                if device_id in pending_enrollment_by_device:
+                    row_result["librenms_enrollment"] = {"status": "pending", "message": "后台纳管处理中", "profile_applied": False}
+                if device_id in pending_snmp_by_device:
+                    row_result["snmp_identification"] = {"status": "pending", "message": "SNMP 识别将在后台继续"}
+            pending_hostname_count = len(pending_hostname_ids - {""})
+            pending_enrollment_items = list(pending_enrollment_by_device.values())
+            pending_snmp_items = list(pending_snmp_by_device.values())
+            response = {
+                "created": created,
+                "skipped": skipped,
+                "skipped_items": skipped_items,
+                "enrichment_pending": bool(pending_hostname_count or pending_enrollment_items or pending_snmp_items),
+                "hostname_sync": {"total": pending_hostname_count, "succeeded": 0, "failed": 0, "pending": pending_hostname_count, "failed_items": []},
+                "librenms_enrollment": {"total": len(pending_enrollment_items), "succeeded": 0, "local_snmp": 0, "failed": 0, "pending": len(pending_enrollment_items), "failed_items": [], "items": [{"device_id": item.get("device_id"), "row": item.get("row"), "hostname": item.get("hostname") or "", "ip": item.get("ip") or "", "status": "pending"} for item in pending_enrollment_items]},
+                "snmp_identification": {"total": len(pending_snmp_items), "identified": 0, "unresolved": 0, "pending": len(pending_snmp_items), "items": [{"device_id": item.get("device_id"), "row": item.get("row"), "asset_tag": item.get("asset_tag") or "", "hostname": item.get("hostname") or "", "ip": item.get("ip") or "", "status": "pending", "message": "SNMP 识别将在后台继续"} for item in pending_snmp_items]},
+            }
+        else:
+            response = _finish_import_post_commit()
+
         if detailed or atomic:
             response.update({
                 'batch_id': batch_id,

@@ -80,22 +80,25 @@ describe('network device inventory pagination', () => {
       json: async () => ({
         total: 19,
         by_type: { network_device: 7, server: 5, other: 7 },
+        by_online_status: { online: 3, offline: 9 },
       }),
     }));
 
     await useInventoryStore.getState().fetchAssetsTotal();
 
     expect(useInventoryStore.getState().assetsTotal).toBe(12);
+    expect(useInventoryStore.getState().assetsOnlineTotal).toBe(3);
     expect(useInventoryStore.getState().assetsTotalError).toBeNull();
   });
 
   it('retains the last successful total and reports a retryable summary error', async () => {
-    useInventoryStore.getState().setAssetsTotal(12);
+    useInventoryStore.setState({ assetsTotal: 12, assetsOnlineTotal: 3 });
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 503 }));
 
     await useInventoryStore.getState().fetchAssetsTotal();
 
     expect(useInventoryStore.getState().assetsTotal).toBe(12);
+    expect(useInventoryStore.getState().assetsOnlineTotal).toBe(3);
     expect(useInventoryStore.getState().assetsTotalError).toBe('Failed to load asset device total');
   });
 

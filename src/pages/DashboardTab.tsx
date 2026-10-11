@@ -32,6 +32,7 @@ interface DashboardTabProps {
   setActiveTab: (tab: string) => void;
   navigate: (path: string) => void;
   assetsTotal: number | null;
+  assetsOnlineTotal: number | null;
   assetsTotalError: string | null;
 }
 
@@ -40,7 +41,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
   complianceTrend, platformData, dashBannerCollapsed, setDashBannerCollapsed,
   dashLastRefresh, autoRefreshEnabled, setAutoRefreshEnabled, fetchSharedData, fetchDevicesData, fetchAssetsTotal, selectedJob, setSelectedJob,
   hostResources, unreadNotificationCount, notifications, language, t, setActiveTab, navigate,
-  assetsTotal, assetsTotalError,
+  assetsTotal, assetsOnlineTotal, assetsTotalError,
 }) => {
   const { systemInfo } = useSystem();
   const [isManualRefreshing, setIsManualRefreshing] = React.useState(false);
@@ -58,14 +59,22 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
   const [showComplianceLine, setShowComplianceLine] = React.useState(true);
   const [showJobSuccessLine, setShowJobSuccessLine] = React.useState(true);
   const ct = useChartTheme();
-  const onlineCount = devices.filter(d => d.status === 'online').length;
-  const onlinePct = devices.length > 0 ? Math.round((onlineCount / devices.length) * 100) : 0;
+  const hasAssetAvailabilitySummary = assetsTotal !== null && assetsOnlineTotal !== null;
+  const onlineMetricTotal = hasAssetAvailabilitySummary ? assetsTotal : devices.length;
+  const onlineCount = hasAssetAvailabilitySummary
+    ? assetsOnlineTotal
+    : devices.filter(d => d.status === 'online').length;
+  const onlinePct = onlineMetricTotal > 0
+    ? Math.round((onlineCount / onlineMetricTotal) * 1000) / 10
+    : 0;
   const compPct = devices.length > 0 ? Math.round((devices.filter(d => d.compliance === 'compliant').length / devices.length) * 100) : 0;
   const now24h = Date.now() - 86400000;
   const failedCount24h = jobs.filter(j => j.status === 'failed' && j.created_at && new Date(j.created_at).getTime() > now24h).length;
   const successJobsCount = jobs.filter(j => j.status === 'success').length;
 
   const hasDevices = devices.length > 0;
+  const hasManagedAssets = (assetsTotal ?? devices.length) > 0;
+  const hasOnlineMetricEvidence = onlineMetricTotal > 0;
 
   // Find latest unread notification to display message context
   const latestAlert = [...notifications]
@@ -96,12 +105,12 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
     return { ...point, jobRate: successRate };
   });
 
-  const hasHealthEvidence = Boolean(hostResources) || hasDevices;
+  const hasHealthEvidence = Boolean(hostResources) || hasDevices || hasManagedAssets;
   const healthLevel = !hasHealthEvidence
     ? 'unknown'
-    : hostResources?.status === 'critical' || unreadNotificationCount >= 5 || (hasDevices && onlinePct < 30)
+    : hostResources?.status === 'critical' || unreadNotificationCount >= 5 || (hasOnlineMetricEvidence && onlinePct < 30)
     ? 'critical'
-    : hostResources?.status === 'degraded' || unreadNotificationCount > 0 || (hasDevices && onlinePct < 60)
+    : hostResources?.status === 'degraded' || unreadNotificationCount > 0 || (hasOnlineMetricEvidence && onlinePct < 60)
       ? 'degraded'
       : 'healthy';
 
@@ -245,17 +254,17 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
             <div className="mt-2.5">
               <div className="flex items-baseline gap-1.5">
                 <span className="nx-kpi-value text-gray-900 dark:text-white">{onlineCount}</span>
-                <span className="text-xs font-medium text-gray-400">/ {devices.length}</span>
+                <span className="text-xs font-medium text-gray-400">/ {onlineMetricTotal}</span>
               </div>
               {/* Progress bar */}
               <div className="mt-2 w-full h-1.5 bg-gray-100 dark:bg-zinc-800 rounded-full overflow-hidden">
                 <div 
                   className="h-full bg-emerald-500 rounded-full transition-all duration-500" 
-                  style={{ width: `${hasDevices ? onlinePct : 0}%` }}
+                  style={{ width: `${hasOnlineMetricEvidence ? onlinePct : 0}%` }}
                 />
               </div>
               <p className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400 mt-1">
-                {hasDevices ? `${onlinePct}% 在线达标` : '暂无节点'}
+                {hasOnlineMetricEvidence ? `${onlinePct}% 在线达标` : '暂无节点'}
               </p>
             </div>
           </div>

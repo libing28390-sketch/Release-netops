@@ -1106,7 +1106,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     // Keep failures visible above the validation dialog and page content.
     setShowValidationModal(false);
     try {
-      const r = await fetch('/api/assets/import', {
+      const r = await fetch('/api/assets/import?detailed=true', {
         method: 'POST',
         headers: authHeaders(true),
         body: JSON.stringify(payload),
@@ -1114,6 +1114,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       if (r.ok) {
         const res = await r.json();
         const skippedItems = Array.isArray(res.skipped_items) ? res.skipped_items as AssetImportSkippedItem[] : [];
+        const failedItems = Array.isArray(res.failed_items) ? res.failed_items as Array<Record<string, unknown>> : [];
         const skippedDetails = skippedItems.slice(0, 8).map((item) => {
           const identity = [item.asset_tag, item.hostname].filter(Boolean).join(' / ') || 'Unknown row';
           if (item.reason === 'duplicate_asset_tag') {
@@ -1139,12 +1140,23 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
             : `${res.skipped - skippedDetails.length} more skipped rows are not shown`);
         }
         const skippedCount = Number(res.skipped || 0);
+        const failedCount = Number(res.failed ?? failedItems.length ?? 0);
+        const failedDetails = failedItems.slice(0, 8).map((item) => {
+          const identity = [item.asset_tag, item.hostname].filter(Boolean).join(' / ');
+          const row = Number(item.row || 0);
+          const reason = String(item.message || item.code || (zh ? '该行导入失败' : 'row import failed'));
+          return zh
+            ? `第 ${row || '?'} 行${identity ? `（${identity}）` : ''}：${reason}`
+            : `Row ${row || '?'}${identity ? ` (${identity})` : ''}: ${reason}`;
+        });
+        const importDetails = [...failedDetails, ...skippedDetails].slice(0, 8);
+        const enrichmentPending = Boolean(res.enrichment_pending);
         setFeedbackMsg({
-          type: skippedCount > 0 ? 'warning' : 'success',
+          type: skippedCount > 0 || failedCount > 0 ? 'warning' : 'success',
           text: zh
-            ? `导入完成：新增 ${res.created} 条，跳过 ${skippedCount} 条${skippedCount > 0 ? '（请查看跳过原因）' : ''}`
-            : `Import done: ${res.created} created, ${skippedCount} skipped${skippedCount > 0 ? ' (review skipped rows)' : ''}`,
-          details: skippedDetails.length > 0 ? skippedDetails : undefined,
+            ? `导入完成：新增 ${res.created} 条，跳过 ${skippedCount} 条，失败 ${failedCount} 条${enrichmentPending ? '；设备名称和识别信息将在后台继续同步，稍后刷新可查看' : ''}`
+            : `Import done: ${res.created} created, ${skippedCount} skipped, ${failedCount} failed${enrichmentPending ? '; device names and identity details will continue syncing in the background; refresh later to view them' : ''}`,
+          details: importDetails.length > 0 ? importDetails : undefined,
         });
         fetchAssets();
         fetchSummary();

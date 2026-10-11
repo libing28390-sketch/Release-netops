@@ -17,3 +17,16 @@ export const getManagedAssetDeviceTotal = (summary: unknown): number | null => {
 
   return networkDevices + servers;
 };
+
+/** Return the online count from the same network-device and server asset scope. */
+export const getManagedAssetDeviceOnlineTotal = (summary: unknown): number | null => {
+  if (!summary || typeof summary !== 'object' || Array.isArray(summary)) return null;
+
+  const byStatus = (summary as { by_online_status?: unknown }).by_online_status;
+  if (!byStatus || typeof byStatus !== 'object' || Array.isArray(byStatus)) return null;
+
+  const online = (byStatus as Record<string, unknown>).online;
+  return typeof online === 'number' && Number.isSafeInteger(online) && online >= 0
+    ? online
+    : null;
+};

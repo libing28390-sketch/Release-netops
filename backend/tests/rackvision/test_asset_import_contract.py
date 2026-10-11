@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 
 from api import assets
 from database import get_db_connection
@@ -17,8 +17,15 @@ def _asset(hostname: str) -> assets.AssetCreate:
 
 
 def test_asset_import_detailed_row_failure_and_atomic_rollback(isolated_db, monkeypatch):
+    prior_row_visible = []
+
     def fail_bad_row(_conn, asset_id, body, _user=None):
         if body.hostname == "bad-row":
+            with get_db_connection() as verify_conn:
+                if verify_conn.execute(
+                    "SELECT 1 FROM physical_assets WHERE hostname = ?", ("partial-good-row",)
+                ).fetchone():
+                    prior_row_visible.append(True)
             raise ValueError("placement conflict")
 
     monkeypatch.setattr(assets, "_sync_rack_device_from_asset", fail_bad_row)
@@ -49,6 +56,45 @@ def test_asset_import_detailed_row_failure_and_atomic_rollback(isolated_db, monk
         ).fetchone()[0] == 0
     finally:
         conn.close()
+
+    partial = assets.import_assets([_asset("partial-good-row"), _asset("bad-row")], detailed=True)
+    assert partial["created"] == 1
+    assert partial["failed"] == 1
+    assert partial["results"][0]["status"] == "created"
+    assert partial["results"][1]["status"] == "failed"
+    assert prior_row_visible
+    with get_db_connection() as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM physical_assets WHERE hostname = ?", ("partial-good-row",)
+        ).fetchone()[0] == 1
+
+
+def test_asset_import_queues_snmp_enrichment_after_committing_asset(isolated_db):
+    background_tasks = BackgroundTasks()
+    result = assets.import_assets(
+        [assets.AssetCreate(
+            asset_type="network_device",
+            hostname="edge-import-pending",
+            asset_tag="tag-edge-import-pending",
+            management_ip="192.0.2.90",
+            vendor="Huawei",
+            model="S6730",
+            platform="huawei_vrp",
+        )],
+        detailed=True,
+        background_tasks=background_tasks,
+    )
+
+    assert result["created"] == 1
+    assert result["enrichment_pending"] is True
+    assert result["snmp_identification"]["pending"] == 1
+    assert len(background_tasks.tasks) == 1
+    assert result["results"][0]["snmp_identification"]["status"] == "pending"
+    with get_db_connection() as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM physical_assets WHERE hostname = ?",
+            ("edge-import-pending",),
+        ).fetchone()[0] == 1
 
 
 def test_asset_import_reserved_site_error_is_actionable(isolated_db):

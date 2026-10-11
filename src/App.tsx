@@ -384,13 +384,13 @@ const App: React.FC = () => {
 
 
 
-  const deviceFetchMode = useMemo<'light' | 'full' | 'paged-light'>(() => {
+  const deviceFetchMode = useMemo<'light' | 'full' | 'paged-light' | 'all-light'>(() => {
     if (activeTab === 'network-monitoring') return 'paged-light';
     if (activeTab === 'inventory') return 'full';
     if (activeTab === 'automation') return 'full';
     if (activeTab === 'config') return 'full';
     if (activeTab === 'topology') return 'full';
-    if (activeTab === 'access' || activeTab === 'access-favorites' || activeTab === 'access-history') return 'full';
+    if (activeTab === 'access' || activeTab === 'access-favorites' || activeTab === 'access-history') return 'all-light';
     return 'light';
   }, [activeTab]);
 

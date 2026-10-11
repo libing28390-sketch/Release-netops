@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import type { Device } from '../types';
 import { displaySiteLabel } from '../utils/deviceUtils';
 import { authHeaders } from '../api/http';
-import { getManagedAssetDeviceTotal } from '../utils/assetSummary';
+import { getManagedAssetDeviceOnlineTotal, getManagedAssetDeviceTotal } from '../utils/assetSummary';
 
 // ─── Inline normalizer (mirrors useInventory.normalizeDeviceRecord) ───────────
 // Keeping this in the store means fetchInventory() needs no external argument,
@@ -130,6 +130,7 @@ interface InventoryState {
   inventoryError: string | null;
   inventoryRefreshTick: number;
   assetsTotal: number | null;
+  assetsOnlineTotal: number | null;
   assetsTotalError: string | null;
 
   // Delete modal state
@@ -179,6 +180,7 @@ export const useInventoryStore = create<InventoryState>((set, get) => ({
   inventoryError: null,
   inventoryRefreshTick: 0,
   assetsTotal: null,
+  assetsOnlineTotal: null,
   assetsTotalError: null,
   deviceToDelete: null,
   isDeletingSelected: false,
@@ -208,11 +210,11 @@ export const useInventoryStore = create<InventoryState>((set, get) => ({
     })),
   setAssetsTotal: (total) => {
     latestAssetSummaryRequestId += 1;
-    set({ assetsTotal: total, assetsTotalError: null });
+    set({ assetsTotal: total, assetsOnlineTotal: null, assetsTotalError: null });
   },
   resetAssetsTotal: () => {
     latestAssetSummaryRequestId += 1;
-    set({ assetsTotal: null, assetsTotalError: null });
+    set({ assetsTotal: null, assetsOnlineTotal: null, assetsTotalError: null });
   },
   setDeviceToDelete: (id) => set({ deviceToDelete: id }),
   setIsDeletingSelected: (v) => set({ isDeletingSelected: v }),
@@ -294,9 +296,10 @@ export const useInventoryStore = create<InventoryState>((set, get) => ({
       const summary = await resp.json();
       const assetsTotal = getManagedAssetDeviceTotal(summary);
       if (assetsTotal === null) throw new Error('Invalid asset summary response');
+      const assetsOnlineTotal = getManagedAssetDeviceOnlineTotal(summary);
 
       if (requestId === latestAssetSummaryRequestId) {
-        set({ assetsTotal, assetsTotalError: null });
+        set({ assetsTotal, assetsOnlineTotal, assetsTotalError: null });
       }
     } catch {
       if (requestId === latestAssetSummaryRequestId && !signal?.aborted) {
