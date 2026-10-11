@@ -2,7 +2,7 @@ import logging
 import uuid
 from fastapi import APIRouter, HTTPException, Body
 from database import get_db_connection
-from core.rbac import require_role
+from core.rbac import enforce_resource_scope, is_global_administrator, require_role
 from services.audit_service import log_audit_event
 from services.change_order_service import get_change_order, update_change_order
 from api.change_orders.helpers import (
@@ -50,23 +50,37 @@ def api_transition_change_order(order_id: str, body: dict = Body(...), user=requ
             )
 
         requester_username = existing.get('requester_username', '')
+        requester_id = str(existing.get('requester_id') or '')
         actor_username = user.get('username', '')
+        actor_id = str(user.get('user_id') or '')
         actor_groups = _load_actor_change_groups(conn, str(user.get('user_id') or ''))
         is_admin = user.get('role') == 'Administrator'
+        tenant_id = str(existing.get('tenant_id') or '').strip()
+        if not is_global_administrator(user):
+            if not tenant_id or not str(user.get('tenant_id') or '').strip() or tenant_id != str(user.get('tenant_id') or '').strip():
+                raise HTTPException(status_code=404, detail='Change order not found')
+        permission_action = (
+            'approve' if new_status == 'approved' or (current_status == 'final_review' and new_status in {'rejected', 'initial_review'})
+            else 'request_approval' if new_status in {'initial_review', 'final_review', 'rejected'}
+            else 'intervene' if new_status in {'implementing', 'completed', 'failed', 'rollback_in_progress', 'rolled_back'}
+            else 'create_change'
+        )
+        enforce_resource_scope(user, 'pam', permission_action, tenant_id=tenant_id or None)
+        is_requester = bool(requester_id and actor_id and requester_id == actor_id)
 
         requester_actions = (
             new_status == 'cancelled'
             or (current_status == 'draft' and new_status == 'initial_review')
             or (current_status == 'rejected' and new_status == 'draft')
         )
-        if requester_actions and requester_username != actor_username and not is_admin:
+        if requester_actions and not is_requester and not is_admin:
             raise HTTPException(status_code=403, detail='Only the requester or an administrator can perform this transition')
 
         if new_status == 'initial_review' and current_status == 'draft' and not existing.get('assigned_initial_reviewer_id'):
             raise HTTPException(status_code=400, detail='An initial reviewer is required before submission')
 
         # Applicant cannot review/approve own ticket.
-        if requester_username and requester_username == actor_username:
+        if requester_id and requester_id == actor_id:
             if new_status in {'final_review', 'approved', 'rejected'} or (new_status == 'initial_review' and current_status != 'draft'):
                 raise HTTPException(status_code=403, detail='申请人不能审核或审批自己的变更工单')
         # Final approval requires administrator role.
@@ -91,7 +105,7 @@ def api_transition_change_order(order_id: str, body: dict = Body(...), user=requ
         # Implementation stages: Only requester can operate
         implementation_statuses = {'implementing', 'completed', 'failed', 'rollback_in_progress', 'rolled_back'}
         if new_status in implementation_statuses or current_status in implementation_statuses:
-            if requester_username != actor_username and user.get('role') != 'Administrator':
+            if not is_requester and user.get('role') != 'Administrator':
                 raise HTTPException(status_code=403, detail='只有工单申请人（实施人）才能操作实施阶段')
         
         if new_status == 'final_review' and not existing.get('assigned_final_approver_id'):

@@ -251,7 +251,7 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(10);
   const [search, setSearch] = useState('');
   const [runs, setRuns] = useState<BackupRun[]>([]);
   const [historyRuns, setHistoryRuns] = useState<BackupRun[]>([]);
@@ -280,7 +280,7 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
   const [detailSearch, setDetailSearch] = useState('');
   const [loadedDetailFilters, setLoadedDetailFilters] = useState({ site: 'all', status: 'all' as DetailStatusFilter, search: '' });
   const [detailPage, setDetailPage] = useState(1);
-  const [detailPageSize, setDetailPageSize] = useState(20);
+  const [detailPageSize, setDetailPageSize] = useState(10);
   const [detailExpanded, setDetailExpanded] = useState(false);
   const detailRequestRef = useRef<AbortController | null>(null);
 

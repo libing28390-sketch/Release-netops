@@ -13,8 +13,8 @@ describe('network device inventory pagination', () => {
     vi.unstubAllGlobals();
   });
 
-  it('defaults to 20 rows per page', () => {
-    expect(useInventoryStore.getInitialState().inventoryPageSize).toBe(20);
+  it('defaults to 10 rows per page', () => {
+    expect(useInventoryStore.getInitialState().inventoryPageSize).toBe(10);
   });
 
   it('returns to the first page when the page size changes', () => {
@@ -72,5 +72,45 @@ describe('network device inventory pagination', () => {
     expect(useInventoryStore.getState().inventoryTotal).toBe(0);
     expect(useInventoryStore.getState().inventoryLoading).toBe(false);
     expect(useInventoryStore.getState().inventoryError).toBe('Forbidden');
+  });
+
+  it('loads the network-device and server total from the asset summary', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        total: 19,
+        by_type: { network_device: 7, server: 5, other: 7 },
+      }),
+    }));
+
+    await useInventoryStore.getState().fetchAssetsTotal();
+
+    expect(useInventoryStore.getState().assetsTotal).toBe(12);
+    expect(useInventoryStore.getState().assetsTotalError).toBeNull();
+  });
+
+  it('retains the last successful total and reports a retryable summary error', async () => {
+    useInventoryStore.getState().setAssetsTotal(12);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 503 }));
+
+    await useInventoryStore.getState().fetchAssetsTotal();
+
+    expect(useInventoryStore.getState().assetsTotal).toBe(12);
+    expect(useInventoryStore.getState().assetsTotalError).toBe('Failed to load asset device total');
+  });
+
+  it('does not let a stale summary response overwrite a fresher asset-page update', async () => {
+    const oldResponse = deferred<{ ok: boolean; json: () => Promise<unknown> }>();
+    vi.stubGlobal('fetch', vi.fn().mockReturnValue(oldResponse.promise));
+
+    const oldRequest = useInventoryStore.getState().fetchAssetsTotal();
+    useInventoryStore.getState().setAssetsTotal(21);
+    oldResponse.resolve({
+      ok: true,
+      json: async () => ({ by_type: { network_device: 2, server: 3 } }),
+    });
+    await oldRequest;
+
+    expect(useInventoryStore.getState().assetsTotal).toBe(21);
   });
 });

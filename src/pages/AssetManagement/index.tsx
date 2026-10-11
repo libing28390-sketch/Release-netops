@@ -21,6 +21,7 @@ import TagFilterDropdown from '../../components/TagFilterDropdown';
 import { ApiError, apiRequest, authHeaders } from '../../api/http';
 import { useSystem } from '../../hooks/useSystem';
 import { formatTerminalAgentError, getLocalTerminalConfig, TERMINAL_APP_LABELS } from '../../utils/localTerminal';
+import { useInventoryStore } from '../../store/inventoryStore';
 import type { TagDefinition } from '../../types';
 
 import { Asset, AssetSummary, AssetManagementTabProps } from './types';
@@ -72,7 +73,6 @@ type AssetImportSkippedItem = {
   existing_hostname?: string;
   duplicate_labels?: string[];
   duplicate_values?: string[];
-  librenms_enrollment?: { status?: string; message?: string };
 };
 
 type BatchTakeoverResult = {
@@ -322,6 +322,7 @@ const formatFallbackTemplateDateColumns = (worksheet: XLSX.WorkSheet, headers: s
 
 const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setActiveTab }) => {
   const { systemInfo } = useSystem();
+  const refreshSharedAssetTotal = useInventoryStore(state => state.fetchAssetsTotal);
   const zh = language === 'zh';
   const goTo = (tab: string) => setActiveTab?.(tab);
 
@@ -333,11 +334,12 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const [sitesError, setSitesError] = useState<AssetLoadIssue | null>(null);
   const [total, setTotal]               = useState(0);
   const [page, setPage]                 = useState(1);
-  const [pageSize, setPageSize]         = useState(20);
+  const [pageSize, setPageSize]         = useState(10);
   const [loading, setLoading]           = useState(true);
   const [assetError, setAssetError] = useState<AssetLoadIssue | null>(null);
   const [assetsLastLoadedAt, setAssetsLastLoadedAt] = useState<Date | null>(null);
   const assetFetchSequenceRef = React.useRef(0);
+  const summaryFetchSequenceRef = React.useRef(0);
 
   const [search, setSearch]             = useState('');
   const [typeFilter, setTypeFilter]     = useState('all');
@@ -458,14 +460,19 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   }, []);
 
   const fetchSummary = useCallback(async () => {
+    const requestSequence = ++summaryFetchSequenceRef.current;
     try {
       const payload = await apiRequest<AssetSummary>('/api/assets/summary');
+      if (requestSequence !== summaryFetchSequenceRef.current) return;
       setSummary(payload);
+      void refreshSharedAssetTotal();
       setSummaryError(null);
     } catch (error) {
-      setSummaryError(getAssetLoadIssue(error, language, zh ? '资产概览' : 'asset summary'));
+      if (requestSequence === summaryFetchSequenceRef.current) {
+        setSummaryError(getAssetLoadIssue(error, language, zh ? '资产概览' : 'asset summary'));
+      }
     }
-  }, [language, zh]);
+  }, [language, refreshSharedAssetTotal, zh]);
 
   const fetchSites = useCallback(async () => {
     try {
@@ -1120,12 +1127,9 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
               `${label}「${item.duplicate_values?.[index] || ''}」`,
             ).join('、');
             const existing = item.existing_hostname ? `（现有设备：${item.existing_hostname}）` : '';
-            const enrollmentNote = item.librenms_enrollment?.message
-              ? `；${item.librenms_enrollment.message}`
-              : '';
             return zh
-              ? `${identity}：${fields || '主机名/资产编号/序列号/管理IP'}已存在${existing}${enrollmentNote}`
-              : `${identity}: ${fields || 'hostname/asset tag/serial number/management IP'} already exists${item.existing_hostname ? ` (existing device: ${item.existing_hostname})` : ''}${item.librenms_enrollment?.message ? `; ${item.librenms_enrollment.message}` : ''}`;
+              ? `${identity}：${fields || '主机名/资产编号/序列号/管理IP'}已存在${existing}`
+              : `${identity}: ${fields || 'hostname/asset tag/serial number/management IP'} already exists${item.existing_hostname ? ` (existing device: ${item.existing_hostname})` : ''}`;
           }
           return zh ? `${identity}：导入规则跳过` : `${identity}: skipped by import rule`;
         });
@@ -1134,114 +1138,13 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
             ? `另有 ${res.skipped - skippedDetails.length} 条跳过记录未展开`
             : `${res.skipped - skippedDetails.length} more skipped rows are not shown`);
         }
-        const hostnameSync = res.hostname_sync || {};
-        const hostnameSyncFailures = Array.isArray(hostnameSync.failed_items) ? hostnameSync.failed_items : [];
-        const hostnameSyncFailedCount = Math.max(hostnameSyncFailures.length, Number(hostnameSync.failed) || 0);
-        const hostnameSyncDetails = hostnameSyncFailures.map((item: any) => {
-          const identity = [item.previous_hostname || item.hostname, item.asset_tag]
-            .filter(Boolean)
-            .join(' / ') || (item.device_id || 'Unknown device');
-          const ip = item.ip ? ` (${item.ip})` : '';
-          const error = item.error || (zh ? '未知错误' : 'unknown error');
-          const failureLabel = error.includes('写回 CMDB')
-            ? (zh ? '主机名写回 CMDB 失败' : 'failed to save hostname to CMDB')
-            : (zh ? 'SNMP 获取主机名失败' : 'failed to read hostname via SNMP');
-          return zh
-            ? `${identity}${ip}：${failureLabel}（${error}）`
-            : `${identity}${ip}: ${failureLabel} (${error})`;
-        });
-        const hasSkipped = Number(res.skipped || 0) > 0;
-        const hasHostnameSyncFailures = hostnameSyncFailedCount > 0;
-        const syncSummary = Number(hostnameSync.total || 0) > 0 && !hasHostnameSyncFailures
-          ? (zh
-            ? `；SNMP 主机名已同步 ${hostnameSync.succeeded || 0}/${hostnameSync.total} 台`
-            : `; SNMP hostnames synced for ${hostnameSync.succeeded || 0}/${hostnameSync.total} devices`)
-          : '';
-        const hostnameSyncFailureSummary = hasHostnameSyncFailures
-          ? (zh
-            ? `；${hostnameSyncFailedCount} 台设备主机名未自动同步，已保留现有名称。请检查 SNMP Community，并确认 CMDB 主机名与实际设备一致。`
-            : `; ${hostnameSyncFailedCount} device${hostnameSyncFailedCount === 1 ? '' : 's'} could not sync the hostname automatically, so the existing name was kept. Check the SNMP Community and confirm that CMDB hostnames match the actual device names.`)
-          : '';
-        const enrollment = res.librenms_enrollment || {};
-        const enrollmentFailures = Array.isArray(enrollment.failed_items) ? enrollment.failed_items : [];
-        const enrollmentFailedCount = Math.max(enrollmentFailures.length, Number(enrollment.failed) || 0);
-        const enrollmentRows = Array.isArray(enrollment.items) ? enrollment.items : enrollmentFailures;
-        const enrollmentDetails = enrollmentRows.slice(0, 8).map((item: any) => {
-          const identity = [item.hostname, item.asset_tag].filter(Boolean).join(' / ')
-            || item.ip || item.device_id || (zh ? '未知设备' : 'Unknown device');
-          const row = item.row ? (zh ? `第 ${item.row} 行 ` : `row ${item.row} `) : '';
-          const succeeded = ['added_and_bound', 'profile_updated_and_bound', 'found_after_retry_and_bound', 'profile_updated_after_retry_and_bound'].includes(item.status);
-          const state = succeeded
-            ? (zh ? '纳管成功' : 'enrolled')
-            : item.status === 'local_snmp'
-              ? (zh ? '由 Nexora 本地 SNMP 采集' : 'collected by Nexora local SNMP')
-            : item.status === 'skipped_duplicate_profile_mismatch'
-              ? (zh ? '未修改已有资产' : 'existing asset unchanged')
-              : item.status === 'not_attempted_import_failed'
-                ? (zh ? '资产导入失败，未纳管' : 'asset import failed; not enrolled')
-                : (zh ? `纳管状态：${item.status || '未执行'}` : `enrollment: ${item.status || 'not attempted'}`);
-          return `${row}${identity}：${state}${item.message ? `；${item.message}` : ''}`;
-        });
-        if (enrollmentRows.length > enrollmentDetails.length) {
-          enrollmentDetails.push(zh
-            ? `另有 ${enrollmentRows.length - enrollmentDetails.length} 行纳管状态未展开`
-            : `${enrollmentRows.length - enrollmentDetails.length} more enrollment rows are not shown`);
-        }
-        const localSnmpCount = Math.max(0, Number(enrollment.local_snmp) || 0);
-        const externalEnrollmentTotal = Math.max(0, Number(enrollment.total || 0) - localSnmpCount);
-        const localSnmpSummary = localSnmpCount > 0
-          ? (zh
-            ? `；${localSnmpCount} 台由 Nexora 本地 SNMP 采集硬件数据`
-            : `; Nexora local SNMP will collect hardware data for ${localSnmpCount} device${localSnmpCount === 1 ? '' : 's'}`)
-          : '';
-        const externalEnrollmentSummary = externalEnrollmentTotal > 0
-          ? (zh
-            ? `；LibreNMS 纳管成功 ${enrollment.succeeded || 0}/${externalEnrollmentTotal} 台${enrollmentFailedCount ? `，失败 ${enrollmentFailedCount} 台` : ''}`
-            : `; LibreNMS enrollment succeeded for ${enrollment.succeeded || 0}/${externalEnrollmentTotal} device${externalEnrollmentTotal === 1 ? '' : 's'}${enrollmentFailedCount ? `, ${enrollmentFailedCount} failed` : ''}`)
-          : '';
-        const enrollmentSummary = `${localSnmpSummary}${externalEnrollmentSummary}`;
-        const enrollmentFailureSummary = enrollmentFailedCount > 0
-          ? (zh
-            ? '；资产已保存，但部分设备未能按所选 Profile 纳入 LibreNMS，请查看详情并修复配置后重新导入对应行重试。'
-            : '; assets were saved, but some devices were not enrolled with the selected profile. Review details and retry those rows after fixing the configuration.')
-          : '';
-        const hasEnrollmentFailures = enrollmentFailedCount > 0;
-        const snmpIdentification = res.snmp_identification || {};
-        const identityRows = Array.isArray(snmpIdentification.items) ? snmpIdentification.items : [];
-        const identityUnresolvedCount = Math.max(0, Number(snmpIdentification.unresolved) || 0);
-        const identityDetails = identityRows.slice(0, 8).map((item: any) => {
-          const identity = [item.detected_vendor, item.detected_platform, item.detected_model]
-            .filter(Boolean)
-            .join(' / ');
-          const row = item.row ? (zh ? `第 ${item.row} 行 ` : `row ${item.row} `) : '';
-          const detected = identity
-            ? (zh ? `识别为 ${identity}` : `identified as ${identity}`)
-            : (zh ? `状态 ${item.status || '未识别'}` : `status ${item.status || 'unidentified'}`);
-          return `${row}${item.hostname || item.ip || item.asset_tag || item.device_id || (zh ? '未知设备' : 'Unknown device')}：${detected}${item.message ? `；${item.message}` : ''}`;
-        });
-        if (identityRows.length > identityDetails.length) {
-          identityDetails.push(zh
-            ? `另有 ${identityRows.length - identityDetails.length} 行 SNMP 识别状态未展开`
-            : `${identityRows.length - identityDetails.length} more SNMP identity results are not shown`);
-        }
-        const identitySummary = Number(snmpIdentification.total || 0) > 0
-          ? (zh
-            ? `；按 LibreNMS 规则完成 SNMP 身份识别 ${snmpIdentification.identified || 0}/${snmpIdentification.total} 台`
-            : `; LibreNMS-rule SNMP identity detected for ${snmpIdentification.identified || 0}/${snmpIdentification.total} devices`)
-          : '';
-        const identityFailureSummary = identityUnresolvedCount > 0
-          ? (zh
-            ? `；${identityUnresolvedCount} 台设备尚未完成 SNMP 身份识别，请查看识别详情`
-            : `; ${identityUnresolvedCount} device${identityUnresolvedCount === 1 ? '' : 's'} could not be identified over SNMP; review the identity details`)
-          : '';
-        const hasIdentityIssues = identityUnresolvedCount > 0;
-        const details = [...skippedDetails, ...hostnameSyncDetails, ...enrollmentDetails, ...identityDetails];
+        const skippedCount = Number(res.skipped || 0);
         setFeedbackMsg({
-          type: hasSkipped || hasHostnameSyncFailures || hasEnrollmentFailures || hasIdentityIssues ? 'warning' : 'success',
+          type: skippedCount > 0 ? 'warning' : 'success',
           text: zh
-            ? `导入完成：新增 ${res.created} 条，跳过 ${res.skipped} 条${hasSkipped ? '（请查看跳过原因）' : ''}${identitySummary}${identityFailureSummary}${enrollmentSummary}${enrollmentFailureSummary}${syncSummary}${hostnameSyncFailureSummary}`
-            : `Import done: ${res.created} created, ${res.skipped} skipped${hasSkipped ? ' (review skipped rows)' : ''}${identitySummary}${identityFailureSummary}${enrollmentSummary}${enrollmentFailureSummary}${syncSummary}${hostnameSyncFailureSummary}`,
-          details: details.length > 0 ? details : undefined,
+            ? `导入完成：新增 ${res.created} 条，跳过 ${skippedCount} 条${skippedCount > 0 ? '（请查看跳过原因）' : ''}`
+            : `Import done: ${res.created} created, ${skippedCount} skipped${skippedCount > 0 ? ' (review skipped rows)' : ''}`,
+          details: skippedDetails.length > 0 ? skippedDetails : undefined,
         });
         fetchAssets();
         fetchSummary();
@@ -1507,12 +1410,19 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         }
         if (!mapped.length) { setFeedbackMsg({ type: 'error', text: zh ? '未找到有效 data 行' : 'No valid rows found' }); return; }
         
-        // Scan for missing racks
+        // Index rack names by every accepted site alias before checking imported rows.
+        const existingRackKeys = new Set<string>();
+        allRacks.forEach((rack) => {
+          const rackName = String(rack.name || '');
+          [rack.site_id, rack.site_code, rack.site_name, rack.datacenter]
+            .filter(Boolean)
+            .forEach((siteAlias) => existingRackKeys.add(`${siteAlias}\u0000${rackName}`));
+        });
         const missingMap: Record<string, { datacenter: string; rack: string; rowCount: number }> = {};
         mapped.forEach(row => {
           if (row.rack) {
             const dcName = row.site_id || row.datacenter || '';
-            const exists = allRacks.some(r => r.name === row.rack && [r.site_id, r.site_code, r.site_name, r.datacenter].filter(Boolean).includes(dcName));
+            const exists = existingRackKeys.has(`${dcName}\u0000${row.rack}`);
             if (!exists) {
               const key = `${dcName}|${row.rack}`;
               if (!missingMap[key]) {

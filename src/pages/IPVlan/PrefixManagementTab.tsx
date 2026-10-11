@@ -241,7 +241,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   const [excludeNetBroadcast, setExcludeNetBroadcast] = useState(true);
   const [excludeGateway, setExcludeGateway] = useState(true);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(10);
   const [totalPrefixes, setTotalPrefixes] = useState(0);
 
   const usableIpDetails = useMemo(() => {

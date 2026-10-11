@@ -952,12 +952,12 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
         </div>
 
         {/* Pagination footer */}
-        {playbookHistoryTotal > 20 && (
+        {playbookHistoryTotal > 10 && (
           <div className="px-6 py-4 border-t border-black/5 bg-black/[0.01] flex-shrink-0">
             <Pagination
               currentPage={playbookHistoryPage}
               totalItems={playbookHistoryTotal}
-              itemsPerPage={20}
+              itemsPerPage={10}
               onPageChange={onHistoryPageChange}
               language={language}
             />
@@ -1222,12 +1222,12 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                           </div>
 
                           {/* Left Pagination */}
-                          {selectedExecDevicesTotal > 20 && (
+                          {selectedExecDevicesTotal > 10 && (
                             <div className="p-3 border-t border-black/5 bg-white flex-shrink-0">
                               <Pagination
                                 currentPage={selectedExecDevicesPage}
                                 totalItems={selectedExecDevicesTotal}
-                                itemsPerPage={20}
+                                itemsPerPage={10}
                                 onPageChange={onExecDevicesPageChange}
                                 language={language}
                               />

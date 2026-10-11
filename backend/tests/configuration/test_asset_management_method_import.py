@@ -273,7 +273,8 @@ def test_import_commits_asset_then_enrolls_with_bound_snmpv3_profile(isolated_db
     ])
 
     assert result["created"] == 1
-    assert result["hostname_sync"]["total"] == 0
+    assert result["hostname_sync"]["total"] == 1
+    assert result["hostname_sync"]["failed"] == 1
     assert result["snmp_identification"]["items"][0]["status"] == "probe_failed"
     enrollment = result["librenms_enrollment"]
     assert {key: enrollment[key] for key in ("total", "succeeded", "failed", "failed_items")} == {

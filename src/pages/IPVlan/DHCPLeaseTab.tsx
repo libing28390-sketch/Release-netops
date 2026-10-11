@@ -44,7 +44,7 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
   const [search, setSearch] = useState('');
   const [stateFilter, setStateFilter] = useState('all');
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(10);
   const [totalLeases, setTotalLeases] = useState(0);
   const [loadError, setLoadError] = useState('');
 

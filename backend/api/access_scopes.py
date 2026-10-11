@@ -20,8 +20,11 @@ class ScopeReplace(BaseModel):
 
 
 @router.get('/users/{user_id}/resource-scopes')
-def read_user_resource_scopes(user_id: str, _user=require_role('Administrator')):
-    return {'items': list_user_scopes(user_id)}
+def read_user_resource_scopes(user_id: str, user=require_role('Administrator')):
+    try:
+        return {'items': list_user_scopes(user_id, actor=user)}
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
 @router.put('/users/{user_id}/resource-scopes')
@@ -30,6 +33,9 @@ def update_user_resource_scopes(user_id: str, body: ScopeReplace, user=require_r
         return {'items': replace_user_scopes(
             user_id, [item.model_dump() for item in body.scopes],
             changed_by=user.get('username', 'system'),
+            actor=user,
         )}
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

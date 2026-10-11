@@ -6,14 +6,23 @@ import logging
 import os
 
 from database import get_db_connection
-from core.rbac import require_role
-from core.config import settings
+from core.rbac import require_role, authorize_resource, is_global_administrator
 from core.read_cache import (
     SCHEDULED_JOBS_CACHE_TTL_SECONDS,
     invalidate_read_cache,
     read_cache,
 )
 from services.config_approval_service import verify_code, consume_approval
+from services.scheduled_job_authorization import (
+    authorize_job_resource,
+    execution_snapshot,
+    job_manifest_source_from_row,
+    manifest_hash,
+    merge_job_source,
+    normalize_job_manifest,
+    scheduled_job_approval_type,
+    script_snapshot,
+)
 from services.audit_service import log_audit_event
 from services.nsot_collection_preview_service import (
     NSOTPreviewPermissionError,
@@ -46,6 +55,47 @@ def _format_job_row(row) -> dict:
     return d
 
 
+def _actor_id(user: dict) -> str:
+    return str(user.get("user_id") or user.get("id") or "").strip()
+
+
+def _actor_tenant(user: dict) -> str:
+    return str(user.get("tenant_id") or "").strip()
+
+
+def _authorize_job(user: dict, row: dict, action: str) -> None:
+    try:
+        authorize_job_resource(user, row, action)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+def _prepare_manifest(conn, source: dict, user: dict, operation: str, *, job_id: str | None = None) -> dict:
+    script_id = str(source.get("script_id") or "").strip()
+    try:
+        script_sha, _ = script_snapshot(
+            conn, script_id, require_released=str(operation).upper() != "DELETE",
+        )
+        return normalize_job_manifest(
+            source,
+            operation=operation,
+            requester_id=_actor_id(user),
+            tenant_id=_actor_tenant(user),
+            script_sha256=script_sha,
+            job_id=job_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _require_job_collection_permission(user: dict, action: str) -> None:
+    tenant_id = _actor_tenant(user)
+    if not tenant_id and not is_global_administrator(user):
+        raise HTTPException(status_code=403, detail="当前账号未分配租户")
+    if not authorize_resource(user, "scheduled_job", action, tenant_id=tenant_id or None):
+        raise HTTPException(status_code=403, detail="当前账号没有计划作业资源权限")
+
+
 # ── List ──
 
 @router.get("/scheduled-jobs")
@@ -56,9 +106,16 @@ def list_scheduled_jobs(
     page_size: int = 20,
     user=require_role("Viewer"),
 ):
+    _require_job_collection_permission(user, "view")
     conn = get_db_connection()
     try:
         where, params = [], []
+        if not is_global_administrator(user):
+            where.append("tenant_id = ?")
+            params.append(_actor_tenant(user))
+            if user.get("role") != "Administrator":
+                where.append("(created_by_id = ? OR authorization_mode = 'system')")
+                params.append(_actor_id(user))
         if job_type:
             where.append("job_type = ?")
             params.append(job_type)
@@ -151,6 +208,7 @@ def list_system_scheduled_jobs(_user=require_role("Viewer")):
     deliberately omitted: they remain running, but do not belong in the user
     job-management surface.
     """
+    _require_job_collection_permission(_user, "view")
     from core.scheduler_manager import scheduler
 
     items: list[dict] = []
@@ -204,7 +262,12 @@ def list_future_execution_plans(
     """
     计算未来一段时间内所有已启用作业（包括一次性和周期性 Cron 作业）的执行排班。
     """
-    cache_key = '|'.join((time_range or '', start_time or '', end_time or '', query or ''))
+    _require_job_collection_permission(user, "view")
+    cache_key = '|'.join((
+        str(user.get("user_id") or user.get("id") or ""),
+        str(user.get("tenant_id") or ""),
+        time_range or '', start_time or '', end_time or '', query or '',
+    ))
     cache_hit, cached = read_cache.get('scheduled_jobs_future', cache_key)
     if cache_hit:
         logger.debug('[Perf] scheduled-jobs/future cache hit key=%s', cache_key)
@@ -245,6 +308,12 @@ def list_future_execution_plans(
     try:
         sql = "SELECT * FROM scheduled_jobs WHERE enabled = 1"
         params = []
+        if not is_global_administrator(user):
+            sql += " AND tenant_id = ?"
+            params.append(_actor_tenant(user))
+            if user.get("role") != "Administrator":
+                sql += " AND (created_by_id = ? OR authorization_mode = 'system')"
+                params.append(_actor_id(user))
         if query:
             sql += " AND name LIKE ?"
             params.append(f"%{query}%")
@@ -313,74 +382,29 @@ def create_scheduled_job(
     payload: dict = Body(...),
     user=require_role("Operator"),
 ):
-    """
-    创建定时作业或执行计划。
-    
-    生产环境需验证审批码；测试环境可通过 skip_approval_verification=true 跳过飞书验证。
-    """
-    is_test_env = getattr(settings, 'ENVIRONMENT', 'development') != 'production'
-    skip_approval_verification = payload.get("skip_approval_verification", False) if is_test_env else False
-    required_approval_type = "execution_plan" if payload.get("job_type", "cron") == "once" else "scheduled_job"
-    
-    approval_token = (payload.get("approval_token") or "").strip()
-    approval_code = (payload.get("approval_code") or "").strip()
+    _require_job_collection_permission(user, "create")
+    if payload.get("skip_approval_verification") or payload.get("skip_approval"):
+        raise HTTPException(status_code=400, detail="不支持跳过计划作业审批")
 
-    # Approval verification logic
-    approval_record = None
-    if not skip_approval_verification:
-        # Production mode or not skipping: require full approval flow
-        if not approval_token or not approval_code:
-            raise HTTPException(
-                status_code=400, 
-                detail="审批令牌和验证码不能为空" if not is_test_env else "审批令牌和验证码不能为空（或在测试环境中使用 skip_approval_verification=true）"
-            )
-
-        ok, err = verify_code(
-            approval_token,
-            approval_code,
-            requester_id=str(user.get("user_id") or ""),
-            requester_username=str(user.get("username") or ""),
-            expected_approval_type=required_approval_type,
-        )
-        if not ok:
-            raise HTTPException(status_code=403, detail=err)
-
-    else:
-        # Test mode with skip flag: create mock approval record
-        logger.warning(f"Creating scheduled job with approval verification skipped by {user.get('username', 'unknown')}")
-        approval_record = {
-            "approver": "test-system",
-            "verified_at": datetime.now().isoformat(),
-            "test_mode": True,
-        }
-
-    name = (payload.get("name") or "").strip()
-    job_type = payload.get("job_type", "cron")  # 'cron' | 'once'
-    action_type = payload.get("action_type", "backup")  # 'backup' | 'inspection' | 'script_run' | 'nsot' (cron); 'command' | 'backup' | 'inspection' (once)
-    cron_expr = (payload.get("cron_expr") or "").strip()
-    scheduled_at = (payload.get("scheduled_at") or "").strip()
-    device_scope = payload.get("device_scope", "all")
-    device_filter = (payload.get("device_filter") or "").strip()
-    commands = (payload.get("commands") or "").strip()
-    if action_type == "inspection" and payload.get("check_items"):
-        commands = ",".join(payload.get("check_items"))
-    script_id = (payload.get("script_id") or "").strip()
+    name = str(payload.get("name") or "").strip()
+    job_type = str(payload.get("job_type") or "cron").strip()
+    action_type = str(payload.get("action_type") or payload.get("action") or "backup").strip()
+    cron_expr = str(payload.get("cron_expr") or "").strip()
+    scheduled_at = str(payload.get("scheduled_at") or "").strip()
+    device_scope = str(payload.get("device_scope") or (payload.get("scope") or {}).get("type") or "all").strip()
+    raw_filter = payload.get("device_filter", (payload.get("scope") or {}).get("filter", ""))
+    device_filter = raw_filter if isinstance(raw_filter, str) else __import__("json").dumps(raw_filter, ensure_ascii=False, sort_keys=True)
+    commands = str(payload.get("commands") or "").strip()
+    check_items = payload.get("check_items")
+    if action_type == "inspection" and isinstance(check_items, list) and check_items:
+        commands = ",".join(str(item).strip() for item in check_items if str(item).strip())
+    script_id = str(payload.get("script_id") or "").strip()
     is_config = 1 if payload.get("is_config") else 0
-    config_reason = (payload.get("config_reason") or "").strip()
+    config_reason = str(payload.get("config_reason") or "").strip()
     use_admin_creds = 1 if payload.get("use_admin_creds") else 0
-
-    # NSOT is a composed, read-only workflow. It keeps the saved Automation
-    # device scope but does not accept arbitrary commands, scripts, config mode,
-    # or borrowed privileged credentials.
-    if action_type == "nsot":
-        commands = ""
-        script_id = ""
-        is_config = 0
-        use_admin_creds = 0
 
     if not name:
         raise HTTPException(status_code=400, detail="作业名称不能为空")
-    # 定时作业（cron）仅支持备份和巡检
     if job_type == "cron" and action_type not in _CRON_ACTION_TYPES:
         raise HTTPException(status_code=400, detail="定时作业支持：配置备份、网络巡检、服务器巡检、健康检查、脚本执行及 NSOT 事实库采集")
     if job_type == "cron" and not cron_expr:
@@ -391,70 +415,113 @@ def create_scheduled_job(
         raise HTTPException(status_code=400, detail="命令类型作业需要命令或脚本")
     if action_type == "script_run" and not script_id:
         raise HTTPException(status_code=400, detail="自动化变更作业需要选择一个已发布的脚本")
+    if action_type in {"command", "script_run"} or script_id or is_config:
+        raise HTTPException(status_code=403, detail="原始命令、脚本和配置变更作业暂不支持计划执行；请使用受控 Playbook 与变更工单执行")
+    if action_type == "nsot" and (commands or script_id or is_config or use_admin_creds):
+        raise HTTPException(status_code=400, detail="NSOT 事实库采集不接受命令、脚本、配置模式或管理凭据")
+    if use_admin_creds and not authorize_resource(
+        user, "credential", "use", tenant_id=_actor_tenant(user) or None,
+    ):
+        raise HTTPException(status_code=403, detail="当前账号没有使用管理凭据的授权")
 
-    # 5. ALL VALIDATIONS PASSED -> Consume approval token
-    if not skip_approval_verification:
-        approval_record = consume_approval(
-            approval_token,
-            requester_id=str(user.get("user_id") or ""),
-            expected_approval_type=required_approval_type,
-        )
-        if not approval_record:
-            raise HTTPException(status_code=403, detail="审批令牌无效或已过期，请重新获取验证码")
-
-    now = datetime.now().isoformat()
     job_id = str(uuid.uuid4())
-    actor = user.get("username", "unknown")
-
+    actor = str(user.get("username") or "unknown")
     conn = get_db_connection()
     try:
+        source = {
+            **payload,
+            "operation": "CREATE",
+            "job_id": "",
+            "job_type": job_type,
+            "name": name,
+            "action": action_type,
+            "cron_expr": cron_expr,
+            "scheduled_at": scheduled_at,
+            "scope": {"type": device_scope, "filter": raw_filter},
+            "commands": commands,
+            "check_items": check_items if isinstance(check_items, list) else [],
+            "script_id": script_id,
+            "is_config": is_config,
+            "use_admin_creds": use_admin_creds,
+            "enabled": True,
+            "config_reason": config_reason,
+        }
+        manifest = _prepare_manifest(conn, source, user, "CREATE")
+        job_type = manifest["job_type"]
+        action_type = manifest["action"]
+        cron_expr = manifest["cron_expr"]
+        scheduled_at = manifest["scheduled_at"]
+        device_scope = manifest["scope"]["type"]
+        device_filter = manifest["scope"]["filter"]
+        commands = manifest["commands"]
+        script_id = manifest["script_id"]
+        is_config = manifest["is_config"]
+        config_reason = manifest["config_reason"]
+        use_admin_creds = manifest["use_admin_creds"]
+        execution_manifest_hash = manifest_hash({
+            **manifest, "operation": "EXECUTION", "job_id": job_id,
+        })
+        approval_type = scheduled_job_approval_type(manifest)
+        approval_token = str(payload.get("approval_token") or "").strip()
+        approval_code = str(payload.get("approval_code") or "").strip()
+        if not approval_token or not approval_code:
+            raise HTTPException(status_code=400, detail="创建计划作业必须提供已验证的审批凭据")
+        binding_hash = manifest_hash(manifest)
+        ok, err = verify_code(
+            approval_token, approval_code,
+            requester_id=_actor_id(user),
+            requester_username=actor,
+            expected_approval_type=approval_type,
+            expected_binding_hash=binding_hash,
+        )
+        if not ok:
+            raise HTTPException(status_code=403, detail=err)
+        approval_record = consume_approval(
+            approval_token,
+            requester_id=_actor_id(user),
+            expected_approval_type=approval_type,
+            expected_binding_hash=binding_hash,
+        )
+        if not approval_record:
+            raise HTTPException(status_code=403, detail="审批令牌无效、已过期或与当前作业内容不匹配")
+
+        now = datetime.now().isoformat()
         conn.execute(
             """INSERT INTO scheduled_jobs
                (id, name, job_type, action_type, cron_expr, scheduled_at,
                 device_scope, device_filter, commands, script_id,
                 is_config, config_reason, use_admin_creds, enabled, status,
-                approved_by, approved_at, created_by, created_at, updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1,'approved',?,?,?,?,?)""",
+                approved_by, approved_at, created_by, created_at, updated_at,
+                created_by_id, tenant_id, script_sha256,
+                authorization_manifest_hash, authorization_mode)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1,'approved',?,?,?,?,?,?,?,?,?,'snapshot')""",
             (
                 job_id, name, job_type, action_type, cron_expr, scheduled_at,
                 device_scope, device_filter, commands, script_id,
                 is_config, config_reason, use_admin_creds,
-                approval_record.get("approver", ""),
-                now,
-                actor, now, now,
+                approval_record.get("approver_username") or approval_record.get("approver", ""),
+                now, actor, now, now,
+                _actor_id(user), _actor_tenant(user), manifest.get("script_sha256", ""),
+                execution_manifest_hash,
             ),
         )
         conn.commit()
-
         log_audit_event(
-            event_type="SCHEDULED_JOB_CREATED",
-            category="automation",
-            severity="high",
-            status="success",
+            event_type="SCHEDULED_JOB_CREATED", category="automation", severity="high", status="success",
             summary=f"Created scheduled job '{name}' (type={job_type})",
-            actor_username=actor,
-            actor_role=user.get("role", "Operator"),
+            actor_username=actor, actor_role=user.get("role", "Operator"),
             source_ip=request.client.host if request.client else None,
             details={
-                "job_id": job_id,
-                "job_type": job_type,
-                "action_type": action_type,
-                "cron_expr": cron_expr,
-                "scheduled_at": scheduled_at,
-                "approved_by": approval_record.get("approver", ""),
-                "approval_skipped": skip_approval_verification,
+                "job_id": job_id, "job_type": job_type, "action_type": action_type,
+                "approved_by": approval_record.get("approver_username") or approval_record.get("approver", ""),
+                "approval_type": approval_type, "approval_manifest_hash": binding_hash,
+                "execution_manifest_hash": execution_manifest_hash,
+                "tenant_id": _actor_tenant(user),
             },
         )
-        
-        # Refresh scheduler
         refresh_dynamic_scheduler()
         invalidate_read_cache('scheduled_jobs_future')
-
-        return {
-            "success": True,
-            "data": {"id": job_id},
-            "message": "作业已创建并通过审批",
-        }
+        return {"success": True, "data": {"id": job_id}, "message": "作业已创建并通过审批"}
     finally:
         conn.close()
 
@@ -468,58 +535,71 @@ def toggle_scheduled_job(
     payload: dict = Body(...),
     user=require_role("Operator"),
 ):
-    """
-    启用/禁用定时作业。
-    
-    启用时需要审批验证，生产环境需飞书验证码；测试环境可通过 skip_approval_verification=true 跳过。
-    """
-    is_test_env = getattr(settings, 'ENVIRONMENT', 'development') != 'production'
-    skip_approval_verification = payload.get("skip_approval_verification", False) if is_test_env else False
-    
-    enabled = payload.get("enabled", True)
-
+    enabled = bool(payload.get("enabled", True))
+    if payload.get("skip_approval_verification") or payload.get("skip_approval"):
+        raise HTTPException(status_code=400, detail="不支持跳过计划作业审批")
     conn = get_db_connection()
     try:
         row = conn.execute("SELECT * FROM scheduled_jobs WHERE id = ?", (job_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="作业不存在")
-
-        # 启用时要求审批验证
-        if enabled:
-            if not skip_approval_verification:
-                required_approval_type = "execution_plan" if row["job_type"] == "once" else "scheduled_job"
-                approval_token = (payload.get("approval_token") or "").strip()
-                approval_code = (payload.get("approval_code") or "").strip()
-                if not approval_token or not approval_code:
-                    raise HTTPException(
-                        status_code=400, 
-                        detail="启用作业需要审批验证码" if not is_test_env else "启用作业需要审批验证码（或在测试环境中使用 skip_approval_verification=true）"
-                    )
-                ok, err = verify_code(
-                    approval_token,
-                    approval_code,
-                    requester_id=str(user.get("user_id") or ""),
-                    requester_username=str(user.get("username") or ""),
-                    expected_approval_type=required_approval_type,
-                )
-                if not ok:
-                    raise HTTPException(status_code=403, detail=err)
-                approval_record = consume_approval(
-                    approval_token,
-                    requester_id=str(user.get("user_id") or ""),
-                    expected_approval_type=required_approval_type,
-                )
-                if not approval_record:
-                    raise HTTPException(status_code=403, detail="审批令牌无效或已过期，请重新获取验证码")
-            else:
-                logger.warning(f"Enabling scheduled job {job_id} with approval verification skipped by {user.get('username', 'unknown')}")
+        current = dict(row)
+        _authorize_job(user, current, "enable" if enabled else "disable")
+        source = merge_job_source(current, {**payload, "enabled": enabled}, "ENABLE" if enabled else "DISABLE")
+        manifest = _prepare_manifest(conn, source, user, "ENABLE" if enabled else "DISABLE", job_id=job_id)
+        required_approval_type = scheduled_job_approval_type(manifest)
+        approval_token = str(payload.get("approval_token") or "").strip()
+        approval_code = str(payload.get("approval_code") or "").strip()
+        if not approval_token or not approval_code:
+            raise HTTPException(status_code=400, detail="计划作业启停必须提供已验证的审批凭据")
+        binding_hash = manifest_hash(manifest)
+        ok, err = verify_code(
+            approval_token, approval_code,
+            requester_id=_actor_id(user),
+            requester_username=str(user.get("username") or ""),
+            expected_approval_type=required_approval_type,
+            expected_binding_hash=binding_hash,
+        )
+        if not ok:
+            raise HTTPException(status_code=403, detail=err)
+        approval_record = consume_approval(
+            approval_token,
+            requester_id=_actor_id(user),
+            expected_approval_type=required_approval_type,
+            expected_binding_hash=binding_hash,
+        )
+        if not approval_record:
+            raise HTTPException(status_code=403, detail="审批令牌无效、已过期或与当前作业内容不匹配")
 
         now = datetime.now().isoformat()
+        new_row = {**current, "enabled": 1 if enabled else 0}
+        snapshot_hash = manifest_hash(execution_snapshot(conn, new_row))
         conn.execute(
-            "UPDATE scheduled_jobs SET enabled = ?, status = ?, updated_at = ? WHERE id = ?",
-            (1 if enabled else 0, "approved" if enabled else "disabled", now, job_id),
+            """UPDATE scheduled_jobs
+                  SET enabled = ?, status = ?, updated_at = ?,
+                      authorization_manifest_hash = ?,
+                      authorization_mode = 'snapshot',
+                      approved_by = ?, approved_at = ?
+                WHERE id = ?""",
+            (
+                1 if enabled else 0, "approved" if enabled else "disabled", now,
+                snapshot_hash,
+                (approval_record or {}).get("approver_username", ""), now, job_id,
+            ),
         )
         conn.commit()
+        log_audit_event(
+            event_type="SCHEDULED_JOB_ENABLED" if enabled else "SCHEDULED_JOB_DISABLED",
+            category="automation", severity="high" if enabled else "medium", status="success",
+            summary=f"{'Enabled' if enabled else 'Disabled'} scheduled job '{current.get('name')}'",
+            actor_username=str(user.get("username") or "unknown"), actor_role=user.get("role", "Operator"),
+            source_ip=request.client.host if request.client else None,
+            details={
+                "job_id": job_id, "manifest_hash": manifest_hash(manifest),
+                "execution_manifest_hash": snapshot_hash,
+                "approved_by": (approval_record or {}).get("approver_username"),
+            },
+        )
 
         # Refresh scheduler
         refresh_dynamic_scheduler()
@@ -536,9 +616,9 @@ def toggle_scheduled_job(
 def delete_scheduled_job(
     job_id: str,
     request: Request,
+    payload: dict = Body(default={}),
     approval_token: Optional[str] = None,
     approval_code: Optional[str] = None,
-    skip_approval: Optional[bool] = False,
     user=require_role("Operator"),
 ):
     conn = get_db_connection()
@@ -547,31 +627,36 @@ def delete_scheduled_job(
         if not row:
             raise HTTPException(status_code=404, detail="作业不存在")
 
-        is_test_env = getattr(settings, 'ENVIRONMENT', 'development') != 'production'
-        skip_verification = skip_approval if is_test_env else False
-
-        if not skip_verification:
-            if not approval_token or not approval_code:
-                raise HTTPException(status_code=400, detail="安全校验失败：删除定时作业必须提供有效工单审批码。请先申请审批。")
-            required_approval_type = "execution_plan" if row["job_type"] == "once" else "scheduled_job_delete"
-            ok, err = verify_code(
-                approval_token,
-                approval_code,
-                requester_id=str(user.get("user_id") or ""),
-                requester_username=str(user.get("username") or ""),
-                expected_approval_type=required_approval_type,
-            )
-            if not ok:
-                raise HTTPException(status_code=403, detail=err)
-            approval_record = consume_approval(
-                approval_token,
-                requester_id=str(user.get("user_id") or ""),
-                expected_approval_type=required_approval_type,
-            )
-            if not approval_record:
-                raise HTTPException(status_code=403, detail="审批令牌无效或已过期，请重新获取验证码")
-        else:
-            logger.warning(f"Deleting scheduled job {job_id} with approval verification skipped by {user.get('username', 'unknown')}")
+        current = dict(row)
+        _authorize_job(user, current, "delete")
+        if payload.get("skip_approval") or payload.get("skip_approval_verification"):
+            raise HTTPException(status_code=400, detail="不支持跳过计划作业审批")
+        manifest = _prepare_manifest(
+            conn, job_manifest_source_from_row(current, "DELETE"), user, "DELETE", job_id=job_id,
+        )
+        approval_token = str((payload or {}).get("approval_token") or approval_token or "").strip()
+        approval_code = str((payload or {}).get("approval_code") or (payload or {}).get("code") or approval_code or "").strip()
+        if not approval_token or not approval_code:
+            raise HTTPException(status_code=400, detail="删除计划作业必须提供已验证的审批凭据")
+        required_approval_type = scheduled_job_approval_type(manifest)
+        binding_hash = manifest_hash(manifest)
+        ok, err = verify_code(
+            approval_token, approval_code,
+            requester_id=_actor_id(user),
+            requester_username=str(user.get("username") or ""),
+            expected_approval_type=required_approval_type,
+            expected_binding_hash=binding_hash,
+        )
+        if not ok:
+            raise HTTPException(status_code=403, detail=err)
+        approval_record = consume_approval(
+            approval_token,
+            requester_id=_actor_id(user),
+            expected_approval_type=required_approval_type,
+            expected_binding_hash=binding_hash,
+        )
+        if not approval_record:
+            raise HTTPException(status_code=403, detail="审批令牌无效、已过期或与当前作业内容不匹配")
 
         conn.execute("DELETE FROM scheduled_jobs WHERE id = ?", (job_id,))
         conn.commit()
@@ -585,7 +670,11 @@ def delete_scheduled_job(
             actor_username=user.get("username", "unknown"),
             actor_role=user.get("role", "Operator"),
             source_ip=request.client.host if request.client else None,
-            details={"job_id": job_id, "job_name": row["name"]},
+            details={
+                "job_id": job_id, "job_name": row["name"],
+                "manifest_hash": binding_hash,
+                "approved_by": approval_record.get("approver_username"),
+            },
         )
 
         # Refresh scheduler
@@ -609,6 +698,7 @@ def get_scheduled_job(
         row = conn.execute("SELECT * FROM scheduled_jobs WHERE id = ?", (job_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="作业不存在")
+        _authorize_job(user, dict(row), "view")
         return {"success": True, "data": _format_job_row(row)}
     finally:
         conn.close()
@@ -626,6 +716,7 @@ def get_scheduled_nsot_collection_preview(
         if not row:
             raise HTTPException(status_code=404, detail="作业不存在")
         job = dict(row)
+        _authorize_job(user, job, "view")
         if str(job.get("action_type") or "").strip().lower() != "nsot":
             raise HTTPException(status_code=400, detail="仅 NSOT 事实库作业支持采集预览")
         try:
@@ -646,131 +737,104 @@ def update_scheduled_job(
     payload: dict = Body(...),
     user=require_role("Operator"),
 ):
-    """编辑已有定时作业（名称、调度、设备范围、执行脚本等）。
-
-    ⚠️ 安全升级：定时作业全生命周期操作（创建、修改、启用、删除）均受工单验证码防线保护。
-    """
-    is_test_env = getattr(settings, 'ENVIRONMENT', 'development') != 'production'
-    skip_approval_verification = payload.get("skip_approval_verification", False) if is_test_env else False
-
+    """Edit a job only after its exact proposed operation is approved."""
+    if payload.get("skip_approval_verification") or payload.get("skip_approval"):
+        raise HTTPException(status_code=400, detail="不支持跳过计划作业审批")
     conn = get_db_connection()
     try:
         row = conn.execute("SELECT * FROM scheduled_jobs WHERE id = ?", (job_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="作业不存在")
-
-        name = (payload.get("name") or "").strip()
-        action_type = payload.get("action_type", row["action_type"])
-        cron_expr = (payload.get("cron_expr") or "").strip()
-        device_scope = payload.get("device_scope", row["device_scope"])
-        device_filter = (payload.get("device_filter") or "").strip()
-        config_reason = (payload.get("config_reason") or "").strip()
-        new_script_id = (payload.get("script_id") or "").strip() if "script_id" in payload else None
-        new_commands = (payload.get("commands") or "").strip() if "commands" in payload else None
-        if action_type == "inspection" and "check_items" in payload:
-            new_commands = ",".join(payload.get("check_items") or [])
-        new_use_admin_creds = (1 if payload.get("use_admin_creds") else 0) if "use_admin_creds" in payload else None
-
-        if action_type == "nsot":
-            new_script_id = ""
-            new_commands = ""
-            new_use_admin_creds = 0
-
-        if not name:
-            raise HTTPException(status_code=400, detail="作业名称不能为空")
-        if row["job_type"] == "cron" and action_type not in _CRON_ACTION_TYPES:
+        current = dict(row)
+        _authorize_job(user, current, "update")
+        source = merge_job_source(current, payload, "UPDATE")
+        manifest = _prepare_manifest(conn, source, user, "UPDATE", job_id=job_id)
+        name = manifest["name"]
+        action_type = manifest["action"]
+        if manifest["job_type"] == "cron" and action_type not in _CRON_ACTION_TYPES:
             raise HTTPException(status_code=400, detail="定时作业支持：配置备份、网络巡检、服务器巡检、健康检查、脚本执行及 NSOT 事实库采集")
-        if row["job_type"] == "cron" and not cron_expr:
-            raise HTTPException(status_code=400, detail="定时作业需要 cron 表达式")
+        if action_type == "command" and not manifest["commands"] and not manifest["script_id"]:
+            raise HTTPException(status_code=400, detail="命令类型作业需要命令或脚本")
+        if action_type == "script_run" and not manifest["script_id"]:
+            raise HTTPException(status_code=400, detail="自动化变更作业需要选择一个已发布的脚本")
+        if action_type in {"command", "script_run"} or manifest["script_id"] or manifest["is_config"]:
+            raise HTTPException(status_code=403, detail="原始命令、脚本和配置变更作业暂不支持计划执行；请使用受控 Playbook 与变更工单执行")
+        if manifest["use_admin_creds"] and not authorize_resource(
+            user, "credential", "use", tenant_id=_actor_tenant(user) or None,
+        ):
+            raise HTTPException(status_code=403, detail="当前账号没有使用管理凭据的授权")
 
-        # ── 强制工单审批校验 ──────────────────────────
-        approval_record = None
-        if not skip_approval_verification:
-            required_approval_type = "execution_plan" if row["job_type"] == "once" else "scheduled_job"
-            approval_token = (payload.get("approval_token") or "").strip()
-            approval_code = (payload.get("approval_code") or "").strip()
-            if not approval_token or not approval_code:
-                raise HTTPException(
-                    status_code=400,
-                    detail="安全校验失败：修改定时作业配置必须提供有效工单审批码。请先发送验证码并验证。"
-                )
-            ok, err = verify_code(
-                approval_token,
-                approval_code,
-                requester_id=str(user.get("user_id") or ""),
-                requester_username=str(user.get("username") or ""),
-                expected_approval_type=required_approval_type,
-            )
-            if not ok:
-                raise HTTPException(status_code=403, detail=err)
-            approval_record = consume_approval(
-                approval_token,
-                requester_id=str(user.get("user_id") or ""),
-                expected_approval_type=required_approval_type,
-            )
-            if not approval_record:
-                raise HTTPException(status_code=403, detail="审批令牌无效或已过期，请重新获取验证码")
-        else:
-            logger.warning(f"Scheduled job {job_id} update with approval skipped by {user.get('username', 'unknown')}")
-
-        sensitive_changed = True
-        sensitive_fields = list(payload.keys())
+        approval_type = scheduled_job_approval_type(manifest)
+        approval_token = str(payload.get("approval_token") or "").strip()
+        approval_code = str(payload.get("approval_code") or "").strip()
+        if not approval_token or not approval_code:
+            raise HTTPException(status_code=400, detail="修改计划作业必须提供已验证的审批凭据")
+        binding_hash = manifest_hash(manifest)
+        ok, err = verify_code(
+            approval_token, approval_code,
+            requester_id=_actor_id(user),
+            requester_username=str(user.get("username") or ""),
+            expected_approval_type=approval_type,
+            expected_binding_hash=binding_hash,
+        )
+        if not ok:
+            raise HTTPException(status_code=403, detail=err)
+        approval_record = consume_approval(
+            approval_token,
+            requester_id=_actor_id(user),
+            expected_approval_type=approval_type,
+            expected_binding_hash=binding_hash,
+        )
+        if not approval_record:
+            raise HTTPException(status_code=403, detail="审批令牌无效、已过期或与当前作业内容不匹配")
 
         now = datetime.now().isoformat()
-
-        # 构建动态 UPDATE 语句（只更新提供了的字段）
         updates = {
-            'name': name,
-            'action_type': action_type,
-            'cron_expr': cron_expr,
-            'device_scope': device_scope,
-            'device_filter': device_filter,
-            'config_reason': config_reason,
-            'updated_at': now,
+            "name": manifest["name"],
+            "action_type": manifest["action"],
+            "job_type": manifest["job_type"],
+            "cron_expr": manifest["cron_expr"],
+            "scheduled_at": manifest["scheduled_at"],
+            "device_scope": manifest["scope"]["type"],
+            "device_filter": manifest["scope"]["filter"],
+            "commands": manifest["commands"],
+            "script_id": manifest["script_id"],
+            "is_config": manifest["is_config"],
+            "config_reason": manifest["config_reason"],
+            "use_admin_creds": manifest["use_admin_creds"],
+            "enabled": 1 if manifest["enabled"] else 0,
+            "status": "approved" if manifest["enabled"] else "disabled",
+            "approved_by": approval_record.get("approver_username") or "",
+            "approved_at": now,
+            "script_sha256": manifest["script_sha256"],
+            "authorization_mode": "snapshot",
+            "updated_at": now,
         }
-        if new_script_id is not None:
-            updates['script_id'] = new_script_id
-        if new_commands is not None:
-            updates['commands'] = new_commands
-        if new_use_admin_creds is not None:
-            updates['use_admin_creds'] = new_use_admin_creds
-        if action_type == "nsot":
-            updates['is_config'] = 0
-        if "enabled" in payload:
-            updates['enabled'] = 1 if payload.get("enabled") else 0
-            if payload.get("enabled"):
-                updates['status'] = 'approved'
-
-        set_clause = ', '.join(f"{k} = ?" for k in updates.keys())
-        params = list(updates.values()) + [job_id]
-        conn.execute(f"UPDATE scheduled_jobs SET {set_clause} WHERE id = ?", params)
+        new_row = {**current, **updates}
+        execution_manifest_hash = manifest_hash(execution_snapshot(conn, new_row))
+        updates["authorization_manifest_hash"] = execution_manifest_hash
+        set_clause = ", ".join(f"{key} = ?" for key in updates)
+        conn.execute(
+            f"UPDATE scheduled_jobs SET {set_clause} WHERE id = ?",
+            (*updates.values(), job_id),
+        )
         conn.commit()
-
-        actor = user.get("username", "unknown")
+        actor = str(user.get("username") or "unknown")
         log_audit_event(
-            event_type="SCHEDULED_JOB_UPDATED",
-            category="automation",
-            severity="high",
-            status="success",
+            event_type="SCHEDULED_JOB_UPDATED", category="automation", severity="high", status="success",
             summary=f"Updated scheduled job '{name}' with verified approval",
-            actor_username=actor,
-            actor_role=user.get("role", "Operator"),
+            actor_username=actor, actor_role=user.get("role", "Operator"),
             source_ip=request.client.host if request.client else None,
             details={
-                "job_id": job_id,
-                "job_name": name,
-                "changes": payload,
-                "sensitive_changed": sensitive_changed,
-                "sensitive_fields": sensitive_fields,
-                "approved_by": approval_record.get("approver", "") if approval_record else None,
-                "approval_skipped": skip_approval_verification,
+                "job_id": job_id, "manifest_hash": binding_hash,
+                "execution_manifest_hash": execution_manifest_hash,
+                "changed_fields": sorted(set(payload) - {"approval_token", "approval_code", "operation_manifest"}),
+                "approved_by": approval_record.get("approver_username"),
+                "tenant_id": _actor_tenant(user),
             },
         )
-
-        # Refresh scheduler
         refresh_dynamic_scheduler()
         invalidate_read_cache('scheduled_jobs_future')
-
         return {"success": True, "message": "作业已成功更新（工单审批已校验）"}
     finally:
         conn.close()

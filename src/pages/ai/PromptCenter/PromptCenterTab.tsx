@@ -206,7 +206,7 @@ export const PromptCenterTab: React.FC = () => {
   const [sceneFilter, setSceneFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(10);
   const [compareLeft, setCompareLeft] = useState(0);
   const [compareRight, setCompareRight] = useState(0);
   const [compareResult, setCompareResult] = useState<AIPromptVersionCompare | null>(null);

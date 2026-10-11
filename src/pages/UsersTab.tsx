@@ -24,24 +24,12 @@ type UserFormState = {
   email: string;
 };
 
-const CHANGE_GROUP_OPTIONS = [
-  { key: 'requester', zh: '申请组', en: 'Requester' },
-  { key: 'initial_reviewer', zh: '初审组', en: 'Initial Review' },
-  { key: 'final_approver', zh: '终审组', en: 'Final Approval' },
-  { key: 'implementer', zh: '实施组', en: 'Implementer' },
-] as const;
+const ADMINISTRATOR_ROLE = 'Administrator';
+const STANDARD_USER_ROLE = 'Viewer';
+const CHANGE_REQUESTER_PROFILE = 'Change Requester';
 
-const ROLE_PROFILE_OPTIONS = [
-  { key: '', zh: '沿用基础角色', en: 'Use base role' },
-  { key: 'Platform Viewer', zh: '平台查看者', en: 'Platform Viewer' },
-  { key: 'Template Developer', zh: '模板开发者', en: 'Template Developer' },
-  { key: 'Platform Maintainer', zh: '平台维护者', en: 'Platform Maintainer' },
-  { key: 'Playbook Author', zh: 'Playbook 作者', en: 'Playbook Author' },
-  { key: 'Release Manager', zh: '审核发布者', en: 'Release Manager' },
-  { key: 'Automation Operator', zh: '自动化操作员', en: 'Automation Operator' },
-  { key: 'Scheduler Administrator', zh: '调度管理员', en: 'Scheduler Administrator' },
-  { key: 'System Administrator', zh: '系统管理员', en: 'System Administrator' },
-] as const;
+const accountRoleFor = (role: string) => role === ADMINISTRATOR_ROLE ? ADMINISTRATOR_ROLE : STANDARD_USER_ROLE;
+const accountProfileFor = (role: string) => role === ADMINISTRATOR_ROLE ? '' : CHANGE_REQUESTER_PROFILE;
 
 interface UsersTabProps {
   users: User[];
@@ -78,18 +66,13 @@ const UsersTab: React.FC<UsersTabProps> = ({
   const isZh = language === 'zh';
   const fieldError = (field: Parameters<typeof validateUserField>[0], value: string) => validateUserField(field, value, isZh);
   const inputClass = (error: string) => `w-full px-4 py-3 rounded-xl border ${error ? 'border-red-400 focus:border-red-500 focus:ring-red-100' : 'border-black/10 focus:border-black focus:ring-black/5'} focus:ring-4 outline-none transition-all`;
-  const labelForGroup = (groupKey: string) => {
-    const match = CHANGE_GROUP_OPTIONS.find((item) => item.key === groupKey);
-    return match ? (isZh ? match.zh : match.en) : groupKey;
+  const openAddUserModal = () => {
+    const role = accountRoleFor(newUserForm.role);
+    setNewUserForm({ ...newUserForm, role, role_profile: accountProfileFor(role) });
+    setShowAddUserModal(true);
   };
-  const toggleChangeGroup = (form: UserFormState, nextKey: string, setter: (v: UserFormState) => void) => {
-    const exists = form.change_groups.includes(nextKey);
-    setter({
-      ...form,
-      change_groups: exists
-        ? form.change_groups.filter((item) => item !== nextKey)
-        : [...form.change_groups, nextKey],
-    });
+  const updateAccountRole = (form: UserFormState, setter: (v: UserFormState) => void, role: string) => {
+    setter({ ...form, role, role_profile: accountProfileFor(role) });
   };
 
   return (
@@ -100,7 +83,7 @@ const UsersTab: React.FC<UsersTabProps> = ({
         subtitle={t('manageAccess')}
         actions={
           <button
-            onClick={() => setShowAddUserModal(true)}
+            onClick={openAddUserModal}
             className={primaryActionBtnClass}
           >
             <Plus size={18} />
@@ -121,9 +104,7 @@ const UsersTab: React.FC<UsersTabProps> = ({
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{isZh ? '手机号' : 'Phone'}</th>
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{isZh ? '邮箱' : 'Email'}</th>
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{t('role')}</th>
-              <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{isZh ? '资源角色' : 'Resource Role'}</th>
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{isZh ? '所属分组' : 'Group'}</th>
-              <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{isZh ? '职责组' : 'Responsibilities'}</th>
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{t('status')}</th>
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{t('lastLogin')}</th>
               <TableActionHeader className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{t('actions')}</TableActionHeader>
@@ -143,22 +124,8 @@ const UsersTab: React.FC<UsersTabProps> = ({
                 <td className="px-6 py-4 text-sm font-medium text-black/80">{user.display_name || <span className="text-black/25 text-xs">{isZh ? '未填写' : 'Not set'}</span>}</td>
                 <td className="px-6 py-4 text-xs font-mono text-black/60">{user.phone || '—'}</td>
                 <td className="px-6 py-4 text-xs font-mono text-black/60">{user.email || '—'}</td>
-                <td className="px-6 py-4 text-xs">{user.role}</td>
-                <td className="px-6 py-4 text-xs text-black/60">{user.role_profile || (isZh ? '沿用基础角色' : 'Base role')}</td>
+                <td className="px-6 py-4 text-xs">{user.role === ADMINISTRATOR_ROLE ? (isZh ? '管理员' : 'Administrator') : (isZh ? '普通用户' : 'Standard User')}</td>
                 <td className="px-6 py-4 text-xs text-black/60">{user.group_name || (isZh ? '未分组' : 'Ungrouped')}</td>
-                <td className="px-6 py-4">
-                  <div className="flex flex-wrap gap-1.5">
-                    {(user.change_groups || []).length > 0 ? (
-                      (user.change_groups || []).map(groupKey => (
-                        <span key={groupKey} className="inline-flex items-center rounded-full bg-cyan-50 px-2 py-1 text-[10px] font-semibold text-cyan-700 ring-1 ring-cyan-200/70">
-                          {labelForGroup(groupKey)}
-                        </span>
-                      ))
-                    ) : (
-                      <span className="text-xs text-black/35">{isZh ? '未配置' : 'Not set'}</span>
-                    )}
-                  </div>
-                </td>
                 <td className="px-6 py-4">
                   <span className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-emerald-100 text-emerald-700">
                     {user.status}
@@ -172,11 +139,12 @@ const UsersTab: React.FC<UsersTabProps> = ({
                     tooltip={t('edit')}
                     onClick={() => {
                       setEditingUser(user);
+                      const role = accountRoleFor(user.role);
                       setEditUserForm({
                         username: user.username,
                         password: '',
-                        role: user.role,
-                        role_profile: user.role_profile || '',
+                        role,
+                        role_profile: accountProfileFor(role),
                         group_name: user.group_name || '',
                         change_groups: [...(user.change_groups || [])],
                         display_name: user.display_name || '',
@@ -234,36 +202,16 @@ const UsersTab: React.FC<UsersTabProps> = ({
                   {fieldError('password', newUserForm.password) && <p className="text-[10px] text-red-500">{fieldError('password', newUserForm.password)}</p>}
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{t('role')}</label>
+                  <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{isZh ? '账号类型' : 'Account Type'}</label>
                   <select
-                    title={t('role')}
+                    title={isZh ? '账号类型' : 'Account Type'}
                     value={newUserForm.role}
-                    onChange={(e) => setNewUserForm({ ...newUserForm, role: e.target.value })}
+                    onChange={(e) => updateAccountRole(newUserForm, setNewUserForm, e.target.value)}
                     className="w-full px-4 py-3 rounded-xl border border-black/10 focus:border-black focus:ring-4 focus:ring-black/5 outline-none transition-all bg-white"
                   >
-                    <option value="Administrator">Administrator</option>
-                    <option value="Operator">Operator</option>
-                    <option value="Viewer">Viewer</option>
+                    <option value={ADMINISTRATOR_ROLE}>{isZh ? '管理员' : 'Administrator'}</option>
+                    <option value={STANDARD_USER_ROLE}>{isZh ? '普通用户' : 'Standard User'}</option>
                   </select>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{isZh ? '资源角色' : 'Resource Role'}</label>
-                  <select title={isZh ? '资源角色' : 'Resource Role'} value={newUserForm.role_profile} onChange={(e) => setNewUserForm({ ...newUserForm, role_profile: e.target.value })} className="w-full px-4 py-3 rounded-xl border border-black/10 focus:border-black focus:ring-4 focus:ring-black/5 outline-none transition-all bg-white">
-                    {ROLE_PROFILE_OPTIONS.map((option) => <option key={option.key} value={option.key}>{isZh ? option.zh : option.en}</option>)}
-                  </select>
-                  <p className="text-[10px] text-black/35">{isZh ? '资源角色会收窄基础角色的动作权限，并保留 Site/设备组范围限制。' : 'A resource role narrows action permissions and keeps Site/device-group scope limits.'}</p>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{isZh ? '所属分组' : 'User Group'}</label>
-                  <input
-                    type="text"
-                    title={isZh ? '所属分组' : 'User Group'}
-                    value={newUserForm.group_name}
-                    onChange={(e) => setNewUserForm({ ...newUserForm, group_name: e.target.value })}
-                    className={inputClass(fieldError('group_name', newUserForm.group_name))}
-                    placeholder={isZh ? '例如：核心网络组 / 变更平台主管组' : 'e.g. Core Network Team'}
-                  />
-                  {fieldError('group_name', newUserForm.group_name) && <p className="text-[10px] text-red-500">{fieldError('group_name', newUserForm.group_name)}</p>}
                 </div>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                   <IconInputField
@@ -298,25 +246,6 @@ const UsersTab: React.FC<UsersTabProps> = ({
                     autoComplete="email"
                     error={fieldError('email', newUserForm.email)}
                   />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{isZh ? '工单职责组' : 'Change Duties'}</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {CHANGE_GROUP_OPTIONS.map((option) => {
-                      const checked = newUserForm.change_groups.includes(option.key);
-                      return (
-                        <label key={option.key} className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-xs transition-all ${checked ? 'border-cyan-300 bg-cyan-50 text-cyan-700' : 'border-black/10 bg-white text-black/55 hover:border-black/20'}`}>
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() => toggleChangeGroup(newUserForm, option.key, setNewUserForm)}
-                            className="rounded border-black/20 text-cyan-500 focus:ring-cyan-400"
-                          />
-                          <span>{isZh ? option.zh : option.en}</span>
-                        </label>
-                      );
-                    })}
-                  </div>
                 </div>
               </div>
               <div className="flex gap-3 mt-8">
@@ -375,34 +304,16 @@ const UsersTab: React.FC<UsersTabProps> = ({
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{t('role')}</label>
+                  <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{isZh ? '账号类型' : 'Account Type'}</label>
                   <select
-                    title={t('role')}
+                    title={isZh ? '账号类型' : 'Account Type'}
                     value={editUserForm.role}
-                    onChange={(e) => setEditUserForm({ ...editUserForm, role: e.target.value })}
+                    onChange={(e) => updateAccountRole(editUserForm, setEditUserForm, e.target.value)}
                     className="w-full px-4 py-3 rounded-xl border border-black/10 focus:border-black focus:ring-4 focus:ring-black/5 outline-none transition-all bg-white"
                   >
-                    <option value="Administrator">Administrator</option>
-                    <option value="Operator">Operator</option>
-                    <option value="Viewer">Viewer</option>
+                    <option value={ADMINISTRATOR_ROLE}>{isZh ? '管理员' : 'Administrator'}</option>
+                    <option value={STANDARD_USER_ROLE}>{isZh ? '普通用户' : 'Standard User'}</option>
                   </select>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{isZh ? '资源角色' : 'Resource Role'}</label>
-                  <select title={isZh ? '资源角色' : 'Resource Role'} value={editUserForm.role_profile} onChange={(e) => setEditUserForm({ ...editUserForm, role_profile: e.target.value })} className="w-full px-4 py-3 rounded-xl border border-black/10 focus:border-black focus:ring-4 focus:ring-black/5 outline-none transition-all bg-white">
-                    {ROLE_PROFILE_OPTIONS.map((option) => <option key={option.key} value={option.key}>{isZh ? option.zh : option.en}</option>)}
-                  </select>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{isZh ? '所属分组' : 'User Group'}</label>
-                  <input
-                    type="text"
-                    title={isZh ? '所属分组' : 'User Group'}
-                    value={editUserForm.group_name}
-                    onChange={(e) => setEditUserForm({ ...editUserForm, group_name: e.target.value })}
-                    className="w-full px-4 py-3 rounded-xl border border-black/10 focus:border-black focus:ring-4 focus:ring-black/5 outline-none transition-all"
-                    placeholder={isZh ? '例如：核心网络组 / 变更平台主管组' : 'e.g. Core Network Team'}
-                  />
                 </div>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                   <IconInputField
@@ -434,25 +345,6 @@ const UsersTab: React.FC<UsersTabProps> = ({
                     placeholder={isZh ? '如：han.meimei@example.com' : 'e.g. han.meimei@example.com'}
                     autoComplete="email"
                   />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{isZh ? '工单职责组' : 'Change Duties'}</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {CHANGE_GROUP_OPTIONS.map((option) => {
-                      const checked = editUserForm.change_groups.includes(option.key);
-                      return (
-                        <label key={option.key} className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-xs transition-all ${checked ? 'border-cyan-300 bg-cyan-50 text-cyan-700' : 'border-black/10 bg-white text-black/55 hover:border-black/20'}`}>
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() => toggleChangeGroup(editUserForm, option.key, setEditUserForm)}
-                            className="rounded border-black/20 text-cyan-500 focus:ring-cyan-400"
-                          />
-                          <span>{isZh ? option.zh : option.en}</span>
-                        </label>
-                      );
-                    })}
-                  </div>
                 </div>
               </div>
               <div className="flex gap-3 mt-8">

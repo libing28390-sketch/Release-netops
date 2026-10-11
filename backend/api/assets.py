@@ -3546,14 +3546,13 @@ def import_assets(
                                     'status': 'skipped_duplicate_profile_mismatch',
                                     'message': '该行匹配到已有资产，导入规则不会修改其管理 IP、端口或 SNMP Profile；请在资产管理中编辑原资产后应用所选 Profile。',
                                 }
-                            if str(existing_network_device['snmp_profile_type'] or '').casefold() != 'snmpv3':
-                                pending_hostname_sync.append({
-                                    'device_id': duplicate_device_id,
-                                    'row': row_number,
-                                    'asset_tag': existing_network_device['asset_tag'] or body.asset_tag or '',
-                                    'hostname': existing_network_device['hostname'] or body.hostname or '',
-                                    'ip': existing_network_device['ip'] or body.management_ip or '',
-                                })
+                            pending_hostname_sync.append({
+                                'device_id': duplicate_device_id,
+                                'row': row_number,
+                                'asset_tag': existing_network_device['asset_tag'] or body.asset_tag or '',
+                                'hostname': existing_network_device['hostname'] or body.hostname or '',
+                                'ip': existing_network_device['ip'] or body.management_ip or '',
+                            })
                 skipped_item = {
                     'row': row_number,
                     'asset_tag': body.asset_tag,
@@ -3648,6 +3647,8 @@ def import_assets(
                         'hostname': body.hostname or '',
                         'ip': body.management_ip or '',
                     })
+                    # The identity probe also reads sysName.0 and owns hostname writeback,
+                    # avoiding a second network request for each newly created device.
                     pending_snmp_identification.append({
                         'device_id': device_id,
                         'row': row_number,
@@ -3659,14 +3660,6 @@ def import_assets(
                         'declared_platform': declared_identity['platform'],
                         'declared_model': declared_identity['model'],
                     })
-                    if snmp_profile_type != 'snmpv3':
-                        pending_hostname_sync.append({
-                            'device_id': device_id,
-                            'row': row_number,
-                            'asset_tag': body.asset_tag or '',
-                            'hostname': body.hostname or '',
-                            'ip': body.management_ip or '',
-                        })
                 if legacy_production:
                     conn.execute(
                         "UPDATE devices SET lifecycle_status = 'production', rotation_status = 'exempt', is_managed = 0 WHERE id = ?",
@@ -3758,6 +3751,13 @@ def import_assets(
         pending_snmp_identification = [
             item for item in pending_snmp_identification
             if str(item.get('device_id') or '') in imported_device_ids
+        ]
+        identified_device_ids = {
+            str(item.get('device_id') or '') for item in pending_snmp_identification
+        }
+        pending_hostname_sync = [
+            item for item in pending_hostname_sync
+            if str(item.get('device_id') or '') not in identified_device_ids
         ]
 
         librenms_enrollment_results: list[dict] = []
@@ -3865,19 +3865,37 @@ def import_assets(
                     result['error'] = '缺少管理 IP'
                     return result
                 result['ip'] = snmp_ip
-                if not community:
-                    result['error'] = '未配置 SNMP 凭据'
+                if not snmp.get('configured'):
+                    result['error'] = '未配置可用的 SNMP 凭据'
                     return result
 
-                from services.snmp_service import _snmp_get
+                from services.snmp_service import _snmp_get, _snmp_get_v3
                 async with semaphore:
-                    raw_sys_name = await _snmp_get(
-                        snmp_ip,
-                        community,
-                        '1.3.6.1.2.1.1.5.0',
-                        port,
-                        timeout=3,
-                    )
+                    if str(snmp.get('version') or '').strip().casefold() in {'3', 'v3', 'snmpv3'}:
+                        raw_sys_name = await _snmp_get_v3(
+                            snmp_ip,
+                            str(snmp.get('username') or ''),
+                            '1.3.6.1.2.1.1.5.0',
+                            port,
+                            timeout=3,
+                            auth_password=str(snmp.get('auth_password') or ''),
+                            auth_protocol=str(snmp.get('auth_protocol') or ''),
+                            priv_password=str(snmp.get('priv_password') or ''),
+                            priv_protocol=str(snmp.get('priv_protocol') or ''),
+                            context_name=str(snmp.get('context_name') or ''),
+                            security_level=str(snmp.get('security_level') or ''),
+                        )
+                    else:
+                        if not community:
+                            result['error'] = '未配置可用的 SNMP 凭据'
+                            return result
+                        raw_sys_name = await _snmp_get(
+                            snmp_ip,
+                            community,
+                            '1.3.6.1.2.1.1.5.0',
+                            port,
+                            timeout=3,
+                        )
                 if not str(raw_sys_name or '').strip():
                     result['error'] = '设备未返回 SNMP sysName.0'
                     return result
@@ -3956,20 +3974,6 @@ def import_assets(
                 else:
                     hostname_sync_results.append(output)
 
-        hostname_sync_by_device = {
-            item['device_id']: item for item in hostname_sync_results
-        }
-        for row_result in row_results:
-            hostname_result = hostname_sync_by_device.get(row_result.get('device_id'))
-            if hostname_result:
-                row_result['hostname_sync'] = {
-                    'status': hostname_result['status'],
-                    'hostname': hostname_result.get('hostname') or '',
-                    'error': hostname_result.get('error') or '',
-                }
-                if hostname_result['status'] == 'synced':
-                    row_result['hostname'] = hostname_result['hostname']
-
         snmp_identification_results: list[dict] = []
         if pending_snmp_identification:
             import asyncio as _aio
@@ -3995,8 +3999,37 @@ def import_assets(
                         'status': 'identification_failed',
                         'message': 'SNMP 身份识别失败，资产已保存',
                     })
+                    hostname_sync_results.append({
+                        **item,
+                        'status': 'failed',
+                        'hostname': '',
+                        'error': f'主机名同步任务异常（{type(output).__name__}）',
+                    })
                 else:
-                    snmp_identification_results.append(output)
+                    hostname_result = output.get('hostname_sync')
+                    if isinstance(hostname_result, dict):
+                        hostname_sync_results.append({
+                            **item,
+                            **hostname_result,
+                            'previous_hostname': hostname_result.get('previous_hostname') or item.get('hostname') or '',
+                        })
+                    snmp_identification_results.append({
+                        key: value for key, value in output.items() if key != 'hostname_sync'
+                    })
+
+        hostname_sync_by_device = {
+            item['device_id']: item for item in hostname_sync_results
+        }
+        for row_result in row_results:
+            hostname_result = hostname_sync_by_device.get(row_result.get('device_id'))
+            if hostname_result:
+                row_result['hostname_sync'] = {
+                    'status': hostname_result['status'],
+                    'hostname': hostname_result.get('hostname') or '',
+                    'error': hostname_result.get('error') or '',
+                }
+                if hostname_result['status'] == 'synced':
+                    row_result['hostname'] = hostname_result['hostname']
 
         snmp_identification_by_device = {
             item['device_id']: item for item in snmp_identification_results

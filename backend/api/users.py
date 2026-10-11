@@ -10,13 +10,18 @@ import hmac
 import hashlib
 import time
 import bcrypt
-from datetime import datetime
+from datetime import datetime, timezone
 import asyncio
 from database import get_db_connection
 from services.audit_service import log_audit_event
 from services import notification_service
 from core.config import settings
-from core.rbac import RECOMMENDED_ROLE_PROFILES, require_role
+from core.rbac import (
+    RECOMMENDED_ROLE_PROFILES,
+    enforce_resource_scope,
+    is_global_administrator,
+    require_role,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -491,7 +496,8 @@ def _get_session(token: str) -> dict | None:
         row = conn.execute(
             "SELECT s.token, s.user_id, s.created_at, u.username, u.role, "
             "COALESCE(u.role_profile, '') AS role_profile, "
-            "COALESCE(u.tenant_id, '') AS tenant_id "
+            "COALESCE(u.tenant_id, '') AS tenant_id, "
+            "COALESCE(u.scope_mode, 'legacy') AS scope_mode "
             "FROM sessions s JOIN users u ON u.id = s.user_id "
             "WHERE s.token = ? AND u.status = 'active'",
             (token,),
@@ -571,18 +577,30 @@ def _require_user_administrator(request: Request) -> dict:
     session = validate_session_token(token)
     if not session:
         raise HTTPException(status_code=401, detail='Not authenticated')
-    if session.get('role') != 'Administrator' and session.get('role_profile') != 'System Administrator':
+    if session.get('role') != 'Administrator':
         raise HTTPException(status_code=403, detail='Administrator permission required')
+    tenant_id = str(session.get('tenant_id') or '').strip()
+    if not tenant_id and not is_global_administrator(session):
+        raise HTTPException(status_code=403, detail='Administrator must be assigned to a tenant')
     return session
 
 @router.get("/users")
 def read_users(request: Request):
-    _require_user_administrator(request)
+    actor = _require_user_administrator(request)
+    global_admin = is_global_administrator(actor)
+    tenant_id = str(actor.get('tenant_id') or '').strip()
+    enforce_resource_scope(actor, 'user', 'view', tenant_id=None if global_admin else tenant_id)
     conn = get_db_connection()
     try:
-        users = conn.execute(
-            'SELECT id, username, role, role_profile, status, last_login as lastLogin, avatar_url, group_name, change_groups_json, notification_channels, preferred_language, display_name, phone, email, mfa_enabled FROM users'
-        ).fetchall()
+        if global_admin:
+            users = conn.execute(
+                'SELECT id, username, role, role_profile, status, last_login as lastLogin, avatar_url, group_name, change_groups_json, notification_channels, preferred_language, display_name, phone, email, mfa_enabled FROM users'
+            ).fetchall()
+        else:
+            users = conn.execute(
+                'SELECT id, username, role, role_profile, status, last_login as lastLogin, avatar_url, group_name, change_groups_json, notification_channels, preferred_language, display_name, phone, email, mfa_enabled FROM users WHERE tenant_id = ?',
+                (tenant_id,),
+            ).fetchall()
         # Fetch the (small) shared notification-channel templates once and
         # reuse for every row — was previously per-row (N+1 query and
         # connection amplification).
@@ -597,12 +615,15 @@ def read_users(request: Request):
 @router.post("/users")
 async def create_user(request: Request, user: dict = Body(...)):
     actor = _require_user_administrator(request)
-    tenant_id = str(actor.get('tenant_id') or '').strip()
-    if not tenant_id:
-        raise HTTPException(
-            status_code=403,
-            detail='Authenticated user is not assigned to a tenant',
-        )
+    global_admin = is_global_administrator(actor)
+    actor_tenant_id = str(actor.get('tenant_id') or '').strip()
+    requested_tenant_id = str(user.get('tenant_id') or '').strip()
+    tenant_id = requested_tenant_id if global_admin and requested_tenant_id else actor_tenant_id
+    if not tenant_id and global_admin:
+        tenant_id = 'tenant-default'
+    if not tenant_id or (not global_admin and requested_tenant_id and requested_tenant_id != actor_tenant_id):
+        raise HTTPException(status_code=403, detail='User must be assigned to the administrator tenant')
+    enforce_resource_scope(actor, 'user', 'create', tenant_id=tenant_id)
     user_id = user.get('id') or str(uuid.uuid4())
     raw_password = str(user.get('password') or '')
     username = str(user.get('username') or '').strip()
@@ -612,9 +633,9 @@ async def create_user(request: Request, user: dict = Body(...)):
     phone = str(user.get('phone') or '').strip()
     email = str(user.get('email') or '').strip()
     role = str(user.get('role') or '').strip()
-    role_profile = _validate_role_profile(user.get('role_profile'))
-    if role_profile is None and str(user.get('role_profile') or '').strip():
-        raise HTTPException(status_code=400, detail='Invalid resource role profile')
+    if role not in ('Administrator', 'Viewer'):
+        raise HTTPException(status_code=400, detail='Account type must be Administrator or Viewer')
+    role_profile = 'Change Requester' if role == 'Viewer' else ''
     validation_error = _validate_new_user_fields(username, raw_password, display_name, phone, email, role, group_name)
     if validation_error:
         raise HTTPException(status_code=400, detail=validation_error)
@@ -626,8 +647,8 @@ async def create_user(request: Request, user: dict = Body(...)):
             raise HTTPException(status_code=409, detail='Username already exists')
         conn.execute(
             'INSERT INTO users (id, username, password, role, role_profile, status, last_login, '
-            'avatar_url, group_name, change_groups_json, display_name, phone, email, tenant_id) '
-            'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            'avatar_url, group_name, change_groups_json, display_name, phone, email, tenant_id, scope_mode) '
+            'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             (
                 user_id,
                 username,
@@ -643,8 +664,23 @@ async def create_user(request: Request, user: dict = Body(...)):
                 phone,
                 email,
                 tenant_id,
+                'restricted' if role_profile == 'Change Requester' else 'legacy',
             ),
         )
+        if role_profile == 'Change Requester':
+            for resource_type, actions in (
+                ('pam', ['create_change', 'view']),
+                ('change_order', ['create', 'update', 'view']),
+            ):
+                conn.execute(
+                    """INSERT INTO user_resource_scopes
+                       (id, user_id, resource_type, scope_type, scope_id, actions_json, created_at)
+                       VALUES (?, ?, ?, 'tenant', ?, ?, ?)""",
+                    (
+                        f"scope-{uuid.uuid4().hex[:12]}", user_id, resource_type, tenant_id,
+                        json.dumps(actions), datetime.now(timezone.utc).isoformat(),
+                    ),
+                )
         conn.commit()
         log_audit_event(
             event_type='USER_CREATE',
@@ -688,9 +724,19 @@ def switch_user(request: Request, response: Response, payload: dict = Body(...))
         
     conn = get_db_connection()
     try:
-        user = conn.execute('SELECT * FROM users WHERE username = ?', (target_username,)).fetchone()
+        user = conn.execute(
+            "SELECT * FROM users WHERE username = ? AND status = 'active'",
+            (target_username,),
+        ).fetchone()
         if not user:
             raise HTTPException(status_code=404, detail="Target user not found")
+
+        if not is_global_administrator(current_sess):
+            actor_tenant_id = str(current_sess.get('tenant_id') or '').strip()
+            target_tenant_id = str(user['tenant_id'] or '').strip()
+            if not actor_tenant_id or target_tenant_id != actor_tenant_id:
+                # Avoid disclosing whether an account exists in another tenant.
+                raise HTTPException(status_code=404, detail="Target user not found")
             
         user_dict = dict(user)
         new_token = _create_token()
@@ -715,6 +761,7 @@ def switch_user(request: Request, response: Response, payload: dict = Body(...))
             actor_role='Administrator',
             source_ip=request.client.host if request and request.client else None,
             target_type='user',
+            target_id=str(user_dict['id']),
             target_name=target_username,
         )
         
@@ -791,6 +838,23 @@ async def login(request: Request, response: Response, payload: dict = Body(...))
             logger.warning(f"[Auth Debug] User NOT found in database: '{safe_username}'")
 
         if user and await _verify_password(password, user['password']):
+            if str(user['status'] or '').strip().lower() != 'active':
+                inactive_user = dict(user)
+                log_audit_event(
+                    event_type='LOGIN_BLOCKED_INACTIVE',
+                    category='identity',
+                    severity='high',
+                    status='failed',
+                    summary=f"Login rejected for inactive user {safe_username}",
+                    actor_id=str(inactive_user.get('id') or ''),
+                    actor_username=safe_username,
+                    actor_role=str(inactive_user.get('role') or 'unknown'),
+                    source_ip=request.client.host if request and request.client else None,
+                    target_type='session',
+                    target_id=str(inactive_user.get('id') or ''),
+                    target_name=safe_username,
+                )
+                raise HTTPException(status_code=403, detail='Account is disabled')
             logger.info(f"Login successful for user: {safe_username}")
             last_login = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -1287,7 +1351,8 @@ async def update_user(user_id: str, request: Request, user: dict = Body(...)):
     session = validate_session_token(session_token)
     if not session:
         raise HTTPException(status_code=401, detail='Not authenticated')
-    if str(session.get('user_id')) != str(user_id) and session.get('role') != 'Administrator' and session.get('role_profile') != 'System Administrator':
+    is_admin = session.get('role') == 'Administrator'
+    if str(session.get('user_id')) != str(user_id) and not is_admin:
         raise HTTPException(status_code=403, detail='You may only update your own profile')
 
     conn = get_db_connection()
@@ -1295,13 +1360,24 @@ async def update_user(user_id: str, request: Request, user: dict = Body(...)):
         existing = conn.execute('SELECT * FROM users WHERE id = ?', (user_id,)).fetchone()
         if not existing:
             raise HTTPException(status_code=404, detail="User not found")
-        is_admin = session.get('role') == 'Administrator' or session.get('role_profile') == 'System Administrator'
+        global_admin = is_global_administrator(session)
+        actor_tenant_id = str(session.get('tenant_id') or '').strip()
+        existing_tenant_id = str(existing['tenant_id'] or '').strip()
+        if is_admin:
+            if not global_admin and (not actor_tenant_id or existing_tenant_id != actor_tenant_id):
+                raise HTTPException(status_code=404, detail='User not found')
+            enforce_resource_scope(
+                session, 'user', 'update',
+                tenant_id=None if global_admin else actor_tenant_id,
+            )
         username = user.get('username', existing['username']) if is_admin else existing['username']
         role = user.get('role', existing['role']) if is_admin else existing['role']
-        requested_profile = user.get('role_profile', existing['role_profile'] if 'role_profile' in existing.keys() else '')
-        role_profile = _validate_role_profile(requested_profile) if is_admin else str(existing['role_profile'] or '')
-        if is_admin and str(requested_profile or '').strip() and role_profile is None:
-            raise HTTPException(status_code=400, detail='Invalid resource role profile')
+        if is_admin:
+            if role not in ('Administrator', 'Viewer'):
+                raise HTTPException(status_code=400, detail='Account type must be Administrator or Viewer')
+            role_profile = 'Change Requester' if role == 'Viewer' else ''
+        else:
+            role_profile = str(existing['role_profile'] or '')
         avatar_url = user.get('avatar_url', existing['avatar_url'])
         group_name = str((user.get('group_name', existing['group_name']) if is_admin else existing['group_name']) or '').strip()
         try:
@@ -1404,6 +1480,29 @@ async def update_user(user_id: str, request: Request, user: dict = Body(...)):
             )
         if password:
             conn.execute('DELETE FROM sessions WHERE user_id = ? AND token != ?', (user_id, session_token))
+        if is_admin:
+            scope_mode = 'restricted' if role_profile == 'Change Requester' else 'legacy'
+            conn.execute('UPDATE users SET scope_mode = ? WHERE id = ?', (scope_mode, user_id))
+            if role_profile == 'Change Requester':
+                tenant_id = existing_tenant_id
+                if not tenant_id:
+                    raise HTTPException(status_code=403, detail='Ordinary users must be assigned to a tenant')
+                conn.execute('DELETE FROM user_resource_scopes WHERE user_id = ?', (user_id,))
+                for resource_type, actions in (
+                    ('pam', ['create_change', 'view']),
+                    ('change_order', ['create', 'update', 'view']),
+                ):
+                    conn.execute(
+                        """INSERT INTO user_resource_scopes
+                           (id, user_id, resource_type, scope_type, scope_id, actions_json, created_at)
+                           VALUES (?, ?, ?, 'tenant', ?, ?, ?)""",
+                        (f"scope-{uuid.uuid4().hex[:12]}", user_id, resource_type, tenant_id,
+                         json.dumps(actions), datetime.now(timezone.utc).isoformat()),
+                    )
+            else:
+                # Explicitly granting the Administrator account type is the
+                # privileged transition out of the requester's restricted scope.
+                conn.execute('DELETE FROM user_resource_scopes WHERE user_id = ?', (user_id,))
         conn.commit()
         result = conn.execute(
             'SELECT id, username, role, role_profile, status, last_login as lastLogin, avatar_url, group_name, change_groups_json, notification_channels, preferred_language, display_name, phone, email, mfa_enabled FROM users WHERE id = ?',

@@ -20,6 +20,8 @@ from services.collection_plan_service import (
 from core.interface_utils import normalize_interface_name
 # Import inspection service to handle specialized inspection jobs
 from services.inspection_service import run_inspection
+from core.rbac import authorize_resource
+from services.scheduled_job_authorization import execution_snapshot, manifest_hash
 
 logger = logging.getLogger(__name__)
 
@@ -263,7 +265,16 @@ def _select_nsot_scope_device_ids(
 
 def _resolve_nsot_target_device_ids(job: dict, conn) -> list[str]:
     """Resolve the saved Automation scope to currently online NSOT targets."""
-    rows = conn.execute("SELECT * FROM devices WHERE status = 'online'").fetchall()
+    tenant_id = str(job.get('tenant_id') or '').strip()
+    if job.get('authorization_mode') == 'system':
+        rows = conn.execute("SELECT * FROM devices WHERE status = 'online'").fetchall()
+    else:
+        if not tenant_id:
+            raise ValueError('Scheduled NSOT job has no tenant boundary')
+        rows = conn.execute(
+            "SELECT * FROM devices WHERE status = 'online' AND tenant_id = ?",
+            (tenant_id,),
+        ).fetchall()
     online_devices = [dict(row) for row in rows]
     scope = str(job.get('device_scope') or 'all').strip().lower()
     tagged_device_ids = None
@@ -301,6 +312,92 @@ def _resolve_nsot_target_device_ids(job: dict, conn) -> list[str]:
     return _select_nsot_scope_device_ids(job, online_devices, tagged_device_ids)
 
 
+def _is_builtin_nsot_job(job: dict) -> bool:
+    return bool(
+        job.get('authorization_mode') == 'system'
+        and str(job.get('id') or '') == 'nsot-daily-collection'
+        and str(job.get('name') or '') == 'NSOT 网络事实库每日采集'
+        and str(job.get('job_type') or '') == 'cron'
+        and str(job.get('action_type') or '') == 'nsot'
+        and str(job.get('cron_expr') or '') == '0 2 * * *'
+        and str(job.get('device_scope') or '') == 'all'
+        and not str(job.get('device_filter') or '').strip()
+        and not str(job.get('commands') or '').strip()
+        and not str(job.get('script_id') or '').strip()
+        and not bool(job.get('is_config'))
+        and not bool(job.get('use_admin_creds'))
+        and str(job.get('created_by') or '') == 'system'
+    )
+
+
+def _authorize_scheduled_job_run(conn, job: dict) -> dict | None:
+    """Revalidate owner, tenant, permissions and immutable content at run time."""
+    if job.get('authorization_mode') == 'system':
+        if _is_builtin_nsot_job(job):
+            return None
+        raise PermissionError('System job identity does not match the built-in NSOT collection job')
+    if job.get('authorization_mode') != 'snapshot':
+        raise PermissionError('Scheduled job requires re-authorization before execution')
+    if not str(job.get('created_by_id') or '').strip() or not str(job.get('tenant_id') or '').strip():
+        raise PermissionError('Scheduled job owner or tenant is missing')
+    owner_row = conn.execute(
+        """SELECT id, username, role, role_profile, status, tenant_id, scope_mode
+             FROM users WHERE id = ?""",
+        (job.get('created_by_id'),),
+    ).fetchone()
+    if not owner_row:
+        raise PermissionError('Scheduled job owner no longer exists')
+    owner = dict(owner_row)
+    if owner.get('status') != 'active' or str(owner.get('tenant_id') or '') != str(job.get('tenant_id') or ''):
+        raise PermissionError('Scheduled job owner is inactive or no longer belongs to its tenant')
+    if not authorize_resource(
+        owner, 'scheduled_job', 'execute', tenant_id=str(job.get('tenant_id') or ''),
+    ):
+        raise PermissionError('Scheduled job owner no longer has execution authorization')
+    try:
+        current_hash = manifest_hash(execution_snapshot(conn, job))
+    except Exception as exc:
+        raise PermissionError(f'Scheduled job content is no longer valid: {exc}') from exc
+    if not current_hash or current_hash != str(job.get('authorization_manifest_hash') or ''):
+        raise PermissionError('Scheduled job content changed after approval')
+    if bool(job.get('is_config')):
+        raise PermissionError('Configuration-changing scheduled jobs require an execution grant')
+    if str(job.get('action_type') or '') not in {'backup', 'inspection', 'server_check', 'health_check', 'nsot'}:
+        raise PermissionError('Scheduled action has no approved read-only execution policy')
+    if str(job.get('action_type') or '') in {'command', 'script_run'} or str(job.get('script_id') or '').strip():
+        raise PermissionError('Raw command and script jobs require a controlled published execution grant')
+    return owner
+
+
+def _authorize_scheduled_job_targets(conn, owner: dict, job: dict, device_ids: list[str]) -> dict[str, dict]:
+    if not device_ids:
+        return {}
+    unique_ids = list(dict.fromkeys(str(value) for value in device_ids if str(value)))
+    placeholders = ','.join('?' for _ in unique_ids)
+    rows = conn.execute(
+        f"SELECT * FROM devices WHERE id IN ({placeholders})",
+        unique_ids,
+    ).fetchall()
+    device_map = {str(row['id']): dict(row) for row in rows}
+    if len(device_map) != len(unique_ids):
+        raise PermissionError('One or more scheduled job targets no longer exist')
+    for device_id in unique_ids:
+        device = device_map[device_id]
+        tenant_id = str(device.get('tenant_id') or '')
+        if tenant_id != str(job.get('tenant_id') or ''):
+            raise PermissionError('Scheduled job target is outside its approved tenant')
+        scope = {
+            'tenant_id': tenant_id,
+            'site_id': device.get('site_id') or device.get('site'),
+            'device_group_id': device.get('device_group_id'),
+        }
+        if not authorize_resource(owner, 'scheduled_job', 'execute', **scope):
+            raise PermissionError(f"Owner no longer has scheduled execution access to device {device_id}")
+        if job.get('use_admin_creds') and not authorize_resource(owner, 'credential', 'use', **scope):
+            raise PermissionError(f"Owner no longer has privileged credential use access to device {device_id}")
+    return device_map
+
+
 async def run_scheduled_automation_job(job_id: str):
     """
     核心执行逻辑：
@@ -317,13 +414,36 @@ async def run_scheduled_automation_job(job_id: str):
         if not row or not row['enabled']:
             return
         job = dict(row)
+        try:
+            owner = _authorize_scheduled_job_run(conn, job)
+        except PermissionError as exc:
+            now = datetime.now().isoformat()
+            conn.execute(
+                "UPDATE scheduled_jobs SET last_run_at = ?, last_run_status = ?, run_count = run_count + 1 WHERE id = ?",
+                (now, 'denied', job_id),
+            )
+            conn.commit()
+            logger.warning("[Scheduler] Refused unauthorized job %s: %s", job_id, exc)
+            return
 
         # NSOT uses the same saved target scope as other Automation tasks, but
         # its target universe is explicitly the online device inventory. Resolve it
         # before entering the composed collector; never fall back to all devices
         # when a saved scope currently matches nothing.
         if job.get('action_type') == 'nsot':
-            device_ids = _resolve_nsot_target_device_ids(job, conn)
+            try:
+                device_ids = _resolve_nsot_target_device_ids(job, conn)
+                if owner is not None:
+                    _authorize_scheduled_job_targets(conn, owner, job, device_ids)
+            except Exception as exc:
+                now = datetime.now().isoformat()
+                conn.execute(
+                    "UPDATE scheduled_jobs SET last_run_at = ?, last_run_status = ?, run_count = run_count + 1 WHERE id = ?",
+                    (now, 'denied', job_id),
+                )
+                conn.commit()
+                logger.warning("[Scheduler] Refused NSOT job %s due to invalid scope: %s", job_id, exc)
+                return
             if not device_ids:
                 now = datetime.now().isoformat()
                 conn.execute(
@@ -334,9 +454,10 @@ async def run_scheduled_automation_job(job_id: str):
                 logger.warning("[Scheduler] NSOT job %s skipped: its saved scope matched no online devices", job_id)
                 return
 
-            # Preserve the existing global full-refresh semantics for an
-            # explicit "all online devices" plan. Other scopes stay isolated.
-            scoped_device_ids = None if str(job.get('device_scope') or 'all').strip().lower() == 'all' else set(device_ids)
+            # Only the built-in system job may request an unbounded refresh.
+            # A tenant owner's scope="all" means all authorized online devices
+            # in that tenant, so keep the resolved ID set through every phase.
+            scoped_device_ids = None if owner is None else set(device_ids)
 
             logger.info(
                 "[Scheduler] Starting NSOT scheduled collection: %s (%s), target_devices=%s",
@@ -382,16 +503,30 @@ async def run_scheduled_automation_job(job_id: str):
 
         # 1. 确定设备范围
         device_ids = []
+        tenant_id = str(job.get('tenant_id') or '').strip()
+        if not tenant_id:
+            raise PermissionError('Scheduled job has no tenant boundary')
         if job['device_scope'] == 'all':
-            rows = conn.execute("SELECT id FROM devices WHERE is_active = 1 OR is_active IS NULL").fetchall()
+            rows = conn.execute(
+                "SELECT id FROM devices WHERE tenant_id = ? AND (is_active = 1 OR is_active IS NULL)",
+                (tenant_id,),
+            ).fetchall()
             device_ids = [r['id'] for r in rows]
         elif job['device_scope'] == 'composite':
             try:
                 comp = json.loads(job['device_filter'] or '{}')
             except (TypeError, ValueError):
-                comp = {}
-            conditions = ["(is_active = 1 OR is_active IS NULL)"]
-            params = []
+                raise ValueError('Invalid composite device filter; refusing to widen scope')
+            supported = {'site', 'role', 'category', 'platform'}
+            if (
+                not isinstance(comp, dict)
+                or not comp
+                or set(comp) - supported
+                or not any(str(value or '').strip() for value in comp.values())
+            ):
+                raise ValueError('Empty or unsupported composite device filter; refusing to widen scope')
+            conditions = ["tenant_id = ?", "(is_active = 1 OR is_active IS NULL)"]
+            params = [tenant_id]
             if comp.get('site'):
                 conditions.append("site = ?")
                 params.append(comp['site'])
@@ -408,10 +543,10 @@ async def run_scheduled_automation_job(job_id: str):
             rows = conn.execute(f"SELECT id FROM devices{where_clause}", params).fetchall()
             device_ids = [r['id'] for r in rows]
         elif job['device_scope'] == 'site':
-            rows = conn.execute("SELECT id FROM devices WHERE site = ? AND (is_active = 1 OR is_active IS NULL)", (job['device_filter'],)).fetchall()
+            rows = conn.execute("SELECT id FROM devices WHERE tenant_id = ? AND site = ? AND (is_active = 1 OR is_active IS NULL)", (tenant_id, job['device_filter'])).fetchall()
             device_ids = [r['id'] for r in rows]
         elif job['device_scope'] == 'role':
-            rows = conn.execute("SELECT id FROM devices WHERE role = ? AND (is_active = 1 OR is_active IS NULL)", (job['device_filter'],)).fetchall()
+            rows = conn.execute("SELECT id FROM devices WHERE tenant_id = ? AND role = ? AND (is_active = 1 OR is_active IS NULL)", (tenant_id, job['device_filter'])).fetchall()
             device_ids = [r['id'] for r in rows]
         elif job['device_scope'] in ('tag', 'tags'):
             # Resolve the saved AND/OR/NOT expression with the same tag
@@ -419,7 +554,9 @@ async def run_scheduled_automation_job(job_id: str):
             try:
                 config = json.loads(job['device_filter'] or '{}')
             except (TypeError, ValueError):
-                config = {}
+                raise ValueError('Invalid tag device filter; refusing to widen scope')
+            if not isinstance(config, dict):
+                raise ValueError('Invalid tag device filter; refusing to widen scope')
             from services.tag_service import (
                 resolve_device_ids_by_condition_groups,
                 resolve_device_ids_by_expression,
@@ -455,10 +592,13 @@ async def run_scheduled_automation_job(job_id: str):
             target_ips = [i.strip() for i in (job['device_filter'] or '').split(',') if i.strip()]
             if target_ips:
                 placeholders = ','.join(['?'] * len(target_ips))
-                rows = conn.execute(f"SELECT id FROM devices WHERE ip_address IN ({placeholders})", target_ips).fetchall()
+                rows = conn.execute(f"SELECT id FROM devices WHERE tenant_id = ? AND ip_address IN ({placeholders})", [tenant_id, *target_ips]).fetchall()
                 device_ids = [r['id'] for r in rows]
         else: # ids
             device_ids = [i.strip() for i in (job['device_filter'] or '').split(',') if i.strip()]
+
+        device_map = _authorize_scheduled_job_targets(conn, owner or {}, job, device_ids)
+        device_ids = list(device_map.keys())
 
         if not device_ids:
             logger.warning(f"Job {job_id} has no target devices.")

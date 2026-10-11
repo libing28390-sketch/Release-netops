@@ -96,7 +96,7 @@ export const IngestionJobsPanel: React.FC = () => {
   const [items, setItems] = useState<KnowledgeIngestionJobSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(10);
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [executionState, setExecutionState] = useState<KnowledgeIngestionExecutionState>('all');

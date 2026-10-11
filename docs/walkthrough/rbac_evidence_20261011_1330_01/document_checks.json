@@ -1,0 +1,14 @@
+{
+  "checked_at": "2026-10-11T16:47:34.340417+08:00",
+  "report": "docs/walkthrough/walkthrough_20261011_1330_01_RBAC审核整改意见.md",
+  "report_sha256": "e44b605c149db05536c11f67d6bd7cfc761a1d9ffc3845340e13065757e9b278",
+  "character_count": 45500,
+  "source_count": 39,
+  "finding_count": 20,
+  "acceptance_case_count": 46,
+  "local_link_count": 72,
+  "policy_probe_count": 14,
+  "pytest_passed": 76,
+  "database_source_removed": true,
+  "problems": []
+}

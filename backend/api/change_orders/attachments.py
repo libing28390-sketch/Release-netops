@@ -5,12 +5,23 @@ import shutil
 from typing import Optional
 from fastapi import APIRouter, HTTPException, File, Form, UploadFile
 from database import get_db_connection, PROJECT_ROOT
-from core.rbac import require_role
+from core.rbac import enforce_resource_scope, is_global_administrator, require_role
 from services.audit_service import log_audit_event
 from services.change_order_service import get_change_order
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _require_order_update_scope(order: dict, user: dict) -> None:
+    tenant_id = str(order.get('tenant_id') or '').strip()
+    if not is_global_administrator(user) and (
+        not tenant_id or tenant_id != str(user.get('tenant_id') or '').strip()
+    ):
+        raise HTTPException(status_code=404, detail='Change order not found')
+    enforce_resource_scope(user, 'change_order', 'update', tenant_id=tenant_id or None)
+    if user.get('role_profile') == 'Change Requester' and str(order.get('requester_id') or '') != str(user.get('user_id') or ''):
+        raise HTTPException(status_code=404, detail='Change order not found')
 
 # MIME whitelist for control-sheet attachments
 _CONTROL_SHEET_ALLOWED_MIMES: frozenset[str] = frozenset({
@@ -50,11 +61,12 @@ async def api_upload_control_sheet(
         existing = get_change_order(conn, order_id)
         if not existing:
             raise HTTPException(status_code=404, detail='Change order not found')
+        _require_order_update_scope(existing, user)
 
         actor_username = user.get('username', '')
         actor_role = user.get('role', '')
-        requester_username = existing.get('requester_username', '')
-        if actor_username != requester_username and actor_role != 'Administrator':
+        requester_id = str(existing.get('requester_id') or '')
+        if requester_id != str(user.get('user_id') or '') and actor_role != 'Administrator':
             raise HTTPException(
                 status_code=403,
                 detail='只有工单申请人（实施人）或管理员才能上传变更控制表附件',
@@ -164,6 +176,7 @@ async def api_upload_attachment(order_id: str, file: UploadFile = File(...), use
         existing = get_change_order(conn, order_id)
         if not existing:
             raise HTTPException(status_code=404, detail='Change order not found')
+        _require_order_update_scope(existing, user)
         
         attachment_id = f"att-{uuid.uuid4().hex[:12]}"
         file_ext = os.path.splitext(file.filename)[1]

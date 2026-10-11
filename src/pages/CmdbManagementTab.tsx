@@ -1690,7 +1690,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
   const [interfaceSearchInput, setInterfaceSearchInput] = useState('');
   const [interfaceSearchQuery, setInterfaceSearchQuery] = useState('');
   const [interfacePage, setInterfacePage] = useState(1);
-  const [interfacePageSize, setInterfacePageSize] = useState(20);
+  const [interfacePageSize, setInterfacePageSize] = useState(10);
   const [interfaceListMeta, setInterfaceListMeta] = useState({
     total: 0,
     summary: { total: 0, with_ip: 0, oper_up: 0, with_links: 0 },
@@ -1705,7 +1705,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
   const [interfaceProfileFieldErrors, setInterfaceProfileFieldErrors] = useState<Record<string, string>>({});
   const [interfaceProfileError, setInterfaceProfileError] = useState('');
   const [interfaceProfileSaving, setInterfaceProfileSaving] = useState(false);
-  const [genericListMeta, setGenericListMeta] = useState({ total: 0, page: 1, page_size: 20 });
+  const [genericListMeta, setGenericListMeta] = useState({ total: 0, page: 1, page_size: 10 });
   const readOnlyTabs = useMemo(() => new Set<EntityKey>(['devices', 'interfaces']), []);
   const isReadOnlyTab = readOnlyTabs.has(tab);
   const isAdministrator = currentUser?.role === 'Administrator';
@@ -1744,7 +1744,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
 
   // Pagination states
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(10);
   const [siteImportOpen, setSiteImportOpen] = useState(false);
   const [siteImportFileName, setSiteImportFileName] = useState('');
   const [siteImportRows, setSiteImportRows] = useState<SiteImportRow[]>([]);

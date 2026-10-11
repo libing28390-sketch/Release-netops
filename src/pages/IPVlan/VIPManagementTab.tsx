@@ -52,7 +52,7 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(10);
   const [totalVips, setTotalVips] = useState(0);
 
   // Modals

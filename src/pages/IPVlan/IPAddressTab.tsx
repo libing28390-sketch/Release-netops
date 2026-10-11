@@ -455,7 +455,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
   const [purposeFilter, setPurposeFilter] = useState('all');
   const [isMatrixView, setIsMatrixView] = useState(false);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(10);
   const [totalItems, setTotalItems] = useState(0);
 
   // Lookup data

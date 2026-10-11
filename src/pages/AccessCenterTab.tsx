@@ -112,6 +112,8 @@ function buildAccessTree(devices: Device[], isZh: boolean): AccessTreeNode {
 
 interface AccessCenterTabProps {
   devices: Device[];
+  assetsTotal: number | null;
+  assetsTotalError: string | null;
   language: string;
   showToast: (msg: string, type: 'success' | 'error' | 'info') => void;
   favoriteDeviceIds?: string[];
@@ -120,6 +122,8 @@ interface AccessCenterTabProps {
 
 export default function AccessCenterTab({
   devices,
+  assetsTotal,
+  assetsTotalError,
   language,
   showToast,
   favoriteDeviceIds = [],
@@ -139,7 +143,7 @@ export default function AccessCenterTab({
   const [activeCategory, setActiveCategory] = useState<AccessCategory>('ALL');
   const [allAccessMethods, setAllAccessMethods] = useState<Record<string, AllAccessMethod>>({});
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(10);
   const [selectedTreeKey, setSelectedTreeKey] = useState('root');
   const [expandedTreeKeys, setExpandedTreeKeys] = useState<Set<string>>(new Set(['root']));
   const [accessTreeCollapsed, setAccessTreeCollapsed] = useState(false);
@@ -1191,21 +1195,34 @@ export default function AccessCenterTab({
 
       {/* Table Section */}
       <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
-        <div className="mb-4 grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <div className="mb-4 grid grid-cols-2 gap-3 xl:grid-cols-5">
           {[
+            {
+              label: isZh ? '资产管理设备' : 'Asset devices',
+              value: assetsTotal ?? '—',
+              note: assetsTotalError
+                ? (isZh ? '统计暂不可用，自动重试中' : 'Summary unavailable; retrying')
+                : assetsTotal === null
+                  ? (isZh ? '正在读取资产管理汇总' : 'Loading Asset Management summary')
+                  : (isZh ? '网络设备 + 服务器' : 'Network devices + servers'),
+              icon: Server,
+              tone: 'blue',
+            },
             { label: isZh ? '当前节点' : 'Current nodes', value: nodeStats.total, note: selectedTreeLabel, icon: Database, tone: 'cyan' },
             { label: isZh ? '在线节点' : 'Online nodes', value: nodeStats.online, note: isZh ? '可直接发起访问' : 'Ready to access', icon: Activity, tone: 'emerald' },
             { label: isZh ? '终端接入' : 'Terminal access', value: nodeStats.terminal, note: 'SSH / RDP', icon: Terminal, tone: 'violet' },
             { label: isZh ? 'Web 入口' : 'Web entries', value: nodeStats.web, note: 'HTTP / HTTPS', icon: Wifi, tone: 'amber' },
           ].map((item) => {
             const StatIcon = item.icon;
-            const tone = item.tone === 'emerald'
-              ? 'border-emerald-100 bg-emerald-50 text-emerald-600'
-              : item.tone === 'violet'
-                ? 'border-violet-100 bg-violet-50 text-violet-600'
-                : item.tone === 'amber'
-                  ? 'border-amber-100 bg-amber-50 text-amber-600'
-                  : 'border-cyan-100 bg-cyan-50 text-cyan-600';
+            const tone = item.tone === 'blue'
+              ? 'border-blue-100 bg-blue-50 text-blue-600'
+              : item.tone === 'emerald'
+                ? 'border-emerald-100 bg-emerald-50 text-emerald-600'
+                : item.tone === 'violet'
+                  ? 'border-violet-100 bg-violet-50 text-violet-600'
+                  : item.tone === 'amber'
+                    ? 'border-amber-100 bg-amber-50 text-amber-600'
+                    : 'border-cyan-100 bg-cyan-50 text-cyan-600';
             return (
               <div key={item.label} className="flex min-w-0 items-center gap-3 rounded-2xl border border-slate-200/80 bg-white px-4 py-3 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md">
                 <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border ${tone}`}>

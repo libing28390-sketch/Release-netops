@@ -35,6 +35,26 @@ export const useAuth = ({
     }
   }, []);
 
+  const checkSetupStatusInBackground = useCallback((
+    token: string,
+    role: string | undefined,
+    isCurrent: () => boolean = () => true,
+  ) => {
+    void fetchWithTimeout(
+      '/api/setup/status',
+      { headers: { Authorization: `Bearer ${token}` } },
+      8000,
+    ).then(async (response) => {
+      if (!response.ok || !isCurrent()) return;
+      const data = await response.json();
+      if (isCurrent() && !data.setup_completed && role === 'Administrator') {
+        setShowSetupWizard(true);
+      }
+    }).catch(() => {
+      // Setup status must not delay an otherwise valid session.
+    });
+  }, [fetchWithTimeout, setShowSetupWizard]);
+
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authChecking, setAuthChecking] = useState(true);
   const [currentUser, setCurrentUser] = useState<SessionUser>({ username: 'admin' });
@@ -107,17 +127,7 @@ export const useAuth = ({
             },
             5000
           ).catch(() => {});
-          try {
-            const sr = await fetchWithTimeout('/api/setup/status', { headers: { Authorization: `Bearer ${token}` } }, 8000);
-            if (sr.ok) {
-              const sd = await sr.json();
-              if (!sd.setup_completed && data?.user?.role === 'Administrator') {
-                setShowSetupWizard(true);
-              }
-            }
-          } catch {
-            // ignore setup-status errors
-          }
+          checkSetupStatusInBackground(token, data?.user?.role, () => active);
         } else {
           expireLocalSession();
         }
@@ -132,7 +142,7 @@ export const useAuth = ({
     return () => {
       active = false;
     };
-  }, [expireLocalSession, fetchWithTimeout, setLanguage, setShowSetupWizard]);
+  }, [checkSetupStatusInBackground, expireLocalSession, fetchWithTimeout, setLanguage, setShowSetupWizard]);
 
   useEffect(() => {
     const expiryHandler = () => {
@@ -260,17 +270,11 @@ export const useAuth = ({
       setCaptchaCode('');
       showToast(language === 'zh' ? '登录成功' : 'Login successful', 'success');
 
-      try {
-        const sr = await fetchWithTimeout('/api/setup/status', { headers: { Authorization: `Bearer ${data.token}` } }, 8000);
-        if (sr.ok) {
-          const sd = await sr.json();
-          if (!sd.setup_completed && data.user?.role === 'Administrator') {
-            setShowSetupWizard(true);
-          }
-        }
-      } catch {
-        // ignore setup-status errors
-      }
+      checkSetupStatusInBackground(
+        data.token,
+        data.user?.role,
+        () => localStorage.getItem('netops_token') === data.token,
+      );
     } catch (error: any) {
       if (error?.name === 'AbortError') {
         setLoginError(language === 'zh' ? '登录超时，请检查后端状态后重试' : 'Login timed out. Please verify backend status and retry');
@@ -327,17 +331,11 @@ export const useAuth = ({
       setTempMfaToken('');
       showToast(language === 'zh' ? '登录成功' : 'Login successful', 'success');
 
-      try {
-        const sr = await fetchWithTimeout('/api/setup/status', { headers: { Authorization: `Bearer ${data.token}` } }, 8000);
-        if (sr.ok) {
-          const sd = await sr.json();
-          if (!sd.setup_completed && data.user?.role === 'Administrator') {
-            setShowSetupWizard(true);
-          }
-        }
-      } catch {
-        // ignore setup-status errors
-      }
+      checkSetupStatusInBackground(
+        data.token,
+        data.user?.role,
+        () => localStorage.getItem('netops_token') === data.token,
+      );
     } catch (error: any) {
       if (error?.name === 'AbortError') {
         setLoginError(language === 'zh' ? '验证超时，请重试' : 'Verification timed out. Please retry');

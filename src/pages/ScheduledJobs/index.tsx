@@ -26,6 +26,26 @@ import { JobDetailModal } from './components/JobDetailModal';
 import { JobModal } from './components/JobModal';
 import { BulkCollectionPlanModal } from './components/BulkCollectionPlanModal';
 
+type ScheduledJobOperation = 'CREATE' | 'UPDATE' | 'ENABLE' | 'DISABLE' | 'DELETE';
+
+interface ScheduledJobOperationManifest {
+  operation: ScheduledJobOperation;
+  job_id: string;
+  job_type: 'cron' | 'once';
+  name: string;
+  action: string;
+  scope: { type: string; filter: string };
+  cron_expr: string;
+  scheduled_at: string;
+  check_items: string[];
+  commands: string;
+  script_id: string;
+  is_config: 0 | 1;
+  use_admin_creds: 0 | 1;
+  enabled: boolean;
+  config_reason: string;
+}
+
 const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast }) => {
   const zh = language === 'zh';
   const navigate = useNavigate();
@@ -35,7 +55,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   const [systemJobs, setSystemJobs] = useState<SystemScheduledJob[]>([]);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(10);
   const [total, setTotal] = useState(0);
 
   // Modal
@@ -72,6 +92,11 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   const [approvalStatus, setApprovalStatus] = useState<'idle' | 'sending' | 'sent' | 'verified'>('idle');
   const [approvalCountdown, setApprovalCountdown] = useState(0);
   const [approvalError, setApprovalError] = useState('');
+  const [approvalManifest, setApprovalManifest] = useState<ScheduledJobOperationManifest | null>(null);
+  const [disableTarget, setDisableTarget] = useState<ScheduledJob | null>(null);
+  const [disableOperation, setDisableOperation] = useState<'ENABLE' | 'DISABLE'>('DISABLE');
+  const [disableReason, setDisableReason] = useState('');
+  const [disableSubmitting, setDisableSubmitting] = useState(false);
 
   // Delete approval state
   const [deleteApprovalOpen, setDeleteApprovalOpen] = useState(false);
@@ -84,6 +109,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   const [deleteStatus, setDeleteStatus] = useState<'idle' | 'sending' | 'sent' | 'verified'>('idle');
   const [deleteCountdown, setDeleteCountdown] = useState(0);
   const [deleteError, setDeleteError] = useState('');
+  const [deleteApprovalManifest, setDeleteApprovalManifest] = useState<ScheduledJobOperationManifest | null>(null);
 
   // Enabling job tracker
   const [enablingJobId, setEnablingJobId] = useState<string | null>(null);
@@ -247,9 +273,9 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
     if (showAddJob || editingJob) fetchDevices();
   }, [showAddJob, editingJob, fetchDevices]);
   useEffect(() => {
-    if (showAddJob) fetchApprovers();
+    if (showAddJob || disableTarget) fetchApprovers();
     if ((showAddJob || detailJob) && (form.action_type === 'script_run' || form.action_type === 'inspection' || detailJob?.action_type === 'script_run' || detailJob?.action_type === 'inspection')) fetchScripts();
-  }, [showAddJob, detailJob, isEditMode, fetchApprovers, fetchScripts, form.action_type]);
+  }, [showAddJob, disableTarget, detailJob, isEditMode, fetchApprovers, fetchScripts, form.action_type]);
 
   // Auto-load script content when detail modal opens for a script_run or inspection job
   useEffect(() => {
@@ -280,6 +306,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
     setApprovalStatus('idle');
     setApprovalCountdown(0);
     setApprovalError('');
+    setApprovalManifest(null);
   };
 
   const resetDeleteApprovalFlow = () => {
@@ -288,6 +315,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
     setDeleteStatus('idle');
     setDeleteCountdown(0);
     setDeleteError('');
+    setDeleteApprovalManifest(null);
   };
 
   const selectApprover = (username: string) => {
@@ -439,34 +467,46 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   /* === APPROVAL (create & update) === */
   const requestApproval = async () => {
     if (!approverUsername) return;
-    const approvalType = isEditMode && editingJob?.job_type === 'once' ? 'execution_plan' : 'scheduled_job';
     // 在发送验证码前先校验必填项,避免半填状态下的无效审批流
-    const err = validateForm();
-    if (err) { showToast(err, 'error'); return; }
+    if (!disableTarget) {
+      const err = validateForm();
+      if (err) { showToast(err, 'error'); return; }
+    }
+    const operation = disableTarget ? disableOperation : (isEditMode ? 'UPDATE' : 'CREATE');
+    const operationManifest = disableTarget
+      ? buildJobOperationManifest(operation, disableTarget)
+      : buildFormOperationManifest(isEditMode ? 'UPDATE' : 'CREATE');
+    const approvalType = disableTarget?.job_type === 'once' || (!disableTarget && isEditMode && editingJob?.job_type === 'once')
+      ? 'execution_plan'
+      : 'scheduled_job';
     setApprovalStatus('sending');
     setApprovalError('');
     try {
-      const actionLabel = ACTION_TYPES.find(a => a.value === form.action_type);
+      const actionLabel = ACTION_TYPES.find(a => a.value === operationManifest.action);
       const r = await fetch('/api/config-approval/request', {
         method: 'POST',
         headers: authHeaders,
         body: JSON.stringify({
           approver_username: approverUsername,
-          config_reason: form.config_reason || `${zh ? (isEditMode ? '修改定时作业' : '创建定时作业') : (isEditMode ? 'Update job' : 'Create job')}: ${form.name}`,
-          device_hostname: form.device_scope === 'all' ? (zh ? '全部设备' : 'All devices') : form.device_filter,
+          config_reason: disableTarget
+            ? (disableReason.trim() || `${zh ? (operation === 'ENABLE' ? '启用定时作业' : '停用定时作业') : (operation === 'ENABLE' ? 'Enable scheduled job' : 'Disable scheduled job')}: ${operationManifest.name}`)
+            : (operationManifest.config_reason || `${zh ? (isEditMode ? '修改定时作业' : '创建定时作业') : (isEditMode ? 'Update job' : 'Create job')}: ${operationManifest.name}`),
+          device_hostname: operationManifest.scope.type === 'all' ? (zh ? '全部设备' : 'All devices') : operationManifest.scope.filter,
           command_preview: '',
           approval_type: approvalType,
           verification_method: approvalMethod,
+          operation_manifest: operationManifest,
           extra_fields: {
-            action_type: zh ? (actionLabel?.labelZh || form.action_type) : (actionLabel?.labelEn || form.action_type),
-            schedule_desc: describeCron(form.cron_expr, zh),
-            operation: isEditMode ? 'UPDATE' : 'CREATE',
+            action_type: zh ? (actionLabel?.labelZh || operationManifest.action) : (actionLabel?.labelEn || operationManifest.action),
+            schedule_desc: describeCron(operationManifest.cron_expr, zh),
+            operation,
           },
         }),
       });
       const j = await r.json();
       if (r.ok && j.success) {
         setApprovalToken(j.approval_token);
+        setApprovalManifest(operationManifest);
         setApprovalStatus('sent');
         setApprovalCountdown(300);
         const message = approvalMethod === 'mfa'
@@ -486,13 +526,15 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   };
 
   const verifyApproval = async () => {
-    if (!approvalToken || !approvalCode) return;
-    const approvalType = isEditMode && editingJob?.job_type === 'once' ? 'execution_plan' : 'scheduled_job';
+    if (!approvalToken || !approvalCode || !approvalManifest) return;
+    const approvalType = disableTarget?.job_type === 'once' || (!disableTarget && isEditMode && editingJob?.job_type === 'once')
+      ? 'execution_plan'
+      : 'scheduled_job';
     try {
       const r = await fetch('/api/config-approval/verify', {
         method: 'POST',
         headers: authHeaders,
-        body: JSON.stringify({ approval_token: approvalToken, code: approvalCode, approval_type: approvalType }),
+        body: JSON.stringify({ approval_token: approvalToken, code: approvalCode, approval_type: approvalType, operation_manifest: approvalManifest }),
       });
       const j = await r.json();
       if (r.ok && j.success) {
@@ -510,6 +552,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   const requestDeleteApproval = async () => {
     if (!deleteApprover || !deleteTarget) return;
     const deleteApprovalType = deleteTarget.job_type === 'once' ? 'execution_plan' : 'scheduled_job_delete';
+    const operationManifest = buildJobOperationManifest('DELETE', deleteTarget);
     setDeleteStatus('sending');
     setDeleteError('');
     try {
@@ -523,12 +566,14 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
           command_preview: '',
           approval_type: deleteApprovalType,
           verification_method: deleteApprovalMethod,
+          operation_manifest: operationManifest,
           extra_fields: { action_type: 'DELETE', job_name: deleteTarget.name },
         }),
       });
       const j = await r.json();
       if (r.ok && j.success) {
         setDeleteToken(j.approval_token);
+        setDeleteApprovalManifest(operationManifest);
         setDeleteStatus('sent');
         setDeleteCountdown(300);
         const message = deleteApprovalMethod === 'mfa'
@@ -548,13 +593,13 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   };
 
   const verifyDeleteApproval = async () => {
-    if (!deleteToken || !deleteCode || !deleteTarget) return;
+    if (!deleteToken || !deleteCode || !deleteTarget || !deleteApprovalManifest) return;
     const deleteApprovalType = deleteTarget.job_type === 'once' ? 'execution_plan' : 'scheduled_job_delete';
     try {
       const r = await fetch('/api/config-approval/verify', {
         method: 'POST',
         headers: authHeaders,
-        body: JSON.stringify({ approval_token: deleteToken, code: deleteCode, approval_type: deleteApprovalType }),
+        body: JSON.stringify({ approval_token: deleteToken, code: deleteCode, approval_type: deleteApprovalType, operation_manifest: deleteApprovalManifest }),
       });
       const j = await r.json();
       if (r.ok && j.success) {
@@ -570,15 +615,25 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
 
   const executeDeleteJob = async () => {
     if (!deleteTarget || deleteStatus !== 'verified') return;
+    const operationManifest = buildJobOperationManifest('DELETE', deleteTarget);
+    if (!sameManifest(deleteApprovalManifest, operationManifest)) {
+      resetDeleteApprovalFlow();
+      setDeleteError(zh ? '作业信息已变化，请重新申请删除审批。' : 'The job details changed. Request delete approval again.');
+      return;
+    }
     try {
       const url = `/api/scheduled-jobs/${deleteTarget.id}?approval_token=${encodeURIComponent(deleteToken)}&approval_code=${encodeURIComponent(deleteCode)}`;
-      const r = await fetch(url, { method: 'DELETE', headers: authHeaders });
+      const r = await fetch(url, {
+        method: 'DELETE',
+        headers: authHeaders,
+        body: JSON.stringify({ operation_manifest: operationManifest }),
+      });
       const j = await r.json();
       if (r.ok && j.success) {
         setDeleteApprovalOpen(false);
         setDeleteTarget(null);
         fetchJobs();
-        showToast(zh ? '定时作业已永久安全删除' : 'Job successfully deleted', 'success');
+        showToast(zh ? '定时作业已删除' : 'Job successfully deleted', 'success');
       } else {
         setDeleteError(j.detail || j.message || 'Deletion failed');
       }
@@ -713,6 +768,95 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
     return form.device_filter;
   };
 
+  const buildFormOperationManifest = (operation: 'CREATE' | 'UPDATE'): ScheduledJobOperationManifest => {
+    const action = form.action_type.trim();
+    const isNsot = action === 'nsot';
+    const jobType: 'cron' | 'once' = operation === 'CREATE' ? 'cron' : editingJob?.job_type === 'once' ? 'once' : 'cron';
+    const checkItems: string[] = [];
+    const commands = isNsot ? '' : form.commands;
+    return {
+      operation,
+      job_id: editingJob?.id || '',
+      job_type: jobType,
+      name: form.name.trim(),
+      action,
+      scope: { type: form.device_scope.trim(), filter: resolveFilter().trim() },
+      cron_expr: jobType === 'once' ? String(editingJob?.cron_expr || '').trim() : form.cron_expr.trim(),
+      scheduled_at: jobType === 'once' ? String(editingJob?.scheduled_at || '').trim() : '',
+      check_items: checkItems,
+      commands,
+      script_id: isNsot ? '' : form.script_id.trim(),
+      is_config: !isNsot && form.is_config ? 1 : 0,
+      use_admin_creds: !isNsot && form.use_admin_creds ? 1 : 0,
+      enabled: !editingJob || Number(editingJob.enabled) === 1,
+      config_reason: form.config_reason.trim(),
+    };
+  };
+
+  const buildJobOperationManifest = (
+    operation: ScheduledJobOperation,
+    job: ScheduledJob,
+  ): ScheduledJobOperationManifest => {
+    const action = String(job.action_type || '');
+    const currentItems = (job as ScheduledJob & { check_items?: string[] }).check_items;
+    const checkItems = action === 'inspection'
+      ? (Array.isArray(currentItems) ? currentItems.map(item => String(item).trim()).filter(Boolean) : [])
+      : [];
+    const commands = action === 'inspection' && checkItems.length > 0
+      ? checkItems.join(',')
+      : String(job.commands || '');
+    return {
+      operation,
+      job_id: String(job.id),
+      job_type: job.job_type === 'once' ? 'once' : 'cron',
+      name: String(job.name || ''),
+      action,
+      scope: {
+        type: String(job.device_scope || ''),
+        filter: String(job.device_filter || ''),
+      },
+      cron_expr: String(job.cron_expr || ''),
+      scheduled_at: String(job.scheduled_at || ''),
+      check_items: checkItems,
+      commands,
+      script_id: String(job.script_id || ''),
+      is_config: Number(job.is_config) === 1 ? 1 : 0,
+      use_admin_creds: Number(job.use_admin_creds) === 1 ? 1 : 0,
+      enabled: operation === 'ENABLE' ? true : operation === 'DISABLE' ? false : Number(job.enabled) === 1,
+      config_reason: String(job.config_reason || ''),
+    };
+  };
+
+  const sameManifest = (left: ScheduledJobOperationManifest | null, right: ScheduledJobOperationManifest) =>
+    left !== null && JSON.stringify(left) === JSON.stringify(right);
+
+  const fetchCurrentScheduledJob = async (id: string): Promise<ScheduledJob | null> => {
+    try {
+      const response = await fetch(`/api/scheduled-jobs/${encodeURIComponent(id)}`, { headers: authHeaders });
+      const payload = await response.json().catch(() => null) as { success?: boolean; data?: ScheduledJob; detail?: string; message?: string } | null;
+      if (!response.ok || !payload?.data) {
+        throw new Error(payload?.detail || payload?.message || (zh ? '无法读取当前作业配置。' : 'Unable to load the current job details.'));
+      }
+      return payload.data;
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : (zh ? '无法读取当前作业配置。' : 'Unable to load the current job details.'), 'error');
+      return null;
+    }
+  };
+
+  const openDeleteApproval = async (job: ScheduledJob) => {
+    const currentJob = await fetchCurrentScheduledJob(job.id);
+    if (!currentJob) return;
+    setDeleteConfirmId(null);
+    setDeleteTarget(currentJob);
+    setDeleteReason(`${zh ? '申请删除作业' : 'Delete job'}: ${currentJob.name}`);
+    setDeleteApprover('');
+    setDeleteApprovalMethod('mfa');
+    resetDeleteApprovalFlow();
+    fetchApprovers();
+    setDeleteApprovalOpen(true);
+  };
+
   /**
    * 统一的表单必填校验。命令(commands)在大部分场景下可选；其余字段都是必填。
    * 仅当返回值为 null 时通过校验，否则返回的字符串就是要展示给用户的中/英文提示。
@@ -761,17 +905,35 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
       showToast(zh ? '请先发送验证码并完成审批验证' : 'Please complete approval verification first', 'error');
       return;
     }
+    const operationManifest = buildFormOperationManifest('CREATE');
+    if (!sameManifest(approvalManifest, operationManifest)) {
+      resetApprovalFlow();
+      showToast(zh ? '作业配置已变化，请重新申请审批' : 'The job configuration changed. Request approval again.', 'error');
+      return;
+    }
     try {
       const r = await fetch('/api/scheduled-jobs', {
         method: 'POST',
         headers: authHeaders,
         body: JSON.stringify({
           ...form,
-          use_admin_creds: form.use_admin_creds ? 1 : 0,
-          device_filter: resolveFilter(),
-          job_type: 'cron',
+          name: operationManifest.name,
+          action_type: operationManifest.action,
+          cron_expr: operationManifest.cron_expr,
+          scheduled_at: operationManifest.scheduled_at,
+          device_scope: operationManifest.scope.type,
+          device_filter: operationManifest.scope.filter,
+          commands: operationManifest.commands,
+          check_items: operationManifest.check_items,
+          script_id: operationManifest.script_id,
+          is_config: operationManifest.is_config,
+          config_reason: operationManifest.config_reason,
+          use_admin_creds: operationManifest.use_admin_creds,
+          enabled: operationManifest.enabled,
+          job_type: operationManifest.job_type,
           approval_token: approvalToken,
           approval_code: approvalCode,
+          operation_manifest: operationManifest,
         }),
       });
       const j = await r.json();
@@ -795,30 +957,40 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
       showToast(zh ? '请先发送验证码并完成审批验证' : 'Please complete approval verification first', 'error');
       return;
     }
+    const operationManifest = buildFormOperationManifest('UPDATE');
+    if (!sameManifest(approvalManifest, operationManifest)) {
+      resetApprovalFlow();
+      showToast(zh ? '作业配置已变化，请重新申请审批' : 'The job configuration changed. Request approval again.', 'error');
+      return;
+    }
     try {
       const r = await fetch(`/api/scheduled-jobs/${editingJob.id}`, {
         method: 'PUT',
         headers: authHeaders,
         body: JSON.stringify({
-          name: form.name,
-          action_type: form.action_type,
-          cron_expr: form.cron_expr,
-          device_scope: form.device_scope,
-          device_filter: resolveFilter(),
-          script_id: form.script_id,
-          commands: form.commands,
-          config_reason: form.config_reason,
-          use_admin_creds: form.use_admin_creds ? 1 : 0,
+          name: operationManifest.name,
+          action_type: operationManifest.action,
+          cron_expr: operationManifest.cron_expr,
+          scheduled_at: operationManifest.scheduled_at,
+          job_type: operationManifest.job_type,
+          device_scope: operationManifest.scope.type,
+          device_filter: operationManifest.scope.filter,
+          script_id: operationManifest.script_id,
+          commands: operationManifest.commands,
+          check_items: operationManifest.check_items,
+          is_config: operationManifest.is_config,
+          config_reason: operationManifest.config_reason,
+          use_admin_creds: operationManifest.use_admin_creds,
           approval_token: approvalToken,
           approval_code: approvalCode,
-          ...(enablingJobId === editingJob.id ? { enabled: true } : {}),
+          operation_manifest: operationManifest,
         }),
       });
       const j = await r.json();
       if (r.ok && j.success) {
         closeModal();
         fetchJobs();
-        showToast(enablingJobId === editingJob.id ? (zh ? '作业已成功启用' : 'Job enabled') : (zh ? '作业已更新' : 'Job updated'), 'success');
+        showToast(zh ? '作业已更新' : 'Job updated', 'success');
       } else {
         showToast(j.detail || j.message || 'Failed', 'error');
       }
@@ -827,25 +999,59 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
     }
   };
 
-  const toggleJobEnabled = async (job: ScheduledJob) => {
-    const nextEnabled = !job.enabled;
-    if (!nextEnabled) {
-      try {
-        const r = await fetch(`/api/scheduled-jobs/${job.id}/toggle`, {
-          method: 'PUT',
-          headers: authHeaders,
-          body: JSON.stringify({ enabled: false }),
-        });
-        if (r.ok) {
-          fetchJobs();
-          showToast(zh ? '作业已安全停用' : 'Job disabled', 'success');
-        }
-      } catch { /* ignore */ }
+  const executeDisableJob = async () => {
+    if (!disableTarget || approvalStatus !== 'verified') return;
+    const operationManifest = buildJobOperationManifest(disableOperation, disableTarget);
+    if (!sameManifest(approvalManifest, operationManifest)) {
+      resetApprovalFlow();
+      setApprovalError(zh ? '作业信息已变化，请重新申请停用审批。' : 'The job details changed. Request disable approval again.');
       return;
     }
-    setEnablingJobId(job.id);
-    openEditModal(job);
-    showToast(zh ? '恢复启用定时作业需完成审批授权' : 'Enabling job requires approval verification', 'info');
+    setDisableSubmitting(true);
+    setApprovalError('');
+    try {
+      const response = await fetch(`/api/scheduled-jobs/${encodeURIComponent(disableTarget.id)}/toggle`, {
+        method: 'PUT',
+        headers: authHeaders,
+        body: JSON.stringify({
+          enabled: disableOperation === 'ENABLE',
+          approval_token: approvalToken,
+          approval_code: approvalCode,
+          operation_manifest: operationManifest,
+        }),
+      });
+      const payload = await response.json().catch(() => null) as { success?: boolean; detail?: string; message?: string } | null;
+      if (!response.ok || payload?.success === false) {
+        throw new Error(payload?.detail || payload?.message || (zh
+          ? (disableOperation === 'ENABLE' ? '无法启用作业。' : '无法停用作业。')
+          : (disableOperation === 'ENABLE' ? 'Unable to enable job.' : 'Unable to disable job.')));
+      }
+      setDisableTarget(null);
+      setDisableReason('');
+      resetApprovalFlow();
+      fetchJobs();
+      showToast(disableOperation === 'ENABLE'
+        ? (zh ? '作业已启用' : 'Job enabled')
+        : (zh ? '作业已停用' : 'Job disabled'), 'success');
+    } catch (cause) {
+      setApprovalError(cause instanceof Error ? cause.message : (zh
+        ? (disableOperation === 'ENABLE' ? '无法启用作业。' : '无法停用作业。')
+        : (disableOperation === 'ENABLE' ? 'Unable to enable job.' : 'Unable to disable job.')));
+    } finally {
+      setDisableSubmitting(false);
+    }
+  };
+
+  const toggleJobEnabled = async (job: ScheduledJob) => {
+    const currentJob = await fetchCurrentScheduledJob(job.id);
+    if (!currentJob) return;
+    const operation = Number(currentJob.enabled) ? 'DISABLE' : 'ENABLE';
+    resetApprovalFlow();
+    setApproverUsername('');
+    setApprovalMethod('mfa');
+    setDisableOperation(operation);
+    setDisableReason(`${zh ? (operation === 'ENABLE' ? '启用定时作业' : '停用定时作业') : (operation === 'ENABLE' ? 'Enable scheduled job' : 'Disable scheduled job')}: ${currentJob.name}`);
+    setDisableTarget(currentJob);
   };
 
   const submitForm = () => {
@@ -1339,14 +1545,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                                 <div className="flex items-center gap-1.5 ml-1">
                                   <button
                                     onClick={() => {
-                                      setDeleteConfirmId(null);
-                                      setDeleteTarget(job);
-                                      setDeleteReason(`${zh ? '申请删除作业' : 'Delete job'}: ${job.name}`);
-                                      setDeleteApprover('');
-                                      setDeleteApprovalMethod('mfa');
-                                      resetDeleteApprovalFlow();
-                                      fetchApprovers();
-                                      setDeleteApprovalOpen(true);
+                                      void openDeleteApproval(job);
                                     }}
                                     className="px-2.5 py-1.5 rounded-xl bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 transition-all shadow-sm"
                                   >
@@ -1425,6 +1624,149 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
         fetchNsotCollectionPreview={fetchNsotCollectionPreview}
         language={language}
       />
+
+      {disableTarget && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center p-4" role="dialog" aria-modal="true">
+          <button
+            type="button"
+            aria-label={zh ? '关闭作业审批' : 'Close job approval'}
+            className="absolute inset-0 bg-slate-950/50 backdrop-blur-sm"
+            disabled={approvalStatus === 'sending' || disableSubmitting}
+            onClick={() => {
+              setDisableTarget(null);
+              setDisableReason('');
+              resetApprovalFlow();
+            }}
+          />
+          <div className="relative w-full max-w-md overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+            <div className={`flex items-center justify-between border-b px-6 py-4 ${disableOperation === 'ENABLE' ? 'border-cyan-100 bg-cyan-50' : 'border-amber-100 bg-amber-50'}`}>
+              <div>
+                <h3 className={`text-sm font-bold ${disableOperation === 'ENABLE' ? 'text-cyan-900' : 'text-amber-900'}`}>
+                  {disableOperation === 'ENABLE'
+                    ? (zh ? '启用作业审批' : 'Enable Job Approval')
+                    : (zh ? '停用作业审批' : 'Disable Job Approval')}
+                </h3>
+                <p className="mt-1 text-xs text-slate-600">{disableTarget.name}</p>
+              </div>
+              <button
+                type="button"
+                disabled={approvalStatus === 'sending' || disableSubmitting}
+                onClick={() => {
+                  setDisableTarget(null);
+                  setDisableReason('');
+                  resetApprovalFlow();
+                }}
+                className="rounded-lg px-2 py-1 text-slate-400 hover:bg-white/70 hover:text-slate-700 disabled:opacity-40"
+              >×</button>
+            </div>
+            <div className="space-y-4 px-6 py-5 text-xs text-slate-700">
+              <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 font-mono text-[11px] text-slate-600">
+                <div>ID: {disableTarget.id}</div>
+                <div>{disableTarget.action_type} · {disableTarget.device_scope}</div>
+                <div>{disableTarget.cron_expr}</div>
+              </div>
+              <label className="block space-y-1.5">
+                <span className="font-semibold">{zh ? '操作原因' : 'Reason'}</span>
+                <input
+                  value={disableReason}
+                  onChange={event => setDisableReason(event.target.value)}
+                  disabled={approvalStatus !== 'idle'}
+                  className={`w-full rounded-xl border border-slate-200 px-3 py-2 outline-none disabled:bg-slate-50 ${disableOperation === 'ENABLE' ? 'focus:border-cyan-500' : 'focus:border-amber-500'}`}
+                />
+              </label>
+              {approvalStatus === 'idle' && (
+                <>
+                  <label className="block space-y-1.5">
+                    <span className="font-semibold">{zh ? '选择审批人' : 'Approver'}</span>
+                    <select
+                      value={approverUsername}
+                      onChange={event => selectApprover(event.target.value)}
+                      className={`w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none ${disableOperation === 'ENABLE' ? 'focus:border-cyan-500' : 'focus:border-amber-500'}`}
+                    >
+                      <option value="">{zh ? '选择审批人...' : 'Select approver...'}</option>
+                      {approvers.map(approver => (
+                        <option key={approver.id} value={approver.username}>{approver.username} ({approver.role})</option>
+                      ))}
+                    </select>
+                    {approvers.length === 0 && <span className="block text-amber-700">{zh ? '当前没有可用审批人。' : 'No eligible approvers are available.'}</span>}
+                  </label>
+                  {approvalMethod && (approvers.find(item => item.username === approverUsername)?.verification_methods.length || 0) > 0 && (
+                    <label className="block space-y-1.5">
+                      <span className="font-semibold">{zh ? '验证方式' : 'Verification method'}</span>
+                      <select
+                        value={approvalMethod}
+                        onChange={event => changeApprovalMethod(event.target.value as ApprovalVerificationMethod)}
+                        className={`w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none ${disableOperation === 'ENABLE' ? 'focus:border-cyan-500' : 'focus:border-amber-500'}`}
+                      >
+                        {approvers.find(item => item.username === approverUsername)?.verification_methods.map(method => (
+                          <option key={method} value={method}>{method === 'mfa' ? 'MFA' : method === 'email' ? (zh ? '邮箱' : 'Email') : 'Feishu'}</option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  <button
+                    type="button"
+                    onClick={requestApproval}
+                    disabled={!approverUsername || !disableReason.trim() || approvalStatus !== 'idle'}
+                    className={`w-full rounded-xl px-4 py-2.5 font-bold text-white disabled:cursor-not-allowed disabled:opacity-40 ${disableOperation === 'ENABLE' ? 'bg-cyan-600 hover:bg-cyan-700' : 'bg-amber-600 hover:bg-amber-700'}`}
+                  >
+                    {zh ? '发送审批验证码' : 'Request approval code'}
+                  </button>
+                </>
+              )}
+              {approvalStatus === 'sending' && <div className="rounded-xl bg-slate-50 px-3 py-2 text-slate-600">{zh ? '正在发送验证码...' : 'Sending approval code...'}</div>}
+              {approvalStatus === 'sent' && (
+                <div className="space-y-2 rounded-xl border border-slate-100 bg-slate-50 p-3">
+                  <label className="block font-semibold" htmlFor="scheduled-job-disable-code">
+                    {approvalMethod === 'mfa' ? (zh ? '输入审批人的 6 位 MFA 动态码' : 'Enter approver’s 6-digit MFA code') : (zh ? '输入 6 位工单验证码' : 'Enter the 6-digit approval code')}
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      id="scheduled-job-disable-code"
+                      value={approvalCode}
+                      onChange={event => { setApprovalCode(event.target.value.replace(/\D/g, '').slice(0, 6)); setApprovalError(''); }}
+                      inputMode="numeric"
+                      maxLength={6}
+                      className="w-36 rounded-xl border border-slate-200 px-3 py-2 text-center font-mono tracking-[0.25em] outline-none focus:border-emerald-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={verifyApproval}
+                      disabled={approvalCode.length !== 6}
+                      className="rounded-xl bg-emerald-600 px-4 py-2 font-bold text-white hover:bg-emerald-700 disabled:opacity-40"
+                    >
+                      {zh ? '验证' : 'Verify'}
+                    </button>
+                  </div>
+                  {approvalCountdown > 0 && <p className="text-slate-500">{zh ? '验证码有效期' : 'Code expires in'} {Math.floor(approvalCountdown / 60)}:{String(approvalCountdown % 60).padStart(2, '0')}</p>}
+                </div>
+              )}
+              {approvalStatus === 'verified' && <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 font-semibold text-emerald-800">{zh ? '审批验证通过。' : 'Approval verified.'}</div>}
+              {approvalError && <div role="alert" className="rounded-xl bg-rose-50 px-3 py-2 text-rose-700">{approvalError}</div>}
+            </div>
+            <div className="flex justify-end gap-2 border-t border-slate-100 px-6 py-4">
+              <button
+                type="button"
+                disabled={approvalStatus === 'sending' || disableSubmitting}
+                onClick={() => {
+                  setDisableTarget(null);
+                  setDisableReason('');
+                  resetApprovalFlow();
+                }}
+                className="rounded-xl border border-slate-200 px-4 py-2 font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+              >{zh ? '取消' : 'Cancel'}</button>
+              <button
+                type="button"
+                onClick={executeDisableJob}
+                disabled={approvalStatus !== 'verified' || disableSubmitting}
+                className={`rounded-xl px-4 py-2 font-bold text-white disabled:cursor-not-allowed disabled:opacity-40 ${disableOperation === 'ENABLE' ? 'bg-cyan-600 hover:bg-cyan-700' : 'bg-amber-600 hover:bg-amber-700'}`}
+              >{disableSubmitting
+                ? (disableOperation === 'ENABLE' ? (zh ? '正在启用...' : 'Enabling...') : (zh ? '正在停用...' : 'Disabling...'))
+                : (disableOperation === 'ENABLE' ? (zh ? '确认启用作业' : 'Confirm enable') : (zh ? '确认停用作业' : 'Confirm disable'))}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* --- Delete Approval Modal --- */}
       <DeleteApprovalModal

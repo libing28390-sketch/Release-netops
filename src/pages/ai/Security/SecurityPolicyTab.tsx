@@ -140,13 +140,13 @@ export const SecurityPolicyTab: React.FC = () => {
   const [eventsLoading, setEventsLoading] = useState(false);
   const [incidentsLoading, setIncidentsLoading] = useState(false);
   const [eventPage, setEventPage] = useState(1);
-  const [eventPageSize, setEventPageSize] = useState(20);
+  const [eventPageSize, setEventPageSize] = useState(10);
   const [eventTotal, setEventTotal] = useState(0);
   const [eventSearch, setEventSearch] = useState('');
   const [eventSearchApplied, setEventSearchApplied] = useState('');
   const [eventDecision, setEventDecision] = useState('');
   const [incidentPage, setIncidentPage] = useState(1);
-  const [incidentPageSize, setIncidentPageSize] = useState(20);
+  const [incidentPageSize, setIncidentPageSize] = useState(10);
   const [incidentTotal, setIncidentTotal] = useState(0);
   const [incidentSearch, setIncidentSearch] = useState('');
   const [incidentSearchApplied, setIncidentSearchApplied] = useState('');

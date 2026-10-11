@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type { Device } from '../types';
 import { displaySiteLabel } from '../utils/deviceUtils';
 import { authHeaders } from '../api/http';
+import { getManagedAssetDeviceTotal } from '../utils/assetSummary';
 
 // ─── Inline normalizer (mirrors useInventory.normalizeDeviceRecord) ───────────
 // Keeping this in the store means fetchInventory() needs no external argument,
@@ -106,6 +107,7 @@ const normalizeDeviceRecord = (raw: any): Device => {
 };
 
 let latestInventoryRequestId = 0;
+let latestAssetSummaryRequestId = 0;
 
 // ─── Store ────────────────────────────────────────────────────────────────────
 
@@ -127,7 +129,8 @@ interface InventoryState {
   inventoryLoading: boolean;
   inventoryError: string | null;
   inventoryRefreshTick: number;
-  assetsTotal: number;
+  assetsTotal: number | null;
+  assetsTotalError: string | null;
 
   // Delete modal state
   deviceToDelete: string | null;
@@ -148,18 +151,19 @@ interface InventoryState {
   setSelectedDeviceIds: (ids: string[] | ((prev: string[]) => string[])) => void;
   setInventoryRefreshTick: (tick: number | ((prev: number) => number)) => void;
   setAssetsTotal: (total: number) => void;
+  resetAssetsTotal: () => void;
   setDeviceToDelete: (id: string | null) => void;
   setIsDeletingSelected: (v: boolean) => void;
   setShowDeleteModal: (v: boolean) => void;
 
   // Fetch logic — no external normalizer needed
   fetchInventory: () => Promise<void>;
-  fetchAssetsTotal: () => Promise<void>;
+  fetchAssetsTotal: (signal?: AbortSignal) => Promise<void>;
 }
 
 export const useInventoryStore = create<InventoryState>((set, get) => ({
   inventoryPage: 1,
-  inventoryPageSize: 20,
+  inventoryPageSize: 10,
   inventorySearch: '',
   inventoryPlatformFilter: 'all',
   inventoryRoleFilter: 'all',
@@ -174,7 +178,8 @@ export const useInventoryStore = create<InventoryState>((set, get) => ({
   inventoryLoading: false,
   inventoryError: null,
   inventoryRefreshTick: 0,
-  assetsTotal: 0,
+  assetsTotal: null,
+  assetsTotalError: null,
   deviceToDelete: null,
   isDeletingSelected: false,
   showDeleteModal: false,
@@ -201,7 +206,14 @@ export const useInventoryStore = create<InventoryState>((set, get) => ({
       inventoryRefreshTick:
         typeof tick === 'function' ? tick(state.inventoryRefreshTick) : tick,
     })),
-  setAssetsTotal: (total) => set({ assetsTotal: total }),
+  setAssetsTotal: (total) => {
+    latestAssetSummaryRequestId += 1;
+    set({ assetsTotal: total, assetsTotalError: null });
+  },
+  resetAssetsTotal: () => {
+    latestAssetSummaryRequestId += 1;
+    set({ assetsTotal: null, assetsTotalError: null });
+  },
   setDeviceToDelete: (id) => set({ deviceToDelete: id }),
   setIsDeletingSelected: (v) => set({ isDeletingSelected: v }),
   setShowDeleteModal: (v) => set({ showDeleteModal: v }),
@@ -272,15 +284,24 @@ export const useInventoryStore = create<InventoryState>((set, get) => ({
     }
   },
 
-  fetchAssetsTotal: async () => {
+  fetchAssetsTotal: async (signal) => {
+    const requestId = ++latestAssetSummaryRequestId;
+    set({ assetsTotalError: null });
     try {
-      const resp = await fetch('/api/assets/summary', { headers: authHeaders() });
-      if (resp.ok) {
-        const data = await resp.json();
-        set({ assetsTotal: data.total || 0 });
+      const resp = await fetch('/api/assets/summary', { headers: authHeaders(), signal });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+      const summary = await resp.json();
+      const assetsTotal = getManagedAssetDeviceTotal(summary);
+      if (assetsTotal === null) throw new Error('Invalid asset summary response');
+
+      if (requestId === latestAssetSummaryRequestId) {
+        set({ assetsTotal, assetsTotalError: null });
       }
     } catch {
-      // Ignore
+      if (requestId === latestAssetSummaryRequestId && !signal?.aborted) {
+        set({ assetsTotalError: 'Failed to load asset device total' });
+      }
     }
   },
 }));

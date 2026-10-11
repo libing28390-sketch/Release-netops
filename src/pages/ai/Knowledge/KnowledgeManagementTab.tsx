@@ -456,7 +456,7 @@ export const KnowledgeManagementTab: React.FC = () => {
   const [totalDocuments, setTotalDocuments] = useState(0);
   const [allDirectoryDocuments, setAllDirectoryDocuments] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage, setItemsPerPage] = useState(20);
+  const [itemsPerPage, setItemsPerPage] = useState(10);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [loadError, setLoadError] = useState('');

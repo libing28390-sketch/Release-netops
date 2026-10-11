@@ -12,7 +12,7 @@ def test_wan_link_permissions_follow_viewer_and_operator_profiles() -> None:
 
     viewer = {'role': 'Viewer'}
     operator = {'role': 'Operator'}
-    named_viewer = {'role': 'Viewer', 'role_profile': 'Platform Viewer'}
+    named_viewer = {'role': 'Operator', 'role_profile': 'Platform Viewer'}
     named_maintainer = {'role': 'Operator', 'role_profile': 'Platform Maintainer'}
     named_reviewer = {'role': 'Operator', 'role_profile': 'Release Manager'}
 

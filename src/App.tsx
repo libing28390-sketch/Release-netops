@@ -551,7 +551,7 @@ const App: React.FC = () => {
     try {
       const params = new URLSearchParams({
         page: String(page),
-        page_size: '20',
+        page_size: '10',
         status: statusFilter,
         ...(search ? { search } : {}),
       });

@@ -21,6 +21,7 @@ interface DashboardTabProps {
   setAutoRefreshEnabled: (v: boolean) => void;
   fetchSharedData: () => Promise<void>;
   fetchDevicesData: () => Promise<void>;
+  fetchAssetsTotal: () => Promise<void>;
   selectedJob: Job | null;
   setSelectedJob: (j: Job | null) => void;
   hostResources: HostResourceSnapshot | null;
@@ -30,22 +31,23 @@ interface DashboardTabProps {
   t: (key: string) => string;
   setActiveTab: (tab: string) => void;
   navigate: (path: string) => void;
-  assetsTotal: number;
+  assetsTotal: number | null;
+  assetsTotalError: string | null;
 }
 
 const DashboardTab: React.FC<DashboardTabProps> = ({
   devices, jobs, scheduledTasks, trendDays, setTrendDays,
   complianceTrend, platformData, dashBannerCollapsed, setDashBannerCollapsed,
-  dashLastRefresh, autoRefreshEnabled, setAutoRefreshEnabled, fetchSharedData, fetchDevicesData, selectedJob, setSelectedJob,
+  dashLastRefresh, autoRefreshEnabled, setAutoRefreshEnabled, fetchSharedData, fetchDevicesData, fetchAssetsTotal, selectedJob, setSelectedJob,
   hostResources, unreadNotificationCount, notifications, language, t, setActiveTab, navigate,
-  assetsTotal,
+  assetsTotal, assetsTotalError,
 }) => {
   const { systemInfo } = useSystem();
   const [isManualRefreshing, setIsManualRefreshing] = React.useState(false);
   const handleManualRefresh = async () => {
     setIsManualRefreshing(true);
     try {
-      await Promise.all([fetchSharedData(), fetchDevicesData()]);
+      await Promise.all([fetchSharedData(), fetchDevicesData(), fetchAssetsTotal()]);
     } catch (e) {
       console.error(e);
     } finally {
@@ -210,12 +212,18 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
             <div className="mt-2.5">
               <div className="flex items-baseline gap-1">
                 <span className="nx-kpi-value text-gray-900 dark:text-white">
-                  {assetsTotal > 0 ? assetsTotal : devices.length}
+                  {assetsTotal ?? '—'}
                 </span>
                 <span className="text-xs font-medium text-gray-400">台</span>
               </div>
               <p className="text-[11px] text-gray-400 dark:text-zinc-500 mt-1 flex items-center gap-1">
-                <span>{devices.length} 台设备已纳管</span>
+                <span>
+                  {assetsTotalError
+                    ? (language === 'zh' ? '设备总数暂不可用，系统将自动重试' : 'Asset total unavailable; retrying automatically')
+                    : assetsTotal === null
+                      ? (language === 'zh' ? '正在读取资产管理汇总' : 'Loading Asset Management summary')
+                      : (language === 'zh' ? '网络设备与服务器，数据来自资产管理' : 'Network devices and servers from Asset Management')}
+                </span>
               </p>
             </div>
           </div>

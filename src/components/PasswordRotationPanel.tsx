@@ -128,13 +128,13 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
   const [deviceSearch, setDeviceSearch] = useState('');
   const [devicePlatform, setDevicePlatform] = useState('');
   const [devicePage, setDevicePage] = useState(1);
-  const [devicePageSize, setDevicePageSize] = useState(20);
+  const [devicePageSize, setDevicePageSize] = useState(10);
   const [devicePageData, setDevicePageData] = useState<RotationDevicePage | null>(null);
   const [deviceListLoading, setDeviceListLoading] = useState(false);
   const [deviceListError, setDeviceListError] = useState('');
   const [deviceRequestVersion, setDeviceRequestVersion] = useState(0);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(10);
   const [revealedSecret, setRevealedSecret] = useState<{ id: string; type: 'password' | 'enable_password'; secret: string } | null>(null);
   const [secretLoading, setSecretLoading] = useState<string | null>(null);
   const [secretCopied, setSecretCopied] = useState(false);
@@ -282,7 +282,7 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
     setDeviceSearch('');
     setDevicePlatform('');
     setDevicePage(1);
-    setDevicePageSize(20);
+    setDevicePageSize(10);
     setDevicePageData(null);
     setDeviceListError('');
   };

@@ -630,6 +630,51 @@ def _row_dict(row: Any) -> dict[str, Any] | None:
     return dict(row) if row is not None else None
 
 
+def _authorize_action_device(user: dict[str, Any], device: dict[str, Any]) -> None:
+    """Fail closed for tenantless device rows and enforce the device scope."""
+    from core.rbac import authorize_resource, is_global_administrator
+
+    user_tenant = str(user.get("tenant_id") or "").strip()
+    device_tenant = str(device.get("tenant_id") or "").strip()
+    if not is_global_administrator(user) and (
+        not user_tenant or not device_tenant or user_tenant != device_tenant
+    ):
+        raise PlatformRegistryError(
+            "DEVICE_SCOPE_DENIED",
+            "Device is outside the current tenant scope or has no tenant assignment",
+            status_code=403,
+        )
+    scope = {
+        "tenant_id": device_tenant or None,
+        "site_id": device.get("site_id") or device.get("site"),
+        "device_group_id": device.get("device_group_id"),
+    }
+    if not authorize_resource(user, "command", "execute", **scope):
+        raise PlatformRegistryError(
+            "DEVICE_SCOPE_DENIED",
+            "Device is outside the current resource scope",
+            status_code=403,
+        )
+
+
+def _enable_secret_for_action(user: dict[str, Any], device: dict[str, Any], secret: str) -> str:
+    """Only pass an enable secret to drivers when credential/use is authorized."""
+    if not secret:
+        return ""
+    # The collector identity is created only inside the read-only collection
+    # service; it is not populated from a request/session user.
+    if user.get("_trusted_service_identity") == "collector":
+        return secret
+    from core.rbac import authorize_resource
+
+    scope = {
+        "tenant_id": str(device.get("tenant_id") or "").strip() or None,
+        "site_id": device.get("site_id") or device.get("site"),
+        "device_group_id": device.get("device_group_id"),
+    }
+    return secret if authorize_resource(user, "credential", "use", **scope) else ""
+
+
 class PlatformActionSession:
     """Hold one read-only driver context for several registry actions.
 
@@ -665,21 +710,7 @@ class PlatformActionSession:
             if not device:
                 raise PlatformRegistryError("DEVICE_NOT_FOUND", "Device not found", status_code=404)
 
-            tenant_id = str(self.user.get("tenant_id") or "")
-            if tenant_id and device.get("tenant_id") and tenant_id != str(device["tenant_id"]):
-                raise PlatformRegistryError("DEVICE_SCOPE_DENIED", "Device is outside the current tenant scope", status_code=403)
-            if self.user.get("role") != "Administrator" and device.get("tenant_id") and tenant_id != str(device["tenant_id"]):
-                raise PlatformRegistryError("DEVICE_SCOPE_DENIED", "A tenant-scoped user is required for this device", status_code=403)
-            from core.rbac import authorize_resource
-            if not authorize_resource(
-                self.user,
-                "command",
-                "execute",
-                tenant_id=device.get("tenant_id"),
-                site_id=device.get("site_id") or device.get("site"),
-                device_group_id=device.get("device_group_id"),
-            ):
-                raise PlatformRegistryError("DEVICE_SCOPE_DENIED", "Device is outside the current resource scope", status_code=403)
+            _authorize_action_device(self.user, device)
             if not platform_codes_match(device.get("platform"), device.get("platform_code"), device.get("parser_platform")):
                 raise PlatformRegistryError(
                     "PLATFORM_PROFILE_MISMATCH",
@@ -694,7 +725,9 @@ class PlatformActionSession:
             ssh_credentials = collector_credentials["ssh"]
             device["username"] = ssh_credentials["username"] or ""
             device["password"] = ssh_credentials["password"] or ""
-            device["enable_password"] = ssh_credentials["enable_password"] or ""
+            device["enable_password"] = _enable_secret_for_action(
+                self.user, device, ssh_credentials["enable_password"] or "",
+            )
             driver_type = CONNECTION_DRIVER_TO_IMPLEMENTATION.get(
                 device.get("connection_driver"), device.get("connection_driver")
             )
@@ -1371,21 +1404,7 @@ def preview_platform_action(
         if not row:
             raise PlatformRegistryError("DEVICE_NOT_FOUND", "Device not found", status_code=404)
         device = _row_dict(row) or {}
-        tenant_id = str(user.get("tenant_id") or "")
-        if tenant_id and device.get("tenant_id") and tenant_id != str(device["tenant_id"]):
-            raise PlatformRegistryError("DEVICE_SCOPE_DENIED", "Device is outside the current tenant scope", status_code=403)
-        if user.get("role") != "Administrator" and device.get("tenant_id") and tenant_id != str(device["tenant_id"]):
-            raise PlatformRegistryError("DEVICE_SCOPE_DENIED", "A tenant-scoped user is required for this device", status_code=403)
-        from core.rbac import authorize_resource
-        if not authorize_resource(
-            user,
-            "command",
-            "execute",
-            tenant_id=device.get("tenant_id"),
-            site_id=device.get("site_id") or device.get("site"),
-            device_group_id=device.get("device_group_id"),
-        ):
-            raise PlatformRegistryError("DEVICE_SCOPE_DENIED", "Device is outside the current resource scope", status_code=403)
+        _authorize_action_device(user, device)
         if action_code == "get_transceivers":
             # Older published releases store a CLI command for this action;
             # optical data is now explicitly an SNMP-only operation.
@@ -1991,21 +2010,7 @@ def execute_platform_action(
         if not row:
             raise PlatformRegistryError("DEVICE_NOT_FOUND", "Device not found", status_code=404)
         device = _row_dict(row) or {}
-        tenant_id = str(user.get("tenant_id") or "")
-        if tenant_id and device.get("tenant_id") and tenant_id != str(device["tenant_id"]):
-            raise PlatformRegistryError("DEVICE_SCOPE_DENIED", "Device is outside the current tenant scope", status_code=403)
-        if user.get("role") != "Administrator" and device.get("tenant_id") and tenant_id != str(device["tenant_id"]):
-            raise PlatformRegistryError("DEVICE_SCOPE_DENIED", "A tenant-scoped user is required for this device", status_code=403)
-        from core.rbac import authorize_resource
-        if not authorize_resource(
-            user,
-            "command",
-            "execute",
-            tenant_id=device.get("tenant_id"),
-            site_id=device.get("site_id") or device.get("site"),
-            device_group_id=device.get("device_group_id"),
-        ):
-            raise PlatformRegistryError("DEVICE_SCOPE_DENIED", "Device is outside the current resource scope", status_code=403)
+        _authorize_action_device(user, device)
         if device.get("sensitive_level") == "sensitive" and user.get("role") != "Administrator":
             raise PlatformRegistryError("SENSITIVE_ACTION_FORBIDDEN", f"{action_code} requires Administrator permission", status_code=403)
         if action_code == "get_transceivers":
@@ -2090,7 +2095,9 @@ def execute_platform_action(
             ssh_credentials = collector_credentials["ssh"]
             device["username"] = ssh_credentials["username"] or ""
             device["password"] = ssh_credentials["password"] or ""
-            device["enable_password"] = ssh_credentials["enable_password"] or ""
+            device["enable_password"] = _enable_secret_for_action(
+                user, device, ssh_credentials["enable_password"] or "",
+            )
             driver_type = CONNECTION_DRIVER_TO_IMPLEMENTATION.get(device.get("connection_driver"), device.get("connection_driver"))
             device["driver_type"] = driver_type
             device["platform"] = device.get("connection_driver") or device.get("platform")

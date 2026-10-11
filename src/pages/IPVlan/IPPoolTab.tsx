@@ -58,7 +58,7 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t, prefixId = '', embed
   const hasLoadedPools = useRef(false);
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(10);
   const [totalPools, setTotalPools] = useState(0);
   const [loadError, setLoadError] = useState('');
 

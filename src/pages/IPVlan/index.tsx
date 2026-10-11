@@ -109,8 +109,8 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
   const [addrViewMode, setAddrViewMode] = useState<'table' | 'card' | 'block'>('table');
   const [subnetGroupBy, setSubnetGroupBy] = useState<'none' | 'site'>('none');
   const [siteCollapsed, setSiteCollapsed] = useState<Record<string, boolean>>({});
-  const [subnetPageSizeOpt, setSubnetPageSizeOpt] = useState(20);
-  const [addrPageSizeOpt, setAddrPageSizeOpt] = useState(20);
+  const [subnetPageSizeOpt, setSubnetPageSizeOpt] = useState(10);
+  const [addrPageSizeOpt, setAddrPageSizeOpt] = useState(10);
   const [addrTotal, setAddrTotal] = useState(0);
   const [overviewCollapsed, setOverviewCollapsed] = useState(true);
   const [compactSubnetList, setCompactSubnetList] = useState(false);

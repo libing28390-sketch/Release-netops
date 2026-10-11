@@ -180,7 +180,7 @@ describe('MonitoringReportsPage requests', () => {
   });
 
   it.each(paginatedReportCases)(
-    '$label uses one consistent 20-row page size and shows the remaining row on the next page',
+    '$label uses one consistent 10-row page size and paginates the remaining rows',
     async ({ path, rowName, createItem }) => {
       const items = Array.from({ length: 21 }, (_, index) => createItem(index));
       vi.mocked(fetch).mockResolvedValue(response({
@@ -196,9 +196,14 @@ describe('MonitoringReportsPage requests', () => {
       );
 
       expect(await screen.findByText(rowName(0))).toBeTruthy();
-      await waitFor(() => expect(container.querySelectorAll('tbody tr')).toHaveLength(20));
-      expect((screen.getByLabelText('Items per page') as HTMLSelectElement).value).toBe('20');
+      await waitFor(() => expect(container.querySelectorAll('tbody tr')).toHaveLength(10));
+      expect((screen.getByLabelText('Items per page') as HTMLSelectElement).value).toBe('10');
       expect(screen.getByText('21 records found')).toBeTruthy();
+
+      fireEvent.click(screen.getByTitle('Next page'));
+
+      expect(await screen.findByText(rowName(10))).toBeTruthy();
+      await waitFor(() => expect(container.querySelectorAll('tbody tr')).toHaveLength(10));
 
       fireEvent.click(screen.getByTitle('Next page'));
 

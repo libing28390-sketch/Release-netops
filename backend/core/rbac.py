@@ -55,6 +55,11 @@ RESOURCE_ACTION_CATALOG = {
     'knowledge_catalog': {'read', 'view', 'create', 'update', 'delete', 'resolve', 'review', 'import', 'rollback'},
     'knowledge_collection': {'read', 'view', 'create', 'update', 'archive'},
     'command': {'view', 'edit_draft', 'test', 'execute'},
+    'script': {'view', 'create', 'edit_draft', 'submit', 'approve', 'publish', 'execute', 'delete'},
+    'scheduled_job': {'view', 'create', 'update', 'enable', 'disable', 'delete', 'execute'},
+    'change_order': {'view', 'create', 'update', 'submit', 'approve', 'implement', 'cancel', 'delete'},
+    'credential': {'view', 'create', 'update', 'rotate', 'use', 'delete'},
+    'user': {'view', 'create', 'update', 'delete', 'manage_scopes'},
     'pam': {'view', 'request_approval', 'approve', 'create_change', 'intervene'},
     'textfsm': {'view', 'create', 'edit_draft', 'delete', 'test', 'submit', 'approve', 'publish', 'rollback', 'deprecate'},
     'sample_output': {'upload', 'view', 'delete'},
@@ -66,6 +71,13 @@ RESOURCE_ACTION_CATALOG = {
 # sessions and installations continue to work while resource actions use the
 # narrower profile when one is assigned.
 RECOMMENDED_ROLE_PROFILES = {
+    # Standard account type for a non-administrator.  It may open and read
+    # change requests in its tenant, but it cannot execute commands, approve,
+    # intervene in PAM sessions, or operate automation jobs.
+    'Change Requester': {
+        'pam': {'view', 'create_change'},
+        'change_order': {'view', 'create', 'update'},
+    },
     'Platform Viewer': {
         'rack': {'read', 'view'},
         'asset': {'read', 'view'},
@@ -75,6 +87,7 @@ RECOMMENDED_ROLE_PROFILES = {
     },
     'Template Developer': {
         'platform': {'view'}, 'command': {'view', 'test'},
+        'script': {'view', 'create', 'edit_draft', 'submit'},
         'textfsm': {'view', 'create', 'edit_draft', 'delete', 'test', 'submit'},
         'sample_output': {'upload', 'view', 'delete'}, 'playbook': {'view'},
     },
@@ -97,6 +110,7 @@ RECOMMENDED_ROLE_PROFILES = {
     },
     'Release Manager': {
         'platform': {'view', 'approve', 'publish', 'rollback'},
+        'script': {'view', 'approve', 'publish'},
         'command': {'view'}, 'textfsm': {'view', 'approve', 'publish', 'rollback', 'deprecate'},
         'pam': {'view', 'approve'},
         'sample_output': {'view'},
@@ -191,6 +205,11 @@ def _profile_for_user(user: dict) -> str:
 
 def _action_allowed(user: dict, resource_type: str, action: str) -> bool:
     profile = _profile_for_user(user)
+    if user.get('role') == 'Viewer' and profile and profile != 'Change Requester':
+        # Older user forms allowed an ordinary account to retain a separate
+        # execution/administration profile. The account-type policy now fails
+        # closed until the migration replaces that profile.
+        return False
     if profile:
         permissions = RECOMMENDED_ROLE_PROFILES.get(profile, {})
         allowed = permissions.get(resource_type, set()) | permissions.get('*', set())
@@ -236,23 +255,30 @@ def authorize_resource(
 ) -> bool:
     """Evaluate resource/action and optional tenant/site/device-group scope.
 
-    Explicit rows in ``user_resource_scopes`` narrow access. Existing users
-    without scope rows retain the role-compatible behavior, while a user with
-    ``tenant_id`` can never cross into another tenant.
+    Explicit rows in ``user_resource_scopes`` narrow access. Existing legacy
+    users without scope rows retain role-compatible behavior. Accounts marked
+    ``scope_mode=restricted`` must have an explicit matching scope; an empty
+    scope list therefore means no resource access.
     """
     role = user.get('role', '')
     if not _action_allowed(user, resource_type, action):
         return False
-    if role == 'Administrator':
-        return True
-
     user_tenant = str(user.get('tenant_id') or '')
-    if user_tenant and tenant_id and user_tenant != str(tenant_id):
+    system_admin = role == 'Administrator' and user.get('role_profile') == 'System Administrator'
+    global_admin = role == 'Administrator' and (not user_tenant or system_admin)
+    if tenant_id is not None and not global_admin and not user_tenant:
         return False
+    if user_tenant and tenant_id is not None and user_tenant != str(tenant_id) and not system_admin:
+        return False
+    if global_admin:
+        return True
 
     user_id = str(user.get('id') or user.get('user_id') or '')
     if not user_id:
-        return True
+        # Tenant-scoped and restricted decisions require a stable subject ID
+        # so the explicit scope rows can be evaluated. Preserve only the
+        # legacy, unscoped compatibility path for old internal callers.
+        return tenant_id is None and str(user.get('scope_mode') or 'legacy') != 'restricted'
     try:
         from database import get_db_connection
         conn = get_db_connection()
@@ -269,7 +295,7 @@ def authorize_resource(
         logger.warning("Resource scope lookup unavailable; denying access", exc_info=True)
         return False
     if not rows:
-        return True
+        return str(user.get('scope_mode') or 'legacy') != 'restricted'
 
     candidates = {
         'global': '',
@@ -315,6 +341,39 @@ def require_permission(resource_type: str, action: str):
             raise HTTPException(status_code=401, detail="Authentication required")
         return enforce_resource_scope(user, resource_type, action)
     return Depends(dependency)
+
+
+def require_change_requester(request: Request):
+    """Authorize creation/editing of a user's own tenant-scoped change order.
+
+    A normal account is intentionally a Viewer at the HTTP layer. This
+    narrowly scoped dependency permits the one create-change action that the
+    requester workflow needs, without granting general POST/PUT execution.
+    """
+    user = _get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    tenant_id = str(user.get('tenant_id') or '').strip()
+    is_global_admin = (
+        user.get('role') == 'Administrator'
+        and (not tenant_id or user.get('role_profile') == 'System Administrator')
+    )
+    if not tenant_id and not is_global_admin:
+        raise HTTPException(status_code=403, detail='A tenant assignment is required for change requests')
+    return enforce_resource_scope(
+        user,
+        'pam',
+        'create_change',
+        tenant_id=tenant_id or None,
+    )
+
+
+def is_global_administrator(user: dict) -> bool:
+    """Whether this account has the explicitly global admin boundary."""
+    tenant_id = str(user.get('tenant_id') or '').strip()
+    return user.get('role') == 'Administrator' and (
+        not tenant_id or user.get('role_profile') == 'System Administrator'
+    )
 
 
 def require_admin(request: Request):

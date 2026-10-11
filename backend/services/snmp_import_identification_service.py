@@ -24,8 +24,21 @@ IDENTITY_OIDS = {
     "sys_name": "1.3.6.1.2.1.1.5.0",
 }
 
-_SNMPV3_AUTH_METHODS = {"md5": "md5", "sha": "sha1"}
-_SNMPV3_PRIV_METHODS = {"aes": "aes", "des": "des"}
+_SNMPV3_AUTH_METHODS = {
+    "md5": "md5",
+    "sha": "sha1",
+    "sha1": "sha1",
+    "sha-1": "sha1",
+    "sha224": "sha224",
+    "sha-224": "sha224",
+    "sha256": "sha256",
+    "sha-256": "sha256",
+    "sha384": "sha384",
+    "sha-384": "sha384",
+    "sha512": "sha512",
+    "sha-512": "sha512",
+}
+_SNMPV3_PRIV_METHODS = {"aes": "aes", "aes-128": "aes", "des": "des"}
 _PLATFORM_FAMILY_ALIASES = {
     "huawei": {
         "huawei": "huawei_vrp",
@@ -103,7 +116,12 @@ def _resolve_probe_settings(
             community = decrypt_credential(credential.get("snmp_community") or "") or ""
             if not community:
                 return None, "credential_incomplete"
-            return {"version": "2c", "community": community, "port": port}, ""
+            return {
+                "version": "2c",
+                "community": community,
+                "server": str(credential.get("snmp_server") or device.get("snmp_server") or "").strip(),
+                "port": port,
+            }, ""
         if credential_type == "snmpv3":
             username = str(credential.get("username") or "").strip()
             level = str(credential.get("snmp_security_level") or "authPriv").strip().casefold()
@@ -115,8 +133,6 @@ def _resolve_probe_settings(
             )
             auth_password = decrypt_credential(credential.get("snmp_auth_password") or "") or ""
             priv_password = decrypt_credential(credential.get("snmp_priv_password") or "") or ""
-            if str(credential.get("snmp_context_name") or "").strip():
-                return None, "snmpv3_context_unsupported"
             if not username or level not in {"noauthnopriv", "authnopriv", "authpriv"}:
                 return None, "credential_incomplete"
             if level != "noauthnopriv" and (not auth_password or not auth_method):
@@ -130,6 +146,9 @@ def _resolve_probe_settings(
                 "auth_method": auth_method if level != "noauthnopriv" else "",
                 "priv_password": priv_password,
                 "priv_method": priv_method if level == "authpriv" else "",
+                "context_name": str(credential.get("snmp_context_name") or ""),
+                "security_level": level,
+                "server": str(credential.get("snmp_server") or device.get("snmp_server") or "").strip(),
                 "port": port,
             }, ""
         return None, "credential_type_unsupported"
@@ -137,7 +156,12 @@ def _resolve_probe_settings(
     community = decrypt_credential(device.get("snmp_community") or "") or ""
     if not community:
         return None, "missing_credentials"
-    return {"version": "2c", "community": community, "port": port}, ""
+    return {
+        "version": "2c",
+        "community": community,
+        "server": str(device.get("snmp_server") or "").strip(),
+        "port": port,
+    }, ""
 
 
 async def _read_identity(ip: str, settings: Mapping[str, Any]) -> dict[str, str]:
@@ -154,6 +178,8 @@ async def _read_identity(ip: str, settings: Mapping[str, Any]) -> dict[str, str]
             auth_protocol=str(settings.get("auth_method") or ""),
             priv_password=str(settings.get("priv_password") or ""),
             priv_protocol=str(settings.get("priv_method") or ""),
+            context_name=str(settings.get("context_name") or ""),
+            security_level=str(settings.get("security_level") or ""),
         )
     else:
         getter = lambda oid: snmp_service._snmp_get(
@@ -166,14 +192,24 @@ async def _read_identity(ip: str, settings: Mapping[str, Any]) -> dict[str, str]
     fields = tuple(IDENTITY_OIDS.items())
     values = await asyncio.gather(*(getter(oid) for _field, oid in fields), return_exceptions=True)
     identity: dict[str, str] = {}
+    probe_errors = [value for value in values if isinstance(value, BaseException)]
+    if probe_errors:
+        identity["_probe_error"] = type(probe_errors[0]).__name__
     for (field, _oid), value in zip(fields, values):
         if not isinstance(value, BaseException) and value is not None:
             identity[field] = str(value).strip()
     return identity
 
 
-def _safe_result(item: Mapping[str, Any], status: str, message: str, **details: Any) -> dict[str, Any]:
-    return {
+def _safe_result(
+    item: Mapping[str, Any],
+    status: str,
+    message: str,
+    *,
+    hostname_sync: Mapping[str, Any] | None = None,
+    **details: Any,
+) -> dict[str, Any]:
+    result = {
         "device_id": str(item.get("device_id") or ""),
         "row": item.get("row"),
         "asset_tag": str(item.get("asset_tag") or ""),
@@ -183,19 +219,67 @@ def _safe_result(item: Mapping[str, Any], status: str, message: str, **details: 
         "message": message,
         **details,
     }
+    if hostname_sync is not None:
+        result["hostname_sync"] = dict(hostname_sync)
+    return result
+
+
+def _sync_hostname_from_sys_name(item: Mapping[str, Any], raw_sys_name: Any) -> dict[str, str]:
+    """Persist the sysName already read for identity detection, without another SNMP GET."""
+    from services.hostname_sync_service import (
+        clean_system_hostname,
+        schedule_monitoring_target_sync_if_hostname_changed,
+        sync_device_hostname_metadata,
+    )
+
+    clean_name = clean_system_hostname(raw_sys_name)
+    if not clean_name:
+        return {"status": "failed", "hostname": "", "error": "设备未返回有效的 SNMP sysName.0"}
+
+    device_id = str(item.get("device_id") or "").strip()
+    conn = get_db_connection()
+    try:
+        sync_result = sync_device_hostname_metadata(conn, device_id, raw_sys_name)
+        if not sync_result:
+            conn.rollback()
+            return {"status": "failed", "hostname": "", "error": "主机名无法写回 CMDB：设备记录不存在"}
+        conn.commit()
+    except Exception as exc:
+        conn.rollback()
+        logger.warning(
+            "Asset import hostname write failed for device %s (%s)",
+            device_id,
+            type(exc).__name__,
+        )
+        return {"status": "failed", "hostname": "", "error": "SNMP 主机名无法写回 CMDB"}
+    finally:
+        conn.close()
+
+    schedule_monitoring_target_sync_if_hostname_changed(sync_result)
+    return {"status": "synced", "hostname": clean_name, "error": ""}
 
 
 async def identify_imported_device(item: Mapping[str, Any], semaphore: Any) -> dict[str, Any]:
     """Probe one committed device and enrich its LibreNMS-derived identity fields."""
     device_id = str(item.get("device_id") or "").strip()
     if not device_id:
-        return _safe_result(item, "device_missing", "导入结果中缺少设备记录")
+        return _safe_result(
+            item,
+            "device_missing",
+            "导入结果中缺少设备记录",
+            hostname_sync={"status": "failed", "hostname": "", "error": "设备记录不存在"},
+        )
 
     conn = get_db_connection()
     try:
         row = conn.execute("SELECT * FROM devices WHERE id = ?", (device_id,)).fetchone()
         if not row:
-            return _safe_result(item, "device_missing", "设备记录不存在")
+            return _safe_result(
+                item,
+                "device_missing",
+                "设备记录不存在",
+                hostname_sync={"status": "failed", "hostname": "", "error": "设备记录不存在"},
+            )
         device = dict(row)
         settings, settings_error = _resolve_probe_settings(
             conn,
@@ -211,15 +295,25 @@ async def identify_imported_device(item: Mapping[str, Any], semaphore: Any) -> d
             "credential_missing": "绑定的 SNMP 凭据已不存在，未执行自动识别",
             "credential_incomplete": "SNMP 凭据字段不完整，未执行自动识别",
             "credential_type_unsupported": "当前凭据类型不支持 SNMP 识别",
-            "snmpv3_context_unsupported": "当前识别探测不支持 SNMPv3 Context Name",
             "snmpv3_auth_unsupported": "当前识别探测不支持该 SNMPv3 认证算法",
             "snmpv3_priv_unsupported": "当前识别探测不支持该 SNMPv3 加密算法",
         }
-        return _safe_result(item, settings_error, messages.get(settings_error, "SNMP 凭据不可用于识别"))
+        failure = messages.get(settings_error, "SNMP 凭据不可用于识别")
+        return _safe_result(
+            item,
+            settings_error,
+            failure,
+            hostname_sync={"status": "failed", "hostname": "", "error": failure},
+        )
 
-    ip = str(device.get("ip_address") or item.get("ip") or "").strip()
+    ip = str(settings.get("server") or device.get("ip_address") or item.get("ip") or "").strip()
     if not ip:
-        return _safe_result(item, "missing_ip", "缺少管理 IP，未执行自动识别")
+        return _safe_result(
+            item,
+            "missing_ip",
+            "缺少管理 IP，未执行自动识别",
+            hostname_sync={"status": "failed", "hostname": "", "error": "缺少管理 IP"},
+        )
 
     try:
         async with semaphore:
@@ -230,9 +324,30 @@ async def identify_imported_device(item: Mapping[str, Any], semaphore: Any) -> d
             device_id,
             type(exc).__name__,
         )
-        return _safe_result(item, "probe_failed", "SNMP 身份读取失败，请检查管理 IP、端口、凭据及访问控制")
+        failure = f"SNMP 主机名读取失败（{type(exc).__name__}）"
+        return _safe_result(
+            item,
+            "probe_failed",
+            "SNMP 身份读取失败，请检查管理 IP、端口、凭据及访问控制",
+            hostname_sync={"status": "failed", "hostname": "", "error": failure},
+        )
+    raw_sys_name = str(observed.get("sys_name") or "").strip()
+    hostname_sync = _sync_hostname_from_sys_name(item, raw_sys_name) if raw_sys_name else {
+        "status": "failed",
+        "hostname": "",
+        "error": (
+            f"SNMP 主机名读取失败（{observed['_probe_error']}）"
+            if observed.get("_probe_error")
+            else "设备未返回 SNMP sysName.0"
+        ),
+    }
     if not any(observed.get(field) for field in IDENTITY_OIDS):
-        return _safe_result(item, "probe_failed", "设备未返回 SNMP 系统身份信息，请检查管理 IP、端口、凭据及访问控制")
+        return _safe_result(
+            item,
+            "probe_failed",
+            "设备未返回 SNMP 系统身份信息，请检查管理 IP、端口、凭据及访问控制",
+            hostname_sync=hostname_sync,
+        )
 
     try:
         await asyncio.to_thread(ensure_rules_available)
@@ -255,6 +370,7 @@ async def identify_imported_device(item: Mapping[str, Any], semaphore: Any) -> d
                 item,
                 "rule_ambiguous",
                 "多条 LibreNMS 识别规则同分匹配，未自动选择设备身份",
+                hostname_sync=hostname_sync,
                 detected_vendor=str((rule or {}).get("vendor") or ""),
                 detected_platform=str((rule or {}).get("platform") or ""),
                 identity_source="librenms",
@@ -279,6 +395,7 @@ async def identify_imported_device(item: Mapping[str, Any], semaphore: Any) -> d
                 item,
                 "identity_conflict",
                 "SNMP 识别到的厂商与导入填写的厂商不一致，未覆盖资产信息",
+                hostname_sync=hostname_sync,
                 detected_vendor=detected_vendor,
                 detected_model=str(identity.get("model") or ""),
                 identity_source=str(identity.get("source") or ""),
@@ -288,6 +405,7 @@ async def identify_imported_device(item: Mapping[str, Any], semaphore: Any) -> d
                 item,
                 "unidentified",
                 "已读取 SNMP 信息，但本地 LibreNMS 规则和厂商映射未能识别设备",
+                hostname_sync=hostname_sync,
                 identity_source=str(identity.get("source") or "none"),
             )
 
@@ -319,6 +437,7 @@ async def identify_imported_device(item: Mapping[str, Any], semaphore: Any) -> d
             item,
             "identified",
             "已按 LibreNMS 设备身份规则识别厂商、平台和型号；硬件采集由对应 LibreNMS YAML 规则决定",
+            hostname_sync=hostname_sync,
             detected_vendor=detected_vendor,
             detected_platform=detected_platform,
             detected_model=detected_model,
@@ -327,7 +446,12 @@ async def identify_imported_device(item: Mapping[str, Any], semaphore: Any) -> d
     except Exception as exc:
         conn.rollback()
         logger.warning("Asset import SNMP identity resolution failed for device %s (%s)", device_id, type(exc).__name__)
-        return _safe_result(item, "identification_failed", "SNMP 身份识别失败，资产数据已保留")
+        return _safe_result(
+            item,
+            "identification_failed",
+            "SNMP 身份识别失败，资产数据已保留",
+            hostname_sync=hostname_sync,
+        )
     finally:
         conn.close()
 

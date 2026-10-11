@@ -18,6 +18,36 @@ import HistoryList from './components/HistoryList';
 import ExecutionDetail from './components/ExecutionDetail';
 import CandidateModal from './components/CandidateModal';
 
+type ExecutionScheduleOperation = 'CREATE' | 'ENABLE' | 'DISABLE' | 'DELETE';
+
+interface ExecutionScheduleOperationManifest {
+  operation: ExecutionScheduleOperation;
+  job_id: string;
+  job_type: 'cron' | 'once';
+  name: string;
+  action: string;
+  scope: { type: string; filter: string };
+  cron_expr: string;
+  scheduled_at: string;
+  check_items: string[];
+  commands: string;
+  script_id: string;
+  is_config: 0 | 1;
+  use_admin_creds: 0 | 1;
+  enabled: boolean;
+  config_reason: string;
+}
+
+interface PendingScheduleOperation {
+  operation: 'ENABLE' | 'DISABLE' | 'DELETE';
+  job: ScheduledJob;
+}
+
+const normalizeCheckItems = (items: unknown): string[] => {
+  const values = Array.isArray(items) ? items : String(items || '').split(/[,\n]+/);
+  return values.map(item => String(item).trim()).filter(Boolean);
+};
+
 const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
   language,
   showToast,
@@ -32,7 +62,7 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
   const [inspSchedules, setInspSchedules] = useState<ScheduledJob[]>([]);
   const [inspSchedulesLoading, setInspSchedulesLoading] = useState(false);
   const [inspSchedulePage, setInspSchedulePage] = useState(1);
-  const [inspSchedulePageSize, setInspSchedulePageSize] = useState(20);
+  const [inspSchedulePageSize, setInspSchedulePageSize] = useState(10);
   const [inspScheduleTotal, setInspScheduleTotal] = useState(0);
   const [showAddInspSchedule, setShowAddInspSchedule] = useState(false);
   const [form, setForm] = useState<FormState>({ ...INITIAL_FORM });
@@ -63,7 +93,7 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
   const [inspRuns, setInspRuns] = useState<any[]>([]);
   const [inspRunsLoading, setInspRunsLoading] = useState(false);
   const [inspRunPage, setInspRunPage] = useState(1);
-  const [inspRunPageSize, setInspRunPageSize] = useState(20);
+  const [inspRunPageSize, setInspRunPageSize] = useState(10);
   const [inspRunTotal, setInspRunTotal] = useState(0);
   const [inspSubTab, setInspSubTab] = useState<InspSubTab>(initialTab || 'schedules');
 
@@ -117,6 +147,10 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
   const [approvalCode, setApprovalCode] = useState('');
   const [approvalStatus, setApprovalStatus] = useState<'idle' | 'sending' | 'sent' | 'verified'>('idle');
   const [approvalError, setApprovalError] = useState('');
+  const [approvalManifest, setApprovalManifest] = useState<ExecutionScheduleOperationManifest | null>(null);
+  const [pendingScheduleOperation, setPendingScheduleOperation] = useState<PendingScheduleOperation | null>(null);
+  const [operationApprovalReason, setOperationApprovalReason] = useState('');
+  const [operationLoading, setOperationLoading] = useState(false);
 
   const authHeaders = useMemo(() => {
     const token = localStorage.getItem('netops_token');
@@ -291,6 +325,65 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
     if (form.device_scope === 'ip') return ipDevices.map(d => d.ip).join(',');
     return form.device_filter;
   };
+
+  const buildFormOperationManifest = (): ExecutionScheduleOperationManifest => {
+    const action = form.action_type.trim();
+    const checkItems = action === 'inspection' ? normalizeCheckItems(form.check_items) : [];
+    const commands = action === 'inspection' && checkItems.length > 0
+      ? checkItems.join(',')
+      : form.commands;
+    return {
+      operation: 'CREATE',
+      job_id: '',
+      job_type: 'once',
+      name: form.name.trim(),
+      action,
+      scope: { type: form.device_scope.trim(), filter: resolveFilter().trim() },
+      cron_expr: '',
+      scheduled_at: form.scheduled_at.trim(),
+      check_items: checkItems,
+      commands,
+      script_id: form.script_id.trim(),
+      is_config: form.is_config ? 1 : 0,
+      use_admin_creds: form.use_admin_creds ? 1 : 0,
+      enabled: true,
+      config_reason: form.config_reason.trim(),
+    };
+  };
+
+  const buildJobOperationManifest = (
+    operation: ExecutionScheduleOperation,
+    job: ScheduledJob,
+  ): ExecutionScheduleOperationManifest => {
+    const action = String(job.action_type || '').trim();
+    const checkItems = action === 'inspection' ? normalizeCheckItems(job.check_items) : [];
+    const commands = action === 'inspection' && checkItems.length > 0
+      ? checkItems.join(',')
+      : String(job.commands || '');
+    return {
+      operation,
+      job_id: String(job.id),
+      job_type: job.job_type === 'cron' ? 'cron' : 'once',
+      name: String(job.name || '').trim(),
+      action,
+      scope: {
+        type: String(job.device_scope || '').trim(),
+        filter: String(job.device_filter || '').trim(),
+      },
+      cron_expr: String(job.cron_expr || '').trim(),
+      scheduled_at: String(job.scheduled_at || '').trim(),
+      check_items: checkItems,
+      commands,
+      script_id: String(job.script_id || '').trim(),
+      is_config: Number(job.is_config) === 1 ? 1 : 0,
+      use_admin_creds: Number(job.use_admin_creds) === 1 ? 1 : 0,
+      enabled: operation === 'ENABLE' ? true : operation === 'DISABLE' ? false : Number(job.enabled) === 1,
+      config_reason: String(job.config_reason || '').trim(),
+    };
+  };
+
+  const sameManifest = (left: ExecutionScheduleOperationManifest | null, right: ExecutionScheduleOperationManifest) =>
+    left !== null && JSON.stringify(left) === JSON.stringify(right);
 
   const fetchInspRuns = useCallback(async () => {
     setInspRunsLoading(true);
@@ -649,8 +742,8 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
   }, [authHeaders]);
 
   useEffect(() => {
-    if (showAddInspSchedule) fetchApprovers();
-  }, [showAddInspSchedule, fetchApprovers]);
+    if (showAddInspSchedule || pendingScheduleOperation) fetchApprovers();
+  }, [showAddInspSchedule, pendingScheduleOperation, fetchApprovers]);
 
   /* ═══ APPROVAL ═══ */
   const resetApproval = () => {
@@ -659,10 +752,24 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
     setApprovalToken('');
     setApprovalCode('');
     setApprovalError('');
+    setApprovalManifest(null);
   };
 
   const requestApproval = async () => {
     if (!approverUsername) return;
+    const operationManifest = pendingScheduleOperation
+      ? buildJobOperationManifest(pendingScheduleOperation.operation, pendingScheduleOperation.job)
+      : buildFormOperationManifest();
+    const defaultReason = pendingScheduleOperation
+      ? `${pendingScheduleOperation.operation === 'ENABLE'
+        ? (zh ? '启用执行计划' : 'Enable execution schedule')
+        : pendingScheduleOperation.operation === 'DISABLE'
+          ? (zh ? '停用执行计划' : 'Disable execution schedule')
+          : (zh ? '删除执行计划' : 'Delete execution schedule')}: ${operationManifest.name}`
+      : `${zh ? '创建执行计划' : 'Create execution schedule'}: ${operationManifest.name}`;
+    const configReason = pendingScheduleOperation
+      ? operationApprovalReason.trim() || defaultReason
+      : operationManifest.config_reason || defaultReason;
     setApprovalStatus('sending');
     setApprovalError('');
     try {
@@ -671,19 +778,24 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
         headers: authHeaders,
         body: JSON.stringify({
           approver_username: approverUsername,
-          config_reason: form.config_reason || `${zh ? '创建执行计划' : 'Create execution schedule'}: ${form.name}`,
-          device_hostname: resolveFilter() || (zh ? '全部设备' : 'All devices'),
-          command_preview: form.commands || '',
+          config_reason: configReason,
+          device_hostname: operationManifest.scope.type === 'all'
+            ? (zh ? '全部设备' : 'All devices')
+            : (operationManifest.scope.filter || operationManifest.scope.type),
+          command_preview: operationManifest.commands || operationManifest.check_items.join(','),
           approval_type: 'execution_plan',
+          operation_manifest: operationManifest,
           extra_fields: {
-            action_type: form.action_type,
-            schedule_desc: form.scheduled_at ? fmtDateTime(form.scheduled_at, zh) : (zh ? '未设定' : 'Not set'),
+            action_type: operationManifest.action,
+            schedule_desc: operationManifest.scheduled_at ? fmtDateTime(operationManifest.scheduled_at, zh) : (zh ? '未设定' : 'Not set'),
+            operation: operationManifest.operation,
           },
         }),
       });
       const j = await r.json();
       if (r.ok && j.success) {
         setApprovalToken(j.approval_token);
+        setApprovalManifest(operationManifest);
         setApprovalStatus('sent');
         showToast(zh ? '验证码已发送至审批人' : 'Code sent to approver', 'success');
       } else {
@@ -697,12 +809,12 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
   };
 
   const verifyApproval = async () => {
-    if (!approvalToken || !approvalCode) return;
+    if (!approvalToken || !approvalCode || !approvalManifest) return;
     try {
       const r = await fetch('/api/config-approval/verify', {
         method: 'POST',
         headers: authHeaders,
-        body: JSON.stringify({ approval_token: approvalToken, code: approvalCode }),
+        body: JSON.stringify({ approval_token: approvalToken, code: approvalCode, approval_type: 'execution_plan', operation_manifest: approvalManifest }),
       });
       const j = await r.json();
       if (r.ok && j.success) {
@@ -731,22 +843,31 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
       return;
     }
     try {
+      const operationManifest = buildFormOperationManifest();
+      if (!sameManifest(approvalManifest, operationManifest)) {
+        resetApproval();
+        showToast(zh ? '计划配置已变化，请重新申请审批' : 'The schedule configuration changed. Request approval again.', 'error');
+        return;
+      }
       const payload = {
-        name: form.name,
-        action_type: form.action_type,
-        job_type: 'once',
-        scheduled_at: form.scheduled_at,
-        cron_expr: '',
-        device_scope: form.device_scope,
-        device_filter: resolveFilter(),
-        script_id: form.script_id,
-        commands: form.commands,
-        config_reason: form.config_reason,
-        use_admin_creds: form.use_admin_creds ? 1 : 0,
+        name: operationManifest.name,
+        action_type: operationManifest.action,
+        job_type: operationManifest.job_type,
+        scheduled_at: operationManifest.scheduled_at,
+        cron_expr: operationManifest.cron_expr,
+        device_scope: operationManifest.scope.type,
+        device_filter: operationManifest.scope.filter,
+        script_id: operationManifest.script_id,
+        commands: operationManifest.commands,
+        is_config: operationManifest.is_config,
+        config_reason: operationManifest.config_reason,
+        use_admin_creds: operationManifest.use_admin_creds,
+        enabled: operationManifest.enabled,
         approval_token: approvalToken,
         approval_code: approvalCode,
-        description: form.description,
-        check_items: form.check_items,
+        description: form.description.trim(),
+        check_items: operationManifest.check_items,
+        operation_manifest: operationManifest,
       };
 
       const r = await fetch('/api/scheduled-jobs', {
@@ -760,6 +881,7 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
         setIpDevices([]);
         setTagFilter({ ...EMPTY_TAG_FILTER });
         resetApproval();
+        setOperationApprovalReason('');
         setInspSchedulePage(1);
         fetchInspSchedules();
         showToast(zh ? '执行计划已创建' : 'Execution schedule created', 'success');
@@ -773,21 +895,85 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
   };
 
   const deleteInspSchedule = async (id: string) => {
+    await startScheduleOperation('DELETE', id);
+  };
+
+  const fetchScheduleForOperation = async (id: string): Promise<ScheduledJob | null> => {
+    setOperationLoading(true);
     try {
-      await fetch(`/api/scheduled-jobs/${id}`, { method: 'DELETE', headers: authHeaders });
+      const response = await fetch(`/api/scheduled-jobs/${encodeURIComponent(id)}`, { headers: authHeaders });
+      const payload = await response.json().catch(() => null) as { success?: boolean; data?: ScheduledJob; detail?: string; message?: string } | null;
+      if (!response.ok || !payload?.data) {
+        throw new Error(payload?.detail || payload?.message || (zh ? '无法读取当前计划配置。' : 'Unable to load the current schedule details.'));
+      }
+      return payload.data;
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : (zh ? '无法读取当前计划配置。' : 'Unable to load the current schedule details.'), 'error');
+      return null;
+    } finally {
+      setOperationLoading(false);
+    }
+  };
+
+  const startScheduleOperation = async (operation: 'ENABLE' | 'DISABLE' | 'DELETE', id: string) => {
+    const job = await fetchScheduleForOperation(id);
+    if (!job) return;
+    const currentOperation = operation === 'DELETE' ? 'DELETE' : Number(job.enabled) ? 'DISABLE' : 'ENABLE';
+    resetApproval();
+    setOperationApprovalReason(`${currentOperation === 'ENABLE'
+      ? (zh ? '启用执行计划' : 'Enable execution schedule')
+      : currentOperation === 'DISABLE'
+        ? (zh ? '停用执行计划' : 'Disable execution schedule')
+        : (zh ? '删除执行计划' : 'Delete execution schedule')}: ${job.name}`);
+    setPendingScheduleOperation({ operation: currentOperation, job });
+    setShowScheduleDetail(false);
+  };
+
+  const executePendingScheduleOperation = async () => {
+    if (!pendingScheduleOperation || approvalStatus !== 'verified') return;
+    const { operation, job } = pendingScheduleOperation;
+    const operationManifest = buildJobOperationManifest(operation, job);
+    if (!sameManifest(approvalManifest, operationManifest)) {
+      resetApproval();
+      setApprovalError(zh ? '计划信息已变化，请重新申请审批。' : 'The schedule details changed. Request approval again.');
+      return;
+    }
+    setOperationLoading(true);
+    setApprovalError('');
+    try {
+      const url = operation === 'DELETE'
+        ? `/api/scheduled-jobs/${encodeURIComponent(job.id)}?approval_token=${encodeURIComponent(approvalToken)}&approval_code=${encodeURIComponent(approvalCode)}`
+        : `/api/scheduled-jobs/${encodeURIComponent(job.id)}/toggle`;
+      const response = await fetch(url, {
+        method: operation === 'DELETE' ? 'DELETE' : 'PUT',
+        headers: authHeaders,
+        body: JSON.stringify(operation === 'DELETE'
+          ? { operation_manifest: operationManifest }
+          : { enabled: operation === 'ENABLE', approval_token: approvalToken, approval_code: approvalCode, operation_manifest: operationManifest }),
+      });
+      const payload = await response.json().catch(() => null) as { success?: boolean; detail?: string; message?: string } | null;
+      if (!response.ok || payload?.success === false) {
+        throw new Error(payload?.detail || payload?.message || (zh ? '操作失败。' : 'Operation failed.'));
+      }
+      setPendingScheduleOperation(null);
+      setShowScheduleDetail(false);
+      resetApproval();
+      setOperationApprovalReason('');
       fetchInspSchedules();
-      showToast(zh ? '计划已删除' : 'Schedule deleted', 'success');
-    } catch { /* ignore */ }
+      showToast(operation === 'DELETE'
+        ? (zh ? '计划已删除' : 'Schedule deleted')
+        : operation === 'ENABLE'
+          ? (zh ? '计划已启用' : 'Schedule enabled')
+          : (zh ? '计划已停用' : 'Schedule disabled'), 'success');
+    } catch (cause) {
+      setApprovalError(cause instanceof Error ? cause.message : (zh ? '操作失败。' : 'Operation failed.'));
+    } finally {
+      setOperationLoading(false);
+    }
   };
 
   const toggleInspScheduleEnabled = async (sch: ScheduledJob) => {
-    try {
-      await fetch(`/api/scheduled-jobs/${sch.id}/toggle`, {
-        method: 'PUT', headers: authHeaders,
-        body: JSON.stringify({ enabled: !sch.enabled }),
-      });
-      fetchInspSchedules();
-    } catch { /* ignore */ }
+    await startScheduleOperation(Number(sch.enabled) ? 'DISABLE' : 'ENABLE', sch.job_id || sch.id);
   };
 
   const handleExportReport = async (logId: string, format: string, source: string = 'inspection') => {
@@ -1056,6 +1242,150 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
           />
         )}
       </div>
+
+      {pendingScheduleOperation && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4" role="dialog" aria-modal="true">
+          <button
+            type="button"
+            aria-label={zh ? '关闭审批窗口' : 'Close approval dialog'}
+            className="absolute inset-0 bg-slate-950/50 backdrop-blur-sm"
+            onClick={() => {
+              if (approvalStatus === 'sending' || operationLoading) return;
+              setPendingScheduleOperation(null);
+              resetApproval();
+              setOperationApprovalReason('');
+            }}
+          />
+          <div className="relative w-full max-w-lg rounded-2xl border border-slate-200 bg-white shadow-2xl">
+            <div className={`flex items-center justify-between rounded-t-2xl border-b px-6 py-4 ${pendingScheduleOperation.operation === 'DELETE' ? 'border-rose-100 bg-rose-50' : 'border-cyan-100 bg-cyan-50'}`}>
+              <div>
+                <h3 className={`text-sm font-bold ${pendingScheduleOperation.operation === 'DELETE' ? 'text-rose-800' : 'text-cyan-900'}`}>
+                  {pendingScheduleOperation.operation === 'DELETE'
+                    ? (zh ? '删除执行计划审批' : 'Delete Schedule Approval')
+                    : pendingScheduleOperation.operation === 'ENABLE'
+                      ? (zh ? '启用执行计划审批' : 'Enable Schedule Approval')
+                      : (zh ? '停用执行计划审批' : 'Disable Schedule Approval')}
+                </h3>
+                <p className="mt-1 text-xs text-slate-600">{pendingScheduleOperation.job.name}</p>
+              </div>
+              <button
+                type="button"
+                className="rounded-lg px-2 py-1 text-slate-400 hover:bg-white/70 hover:text-slate-700 disabled:opacity-40"
+                disabled={approvalStatus === 'sending' || operationLoading}
+                onClick={() => {
+                  setPendingScheduleOperation(null);
+                  resetApproval();
+                  setOperationApprovalReason('');
+                }}
+              >
+                ×
+              </button>
+            </div>
+            <div className="space-y-4 px-6 py-5 text-xs text-slate-700">
+              <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 font-mono text-[11px] text-slate-600">
+                <div>ID: {pendingScheduleOperation.job.id}</div>
+                <div>{pendingScheduleOperation.job.action_type} · {pendingScheduleOperation.job.device_scope}</div>
+                <div>{pendingScheduleOperation.job.scheduled_at || pendingScheduleOperation.job.cron_expr}</div>
+              </div>
+              {approvalStatus !== 'verified' && (
+                <>
+                  <label className="block space-y-1.5">
+                    <span className="font-semibold">{zh ? '操作原因' : 'Reason'}</span>
+                    <input
+                      value={operationApprovalReason}
+                      onChange={event => setOperationApprovalReason(event.target.value)}
+                      disabled={approvalStatus !== 'idle'}
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 outline-none focus:border-cyan-500 disabled:bg-slate-50"
+                    />
+                  </label>
+                  <label className="block space-y-1.5">
+                    <span className="font-semibold">{zh ? '选择审批人' : 'Approver'}</span>
+                    <select
+                      value={approverUsername}
+                      onChange={event => setApproverUsername(event.target.value)}
+                      disabled={approvalStatus !== 'idle'}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none focus:border-cyan-500 disabled:bg-slate-50"
+                    >
+                      <option value="">{zh ? '选择审批人...' : 'Select approver...'}</option>
+                      {approvers.map(approver => (
+                        <option key={approver.id} value={approver.username}>{approver.username} ({approver.role})</option>
+                      ))}
+                    </select>
+                    {approvers.length === 0 && <span className="block text-amber-700">{zh ? '当前没有可用审批人。' : 'No eligible approvers are available.'}</span>}
+                  </label>
+                  <button
+                    type="button"
+                    onClick={requestApproval}
+                    disabled={!approverUsername || !operationApprovalReason.trim() || approvalStatus !== 'idle' || operationLoading}
+                    className="w-full rounded-xl bg-cyan-800 px-4 py-2.5 font-bold text-white transition hover:bg-cyan-900 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {approvalStatus === 'sending' ? (zh ? '正在发送...' : 'Sending...') : (zh ? '发送审批验证码' : 'Request approval code')}
+                  </button>
+                </>
+              )}
+              {approvalStatus === 'sent' && (
+                <div className="space-y-2 rounded-xl border border-slate-100 bg-slate-50 p-3">
+                  <label className="block font-semibold" htmlFor="execution-schedule-approval-code">
+                    {zh ? '输入 6 位审批验证码' : 'Enter the 6-digit approval code'}
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      id="execution-schedule-approval-code"
+                      value={approvalCode}
+                      onChange={event => { setApprovalCode(event.target.value.replace(/\D/g, '').slice(0, 6)); setApprovalError(''); }}
+                      inputMode="numeric"
+                      maxLength={6}
+                      className="w-36 rounded-xl border border-slate-200 px-3 py-2 text-center font-mono tracking-[0.25em] outline-none focus:border-emerald-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={verifyApproval}
+                      disabled={approvalCode.length !== 6}
+                      className="rounded-xl bg-emerald-600 px-4 py-2 font-bold text-white hover:bg-emerald-700 disabled:opacity-40"
+                    >
+                      {zh ? '验证' : 'Verify'}
+                    </button>
+                  </div>
+                </div>
+              )}
+              {approvalStatus === 'verified' && (
+                <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 font-semibold text-emerald-800">
+                  {zh ? '审批验证通过。' : 'Approval verified.'}
+                </div>
+              )}
+              {approvalError && <div role="alert" className="rounded-xl bg-rose-50 px-3 py-2 text-rose-700">{approvalError}</div>}
+            </div>
+            <div className="flex justify-end gap-2 border-t border-slate-100 px-6 py-4">
+              <button
+                type="button"
+                onClick={() => {
+                  setPendingScheduleOperation(null);
+                  resetApproval();
+                  setOperationApprovalReason('');
+                }}
+                disabled={approvalStatus === 'sending' || operationLoading}
+                className="rounded-xl border border-slate-200 px-4 py-2 font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+              >
+                {zh ? '取消' : 'Cancel'}
+              </button>
+              <button
+                type="button"
+                onClick={executePendingScheduleOperation}
+                disabled={approvalStatus !== 'verified' || operationLoading}
+                className={`rounded-xl px-4 py-2 font-bold text-white disabled:cursor-not-allowed disabled:opacity-40 ${pendingScheduleOperation.operation === 'DELETE' ? 'bg-rose-600 hover:bg-rose-700' : pendingScheduleOperation.operation === 'ENABLE' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-amber-600 hover:bg-amber-700'}`}
+              >
+                {operationLoading
+                  ? (zh ? '正在处理...' : 'Working...')
+                  : pendingScheduleOperation.operation === 'DELETE'
+                    ? (zh ? '确认删除' : 'Confirm delete')
+                    : pendingScheduleOperation.operation === 'ENABLE'
+                      ? (zh ? '确认启用' : 'Confirm enable')
+                      : (zh ? '确认停用' : 'Confirm disable')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal/Slide-over details */}
       <ScheduleDetail

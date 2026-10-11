@@ -5,7 +5,12 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, Body
 from fastapi.responses import FileResponse
 from database import get_db_connection, PROJECT_ROOT
-from core.rbac import require_role
+from core.rbac import (
+    enforce_resource_scope,
+    is_global_administrator,
+    require_change_requester,
+    require_role,
+)
 from services.audit_service import log_audit_event
 from services.monitoring_incident_service import append_incident_timeline
 from services.change_order_service import (
@@ -37,6 +42,21 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _require_change_order_access(order: dict, user: dict, action: str = 'view') -> None:
+    """Apply tenant, resource-action, and requester ownership checks to an order."""
+    tenant_id = str(order.get('tenant_id') or '').strip()
+    user_id = str(user.get('user_id') or user.get('id') or '').strip()
+    if not is_global_administrator(user):
+        if not tenant_id or not str(user.get('tenant_id') or '').strip():
+            raise HTTPException(status_code=404, detail='Change order not found')
+        if tenant_id != str(user.get('tenant_id') or '').strip():
+            raise HTTPException(status_code=404, detail='Change order not found')
+    if user.get('role_profile') == 'Change Requester':
+        if not user_id or str(order.get('requester_id') or '') != user_id:
+            raise HTTPException(status_code=404, detail='Change order not found')
+    enforce_resource_scope(user, 'change_order', action, tenant_id=tenant_id or None)
+
+
 def _parse_iso_to_utc(value: str) -> Optional[datetime]:
     """Parse stored change-window timestamps using the same UTC policy as execution."""
     try:
@@ -53,7 +73,24 @@ def _parse_iso_to_utc(value: str) -> Optional[datetime]:
 def api_change_order_summary(user=require_role("Viewer")):
     conn = get_db_connection()
     try:
-        return {'success': True, 'data': get_summary(conn, user_id=str(user.get('user_id') or ''), username=user.get('username', ''))}
+        tenant_scope = '' if is_global_administrator(user) else str(user.get('tenant_id') or '').strip()
+        if not tenant_scope and not is_global_administrator(user):
+            raise HTTPException(status_code=403, detail='A tenant assignment is required')
+        if tenant_scope:
+            enforce_resource_scope(user, 'pam', 'view', tenant_id=tenant_scope)
+            enforce_resource_scope(user, 'change_order', 'view', tenant_id=tenant_scope)
+        requester_scope = (
+            str(user.get('user_id') or '')
+            if user.get('role_profile') == 'Change Requester'
+            else ''
+        )
+        return {'success': True, 'data': get_summary(
+            conn,
+            user_id=str(user.get('user_id') or ''),
+            username=user.get('username', ''),
+            tenant_id=tenant_scope,
+            requester_id=requester_scope,
+        )}
     finally:
         conn.close()
 
@@ -86,6 +123,17 @@ def api_list_change_orders(
 ):
     conn = get_db_connection()
     try:
+        tenant_scope = '' if is_global_administrator(user) else str(user.get('tenant_id') or '').strip()
+        if not tenant_scope and not is_global_administrator(user):
+            raise HTTPException(status_code=403, detail='A tenant assignment is required')
+        if tenant_scope:
+            enforce_resource_scope(user, 'pam', 'view', tenant_id=tenant_scope)
+            enforce_resource_scope(user, 'change_order', 'view', tenant_id=tenant_scope)
+        requester_scope = (
+            str(user.get('user_id') or '')
+            if user.get('role_profile') == 'Change Requester'
+            else ''
+        )
         orders, total = list_change_orders(
             conn, page=page, page_size=page_size,
             status=status, priority=priority,
@@ -99,6 +147,8 @@ def api_list_change_orders(
             completed_from=completed_from, completed_to=completed_to,
             scheduled_from=scheduled_from, scheduled_to=scheduled_to,
             my_todo_kind=my_todo_kind,
+            tenant_id=tenant_scope,
+            requester_id=requester_scope,
         )
         return {'success': True, 'data': orders, 'total': total, 'page': page, 'page_size': page_size}
     finally:
@@ -113,7 +163,7 @@ def api_validate_change_ticket(order_number: str, user=require_role("Viewer")):
     conn = get_db_connection()
     try:
         row = conn.execute(
-            "SELECT id, order_number, title, status, scheduled_start, scheduled_end FROM change_orders WHERE order_number = ?",
+            "SELECT id, order_number, title, status, scheduled_start, scheduled_end, tenant_id, requester_id FROM change_orders WHERE order_number = ?",
             (order_number.strip(),),
         ).fetchone()
         if not row:
@@ -127,12 +177,13 @@ def api_validate_change_ticket(order_number: str, user=require_role("Viewer")):
                 },
             }
         order = dict(row)
+        _require_change_order_access(order, user, 'view')
         status = order.get('status', '')
         scheduled_start = order.get('scheduled_start', '')
         scheduled_end = order.get('scheduled_end', '')
 
         # Check status: only approved/implementing orders allow execution
-        executable_statuses = {'approved', 'implementing'}
+        executable_statuses = {'implementing'}
         if status not in executable_statuses:
             return {
                 'success': True,
@@ -143,7 +194,7 @@ def api_validate_change_ticket(order_number: str, user=require_role("Viewer")):
                     'status': status,
                     'title': order.get('title', ''),
                     'order_number': order.get('order_number', ''),
-                    'message': f'工单状态为 {status}，仅已审批/执行中的工单允许操作',
+                    'message': f'工单状态为 {status}，必须完成实施授权并处于实施中才能执行',
                 },
             }
 
@@ -200,6 +251,7 @@ def api_get_change_order(order_id: str, user=require_role("Viewer")):
         order = get_change_order(conn, order_id)
         if not order:
             raise HTTPException(status_code=404, detail='Change order not found')
+        _require_change_order_access(order, user, 'view')
         return {'success': True, 'data': order}
     finally:
         conn.close()
@@ -212,6 +264,7 @@ def api_get_change_order_timeline(order_id: str, user=require_role("Viewer")):
         order = get_change_order(conn, order_id)
         if not order:
             raise HTTPException(status_code=404, detail='Change order not found')
+        _require_change_order_access(order, user, 'view')
         rows = conn.execute(
             '''
             SELECT id, event_type, summary, actor_username, created_at, details_json
@@ -274,9 +327,14 @@ def api_validate_template(body: TemplateValidateRequest, user=require_role("View
 
 
 @router.post('/change-orders')
-def api_create_change_order(body: ChangeOrderCreate, user=require_role("Operator")):
+def api_create_change_order(body: ChangeOrderCreate, user=require_change_requester):
     conn = get_db_connection()
     try:
+        tenant_id = str(user.get('tenant_id') or '').strip()
+        if not tenant_id and not is_global_administrator(user):
+            raise HTTPException(status_code=403, detail='A tenant assignment is required to create a change order')
+        enforce_resource_scope(user, 'pam', 'create_change', tenant_id=tenant_id or None)
+        enforce_resource_scope(user, 'change_order', 'create', tenant_id=tenant_id or None)
         payload = _normalize_assignment_payload(conn, body.model_dump())
         payload = _normalize_command_template_payload(payload)
 
@@ -310,6 +368,7 @@ def api_create_change_order(body: ChangeOrderCreate, user=require_role("Operator
             status=payload.get('status', 'draft'),
             requester_id=user.get('user_id', ''),
             requester_username=user.get('username', ''),
+            tenant_id=tenant_id,
             assigned_initial_reviewer_id=payload.get('assigned_initial_reviewer_id', ''),
             assigned_initial_reviewer_username=payload.get('assigned_initial_reviewer_username', ''),
             assigned_final_approver_id=payload.get('assigned_final_approver_id', ''),
@@ -359,7 +418,7 @@ def api_create_change_order(body: ChangeOrderCreate, user=require_role("Operator
 
 
 @router.put('/change-orders/{order_id}')
-def api_update_change_order(order_id: str, body: ChangeOrderUpdate, user=require_role("Operator")):
+def api_update_change_order(order_id: str, body: ChangeOrderUpdate, user=require_role("Viewer")):
     conn = get_db_connection()
     try:
         raw_updates = body.model_dump(exclude_none=True)
@@ -375,9 +434,9 @@ def api_update_change_order(order_id: str, body: ChangeOrderUpdate, user=require
         existing = get_change_order(conn, order_id)
         if not existing:
             raise HTTPException(status_code=404, detail='Change order not found')
-
+        _require_change_order_access(existing, user, 'update')
         is_admin = user.get('role') == 'Administrator'
-        is_requester = existing.get('requester_username') == user.get('username')
+        is_requester = str(existing.get('requester_id') or '') == str(user.get('user_id') or '')
         if not is_admin and not is_requester:
             raise HTTPException(status_code=403, detail='Only the requester or an administrator can edit this change order')
         if existing.get('status') not in {'draft', 'rejected'}:
@@ -463,6 +522,7 @@ def api_delete_change_order(order_id: str, user=require_role("Administrator")):
         existing = get_change_order(conn, order_id)
         if not existing:
             raise HTTPException(status_code=404, detail='Change order not found')
+        _require_change_order_access(existing, user, 'delete')
         delete_change_order(conn, order_id, commit=False)
         log_audit_event(
             event_type='change_order.deleted',
@@ -488,6 +548,10 @@ def api_delete_change_order(order_id: str, user=require_role("Administrator")):
 def api_get_attachment(order_id: str, attachment_id: str, user=require_role("Viewer")):
     conn = get_db_connection()
     try:
+        order = get_change_order(conn, order_id)
+        if not order:
+            raise HTTPException(status_code=404, detail='Change order not found')
+        _require_change_order_access(order, user, 'view')
         row = conn.execute(
             'SELECT file_path, file_name FROM change_order_control_sheet_attachments WHERE id = ? AND order_id = ?',
             (attachment_id, order_id)
@@ -504,6 +568,10 @@ def api_get_attachment(order_id: str, attachment_id: str, user=require_role("Vie
 def api_delete_attachment(order_id: str, attachment_id: str, user=require_role("Operator")):
     conn = get_db_connection()
     try:
+        order = get_change_order(conn, order_id)
+        if not order:
+            raise HTTPException(status_code=404, detail='Change order not found')
+        _require_change_order_access(order, user, 'update')
         row = conn.execute(
             'SELECT file_path FROM change_order_control_sheet_attachments WHERE id = ? AND order_id = ?',
             (attachment_id, order_id)

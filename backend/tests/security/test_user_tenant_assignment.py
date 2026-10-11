@@ -23,7 +23,7 @@ def _unique_id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:10]}"
 
 
-def test_user_create_inherits_authenticated_tenant_and_ignores_payload_tenant(
+def test_user_create_rejects_foreign_payload_tenant_and_inherits_actor_tenant(
     isolated_db,
     make_user,
     monkeypatch,
@@ -58,15 +58,15 @@ def test_user_create_inherits_authenticated_tenant_and_ignores_payload_tenant(
 
     monkeypatch.setattr(users, "_hash_password", fake_hash)
     monkeypatch.setattr(users, "log_audit_event", lambda **_event: None)
-    username = f"created-{uuid.uuid4().hex[:10]}"
+    attacker_username = f"rejected-{uuid.uuid4().hex[:10]}"
     response = _request(
         "POST",
         "/api/users",
         headers={"Authorization": "Bearer tenant-admin-token"},
         json={
-            "username": username,
+            "username": attacker_username,
             "password": "Strong-Test!257",
-            "role": "Operator",
+            "role": "Viewer",
             "display_name": "Tenant User",
             "phone": "+1 555 010 1234",
             "email": "tenant-user@example.test",
@@ -74,7 +74,31 @@ def test_user_create_inherits_authenticated_tenant_and_ignores_payload_tenant(
         },
     )
 
-    assert response.status_code == 200, response.text
+    assert response.status_code == 403, response.text
+    conn = get_db_connection()
+    try:
+        assert conn.execute(
+            "SELECT 1 FROM users WHERE username = ?",
+            (attacker_username,),
+        ).fetchone() is None
+    finally:
+        conn.close()
+
+    username = f"created-{uuid.uuid4().hex[:10]}"
+    inherited = _request(
+        "POST",
+        "/api/users",
+        headers={"Authorization": "Bearer tenant-admin-token"},
+        json={
+            "username": username,
+            "password": "Strong-Test!257",
+            "role": "Viewer",
+            "display_name": "Tenant User",
+            "phone": "+1 555 010 1234",
+            "email": "tenant-user@example.test",
+        },
+    )
+    assert inherited.status_code == 200, inherited.text
     conn = get_db_connection()
     try:
         created = conn.execute(
@@ -86,7 +110,7 @@ def test_user_create_inherits_authenticated_tenant_and_ignores_payload_tenant(
         conn.close()
 
 
-def test_user_create_rejects_tenantless_actor_and_unauthenticated_request(
+def test_global_admin_assigns_default_tenant_and_unauthenticated_request_is_rejected(
     isolated_db,
     monkeypatch,
 ):
@@ -98,6 +122,11 @@ def test_user_create_rejects_tenantless_actor_and_unauthenticated_request(
         "tenant_id": "",
     }
     monkeypatch.setattr(users, "validate_session_token", lambda _token: tenantless_actor)
+    async def fake_hash(_password: str) -> str:
+        return "test-only-hash"
+
+    monkeypatch.setattr(users, "_hash_password", fake_hash)
+    monkeypatch.setattr(users, "log_audit_event", lambda **_event: None)
     blocked_username = f"blocked-{uuid.uuid4().hex[:10]}"
     response = _request(
         "POST",
@@ -106,21 +135,21 @@ def test_user_create_rejects_tenantless_actor_and_unauthenticated_request(
         json={
             "username": blocked_username,
             "password": "Strong-Test!257",
-            "role": "Operator",
+            "role": "Viewer",
             "display_name": "Blocked User",
             "phone": "+1 555 010 1234",
             "email": "blocked@example.test",
             "tenant_id": "tenant-default",
         },
     )
-    assert response.status_code == 403, response.text
-    assert response.json()["detail"] == "Authenticated user is not assigned to a tenant"
+    assert response.status_code == 200, response.text
     conn = get_db_connection()
     try:
-        assert conn.execute(
-            "SELECT 1 FROM users WHERE username = ?",
+        created = conn.execute(
+            "SELECT tenant_id FROM users WHERE username = ?",
             (blocked_username,),
-        ).fetchone() is None
+        ).fetchone()
+        assert created["tenant_id"] == "tenant-default"
     finally:
         conn.close()
 
@@ -131,7 +160,7 @@ def test_user_create_rejects_tenantless_actor_and_unauthenticated_request(
         json={
             "username": f"anonymous-{uuid.uuid4().hex[:10]}",
             "password": "Strong-Test!257",
-            "role": "Operator",
+            "role": "Viewer",
             "display_name": "Anonymous User",
             "phone": "+1 555 010 1234",
             "email": "anonymous@example.test",

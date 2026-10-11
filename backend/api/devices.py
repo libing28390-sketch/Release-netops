@@ -20,7 +20,7 @@ from services.platform_registry_service import PLATFORM_CATALOG_METADATA, list_p
 from services import tag_service
 from core.crypto import encrypt_credential, decrypt_credential
 from core.config import settings
-from core.rbac import authorize_resource, require_role
+from core.rbac import authorize_resource, is_global_administrator, require_role
 from services.vault_service import resolve_device_credentials, resolve_collector_credentials, write_credentials as vault_write, vault_available
 from services.snmp_mib_service import (
     list_mibs_page,
@@ -155,14 +155,14 @@ def _assert_operational_data_device_scope(user: dict, device: dict) -> None:
     boundaries.
     """
     device_id = str(device.get('id') or '')
-    is_admin = user.get('role') == 'Administrator'
+    global_admin = is_global_administrator(user)
     user_tenant = str(user.get('tenant_id') or '').strip()
     device_tenant = str(device.get('tenant_id') or '').strip()
 
     # Non-admin users must be explicitly tenant-scoped and the device must
     # carry the same tenant.  This also fails closed for legacy rows without a
     # tenant instead of allowing credential-backed collection by id alone.
-    if not is_admin and (not user_tenant or not device_tenant or user_tenant != device_tenant):
+    if not global_admin and (not user_tenant or not device_tenant or user_tenant != device_tenant):
         raise HTTPException(status_code=403, detail={
             'code': 'RESOURCE_SCOPE_DENIED',
             'message': 'Device belongs to another or unscoped tenant',
@@ -367,6 +367,21 @@ def _record_instant_execution(
     if not derived_commands:
         derived_commands = list(commands or [])
 
+    from services.pam_audit_service import redact_command_input, redact_output
+    from services.playbook_output_service import protect_output
+
+    safe_commands = [redact_command_input(command) for command in derived_commands]
+    safe_error, _ = redact_output(error or '')
+    safe_output, _ = redact_output(output or error or ('' if status == 'completed' else 'Unknown error'))
+    output_payload = {
+        'execute': {
+            'success': status == 'completed',
+            'output': safe_output,
+            'commands': safe_commands,
+        }
+    }
+    encrypted_output, output_placeholder, output_expiry, _ = protect_output(output_payload)
+
     # Determine hostname/ip for history display
     host = (device_info or {}).get('hostname') or ''
     ip = (device_info or {}).get('ip_address') or ''
@@ -383,7 +398,7 @@ def _record_instant_execution(
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             exec_id, 'instant', name, platform, json.dumps([device_id]), '{}',
-            status, 0, 'admin', 1, json.dumps({'execute': derived_commands}),
+            status, 0, 'admin', 1, json.dumps({'execute': safe_commands}),
             now, now, 1, 1 if status == 'completed' else 0, 0 if status == 'completed' else 1
         ))
 
@@ -391,18 +406,12 @@ def _record_instant_execution(
         # can render them correctly)
         conn.execute('''
             INSERT INTO execution_device_results
-            (id, execution_id, device_id, hostname, ip_address, status, error_message, phases_json, started_at, completed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (id, execution_id, device_id, hostname, ip_address, status, error_message,
+             phases_json, phases_encrypted, raw_output_expires_at, started_at, completed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
-            str(uuid.uuid4()), exec_id, device_id, host, ip, status, error,
-            json.dumps({
-                'execute': {
-                    'success': status == 'completed',
-                    'output': output or error or ('' if status == 'completed' else 'Unknown error'),
-                    'commands': derived_commands,
-                }
-            }, ensure_ascii=False),
-            now, now
+            str(uuid.uuid4()), exec_id, device_id, host, ip, status, safe_error,
+            output_placeholder, encrypted_output, output_expiry, now, now,
         ))
         conn.commit()
     except Exception as e:
@@ -3236,82 +3245,91 @@ def collect_device_operational_data(
 
 
 @router.post("/devices/{device_id}/parsed-command")
-def collect_device_parsed_command(device_id: str, payload: dict = Body(default={})):
+def collect_device_parsed_command(device_id: str, payload: dict = Body(default={}), user=require_role("Operator")):
+    command = payload.get('command') if isinstance(payload, dict) else None
+    if not isinstance(command, str) or not command.strip():
+        raise HTTPException(status_code=400, detail='Command is required')
+    commands = [line.strip() for line in command.splitlines() if line.strip()]
+    if not commands or len(commands) > 20:
+        raise HTTPException(status_code=400, detail='A query may contain between 1 and 20 commands')
+    requested_role = str(payload.get('auth_role') or 'normal').strip().lower()
+    if requested_role not in {'normal', 'auto'}:
+        raise HTTPException(status_code=403, detail='查询操作只能使用普通设备账号')
+
     conn = get_db_connection()
     try:
         row = conn.execute('SELECT * FROM devices WHERE id = ?', (device_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail='Device not found')
+        device_info = dict(row)
     finally:
         conn.close()
 
-    if not row:
-        raise HTTPException(status_code=404, detail='Device not found')
+    _assert_operational_data_device_scope(user, device_info)
 
-    device_info = dict(row)
-
-    command = payload.get('command') if isinstance(payload, dict) else None
-    if not command:
-        raise HTTPException(status_code=400, detail="Command is required")
-
-    commands = [line.strip() for line in str(command).splitlines() if line.strip()]
-    
-    platform = str(device_info.get('platform') or '').lower()
-    category = str(device_info.get('device_category') or '').lower()
-    is_server = any(t in platform for t in ('linux', 'ubuntu', 'centos', 'debian', 'redhat', 'server')) or category == 'server'
-
-    if is_server:
-        server_query_prefixes = (
-            'dis ', 'display ', 'show ', 'ping ', 'tracert ', 'traceroute ', 'dir ', 'pwd ', 'more ', 'terminal ',
-            'df ', 'free ', 'uptime', 'ip ', 'ss ', 'ps ', 'cat ', 'last ', 'env', 'tail ', 'grep ', 'uname ', 'sensors', 'dmesg', 'top '
-        )
-        def check_server_cmd(c):
-            c_lower = c.lower()
-            if any(c_lower.startswith(p) for p in server_query_prefixes):
-                return True
-            if c_lower in ('df', 'free', 'uptime', 'ip', 'ss', 'ps', 'last', 'env', 'uname', 'sensors', 'dmesg', 'top'):
-                return True
-            if c_lower.startswith('systemctl '):
-                allowed_sysctl = ('systemctl status', 'systemctl list-units', 'systemctl is-active', 'systemctl is-enabled')
-                return any(c_lower.startswith(p) for p in allowed_sysctl)
-            return False
-        is_query_only = all(check_server_cmd(c) for c in commands)
-    else:
-        _show_prefixes = ('dis ', 'display ', 'show ', 'ping ', 'tracert ', 'traceroute ', 'dir ', 'pwd ', 'more ', 'terminal ')
-        is_query_only = all(any(c.lower().startswith(p) for p in _show_prefixes) or c.lower() in ('pwd', 'dir') for c in commands)
-
-    if not is_query_only:
-        raise HTTPException(status_code=403, detail="查询模式下只允许执行只读查询命令（如 show, display, ping 等）。如需修改配置，请走工单流程或通过配置模板下发！")
-
-    auth_role = payload.get('auth_role', 'auto') if isinstance(payload, dict) else 'auto'
-    query_name = payload.get('name') or "Custom Command Query"
-
+    from services.platform_registry_service import (
+        PlatformRegistryError,
+        execute_platform_action,
+        preview_platform_action,
+        resolve_device_action_code,
+    )
+    action_codes = []
     try:
-        res = collect_custom_command_data(device_info, command=command, auth_role=auth_role)
+        for requested_command in commands:
+            action_code = resolve_device_action_code(device_id, requested_command)
+            if not action_code:
+                raise HTTPException(status_code=403, detail='命令未绑定到当前已发布平台动作，只能执行已发布的只读操作')
+            preview_platform_action(device_id, action_code, user=user)
+            action_codes.append(action_code)
+    except PlatformRegistryError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+    records = []
+    raw_outputs = []
+    failures = []
+    try:
+        for requested_command, action_code in zip(commands, action_codes):
+            try:
+                result = execute_platform_action(
+                    device_id, action_code, user=user, include_raw_output=True,
+                )
+            except PlatformRegistryError as exc:
+                raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+            records.extend(result.get('records') or [])
+            output = str(result.get('raw_output') or '')
+            raw_outputs.append({'command': requested_command, 'output': output})
+            if not result.get('success'):
+                failures.append(str(result.get('error') or result.get('error_code') or 'Query failed'))
+        success = not failures
+        response = {
+            'success': success,
+            'categories': [{
+                'key': str(payload.get('name') or 'custom_command'),
+                'success': success,
+                'commands': commands,
+                'records': records,
+                'raw_outputs': raw_outputs,
+                'error': '; '.join(failures) if failures else '',
+            }],
+            'records': records,
+            'count': len(records),
+            'raw_output': '\n'.join(item['output'] for item in raw_outputs),
+            'error': '; '.join(failures) if failures else '',
+        }
         _record_instant_execution(
-            device_id, query_name, [command] if command else [], 'completed',
-            platform=device_info.get('platform', 'unknown'),
-            result_payload=res, device_info=device_info,
+            device_id, str(payload.get('name') or 'Published Platform Action Query'), commands,
+            'completed' if success else 'failed', platform=device_info.get('platform') or 'unknown',
+            result_payload=response, device_info=device_info,
         )
-        return res
-    except ValueError as exc:
-        _record_instant_execution(
-            device_id, query_name, [command] if command else [], 'failed',
-            platform=device_info.get('platform', 'unknown'),
-            error=str(exc), device_info=device_info,
-        )
-        raise HTTPException(status_code=400, detail=str(exc))
+        return response
+    except HTTPException:
+        raise
     except Exception as exc:
         _record_instant_execution(
-            device_id, query_name, [command] if command else [], 'failed',
-            platform=device_info.get('platform', 'unknown'),
-            error=str(exc), device_info=device_info,
+            device_id, str(payload.get('name') or 'Published Platform Action Query'), commands, 'failed',
+            platform=device_info.get('platform') or 'unknown', error=str(exc), device_info=device_info,
         )
-        ssh_failure_response = _build_device_operation_ssh_failure_response(
-            device_info,
-            str(exc),
-            'parsed-command',
-        )
+        ssh_failure_response = _build_device_operation_ssh_failure_response(device_info, str(exc), 'parsed-command')
         if ssh_failure_response:
             return ssh_failure_response
-        raise HTTPException(status_code=500, detail=f'Parsed command execution failed: {exc}')
-
-
+        raise HTTPException(status_code=500, detail='Published platform action failed') from exc

@@ -268,7 +268,7 @@ export const ProviderManagementTab: React.FC = () => {
   const [tagFilter, setTagFilter] = useState('');
   const [providerFacets, setProviderFacets] = useState({ data_regions: [] as string[], health_statuses: [] as string[], provider_types: [] as string[], tags: [] as string[] });
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(10);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);

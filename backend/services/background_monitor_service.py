@@ -1295,7 +1295,7 @@ def _set_device_reachability_alert(device_row: dict, ip_address: str, *, reachab
         active,
         (rule or {}).get('severity', 'critical') if active else 'info',
         'Device Offline',
-        f"{device_label} ({ip_address}) {'已恢复连接' if reachable else '无法连接，Ping 超时'}",
+        f"{device_label} ({ip_address}) {'已恢复连接' if reachable else '网络可达性探测未响应'}",
         device_id,
         ip_address=ip_address,
         status='resolved' if reachable else 'active',
@@ -1382,6 +1382,76 @@ async def _probe_device_reachability(ip_address: str, management_port: int = 22)
         return False, 'unreachable'
 
 
+async def _probe_device_reachability_snmp_first(
+    device: dict,
+) -> tuple[bool, str, dict[str, Any] | None, bool]:
+    """Use configured SNMP as positive reachability evidence, then fall back to ICMP/TCP.
+
+    SNMP failures never mark a device offline by themselves. A failed or timed-out
+    SNMP probe continues through the same bounded ICMP/management-port probes used
+    for devices without SNMP credentials.
+    """
+    device = _as_dict(device)
+    ip_address = str(device.get('ip_address') or '').strip()
+    collector_credentials = None
+    snmp_probe_attempted = False
+    has_snmp_configuration = any(
+        str(device.get(key) or '').strip()
+        for key in ('snmp_credential_id', 'snmp_community', 'snmp_username', 'snmp_credential_type')
+    )
+
+    if has_snmp_configuration:
+        try:
+            collector_credentials = await asyncio.to_thread(resolve_collector_credentials, device)
+            snmp_credentials = collector_credentials.get('snmp') or {}
+            if snmp_credentials.get('configured'):
+                from services.snmp_service import SYS_UPTIME, _snmp_get, _snmp_get_v3
+
+                snmp_probe_attempted = True
+                snmp_ip = str(snmp_credentials.get('server') or ip_address).strip()
+                snmp_port = int(snmp_credentials.get('port') or 161)
+                snmp_version = str(snmp_credentials.get('version') or '2c').strip().casefold()
+                if snmp_version in {'3', 'v3', 'snmpv3'}:
+                    probe_value = await _snmp_get_v3(
+                        snmp_ip,
+                        str(snmp_credentials.get('username') or ''),
+                        SYS_UPTIME,
+                        snmp_port,
+                        timeout=1.5,
+                        auth_password=str(snmp_credentials.get('auth_password') or ''),
+                        auth_protocol=str(snmp_credentials.get('auth_protocol') or ''),
+                        priv_password=str(snmp_credentials.get('priv_password') or ''),
+                        priv_protocol=str(snmp_credentials.get('priv_protocol') or ''),
+                        context_name=str(snmp_credentials.get('context_name') or ''),
+                        security_level=str(snmp_credentials.get('security_level') or ''),
+                    )
+                else:
+                    probe_value = await _snmp_get(
+                        snmp_ip,
+                        str(snmp_credentials.get('community') or ''),
+                        SYS_UPTIME,
+                        snmp_port,
+                        timeout=1.5,
+                        version=snmp_version,
+                    )
+                if probe_value is not None:
+                    return True, 'snmp', collector_credentials, True
+        except Exception as exc:
+            # A credential/profile error is not evidence that the device is offline.
+            logger.debug(
+                '[Status Monitor] SNMP reachability probe failed for %s (%s)',
+                ip_address,
+                type(exc).__name__,
+            )
+
+    async with get_network_access_limiter().async_probe():
+        reachable, probe_method = await _probe_device_reachability(
+            ip_address,
+            _device_management_port(device),
+        )
+    return reachable, probe_method, collector_credentials, snmp_probe_attempted
+
+
 def _device_management_port(device: dict) -> int:
     """Resolve the status-probe port using the device connection method."""
     raw_port = device.get('management_port') or device.get('port')
@@ -1440,14 +1510,11 @@ async def _process_device_raw(device, cycle_tick: int):
                 _schedule_monitoring_target_sync()
             return
 
-        # 1. Ping Check
+        # 1. SNMP reachability first; ICMP/management TCP are the fallback.
         try:
-            # ping() is blocking; run it off the event loop to keep API endpoints responsive.
-            async with get_network_access_limiter().async_probe():
-                reachable, probe_method = await _probe_device_reachability(
-                    ip,
-                    _device_management_port(device),
-                )
+            reachable, probe_method, collector_credentials, _snmp_probe_attempted = (
+                await _probe_device_reachability_snmp_first(device)
+            )
             new_status = 'online' if reachable else 'offline'
 
             if device['status'] != new_status:
@@ -1481,13 +1548,14 @@ async def _process_device_raw(device, cycle_tick: int):
         mem_history = json.loads(device['memory_history'] or '[]')
 
         collection_started = _time.perf_counter()
-        collector_credentials = resolve_collector_credentials(device)
+        if collector_credentials is None:
+            collector_credentials = await asyncio.to_thread(resolve_collector_credentials, device)
         snmp_credentials = collector_credentials['snmp']
         snmp_ip = snmp_credentials.get('server') or ip
         snmp_community = snmp_credentials.get('community') or ''
         snmp_port = snmp_credentials.get('port') or 161
         platform = device['platform'] or 'cisco_ios'
-        snmp_available = False
+        snmp_available = probe_method == 'snmp'
         snmp_error_code = ''
         snmp_error_message = ''
         # Hardware OID discovery and sampling run in Nexora's dedicated SNMP
@@ -1499,19 +1567,6 @@ async def _process_device_raw(device, cycle_tick: int):
         fan = None
         psu = None
         hardware_metrics: dict[str, Any] = {}
-
-        # Fallback: if standard metrics failed (e.g. Linux servers lacking specific OIDs),
-        # verify true reachability via standard sysUpTime before marking unreachable.
-        if snmp_community and not snmp_available:
-            try:
-                from services.snmp_service import _snmp_get, SYS_UPTIME
-                test_val = await _snmp_get(snmp_ip, snmp_community, SYS_UPTIME, snmp_port, timeout=1.5)
-                if test_val is not None:
-                    snmp_available = True
-            except Exception:
-                if not snmp_error_code:
-                    snmp_error_code = 'snmp_no_response'
-                    snmp_error_message = 'No response from standard SNMP system OID'
 
         # Device hardware fields and history are populated by the native-result
         # projection. Leaving them untouched here prevents the reachability
@@ -1701,7 +1756,7 @@ async def _process_device_raw(device, cycle_tick: int):
             snmp_active = snmp_failure_streak[dev_id] >= 2
             failure_detail = (
                 f"{dev_label} SNMP 凭据未配置"
-                if not snmp_community
+                if not snmp_credentials.get('configured')
                 else f"{dev_label} 设备在线，但连续 {snmp_failure_streak[dev_id]} 次 SNMP 采集失败"
             )
             set_alert_state(
@@ -1718,7 +1773,7 @@ async def _process_device_raw(device, cycle_tick: int):
 
 
 async def process_device_fast(device):
-    # Fast reachability probe (ICMP with management-port fallback)
+    # Fast reachability probe (SNMP first, ICMP/management-port fallback)
     device = _as_dict(device)
     ip = device['ip_address']
     dev_id = device['id']
@@ -1748,20 +1803,30 @@ async def process_device_fast(device):
         return
 
     try:
-        async with get_network_access_limiter().async_probe():
-            reachable, probe_method = await _probe_device_reachability(
-                ip,
-                _device_management_port(device),
-            )
+        reachable, probe_method, _collector_credentials, snmp_probe_attempted = (
+            await _probe_device_reachability_snmp_first(device)
+        )
         new_status = 'online' if reachable else 'offline'
+        probe_source = 'snmp' if probe_method == 'snmp' else 'icmp_tcp'
+        probe_error_message = ''
+        if not reachable:
+            probe_error_message = (
+                'SNMP, ICMP, and management-port probes failed'
+                if snmp_probe_attempted else
+                'ICMP and management-port probes failed'
+            )
         await asyncio.to_thread(record_collection_result,
             dev_id,
             'reachability',
             status='success' if reachable else 'failed',
             transport=probe_method,
-            source='icmp_tcp',
+            source=probe_source,
             error_code='' if reachable else 'device_unreachable',
-            error_message='' if reachable else 'ICMP and management-port probes failed',
+            error_message=probe_error_message,
+            metadata={
+                'snmp_primary_probe_attempted': snmp_probe_attempted,
+                'fallback_used': snmp_probe_attempted and probe_method != 'snmp',
+            },
         )
 
         if device['status'] != new_status:

@@ -527,10 +527,14 @@ ensure_postgres_monitoring_objects() {
     db_name="$(env_value POSTGRES_DB)"
     db_user="${db_user:-postgres}"
     db_name="${db_name:-netops}"
-    log "Ensuring pg_stat_statements and the restricted postgres_exporter role are ready"
-    compose exec -T db psql --username "$db_user" --dbname "$db_name" --set=ON_ERROR_STOP=1 <<'SQL'
+    # psql's \gexec prints each generated statement as a result row. Keep
+    # successful setup output out of deployment logs because it contains the
+    # exporter password; errors still reach stderr and preserve the exit code.
+    compose exec -T db psql --username "$db_user" --dbname "$db_name" --set=ON_ERROR_STOP=1 <<'SQL' >/dev/null
 \getenv exporter_user POSTGRES_EXPORTER_USER
 \getenv exporter_password POSTGRES_EXPORTER_PASSWORD
+
+SET client_min_messages = warning;
 
 CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
 

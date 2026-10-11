@@ -4,6 +4,7 @@ import json
 import asyncio
 import logging
 import hashlib
+import hmac
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
@@ -11,7 +12,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Bo
 from fastapi.responses import JSONResponse
 
 from database import get_db_connection
-from core.rbac import authorize_resource, require_permission, require_role
+from core.rbac import authorize_resource, is_global_administrator, require_permission, require_role
 from services.audit_service import log_audit_event
 from core.crypto import decrypt_credential
 from core.read_cache import (
@@ -52,7 +53,6 @@ from services.playbook_execution_approval_service import (
     PlaybookApprovalError,
     create_execution_approvals,
     decide_execution_approval,
-    execution_start_payload,
     list_execution_approvals,
 )
 from services.playbook_output_service import PlaybookOutputError, load_output
@@ -93,7 +93,7 @@ def _create_playbook_execution_snapshot(
             name,
             encoded,
             checksum,
-            user.get('id') or user.get('username') or 'system',
+            user.get('id') or user.get('user_id') or user.get('username') or 'system',
             now,
             now,
         ),
@@ -111,7 +111,7 @@ def _ensure_controlled_phases(phases: object, *, user: dict, operation: str) -> 
         severity='high',
         status='denied',
         summary=f'Rejected raw Playbook steps during {operation}',
-        actor_id=user.get('id'),
+        actor_id=user.get('id') or user.get('user_id'),
         actor_username=user.get('username'),
         actor_role=user.get('role'),
         target_type='playbook',
@@ -175,8 +175,192 @@ def _call_playbook_approval(fn, *args, **kwargs):
         raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
 
 
-def _resume_approved_execution(execution: dict, user: dict) -> dict:
-    payload = _call_playbook_approval(execution_start_payload, execution)
+def _playbook_execution_start_error(code: str, message: str, *, status_code: int = 403) -> HTTPException:
+    return HTTPException(status_code=status_code, detail={'code': code, 'message': message})
+
+
+def _prepare_playbook_execution_for_run(execution_id: str) -> tuple[dict, dict]:
+    """Revalidate the frozen run intent and its original operator before launch."""
+    conn = get_db_connection()
+    try:
+        row = conn.execute('SELECT * FROM playbook_executions WHERE id = ?', (execution_id,)).fetchone()
+        if not row:
+            raise _playbook_execution_start_error('EXECUTION_NOT_FOUND', 'Playbook execution not found', status_code=404)
+        execution = dict(row)
+        if str(execution.get('status') or '').lower() != 'pending':
+            raise _playbook_execution_start_error('EXECUTION_NOT_PENDING', 'Playbook execution is not ready to start', status_code=409)
+
+        snapshot_id = str(execution.get('playbook_version_id') or '').strip()
+        if not snapshot_id:
+            raise _playbook_execution_start_error('EXECUTION_SNAPSHOT_REQUIRED', 'Execution snapshot is missing', status_code=409)
+        snapshot_row = conn.execute(
+            'SELECT id, playbook_id, tenant_id, status, definition_json, checksum, created_by '
+            'FROM playbook_versions WHERE id = ?',
+            (snapshot_id,),
+        ).fetchone()
+        if not snapshot_row:
+            raise _playbook_execution_start_error('EXECUTION_SNAPSHOT_MISSING', 'Execution snapshot is unavailable', status_code=409)
+        snapshot = dict(snapshot_row)
+        if snapshot.get('status') != 'SNAPSHOT':
+            raise _playbook_execution_start_error('EXECUTION_SNAPSHOT_INVALID', 'Execution snapshot is no longer valid', status_code=409)
+        try:
+            definition = json.loads(snapshot.get('definition_json') or '')
+        except (TypeError, json.JSONDecodeError):
+            definition = None
+        if not isinstance(definition, dict):
+            raise _playbook_execution_start_error('EXECUTION_SNAPSHOT_INVALID', 'Execution snapshot definition is invalid', status_code=409)
+        encoded_definition = json.dumps(definition, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+        calculated_checksum = hashlib.sha256(encoded_definition.encode('utf-8')).hexdigest()
+        if not hmac.compare_digest(calculated_checksum, str(snapshot.get('checksum') or '')):
+            raise _playbook_execution_start_error('EXECUTION_SNAPSHOT_CHECKSUM_MISMATCH', 'Execution snapshot checksum is invalid', status_code=409)
+
+        execution_tenant = str(execution.get('tenant_id') or '')
+        snapshot_tenant = str(snapshot.get('tenant_id') or '')
+        if snapshot_tenant != execution_tenant or str(snapshot.get('playbook_id') or '') != str(execution.get('scenario_id') or ''):
+            raise _playbook_execution_start_error('EXECUTION_SNAPSHOT_BINDING_INVALID', 'Execution does not match its snapshot', status_code=409)
+        creator_key = str(snapshot.get('created_by') or '').strip()
+        if not creator_key:
+            raise _playbook_execution_start_error('EXECUTION_OPERATOR_UNAVAILABLE', 'Original execution operator is unavailable')
+        actor_row = conn.execute(
+            "SELECT id, username, role, role_profile, tenant_id, scope_mode, status "
+            "FROM users WHERE id = ?",
+            (creator_key,),
+        ).fetchone()
+        if not actor_row:
+            actor_row = conn.execute(
+                "SELECT id, username, role, role_profile, tenant_id, scope_mode, status "
+                "FROM users WHERE username = ? AND status = 'active'",
+                (creator_key,),
+            ).fetchone()
+        if not actor_row or str(actor_row['status'] or '') != 'active':
+            raise _playbook_execution_start_error('EXECUTION_OPERATOR_UNAVAILABLE', 'Original execution operator is inactive or unavailable')
+        run_as = dict(actor_row)
+        run_as['user_id'] = run_as.get('id')
+        if creator_key not in {str(run_as.get('id') or ''), str(run_as.get('username') or '')}:
+            raise _playbook_execution_start_error('EXECUTION_OPERATOR_BINDING_INVALID', 'Execution operator does not match its snapshot')
+
+        is_global_admin = is_global_administrator(run_as)
+        operator_tenant = str(run_as.get('tenant_id') or '')
+        if not is_global_admin and (not operator_tenant or operator_tenant != execution_tenant):
+            raise _playbook_execution_start_error('EXECUTION_TENANT_SCOPE_DENIED', 'Original operator is outside the execution tenant')
+        if not authorize_resource(run_as, 'playbook', 'execute', tenant_id=execution_tenant or None):
+            raise _playbook_execution_start_error('EXECUTION_PERMISSION_REVOKED', 'Original operator no longer has Playbook execution permission')
+
+        try:
+            stored_device_ids = json.loads(execution.get('device_ids') or '[]')
+            stored_variables = json.loads(execution.get('variables') or '{}')
+            stored_phases = json.loads(execution.get('phases_json') or '{}')
+        except (TypeError, json.JSONDecodeError):
+            raise _playbook_execution_start_error('EXECUTION_PAYLOAD_INVALID', 'Stored execution payload is invalid', status_code=409)
+        if not isinstance(stored_phases, dict):
+            raise _playbook_execution_start_error('EXECUTION_PAYLOAD_INVALID', 'Stored execution phases are invalid', status_code=409)
+        try:
+            device_ids, variables, concurrency, dry_run, commit_confirmed_ttl = _validate_execution_limits(
+                stored_device_ids,
+                stored_variables,
+                int(execution.get('concurrency') or 1),
+                bool(execution.get('dry_run')),
+                int(execution.get('commit_confirmed_ttl') or 0),
+            )
+        except (TypeError, ValueError):
+            raise _playbook_execution_start_error('EXECUTION_PAYLOAD_INVALID', 'Stored execution limits are invalid', status_code=409)
+
+        snapshot_device_ids = definition.get('device_ids')
+        snapshot_variables = definition.get('variables')
+        snapshot_phases = definition.get('phases')
+        snapshot_concurrency = definition.get('concurrency')
+        snapshot_dry_run = definition.get('dry_run')
+        snapshot_ttl = definition.get('commit_confirmed_ttl')
+        if (
+            not isinstance(snapshot_device_ids, list)
+            or snapshot_device_ids != device_ids
+            or snapshot_variables != variables
+            or snapshot_phases != stored_phases
+            or definition.get('platform') != execution.get('platform')
+            or definition.get('scenario_id') != execution.get('scenario_id')
+            or isinstance(snapshot_concurrency, bool)
+            or snapshot_concurrency != concurrency
+            or not isinstance(snapshot_dry_run, bool)
+            or snapshot_dry_run != dry_run
+            or isinstance(snapshot_ttl, bool)
+            or snapshot_ttl != commit_confirmed_ttl
+        ):
+            raise _playbook_execution_start_error('EXECUTION_SNAPSHOT_BINDING_INVALID', 'Execution payload does not match its approved snapshot', status_code=409)
+
+        _ensure_controlled_phases(snapshot_phases, user=run_as, operation='resume')
+        _assert_playbook_device_scope(conn, device_ids, run_as)
+
+        expected_approvals = extract_approval_steps(snapshot_phases)
+        approval_rows = conn.execute(
+            "SELECT step_path, title, message, required_role, status, requested_by, "
+            "requested_by_username, tenant_id, decided_by "
+            "FROM playbook_execution_approvals WHERE execution_id = ? ORDER BY step_path",
+            (execution_id,),
+        ).fetchall()
+        approvals = [dict(approval) for approval in approval_rows]
+        if len(approvals) != len(expected_approvals):
+            raise _playbook_execution_start_error('EXECUTION_APPROVAL_BINDING_INVALID', 'Approval records do not match the execution snapshot', status_code=409)
+        expected_by_path = {step['step_path']: step for step in expected_approvals}
+        approval_by_path = {str(approval.get('step_path') or ''): approval for approval in approvals}
+        if len(approval_by_path) != len(approvals) or set(approval_by_path) != set(expected_by_path):
+            raise _playbook_execution_start_error('EXECUTION_APPROVAL_BINDING_INVALID', 'Approval records do not match the execution snapshot', status_code=409)
+        actor_keys = {str(run_as.get('id') or ''), str(run_as.get('username') or ''), creator_key}
+        for path, expected in expected_by_path.items():
+            approval = approval_by_path[path]
+            if (
+                approval.get('status') != 'APPROVED'
+                or approval.get('title') != expected['title']
+                or approval.get('message') != expected['message']
+                or approval.get('required_role') != expected['required_role']
+                or str(approval.get('requested_by') or '') not in actor_keys
+                or str(approval.get('requested_by_username') or '') != str(run_as.get('username') or '')
+                or str(approval.get('tenant_id') or '') != execution_tenant
+                or not str(approval.get('decided_by') or '').strip()
+                or str(approval.get('decided_by') or '') in actor_keys
+            ):
+                raise _playbook_execution_start_error('EXECUTION_APPROVAL_BINDING_INVALID', 'Execution approvals are incomplete or do not match the original operator', status_code=403)
+
+        updated = conn.execute(
+            "UPDATE playbook_executions SET status = 'running', updated_at = ? WHERE id = ? AND status = 'pending'",
+            (datetime.now(timezone.utc).isoformat(), execution_id),
+        )
+        if getattr(updated, 'rowcount', 0) != 1:
+            raise _playbook_execution_start_error('EXECUTION_NOT_PENDING', 'Playbook execution was already claimed', status_code=409)
+        conn.commit()
+        return {
+            'execution_id': execution_id,
+            'device_ids': device_ids,
+            'phases': snapshot_phases,
+            'variables': variables,
+            'dry_run': dry_run,
+            'concurrency': concurrency,
+            'platform': str(definition.get('platform') or 'cisco_ios'),
+            'commit_confirmed_ttl': commit_confirmed_ttl,
+            'status': 'running',
+        }, run_as
+    except HTTPException:
+        conn.rollback()
+        conn.execute(
+            "UPDATE playbook_executions SET status = 'failed', updated_at = ? WHERE id = ? AND status = 'pending'",
+            (datetime.now(timezone.utc).isoformat(), execution_id),
+        )
+        conn.commit()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        conn.execute(
+            "UPDATE playbook_executions SET status = 'failed', updated_at = ? WHERE id = ? AND status = 'pending'",
+            (datetime.now(timezone.utc).isoformat(), execution_id),
+        )
+        conn.commit()
+        logger.exception('Failed to authorize Playbook execution before run execution_id=%s', execution_id)
+        raise _playbook_execution_start_error('EXECUTION_AUTHORIZATION_UNAVAILABLE', 'Playbook execution authorization could not be verified', status_code=503) from exc
+    finally:
+        conn.close()
+
+
+def _resume_approved_execution(execution: dict) -> dict:
+    payload, run_as = _prepare_playbook_execution_for_run(str(execution.get('id') or ''))
     asyncio.create_task(_run_playbook(
         payload['execution_id'],
         payload['device_ids'],
@@ -186,7 +370,7 @@ def _resume_approved_execution(execution: dict, user: dict) -> dict:
         payload['concurrency'],
         payload['platform'],
         payload['commit_confirmed_ttl'],
-        user,
+        run_as,
     ))
     return payload
 
@@ -201,7 +385,7 @@ def _assert_execution_scope(conn, execution_id: str, user: dict, *, action: str 
         raise HTTPException(status_code=404, detail="Execution not found")
 
     execution = dict(row)
-    if user.get('role') == 'Administrator':
+    if is_global_administrator(user):
         return execution
 
     execution_tenant = str(execution.get('tenant_id') or '')
@@ -291,12 +475,12 @@ def _assert_playbook_device_scope(conn, device_ids: list[str], user: dict) -> li
             'device_ids': missing[:32],
         })
 
-    is_admin = user.get('role') == 'Administrator'
+    is_global_admin = is_global_administrator(user)
     user_tenant = str(user.get('tenant_id') or '')
     for device_id in normalized_ids:
         device = by_id[device_id]
         device_tenant = str(device.get('tenant_id') or '')
-        if not is_admin and (not user_tenant or not device_tenant or user_tenant != device_tenant):
+        if not is_global_admin and (not user_tenant or not device_tenant or user_tenant != device_tenant):
             raise HTTPException(status_code=403, detail={
                 'code': 'RESOURCE_SCOPE_DENIED',
                 'message': 'Selected device belongs to another or unscoped tenant',
@@ -367,7 +551,7 @@ async def list_platforms(user=require_permission("playbook", "view")):
 @router.get("/playbooks/scenarios")
 async def list_scenarios(user=require_permission("playbook", "view")):
     """Return built-in and custom scenario templates."""
-    tenant_id = None if user.get('role') == 'Administrator' else str(user.get('tenant_id') or '') or None
+    tenant_id = None if is_global_administrator(user) else str(user.get('tenant_id') or '') or None
     return _all_scenarios(tenant_id)
 
 
@@ -526,6 +710,11 @@ async def update_playbook_version(version_id: str, payload: dict = Body(...), us
 
 @router.get("/playbooks/{execution_id}/approvals")
 async def get_playbook_execution_approvals(execution_id: str, user=require_permission("playbook", "view")):
+    conn = get_db_connection()
+    try:
+        _assert_execution_scope(conn, execution_id, user, action='view')
+    finally:
+        conn.close()
     return {"success": True, "data": _call_playbook_approval(list_execution_approvals, execution_id, user)}
 
 
@@ -536,17 +725,63 @@ async def _decide_playbook_execution_approval(
     payload: dict,
     user: dict,
 ):
+    conn = get_db_connection()
+    try:
+        _assert_execution_scope(conn, execution_id, user, action='approve')
+        if decision == 'APPROVED':
+            snapshot_row = conn.execute(
+                "SELECT v.created_by FROM playbook_executions e "
+                "LEFT JOIN playbook_versions v ON v.id = e.playbook_version_id "
+                "WHERE e.id = ?",
+                (execution_id,),
+            ).fetchone()
+            creator_key = str(snapshot_row['created_by'] or '').strip() if snapshot_row else ''
+            creator = None
+            if creator_key:
+                creator = conn.execute('SELECT id, username FROM users WHERE id = ?', (creator_key,)).fetchone()
+                if not creator:
+                    creator = conn.execute('SELECT id, username FROM users WHERE username = ?', (creator_key,)).fetchone()
+            if not creator:
+                raise HTTPException(status_code=409, detail={
+                    'code': 'EXECUTION_OPERATOR_UNAVAILABLE',
+                    'message': 'Original execution operator is unavailable',
+                })
+            current_user_id = str(user.get('id') or user.get('user_id') or '')
+            same_requester = (
+                current_user_id and str(creator['id'] or '') == current_user_id
+            ) or (
+                str(user.get('username') or '')
+                and str(creator['username'] or '') == str(user.get('username') or '')
+            )
+            if same_requester:
+                raise HTTPException(status_code=403, detail={
+                    'code': 'SELF_APPROVAL_FORBIDDEN',
+                    'message': 'The execution requester cannot approve their own Playbook',
+                })
+    finally:
+        conn.close()
+    approval_user = dict(user)
+    approval_user['id'] = user.get('id') or user.get('user_id')
     result = _call_playbook_approval(
         decide_execution_approval,
         execution_id,
         approval_id,
         decision,
-        user,
+        approval_user,
         str(payload.get('reason') or ''),
     )
     execution = result.get('execution') or {}
+    execution_status = execution.get('status')
+    execution_started = False
+    execution_start_error = None
     if result.get('should_start'):
-        _resume_approved_execution(execution, user)
+        try:
+            started_payload = _resume_approved_execution(execution)
+            execution_status = started_payload.get('status') or execution_status
+            execution_started = True
+        except HTTPException as exc:
+            execution_status = 'failed'
+            execution_start_error = exc.detail
     approval = result.get('approval') or {}
     log_audit_event(
         event_type='PLAYBOOK_EXECUTION_APPROVAL',
@@ -554,7 +789,7 @@ async def _decide_playbook_execution_approval(
         severity='high',
         status=str(approval.get('status') or decision).lower(),
         summary=f'Playbook execution approval {str(approval.get("status") or decision).lower()}',
-        actor_id=user.get('id'),
+        actor_id=user.get('id') or user.get('user_id'),
         actor_username=user.get('username'),
         actor_role=user.get('role'),
         target_type='playbook_execution',
@@ -564,15 +799,17 @@ async def _decide_playbook_execution_approval(
             'approval_id': approval_id,
             'step_path': approval.get('step_path'),
             'status': approval.get('status'),
-            'execution_status': execution.get('status'),
-            'execution_started': bool(result.get('should_start')),
+            'execution_status': execution_status,
+            'execution_started': execution_started,
+            'execution_start_error': execution_start_error,
         },
     )
     return {
         'approval': approval,
         'execution_id': execution_id,
-        'execution_status': execution.get('status'),
-        'execution_started': bool(result.get('should_start')),
+        'execution_status': execution_status,
+        'execution_started': execution_started,
+        'execution_start_error': execution_start_error,
     }
 
 
@@ -1022,7 +1259,7 @@ async def preview_playbook(payload: dict = Body(...), user=require_permission("p
     requested_platform = payload.get('platform', 'cisco_ios')
     platform = _normalize_playbook_platform(requested_platform)
 
-    tenant_id = None if user.get('role') == 'Administrator' else str(user.get('tenant_id') or '') or None
+    tenant_id = None if is_global_administrator(user) else str(user.get('tenant_id') or '') or None
     try:
         scenarios = _all_scenarios(tenant_id)
     except TypeError:
@@ -1195,12 +1432,19 @@ async def execute_playbook(
     )
     change_ticket = str(payload.get('change_ticket') or '').strip()
     author = user.get('username') or payload.get('author', 'admin')
-    actor_id = user.get('id')
+    actor_id = user.get('id') or user.get('user_id')
     actor_role = user.get('role') or 'Viewer'
     requested_version_id = str(payload.get('playbook_version_id') or '').strip()
     selected_version = None
     if requested_version_id:
         selected_version = _call_playbook_version(get_version, requested_version_id, user)
+        version_tenant = str(selected_version.get('tenant_id') or '')
+        user_tenant = str(user.get('tenant_id') or '')
+        if not is_global_administrator(user) and version_tenant and version_tenant != user_tenant:
+            raise HTTPException(status_code=403, detail={
+                'code': 'RESOURCE_SCOPE_DENIED',
+                'message': 'Playbook version is outside the current tenant scope',
+            })
         if selected_version.get('status') != 'PUBLISHED':
             raise HTTPException(status_code=400, detail={
                 'code': 'PLAYBOOK_VERSION_NOT_PUBLISHED',
@@ -1215,7 +1459,7 @@ async def execute_playbook(
     requested_platform = payload.get('platform') or version_definition.get('platform') or 'cisco_ios'
     platform = _normalize_playbook_platform(requested_platform)
 
-    tenant_id = None if user.get('role') == 'Administrator' else str(user.get('tenant_id') or '') or None
+    tenant_id = None if is_global_administrator(user) else str(user.get('tenant_id') or '') or None
     scenario = None if selected_version else next((s for s in _all_scenarios(tenant_id) if s['id'] == scenario_id), None)
     # Allow custom playbooks (scenario can be None — user provides commands directly)
     custom_phases = version_definition.get('phases') if selected_version else payload.get('phases')
@@ -1259,15 +1503,19 @@ async def execute_playbook(
         snapshot_id, snapshot_version, snapshot_checksum = _create_playbook_execution_snapshot(
             conn,
             playbook_id=str(scenario_id or 'custom'),
-            tenant_id=user.get('tenant_id'),
+            tenant_id=tenant_id,
             name=scenario_name,
             definition={
                 'scenario_id': scenario_id or 'custom',
                 'platform': platform,
                 'requested_platform': requested_platform,
+                'device_ids': device_ids,
                 'variables': variables,
-            'phases': phases_for_execution,
-            'base_playbook_version_id': requested_version_id or None,
+                'phases': phases_for_execution,
+                'dry_run': dry_run,
+                'concurrency': concurrency,
+                'commit_confirmed_ttl': commit_confirmed_ttl,
+                'base_playbook_version_id': requested_version_id or None,
             },
             user=user,
         )
@@ -1286,7 +1534,10 @@ async def execute_playbook(
               commit_confirmed_ttl,
               datetime.now().isoformat(), datetime.now().isoformat())
         )
-        approvals = create_execution_approvals(conn, execution_id, phases_for_execution, user) if approval_steps else []
+        approval_creator = dict(user)
+        approval_creator['id'] = user.get('id') or user.get('user_id')
+        approval_creator['tenant_id'] = tenant_id or ''
+        approvals = create_execution_approvals(conn, execution_id, phases_for_execution, approval_creator) if approval_steps else []
         conn.commit()
     finally:
         conn.close()
@@ -1296,15 +1547,36 @@ async def execute_playbook(
     invalidate_read_cache('playbooks')
 
     # Approval-gated executions remain paused until every gate is approved.
+    start_error = None
     if not approvals:
-        asyncio.create_task(_run_playbook(execution_id, device_ids, phases_for_execution, variables, dry_run, concurrency, platform, commit_confirmed_ttl, user))
+        try:
+            start_payload, run_as = _prepare_playbook_execution_for_run(execution_id)
+            asyncio.create_task(_run_playbook(
+                start_payload['execution_id'],
+                start_payload['device_ids'],
+                start_payload['phases'],
+                start_payload['variables'],
+                start_payload['dry_run'],
+                start_payload['concurrency'],
+                start_payload['platform'],
+                start_payload['commit_confirmed_ttl'],
+                run_as,
+            ))
+        except HTTPException as exc:
+            start_error = exc.detail
 
     log_audit_event(
         event_type='PLAYBOOK_EXECUTION',
         category='automation',
         severity='high' if not dry_run else 'medium',
-        status='awaiting_approval' if approvals else 'pending',
-        summary=f"Started playbook {scenario_name} for {len(device_ids)} device(s)",
+        status='awaiting_approval' if approvals else ('denied' if start_error else 'pending'),
+        summary=(
+            f"Queued playbook {scenario_name} for approval"
+            if approvals else
+            f"Blocked playbook {scenario_name} before execution"
+            if start_error else
+            f"Started playbook {scenario_name} for {len(device_ids)} device(s)"
+        ),
         actor_id=str(actor_id) if actor_id is not None else None,
         actor_username=author,
         actor_role=actor_role,
@@ -1326,18 +1598,20 @@ async def execute_playbook(
             'playbook_version_number': snapshot_version,
             'playbook_version_checksum': snapshot_checksum,
             'approval_count': len(approvals),
+            'execution_start_error': start_error,
         },
     )
 
     return {
         "execution_id": execution_id,
-        "status": "awaiting_approval" if approvals else "pending",
+        "status": "awaiting_approval" if approvals else ('failed' if start_error else 'pending'),
         "approval_ids": [approval['id'] for approval in approvals],
         "playbook_version_id": snapshot_id,
         "playbook_version_number": snapshot_version,
         "playbook_version_checksum": snapshot_checksum,
         "change_order_number": (resolved_change_order or {}).get('order_number'),
         "change_order_auto_matched": auto_matched_change_order,
+        "execution_start_error": start_error,
     }
 
 # ════════════════════════════════════════════════════════════════════
@@ -1360,8 +1634,8 @@ async def playbook_ws(websocket: WebSocket, execution_id: str):
     conn = get_db_connection()
     try:
         _assert_execution_scope(conn, execution_id, ws_user, action='view')
-    except HTTPException as exc:
-        await websocket.close(code=1008, reason=str(exc.detail))
+    except HTTPException:
+        await websocket.close(code=1008, reason="Execution access denied")
         return
     finally:
         conn.close()
@@ -1369,10 +1643,31 @@ async def playbook_ws(websocket: WebSocket, execution_id: str):
     await ws_manager.connect(execution_id, websocket)
     try:
         while True:
-            data = await websocket.receive_text()
+            try:
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=20)
+            except asyncio.TimeoutError:
+                data = None
+
+            # Sessions and resource scopes can be revoked after the upgrade.
+            # Re-read both periodically, and also on each client message.
+            ws_user = validate_session_token(token)
+            if not ws_user:
+                await websocket.close(code=1008, reason="Session expired or revoked")
+                break
+            conn = get_db_connection()
+            try:
+                _assert_execution_scope(conn, execution_id, ws_user, action='view')
+            except HTTPException:
+                await websocket.close(code=1008, reason="Execution access revoked")
+                break
+            finally:
+                conn.close()
+
             if data == 'ping':
                 await websocket.send_json({"type": "pong"})
     except WebSocketDisconnect:
+        pass
+    finally:
         ws_manager.disconnect(execution_id, websocket)
 
 

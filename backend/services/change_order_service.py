@@ -42,6 +42,7 @@ def create_change_order(conn, *, title: str, description: str = '',
                         order_type: str = 'config_change', priority: str = 'medium',
                         status: str = 'draft',
                         requester_id: str = '', requester_username: str = '',
+                        tenant_id: str = '',
                         assigned_initial_reviewer_id: str = '',
                         assigned_initial_reviewer_username: str = '',
                         assigned_final_approver_id: str = '',
@@ -63,7 +64,7 @@ def create_change_order(conn, *, title: str, description: str = '',
         '''
         INSERT INTO change_orders (
             id, order_number, title, description, incident_id, order_type, priority, status,
-            requester_id, requester_username,
+            requester_id, requester_username, tenant_id,
             assigned_initial_reviewer_id, assigned_initial_reviewer_username,
             assigned_final_approver_id, assigned_final_approver_username,
             command_template_json,
@@ -72,11 +73,11 @@ def create_change_order(conn, *, title: str, description: str = '',
             authorization_exempt,
             control_sheet_json,
             created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''',
         (
             order_id, order_number, title, description, incident_id, order_type, priority, status,
-            requester_id, requester_username,
+            requester_id, requester_username, tenant_id,
             assigned_initial_reviewer_id, assigned_initial_reviewer_username,
             assigned_final_approver_id, assigned_final_approver_username,
             json.dumps(command_template or {}, ensure_ascii=False),
@@ -224,7 +225,9 @@ def list_change_orders(conn, *, page: int = 1, page_size: int = 20,
                        scheduled_from: str = '',
                        scheduled_to: str = '',
                        exclude_requester: str = '',
-                       my_todo_kind: str = '') -> tuple[list[dict], int]:
+                       my_todo_kind: str = '',
+                       tenant_id: str = '',
+                       requester_id: str = '') -> tuple[list[dict], int]:
     """List change orders with optional filters.
 
     View Filter Semantics (Property 6 contract — design.md §View Filter Semantics):
@@ -267,6 +270,13 @@ def list_change_orders(conn, *, page: int = 1, page_size: int = 20,
     """
     conditions = []
     params = []
+
+    if tenant_id:
+        conditions.append("tenant_id = ?")
+        params.append(tenant_id)
+    if requester_id:
+        conditions.append("requester_id = ?")
+        params.append(requester_id)
 
     if my_drafts:
         conditions.append("(requester_username = ? AND status = 'draft')")
@@ -418,32 +428,44 @@ def list_change_orders(conn, *, page: int = 1, page_size: int = 20,
     return results, total
 
 
-def get_summary(conn, user_id: str = '', username: str = '') -> dict:
-    total = conn.execute("SELECT COUNT(*) FROM change_orders").fetchone()[0]
+def get_summary(conn, user_id: str = '', username: str = '', *, tenant_id: str = '', requester_id: str = '') -> dict:
+    summary_where = " WHERE tenant_id = ?" if tenant_id else ""
+    summary_params = (tenant_id,) if tenant_id else ()
+    if requester_id:
+        summary_where += (" AND " if summary_where else " WHERE ") + "requester_id = ?"
+        summary_params = (*summary_params, requester_id)
+    total = conn.execute(f"SELECT COUNT(*) FROM change_orders{summary_where}", summary_params).fetchone()[0]
     by_status = {}
-    for row in conn.execute("SELECT status, COUNT(*) as cnt FROM change_orders GROUP BY status"):
+    for row in conn.execute(f"SELECT status, COUNT(*) as cnt FROM change_orders{summary_where} GROUP BY status", summary_params):
         by_status[row['status']] = row['cnt']
     by_priority = {}
-    for row in conn.execute("SELECT priority, COUNT(*) as cnt FROM change_orders GROUP BY priority"):
+    for row in conn.execute(f"SELECT priority, COUNT(*) as cnt FROM change_orders{summary_where} GROUP BY priority", summary_params):
         by_priority[row['priority']] = row['cnt']
     by_type = {}
-    for row in conn.execute("SELECT order_type, COUNT(*) as cnt FROM change_orders GROUP BY order_type"):
+    for row in conn.execute(f"SELECT order_type, COUNT(*) as cnt FROM change_orders{summary_where} GROUP BY order_type", summary_params):
         by_type[row['order_type']] = row['cnt']
 
     my_todo_count = 0
     group_todo_count = 0
     if user_id and username:
         # My Todo - Align with list_change_orders
+        todo_conditions = [
+            "(",
+            "(requester_username = ? AND status IN ('draft', 'rejected', 'approved', 'implementing', 'executing', 'failed', 'rollback_in_progress')) OR ",
+            "(assigned_initial_reviewer_username = ? AND status = 'initial_review' AND requester_username != ?) OR ",
+            "(assigned_final_approver_username = ? AND status = 'final_review' AND requester_username != ?)",
+            ")",
+        ]
+        todo_params = [username, username, username, username, username]
+        if tenant_id:
+            todo_conditions.insert(0, "tenant_id = ? AND ")
+            todo_params.insert(0, tenant_id)
+        if requester_id:
+            todo_conditions.insert(0, "requester_id = ? AND ")
+            todo_params.insert(0, requester_id)
         my_todo_count = conn.execute(
-            """
-            SELECT COUNT(*) FROM change_orders 
-            WHERE (
-                (requester_username = ? AND status IN ('draft', 'rejected', 'approved', 'implementing', 'executing', 'failed', 'rollback_in_progress')) OR 
-                (assigned_initial_reviewer_username = ? AND status = 'initial_review' AND requester_username != ?) OR 
-                (assigned_final_approver_username = ? AND status = 'final_review' AND requester_username != ?)
-            )
-            """,
-            (username, username, username, username, username)
+            "SELECT COUNT(*) FROM change_orders WHERE " + ''.join(todo_conditions),
+            tuple(todo_params),
         ).fetchone()[0]
 
         # Group Todo - Already using shared helper if it was extracted, otherwise inline
@@ -460,9 +482,12 @@ def get_summary(conn, user_id: str = '', username: str = '') -> dict:
             if isinstance(raw_groups, (list, tuple, set)):
                 groups = {str(item or '').strip() for item in raw_groups if str(item or '').strip()}
         
-        if groups:
+        if groups and not requester_id:
             g_conds, g_params = _build_group_todo_conditions(groups, username)
             where = f"WHERE {' AND '.join(g_conds)}"
+            if tenant_id:
+                where += " AND tenant_id = ?"
+                g_params.append(tenant_id)
             group_todo_count = conn.execute(
                 f"SELECT COUNT(*) FROM change_orders {where}",
                 tuple(g_params)

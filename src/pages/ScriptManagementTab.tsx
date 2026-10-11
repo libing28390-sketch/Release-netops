@@ -37,7 +37,9 @@ interface Script {
 }
 
 interface UserInfo {
+  id?: string;
   username: string;
+  role?: string;
 }
 
 const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string, type: 'success' | 'error' | 'info') => void; view?: 'scripts' | 'nsot' }> = ({ language, showToast, view = 'scripts' }) => {
@@ -68,7 +70,7 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
   const [showAuditorDropdown, setShowAuditorDropdown] = useState(false);
 
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(10);
   const [totalScripts, setTotalScripts] = useState(0);
 
   const zh = language === 'zh';
@@ -131,8 +133,11 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
 
   const fetchUsers = async () => {
     try {
-      const res = await fetch('/api/users', { headers: getHeaders() });
-      if (res.ok) setUsers(await res.json());
+      const res = await fetch('/api/scripts/approvers', { headers: getHeaders() });
+      if (res.ok) {
+        const payload = await res.json();
+        setUsers(Array.isArray(payload.items) ? payload.items : []);
+      }
       const meRes = await fetch('/api/session', { headers: getHeaders() });
       if (meRes.ok) {
         const data = await meRes.json();
@@ -271,7 +276,7 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
 
   const isSystemScript = editForm.submitter_name === 'system' || editForm.author === 'system';
   const isReviewMode = editForm.status === 'pending_audit' && editForm.approver_username === currentUser;
-  const isReadOnly = isReviewMode || (editForm.status === 'pending_audit' && editForm.submitter_name === currentUser) || isSystemScript;
+  const isReadOnly = isReviewMode || editForm.status === 'released' || (editForm.status === 'pending_audit' && editForm.submitter_name === currentUser) || isSystemScript;
 
   const inputClass = `w-full bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-[13px] outline-none transition-all ${isReadOnly ? 'text-slate-400 cursor-not-allowed opacity-70' : 'text-slate-700 dark:text-slate-100 focus:ring-2 focus:ring-[#00a9ce]/20'}`;
   const labelClass = "text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-1.5 flex items-center gap-1.5";

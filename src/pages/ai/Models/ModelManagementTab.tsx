@@ -49,7 +49,7 @@ export const ModelManagementTab: React.FC = () => {
   const [typeFilter, setTypeFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(10);
   const [selectedScenes, setSelectedScenes] = useState<Set<string>>(new Set());
   const [bulkPrimaryModelId, setBulkPrimaryModelId] = useState('');
   const [bulkDataClassification, setBulkDataClassification] = useState('');

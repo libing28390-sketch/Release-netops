@@ -19,7 +19,7 @@ const WanAlertEventsPanel: React.FC<WanAlertEventsPanelProps> = ({ onOpenEvent }
   const [keyword, setKeyword] = useState('');
   const [startAt, setStartAt] = useState('');
   const [endAt, setEndAt] = useState('');
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(10);
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
 

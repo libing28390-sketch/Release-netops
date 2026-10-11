@@ -7,7 +7,6 @@ import type { AlertRuleHistoryItem, AlertRuleListResponse, AlertRuleNotification
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
-import { useSystem } from '../hooks/useSystem';
 import { severityBadgeClass } from '../components/shared';
 import {
   ALERT_SEVERITY_OPTIONS,
@@ -370,7 +369,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(10);
   const [search, setSearch] = useState('');
   const [enabledFilter, setEnabledFilter] = useState('all');
   const [metricFilter, setMetricFilter] = useState('all');
@@ -397,7 +396,6 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [togglingIds, setTogglingIds] = useState<Set<string>>(new Set());
   const [ruleHistory, setRuleHistory] = useState<AlertRuleHistoryItem[]>([]);
   const [historyExpanded, setHistoryExpanded] = useState(false);
 
@@ -410,16 +408,6 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
   const [approvalStatus, setApprovalStatus] = useState<'idle' | 'sending' | 'sent' | 'verified'>('idle');
   const [approvalCountdown, setApprovalCountdown] = useState(0);
   const [approvalError, setApprovalError] = useState('');
-  const { systemInfo } = useSystem();
-  const isProduction = systemInfo?.environment?.toLowerCase() === 'production';
-  const [skipApproval, setSkipApproval] = useState(true);
-
-  useEffect(() => {
-    if (systemInfo?.environment) {
-      setSkipApproval(systemInfo.environment.toLowerCase() !== 'production');
-    }
-  }, [systemInfo]);
-
   // Deletion approval states
   const [deleteApprovalOpen, setDeleteApprovalOpen] = useState(false);
   const [deleteTargetIds, setDeleteTargetIds] = useState<string[]>([]);
@@ -447,6 +435,35 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
     return () => clearTimeout(t);
   }, [deleteCountdown]);
 
+  const buildRuleApprovalPayload = () => {
+    if (!ruleDraft) return {};
+    const hostMetric = isHostMetric(ruleDraft.metric_type);
+    const { tenant_id: _tenantId, ...rulePayload } = ruleDraft as AlertRuleSettings & { tenant_id?: string };
+    return {
+      ...rulePayload,
+      notification_channels: hostMetric
+        ? ['workspace']
+        : (ruleDraft.notification_channels || []).filter((channel) => channel === 'feishu' || channel === 'email'),
+      notification_group_names: hostMetric ? [] : (ruleDraft.notification_group_names || []),
+      scope_type: hostMetric ? 'global' : ruleDraft.scope_type,
+      scope_match_mode: hostMetric ? 'exact' : ruleDraft.scope_match_mode,
+      scope_value: hostMetric ? '' : ruleDraft.scope_value,
+      created_by: ruleDraft.created_by || currentUsername,
+      updated_by: currentUsername,
+    };
+  };
+
+  const buildRuleOperationManifest = () => ({
+    operation: editingRuleId ? 'UPDATE' : 'CREATE',
+    rule_id: editingRuleId || '',
+    rule: buildRuleApprovalPayload(),
+  });
+
+  const buildDeleteOperationManifest = () => ({
+    operation: 'DELETE',
+    rule_ids: [...deleteTargetIds],
+  });
+
   // Request approval for rule creation / updates
   const requestApproval = async () => {
     if (!approverUsername) return;
@@ -462,6 +479,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
           device_hostname: ruleDraft?.scope_value || (language === 'zh' ? '全局范围' : 'Global'),
           command_preview: '',
           approval_type: 'alert_rule',
+          operation_manifest: buildRuleOperationManifest(),
           extra_fields: {
             action_type: language === 'zh' ? '告警规则变更' : 'Alert Rule Change',
             schedule_desc: language === 'zh' 
@@ -494,7 +512,12 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
       const r = await fetch('/api/config-approval/verify', {
         method: 'POST',
         headers: getHeaders(true),
-        body: JSON.stringify({ approval_token: approvalToken, code: approvalCode }),
+        body: JSON.stringify({
+          approval_token: approvalToken,
+          code: approvalCode,
+          approval_type: 'alert_rule',
+          operation_manifest: buildRuleOperationManifest(),
+        }),
       });
       const j = await r.json();
       if (r.ok && j.success) {
@@ -523,6 +546,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
           device_hostname: '',
           command_preview: '',
           approval_type: 'alert_rule_delete',
+          operation_manifest: buildDeleteOperationManifest(),
           extra_fields: {
             action_type: language === 'zh' ? '告警规则删除' : 'Alert Rule Deletion',
             operation: 'DELETE',
@@ -552,7 +576,12 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
       const r = await fetch('/api/config-approval/verify', {
         method: 'POST',
         headers: getHeaders(true),
-        body: JSON.stringify({ approval_token: deleteToken, code: deleteCode }),
+        body: JSON.stringify({
+          approval_token: deleteToken,
+          code: deleteCode,
+          approval_type: 'alert_rule_delete',
+          operation_manifest: buildDeleteOperationManifest(),
+        }),
       });
       const j = await r.json();
       if (r.ok && j.success) {
@@ -569,7 +598,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
   // Confirm and execute rule deletion(s)
   const executeDelete = async () => {
     if (!deleteTargetIds.length) return;
-    if (deleteStatus !== 'verified' && !skipApproval) {
+    if (deleteStatus !== 'verified') {
       showToast(language === 'zh' ? '请先完成删除验证' : 'Please complete deletion verification', 'error');
       return;
     }
@@ -585,22 +614,22 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
           body: JSON.stringify({
             rule_ids: deleteTargetIds,
             actor_username: currentUsername,
-            approval_token: skipApproval ? '' : deleteToken,
-            approval_code: skipApproval ? '' : deleteCode,
-            skip_approval_verification: skipApproval,
+            approval_token: deleteToken,
+            approval_code: deleteCode,
+            operation_manifest: buildDeleteOperationManifest(),
           }),
         });
       } else {
         const id = deleteTargetIds[0];
         const params = new URLSearchParams({
           actor_username: currentUsername,
-          approval_token: skipApproval ? '' : deleteToken,
-          approval_code: skipApproval ? '' : deleteCode,
-          skip_approval: String(skipApproval),
+          approval_token: deleteToken,
+          approval_code: deleteCode,
         });
         resp = await fetch(`/api/alerts/rules/${id}?${params.toString()}`, {
           method: 'DELETE',
-          headers: getHeaders(false),
+          headers: getHeaders(true),
+          body: JSON.stringify({ operation_manifest: buildDeleteOperationManifest() }),
         });
       }
       
@@ -1089,29 +1118,22 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
         return;
       }
     }
-    if (!skipApproval && approvalStatus !== 'verified') {
+    if (approvalStatus !== 'verified') {
       showToast(language === 'zh' ? '请先完成审批验证' : 'Please complete approval verification first', 'error');
       return;
     }
     setSaving(true);
     try {
       const isCreate = !editingRuleId;
-      const { tenant_id: _tenantId, ...rulePayload } = ruleDraft as AlertRuleSettings & { tenant_id?: string };
+      const rulePayload = buildRuleApprovalPayload();
       const resp = await fetch(isCreate ? '/api/alerts/rules' : `/api/alerts/rules/${editingRuleId}`, {
         method: isCreate ? 'POST' : 'PUT',
         headers: getHeaders(true),
         body: JSON.stringify({
           ...rulePayload,
-          notification_channels: draftIsHostMetric ? ['workspace'] : selectedChannels,
-          notification_group_names: draftIsHostMetric ? [] : (ruleDraft.notification_group_names || []),
-          scope_type: draftIsHostMetric ? 'global' : ruleDraft.scope_type,
-          scope_match_mode: draftIsHostMetric ? 'exact' : ruleDraft.scope_match_mode,
-          scope_value: draftIsHostMetric ? '' : ruleDraft.scope_value,
-          created_by: ruleDraft.created_by || currentUsername,
-          updated_by: currentUsername,
-          approval_token: skipApproval ? '' : approvalToken,
-          approval_code: skipApproval ? '' : approvalCode,
-          skip_approval_verification: skipApproval,
+          operation_manifest: buildRuleOperationManifest(),
+          approval_token: approvalToken,
+          approval_code: approvalCode,
         }),
       });
       const data = await resp.json().catch(() => ({}));
@@ -1153,44 +1175,18 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
   };
 
   const handleToggleEnabled = async (rule: AlertRuleSettings) => {
-    const ruleId = rule.id;
-    if (!ruleId) return;
+    if (!rule.id) return;
     if ((rule.rule_supported === false || isServerMetric(rule.metric_type)) && !rule.enabled) {
       showToast(language === 'zh' ? '该历史规则未接入告警执行器，只能保持停用或删除。' : 'This historical rule has no executor and can only remain disabled or be deleted.', 'info');
       return;
     }
-
-    if (skipApproval) {
-      setTogglingIds((prev) => new Set(prev).add(ruleId));
-      try {
-        const resp = await fetch('/api/alerts/rules/batch-toggle', {
-          method: 'POST',
-          headers: getHeaders(true),
-          body: JSON.stringify({
-            rule_ids: [ruleId],
-            enabled: !rule.enabled,
-            actor_username: currentUsername,
-            skip_approval_verification: true,
-          }),
-        });
-        if (!resp.ok) throw new Error('Failed to toggle rule');
-        setAlertRules((prev) => prev.map((r) => r.id === ruleId ? { ...r, enabled: !r.enabled } : r));
-        showToast(language === 'zh' ? '规则状态已更新' : 'Rule state updated', 'success');
-      } catch {
-        showToast(language === 'zh' ? '切换规则状态失败' : 'Failed to toggle rule', 'error');
-      } finally {
-        setTogglingIds((prev) => { const next = new Set(prev); next.delete(ruleId); return next; });
-      }
-    } else {
-      showToast(
-        language === 'zh'
-          ? '生产环境修改规则状态需要工单审批，已为您打开规则编辑器。'
-          : 'Modifying rule state in production requires approval. Editor opened.',
-        'info'
-      );
-      const updatedRule = { ...rule, enabled: !rule.enabled };
-      openEdit(updatedRule);
-    }
+    showToast(
+      language === 'zh'
+        ? '规则状态变更需要审批，已为您打开规则编辑器。'
+        : 'Rule state changes require approval. The editor is open.',
+      'info'
+    );
+    openEdit({ ...rule, enabled: !rule.enabled });
   };
 
   const handleCloneRule = (rule: AlertRuleSettings) => {
@@ -1236,39 +1232,16 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
 
   const handleBatchToggle = async (enabled: boolean) => {
     if (selectedIds.size === 0) return;
-
     if (enabled && alertRules.some((rule) => rule.id && selectedIds.has(rule.id) && (rule.rule_supported === false || isServerMetric(rule.metric_type)))) {
       showToast(language === 'zh' ? '未接入执行器的历史规则不能批量启用。' : 'Historical rules without an executor cannot be enabled in bulk.', 'info');
       return;
     }
-
-    if (skipApproval) {
-      try {
-        const resp = await fetch('/api/alerts/rules/batch-toggle', {
-          method: 'POST',
-          headers: getHeaders(true),
-          body: JSON.stringify({
-            rule_ids: Array.from(selectedIds),
-            enabled,
-            actor_username: currentUsername,
-            skip_approval_verification: true,
-          }),
-        });
-        if (!resp.ok) throw new Error('Failed to batch toggle');
-        setAlertRules((prev) => prev.map((r) => r.id && selectedIds.has(r.id) ? { ...r, enabled } : r));
-        setSelectedIds(new Set());
-        showToast(language === 'zh' ? '批量更新成功' : 'Batch update successful', 'success');
-      } catch {
-        showToast(language === 'zh' ? '批量更新失败' : 'Batch update failed', 'error');
-      }
-    } else {
-      showToast(
-        language === 'zh'
-          ? '生产环境批量启停需要单条获取工单审批修改。'
-          : 'Batch toggling requires individual approval in production.',
-        'info'
-      );
-    }
+    showToast(
+      language === 'zh'
+        ? '批量启停暂不支持；请逐条打开规则并完成审批。'
+        : 'Bulk enable/disable is unavailable. Open each rule and approve the change individually.',
+      'info'
+    );
   };
 
   const handleBatchDelete = () => {
@@ -1598,7 +1571,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                             ? (language === 'zh' ? '点击停用' : 'Click to disable')
                             : (language === 'zh' ? '点击启用' : 'Click to enable')}
                           onClick={() => void handleToggleEnabled(rule)}
-                          disabled={!rule.id || togglingIds.has(rule.id)}
+                          disabled={!rule.id || saving}
                           className={`group relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 ${rule.enabled ? 'bg-cyan-500' : 'bg-slate-300'}`}
                         >
                           <span
@@ -2108,29 +2081,12 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                       <Shield size={14} className="text-cyan-600" />
                       {language === 'zh' ? '变更审批授权' : 'Approval Authorization'}
                     </span>
-                    {isProduction ? (
-                      <span className="text-xs text-rose-500 font-bold bg-rose-50 px-2.5 py-1 rounded-lg border border-rose-100 shadow-sm">
-                        {language === 'zh' ? '生产环境 强制校验' : 'Production Enforced Check'}
-                      </span>
-                    ) : (
-                      <label className="flex items-center gap-2 text-xs text-slate-500 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={skipApproval}
-                          onChange={(e) => {
-                            setSkipApproval(e.target.checked);
-                            setApprovalStatus('idle');
-                            setApprovalCode('');
-                            setApprovalError('');
-                          }}
-                          className="rounded border-slate-300 text-cyan-600 focus:ring-cyan-500"
-                        />
-                        <span>{language === 'zh' ? '仅测试/开发环境可用 - 跳过审批' : 'Dev/Test only - Skip approval'}</span>
-                      </label>
-                    )}
+                    <span className="text-xs text-rose-500 font-bold bg-rose-50 px-2.5 py-1 rounded-lg border border-rose-100 shadow-sm">
+                      {language === 'zh' ? '所有环境均需审批' : 'Approval Required'}
+                    </span>
                   </div>
                   
-                  {!skipApproval && approvalStatus !== 'verified' && (
+                  {approvalStatus !== 'verified' && (
                     <div className="px-5 py-4 bg-white space-y-4 text-xs">
                       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                         <label className="block text-slate-600">
@@ -2228,7 +2184,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                     </div>
                   )}
 
-                  {!skipApproval && approvalStatus === 'verified' && (
+                  {approvalStatus === 'verified' && (
                     <div className="px-5 py-4 bg-emerald-50 border-t border-emerald-100 flex items-center gap-2 text-emerald-800 text-xs font-semibold">
                       <Check size={16} className="text-emerald-600" />
                       {language === 'zh' ? '审批验证已通过，随时可保存生效' : 'Approval verified. You can save changes now.'}
@@ -2280,7 +2236,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                     </ActionButton>
                   ) : null}
                   <button
-                    disabled={saving || !isDirty || (!skipApproval && approvalStatus !== 'verified')}
+                    disabled={saving || !isDirty || approvalStatus !== 'verified'}
                     onClick={() => void handleSave()}
                     className={alertPrimaryButtonClass}
                   >
@@ -2459,30 +2415,13 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                 </div>
 
                 <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                  <span className="font-bold text-slate-700">{language === 'zh' ? '跳过审批流程' : 'Skip Approval'}</span>
-                  {isProduction ? (
-                    <span className="text-xs text-rose-500 font-bold bg-rose-50 px-2.5 py-1 rounded-lg border border-rose-100 shadow-sm">
-                      {language === 'zh' ? '生产环境 强制校验' : 'Production Enforced Check'}
-                    </span>
-                  ) : (
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={skipApproval}
-                        onChange={(e) => {
-                          setSkipApproval(e.target.checked);
-                          setDeleteStatus('idle');
-                          setDeleteCode('');
-                          setDeleteError('');
-                        }}
-                        className="rounded border-slate-300 text-rose-600 focus:ring-rose-500"
-                      />
-                      <span className="ml-2 text-slate-500">{language === 'zh' ? '仅测试/开发环境' : 'Dev/Test only'}</span>
-                    </label>
-                  )}
+                  <span className="font-bold text-slate-700">{language === 'zh' ? '删除操作审批' : 'Deletion Approval'}</span>
+                  <span className="text-xs text-rose-500 font-bold bg-rose-50 px-2.5 py-1 rounded-lg border border-rose-100 shadow-sm">
+                    {language === 'zh' ? '所有环境均需审批' : 'Approval Required'}
+                  </span>
                 </div>
 
-                {!skipApproval && deleteStatus !== 'verified' && (
+                {deleteStatus !== 'verified' && (
                   <>
                     <div className="space-y-1.5">
                       <label className="font-bold text-slate-700 block">{language === 'zh' ? '删除原因说明' : 'Deletion Reason'}</label>
@@ -2562,7 +2501,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                   </>
                 )}
 
-                {(skipApproval || deleteStatus === 'verified') && (
+                {deleteStatus === 'verified' && (
                   <div className="px-4 py-3 bg-emerald-50 border border-emerald-100 rounded-xl text-emerald-800 text-xs font-semibold flex items-center gap-2">
                     <Check size={14} className="text-emerald-600" />
                     {language === 'zh' ? '删除已获得安全授权，可执行永久删除。' : 'Deletion authorized. Safe to execute deletion.'}
@@ -2581,7 +2520,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                 <button
                   type="button"
                   onClick={executeDelete}
-                  disabled={!skipApproval && deleteStatus !== 'verified'}
+                  disabled={deleteStatus !== 'verified'}
                   className="px-4 py-2 rounded-xl bg-rose-600 text-white font-bold hover:bg-rose-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-md shadow-rose-600/10"
                 >
                   {language === 'zh' ? '确认安全删除' : 'Secure Delete'}

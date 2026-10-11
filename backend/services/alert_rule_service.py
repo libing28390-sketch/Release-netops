@@ -502,6 +502,105 @@ def get_rule(rule_id: str, tenant_id: str = 'tenant-default') -> dict[str, Any] 
         conn.close()
 
 
+def build_alert_rule_approval_manifest(
+    payload: dict[str, Any],
+    *,
+    tenant_id: str,
+    requester_id: str,
+    expected_operation: str,
+    route_rule_id: str = '',
+) -> dict[str, Any]:
+    """Build an approval binding from canonical server-side rule state."""
+    tenant_id = _tenant_id(tenant_id)
+    source = payload.get('operation_manifest') if isinstance(payload, dict) else None
+    if not isinstance(source, dict) or not source:
+        raise ValueError('operation_manifest is required')
+    operation = str(source.get('operation') or '').strip().upper()
+    expected_operation = str(expected_operation or '').strip().upper()
+    if operation != expected_operation:
+        raise ValueError('Approval operation does not match the requested rule change')
+    actor_id = str(requester_id or '').strip()
+    if not actor_id:
+        raise ValueError('A stable requester identity is required')
+
+    conn = get_db_connection()
+    try:
+        if operation in {'CREATE', 'UPDATE'}:
+            rule_id = str(route_rule_id or source.get('rule_id') or '').strip()
+            if operation == 'CREATE' and rule_id:
+                raise ValueError('Create approval cannot target an existing rule')
+            if operation == 'UPDATE' and not rule_id:
+                raise ValueError('Update approval requires a rule ID')
+            existing = None
+            if operation == 'UPDATE':
+                row = conn.execute(
+                    'SELECT * FROM alert_rules WHERE id = ? AND tenant_id = ?',
+                    (rule_id, tenant_id),
+                ).fetchone()
+                if not row:
+                    raise ValueError('Alert rule not found in the current tenant')
+                existing = _normalize_rule_row(row)
+            client_rule = payload if any(key in payload for key in (
+                'name', 'metric_type', 'scope_type', 'scope_value', 'severity', 'threshold',
+                'notification_channels', 'notification_group_names', 'enabled',
+            )) else source.get('rule')
+            if not isinstance(client_rule, dict):
+                raise ValueError('Approval manifest is missing the alert rule definition')
+            normalized = _validate_rule_payload(client_rule, existing, conn=conn, tenant_id=tenant_id)
+            return {
+                'operation': operation,
+                'tenant_id': tenant_id,
+                'requester_id': actor_id,
+                'rule_id': rule_id,
+                'rule': normalized,
+            }
+
+        if operation in {'DELETE', 'TOGGLE'}:
+            raw_ids = route_rule_id or payload.get('rule_ids') or source.get('rule_ids')
+            if isinstance(raw_ids, str):
+                raw_ids = [raw_ids]
+            if not isinstance(raw_ids, list):
+                raise ValueError('Rule operation requires rule_ids')
+            rule_ids = [str(value or '').strip() for value in raw_ids if str(value or '').strip()]
+            if not rule_ids or len(rule_ids) > 200 or len(rule_ids) != len(set(rule_ids)):
+                raise ValueError('Rule IDs must be unique and contain between 1 and 200 items')
+            placeholders = ','.join('?' for _ in rule_ids)
+            rows = conn.execute(
+                f'SELECT * FROM alert_rules WHERE tenant_id = ? AND id IN ({placeholders})',
+                (tenant_id, *rule_ids),
+            ).fetchall()
+            by_id = {str(row['id']): _normalize_rule_row(row) for row in rows}
+            if set(by_id) != set(rule_ids):
+                raise ValueError('One or more alert rules are outside the current tenant or no longer exist')
+            fields = (
+                'name', 'metric_type', 'scope_type', 'scope_match_mode', 'scope_value', 'severity',
+                'threshold', 'enabled', 'aggregation_mode', 'notification_repeat_window_seconds',
+                'for_duration_seconds', 'notification_channels', 'notification_group_names',
+                'notify_on_active', 'notify_on_recovery', 'notify_on_reopen_after_maintenance',
+            )
+            snapshots = [
+                {'id': rule_id, **{key: by_id[rule_id].get(key) for key in fields}}
+                for rule_id in sorted(rule_ids)
+            ]
+            manifest: dict[str, Any] = {
+                'operation': operation,
+                'tenant_id': tenant_id,
+                'requester_id': actor_id,
+                'rule_ids': sorted(rule_ids),
+                'rules': snapshots,
+            }
+            if operation == 'TOGGLE':
+                enabled = payload.get('enabled', source.get('enabled'))
+                if not isinstance(enabled, bool):
+                    raise ValueError('Toggle approval requires an enabled boolean')
+                manifest['enabled'] = enabled
+            return manifest
+
+        raise ValueError('Unsupported alert rule approval operation')
+    finally:
+        conn.close()
+
+
 def create_rule(payload: dict[str, Any], tenant_id: str = 'tenant-default') -> dict[str, Any]:
     tenant_id = _tenant_id(tenant_id)
     now = _utc_now_iso()

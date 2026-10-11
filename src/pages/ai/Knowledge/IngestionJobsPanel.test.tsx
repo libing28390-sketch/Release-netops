@@ -75,7 +75,7 @@ describe('IngestionJobsPanel', () => {
     await user.type(screen.getByPlaceholderText('搜索任务 ID、类型、阶段或错误码'), 'timeout');
     await user.click(screen.getByRole('button', { name: '搜索' }));
 
-    expect(listJobs).toHaveBeenLastCalledWith(expect.objectContaining({ executionState: 'failed', search: 'timeout', page: 1, pageSize: 20 }));
+    expect(listJobs).toHaveBeenLastCalledWith(expect.objectContaining({ executionState: 'failed', search: 'timeout', page: 1, pageSize: 10 }));
   });
 
   it('renders an actionable empty or request error state', async () => {

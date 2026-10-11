@@ -42,7 +42,7 @@ def test_system_jobs_hide_internal_unknown_and_user_jobs(monkeypatch):
         ],
     )
 
-    response = scheduled_jobs.list_system_scheduled_jobs(_user={"role": "Viewer"})
+    response = scheduled_jobs.list_system_scheduled_jobs(_user={"role": "Administrator"})
 
     assert response["success"] is True
     assert response["data"]["total"] == 2
@@ -61,7 +61,7 @@ def test_system_jobs_include_password_rotation_only_when_registered(monkeypatch)
         lambda: [_FakeJob("password_rotation_sweep")],
     )
 
-    response = scheduled_jobs.list_system_scheduled_jobs(_user={"role": "Viewer"})
+    response = scheduled_jobs.list_system_scheduled_jobs(_user={"role": "Administrator"})
 
     assert response["data"]["total"] == 1
     assert response["data"]["items"][0]["id"] == "password_rotation_sweep"
@@ -73,6 +73,6 @@ def test_system_jobs_fail_closed_when_scheduler_registry_is_unavailable(monkeypa
 
     monkeypatch.setattr(scheduler, "get_jobs", _raise)
 
-    response = scheduled_jobs.list_system_scheduled_jobs(_user={"role": "Viewer"})
+    response = scheduled_jobs.list_system_scheduled_jobs(_user={"role": "Administrator"})
 
     assert response == {"success": True, "data": {"items": [], "total": 0}}

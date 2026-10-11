@@ -7,7 +7,11 @@ from fastapi import APIRouter, Body, HTTPException, Query, Depends
 from core.rbac import require_role
 from core.config import settings
 from core.crypto import decrypt_credential, encrypt_credential
-from services.config_approval_service import verify_code, consume_approval
+from services.config_approval_service import (
+    approval_manifest_hash,
+    consume_approval,
+    verify_code,
+)
 from database import get_db_connection
 from services import alert_maintenance_service
 from services import alert_rule_service
@@ -25,37 +29,44 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def _verify_alert_rule_approval(payload: dict, user: dict, approval_type: str = 'alert_rule'):
-    is_test_env = getattr(settings, 'ENVIRONMENT', 'development') != 'production'
-    skip_approval_verification = payload.get("skip_approval_verification", False) if is_test_env else False
-    
-    if skip_approval_verification:
-        return
-        
+def _verify_alert_rule_approval(
+    payload: dict,
+    user: dict,
+    approval_type: str = 'alert_rule',
+    *,
+    operation: str,
+    rule_id: str = '',
+):
     approval_token = (payload.get("approval_token") or "").strip()
     approval_code = (payload.get("approval_code") or "").strip()
-    
     if not approval_token or not approval_code:
-        raise HTTPException(
-            status_code=400,
-            detail="安全校验失败：执行此修改必须提供有效工单审批码。请先获取验证码验证。" if not is_test_env else "安全校验失败：必须提供有效工单审批码（或在测试环境使用 skip_approval_verification=true 绕过）"
+        raise HTTPException(status_code=400, detail='此规则变更必须提供有效审批凭证')
+    try:
+        manifest = alert_rule_service.build_alert_rule_approval_manifest(
+            payload,
+            tenant_id=_notification_tenant_id(user),
+            requester_id=str(user.get('user_id') or user.get('id') or ''),
+            expected_operation=operation,
+            route_rule_id=rule_id,
         )
-        
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    binding_hash = approval_manifest_hash(manifest)
     ok, err = verify_code(
         approval_token,
         approval_code,
         requester_id=str(user.get('user_id') or ''),
         requester_username=str(user.get('username') or ''),
         expected_approval_type=approval_type,
+        expected_binding_hash=binding_hash,
     )
     if not ok:
         raise HTTPException(status_code=403, detail=err)
-        
-    # Consume it
     if not consume_approval(
         approval_token,
         requester_id=str(user.get('user_id') or ''),
         expected_approval_type=approval_type,
+        expected_binding_hash=binding_hash,
     ):
         raise HTTPException(status_code=403, detail='审批令牌与当前操作不匹配或已被使用')
 
@@ -1615,7 +1626,7 @@ def test_alert_email_channel(payload: dict = Body(default={}), user=require_role
 @router.post('/alerts/rules')
 def create_alert_rule(payload: dict = Body(...), user=require_role("Operator")):
     actor_username = user.get("username", "unknown")
-    _verify_alert_rule_approval(payload, user=user, approval_type='alert_rule')
+    _verify_alert_rule_approval(payload, user=user, approval_type='alert_rule', operation='CREATE')
     try:
         rule = alert_rule_service.create_rule(payload, tenant_id=_notification_tenant_id(user))
     except alert_rule_service.UnsupportedMetricTypeError as exc:
@@ -1658,7 +1669,7 @@ def read_alert_rules_history(limit: int = Query(default=20, ge=1, le=100), rule_
 @router.put('/alerts/rules/{rule_id}')
 def update_alert_rules(rule_id: str, payload: dict = Body(...), user=require_role("Operator")):
     actor_username = user.get("username", "unknown")
-    _verify_alert_rule_approval(payload, user=user, approval_type='alert_rule')
+    _verify_alert_rule_approval(payload, user=user, approval_type='alert_rule', operation='UPDATE', rule_id=rule_id)
     try:
         rule = alert_rule_service.update_rule(rule_id, payload, tenant_id=_notification_tenant_id(user))
     except alert_rule_service.UnsupportedMetricTypeError as exc:
@@ -1694,16 +1705,19 @@ def delete_alert_rule(
     rule_id: str,
     approval_token: str | None = Query(default=None),
     approval_code: str | None = Query(default=None),
-    skip_approval: bool = Query(default=False),
+    payload: dict = Body(default={}),
     user=require_role("Administrator"),
 ):
     actor_username = user.get("username", "unknown")
-    payload = {
+    approval_payload = {
+        **payload,
         "approval_token": approval_token,
         "approval_code": approval_code,
-        "skip_approval_verification": skip_approval
     }
-    _verify_alert_rule_approval(payload, user=user, approval_type='alert_rule_delete')
+    _verify_alert_rule_approval(
+        approval_payload, user=user, approval_type='alert_rule_delete',
+        operation='DELETE', rule_id=rule_id,
+    )
     try:
         tenant_id = _notification_tenant_id(user)
         existing = alert_rule_service.get_rule(rule_id, tenant_id=tenant_id)
@@ -1737,7 +1751,7 @@ def batch_toggle_alert_rules(payload: dict = Body(...), user=require_role("Opera
     if len(rule_ids) > 200:
         raise HTTPException(status_code=400, detail='Too many rule IDs (max 200)')
 
-    _verify_alert_rule_approval(payload, user=user, approval_type='alert_rule')
+    _verify_alert_rule_approval(payload, user=user, approval_type='alert_rule', operation='TOGGLE')
 
     conn = get_db_connection()
     try:
@@ -1803,7 +1817,7 @@ def batch_delete_alert_rules(payload: dict = Body(...), user=require_role("Admin
     if len(rule_ids) > 200:
         raise HTTPException(status_code=400, detail='Too many rule IDs (max 200)')
 
-    _verify_alert_rule_approval(payload, user=user, approval_type='alert_rule_delete')
+    _verify_alert_rule_approval(payload, user=user, approval_type='alert_rule_delete', operation='DELETE')
 
     conn = get_db_connection()
     try:

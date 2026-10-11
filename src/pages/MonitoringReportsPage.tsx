@@ -124,7 +124,7 @@ export const MonitoringReportsPage: React.FC<MonitoringReportsPageProps> = ({ la
   const [sortKey, setSortKey] = useState<string>('');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(10);
 
   // Count active advanced filter criteria
   const activeAdvancedFilterCount = useMemo(() => {

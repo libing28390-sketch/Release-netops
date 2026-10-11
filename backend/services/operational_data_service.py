@@ -1351,6 +1351,7 @@ def _collect_registry_categories(
         'username': 'collector',
         'role': 'Operator',
         'tenant_id': device_info.get('tenant_id') or '',
+        '_trusted_service_identity': 'collector',
     }
     results: dict[str, dict[str, Any]] = {}
     for category in categories:

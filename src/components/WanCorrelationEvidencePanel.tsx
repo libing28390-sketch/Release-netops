@@ -26,7 +26,7 @@ const WanCorrelationEvidencePanel: React.FC = () => {
   const load = async () => {
     setLoading(true); setError('');
     try {
-      const query = new URLSearchParams({ page: String(page), page_size: '20' });
+      const query = new URLSearchParams({ page: String(page), page_size: '10' });
       if (status) query.set('status', status); if (severity) query.set('severity', severity); if (siteId) query.set('site_id', siteId); if (provider) query.set('provider', provider); if (keyword.trim()) query.set('keyword', keyword.trim()); if (startAt) query.set('start_at', new Date(startAt).toISOString()); if (endAt) query.set('end_at', new Date(endAt).toISOString());
       const response = await fetch(`/api/monitoring/wan-correlations?${query}`, { headers: headers() });
       if (!response.ok) throw new Error('关联事件加载失败');

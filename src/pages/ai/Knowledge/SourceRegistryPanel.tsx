@@ -84,7 +84,7 @@ export const SourceRegistryPanel: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState('all');
   const [sources, setSources] = useState<KnowledgeSourceRegistry[]>([]);
   const [sourcePage, setSourcePage] = useState(1);
-  const [sourcePageSize, setSourcePageSize] = useState(20);
+  const [sourcePageSize, setSourcePageSize] = useState(10);
   const [sourceTotal, setSourceTotal] = useState(0);
   const [selectedId, setSelectedId] = useState('');
   const [refreshStatus, setRefreshStatus] = useState<KnowledgeSourceRefreshStatus | null>(null);

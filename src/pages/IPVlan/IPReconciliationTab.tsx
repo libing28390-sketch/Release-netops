@@ -239,7 +239,7 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
   const [apiError, setApiError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(10);
   const [resultTotal, setResultTotal] = useState(0);
 
   // Modals state

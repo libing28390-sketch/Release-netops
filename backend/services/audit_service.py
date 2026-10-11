@@ -11,6 +11,9 @@ _SENSITIVE_KEY_PARTS = (
     "password", "passwd", "token", "secret", "private_key", "community",
     "authorization", "credential", "api_key",
 )
+_SENSITIVE_EXACT_KEYS = {
+    "code", "approval_code", "verification_code", "mfa_code", "totp", "otp",
+}
 
 
 def utc_now_iso() -> str:
@@ -20,7 +23,7 @@ def utc_now_iso() -> str:
 def redact_audit_value(value: Any, key: str = "") -> Any:
     """Recursively remove credentials and tokens before persistence."""
     lowered = key.lower()
-    if key and any(part in lowered for part in _SENSITIVE_KEY_PARTS):
+    if key and (lowered in _SENSITIVE_EXACT_KEYS or any(part in lowered for part in _SENSITIVE_KEY_PARTS)):
         return "[REDACTED]"
     if isinstance(value, dict):
         return {str(k): redact_audit_value(v, str(k)) for k, v in value.items()}

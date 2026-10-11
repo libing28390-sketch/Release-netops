@@ -2,6 +2,7 @@ import React from 'react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import AssetManagementTab from './index';
+import { useInventoryStore } from '../../store/inventoryStore';
 
 vi.mock('../../hooks/useSystem', () => ({ useSystem: () => ({ systemInfo: {} }) }));
 vi.mock('../../components/DataTable', () => ({
@@ -46,6 +47,16 @@ const response = (payload: unknown, status = 200) => ({
   json: vi.fn().mockResolvedValue(payload),
 }) as unknown as Response;
 
+const assetSummary = (networkDevices: number, servers: number) => response({
+  total: networkDevices + servers,
+  by_type: { network_device: networkDevices, server: servers },
+  by_status: {},
+  by_vendor: {},
+  by_site: {},
+  by_department: {},
+  warranty_expiring_soon: 0,
+});
+
 const renderAssetPage = () => render(
   <AssetManagementTab language="en" t={key => key} />,
 );
@@ -53,6 +64,7 @@ const renderAssetPage = () => render(
 describe('AssetManagementTab request states', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn());
+    useInventoryStore.setState(useInventoryStore.getInitialState());
   });
 
   afterEach(() => {
@@ -75,7 +87,7 @@ describe('AssetManagementTab request states', () => {
     vi.mocked(fetch).mockImplementation(async input => {
       const url = String(input);
       if (url.startsWith('/api/assets?')) return response({ items: [asset], total: 1 });
-      if (url === '/api/assets/summary') return response({ total: 1, online: 1, offline: 0 });
+      if (url === '/api/assets/summary') return assetSummary(1, 0);
       if (url === '/api/cmdb/sites') return response({ data: [] });
       if (url === '/api/racks') return response({ success: true, data: [] });
       if (url === '/api/tags/definitions') return response({ data: [] });
@@ -84,6 +96,7 @@ describe('AssetManagementTab request states', () => {
 
     renderAssetPage();
     await screen.findByText('server-columns-1');
+    await waitFor(() => expect(useInventoryStore.getState().assetsTotal).toBe(1));
 
     for (const column of [
       'Device', 'Asset tag', 'Asset type', 'Category', 'Role', 'Site', 'Status',
@@ -115,6 +128,33 @@ describe('AssetManagementTab request states', () => {
     expect(await screen.findByRole('columnheader', { name: 'Rack' })).toBeTruthy();
   });
 
+  it('refreshes the shared device count after an asset is saved', async () => {
+    let summaryRequestCount = 0;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.startsWith('/api/assets?')) return response({ items: [], total: 0 });
+      if (url === '/api/assets/summary') {
+        summaryRequestCount += 1;
+        return summaryRequestCount <= 2 ? assetSummary(0, 0) : assetSummary(2, 1);
+      }
+      if (url === '/api/cmdb/sites') return response({ data: [] });
+      if (url === '/api/racks') return response({ success: true, data: [] });
+      if (url === '/api/tags/definitions') return response({ data: [] });
+      if (url === '/api/assets' && init?.method === 'POST') return response({ ok: true });
+      return response({});
+    });
+
+    renderAssetPage();
+    await screen.findByText('No asset records');
+    await waitFor(() => expect(useInventoryStore.getState().assetsTotal).toBe(0));
+    fireEvent.click(screen.getByRole('button', { name: 'Add Asset' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Hostname' }), { target: { value: 'new-device' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(useInventoryStore.getState().assetsTotal).toBe(3));
+    expect(fetch).toHaveBeenCalledWith('/api/assets', expect.objectContaining({ method: 'POST' }));
+  });
+
   it('migrates the previously auto-saved default columns', async () => {
     window.localStorage.setItem('netops:assets:columns:v1', JSON.stringify({
       hostname: true,
@@ -139,7 +179,7 @@ describe('AssetManagementTab request states', () => {
     vi.mocked(fetch).mockImplementation(async input => {
       const url = String(input);
       if (url.startsWith('/api/assets?')) return response({ items: [], total: 0 });
-      if (url === '/api/assets/summary') return response({ total: 0, online: 0, offline: 0 });
+      if (url === '/api/assets/summary') return assetSummary(0, 0);
       if (url === '/api/cmdb/sites') return response({ data: [] });
       if (url === '/api/racks') return response({ success: true, data: [] });
       if (url === '/api/tags/definitions') return response({ data: [] });
@@ -159,7 +199,7 @@ describe('AssetManagementTab request states', () => {
     vi.mocked(fetch).mockImplementation(async input => {
       const url = String(input);
       if (url.startsWith('/api/assets?')) return response({ detail: 'forbidden' }, 403);
-      if (url === '/api/assets/summary') return response({ total: 0, online: 0, offline: 0 });
+      if (url === '/api/assets/summary') return assetSummary(0, 0);
       if (url === '/api/cmdb/sites') return response({ data: [] });
       if (url === '/api/racks') return response({ success: true, data: [] });
       if (url === '/api/tags/definitions') return response({ data: [] });
@@ -179,7 +219,7 @@ describe('AssetManagementTab request states', () => {
     vi.mocked(fetch).mockImplementation(input => {
       const url = String(input);
       if (url.startsWith('/api/assets?')) return Promise.resolve(response({ items: [], total: 0 }));
-      if (url === '/api/assets/summary') return Promise.resolve(response({ total: 0, online: 0, offline: 0 }));
+      if (url === '/api/assets/summary') return Promise.resolve(assetSummary(0, 0));
       if (url === '/api/cmdb/sites') return Promise.resolve(response({ data: [] }));
       if (url === '/api/racks') return Promise.resolve(response({ success: true, data: [] }));
       if (url === '/api/tags/definitions') return Promise.resolve(response({ data: [] }));
@@ -238,7 +278,7 @@ describe('AssetManagementTab request states', () => {
     vi.mocked(fetch).mockImplementation(async input => {
       const url = String(input);
       if (url.startsWith('/api/assets?')) return response({ items: [asset], total: 1 });
-      if (url === '/api/assets/summary') return response({ total: 1, online: 1, offline: 0 });
+      if (url === '/api/assets/summary') return assetSummary(0, 1);
       if (url === '/api/cmdb/sites') return response({ data: [] });
       if (url === '/api/racks') return response({ success: true, data: [] });
       if (url === '/api/tags/definitions') return response({ data: [] });

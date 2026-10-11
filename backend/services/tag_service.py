@@ -166,8 +166,9 @@ def _ensure_status_tag_ids(conn, *, commit: bool = True) -> dict[str, str]:
     return {str(row["code"]).rsplit(".", 1)[-1]: str(row["id"]) for row in rows}
 
 
-def _system_status_value(device_status: str | None) -> str:
-    return "online" if str(device_status or "").lower() == "online" else "offline"
+def _system_status_value(device_status: str | None) -> str | None:
+    status = str(device_status or "").strip().lower()
+    return status if status in {"online", "offline"} else None
 
 
 def sync_device_status_tag(
@@ -179,14 +180,15 @@ def sync_device_status_tag(
     commit: bool = True,
 ) -> bool:
     tag_ids = _ensure_status_tag_ids(conn, commit=commit)
-    target_id = tag_ids[_system_status_value(device_status)]
+    status_value = _system_status_value(device_status)
+    target_id = tag_ids.get(status_value) if status_value else None
     current = conn.execute(
         '''SELECT ta.tag_id FROM tag_assignments ta JOIN tag_definitions td ON td.id = ta.tag_id
            WHERE ta.resource_type='device' AND ta.resource_id=? AND td.category='system_auto' AND td.is_system=1''',
         (device_id,),
     ).fetchall()
     current_ids = {str(row["tag_id"]) for row in current}
-    if current_ids == {target_id}:
+    if (target_id and current_ids == {target_id}) or (not target_id and not current_ids):
         if commit:
             conn.commit()
         return False
@@ -195,13 +197,26 @@ def sync_device_status_tag(
            AND tag_id IN (SELECT id FROM tag_definitions WHERE category='system_auto' AND is_system=1)''',
         (device_id,),
     )
-    conn.execute(
-        '''INSERT INTO tag_assignments
-           (resource_type, resource_id, tag_id, source_type, created_at, created_by)
-           VALUES ('device', ?, ?, 'system', ?, ?)''',
-        (device_id, target_id, _now(), created_by),
-    )
-    _record_history(conn, "device", device_id, target_id, "replace", "system", created_by, reason="device status")
+    if target_id:
+        conn.execute(
+            '''INSERT INTO tag_assignments
+               (resource_type, resource_id, tag_id, source_type, created_at, created_by)
+               VALUES ('device', ?, ?, 'system', ?, ?)''',
+            (device_id, target_id, _now(), created_by),
+        )
+        _record_history(conn, "device", device_id, target_id, "replace", "system", created_by, reason="device status")
+    else:
+        for current_id in current_ids:
+            _record_history(
+                conn,
+                "device",
+                device_id,
+                current_id,
+                "remove",
+                "system",
+                created_by,
+                reason=f"device status {str(device_status or 'unknown').strip() or 'unknown'}",
+            )
     if commit:
         conn.commit()
     return True

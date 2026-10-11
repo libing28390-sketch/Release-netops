@@ -88,7 +88,10 @@ const AppMainContent: React.FC = () => {
   const topology = useTopologyContext();
 
   const { isFeatureEnabled } = useSystem();
-  const { assetsTotal } = useInventoryStore();
+  const assetsTotal = useInventoryStore(state => state.assetsTotal);
+  const assetsTotalError = useInventoryStore(state => state.assetsTotalError);
+  const fetchAssetsTotal = useInventoryStore(state => state.fetchAssetsTotal);
+  const resetAssetsTotal = useInventoryStore(state => state.resetAssetsTotal);
   const { monitorOverview, setMonitorSelectedDevice } = useMonitoringStore();
   
   const {
@@ -109,6 +112,26 @@ const AppMainContent: React.FC = () => {
     currentUser,
     devices,
   } = coreApp;
+
+  React.useEffect(() => {
+    if (!isAuthenticated) {
+      resetAssetsTotal();
+      return;
+    }
+
+    resetAssetsTotal();
+    const controller = new AbortController();
+    const refreshAssetsTotal = () => {
+      void fetchAssetsTotal(controller.signal);
+    };
+
+    refreshAssetsTotal();
+    const intervalId = window.setInterval(refreshAssetsTotal, 30_000);
+    return () => {
+      controller.abort();
+      window.clearInterval(intervalId);
+    };
+  }, [isAuthenticated, currentUser?.id, currentUser?.username, fetchAssetsTotal, resetAssetsTotal]);
 
   const { favoriteDeviceIds, toggleFavorite } = useAccessFavorites(currentUser?.username);
   const handleFavoriteToggle = (device: { id: string }) => toggleFavorite(device.id);
@@ -491,6 +514,7 @@ const AppMainContent: React.FC = () => {
             setAutoRefreshEnabled={setAutoRefreshEnabled}
             fetchSharedData={fetchSharedData}
             fetchDevicesData={fetchDevicesData}
+            fetchAssetsTotal={fetchAssetsTotal}
             selectedJob={selectedJob}
             setSelectedJob={setSelectedJob}
             hostResources={hostResources}
@@ -501,6 +525,7 @@ const AppMainContent: React.FC = () => {
             setActiveTab={setActiveTab}
             navigate={navigate}
             assetsTotal={assetsTotal}
+            assetsTotalError={assetsTotalError}
           />
         </Suspense>
       )}
@@ -591,6 +616,8 @@ const AppMainContent: React.FC = () => {
         <Suspense fallback={lazyPanelFallback}>
           <AccessCenterTab
             devices={devices}
+            assetsTotal={assetsTotal}
+            assetsTotalError={assetsTotalError}
             language={language}
             showToast={showToast}
             favoriteDeviceIds={favoriteDeviceIds}

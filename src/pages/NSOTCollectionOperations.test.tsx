@@ -103,9 +103,9 @@ describe('NSOTCollectionOperations', () => {
     render(<NSOTCollectionOperations language="zh" searchText="" />);
 
     expect(await screen.findByText('共 21 行')).toBeTruthy();
-    expect(screen.getAllByRole('row')).toHaveLength(21);
+    expect(screen.getAllByRole('row')).toHaveLength(11);
     await user.click(screen.getByTitle('下一页'));
     expect((screen.getByRole('spinbutton', { name: '当前页' }) as HTMLInputElement).value).toBe('2');
-    expect(screen.getAllByRole('row')).toHaveLength(2);
+    expect(screen.getAllByRole('row')).toHaveLength(11);
   });
 });
