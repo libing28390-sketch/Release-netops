@@ -1,5 +1,4 @@
 import { useCallback } from 'react';
-import * as XLSX from 'xlsx';
 import type { Device } from '../types';
 import { authHeaders } from '../api/http';
 import { exportInventoryToExcel } from '../utils/inventoryExport';
@@ -21,8 +20,8 @@ export const useInventoryImportExport = ({
   const setInventoryRefreshTick = useInventoryStore((s) => s.setInventoryRefreshTick);
   const setInventoryPage = useInventoryStore((s) => s.setInventoryPage);
 
-  const handleExport = useCallback(() => {
-    exportInventoryToExcel(devices);
+  const handleExport = useCallback(async () => {
+    await exportInventoryToExcel(devices);
   }, [devices]);
 
   const handleImport = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
@@ -30,8 +29,9 @@ export const useInventoryImportExport = ({
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (loadEvent) => {
+    reader.onload = async (loadEvent) => {
       try {
+        const XLSX = await import('xlsx');
         const data = new Uint8Array(loadEvent.target?.result as ArrayBuffer);
         const workbook = XLSX.read(data, { type: 'array' });
         const firstSheetName = workbook.SheetNames[0];

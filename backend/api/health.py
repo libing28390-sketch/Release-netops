@@ -518,6 +518,79 @@ def record_host_resource_snapshot(sync_alerts: bool = True) -> dict[str, Any]:
     return snapshot
 
 
+def _empty_host_resource_snapshot() -> dict[str, Any]:
+    """Return the normal response shape when the scheduled sampler has not run yet."""
+    hostname = (
+        os.environ.get("HOSTNAME")
+        or os.environ.get("COMPUTERNAME")
+        or (os.uname().nodename if hasattr(os, "uname") else None)
+    )
+    return {
+        "status": "degraded",
+        "metrics_available": False,
+        "cpu_percent": None,
+        "memory_percent": None,
+        "memory_used_gb": None,
+        "memory_total_gb": None,
+        "disk_percent": None,
+        "disk_used_gb": 0.0,
+        "disk_total_gb": 0.0,
+        "disk_free_gb": 0.0,
+        "load_1m": None,
+        "uptime_hours": None,
+        "database_status": "not sampled yet",
+        # Reaching this response proves the database read itself succeeded;
+        # the scheduled host-level database probe has not produced a sample.
+        "database_ok": True,
+        "process_memory_mb": None,
+        "process_cpu_percent": None,
+        "hostname": hostname,
+        "platform": os.name,
+        "updated_at": "",
+        "active_alert_count": 0,
+        "active_alerts": [],
+    }
+
+
+def _load_latest_host_resource_snapshot(conn=None) -> dict[str, Any]:
+    """Read the latest scheduled host sample without collecting or writing data."""
+    owns_connection = conn is None
+    connection = conn or get_db_connection()
+    try:
+        row = connection.execute(
+            """
+            SELECT ts AS updated_at, status, cpu_percent, memory_percent,
+                   disk_percent, load_1m, process_memory_mb, process_cpu_percent,
+                   memory_used_gb, memory_total_gb, disk_used_gb, disk_total_gb,
+                   disk_free_gb, uptime_hours, database_ok, database_status
+            FROM host_resource_samples
+            ORDER BY ts DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    finally:
+        if owns_connection:
+            connection.close()
+
+    if not row:
+        return _empty_host_resource_snapshot()
+
+    snapshot = dict(row)
+    snapshot["metrics_available"] = psutil is not None
+    snapshot["database_ok"] = bool(snapshot.get("database_ok"))
+    snapshot["database_status"] = str(snapshot.get("database_status") or "")
+    snapshot["hostname"] = (
+        os.environ.get("HOSTNAME")
+        or os.environ.get("COMPUTERNAME")
+        or (os.uname().nodename if hasattr(os, "uname") else None)
+    )
+    snapshot["platform"] = os.name
+    active_alerts = _get_host_resource_alerts(snapshot)
+    snapshot["active_alert_count"] = len(active_alerts)
+    snapshot["active_alerts"] = active_alerts
+    return snapshot
+
+
 def _load_recent_host_resource_alerts(range_hours: int) -> list[dict[str, Any]]:
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=range_hours)).replace(microsecond=0).isoformat()
     conn = get_db_connection()
@@ -729,7 +802,7 @@ def health_metrics():
 @router.get("/health/resources", tags=["health"])
 def health_resources():
     logger.debug("Health resources endpoint called")
-    return record_host_resource_snapshot(sync_alerts=False)
+    return _load_latest_host_resource_snapshot()
 
 
 @router.get("/health/resources/history", tags=["health"])
@@ -737,11 +810,10 @@ def health_resource_history(
     range_hours: int = Query(default=24, ge=1, le=24 * 7),
 ):
     logger.debug("Health resource history endpoint called")
-    init_db()
-    current = record_host_resource_snapshot(sync_alerts=False)
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=range_hours)).replace(microsecond=0).isoformat()
     conn = get_db_connection()
     try:
+        current = _load_latest_host_resource_snapshot(conn)
         rows = conn.execute(
             '''
             SELECT ts, status, cpu_percent, memory_percent, disk_percent, load_1m,

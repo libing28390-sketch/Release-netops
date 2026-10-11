@@ -132,3 +132,79 @@ def test_asset_import_reserved_site_error_is_actionable(isolated_db):
     assert detail["site_label"] == "系统默认站点"
     assert "系统保留站点" in detail["message"]
     assert "site-default" not in detail["message"]
+
+
+def test_batch_asset_delete_uses_one_monitor_sync_and_reports_item_failures(isolated_db, monkeypatch):
+    user = {
+        "id": "batch-delete-admin",
+        "user_id": "batch-delete-admin",
+        "username": "batch-delete-admin",
+        "role": "Administrator",
+        "tenant_id": "tenant-default",
+    }
+    created = assets.create_asset(
+        assets.AssetCreate(
+            asset_type="server",
+            hostname="batch-delete-server",
+            asset_tag="batch-delete-server",
+            management_ip="192.0.2.201",
+        ),
+        _user=user,
+    )
+    sync_calls = []
+    monkeypatch.setattr(assets, "_trigger_asset_monitoring_sync", lambda: sync_calls.append(True))
+
+    result = assets.batch_delete_assets(
+        assets.BatchAssetDeleteRequest(asset_ids=[created["id"], "missing-asset"]),
+        _user=user,
+    )
+
+    assert result["deleted"] == 1
+    assert result["deleted_ids"] == [created["id"]]
+    assert result["failed"] == 1
+    assert result["failed_items"] == [{"asset_id": "missing-asset", "message": "Asset not found"}]
+    assert sync_calls == [True]
+    with get_db_connection() as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM physical_assets WHERE id = ?", (created["id"],)
+        ).fetchone()[0] == 0
+
+
+def test_batch_asset_delete_preserves_assets_denied_by_scope(isolated_db, monkeypatch):
+    user = {
+        "id": "batch-delete-scoped-admin",
+        "user_id": "batch-delete-scoped-admin",
+        "username": "batch-delete-scoped-admin",
+        "role": "Administrator",
+        "tenant_id": "tenant-default",
+    }
+    created = assets.create_asset(
+        assets.AssetCreate(
+            asset_type="server",
+            hostname="batch-delete-denied-server",
+            asset_tag="batch-delete-denied-server",
+            management_ip="192.0.2.202",
+        ),
+        _user=user,
+    )
+
+    def deny_delete(_user, _row, action):
+        assert action == "delete"
+        raise HTTPException(status_code=403, detail="Asset is outside the user's scope")
+
+    monkeypatch.setattr(assets, "_enforce_asset_row_scope", deny_delete)
+    result = assets.batch_delete_assets(
+        assets.BatchAssetDeleteRequest(asset_ids=[created["id"]]),
+        _user=user,
+    )
+
+    assert result["deleted"] == 0
+    assert result["failed"] == 1
+    assert result["failed_items"] == [{
+        "asset_id": created["id"],
+        "message": "Asset is outside the user's scope",
+    }]
+    with get_db_connection() as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM physical_assets WHERE id = ?", (created["id"],)
+        ).fetchone()[0] == 1

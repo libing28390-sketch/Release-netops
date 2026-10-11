@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Play, AlertTriangle } from 'lucide-react';
 import type { Device } from '../../types';
@@ -13,13 +13,44 @@ import { QuickQueryOverlay } from './components/QuickQueryOverlay';
 import { QuickQueryResultOverlay } from './components/QuickQueryResultOverlay';
 import { TextFSMDebugger } from './components/TextFSMDebugger';
 import { getDeviceCategory, getVendor, classifyVarGroup, isAutomationPlatformSupported, normalizeAutomationPlatform } from './helpers';
-import { VAR_GROUP_ORDER } from './constants';
+import { DEVICE_PAGE_SIZE, VAR_GROUP_ORDER } from './constants';
+import { ApiError, apiRequest } from '../../api/http';
+import { fetchAllPaginatedItems } from '../../utils/pagination';
+
+interface DeviceSelectionSiteFacet {
+  site: string;
+  count: number;
+  online_count?: number;
+}
+
+interface DeviceSelectionSiteRoleFacet {
+  site: string;
+  role: string;
+  count: number;
+  online_count?: number;
+}
+
+interface DeviceSelectionFacets {
+  sites?: DeviceSelectionSiteFacet[];
+  site_roles?: DeviceSelectionSiteRoleFacet[];
+  vendors?: string[];
+}
+
+interface DeviceSelectionPageResponse {
+  items: Device[];
+  total: number;
+  page: number;
+  page_size: number;
+  status_counts?: Record<string, number>;
+  facets?: DeviceSelectionFacets;
+}
 
 export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props) => {
   const {
     t,
     language,
     devices,
+    rememberedBatchDevices,
     selectedDevice,
     batchMode,
     batchDeviceIds,
@@ -57,6 +88,7 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
     onScenarioSearchChange,
     onToggleBatchMode,
     onToggleBatchDevice,
+    onRememberDevice,
     onSelectDevice,
     onOpenCustomCommandModal,
     onOpenScenario,
@@ -85,12 +117,20 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
   const [currentStep, setCurrentStep] = useState<StepId>(1);
   const [vendorFilter, setVendorFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [siteFilter, setSiteFilter] = useState<string>('all');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [deviceTypeFilter, setDeviceTypeFilter] = useState<'all' | 'network' | 'server'>('all');
   const [riskFilter, setRiskFilter] = useState<string>('all');
   const [deviceViewMode, setDeviceViewMode] = useState<'grid' | 'list'>('list');
   const [devicePage, setDevicePage] = useState(1);
+  const [devicePageItems, setDevicePageItems] = useState<Device[]>([]);
+  const [deviceTotal, setDeviceTotal] = useState(0);
+  const [deviceStatusCounts, setDeviceStatusCounts] = useState<Record<string, number>>({});
+  const [deviceFacets, setDeviceFacets] = useState<DeviceSelectionFacets>({});
+  const [devicePageLoading, setDevicePageLoading] = useState(false);
+  const [devicePageError, setDevicePageError] = useState('');
+  const [debouncedDeviceSearch, setDebouncedDeviceSearch] = useState(automationSearch);
+  const [deviceRequestVersion, setDeviceRequestVersion] = useState(0);
+  const devicePageAbortRef = useRef<AbortController | null>(null);
 
   const [localChangeTicket, localSetChangeTicket] = useState('');
   const changeTicket = propChangeTicket !== undefined ? propChangeTicket : localChangeTicket;
@@ -190,88 +230,152 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [deviceStatusMap]);
 
-  /* Filtered devices */
-  const filteredDevices = useMemo(() => {
-    return devices.filter((d) => {
-      if (automationSearch) {
-        const q = automationSearch.toLowerCase();
-        if (!String(d.hostname || '').toLowerCase().includes(q) && !String(d.ip_address || '').includes(q)) return false;
-      }
-      if (statusFilter !== 'all') {
-        const isOnline = d.status === 'online';
-        if (statusFilter === 'online' && !isOnline) return false;
-        if (statusFilter === 'offline' && isOnline) return false;
-      }
-      if (vendorFilter !== 'all') {
-        const vendor = getVendor(d);
-        if (vendor !== vendorFilter) return false;
-      }
-      if (siteFilter !== 'all' && (d.site || '') !== siteFilter) return false;
-      if (treeFilterSite) {
-        const dSite = d.site || (isZh ? '未分组' : 'Ungrouped');
-        if (dSite !== treeFilterSite) return false;
-      }
-      if (treeFilterRole) {
-        const dRole = d.role || (isZh ? '未分配' : 'Unassigned');
-        if (dRole !== treeFilterRole) return false;
-      }
-      if (deviceTypeFilter !== 'all') {
-        const type = getDeviceCategory(d);
-        if (type !== deviceTypeFilter) return false;
-      }
-      return true;
+  const buildDeviceRequestParams = useCallback((page: number, searchTerm = debouncedDeviceSearch) => {
+    const params = new URLSearchParams({
+      mode: 'light',
+      asset_type: 'all',
+      include_facets: 'true',
+      page: String(page),
+      page_size: String(DEVICE_PAGE_SIZE),
     });
-  }, [devices, automationSearch, statusFilter, vendorFilter, siteFilter, treeFilterSite, treeFilterRole, isZh, deviceTypeFilter]);
-
-  /* Device tree structure: site -> role -> count */
-  const deviceTree = useMemo(() => {
-    const tree: Array<{
-      site: string;
-      count: number;
-      onlineCount: number;
-      roles: Array<{ role: string; count: number; onlineCount: number }>;
-    }> = [];
-    const siteMap = new Map<string, Map<string, { total: number; online: number }>>();
-    for (const d of devices) {
-      const site = d.site || (isZh ? '未分组' : 'Ungrouped');
-      const role = d.role || (isZh ? '未分配' : 'Unassigned');
-      if (!siteMap.has(site)) siteMap.set(site, new Map());
-      const roleMap = siteMap.get(site)!;
-      if (!roleMap.has(role)) roleMap.set(role, { total: 0, online: 0 });
-      const c = roleMap.get(role)!;
-      c.total++;
-      if (d.status === 'online') c.online++;
+    if (searchTerm.trim()) params.set('search', searchTerm.trim());
+    if (statusFilter !== 'all') params.set('status', statusFilter === 'offline' ? 'not_online' : statusFilter);
+    if (vendorFilter !== 'all') params.set('vendor', vendorFilter);
+    if (treeFilterSite) params.set('site', treeFilterSite);
+    if (treeFilterRole) {
+      params.set('role', treeFilterRole);
+      params.set('role_exact', 'true');
     }
-    for (const [site, roleMap] of Array.from(siteMap.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
-      const roles: Array<{ role: string; count: number; onlineCount: number }> = [];
-      let siteTotal = 0,
-        siteOnline = 0;
-      for (const [role, c] of Array.from(roleMap.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
-        roles.push({ role, count: c.total, onlineCount: c.online });
-        siteTotal += c.total;
-        siteOnline += c.online;
-      }
-      tree.push({ site, count: siteTotal, onlineCount: siteOnline, roles });
-    }
-    return tree;
-  }, [devices, isZh]);
+    if (deviceTypeFilter !== 'all') params.set('device_category', deviceTypeFilter);
+    return params;
+  }, [debouncedDeviceSearch, statusFilter, vendorFilter, treeFilterSite, treeFilterRole, deviceTypeFilter]);
 
-  /* Reset page when filters change */
   useEffect(() => {
-    setDevicePage(1);
-  }, [automationSearch, statusFilter, vendorFilter, siteFilter, treeFilterSite, treeFilterRole]);
+    const timer = window.setTimeout(() => {
+      setDebouncedDeviceSearch(automationSearch.trim());
+      setDevicePage(1);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [automationSearch]);
 
-  const pagedDevices = useMemo(() => {
-    const start = (devicePage - 1) * 10;
-    return filteredDevices.slice(start, start + 10);
-  }, [filteredDevices, devicePage]);
+  useEffect(() => {
+    if (currentStep !== 1) {
+      devicePageAbortRef.current?.abort();
+      setDevicePageLoading(false);
+      return;
+    }
 
-  /* Unique values for filters */
-  const vendors = useMemo(() => [...new Set(devices.map((d) => getVendor(d)))].sort(), [devices]);
+    const controller = new AbortController();
+    devicePageAbortRef.current?.abort();
+    devicePageAbortRef.current = controller;
+    setDevicePageLoading(true);
+    setDevicePageError('');
+    setDevicePageItems([]);
+    setDeviceTotal(0);
+    setDeviceStatusCounts({});
+    setDeviceFacets({});
+
+    apiRequest<DeviceSelectionPageResponse>(`/api/devices?${buildDeviceRequestParams(devicePage).toString()}`, {
+      signal: controller.signal,
+    }).then((response) => {
+      if (controller.signal.aborted) return;
+      setDevicePageItems(Array.isArray(response.items) ? response.items : []);
+      const total = Number.isFinite(response.total) ? Math.max(0, response.total) : 0;
+      setDeviceTotal(total);
+      setDeviceStatusCounts(response.status_counts || {});
+      setDeviceFacets(response.facets || {});
+      const lastPage = Math.max(1, Math.ceil(total / DEVICE_PAGE_SIZE));
+      if (devicePage > lastPage) setDevicePage(lastPage);
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted || (error instanceof Error && error.name === 'AbortError')) return;
+      setDevicePageError(error instanceof ApiError && error.status === 403
+        ? (isZh ? '你没有查看设备列表的权限。' : 'You do not have permission to view the device list.')
+        : (error instanceof Error ? error.message : String(error)));
+    }).finally(() => {
+      if (!controller.signal.aborted) setDevicePageLoading(false);
+    });
+
+    return () => {
+      controller.abort();
+      if (devicePageAbortRef.current === controller) devicePageAbortRef.current = null;
+    };
+  }, [currentStep, devicePage, buildDeviceRequestParams, deviceRequestVersion, isZh]);
+
+  const deviceTree = useMemo(() => {
+    const rolesBySite = new Map<string, Array<{ role: string; count: number; onlineCount: number }>>();
+    (deviceFacets.site_roles || []).forEach((facet) => {
+      if (!facet.site || !facet.role) return;
+      const roles = rolesBySite.get(facet.site) || [];
+      roles.push({
+        role: isZh && facet.role === 'Unassigned' ? '未分配' : facet.role,
+        count: Number(facet.count || 0),
+        onlineCount: Number(facet.online_count || 0),
+      });
+      rolesBySite.set(facet.site, roles);
+    });
+    return (deviceFacets.sites || []).map((facet) => ({
+      site: isZh && facet.site === 'Unassigned' ? '未分组' : facet.site,
+      count: Number(facet.count || 0),
+      onlineCount: Number(facet.online_count || 0),
+      roles: rolesBySite.get(facet.site) || [],
+    }));
+  }, [deviceFacets, isZh]);
+
+  const vendors = useMemo(() => [...new Set(deviceFacets.vendors || [])].sort(), [deviceFacets.vendors]);
+  const knownDevices = useMemo(() => {
+    const byId = new Map<string, Device>();
+    [...devices, ...rememberedBatchDevices, ...devicePageItems].forEach((device) => byId.set(device.id, device));
+    return Array.from(byId.values());
+  }, [devices, rememberedBatchDevices, devicePageItems]);
+  const knownDevicesById = useMemo(
+    () => new Map<string, Device>(knownDevices.map((device) => [device.id, device] as const)),
+    [knownDevices],
+  );
+  const selectedBatchDevices = useMemo(
+    () => batchDeviceIds.map((deviceId) => knownDevicesById.get(deviceId)).filter((device): device is Device => Boolean(device)),
+    [batchDeviceIds, knownDevicesById],
+  );
+  const exportAllMatchingDevices = useCallback(async () => {
+    const params = buildDeviceRequestParams(1);
+    params.delete('page');
+    params.delete('page_size');
+    params.delete('include_facets');
+    const allDevices = await fetchAllPaginatedItems<Device>('/api/devices', params, 1000);
+    return {
+      headers: [
+        isZh ? '状态' : 'Status',
+        isZh ? '主机名' : 'Hostname',
+        'IP',
+        isZh ? '厂商' : 'Vendor',
+        isZh ? '类型' : 'Type',
+        isZh ? '角色' : 'Role',
+        isZh ? '站点' : 'Site',
+      ],
+      rows: allDevices.map((device) => [
+        device.status === 'online' ? (isZh ? '在线' : 'Online') : (isZh ? '离线' : 'Offline'),
+        device.hostname,
+        device.ip_address,
+        getVendor(device),
+        getDeviceCategory(device) === 'server' ? (isZh ? '服务器' : 'Server') : (isZh ? '网络设备' : 'Network'),
+        device.role || '—',
+        device.site || '—',
+      ]),
+    };
+  }, [buildDeviceRequestParams, isZh]);
+
+  const resetDevicePage = () => setDevicePage(1);
+  const handleDeviceSearchChange = (value: string) => {
+    onAutomationSearchChange(value);
+  };
+  const handleStatusFilterChange = (value: string) => { setStatusFilter(value); resetDevicePage(); };
+  const handleVendorFilterChange = (value: string) => { setVendorFilter(value); resetDevicePage(); };
+  const handleDeviceTypeFilterChange = (value: 'all' | 'network' | 'server') => { setDeviceTypeFilter(value); resetDevicePage(); };
+  const handleTreeSiteChange = (value: string | null) => { setTreeFilterSite(value); resetDevicePage(); };
+  const handleTreeRoleChange = (value: string | null) => { setTreeFilterRole(value); resetDevicePage(); };
 
   /* Filtered scenarios */
   const displayScenarios = useMemo(() => {
-    const selectedDevices = batchMode ? devices.filter((d) => batchDeviceIds.includes(d.id)) : selectedDevice ? [selectedDevice] : [];
+    const selectedDevices = batchMode ? selectedBatchDevices : selectedDevice ? [selectedDevice] : [];
     const selectedPlatforms = new Set(selectedDevices.map((d) => normalizeAutomationPlatform(d.platform)));
     const selectedCategories = new Set(selectedDevices.map((d) => getDeviceCategory(d)));
 
@@ -293,7 +397,7 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
 
       return true;
     });
-  }, [filteredScenarios, categoryFilter, riskFilter, batchMode, batchDeviceIds, devices, selectedDevice]);
+  }, [filteredScenarios, categoryFilter, riskFilter, batchMode, selectedBatchDevices, selectedDevice]);
 
   const scenarioCategories = useMemo(() => {
     const cats = new Set(filteredScenarios.map((s) => s.category || 'Custom'));
@@ -340,7 +444,7 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
   ]);
 
   /* Quick Query helpers */
-  const targetDevices = batchMode ? devices.filter((d) => batchDeviceIds.includes(d.id)) : selectedDevice ? [selectedDevice] : [];
+  const targetDevices = batchMode ? selectedBatchDevices : selectedDevice ? [selectedDevice] : [];
   const singleDevice = targetDevices[0] || null;
   const hasTargets = targetDevices.length > 0;
   const platform = normalizeAutomationPlatform(singleDevice?.platform);
@@ -377,7 +481,7 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
   }, [quickQueryTable.records, quickQuerySearch]);
 
   const queryPresets = useMemo(() => {
-    const selectedDevices = batchMode ? devices.filter((d) => batchDeviceIds.includes(d.id)) : selectedDevice ? [selectedDevice] : [];
+    const selectedDevices = batchMode ? selectedBatchDevices : selectedDevice ? [selectedDevice] : [];
     const deviceCategory = selectedDevices.length > 0 ? getDeviceCategory(selectedDevices[0]) : 'all';
 
     const all: Array<{
@@ -757,7 +861,7 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
       if (deviceCategory !== 'all' && p.scope !== 'all' && p.scope !== deviceCategory) return false;
       return true;
     });
-  }, [isCisco, isHuawei, isH3c, isNxos, isJuniper, isRuijie, deviceRole, savedQueries, batchMode, batchDeviceIds, devices, selectedDevice]);
+  }, [isCisco, isHuawei, isH3c, isNxos, isJuniper, isRuijie, deviceRole, savedQueries, batchMode, selectedBatchDevices, selectedDevice]);
 
   const handleNewTask = () => {
     onResetExecutionState();
@@ -773,9 +877,10 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
 
   const handleSelectAllOnline = () => {
     if (!batchMode) onToggleBatchMode();
-    filteredDevices
+    devicePageItems
       .filter((d) => d.status === 'online')
       .forEach((d) => {
+        onRememberDevice(d);
         if (!batchDeviceIds.includes(d.id)) onToggleBatchDevice(d.id);
       });
   };
@@ -788,6 +893,7 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
       setTreeFilterSite(site);
       setTreeFilterRole(role);
     }
+    resetDevicePage();
   };
 
   const varGroupLabel = (group: string) => {
@@ -843,29 +949,35 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
                 isZh={isZh}
                 language={language}
                 automationSearch={automationSearch}
-                onAutomationSearchChange={onAutomationSearchChange}
+                onAutomationSearchChange={handleDeviceSearchChange}
                 deviceTree={deviceTree}
                 treeFilterSite={treeFilterSite}
                 treeFilterRole={treeFilterRole}
                 handleTreeFilter={handleTreeFilter}
-                setTreeFilterSite={setTreeFilterSite}
-                setTreeFilterRole={setTreeFilterRole}
+                setTreeFilterSite={handleTreeSiteChange}
+                setTreeFilterRole={handleTreeRoleChange}
                 deviceTypeFilter={deviceTypeFilter}
-                setDeviceTypeFilter={setDeviceTypeFilter}
+                setDeviceTypeFilter={handleDeviceTypeFilterChange}
                 statusFilter={statusFilter}
-                setStatusFilter={setStatusFilter}
-                filteredDevices={filteredDevices}
+                setStatusFilter={handleStatusFilterChange}
+                deviceItems={devicePageItems}
+                totalDevices={deviceTotal}
+                onlineDeviceCount={Number(deviceStatusCounts.online || 0)}
+                devicePageLoading={devicePageLoading}
+                devicePageError={devicePageError}
+                onRetryDevicePage={() => setDeviceRequestVersion((version) => version + 1)}
+                exportAllMatchingDevices={exportAllMatchingDevices}
                 vendors={vendors}
                 vendorFilter={vendorFilter}
-                setVendorFilter={setVendorFilter}
+                setVendorFilter={handleVendorFilterChange}
                 handleSelectAllOnline={handleSelectAllOnline}
                 deviceViewMode={deviceViewMode}
                 setDeviceViewMode={setDeviceViewMode}
-                pagedDevices={pagedDevices}
                 batchMode={batchMode}
                 onToggleBatchMode={onToggleBatchMode}
                 batchDeviceIds={batchDeviceIds}
                 onToggleBatchDevice={onToggleBatchDevice}
+                onRememberDevice={onRememberDevice}
                 selectedDevice={selectedDevice}
                 devicePage={devicePage}
                 setDevicePage={setDevicePage}
@@ -873,7 +985,7 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
                 showSelectedDrawer={showSelectedDrawer}
                 setShowSelectedDrawer={setShowSelectedDrawer}
                 handleClearSelection={handleClearSelection}
-                devices={devices}
+                devices={knownDevices}
               />
             )}
 

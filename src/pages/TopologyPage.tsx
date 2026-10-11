@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { Activity, AlertTriangle, ArrowRight, Clock3, Database, Download, EyeOff, GitMerge, Globe, LayoutGrid, MapPin, Network, RotateCcw, Search, Tag, X } from 'lucide-react';
+import { Activity, AlertTriangle, ArrowRight, Clock3, Database, Download, EyeOff, GitMerge, Globe, LayoutGrid, MapPin, Network, RefreshCw, RotateCcw, Search, Tag, X } from 'lucide-react';
 import type { Device, TagDefinition } from '../types';
 import { ActionButton } from '../components/ui/ActionIconButton';
 import TagConditionPicker, { countTagFilterConditions, EMPTY_TAG_FILTER, hasTagFilterConditions, type TagFilterConfig } from '../components/TagConditionPicker';
@@ -331,6 +331,7 @@ interface TopologyPageProps {
   topologyPriorityDevices: Device[];
   topologyOrphanDevices: Device[];
   topologyCanvasRef: React.RefObject<HTMLDivElement | null>;
+  onRefreshTopologyData: () => void;
   onTriggerDiscovery: () => void;
   onCancelDiscovery: () => void;
   onExportMap: () => void;
@@ -403,6 +404,7 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
   topologyPriorityDevices,
   topologyOrphanDevices,
   topologyCanvasRef,
+  onRefreshTopologyData,
   onTriggerDiscovery,
   onCancelDiscovery,
   onExportMap,
@@ -518,6 +520,7 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
     status: generationStatus,
     error: generationStatusError,
     loading: generationStatusLoading,
+    refresh: refreshGenerationStatus,
   } = useTopologyGenerationStatus(terminalDiscoveryStatus);
   const generationInventory = generationStatus?.inventory;
   const automaticIntervalSeconds = Math.max(60, generationStatus?.generation.automatic.interval_seconds || 86400);
@@ -567,6 +570,18 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
           : 'Generate network adjacency from LLDP evidence and reduce the fault domain by site, role, and health state.'}
         actions={
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                void onRefreshTopologyData();
+                void refreshGenerationStatus();
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 transition-all cursor-pointer"
+              title={language === 'zh' ? '手动重新加载当前拓扑数据' : 'Reload the current topology data'}
+            >
+              <RefreshCw size={13} />
+              {language === 'zh' ? '刷新拓扑' : 'Refresh Map'}
+            </button>
             <button
               type="button"
               onClick={onTriggerDiscovery}

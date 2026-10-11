@@ -51,12 +51,36 @@ logger = logging.getLogger(__name__)
 router = APIRouter(dependencies=[require_role("Viewer")])
 
 _ASSET_IDENTITY_FIELDS = ('hostname', 'asset_tag', 'serial_number', 'management_ip')
+_ASSET_IMMUTABLE_AFTER_CREATE_FIELDS = (
+    'asset_type', 'asset_tag', 'serial_number', 'vendor', 'model', 'hostname', 'management_ip', 'u_height',
+)
 _ASSET_IDENTITY_LABELS = {
     'hostname': '主机名',
     'asset_tag': '资产编号',
     'serial_number': '序列号',
     'management_ip': '管理IP',
 }
+_ASSET_RACK_SYNC_FIELDS = frozenset({
+    'hostname', 'rack', 'rack_unit', 'rack_id', 'rack_position', 'rack_mount_kind',
+    'rack_height_u', 'rack_placement_status', 'rack_placement_source',
+    'rack_dimension_status', 'rack_location_note', 'rack_model_key', 'u_height',
+    'planned_start_u', 'serial_number', 'vendor', 'model', 'power_watts',
+    'device_role', 'asset_origin',
+})
+_ASSET_DEVICE_TYPE_FIELDS = frozenset({'vendor', 'model', 'power_watts', 'device_role', 'u_height'})
+_ASSET_DEVICE_SYNC_FIELDS = frozenset({
+    'asset_type', 'hostname', 'management_ip', 'serial_number', 'model', 'device_role', 'site_id', 'lifecycle_status',
+    'vendor', 'platform', 'connection_method', 'ssh_algorithm_profile', 'snmp_port',
+    'snmp_credential_id', 'auth_model', 'device_category', 'function', 'zone',
+    'power_watts', 'management_port', 'snmp_community', 'username', 'normal_username',
+    'admin_username', 'password', 'normal_password', 'admin_password', 'enable_password',
+    'credential_id', 'admin_credential_id',
+})
+_ASSET_MONITORING_SYNC_FIELDS = frozenset({
+    'asset_type', 'hostname', 'management_ip', 'status', 'lifecycle_status', 'vendor',
+    'platform', 'connection_method', 'management_port', 'snmp_port',
+    'snmp_credential_id', 'snmp_community', 'credential_id', 'admin_credential_id',
+})
 
 # The inventory tables contain operational, credential-governance and
 # migration-only columns that are not part of the public asset contract.  Keep
@@ -222,16 +246,22 @@ def _acquire_connectivity_slot(asset_id: str) -> None:
         raise
 
 
-def _find_asset_identity_duplicates(conn, values: dict, exclude_asset_id: str = '') -> list[dict]:
+def _find_asset_identity_duplicates(
+    conn,
+    values: dict,
+    exclude_asset_id: str = '',
+    fields: tuple[str, ...] | None = None,
+) -> list[dict]:
     """Find non-empty identity fields already used by another physical asset."""
     duplicates = []
-    for field in _ASSET_IDENTITY_FIELDS:
+    for field in (_ASSET_IDENTITY_FIELDS if fields is None else fields):
         value = str(values.get(field) or '').strip()
         if not value:
             continue
         query = (
             f"SELECT id, hostname FROM physical_assets "
-            f"WHERE LOWER(TRIM(COALESCE({field}, ''))) = LOWER(TRIM(?))"
+            f"WHERE LOWER(TRIM({field})) = LOWER(TRIM(?)) "
+            f"AND TRIM(COALESCE({field}, '')) <> ''"
         )
         params: list[str] = [value]
         if exclude_asset_id:
@@ -247,6 +277,11 @@ def _find_asset_identity_duplicates(conn, values: dict, exclude_asset_id: str = 
                 'existing_hostname': existing['hostname'] or '',
             })
     return duplicates
+
+
+def _asset_identity_key(value: object) -> str:
+    """Match the normalization used by the asset identity unique indexes."""
+    return str(value or '').strip().lower()
 
 
 def _identity_duplicate_detail(duplicates: list[dict]) -> str:
@@ -978,6 +1013,29 @@ def _pre_resolve_credential(conn, body) -> None:
         body.enable_password = dec_enable
 
 
+def _asset_credential_input_changed(row, body) -> bool:
+    """Whether an asset edit actually changes a credential binding or input."""
+    for field in ('credential_id', 'admin_credential_id'):
+        requested = getattr(body, field, None)
+        if requested is not None and str(requested or '').strip() != str(row[field] or '').strip():
+            return True
+
+    for field in ('username', 'normal_username', 'admin_username'):
+        requested = getattr(body, field, None)
+        if requested is not None and str(requested or '') != str(row[field] or ''):
+            return True
+
+    # The editor intentionally submits blank secret fields to mean "keep the
+    # stored value". Only a non-empty secret is an explicit credential edit.
+    return any(
+        bool(getattr(body, field, None))
+        for field in (
+            'password', 'normal_password', 'admin_password', 'enable_password',
+            'snmp_community',
+        )
+    )
+
+
 def _create_linked_device(conn, asset_id: str, body, user: dict) -> str:
     """Create a devices row linked to a physical_assets row."""
     device_id = str(uuid.uuid4())
@@ -1214,9 +1272,18 @@ def _sync_asset_tags(conn, asset_id: str, tag_ids: list[str] | None) -> None:
         raise HTTPException(status_code=422, detail=str(exc))
 
 
-def _sync_device_from_asset(conn, asset_id: str, body) -> None:
+def _sync_device_from_asset(
+    conn,
+    asset_id: str,
+    body,
+    changed_fields: set[str] | None = None,
+) -> None:
     """Push basic-info changes from asset to its linked device row."""
-    row = conn.execute('SELECT id, credential_id, admin_credential_id FROM devices WHERE asset_id = ?', (asset_id,)).fetchone()
+    row = conn.execute(
+        'SELECT id, credential_id, admin_credential_id, snmp_credential_id '
+        'FROM devices WHERE asset_id = ?',
+        (asset_id,),
+    ).fetchone()
     if not row:
         return
     device_id = row['id']
@@ -1235,9 +1302,23 @@ def _sync_device_from_asset(conn, asset_id: str, body) -> None:
 
     input_credential_id = getattr(body, 'credential_id', None)
     input_admin_credential_id = getattr(body, 'admin_credential_id', None)
+    sync_primary_credentials = changed_fields is None or bool(changed_fields & {
+        'credential_id', 'username', 'normal_username', 'password', 'normal_password',
+        'enable_password', 'snmp_community',
+    })
+    sync_admin_credentials = changed_fields is None or bool(changed_fields & {
+        'admin_credential_id', 'admin_username', 'admin_password', 'enable_password',
+    })
+    sync_snmp_credentials = changed_fields is None or bool(changed_fields & {
+        'snmp_credential_id', 'snmp_community',
+    })
     
     # If a new credential_id is passed, update binding
-    if input_credential_id is not None:
+    if (
+        sync_primary_credentials
+        and input_credential_id is not None
+        and str(input_credential_id or '').strip() != str(credential_id or '').strip()
+    ):
         if input_credential_id:
             # Lookup credential in DB
             cred_row = conn.execute(
@@ -1280,7 +1361,11 @@ def _sync_device_from_asset(conn, asset_id: str, body) -> None:
                 credential_id = None
 
     # If a new admin_credential_id is passed, update binding
-    if input_admin_credential_id is not None:
+    if (
+        sync_admin_credentials
+        and input_admin_credential_id is not None
+        and str(input_admin_credential_id or '').strip() != str(admin_credential_id or '').strip()
+    ):
         if input_admin_credential_id:
             # Lookup credential in DB
             cred_row = conn.execute(
@@ -1321,7 +1406,11 @@ def _sync_device_from_asset(conn, asset_id: str, body) -> None:
 
     # If a new snmp_credential_id is passed, update binding
     input_snmp_credential_id = getattr(body, 'snmp_credential_id', None)
-    if input_snmp_credential_id is not None:
+    if (
+        sync_snmp_credentials
+        and input_snmp_credential_id is not None
+        and str(input_snmp_credential_id or '').strip() != str(row['snmp_credential_id'] or '').strip()
+    ):
         if input_snmp_credential_id:
             cred_row = conn.execute(
                 'SELECT id, credential_name, snmp_community FROM credentials WHERE id = ? OR credential_name = ?',
@@ -1340,7 +1429,7 @@ def _sync_device_from_asset(conn, asset_id: str, body) -> None:
             conn.execute('UPDATE physical_assets SET snmp_credential_id = \'\' WHERE id = ?', (asset_id,))
 
     # Sync credential row if it's device-specific
-    if credential_id:
+    if sync_primary_credentials and credential_id:
         cred_row = conn.execute('SELECT credential_name, username, encrypted_password, enable_password, snmp_community FROM credentials WHERE id = ?', (credential_id,)).fetchone()
         if cred_row:
             # Check if this credential is device-specific
@@ -1360,7 +1449,7 @@ def _sync_device_from_asset(conn, asset_id: str, body) -> None:
                     SET username = ?, encrypted_password = ?, enable_password = ?, snmp_community = ?
                     WHERE id = ?
                 ''', (stored_uname, stored_pwd, stored_enable, stored_snmp, credential_id))
-    elif not admin_credential_id:
+    elif sync_primary_credentials and not admin_credential_id:
         # Create credential_id if missing and we have local credentials
         if normal_username not in (None, '') or normal_pwd not in (None, '') or username not in (None, '') or (pwd is not None and pwd != '') or (enable_pwd is not None and enable_pwd != '') or (community is not None and community != ''):
             credential_id = _create_device_local_credential(
@@ -1379,7 +1468,7 @@ def _sync_device_from_asset(conn, asset_id: str, body) -> None:
     # entered manually later.  Create the missing device-local admin record and
     # bind it to the admin slot instead of leaving the privileged password only
     # in the device columns.
-    if not admin_credential_id and (
+    if sync_admin_credentials and not admin_credential_id and (
         admin_username not in (None, '') or admin_pwd not in (None, '')
     ):
         admin_credential_id = _create_device_local_credential(
@@ -1395,46 +1484,47 @@ def _sync_device_from_asset(conn, asset_id: str, body) -> None:
         conn.execute('UPDATE physical_assets SET admin_credential_id = ? WHERE id = ?', (admin_credential_id, asset_id))
 
     updates = {
-        'hostname': body.hostname,
-        'ip_address': body.management_ip,
-        'sn': body.serial_number,
-        'model': body.model,
-        'role': body.device_role,
-        'site': body.site_id,
-        'site_id': body.site_id,
-        'vendor': body.vendor,
+        'hostname': body.hostname if changed_fields is None or 'hostname' in changed_fields else None,
+        'ip_address': body.management_ip if changed_fields is None or 'management_ip' in changed_fields else None,
+        'sn': body.serial_number if changed_fields is None or 'serial_number' in changed_fields else None,
+        'model': body.model if changed_fields is None or 'model' in changed_fields else None,
+        'role': body.device_role if changed_fields is None or 'device_role' in changed_fields else None,
+        'site': body.site_id if changed_fields is None or 'site_id' in changed_fields else None,
+        'site_id': body.site_id if changed_fields is None or 'site_id' in changed_fields else None,
+        'vendor': body.vendor if changed_fields is None or 'vendor' in changed_fields else None,
         'platform': _normalize_asset_platform(
             getattr(body, 'vendor', None) or '',
             getattr(body, 'platform', None) or '',
             getattr(body, 'asset_type', None) or 'network_device',
-        ) if getattr(body, 'platform', None) is not None else None,
-        'connection_method': getattr(body, 'connection_method', None),
+        ) if getattr(body, 'platform', None) is not None and (changed_fields is None or 'platform' in changed_fields) else None,
+        'connection_method': getattr(body, 'connection_method', None) if changed_fields is None or 'connection_method' in changed_fields else None,
         'ssh_algorithm_profile': (
             normalize_ssh_algorithm_profile(getattr(body, 'ssh_algorithm_profile'))
-            if getattr(body, 'ssh_algorithm_profile', None) is not None
+            if getattr(body, 'ssh_algorithm_profile', None) is not None and (changed_fields is None or 'ssh_algorithm_profile' in changed_fields)
             else None
         ),
-        'snmp_port': getattr(body, 'snmp_port', None),
-        'snmp_credential_id': getattr(body, 'snmp_credential_id', None),
-        'auth_model': getattr(body, 'auth_model', None),
-        'device_category': getattr(body, 'device_category', None),
-        'function': getattr(body, 'function', None),
-        'zone': getattr(body, 'zone', None),
-        'power_watts': getattr(body, 'power_watts', None),
-        'management_port': getattr(body, 'management_port', None),
+        'snmp_port': getattr(body, 'snmp_port', None) if changed_fields is None or 'snmp_port' in changed_fields else None,
+        'snmp_credential_id': getattr(body, 'snmp_credential_id', None) if changed_fields is None or 'snmp_credential_id' in changed_fields else None,
+        'auth_model': getattr(body, 'auth_model', None) if changed_fields is None or 'auth_model' in changed_fields else None,
+        'device_category': getattr(body, 'device_category', None) if changed_fields is None or 'device_category' in changed_fields else None,
+        'function': getattr(body, 'function', None) if changed_fields is None or 'function' in changed_fields else None,
+        'zone': getattr(body, 'zone', None) if changed_fields is None or 'zone' in changed_fields else None,
+        'power_watts': getattr(body, 'power_watts', None) if changed_fields is None or 'power_watts' in changed_fields else None,
+        'management_port': getattr(body, 'management_port', None) if changed_fields is None or 'management_port' in changed_fields else None,
     }
 
-    if getattr(body, 'snmp_community', None) not in (None, ''):
+    if getattr(body, 'snmp_community', None) not in (None, '') and (changed_fields is None or 'snmp_community' in changed_fields):
         updates['snmp_community'] = _safe_encrypt_snmp_community(body.snmp_community)
 
-    if getattr(body, 'username', None) is not None: updates['username'] = body.username
-    if getattr(body, 'normal_username', None) is not None: updates['normal_username'] = body.normal_username
-    if getattr(body, 'admin_username', None) is not None: updates['admin_username'] = body.admin_username
+    if getattr(body, 'username', None) is not None and (changed_fields is None or 'username' in changed_fields): updates['username'] = body.username
+    if getattr(body, 'normal_username', None) is not None and (changed_fields is None or 'normal_username' in changed_fields): updates['normal_username'] = body.normal_username
+    if getattr(body, 'admin_username', None) is not None and (changed_fields is None or 'admin_username' in changed_fields): updates['admin_username'] = body.admin_username
     
-    updates['password'] = ''
-    updates['normal_password'] = ''
-    updates['admin_password'] = ''
-    updates['enable_password'] = ''
+    if sync_primary_credentials or sync_admin_credentials:
+        updates['password'] = ''
+        updates['normal_password'] = ''
+        updates['admin_password'] = ''
+        updates['enable_password'] = ''
 
     set_parts = []
     params = []
@@ -1448,7 +1538,14 @@ def _sync_device_from_asset(conn, asset_id: str, body) -> None:
 
 
 
-def _sync_rack_device_from_asset(conn, asset_id: str, obj, user: dict | None = None) -> None:
+def _sync_rack_device_from_asset(
+    conn,
+    asset_id: str,
+    obj,
+    user: dict | None = None,
+    *,
+    sync_device_type: bool = True,
+) -> None:
     # obj can be a dict, DictRow, or a Pydantic model
     def get_val(key, default=None):
         if hasattr(obj, key):
@@ -1533,7 +1630,8 @@ def _sync_rack_device_from_asset(conn, asset_id: str, obj, user: dict | None = N
 
     # Resolve the device type before deciding whether a missing start_u means
     # "uninstalled" (legacy asset form) or an explicit non-U placement.
-    _sync_device_type_power(conn, vendor, model, power_watts, device_role, u_height)
+    if sync_device_type:
+        _sync_device_type_power(conn, vendor, model, power_watts, device_role, u_height)
     dt_row = conn.execute(
         "SELECT id, default_mount_kind, dimension_status FROM device_types WHERE model = ? AND vendor = ?",
         (model, vendor),
@@ -1995,6 +2093,18 @@ class AssetUpdate(BaseModel):
 
 class BatchTakeoverRequest(BaseModel):
     asset_ids: list[str]
+
+
+class BatchAssetDeleteRequest(BaseModel):
+    asset_ids: list[str] = Field(min_length=1, max_length=1000)
+
+    @field_validator('asset_ids')
+    @classmethod
+    def normalize_asset_ids(cls, value: list[str]) -> list[str]:
+        normalized = list(dict.fromkeys(str(asset_id).strip() for asset_id in value if str(asset_id).strip()))
+        if not normalized:
+            raise ValueError('asset_ids must contain at least one asset ID')
+        return normalized
 
 
 # ── Summary ──────────────────────────────────────────────────────────
@@ -2689,24 +2799,21 @@ def create_asset(body: AssetCreate, _user=require_role("Operator")):
         if duplicates:
             raise HTTPException(status_code=409, detail=_identity_duplicate_detail(duplicates))
 
-        conn.execute('''
-            INSERT INTO physical_assets (
-                id, asset_type, asset_tag, serial_number, vendor, model, hostname,
-                site_id, rack, rack_unit, u_height, planned_start_u, management_ip, business_ip, device_role,
-                vlan, uplink_switch, uplink_port,
-                status, lifecycle_status, asset_origin, purchase_date, warranty_expiry, department, notes,
-                platform, connection_method, username, password,
-                normal_username, normal_password, admin_username, admin_password,
-                enable_password, auth_model,
-                snmp_community, snmp_port, device_category, function, zone, power_watts,
-                credential_id, admin_credential_id,
-                created_at, updated_at
-            ) VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-            )
-        ''', (
+        asset_columns = (
+            'id', 'asset_type', 'asset_tag', 'serial_number', 'vendor', 'model', 'hostname',
+            'site_id', 'rack', 'rack_unit', 'u_height', 'planned_start_u', 'management_ip', 'business_ip', 'device_role',
+            'vlan', 'uplink_switch', 'uplink_port',
+            'status', 'lifecycle_status', 'asset_origin', 'purchase_date', 'warranty_expiry', 'department', 'notes',
+            'platform', 'connection_method', 'username', 'password',
+            'normal_username', 'normal_password', 'admin_username', 'admin_password',
+            'enable_password', 'auth_model',
+            'snmp_community', 'snmp_port', 'snmp_credential_id', 'management_port',
+            'winrm_enabled', 'winrm_port', 'winrm_auth_mode', 'winrm_tls_mode', 'winrm_cert_fingerprint',
+            'ssh_algorithm_profile', 'device_category', 'function', 'zone', 'power_watts',
+            'credential_id', 'admin_credential_id',
+            'created_at', 'updated_at',
+        )
+        asset_values = (
             asset_id, body.asset_type, body.asset_tag, body.serial_number, body.vendor,
             body.model, body.hostname, body.site_id, body.rack, body.rack_unit,
             max(1, min(60, body.u_height)), body.planned_start_u,
@@ -2722,27 +2829,20 @@ def create_asset(body: AssetCreate, _user=require_role("Operator")):
             _safe_encrypt(getattr(body, 'admin_password', '') or ''),
             _safe_encrypt(getattr(body, 'enable_password', '') or ''),
             getattr(body, 'auth_model', '') or 'single',
-            _safe_encrypt_snmp_community(body.snmp_community), body.snmp_port, body.device_category,
+            _safe_encrypt_snmp_community(body.snmp_community), body.snmp_port,
+            body.snmp_credential_id or '', _management_port_for_storage(body),
+            body.winrm_enabled, body.winrm_port, body.winrm_auth_mode, body.winrm_tls_mode,
+            body.winrm_cert_fingerprint, normalize_ssh_algorithm_profile(body.ssh_algorithm_profile),
+            body.device_category,
             getattr(body, 'function', '') or '', getattr(body, 'zone', 'Unknown') or 'Unknown', body.power_watts,
             body.credential_id or '',
             body.admin_credential_id or '',
             now, now
-        ))
-        conn.execute(
-            'UPDATE physical_assets SET snmp_credential_id = ?, management_port = ? WHERE id = ?',
-            (body.snmp_credential_id or '', _management_port_for_storage(body), asset_id),
         )
         conn.execute(
-            '''UPDATE physical_assets SET
-                      winrm_enabled = ?, winrm_port = ?, winrm_auth_mode = ?, winrm_tls_mode = ?,
-                      winrm_cert_fingerprint = ?
-               WHERE id = ?''',
-            (body.winrm_enabled, body.winrm_port, body.winrm_auth_mode, body.winrm_tls_mode,
-             body.winrm_cert_fingerprint, asset_id),
-        )
-        conn.execute(
-            'UPDATE physical_assets SET ssh_algorithm_profile = ? WHERE id = ?',
-            (normalize_ssh_algorithm_profile(body.ssh_algorithm_profile), asset_id),
+            f"INSERT INTO physical_assets ({', '.join(asset_columns)}) "
+            f"VALUES ({', '.join('?' for _ in asset_columns)})",
+            asset_values,
         )
 
         # Plan-A: auto-create linked device for managed assets
@@ -2819,29 +2919,79 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True, _
             raise HTTPException(status_code=404, detail='Asset not found')
         _enforce_asset_row_scope(_user, row, 'update')
 
+        immutable_changes = []
+        for field in _ASSET_IMMUTABLE_AFTER_CREATE_FIELDS:
+            requested = getattr(body, field, None)
+            if requested is None:
+                continue
+            stored = row[field]
+            unchanged = (
+                _asset_identity_key(requested) == _asset_identity_key(stored)
+                if field in _ASSET_IDENTITY_FIELDS
+                else str(requested or '').strip() == str(stored or '').strip()
+            )
+            if unchanged:
+                setattr(body, field, stored)
+            else:
+                immutable_changes.append(field)
+        if immutable_changes:
+            labels = {
+                'asset_type': '资产类型',
+                'asset_tag': '资产编号',
+                'serial_number': '序列号',
+                'vendor': '厂商',
+                'model': '型号',
+                'hostname': '主机名',
+                'management_ip': '管理 IP',
+                'u_height': '设备高度',
+            }
+            changed_labels = '、'.join(labels[field] for field in immutable_changes)
+            raise HTTPException(
+                status_code=422,
+                detail=f'资产创建后以下档案字段不可编辑：{changed_labels}。如需更正，请联系管理员执行档案更正。',
+            )
+
         # Resolve the import/client compatibility alias only after the target
         # asset has passed the resource-scope check.  This prevents callers
         # without access to the asset from probing credential names through
         # validation errors.
-        if (
+        snmp_binding_supplied = (
             getattr(body, 'snmp_credential_name', None) is not None
             or getattr(body, 'snmp_credential_id', None) is not None
-        ):
+        )
+        requested_snmp_binding = str(
+            getattr(body, 'snmp_credential_id', None)
+            or getattr(body, 'snmp_credential_name', None)
+            or ''
+        ).strip()
+        current_snmp_binding = str(row['snmp_credential_id'] or '').strip()
+        if snmp_binding_supplied and requested_snmp_binding != current_snmp_binding:
             _resolve_snmp_credential_binding(conn, body)
+        elif snmp_binding_supplied and not requested_snmp_binding:
+            body.snmp_credential_id = ''
+        elif not getattr(body, 'snmp_community', None) and getattr(body, 'community', None):
+            body.snmp_community = str(body.community or '').strip()
 
         requested_tag_ids = _resolve_asset_tag_ids(conn, body)
 
         if body.site_id is not None:
-            try:
-                body.site_id = resolve_canonical_site_id(conn, body.site_id)
-            except ValueError as exc:
-                raise HTTPException(status_code=422, detail=str(exc))
-            _enforce_asset_site_scope(conn, _user, body.site_id, 'update')
+            if str(body.site_id or '').strip() == str(row['site_id'] or '').strip():
+                # The asset row has already passed its update-scope check. Keep
+                # an unchanged site value canonical without resolving aliases
+                # or repeating the site-scope query on ordinary edits.
+                body.site_id = row['site_id']
+            else:
+                try:
+                    body.site_id = resolve_canonical_site_id(conn, body.site_id)
+                except ValueError as exc:
+                    raise HTTPException(status_code=422, detail=str(exc))
+                _enforce_asset_site_scope(conn, _user, body.site_id, 'update')
 
         # Normalize and validate bound credential references before any
         # lifecycle checks or asset writes. This also refreshes the local
         # compatibility cache from the authoritative vault row.
-        _pre_resolve_credential(conn, body)
+        if _asset_credential_input_changed(row, body):
+            _pre_resolve_credential(conn, body)
 
         effective_vendor = body.vendor if body.vendor is not None else row['vendor']
         effective_asset_type = body.asset_type if body.asset_type is not None else row['asset_type']
@@ -2853,14 +3003,6 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True, _
         )
         if normalized_platform != effective_platform or body.platform is not None or body.vendor is not None:
             body.platform = normalized_platform
-
-        identity_values = {
-            field: getattr(body, field) if getattr(body, field, None) is not None else row[field]
-            for field in _ASSET_IDENTITY_FIELDS
-        }
-        duplicates = _find_asset_identity_duplicates(conn, identity_values, exclude_asset_id=asset_id)
-        if duplicates:
-            raise HTTPException(status_code=409, detail=_identity_duplicate_detail(duplicates))
 
         # Detect lifecycle transition for auto password rotation
         old_lifecycle = row['lifecycle_status'] if 'lifecycle_status' in row.keys() else 'staging'
@@ -2967,6 +3109,7 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True, _
 
         updates = []
         params = []
+        changed_fields: set[str] = set()
         updatable = [
             'asset_type', 'asset_tag', 'serial_number', 'vendor', 'model', 'hostname',
             'site_id', 'rack', 'rack_unit', 'u_height', 'planned_start_u', 'management_ip', 'business_ip', 'device_role',
@@ -2982,7 +3125,7 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True, _
             val = getattr(body, field, None)
             if val is not None:
                 if field == 'snmp_credential_id':
-                    val = _resolve_snmp_credential_id(conn, val)
+                    val = str(val or '').strip()
                 if field == 'lifecycle_status' and transitioning_to_production:
                     continue
                 if field in ('password', 'normal_password', 'admin_password', 'enable_password', 'snmp_community'):
@@ -2990,9 +3133,28 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True, _
                     if val != '':
                         updates.append(f'{field} = ?')
                         params.append(_safe_encrypt(val))
+                        changed_fields.add(field)
                 else:
+                    if field in row.keys() and val == row[field]:
+                        continue
                     updates.append(f'{field} = ?')
                     params.append(_safe_encrypt_snmp_community(val) if field == 'snmp_community' else val)
+                    changed_fields.add(field)
+
+        placement_fields = (
+            'rack_id', 'rack_position', 'rack_mount_kind', 'rack_height_u',
+            'rack_placement_status', 'rack_placement_source', 'rack_dimension_status',
+            'rack_location_note', 'rack_model_key',
+        )
+        changed_placement_fields = {
+            field for field in placement_fields
+            if getattr(body, field, None) is not None
+            and (field not in row.keys() or getattr(body, field) != row[field])
+        }
+        should_sync_rack = bool(changed_fields & _ASSET_RACK_SYNC_FIELDS) or bool(changed_placement_fields)
+        should_sync_device = bool(changed_fields & _ASSET_DEVICE_SYNC_FIELDS)
+        should_sync_device_type = bool(changed_fields & _ASSET_DEVICE_TYPE_FIELDS)
+        should_sync_monitoring = bool(changed_fields & _ASSET_MONITORING_SYNC_FIELDS)
 
         if legacy_exempt:
             exempt_reason = (body.takeover_exempt_reason or '').strip()
@@ -3001,14 +3163,30 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True, _
                 updates.append('updated_at = ?')
                 params.extend([exempt_at, asset_id])
                 conn.execute(f"UPDATE physical_assets SET {', '.join(updates)} WHERE id = ?", tuple(params))
-                updated_row = conn.execute("SELECT * FROM physical_assets WHERE id = ?", (asset_id,)).fetchone()
-                try:
-                    merged_row = {**dict(updated_row), **body.model_dump(exclude_unset=True)}
-                    _sync_rack_device_from_asset(conn, asset_id, merged_row, _user)
-                except ValueError as exc:
-                    conn.rollback()
-                    raise HTTPException(status_code=400, detail=str(exc))
-                _sync_device_from_asset(conn, asset_id, body)
+                if should_sync_device_type:
+                    _sync_device_type_power(
+                        conn,
+                        body.vendor if body.vendor is not None else row['vendor'],
+                        body.model if body.model is not None else row['model'],
+                        body.power_watts if body.power_watts is not None else row['power_watts'],
+                        body.device_role if body.device_role is not None else row['device_role'],
+                        body.u_height if body.u_height is not None else row['u_height'],
+                    )
+                if should_sync_rack:
+                    try:
+                        merged_row = {**dict(row), **body.model_dump(exclude_unset=True)}
+                        _sync_rack_device_from_asset(
+                            conn,
+                            asset_id,
+                            merged_row,
+                            _user,
+                            sync_device_type=False,
+                        )
+                    except ValueError as exc:
+                        conn.rollback()
+                        raise HTTPException(status_code=400, detail=str(exc))
+                if should_sync_device and row['asset_type'] in ('network_device', 'server'):
+                    _sync_device_from_asset(conn, asset_id, body, changed_fields)
             conn.execute(
                 "UPDATE physical_assets SET lifecycle_status = 'production', is_managed = 0, "
                 "credential_governance_mode = 'legacy_exempt', takeover_exempt_reason = ?, "
@@ -3053,42 +3231,51 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True, _
 
         rotation_result = None
         if updates or transitioning_to_production:
-            updates.append('updated_at = ?')
-            params.append(_utc_now())
-            params.append(asset_id)
-            conn.execute(f"UPDATE physical_assets SET {', '.join(updates)} WHERE id = ?", tuple(params))
+            if updates:
+                updates.append('updated_at = ?')
+                params.append(_utc_now())
+                params.append(asset_id)
+                conn.execute(f"UPDATE physical_assets SET {', '.join(updates)} WHERE id = ?", tuple(params))
 
-            # Sync and validate rack device placement
-            updated_row = conn.execute("SELECT * FROM physical_assets WHERE id = ?", (asset_id,)).fetchone()
-            try:
-                merged_row = {**dict(updated_row), **body.model_dump(exclude_unset=True)}
-                _sync_rack_device_from_asset(conn, asset_id, merged_row, _user)
-            except ValueError as e:
-                conn.rollback()
-                raise HTTPException(status_code=400, detail=str(e))
+            if should_sync_device_type:
+                _sync_device_type_power(
+                    conn,
+                    body.vendor if body.vendor is not None else row['vendor'],
+                    body.model if body.model is not None else row['model'],
+                    body.power_watts if body.power_watts is not None else row['power_watts'],
+                    body.device_role if body.device_role is not None else row['device_role'],
+                    body.u_height if body.u_height is not None else row['u_height'],
+                )
+
+            if should_sync_rack:
+                try:
+                    merged_row = {**dict(row), **body.model_dump(exclude_unset=True)}
+                    _sync_rack_device_from_asset(
+                        conn,
+                        asset_id,
+                        merged_row,
+                        _user,
+                        sync_device_type=False,
+                    )
+                except ValueError as e:
+                    conn.rollback()
+                    raise HTTPException(status_code=400, detail=str(e))
 
             # Plan-A: sync basic info to linked device
             current_type = body.asset_type if body.asset_type is not None else row['asset_type']
-            if current_type in ('network_device', 'server'):
-                _sync_device_from_asset(conn, asset_id, body)
+            if should_sync_device and current_type in ('network_device', 'server'):
+                _sync_device_from_asset(conn, asset_id, body, changed_fields)
                 # Also sync lifecycle_status to linked device
-                if body.lifecycle_status is not None and not transitioning_to_production:
+                if 'lifecycle_status' in changed_fields and not transitioning_to_production:
                     conn.execute(
                         'UPDATE devices SET lifecycle_status = ? WHERE asset_id = ?',
                         (body.lifecycle_status, asset_id)
                     )
 
-            row_dict = dict(row)
-            _sync_device_type_power(
-                conn,
-                body.vendor if body.vendor is not None else row_dict.get('vendor', ''),
-                body.model if body.model is not None else row_dict.get('model', ''),
-                body.power_watts if body.power_watts is not None else row_dict.get('power_watts', 0),
-                body.device_role if body.device_role is not None else row_dict.get('device_role', 'switch'),
-                body.u_height if body.u_height is not None else row_dict.get('u_height', 1)
-            )
-
-            conn.commit()
+            # Normal edits stay in one transaction. A production transition is
+            # committed before its background rotation starts reading state.
+            if transitioning_to_production:
+                conn.commit()
 
 
             # Auto-rotate default password when transitioning to production
@@ -3179,7 +3366,6 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True, _
 
         if requested_tag_ids is not None:
             _sync_asset_tags(conn, asset_id, requested_tag_ids)
-            conn.commit()
 
         if body.web_profiles is not None:
             try:
@@ -3187,7 +3373,6 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True, _
             except ValueError as exc:
                 conn.rollback()
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
-            conn.commit()
 
         updated_row = conn.execute(
             'SELECT * FROM physical_assets WHERE id = ?', (asset_id,)
@@ -3207,11 +3392,8 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True, _
         # asset mutations are committed together.  A second commit is safe
         # for the legacy path and keeps the function's existing contract.
         conn.commit()
-        try:
-            from services.collector_sync_service import trigger_async_monitoring_sync
-            trigger_async_monitoring_sync()
-        except Exception:
-            pass
+        if should_sync_monitoring:
+            _trigger_asset_monitoring_sync()
         return {
             'ok': True,
             'password_rotated': rotation_result is not None and rotation_result.get('success', False),
@@ -3225,68 +3407,118 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True, _
 
 # ── Delete ───────────────────────────────────────────────────────────
 
+def _delete_asset_in_connection(conn, asset_id: str, user) -> None:
+    row = conn.execute(
+        '''SELECT pa.id, pa.site_id, s.tenant_id AS site_tenant_id
+           FROM physical_assets pa LEFT JOIN sites s ON s.id = pa.site_id
+          WHERE pa.id = ?''',
+        (asset_id,),
+    ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail='Asset not found')
+    _enforce_asset_row_scope(user, row, 'delete')
+    _delete_linked_device(conn, asset_id)
+
+    # Remove rack placements through the canonical placement service so the
+    # asset projection is cleared and the rack layout revision is bumped.
+    rack_device_rows = conn.execute(
+        'SELECT id FROM rack_devices WHERE asset_id = ?', (asset_id,)
+    ).fetchall()
+    if rack_device_rows:
+        from services import rack_service
+        for rack_device_row in rack_device_rows:
+            rack_service.delete_rack_device(conn, rack_device_row['id'], commit=False)
+
+    # Preserve PAM audit history while invalidating tokens tied to this asset.
+    now_iso = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S+00:00')
+    conn.execute(
+        "UPDATE pam_sessions SET archived = 1, updated_at = ? WHERE asset_id = ?",
+        (now_iso, asset_id),
+    )
+    conn.execute(
+        "UPDATE pam_access_requests SET updated_at = ? WHERE asset_id = ?",
+        (now_iso, asset_id),
+    )
+    conn.execute('DELETE FROM pam_session_tokens WHERE asset_id = ?', (asset_id,))
+    conn.execute('DELETE FROM physical_assets WHERE id = ?', (asset_id,))
+    _audit_asset_event(
+        conn,
+        event_type='asset.delete',
+        summary='Physical asset deleted',
+        user=user,
+        asset_id=asset_id,
+        target_name=asset_id,
+        before=row,
+        details={'source': 'api'},
+    )
+
+
+def _trigger_asset_monitoring_sync() -> None:
+    try:
+        from services.collector_sync_service import trigger_async_monitoring_sync
+        trigger_async_monitoring_sync()
+    except Exception:
+        pass
+
+
+@router.post('/assets/batch-delete')
+def batch_delete_assets(body: BatchAssetDeleteRequest, _user=require_role("Administrator")):
+    conn = get_db_connection()
+    deleted_ids: list[str] = []
+    failed_items: list[dict[str, str]] = []
+    try:
+        for index, asset_id in enumerate(body.asset_ids, start=1):
+            savepoint = f'asset_batch_delete_{index}'
+            conn.execute(f'SAVEPOINT {savepoint}')
+            try:
+                _delete_asset_in_connection(conn, asset_id, _user)
+                conn.execute(f'RELEASE SAVEPOINT {savepoint}')
+                deleted_ids.append(asset_id)
+            except HTTPException as exc:
+                conn.execute(f'ROLLBACK TO SAVEPOINT {savepoint}')
+                conn.execute(f'RELEASE SAVEPOINT {savepoint}')
+                detail = exc.detail
+                message = detail.get('message') if isinstance(detail, dict) else detail
+                failed_items.append({
+                    'asset_id': asset_id,
+                    'message': str(message or '删除失败'),
+                })
+            except Exception as exc:  # noqa: BLE001
+                conn.execute(f'ROLLBACK TO SAVEPOINT {savepoint}')
+                conn.execute(f'RELEASE SAVEPOINT {savepoint}')
+                logger.exception('Asset batch delete failed for asset %s', asset_id)
+                failed_items.append({
+                    'asset_id': asset_id,
+                    'message': str(exc) if isinstance(exc, ValueError) else '删除失败，请稍后重试',
+                })
+
+        conn.commit()
+        if deleted_ids:
+            _trigger_asset_monitoring_sync()
+        return {
+            'ok': True,
+            'deleted': len(deleted_ids),
+            'deleted_ids': deleted_ids,
+            'failed': len(failed_items),
+            'failed_items': failed_items,
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
 @router.delete('/assets/{asset_id}')
 def delete_asset(asset_id: str, _user=require_role("Administrator")):
     conn = get_db_connection()
     try:
-        row = conn.execute(
-            '''SELECT pa.id, pa.site_id, s.tenant_id AS site_tenant_id
-               FROM physical_assets pa LEFT JOIN sites s ON s.id = pa.site_id
-              WHERE pa.id = ?''',
-            (asset_id,),
-        ).fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail='Asset not found')
-        _enforce_asset_row_scope(_user, row, 'delete')
-        # Plan-A: cascade-delete linked device first
-        _delete_linked_device(conn, asset_id)
-
-        # Cascade-delete linked rack device through the canonical placement
-        # service so the asset projection is cleared and rack layout_revision
-        # is bumped in the same transaction.
-        rack_device_rows = conn.execute(
-            'SELECT id FROM rack_devices WHERE asset_id = ?', (asset_id,)
-        ).fetchall()
-        if rack_device_rows:
-            from services import rack_service
-            for rack_device_row in rack_device_rows:
-                rack_service.delete_rack_device(conn, rack_device_row['id'], commit=False)
-
-        # PAM: archive (don't delete) sessions and access requests so the audit
-        # trail survives asset removal. We mark `archived = 1` here; the FK on
-        # asset_id is configured ON DELETE SET NULL (PG) so the column itself
-        # is nulled automatically when physical_assets is deleted below.
-        # Tokens are short-lived and have no audit value, so they are still
-        # hard-deleted to free the asset_id reference cleanly.
-        now_iso = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S+00:00')
-        conn.execute(
-            "UPDATE pam_sessions SET archived = 1, updated_at = ? WHERE asset_id = ?",
-            (now_iso, asset_id),
-        )
-        conn.execute(
-            "UPDATE pam_access_requests SET updated_at = ? WHERE asset_id = ?",
-            (now_iso, asset_id),
-        )
-        conn.execute('DELETE FROM pam_session_tokens WHERE asset_id = ?', (asset_id,))
-
-        conn.execute('DELETE FROM physical_assets WHERE id = ?', (asset_id,))
-        _audit_asset_event(
-            conn,
-            event_type='asset.delete',
-            summary='Physical asset deleted',
-            user=_user,
-            asset_id=asset_id,
-            target_name=asset_id,
-            before=row,
-            details={'source': 'api'},
-        )
+        _delete_asset_in_connection(conn, asset_id, _user)
         conn.commit()
-        try:
-            from services.collector_sync_service import trigger_async_monitoring_sync
-            trigger_async_monitoring_sync()
-        except Exception:
-            pass
+        _trigger_asset_monitoring_sync()
         return {'ok': True}
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
@@ -3574,27 +3806,22 @@ def import_assets(
                 skipped_items.append(skipped_item)
                 return {'status': 'skipped', **skipped_item}
 
-            conn.execute('''
-                INSERT INTO physical_assets (
-                    id, asset_type, asset_tag, serial_number, vendor, model, hostname,
-                    site_id, rack, rack_unit, u_height, planned_start_u, management_ip, business_ip, device_role,
-                    vlan, uplink_switch, uplink_port,
-                    status, lifecycle_status, asset_origin, purchase_date, warranty_expiry, department, notes,
-                    platform, connection_method, username, password,
-                    normal_username, normal_password, admin_username, admin_password,
-                    enable_password, auth_model,
-                    snmp_community, snmp_port, management_port, device_category, function, zone, power_watts,
-                    credential_governance_mode, takeover_exempt_reason, takeover_exempt_at, is_managed,
-                    credential_id, admin_credential_id,
-                    created_at, updated_at
-                ) VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-                )
-            ''', (
+            asset_columns = (
+                'id', 'asset_type', 'asset_tag', 'serial_number', 'vendor', 'model', 'hostname',
+                'site_id', 'rack', 'rack_unit', 'u_height', 'planned_start_u', 'management_ip', 'business_ip', 'device_role',
+                'vlan', 'uplink_switch', 'uplink_port',
+                'status', 'lifecycle_status', 'asset_origin', 'purchase_date', 'warranty_expiry', 'department', 'notes',
+                'platform', 'connection_method', 'username', 'password',
+                'normal_username', 'normal_password', 'admin_username', 'admin_password',
+                'enable_password', 'auth_model',
+                'snmp_community', 'snmp_port', 'snmp_credential_id', 'management_port',
+                'winrm_enabled', 'winrm_port', 'winrm_auth_mode', 'winrm_tls_mode', 'winrm_cert_fingerprint',
+                'ssh_algorithm_profile', 'device_category', 'function', 'zone', 'power_watts',
+                'credential_governance_mode', 'takeover_exempt_reason', 'takeover_exempt_at', 'is_managed',
+                'credential_id', 'admin_credential_id',
+                'created_at', 'updated_at',
+            )
+            asset_values = (
                 asset_id, body.asset_type, body.asset_tag, body.serial_number, body.vendor,
                 body.model, body.hostname, body.site_id, body.rack, body.rack_unit,
                 max(1, min(60, body.u_height)), body.planned_start_u,
@@ -3610,7 +3837,9 @@ def import_assets(
                 _safe_encrypt(getattr(body, 'enable_password', '') or ''),
                 getattr(body, 'auth_model', '') or 'single',
                 _safe_encrypt_snmp_community(body.snmp_community), body.snmp_port,
-                _management_port_for_storage(body),
+                body.snmp_credential_id or '', _management_port_for_storage(body),
+                body.winrm_enabled, body.winrm_port, body.winrm_auth_mode, body.winrm_tls_mode,
+                body.winrm_cert_fingerprint, normalize_ssh_algorithm_profile(body.ssh_algorithm_profile),
                 body.device_category, getattr(body, 'function', '') or '', getattr(body, 'zone', 'Unknown') or 'Unknown', body.power_watts,
                 'legacy_exempt' if legacy_production else 'managed',
                 (body.takeover_exempt_reason or '').strip() if legacy_production else '',
@@ -3619,22 +3848,11 @@ def import_assets(
                 body.credential_id or '',
                 body.admin_credential_id or '',
                 now, now
-            ))
-            conn.execute(
-                'UPDATE physical_assets SET snmp_credential_id = ?, management_port = ? WHERE id = ?',
-                (body.snmp_credential_id or '', _management_port_for_storage(body), asset_id),
             )
             conn.execute(
-                '''UPDATE physical_assets SET
-                          winrm_enabled = ?, winrm_port = ?, winrm_auth_mode = ?, winrm_tls_mode = ?,
-                          winrm_cert_fingerprint = ?
-                   WHERE id = ?''',
-                (body.winrm_enabled, body.winrm_port, body.winrm_auth_mode, body.winrm_tls_mode,
-                 body.winrm_cert_fingerprint, asset_id),
-            )
-            conn.execute(
-                'UPDATE physical_assets SET ssh_algorithm_profile = ? WHERE id = ?',
-                (normalize_ssh_algorithm_profile(body.ssh_algorithm_profile), asset_id),
+                f"INSERT INTO physical_assets ({', '.join(asset_columns)}) "
+                f"VALUES ({', '.join('?' for _ in asset_columns)})",
+                asset_values,
             )
             device_id = None
             if body.asset_type in ('network_device', 'server'):

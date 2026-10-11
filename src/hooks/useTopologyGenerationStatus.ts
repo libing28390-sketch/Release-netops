@@ -73,8 +73,6 @@ export const useTopologyGenerationStatus = (refreshKey?: string) => {
 
   useEffect(() => {
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 60_000);
-    return () => window.clearInterval(timer);
   }, [refresh, refreshKey]);
 
   return { status, error, loading, refresh };

@@ -287,18 +287,19 @@ def resolve_device_credentials(device: dict) -> dict[str, str]:
         # A device-local record also has a credentials.id, but its explicit
         # ``unbound`` role means the device/asset password remains authoritative.
         # Only shared credential-center records may suppress that fallback.
-        try:
-            from database import get_db_connection
-            conn = get_db_connection()
+        if credential_id or admin_credential_id:
             try:
-                normal_bound = credential_is_shared(conn, credential_id, db_creds, device_hostname=device.get('hostname')) if credential_id else False
-                admin_bound = credential_is_shared(conn, admin_credential_id, db_admin_creds, device_hostname=device.get('hostname')) if admin_credential_id else False
-            finally:
-                conn.close()
-        except Exception as exc:
-            logger.warning('Failed to classify credential binding for %s: %s', device.get('hostname') or device.get('id'), exc)
-            normal_bound = False
-            admin_bound = False
+                from database import get_db_connection
+                conn = get_db_connection()
+                try:
+                    normal_bound = credential_is_shared(conn, credential_id, db_creds, device_hostname=device.get('hostname')) if credential_id else False
+                    admin_bound = credential_is_shared(conn, admin_credential_id, db_admin_creds, device_hostname=device.get('hostname')) if admin_credential_id else False
+                finally:
+                    conn.close()
+            except Exception as exc:
+                logger.warning('Failed to classify credential binding for %s: %s', device.get('hostname') or device.get('id'), exc)
+                normal_bound = False
+                admin_bound = False
 
         # A legacy generic credential_id must not collapse an explicitly
         # modelled dual-account asset back into one account. Only credentials

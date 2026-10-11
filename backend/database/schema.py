@@ -771,6 +771,8 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     ensure_column('prefixes', 'network_type', "TEXT DEFAULT 'server'")
     ensure_column('prefixes', 'gateway_device_id', "TEXT")
     ensure_column('prefixes', 'gateway_interface_id', "TEXT")
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_prefixes_gateway_device_id ON prefixes(gateway_device_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_prefixes_gateway_interface_id ON prefixes(gateway_interface_id)')
     ensure_column('prefixes', 'traceable', "INTEGER DEFAULT 1")
     ensure_column('prefixes', 'prefix_cidr', "CIDR" if _USE_PG else "TEXT DEFAULT ''")
     ensure_column('prefixes', 'ip_version', "INTEGER DEFAULT 0")
@@ -1259,6 +1261,7 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     ''')
     cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_topo_links_key ON topology_links(link_key)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_topo_links_source_target ON topology_links(source_device_id, target_device_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_topo_links_target_device_id ON topology_links(target_device_id)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_topo_links_src_intf ON topology_links(source_interface_id)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_topo_links_tgt_intf ON topology_links(target_interface_id)')
 
@@ -1412,6 +1415,7 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         ('last_seen', "TEXT DEFAULT ''")
     ]:
         ensure_column('ip_inventory', col, dtype)
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_ip_inventory_device_id ON ip_inventory(device_id)')
 
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS route_cache (
@@ -2466,6 +2470,7 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     )
     ''')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_device_telemetry_hourly_ts ON device_telemetry_hourly(ts_hour)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_device_telemetry_hourly_device_id ON device_telemetry_hourly(device_id)')
 
     # Migration: extend telemetry tables with IO latency + per-state TCP metrics.
     # (Older DBs created before these columns existed need them backfilled.)
@@ -3119,6 +3124,8 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         ('confirmed_by', "TEXT DEFAULT ''"),
     ]:
         ensure_column('ip_addresses', col, dtype)
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_ip_addresses_device_id ON ip_addresses(device_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_ip_addresses_interface_id ON ip_addresses(interface_id)')
 
     for table_name in ('devices', 'interfaces', 'prefixes'):
         for col, dtype in [
@@ -3398,6 +3405,7 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     )
     ''')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_pam_token_exp ON pam_session_tokens(expires_at)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_pam_session_tokens_asset_id ON pam_session_tokens(asset_id)')
 
     # PAM Controlled Sessions
     #

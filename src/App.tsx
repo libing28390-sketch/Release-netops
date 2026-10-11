@@ -71,11 +71,18 @@ const AppModals = lazy(() => import('./components/modals/AppModals').then(({ App
 type AppSharedLookupSetters = {
   sessionIdentity: string;
   setScripts: React.Dispatch<React.SetStateAction<Script[]>>;
-  setUsers: React.Dispatch<React.SetStateAction<UserType[]>>;
   setConfigTemplates: React.Dispatch<React.SetStateAction<ConfigTemplate[]>>;
   setSelectedTemplateId: React.Dispatch<React.SetStateAction<string>>;
   setGlobalVars: React.Dispatch<React.SetStateAction<Array<{ id?: string; key: string; value: string }>>>;
 };
+
+type AppSharedLookupScope = 'none' | 'automation' | 'configuration' | 'all';
+
+type AppSharedLookupOptions = {
+  force?: boolean;
+};
+
+const APP_SHARED_LOOKUP_CACHE_TTL_MS = 120_000;
 
 const fingerprintSessionToken = (token: string) => {
   // This fingerprint is only an in-memory change detector. The token itself
@@ -92,6 +99,7 @@ const fingerprintSessionToken = (token: string) => {
 
 type AppSharedLookupRequest = {
   sessionIdentity: string;
+  scope: Exclude<AppSharedLookupScope, 'none'>;
   controller: AbortController;
   promise: Promise<void>;
 };
@@ -99,12 +107,12 @@ type AppSharedLookupRequest = {
 export const useAppSharedLookups = ({
   sessionIdentity,
   setScripts,
-  setUsers,
   setConfigTemplates,
   setSelectedTemplateId,
   setGlobalVars,
 }: AppSharedLookupSetters) => {
   const inFlightRef = React.useRef<AppSharedLookupRequest | null>(null);
+  const loadedAtRef = React.useRef(new Map<string, number>());
   const activeSessionIdentityRef = React.useRef(sessionIdentity);
   activeSessionIdentityRef.current = sessionIdentity;
 
@@ -114,13 +122,24 @@ export const useAppSharedLookups = ({
       request.controller.abort();
       inFlightRef.current = null;
     }
+    if (activeSessionIdentityRef.current !== sessionIdentity) {
+      loadedAtRef.current.clear();
+    }
   }, [sessionIdentity]);
 
-  return useCallback(() => {
-    if (!sessionIdentity) return Promise.resolve();
+  return useCallback((scope: AppSharedLookupScope = 'all', options: AppSharedLookupOptions = {}) => {
+    if (!sessionIdentity || scope === 'none') return Promise.resolve();
+
+    const cacheKey = `${sessionIdentity}:${scope}`;
+    const lastLoadedAt = loadedAtRef.current.get(cacheKey) || 0;
+    if (!options.force && Date.now() - lastLoadedAt < APP_SHARED_LOOKUP_CACHE_TTL_MS) {
+      return Promise.resolve();
+    }
 
     const currentRequest = inFlightRef.current;
-    if (currentRequest?.sessionIdentity === sessionIdentity) return currentRequest.promise;
+    if (currentRequest?.sessionIdentity === sessionIdentity && currentRequest.scope === scope) {
+      return currentRequest.promise;
+    }
     if (currentRequest) {
       currentRequest.controller.abort();
       inFlightRef.current = null;
@@ -129,6 +148,7 @@ export const useAppSharedLookups = ({
     const controller = new AbortController();
     const request: AppSharedLookupRequest = {
       sessionIdentity,
+      scope,
       controller,
       promise: Promise.resolve(),
     };
@@ -142,42 +162,45 @@ export const useAppSharedLookups = ({
       try {
         const headers = authHeaders();
         const init = { headers, signal: controller.signal };
-        const [scriptsRes, usersRes, templatesRes, varsRes] = await Promise.all([
-          fetch('/api/scripts', init),
-          fetch('/api/users', init),
-          fetch('/api/config-templates?page=1&page_size=200&sort=updated', init),
-          fetch('/api/vars', init),
-        ]);
+        const resources = scope === 'automation'
+          ? ['scripts'] as const
+          : scope === 'configuration'
+            ? ['templates', 'vars'] as const
+            : ['scripts', 'templates', 'vars'] as const;
+        const responses = await Promise.all(resources.map((resource) => {
+          if (resource === 'scripts') return fetch('/api/scripts', init);
+          if (resource === 'templates') return fetch('/api/config-templates?page=1&page_size=200&sort=updated', init);
+          return fetch('/api/vars', init);
+        }));
 
         if (!isCurrentRequest()) return;
-        if (usersRes.status === 401) {
+        if (responses.some((response) => response.status === 401)) {
           window.dispatchEvent(new Event('netops:auth-expired'));
           return;
         }
-        if (scriptsRes.ok) {
-          const scripts = await scriptsRes.json();
+
+        let allResourcesLoaded = true;
+        for (const [index, resource] of resources.entries()) {
+          const response = responses[index];
+          if (!response.ok) {
+            allResourcesLoaded = false;
+            continue;
+          }
+          const payload = await response.json();
           if (!isCurrentRequest()) return;
-          setScripts(scripts);
+          if (resource === 'scripts') {
+            setScripts(Array.isArray(payload) ? payload : []);
+          } else if (resource === 'templates') {
+            const templates: ConfigTemplate[] = Array.isArray(payload)
+              ? payload
+              : (Array.isArray(payload?.items) ? payload.items : []);
+            setConfigTemplates(templates);
+            setSelectedTemplateId((current) => current || templates[0]?.id || '');
+          } else {
+            setGlobalVars(Array.isArray(payload) ? payload : []);
+          }
         }
-        if (usersRes.ok) {
-          const users = await usersRes.json();
-          if (!isCurrentRequest()) return;
-          setUsers(users);
-        }
-        if (templatesRes.ok) {
-          const templatePayload = await templatesRes.json();
-          if (!isCurrentRequest()) return;
-          const templates: ConfigTemplate[] = Array.isArray(templatePayload)
-            ? templatePayload
-            : (templatePayload.items || []);
-          setConfigTemplates(templates);
-          setSelectedTemplateId((current) => current || templates[0]?.id || '');
-        }
-        if (varsRes.ok) {
-          const vars = await varsRes.json();
-          if (!isCurrentRequest()) return;
-          setGlobalVars(vars);
-        }
+        if (allResourcesLoaded && isCurrentRequest()) loadedAtRef.current.set(cacheKey, Date.now());
       } catch (error) {
         if (isCurrentRequest() && !(error instanceof DOMException && error.name === 'AbortError')) {
           console.error('Failed to fetch shared lookups:', error);
@@ -190,16 +213,19 @@ export const useAppSharedLookups = ({
     });
     inFlightRef.current = request;
     return request.promise;
-  }, [sessionIdentity, setScripts, setUsers, setConfigTemplates, setSelectedTemplateId, setGlobalVars]);
+  }, [sessionIdentity, setScripts, setConfigTemplates, setSelectedTemplateId, setGlobalVars]);
 };
 
 interface AppSharedDataRefreshLifecycleArgs {
   isAuthenticated: boolean;
   pathname: string;
   activeTab: string;
+  automationPage?: string;
+  configPage?: string;
+  changeOrderPage?: string;
   inventorySubPage: string;
   autoRefreshEnabled: boolean;
-  fetchSharedLookups: () => Promise<void>;
+  fetchSharedLookups: (scope?: AppSharedLookupScope) => Promise<void>;
   fetchHotData: () => Promise<void>;
   fetchDevicesData: () => Promise<void>;
   setIsLoading: React.Dispatch<React.SetStateAction<boolean>>;
@@ -209,6 +235,9 @@ export const useAppSharedDataRefreshLifecycle = ({
   isAuthenticated,
   pathname,
   activeTab,
+  automationPage,
+  configPage,
+  changeOrderPage,
   inventorySubPage,
   autoRefreshEnabled,
   fetchSharedLookups,
@@ -217,6 +246,24 @@ export const useAppSharedDataRefreshLifecycle = ({
   setIsLoading,
 }: AppSharedDataRefreshLifecycleArgs) => {
   const skipNextRouteRefreshRef = React.useRef(false);
+  const deviceDependentAutomationPages = new Set([
+    'playbooks', 'inspection', 'inspection-records',
+    'schedule', 'history', 'schedule-history', 'queries',
+  ]);
+  const shouldFetchSharedDevices = activeTab !== 'dashboard'
+    && activeTab !== 'assets'
+    && activeTab !== 'change-orders'
+    && activeTab !== 'ipam'
+    && !(activeTab === 'inventory' && inventorySubPage === 'devices');
+  const shouldFetchRouteDevices = shouldFetchSharedDevices
+    && (activeTab !== 'automation' || deviceDependentAutomationPages.has(automationPage || ''));
+  const sharedLookupScope: AppSharedLookupScope = activeTab === 'automation'
+    ? 'automation'
+    : (activeTab === 'config' && configPage === 'templates')
+      || (activeTab === 'change-orders' && changeOrderPage === 'new')
+      ? 'configuration'
+      : 'none';
+  const shouldFetchHotData = activeTab === 'dashboard';
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -229,34 +276,31 @@ export const useAppSharedDataRefreshLifecycle = ({
     // first authenticated render. Let the initial load own that refresh.
     skipNextRouteRefreshRef.current = true;
     setIsLoading(true);
-    const shouldFetchSharedDevices = activeTab !== 'dashboard'
-      && !(activeTab === 'inventory' && inventorySubPage === 'devices');
-    const sharedDevicesLoad = shouldFetchSharedDevices
+    const sharedDevicesLoad = shouldFetchRouteDevices
       ? fetchDevicesData()
       : Promise.resolve();
-    Promise.all([fetchSharedLookups(), fetchHotData(), sharedDevicesLoad])
+    Promise.all([
+      fetchSharedLookups(sharedLookupScope),
+      shouldFetchHotData ? fetchHotData() : Promise.resolve(),
+      sharedDevicesLoad,
+    ])
       .finally(() => setIsLoading(false));
 
     let hotInterval: ReturnType<typeof setInterval> | undefined;
     let lookupsInterval: ReturnType<typeof setInterval> | undefined;
-    let devicesInterval: ReturnType<typeof setInterval> | undefined;
 
-    if (autoRefreshEnabled) {
+    if (autoRefreshEnabled && shouldFetchHotData) {
       hotInterval = setInterval(fetchHotData, 30000);
-      lookupsInterval = setInterval(fetchSharedLookups, 120000);
-      if (activeTab !== 'network-monitoring'
-        && activeTab !== 'dashboard'
-        && !(activeTab === 'inventory' && inventorySubPage === 'devices')) {
-        devicesInterval = setInterval(fetchDevicesData, 15000);
-      }
+    }
+    if (autoRefreshEnabled && sharedLookupScope !== 'none') {
+      lookupsInterval = setInterval(() => fetchSharedLookups(sharedLookupScope), 120000);
     }
 
     return () => {
       if (hotInterval) clearInterval(hotInterval);
       if (lookupsInterval) clearInterval(lookupsInterval);
-      if (devicesInterval) clearInterval(devicesInterval);
     };
-  }, [isAuthenticated, fetchSharedLookups, fetchHotData, fetchDevicesData, activeTab, inventorySubPage, autoRefreshEnabled, setIsLoading]);
+  }, [isAuthenticated, fetchSharedLookups, fetchHotData, fetchDevicesData, activeTab, automationPage, configPage, changeOrderPage, inventorySubPage, shouldFetchRouteDevices, shouldFetchHotData, sharedLookupScope, autoRefreshEnabled, setIsLoading]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -264,14 +308,12 @@ export const useAppSharedDataRefreshLifecycle = ({
       skipNextRouteRefreshRef.current = false;
       return;
     }
-    fetchSharedLookups();
-    fetchHotData();
-    if (activeTab !== 'network-monitoring'
-      && activeTab !== 'dashboard'
-      && !(activeTab === 'inventory' && inventorySubPage === 'devices')) {
+    fetchSharedLookups(sharedLookupScope);
+    if (shouldFetchHotData) fetchHotData();
+    if (shouldFetchRouteDevices && activeTab !== 'network-monitoring') {
       fetchDevicesData();
     }
-  }, [isAuthenticated, pathname, fetchSharedLookups, fetchHotData, fetchDevicesData, activeTab, inventorySubPage]);
+  }, [isAuthenticated, pathname, fetchSharedLookups, fetchHotData, fetchDevicesData, activeTab, automationPage, configPage, changeOrderPage, inventorySubPage, shouldFetchRouteDevices, shouldFetchHotData, sharedLookupScope]);
 };
 
 
@@ -384,15 +426,20 @@ const App: React.FC = () => {
 
 
 
-  const deviceFetchMode = useMemo<'light' | 'full' | 'paged-light' | 'all-light'>(() => {
+  const deviceFetchMode = useMemo<
+    'light' | 'full' | 'paged-light' | 'all-light' | 'all-network-light' | 'all-network-topology'
+  >(() => {
     if (activeTab === 'network-monitoring') return 'paged-light';
     if (activeTab === 'inventory') return 'full';
+    if (activeTab === 'automation' && automationPage === 'execute') return 'all-network-light';
     if (activeTab === 'automation') return 'full';
+    // Topology needs interface telemetry as well as device identity, while
+    // config histories are not used by the graph.
+    if (activeTab === 'topology') return 'all-network-topology';
     if (activeTab === 'config') return 'full';
-    if (activeTab === 'topology') return 'full';
     if (activeTab === 'access' || activeTab === 'access-favorites' || activeTab === 'access-history') return 'all-light';
     return 'light';
-  }, [activeTab]);
+  }, [activeTab, automationPage]);
 
   const {
     devices,
@@ -448,7 +495,9 @@ const App: React.FC = () => {
     handleSaveQuickQuery,
     savedQueries,
     handleRerun,
-    handleClearSelection
+    handleClearSelection,
+    rememberedBatchDevices,
+    rememberBatchDevice,
   } = useAutomation({ currentUser, isAuthenticated, language, showToast, navigate, setSelectedDevice, devices, selectedDevice, activeTab, automationPage });
   useEscapeClose(saveQuickQueryModalOpen, () => setSaveQuickQueryModalOpen(false));
 
@@ -537,8 +586,9 @@ const App: React.FC = () => {
     statusFilter = playbookHistoryStatusFilter,
     scenarioFilter = playbookHistoryScenarioSearch,
   ) => {
-    await loadPlaybookHistory(page, statusFilter, scenarioFilter);
-  }, [playbookHistoryPage, playbookHistoryStatusFilter, playbookHistoryScenarioSearch, loadPlaybookHistory]);
+    const total = await loadPlaybookHistory(page, statusFilter, scenarioFilter);
+    setPlaybookHistoryTotal(total);
+  }, [playbookHistoryPage, playbookHistoryStatusFilter, playbookHistoryScenarioSearch, loadPlaybookHistory, setPlaybookHistoryTotal]);
 
   useEffect(() => {
     if (isAuthenticated && activeTab === 'automation' && automationPage === 'queries') {
@@ -619,6 +669,7 @@ const App: React.FC = () => {
     handleExportMap,
     handleTriggerDiscovery,
     handleCancelDiscovery,
+    handleRefreshTopologyData,
     handleConfirmTopologyRelation,
     loadTopologyHistory,
   } = useTopology({
@@ -1032,7 +1083,6 @@ const App: React.FC = () => {
       ? `${currentUser.id || currentUser.username}:${fingerprintSessionToken(localStorage.getItem('netops_token') || '')}`
       : '',
     setScripts,
-    setUsers,
     setConfigTemplates,
     setSelectedTemplateId,
     setGlobalVars,
@@ -1040,8 +1090,8 @@ const App: React.FC = () => {
 
   /**
    * Fetch only the data that genuinely changes often (recent jobs, upcoming
-   * tasks). Used by the short-cadence interval. The Dashboard manual
-   * refresh button still calls `fetchSharedData` for a full refresh.
+   * tasks). Used by the short-cadence interval and the Dashboard refresh
+   * button; shared lookups refresh only on routes that consume them.
    */
   const fetchHotData = useCallback(async () => {
     try {
@@ -1054,13 +1104,12 @@ const App: React.FC = () => {
   }, [loadUpcomingTasks, loadJobs]);
 
   /**
-   * Full shared-data refresh: lookups + hot data. Used on initial load,
-   * on route change, and when the user clicks the Dashboard refresh button.
-   * Polling intervals do NOT call this (see fetchHotData / fetchSharedLookups).
+   * Refresh the Dashboard's short-lived data without reloading unrelated
+   * automation/configuration lookup tables.
    */
   const fetchSharedData = useCallback(async () => {
-    await Promise.all([fetchSharedLookups(), fetchHotData()]);
-  }, [fetchSharedLookups, fetchHotData]);
+    await fetchHotData();
+  }, [fetchHotData]);
 
   const handleOpenTemplateDeploy = () => {
     setConfigWorkspaceView('checks');
@@ -1093,6 +1142,9 @@ const App: React.FC = () => {
     isAuthenticated,
     pathname: location.pathname,
     activeTab,
+    automationPage,
+    configPage,
+    changeOrderPage,
     inventorySubPage,
     autoRefreshEnabled,
     fetchSharedLookups,
@@ -1728,6 +1780,7 @@ const App: React.FC = () => {
     handleSelectExecution, handleDeleteExecution, handleExecDevicesStatusFilterChange, handleExecDevicesPageChange, handleSelectExecDevice,
     findMatchingPlatform, handleRerun, selectedJob, setSelectedJob,
     selectedDevice, handleClearSelection,
+    rememberedBatchDevices, rememberBatchDevice,
   };
 
   const configValue = {
@@ -1778,7 +1831,7 @@ const App: React.FC = () => {
     selectedTopologyDeviceId, selectedTopologyLinkKey, selectedTopologyDevice, selectedTopologyLink,
     topologyNeighborDevices, topologyDeviceLinks, topologyPriorityDevices, topologyOrphanDevices, topologyRef,
     hideStaleLinks, setHideStaleLinks, hideOrphanDevices, setHideOrphanDevices,
-     handleTriggerDiscovery, handleCancelDiscovery, handleExportMap,
+     handleTriggerDiscovery, handleCancelDiscovery, handleRefreshTopologyData, handleExportMap,
     handleConfirmTopologyRelation, loadTopologyHistory,
     setTopologySearch, setTopologySiteFilter, setTopologyGraphView, setTopologyTagFilter, setTopologyRoleFilter, setTopologyStatusFilter,
     setTopologyLinkStatusFilter, setTopologyProtocolFilter,

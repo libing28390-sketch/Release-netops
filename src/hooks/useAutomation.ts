@@ -1,5 +1,4 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import * as XLSX from 'xlsx';
 import type { Job, ScheduledTask, Script, ConfigTemplate, SessionUser, Device } from '../types';
 import { isAutomationPlatformSupported, normalizeAutomationPlatform } from '../pages/AutomationExecute/helpers';
 import { authHeaders } from '../api/http';
@@ -84,6 +83,7 @@ export const useAutomation = ({
   // Batch execution
   const [batchMode, setBatchMode] = useState(false);
   const [batchDeviceIds, setBatchDeviceIds] = useState<string[]>([]);
+  const [batchDeviceSnapshots, setBatchDeviceSnapshots] = useState<Record<string, Device>>({});
   const [batchResults, setBatchResults] = useState<{deviceId: string; hostname: string; status: 'pending'|'running'|'success'|'failed'; output?: string}[]>([]);
   const [isBatchRunning, setIsBatchRunning] = useState(false);
   
@@ -238,6 +238,44 @@ export const useAutomation = ({
     setBatchDeviceIds((current) => (current.includes(deviceId) ? current.filter((id) => id !== deviceId) : [...current, deviceId]));
   }, []);
 
+  const rememberBatchDevice = useCallback((device: Device) => {
+    const id = String(device?.id || '').trim();
+    if (!id) return;
+    setBatchDeviceSnapshots((current) => ({ ...current, [id]: device }));
+  }, []);
+
+  const selectedBatchDevices = useMemo(() => {
+    const currentDevicesById = new Map<string, Device>();
+    Object.entries(batchDeviceSnapshots).forEach(([id, device]) => currentDevicesById.set(id, device));
+    devices.forEach((device) => currentDevicesById.set(String(device.id), device as Device));
+    return batchDeviceIds
+      .map((id) => currentDevicesById.get(String(id)))
+      .filter((device): device is Device => Boolean(device));
+  }, [batchDeviceIds, batchDeviceSnapshots, devices]);
+  const rememberedBatchDevices = useMemo(
+    () => Object.values(batchDeviceSnapshots),
+    [batchDeviceSnapshots],
+  );
+
+  // Route history reruns and previously loaded selections may have IDs before
+  // their device snapshots are available. Cache matching records as they arrive.
+  useEffect(() => {
+    if (batchDeviceIds.length === 0 || devices.length === 0) return;
+    const selectedIds = new Set(batchDeviceIds.map(String));
+    setBatchDeviceSnapshots((current) => {
+      let changed = false;
+      const next = { ...current };
+      devices.forEach((device) => {
+        const id = String(device?.id || '');
+        if (id && selectedIds.has(id) && next[id] !== device) {
+          next[id] = device as Device;
+          changed = true;
+        }
+      });
+      return changed ? next : current;
+    });
+  }, [batchDeviceIds, devices]);
+
   const handleResetQuickQuery = useCallback(() => {
     quickQueryRunIdRef.current += 1;
     quickQueryAbortRef.current?.abort();
@@ -268,6 +306,7 @@ export const useAutomation = ({
   const handleClearSelection = useCallback(() => {
     setSelectedDevice(null);
     setBatchDeviceIds([]);
+    setBatchDeviceSnapshots({});
   }, [setSelectedDevice, setBatchDeviceIds]);
 
   const handleResetQuickExecutionState = useCallback(() => {
@@ -342,11 +381,10 @@ export const useAutomation = ({
 
   const quickTargetDevices = useMemo(() => {
     if (batchMode) {
-      const selectedIds = new Set(batchDeviceIds);
-      return devices.filter((d) => selectedIds.has(d.id));
+      return selectedBatchDevices;
     }
     return selectedDevice ? [selectedDevice] : [];
-  }, [batchMode, batchDeviceIds, devices, selectedDevice]);
+  }, [batchMode, selectedBatchDevices, selectedDevice]);
 
   const quickDetectedPlatforms = useMemo(() => {
     return Array.from(new Set(quickTargetDevices.map((d) => normalizeAutomationPlatform(d.platform)).filter(Boolean)));
@@ -685,6 +723,7 @@ export const useAutomation = ({
       setAutomationSearch('');
       setBatchMode(false);
       setBatchDeviceIds([]);
+      setBatchDeviceSnapshots({});
       setSelectedDevice(null);
       setQuickPlaybookScenario(null);
       setQuickPlaybookVars({});
@@ -714,7 +753,7 @@ export const useAutomation = ({
     if (page === 'scenarios') {
       setScenarioSearch('');
     }
-  }, [setAutomationSearch, setBatchMode, setBatchDeviceIds, setSelectedDevice, setQuickPlaybookScenario, setQuickPlaybookVars, setQuickPlaybookPlatform, setQuickPlaybookDryRun, setQuickPlaybookConcurrency, setQuickPlaybookPreview, setQuickRiskConfirmed, setQuickExecutionResult, handleResetQuickQuery, setWsMessages, setDeviceStatusMap, setWsCompleteMsg, setSelectedScenario, setPlaybookVars, setPlaybookDeviceIds, setPlaybookDryRun, setPlaybookConcurrency, setPlaybookPreview, setScenarioSearch]);
+  }, [setAutomationSearch, setBatchMode, setBatchDeviceIds, setBatchDeviceSnapshots, setSelectedDevice, setQuickPlaybookScenario, setQuickPlaybookVars, setQuickPlaybookPlatform, setQuickPlaybookDryRun, setQuickPlaybookConcurrency, setQuickPlaybookPreview, setQuickRiskConfirmed, setQuickExecutionResult, handleResetQuickQuery, setWsMessages, setDeviceStatusMap, setWsCompleteMsg, setSelectedScenario, setPlaybookVars, setPlaybookDeviceIds, setPlaybookDryRun, setPlaybookConcurrency, setPlaybookPreview, setScenarioSearch]);
 
   const executePlaybook = useCallback(async (dryRunOverride?: boolean) => {
     if (!selectedScenario) {
@@ -848,7 +887,7 @@ export const useAutomation = ({
   }, [selectedDevice, customCommand, selectedScript, selectedAutomationTemplate, editedScriptContent, currentUser, showToast, loadJobs]);
 
   const runParsedCustomCommand = useCallback(async (label: string, command: string) => {
-    const device = selectedDevice || (batchMode && batchDeviceIds.length === 1 ? devices.find((item) => item.id === batchDeviceIds[0]) : null);
+    const device = selectedDevice || (batchMode && batchDeviceIds.length === 1 ? selectedBatchDevices[0] || null : null);
     if (!device) {
       showToast(language === 'zh' ? '请先选择一台设备' : 'Select a device first', 'error');
       return false;
@@ -907,10 +946,10 @@ export const useAutomation = ({
         setQuickQueryRunning(false);
       }
     }
-  }, [selectedDevice, batchMode, batchDeviceIds, devices, showToast, language]);
+  }, [selectedDevice, batchMode, batchDeviceIds, selectedBatchDevices, showToast, language]);
 
   const runBatchTask = useCallback(async (taskName: string) => {
-    const targets = devices.filter(d => batchDeviceIds.includes(d.id));
+    const targets = selectedBatchDevices;
     if (targets.length === 0) return false;
     setIsBatchRunning(true);
     setBatchResults(targets.map(d => ({ deviceId: d.id, hostname: d.hostname, status: 'pending' })));
@@ -958,7 +997,7 @@ export const useAutomation = ({
     }
     showToast(`Batch task "${taskName}" completed on ${targets.length} devices`, 'success');
     return true;
-  }, [devices, batchDeviceIds, customCommand, dryRun, currentUser, showToast, loadJobs, editedScriptContent, changeTicket]);
+  }, [selectedBatchDevices, customCommand, dryRun, currentUser, showToast, loadJobs, editedScriptContent, changeTicket]);
 
   const saveFavorite = useCallback((cmd: string) => {
     if (!cmd.trim()) return;
@@ -1050,36 +1089,42 @@ export const useAutomation = ({
       return;
     }
 
-    const dataSheet = XLSX.utils.json_to_sheet(table.records, { header: table.columns });
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, dataSheet, 'Data');
+    void import('xlsx')
+      .then((XLSX) => {
+        const dataSheet = XLSX.utils.json_to_sheet(table.records, { header: table.columns });
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, dataSheet, 'Data');
 
-    const metaRows = [
-      { key: language === 'zh' ? '查询名称' : 'Query', value: quickQueryLabel },
-      { key: language === 'zh' ? '设备' : 'Device', value: quickQueryStructured?.device?.hostname || '' },
-      { key: language === 'zh' ? '平台' : 'Platform', value: quickQueryStructured?.device?.platform || '' },
-      { key: language === 'zh' ? '采集时间' : 'Collected At', value: quickQueryStructured?.collected_at || '' },
-      { key: language === 'zh' ? '解析器' : 'Parser', value: table.category?.parser || 'platform-parser' },
-      { key: language === 'zh' ? '记录数' : 'Records', value: String(table.records.length) },
-      { key: language === 'zh' ? '实际执行命令' : 'Executed Commands', value: commands.join('\n') },
-    ];
-    const metaSheet = XLSX.utils.json_to_sheet(metaRows);
-    XLSX.utils.book_append_sheet(workbook, metaSheet, 'Meta');
+        const metaRows = [
+          { key: language === 'zh' ? '查询名称' : 'Query', value: quickQueryLabel },
+          { key: language === 'zh' ? '设备' : 'Device', value: quickQueryStructured?.device?.hostname || '' },
+          { key: language === 'zh' ? '平台' : 'Platform', value: quickQueryStructured?.device?.platform || '' },
+          { key: language === 'zh' ? '采集时间' : 'Collected At', value: quickQueryStructured?.collected_at || '' },
+          { key: language === 'zh' ? '解析器' : 'Parser', value: table.category?.parser || 'platform-parser' },
+          { key: language === 'zh' ? '记录数' : 'Records', value: String(table.records.length) },
+          { key: language === 'zh' ? '实际执行命令' : 'Executed Commands', value: commands.join('\n') },
+        ];
+        const metaSheet = XLSX.utils.json_to_sheet(metaRows);
+        XLSX.utils.book_append_sheet(workbook, metaSheet, 'Meta');
 
-    const sanitize = (value: string, fallback: string) => {
-      return String(value || fallback).trim().replace(/[<>:"/\\|?*\x00-\x1F]/g, '-').replace(/\s+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || fallback;
-    };
+        const sanitize = (value: string, fallback: string) => {
+          return String(value || fallback).trim().replace(/[<>:"/\\|?*\x00-\x1F]/g, '-').replace(/\s+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || fallback;
+        };
 
-    const deviceName = sanitize(quickQueryStructured?.device?.hostname || 'device', 'device');
-    const queryName = sanitize(quickQueryLabel || 'quick-query', 'quick-query');
-    const timestamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
-    XLSX.writeFile(workbook, `${deviceName}_${queryName}_${timestamp}.xlsx`);
-    showToast(language === 'zh' ? '已导出 Excel' : 'Excel exported', 'success');
+        const deviceName = sanitize(quickQueryStructured?.device?.hostname || 'device', 'device');
+        const queryName = sanitize(quickQueryLabel || 'quick-query', 'quick-query');
+        const timestamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
+        XLSX.writeFile(workbook, `${deviceName}_${queryName}_${timestamp}.xlsx`);
+        showToast(language === 'zh' ? '已导出 Excel' : 'Excel exported', 'success');
+      })
+      .catch(() => {
+        showToast(language === 'zh' ? '导出 Excel 失败' : 'Failed to export Excel', 'error');
+      });
   }, [quickQueryStructured, quickQueryLabel, language, showToast]);
 
   const runQuickQuery = useCallback(async (label: string, commands: string, operationalCategory?: string, authRole: string = 'normal') => {
     const targets = batchMode
-      ? devices.filter(d => batchDeviceIds.includes(d.id))
+      ? selectedBatchDevices
       : (selectedDevice ? [selectedDevice] : []);
     if (targets.length === 0) {
       showToast(language === 'zh' ? '请先选择目标设备' : 'Select target devices first', 'error');
@@ -1249,7 +1294,7 @@ export const useAutomation = ({
         setQuickQueryRunning(false);
       }
     }
-  }, [selectedDevice, batchMode, batchDeviceIds, devices, currentUser, language, showToast, formatQuickQueryRawOutput]);
+  }, [selectedDevice, batchMode, batchDeviceIds, selectedBatchDevices, currentUser, language, showToast, formatQuickQueryRawOutput]);
 
   const handleRerun = useCallback(async (execution: any) => {
     try {
@@ -1326,6 +1371,7 @@ export const useAutomation = ({
     scriptParams, setScriptParams, commandFavorites, setCommandFavorites, showFavorites, setShowFavorites,
     commandHistory, setCommandHistory,
     scriptVars, setScriptVars, batchMode, setBatchMode, batchDeviceIds, setBatchDeviceIds,
+    selectedBatchDevices, rememberedBatchDevices, rememberBatchDevice,
     batchResults, setBatchResults, isBatchRunning, setIsBatchRunning, dryRun, setDryRun,
     quickQueryOutput, setQuickQueryOutput, quickQueryRunning, setQuickQueryRunning, quickQueryLabel, setQuickQueryLabel,
     quickQueryStructured, setQuickQueryStructured, quickQueryView, setQuickQueryView, quickQueryMaximized, setQuickQueryMaximized,

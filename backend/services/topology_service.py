@@ -5806,12 +5806,12 @@ def get_topology_generation_status(
     blocking_warnings = [item for item in warnings if item.get('blocking', True)]
     return {
         'generation': {
-            'strategy': 'automatic_and_on_demand',
+            'strategy': 'manual_only',
             'automatic': {
-                'enabled': True,
-                'job_id': 'topology_interface_sync',
-                'interval_seconds': TOPOLOGY_AUTOMATIC_INTERVAL_SECONDS,
-                'scope': 'online_devices_with_management_ip',
+                'enabled': False,
+                'job_id': '',
+                'interval_seconds': 0,
+                'scope': '',
             },
             'manual': {
                 'enabled': True,

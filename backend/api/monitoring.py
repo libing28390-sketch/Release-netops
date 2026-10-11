@@ -15,7 +15,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
 from api.users import validate_session_token
 from core.rbac import enforce_resource_scope, require_role, resource_action_allowed
-from database import get_db_connection, fetch_interface_data
+from database import get_db_connection, fetch_interface_data, fetch_interface_data_for_devices
 from services.audit_service import log_audit_event
 from services.device_health_service import annotate_devices_with_health, build_health_overview, load_devices_for_health
 from services.collection_status_service import collection_status_summary, list_collection_status
@@ -170,6 +170,7 @@ def _is_virtual_interface_name(name: object) -> bool:
 _OVERVIEW_CACHE_TTL_SECONDS = 30
 _overview_cache_lock = threading.Lock()
 _overview_cache: dict[tuple[str, str], dict[str, Any]] = {}
+_overview_inflight: dict[tuple[str, str], threading.Event] = {}
 
 
 def _monitoring_tenant_id(user: Any) -> str | None:
@@ -641,16 +642,38 @@ def monitoring_overview(force_refresh: bool = Query(default=False), user=require
     # pass an explicit user scope.
     tenant_id = _monitoring_tenant_id(user)
     cache_key = ('administrator', '') if tenant_id is None else ('tenant', tenant_id)
-    if not force_refresh:
+    waited_for_refresh = False
+    while True:
         with _overview_cache_lock:
             cached = _overview_cache.get(cache_key) or {}
             cached_expires_at = cached.get('expires_at')
             cached_payload = cached.get('payload')
-            if isinstance(cached_expires_at, datetime) and cached_expires_at > now_utc and isinstance(cached_payload, dict):
+            cache_check_time = datetime.now(timezone.utc)
+            cache_is_fresh = (
+                isinstance(cached_expires_at, datetime)
+                and cached_expires_at > cache_check_time
+                and isinstance(cached_payload, dict)
+            )
+            if cache_is_fresh and (not force_refresh or waited_for_refresh):
                 return cached_payload
+            refresh_event = _overview_inflight.get(cache_key)
+            if refresh_event is None:
+                refresh_event = threading.Event()
+                _overview_inflight[cache_key] = refresh_event
+                owns_refresh = True
+            else:
+                owns_refresh = False
+        if owns_refresh:
+            break
+        # Requests for the same authorization scope share one refresh.  A
+        # forced refresh still bypasses an already-fresh cache, but can join a
+        # refresh that began concurrently with it.
+        refresh_event.wait()
+        waited_for_refresh = True
 
-    conn = get_db_connection()
+    conn = None
     try:
+        conn = get_db_connection()
         stats_window_minutes = 60
         stats_window_start = (now_utc - timedelta(minutes=stats_window_minutes)).isoformat()
         hot_interface_limit = 24
@@ -677,11 +700,29 @@ def monitoring_overview(force_refresh: bool = Query(default=False), user=require
             "FROM devices d LEFT JOIN sites s ON s.id = d.site_id WHERE d.status = 'online'" + tenant_clause,
             tenant_params,
         ).fetchall()
-        devices = []
-        for r in devices_rows:
-            d = dict(r)
-            d['interface_data'] = fetch_interface_data(conn, d['id'])
-            devices.append(d)
+        online_devices = [dict(row) for row in devices_rows]
+        non_online_rows = conn.execute(
+            '''
+            SELECT d.id, d.hostname, d.ip_address, d.platform, d.status, d.compliance, d.role,
+                   COALESCE(NULLIF(s.site_name, ''), CASE WHEN SUBSTR(COALESCE(d.site, ''), 1, 5) = 'site-' THEN '' ELSE COALESCE(d.site, '') END, '') AS site,
+                   d.cpu_usage, d.memory_usage, d.temp, d.fan_status, d.psu_status, d.device_category
+            FROM devices d
+            LEFT JOIN sites s ON s.id = d.site_id
+            WHERE (d.status IS NULL OR d.status != 'online')
+            ''' + tenant_clause + '''
+            ORDER BY d.hostname ASC
+            ''',
+            tenant_params,
+        ).fetchall()
+        non_online_devices = [dict(row) for row in non_online_rows]
+        all_device_dicts = online_devices + non_online_devices
+        interface_data_by_device = fetch_interface_data_for_devices(
+            conn,
+            [device['id'] for device in all_device_dicts],
+        )
+        for device in all_device_dicts:
+            device['interface_data'] = interface_data_by_device.get(str(device['id']), [])
+        devices = online_devices
 
         interfaces_up = 0
         interfaces_down = 0
@@ -689,7 +730,12 @@ def monitoring_overview(force_refresh: bool = Query(default=False), user=require
         hot_interface_heap = []
         hot_interface_seq = 0
         for d in devices:
-            intfs = _parse_json(d['interface_data'], [])
+            interface_payload = d.get('interface_data')
+            intfs = (
+                interface_payload
+                if isinstance(interface_payload, list)
+                else _parse_json(interface_payload, [])
+            )
             for i in intfs:
                 status = str(i.get('status', '')).lower()
                 if status == 'up':
@@ -825,28 +871,8 @@ def monitoring_overview(force_refresh: bool = Query(default=False), user=require
             'updated_at': now_utc.isoformat(),
         }
 
-        # Health evaluation: reuse already-fetched online device rows,
-        # only query non-online devices to avoid loading interface_data twice.
-        online_dicts = [dict(row) for row in devices]
-        non_online_rows = conn.execute(
-            '''
-            SELECT d.id, d.hostname, d.ip_address, d.platform, d.status, d.compliance, d.role,
-                   COALESCE(NULLIF(s.site_name, ''), CASE WHEN SUBSTR(COALESCE(d.site, ''), 1, 5) = 'site-' THEN '' ELSE COALESCE(d.site, '') END, '') AS site,
-                   d.cpu_usage, d.memory_usage, d.temp, d.fan_status, d.psu_status, d.device_category
-            FROM devices d
-            LEFT JOIN sites s ON s.id = d.site_id
-            WHERE (d.status IS NULL OR d.status != 'online')
-            ''' + tenant_clause + '''
-            ORDER BY d.hostname ASC
-            ''',
-            tenant_params,
-        ).fetchall()
-        non_online_dicts = []
-        for r in non_online_rows:
-            d = dict(r)
-            d['interface_data'] = fetch_interface_data(conn, d['id'])
-            non_online_dicts.append(d)
-        all_device_dicts = online_dicts + non_online_dicts
+        # Both online and non-online rows already carry their interface data
+        # from the bounded batch read above.
         evaluated_devices = annotate_devices_with_health(conn, all_device_dicts)
         payload['device_health_summary'] = build_health_overview(evaluated_devices)
         payload['top_risky_devices'] = payload['device_health_summary']['top_risky_devices']
@@ -935,11 +961,18 @@ def monitoring_overview(force_refresh: bool = Query(default=False), user=require
         with _overview_cache_lock:
             _overview_cache[cache_key] = {
                 'payload': payload,
-                'expires_at': now_utc + timedelta(seconds=_OVERVIEW_CACHE_TTL_SECONDS),
+                'expires_at': datetime.now(timezone.utc) + timedelta(seconds=_OVERVIEW_CACHE_TTL_SECONDS),
             }
         return payload
     finally:
-        conn.close()
+        try:
+            if conn is not None:
+                conn.close()
+        finally:
+            with _overview_cache_lock:
+                if _overview_inflight.get(cache_key) is refresh_event:
+                    _overview_inflight.pop(cache_key, None)
+                refresh_event.set()
 
 
 @router.get('/monitoring/device/{device_id}/realtime')

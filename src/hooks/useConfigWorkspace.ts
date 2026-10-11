@@ -1,4 +1,3 @@
-import * as XLSX from 'xlsx';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ConfigTemplate, Device, SessionUser } from '../types';
 import { getVendorFromPlatform } from '../types';
@@ -226,6 +225,7 @@ export const useConfigWorkspace = ({
 
     try {
       const data = await file.arrayBuffer();
+      const XLSX = await import('xlsx');
       const workbook = XLSX.read(data, { type: 'array' });
       const worksheet = workbook.Sheets[workbook.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, { defval: '' });

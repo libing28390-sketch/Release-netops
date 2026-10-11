@@ -1,4 +1,5 @@
-@import "tailwindcss";
+/* Source paths are relative to this stylesheet. Keep generated builds out of the scan. */
+@import "tailwindcss" source("./");
 
 @custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
 

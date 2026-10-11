@@ -39,6 +39,12 @@ vi.mock('./components/DeleteConfirmModal', () => ({ DeleteConfirmModal: () => nu
 vi.mock('./components/AssetImportValidationModal', () => ({ AssetImportValidationModal: () => null }));
 vi.mock('./components/TerminalAccessModal', () => ({ TerminalAccessModal: () => null }));
 vi.mock('./components/AssetDetailDrawer', () => ({ AssetDetailDrawer: () => null }));
+vi.mock('xlsx', () => ({
+  read: vi.fn(() => ({ SheetNames: ['Sheet1'], Sheets: { Sheet1: {} } })),
+  utils: {
+    sheet_to_json: vi.fn(() => [{ Hostname: 'progressive-import-server', 'Asset Type': 'server', 'Mgmt IP': '192.0.2.220' }]),
+  },
+}));
 
 const response = (payload: unknown, status = 200) => ({
   ok: status >= 200 && status < 300,
@@ -153,6 +159,89 @@ describe('AssetManagementTab request states', () => {
 
     await waitFor(() => expect(useInventoryStore.getState().assetsTotal).toBe(3));
     expect(fetch).toHaveBeenCalledWith('/api/assets', expect.objectContaining({ method: 'POST' }));
+  });
+
+  it('refreshes the visible list while a detailed import request is still running', async () => {
+    const importedAsset = {
+      id: 'asset-progressive-import',
+      asset_type: 'server',
+      asset_tag: 'progressive-import-server',
+      hostname: 'progressive-import-server',
+      management_ip: '192.0.2.220',
+      status: 'active',
+      lifecycle_status: 'staging',
+      tags: [],
+    };
+    let importResolved = false;
+    let finishImport!: (result: Response) => void;
+    vi.stubGlobal('confirm', vi.fn(() => true));
+    vi.mocked(fetch).mockImplementation((input, init) => {
+      const url = String(input);
+      if (url.startsWith('/api/assets?')) {
+        return Promise.resolve(response({ items: importResolved ? [importedAsset] : [], total: importResolved ? 1 : 0 }));
+      }
+      if (url === '/api/assets/summary') return Promise.resolve(assetSummary(importResolved ? 1 : 0, 0));
+      if (url === '/api/cmdb/sites') return Promise.resolve(response({ data: [] }));
+      if (url === '/api/racks') return Promise.resolve(response({ success: true, data: [] }));
+      if (url === '/api/tags/definitions') return Promise.resolve(response({ data: [] }));
+      if (url === '/api/assets/import?detailed=true') {
+        return new Promise<Response>(resolve => { finishImport = resolve; });
+      }
+      return Promise.resolve(response({}));
+    });
+
+    renderAssetPage();
+    await screen.findByText('No asset records');
+    const file = new File(['workbook'], 'assets.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    fireEvent.change(document.querySelector('input[type="file"]')!, { target: { files: [file] } });
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/assets/import?detailed=true', expect.any(Object)));
+
+    importResolved = true;
+    expect((await screen.findAllByText('progressive-import-server', {}, { timeout: 3500 })).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Importing 1 row/)).toBeTruthy();
+
+    finishImport(response({ created: 1, skipped: 0, failed: 0, skipped_items: [], failed_items: [] }));
+    await screen.findByText(/Import done: 1 created/);
+  });
+
+  it('sends one batch-delete request for the selected assets', async () => {
+    const asset = {
+      id: 'asset-batch-delete-1',
+      asset_type: 'server',
+      asset_tag: 'tag-batch-delete-1',
+      hostname: 'batch-delete-1',
+      management_ip: '192.0.2.21',
+      status: 'active',
+      lifecycle_status: 'production',
+      tags: [],
+    };
+    vi.stubGlobal('confirm', vi.fn(() => true));
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.startsWith('/api/assets?')) return response({ items: [asset], total: 1 });
+      if (url === '/api/assets/summary') return assetSummary(0, 1);
+      if (url === '/api/cmdb/sites') return response({ data: [] });
+      if (url === '/api/racks') return response({ success: true, data: [] });
+      if (url === '/api/tags/definitions') return response({ data: [] });
+      if (url === '/api/assets/batch-delete' && init?.method === 'POST') {
+        return response({ deleted: 1, deleted_ids: [asset.id], failed: 0, failed_items: [] });
+      }
+      return response({});
+    });
+
+    renderAssetPage();
+    await screen.findByText('batch-delete-1');
+    const checkboxes = screen.getAllByRole('checkbox');
+    fireEvent.click(checkboxes[1]);
+    fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }));
+
+    await screen.findByText('Delete complete: 1 deleted, 0 failed');
+    const batchDeleteCalls = vi.mocked(fetch).mock.calls.filter(([input, init]) =>
+      String(input) === '/api/assets/batch-delete' && init?.method === 'POST',
+    );
+    expect(batchDeleteCalls).toHaveLength(1);
+    expect(batchDeleteCalls[0][1]?.body).toBe(JSON.stringify({ asset_ids: [asset.id] }));
+    expect(vi.mocked(fetch).mock.calls.some(([input, init]) => String(input) === `/api/assets/${asset.id}` && init?.method === 'DELETE')).toBe(false);
   });
 
   it('migrates the previously auto-saved default columns', async () => {

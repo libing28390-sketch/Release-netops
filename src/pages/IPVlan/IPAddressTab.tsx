@@ -336,17 +336,53 @@ const deviceDisplayLabel = (device: DeviceCandidate): string => {
   return asset && asset !== host ? `${asset} · ${host}` : host;
 };
 
+const deviceCandidateFromAddress = (address: IPAddress): DeviceCandidate | null => {
+  if (!address.device_id) return null;
+  return {
+    id: address.device_id,
+    hostname: address.bound_device_hostname || address.asset_hostname || undefined,
+    ip_address: address.asset_management_ip || address.asset_business_ip || undefined,
+    asset_id: address.linked_asset_id,
+    asset_tag: address.asset_tag,
+    asset_serial_number: address.asset_serial_number,
+    asset_hostname: address.asset_hostname,
+    asset_vendor: address.asset_vendor,
+    asset_model: address.asset_model,
+    asset_management_ip: address.asset_management_ip,
+    asset_business_ip: address.asset_business_ip,
+  };
+};
+
 const DeviceSearchSelect: React.FC<{
-  devices: DeviceCandidate[];
   value: string;
   onChange: (id: string) => void;
   zh: boolean;
-}> = ({ devices, value, onChange, zh }) => {
+  authHeaders: () => Record<string, string>;
+  initialDevice: DeviceCandidate | null;
+}> = ({ value, onChange, zh, authHeaders, initialDevice }) => {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [devices, setDevices] = useState<DeviceCandidate[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const [retryCount, setRetryCount] = useState(0);
+  const [selectedDevice, setSelectedDevice] = useState<DeviceCandidate | null>(initialDevice);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const requestRef = useRef<AbortController | null>(null);
 
-  const selected = devices.find((d) => d.id === value);
+  const selected = value
+    ? devices.find((device) => device.id === value)
+      || (selectedDevice?.id === value ? selectedDevice : null)
+      || (initialDevice?.id === value ? initialDevice : null)
+      || { id: value }
+    : null;
+  const selectedIsKnown = Boolean(
+    selected && (
+      selectedDevice?.id === value
+      || initialDevice?.id === value
+      || devices.some((device) => device.id === value)
+    ),
+  );
   const display = selected
     ? `${deviceDisplayLabel(selected)}${selected.ip_address && selected.hostname ? ` (${selected.ip_address})` : ''}`
     : '';
@@ -362,16 +398,65 @@ const DeviceSearchSelect: React.FC<{
     return () => document.removeEventListener('mousedown', onDoc);
   }, []);
 
-  const filtered = query.trim()
-    ? devices.filter((d) => {
-        const q = query.toLowerCase();
-        return [
-          d.hostname, d.ip_address, d.asset_tag, d.asset_serial_number,
-          d.asset_hostname, d.asset_vendor, d.asset_model,
-          d.asset_management_ip, d.asset_business_ip,
-        ].some(value => String(value || '').toLowerCase().includes(q));
-      })
-    : devices;
+  useEffect(() => {
+    if (!value || selectedDevice?.id === value) return;
+    const loadedSelection = devices.find((device) => device.id === value);
+    if (loadedSelection) setSelectedDevice(loadedSelection);
+  }, [devices, selectedDevice?.id, value]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const controller = new AbortController();
+    requestRef.current?.abort();
+    requestRef.current = controller;
+    setLoading(true);
+    setLoadError('');
+    setDevices([]);
+
+    const timeoutId = window.setTimeout(async () => {
+      const params = new URLSearchParams({ mode: 'light', page: '1', page_size: '50' });
+      const searchTerm = query.trim();
+      if (searchTerm) params.set('search', searchTerm);
+
+      try {
+        const response = await fetch(`/api/devices?${params.toString()}`, {
+          headers: authHeaders(),
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted || requestRef.current !== controller) return;
+        if (!response.ok) {
+          setLoadError(response.status === 401
+            ? (zh ? '登录已过期，请重新登录后重试。' : 'Your session has expired. Sign in and retry.')
+            : response.status === 403
+              ? (zh ? '当前账号没有查看设备的权限。' : 'You do not have permission to view devices.')
+              : (zh ? '加载设备列表失败，请重试。' : 'Failed to load devices. Please retry.'));
+          return;
+        }
+
+        const data = await response.json();
+        if (controller.signal.aborted || requestRef.current !== controller) return;
+        const items = Array.isArray(data) ? data : (Array.isArray(data?.items) ? data.items : []);
+        setDevices(items);
+      } catch {
+        if (controller.signal.aborted || requestRef.current !== controller) return;
+        setLoadError(zh ? '加载设备列表失败，请检查网络后重试。' : 'Failed to load devices. Check the connection and retry.');
+      } finally {
+        if (!controller.signal.aborted && requestRef.current === controller) {
+          requestRef.current = null;
+          setLoading(false);
+        }
+      }
+    }, 250);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      controller.abort();
+      if (requestRef.current === controller) requestRef.current = null;
+    };
+  }, [open, query, retryCount, authHeaders, zh]);
+
+  const hasSelectedDeviceOutsideResults = selectedIsKnown && !devices.some((device) => device.id === value);
 
   return (
     <div className="relative" ref={wrapRef}>
@@ -393,6 +478,7 @@ const DeviceSearchSelect: React.FC<{
         <div className="absolute z-50 mt-1 w-full max-h-56 overflow-auto bg-white border border-gray-150 rounded-xl shadow-xl py-1">
           <div
             onClick={() => {
+              setSelectedDevice(null);
               onChange('');
               setOpen(false);
               setQuery('');
@@ -401,10 +487,24 @@ const DeviceSearchSelect: React.FC<{
           >
             {zh ? '— 不绑定设备 —' : '— None —'}
           </div>
-          {filtered.map((d) => (
+          {hasSelectedDeviceOutsideResults && selected && (
+            <div className="border-b border-gray-100 px-4 py-2 text-xs text-gray-700">
+              <div className="flex items-center justify-between gap-2">
+                <div className="truncate font-semibold">{deviceDisplayLabel(selected)}</div>
+                <span className="shrink-0 text-[10px] font-bold text-cyan-700">{zh ? '当前已选' : 'Selected'}</span>
+              </div>
+              <div className="mt-0.5 truncate text-[10px] text-gray-400">
+                {selected.ip_address || (zh ? '未填写管理IP' : 'No management IP')}
+                {selected.asset_serial_number ? ` · SN ${selected.asset_serial_number}` : ''}
+                {!selected.asset_tag && selected.asset_id ? ` · ${zh ? '已关联资产' : 'Linked asset'}` : ''}
+              </div>
+            </div>
+          )}
+          {devices.map((d) => (
             <div
               key={d.id}
               onClick={() => {
+                setSelectedDevice(d);
                 onChange(d.id);
                 setOpen(false);
                 setQuery('');
@@ -421,9 +521,28 @@ const DeviceSearchSelect: React.FC<{
               </div>
             </div>
           ))}
-          {filtered.length === 0 && (
+          {loading && (
             <div className="px-4 py-3 text-xs text-gray-400 text-center">
-              {zh ? '无匹配设备' : 'No matching device'}
+              {zh ? '正在加载设备...' : 'Loading devices...'}
+            </div>
+          )}
+          {!loading && loadError && (
+            <div role="alert" className="px-4 py-3 text-center">
+              <div className="text-xs text-rose-600">{loadError}</div>
+              <button
+                type="button"
+                onClick={() => setRetryCount((count) => count + 1)}
+                className="mt-2 text-xs font-bold text-cyan-700 hover:text-cyan-800"
+              >
+                {zh ? '重试' : 'Retry'}
+              </button>
+            </div>
+          )}
+          {!loading && !loadError && devices.length === 0 && (
+            <div className="px-4 py-3 text-xs text-gray-400 text-center">
+              {query.trim()
+                ? (zh ? '没有匹配的设备' : 'No matching devices')
+                : (zh ? '暂无可关联设备' : 'No devices available')}
             </div>
           )}
         </div>
@@ -459,7 +578,6 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
   const [totalItems, setTotalItems] = useState(0);
 
   // Lookup data
-  const [devices, setDevices] = useState<DeviceCandidate[]>([]);
   const [selectedPrefixId, setSelectedPrefixId] = useState(prefixIdParam);
   const [selectedSiteId, setSelectedSiteId] = useState('all');
   const [activePrefix, setActivePrefix] = useState<Prefix | null>(null);
@@ -508,13 +626,6 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
           const matched = data.find((p: Prefix) => p.id === prefixIdParam);
           if (matched) setActivePrefix(matched);
         }
-      }
-
-      // Fetch Network Devices
-      const devRes = await fetch('/api/devices?mode=light&page=1&page_size=1000', { headers: hdrs });
-      if (devRes.ok) {
-        const raw = await devRes.json();
-        setDevices(Array.isArray(raw) ? raw : (raw.items || []));
       }
     } catch (e) {
       console.error(e);
@@ -770,7 +881,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
     const allAddresses = await fetchAllIpamExportItems<IPAddress>('/api/ipam/addresses', params);
     const linkedDeviceName = (node: IPAddress) => {
       if (node.switch_name || node.bound_device_hostname) return node.switch_name || node.bound_device_hostname || '-';
-      const device = devices.find((candidate) => candidate.id === node.device_id);
+      const device = deviceCandidateFromAddress(node);
       return device ? deviceHostLabel(device) : '-';
     };
     return buildVisibleIpamExportData(addressTableRef.current, [
@@ -789,7 +900,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
       { header: zh ? '备注描述' : 'Description', value: (node) => node.description || '-' },
       { header: zh ? '发现时间' : 'Last Seen', value: (node) => (node.discovered_last_seen || node.last_seen) ? (node.discovered_last_seen || node.last_seen).replace('T', ' ').slice(0, 19) : '-' },
     ], allAddresses);
-  }, [selectedSiteId, selectedPrefixId, search, statusFilter, isMatrixView, typeFilter, purposeFilter, zh, devices]);
+  }, [selectedSiteId, selectedPrefixId, search, statusFilter, isMatrixView, typeFilter, purposeFilter, zh]);
 
   // Form handling
   const openForm = (ipItem: IPAddress | null = null, quickAllocation = false) => {
@@ -902,10 +1013,10 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
     }
   };
 
-  // Find hostname for device selection
-  const getDeviceName = (devId: string) => {
-    const dev = devices.find((d) => d.id === devId);
-    return dev ? deviceHostLabel(dev) : '-';
+  // Use the linked-device summary returned with the IP address.
+  const getDeviceName = (address: IPAddress) => {
+    const device = deviceCandidateFromAddress(address);
+    return device ? deviceHostLabel(device) : '-';
   };
 
   return (
@@ -1254,7 +1365,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                         </span>
                       </td>
                       <td className="px-3 py-3 text-xs font-semibold text-gray-500"><span className="block max-w-[101px] truncate" title={node.hostname || '-'}>{node.hostname || '-'}</span></td>
-                      <td className="px-3 py-3 text-xs font-bold text-cyan-600 hover:underline cursor-pointer"><span className="block max-w-[101px] truncate" title={node.switch_name || node.bound_device_hostname || (node.device_id ? getDeviceName(node.device_id) : '-')}>{node.switch_name || node.bound_device_hostname || (node.device_id ? getDeviceName(node.device_id) : '-')}</span></td>
+                      <td className="px-3 py-3 text-xs font-bold text-cyan-600 hover:underline cursor-pointer"><span className="block max-w-[101px] truncate" title={node.switch_name || node.bound_device_hostname || getDeviceName(node)}>{node.switch_name || node.bound_device_hostname || getDeviceName(node)}</span></td>
                       <td className="px-3 py-3 text-xs font-medium text-gray-500"><span className="block max-w-[111px] truncate" title={assetInfoLabel(node, zh)}>{assetInfoLabel(node, zh)}</span></td>
                       <td className="px-3 py-3 text-xs font-semibold text-gray-600"><span className="block max-w-[81px] truncate" title={node.switch_port || node.interface_name || '-'}>{node.switch_port || node.interface_name || '-'}</span></td>
                       <td className="px-3 py-3 font-mono text-xs text-gray-500">{formatMacAddress(node.mac_address) || '-'}</td>
@@ -1440,10 +1551,11 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                   <div className="space-y-1.5">
                     <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '关联资产 / 设备' : 'Linked Asset / Device'}</label>
                     <DeviceSearchSelect
-                      devices={devices}
                       value={form.device_id}
                       onChange={(id) => setForm({ ...form, device_id: id })}
                       zh={zh}
+                      authHeaders={authHeaders}
+                      initialDevice={editingIP?.device_id === form.device_id ? deviceCandidateFromAddress(editingIP) : null}
                     />
                     <p className="ml-1 text-[10px] font-medium text-gray-400">
                       {zh ? '资产管理新增的网络设备/服务器会自动出现在这里，保存后通过设备关联回资产。' : 'New network devices and servers from Asset Management appear here automatically.'}

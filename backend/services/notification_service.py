@@ -1006,7 +1006,7 @@ def _dispatch_to_users(
     other configured destinations.
     """
     if not automatic_notifications_enabled():
-        logger.info("[Notify] Automatic notification dispatch disabled by runtime policy")
+        logger.debug("[Notify] Automatic notification dispatch disabled by runtime policy")
         return []
 
     tenant_id = str(tenant_id or '').strip()

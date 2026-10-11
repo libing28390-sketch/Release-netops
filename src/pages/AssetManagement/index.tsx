@@ -388,8 +388,11 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const [feedbackMsg, setFeedbackMsg] = useState<{
     type: 'success' | 'error' | 'warning' | 'info';
     text: string;
+    description?: string;
     details?: string[];
   } | null>(null);
+  const [importInProgress, setImportInProgress] = useState(false);
+  const [batchDeleting, setBatchDeleting] = useState(false);
   const [deptFilter, setDeptFilter]     = useState('all');
   const [severityFilter, setSeverityFilter] = useState<string>('all');
   const [lifecycleFilter, setLifecycleFilter] = useState('all');
@@ -402,6 +405,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const [showModal, setShowModal]       = useState(false);
   const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
   const [form, setForm]                 = useState({ ...EMPTY_FORM });
+  const editFormBaselineRef = React.useRef<Record<string, any> | null>(null);
   const [saving, setSaving]             = useState(false);
   const saveInFlightRef = React.useRef(false);
   const [deleteTarget, setDeleteTarget] = useState<Asset | null>(null);
@@ -414,6 +418,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const [rotatingAssetId, setRotatingAssetId] = useState<string | null>(null);
   const [batchTakeoverResults, setBatchTakeoverResults] = useState<BatchTakeoverResult[]>([]);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const importInProgressRef = React.useRef(false);
+  const importPollRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const rotationPollRef = React.useRef<any>(null);
   const batchTakeoverPollRef = React.useRef<any>(null);
 
@@ -455,6 +461,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   }, [assetColumns]);
 
   useEffect(() => () => {
+    if (importPollRef.current) clearTimeout(importPollRef.current);
     if (rotationPollRef.current) clearInterval(rotationPollRef.current);
     if (batchTakeoverPollRef.current) clearInterval(batchTakeoverPollRef.current);
   }, []);
@@ -502,9 +509,9 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     return params;
   }, [search, typeFilter, statusFilter, vendorFilter, dcFilter, deptFilter, deviceCategoryFilter, lifecycleFilter, tagFilter]);
 
-  const fetchAssets = useCallback(async () => {
+  const fetchAssets = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
     const requestSequence = ++assetFetchSequenceRef.current;
-    setLoading(true);
+    if (!silent) setLoading(true);
     setAssetError(null);
     try {
       const params = buildAssetParams(page, pageSize);
@@ -519,7 +526,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         setAssetError(getAssetLoadIssue(error, language, zh ? '资产列表' : 'asset list'));
       }
     } finally {
-      if (requestSequence === assetFetchSequenceRef.current) setLoading(false);
+      if (!silent && requestSequence === assetFetchSequenceRef.current) setLoading(false);
     }
   }, [buildAssetParams, language, page, pageSize, zh]);
 
@@ -558,10 +565,11 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   useEffect(() => {
     if (!feedbackMsg) return;
     if (rotatingAssetId) return;
+    if (importInProgress && feedbackMsg.type === 'info') return;
     if (feedbackMsg.type === 'warning' && feedbackMsg.details?.length) return;
     const t = setTimeout(() => setFeedbackMsg(null), feedbackMsg.type === 'error' || feedbackMsg.type === 'warning' ? 10000 : 5000);
     return () => clearTimeout(t);
-  }, [feedbackMsg, rotatingAssetId]);
+  }, [feedbackMsg, importInProgress, rotatingAssetId]);
 
   const vendorList = useMemo(() => summary?.by_vendor ? Object.keys(summary.by_vendor).sort() : [], [summary]);
   const dcList = useMemo(
@@ -623,6 +631,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
 
   const openAdd = () => {
     setEditingAsset(null);
+    editFormBaselineRef.current = null;
     setForm({ ...EMPTY_FORM });
     setModalError(null);
     setShowEnableSecret(false);
@@ -633,7 +642,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     setEditingAsset(a);
     setModalError(null);
     setShowEnableSecret(!!(a as any).enable_password_set || !!(a as any).enable_password);
-    setForm({
+    const editForm = {
       asset_type: a.asset_type, asset_tag: a.asset_tag, serial_number: a.serial_number,
       vendor: a.vendor, model: a.model, hostname: a.hostname, site_id: a.site_id || '',
       rack: a.rack, rack_unit: a.rack_unit,
@@ -681,7 +690,13 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         normal_password: '',
         admin_password: '',
       })),
-    });
+    };
+    editFormBaselineRef.current = {
+      ...editForm,
+      tag_ids: [...editForm.tag_ids],
+      web_profiles: editForm.web_profiles.map((profile: any) => ({ ...profile })),
+    };
+    setForm(editForm);
     setShowModal(true);
   };
 
@@ -776,14 +791,57 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
           admin_credential_id: String(profile.admin_credential_id || '').trim(),
         })),
       };
+      const requestPayload: Record<string, unknown> = { ...payload };
+      const baseline = editingAsset ? editFormBaselineRef.current : null;
+      if (baseline) {
+        const sameFormValue = (field: string, value: unknown, original: unknown) => {
+          if (field === 'power_watts') return Number(value || 0) === Number(original || 0);
+          if ((value == null || value === '') && (original == null || original === '')) return true;
+          return String(value) === String(original);
+        };
+        const normalizeProfiles = (profiles: any[]) => (profiles || []).map(profile => ({
+          id: String(profile.id || ''),
+          profile_name: String(profile.profile_name || '').trim(),
+          scheme: profile.scheme === 'http' ? 'http' : 'https',
+          port: String(parseInt(String(profile.port), 10) || (profile.scheme === 'http' ? 80 : 443)),
+          path: String(profile.path || '/').trim() || '/',
+          enabled: profile.enabled !== false,
+          credential_mode: profile.credential_mode === 'independent' ? 'independent' : 'inherit_asset',
+          normal_username: String(profile.normal_username || '').trim(),
+          normal_password: String(profile.normal_password || ''),
+          admin_username: String(profile.admin_username || '').trim(),
+          admin_password: String(profile.admin_password || ''),
+          credential_id: String(profile.credential_id || '').trim(),
+          admin_credential_id: String(profile.admin_credential_id || '').trim(),
+        }));
+        const currentTagIds = (form.tag_ids || []).map(String).sort();
+        const originalTagIds = (baseline.tag_ids || []).map(String).sort();
+        if (JSON.stringify(currentTagIds) === JSON.stringify(originalTagIds)) {
+          delete requestPayload.tag_ids;
+        }
+        if (JSON.stringify(normalizeProfiles(form.web_profiles || [])) === JSON.stringify(normalizeProfiles(baseline.web_profiles || []))) {
+          delete requestPayload.web_profiles;
+        }
+        const overrideFields = new Set(Object.keys(overrides));
+        for (const [field, value] of Object.entries(payload)) {
+          if (field === 'tag_ids' || field === 'web_profiles' || overrideFields.has(field)) continue;
+          if (field in baseline && sameFormValue(field, value, baseline[field])) {
+            delete requestPayload[field];
+          }
+        }
+      }
       const data = await apiRequest<any>(url, {
         method: editingAsset ? 'PUT' : 'POST',
-        body: JSON.stringify(payload),
+        body: JSON.stringify(requestPayload),
       });
       setShowModal(false);
       setShowProductionConfirm(false);
-      fetchAssets();
-      fetchSummary();
+      void fetchAssets({ silent: true });
+      const summaryFields = ['asset_type', 'status', 'lifecycle_status', 'vendor', 'platform', 'site_id', 'department'] as const;
+      const summaryChanged = !editingAsset || summaryFields.some(field =>
+        String((payload as Record<string, unknown>)[field] ?? '') !== String((editingAsset as unknown as Record<string, unknown>)[field] ?? '')
+      );
+      if (summaryChanged) void fetchSummary();
       if (data?.rotation_pending && editingAsset) {
         startRotationPoll(editingAsset.id);
       } else if (data?.legacy_exempt) {
@@ -792,7 +850,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         setFeedbackMsg({ type: 'success', text: zh ? '已投产，默认口令已自动修改上收。' : 'Marked as production. Default password has been auto-rotated.' });
       } else if (data?.lifecycle_reverted && data?.rotation_detail) {
         setFeedbackMsg({ type: 'warning', text: zh ? `口令自动轮换失败，投产已回滚: ${data.rotation_detail}` : `Auto-rotation failed, production transition reverted: ${data.rotation_detail}` });
-        fetchAssets();
+        void fetchAssets({ silent: true });
       } else if (data?.rotation_detail) {
         setFeedbackMsg({ type: 'warning', text: zh ? `已投产，但口令自动轮换失败: ${data.rotation_detail}` : `Marked as production, but auto-rotation failed: ${data.rotation_detail}` });
       }
@@ -813,12 +871,12 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   };
 
   const handleSave = async () => {
-    if (!form.hostname.trim() && !form.asset_tag.trim()) {
+    if (!editingAsset && !form.hostname.trim() && !form.asset_tag.trim()) {
       setModalError(zh ? '主机名和资产编号至少填写一项' : 'Hostname or Asset Tag is required');
       return;
     }
     const mgmtIp = String(form.management_ip || '').trim();
-    if (mgmtIp && !isValidIpAddress(mgmtIp)) {
+    if (!editingAsset && mgmtIp && !isValidIpAddress(mgmtIp)) {
       setModalError(zh ? `管理IP "${mgmtIp}" 格式不正确，请输入有效的 IPv4 或 IPv6 地址` : `Management IP "${mgmtIp}" is not a valid IP address`);
       return;
     }
@@ -837,6 +895,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
 
   const openCopy = (a: Asset) => {
     setEditingAsset(null);
+    editFormBaselineRef.current = null;
     const copyTag = a.asset_tag ? `${a.asset_tag}-${Date.now().toString(36).slice(-4)}` : '';
     setForm({
       asset_type: a.asset_type, asset_tag: copyTag, serial_number: '',
@@ -913,25 +972,52 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const clearSel  = () => setSelectedIds(new Set());
 
   const handleBatchDelete = async () => {
-    if (selectedIds.size === 0) return;
+    if (selectedIds.size === 0 || batchDeleting) return;
     if (!confirm(zh ? '确定删除选中的资产吗？' : 'Delete selected assets?')) return;
-    const promises = Array.from(selectedIds).map(id =>
-      apiRequest(`/api/assets/${id}`, { method: 'DELETE' })
-    );
-    const results = await Promise.allSettled(promises);
-    const failures = results
-      .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
-      .map(result => result.reason instanceof Error ? result.reason.message : (zh ? '删除资产失败' : 'Failed to delete asset'));
-    if (failures.length > 0) {
+    const assetIds = Array.from(selectedIds);
+    setBatchDeleting(true);
+    setFeedbackMsg({
+      type: 'info',
+      text: zh ? `正在删除 ${assetIds.length} 台资产…` : `Deleting ${assetIds.length} asset(s)…`,
+    });
+    try {
+      const response = await fetch('/api/assets/batch-delete', {
+        method: 'POST',
+        headers: authHeaders(true),
+        body: JSON.stringify({ asset_ids: assetIds }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(result?.detail || result?.message || (zh ? '批量删除失败' : 'Batch delete failed'));
+      }
+
+      const failedItems = Array.isArray(result.failed_items) ? result.failed_items as Array<{ asset_id?: string; message?: string }> : [];
+      const failedCount = Number(result.failed ?? failedItems.length) || 0;
+      const deletedCount = Number(result.deleted) || 0;
+      const details = failedItems.slice(0, 8).map(item =>
+        `${item.asset_id || ''}${item.asset_id && item.message ? '：' : ''}${item.message || (zh ? '删除失败' : 'Delete failed')}`,
+      );
+      setFeedbackMsg({
+        type: failedCount > 0 ? 'warning' : 'success',
+        text: zh
+          ? `删除完成：成功 ${deletedCount} 台，失败 ${failedCount} 台`
+          : `Delete complete: ${deletedCount} deleted, ${failedCount} failed`,
+        details: details.length > 0 ? details : undefined,
+      });
+      setSelectedIds(new Set(failedItems.map(item => item.asset_id).filter((id): id is string => Boolean(id))));
+      if (drawerAsset && assetIds.includes(drawerAsset.id) && !failedItems.some(item => item.asset_id === drawerAsset.id)) {
+        setDrawerAsset(null);
+      }
+      await Promise.all([fetchAssets({ silent: true }), fetchSummary()]);
+    } catch (error) {
       setFeedbackMsg({
         type: 'error',
-        text: zh ? `${failures.length} 台资产删除失败` : `${failures.length} asset(s) failed to delete`,
-        details: failures.slice(0, 8),
+        text: error instanceof Error ? error.message : (zh ? '批量删除失败' : 'Batch delete failed'),
       });
+      await fetchAssets({ silent: true });
+    } finally {
+      setBatchDeleting(false);
     }
-    clearSel();
-    fetchAssets();
-    fetchSummary();
   };
 
   const handleBatchTakeover = async () => {
@@ -1105,69 +1191,93 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const doImport = async (payload: any[]) => {
     // Keep failures visible above the validation dialog and page content.
     setShowValidationModal(false);
+    if (importInProgressRef.current) return;
+    importInProgressRef.current = true;
+    setImportInProgress(true);
+    setFeedbackMsg({
+      type: 'info',
+      text: zh ? `正在导入 ${payload.length} 行` : `Importing ${payload.length} row(s)`,
+      description: zh
+        ? '已完成的资产会自动显示在列表中'
+        : 'Completed assets will appear in the list automatically.',
+    });
+    const scheduleImportListRefresh = () => {
+      if (!importInProgressRef.current) return;
+      importPollRef.current = setTimeout(() => {
+        importPollRef.current = null;
+        if (!importInProgressRef.current) return;
+        void fetchAssets({ silent: true }).finally(scheduleImportListRefresh);
+      }, 1200);
+    };
+    scheduleImportListRefresh();
     try {
       const r = await fetch('/api/assets/import?detailed=true', {
         method: 'POST',
         headers: authHeaders(true),
         body: JSON.stringify(payload),
       });
-      if (r.ok) {
-        const res = await r.json();
-        const skippedItems = Array.isArray(res.skipped_items) ? res.skipped_items as AssetImportSkippedItem[] : [];
-        const failedItems = Array.isArray(res.failed_items) ? res.failed_items as Array<Record<string, unknown>> : [];
-        const skippedDetails = skippedItems.slice(0, 8).map((item) => {
-          const identity = [item.asset_tag, item.hostname].filter(Boolean).join(' / ') || 'Unknown row';
-          if (item.reason === 'duplicate_asset_tag') {
-            const existing = item.existing_hostname ? `（现有设备：${item.existing_hostname}）` : '';
-            return zh
-              ? `${identity}：资产编号已存在${existing}`
-              : `${identity}: asset tag already exists${item.existing_hostname ? ` (existing device: ${item.existing_hostname})` : ''}`;
-          }
-          if (item.reason === 'duplicate_identity') {
-            const fields = (item.duplicate_labels || []).map((label, index) =>
-              `${label}「${item.duplicate_values?.[index] || ''}」`,
-            ).join('、');
-            const existing = item.existing_hostname ? `（现有设备：${item.existing_hostname}）` : '';
-            return zh
-              ? `${identity}：${fields || '主机名/资产编号/序列号/管理IP'}已存在${existing}`
-              : `${identity}: ${fields || 'hostname/asset tag/serial number/management IP'} already exists${item.existing_hostname ? ` (existing device: ${item.existing_hostname})` : ''}`;
-          }
-          return zh ? `${identity}：导入规则跳过` : `${identity}: skipped by import rule`;
-        });
-        if (res.skipped > skippedDetails.length) {
-          skippedDetails.push(zh
-            ? `另有 ${res.skipped - skippedDetails.length} 条跳过记录未展开`
-            : `${res.skipped - skippedDetails.length} more skipped rows are not shown`);
-        }
-        const skippedCount = Number(res.skipped || 0);
-        const failedCount = Number(res.failed ?? failedItems.length ?? 0);
-        const failedDetails = failedItems.slice(0, 8).map((item) => {
-          const identity = [item.asset_tag, item.hostname].filter(Boolean).join(' / ');
-          const row = Number(item.row || 0);
-          const reason = String(item.message || item.code || (zh ? '该行导入失败' : 'row import failed'));
-          return zh
-            ? `第 ${row || '?'} 行${identity ? `（${identity}）` : ''}：${reason}`
-            : `Row ${row || '?'}${identity ? ` (${identity})` : ''}: ${reason}`;
-        });
-        const importDetails = [...failedDetails, ...skippedDetails].slice(0, 8);
-        const enrichmentPending = Boolean(res.enrichment_pending);
-        setFeedbackMsg({
-          type: skippedCount > 0 || failedCount > 0 ? 'warning' : 'success',
-          text: zh
-            ? `导入完成：新增 ${res.created} 条，跳过 ${skippedCount} 条，失败 ${failedCount} 条${enrichmentPending ? '；设备名称和识别信息将在后台继续同步，稍后刷新可查看' : ''}`
-            : `Import done: ${res.created} created, ${skippedCount} skipped, ${failedCount} failed${enrichmentPending ? '; device names and identity details will continue syncing in the background; refresh later to view them' : ''}`,
-          details: importDetails.length > 0 ? importDetails : undefined,
-        });
-        fetchAssets();
-        fetchSummary();
-        fetchAllRacks();
-      } else {
+      if (!r.ok) {
         const error = await r.json().catch(() => null);
         const formatted = formatAssetImportError(error?.detail, language);
         setFeedbackMsg({ type: 'error', ...formatted });
+        return;
       }
+
+      const res = await r.json();
+      const skippedItems = Array.isArray(res.skipped_items) ? res.skipped_items as AssetImportSkippedItem[] : [];
+      const failedItems = Array.isArray(res.failed_items) ? res.failed_items as Array<Record<string, unknown>> : [];
+      const skippedDetails = skippedItems.slice(0, 8).map((item) => {
+        const identity = [item.asset_tag, item.hostname].filter(Boolean).join(' / ') || 'Unknown row';
+        if (item.reason === 'duplicate_asset_tag') {
+          const existing = item.existing_hostname ? `（现有设备：${item.existing_hostname}）` : '';
+          return zh
+            ? `${identity}：资产编号已存在${existing}`
+            : `${identity}: asset tag already exists${item.existing_hostname ? ` (existing device: ${item.existing_hostname})` : ''}`;
+        }
+        if (item.reason === 'duplicate_identity') {
+          const fields = (item.duplicate_labels || []).map((label, index) =>
+            `${label}「${item.duplicate_values?.[index] || ''}」`,
+          ).join('、');
+          const existing = item.existing_hostname ? `（现有设备：${item.existing_hostname}）` : '';
+          return zh
+            ? `${identity}：${fields || '主机名/资产编号/序列号/管理IP'}已存在${existing}`
+            : `${identity}: ${fields || 'hostname/asset tag/serial number/management IP'} already exists${item.existing_hostname ? ` (existing device: ${item.existing_hostname})` : ''}`;
+        }
+        return zh ? `${identity}：导入规则跳过` : `${identity}: skipped by import rule`;
+      });
+      if (res.skipped > skippedDetails.length) {
+        skippedDetails.push(zh
+          ? `另有 ${res.skipped - skippedDetails.length} 条跳过记录未展开`
+          : `${res.skipped - skippedDetails.length} more skipped rows are not shown`);
+      }
+      const skippedCount = Number(res.skipped || 0);
+      const failedCount = Number(res.failed ?? failedItems.length ?? 0);
+      const failedDetails = failedItems.slice(0, 8).map((item) => {
+        const identity = [item.asset_tag, item.hostname].filter(Boolean).join(' / ');
+        const row = Number(item.row || 0);
+        const reason = String(item.message || item.code || (zh ? '该行导入失败' : 'row import failed'));
+        return zh
+          ? `第 ${row || '?'} 行${identity ? `（${identity}）` : ''}：${reason}`
+          : `Row ${row || '?'}${identity ? ` (${identity})` : ''}: ${reason}`;
+      });
+      const importDetails = [...failedDetails, ...skippedDetails].slice(0, 8);
+      const enrichmentPending = Boolean(res.enrichment_pending);
+      setFeedbackMsg({
+        type: skippedCount > 0 || failedCount > 0 ? 'warning' : 'success',
+        text: zh
+          ? `导入完成：新增 ${res.created} 条，跳过 ${skippedCount} 条，失败 ${failedCount} 条${enrichmentPending ? '；设备名称和识别信息将在后台继续同步，稍后刷新可查看' : ''}`
+          : `Import done: ${res.created} created, ${skippedCount} skipped, ${failedCount} failed${enrichmentPending ? '; device names and identity details will continue syncing in the background; refresh later to view them' : ''}`,
+        details: importDetails.length > 0 ? importDetails : undefined,
+      });
     } catch {
       setFeedbackMsg({ type: 'error', text: zh ? '连接失败，导入未完成' : 'Connection failed, import incomplete' });
+    } finally {
+      importInProgressRef.current = false;
+      if (importPollRef.current) clearTimeout(importPollRef.current);
+      importPollRef.current = null;
+      setImportInProgress(false);
+      // A failed detailed import may already have committed earlier rows.
+      await Promise.all([fetchAssets({ silent: true }), fetchSummary(), fetchAllRacks()]);
     }
   };
 
@@ -1839,24 +1949,49 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         <AnimatePresence>
           {feedbackMsg && (
             <motion.div
-              role="alert"
+              role={importInProgress && feedbackMsg.type === 'info' ? 'status' : 'alert'}
+              aria-live={importInProgress && feedbackMsg.type === 'info' ? 'polite' : 'assertive'}
               initial={{ opacity: 0, y: -12 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -12 }}
               transition={{ duration: 0.25 }}
-              className={`fixed right-6 top-20 z-[220] flex w-[min(560px,calc(100vw-2rem))] items-start gap-3 px-4 py-3 rounded-2xl border shadow-2xl backdrop-blur-sm ${
+              className={`fixed right-6 top-20 z-[220] flex w-[min(560px,calc(100vw-2rem))] items-start gap-3 px-4 py-3 rounded-xl border shadow-lg backdrop-blur-sm ${
                 feedbackMsg.type === 'success' ? 'bg-emerald-50/95 border-emerald-200 text-emerald-800 dark:bg-emerald-950/90 dark:text-emerald-200 dark:border-emerald-800' :
                 feedbackMsg.type === 'warning' ? 'bg-amber-50/95 border-amber-200 text-amber-800 dark:bg-amber-950/90 dark:text-amber-200 dark:border-amber-800' :
-                feedbackMsg.type === 'info' ? 'bg-blue-50/95 border-blue-200 text-blue-800 dark:bg-blue-950/90 dark:text-blue-200 dark:border-blue-800' :
+                feedbackMsg.type === 'info' ? (importInProgress
+                  ? 'bg-slate-50/95 border-slate-200 text-slate-700 dark:bg-zinc-900/95 dark:text-zinc-100 dark:border-zinc-700'
+                  : 'bg-blue-50/95 border-blue-200 text-blue-800 dark:bg-blue-950/90 dark:text-blue-200 dark:border-blue-800') :
                 'bg-rose-50/95 border-rose-200 text-rose-800 dark:bg-rose-950/90 dark:text-rose-200 dark:border-rose-800'
               }`}
             >
               {feedbackMsg.type === 'success' ? <CheckCircle2 size={18} className="text-emerald-500 shrink-0 mt-0.5" /> :
                feedbackMsg.type === 'warning' ? <AlertTriangle size={18} className="text-amber-500 shrink-0 mt-0.5" /> :
-               feedbackMsg.type === 'info' ? (rotatingAssetId ? <Loader2 size={18} className="text-blue-500 shrink-0 animate-spin mt-0.5" /> : <Info size={18} className="text-blue-500 shrink-0 mt-0.5" />) :
+               feedbackMsg.type === 'info' ? (importInProgress || rotatingAssetId
+                 ? <Loader2 size={17} className="text-sky-600 dark:text-sky-400 shrink-0 animate-spin mt-0.5" />
+                 : <Info size={18} className="text-blue-500 shrink-0 mt-0.5" />) :
                <AlertCircle size={18} className="text-rose-500 shrink-0 mt-0.5" />}
               <div className="flex-1 min-w-0">
-                <div className="text-sm font-bold">{feedbackMsg.text}</div>
+                <div className={importInProgress && feedbackMsg.type === 'info' ? 'text-sm font-semibold leading-5' : 'text-sm font-bold'}>
+                  {feedbackMsg.text}
+                </div>
+                {feedbackMsg.description && (
+                  <div className="mt-0.5 text-xs font-normal leading-4 text-slate-500 dark:text-zinc-400">
+                    {feedbackMsg.description}
+                  </div>
+                )}
+                {importInProgress && feedbackMsg.type === 'info' && (
+                  <div
+                    className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-200/90 dark:bg-zinc-700"
+                    aria-hidden="true"
+                  >
+                    <motion.div
+                      className="h-full w-2/5 rounded-full bg-sky-500"
+                      initial={{ x: '-100%' }}
+                      animate={{ x: '250%' }}
+                      transition={{ duration: 1.25, ease: 'easeInOut', repeat: Infinity }}
+                    />
+                  </div>
+                )}
                 {feedbackMsg.details?.length ? (
                   <ul className="mt-1 max-h-52 space-y-0.5 overflow-auto text-xs font-normal leading-4 opacity-90">
                     {feedbackMsg.details.map((detail, index) => <li key={`${detail}-${index}`}>{detail}</li>)}
@@ -2152,8 +2287,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                       <Shield size={12} />
                       {zh ? '批量上收' : 'Takeover'}
                     </button>
-                    <ActionButton icon={Trash2} variant="danger" size="sm" onClick={handleBatchDelete}>
-                      {zh ? '批量删除' : 'Delete'}
+                    <ActionButton icon={Trash2} variant="danger" size="sm" onClick={handleBatchDelete} disabled={batchDeleting}>
+                      {batchDeleting ? (zh ? '删除中…' : 'Deleting…') : (zh ? '批量删除' : 'Delete selected')}
                     </ActionButton>
                     <button
                       type="button"

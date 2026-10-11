@@ -433,56 +433,85 @@ def list_rules_paginated(
     tenant_id: str = 'tenant-default',
 ) -> dict[str, Any]:
     tenant_id = _tenant_id(tenant_id)
-    all_items = list_rules(tenant_id=tenant_id)
     enabled_filter = str(enabled or 'all').strip().lower()
     metric_filter = str(metric_type or 'all').strip().lower()
     cat_filter = str(category or 'all').strip().lower()
-    filtered_items = all_items
-
-    if enabled_filter == 'enabled':
-        filtered_items = [item for item in filtered_items if item.get('enabled')]
-    elif enabled_filter == 'disabled':
-        filtered_items = [item for item in filtered_items if not item.get('enabled')]
-
     query = str(search or '').strip().lower()
-    if query:
-        next_items: list[dict[str, Any]] = []
-        for item in filtered_items:
-            haystack = ' '.join([
-                str(item.get('name') or ''),
-                str(item.get('metric_type') or ''),
-                str(item.get('scope_type') or ''),
-                str(item.get('scope_value') or ''),
-                str(item.get('severity') or ''),
-                str(item.get('updated_by') or ''),
-            ]).lower()
-            if query in haystack:
-                next_items.append(item)
-        filtered_items = next_items
-
-    # Compute category counts after search and enabled filter are applied
-    category_counts = {
-        'all': len(filtered_items),
-        'network': sum(1 for item in filtered_items if _get_metric_category(item.get('metric_type')) == 'network'),
-        'host': sum(1 for item in filtered_items if _get_metric_category(item.get('metric_type')) == 'host'),
-        'server': sum(1 for item in filtered_items if _get_metric_category(item.get('metric_type')) == 'server'),
-    }
-
-    # Filter by category
-    if cat_filter != 'all':
-        filtered_items = [item for item in filtered_items if _get_metric_category(item.get('metric_type')) == cat_filter]
-
-    # Filter by metric type
-    if metric_filter != 'all' and metric_filter:
-        filtered_items = [item for item in filtered_items if item.get('metric_type') == metric_filter]
-
-    total = len(filtered_items)
     current_page = max(1, int(page or 1))
     current_page_size = max(1, int(page_size or 20))
-    start = (current_page - 1) * current_page_size
-    end = start + current_page_size
+
+    base_conditions = ['tenant_id = ?']
+    base_params: list[Any] = [tenant_id]
+    if enabled_filter == 'enabled':
+        base_conditions.append('COALESCE(enabled, 0) <> 0')
+    elif enabled_filter == 'disabled':
+        base_conditions.append('COALESCE(enabled, 0) = 0')
+
+    if query:
+        escaped_query = query.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+        search_pattern = f'%{escaped_query}%'
+        search_columns = ('name', 'metric_type', 'scope_type', 'scope_value', 'severity', 'updated_by')
+        base_conditions.append('(' + ' OR '.join(
+            f"LOWER(COALESCE({column}, '')) LIKE ? ESCAPE '\\'" for column in search_columns
+        ) + ')')
+        base_params.extend([search_pattern] * len(search_columns))
+
+    category_expression = (
+        "CASE WHEN metric_type IN ('host_cpu', 'host_memory', 'host_disk') THEN 'host' "
+        "WHEN SUBSTR(metric_type, 1, 4) = 'srv_' THEN 'server' ELSE 'network' END"
+    )
+    base_where_sql = ' AND '.join(base_conditions)
+    filtered_conditions = list(base_conditions)
+    filtered_params = list(base_params)
+    conn = get_db_connection()
+    try:
+        category_rows = conn.execute(
+            f'''
+            SELECT {category_expression} AS category, COUNT(*) AS count
+            FROM alert_rules
+            WHERE {base_where_sql}
+            GROUP BY {category_expression}
+            ''',
+            tuple(base_params),
+        ).fetchall()
+        category_counts = {'all': 0, 'network': 0, 'host': 0, 'server': 0}
+        for row in category_rows:
+            category_name = str(row['category'] or '')
+            count = int(row['count'] or 0)
+            category_counts['all'] += count
+            if category_name in {'network', 'host', 'server'}:
+                category_counts[category_name] = count
+
+        if cat_filter != 'all':
+            filtered_conditions.append(f'({category_expression}) = ?')
+            filtered_params.append(cat_filter)
+        if metric_filter != 'all' and metric_filter:
+            filtered_conditions.append('metric_type = ?')
+            filtered_params.append(metric_filter)
+
+        filtered_where_sql = ' AND '.join(filtered_conditions)
+        total_row = conn.execute(
+            f'SELECT COUNT(*) AS count FROM alert_rules WHERE {filtered_where_sql}',
+            tuple(filtered_params),
+        ).fetchone()
+        total = int(total_row['count'] or 0) if total_row else 0
+        offset = (current_page - 1) * current_page_size
+        rows = conn.execute(
+            f'''
+            SELECT *
+            FROM alert_rules
+            WHERE {filtered_where_sql}
+            ORDER BY metric_type ASC, enabled DESC, scope_type DESC, updated_at DESC, name ASC
+            LIMIT ? OFFSET ?
+            ''',
+            tuple([*filtered_params, current_page_size, offset]),
+        ).fetchall()
+        items = [_normalize_rule_row(row) for row in rows]
+    finally:
+        conn.close()
+
     return {
-        'items': filtered_items[start:end],
+        'items': items,
         'total': total,
         'page': current_page,
         'page_size': current_page_size,

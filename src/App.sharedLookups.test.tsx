@@ -10,20 +10,20 @@ const response = (payload: unknown) => ({
   json: vi.fn().mockResolvedValue(payload),
 }) as unknown as Response;
 
-const lookupPayloadFor = (input: RequestInfo | URL) => {
+const lookupPayloadFor = (input: RequestInfo | URL, session = 'user-a') => {
   const url = String(input);
-  if (url === '/api/scripts') return [];
-  if (url === '/api/users') return [];
-  if (url.startsWith('/api/config-templates')) return { items: [{ id: 'template-1', name: 'Template 1' }] };
-  return [];
-};
-
-const lookupPayloadForSession = (input: RequestInfo | URL, session: string) => {
-  const url = String(input);
-  if (url === '/api/scripts' || url === '/api/users' || url === '/api/vars') return [session];
+  if (url === '/api/scripts' || url === '/api/vars') return [session];
   if (url.startsWith('/api/config-templates')) return { items: [{ id: `${session}-template`, name: 'Template' }] };
   return [];
 };
+
+const lookupSetters = (sessionIdentity = 'user-a:session-a') => ({
+  sessionIdentity,
+  setScripts: vi.fn(),
+  setConfigTemplates: vi.fn(),
+  setSelectedTemplateId: vi.fn(),
+  setGlobalVars: vi.fn(),
+});
 
 describe('App shared lookup refresh', () => {
   beforeEach(() => {
@@ -37,13 +37,7 @@ describe('App shared lookup refresh', () => {
   });
 
   it('keeps the lookup callback stable when template selection changes', () => {
-    const setters = {
-      sessionIdentity: 'user-a:session-a',
-      setScripts: vi.fn(),
-      setUsers: vi.fn(),
-      setConfigTemplates: vi.fn(),
-      setGlobalVars: vi.fn(),
-    };
+    const setters = lookupSetters();
     const { result } = renderHook(() => {
       const [selectedTemplateId, setSelectedTemplateId] = useState('');
       const fetchSharedLookups = useAppSharedLookups({ ...setters, setSelectedTemplateId });
@@ -57,66 +51,65 @@ describe('App shared lookup refresh', () => {
     expect(result.current.fetchSharedLookups).toBe(originalCallback);
   });
 
-  it('deduplicates overlapping lookup calls, selects the first template once, and permits a later refresh', async () => {
-    vi.mocked(fetch).mockImplementation(async input => {
-      const url = String(input);
-      return response(lookupPayloadFor(url));
-    });
+  it('loads only the requested resources and reuses successful results for two minutes', async () => {
+    vi.useFakeTimers();
+    const setters = lookupSetters();
+    const { result } = renderHook(() => useAppSharedLookups(setters));
 
-    const setters = {
-      sessionIdentity: 'user-a:session-a',
-      setScripts: vi.fn(),
-      setUsers: vi.fn(),
-      setConfigTemplates: vi.fn(),
-      setGlobalVars: vi.fn(),
-    };
-    const { result } = renderHook(() => {
-      const [selectedTemplateId, setSelectedTemplateId] = useState('');
-      return {
-        selectedTemplateId,
-        fetchSharedLookups: useAppSharedLookups({ ...setters, setSelectedTemplateId }),
-      };
-    });
+    await act(async () => { await result.current('automation'); });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledWith('/api/scripts', expect.anything());
+    expect(fetch).not.toHaveBeenCalledWith('/api/users', expect.anything());
+
+    await act(async () => { await result.current('automation'); });
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    await act(async () => { await result.current('configuration'); });
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(fetch).toHaveBeenCalledWith('/api/config-templates?page=1&page_size=200&sort=updated', expect.anything());
+    expect(fetch).toHaveBeenCalledWith('/api/vars', expect.anything());
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+    await act(async () => { await result.current('automation'); });
+    expect(fetch).toHaveBeenCalledTimes(4);
+
+    await act(async () => { await result.current('automation', { force: true }); });
+    expect(fetch).toHaveBeenCalledTimes(5);
+  });
+
+  it('deduplicates overlapping lookups and selects the first template without replacing a manual choice', async () => {
+    const setters = lookupSetters();
+    const { result } = renderHook(() => useAppSharedLookups(setters));
 
     let first!: Promise<void>;
     let overlapping!: Promise<void>;
     act(() => {
-      first = result.current.fetchSharedLookups();
-      overlapping = result.current.fetchSharedLookups();
+      first = result.current();
+      overlapping = result.current();
     });
     expect(overlapping).toBe(first);
-    expect(fetch).toHaveBeenCalledTimes(4);
+    expect(fetch).toHaveBeenCalledTimes(3);
 
     await act(async () => { await Promise.all([first, overlapping]); });
-    expect(result.current.selectedTemplateId).toBe('template-1');
+    expect(setters.setSelectedTemplateId).toHaveBeenCalledWith(expect.any(Function));
 
-    await act(async () => { await result.current.fetchSharedLookups(); });
-    expect(fetch).toHaveBeenCalledTimes(8);
-    expect(result.current.selectedTemplateId).toBe('template-1');
+    await act(async () => { await result.current(undefined, { force: true }); });
+    expect(fetch).toHaveBeenCalledTimes(6);
   });
 
-  it('aborts an old session on logout, starts a new request for the next session, and ignores late old responses', async () => {
-    const delayedOldResponses: Array<{ url: string; resolve: (value: Response) => void }> = [];
+  it('aborts an old session on logout and ignores late responses after the next session starts', async () => {
+    const delayedOldResponses: Array<(value: Response) => void> = [];
     const signals: AbortSignal[] = [];
     let requestCount = 0;
     vi.mocked(fetch).mockImplementation((input, init) => {
-      const url = String(input);
       const signal = init?.signal as AbortSignal;
       signals.push(signal);
       requestCount += 1;
-      if (requestCount <= 4) {
-        return new Promise<Response>(resolve => delayedOldResponses.push({ url, resolve }));
-      }
-      return Promise.resolve(response(lookupPayloadForSession(url, 'session-b')));
+      if (requestCount <= 3) return new Promise<Response>(resolve => delayedOldResponses.push(resolve));
+      return Promise.resolve(response(lookupPayloadFor(input, 'session-b')));
     });
 
-    const setters = {
-      setScripts: vi.fn(),
-      setUsers: vi.fn(),
-      setConfigTemplates: vi.fn(),
-      setSelectedTemplateId: vi.fn(),
-      setGlobalVars: vi.fn(),
-    };
+    const setters = lookupSetters();
     const { result, rerender } = renderHook(
       ({ sessionIdentity }) => useAppSharedLookups({ ...setters, sessionIdentity }),
       { initialProps: { sessionIdentity: 'user-a:session-a' } },
@@ -124,66 +117,38 @@ describe('App shared lookup refresh', () => {
 
     let oldSessionRequest!: Promise<void>;
     act(() => { oldSessionRequest = result.current(); });
-    expect(fetch).toHaveBeenCalledTimes(4);
+    expect(fetch).toHaveBeenCalledTimes(3);
 
     rerender({ sessionIdentity: '' });
     expect(signals.every(signal => signal.aborted)).toBe(true);
     await act(async () => { await result.current(); });
-    expect(fetch).toHaveBeenCalledTimes(4);
+    expect(fetch).toHaveBeenCalledTimes(3);
 
     rerender({ sessionIdentity: 'user-b:session-b' });
     let newSessionRequest!: Promise<void>;
     act(() => { newSessionRequest = result.current(); });
-    expect(fetch).toHaveBeenCalledTimes(8);
+    expect(fetch).toHaveBeenCalledTimes(6);
     await act(async () => { await newSessionRequest; });
     expect(setters.setScripts).toHaveBeenCalledWith(['session-b']);
-    expect(setters.setUsers).toHaveBeenCalledWith(['session-b']);
-    expect(setters.setConfigTemplates).toHaveBeenCalledWith([{ id: 'session-b-template', name: 'Template' }]);
     expect(setters.setGlobalVars).toHaveBeenCalledWith(['session-b']);
+    expect(setters.setConfigTemplates).toHaveBeenCalledWith([{ id: 'session-b-template', name: 'Template' }]);
 
-    const writesAfterNewSession = Object.values(setters).map(setter => setter.mock.calls.length);
+    const captureWrites = () => [
+      setters.setScripts.mock.calls.length,
+      setters.setConfigTemplates.mock.calls.length,
+      setters.setSelectedTemplateId.mock.calls.length,
+      setters.setGlobalVars.mock.calls.length,
+    ];
+    const writesAfterNewSession = captureWrites();
     await act(async () => {
-      delayedOldResponses.forEach(({ url, resolve }) => resolve(response(lookupPayloadForSession(url, 'session-a'))));
+      delayedOldResponses.forEach(resolve => resolve(response(lookupPayloadFor('/api/scripts', 'session-a'))));
       await oldSessionRequest;
     });
-    expect(Object.values(setters).map(setter => setter.mock.calls.length)).toEqual(writesAfterNewSession);
+    expect(captureWrites()).toEqual(writesAfterNewSession);
   });
 
-  it('aborts an in-flight request and ignores its response when the hook unmounts', async () => {
-    const delayedResponses: Array<{ url: string; resolve: (value: Response) => void }> = [];
-    const signals: AbortSignal[] = [];
-    vi.mocked(fetch).mockImplementation((input, init) => {
-      const signal = init?.signal as AbortSignal;
-      signals.push(signal);
-      return new Promise<Response>(resolve => delayedResponses.push({ url: String(input), resolve }));
-    });
-    const setters = {
-      sessionIdentity: 'user-a:session-a',
-      setScripts: vi.fn(),
-      setUsers: vi.fn(),
-      setConfigTemplates: vi.fn(),
-      setSelectedTemplateId: vi.fn(),
-      setGlobalVars: vi.fn(),
-    };
-    const { result, unmount } = renderHook(() => useAppSharedLookups(setters));
-
-    let request!: Promise<void>;
-    act(() => { request = result.current(); });
-    unmount();
-    expect(signals.every(signal => signal.aborted)).toBe(true);
-
-    await act(async () => {
-      delayedResponses.forEach(({ url, resolve }) => resolve(response(lookupPayloadForSession(url, 'session-a'))));
-      await request;
-    });
-    expect(setters.setScripts).not.toHaveBeenCalled();
-    expect(setters.setUsers).not.toHaveBeenCalled();
-    expect(setters.setConfigTemplates).not.toHaveBeenCalled();
-    expect(setters.setGlobalVars).not.toHaveBeenCalled();
-  });
-
-  it('runs the production initial and route effects once, keeps the 120-second lookup poll, and cleans timers on unmount', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+  it('loads Dashboard hot data only there and refreshes route-specific lookup scopes', async () => {
+    vi.useFakeTimers();
     const fetchSharedLookups = vi.fn().mockResolvedValue(undefined);
     const fetchHotData = vi.fn().mockResolvedValue(undefined);
     const fetchDevicesData = vi.fn().mockResolvedValue(undefined);
@@ -192,6 +157,9 @@ describe('App shared lookup refresh', () => {
       isAuthenticated: true,
       pathname: '/monitor/overview',
       activeTab: 'dashboard',
+      automationPage: '',
+      configPage: '',
+      changeOrderPage: '',
       inventorySubPage: '',
       autoRefreshEnabled: true,
       fetchSharedLookups,
@@ -206,21 +174,25 @@ describe('App shared lookup refresh', () => {
     );
     await act(async () => { await Promise.resolve(); });
     expect(fetchSharedLookups).toHaveBeenCalledTimes(1);
+    expect(fetchSharedLookups).toHaveBeenNthCalledWith(1, 'none');
     expect(fetchHotData).toHaveBeenCalledTimes(1);
     expect(fetchDevicesData).toHaveBeenCalledTimes(0);
 
     await act(async () => { await Promise.resolve(); });
-    rerender({ ...initialProps, pathname: '/config/templates' });
+    rerender({ ...initialProps, pathname: '/config/templates', activeTab: 'config', configPage: 'templates' });
     expect(fetchSharedLookups).toHaveBeenCalledTimes(2);
-    expect(fetchHotData).toHaveBeenCalledTimes(2);
+    expect(fetchSharedLookups).toHaveBeenNthCalledWith(2, 'configuration');
+    expect(fetchHotData).toHaveBeenCalledTimes(1);
+    expect(fetchDevicesData).toHaveBeenCalledTimes(1);
 
-    await act(async () => { await vi.advanceTimersByTimeAsync(119999); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(119_999); });
     expect(fetchSharedLookups).toHaveBeenCalledTimes(2);
     await act(async () => { await vi.advanceTimersByTimeAsync(1); });
     expect(fetchSharedLookups).toHaveBeenCalledTimes(3);
+    expect(fetchSharedLookups).toHaveBeenNthCalledWith(3, 'configuration');
 
     unmount();
-    await act(async () => { await vi.advanceTimersByTimeAsync(240000); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(240_000); });
     expect(fetchSharedLookups).toHaveBeenCalledTimes(3);
   });
 });

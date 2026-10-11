@@ -386,6 +386,16 @@ def set_resource_tags(
         (resource_type, resource_id),
     ).fetchall()
     old_ids = {str(row["tag_id"]) for row in existing}
+    new_ids = {str(tag["id"]) for tag in tags}
+    if old_ids == new_ids:
+        if resource_type == "device":
+            row = conn.execute("SELECT status FROM devices WHERE id=?", (resource_id,)).fetchone()
+            if row:
+                sync_device_status_tag(conn, resource_id, row["status"], "system", commit=False)
+        if commit:
+            conn.commit()
+        return get_resource_tags(conn, resource_type, resource_id)
+
     conn.execute("DELETE FROM tag_assignments WHERE resource_type=? AND resource_id=? AND source_type='manual'", (resource_type, resource_id))
     for tag in tags:
         conn.execute(

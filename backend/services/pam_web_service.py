@@ -17,7 +17,9 @@ def _as_dict(profile):
 def replace_asset_web_profiles(conn, asset_id: str, profiles: Iterable) -> list[dict]:
     """Replace an asset's Web entries inside the caller's transaction."""
     existing_rows = conn.execute(
-        """SELECT id, normal_password, admin_password
+        """SELECT id, profile_name, scheme, port, path, enabled, credential_mode,
+                  normal_username, normal_password, admin_username, admin_password,
+                  credential_id, admin_credential_id
            FROM asset_web_access_profiles WHERE asset_id = ?""",
         (asset_id,),
     ).fetchall()
@@ -72,6 +74,29 @@ def replace_asset_web_profiles(conn, asset_id: str, profiles: Iterable) -> list[
             "credential_id": credential_id,
             "admin_credential_id": admin_credential_id,
         })
+
+    comparable_fields = (
+        "profile_name", "scheme", "port", "path", "enabled", "credential_mode",
+        "normal_username", "normal_password", "admin_username", "admin_password",
+        "credential_id", "admin_credential_id",
+    )
+    if len(existing_secrets) == len(normalized):
+        unchanged = True
+        for item in normalized:
+            previous = existing_secrets.get(item["id"])
+            if not previous:
+                unchanged = False
+                break
+            if any(
+                (1 if bool(previous[field]) else 0) != item[field]
+                if field == "enabled"
+                else str(previous[field] or "") != str(item[field] or "")
+                for field in comparable_fields
+            ):
+                unchanged = False
+                break
+        if unchanged:
+            return normalized
 
     conn.execute("DELETE FROM asset_web_access_profiles WHERE asset_id = ?", (asset_id,))
     for item in normalized:

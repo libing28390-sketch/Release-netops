@@ -113,9 +113,10 @@ const AppMainContent: React.FC = () => {
     currentUser,
     devices,
   } = coreApp;
+  const shouldLoadAssetSummary = activeTab === 'overview' || activeTab === 'access';
 
   React.useEffect(() => {
-    if (!isAuthenticated) {
+    if (!isAuthenticated || !shouldLoadAssetSummary) {
       resetAssetsTotal();
       return;
     }
@@ -132,7 +133,7 @@ const AppMainContent: React.FC = () => {
       controller.abort();
       window.clearInterval(intervalId);
     };
-  }, [isAuthenticated, currentUser?.id, currentUser?.username, fetchAssetsTotal, resetAssetsTotal]);
+  }, [isAuthenticated, shouldLoadAssetSummary, currentUser?.id, currentUser?.username, fetchAssetsTotal, resetAssetsTotal]);
 
   const { favoriteDeviceIds, toggleFavorite } = useAccessFavorites(currentUser?.username);
   const handleFavoriteToggle = (device: { id: string }) => toggleFavorite(device.id);
@@ -215,6 +216,8 @@ const AppMainContent: React.FC = () => {
     handleSelectAutomationDevice,
     batchMode,
     batchDeviceIds,
+    rememberedBatchDevices,
+    rememberBatchDevice,
     automationSearch,
     hasQuickTargets,
     openQuickPlaybookModal,
@@ -429,6 +432,7 @@ const AppMainContent: React.FC = () => {
     setHideOrphanDevices,
     handleTriggerDiscovery,
     handleCancelDiscovery,
+    handleRefreshTopologyData,
     handleExportMap,
     handleConfirmTopologyRelation,
     loadTopologyHistory,
@@ -840,6 +844,7 @@ const AppMainContent: React.FC = () => {
             onHideStaleLinksChange={setHideStaleLinks}
             hideOrphanDevices={hideOrphanDevices}
             onHideOrphanDevicesChange={setHideOrphanDevices}
+            onRefreshTopologyData={handleRefreshTopologyData}
             onTriggerDiscovery={handleTriggerDiscovery}
             onCancelDiscovery={handleCancelDiscovery}
             onExportMap={handleExportMap}
@@ -910,6 +915,7 @@ const AppMainContent: React.FC = () => {
             language={language}
             sectionHeaderRowClass={sectionHeaderRowClass}
             devices={devices}
+            rememberedBatchDevices={rememberedBatchDevices}
             selectedDevice={selectedDevice}
             batchMode={batchMode}
             batchDeviceIds={batchDeviceIds}
@@ -948,6 +954,7 @@ const AppMainContent: React.FC = () => {
             onScenarioSearchChange={handleScenarioSearch}
             onToggleBatchMode={handleToggleBatchMode}
             onToggleBatchDevice={handleToggleBatchDevice}
+            onRememberDevice={rememberBatchDevice}
             onSelectDevice={handleSelectAutomationDevice}
             handleClearSelection={handleClearSelection}
             onOpenCustomCommandModal={() => setShowCustomCommandModal(true)}

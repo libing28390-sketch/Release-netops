@@ -487,32 +487,223 @@ def list_windows(status: str = 'all') -> list[dict[str, Any]]:
 
 
 def list_windows_paginated(status: str = 'all', search: str = '', page: int = 1, page_size: int = 20) -> dict[str, Any]:
-    items = list_windows(status=status)
+    current_page = max(1, int(page or 1))
+    current_page_size = max(1, int(page_size or 20))
+    now_iso = utc_now_iso()
+    runtime_status_expression = '''
+        CASE
+            WHEN LOWER(COALESCE(status, 'scheduled')) = 'cancelled' THEN 'cancelled'
+            WHEN TRIM(COALESCE(starts_at, '')) = '' OR TRIM(COALESCE(ends_at, '')) = ''
+                THEN COALESCE(NULLIF(LOWER(status), ''), 'scheduled')
+            WHEN REPLACE(REPLACE(starts_at, '.000Z', 'Z'), 'Z', '+00:00') > ? THEN 'scheduled'
+            WHEN REPLACE(REPLACE(ends_at, '.000Z', 'Z'), 'Z', '+00:00') < ? THEN 'expired'
+            ELSE 'active'
+        END
+    '''
+    selection_mode_expression = '''
+        CASE
+            WHEN LOWER(TRIM(COALESCE(selection_mode, ''))) IN ('conditions', 'resources')
+                THEN LOWER(TRIM(selection_mode))
+            WHEN REPLACE(COALESCE(match_conditions_json, '[]'), ' ', '') NOT IN ('[]', 'null')
+                OR TRIM(COALESCE(title_pattern, '')) != ''
+                OR TRIM(COALESCE(message_pattern, '')) != ''
+                THEN 'conditions'
+            ELSE 'resources'
+        END
+    '''
+    condition_logic_expression = '''
+        CASE
+            WHEN LOWER(TRIM(COALESCE(condition_logic, ''))) IN ('all', 'any', 'none')
+                THEN LOWER(TRIM(condition_logic))
+            ELSE 'all'
+        END
+    '''
+    conditions: list[str] = []
+    params: list[Any] = []
+    normalized_status = str(status or 'all')
+    if normalized_status != 'all':
+        conditions.append('runtime_status = ?')
+        params.append(normalized_status)
+
     query = str(search or '').strip().lower()
     if query:
-        filtered: list[dict[str, Any]] = []
-        for item in items:
-            haystack = ' '.join([
-                str(item.get('name') or ''),
-                ' '.join(item.get('target_ips') or []),
-                json.dumps(item.get('match_conditions') or [], ensure_ascii=False),
-                str(item.get('reason') or ''),
-                str(item.get('created_by') or ''),
-                str(item.get('scope_summary') or ''),
-            ]).lower()
-            if query in haystack:
-                filtered.append(item)
-    else:
-        filtered = items
+        def escape_like(value: str) -> str:
+            return value.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
 
-    total = len(filtered)
-    start = (page - 1) * page_size
-    end = start + page_size
+        escaped_query = escape_like(query)
+        search_pattern = f'%{escaped_query}%'
+        search_columns = (
+            'name', 'target_ip', 'target_ips_json', 'match_conditions_json',
+            'title_pattern', 'message_pattern', 'reason', 'created_by',
+        )
+        search_predicates = [
+            f"LOWER(COALESCE({column}, '')) LIKE ? ESCAPE '\\'" for column in search_columns
+        ]
+        search_params: list[Any] = [search_pattern] * len(search_columns)
+
+        # The old search also included the localized scope_summary projection.
+        # Its labels map back to these persisted fields so matching stays in SQL.
+        resource_prefix = '资源对象：'
+        if query in resource_prefix:
+            search_predicates.append(f"({selection_mode_expression}) = 'resources'")
+        for start in range(len(resource_prefix)):
+            prefix_suffix = resource_prefix[start:]
+            if query.startswith(prefix_suffix) and len(query) > len(prefix_suffix):
+                resource_fragment = query[len(prefix_suffix):].replace(', ', '", "')
+                search_predicates.append(
+                    f"({selection_mode_expression}) = 'resources' "
+                    "AND LOWER(COALESCE(target_ips_json, '')) LIKE ? ESCAPE '\\'"
+                )
+                search_params.append(f'%{escape_like(resource_fragment)}%')
+
+        field_labels = (
+            ('alert_description', '告警描述'),
+            ('alert_ip', '告警IP'),
+            ('alert_level', '告警等级'),
+        )
+        operator_labels = (
+            ('contains', '包含'),
+            ('equals', '等于'),
+            ('not_contains', '不包含'),
+            ('not_equals', '不等于'),
+            ('regex', '正则表达式'),
+        )
+        logic_labels = (('all', '满足全部'), ('any', '满足任意'), ('none', '都不满足'))
+
+        for logic, label in logic_labels:
+            if query in label:
+                search_predicates.append(
+                    f"({selection_mode_expression}) = 'conditions' "
+                    f'AND ({condition_logic_expression}) = ?'
+                )
+                search_params.append(logic)
+
+        for field, label in field_labels:
+            if query in label:
+                field_pattern = f'%"field": "{field}"%'
+                legacy_match = (
+                    " OR (" + "LOWER(COALESCE(title_pattern, '')) != '' "
+                    "OR LOWER(COALESCE(message_pattern, '')) != '')"
+                    if field == 'alert_description'
+                    else " OR LOWER(COALESCE(target_ip, '')) != ''" if field == 'alert_ip' else ''
+                )
+                search_predicates.append(
+                    f"({selection_mode_expression}) = 'conditions' AND ("
+                    "LOWER(COALESCE(match_conditions_json, '')) LIKE ? ESCAPE '\\'"
+                    f'{legacy_match})'
+                )
+                search_params.append(field_pattern)
+
+        for operator, label in operator_labels:
+            if query in label:
+                operator_pattern = f'%"operator": "{operator}"%'
+                legacy_match = (
+                    " OR (LOWER(COALESCE(title_pattern, '')) != '' "
+                    "OR LOWER(COALESCE(message_pattern, '')) != '')"
+                    if operator == 'contains'
+                    else " OR LOWER(COALESCE(target_ip, '')) != ''" if operator == 'equals' else ''
+                )
+                search_predicates.append(
+                    f"({selection_mode_expression}) = 'conditions' AND ("
+                    "LOWER(COALESCE(match_conditions_json, '')) LIKE ? ESCAPE '\\'"
+                    f'{legacy_match})'
+                )
+                search_params.append(operator_pattern)
+
+        # A search may include part of a rendered field/operator label and the
+        # start of its value (for example, "告警IP 等于 10.0.0.1"). Translate
+        # that phrase into a portable LIKE pattern over the serialized condition.
+        for logic, logic_label in [(None, '') , *logic_labels]:
+            logic_prefix = f'{logic_label}：' if logic else ''
+            for field, field_label in field_labels:
+                for operator, operator_label in operator_labels:
+                    display_prefix = f'{logic_prefix}{field_label} {operator_label} '
+                    for start in range(len(display_prefix)):
+                        prefix_suffix = display_prefix[start:]
+                        prefix_core = prefix_suffix.rstrip()
+                        if not prefix_core or not query.startswith(prefix_core):
+                            continue
+                        remainder = query[len(prefix_core):]
+                        if prefix_suffix != prefix_core and remainder and not remainder[0].isspace():
+                            continue
+                        value_fragment = remainder.strip()
+                        json_prefix = f'"field": "{field}", "operator": "{operator}", "value": "'
+                        match_predicate = (
+                            f"LOWER(COALESCE(match_conditions_json, '')) LIKE ? ESCAPE '\\'"
+                        )
+                        match_params = [f'%{escape_like(json_prefix + value_fragment)}%']
+                        legacy_predicates: list[str] = []
+                        if field == 'alert_description' and operator == 'contains':
+                            legacy_predicates = [
+                                "LOWER(COALESCE(title_pattern, '')) LIKE ? ESCAPE '\\'",
+                                "LOWER(COALESCE(message_pattern, '')) LIKE ? ESCAPE '\\'",
+                            ]
+                            match_params.extend([f'%{escape_like(value_fragment)}%'] * 2)
+                        elif field == 'alert_ip' and operator == 'equals':
+                            legacy_predicates = ["LOWER(COALESCE(target_ip, '')) LIKE ? ESCAPE '\\'"]
+                            match_params.append(f'%{escape_like(value_fragment)}%')
+                        condition_parts = [match_predicate, *legacy_predicates]
+                        phrase_predicate = (
+                            f"({selection_mode_expression}) = 'conditions' AND ("
+                            + ' OR '.join(condition_parts)
+                            + ')'
+                        )
+                        if logic:
+                            phrase_predicate += f' AND ({condition_logic_expression}) = ?'
+                            match_params.append(logic)
+                        search_predicates.append(phrase_predicate)
+                        search_params.extend(match_params)
+
+        conditions.append('(' + ' OR '.join(search_predicates) + ')')
+        params.extend(search_params)
+
+    where_sql = ' AND '.join(conditions) if conditions else '1 = 1'
+    window_cte = f'''
+        WITH computed_windows AS (
+            SELECT
+                id, name, target_ip, target_ips_json, selection_mode, condition_logic,
+                match_conditions_json, title_pattern, message_pattern, starts_at, ends_at,
+                notify_user_ids, reason, status, created_by, created_at, updated_at,
+                last_match_count,
+                {runtime_status_expression} AS runtime_status
+            FROM alert_maintenance_windows
+        )
+    '''
+
+    conn = get_db_connection()
+    try:
+        query_params = [now_iso, now_iso, *params]
+        total_row = conn.execute(
+            f'{window_cte} SELECT COUNT(*) AS count FROM computed_windows WHERE {where_sql}',
+            tuple(query_params),
+        ).fetchone()
+        total = int(total_row['count'] or 0) if total_row else 0
+        offset = (current_page - 1) * current_page_size
+        rows = conn.execute(
+            f'''
+            {window_cte}
+            SELECT *
+            FROM computed_windows
+            WHERE {where_sql}
+            ORDER BY starts_at DESC
+            LIMIT ? OFFSET ?
+            ''',
+            tuple([*query_params, current_page_size, offset]),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    items = []
+    for row in rows:
+        item = _normalize_window_record(dict(row))
+        item['runtime_status'] = _normalize_runtime_status(item, now_iso)
+        items.append(item)
+
     return {
-        'items': filtered[start:end],
+        'items': items,
         'total': total,
-        'page': page,
-        'page_size': page_size,
+        'page': current_page,
+        'page_size': current_page_size,
     }
 
 

@@ -7,16 +7,18 @@ const SERVER_PLATFORMS = new Set([
 const SERVER_ROLES = new Set(['server', 'host', 'vm', 'virtual-machine', 'hypervisor', 'storage']);
 
 /** Keep server assets out of every network topology read model and its links. */
-export const isTopologyServerDevice = (device: Pick<Device, 'role' | 'device_category' | 'platform'>): boolean => {
-  const role = String(device.role || '').trim().toLowerCase().replaceAll('_', '-');
+export const isTopologyServerDevice = (device: Pick<Device, 'asset_type' | 'role' | 'role_identity' | 'device_category' | 'platform'>): boolean => {
+  const role = String(device.role || device.role_identity || '').trim().toLowerCase().replaceAll('_', '-');
   const platform = String(device.platform || '').trim().toLowerCase().replaceAll('-', '_');
-  if (SERVER_ROLES.has(role) || SERVER_PLATFORMS.has(platform)) return true;
-  return [device.device_category, device.platform].some((value) =>
-    /server|服务器|虚拟机|hypervisor|esxi|vmware/i.test(String(value || '')),
+  if (String(device.asset_type || '').trim().toLowerCase() === 'server'
+    || SERVER_ROLES.has(role)
+    || SERVER_PLATFORMS.has(platform)) return true;
+  return [device.device_category, device.platform, device.role_identity].some((value) =>
+    /server|服务器|主机|虚拟机|hypervisor|esxi|vmware/i.test(String(value || '')),
   );
 };
 
-export const excludeServerTopologyDevices = <T extends Pick<Device, 'id' | 'role' | 'device_category' | 'platform'>>(
+export const excludeServerTopologyDevices = <T extends Pick<Device, 'id' | 'asset_type' | 'role' | 'role_identity' | 'device_category' | 'platform'>>(
   devices: T[],
 ) => {
   const excludedIds = new Set(devices.filter(isTopologyServerDevice).map((device) => device.id));

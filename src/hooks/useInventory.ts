@@ -1,17 +1,35 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import type { Device } from '../types';
 import { displaySiteLabel } from '../utils/deviceUtils';
+import { excludeServerTopologyDevices } from '../utils/topologyDevices';
 import { authHeaders } from '../api/http';
 
-export type DeviceFetchMode = 'light' | 'full' | 'paged-light' | 'all-light';
+export type DeviceFetchMode =
+  | 'light'
+  | 'full'
+  | 'paged-light'
+  | 'all-light'
+  | 'all-network-light'
+  | 'all-network-topology';
 
-const ALL_LIGHT_PAGE_SIZE = 200;
+const ALL_DEVICE_PAGE_SIZE = 200;
 
 export const useInventory = (deviceFetchMode: DeviceFetchMode = 'full') => {
   const [devices, setDevices] = useState<Device[]>([]);
   const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
   const [devicesLastUpdatedAt, setDevicesLastUpdatedAt] = useState<number>(0);
   const [devicesError, setDevicesError] = useState<string | null>(null);
+  const isNetworkOnlyMode = deviceFetchMode === 'all-network-light' || deviceFetchMode === 'all-network-topology';
+  const visibleDevices = useMemo(
+    () => isNetworkOnlyMode ? excludeServerTopologyDevices(devices).devices : devices,
+    [devices, isNetworkOnlyMode],
+  );
+  const visibleSelectedDevice = useMemo(
+    () => isNetworkOnlyMode && selectedDevice && !visibleDevices.some((device) => device.id === selectedDevice.id)
+      ? null
+      : selectedDevice,
+    [isNetworkOnlyMode, selectedDevice, visibleDevices],
+  );
 
   const safeJsonArray = (value: any) => {
     if (Array.isArray(value)) return value;
@@ -84,19 +102,26 @@ export const useInventory = (deviceFetchMode: DeviceFetchMode = 'full') => {
     const fetchId = ++lastFetchId.current;
     setDevicesError(null);
     try {
-      const requestMode = deviceFetchMode === 'paged-light' || deviceFetchMode === 'all-light'
+      const isAllLightMode = deviceFetchMode === 'all-light' || deviceFetchMode === 'all-network-light';
+      const isTopologyMode = deviceFetchMode === 'all-network-topology';
+      const isAllPagesMode = isAllLightMode || isTopologyMode;
+      const requestMode = deviceFetchMode === 'paged-light' || isAllLightMode
         ? 'light'
-        : deviceFetchMode;
+        : isTopologyMode
+          ? 'topology'
+          : deviceFetchMode;
       const params = new URLSearchParams({ mode: requestMode });
       if (deviceFetchMode === 'paged-light') {
         params.set('page', '1');
         params.set('page_size', '30');
       }
-      if (deviceFetchMode === 'all-light') {
+      if (isAllPagesMode) {
         params.set('page', '1');
-        params.set('page_size', String(ALL_LIGHT_PAGE_SIZE));
+        params.set('page_size', String(ALL_DEVICE_PAGE_SIZE));
       }
-      if (assetType !== 'all') {
+      if (isNetworkOnlyMode) {
+        params.set('asset_type', 'network_device');
+      } else if (assetType !== 'all') {
         params.set('asset_type', assetType);
       } else if (deviceFetchMode === 'paged-light') {
         params.set('asset_type', 'network_device');
@@ -119,7 +144,7 @@ export const useInventory = (deviceFetchMode: DeviceFetchMode = 'full') => {
       };
 
       let devs: any[];
-      if (deviceFetchMode === 'all-light') {
+      if (isAllPagesMode) {
         const firstPage = await fetchDevicePage(1);
         if (fetchId !== lastFetchId.current) return;
         if (!Array.isArray(firstPage?.items)) {
@@ -131,7 +156,7 @@ export const useInventory = (deviceFetchMode: DeviceFetchMode = 'full') => {
         }
 
         devs = [...firstPage.items];
-        const totalPages = Math.ceil(total / ALL_LIGHT_PAGE_SIZE);
+        const totalPages = Math.ceil(total / ALL_DEVICE_PAGE_SIZE);
         for (let page = 2; page <= totalPages; page += 1) {
           if (fetchId !== lastFetchId.current) return;
           const nextPage = await fetchDevicePage(page);
@@ -160,7 +185,7 @@ export const useInventory = (deviceFetchMode: DeviceFetchMode = 'full') => {
       // Safety Check: Prevent older or mismatched mode requests from overwriting state
       if (fetchId !== lastFetchId.current) return;
 
-      setDevices(devs.map((d: any) => {
+      const normalizedDevices = devs.map((d: any) => {
         const normalized = normalizeDeviceRecord(d);
         if (deviceFetchMode !== 'full') {
           return {
@@ -169,7 +194,10 @@ export const useInventory = (deviceFetchMode: DeviceFetchMode = 'full') => {
           };
         }
         return normalized;
-      }));
+      });
+      setDevices(isNetworkOnlyMode
+        ? excludeServerTopologyDevices(normalizedDevices).devices
+        : normalizedDevices);
       setDevicesLastUpdatedAt(Date.now());
     } catch (error) {
       if (fetchId === lastFetchId.current) {
@@ -180,9 +208,9 @@ export const useInventory = (deviceFetchMode: DeviceFetchMode = 'full') => {
   }, [deviceFetchMode, normalizeDeviceRecord]);
 
   return {
-    devices,
+    devices: visibleDevices,
     setDevices,
-    selectedDevice,
+    selectedDevice: visibleSelectedDevice,
     setSelectedDevice,
     devicesLastUpdatedAt,
     devicesError,

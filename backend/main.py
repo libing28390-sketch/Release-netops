@@ -138,7 +138,7 @@ async def _bg_init():
         if os.environ.get("ENVIRONMENT") != "test" and "PYTEST_CURRENT_TEST" not in os.environ and "pytest" not in sys.modules:
             try:
                 from services.collector_sync_service import sync_all_monitoring_collectors
-                sync_all_monitoring_collectors()
+                await asyncio.to_thread(sync_all_monitoring_collectors)
                 logger.info("[Background] Monitoring targets auto-synchronized from CMDB.")
             except Exception as sync_exc:
                 logger.warning(f"[Background] Monitoring targets auto-sync failed: {sync_exc}")
@@ -362,13 +362,12 @@ async def lifespan(app: FastAPI):
         max_instances=1, coalesce=True,
     )
     if os.environ.get("ENVIRONMENT") != "test" and "PYTEST_CURRENT_TEST" not in os.environ and "pytest" not in sys.modules:
-        from services.collector_sync_service import sync_all_monitoring_collectors, trigger_async_monitoring_sync
+        from services.collector_sync_service import sync_all_monitoring_collectors
         scheduler.add_job(
             synchronized_scheduler_job('monitoring_collector_auto_sync', expire_seconds=290)(sync_all_monitoring_collectors),
             'interval', minutes=5, id='monitoring_collector_auto_sync', replace_existing=True,
             max_instances=1, coalesce=True,
         )
-        trigger_async_monitoring_sync(delay_seconds=3.0)
     from services.wan_link_service import run_wan_collection_once
     scheduler.add_job(
         synchronized_scheduler_job('wan_link_sampler', expire_seconds=55)(run_wan_collection_once),
@@ -1081,7 +1080,17 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", "5010"))
     workers = int(os.environ.get("WORKERS", "1"))
     is_dev = os.environ.get("NODE_ENV") == "development"
-    reload_kwargs = {'reload': True} if is_dev else {}
+    reload_kwargs = (
+        {
+            'reload': True,
+            # The project root also contains node_modules, generated frontend
+            # builds, and validation snapshots. Watching those trees causes
+            # unrelated file activity to wake the Python reloader.
+            'reload_dirs': [os.path.dirname(os.path.abspath(__file__))],
+        }
+        if is_dev
+        else {}
+    )
 
     # Bind to loopback by default — production deployments should sit
     # behind Nginx (which forwards 127.0.0.1:$PORT). Override with

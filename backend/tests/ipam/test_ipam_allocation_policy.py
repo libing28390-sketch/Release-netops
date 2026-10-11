@@ -166,11 +166,16 @@ def test_inventory_surfaces_the_asset_linked_to_a_device(isolated_db) -> None:
         search='SW-EDGE-001',
         platform=None,
         role=None,
+        role_exact=False,
         status=None,
+        site=None,
+        vendor=None,
+        device_category=None,
         sort_key=None,
         sort_direction='asc',
         page=None,
         page_size=None,
+        include_facets=False,
         asset_type='all',
     )
     assert len(device_candidates) == 1

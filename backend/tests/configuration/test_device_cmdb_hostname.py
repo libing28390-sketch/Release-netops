@@ -9,6 +9,8 @@ def _read_devices(**overrides):
     # Direct router calls otherwise receive the Query descriptor itself.
     params = {
         'search': None, 'platform': None, 'role': None, 'status': None,
+        'role_exact': False, 'site': None, 'vendor': None,
+        'device_category': None, 'include_facets': False,
         'mode': 'full', 'sort_key': 'hostname', 'sort_direction': 'asc',
         'page': 1, 'page_size': 10, 'asset_type': 'all',
     }
@@ -74,6 +76,35 @@ def test_device_list_projects_linked_hostname_from_cmdb_for_full_light_and_paged
 
     legacy_array = _read_devices(page=None, page_size=None)
     assert [item['hostname'] for item in legacy_array] == ['cmdb-alpha', 'cmdb-zulu', 'legacy-charlie']
+
+
+def test_topology_device_mode_keeps_interface_data_without_config_history(isolated_db):
+    _seed_hostname_projection_rows()
+    with get_db_connection() as conn:
+        conn.execute(
+            'UPDATE devices SET config_history = ? WHERE id = ?',
+            ('[{"id":"snapshot-1"}]', 'device-cmdb-alpha'),
+        )
+        conn.execute(
+            'INSERT INTO interfaces (id, device_id, interface_name, oper_status) VALUES (?, ?, ?, ?)',
+            ('interface-cmdb-alpha', 'device-cmdb-alpha', 'GigabitEthernet1/0/1', 'up'),
+        )
+        conn.commit()
+
+    result = _read_devices(
+        mode='topology',
+        asset_type='network_device',
+        sort_key='hostname',
+        page=1,
+        page_size=10,
+    )
+    alpha = next(item for item in result['items'] if item['id'] == 'device-cmdb-alpha')
+
+    assert result['total'] == 3
+    assert alpha['interface_data'][0]['name'] == 'GigabitEthernet1/0/1'
+    assert alpha['interface_data'][0]['status'] == 'up'
+    assert alpha['config_history'] == []
+    assert 'current_config' not in alpha
 
 
 def test_device_list_search_and_sort_use_cmdb_hostname(isolated_db):

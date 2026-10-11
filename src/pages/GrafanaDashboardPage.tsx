@@ -133,6 +133,21 @@ const TIME_RANGES = [
   { value: '7d', labelZh: '最近 7 天', labelEn: 'Last 7d' },
 ];
 
+const GRAFANA_DEFAULT_TIME_RANGES: Record<string, string> = {
+  'nexora-network-overview': '6h',
+  'nexora-network-device': '6h',
+  'nexora-network-wireless': '15m',
+  'nexora-network-interface': '6h',
+  'nexora-monitoring-health': '1h',
+  'nexora-network-outbound': '6h',
+  'nexora-linux-metrics': '6h',
+  'nexora-windows-metrics': '6h',
+  'nexora-platform-health': '1h',
+  'nexora-outbound-probe-quality': '24h',
+  'nexora-alert-operations': '24h',
+  'nexora-postgres-performance': '1h',
+};
+
 const REFRESH_RATES = [
   { value: 'off', labelZh: '关闭自动刷新', labelEn: 'Off' },
   { value: '10s', labelZh: '10 秒', labelEn: '10s' },
@@ -174,7 +189,8 @@ const GrafanaDashboardPage: React.FC<GrafanaDashboardPageProps> = ({ language })
   const [loaded, setLoaded] = useState(false);
   const [status, setStatus] = useState<GrafanaStatus>('checking');
   const [theme, setTheme] = useState<'light' | 'dark'>(() => resolveSystemTheme());
-  const [timeRange, setTimeRange] = useState('6h');
+  const [timeRangeOverride, setTimeRangeOverride] = useState<string | null>(null);
+  const dashboardDefaultTimeRange = GRAFANA_DEFAULT_TIME_RANGES[selectedDashboard] || '6h';
   const [refreshRate, setRefreshRate] = useState('30s');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
@@ -264,8 +280,8 @@ const GrafanaDashboardPage: React.FC<GrafanaDashboardPageProps> = ({ language })
     if (refreshRate !== 'off') {
       params.set('refresh', refreshRate);
     }
-    if (timeRange) {
-      params.set('from', `now-${timeRange}`);
+    if (timeRangeOverride) {
+      params.set('from', `now-${timeRangeOverride}`);
       params.set('to', 'now');
     }
     params.set('theme', theme);
@@ -274,7 +290,7 @@ const GrafanaDashboardPage: React.FC<GrafanaDashboardPageProps> = ({ language })
     }
 
     return `/grafana/d/${selectedDashboard}/${selectedDashboard}?${params.toString()}&kiosk`;
-  }, [selectedDashboard, theme, timeRange, refreshRate, dashboardContext.assetId]);
+  }, [selectedDashboard, theme, timeRangeOverride, refreshRate, dashboardContext.assetId]);
 
   const statusText =
     status === 'checking'
@@ -425,10 +441,13 @@ const GrafanaDashboardPage: React.FC<GrafanaDashboardPageProps> = ({ language })
                 <div className="flex items-center gap-1 text-xs text-slate-500 dark:text-zinc-400">
                   <Clock size={13} />
                   <select
-                    value={timeRange}
-                    onChange={e => setTimeRange(e.target.value)}
+                    value={timeRangeOverride || 'dashboard-default'}
+                    onChange={e => setTimeRangeOverride(e.target.value === 'dashboard-default' ? null : e.target.value)}
                     className="rounded-lg border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-2 py-1 text-[11px] font-semibold text-slate-700 dark:text-zinc-200 outline-none hover:border-cyan-300 cursor-pointer"
                   >
+                    <option value="dashboard-default">
+                      {zh ? `大盘默认（最近 ${dashboardDefaultTimeRange}）` : `Dashboard default (last ${dashboardDefaultTimeRange})`}
+                    </option>
                     {TIME_RANGES.map(item => (
                       <option key={item.value} value={item.value}>
                         {zh ? item.labelZh : item.labelEn}

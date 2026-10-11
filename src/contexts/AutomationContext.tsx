@@ -48,6 +48,8 @@ interface AutomationContextValue {
   handleClearSelection: () => void;
   batchMode: boolean;
   batchDeviceIds: string[];
+  rememberedBatchDevices: Device[];
+  rememberBatchDevice: (device: Device) => void;
   automationSearch: string;
   hasQuickTargets: boolean;
   openQuickPlaybookModal: (scenario: any) => void;

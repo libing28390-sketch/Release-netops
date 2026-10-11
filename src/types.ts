@@ -28,6 +28,7 @@ export interface DevicePlatformBinding {
 
 export interface Device {
   id: string;
+  asset_type?: string;
   hostname: string;
   ip_address: string;
   platform: string;

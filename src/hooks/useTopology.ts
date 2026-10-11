@@ -1,5 +1,4 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import * as htmlToImage from 'html-to-image';
 import type { Device } from '../types';
 import { EMPTY_TAG_FILTER, type TagFilterConfig } from '../components/TagConditionPicker';
 import type { Language } from '../i18n.tsx';
@@ -291,6 +290,7 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
   const [hideOrphanDevices, setHideOrphanDevices] = useState(false);
   const topologyRef = React.useRef<HTMLDivElement>(null);
   const authExpiredSignaledRef = React.useRef(false);
+  const lastUnknownEndpointRefreshRef = React.useRef('');
   // Keep the latest inventory available to the refresh callback without
   // making the callback/effect restart every time background polling updates
   // one device field.
@@ -315,12 +315,18 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
       include_stale: hideStaleLinks ? 'false' : 'true',
     });
     if (topologySiteFilter !== 'all') graphParams.set('site_id', topologySiteFilter);
+    // The first topology view is a site overview built from the links
+    // read-model. Defer the larger relation graph until a site is opened or
+    // the user selects a non-physical graph view.
+    const needsGraph = topologySiteFilter !== 'all' || topologyGraphView !== 'physical';
     const [linksResponse, sitesResponse, graphResponse] = await Promise.all([
       fetch(`/api/topology/links?${params.toString()}`, { headers }),
       fetch('/api/topology/sites', { headers }),
-      fetch(`/api/topology/graph?${graphParams.toString()}`, { headers }),
+      needsGraph
+        ? fetch(`/api/topology/graph?${graphParams.toString()}`, { headers })
+        : Promise.resolve(null),
     ]);
-    if ([linksResponse, sitesResponse, graphResponse].some((response) => response.status === 401)) {
+    if ([linksResponse, sitesResponse, graphResponse].some((response) => response?.status === 401)) {
       if (!authExpiredSignaledRef.current) {
         authExpiredSignaledRef.current = true;
         window.dispatchEvent(new Event('netops:auth-expired'));
@@ -351,8 +357,13 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
       ? unmanagedLinks
       : [];
     let nextLinks = [...legacyLinks, ...externalLinksForView];
+    const physicalLinks = legacyLinks.filter((link: any) => {
+      const relation = String(link.relation_type || '').toUpperCase();
+      return !relation || relation === 'PHYSICAL';
+    });
+    const foldedPhysicalLinks = physicalLinks;
     const graphNodeMetadata: Record<string, Partial<Device>> = {};
-    if (graphResponse.ok) {
+    if (graphResponse?.ok) {
       const graphPayload = await graphResponse.json();
       const graphNodes = Array.isArray(graphPayload?.nodes) ? graphPayload.nodes : [];
       const graphEdges = Array.isArray(graphPayload?.edges) ? graphPayload.edges : [];
@@ -426,15 +437,10 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
       // single rendered aggregation edge. For the composite view, combine
       // those physical rows with non-physical evidence edges; logical views
       // must never be polluted by the physical fallback.
-      const physicalLinks = legacyLinks.filter((link: any) => {
-        const relation = String(link.relation_type || '').toUpperCase();
-        return !relation || relation === 'PHYSICAL';
-      });
       // Aggregation collapse and member construction happen in the backend
       // read model.  Do not infer a LAG in the browser merely because two
       // devices have parallel LLDP rows; the API now supplies an explicit
       // link_kind/member contract when the inventory proves it.
-      const foldedPhysicalLinks = physicalLinks;
       if (topologyGraphView === 'physical') {
         nextLinks = [...(foldedPhysicalLinks.length > 0 ? foldedPhysicalLinks : graphLinks), ...externalLinksForView];
       } else if (topologyGraphView === 'all') {
@@ -447,6 +453,9 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
       }
     } else {
       setTopologyGraphNodeDevices([]);
+      if (topologyGraphView === 'physical') {
+        nextLinks = [...foldedPhysicalLinks, ...externalLinksForView];
+      }
     }
     const nextNodeMetadata = {
       ...(linksPayload?.node_metadata && typeof linksPayload.node_metadata === 'object'
@@ -461,11 +470,21 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
     // before publishing the new graph data.
     if (refreshDevices) {
       const currentDeviceIds = new Set(devicesRef.current.map((device) => String(device.id)));
-      const hasUnknownEndpoint = nextLinks.some((link: any) => (
-        !currentDeviceIds.has(String(link.source_device_id || ''))
-        || !currentDeviceIds.has(String(link.target_device_id || ''))
-      ));
-      if (hasUnknownEndpoint) await refreshDevices();
+      const unknownEndpointIds = [...new Set(nextLinks.flatMap((link: any) => [
+        String(link.source_device_id || ''),
+        String(link.target_device_id || ''),
+      ]).filter((deviceId) => deviceId && !currentDeviceIds.has(deviceId)))].sort();
+      const unknownEndpointSignature = unknownEndpointIds.join('|');
+      // A graph endpoint can legitimately be outside the shared network-device
+      // list (for example, a server or unmanaged neighbor). Retry the inventory
+      // once for a newly observed set, but do not re-fetch the same complete
+      // device collection on every graph reload when it cannot resolve that ID.
+      if (unknownEndpointSignature && unknownEndpointSignature !== lastUnknownEndpointRefreshRef.current) {
+        lastUnknownEndpointRefreshRef.current = unknownEndpointSignature;
+        await refreshDevices();
+      } else if (!unknownEndpointSignature) {
+        lastUnknownEndpointRefreshRef.current = '';
+      }
     }
     setTopologyLinks(nextLinks);
     setTopologyNodeMetadata(nextNodeMetadata);
@@ -474,7 +493,9 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
       setTopologySites(Array.isArray(sitesPayload?.items) ? sitesPayload.items : []);
     }
     setTopologyDataError(
-      sitesResponse.ok && graphResponse.ok ? '' : `topology_${!sitesResponse.ok ? 'sites' : 'graph'}_fetch_failed`,
+      sitesResponse.ok && (!needsGraph || graphResponse?.ok)
+        ? ''
+        : `topology_${!sitesResponse.ok ? 'sites' : 'graph'}_fetch_failed`,
     );
   }, [enabled, hideStaleLinks, isAuthenticated, refreshDevices, topologyGraphView, topologySiteFilter]);
 
@@ -499,11 +520,7 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
       }
     };
     void refresh();
-    const timer = window.setInterval(refresh, 60_000);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
+    return () => { active = false; };
   }, [enabled, isAuthenticated, refreshTopologyData]);
 
   const evaluateTopologyInterfaceSnapshot = useCallback(
@@ -973,7 +990,8 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
       topologySvg.appendChild(exportOverlay);
 
       const exportPixelRatio = getTopologyExportPixelRatio(width, height);
-      const dataUrl = await htmlToImage.toPng(topologySvg as unknown as HTMLElement, {
+      const { toPng } = await import('html-to-image');
+      const dataUrl = await toPng(topologySvg as unknown as HTMLElement, {
         backgroundColor: '#ffffff',
         cacheBust: true,
         width,
@@ -1118,6 +1136,15 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
     }
   }, [language, showToast, topologyDiscoveryProgress?.id, topologyDiscoveryRunId, topologyDiscoveryRunning]);
 
+  const handleRefreshTopologyData = useCallback(async () => {
+    try {
+      await refreshTopologyData();
+    } catch (error) {
+      setTopologyDataError(error instanceof Error ? error.message : 'topology_fetch_failed');
+      showToast(language === 'zh' ? '刷新拓扑数据失败' : 'Failed to refresh topology data', 'error');
+    }
+  }, [language, refreshTopologyData, showToast]);
+
   const handleConfirmTopologyRelation = useCallback(async (edgeId: string, relationType: string) => {
     const response = await fetch(`/api/topology/graph/edges/${encodeURIComponent(edgeId)}/relation`, {
       method: 'PUT',
@@ -1197,6 +1224,7 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
     handleExportMap,
     handleTriggerDiscovery,
     handleCancelDiscovery,
+    handleRefreshTopologyData,
     handleConfirmTopologyRelation,
     loadTopologyHistory,
     refreshTopologyData,

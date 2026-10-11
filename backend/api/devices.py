@@ -540,6 +540,222 @@ def _sanitize_device_item(item: dict) -> dict:
     return sanitized
 
 
+_AUTOMATION_PLATFORM_VENDOR_MAP = {
+    'cisco_ios': 'Cisco',
+    'cisco_nxos': 'Cisco',
+    'cisco_iosxe': 'Cisco',
+    'huawei_vrp': 'Huawei',
+    'huawei_yunshan': 'Huawei',
+    'h3c_comware': 'H3C',
+    'h3c_comware_v3': 'H3C',
+    'arista_eos': 'Arista',
+    'juniper_junos': 'Juniper',
+}
+
+_AUTOMATION_PLATFORM_ALIASES = {
+    'cisco': 'cisco_ios', 'ios': 'cisco_ios', 'iosxe': 'cisco_ios',
+    'cisco_iosxe': 'cisco_ios', 'nxos': 'cisco_nxos', 'nexus': 'cisco_nxos',
+    'huawei': 'huawei_vrp', 'vrp': 'huawei_vrp', 'ce': 'huawei_vrp',
+    'ce_vrp': 'huawei_vrp', 'ne': 'huawei_vrp',
+    'h3c': 'h3c_comware', 'comware': 'h3c_comware',
+    'juniper': 'juniper_junos', 'junos': 'juniper_junos',
+    'arista': 'arista_eos', 'eos': 'arista_eos',
+    'ruijie': 'ruijie_rgos', 'rgos': 'ruijie_rgos',
+}
+
+_AUTOMATION_PLATFORM_LABEL_ALIASES = {
+    '思科 ios': 'cisco_ios', 'cisco ios': 'cisco_ios',
+    '思科 nx-os': 'cisco_nxos', 'cisco nx-os': 'cisco_nxos',
+    '华为 vrpv5': 'huawei_vrp', 'huawei vrpv5': 'huawei_vrp',
+    'yunshan': 'huawei_yunshan', 'yunshanos': 'huawei_yunshan',
+    'yunshan os': 'huawei_yunshan', 'huawei_yunshan_os': 'huawei_yunshan',
+    'yunshan_os': 'huawei_yunshan', 'huawei yunshan os': 'huawei_yunshan',
+    '华为 yunshan os（云杉）': 'huawei_yunshan',
+    '华为 yunshan os (云杉)': 'huawei_yunshan',
+    '华为 yunshanos': 'huawei_yunshan',
+    '华三 comware v3': 'h3c_comware', '华三 comware v5': 'h3c_comware',
+    '华三 comware v7': 'h3c_comware', '华三 comware v9': 'h3c_comware',
+    'h3c comware': 'h3c_comware', 'h3c comware v3': 'h3c_comware',
+    'h3c comware v5': 'h3c_comware', 'h3c comware v7': 'h3c_comware',
+    'h3c comware v9': 'h3c_comware', 'hp_comware': 'h3c_comware',
+    '阿里斯塔 eos': 'arista_eos', 'arista eos': 'arista_eos',
+    '瞻博 junos': 'juniper_junos', 'juniper junos': 'juniper_junos',
+}
+
+
+def _automation_vendor(device_vendor: Any, platform: Any) -> str:
+    """Mirror AutomationExecute.getVendor for the device list filters/facets."""
+    if device_vendor:
+        return str(device_vendor)
+    raw_platform = str(platform or '').strip()
+    platform_key = raw_platform.lower()
+    platform_key = _AUTOMATION_PLATFORM_LABEL_ALIASES.get(platform_key, platform_key)
+    platform_key = _AUTOMATION_PLATFORM_ALIASES.get(platform_key, platform_key)
+    return _AUTOMATION_PLATFORM_VENDOR_MAP.get(
+        platform_key,
+        _AUTOMATION_PLATFORM_VENDOR_MAP.get(raw_platform, 'Other'),
+    )
+
+
+def _automation_site_label(site_name: Any, site_code: Any, site_value: Any) -> str:
+    """Use the same candidate order and generated-ID rule as displaySiteLabel."""
+    for raw_value in (site_name, site_code, site_value):
+        value = str(raw_value or '').strip()
+        if value and not re.fullmatch(r'site-[a-z0-9]+', value, re.IGNORECASE):
+            return value
+    # read_devices sanitizes missing labels to this stable API value. The
+    # execution UI can localize it when rendering the facet.
+    return 'Unassigned'
+
+
+def _device_site_filter(conn, requested_site: str) -> tuple[str, list[Any]]:
+    """Build an exact display-site predicate without SQL-specific regexes."""
+    site_value = str(requested_site or '').strip()
+    if not site_value:
+        return '', []
+    if site_value in {'Unassigned', 'Ungrouped', '未分组', '未分配', '__unassigned__'} or re.fullmatch(
+        r'site-[a-z0-9]+', site_value, re.IGNORECASE
+    ):
+        site_value = 'Unassigned'
+
+    site_rows = conn.execute('SELECT id, site_name, site_code FROM sites').fetchall()
+    matching_site_ids: list[str] = []
+    unlabeled_site_ids: list[str] = []
+    for row in site_rows:
+        site_id = str(row['id'] or '')
+        site_name = str(row['site_name'] or '').strip()
+        site_code = str(row['site_code'] or '').strip()
+        has_display_label = any(
+            value and not re.fullmatch(r'site-[a-z0-9]+', value, re.IGNORECASE)
+            for value in (site_name, site_code)
+        )
+        label = _automation_site_label(site_name, site_code, site_id)
+        if has_display_label and label == site_value:
+            matching_site_ids.append(site_id)
+        elif not has_display_label:
+            unlabeled_site_ids.append(site_id)
+
+    canonical_site_id = "COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''), '')"
+    predicates: list[str] = []
+    params: list[Any] = []
+    if matching_site_ids:
+        placeholders = ', '.join('?' for _ in matching_site_ids)
+        predicates.append(f'{canonical_site_id} IN ({placeholders})')
+        params.extend(matching_site_ids)
+
+    fallback_scopes = ['s.id IS NULL']
+    if unlabeled_site_ids:
+        placeholders = ', '.join('?' for _ in unlabeled_site_ids)
+        fallback_scopes.append(f'{canonical_site_id} IN ({placeholders})')
+        params.extend(unlabeled_site_ids)
+
+    if site_value == 'Unassigned':
+        distinct_sites = conn.execute(
+            'SELECT DISTINCT site FROM devices WHERE site IS NOT NULL'
+        ).fetchall()
+        internal_site_values = [
+            str(row['site']) for row in distinct_sites
+            if re.fullmatch(r'site-[a-z0-9]+', str(row['site'] or '').strip(), re.IGNORECASE)
+        ]
+        raw_site_predicates = ["d.site IS NULL", "TRIM(COALESCE(d.site, '')) = ''"]
+        if internal_site_values:
+            placeholders = ', '.join('?' for _ in internal_site_values)
+            raw_site_predicates.append(f'd.site IN ({placeholders})')
+            params.extend(internal_site_values)
+        raw_site_predicates.append("TRIM(d.site) = 'Unassigned'")
+        raw_site_predicate = f"({' OR '.join(raw_site_predicates)})"
+    else:
+        raw_site_predicate = 'TRIM(d.site) = ?'
+        params.append(site_value)
+
+    predicates.append(f"(({' OR '.join(fallback_scopes)}) AND {raw_site_predicate})")
+    return f"({' OR '.join(predicates)})", params
+
+
+def _device_list_facets(conn, from_clause: str, where_sql: str, params: list[Any]) -> dict:
+    """Aggregate automation device tree/vendor options outside page limits."""
+    grouped_rows = conn.execute(
+        f'''SELECT s.site_name, s.site_code, d.site, d.role, d.status,
+                   COUNT(DISTINCT d.id) AS device_count,
+                   COUNT(DISTINCT CASE WHEN d.status = 'online' THEN d.id END) AS online_count
+            {from_clause} {where_sql}
+            GROUP BY s.site_name, s.site_code, d.site, d.role, d.status''',
+        tuple(params),
+    ).fetchall()
+
+    site_counts: dict[str, dict[str, int | str]] = {}
+    site_role_counts: dict[tuple[str, str], dict[str, int | str]] = {}
+    for row in grouped_rows:
+        site_label = _automation_site_label(row['site_name'], row['site_code'], row['site'])
+        role_label = str(row['role'] or '') or 'Unassigned'
+        count = int(row['device_count'] or 0)
+        online_count = int(row['online_count'] or 0)
+
+        site_entry = site_counts.setdefault(site_label, {
+            'site': site_label, 'count': 0, 'online_count': 0,
+        })
+        site_entry['count'] = int(site_entry['count']) + count
+        site_entry['online_count'] = int(site_entry['online_count']) + online_count
+
+        key = (site_label, role_label)
+        role_entry = site_role_counts.setdefault(key, {
+            'site': site_label, 'role': role_label, 'count': 0, 'online_count': 0,
+        })
+        role_entry['count'] = int(role_entry['count']) + count
+        role_entry['online_count'] = int(role_entry['online_count']) + online_count
+
+    vendor_rows = conn.execute(
+        f'''SELECT d.vendor, d.platform
+            {from_clause} {where_sql}
+            GROUP BY d.vendor, d.platform''',
+        tuple(params),
+    ).fetchall()
+    vendors = sorted({
+        _automation_vendor(row['vendor'], row['platform']) for row in vendor_rows
+    })
+    return {
+        'sites': sorted(site_counts.values(), key=lambda item: str(item['site']).casefold()),
+        'site_roles': sorted(
+            site_role_counts.values(),
+            key=lambda item: (str(item['site']).casefold(), str(item['role']).casefold()),
+        ),
+        'vendors': vendors,
+    }
+
+
+def _automation_vendor_filter(
+    conn,
+    from_clause: str,
+    where_sql: str,
+    params: list[Any],
+    requested_vendor: str,
+) -> tuple[str, list[Any]]:
+    """Filter with the same explicit-device-vendor then platform fallback as getVendor."""
+    clauses = ['d.vendor = ?']
+    filter_params: list[Any] = [requested_vendor]
+    platform_where = f"{where_sql} AND COALESCE(d.vendor, '') = ''" if where_sql else "WHERE COALESCE(d.vendor, '') = ''"
+    platform_rows = conn.execute(
+        f'SELECT DISTINCT d.platform {from_clause} {platform_where}',
+        tuple(params),
+    ).fetchall()
+    matching_platforms = [
+        row['platform'] for row in platform_rows
+        if _automation_vendor('', row['platform']) == requested_vendor
+    ]
+    matching_values = [value for value in matching_platforms if value is not None]
+    has_null_platform = any(value is None for value in matching_platforms)
+    platform_clauses = []
+    if matching_values:
+        placeholders = ', '.join('?' for _ in matching_values)
+        platform_clauses.append(f'd.platform IN ({placeholders})')
+        filter_params.extend(matching_values)
+    if has_null_platform:
+        platform_clauses.append('d.platform IS NULL')
+    if platform_clauses:
+        clauses.append(f"(COALESCE(d.vendor, '') = '' AND ({' OR '.join(platform_clauses)}))")
+    return f"({' OR '.join(clauses)})", filter_params
+
+
 def _resolve_device_site_id(conn, site_id: str | None, site_name: str | None) -> str:
     requested_id = str(site_id or '').strip()
     if requested_id:
@@ -978,46 +1194,85 @@ def read_devices(
     search: Optional[str] = Query(default=None),
     platform: Optional[str] = Query(default=None),
     role: Optional[str] = Query(default=None),
+    role_exact: bool = Query(default=False),
     status: Optional[str] = Query(default=None),
+    site: Optional[str] = Query(default=None),
+    vendor: Optional[str] = Query(default=None),
+    device_category: Optional[str] = Query(default=None, pattern='^(network|server)$'),
     mode: Optional[str] = Query(default='full'),
     sort_key: Optional[str] = Query(default=None),
     sort_direction: Optional[str] = Query(default='asc'),
     page: Optional[int] = Query(default=None, ge=1),
     page_size: Optional[int] = Query(default=None, ge=1, le=1000),
+    include_facets: bool = Query(default=False),
     asset_type: Optional[str] = Query(default='all'),
 ):
     conn = get_db_connection()
     try:
-        where_clauses = []
-        params = []
+        base_where_clauses: list[str] = []
+        base_params: list[Any] = []
 
         if asset_type and asset_type != 'all':
             # Default unlinked devices to 'network_device'
-            where_clauses.append("(CASE WHEN pa.asset_type IS NOT NULL THEN pa.asset_type ELSE 'network_device' END) = ?")
-            params.append(asset_type)
+            base_where_clauses.append("(CASE WHEN pa.asset_type IS NOT NULL THEN pa.asset_type ELSE 'network_device' END) = ?")
+            base_params.append(asset_type)
 
         if search and search.strip():
             q = f"%{search.strip()}%"
-            where_clauses.append('('
+            base_where_clauses.append('('
                 "COALESCE(NULLIF(pa.hostname, ''), d.hostname) LIKE ? OR d.ip_address LIKE ? OR d.sn LIKE ? OR "
                 'pa.asset_tag LIKE ? OR pa.management_ip LIKE ? OR pa.business_ip LIKE ? OR '
                 'pa.site_id LIKE ? OR pa.vendor LIKE ? OR pa.model LIKE ?'
                 ')')
-            params.extend([q, q, q, q, q, q, q, q, q])
+            base_params.extend([q, q, q, q, q, q, q, q, q])
+
+        where_clauses = list(base_where_clauses)
+        params: list[Any] = list(base_params)
 
         if platform and platform != 'all':
             where_clauses.append('d.platform = ?')
             params.append(platform)
 
         if role and role != 'all':
-            where_clauses.append('LOWER(d.role) LIKE ?')
-            params.append(f'%{role.lower()}%')
+            if role.strip().lower() in {'unassigned', '未分配', '__unassigned__'}:
+                where_clauses.append("TRIM(COALESCE(d.role, '')) = ''")
+            elif role_exact:
+                where_clauses.append('LOWER(TRIM(COALESCE(d.role, \'\'))) = ?')
+                params.append(role.strip().lower())
+            else:
+                where_clauses.append('LOWER(d.role) LIKE ?')
+                params.append(f'%{role.lower()}%')
 
+        status_filter_sql = ''
+        status_filter_params: list[Any] = []
         if status and status != 'all':
-            where_clauses.append('d.status = ?')
-            params.append(status)
+            if status == 'not_online':
+                status_filter_sql = "COALESCE(d.status, '') <> 'online'"
+            else:
+                status_filter_sql = 'd.status = ?'
+                status_filter_params.append(status)
 
-        where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ''
+        if site and site.strip() and site != 'all':
+            site_clause, site_params = _device_site_filter(conn, site)
+            if site_clause:
+                where_clauses.append(site_clause)
+                params.extend(site_params)
+
+        if device_category:
+            server_keywords = (
+                'linux', 'ubuntu', 'centos', 'windows', 'debian', 'redhat',
+                'esxi', 'docker', 'alma', 'rocky', 'oracle', 'server', 'service',
+            )
+            server_clauses = []
+            for keyword in server_keywords:
+                server_clauses.extend([
+                    "LOWER(COALESCE(d.platform, '')) LIKE ?",
+                    "LOWER(COALESCE(d.role, '')) LIKE ?",
+                ])
+            server_predicate = f"({' OR '.join(server_clauses)})"
+            category_predicate = server_predicate if device_category == 'server' else f'NOT {server_predicate}'
+            where_clauses.append(category_predicate)
+            params.extend([f'%{keyword}%' for keyword in server_keywords for _ in range(2)])
 
         sortable_columns = {
             'hostname': "COALESCE(NULLIF(pa.hostname, ''), d.hostname)",
@@ -1076,9 +1331,35 @@ def read_devices(
             'AND (r_legacy.rack_code = pa.rack OR r_legacy.rack_name = pa.rack OR r_legacy.name = pa.rack)'
         )
 
+        where_without_vendor_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ''
+        if vendor and vendor != 'all':
+            vendor_clause, vendor_params = _automation_vendor_filter(
+                conn, from_clause, where_without_vendor_sql, params, vendor,
+            )
+            where_clauses.append(vendor_clause)
+            params.extend(vendor_params)
+        status_count_where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ''
+        status_count_params = list(params)
+        if status_filter_sql:
+            where_clauses.append(status_filter_sql)
+            params.extend(status_filter_params)
+        where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ''
+        facet_where_clauses = list(base_where_clauses)
+        facet_params: list[Any] = list(base_params)
+        if status and status != 'all':
+            if status == 'not_online':
+                facet_where_clauses.append("COALESCE(d.status, '') <> 'online'")
+            else:
+                facet_where_clauses.append('d.status = ?')
+                facet_params.append(status)
+        facet_where_sql = f"WHERE {' AND '.join(facet_where_clauses)}" if facet_where_clauses else ''
+
+        mode_name = str(mode or 'full').lower()
         select_clause = f'd.*{asset_cols}'
-        if str(mode).lower() == 'light':
-            # Lightweight projection for high-frequency polling.
+        if mode_name in {'light', 'topology'}:
+            # Keep light and topology reads bounded. Topology also loads only
+            # the batched interface snapshot required to render links;
+            # config histories and other large device fields stay out.
             select_clause = (
                 'd.id, d.hostname, d.ip_address, d.platform, d.status, d.compliance, d.sn, d.model, d.version, '
                 'd.role, d.site, d.uptime, d.connection_method, d.cpu_usage, d.memory_usage, d.temp, '
@@ -1095,7 +1376,7 @@ def read_devices(
                 f'SELECT {select_clause} {from_clause} {where_sql} ORDER BY {order_col} {order_dir} LIMIT 200',
                 tuple(params)
             ).fetchall()
-            if str(mode).lower() == 'light':
+            if mode_name == 'light':
                 items = [_sanitize_device_item(dict(d)) for d in devices]
             else:
                 interface_data = _fetch_interface_data_by_device_ids(conn, [str(d['id']) for d in devices])
@@ -1112,10 +1393,12 @@ def read_devices(
 
         # Status counts across full filtered set (not just current page)
         status_count_rows = conn.execute(
-            f'SELECT d.status, COUNT(*) AS cnt {from_clause} {where_sql} GROUP BY d.status',
-            tuple(params)
+            f'SELECT d.status, COUNT(DISTINCT d.id) AS cnt {from_clause} {status_count_where_sql} GROUP BY d.status',
+            tuple(status_count_params)
         ).fetchall()
         status_counts = {r['status']: r['cnt'] for r in status_count_rows}
+
+        facets = _device_list_facets(conn, from_clause, facet_where_sql, facet_params) if include_facets else None
 
         offset = (page - 1) * page_size
         devices = conn.execute(
@@ -1123,7 +1406,7 @@ def read_devices(
             tuple([*params, page_size, offset])
         ).fetchall()
 
-        if str(mode).lower() == 'light':
+        if mode_name == 'light':
             items = [_sanitize_device_item(dict(d)) for d in devices]
         else:
             interface_data = _fetch_interface_data_by_device_ids(conn, [str(d['id']) for d in devices])
@@ -1131,13 +1414,16 @@ def read_devices(
 
         items = _annotate_devices_with_platform_binding(conn, items)
         items = _annotate_devices_with_tags(conn, items)
-        return {
+        response = {
             'items': annotate_devices_with_health(conn, items),
             'total': total,
             'page': page,
             'page_size': page_size,
             'status_counts': status_counts,
         }
+        if facets is not None:
+            response['facets'] = facets
+        return response
     finally:
         conn.close()
 

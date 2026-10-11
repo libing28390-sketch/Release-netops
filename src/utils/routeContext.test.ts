@@ -40,6 +40,21 @@ describe('getRouteContext terminal access routes', () => {
   });
 });
 
+describe('getRouteContext automation routes', () => {
+  it('maps quick operations to the device execution page', () => {
+    const context = getRouteContext('/automation/quick-ops');
+
+    expect(context.activeTab).toBe('automation');
+    expect(context.automationPage).toBe('execute');
+  });
+});
+
+describe('getRouteContext topology routes', () => {
+  it('maps the network topology URL to the topology tab', () => {
+    expect(getRouteContext('/monitor/topology').activeTab).toBe('topology');
+  });
+});
+
 describe('getRouteContext monitoring routes', () => {
   it('maps monitoring navigation targets to their rendered panels', () => {
     expect(getRouteContext('/monitor/telemetry').activeTab).toBe('monitoring');

@@ -14,7 +14,8 @@ __all__ = [
     '_table_columns',
     '_table_columns_deprecated',
     '_db_initialized',
-    'fetch_interface_data'
+    'fetch_interface_data',
+    'fetch_interface_data_for_devices',
 ]
 
 # Map attributes to their source modules
@@ -26,6 +27,7 @@ _ATTR_MAP = {
     '_SERIAL_PK': core,
     '_JSON_ARRAY_FN': core,
     'fetch_interface_data': core,
+    'fetch_interface_data_for_devices': core,
     'init_db': schema,
     '_table_columns': schema,
     '_table_columns_deprecated': schema,

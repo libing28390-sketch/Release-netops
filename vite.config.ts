@@ -52,6 +52,11 @@ export default defineConfig(({ mode }) => {
         '@': path.resolve(__dirname, '.'),
       },
     },
+    optimizeDeps: {
+      // The default HTML glob also finds historical dist-* validation builds.
+      // Follow imports from the application entry instead of scanning those copies.
+      entries: ['index.html'],
+    },
     build: {
       // The remaining three.js chunk is an intentionally lazy WebGL dependency
       // for the rack/home 3D views; keep the warning focused on initial app code.
@@ -77,20 +82,6 @@ export default defineConfig(({ mode }) => {
               || moduleId.includes('/node_modules/react-is/')
               || moduleId.includes('/node_modules/use-sync-external-store/')) {
               return 'react-vendor';
-            }
-
-            if (moduleId.includes('/node_modules/@react-three/')) {
-              return 'react-three-vendor';
-            }
-
-            if (moduleId.includes('/node_modules/three/')) {
-              return 'three-vendor';
-            }
-
-            if (moduleId.includes('/node_modules/three-')
-              || moduleId.includes('/node_modules/troika-')
-              || moduleId.includes('/node_modules/camera-controls/')) {
-              return 'webgl-addons-vendor';
             }
 
             // Recharts and React Three Fiber both depend on this shared
@@ -145,8 +136,8 @@ export default defineConfig(({ mode }) => {
           '**/backup/**',
           '**/data/**',
           '**/dist/**',
-          '**/.codex-build-validation*/**',
-          '**/.codex-tmp/**',
+          '**/dist-*/**',
+          '**/.codex-*/**',
         ],
       },
       proxy: {

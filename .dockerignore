@@ -24,6 +24,8 @@ dist-ssr
 *.so
 build/
 dist/
+dist-*/
+.codex-*/
 
 # Agent / IDE Artifacts
 task.md

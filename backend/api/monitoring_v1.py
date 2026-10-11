@@ -1201,14 +1201,6 @@ def _load_compile_inputs(conn, collector_id: str, user: Any = None):
         conn.rollback()
         logger.warning("[CollectorCompile] Failed to query interface profiles: %s", exc)
         interface_profiles = []
-    try:
-        from services.tag_service import get_device_tags
-        for device in devices:
-            device["tag_ids"] = [str(item.get("id") or "") for item in get_device_tags(conn, str(device.get("id") or "")) if item.get("id")]
-    except Exception:
-        conn.rollback()
-        for device in devices:
-            device.setdefault("tag_ids", [])
     modules = [_dict(row) for row in conn.execute("SELECT * FROM snmp_modules WHERE enabled = 1").fetchall()]
     variants = [_dict(row) for row in conn.execute("SELECT * FROM snmp_module_variants WHERE enabled = 1").fetchall()]
     collectors = [_dict(row) for row in conn.execute("SELECT * FROM monitoring_collectors WHERE enabled = 1").fetchall()]
@@ -1257,6 +1249,7 @@ def _load_compile_inputs(conn, collector_id: str, user: Any = None):
             credentials = []
     aliases = {str(item["id"]): opaque_auth_alias(str(item["id"])) for item in credentials if item.get("id")}
     snmp_devices = []
+    missing_snmp_credentials = []
     for device in devices:
         if str(device.get("role") or "").lower() == "server" or "server" in str(device.get("device_category") or "").lower():
             continue
@@ -1292,14 +1285,32 @@ def _load_compile_inputs(conn, collector_id: str, user: Any = None):
             if auth_alias or (credential_id and credential_id in aliases):
                 snmp_devices.append(device)
             else:
-                logger.warning(
-                    "[CollectorCompile] Skipping device %s (%s) from SNMP collection: no SNMP credential or community configured",
-                    device.get("id"), device.get("hostname") or device.get("ip_address"),
+                missing_snmp_credentials.append(
+                    str(device.get("hostname") or device.get("ip_address") or device.get("id") or "unknown")
                 )
         except Exception:
             # A legacy/incomplete CMDB row is left for the compiler to mark as
             # unconfigured; no plaintext fallback is introduced here.
             pass
+    if missing_snmp_credentials:
+        examples = ", ".join(missing_snmp_credentials[:5])
+        logger.warning(
+            "[CollectorCompile] Excluded %d online device(s) from SNMP collection because no SNMP credential/community is configured (examples: %s)",
+            len(missing_snmp_credentials),
+            examples,
+        )
+    try:
+        from services.tag_service import get_device_tags
+        for device in snmp_devices:
+            device["tag_ids"] = [
+                str(item.get("id") or "")
+                for item in get_device_tags(conn, str(device.get("id") or ""))
+                if item.get("id")
+            ]
+    except Exception:
+        conn.rollback()
+        for device in snmp_devices:
+            device.setdefault("tag_ids", [])
     return snmp_devices, plans, modules, variants, collectors, credentials, aliases, servers, interface_profiles
 
 

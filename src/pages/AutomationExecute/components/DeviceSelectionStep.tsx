@@ -1,7 +1,7 @@
 import { DataTable } from '../../../components/DataTable';
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, CheckCircle2, LayoutGrid, List, Server, Terminal, Cpu, X, ChevronDown, ChevronRight, Filter } from 'lucide-react';
+import { Search, CheckCircle2, LayoutGrid, List, Server, Terminal, Cpu, X, ChevronDown, ChevronRight, Filter, LoaderCircle, RefreshCw } from 'lucide-react';
 import type { Device } from '../../../types';
 import Pagination from '../../../components/Pagination';
 import { DEVICE_PAGE_SIZE } from '../constants';
@@ -22,18 +22,24 @@ interface DeviceSelectionStepProps {
   setDeviceTypeFilter: (val: 'all' | 'network' | 'server') => void;
   statusFilter: string;
   setStatusFilter: (val: 'all' | 'online' | 'offline') => void;
-  filteredDevices: Device[];
+  deviceItems: Device[];
+  totalDevices: number;
+  onlineDeviceCount: number;
+  devicePageLoading: boolean;
+  devicePageError: string;
+  onRetryDevicePage: () => void;
+  exportAllMatchingDevices: () => Promise<{ headers: string[]; rows: unknown[][] }>;
   vendors: string[];
   vendorFilter: string;
   setVendorFilter: (val: string) => void;
   handleSelectAllOnline: () => void;
   deviceViewMode: 'grid' | 'list';
   setDeviceViewMode: (val: 'grid' | 'list') => void;
-  pagedDevices: Device[];
   batchMode: boolean;
   onToggleBatchMode: () => void;
   batchDeviceIds: string[];
   onToggleBatchDevice: (deviceId: string) => void;
+  onRememberDevice: (device: Device) => void;
   selectedDevice: Device | null;
   devicePage: number;
   setDevicePage: (val: number) => void;
@@ -59,18 +65,24 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
   setDeviceTypeFilter,
   statusFilter,
   setStatusFilter,
-  filteredDevices,
+  deviceItems,
+  totalDevices,
+  onlineDeviceCount,
+  devicePageLoading,
+  devicePageError,
+  onRetryDevicePage,
+  exportAllMatchingDevices,
   vendors,
   vendorFilter,
   setVendorFilter,
   handleSelectAllOnline,
   deviceViewMode,
   setDeviceViewMode,
-  pagedDevices,
   batchMode,
   onToggleBatchMode,
   batchDeviceIds,
   onToggleBatchDevice,
+  onRememberDevice,
   selectedDevice,
   devicePage,
   setDevicePage,
@@ -81,25 +93,12 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
   devices,
 }) => {
   const [filterCollapsed, setFilterCollapsed] = useState(false);
-  const deviceExportData = {
-    headers: [
-      isZh ? '状态' : 'Status',
-      isZh ? '主机名' : 'Hostname',
-      'IP',
-      isZh ? '厂商' : 'Vendor',
-      isZh ? '类型' : 'Type',
-      isZh ? '角色' : 'Role',
-      isZh ? '站点' : 'Site',
-    ],
-    rows: filteredDevices.map((device) => [
-      device.status === 'online' ? (isZh ? '在线' : 'Online') : (isZh ? '离线' : 'Offline'),
-      device.hostname,
-      device.ip_address,
-      getVendor(device),
-      getDeviceCategory(device) === 'server' ? (isZh ? '服务器' : 'Server') : (isZh ? '网络设备' : 'Network'),
-      device.role || '—',
-      device.site || '—',
-    ]),
+  const [expandedSites, setExpandedSites] = useState<Set<string>>(new Set());
+  const toggleDeviceSelection = (device: Device) => {
+    const isAlreadySelected = batchDeviceIds.includes(device.id);
+    if (!isAlreadySelected) onRememberDevice(device);
+    if (!batchMode) onToggleBatchMode();
+    onToggleBatchDevice(device.id);
   };
 
   return (
@@ -157,20 +156,56 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
               <label className="text-[10px] font-semibold text-gray-400 block mb-1.5">{isZh ? '站点' : 'Site'}</label>
               <div className="flex flex-wrap gap-1">
                 {deviceTree.map((node) => (
-                  <button
-                    key={node.site}
-                    onClick={() => handleTreeFilter(node.site, null)}
-                    className={`px-2 py-1 rounded-md text-[10px] font-medium transition-all ${
-                      treeFilterSite === node.site
-                        ? 'bg-cyan-50 text-cyan-700 ring-1 ring-cyan-200'
-                        : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
-                    }`}
-                  >
-                    {node.site}
-                    <span className="ml-1 text-[9px] opacity-60">
-                      {node.onlineCount}/{node.count}
-                    </span>
-                  </button>
+                  <div key={node.site} className="w-full">
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => handleTreeFilter(node.site, null)}
+                        className={`flex-1 px-2 py-1 rounded-md text-left text-[10px] font-medium transition-all ${
+                          treeFilterSite === node.site && !treeFilterRole
+                            ? 'bg-cyan-50 text-cyan-700 ring-1 ring-cyan-200'
+                            : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
+                        }`}
+                      >
+                        {node.site}
+                        <span className="ml-1 text-[9px] opacity-60">
+                          {node.onlineCount}/{node.count}
+                        </span>
+                      </button>
+                      {node.roles.length > 0 && (
+                        <button
+                          type="button"
+                          title={isZh ? '按角色筛选' : 'Filter by role'}
+                          aria-label={`${isZh ? '展开' : 'Expand'} ${node.site} ${isZh ? '角色' : 'roles'}`}
+                          onClick={() => setExpandedSites((current) => {
+                            const next = new Set(current);
+                            if (next.has(node.site)) next.delete(node.site);
+                            else next.add(node.site);
+                            return next;
+                          })}
+                          className="rounded p-1 text-gray-400 hover:bg-cyan-50 hover:text-cyan-600"
+                        >
+                          <ChevronRight size={12} className={`transition-transform ${expandedSites.has(node.site) ? 'rotate-90' : ''}`} />
+                        </button>
+                      )}
+                    </div>
+                    {expandedSites.has(node.site) && node.roles.length > 0 && (
+                      <div className="ml-2 mt-1 flex flex-wrap gap-1 border-l border-gray-100 pl-2">
+                        {node.roles.map((role) => (
+                          <button
+                            key={`${node.site}-${role.role}`}
+                            onClick={() => handleTreeFilter(node.site, role.role)}
+                            className={`px-2 py-1 rounded-md text-[9px] font-medium transition-all ${
+                              treeFilterSite === node.site && treeFilterRole === role.role
+                                ? 'bg-cyan-50 text-cyan-700 ring-1 ring-cyan-200'
+                                : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
+                            }`}
+                          >
+                            {role.role} <span className="opacity-60">{role.onlineCount}/{role.count}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 ))}
               </div>
             </div>
@@ -214,7 +249,7 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
             </div>
             {/* Summary */}
             <div className="pt-2 border-t border-gray-100 text-[10px] text-gray-400">
-              {isZh ? '匹配' : 'Found'} <span className="font-semibold text-gray-600">{filteredDevices.length}</span> {isZh ? '台设备' : 'devices'}
+              {isZh ? '匹配' : 'Found'} <span className="font-semibold text-gray-600">{totalDevices}</span> {isZh ? '台设备' : 'devices'}
             </div>
           </div>}
         </div>
@@ -244,7 +279,7 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
                 className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-100 hover:bg-emerald-100 transition-all"
               >
                 <CheckCircle2 size={11} />
-                {isZh ? '全选在线' : 'Select Online'}
+                {isZh ? '选择本页在线设备' : 'Select online on this page'}
               </button>
               <div className="w-px h-5 bg-gray-200" />
               <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
@@ -272,9 +307,26 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
 
           {/* List display */}
           <div className="flex-1 min-h-0 overflow-auto">
-            {deviceViewMode === 'grid' ? (
+            {devicePageError ? (
+              <div role="alert" className="m-3 rounded-xl border border-rose-100 bg-rose-50 px-5 py-8 text-center text-sm text-rose-700">
+                <p>{devicePageError}</p>
+                <button type="button" onClick={onRetryDevicePage} className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100">
+                  <RefreshCw size={12} /> {isZh ? '重试' : 'Retry'}
+                </button>
+              </div>
+            ) : devicePageLoading ? (
+              <div role="status" className="flex h-full min-h-40 items-center justify-center gap-2 text-sm text-gray-400">
+                <LoaderCircle size={16} className="animate-spin text-cyan-500" />
+                {isZh ? '正在加载当前页设备…' : 'Loading this device page…'}
+              </div>
+            ) : deviceItems.length === 0 ? (
+              <div className="flex h-full min-h-40 flex-col items-center justify-center text-gray-300">
+                <Server size={32} strokeWidth={1} className="mb-3 opacity-50" />
+                <p className="text-sm">{totalDevices === 0 ? (isZh ? '没有匹配的设备' : 'No matching devices') : (isZh ? '当前页暂无设备' : 'No devices on this page')}</p>
+              </div>
+            ) : deviceViewMode === 'grid' ? (
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2.5">
-                {pagedDevices.map((device) => {
+                {deviceItems.map((device) => {
                   const isSelected = batchMode ? batchDeviceIds.includes(device.id) : selectedDevice?.id === device.id;
                   const vendor = getVendor(device);
                   const isOffline = device.status !== 'online';
@@ -286,8 +338,7 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
                       disabled={isOffline}
                       onClick={() => {
                         if (isOffline) return;
-                        if (!batchMode) onToggleBatchMode();
-                        onToggleBatchDevice(device.id);
+                        toggleDeviceSelection(device);
                       }}
                       className={`relative p-3 rounded-xl border-2 text-left transition-all group ${
                         isOffline
@@ -327,34 +378,31 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
                     </motion.button>
                   );
                 })}
-                {filteredDevices.length === 0 && (
-                  <div className="col-span-full py-16 text-center text-gray-300">
-                    <Server size={32} strokeWidth={1} className="mx-auto mb-3 opacity-50" />
-                    <p className="text-sm">{isZh ? '没有匹配的设备' : 'No matching devices'}</p>
-                  </div>
-                )}
               </div>
             ) : (
               <div className="rounded-xl border border-gray-100 bg-white overflow-hidden">
-                <DataTable unstyled exportConfig={{ filename: 'automation-device-selection', language: isZh ? 'zh' : 'en', disabled: filteredDevices.length === 0, exportData: deviceExportData }} className="nx-data-table nx-data-table--compact text-left">
+                <DataTable unstyled exportConfig={{ filename: 'automation-device-selection', language: isZh ? 'zh' : 'en', disabled: totalDevices === 0, exportData: exportAllMatchingDevices }} className="nx-data-table nx-data-table--compact text-left">
                   <thead>
                     <tr className="border-b border-gray-100 bg-gray-50/60">
                       <th className="w-10 px-3 py-2">
                         <input
                           type="checkbox"
                           checked={
-                            pagedDevices.filter((d) => d.status === 'online').length > 0 &&
-                            pagedDevices.filter((d) => d.status === 'online').every((d) => batchDeviceIds.includes(d.id))
+                            deviceItems.filter((d) => d.status === 'online').length > 0 &&
+                            deviceItems.filter((d) => d.status === 'online').every((d) => batchDeviceIds.includes(d.id))
                           }
                           onChange={() => {
                             if (!batchMode) onToggleBatchMode();
-                            const onlineOnPage = pagedDevices.filter((d) => d.status === 'online');
+                            const onlineOnPage = deviceItems.filter((d) => d.status === 'online');
                             const allSelected = onlineOnPage.every((d) => batchDeviceIds.includes(d.id));
                             onlineOnPage.forEach((d) => {
                               if (allSelected) {
                                 if (batchDeviceIds.includes(d.id)) onToggleBatchDevice(d.id);
                               } else {
-                                if (!batchDeviceIds.includes(d.id)) onToggleBatchDevice(d.id);
+                                if (!batchDeviceIds.includes(d.id)) {
+                                  onRememberDevice(d);
+                                  onToggleBatchDevice(d.id);
+                                }
                               }
                             });
                           }}
@@ -372,7 +420,7 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
                     </tr>
                   </thead>
                   <tbody>
-                    {pagedDevices.map((device) => {
+                    {deviceItems.map((device) => {
                       const isSelected = batchDeviceIds.includes(device.id);
                       const vendor = getVendor(device);
                       const isOffline = device.status !== 'online';
@@ -381,8 +429,7 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
                           key={device.id}
                           onClick={() => {
                             if (isOffline) return;
-                            if (!batchMode) onToggleBatchMode();
-                            onToggleBatchDevice(device.id);
+                            toggleDeviceSelection(device);
                           }}
                           className={`border-b border-gray-50 transition-colors ${
                             isOffline ? 'opacity-40 cursor-not-allowed' : isSelected ? 'bg-cyan-50/70 hover:bg-cyan-50 cursor-pointer' : 'hover:bg-gray-50/80 cursor-pointer'
@@ -397,8 +444,7 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
                               onChange={(e) => {
                                 e.stopPropagation();
                                 if (isOffline) return;
-                                if (!batchMode) onToggleBatchMode();
-                                onToggleBatchDevice(device.id);
+                                toggleDeviceSelection(device);
                               }}
                               onClick={(e) => e.stopPropagation()}
                               className="w-3.5 h-3.5 rounded accent-cyan-500 disabled:opacity-30"
@@ -440,22 +486,16 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
                     })}
                   </tbody>
                 </DataTable>
-                {filteredDevices.length === 0 && (
-                  <div className="py-16 text-center text-gray-300">
-                    <Server size={32} strokeWidth={1} className="mx-auto mb-3 opacity-50" />
-                    <p className="text-sm">{isZh ? '没有匹配的设备' : 'No matching devices'}</p>
-                  </div>
-                )}
               </div>
             )}
           </div>
 
           {/* Pagination */}
-          {filteredDevices.length > DEVICE_PAGE_SIZE && (
+          {totalDevices > DEVICE_PAGE_SIZE && (
             <div className="flex-shrink-0 px-1">
               <Pagination
                 currentPage={devicePage}
-                totalItems={filteredDevices.length}
+                totalItems={totalDevices}
                 onPageChange={setDevicePage}
                 itemsPerPage={DEVICE_PAGE_SIZE}
                 language={language}
@@ -469,10 +509,10 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
       <div className="flex-shrink-0 flex items-center justify-between rounded-xl border border-gray-100 bg-white px-4 py-2.5 shadow-sm">
         <div className="flex items-center gap-3">
           <span className="text-xs text-gray-500">
-            {isZh ? `共 ${filteredDevices.length} 台` : `${filteredDevices.length} devices`}
+            {isZh ? `共 ${totalDevices} 台` : `${totalDevices} devices`}
             {statusFilter === 'all' && (
               <span className="ml-1.5 text-emerald-600 font-medium font-sans">
-                ({devices.filter((d) => d.status === 'online').length} {isZh ? '在线' : 'online'})
+                ({onlineDeviceCount} {isZh ? '在线' : 'online'})
               </span>
             )}
           </span>

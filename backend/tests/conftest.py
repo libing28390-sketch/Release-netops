@@ -222,6 +222,7 @@ def requester(make_user):
     return make_user(
         "alice_requester",
         role="Operator",
+        tenant_id="tenant-default",
         change_groups=["initial_reviewer"],
         mfa_enabled=True,
     )
@@ -229,9 +230,15 @@ def requester(make_user):
 
 @pytest.fixture()
 def initial_reviewer(make_user):
-    return make_user("bob_initial", role="Operator", change_groups=["initial_reviewer"])
+    return make_user(
+        "bob_initial", role="Operator", tenant_id="tenant-default",
+        change_groups=["initial_reviewer"],
+    )
 
 
 @pytest.fixture()
 def final_approver(make_user):
-    return make_user("carol_final", role="Administrator", change_groups=["final_approver"])
+    return make_user(
+        "carol_final", role="Administrator", tenant_id="tenant-default",
+        change_groups=["final_approver"],
+    )

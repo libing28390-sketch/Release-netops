@@ -2,8 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { Activity, RotateCcw, ArrowRight, User, XCircle, Shield, HelpCircle, Clock, Server, CheckCircle2, Cpu } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import ForgotPasswordModal from './ForgotPasswordModal';
-import ThreeCyberNetwork from './home/ThreeCyberNetwork';
 import { PasswordInputField } from './ui/PasswordInputField';
+
+const ThreeCyberNetwork = React.lazy(() => import('./home/ThreeCyberNetwork'));
 
 interface LoginScreenProps {
   isDark: boolean;
@@ -98,9 +99,11 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
   }, []);
 
   return (
-    <div className="h-screen w-screen flex flex-col justify-between font-sans relative overflow-hidden select-none bg-[#ffffff] text-gray-900 p-5 sm:p-7 lg:p-9">
+    <div className="h-screen w-full flex flex-col justify-between font-sans relative overflow-hidden select-none bg-[#ffffff] text-gray-900 p-5 sm:p-7 lg:p-9">
       {/* ── 1. Spatial Network Field Background ── */}
-      <ThreeCyberNetwork />
+      <React.Suspense fallback={null}>
+        <ThreeCyberNetwork />
+      </React.Suspense>
 
       {/* ── 2. Top Header: Minimal Brand, Real-time Clock & Live Status ── */}
       <header className="w-full relative z-20 flex items-center justify-between pointer-events-none flex-shrink-0">

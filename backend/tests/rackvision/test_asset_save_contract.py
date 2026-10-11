@@ -186,18 +186,12 @@ def test_asset_http_put_preserves_sync_scope_and_rollback_contracts(
     )
 
     primary_id = primary["id"]
-    normal_hostname = _id("asset-save-updated-host")
-    normal_tag = _id("asset-save-updated-tag")
-    normal_ip = "192.0.2.82"
+    before_update = _asset_state(primary_id)
     updated = _request(
         "PUT",
         f"/api/assets/{primary_id}?run_bg_rotate=false",
         headers=headers_a,
         json={
-            "asset_tag": normal_tag,
-            "hostname": normal_hostname,
-            "model": "Test switch revised",
-            "management_ip": normal_ip,
             "department": "Network Operations",
             "notes": "ordinary staging update",
         },
@@ -205,24 +199,30 @@ def test_asset_http_put_preserves_sync_scope_and_rollback_contracts(
     assert updated.status_code == 200, updated.text
     state = _asset_state(primary_id)
     assert state["lifecycle_status"] == "staging"
-    assert state["asset_tag"] == normal_tag
-    assert state["hostname"] == state["device_hostname"] == normal_hostname
+    assert state["asset_tag"] == before_update["asset_tag"]
+    assert state["hostname"] == state["device_hostname"] == before_update["hostname"]
     assert state["asset_vendor"] == state["device_vendor"] == "Cisco"
-    assert state["asset_model"] == state["device_model"] == "Test switch revised"
+    assert state["asset_model"] == state["device_model"] == before_update["asset_model"]
     assert state["asset_platform"] == state["device_platform"] == "cisco_iosxe"
-    assert state["management_ip"] == state["ip_address"] == normal_ip
+    assert state["management_ip"] == state["ip_address"] == before_update["management_ip"]
     assert state["asset_site_id"] == state["device_site_id"] == site_a
     assert state["device_tenant_id"] == tenant_a
     assert state["department"] == "Network Operations"
 
     before_conflict = _asset_state(primary_id)
-    hostname_conflict = _request(
+    locked_identity = _request(
         "PUT",
         f"/api/assets/{primary_id}?run_bg_rotate=false",
         headers=headers_a,
-        json={"hostname": _asset_state(conflict["id"])["hostname"], "notes": "must not persist"},
+        json={
+            "asset_tag": _id("asset-save-revised-tag"),
+            "hostname": _asset_state(conflict["id"])["hostname"],
+            "model": "must not persist",
+            "management_ip": "192.0.2.82",
+        },
     )
-    assert hostname_conflict.status_code == 409, hostname_conflict.text
+    assert locked_identity.status_code == 422, locked_identity.text
+    assert "资产创建后" in locked_identity.json()["detail"]
     after_conflict = _asset_state(primary_id)
     assert after_conflict == before_conflict
 
@@ -232,8 +232,8 @@ def test_asset_http_put_preserves_sync_scope_and_rollback_contracts(
         f"/api/assets/{primary_id}?run_bg_rotate=false",
         headers=headers_a,
         json={
-            "hostname": _id("must-rollback"),
             "department": "must rollback",
+            "notes": "must rollback",
             "rack_id": _id("missing-rack"),
         },
     )
@@ -263,20 +263,7 @@ def test_asset_http_put_preserves_sync_scope_and_rollback_contracts(
         "PUT",
         f"/api/assets/{primary_id}?run_bg_rotate=false",
         headers=headers_a,
-        json={"vendor": "Huawei", "platform": "cisco_iosxe"},
+        json={"vendor": "Huawei"},
     )
-    assert switched_to_huawei.status_code == 200, switched_to_huawei.text
-    huawei_state = _asset_state(primary_id)
-    assert huawei_state["asset_vendor"] == huawei_state["device_vendor"] == "Huawei"
-    assert huawei_state["asset_platform"] == huawei_state["device_platform"] == "huawei_vrp"
-
-    switched_to_h3c = _request(
-        "PUT",
-        f"/api/assets/{primary_id}?run_bg_rotate=false",
-        headers=headers_a,
-        json={"vendor": "H3C", "platform": "huawei_vrp"},
-    )
-    assert switched_to_h3c.status_code == 200, switched_to_h3c.text
-    h3c_state = _asset_state(primary_id)
-    assert h3c_state["asset_vendor"] == h3c_state["device_vendor"] == "H3C"
-    assert h3c_state["asset_platform"] == h3c_state["device_platform"] == "h3c_comware"
+    assert switched_to_huawei.status_code == 422, switched_to_huawei.text
+    assert _asset_state(primary_id) == before_conflict

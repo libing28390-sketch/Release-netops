@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { CalendarClock, Plus, X, RotateCcw } from 'lucide-react';
 import PageHero from '../../components/PageHero';
 import { ActionButton } from '../../components/ui/ActionIconButton';
@@ -90,8 +90,8 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
   const [selectedSchedule, setSelectedSchedule] = useState<ScheduledJob | null>(null);
   const [showScheduleDetail, setShowScheduleDetail] = useState(false);
 
-  const [inspRuns, setInspRuns] = useState<any[]>([]);
   const [inspRunsLoading, setInspRunsLoading] = useState(false);
+  const [inspRunsError, setInspRunsError] = useState('');
   const [inspRunPage, setInspRunPage] = useState(1);
   const [inspRunPageSize, setInspRunPageSize] = useState(10);
   const [inspRunTotal, setInspRunTotal] = useState(0);
@@ -103,16 +103,13 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
   const [searchName, setSearchName] = useState('');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
-  const [allFutureSchedules, setAllFutureSchedules] = useState<ScheduledJob[]>([]);
-
-  const paginatedSchedules = useMemo(() => {
-    const start = (inspSchedulePage - 1) * inspSchedulePageSize;
-    return allFutureSchedules.slice(start, start + inspSchedulePageSize);
-  }, [allFutureSchedules, inspSchedulePage, inspSchedulePageSize]);
+  const futureSchedulesControllerRef = useRef<AbortController | null>(null);
+  const executionHistoryControllerRef = useRef<AbortController | null>(null);
 
   // Unified execution history states
   const [unifiedLogs, setUnifiedLogs] = useState<UnifiedExecutionLog[]>([]);
   const [executionTypeFilter, setExecutionTypeFilter] = useState<'all' | 'manual' | 'plan' | 'job'>('all');
+  const [executionHistorySearch, setExecutionHistorySearch] = useState('');
 
   const [selectedLog, setSelectedLog] = useState<UnifiedExecutionLog | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
@@ -174,10 +171,15 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
   }, [authHeaders, form.check_items.length]);
 
   const fetchInspSchedules = useCallback(async () => {
+    futureSchedulesControllerRef.current?.abort();
+    const controller = new AbortController();
+    futureSchedulesControllerRef.current = controller;
     setInspSchedulesLoading(true);
     try {
       const params = new URLSearchParams();
       params.append('time_range', timeRange);
+      params.append('page', String(inspSchedulePage));
+      params.append('page_size', String(inspSchedulePageSize));
       if (searchName.trim()) {
         params.append('query', searchName.trim());
       }
@@ -189,16 +191,27 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
           params.append('end_time', new Date(customEnd).toISOString());
         }
       }
-      const r = await fetch(`/api/scheduled-jobs/future?${params.toString()}`, { headers: authHeaders });
+      const r = await fetch(`/api/scheduled-jobs/future?${params.toString()}`, {
+        headers: authHeaders,
+        signal: controller.signal,
+      });
       if (r.ok) {
         const j = await r.json();
-        const items = j.data || [];
-        setAllFutureSchedules(items);
-        setInspScheduleTotal(items.length);
+        const data = j.data || {};
+        const items = Array.isArray(data.items) ? data.items : [];
+        const total = Number(data.total || 0);
+        if (!controller.signal.aborted) {
+          setInspSchedules(items);
+          setInspScheduleTotal(total);
+          const lastPage = Math.max(1, Math.ceil(total / inspSchedulePageSize));
+          if (inspSchedulePage > lastPage) setInspSchedulePage(lastPage);
+        }
       }
     } catch { /* ignore */ }
-    finally { setInspSchedulesLoading(false); }
-  }, [authHeaders, timeRange, searchName, customStart, customEnd]);
+    finally {
+      if (!controller.signal.aborted) setInspSchedulesLoading(false);
+    }
+  }, [authHeaders, timeRange, searchName, customStart, customEnd, inspSchedulePage, inspSchedulePageSize]);
 
   const fetchScripts = useCallback(async () => {
     if (!authHeaders) return;
@@ -386,72 +399,59 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
     left !== null && JSON.stringify(left) === JSON.stringify(right);
 
   const fetchInspRuns = useCallback(async () => {
+    executionHistoryControllerRef.current?.abort();
+    const controller = new AbortController();
+    executionHistoryControllerRef.current = controller;
     setInspRunsLoading(true);
+    setInspRunsError('');
     try {
-      const inspResp = await fetch(`/api/inspections?limit=500`, { headers: authHeaders });
-      let inspections: any[] = [];
-      if (inspResp.ok) {
-        const j = await inspResp.json();
-        const d = j.data;
-        inspections = Array.isArray(d) ? d : (d?.items || []);
-      }
+      const params = new URLSearchParams({
+        page: String(inspRunPage),
+        page_size: String(inspRunPageSize),
+        trigger_type: executionTypeFilter,
+      });
+      if (executionHistorySearch.trim()) params.set('query', executionHistorySearch.trim());
+      const response = await fetch(`/api/inspections/execution-history?${params.toString()}`, {
+        headers: authHeaders,
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error('Execution history request failed');
+      const payload = await response.json();
+      const data = payload.data || {};
+      const items = Array.isArray(data.items) ? data.items : [];
+      if (controller.signal.aborted) return;
 
-      const pbResp = await fetch(`/api/playbooks?page=1&page_size=500`, { headers: authHeaders });
-      let playbooks: any[] = [];
-      if (pbResp.ok) {
-        const j = await pbResp.json();
-        playbooks = Array.isArray(j) ? j : (j?.items || []);
-      } else {
-        if (pbResp.status === 403) {
-          showToast(zh ? '获取执行历史被拒绝 (403)' : 'Access denied to execution history (403)', 'error');
-        }
-      }
-
-      const normalizedInsp: UnifiedExecutionLog[] = inspections.map(run => ({
-        id: run.id,
-        source: 'inspection',
-        started_at: run.started_at,
-        trigger_type: run.trigger_type === 'manual' ? 'manual' : 'plan',
-        status: run.status,
-        total_devices: run.total_devices || 0,
-        success_count: run.success_count || 0,
-        failed_count: run.failed_count || 0,
-        avg_health_score: run.avg_health_score,
-        created_by: run.created_by || 'system',
-        name: run.schedule_name || run.name || (zh ? '网络巡检' : 'Network Inspection')
+      const logs: UnifiedExecutionLog[] = items.map((item: any) => ({
+        id: String(item.id),
+        source: (item.source === 'playbook' ? 'playbook' : 'inspection') as UnifiedExecutionLog['source'],
+        started_at: item.started_at || '',
+        trigger_type: (item.trigger_type || 'manual') as UnifiedExecutionLog['trigger_type'],
+        status: item.status || 'unknown',
+        total_devices: Number(item.total_devices || 0),
+        success_count: Number(item.success_count || 0),
+        failed_count: Number(item.failed_count || 0),
+        partial_count: Number(item.partial_count || 0),
+        avg_health_score: item.avg_health_score == null ? undefined : Number(item.avg_health_score),
+        created_by: item.created_by || (item.source === 'playbook' ? 'admin' : 'system'),
+        name: item.name || (item.source === 'playbook'
+          ? (zh ? '快捷命令执行' : 'Quick Playbook')
+          : (zh ? '网络巡检' : 'Network Inspection')),
       }));
-
-      const normalizedPlaybooks: UnifiedExecutionLog[] = playbooks.map(pb => {
-        const isScheduled = pb.author === 'scheduler' || pb.author === 'system'
-                            || (pb.scenario_id && String(pb.scenario_id).startsWith('scheduled:'));
-        return {
-          id: pb.id,
-          source: 'playbook',
-          started_at: pb.created_at,
-          trigger_type: isScheduled ? 'job' : 'manual',
-          status: pb.status,
-          total_devices: pb.total_devices || 0,
-          success_count: pb.success_count || 0,
-          failed_count: pb.failed_count || 0,
-          partial_count: pb.partial_count || 0,
-          created_by: pb.author || 'admin',
-          name: pb.scenario_name || pb.task_name || (zh ? '快捷命令执行' : 'Quick Playbook')
-        };
-      });
-
-      const combined = [...normalizedInsp, ...normalizedPlaybooks].sort((a, b) => {
-        const timeA = a.started_at ? new Date(a.started_at).getTime() : 0;
-        const timeB = b.started_at ? new Date(b.started_at).getTime() : 0;
-        return (isNaN(timeB) ? 0 : timeB) - (isNaN(timeA) ? 0 : timeA);
-      });
-
-      setUnifiedLogs(combined);
-    } catch (e) {
-      console.error(e);
+      const total = Number(data.total || 0);
+      setUnifiedLogs(logs);
+      setInspRunTotal(total);
+      const lastPage = Math.max(1, Math.ceil(total / inspRunPageSize));
+      if (inspRunPage > lastPage) setInspRunPage(lastPage);
+    } catch {
+      if (!controller.signal.aborted) {
+        setUnifiedLogs([]);
+        setInspRunTotal(0);
+        setInspRunsError(zh ? '加载执行历史失败，请重试' : 'Failed to load execution history. Try again.');
+      }
     } finally {
-      setInspRunsLoading(false);
+      if (!controller.signal.aborted) setInspRunsLoading(false);
     }
-  }, [authHeaders, zh, showToast]);
+  }, [authHeaders, zh, inspRunPage, inspRunPageSize, executionTypeFilter, executionHistorySearch]);
 
   const loadAllExecutionLogs = useCallback(async (): Promise<UnifiedExecutionLog[]> => {
     interface InspectionHistoryRecord extends InspectionRunExportRecord {
@@ -463,7 +463,10 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
     }
     const inspections = await fetchAllInspectionRuns<InspectionHistoryRecord>(authHeaders);
 
-    const playbooks = await fetchAllPaginatedItems<any>('/api/playbooks', new URLSearchParams({ status: 'all' }));
+    const playbooks = await fetchAllPaginatedItems<any>('/api/playbooks', new URLSearchParams({ status: 'all' })).catch((error: unknown) => {
+      if (error instanceof Error && error.message.includes('(HTTP 403)')) return [];
+      throw error;
+    });
     const normalizedInspections: UnifiedExecutionLog[] = inspections.map((run) => ({
       id: run.id,
       source: 'inspection',
@@ -501,17 +504,20 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
     });
   }, [authHeaders, zh]);
 
-  const filteredLogs = useMemo(() => {
-    return unifiedLogs.filter(log => {
-      if (executionTypeFilter === 'all') return true;
-      return log.trigger_type === executionTypeFilter;
-    });
-  }, [unifiedLogs, executionTypeFilter]);
-
-  // Reset log page when filter changes
-  useEffect(() => {
+  const handleExecutionTypeFilterChange = useCallback((filter: 'all' | 'manual' | 'plan' | 'job') => {
+    setExecutionTypeFilter(filter);
     setInspRunPage(1);
-  }, [executionTypeFilter, unifiedLogs.length]);
+  }, []);
+
+  const handleExecutionHistorySearchChange = useCallback((query: string) => {
+    setExecutionHistorySearch(query);
+    setInspRunPage(1);
+  }, []);
+
+  const handleExecutionHistoryPageSizeChange = useCallback((pageSize: number) => {
+    setInspRunPageSize(pageSize);
+    setInspRunPage(1);
+  }, []);
 
   // ESC to close the execution detail modal and the schedule detail modal
   useEffect(() => {
@@ -708,27 +714,20 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
   }, [initialTab]);
 
   useEffect(() => {
-    if (inspSubTab === 'schedules') {
-      fetchInspSchedules();
-    } else if (inspSubTab === 'history') {
-      fetchInspRuns();
-    }
-  }, [inspSubTab, fetchInspSchedules, fetchInspRuns]);
+    if (inspSubTab !== 'schedules') return;
+    fetchInspSchedules();
+    return () => futureSchedulesControllerRef.current?.abort();
+  }, [inspSubTab, fetchInspSchedules]);
+
+  useEffect(() => {
+    if (inspSubTab !== 'history') return;
+    fetchInspRuns();
+    return () => executionHistoryControllerRef.current?.abort();
+  }, [inspSubTab, fetchInspRuns]);
 
   useEffect(() => {
     fetchInspectionItems();
   }, [fetchInspectionItems]);
-
-  useEffect(() => {
-    setInspSchedulePage(1);
-  }, [timeRange, searchName, customStart, customEnd]);
-
-  useEffect(() => {
-    const totalPages = Math.ceil(allFutureSchedules.length / inspSchedulePageSize);
-    if (inspSchedulePage > totalPages && totalPages > 0) {
-      setInspSchedulePage(1);
-    }
-  }, [allFutureSchedules.length, inspSchedulePageSize, inspSchedulePage]);
 
   const fetchApprovers = useCallback(async () => {
     try {
@@ -1108,6 +1107,7 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
                         onChange={(e) => setNameFilterInput(e.target.value)}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') {
+                            setInspSchedulePage(1);
                             setSearchName(nameFilterInput);
                           }
                         }}
@@ -1122,6 +1122,7 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
                           key={r}
                           type="button"
                           onClick={() => {
+                            setInspSchedulePage(1);
                             setTimeRange(r);
                             if (r !== 'custom') {
                               setCustomStart('');
@@ -1150,14 +1151,20 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
                         <input
                           type="datetime-local"
                           value={customStart}
-                          onChange={(e) => setCustomStart(e.target.value)}
+                          onChange={(e) => {
+                            setInspSchedulePage(1);
+                            setCustomStart(e.target.value);
+                          }}
                           className="px-2 py-1 text-xs rounded-xl border border-slate-200 focus:outline-none focus:border-cyan-500 font-mono text-[#1e293b]"
                         />
                         <span className="text-slate-400 text-xs">—</span>
                         <input
                           type="datetime-local"
                           value={customEnd}
-                          onChange={(e) => setCustomEnd(e.target.value)}
+                          onChange={(e) => {
+                            setInspSchedulePage(1);
+                            setCustomEnd(e.target.value);
+                          }}
                           className="px-2 py-1 text-xs rounded-xl border border-slate-200 focus:outline-none focus:border-cyan-500 font-mono text-[#1e293b]"
                         />
                       </div>
@@ -1166,13 +1173,17 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
 
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => setSearchName(nameFilterInput)}
+                      onClick={() => {
+                        setInspSchedulePage(1);
+                        setSearchName(nameFilterInput);
+                      }}
                       className="px-4 py-1.5 rounded-xl text-xs font-bold text-white bg-cyan-600 hover:bg-cyan-500 transition-all active:scale-[0.97]"
                     >
                       {zh ? '查询' : 'Query'}
                     </button>
                     <button
                       onClick={() => {
+                        setInspSchedulePage(1);
                         setNameFilterInput('');
                         setSearchName('');
                         setTimeRange('1d');
@@ -1189,7 +1200,7 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
                 <ScheduleList
                   zh={zh}
                   language={language}
-                  schedules={paginatedSchedules}
+                  schedules={inspSchedules}
                   loading={inspSchedulesLoading}
                   total={inspScheduleTotal}
                   page={inspSchedulePage}
@@ -1229,13 +1240,17 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
             zh={zh}
             language={language}
             loading={inspRunsLoading}
-            logs={filteredLogs}
+            errorMessage={inspRunsError}
+            logs={unifiedLogs}
+            total={inspRunTotal}
             page={inspRunPage}
             pageSize={inspRunPageSize}
             onPageChange={setInspRunPage}
-            onPageSizeChange={setInspRunPageSize}
+            onPageSizeChange={handleExecutionHistoryPageSizeChange}
+            searchQuery={executionHistorySearch}
+            onSearchChange={handleExecutionHistorySearchChange}
             executionTypeFilter={executionTypeFilter}
-            onFilterChange={setExecutionTypeFilter}
+            onFilterChange={handleExecutionTypeFilterChange}
             onSelectLog={handleSelectLog}
             onExport={handleExportReport}
             loadAllLogs={loadAllExecutionLogs}

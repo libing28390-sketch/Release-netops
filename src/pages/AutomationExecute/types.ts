@@ -56,6 +56,8 @@ export interface AutomationExecuteTabProps {
   language: string;
   sectionHeaderRowClass: string;
   devices: Device[];
+  /** Device records retained for the IDs selected across server-paginated pages. */
+  rememberedBatchDevices: Device[];
   selectedDevice: Device | null;
   batchMode: boolean;
   batchDeviceIds: string[];
@@ -94,6 +96,8 @@ export interface AutomationExecuteTabProps {
   onScenarioSearchChange: (value: string) => void;
   onToggleBatchMode: () => void;
   onToggleBatchDevice: (deviceId: string) => void;
+  /** Persist a selected page record so execution still has its metadata after paging/navigation. */
+  onRememberDevice: (device: Device) => void;
   onSelectDevice: (device: Device) => void;
   handleClearSelection: () => void;
   onOpenCustomCommandModal: () => void;

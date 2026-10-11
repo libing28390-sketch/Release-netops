@@ -62,6 +62,7 @@ interface TopologyContextValue {
   setHideOrphanDevices: (value: boolean) => void;
   handleTriggerDiscovery: () => Promise<void>;
   handleCancelDiscovery: () => Promise<void>;
+  handleRefreshTopologyData: () => Promise<void>;
   handleExportMap: () => Promise<void>;
   setTopologySearch: (search: string) => void;
   setTopologySiteFilter: (site: string) => void;

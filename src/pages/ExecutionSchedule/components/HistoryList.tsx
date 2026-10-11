@@ -16,11 +16,15 @@ interface HistoryListProps {
   zh: boolean;
   language: string;
   logs: UnifiedExecutionLog[];
+  total: number;
   loading: boolean;
+  errorMessage?: string;
   page: number;
   pageSize: number;
   onPageChange: (p: number) => void;
   onPageSizeChange: (s: number) => void;
+  searchQuery: string;
+  onSearchChange: (query: string) => void;
   executionTypeFilter: 'all' | 'manual' | 'plan' | 'job';
   onFilterChange: (f: 'all' | 'manual' | 'plan' | 'job') => void;
   onSelectLog: (log: UnifiedExecutionLog) => void;
@@ -138,28 +142,11 @@ const ExportDropdown: React.FC<{
 };
 
 const HistoryList: React.FC<HistoryListProps> = ({
-  zh, language, logs, loading, page, pageSize,
-  onPageChange, onPageSizeChange, executionTypeFilter, onFilterChange,
+  zh, language, logs, total, loading, errorMessage, page, pageSize,
+  onPageChange, onPageSizeChange, searchQuery, onSearchChange,
+  executionTypeFilter, onFilterChange,
   onSelectLog, onExport, loadAllLogs,
 }) => {
-  const [searchQuery, setSearchQuery] = useState('');
-
-  const searchedLogs = React.useMemo(() => {
-    if (!searchQuery.trim()) return logs;
-    const q = searchQuery.toLowerCase();
-    return logs.filter(log =>
-      (log.name || '').toLowerCase().includes(q) ||
-      (log.created_by || '').toLowerCase().includes(q) ||
-      (log.status || '').toLowerCase().includes(q)
-    );
-  }, [logs, searchQuery]);
-  const displayLogs = React.useMemo(() => {
-    const start = (page - 1) * pageSize;
-    return searchedLogs.slice(start, start + pageSize);
-  }, [searchedLogs, page, pageSize]);
-
-  useEffect(() => { onPageChange(1); }, [searchQuery, onPageChange]);
-
   const exportHistory = useCallback(async () => {
     const allLogs = (await loadAllLogs()).filter((log) => executionTypeFilter === 'all' || log.trigger_type === executionTypeFilter);
     const query = searchQuery.trim().toLowerCase();
@@ -217,7 +204,7 @@ const HistoryList: React.FC<HistoryListProps> = ({
                   {zh ? '执行流水历史' : 'Execution Logs'}
                 </h3>
                 <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-cyan-100/80 text-cyan-800 font-mono">
-                  {logs.length}
+                  {total}
                 </span>
               </div>
               <p className="text-[11px] text-slate-400 mt-0.5">
@@ -232,7 +219,7 @@ const HistoryList: React.FC<HistoryListProps> = ({
             <input
               type="search"
               value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
+              onChange={e => onSearchChange(e.target.value)}
               placeholder={zh ? '搜索任务名称或执行人...' : 'Search task or operator...'}
               className="w-full pl-8 pr-3 py-1.5 rounded-xl border border-slate-200 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-500 transition-all placeholder:text-slate-300"
             />
@@ -274,8 +261,13 @@ const HistoryList: React.FC<HistoryListProps> = ({
             <RotateCcw size={28} className="animate-spin text-cyan-500" />
             <span className="text-xs font-medium">{zh ? '获取流水中...' : 'Loading history...'}</span>
           </div>
-        ) : displayLogs.length > 0 ? (
-          <DataTable unstyled exportConfig={{ filename: 'execution-history', language: zh ? 'zh' : 'en', disabled: displayLogs.length === 0, exportData: exportHistory }} className="w-full min-w-[1200px] table-fixed border-collapse">
+        ) : errorMessage ? (
+          <div className="flex min-h-[320px] flex-col items-center justify-center gap-3 px-6 py-20 text-center text-rose-500">
+            <AlertCircle size={28} />
+            <p className="text-xs font-medium">{errorMessage}</p>
+          </div>
+        ) : logs.length > 0 ? (
+          <DataTable unstyled exportConfig={{ filename: 'execution-history', language: zh ? 'zh' : 'en', disabled: logs.length === 0, exportData: exportHistory }} className="w-full min-w-[1200px] table-fixed border-collapse">
             <colgroup>
               <col style={{ width: '12%' }} /> {/* 触发时间 */}
               <col style={{ width: '19%' }} /> {/* 任务名称 */}
@@ -305,7 +297,7 @@ const HistoryList: React.FC<HistoryListProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {displayLogs.map(log => {
+              {logs.map(log => {
                 const statusMap: Record<string, { label: string; badgeCls: string; dotCls: string }> = {
                   completed: { label: zh ? '已完成' : 'Completed', badgeCls: 'bg-emerald-50 text-emerald-700 border-emerald-200/60', dotCls: 'bg-emerald-500' },
                   success: { label: zh ? '已完成' : 'Completed', badgeCls: 'bg-emerald-50 text-emerald-700 border-emerald-200/60', dotCls: 'bg-emerald-500' },
@@ -421,11 +413,11 @@ const HistoryList: React.FC<HistoryListProps> = ({
       </div>
 
       {/* ── Pagination Footer ──────────────────────────────────────── */}
-      {searchedLogs.length > 0 && (
+      {total > 0 && (
         <div className="px-6 py-3 border-t border-slate-100 bg-white">
           <Pagination
             currentPage={page}
-            totalItems={searchedLogs.length}
+            totalItems={total}
             onPageChange={onPageChange}
             itemsPerPage={pageSize}
             onItemsPerPageChange={onPageSizeChange}

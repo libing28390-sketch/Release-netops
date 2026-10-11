@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Body, Request, Depends
+from fastapi import APIRouter, HTTPException, Body, Request, Depends, Query
 from typing import Optional
 from datetime import datetime, timedelta
 import uuid
@@ -257,16 +257,24 @@ def list_future_execution_plans(
     start_time: Optional[str] = None,
     end_time: Optional[str] = None,
     query: Optional[str] = None,
+    page: Optional[int] = Query(default=None, ge=1),
+    page_size: Optional[int] = Query(default=None, ge=1, le=100),
     user=require_role("Viewer"),
 ):
     """
     计算未来一段时间内所有已启用作业（包括一次性和周期性 Cron 作业）的执行排班。
     """
     _require_job_collection_permission(user, "view")
+    pagination_requested = page is not None or page_size is not None
+    safe_page = page or 1
+    safe_page_size = page_size or 20
     cache_key = '|'.join((
         str(user.get("user_id") or user.get("id") or ""),
         str(user.get("tenant_id") or ""),
         time_range or '', start_time or '', end_time or '', query or '',
+        'paged' if pagination_requested else 'legacy',
+        str(safe_page) if pagination_requested else '',
+        str(safe_page_size) if pagination_requested else '',
     ))
     cache_hit, cached = read_cache.get('scheduled_jobs_future', cache_key)
     if cache_hit:
@@ -358,10 +366,24 @@ def list_future_execution_plans(
                         logger.error(f"Error parsing cron expression '{job['cron_expr']}' for job '{job['name']}': {e}")
                         pass
         
-        future_runs.sort(key=lambda x: x['run_at'])
+        future_runs.sort(key=lambda x: (x['run_at'], str(x.get('job_id') or '')))
+        if pagination_requested:
+            total = len(future_runs)
+            offset = (safe_page - 1) * safe_page_size
+            page_items = future_runs[offset:offset + safe_page_size]
+            response_data = {
+                'items': page_items,
+                'total': total,
+                'page': safe_page,
+                'page_size': safe_page_size,
+            }
+        else:
+            # Keep the original response for existing callers that do not yet
+            # request pagination (for example, the dashboard's 1-day preview).
+            response_data = future_runs
         response = {
             'success': True,
-            'data': future_runs
+            'data': response_data,
         }
         read_cache.set(
             'scheduled_jobs_future',

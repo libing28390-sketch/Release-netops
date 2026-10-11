@@ -84,10 +84,11 @@ export const AssetModal: React.FC<AssetModalProps> = ({
   const [credMode, setCredMode] = React.useState<'manual' | 'existing'>('manual');
   const [breakGlassAcknowledged, setBreakGlassAcknowledged] = React.useState(false);
   const mgmtIpError = React.useMemo(() => {
+    if (isEditMode) return null;
     const ip = String(form.management_ip || '').trim();
     if (!ip) return null;
     return isValidIpAddress(ip) ? null : (zh ? 'IP 格式不正确' : 'Invalid IP format');
-  }, [form.management_ip, zh]);
+  }, [form.management_ip, isEditMode, zh]);
 
   React.useEffect(() => {
     if (isOpen) {
@@ -191,6 +192,8 @@ export const AssetModal: React.FC<AssetModalProps> = ({
   );
   const selectedSnmpCredential = snmpCredentials.find(c => c.id === form.snmp_credential_id);
   const snmpCommunityConfigured = Boolean(form.snmp_community_set || selectedSnmpCredential?.has_snmp_community);
+  const requiresBreakGlassAck = form.ssh_algorithm_profile === 'legacy_break_glass'
+    && (!isEditMode || editingAsset?.ssh_algorithm_profile !== 'legacy_break_glass');
   const showLookupLoading = isOpen && (lookupsLoading || (!lookupsLoaded && !lookupError));
   const runSaveAction = React.useCallback(async (action: () => void | Promise<void>) => {
     if (saving || saveLockRef.current) return;
@@ -229,6 +232,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
   // platform selected, including when an older alias is loaded for editing.
   // Vendors with multiple platforms remain user-selectable.
   React.useEffect(() => {
+    if (isEditMode) return;
     if (form.asset_type !== 'network_device' || !form.vendor) return;
     const platformOptions = getPlatformsForVendor(form.vendor);
     if (platformOptions.length !== 1) return;
@@ -240,10 +244,18 @@ export const AssetModal: React.FC<AssetModalProps> = ({
       }
       return withTechnologyTag({ ...current, platform: defaultPlatform }, current.vendor, defaultPlatform);
     });
-  }, [allTags, form.asset_type, form.platform, form.vendor, setForm]);
+  }, [allTags, form.asset_type, form.platform, form.vendor, isEditMode, setForm]);
 
   // Real-time U-position validation
   React.useEffect(() => {
+    const placementChanged = !isEditMode || !editingAsset
+      || String(form.site_id || '') !== String(editingAsset.site_id || '')
+      || String(form.rack || '') !== String(editingAsset.rack || '')
+      || String(form.planned_start_u ?? '').trim() !== String(editingAsset.planned_start_u ?? '').trim();
+    if (!placementChanged) {
+      setUValidationError(null);
+      return;
+    }
     const rack = form.rack;
     const startU = parseInt(String(form.planned_start_u), 10);
     const height = parseInt(String(form.u_height), 10);
@@ -277,7 +289,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [form.rack, form.planned_start_u, form.u_height, editingAsset, language]);
+  }, [form.site_id, form.rack, form.planned_start_u, form.u_height, editingAsset, isEditMode, language]);
 
   if (!isOpen) return null;
 
@@ -312,6 +324,11 @@ export const AssetModal: React.FC<AssetModalProps> = ({
             <div className="rounded-lg border border-cyan-100 bg-cyan-50/60 px-3 py-2 text-[10px] text-cyan-800">
               {zh ? '必填规则：主机名、资产编号至少填写一项。存量设备直接投产时，还必须填写普通账号、普通密码和免上收投产原因（至少 5 个字符）。' : 'Required: provide either Hostname or Asset Tag. Legacy devices created as production also require a normal username, normal password, and an exemption reason (minimum 5 characters).'}
             </div>
+            {isEditMode && (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] text-slate-600">
+                {zh ? '资产类型、资产编号、序列号、厂商、型号、主机名、管理 IP 和设备高度在首次录入后固定；站点、机柜和安装 U 位仍可随设备迁移调整。' : 'Asset type, asset tag, serial number, vendor, model, hostname, management IP, and device height are fixed after creation. Site, rack, and installed U position remain editable for moves.'}
+              </div>
+            )}
             {showLookupLoading && (
               <div role="status" className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] text-slate-600">
                 <RefreshCw size={12} className="animate-spin" />
@@ -335,6 +352,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                 <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '资产类型' : 'Asset Type'}</label>
                 <select
                   value={form.asset_type}
+                  disabled={isEditMode}
                   onChange={e => {
                     const assetType = e.target.value;
                     setForm(f => ({
@@ -346,7 +364,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                       platform: assetType === 'server' ? SERVER_PLATFORMS[0]?.value || 'linux' : '',
                     }));
                   }}
-                  className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 focus:outline-none focus:border-[#00bceb]/25"
+                  className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 disabled:bg-black/[0.03] disabled:text-black/35 disabled:cursor-not-allowed focus:outline-none focus:border-[#00bceb]/25"
                   title="Asset Type"
                 >
                   <option value="server">{zh ? '服务器' : 'Server'}</option>
@@ -357,16 +375,18 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                 label={zh ? '主机名' : 'Hostname'}
                 value={form.hostname}
                 onChange={v => setForm(f => ({ ...f, hostname: v }))}
+                disabled={isEditMode}
                 placeholder={zh ? '仅网络设备批量导入时会通过 SNMP 同步' : 'SNMP sync runs on network device import'}
               />
-              <Field label={zh ? '资产编号' : 'Asset Tag'} value={form.asset_tag} onChange={v => setForm(f => ({ ...f, asset_tag: v }))} placeholder="e.g. SRV-BJ-001" />
-              <Field label={zh ? '序列号 (S/N)' : 'Serial Number'} value={form.serial_number} onChange={v => setForm(f => ({ ...f, serial_number: v }))} />
+              <Field label={zh ? '资产编号' : 'Asset Tag'} value={form.asset_tag} onChange={v => setForm(f => ({ ...f, asset_tag: v }))} placeholder="e.g. SRV-BJ-001" disabled={isEditMode} />
+              <Field label={zh ? '序列号 (S/N)' : 'Serial Number'} value={form.serial_number} onChange={v => setForm(f => ({ ...f, serial_number: v }))} disabled={isEditMode} />
               
               <div>
                 <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '厂商' : 'Vendor'}</label>
                 {form.asset_type === 'server' ? (
                   <select
                     value={form.vendor}
+                    disabled={isEditMode}
                     onChange={e => {
                       const vendor = e.target.value;
                       const platformOptions = VENDOR_PLATFORMS[vendor] || [];
@@ -379,7 +399,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                           : (platformOptions[0]?.value || ''),
                       }, vendor, f.platform));
                     }}
-                    className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 focus:outline-none focus:border-[#00bceb]/25"
+                    className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 disabled:bg-black/[0.03] disabled:text-black/35 disabled:cursor-not-allowed focus:outline-none focus:border-[#00bceb]/25"
                     title="Vendor"
                   >
                     <option value="">{zh ? '选择服务器厂商...' : 'Select vendor...'}</option>
@@ -393,6 +413,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                 ) : (
                   <select
                     value={form.vendor}
+                    disabled={isEditMode}
                     onChange={e => {
                       const vendor = e.target.value;
                       const platformOptions = getPlatformsForVendor(vendor);
@@ -408,7 +429,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                         }, vendor, nextPlatform);
                       });
                     }}
-                    className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 focus:outline-none focus:border-[#00bceb]/25"
+                    className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 disabled:bg-black/[0.03] disabled:text-black/35 disabled:cursor-not-allowed focus:outline-none focus:border-[#00bceb]/25"
                     title="Vendor"
                   >
                     <option value="">{zh ? '选择设备厂商...' : 'Select vendor...'}</option>
@@ -423,7 +444,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                   </select>
                 )}
               </div>
-              <Field label={zh ? '型号' : 'Model'} value={form.model} onChange={v => setForm(f => ({ ...f, model: v }))} placeholder="e.g. PowerEdge R750" />
+              <Field label={zh ? '型号' : 'Model'} value={form.model} onChange={v => setForm(f => ({ ...f, model: v }))} placeholder="e.g. PowerEdge R750" disabled={isEditMode} />
               <div>
                 <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '状态' : 'Status'}</label>
                 <select
@@ -488,7 +509,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                   />
                 </div>
               )}
-              <Field label={zh ? '管理IP' : 'Mgmt IP'} value={form.management_ip} onChange={v => setForm(f => ({ ...f, management_ip: v }))} placeholder="e.g. 10.0.1.10" error={mgmtIpError} />
+              <Field label={zh ? '管理IP' : 'Mgmt IP'} value={form.management_ip} onChange={v => setForm(f => ({ ...f, management_ip: v }))} placeholder="e.g. 10.0.1.10" error={mgmtIpError} disabled={isEditMode} />
               <Field label={zh ? '主通道端口' : 'Primary channel port'} value={form.management_port} onChange={v => setForm(f => ({ ...f, management_port: v }))} placeholder={form.connection_method === 'web' || form.connection_method === 'none' ? '-' : '22'} />
 
               <div className="col-span-2 rounded-xl border border-cyan-100 bg-cyan-50/30 p-3">
@@ -1143,7 +1164,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                   ))}
                 </datalist>
               </div>
-              <Field type="number" label={zh ? '设备高度(U)' : 'Height (U)'} value={form.u_height} onChange={v => setForm(f => ({ ...f, u_height: v }))} placeholder="1" />
+              <Field type="number" label={zh ? '设备高度(U)' : 'Height (U)'} value={form.u_height} onChange={v => setForm(f => ({ ...f, u_height: v }))} placeholder="1" disabled={isEditMode} />
               <Field type="number" label={zh ? '计划起始U(选填)' : 'Planned start U'} value={form.planned_start_u} onChange={v => setForm(f => ({ ...f, planned_start_u: v }))} placeholder="" />
               <Field label={zh ? '机位备注(选填)' : 'Location note'} value={form.rack_unit} onChange={v => setForm(f => ({ ...f, rack_unit: v }))} placeholder={zh ? '文本备注' : 'Optional note'} />
               <Field label={zh ? '部门/业务' : 'Service'} value={form.department} onChange={v => setForm(f => ({ ...f, department: v }))} />
@@ -1175,7 +1196,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
               <button onClick={onClose} className="px-3 py-1.5 rounded-lg bg-black/[0.01] border border-black/5 text-black/40 text-xs hover:bg-black/[0.02]">{zh ? '取消' : 'Cancel'}</button>
               <button
                 onClick={handleSaveOnce}
-                disabled={saving || (!form.hostname.trim() && !form.asset_tag.trim()) || !!uValidationError || (!isEditMode && form.asset_origin === 'legacy' && form.lifecycle_status === 'production' && String(form.takeover_exempt_reason || '').trim().length < 5) || (form.ssh_algorithm_profile === 'legacy_break_glass' && !breakGlassAcknowledged)}
+                disabled={saving || (!isEditMode && !form.hostname.trim() && !form.asset_tag.trim()) || !!uValidationError || (!isEditMode && form.asset_origin === 'legacy' && form.lifecycle_status === 'production' && String(form.takeover_exempt_reason || '').trim().length < 5) || (requiresBreakGlassAck && !breakGlassAcknowledged)}
                 className="px-4 py-1.5 rounded-lg bg-[#00bceb] text-white text-xs font-bold hover:bg-[#00a5d0] disabled:opacity-50 shadow-sm shadow-[#00bceb]/20"
               >
                 {saving ? (zh ? '保存中...' : 'Saving...') : (zh ? '保存' : 'Save')}
@@ -1247,8 +1268,8 @@ export const AssetModal: React.FC<AssetModalProps> = ({
 };
 
 /* --- Form field --- */
-function Field({ label, value, onChange, placeholder, type = 'text', list, error, action }: {
-  label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string; list?: string; error?: string | null; action?: React.ReactNode;
+function Field({ label, value, onChange, placeholder, type = 'text', list, error, action, disabled = false }: {
+  label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string; list?: string; error?: string | null; action?: React.ReactNode; disabled?: boolean;
 }) {
   return (
     <div>
@@ -1262,10 +1283,11 @@ function Field({ label, value, onChange, placeholder, type = 'text', list, error
       <input
         type={type}
         value={value}
+        disabled={disabled}
         onChange={e => onChange(e.target.value)}
         placeholder={placeholder}
         list={list}
-        className={`w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs text-black/65 placeholder:text-black/12 focus:outline-none ${
+        className={`w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs text-black/65 placeholder:text-black/12 disabled:bg-black/[0.03] disabled:text-black/35 disabled:cursor-not-allowed focus:outline-none ${
           error ? 'border-red-400 bg-red-50/20 focus:border-red-500' : 'border-black/8 focus:border-[#00bceb]/25'
         }`}
       />

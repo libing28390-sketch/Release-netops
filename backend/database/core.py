@@ -489,3 +489,100 @@ def fetch_interface_data(conn, device_id: str) -> list[dict]:
         except Exception:
             pass
         return []
+
+
+def fetch_interface_data_for_devices(
+    conn,
+    device_ids,
+    *,
+    chunk_size: int = 250,
+) -> dict[str, list[dict]]:
+    """Fetch interface state and latest raw telemetry for several devices.
+
+    The overview endpoint needs interface data for every device so that it can
+    produce both traffic summaries and device-health scores.  Keeping the
+    latest-sample join in a bounded batch avoids one database round-trip per
+    device while preserving the shape returned by ``fetch_interface_data``.
+    """
+    normalized_ids = list(dict.fromkeys(str(device_id) for device_id in device_ids if device_id is not None))
+    result: dict[str, list[dict]] = {device_id: [] for device_id in normalized_ids}
+    if not normalized_ids:
+        return result
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive")
+
+    for offset in range(0, len(normalized_ids), chunk_size):
+        device_chunk = normalized_ids[offset:offset + chunk_size]
+        try:
+            rows = conn.execute(
+                '''
+                SELECT
+                    i.device_id,
+                    i.interface_name AS name,
+                    i.interface_type,
+                    i.parent_interface_id,
+                    i.channel_group,
+                    i.aggregation_protocol,
+                    i.description,
+                    COALESCE(t.status, i.oper_status) AS status,
+                    COALESCE(t.speed_mbps, i.speed / 1000000.0) AS speed_mbps,
+                    COALESCE(t.in_bps, 0.0) AS in_bps,
+                    COALESCE(t.out_bps, 0.0) AS out_bps,
+                    COALESCE(t.bw_in_pct, 0.0) AS bw_in_pct,
+                    COALESCE(t.bw_out_pct, 0.0) AS bw_out_pct,
+                    COALESCE(t.in_pkts, 0) AS in_packets_total,
+                    COALESCE(t.out_pkts, 0) AS out_packets_total,
+                    COALESCE(t.in_pkts, 0) AS in_ucast_pkts,
+                    COALESCE(t.out_pkts, 0) AS out_ucast_pkts,
+                    COALESCE(t.in_errors, 0) AS in_errors,
+                    COALESCE(t.out_errors, 0) AS out_errors,
+                    COALESCE(t.in_discards, 0) AS in_discards,
+                    COALESCE(t.out_discards, 0) AS out_discards,
+                    COALESCE(t.fcs_errors, 0) AS fcs_errors,
+                    COALESCE(t.frame_too_long_errors, 0) AS frame_too_long_errors,
+                    COALESCE(t.mac_rx_errors, 0) AS mac_rx_errors,
+                    COALESCE(t.symbol_errors, 0) AS symbol_errors,
+                    COALESCE(t.packet_counter_source, '') AS packet_counter_source,
+                    COALESCE(t.fcs_source, '') AS fcs_source
+                FROM interfaces i
+                LEFT JOIN (
+                    SELECT latest.*
+                    FROM interface_telemetry_raw latest
+                    INNER JOIN (
+                        SELECT device_id, interface_name, MAX(ts) AS max_ts
+                        FROM interface_telemetry_raw
+                        WHERE device_id = ANY(?)
+                        GROUP BY device_id, interface_name
+                    ) sub ON latest.device_id = sub.device_id
+                         AND latest.interface_name = sub.interface_name
+                         AND latest.ts = sub.max_ts
+                    WHERE latest.device_id = ANY(?)
+                ) t ON t.device_id = i.device_id
+                   AND t.interface_name = i.interface_name
+                WHERE i.device_id = ANY(?)
+                ORDER BY i.device_id, i.interface_name
+                ''',
+                (device_chunk, device_chunk, device_chunk),
+            ).fetchall()
+        except Exception as exc:
+            logger.warning(
+                "Failed to fetch interface telemetry for %d devices: %s",
+                len(device_chunk),
+                exc,
+            )
+            try:
+                # PostgreSQL aborts the active transaction after a missing
+                # optional telemetry relation or column.  Match the legacy
+                # reader's best-effort behavior and leave the caller's
+                # connection usable for subsequent device-health queries.
+                conn.rollback()
+            except Exception:
+                pass
+            return result
+
+        for row in rows:
+            item = dict(row)
+            device_id = str(item.pop('device_id'))
+            result.setdefault(device_id, []).append(item)
+
+    return result

@@ -77,7 +77,7 @@ def test_offline_reachability_does_not_replace_native_hardware_values_with_zero(
     monkeypatch.setattr(background_monitor_service, "_sync_device_status_tag", lambda *_args: None)
     monkeypatch.setattr(background_monitor_service, "_set_protocol_alerts_for_device_offline", lambda *_args: None)
     monkeypatch.setattr(background_monitor_service, "_set_device_reachability_alert", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(background_monitor_service, "_schedule_monitoring_target_sync", lambda: None)
+    monkeypatch.setattr(background_monitor_service, "_schedule_monitoring_target_sync", lambda *_args: None)
     monkeypatch.setattr(background_monitor_service, "record_collection_result", lambda *_args, **_kwargs: None)
 
     asyncio.run(background_monitor_service.process_device_fast({

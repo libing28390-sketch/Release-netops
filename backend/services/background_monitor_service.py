@@ -108,12 +108,32 @@ def _sync_device_status_tag(device_id: str, status: str) -> None:
         conn.close()
 
 
-def _schedule_monitoring_target_sync() -> None:
-    """Refresh SNMP file-SD targets after a device reachability transition."""
+def _schedule_monitoring_target_sync(device: dict | None = None) -> None:
+    """Refresh targets after a relevant reachability change, coalescing probe bursts."""
+    if device is not None:
+        role = str(device.get('role') or '').strip().lower()
+        category = str(device.get('device_category') or '').strip().lower()
+        platform = str(device.get('platform') or '').strip().lower()
+        is_server_target = (
+            role == 'server'
+            or 'server' in category
+            or platform in {'linux', 'ubuntu', 'centos', 'debian', 'redhat', 'windows', 'windows_server'}
+        )
+        has_snmp_candidate = any(
+            str(device.get(key) or '').strip()
+            for key in (
+                'snmp_credential_id', 'snmp_community', 'snmp_username',
+                'snmp_credential_type', 'auth_alias',
+            )
+        )
+        if not is_server_target and not has_snmp_candidate:
+            return
     try:
         from services.collector_sync_service import trigger_async_monitoring_sync
 
-        trigger_async_monitoring_sync(delay_seconds=3.0)
+        # Reachability loops can discover many transitions over several seconds.
+        # Wait for the burst to settle so one transition wave causes one full compile.
+        trigger_async_monitoring_sync(delay_seconds=15.0)
     except Exception:
         logger.warning(
             "Failed to schedule monitoring target sync after device status change",
@@ -454,6 +474,57 @@ def _init_telemetry_state():
     except Exception:
         pass
     _refresh_runtime_alert_rules(force=True)
+    _resolve_open_unconfigured_snmp_alerts()
+
+
+def _resolve_open_unconfigured_snmp_alerts() -> None:
+    """Close legacy SNMP alarms that were opened only because credentials were absent."""
+    try:
+        rows = _db_quick(
+            """
+            SELECT dedupe_key, device_id, severity, title
+            FROM alert_events
+            WHERE resolved_at IS NULL
+              AND dedupe_key LIKE 'snmp_unreachable:%'
+              AND message LIKE '%凭据未配置%'
+            """,
+            fetchall=True,
+        ) or []
+    except Exception:
+        logger.warning("Failed to load legacy unconfigured SNMP alerts", exc_info=True)
+        return
+
+    seen_keys: set[str] = set()
+    resolved_count = 0
+    for row in rows:
+        dedupe_key = str(row['dedupe_key'] or '').strip()
+        if not dedupe_key or dedupe_key in seen_keys:
+            continue
+        seen_keys.add(dedupe_key)
+        device_id = str(row['device_id'] or dedupe_key.partition(':')[2]).strip()
+        if not device_id:
+            continue
+        rule = resolve_alert_rule('snmp_unreachable')
+        try:
+            set_alert_state(
+                dedupe_key,
+                False,
+                resolved_alert_severity(rule, str(row['severity'] or 'major')),
+                str(row['title'] or 'SNMP Unreachable'),
+                'SNMP 凭据未配置，此设备不纳入 SNMP 可达性告警。',
+                device_id,
+                status='resolved',
+                rule=rule,
+                notify=False,
+            )
+            resolved_count += 1
+        except Exception:
+            logger.warning("Failed to resolve legacy SNMP alert %s", dedupe_key, exc_info=True)
+    if resolved_count:
+        logger.info(
+            "[Alert] Resolved %d legacy SNMP alert(s) caused by missing credentials",
+            resolved_count,
+        )
 
 
 def _refresh_runtime_alert_rules(
@@ -1045,7 +1116,7 @@ def maybe_notify_webhook(dedupe_key: str, severity: str, title: str, message: st
     # before throttling state changes so opting back in does not inherit a
     # stale suppression window from a disabled run.
     if not notification_service.automatic_notifications_enabled():
-        logger.info("[Alert] Automatic notification dispatch disabled by runtime policy")
+        logger.debug("[Alert] Automatic notification dispatch disabled by runtime policy")
         return
 
     now_ts = datetime.now(timezone.utc)
@@ -1507,7 +1578,7 @@ async def _process_device_raw(device, cycle_tick: int):
         if not ip or ip == '0.0.0.0':
             mark_offline_and_clear_cache()
             if str(device.get('status') or '').lower() != 'offline':
-                _schedule_monitoring_target_sync()
+                _schedule_monitoring_target_sync(device)
             return
 
         # 1. SNMP reachability first; ICMP/management TCP are the fallback.
@@ -1529,13 +1600,13 @@ async def _process_device_raw(device, cycle_tick: int):
                 logger.info(
                     f"[Status Monitor] Device {ip} status changed to {new_status} via {probe_method}"
                 )
-                _schedule_monitoring_target_sync()
+                _schedule_monitoring_target_sync(device)
         except Exception:
             new_status = 'offline'
             if device.get('status') != 'offline':
                 _set_protocol_alerts_for_device_offline(device, ip)
                 _set_device_reachability_alert(device, ip, reachable=False)
-                _schedule_monitoring_target_sync()
+                _schedule_monitoring_target_sync(device)
             mark_offline_and_clear_cache()
 
         # 2. SNMP Metrics Collection (only if online)
@@ -1738,7 +1809,25 @@ async def _process_device_raw(device, cycle_tick: int):
 
         snmp_rule = resolve_alert_rule('snmp_unreachable', device_row=device, ip_address=ip)
         snmp_key = f"snmp_unreachable:{dev_id}"
-        if snmp_available:
+        if not snmp_credentials.get('configured'):
+            # Missing credentials mean SNMP is not configured for this device,
+            # not that an SNMP probe failed. Avoid creating an unreachable
+            # alert on every poll and silently close any legacy false positive.
+            snmp_failure_streak.pop(dev_id, None)
+            if snmp_key in open_alerts:
+                set_alert_state(
+                    snmp_key,
+                    False,
+                    resolved_alert_severity(snmp_rule, 'major'),
+                    'SNMP Unreachable',
+                    f"{dev_label} 未配置 SNMP 凭据，已从 SNMP 可达性告警中排除",
+                    dev_id,
+                    ip_address=ip,
+                    status='resolved',
+                    rule=snmp_rule,
+                    notify=False,
+                )
+        elif snmp_available:
             snmp_failure_streak.pop(dev_id, None)
             set_alert_state(
                 snmp_key,
@@ -1754,17 +1843,12 @@ async def _process_device_raw(device, cycle_tick: int):
         else:
             snmp_failure_streak[dev_id] = snmp_failure_streak.get(dev_id, 0) + 1
             snmp_active = snmp_failure_streak[dev_id] >= 2
-            failure_detail = (
-                f"{dev_label} SNMP 凭据未配置"
-                if not snmp_credentials.get('configured')
-                else f"{dev_label} 设备在线，但连续 {snmp_failure_streak[dev_id]} 次 SNMP 采集失败"
-            )
             set_alert_state(
                 snmp_key,
                 snmp_active,
                 (snmp_rule or {}).get('severity', 'major'),
                 'SNMP Unreachable',
-                failure_detail,
+                f"{dev_label} 设备在线，但连续 {snmp_failure_streak[dev_id]} 次 SNMP 采集失败",
                 dev_id,
                 ip_address=ip,
                 status='active' if snmp_active else 'resolved',
@@ -1791,7 +1875,7 @@ async def process_device_fast(device):
     if not ip or ip == '0.0.0.0':
         mark_offline_and_clear_cache()
         if str(device.get('status') or '').lower() != 'offline':
-            _schedule_monitoring_target_sync()
+            _schedule_monitoring_target_sync(device)
         await asyncio.to_thread(record_collection_result,
             dev_id,
             'reachability',
@@ -1841,7 +1925,7 @@ async def process_device_fast(device):
             logger.info(
                 f"[Status Monitor] Device {ip} status changed to {new_status} via {probe_method}"
             )
-            _schedule_monitoring_target_sync()
+            _schedule_monitoring_target_sync(device)
     except Exception as exc:
         await asyncio.to_thread(record_collection_result,
             dev_id,
@@ -1855,7 +1939,7 @@ async def process_device_fast(device):
         if device.get('status') != 'offline':
             _set_protocol_alerts_for_device_offline(device, ip)
             _set_device_reachability_alert(device, ip, reachable=False)
-            _schedule_monitoring_target_sync()
+            _schedule_monitoring_target_sync(device)
         mark_offline_and_clear_cache()
 
 async def process_device_slow(device, cycle_tick: int = 0):

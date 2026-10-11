@@ -8,7 +8,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from core.rbac import require_role
+from core.rbac import authorize_resource, require_role
 from core.report_generator import (
     generate_inspection_excel,
     generate_inspection_html,
@@ -31,6 +31,7 @@ from services.inspection_service import (
     update_inspection_item,
     delete_inspection_item,
 )
+from services.execution_history_service import get_execution_history
 from database import get_db_connection
 import json
 import uuid
@@ -123,6 +124,29 @@ def list_inspection_runs(
     _user=require_role('Viewer'),
 ):
     data = get_inspection_runs(limit=limit, offset=offset)
+    return {'success': True, 'data': data, 'message': ''}
+
+
+@router.get('/inspections/execution-history')
+def list_execution_history(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
+    trigger_type: str = Query('all', pattern='^(all|manual|plan|job)$'),
+    query: str = Query('', max_length=200),
+    user=require_role('Viewer'),
+):
+    # Inspections retain the existing Viewer access. Playbook rows are an
+    # optional source and must pass the same resource authorization as
+    # GET /api/playbooks; denied users still receive inspection history.
+    include_playbooks = authorize_resource(user, 'playbook', 'view')
+    data = get_execution_history(
+        page=page,
+        page_size=page_size,
+        trigger_type=trigger_type,
+        query=query,
+        user=user,
+        include_playbooks=include_playbooks,
+    )
     return {'success': True, 'data': data, 'message': ''}
 
 

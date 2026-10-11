@@ -72,7 +72,7 @@ class _TrackedConnection:
         return self.connection.close()
 
 
-def test_resource_read_routes_sample_without_sending_notifications(isolated_db, monkeypatch):
+def test_resource_read_routes_reuse_stored_sample_without_sampling_or_writing(isolated_db, monkeypatch):
     _patch_snapshot_inputs(monkeypatch)
     monkeypatch.setattr(health, "_get_host_resource_alerts", lambda _snapshot: [_alert()])
     monkeypatch.setattr(
@@ -80,13 +80,54 @@ def test_resource_read_routes_sample_without_sending_notifications(isolated_db, 
         "_dispatch_host_resource_notification",
         lambda *_args, **_kwargs: pytest.fail("read routes must not dispatch notifications"),
     )
+    seeded = health.record_host_resource_snapshot(sync_alerts=False)
+    monkeypatch.setattr(
+        health,
+        "record_host_resource_snapshot",
+        lambda **_kwargs: pytest.fail("read routes must reuse the scheduled snapshot"),
+    )
+
+    connection = get_db_connection()
+    try:
+        before_count = connection.execute("SELECT COUNT(*) AS count FROM host_resource_samples").fetchone()["count"]
+    finally:
+        connection.close()
 
     current = health.health_resources()
     history = health.health_resource_history(range_hours=1)
 
+    connection = get_db_connection()
+    try:
+        after_count = connection.execute("SELECT COUNT(*) AS count FROM host_resource_samples").fetchone()["count"]
+    finally:
+        connection.close()
+
     assert current["active_alert_count"] == 1
     assert history["current"]["active_alert_count"] == 1
     assert history["range_hours"] == 1
+    assert current["updated_at"] == seeded["updated_at"]
+    assert history["sample_count"] == 1
+    assert after_count == before_count == 1
+
+
+def test_resource_read_routes_return_empty_state_before_first_scheduled_sample(isolated_db, monkeypatch):
+    monkeypatch.setattr(
+        health,
+        "record_host_resource_snapshot",
+        lambda **_kwargs: pytest.fail("read routes must not sample the host"),
+    )
+
+    current = health.health_resources()
+    history = health.health_resource_history(range_hours=1)
+
+    assert current["status"] == "degraded"
+    assert current["metrics_available"] is False
+    assert current["database_status"] == "not sampled yet"
+    assert current["database_ok"] is True
+    assert current["active_alerts"] == []
+    assert history["current"]["updated_at"] == ""
+    assert history["series"] == []
+    assert history["sample_count"] == 0
 
 
 def test_background_sampler_dispatches_after_commit_and_connection_close(isolated_db, monkeypatch):
@@ -311,14 +352,14 @@ def test_live_request_progresses_while_resource_handler_waits(monkeypatch):
     entered = threading.Event()
     resume = threading.Event()
 
-    def slow_snapshot(*, sync_alerts: bool = True):
-        assert sync_alerts is False
+    def slow_snapshot(conn=None):
+        assert conn is None
         entered.set()
         if not resume.wait(timeout=5):
             raise TimeoutError("resource handler test gate was not released")
         return {"status": "healthy"}
 
-    monkeypatch.setattr(health, "record_host_resource_snapshot", slow_snapshot)
+    monkeypatch.setattr(health, "_load_latest_host_resource_snapshot", slow_snapshot)
     app = FastAPI()
     app.include_router(health.router, prefix="/api")
 

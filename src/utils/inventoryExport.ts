@@ -1,7 +1,7 @@
-import * as XLSX from 'xlsx';
 import type { Device } from '../types';
 
-export const exportInventoryToExcel = (devices: Device[]) => {
+export const exportInventoryToExcel = async (devices: Device[]) => {
+  const XLSX = await import('xlsx');
   const exportData = devices.map(({ current_config, config_history, ...rest }) => rest);
   const worksheet = XLSX.utils.json_to_sheet(exportData);
   const workbook = XLSX.utils.book_new();

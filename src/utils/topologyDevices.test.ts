@@ -15,6 +15,22 @@ describe('topology device classification', () => {
     expect(isTopologyServerDevice(devices[2])).toBe(false);
   });
 
+  it('uses the canonical role identity and host labels to classify legacy server records', () => {
+    expect(isTopologyServerDevice({
+      role: '',
+      role_identity: '主机',
+      device_category: 'compute',
+      platform: 'unknown',
+    })).toBe(true);
+    expect(isTopologyServerDevice({
+      asset_type: 'server',
+      role: 'switch',
+      role_identity: '',
+      device_category: 'network',
+      platform: 'cisco_ios',
+    })).toBe(true);
+  });
+
   it('renders one icon per managed asset and keeps unmatched LLDP peers in diagnostics only', () => {
     const devices = [
       { id: 'sw-1' },
