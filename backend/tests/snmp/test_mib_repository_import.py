@@ -70,10 +70,10 @@ def _create_import_schema(conn: postgresql_test_driver.Connection) -> None:
 
 
 def test_librenms_import_scans_root_and_vendor_files_idempotently(tmp_path, monkeypatch) -> None:
-    db_path = tmp_path / "mib-import.sqlite"
+    pg_test_key = tmp_path / "mib-import"
 
     def open_conn():
-        connection = postgresql_test_driver.connect(db_path)
+        connection = postgresql_test_driver.connect(pg_test_key)
         connection.row_factory = postgresql_test_driver.Row
         return connection
 
@@ -131,10 +131,10 @@ def test_librenms_import_scans_root_and_vendor_files_idempotently(tmp_path, monk
 
 
 def test_librenms_update_after_upstream_commit_reuses_same_active_row(tmp_path, monkeypatch) -> None:
-    db_path = tmp_path / "mib-commit-update.sqlite"
+    pg_test_key = tmp_path / "mib-commit-update"
 
     def open_conn():
-        connection = postgresql_test_driver.connect(db_path)
+        connection = postgresql_test_driver.connect(pg_test_key)
         connection.row_factory = postgresql_test_driver.Row
         return connection
 
@@ -177,10 +177,10 @@ def test_librenms_update_after_upstream_commit_reuses_same_active_row(tmp_path, 
 
 
 def test_librenms_full_snapshot_retires_removed_path(tmp_path, monkeypatch) -> None:
-    db_path = tmp_path / "mib-removed.sqlite"
+    pg_test_key = tmp_path / "mib-removed"
 
     def open_conn():
-        connection = postgresql_test_driver.connect(db_path)
+        connection = postgresql_test_driver.connect(pg_test_key)
         connection.row_factory = postgresql_test_driver.Row
         return connection
 

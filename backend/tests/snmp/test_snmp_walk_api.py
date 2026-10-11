@@ -182,7 +182,10 @@ def test_device_snmp_test_uses_only_the_librenms_rule_probe(monkeypatch) -> None
         }
 
     monkeypatch.setattr(snmp_hardware_poller_service, "inspect_librenms_hardware_rules", fake_inspect)
-    result = asyncio.run(devices_api.snmp_test("device-1", user={"role": "Operator", "tenant_id": "tenant-1"}))
+    result = asyncio.run(devices_api.snmp_test(
+        "device-1",
+        user={"id": "snmp-test-operator", "role": "Operator", "tenant_id": "tenant-1"},
+    ))
 
     assert result["success"] is True
     assert result["collection_mode"] == "pinned_librenms_rule_diagnostic"

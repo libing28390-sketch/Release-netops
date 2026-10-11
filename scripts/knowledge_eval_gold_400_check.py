@@ -187,7 +187,6 @@ def validate_dataset(
             "case_count": 0,
             "errors": ["official-source-backed 400-case dataset is not present"],
             "database": "PostgreSQL",
-            "sqlite": "not_used",
             "external_network": "forbidden",
             "secrets": False,
         }
@@ -247,7 +246,6 @@ def validate_dataset(
     source_policy = dataset.get("source_policy") if isinstance(dataset.get("source_policy"), Mapping) else {}
     for key, expected in {
         "database": "PostgreSQL",
-        "sqlite": "not_used",
         "external_network": "forbidden",
         "secrets": "forbidden",
         "production_data": "forbidden",
@@ -388,7 +386,6 @@ def validate_dataset(
         "errors": errors[:200],
         "error_count": len(errors),
         "database": "PostgreSQL",
-        "sqlite": "not_used",
         "external_network": "forbidden",
         "secrets": bool(_SECRET_RE.search(rendered)),
         "customer_identifiers": _case_has_customer_key(dataset),

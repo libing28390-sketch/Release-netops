@@ -38,7 +38,7 @@ def test_ing004_imports_one_official_pdf_and_persists_provenance(isolated_db, ma
     from database import get_db_connection
     from services.local_official_file_import_service import import_local_official_file
 
-    operator = make_user("ing004-importer", role="Operator")
+    operator = make_user("ing004-importer", role="Administrator", tenant_id="tenant-default")
     body = _pdf()
     result = import_local_official_file(operator, _payload(), content=body, filename="c9300-guide.pdf", content_type="application/pdf")
 
@@ -82,7 +82,7 @@ def test_ing004_replays_same_tenant_key_and_deduplicates_same_content(isolated_d
     from database import get_db_connection
     from services.local_official_file_import_service import import_local_official_file
 
-    operator = make_user("ing004-replay", role="Operator")
+    operator = make_user("ing004-replay", role="Administrator", tenant_id="tenant-default")
     body = _text()
     first = import_local_official_file(operator, _payload(idempotency_key="ing004-replay"), content=body, filename="guide.md", content_type="text/markdown")
     second = import_local_official_file(operator, _payload(idempotency_key="ing004-replay"), content=body, filename="guide.md", content_type="text/markdown")
@@ -116,7 +116,7 @@ def test_ing004_replays_same_tenant_key_and_deduplicates_same_content(isolated_d
 def test_ing004_file_name_type_and_magic_fail_closed(isolated_db, make_user, filename, content_type, body, code):
     from services.local_official_file_import_service import LocalOfficialFileImportError, import_local_official_file
 
-    operator = make_user("ing004-invalid-file", role="Operator")
+    operator = make_user("ing004-invalid-file", role="Administrator", tenant_id="tenant-default")
     with pytest.raises(LocalOfficialFileImportError) as exc:
         import_local_official_file(operator, _payload(idempotency_key=f"bad-{code}"), content=body, filename=filename, content_type=content_type)
     assert exc.value.code == code
@@ -126,7 +126,7 @@ def test_ing004_requires_official_proof_before_job_or_source_creation(isolated_d
     from database import get_db_connection
     from services.local_official_file_import_service import LocalOfficialFileImportError, import_local_official_file
 
-    operator = make_user("ing004-no-proof", role="Operator")
+    operator = make_user("ing004-no-proof", role="Administrator", tenant_id="tenant-default")
     with pytest.raises(LocalOfficialFileImportError) as missing:
         import_local_official_file(operator, _payload(terms_review_status="pending"), content=_pdf(), filename="guide.pdf", content_type="application/pdf")
     assert missing.value.code == "IMPORT_TERMS_REVIEW_REQUIRED"
@@ -144,7 +144,7 @@ def test_ing004_requires_official_proof_before_job_or_source_creation(isolated_d
 def test_ing004_evidence_url_cannot_be_replaced_by_unreviewed_url(isolated_db, make_user):
     from services.local_official_file_import_service import LocalOfficialFileImportError, import_local_official_file
 
-    operator = make_user("ing004-evidence", role="Operator")
+    operator = make_user("ing004-evidence", role="Administrator", tenant_id="tenant-default")
     with pytest.raises(LocalOfficialFileImportError) as exc:
         import_local_official_file(operator, _payload(evidence_url="https://evil.example/file.pdf"), content=_pdf(), filename="guide.pdf", content_type="application/pdf")
     assert exc.value.code == "PROVENANCE_EVIDENCE_URL_MISMATCH"
@@ -153,7 +153,7 @@ def test_ing004_evidence_url_cannot_be_replaced_by_unreviewed_url(isolated_db, m
 def test_ing004_viewer_cannot_create_local_official_file_job(isolated_db, make_user):
     from services.local_official_file_import_service import LocalOfficialFileImportError, import_local_official_file
 
-    viewer = make_user("ing004-viewer", role="Viewer")
+    viewer = make_user("ing004-viewer", role="Viewer", tenant_id="tenant-default")
     with pytest.raises(LocalOfficialFileImportError) as exc:
         import_local_official_file(viewer, _payload(idempotency_key="viewer-denied"), content=_pdf(), filename="guide.pdf", content_type="application/pdf")
     assert exc.value.code == "SOURCE_PERMISSION_DENIED"
@@ -162,9 +162,8 @@ def test_ing004_viewer_cannot_create_local_official_file_job(isolated_db, make_u
 def test_ing004_server_owns_hash_and_rejects_cross_tenant_replay(isolated_db, make_user):
     from services.local_official_file_import_service import import_local_official_file
 
-    first_user = make_user("ing004-tenant-a", role="Operator")
-    other_user = make_user("ing004-tenant-b", role="Operator")
-    other_user["tenant_id"] = "tenant-ing004-b"
+    first_user = make_user("ing004-tenant-a", role="Administrator", tenant_id="tenant-default")
+    other_user = make_user("ing004-tenant-b", role="Administrator", tenant_id="tenant-ing004-b")
     body = _pdf()
     first = import_local_official_file(first_user, _payload(idempotency_key="same-key"), content=body, filename="guide.pdf", content_type="application/pdf")
     second = import_local_official_file(other_user, _payload(idempotency_key="same-key"), content=body, filename="guide.pdf", content_type="application/pdf")

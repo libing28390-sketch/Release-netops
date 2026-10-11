@@ -64,7 +64,6 @@ def _write_dataset(tmp_path: Path, cases: list[dict]) -> Path:
                 "test_only": True,
                 "source_policy": {
                     "database": "PostgreSQL",
-                    "sqlite": "not_used",
                     "external_network": "forbidden",
                     "secrets": "forbidden",
                     "production_data": "forbidden",

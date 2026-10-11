@@ -283,9 +283,8 @@ def apply_wan_retention_once() -> dict[str, int]:
     policy_json = "{}"
     try:
         policy = dict(conn.execute("SELECT * FROM wan_retention_policies WHERE id = 'default'").fetchone() or {})
-        # PostgreSQL returns timestamp columns as ``datetime`` objects while
-        # SQLite returns strings.  Retention runs must be auditable on both
-        # backends, so normalize the policy payload before persisting JSON.
+        # Normalize PostgreSQL timestamp values before persisting the policy
+        # payload as JSON.
         policy_json = json.dumps(policy, default=str)
         removed: dict[str, int] = {}
         for table, column, days in (

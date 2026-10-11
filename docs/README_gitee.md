@@ -302,7 +302,7 @@ Copy `.env.example` to `.env` and configure:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `DATABASE_URL` | PostgreSQL connection string | SQLite fallback |
+| `DATABASE_URL` | Required PostgreSQL connection string | None |
 | `SECRET_KEY` | Session signing key — **must be changed** | placeholder |
 | `CREDENTIAL_ENCRYPTION_KEY` | Device credential encryption key — **must be changed** | placeholder |
 | `ENVIRONMENT` | `production` or `development` | `development` |
@@ -328,7 +328,7 @@ nexora-automation/
 │   ├── models/               # Database models
 │   ├── schemas/              # Pydantic schemas
 │   ├── services/             # Business services (SNMP, alerts, etc.)
-│   ├── database.py           # PG / SQLite dual-backend
+│   ├── database.py           # PostgreSQL connection and pooling
 │   ├── main.py               # FastAPI entrypoint
 │   └── requirements.txt
 ├── src/                      # React frontend source
@@ -527,7 +527,7 @@ cp .env.example .env
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `DATABASE_URL` | PostgreSQL 连接字符串 | 回退到 SQLite |
+| `DATABASE_URL` | 必填 PostgreSQL 连接字符串 | 无 |
 | `SECRET_KEY` | 会话签名密钥，**必须修改** | 占位符 |
 | `CREDENTIAL_ENCRYPTION_KEY` | 设备凭据加密密钥，**必须修改** | 占位符 |
 | `ENVIRONMENT` | `production` 或 `development` | `development` |
@@ -553,7 +553,7 @@ nexora-automation/
 │   ├── models/               # 数据模型
 │   ├── schemas/              # Pydantic 模型
 │   ├── services/             # 业务服务（SNMP、告警等）
-│   ├── database.py           # PG / SQLite 双后端
+│   ├── database.py           # PostgreSQL 连接池
 │   ├── main.py               # FastAPI 启动入口
 │   └── requirements.txt
 ├── src/                      # React 前端源码

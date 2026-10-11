@@ -187,7 +187,7 @@ def test_cat004_collects_hash_only_version_and_redacted_audit(isolated_db, make_
     from database import get_db_connection
     from services.source_registry_service import collect_source, create_source, enable_source
 
-    operator = make_user("cat004-collector", role="Operator")
+    operator = make_user("cat004-collector", role="Administrator", tenant_id="tenant-default")
     source = create_source(
         {
             "source_type": "internal",

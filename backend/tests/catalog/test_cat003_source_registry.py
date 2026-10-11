@@ -26,7 +26,7 @@ def test_cat003_create_validate_enable_disable_and_tenant_scope(isolated_db, mak
         validate_source,
     )
 
-    operator = make_user("cat003-operator", role="Operator")
+    operator = make_user("cat003-operator", role="Administrator", tenant_id="tenant-default")
     source = create_source(_internal_payload(), operator)
     assert source["status"] == "draft"
     assert source["fetch_enabled"] is False
@@ -40,8 +40,7 @@ def test_cat003_create_validate_enable_disable_and_tenant_scope(isolated_db, mak
     assert disabled["fetch_enabled"] is False
     assert get_source(source["id"], operator)["status"] == "disabled"
 
-    other_tenant = make_user("cat003-other", role="Operator")
-    other_tenant["tenant_id"] = "tenant-other"
+    other_tenant = make_user("cat003-other", role="Administrator", tenant_id="tenant-other")
     with pytest.raises(SourceRegistryError) as denied:
         get_source(source["id"], other_tenant)
     assert denied.value.code == "SOURCE_NOT_FOUND"
@@ -50,7 +49,7 @@ def test_cat003_create_validate_enable_disable_and_tenant_scope(isolated_db, mak
 def test_cat003_official_validation_fails_closed_until_catalog_review(isolated_db, make_user):
     from services.source_registry_service import SourceRegistryError, create_source, enable_source, validate_source
 
-    operator = make_user("cat003-reviewer", role="Operator")
+    operator = make_user("cat003-reviewer", role="Administrator", tenant_id="tenant-default")
     source = create_source(
         {
             "source_type": "command_reference",
@@ -97,7 +96,7 @@ def test_cat003_policy_change_requires_revalidation_and_source_version_is_append
         update_source,
     )
 
-    operator = make_user("cat003-version", role="Operator")
+    operator = make_user("cat003-version", role="Administrator", tenant_id="tenant-default")
     source = create_source(_internal_payload("https://kb.internal.example/docs/versioned"), operator)
     enable_source(source["id"], operator)
     payload = b"version-one"
@@ -154,7 +153,7 @@ def test_kui015_source_refresh_status_is_bounded_and_tenant_scoped(isolated_db, 
         SourceRegistryError,
     )
 
-    operator = make_user("kui015-status", role="Operator")
+    operator = make_user("kui015-status", role="Administrator", tenant_id="tenant-default")
     source = create_source(_internal_payload("https://kb.internal.example/docs/kui015"), operator)
     enable_source(source["id"], operator)
     record_source_refresh_observation(
@@ -174,8 +173,7 @@ def test_kui015_source_refresh_status_is_bounded_and_tenant_scoped(isolated_db, 
     assert status["observation_count"] == 1
     assert status["counts"]["unchanged"] == 1
     assert "body" not in str(status).lower()
-    other = make_user("kui015-other", role="Operator")
-    other["tenant_id"] = "tenant-kui015-other"
+    other = make_user("kui015-other", role="Administrator", tenant_id="tenant-kui015-other")
     with pytest.raises(SourceRegistryError) as denied:
         get_source_refresh_status(source["id"], other)
     assert denied.value.code == "SOURCE_NOT_FOUND"

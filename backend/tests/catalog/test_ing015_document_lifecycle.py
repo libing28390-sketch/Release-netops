@@ -42,7 +42,7 @@ def reset_pipeline():
 
 
 def test_ing015_publish_quarantine_disable_and_request_idempotency(isolated_db, make_user):
-    user = make_user("ing015-lifecycle", role="Operator")
+    user = make_user("ing015-lifecycle", role="Administrator", tenant_id="tenant-default")
     imported = import_single_official_url(user, _payload(idempotency_key="ing015-lifecycle-a"), transport=_transport(b"lifecycle body"), resolver=_public)
     document_id = imported["document"]["id"]
     version_id = imported["document_version"]["id"]
@@ -67,7 +67,7 @@ def test_ing015_publish_quarantine_disable_and_request_idempotency(isolated_db, 
 
 
 def test_ing015_superseded_version_keeps_published_replacement(isolated_db, make_user):
-    user = make_user("ing015-superseded", role="Operator")
+    user = make_user("ing015-superseded", role="Administrator", tenant_id="tenant-default")
     first = import_single_official_url(user, _payload(idempotency_key="ing015-version-a"), transport=_transport(b"first lifecycle version"), resolver=_public)
     second = import_single_official_url(user, _payload(idempotency_key="ing015-version-b"), transport=_transport(b"second lifecycle version"), resolver=_public)
     assert second["document"]["id"] == first["document"]["id"]
@@ -89,7 +89,7 @@ def test_ing015_superseded_version_keeps_published_replacement(isolated_db, make
 
 
 def test_ing015_rejects_invalid_transition_stale_cas_cross_tenant_and_viewer(isolated_db, make_user):
-    user = make_user("ing015-boundary", role="Operator")
+    user = make_user("ing015-boundary", role="Administrator", tenant_id="tenant-default")
     imported = import_single_official_url(user, _payload(idempotency_key="ing015-boundary"), transport=_transport(b"boundary lifecycle"), resolver=_public)
     document_id = imported["document"]["id"]
     version_id = imported["document_version"]["id"]
@@ -100,7 +100,7 @@ def test_ing015_rejects_invalid_transition_stale_cas_cross_tenant_and_viewer(iso
         transition_document_lifecycle(document_id, "published", user, document_version_id=version_id, expected_status="published", request_id="ing015-stale")
     assert stale.value.code == "DOCUMENT_LIFECYCLE_STALE"
 
-    viewer = make_user("ing015-viewer", role="Viewer")
+    viewer = make_user("ing015-viewer", role="Viewer", tenant_id="tenant-default")
     with pytest.raises(DocumentLifecycleError) as denied:
         transition_document_lifecycle(document_id, "published", viewer, document_version_id=version_id, request_id="ing015-viewer")
     assert denied.value.code == "DOCUMENT_LIFECYCLE_PERMISSION_DENIED"

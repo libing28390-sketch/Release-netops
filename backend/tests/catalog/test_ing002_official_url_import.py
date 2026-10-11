@@ -47,7 +47,7 @@ def reset_pipeline():
 
 
 def test_ing002_fetches_one_reviewed_url_and_stops_at_fetched_continuation(isolated_db, make_user):
-    user = make_user("ing002-importer", role="Operator")
+    user = make_user("ing002-importer", role="Administrator", tenant_id="tenant-default")
     body = b"Cisco official command reference"
     result = import_single_official_url(
         user,
@@ -70,7 +70,7 @@ def test_ing002_fetches_one_reviewed_url_and_stops_at_fetched_continuation(isola
 
 
 def test_ing002_explicit_publish_completes_local_projection(isolated_db, make_user):
-    user = make_user("ing002-publisher", role="Operator")
+    user = make_user("ing002-publisher", role="Administrator", tenant_id="tenant-default")
     body = b"OSPF configuration guide\nrouter ospf 1\n network 192.0.2.0 0.0.0.255 area 0"
     result = import_single_official_url(
         user,
@@ -92,7 +92,7 @@ def test_ing002_explicit_publish_completes_local_projection(isolated_db, make_us
 
 
 def test_ing002_reviewed_feature_scope_is_preserved_for_a_broad_source(isolated_db, make_user):
-    user = make_user("ing002-explicit-feature", role="Operator")
+    user = make_user("ing002-explicit-feature", role="Administrator", tenant_id="tenant-default")
     result = import_single_official_url(
         user,
         _payload(
@@ -127,7 +127,7 @@ def test_ing002_reviewed_feature_scope_is_preserved_for_a_broad_source(isolated_
 
 
 def test_ing002_troubleshooting_source_publishes_allowlisted_document_kind(isolated_db, make_user):
-    user = make_user("ing002-troubleshooting", role="Operator")
+    user = make_user("ing002-troubleshooting", role="Administrator", tenant_id="tenant-default")
     payload = {
         "url": TROUBLESHOOTING_URL,
         "source_kind": "troubleshooting_guide",
@@ -160,7 +160,7 @@ def test_ing002_troubleshooting_source_publishes_allowlisted_document_kind(isola
 
 
 def test_ing002_same_idempotency_replays_version_without_second_fetch(isolated_db, make_user):
-    user = make_user("ing002-replay", role="Operator")
+    user = make_user("ing002-replay", role="Administrator", tenant_id="tenant-default")
     calls = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -177,7 +177,7 @@ def test_ing002_same_idempotency_replays_version_without_second_fetch(isolated_d
 
 
 def test_ing012_same_url_same_content_with_different_request_keys_replays_version(isolated_db, make_user):
-    user = make_user("ing012-replay", role="Operator")
+    user = make_user("ing012-replay", role="Administrator", tenant_id="tenant-default")
     body = b"same-url-same-content"
     calls = []
 
@@ -206,7 +206,7 @@ def test_ing012_same_url_same_content_with_different_request_keys_replays_versio
 
 
 def test_ing012_same_url_changed_content_is_a_new_version(isolated_db, make_user):
-    user = make_user("ing012-new-version", role="Operator")
+    user = make_user("ing012-new-version", role="Administrator", tenant_id="tenant-default")
     bodies = [b"version-one", b"version-two"]
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -233,10 +233,8 @@ def test_ing012_same_url_changed_content_is_a_new_version(isolated_db, make_user
 
 
 def test_ing012_same_url_content_is_tenant_scoped(isolated_db, make_user):
-    first_user = make_user("ing012-tenant-a", role="Operator")
-    second_user = make_user("ing012-tenant-b", role="Operator")
-    first_user["tenant_id"] = "tenant-a"
-    second_user["tenant_id"] = "tenant-b"
+    first_user = make_user("ing012-tenant-a", role="Administrator", tenant_id="tenant-a")
+    second_user = make_user("ing012-tenant-b", role="Administrator", tenant_id="tenant-b")
     body = b"tenant-isolated-content"
     handler = lambda request: httpx.Response(200, headers={"content-type": "text/plain"}, content=body, request=request)
 
@@ -262,7 +260,7 @@ def test_ing012_same_url_content_is_tenant_scoped(isolated_db, make_user):
 def test_ing002_unallowlisted_url_fails_before_source_persist_or_network(isolated_db, make_user):
     from services.source_registry_service import list_sources
 
-    user = make_user("ing002-boundary", role="Operator")
+    user = make_user("ing002-boundary", role="Administrator", tenant_id="tenant-default")
     with pytest.raises(OfficialUrlImportError) as invalid:
         import_single_official_url(user, _payload(url="https://www.cisco.com/unsupported/secret"), transport=_transport(lambda request: pytest.fail("network must not run")), resolver=_public)
     assert invalid.value.code == "OFFICIAL_URL_NOT_ALLOWLISTED"
@@ -270,7 +268,7 @@ def test_ing002_unallowlisted_url_fails_before_source_persist_or_network(isolate
 
 
 def test_ing002_missing_review_evidence_and_query_url_fail_closed(isolated_db, make_user):
-    user = make_user("ing002-input", role="Operator")
+    user = make_user("ing002-input", role="Administrator", tenant_id="tenant-default")
     with pytest.raises(OfficialUrlImportError) as terms:
         import_single_official_url(user, _payload(terms_review_status="pending"))
     assert terms.value.code == "IMPORT_TERMS_REVIEW_REQUIRED"
@@ -280,7 +278,7 @@ def test_ing002_missing_review_evidence_and_query_url_fail_closed(isolated_db, m
 
 
 def test_ing002_ssrf_failure_is_redacted_and_recorded_as_non_retryable(isolated_db, make_user):
-    user = make_user("ing002-ssrf", role="Operator")
+    user = make_user("ing002-ssrf", role="Administrator", tenant_id="tenant-default")
     result = import_single_official_url(
         user,
         _payload(idempotency_key="ing002-ssrf"),

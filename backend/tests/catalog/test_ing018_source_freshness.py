@@ -94,7 +94,7 @@ def test_ing018_collects_304_without_creating_duplicate_version(isolated_db, mak
         list_source_versions,
     )
 
-    operator = make_user("ing018-304", role="Operator")
+    operator = make_user("ing018-304", role="Administrator", tenant_id="tenant-default")
     source = create_source(_source_payload(), operator)
     enable_source(source["id"], operator)
     body = b"stable source body"
@@ -127,7 +127,7 @@ def test_ing018_collects_304_without_creating_duplicate_version(isolated_db, mak
 def test_ing018_same_hash_refreshes_validators_and_changed_hash_appends_version(isolated_db, make_user):
     from services.source_registry_service import collect_source, create_source, enable_source, list_source_refresh_observations, list_source_versions
 
-    operator = make_user("ing018-hash", role="Operator")
+    operator = make_user("ing018-hash", role="Administrator", tenant_id="tenant-default")
     source = create_source(_source_payload("https://docs.example/refresh/hash"), operator)
     enable_source(source["id"], operator)
     body = b"same content"

@@ -24,7 +24,7 @@ def test_ing005_defaults_to_internal_and_keeps_enterprise_domain(isolated_db, ma
     from database import get_db_connection
     from services.enterprise_sop_import_service import import_enterprise_sop_file
 
-    operator = make_user("ing005-owner", role="Operator")
+    operator = make_user("ing005-owner", role="Administrator", tenant_id="tenant-default")
     body = _body()
     result = import_enterprise_sop_file(operator, _payload(), content=body, filename="emergency-change.md", content_type="text/markdown")
 
@@ -60,7 +60,7 @@ def test_ing005_rejects_public_or_external_source_claims_before_job_creation(iso
     from database import get_db_connection
     from services.enterprise_sop_import_service import EnterpriseSopImportError, import_enterprise_sop_file
 
-    operator = make_user("ing005-boundary", role="Operator")
+    operator = make_user("ing005-boundary", role="Administrator", tenant_id="tenant-default")
     with pytest.raises(EnterpriseSopImportError) as public:
         import_enterprise_sop_file(operator, _payload(classification="PUBLIC", idempotency_key="ing005-public"), content=_body(), filename="sop.md", content_type="text/markdown")
     assert public.value.code == "SOP_CLASSIFICATION_FORBIDDEN"
@@ -79,7 +79,7 @@ def test_ing005_replays_by_tenant_and_content_without_duplicate_version(isolated
     from database import get_db_connection
     from services.enterprise_sop_import_service import import_enterprise_sop_file
 
-    operator = make_user("ing005-replay", role="Operator")
+    operator = make_user("ing005-replay", role="Administrator", tenant_id="tenant-default")
     body = _body()
     first = import_enterprise_sop_file(operator, _payload(idempotency_key="ing005-replay"), content=body, filename="sop.md", content_type="text/markdown")
     second = import_enterprise_sop_file(operator, _payload(idempotency_key="ing005-replay"), content=body, filename="sop.md", content_type="text/markdown")
@@ -104,12 +104,12 @@ def test_ing005_replays_by_tenant_and_content_without_duplicate_version(isolated
 def test_ing005_viewer_is_denied_and_file_boundary_is_reused(isolated_db, make_user):
     from services.enterprise_sop_import_service import EnterpriseSopImportError, import_enterprise_sop_file
 
-    viewer = make_user("ing005-viewer", role="Viewer")
+    viewer = make_user("ing005-viewer", role="Viewer", tenant_id="tenant-default")
     with pytest.raises(EnterpriseSopImportError) as exc:
         import_enterprise_sop_file(viewer, _payload(idempotency_key="ing005-viewer"), content=_body(), filename="sop.md", content_type="text/markdown")
     assert exc.value.code == "SOURCE_PERMISSION_DENIED"
 
-    operator = make_user("ing005-pdf-mismatch", role="Operator")
+    operator = make_user("ing005-pdf-mismatch", role="Administrator", tenant_id="tenant-default")
     with pytest.raises(Exception) as invalid:
         import_enterprise_sop_file(operator, _payload(idempotency_key="ing005-magic"), content=b"not pdf", filename="sop.pdf", content_type="application/pdf")
     assert getattr(invalid.value, "code", "") == "LOCAL_FILE_MAGIC_MISMATCH"

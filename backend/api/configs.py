@@ -1423,7 +1423,7 @@ def get_backup_stats():
         agg_map = {r['device_id']: {'cnt': r['cnt'], 'latest': r['latest']} for r in agg_rows}
 
         # Last trigger per device. We compute MAX(timestamp) per device, then
-        # join back to find that row's `trigger`. Works in both PG and SQLite.
+        # join back to find that row's `trigger`.
         last_trigger_rows = conn.execute(
             f'''SELECT cs.device_id, cs.trigger
                 FROM config_snapshots cs

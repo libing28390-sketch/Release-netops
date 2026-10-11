@@ -71,6 +71,7 @@ def _insert_user(
     username: str,
     role: str,
     change_groups: list[str] | None,
+    tenant_id: str | None = None,
     mfa_enabled: bool = False,
     mfa_secret: str | None = None,
 ) -> dict:
@@ -80,11 +81,11 @@ def _insert_user(
     connection.execute(
         """
         INSERT INTO users (
-            id, username, password, role, status, created_at,
+            id, username, password, role, status, created_at, tenant_id,
             group_name, change_groups_json, notification_channels,
             preferred_language, fixed_pin, mfa_enabled, mfa_secret
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             user_id,
@@ -93,6 +94,7 @@ def _insert_user(
             role,
             "active",
             now,
+            tenant_id or "",
             "",
             json.dumps(change_groups if change_groups is not None else []),
             "{}",
@@ -107,6 +109,7 @@ def _insert_user(
         "user_id": user_id,
         "username": username,
         "role": role,
+        "tenant_id": tenant_id or "",
         "mfa_enabled": bool(mfa_enabled),
         "mfa_secret": resolved_mfa_secret,
     }
@@ -192,6 +195,7 @@ def make_user(isolated_db):
         username: str,
         *,
         role: str = "Operator",
+        tenant_id: str | None = None,
         change_groups: list[str] | None = None,
         mfa_enabled: bool = False,
         mfa_secret: str | None = None,
@@ -202,6 +206,7 @@ def make_user(isolated_db):
                 connection,
                 username=username,
                 role=role,
+                tenant_id=tenant_id,
                 change_groups=change_groups,
                 mfa_enabled=mfa_enabled,
                 mfa_secret=mfa_secret,

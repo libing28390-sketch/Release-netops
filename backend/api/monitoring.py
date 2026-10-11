@@ -374,7 +374,7 @@ def _fill_missing_time_buckets(rows: list[dict], start_dt: datetime, end_dt: dat
 
 
 def _downsample_network_series(rows: list[dict], bucket_seconds: int) -> list[dict]:
-    """Database-agnostic time bucketing for PostgreSQL and SQLite."""
+    """Database-agnostic time bucketing for rows returned by PostgreSQL."""
     if bucket_seconds <= 60:
         return rows
     buckets: dict[int, list[dict]] = {}

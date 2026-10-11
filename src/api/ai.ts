@@ -1555,7 +1555,6 @@ export interface KnowledgeGold400FixtureSummary {
   };
   source_policy: {
     database: string;
-    sqlite: string;
     external_network: string;
     secrets: string;
     production_data: string;

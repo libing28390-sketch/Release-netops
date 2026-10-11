@@ -326,7 +326,7 @@ def parse_and_store_mib(
     store_content: bool = True,
     existing_id: str = "",
 ) -> dict[str, Any]:
-    """Parse one MIB file text and persist it and its symbols to PostgreSQL/SQLite."""
+    """Parse one MIB file text and persist it and its symbols to PostgreSQL."""
     parser = MibParser(raw_text, external_symbols=external_symbols)
     nodes = parser.parse()
     module_name = parser.module_name if parser.module_name != "UNKNOWN-MIB" else filename.rsplit(".", 1)[0]
@@ -1108,8 +1108,8 @@ def resolve_mib_nodes_for_oids(
     """Resolve walked numeric OIDs to their longest imported MIB node prefix.
 
     The lookup batches all numeric OID prefixes into bounded ``IN`` queries,
-    avoiding a database request per varbind while keeping SQLite and
-    PostgreSQL parameter counts small.
+    avoiding a database request per varbind while keeping each PostgreSQL
+    query's parameter count bounded.
     """
     prefixes_by_oid: dict[str, list[str]] = {}
     oids_by_prefix: dict[str, set[str]] = {}

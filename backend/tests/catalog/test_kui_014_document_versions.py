@@ -49,7 +49,7 @@ def reset_pipeline():
 
 
 def test_kui014_compare_publish_supersede_and_atomic_rollback(isolated_db, make_user):
-    user = make_user("kui014-version-admin", role="Operator")
+    user = make_user("kui014-version-admin", role="Administrator", tenant_id="tenant-default")
     first = import_single_official_url(
         user,
         _payload(idempotency_key="kui014-a"),
@@ -109,7 +109,7 @@ def test_kui014_compare_publish_supersede_and_atomic_rollback(isolated_db, make_
 
 
 def test_kui014_compare_is_tenant_scoped_and_routes_are_confirmed(isolated_db, make_user):
-    user = make_user("kui014-scope", role="Operator")
+    user = make_user("kui014-scope", role="Administrator", tenant_id="tenant-default")
     imported = import_single_official_url(
         user,
         _payload(idempotency_key="kui014-scope"),

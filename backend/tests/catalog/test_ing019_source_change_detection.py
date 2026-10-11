@@ -77,7 +77,7 @@ def reset_pipeline():
 def test_ing019_first_official_refresh_is_baseline_with_no_detection(isolated_db, make_user):
     from services.source_registry_service import collect_source, list_source_refresh_observations
 
-    user = make_user("ing019-baseline", role="Operator")
+    user = make_user("ing019-baseline", role="Administrator", tenant_id="tenant-default")
     imported = _import_official(user, b"first official body", key="ing019-baseline")
     source_id = imported["source"]["id"]
 
@@ -106,7 +106,7 @@ def test_ing019_changed_hash_after_baseline_signals_version_update_without_quara
     from services.official_source_change_service import apply_official_source_detection
     from services.source_registry_service import collect_source, get_source, list_source_refresh_observations
 
-    user = make_user("ing019-version", role="Operator")
+    user = make_user("ing019-version", role="Administrator", tenant_id="tenant-default")
     imported = _import_official(user, b"version one", key="ing019-version")
     source_id = imported["source"]["id"]
     changed = collect_source(
@@ -142,7 +142,7 @@ def test_ing019_changed_hash_after_baseline_signals_version_update_without_quara
 def test_ing019_same_hash_and_304_remain_non_destructive(isolated_db, make_user):
     from services.source_registry_service import collect_source, get_source, list_source_refresh_observations
 
-    user = make_user("ing019-stable", role="Operator")
+    user = make_user("ing019-stable", role="Administrator", tenant_id="tenant-default")
     imported = _import_official(user, b"stable body", key="ing019-stable")
     source_id = imported["source"]["id"]
     same_hash = collect_source(
@@ -179,7 +179,7 @@ def test_ing019_same_hash_and_304_remain_non_destructive(isolated_db, make_user)
 def test_ing019_removed_official_source_quarantines_linked_published_document_and_preserves_history(isolated_db, make_user, status):
     from services.source_registry_service import collect_source, get_source, list_source_refresh_observations, list_source_versions
 
-    user = make_user(f"ing019-removed-{status}", role="Operator")
+    user = make_user(f"ing019-removed-{status}", role="Administrator", tenant_id="tenant-default")
     imported = _import_official(user, b"removable body", key=f"ing019-removed-{status}")
     source_id = imported["source"]["id"]
     _publish(imported, user, request_id=f"ing019-publish-{status}")
@@ -204,7 +204,7 @@ def test_ing019_removed_official_source_quarantines_linked_published_document_an
 def test_ing019_other_4xx_is_a_failure_and_never_quarantines(isolated_db, make_user):
     from services.source_registry_service import SourceRegistryError, collect_source, get_source, list_source_refresh_observations
 
-    user = make_user("ing019-client-error", role="Operator")
+    user = make_user("ing019-client-error", role="Administrator", tenant_id="tenant-default")
     imported = _import_official(user, b"still valid body", key="ing019-client-error")
     source_id = imported["source"]["id"]
     _publish(imported, user, request_id="ing019-client-error-publish")
@@ -227,7 +227,7 @@ def test_ing019_other_4xx_is_a_failure_and_never_quarantines(isolated_db, make_u
 def test_ing019_safe_replacement_quarantines_but_canonical_equivalent_redirect_does_not(isolated_db, make_user):
     from services.source_registry_service import collect_source, get_source, list_source_refresh_observations
 
-    user = make_user("ing019-redirect", role="Operator")
+    user = make_user("ing019-redirect", role="Administrator", tenant_id="tenant-default")
     replacement = _import_official(user, b"replacement body", key="ing019-replacement")
     replacement_source_id = replacement["source"]["id"]
     _publish(replacement, user, request_id="ing019-replacement-publish")
@@ -250,8 +250,7 @@ def test_ing019_safe_replacement_quarantines_but_canonical_equivalent_redirect_d
     assert replacement_observation["detection_type"] == "replacement"
     assert replacement_observation["replacement_url"] == replacement_url
 
-    equivalent_user = make_user("ing019-equivalent", role="Operator")
-    equivalent_user["tenant_id"] = "tenant-equivalent"
+    equivalent_user = make_user("ing019-equivalent", role="Administrator", tenant_id="tenant-equivalent")
     equivalent = _import_official(equivalent_user, b"equivalent body", key="ing019-equivalent")
     equivalent_source_id = equivalent["source"]["id"]
     equivalent_redirect = OFFICIAL_URL.replace("https://www.cisco.com", "https://www.cisco.com:443")
@@ -278,7 +277,7 @@ def test_ing019_non_official_source_is_not_acted_on(isolated_db, make_user):
     from services.official_source_change_service import apply_official_source_detection
     from services.source_registry_service import create_source, enable_source, get_source
 
-    user = make_user("ing019-non-official", role="Operator")
+    user = make_user("ing019-non-official", role="Administrator", tenant_id="tenant-default")
     source = create_source(
         {
             "source_type": "internal",
@@ -305,10 +304,8 @@ def test_ing019_detection_is_tenant_isolated_idempotent_and_exposes_redacted_sig
     from services.official_source_change_service import apply_official_source_detection
     from services.source_registry_service import get_source, record_source_refresh_observation
 
-    tenant_a = make_user("ing019-tenant-a", role="Operator")
-    tenant_a["tenant_id"] = "tenant-a"
-    tenant_b = make_user("ing019-tenant-b", role="Operator")
-    tenant_b["tenant_id"] = "tenant-b"
+    tenant_a = make_user("ing019-tenant-a", role="Administrator", tenant_id="tenant-a")
+    tenant_b = make_user("ing019-tenant-b", role="Administrator", tenant_id="tenant-b")
     source_a = _import_official(tenant_a, b"tenant a", key="ing019-tenant-a")
     source_b = _import_official(tenant_b, b"tenant b", key="ing019-tenant-b")
     _publish(source_a, tenant_a, request_id="ing019-tenant-a-publish")
@@ -355,7 +352,7 @@ def test_ing019_change_action_failure_is_durable_and_retryable(isolated_db, make
     from services.official_source_change_service import apply_official_source_detection
     from services.source_registry_service import record_source_refresh_observation
 
-    user = make_user("ing019-retry", role="Operator")
+    user = make_user("ing019-retry", role="Administrator", tenant_id="tenant-default")
     imported = _import_official(user, b"retryable body", key="ing019-retry")
     _publish(imported, user, request_id="ing019-retry-publish")
     source_id = imported["source"]["id"]
@@ -430,7 +427,7 @@ def test_ing019_change_action_requires_source_update_permission(isolated_db, mak
     from services.official_source_change_service import apply_official_source_detection
     from services.source_registry_service import SourceRegistryError, record_source_refresh_observation
 
-    operator = make_user("ing019-action-owner", role="Operator")
+    operator = make_user("ing019-action-owner", role="Administrator", tenant_id="tenant-default")
     imported = _import_official(operator, b"permission body", key="ing019-action-owner")
     observation = record_source_refresh_observation(
         imported["source"]["id"],
@@ -445,7 +442,7 @@ def test_ing019_change_action_requires_source_update_permission(isolated_db, mak
         },
         operator,
     )
-    viewer = make_user("ing019-action-viewer", role="Viewer")
+    viewer = make_user("ing019-action-viewer", role="Viewer", tenant_id="tenant-default")
     with pytest.raises(SourceRegistryError) as denied:
         apply_official_source_detection(
             imported["source"]["id"],

@@ -64,7 +64,7 @@ const fixtureSummary = {
   case_count: 400,
   database: 'PostgreSQL',
   collection: { mode: 'official_url_backed_local_summary', source_manifest: 'data/kb_import/manifest.json', source_manifest_sha256: 'manifest-sha', collected_at: '2026-09-05', content_origin: 'local_summary_derived_from_official_pages' },
-  source_policy: { database: 'PostgreSQL', sqlite: 'not_used', external_network: 'forbidden', secrets: 'forbidden', production_data: 'forbidden', official_sources: 'required', source_collection: 'official_url_backed_local_summary' },
+  source_policy: { database: 'PostgreSQL', external_network: 'forbidden', secrets: 'forbidden', production_data: 'forbidden', official_sources: 'required', source_collection: 'official_url_backed_local_summary' },
   coverage: {
     categories: [{ key: 'knowledge_config_reference', count: 140 }, { key: 'troubleshooting', count: 70 }],
     vendors: [{ key: 'Huawei', count: 100 }, { key: 'Cisco', count: 100 }],

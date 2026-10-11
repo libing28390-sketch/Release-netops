@@ -162,7 +162,6 @@ def get_gold_400_fixture_summary(user: Mapping[str, Any]) -> dict[str, Any]:
         },
         "source_policy": {
             "database": str(source_policy.get("database") or "PostgreSQL")[:32],
-            "sqlite": str(source_policy.get("sqlite") or "not_used")[:32],
             "external_network": str(source_policy.get("external_network") or "forbidden")[:32],
             "secrets": str(source_policy.get("secrets") or "forbidden")[:32],
             "production_data": str(source_policy.get("production_data") or "forbidden")[:32],

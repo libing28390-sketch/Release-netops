@@ -136,7 +136,7 @@ export default defineConfig(({ mode }) => {
       host: '0.0.0.0',
       watch: {
         // Keep Vite focused on frontend sources so Linux doesn't exhaust inotify
-        // watchers on `.venv`, backend code, backup data, or SQLite artifacts.
+        // watchers on `.venv`, backend code, or backup data.
         ignored: [
           '**/.git/**',
           '**/node_modules/**',

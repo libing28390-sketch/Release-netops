@@ -45,7 +45,7 @@ if not _in_compose and '@db:' in _DATABASE_URL:
 normalized_db_url = _DATABASE_URL.lower()
 if not (normalized_db_url.startswith('postgresql://') or normalized_db_url.startswith('postgres://')):
     raise RuntimeError(
-        "PostgreSQL DATABASE_URL is required; SQLite and file-database fallbacks are not supported"
+        "PostgreSQL DATABASE_URL is required"
     )
 _USE_PG = True
 

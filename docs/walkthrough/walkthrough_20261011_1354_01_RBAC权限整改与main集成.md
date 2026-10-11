@@ -61,20 +61,24 @@
 | 全量前端首轮结果 | 478 passed、6 failed（124 files）；5 项为已改为默认 10 条后的旧 20 条分页断言，另 1 项 Copilot 流式渲染在全量并行运行时超过 5 秒 |
 | 前端针对性复跑 | Monitoring Reports、NSOT 列表和知识导入 3 个测试文件 11 passed；Copilot 流式测试单文件 7 passed |
 | 全量前端复跑 | 124 files、484 passed，全部通过 |
+| CI 失败后的定向 PostgreSQL 回归 | 129 passed；使用独立临时 PostgreSQL 源库，覆盖 catalog/knowledge、拓扑计划任务、NSOT 预览及 SNMP 测试夹具 |
+| SQLite 残留清理 | UI/API 评估契约、gold-400 evaluator 校验、测试 mock、README 中的 SQLite 文案和 SQLite 假测试路径已移除；运行时代码要求 PostgreSQL `DATABASE_URL`，没有 `sqlite3` 驱动调用 |
 
 ### 尚未完成
 
-- 后端全量 `pytest backend/tests -q` 曾推进到约 43%，当时未观察到失败；发现并修复普通账号可保留旧高权限 profile 后主动中止，所以不将它记录为全量通过。
-- 所有直接关联的安全、账号、平台权限、Playbook、计划作业和 SNMP 导入测试均已选取执行；初次报告中的 5 个旧身份/权限预期已修正并通过。没有在最终迁移后再跑完整 backend suite。
+- 对 `3eda175e` 的 GitHub Actions 后端全量门禁失败：61 failed、3089 passed、1 skipped。失败来自旧 `Operator` 测试主体和 tenantless 用户/设备/计划任务夹具与 RBAC tenant/snapshot 契约不匹配，以及一条 SNMP 诊断夹具缺少稳定用户 ID；不是 PostgreSQL 或 SQLite 运行时故障。`Knowledge Engine Promptfoo Gate` 对同一 SHA 成功。
+- 已按失败证据修复受影响夹具，并以独立 PostgreSQL 源库运行 129 项定向回归通过；尚未在当前修复状态下完成后端全量 `pytest backend/tests -q`，也尚未产生第二次推送对应的 Actions 结果。
+- 本地 `pytest -x` 曾在 168 passed 后发现 gold-400 evaluator 仍强制旧 `source_policy.sqlite=not_used`；清除 checker 中该字段后，`backend/tests/ai/test_eval_gold_400_check.py` 5 passed。未将被该首个失败中断的全量本地运行记作全量通过。
 
 ## 部署与发布注意事项
 
 - 迁移面向 PostgreSQL；上线前应先备份并确认旧任务 owner 映射。迁移无法确认 owner 的记录会禁用并进入 `reauthorization_required`，需要管理员人工处理。
 - 必须核验租户/范围策略配置与已有用户的业务映射，再允许其提交生产变更。角色名简化不应理解为普通用户自动获得执行权。
-- `.github/workflows/release.yml` 对 `main` 的每次 push 都会在门禁后同步发布到独立公开 Release 仓库，并使用 force push 更新该仓库 `main`。这属于真实发布副作用，推送前需在最终检查点明确确认。
-- 本次代码和文档已完成精确暂存审查，并形成 `main` 本地提交；尚未推送，因此没有本次提交对应的 GitHub Actions 结果。
+- `.github/workflows/release.yml` 对 `main` push 会在门禁通过后同步到独立公开 Release 仓库，并使用 force push 更新该仓库 `main`。用户已授权本次整改推送和 Actions 验收，因此按该授权继续；同步只会发生在门禁通过后。
+- 当前 `main` 与 `origin/main` 均为首次 RBAC 提交 `3eda175e`；Actions 已报告后端门禁失败。后续修复、文档及 fix record 尚待暂存、提交和推送。
 
 ## 剩余工作
 
-1. 推送前再次确认公开 Release 工作流副作用；推送后跟踪对应 Actions。
-2. 如主线发布门禁的全量后端 pytest 失败，按日志修复并重新验证；本地已完成与本次授权改动直接相关的测试范围。
+1. 在当前修复状态运行后端全量 PostgreSQL pytest、受影响前端测试及 PostgreSQL-only 检查。
+2. 建立本轮 fix record，更新 plan/walkthrough，审核暂存文件仅含本次公开源代码、测试和正式文档。
+3. 推送至 `main`，等待对应 Actions 全部成功，并核验 Release 仓库同步到同一发布 SHA；若失败则按日志继续修复与重推。

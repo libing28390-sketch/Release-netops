@@ -28,7 +28,7 @@ def test_ing009_record_source_version_persists_server_owned_manifest(isolated_db
     from services.source_registry_service import create_source, enable_source, record_source_version
     from services.source_version_manifest_service import validate_source_version_manifest
 
-    operator = make_user("ing009-manifest", role="Operator")
+    operator = make_user("ing009-manifest", role="Administrator", tenant_id="tenant-default")
     source = create_source(_internal_payload(), operator)
     enable_source(source["id"], operator)
     body = b"immutable source body"
@@ -75,7 +75,7 @@ def test_ing009_record_source_version_persists_server_owned_manifest(isolated_db
 def test_ing009_collect_source_captures_http_headers_and_fetch_time(isolated_db, make_user):
     from services.source_registry_service import collect_source, create_source, enable_source
 
-    operator = make_user("ing009-http", role="Operator")
+    operator = make_user("ing009-http", role="Administrator", tenant_id="tenant-default")
     source = create_source(_internal_payload("https://kb.internal.example/docs/http"), operator)
     enable_source(source["id"], operator)
     body = b"http manifest"
@@ -108,7 +108,7 @@ def test_ing009_collect_source_captures_http_headers_and_fetch_time(isolated_db,
 def test_ing009_manifest_rejects_unbounded_or_unsafe_facts(isolated_db, make_user, changes, code):
     from services.source_registry_service import SourceRegistryError, create_source, enable_source, record_source_version
 
-    operator = make_user("ing009-negative", role="Operator")
+    operator = make_user("ing009-negative", role="Administrator", tenant_id="tenant-default")
     source = create_source(_internal_payload(f"https://kb.internal.example/docs/{code.lower()}"), operator)
     enable_source(source["id"], operator)
     payload = {"content": b"negative", "parser_name": "nexora-txt", "parser_version": "1.0.0", "status": "fetched"}

@@ -97,9 +97,12 @@ def test_topology_batch_marks_unconfirmed_redis_publish_partial():
     }
 
 
-def test_scheduled_nsot_stores_partial_when_topology_summary_is_incomplete(isolated_db, monkeypatch):
+def test_scheduled_nsot_stores_partial_when_topology_summary_is_incomplete(isolated_db, make_user, monkeypatch):
+    from services.scheduled_job_authorization import execution_snapshot, manifest_hash
+
     conn = isolated_db['module'].get_db_connection()
     now = '2026-09-13T00:00:00+00:00'
+    owner = make_user("topology-nsot-owner", role="Administrator", tenant_id="tenant-topology")
     try:
         for device_id, site, status in (
             ('nsot-wh-1', 'WH-DC-02', 'online'),
@@ -107,22 +110,45 @@ def test_scheduled_nsot_stores_partial_when_topology_summary_is_incomplete(isola
             ('nsot-wh-offline', 'WH-DC-02', 'offline'),
         ):
             conn.execute(
-                "INSERT INTO devices (id, hostname, ip_address, platform, status, role, site) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (device_id, device_id, '192.0.2.10', 'h3c_comware', status, 'switch', site),
+                "INSERT INTO devices (id, hostname, ip_address, platform, status, role, site, tenant_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (device_id, device_id, '192.0.2.10', 'h3c_comware', status, 'switch', site, 'tenant-topology'),
             )
-        conn.execute(
-            "INSERT INTO scheduled_jobs "
-            "(id, name, job_type, action_type, device_scope, device_filter, enabled, status, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            ('nsot-job', 'NSOT scheduled', 'cron', 'nsot', 'site', 'WH-DC-02', 1, 'approved', now, now),
-        )
-        conn.execute(
-            "INSERT INTO scheduled_jobs "
-            "(id, name, job_type, action_type, device_scope, device_filter, enabled, status, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            ('nsot-empty-job', 'NSOT empty scope', 'cron', 'nsot', 'site', 'NO-SITE', 1, 'approved', now, now),
-        )
+        for job_id, scope_filter in (('nsot-job', 'WH-DC-02'), ('nsot-empty-job', 'NO-SITE')):
+            job = {
+                'id': job_id,
+                'name': 'NSOT scheduled',
+                'job_type': 'cron',
+                'action_type': 'nsot',
+                'cron_expr': '0 2 * * *',
+                'scheduled_at': '',
+                'device_scope': 'site',
+                'device_filter': scope_filter,
+                'commands': '',
+                'script_id': '',
+                'is_config': 0,
+                'config_reason': '',
+                'use_admin_creds': 0,
+                'enabled': 1,
+                'created_by_id': owner['user_id'],
+                'tenant_id': 'tenant-topology',
+            }
+            job_hash = manifest_hash(execution_snapshot(conn, job))
+            conn.execute(
+                "INSERT INTO scheduled_jobs "
+                "(id, name, job_type, action_type, cron_expr, scheduled_at, device_scope, device_filter, "
+                "commands, script_id, is_config, config_reason, use_admin_creds, enabled, status, "
+                "created_by, created_by_id, tenant_id, authorization_mode, authorization_manifest_hash, "
+                "created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    job['id'], job['name'], job['job_type'], job['action_type'], job['cron_expr'],
+                    job['scheduled_at'], job['device_scope'], job['device_filter'], job['commands'],
+                    job['script_id'], job['is_config'], job['config_reason'], job['use_admin_creds'],
+                    job['enabled'], 'approved', owner['username'], job['created_by_id'],
+                    job['tenant_id'], 'snapshot', job_hash, now, now,
+                ),
+            )
         conn.commit()
     finally:
         conn.close()

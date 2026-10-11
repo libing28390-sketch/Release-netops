@@ -1592,7 +1592,7 @@ class KnowledgeService:
 
     @staticmethod
     def _table_columns(cursor, table_name: str) -> set[str]:
-        """Return columns for both PostgreSQL and SQLite cursor adapters."""
+        """Return columns visible through the PostgreSQL cursor."""
         cursor.execute(f"SELECT * FROM {table_name} WHERE 1 = 0")
         return {str(description[0]) for description in (cursor.description or [])}
 

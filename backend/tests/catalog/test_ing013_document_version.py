@@ -52,7 +52,7 @@ def reset_pipeline():
 
 
 def test_ing013_changed_url_content_appends_document_version_and_supersedes_previous(isolated_db, make_user):
-    user = make_user("ing013-version-chain", role="Operator")
+    user = make_user("ing013-version-chain", role="Administrator", tenant_id="tenant-default")
     first = import_single_official_url(
         user,
         _payload(idempotency_key="ing013-a"),
@@ -92,7 +92,7 @@ def test_ing013_changed_url_content_appends_document_version_and_supersedes_prev
 
 
 def test_ing013_same_content_replays_document_version_without_duplicate(isolated_db, make_user):
-    user = make_user("ing013-replay", role="Operator")
+    user = make_user("ing013-replay", role="Administrator", tenant_id="tenant-default")
     first = import_single_official_url(
         user,
         _payload(idempotency_key="ing013-replay-a"),
@@ -122,7 +122,7 @@ def test_ing013_same_content_replays_document_version_without_duplicate(isolated
 
 
 def test_ing013_hash_and_tenant_conflicts_fail_closed(isolated_db, make_user):
-    user = make_user("ing013-boundary", role="Operator")
+    user = make_user("ing013-boundary", role="Administrator", tenant_id="tenant-default")
     first = import_single_official_url(
         user,
         _payload(idempotency_key="ing013-boundary-a"),
@@ -154,7 +154,7 @@ def test_ing013_hash_and_tenant_conflicts_fail_closed(isolated_db, make_user):
 
 
 def test_ing013_source_reference_is_used_when_raw_bytes_are_not_retained(isolated_db, make_user):
-    user = make_user("ing013-reference", role="Operator")
+    user = make_user("ing013-reference", role="Administrator", tenant_id="tenant-default")
     first = import_single_official_url(
         user,
         _payload(idempotency_key="ing013-reference-a"),

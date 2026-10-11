@@ -50,7 +50,7 @@ def reset_pipeline():
 
 
 def test_ing014_different_urls_same_content_merge_and_append_source_observation(isolated_db, make_user):
-    user = make_user("ing014-merge", role="Operator")
+    user = make_user("ing014-merge", role="Administrator", tenant_id="tenant-default")
     body = b"one official command body mirrored at two reviewed URLs"
     first = import_single_official_url(
         user,
@@ -89,7 +89,7 @@ def test_ing014_different_urls_same_content_merge_and_append_source_observation(
 
 
 def test_ing014_different_urls_changed_content_keep_separate_documents(isolated_db, make_user):
-    user = make_user("ing014-separate", role="Operator")
+    user = make_user("ing014-separate", role="Administrator", tenant_id="tenant-default")
     first = import_single_official_url(
         user,
         _payload(URL_17_9, idempotency_key="ing014-separate-a"),
@@ -109,10 +109,8 @@ def test_ing014_different_urls_changed_content_keep_separate_documents(isolated_
 
 
 def test_ing014_cross_tenant_same_hash_never_merges(isolated_db, make_user):
-    first_user = make_user("ing014-tenant-a", role="Operator")
-    second_user = make_user("ing014-tenant-b", role="Operator")
-    first_user["tenant_id"] = "tenant-a"
-    second_user["tenant_id"] = "tenant-b"
+    first_user = make_user("ing014-tenant-a", role="Administrator", tenant_id="tenant-a")
+    second_user = make_user("ing014-tenant-b", role="Administrator", tenant_id="tenant-b")
     body = b"same bytes are not a cross-tenant cache"
     first = import_single_official_url(
         first_user,
@@ -131,7 +129,7 @@ def test_ing014_cross_tenant_same_hash_never_merges(isolated_db, make_user):
 
 
 def test_ing014_deduplication_uses_authoritative_registry_facts(isolated_db, make_user):
-    user = make_user("ing014-authority", role="Operator")
+    user = make_user("ing014-authority", role="Administrator", tenant_id="tenant-default")
     first = import_single_official_url(
         user,
         _payload(URL_17_9, idempotency_key="ing014-authority-a"),

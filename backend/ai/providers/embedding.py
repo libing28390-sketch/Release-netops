@@ -281,11 +281,6 @@ def assert_pgvector_column_compatible(
         )
         row = cursor.fetchone()
     except Exception as exc:
-        # SQLite and legacy adapters have no pg_catalog; compatibility mode is
-        # validated by the vector length guard above.  A real PostgreSQL
-        # inspection failure must not be treated as a successful check.
-        if "sqlite" in type(cursor).__module__.lower():
-            return
         raise EmbeddingProviderError("Unable to inspect pgvector column contract") from exc
     type_name = str((row or [""])[0] or "").lower()
     match = re.search(r"\bvector\((\d+)\)", type_name)

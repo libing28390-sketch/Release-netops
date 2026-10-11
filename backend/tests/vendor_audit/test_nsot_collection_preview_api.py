@@ -53,8 +53,8 @@ def nsot_preview_data(isolated_db):
             """INSERT INTO scheduled_jobs (
                    id, name, job_type, action_type, cron_expr, device_scope,
                    device_filter, commands, script_id, enabled, status,
-                   created_by, created_at, updated_at
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   created_by, created_at, updated_at, tenant_id
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 job_id,
                 "NSOT preview test",
@@ -70,6 +70,7 @@ def nsot_preview_data(isolated_db):
                 "test",
                 now,
                 now,
+                "tenant-default",
             ),
         )
         connection.commit()

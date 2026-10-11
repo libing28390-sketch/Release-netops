@@ -11,7 +11,7 @@ and seeds default data. It is intentionally left untouched.
 From now on, **incremental schema changes go into ordered, tracked migration
 modules** in this package instead of being appended to the monolith. Each
 applied migration is recorded in the ``schema_migrations`` table so it runs
-exactly once per database, on both SQLite and PostgreSQL.
+exactly once in PostgreSQL.
 
 Authoring a migration
 ---------------------
@@ -101,6 +101,8 @@ def build_migration_plan(conn, use_pg: bool | None = None) -> MigrationPlan:
     """Build a deterministic fresh/upgrade plan before executing any module."""
     if use_pg is None:
         from ..core import _USE_PG as use_pg  # type: ignore
+    if not use_pg:
+        raise MigrationHistoryError("Schema migrations require PostgreSQL")
 
     migrations = discover_migrations()
     discovered = {int(module.VERSION): module for module in migrations}
