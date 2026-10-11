@@ -63,22 +63,29 @@
 | 全量前端复跑 | 124 files、484 passed，全部通过 |
 | CI 失败后的定向 PostgreSQL 回归 | 129 passed；使用独立临时 PostgreSQL 源库，覆盖 catalog/knowledge、拓扑计划任务、NSOT 预览及 SNMP 测试夹具 |
 | SQLite 残留清理 | UI/API 评估契约、gold-400 evaluator 校验、测试 mock、README 中的 SQLite 文案和 SQLite 假测试路径已移除；运行时代码要求 PostgreSQL `DATABASE_URL`，没有 `sqlite3` 驱动调用 |
+| 主线发布工作流 `38128867180` | 源提交 `98654393` 全部 required steps 成功：后端全量 pytest、Docker 输入检查、前端构建、sanitized Release tree 提交与归档打包 |
+| PostgreSQL Knowledge Engine Evaluation `38130086205` | 手动 `workflow_dispatch` 成功；补足 `main` 快速发布路径按配置跳过的单独评估步骤 |
+| Release 同步核验 | `Release-netops/main` 为 `2756ef12d198d22594c529d07f7be566ff9e42fe`；`backend/database/core.py`、`backend/services/knowledge_evaluation_service.py`、RAG 评估页面 blob 与源提交相同 |
 
-### 尚未完成
+### CI 失败及修复
 
 - 对 `3eda175e` 的 GitHub Actions 后端全量门禁失败：61 failed、3089 passed、1 skipped。失败来自旧 `Operator` 测试主体和 tenantless 用户/设备/计划任务夹具与 RBAC tenant/snapshot 契约不匹配，以及一条 SNMP 诊断夹具缺少稳定用户 ID；不是 PostgreSQL 或 SQLite 运行时故障。`Knowledge Engine Promptfoo Gate` 对同一 SHA 成功。
-- 已按失败证据修复受影响夹具，并以独立 PostgreSQL 源库运行 129 项定向回归通过；尚未在当前修复状态下完成后端全量 `pytest backend/tests -q`，也尚未产生第二次推送对应的 Actions 结果。
+- 已按失败证据修复受影响夹具，并以独立 PostgreSQL 源库运行 129 项定向回归通过；源提交 `98654393` 的后端全量 pytest 与其余 required Actions steps 已成功，详见最终状态。
 - 本地 `pytest -x` 曾在 168 passed 后发现 gold-400 evaluator 仍强制旧 `source_policy.sqlite=not_used`；清除 checker 中该字段后，`backend/tests/ai/test_eval_gold_400_check.py` 5 passed。未将被该首个失败中断的全量本地运行记作全量通过。
+
+### 最终状态
+
+- 上述旧的 61 个 CI 失败与本地首个 evaluator 契约失败均已修复。
+- 源提交 `98654393` 的 GitHub Actions `38128867180` 总体成功；按工作流设计，正式 tag 发布、Baidu Pan 上传、Windows Agent 和 main 快速路径中的完整评估步骤为 skipped。另有 PostgreSQL Knowledge Engine Evaluation `38130086205` 手动运行成功。
+- 当前 RBAC/SQLite 清理和 main 集成任务已完成；没有把被中断的本地全量测试冒充为通过，后端全量通过依据来自 Actions。
 
 ## 部署与发布注意事项
 
 - 迁移面向 PostgreSQL；上线前应先备份并确认旧任务 owner 映射。迁移无法确认 owner 的记录会禁用并进入 `reauthorization_required`，需要管理员人工处理。
 - 必须核验租户/范围策略配置与已有用户的业务映射，再允许其提交生产变更。角色名简化不应理解为普通用户自动获得执行权。
 - `.github/workflows/release.yml` 对 `main` push 会在门禁通过后同步到独立公开 Release 仓库，并使用 force push 更新该仓库 `main`。用户已授权本次整改推送和 Actions 验收，因此按该授权继续；同步只会发生在门禁通过后。
-- 当前 `main` 与 `origin/main` 均为首次 RBAC 提交 `3eda175e`；Actions 已报告后端门禁失败。后续修复、文档及 fix record 尚待暂存、提交和推送。
+- 源代码修复提交 `98654393` 已在 `main`，主线 Actions 与手动 PostgreSQL Knowledge Engine Evaluation 均成功；Release mirror 提交为 `2756ef12d198d22594c529d07f7be566ff9e42fe`。当前只保留上线前备份、owner 映射与授权策略人工核对等部署事项。
 
-## 剩余工作
+## 后续部署注意事项
 
-1. 在当前修复状态运行后端全量 PostgreSQL pytest、受影响前端测试及 PostgreSQL-only 检查。
-2. 建立本轮 fix record，更新 plan/walkthrough，审核暂存文件仅含本次公开源代码、测试和正式文档。
-3. 推送至 `main`，等待对应 Actions 全部成功，并核验 Release 仓库同步到同一发布 SHA；若失败则按日志继续修复与重推。
+上线迁移前仍需备份 PostgreSQL，并核对旧计划任务 owner、租户和范围映射；这些属于正式部署数据审查，不阻塞本次代码、测试、Actions 与 Release 同步验收。
