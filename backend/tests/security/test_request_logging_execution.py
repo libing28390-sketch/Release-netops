@@ -22,8 +22,11 @@ def test_request_logging_auth_does_not_block_other_requests(monkeypatch):
     finish_validation = threading.Event()
     contexts = []
     auth_threads = []
+    validation_count = 0
 
     def validate(_token):
+        nonlocal validation_count
+        validation_count += 1
         auth_threads.append(threading.get_ident())
         validating.set()
         assert finish_validation.wait(timeout=3)
@@ -32,6 +35,10 @@ def test_request_logging_auth_does_not_block_other_requests(monkeypatch):
     monkeypatch.setattr(users, "validate_session_token", validate)
 
     async def handler(request):
+        if request.url.path == "/api/devices":
+            from core.rbac import _get_current_user
+
+            assert _get_current_user(request) == {"username": "test_operator"}
         contexts.append((request.url.path, user_var.get(), request_id_var.get()))
         return Response(status_code=204)
 
@@ -59,6 +66,7 @@ def test_request_logging_auth_does_not_block_other_requests(monkeypatch):
         ("/api/health/live", "anonymous", "req_execution_test"),
         ("/api/devices", "test_operator", "req_execution_test"),
     ]
+    assert validation_count == 1
 
 
 def test_request_logging_keeps_anonymous_context_when_lookup_fails(monkeypatch):

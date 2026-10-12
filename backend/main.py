@@ -95,6 +95,7 @@ from engine.orchestrator import get_telemetry_orchestrator
 import logging
 import os
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -505,6 +506,14 @@ import time
 
 from fastapi.responses import RedirectResponse
 
+# Device polling also uses asyncio's default executor for network I/O. Keep
+# session validation on a small, independent pool so unreachable devices cannot
+# queue browser/API authentication behind probe timeouts.
+_SESSION_AUTH_EXECUTOR = ThreadPoolExecutor(
+    max_workers=4,
+    thread_name_prefix="nexora-session-auth",
+)
+
 app = FastAPI(
     dependencies=[Depends(enforce_api_access)],
     title=settings.PROJECT_NAME,
@@ -566,12 +575,19 @@ async def add_request_id_and_log(request: Request, call_next):
     
     auth_start_time = time.perf_counter()
     auth = request.headers.get('Authorization', '')
+    request.state.nexora_session_auth_checked = False
     if auth.startswith('Bearer '):
         token = auth.replace('Bearer ', '')
         if token:
             try:
                 from api.users import validate_session_token
-                user = await asyncio.to_thread(validate_session_token, token)
+                user = await asyncio.get_running_loop().run_in_executor(
+                    _SESSION_AUTH_EXECUTOR,
+                    validate_session_token,
+                    token,
+                )
+                request.state.nexora_session_auth_checked = True
+                request.state.nexora_session_auth_user = user
                 if user and user.get('username'):
                     user_var.set(user['username'])
             except Exception:
