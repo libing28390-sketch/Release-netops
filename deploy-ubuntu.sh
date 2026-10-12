@@ -408,9 +408,9 @@ ok "前端构建完成 (dist/)"
 # 6. 环境文件 (.env)
 # ============================================================
 if [ ! -f "$PROJECT_DIR/.env" ]; then
-    if [ -f "$PROJECT_DIR/.env.example" ]; then
+    if [ -f "$PROJECT_DIR/.env.ubuntu.example" ]; then
         info "正在生成 .env 配置文件..."
-        cp "$PROJECT_DIR/.env.example" "$PROJECT_DIR/.env"
+        cp "$PROJECT_DIR/.env.ubuntu.example" "$PROJECT_DIR/.env"
         # 强制转换 CRLF → LF，避免 Windows 换行符导致 sed 替换失败
         sed -i 's/\r$//' "$PROJECT_DIR/.env"
 
@@ -460,7 +460,7 @@ if [ ! -f "$PROJECT_DIR/.env" ]; then
             warn ".env 已创建，但数据库密码需要手动更新 (DATABASE_URL)"
         fi
     else
-        warn "未找到 .env.example，跳过环境文件自动生成"
+        warn "未找到 .env.ubuntu.example，跳过环境文件自动生成"
     fi
 fi
 

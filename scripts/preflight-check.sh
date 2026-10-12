@@ -41,7 +41,7 @@ hdr "Environment file"
 
 if [ ! -f "$ENV_FILE" ]; then
     fail ".env not found at $ENV_FILE"
-    fail "Run deploy-ubuntu.sh or copy .env.example → .env and fill in real secrets."
+    fail "Run deploy-ubuntu.sh or copy .env.ubuntu.example → .env and fill in real secrets."
     echo
     echo "Cannot continue without .env."
     exit 1

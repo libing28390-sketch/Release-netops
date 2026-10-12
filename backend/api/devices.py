@@ -1,8 +1,7 @@
-from fastapi import APIRouter, HTTPException, Body, Query, Depends, File, UploadFile, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Body, Query, Depends, BackgroundTasks
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from collections.abc import Mapping
-import os
 import uuid
 import json
 import re
@@ -19,7 +18,6 @@ from services.platform_identification_service import _canonical_vendor
 from services.platform_registry_service import PLATFORM_CATALOG_METADATA, list_platform_vendor_names
 from services import tag_service
 from core.crypto import encrypt_credential, decrypt_credential
-from core.config import settings
 from core.rbac import authorize_resource, is_global_administrator, require_role
 from services.vault_service import resolve_device_credentials, resolve_collector_credentials, write_credentials as vault_write, vault_available
 from services.snmp_mib_service import (
@@ -29,12 +27,8 @@ from services.snmp_mib_service import (
     list_mib_node_vendors,
     get_mib_detail,
     delete_mib,
-    parse_and_store_mib,
-    parse_and_store_zip,
-    extract_mib_archive_to_repo,
     search_mib_nodes,
     resolve_mib_nodes_for_oids,
-    SUPPORTED_MIB_FILE_SUFFIXES,
 )
 from services.librenms_mib_service import (
     VENDOR_DIR_MAP,
@@ -1814,175 +1808,6 @@ def reset_builtin_snmp_mibs(user=require_role("Operator")):
         "message": f"Successfully reloaded {count} built-in MIB modules",
         "count": count,
     }
-
-
-@router.post("/platform-registry/mibs/upload")
-async def upload_snmp_mib_file(
-    file: UploadFile = File(...),
-    vendor: str = Query("", max_length=64),
-    description: str = Query("", max_length=500),
-    background_tasks: BackgroundTasks = None,
-    user=require_role("Operator"),
-):
-    """Upload and parse a .mib / .my / .txt file or a .zip MIB archive."""
-    if background_tasks is None:
-        background_tasks = BackgroundTasks()
-
-    if not settings.SNMP_MIB_MANUAL_UPLOAD_ENABLED:
-        raise HTTPException(
-            status_code=410,
-            detail="Manual MIB uploads are disabled; use the official LibreNMS synchronization or create an SNMP metric template.",
-        )
-
-    filename = os.path.basename(file.filename or "unknown.mib")
-    content = await file.read()
-    if not content:
-        raise HTTPException(status_code=400, detail="Uploaded file is empty")
-    if len(content) > settings.SNMP_MIB_UPLOAD_MAX_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=(
-                "Uploaded MIB file is too large; maximum size is "
-                f"{settings.SNMP_MIB_UPLOAD_MAX_BYTES} bytes"
-            ),
-        )
-
-    lower_filename = filename.lower()
-    if not lower_filename.endswith((*SUPPORTED_MIB_FILE_SUFFIXES, ".zip")):
-        raise HTTPException(
-            status_code=400,
-            detail="Only .zip, .mib, .my, .txt, .asn, and .smi files are supported",
-        )
-
-    if lower_filename.endswith(".zip"):
-        import zipfile
-        import io
-        try:
-            with zipfile.ZipFile(io.BytesIO(content), "r") as z_inspect:
-                valid_members = [
-                    f.filename for f in z_inspect.infolist()
-                    if not f.is_dir() and not any(p.startswith(".") for p in f.filename.replace("\\", "/").split("/"))
-                ]
-        except zipfile.BadZipFile as exc:
-            raise HTTPException(status_code=400, detail=f"Invalid or corrupted ZIP archive: {exc}") from exc
-
-        # If it's a large archive (> 10 files, e.g. full vendor repo or LibreNMS package),
-        # automatically extract to the repository directory and trigger full background indexing.
-        is_directory_or_large = len(valid_members) > 10
-
-        if is_directory_or_large:
-            extracted_count, detected_vendors = extract_mib_archive_to_repo(
-                content,
-                target_mibs_dir=MIBS_DIR,
-                max_files=settings.SNMP_MIB_UPLOAD_MAX_FILES,
-                max_uncompressed_bytes=settings.SNMP_MIB_UPLOAD_MAX_UNCOMPRESSED_BYTES,
-            )
-            if extracted_count == 0:
-                raise HTTPException(
-                    status_code=400,
-                    detail="No valid MIB files found in uploaded ZIP archive.",
-                )
-            platform_vendor_scope = [*list_platform_vendor_names(), "Standard"]
-            allowed_vendors = _platform_mib_vendor_map(platform_vendor_scope)
-            detected_platform_vendors = sorted({
-                allowed_vendors[_mib_vendor_token(value)]
-                for value in detected_vendors
-                if _mib_vendor_token(value) in allowed_vendors
-            })
-
-            def _archive_sync_worker():
-                global _librenms_sync_state
-                _librenms_sync_state["running"] = True
-                _librenms_sync_state["progress"] = f"Unpacked {extracted_count} MIB files; importing only platform-supported vendors..."
-                _librenms_sync_state["started_at"] = time.time()
-                try:
-                    result = import_mibs_from_directory(
-                        mibs_dir=MIBS_DIR,
-                        target_vendors=platform_vendor_scope,
-                        retire_missing_files=False,
-                    )
-                    result["platform_vendor_scope"] = platform_vendor_scope
-                    _librenms_sync_state["last_result"] = result
-                    _librenms_sync_state["run_id"] = result.get("run_id")
-                    _librenms_sync_state["progress"] = (
-                        f"Finished: {result.get('imported', 0)} MIBs imported, "
-                        f"{result.get('nodes', 0)} OID nodes"
-                    )
-                except Exception as exc:
-                    logger.error("ZIP MIB sync worker failed: %s", exc)
-                    _librenms_sync_state["progress"] = f"Error: {exc}"
-                    _librenms_sync_state["last_result"] = {"success": False, "error": str(exc)}
-                finally:
-                    _librenms_sync_state["running"] = False
-
-            background_tasks.add_task(_archive_sync_worker)
-            return {
-                "success": True,
-                "async": True,
-                "message": f"Successfully unpacked {extracted_count} MIB files. Full background indexing has started.",
-                "extracted": extracted_count,
-                "vendors": detected_platform_vendors,
-                "platform_vendor_scope": platform_vendor_scope,
-                "state": _librenms_sync_state,
-            }
-
-    conn = get_db_connection()
-    try:
-        if lower_filename.endswith(".zip"):
-            import_errors: list[dict[str, str]] = []
-            results = parse_and_store_zip(
-                conn,
-                content,
-                vendor=vendor,
-                description=description,
-                max_files=settings.SNMP_MIB_UPLOAD_MAX_FILES,
-                max_uncompressed_bytes=settings.SNMP_MIB_UPLOAD_MAX_UNCOMPRESSED_BYTES,
-                errors=import_errors,
-            )
-            conn.commit()
-            if not results:
-                conn.rollback()
-                detail: dict[str, Any] = {
-                    "message": "No valid MIB files (.mib/.my/.txt/.asn/.smi) found in zip archive",
-                }
-                if import_errors:
-                    detail["errors"] = import_errors
-                raise HTTPException(status_code=400, detail=detail)
-            return {
-                "success": True,
-                "async": False,
-                "message": f"Successfully parsed and imported {len(results)} MIB modules from zip archive",
-                "data": results,
-                "errors": import_errors,
-                "imported": len(results),
-                "failed": len(import_errors),
-            }
-        else:
-            raw_text = content.decode("utf-8", errors="replace")
-            res = parse_and_store_mib(
-                conn,
-                filename=filename,
-                raw_text=raw_text,
-                vendor=vendor,
-                source_type="user_upload",
-                description=description,
-            )
-            conn.commit()
-            return {
-                "success": True,
-                "async": False,
-                "message": f"Successfully parsed MIB module '{res['name']}' with {res['node_count']} OID nodes",
-                "data": res,
-            }
-    except HTTPException:
-        conn.rollback()
-        raise
-    except Exception as exc:
-        conn.rollback()
-        logger.warning("MIB upload parsing failed for %s: %s", filename, exc)
-        raise HTTPException(status_code=400, detail=f"Failed to parse MIB file: {exc}") from exc
-    finally:
-        conn.close()
 
 
 @router.get("/platform-registry/mibs/{mib_id}")

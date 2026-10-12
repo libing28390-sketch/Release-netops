@@ -94,6 +94,7 @@ CONFIG_OUT="\$BACKUP_DIR/netops-\$TS.config.tar.gz"
 CONFIG_PARTIAL="\$CONFIG_OUT.partial"
 CONFIG_ENTRIES=(.env)
 [ -f "\$PROJECT_DIR/.env.example" ] && CONFIG_ENTRIES+=(.env.example)
+[ -f "\$PROJECT_DIR/.env.ubuntu.example" ] && CONFIG_ENTRIES+=(.env.ubuntu.example)
 [ -d "\$PROJECT_DIR/nginx/ssl" ] && CONFIG_ENTRIES+=(nginx/ssl)
 if tar -czf "\$CONFIG_PARTIAL" -C "\$PROJECT_DIR" "\${CONFIG_ENTRIES[@]}"; then
     if [ ! -s "\$CONFIG_PARTIAL" ]; then

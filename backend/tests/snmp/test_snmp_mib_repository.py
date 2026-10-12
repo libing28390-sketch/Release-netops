@@ -1,43 +1,26 @@
 from __future__ import annotations
 
-import io
-import asyncio
-from backend.tests.pg_test_utils import postgresql_test_driver
-import zipfile
 import pytest
-from fastapi import BackgroundTasks, HTTPException, UploadFile
+from fastapi import HTTPException
 
 from database import get_db_connection
 from services.snmp_mib_service import (
     MibParser,
     parse_and_store_mib,
-    list_mibs,
     list_mibs_page,
     get_mib_repository_stats,
     get_mib_detail,
     delete_mib,
     search_mib_nodes,
 )
-import services.snmp_mib_service as snmp_mib_service
-import api.devices as devices_api
-from core.config import settings
+from services.snmp_preset_service import seed_builtin_mibs
+from api.devices import reject_local_snmp_model_presets
 
 
 @pytest.fixture(autouse=True)
 def _isolated_snmp_database(isolated_db):
     """Give repository tests the same fresh schema as the application."""
     yield isolated_db
-from services.snmp_preset_service import (
-    seed_builtin_mibs,
-)
-from api.devices import (
-    get_snmp_mibs,
-    search_snmp_mib_nodes,
-    get_snmp_mib_detail,
-    remove_snmp_mib,
-    upload_snmp_mib_file,
-    reject_local_snmp_model_presets,
-)
 
 
 SAMPLE_TEST_MIB = """
@@ -219,159 +202,6 @@ def test_local_snmp_model_preset_routes_are_retired() -> None:
 
     assert exc_info.value.status_code == 410
     assert exc_info.value.detail["code"] == "LIBRENMS_RULES_ONLY"
-
-
-def test_manual_mib_upload_can_be_disabled_explicitly(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "SNMP_MIB_MANUAL_UPLOAD_ENABLED", False)
-    upload = UploadFile(filename="SAMPLE-TEST-MIB.mib", file=io.BytesIO(SAMPLE_TEST_MIB.encode()))
-
-    with pytest.raises(HTTPException) as exc_info:
-        asyncio.run(upload_snmp_mib_file(file=upload, user={"role": "Operator"}))
-
-    assert exc_info.value.status_code == 410
-    assert "Manual MIB uploads are disabled" in str(exc_info.value.detail)
-
-
-def _create_upload_schema(conn: postgresql_test_driver.Connection) -> None:
-    conn.executescript(
-        """
-        CREATE TABLE snmp_mibs (
-            id TEXT PRIMARY KEY, name TEXT NOT NULL, vendor TEXT NOT NULL,
-            filename TEXT NOT NULL, file_size INTEGER NOT NULL, node_count INTEGER NOT NULL,
-            source_type TEXT NOT NULL, description TEXT NOT NULL, content_text TEXT NOT NULL,
-            source_id TEXT NOT NULL DEFAULT '', source_commit TEXT NOT NULL DEFAULT '',
-            relative_path TEXT NOT NULL DEFAULT '', raw_file_path TEXT NOT NULL DEFAULT '',
-            sha256 TEXT NOT NULL DEFAULT '', parse_status TEXT NOT NULL DEFAULT 'legacy',
-            parse_error TEXT NOT NULL DEFAULT '', parser_version TEXT NOT NULL DEFAULT 'legacy',
-            module_oid TEXT NOT NULL DEFAULT '', import_run_id TEXT NOT NULL DEFAULT '',
-            is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-        );
-        CREATE TABLE snmp_mib_nodes (
-            id TEXT PRIMARY KEY, mib_id TEXT NOT NULL, node_name TEXT NOT NULL,
-            oid TEXT NOT NULL, parent_oid TEXT NOT NULL, syntax_type TEXT NOT NULL,
-            access_type TEXT NOT NULL, status TEXT NOT NULL, description TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        );
-        """
-    )
-
-
-def test_manual_mib_zip_upload_imports_supported_members(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "SNMP_MIB_MANUAL_UPLOAD_ENABLED", True)
-    conn = postgresql_test_driver.connect()
-    _create_upload_schema(conn)
-    monkeypatch.setattr(devices_api, "get_db_connection", lambda: conn)
-
-    archive = io.BytesIO()
-    with zipfile.ZipFile(archive, "w") as zip_file:
-        zip_file.writestr("vendor/SAMPLE-TEST-MIB.mib", SAMPLE_TEST_MIB)
-        zip_file.writestr("README.md", "ignored")
-    archive.seek(0)
-
-    upload = UploadFile(filename="vendor-mibs.zip", file=archive)
-    response = asyncio.run(
-        upload_snmp_mib_file(
-            file=upload,
-            vendor="",
-            description="",
-            user={"role": "Operator"},
-        )
-    )
-
-    assert response["success"] is True
-    assert response["imported"] == 1
-    assert response["failed"] == 0
-    assert response["data"][0]["name"] == "SAMPLE-TEST-MIB"
-
-
-def test_manual_large_zip_archive_upload_triggers_background_indexing(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "SNMP_MIB_MANUAL_UPLOAD_ENABLED", True)
-    sync_state = {
-        "running": False,
-        "progress": "idle",
-        "run_id": None,
-        "started_at": None,
-    }
-    monkeypatch.setattr(devices_api, "_librenms_sync_state", sync_state)
-    monkeypatch.setattr(devices_api, "list_platform_vendor_names", lambda *_args: ["Cisco"])
-    monkeypatch.setattr(
-        devices_api,
-        "extract_mib_archive_to_repo",
-        lambda *_args, **_kwargs: (12, ["Cisco"]),
-    )
-
-    import_result = {}
-
-    def mock_import(**kwargs):
-        import_result.update(kwargs)
-        return {"success": True, "imported": 12, "nodes": 100, "run_id": "test-run-123"}
-
-    monkeypatch.setattr(devices_api, "import_mibs_from_directory", mock_import)
-
-    archive = io.BytesIO()
-    with zipfile.ZipFile(archive, "w") as zip_file:
-        for i in range(12):
-            zip_file.writestr(f"cisco/TEST-MIB-{i}", f"TEST-MIB-{i} DEFINITIONS ::= BEGIN END")
-    archive.seek(0)
-
-    upload = UploadFile(filename="all-mibs.zip", file=archive)
-    background_tasks = BackgroundTasks()
-    response = asyncio.run(
-        upload_snmp_mib_file(
-            file=upload,
-            vendor="",
-            description="",
-            background_tasks=background_tasks,
-            user={"role": "Operator"},
-        )
-    )
-
-    assert response["success"] is True
-    assert response["async"] is True
-    assert response["extracted"] == 12
-    assert response["vendors"] == ["Cisco"]
-    assert response["state"] is sync_state
-    assert response["state"]["progress"] == "idle"
-    assert import_result == {}
-
-    asyncio.run(background_tasks())
-
-    assert import_result["target_vendors"] == ["Cisco", "Standard"]
-    assert import_result["retire_missing_files"] is False
-    assert sync_state["running"] is False
-    assert sync_state["run_id"] == "test-run-123"
-    assert sync_state["progress"] == "Finished: 12 MIBs imported, 100 OID nodes"
-
-    status = devices_api.get_sync_librenms_mibs_status(user={"role": "Viewer"})
-    assert status["success"] is True
-    assert status["data"]["progress"] == sync_state["progress"]
-    assert status["data"]["librenms_rule_count"] == 0
-
-
-def test_zip_member_failure_does_not_abort_other_members(monkeypatch) -> None:
-    conn = postgresql_test_driver.connect()
-    conn.execute("CREATE TABLE imported_files (filename TEXT PRIMARY KEY)")
-    archive = io.BytesIO()
-    with zipfile.ZipFile(archive, "w") as zip_file:
-        zip_file.writestr("good.mib", "good")
-        zip_file.writestr("broken.mib", "broken")
-    archive.seek(0)
-
-    def fake_parse_and_store_mib(connection, *, filename, **kwargs):
-        if filename == "broken.mib":
-            raise ValueError("invalid MIB")
-        connection.execute("INSERT INTO imported_files (filename) VALUES (?)", (filename,))
-        return {"filename": filename}
-
-    monkeypatch.setattr(snmp_mib_service, "parse_and_store_mib", fake_parse_and_store_mib)
-    errors: list[dict[str, str]] = []
-    results = snmp_mib_service.parse_and_store_zip(conn, archive.getvalue(), errors=errors)
-    conn.commit()
-
-    assert results == [{"filename": "good.mib"}]
-    assert errors == [{"filename": "broken.mib", "error": "invalid MIB"}]
-    assert [tuple(row) for row in conn.execute("SELECT filename FROM imported_files").fetchall()] == [("good.mib",)]
-    conn.close()
 
 
 def test_reset_and_search_multi_vendor_mibs() -> None:

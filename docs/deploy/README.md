@@ -9,6 +9,8 @@
 | **Docker Compose** | Linux 服务器、生产环境，已有 Docker 经验 | `docker-compose.yml` / `Dockerfile` | [docker.md](./docker.md) |
 | **Ubuntu 一键脚本** | Ubuntu 裸机 / Codespaces，想要 systemd + Nginx 的原生部署 | `deploy-ubuntu.sh` | [ubuntu.md](./ubuntu.md) |
 
+Docker Compose 使用根目录 `.env.example`；原生 Ubuntu/systemd 使用 `.env.ubuntu.example`。
+
 两种方式功能完全一致，区别只在运行环境和安装门槛。
 
 - **v1.0.9 发布说明**：[Linux / Ubuntu / Docker Release Notes](./release-notes.md)

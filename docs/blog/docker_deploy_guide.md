@@ -36,20 +36,14 @@
 
 ## 🛠️ Docker 5 分钟一键部署教程
 
-我们为您提供了两个代码托管地址，部署时任选其一即可：
-
-- **Gitee 地址**：`https://gitee.com/leerbon/netops.git`
-- **GitHub 地址**：`https://github.com/libing28390-sketch/Release-netops.git`
+项目代码托管在 GitHub：`https://github.com/libing28390-sketch/Release-netops.git`。
 
 ### 第一步：准备 Linux 主机与拉取代码
 
 在您的 Linux 宿主机终端执行以下命令拉取项目：
 
 ```bash
-# 二选一：选择当前环境可以访问的代码仓库
-git clone https://gitee.com/leerbon/netops.git nexora-automation
-# 或者使用 GitHub
-# git clone https://github.com/libing28390-sketch/Release-netops.git nexora-automation
+git clone https://github.com/libing28390-sketch/Release-netops.git nexora-automation
 
 cd nexora-automation
 ```
@@ -132,5 +126,5 @@ docker compose down
 ## 🎁 读者福利与技术交流
 
 - **关注公众号**：微信搜索关注 **“小网工爱运维”**，回复 **“试用”** 或 **“交流”** 获取最新运维自动化实践案例与行业精选干货。
-- **开源共建与打赏**：如果本项目让您的网络运维工作获得了极大解脱，欢迎在 Gitee / GitHub 点亮 **Star ⭐️** 或打赏一杯咖啡 ☕️！
+- **开源共建与打赏**：如果本项目让您的网络运维工作获得了极大解脱，欢迎在 GitHub 点亮 **Star ⭐️** 或打赏一杯咖啡 ☕️！
 - **反馈与技术讨论**：在部署或使用过程中遇到任何 Bug、设备兼容性问题或新功能建议，欢迎前往仓库提交 **Issue**，开源团队将第一时间跟进解决；同时也欢迎通过公众号联系作者加入专业技术群交流沟通！

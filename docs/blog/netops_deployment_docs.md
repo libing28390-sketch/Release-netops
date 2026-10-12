@@ -53,12 +53,6 @@ Windows 部署支持两种主流模式：**小白用户的图形向导一键部�
   git clone -b windows https://github.com/libing28390-sketch/Release-netops.git nexora-automation
   cd nexora-automation
   ```
-* **Gitee 国内镜像克隆**（访问更快）：
-  ```powershell
-  git clone -b windows https://gitee.com/leerbon/netops.git nexora-automation
-  cd nexora-automation
-  ```
-
 ---
 
 ### 2. 模式 A：Windows 一键图形化向导（推荐）
@@ -126,7 +120,7 @@ Windows 有两种升级路径，范围不同：
 * **完整升级（推荐）**：退出托盘程序并备份 PostgreSQL 后，使用 `git pull origin windows` 或最新 `NetOps-Windows.zip`。保留 `.env`、`data/`、`backup/` 和 `desktop/desktop_settings.ini`，让新包覆盖 `backend/`、`desktop/`、`src/` 和 `NetOps.exe`；有效的 `.venv` 可以复用，但如果 `backend/requirements.txt` 发生变化，需要重新安装依赖；后端启动时会执行未完成的数据库迁移。
 * **托盘“检查更新”**：当前直接访问 GitHub Releases API，下载 GitHub Release 中的 `NetOps.exe`，只替换启动器。它不会同步后端、前端、托盘脚本或数据库迁移，不能代替完整升级。
 
-GitHub 在线更新在国内网络环境下可能因 DNS、连接超时、代理或 TLS 拦截失败。更新失败时不会替换当前客户端，建议改用可访问的 Windows ZIP/内部制品包；若所在环境维护了同步的 Gitee `windows` 分支，也可以在该来源执行 `git pull origin windows`。当前发布工作流不会自动把 Release 同步到 Gitee，Gitee 是否有最新 Windows 分支需要发布人员单独确认。构建流程在配置了 `BAIDU_PAN_TOKEN` 时还会把 Windows ZIP 上传到百度网盘，可作为离线分发来源。
+GitHub 在线更新在国内网络环境下可能因 DNS、连接超时、代理或 TLS 拦截失败。更新失败时不会替换当前客户端，建议改用可访问的 Windows ZIP、百度网盘包或内部制品包。
 
 ## 三、 Linux Docker Compose 生产部署
 

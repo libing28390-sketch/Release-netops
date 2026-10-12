@@ -64,9 +64,17 @@ docker exec nexora-nginx ps aux
    ```bash
    git clone https://github.com/libing28390-sketch/Release-netops.git nexora-automation
    cd nexora-automation
-   # 编辑 .env，至少替换 SECRET_KEY、CREDENTIAL_ENCRYPTION_KEY、POSTGRES_PASSWORD、DATABASE_URL、ALERT_NOTIFICATION_BROKER_PASSWORD
+   # 首次安装由部署脚本生成数据库、应用、Grafana、S3 和缓存 Redis 密钥。
+   # 先手动生成并写入必填的告警 Broker 密码：
    openssl rand -hex 32
    ```
+
+   直接运行 Compose 时，必须自行填写 `POSTGRES_PASSWORD`、
+   `POSTGRES_EXPORTER_PASSWORD`、`SECRET_KEY`、`CREDENTIAL_ENCRYPTION_KEY`、
+   `GRAFANA_ADMIN_PASSWORD`、`ALERT_NOTIFICATION_BROKER_PASSWORD` 和 S3 凭据。
+   前六项为空时 Compose 会拒绝启动；S3 凭据为空时应用配置校验会失败。
+   直接 Compose 时也要设置 `DATABASE_URL`，供宿主机备份和维护脚本使用；
+   容器内连接串由 Compose 根据 `POSTGRES_*` 自动构造。
 2. 构建并启动（前端会在容器内自动编译）：
    ```bash
    bash scripts/deploy-docker.sh install
@@ -84,7 +92,7 @@ docker exec nexora-nginx ps aux
 ## S3 对象存储与 SeaweedFS
 
 Docker 部署默认包含本地 S3 兼容存储 SeaweedFS，不需要 AWS 账号或 AWS 服务。
-部署脚本首次运行时会从 `.env.example` 创建 `.env`；默认配置使用
+部署脚本首次运行时会从 Docker 专用的 `.env.example` 创建 `.env`；默认配置使用
 `STORAGE_BACKEND=s3`、内部地址 `http://seaweedfs:8333` 和 Bucket `nexora`，并自动
 启用 SeaweedFS Compose profile。脚本会为 `.env` 中的 Access Key ID 和 Secret
 生成强随机值；已有真实值会原样保留：

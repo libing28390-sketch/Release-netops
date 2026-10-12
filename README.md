@@ -126,7 +126,8 @@ Windows 工作站仍可通过浏览器访问 Linux/Docker 服务端。进入个�
 
 ## 常用配置 / Configuration
 
-部署脚本会从 `.env.example` 初始化 `.env`。常用配置如下；完整清单和注释以 `.env.example` 为准。
+Docker 部署脚本从 `.env.example` 初始化 `.env`；Ubuntu/systemd 部署使用 `.env.ubuntu.example`。
+常用 Docker 配置如下；完整清单和注释以 `.env.example` 为准。
 
 | 变量 | 作用 | 默认/说明 |
 | :--- | :--- | :--- |

@@ -98,7 +98,6 @@ describe('MibUploadModal node search and template mapping', () => {
     );
 
     await waitFor(() => expect(screen.getAllByText('ZTE-AN-ENVMON-MIB').length).toBeGreaterThan(0));
-    expect(screen.getByRole('button', { name: '上传 MIB / ZIP' })).toBeTruthy();
     const vendorCombobox = screen.getByRole('combobox', { name: '厂商分类' });
     await user.click(vendorCombobox);
     const vendorSearch = screen.getByLabelText('搜索厂商');
@@ -153,47 +152,6 @@ describe('MibUploadModal node search and template mapping', () => {
       oid: mibNode.oid,
       mib_name: 'ZTE-AN-ENVMON-MIB',
     }), 'cpu');
-  });
-
-  it('uploads a ZIP archive as multipart form data and refreshes the repository', async () => {
-    const user = userEvent.setup();
-    const showToast = vi.fn();
-    mockedApiRequest.mockImplementation(async (url, init) => {
-      const requestUrl = String(url);
-      if (requestUrl.startsWith('/api/platform-registry/mibs/sync-librenms/status')) {
-        return { success: true, data: { running: false, repository: null } } as never;
-      }
-      if (requestUrl.startsWith('/api/platform-registry/mibs/upload')) {
-        expect(init?.method).toBe('POST');
-        expect(init?.body).toBeInstanceOf(FormData);
-        return {
-          success: true,
-          imported: 2,
-          failed: 1,
-          data: [],
-          errors: [{ filename: 'broken.mib', error: 'parse failed' }],
-        } as never;
-      }
-      if (requestUrl.startsWith('/api/platform-registry/mibs?')) {
-        return { success: true, data: [], total: 0, page: 1, stats: null } as never;
-      }
-      return { success: true, data: [] } as never;
-    });
-
-    render(
-      <MibUploadModal
-        open
-        language="zh"
-        onClose={vi.fn()}
-        showToast={showToast}
-      />,
-    );
-
-    const input = screen.getByLabelText('选择 MIB 或 ZIP 文件');
-    await user.upload(input, new File(['zip bytes'], 'vendor-mibs.zip', { type: 'application/zip' }));
-
-    await waitFor(() => expect(showToast).toHaveBeenCalledWith('MIB 导入完成：成功 2 个，失败 1 个', 'info'));
-    expect(mockedApiRequest.mock.calls.some(([url]) => String(url).startsWith('/api/platform-registry/mibs/upload'))).toBe(true);
   });
 
   it('keeps the current MIB list visible while a vendor filter reloads', async () => {

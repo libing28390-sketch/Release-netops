@@ -7,6 +7,7 @@ Thumbs.db
 *.log
 .env*
 !.env.example
+!.env.ubuntu.example
 __pycache__/
 *.pyc
 .venv/
@@ -99,8 +100,6 @@ docs/tts_scripts/device_onboarding_and_rotation_20260524.mp3
 docs/tts_scripts/device_onboarding_and_rotation.srt
 docs/tts_scripts/test_concat.mp3
 scripts/generate_device_onboarding_audio.py
-README.gitee.md
-deploy-ubuntu.gitee.sh
 
 # Local session links and codex-bridge cache
 artifacts_symlink/
@@ -124,7 +123,6 @@ tools/node/
 !**/README_*.md
 !**/README.*.md
 !**/readme.md
-!**/README_gitee.md
 !**/DEPLOY.md
 !**/*DEPLOY*.md
 !**/deploy/**/*.md

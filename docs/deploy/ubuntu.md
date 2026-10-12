@@ -7,7 +7,6 @@
 | 文件 | 作用 |
 |------|------|
 | `deploy-ubuntu.sh` | Ubuntu / Codespaces 一键部署脚本 |
-| `deploy-ubuntu.gitee.sh` | Gitee 镜像版（国内网络） |
 
 > 脚本是**自包含**的：它会自己克隆仓库再部署，所以可以在任意目录运行。文件保持在根目录，是为了让下面那条公开的 `curl` 一键安装链接保持有效。
 
@@ -38,9 +37,13 @@ chmod +x deploy-ubuntu.sh
 ## 脚本做了什么
 
 - 安装 Node.js 22、Python 3.10+ 及系统依赖
-- 全新部署时自动生成 `.env`（含随机 `SECRET_KEY` / `CREDENTIAL_ENCRYPTION_KEY` / 数据库密码）
+- 全新部署时从 `.env.ubuntu.example` 生成 `.env`（含随机 `SECRET_KEY` / `CREDENTIAL_ENCRYPTION_KEY` / 数据库密码）
 - 配置 systemd 服务（后端绑定 `127.0.0.1`，外部流量经 Nginx）
 - 容器环境（无 systemd）自动降级用 `service` + `nohup` 启动
+
+已有 `.env` 会被保留。若旧 Ubuntu 部署曾从 Docker 模板复制配置，确认
+`STORAGE_BACKEND=local`、`MONITORING_METRIC_BACKEND=native` 和
+`IP_LOCATOR_CACHE_BACKEND=postgres`，避免引用仅在 Compose 网络内可达的服务名。
 
 ## 部署后建议
 

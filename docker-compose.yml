@@ -1,5 +1,11 @@
 name: nexora
 
+# Per-service CPU and memory ceilings (not reservations) are configured below.
+# Defaults target a 2 CPU / 8 GiB host; aggregate caps may exceed physical CPU
+# and installed RAM, so verify workload headroom before production rollout.
+# Recreate containers after changing limits. Keep Redis above its 512 MB data
+# cap to allow room for AOF and buffer overhead.
+
 # Keep container stdout/stderr bounded even when a service enters a restart
 # loop. The local driver is compact and rotates without retaining an
 # unbounded JSON log file.

@@ -64,18 +64,7 @@ openssl version
 sudo usermod -aG docker "$USER"
 ```
 
-## 四、拉取代码：Gitee 和 GitHub 二选一
-
-以下两个地址任选一个，不要同时执行。
-
-### 方式 A：Gitee
-
-```
-git clone https://gitee.com/leerbon/netops.git netops-automation
-cd netops-automation
-```
-
-### 方式 B：GitHub
+## 四、从 GitHub 拉取代码
 
 ```
 git clone https://github.com/libing28390-sketch/Release-netops.git netops-automation

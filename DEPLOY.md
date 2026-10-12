@@ -121,7 +121,7 @@ curl -fsSL https://raw.githubusercontent.com/libing28390-sketch/Release-netops/m
 > - Custom backend API listening port (default: 8003)
 > - Custom external Nginx proxy port (default: 80)
 > 
-> You can also pre-configure your `.env` file manually (`cp .env.example .env`). The script will auto-detect and retain your pre-configured settings.
+> You can also pre-configure your `.env` file manually (`cp .env.ubuntu.example .env`). The script will auto-detect and retain your pre-configured settings.
 
 ```bash
 chmod +x deploy-ubuntu.sh
@@ -135,7 +135,7 @@ chmod +x deploy-ubuntu.sh
 3. Interactively requests custom database credentials & listening ports
 4. Creates a Python virtual environment and installs `backend/requirements.txt`
 5. Installs Node.js dependencies and builds the frontend (`dist/`)
-6. Generates `.env` from `.env.example` with random encryption keys
+6. Generates `.env` from `.env.ubuntu.example` with random encryption keys
 7. Creates PostgreSQL database and sets up credentials
 8. Sets `CAP_NET_RAW` on the venv Python binary (for ICMP ping)
 9. Writes and enables an Nginx reverse proxy config on your chosen port
@@ -336,7 +336,7 @@ sudo -u postgres psql -c "CREATE USER netops WITH PASSWORD 'your-password';"
 sudo -u postgres psql -c "CREATE DATABASE netops OWNER netops;"
 
 # 5. Environment
-cp .env.example .env
+cp .env.ubuntu.example .env
 # Edit .env: set DATABASE_URL, SECRET_KEY, CREDENTIAL_ENCRYPTION_KEY
 
 # 6. CAP_NET_RAW (Linux, for ICMP ping)
@@ -434,7 +434,7 @@ curl -fsSL https://raw.githubusercontent.com/libing28390-sketch/Release-netops/m
 > - 后端 API 内部监听端口（默认 8003）
 > - 外部 Nginx 代理访问端口（默认 80）
 > 
-> 您也可在执行前提前配置 `.env` (`cp .env.example .env`)，部署脚本将完美检测并继承您的既有配置。
+> 您也可在执行前提前配置 `.env` (`cp .env.ubuntu.example .env`)，部署脚本将检测并继承现有配置。
 
 ```bash
 chmod +x deploy-ubuntu.sh
@@ -448,7 +448,7 @@ chmod +x deploy-ubuntu.sh
 3. 交互式询问并设定自定义口令及端口
 4. 创建 Python 虚拟环境并安装 `backend/requirements.txt`
 5. 安装 Node.js 依赖并构建前端（`dist/`）
-6. 从 `.env.example` 生成 `.env`，随机生成各类加密密钥
+6. 从 `.env.ubuntu.example` 生成 `.env`，随机生成各类加密密钥
 7. 初始化 PostgreSQL 数据库及授权
 8. 为虚拟环境 Python 设置 `CAP_NET_RAW`（用于 ICMP ping）
 9. 写入并启用 Nginx 反向代理配置（监听您设定的端口）
@@ -649,7 +649,7 @@ sudo -u postgres psql -c "CREATE USER netops WITH PASSWORD '你的密码';"
 sudo -u postgres psql -c "CREATE DATABASE netops OWNER netops;"
 
 # 5. 环境配置
-cp .env.example .env
+cp .env.ubuntu.example .env
 # 编辑 .env：设置 DATABASE_URL、SECRET_KEY、CREDENTIAL_ENCRYPTION_KEY
 
 # 6. CAP_NET_RAW（Linux，用于 ICMP ping）

@@ -106,14 +106,6 @@ class Settings(BaseSettings):
     LIBRENMS_ALLOWED_HOSTS: str = "librenms,localhost,127.0.0.1"
     LIBRENMS_API_TIMEOUT_SECONDS: float = 10.0
 
-    # MIBs can be maintained from the versioned LibreNMS catalog or uploaded
-    # by an Operator.  Keep the limits configurable so a large vendor archive
-    # cannot exhaust memory during parsing.
-    SNMP_MIB_MANUAL_UPLOAD_ENABLED: bool = True
-    SNMP_MIB_UPLOAD_MAX_BYTES: int = 150 * 1024 * 1024
-    SNMP_MIB_UPLOAD_MAX_FILES: int = 20000
-    SNMP_MIB_UPLOAD_MAX_UNCOMPRESSED_BYTES: int = 500 * 1024 * 1024
-
     # External AI is opt-in.  Security gateway failures, kill-switch state,
     # oversized payloads, and provider URL policy are all enforced before an
     # HTTP request is constructed.
