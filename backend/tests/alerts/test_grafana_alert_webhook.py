@@ -163,7 +163,7 @@ def test_grafana_webhook_persists_lifecycle_and_queues_each_notification_once(is
         connection.close()
 
 
-def test_grafana_webhook_batches_500_alerts_with_bounded_sql(isolated_db, monkeypatch):
+def test_grafana_webhook_batches_500_and_1000_alerts_with_bounded_sql(isolated_db, monkeypatch):
     monkeypatch.delenv("FEISHU_WEBHOOK_URL", raising=False)
     recording_connections: list[_RecordingConnection] = []
     original_get_connection = alerts_api.get_db_connection
@@ -193,24 +193,49 @@ def test_grafana_webhook_batches_500_alerts_with_bounded_sql(isolated_db, monkey
     assert response.json()["received_count"] == 500
     assert len(recording_connections) == 1
     sql_calls = [sql.lower() for sql, _params in recording_connections[0].execute_calls]
-    assert sum("where dedupe_key in" in sql for sql in sql_calls) == 3
-    assert sum("insert into alert_events" in sql for sql in sql_calls) == 3
-    assert sum("insert into alert_delivery_outbox" in sql for sql in sql_calls) == 3
+    assert sum("where dedupe_key in" in sql for sql in sql_calls) == 1
+    assert sum("insert into alert_events" in sql for sql in sql_calls) == 1
+    assert sum("insert into alert_delivery_outbox" in sql for sql in sql_calls) == 1
+    assert sum("insert into alert_activity" in sql for sql in sql_calls) == 2
     assert not any("from devices" in sql for sql in sql_calls)
-    assert len(sql_calls) <= 18
+    assert len(sql_calls) == 5
+
+    second_response = client.post("/api/alerts/webhook/grafana", json={
+        "status": "firing",
+        "alerts": [
+            {
+                "status": "firing",
+                "fingerprint": f"storm-test-second-{index}",
+                "labels": {"alertname": "StormTest", "severity": "warning"},
+                "annotations": {"summary": f"synthetic alert {index}"},
+            }
+            for index in range(1000)
+        ],
+    })
+
+    assert second_response.status_code == 200
+    assert second_response.json()["received_count"] == 1000
+    assert len(recording_connections) == 2
+    second_sql_calls = [sql.lower() for sql, _params in recording_connections[1].execute_calls]
+    assert sum("where dedupe_key in" in sql for sql in second_sql_calls) == 2
+    assert sum("insert into alert_events" in sql for sql in second_sql_calls) == 2
+    assert sum("insert into alert_delivery_outbox" in sql for sql in second_sql_calls) == 2
+    assert sum("insert into alert_activity" in sql for sql in second_sql_calls) == 4
+    assert not any("from devices" in sql for sql in second_sql_calls)
+    assert len(second_sql_calls) == 10
 
     connection = get_db_connection()
     try:
         assert connection.execute(
             "SELECT COUNT(*) AS count FROM alert_events WHERE source = 'grafana_alert'"
-        ).fetchone()["count"] == 500
+        ).fetchone()["count"] == 1500
         assert connection.execute(
             "SELECT COUNT(*) AS count FROM alert_delivery_outbox WHERE channel = 'workspace'"
-        ).fetchone()["count"] == 500
+        ).fetchone()["count"] == 1500
         assert connection.execute(
             "SELECT COUNT(*) AS count FROM alert_activity WHERE event_type = 'OPENED' "
             "AND alert_id IN (SELECT id FROM alert_events WHERE source = 'grafana_alert')"
-        ).fetchone()["count"] == 500
+        ).fetchone()["count"] == 1500
     finally:
         connection.close()
 

@@ -2144,7 +2144,11 @@ def receive_grafana_alert_webhook(payload: dict = Body(...)):
     if not alerts and ('title' in payload or 'ruleName' in payload):
         alerts = [payload]
 
-    batch_size = 200
+    # Keep each VALUES statement aligned with the outbox service's 500-row
+    # bound. This avoids repeating the same prefetch and lifecycle statements
+    # every 200 alerts while keeping parameter counts comfortably below the
+    # PostgreSQL extended-query limit.
+    batch_size = 500
     processed = []
     conn = get_db_connection()
     try:
