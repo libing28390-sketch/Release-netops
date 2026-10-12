@@ -148,6 +148,8 @@ services:
       - DB_POOL_MIN_SIZE=${DB_POOL_MIN_SIZE:-${DB_POOL_SIZE:-16}}
       - DB_POOL_OVERFLOW_MAX=${DB_POOL_OVERFLOW_MAX:-4}
       - DB_POOL_ACQUIRE_TIMEOUT_SECONDS=${DB_POOL_ACQUIRE_TIMEOUT_SECONDS:-10}
+      - ALERT_NOTIFICATION_CELERY_ENABLED=1
+      - ALERT_NOTIFICATION_BROKER_PASSWORD=
       - TEMPLATES_CACHE_TTL_SECONDS=${TEMPLATES_CACHE_TTL_SECONDS:-2}
       - SCHEDULER_MISFIRE_GRACE_SECONDS=${SCHEDULER_MISFIRE_GRACE_SECONDS:-30}
       # Keep one worker by default because the lifespan-owned telemetry loops
@@ -184,6 +186,198 @@ services:
       timeout: 5s
       retries: 3
       start_period: 120s
+
+  alert-redis:
+    image: redis:7.4.2-alpine
+    container_name: nexora-alert-redis
+    cpus: "${ALERT_REDIS_CPUS:-0.25}"
+    cpu_shares: 64
+    mem_limit: ${ALERT_REDIS_MEM_LIMIT:-384m}
+    pids_limit: 64
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      ALERT_NOTIFICATION_BROKER_PASSWORD: ${ALERT_NOTIFICATION_BROKER_PASSWORD:?Set a URL-safe random ALERT_NOTIFICATION_BROKER_PASSWORD in .env}
+    networks:
+      - alert_notifications
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        umask 077
+        password_hash="$$(printf '%s' "$$ALERT_NOTIFICATION_BROKER_PASSWORD" | sha256sum | awk '{print $$1}')"
+        printf 'user default off\nuser alert-broker on #%s ~nexora_alert_* +@read +@write +@transaction +@scripting -@dangerous +ping +auth +hello +select +quit +client|setinfo\n' "$$password_hash" > /data/alert-users.acl
+        exec /usr/local/bin/docker-entrypoint.sh redis-server --appendonly yes --appendfsync everysec \
+          --maxmemory 128mb --maxmemory-policy noeviction --protected-mode yes --aclfile /data/alert-users.acl
+    volumes:
+      - nexora-alert-redis-data:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          REDISCLI_AUTH="$${ALERT_NOTIFICATION_BROKER_PASSWORD}" redis-cli --user alert-broker ping | grep -q PONG
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging: *container-logging
+
+  alert-notify-relay:
+    image: nexora-netops
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nexora-alert-notify-relay
+    env_file:
+      - .env
+    networks:
+      - default
+      - alert_notifications
+    init: true
+    cpus: "${ALERT_RELAY_CPUS:-0.10}"
+    cpu_shares: 64
+    mem_limit: ${ALERT_RELAY_MEM_LIMIT:-192m}
+    pids_limit: 64
+    stop_grace_period: 10s
+    command: ["python", "-m", "alert_delivery_relay"]
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      - ENVIRONMENT=production
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@db:5432/${POSTGRES_DB:-netops}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY must be set}
+      - CREDENTIAL_ENCRYPTION_KEY=${CREDENTIAL_ENCRYPTION_KEY:?CREDENTIAL_ENCRYPTION_KEY must be set}
+      - ALERT_NOTIFICATION_CELERY_ENABLED=1
+      - ALERT_NOTIFICATION_BROKER_URL=redis://alert-broker:${ALERT_NOTIFICATION_BROKER_PASSWORD:?Set ALERT_NOTIFICATION_BROKER_PASSWORD in .env}@alert-redis:6379/0
+      - ALERT_NOTIFICATION_BROKER_PASSWORD=
+      - ALERT_NOTIFICATION_RELAY_INTERVAL_SECONDS=${ALERT_NOTIFICATION_RELAY_INTERVAL_SECONDS:-0.5}
+      - ALERT_NOTIFICATION_RELAY_BATCH_SIZE=${ALERT_NOTIFICATION_RELAY_BATCH_SIZE:-50}
+      - DB_POOL_SIZE=1
+      - DB_POOL_MIN_SIZE=1
+      - DB_POOL_OVERFLOW_MAX=0
+      - LIBRENMS_APP_KEY=
+      - LIBRENMS_DB_PASSWORD=
+      - LIBRENMS_DB_ROOT_PASSWORD=
+      - LIBRENMS_REDIS_PASSWORD=
+    depends_on:
+      db:
+        condition: service_healthy
+      alert-redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      disable: true
+    logging: *container-logging
+
+  alert-notify-critical:
+    image: nexora-netops
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nexora-alert-notify-critical
+    env_file:
+      - .env
+    networks:
+      - default
+      - alert_notifications
+    init: true
+    cpus: "${ALERT_WORKER_CRITICAL_CPUS:-0.25}"
+    cpu_shares: 64
+    mem_limit: ${ALERT_WORKER_CRITICAL_MEM_LIMIT:-512m}
+    pids_limit: 128
+    stop_grace_period: 75s
+    command:
+      - celery
+      - -A
+      - celery_app:app
+      - worker
+      - --queues=alert_notify_critical
+      - --concurrency=1
+      - --prefetch-multiplier=1
+      - --max-tasks-per-child=200
+      - --soft-time-limit=50
+      - --time-limit=60
+      - --loglevel=INFO
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      - ENVIRONMENT=production
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@db:5432/${POSTGRES_DB:-netops}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY must be set}
+      - CREDENTIAL_ENCRYPTION_KEY=${CREDENTIAL_ENCRYPTION_KEY:?CREDENTIAL_ENCRYPTION_KEY must be set}
+      - ALERT_NOTIFICATION_CELERY_ENABLED=1
+      - ALERT_NOTIFICATION_BROKER_URL=redis://alert-broker:${ALERT_NOTIFICATION_BROKER_PASSWORD:?Set ALERT_NOTIFICATION_BROKER_PASSWORD in .env}@alert-redis:6379/0
+      - ALERT_NOTIFICATION_BROKER_PASSWORD=
+      - DB_POOL_SIZE=1
+      - DB_POOL_MIN_SIZE=1
+      - DB_POOL_OVERFLOW_MAX=0
+      - LIBRENMS_APP_KEY=
+      - LIBRENMS_DB_PASSWORD=
+      - LIBRENMS_DB_ROOT_PASSWORD=
+      - LIBRENMS_REDIS_PASSWORD=
+    depends_on:
+      db:
+        condition: service_healthy
+      alert-redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      disable: true
+    logging: *container-logging
+
+  alert-notify-normal:
+    image: nexora-netops
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nexora-alert-notify-normal
+    env_file:
+      - .env
+    networks:
+      - default
+      - alert_notifications
+    init: true
+    cpus: "${ALERT_WORKER_NORMAL_CPUS:-0.25}"
+    cpu_shares: 64
+    mem_limit: ${ALERT_WORKER_NORMAL_MEM_LIMIT:-512m}
+    pids_limit: 128
+    stop_grace_period: 75s
+    command:
+      - celery
+      - -A
+      - celery_app:app
+      - worker
+      - --queues=alert_notify_normal
+      - --concurrency=1
+      - --prefetch-multiplier=1
+      - --max-tasks-per-child=200
+      - --soft-time-limit=50
+      - --time-limit=60
+      - --loglevel=INFO
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      - ENVIRONMENT=production
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@db:5432/${POSTGRES_DB:-netops}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY must be set}
+      - CREDENTIAL_ENCRYPTION_KEY=${CREDENTIAL_ENCRYPTION_KEY:?CREDENTIAL_ENCRYPTION_KEY must be set}
+      - ALERT_NOTIFICATION_CELERY_ENABLED=1
+      - ALERT_NOTIFICATION_BROKER_URL=redis://alert-broker:${ALERT_NOTIFICATION_BROKER_PASSWORD:?Set ALERT_NOTIFICATION_BROKER_PASSWORD in .env}@alert-redis:6379/0
+      - ALERT_NOTIFICATION_BROKER_PASSWORD=
+      - DB_POOL_SIZE=1
+      - DB_POOL_MIN_SIZE=1
+      - DB_POOL_OVERFLOW_MAX=0
+      - LIBRENMS_APP_KEY=
+      - LIBRENMS_DB_PASSWORD=
+      - LIBRENMS_DB_ROOT_PASSWORD=
+      - LIBRENMS_REDIS_PASSWORD=
+    depends_on:
+      db:
+        condition: service_healthy
+      alert-redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      disable: true
+    logging: *container-logging
 
   victoriametrics:
     image: victoriametrics/victoria-metrics:v1.103.0
@@ -740,6 +934,8 @@ volumes:
     name: nexora-dist
   nexora-redis-data:
     name: nexora-redis-data
+  nexora-alert-redis-data:
+    name: nexora-alert-redis-data
   nexora-vmdata:
     name: nexora-vmdata
   nexora-vmagent-queue:
@@ -758,6 +954,9 @@ volumes:
     name: nexora-librenms-redis-data
 
 networks:
+  default: {}
+  alert_notifications:
+    internal: true
   monitoring_internal:
     internal: true
   librenms_control:

@@ -1,14 +1,15 @@
 import sys
 import os
 import asyncio
+import copy
+from contextvars import ContextVar
 import json
 import hashlib
 import uuid
 import logging
+from itertools import islice
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
-from urllib import request as urlrequest
-from urllib import error as urlerror
 from ping3 import ping
 from database import get_db_connection
 from core.config import settings
@@ -34,10 +35,21 @@ from core.crypto import decrypt_credential
 
 logger = logging.getLogger(__name__)
 
+_ALERT_STATE_BATCH_SIZE = 100
+_alert_state_batch_connection: ContextVar[Any | None] = ContextVar(
+    "alert_state_batch_connection",
+    default=None,
+)
+_alert_state_batch_transition_rows: ContextVar[dict[tuple[str, str], tuple] | None] = ContextVar(
+    "alert_state_batch_transition_rows",
+    default=None,
+)
 
-def _db_quick(sql, params=(), fetch=False, fetchall=False):
+
+def _db_quick(sql, params=(), fetch=False, fetchall=False, connection=None):
     """Execute a quick DB operation with its own connection (no long locks)."""
-    conn = get_db_connection()
+    owns_connection = connection is None
+    conn = connection or get_db_connection()
     try:
         if fetchall:
             return conn.execute(sql, params).fetchall()
@@ -45,9 +57,11 @@ def _db_quick(sql, params=(), fetch=False, fetchall=False):
             return conn.execute(sql, params).fetchone()
         else:
             conn.execute(sql, params)
-            conn.commit()
+            if owns_connection:
+                conn.commit()
     finally:
-        conn.close()
+        if owns_connection:
+            conn.close()
 
 def _db_many(sql, rows):
     if not rows:
@@ -58,6 +72,36 @@ def _db_many(sql, rows):
         conn.commit()
     finally:
         conn.close()
+
+
+class _LazyAlertBatchConnection:
+    """Open one connection on first SQL use, preserving no-op test doubles."""
+
+    def __init__(self):
+        self._connection = None
+
+    def _get_connection(self):
+        if self._connection is None:
+            self._connection = get_db_connection()
+        return self._connection
+
+    def execute(self, sql, params=()):
+        return self._get_connection().execute(sql, params)
+
+    def executemany(self, sql, rows):
+        return self._get_connection().executemany(sql, rows)
+
+    def commit(self):
+        if self._connection is not None:
+            self._connection.commit()
+
+    def rollback(self):
+        if self._connection is not None:
+            self._connection.rollback()
+
+    def close(self):
+        if self._connection is not None:
+            self._connection.close()
 
 
 def _store_interface_sample(
@@ -165,24 +209,6 @@ def _local_now_str() -> str:
     """返回 CST 本地时间字符串，用于通知显示。"""
     return datetime.now(_CST).strftime('%Y-%m-%d %H:%M:%S')
 
-def _send_webhook_notification(payload: dict):
-    webhook = (settings.ALERT_NOTIFY_WEBHOOK_URL or '').strip()
-    if not webhook:
-        return
-    data = json.dumps(payload).encode('utf-8')
-    req = urlrequest.Request(
-        webhook,
-        data=data,
-        headers={'Content-Type': 'application/json'},
-        method='POST',
-    )
-    try:
-        with urlrequest.urlopen(req, timeout=5) as resp:
-            if resp.status >= 400:
-                logger.warning(f"[Alert] Webhook responded with status {resp.status}")
-    except urlerror.URLError as exc:
-        logger.warning(f"[Alert] Webhook send failed: {exc}")
-
 def _create_alert_event(
     dedupe_key: str,
     severity: str,
@@ -192,6 +218,7 @@ def _create_alert_event(
     interface_name: str | None = None,
     workflow_status: str = 'open',
     note: str = '',
+    connection=None,
 ):
     alert_id = str(uuid.uuid4())
     now_utc = _utc_now_iso()
@@ -202,61 +229,85 @@ def _create_alert_event(
             created_at, resolved_at, workflow_status, note, updated_at
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
-    ''', (alert_id, dedupe_key, 'network_monitor', severity, title, message, device_id, interface_name, now_utc, workflow_status, note, now_utc))
+    ''', (alert_id, dedupe_key, 'network_monitor', severity, title, message, device_id, interface_name, now_utc, workflow_status, note, now_utc), connection=connection)
     return alert_id, now_local
 
-def _resolve_alert_event(dedupe_key: str):
+def _resolve_alert_event(dedupe_key: str, connection=None):
     now = _utc_now_iso()
     row = _db_quick(
         "SELECT id FROM alert_events WHERE dedupe_key = ? AND resolved_at IS NULL ORDER BY created_at DESC LIMIT 1",
-        (dedupe_key,), fetch=True,
+        (dedupe_key,), fetch=True, connection=connection,
     )
     _db_quick('''
         UPDATE alert_events
         SET resolved_at = ?, workflow_status = 'resolved', updated_at = ?
         WHERE dedupe_key = ? AND resolved_at IS NULL
-    ''', (now, now, dedupe_key))
+    ''', (now, now, dedupe_key), connection=connection)
     return str(row['id']) if row else None
 
 
-def _persist_alert_transition(dedupe_key: str, transition: AlertState, rule: dict, device_id: str, interface_name: str | None):
+_ALERT_RULE_STATE_UPSERT_SQL = """
+    INSERT INTO alert_rule_states
+        (id, rule_id, target_key, state, pending_since, recovery_since,
+         breach_count, recovery_count, flap_count, last_status, last_transition_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(rule_id, target_key) DO UPDATE SET
+        state=excluded.state, pending_since=excluded.pending_since,
+        recovery_since=excluded.recovery_since, breach_count=excluded.breach_count,
+        recovery_count=excluded.recovery_count, flap_count=excluded.flap_count,
+        last_status=excluded.last_status, last_transition_at=excluded.last_transition_at,
+        updated_at=excluded.updated_at
+    """
+
+
+def _persist_alert_transition(
+    dedupe_key: str,
+    transition: AlertState,
+    rule: dict,
+    device_id: str,
+    interface_name: str | None,
+    connection=None,
+):
     """Persist hysteresis state so a worker restart cannot erase FOR/recovery state."""
     try:
-        _db_quick(
-            """
-            INSERT INTO alert_rule_states
-                (id, rule_id, target_key, state, pending_since, recovery_since,
-                 breach_count, recovery_count, flap_count, last_status, last_transition_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(rule_id, target_key) DO UPDATE SET
-                state=excluded.state, pending_since=excluded.pending_since,
-                recovery_since=excluded.recovery_since, breach_count=excluded.breach_count,
-                recovery_count=excluded.recovery_count, flap_count=excluded.flap_count,
-                last_status=excluded.last_status, last_transition_at=excluded.last_transition_at,
-                updated_at=excluded.updated_at
-            """,
-            (
-                f"ars_{uuid.uuid4().hex[:16]}",
-                str(rule.get('id') or dedupe_key),
-                f"{device_id}:{interface_name or ''}",
-                transition.state,
-                transition.pending_since.isoformat() if transition.pending_since else None,
-                transition.recovery_since.isoformat() if transition.recovery_since else None,
-                transition.breach_count,
-                transition.recovery_count,
-                transition.flap_count,
-                'active' if transition.state in {'PENDING', 'ACTIVE', 'RECOVERING'} else 'resolved',
-                _utc_now_iso() if transition.transitions else None,
-                _utc_now_iso(),
-            ),
+        params = (
+            f"ars_{uuid.uuid4().hex[:16]}",
+            str(rule.get('id') or dedupe_key),
+            f"{device_id}:{interface_name or ''}",
+            transition.state,
+            transition.pending_since.isoformat() if transition.pending_since else None,
+            transition.recovery_since.isoformat() if transition.recovery_since else None,
+            transition.breach_count,
+            transition.recovery_count,
+            transition.flap_count,
+            'active' if transition.state in {'PENDING', 'ACTIVE', 'RECOVERING'} else 'resolved',
+            _utc_now_iso() if transition.transitions else None,
+            _utc_now_iso(),
         )
+        pending_rows = _alert_state_batch_transition_rows.get()
+        if pending_rows is not None:
+            pending_rows[(params[1], params[2])] = params
+        else:
+            _db_quick(
+                _ALERT_RULE_STATE_UPSERT_SQL,
+                params,
+                connection=connection,
+            )
     except Exception:
+        if connection is not None:
+            raise
         # m0105 may not have been applied on an older development database;
         # the in-memory state remains authoritative until the next migration.
         logger.debug("Alert transition state table unavailable", exc_info=True)
 
 
-def _load_alert_transition_state(dedupe_key: str, rule: dict, device_id: str, interface_name: str | None) -> AlertState:
+def _load_alert_transition_state(
+    dedupe_key: str,
+    rule: dict,
+    device_id: str,
+    interface_name: str | None,
+    connection=None,
+) -> AlertState:
     """Restore persisted FOR/recovery counters after a monitor restart."""
     rule_id = str(rule.get('id') or dedupe_key)
     target_key = f"{device_id}:{interface_name or ''}"
@@ -271,6 +322,7 @@ def _load_alert_transition_state(dedupe_key: str, rule: dict, device_id: str, in
             """,
             (rule_id, target_key),
             fetch=True,
+            connection=connection,
         )
         if not row:
             return AlertState()
@@ -297,7 +349,15 @@ def _load_alert_transition_state(dedupe_key: str, rule: dict, device_id: str, in
         return AlertState()
 
 
-def _record_alert_activity(alert_id: str | None, event_type: str, *, from_state: str | None = None, to_state: str | None = None, metadata: dict | None = None):
+def _record_alert_activity(
+    alert_id: str | None,
+    event_type: str,
+    *,
+    from_state: str | None = None,
+    to_state: str | None = None,
+    metadata: dict | None = None,
+    connection=None,
+):
     if not alert_id:
         return
     try:
@@ -308,8 +368,11 @@ def _record_alert_activity(alert_id: str | None, event_type: str, *, from_state:
             VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (f"aact_{uuid.uuid4().hex[:16]}", alert_id, event_type, from_state, to_state, json.dumps(metadata or {}, ensure_ascii=False), _utc_now_iso()),
+            connection=connection,
         )
     except Exception:
+        if connection is not None:
+            raise
         logger.debug("Alert activity table unavailable", exc_info=True)
 
 def _run_telemetry_maintenance():
@@ -832,46 +895,62 @@ def sync_lldp_neighbor_alerts():
     ) or []
     active_keys: set[str] = set()
 
-    for row in links:
-        link = dict(row)
-        dedupe_key = f"lldp_neighbor_lost:{link.get('link_key') or link.get('id')}"
-        active_keys.add(dedupe_key)
-        source_online = str(link.get('source_status') or '').lower() == 'online'
-        target_online = str(link.get('target_status') or '').lower() == 'online'
-        is_lost = str(link.get('status') or '').lower() == 'stale' and source_online and target_online
-        interface_name = f"{link.get('source_port_normalized') or link.get('source_port') or ''}->{link.get('target_port_normalized') or link.get('target_port') or ''}"
-        rule = resolve_alert_rule(
-            'lldp_neighbor_lost',
-            device_row={
-                'id': link.get('source_device_id'),
-                'hostname': link.get('source_hostname') or '',
-                'site': '',
-                'ip_address': '',
-                'tenant_id': link.get('source_tenant_id'),
-            },
-            ip_address='',
-            interface_name=interface_name,
-        )
-        set_alert_state(
-            dedupe_key,
-            is_lost,
-            (rule or {}).get('severity', 'major'),
-            'LLDP Neighbor Lost',
-            (
-                f"链路 {link.get('source_hostname') or link.get('source_device_id')}:{link.get('source_port')} -> {link.get('target_hostname') or link.get('target_device_id')}:{link.get('target_port')} 未在最新邻居发现中出现"
-                if is_lost else
-                f"链路 {link.get('source_hostname') or link.get('source_device_id')}:{link.get('source_port')} -> {link.get('target_hostname') or link.get('target_device_id')}:{link.get('target_port')} 已重新被邻居发现"
-            ),
-            str(link.get('source_device_id') or ''),
-            interface_name,
-            ip_address='',
-            status='active' if is_lost else 'resolved',
-            rule=rule,
-        )
+    def link_alert_updates():
+        for row in links:
+            link = dict(row)
+            dedupe_key = f"lldp_neighbor_lost:{link.get('link_key') or link.get('id')}"
+            active_keys.add(dedupe_key)
+            source_online = str(link.get('source_status') or '').lower() == 'online'
+            target_online = str(link.get('target_status') or '').lower() == 'online'
+            is_lost = str(link.get('status') or '').lower() == 'stale' and source_online and target_online
+            interface_name = f"{link.get('source_port_normalized') or link.get('source_port') or ''}->{link.get('target_port_normalized') or link.get('target_port') or ''}"
+            rule = resolve_alert_rule(
+                'lldp_neighbor_lost',
+                device_row={
+                    'id': link.get('source_device_id'),
+                    'hostname': link.get('source_hostname') or '',
+                    'site': '',
+                    'ip_address': '',
+                    'tenant_id': link.get('source_tenant_id'),
+                },
+                ip_address='',
+                interface_name=interface_name,
+            )
+            yield {
+                "args": (
+                    dedupe_key,
+                    is_lost,
+                    (rule or {}).get('severity', 'major'),
+                    'LLDP Neighbor Lost',
+                    (
+                        f"链路 {link.get('source_hostname') or link.get('source_device_id')}:{link.get('source_port')} -> {link.get('target_hostname') or link.get('target_device_id')}:{link.get('target_port')} 未在最新邻居发现中出现"
+                        if is_lost else
+                        f"链路 {link.get('source_hostname') or link.get('source_device_id')}:{link.get('source_port')} -> {link.get('target_hostname') or link.get('target_device_id')}:{link.get('target_port')} 已重新被邻居发现"
+                    ),
+                    str(link.get('source_device_id') or ''),
+                    interface_name,
+                ),
+                "kwargs": {
+                    "ip_address": '',
+                    "status": 'active' if is_lost else 'resolved',
+                    "rule": rule,
+                },
+            }
 
-    for dedupe_key in list(open_alerts.keys()):
-        if dedupe_key.startswith('lldp_neighbor_lost:') and dedupe_key not in active_keys:
-            set_alert_state(dedupe_key, False, 'major', 'LLDP Neighbor Lost', 'LLDP 邻居关系已恢复', '', None, status='resolved')
+    _set_alert_states_batched(link_alert_updates())
+
+    def missing_link_alert_updates():
+        for dedupe_key in list(open_alerts.keys()):
+            if dedupe_key.startswith('lldp_neighbor_lost:') and dedupe_key not in active_keys:
+                yield {
+                    "args": (
+                        dedupe_key, False, 'major', 'LLDP Neighbor Lost',
+                        'LLDP 邻居关系已恢复', '', None,
+                    ),
+                    "kwargs": {"status": 'resolved'},
+                }
+
+    _set_alert_states_batched(missing_link_alert_updates())
 
 def _normalize_protocol_text(value) -> str:
     return str(value or '').strip().lower()
@@ -1057,9 +1136,9 @@ async def _collect_protocol_neighbor_alerts(device_row: dict, ip_address: str):
         flapping_peers = [peer for peer in down_peers if _is_protocol_notification_suppressed(f"{metric_type}:{device_row['id']}:{peer}")]
         _sync_protocol_flap_alert(metric_type, title, device_row, ip_address, flapping_peers)
 
-    _sync_protocol_category('bgp_neighbor_down', 'bgp', 'BGP Neighbor Down')
-    _sync_protocol_category('ospf_neighbor_down', 'ospf', 'OSPF Neighbor Down')
-    _sync_protocol_category('bfd_session_down', 'bfd', 'BFD Session Down')
+    await _run_monitoring_sync_work(_sync_protocol_category, 'bgp_neighbor_down', 'bgp', 'BGP Neighbor Down')
+    await _run_monitoring_sync_work(_sync_protocol_category, 'ospf_neighbor_down', 'ospf', 'OSPF Neighbor Down')
+    await _run_monitoring_sync_work(_sync_protocol_category, 'bfd_session_down', 'bfd', 'BFD Session Down')
 
 def _set_protocol_alerts_for_device_offline(device_row: dict, ip_address: str):
     metric_titles = {
@@ -1110,32 +1189,33 @@ def maybe_notify_webhook(dedupe_key: str, severity: str, title: str, message: st
                            reopened_after_maintenance: bool = False,
                            rule: dict | None = None,
                            alert_id: str | None = None,
-                           device_id: str = ''):
+                           device_id: str = '',
+                           connection=None):
     # A development/test launcher must not replay existing alert state into a
     # real webhook while bootstrapping the background monitor. Keep this guard
     # before throttling state changes so opting back in does not inherit a
     # stale suppression window from a disabled run.
     if not notification_service.automatic_notifications_enabled():
         logger.debug("[Alert] Automatic notification dispatch disabled by runtime policy")
-        return
+        return False
 
     now_ts = datetime.now(timezone.utc)
     repeat_window_seconds = max(0, int((rule or {}).get('notification_repeat_window_seconds', 120) or 0))
     if status == 'active' and not bool((rule or {}).get('notify_on_active', True)):
-        return
+        return False
     if status == 'resolved' and not bool((rule or {}).get('notify_on_recovery', True)):
-        webhook_last_sent.pop(dedupe_key, None)
-        return
+        if connection is None:
+            webhook_last_sent.pop(dedupe_key, None)
+        return False
     if reopened_after_maintenance and not bool((rule or {}).get('notify_on_reopen_after_maintenance', True)):
-        return
+        return False
     # 恢复通知不受节流限制，且清除节流记录（为下次触发做准备）
     if status == 'resolved':
         webhook_last_sent.pop(dedupe_key, None)
     else:
         last_ts = webhook_last_sent.get(dedupe_key)
         if last_ts and repeat_window_seconds > 0 and (now_ts - last_ts).total_seconds() < repeat_window_seconds:
-            return
-        webhook_last_sent[dedupe_key] = now_ts
+            return False
 
     alert_info = {
         'title':            title,
@@ -1162,7 +1242,7 @@ def maybe_notify_webhook(dedupe_key: str, severity: str, title: str, message: st
     try:
         tenant_row = _db_quick(
             "SELECT COALESCE(tenant_id, 'tenant-default') AS tenant_id FROM devices WHERE id = ?",
-            (device_id,), fetch=True,
+            (device_id,), fetch=True, connection=connection,
         )
         tenant_id = str(tenant_row['tenant_id'] or 'tenant-default') if tenant_row else tenant_id
     except Exception:
@@ -1170,6 +1250,7 @@ def maybe_notify_webhook(dedupe_key: str, severity: str, title: str, message: st
     alert_info['tenant_id'] = tenant_id
 
     from services.monitoring_notification_outbox_service import enqueue_alert_delivery
+    transaction_arg = {'connection': connection} if connection is not None else {}
 
     configured_channels = (rule or {}).get('notification_channels')
     if isinstance(configured_channels, str):
@@ -1193,6 +1274,7 @@ def maybe_notify_webhook(dedupe_key: str, severity: str, title: str, message: st
 
     # Keep the legacy .env webhook attached to workspace rules. An explicit
     # channel policy can opt into global_webhook independently.
+    enqueued = False
     if 'workspace' in channels and (settings.ALERT_NOTIFY_WEBHOOK_URL or '').strip():
         plain = (
             f"[{severity.upper()}] {title}\n"
@@ -1212,7 +1294,9 @@ def maybe_notify_webhook(dedupe_key: str, severity: str, title: str, message: st
             delivery_key=f"{dedupe_key}:global_webhook:{event_kind}:{created_at}",
             channel='global_webhook',
             payload=payload,
+            **transaction_arg,
         )
+        enqueued = True
 
     for channel in channels:
         if channel == 'global_webhook' and not (settings.ALERT_NOTIFY_WEBHOOK_URL or '').strip():
@@ -1229,125 +1313,293 @@ def maybe_notify_webhook(dedupe_key: str, severity: str, title: str, message: st
             delivery_key=f"{dedupe_key}:{channel}:{event_kind}:{created_at}",
             channel=channel,
             payload=channel_payload,
+            **transaction_arg,
         )
+        enqueued = True
+
+    if enqueued and connection is None:
+        if status == 'resolved':
+            webhook_last_sent.pop(dedupe_key, None)
+        else:
+            webhook_last_sent[dedupe_key] = now_ts
+    return enqueued
 
 def set_alert_state(dedupe_key: str, is_active: bool, severity: str, title: str, message: str,
                      device_id: str, interface_name: str | None = None,
                      ip_address: str = '', status: str = '', rule: dict | None = None,
                      notify: bool = True):
     alert_rule = rule or {}
-    currently_open = open_alerts.get(dedupe_key)
-    if currently_open is None:
-        # Rehydrate the open projection as well as the hysteresis state so a
-        # worker restart does not create duplicate alerts or lose recovery.
-        try:
+    connection = _alert_state_batch_connection.get()
+    owns_connection = connection is None
+    if owns_connection:
+        connection = get_db_connection()
+    previous_protocol_history = copy.deepcopy(protocol_transition_history.get(dedupe_key))
+    previous_suppressed_until = protocol_notify_suppressed_until.get(dedupe_key)
+    opened_at = None
+    resolved = False
+    notification_queued = False
+    try:
+        currently_open = open_alerts.get(dedupe_key)
+        if currently_open is None:
+            # Rehydrate the open projection and hysteresis from the same
+            # transaction that may create or resolve the lifecycle event.
             existing = _db_quick(
                 "SELECT created_at FROM alert_events WHERE dedupe_key = ? AND resolved_at IS NULL ORDER BY created_at ASC LIMIT 1",
-                (dedupe_key,),
-                fetch=True,
+                (dedupe_key,), fetch=True, connection=connection,
             )
             if existing:
                 currently_open = str(existing['created_at'] or '')
+
+        cached_state = alert_transition_states.get(dedupe_key)
+        transition_state_row = copy.deepcopy(cached_state) if cached_state is not None else _load_alert_transition_state(
+            dedupe_key, alert_rule, device_id, interface_name, connection=connection
+        )
+        transition = transition_state(
+            transition_state_row,
+            breached=bool(is_active),
+            for_seconds=int(alert_rule.get('for_duration_seconds') or 0),
+            recovery_threshold=int(alert_rule.get('recovery_threshold') or alert_rule.get('recover_after_count') or 1),
+            recovery_seconds=int(alert_rule.get('recovery_duration_seconds') or 0),
+        )
+        _persist_alert_transition(
+            dedupe_key, transition_state_row, alert_rule, device_id, interface_name,
+            connection=connection,
+        )
+
+        # Raw observations remain available to the monitor; only the operator
+        # alert projection waits for FOR/recovery hysteresis.
+        if (is_active and not transition.emit and transition.state != 'ACTIVE') or (not is_active and not transition.emit):
+            if owns_connection:
+                connection.commit()
+            alert_transition_states[dedupe_key] = transition_state_row
+            if currently_open:
                 open_alerts[dedupe_key] = currently_open
-        except Exception:
-            currently_open = None
-    transition_state_row = alert_transition_states.get(dedupe_key)
-    if transition_state_row is None:
-        transition_state_row = _load_alert_transition_state(dedupe_key, alert_rule, device_id, interface_name)
+            return
+
+        if is_active and not currently_open:
+            tenant_row = _db_quick(
+                "SELECT COALESCE(tenant_id, 'tenant-default') AS tenant_id FROM devices WHERE id = ?",
+                (device_id,), fetch=True, connection=connection,
+            ) if device_id else None
+            alert_context = {
+                'dedupe_key': dedupe_key,
+                'severity': severity,
+                'title': title,
+                'message': message,
+                'device_id': device_id,
+                'interface_name': interface_name,
+                'ip_address': ip_address,
+                'tenant_id': str(tenant_row['tenant_id'] or 'tenant-default') if tenant_row else 'tenant-default',
+            }
+            maintenance_window = alert_maintenance_service.find_active_window_for_alert(alert_context, conn=connection)
+            silence = find_active_silence_for_alert(alert_context, connection=connection)
+            workflow_status = 'suppressed' if maintenance_window else 'open'
+            note = (
+                f"Suppressed by maintenance window: {maintenance_window['name']}"
+                if maintenance_window else
+                f"Notification silenced: {silence['reason']}" if silence else ''
+            )
+            alert_id, created_at = _create_alert_event(
+                dedupe_key, severity, title, message, device_id, interface_name,
+                workflow_status=workflow_status,
+                note=note,
+                connection=connection,
+            )
+            _record_alert_activity(
+                alert_id,
+                'SUPPRESSED' if maintenance_window else 'SILENCED' if silence else 'OPENED',
+                to_state=workflow_status,
+                metadata={
+                    "dedupe_key": dedupe_key,
+                    "source": "network_monitor",
+                    "silence_id": silence.get('id') if silence else None,
+                },
+                connection=connection,
+            )
+            opened_at = created_at
+            if not maintenance_window and not silence:
+                object_name = interface_name if interface_name else dedupe_key
+                if notify and _protocol_transition_notify_allowed(dedupe_key):
+                    notification_queued = maybe_notify_webhook(
+                        dedupe_key, severity, title, message,
+                        created_at=created_at,
+                        ip_address=ip_address,
+                        object_name=object_name,
+                        status=status or 'active',
+                        last_occurrence=created_at,
+                        rule=rule,
+                        alert_id=alert_id,
+                        device_id=device_id,
+                        connection=connection,
+                    )
+        elif (not is_active) and currently_open:
+            alert_row = _db_quick(
+                "SELECT workflow_status FROM alert_events WHERE dedupe_key = ? AND resolved_at IS NULL ORDER BY created_at DESC LIMIT 1",
+                (dedupe_key,), fetch=True, connection=connection,
+            )
+            resolved_alert_id = _resolve_alert_event(dedupe_key, connection=connection)
+            _record_alert_activity(
+                resolved_alert_id,
+                'RESOLVED',
+                from_state='open',
+                to_state='resolved',
+                metadata={"dedupe_key": dedupe_key, "resolve_type": "automatic_recovery"},
+                connection=connection,
+            )
+            resolved = True
+            if not (alert_row and str(alert_row['workflow_status'] or '').lower() == 'suppressed'):
+                now_ts = _local_now_str()
+                object_name = interface_name if interface_name else dedupe_key
+                try:
+                    duration_start = datetime.fromisoformat(currently_open)
+                    duration_end = datetime.now()
+                    duration_seconds = max(0, int((duration_end - duration_start).total_seconds()))
+                except Exception:
+                    duration_seconds = None
+                impact_window = (
+                    f"{currently_open.split(' ')[-1]} → {now_ts.split(' ')[-1]}"
+                    if ' ' in currently_open and ' ' in now_ts else None
+                )
+                count_row = _db_quick(
+                    "SELECT COUNT(*) AS cnt FROM alert_events WHERE dedupe_key = ?",
+                    (dedupe_key,), fetch=True, connection=connection,
+                )
+                alert_count = count_row['cnt'] if count_row else None
+                if notify and _protocol_transition_notify_allowed(dedupe_key):
+                    notification_queued = maybe_notify_webhook(
+                        dedupe_key, severity, title, message,
+                        created_at=currently_open,
+                        ip_address=ip_address,
+                        object_name=object_name,
+                        status='resolved',
+                        last_occurrence=now_ts,
+                        duration_seconds=duration_seconds,
+                        impact_window=impact_window,
+                        alert_count=alert_count,
+                        rule=rule,
+                        alert_id=resolved_alert_id,
+                        device_id=device_id,
+                        connection=connection,
+                    )
+
+        if owns_connection:
+            connection.commit()
         alert_transition_states[dedupe_key] = transition_state_row
-    transition = transition_state(
-        transition_state_row,
-        breached=bool(is_active),
-        for_seconds=int(alert_rule.get('for_duration_seconds') or 0),
-        recovery_threshold=int(alert_rule.get('recovery_threshold') or alert_rule.get('recover_after_count') or 1),
-        recovery_seconds=int(alert_rule.get('recovery_duration_seconds') or 0),
-    )
-    _persist_alert_transition(dedupe_key, transition_state_row, alert_rule, device_id, interface_name)
-    # Raw observations remain available to the monitor; only the operator
-    # alert projection waits for FOR/recovery hysteresis.
-    if is_active and not transition.emit and transition.state != 'ACTIVE':
-        return
-    if (not is_active) and not transition.emit:
-        return
-    if is_active and not currently_open:
-        alert_context = {
-            'dedupe_key': dedupe_key,
-            'severity': severity,
-            'title': title,
-            'message': message,
-            'device_id': device_id,
-            'interface_name': interface_name,
-            'ip_address': ip_address,
-        }
-        maintenance_window = alert_maintenance_service.find_active_window_for_alert(alert_context)
-        silence = find_active_silence_for_alert(alert_context)
-        workflow_status = 'suppressed' if maintenance_window else 'open'
-        note = f"Suppressed by maintenance window: {maintenance_window['name']}" if maintenance_window else f"Notification silenced: {silence['reason']}" if silence else ''
-        alert_id, created_at = _create_alert_event(
-            dedupe_key, severity, title, message, device_id, interface_name,
-            workflow_status=workflow_status,
-            note=note,
-        )
-        _record_alert_activity(alert_id, 'SUPPRESSED' if maintenance_window else 'SILENCED' if silence else 'OPENED', to_state=workflow_status, metadata={"dedupe_key": dedupe_key, "source": "network_monitor", "silence_id": silence.get('id') if silence else None})
-        open_alerts[dedupe_key] = created_at  # store first-occurrence time
-        if maintenance_window or silence:
-            return
-        object_name = interface_name if interface_name else dedupe_key
-        if notify and _protocol_transition_notify_allowed(dedupe_key):
-            maybe_notify_webhook(
-                dedupe_key, severity, title, message,
-                created_at=created_at,
-                ip_address=ip_address,
-                object_name=object_name,
-                status=status or 'active',
-                last_occurrence=created_at,
-                rule=rule,
-                alert_id=alert_id,
-                device_id=device_id,
-            )
-    elif (not is_active) and currently_open:
-        alert_row = _db_quick(
-            "SELECT workflow_status FROM alert_events WHERE dedupe_key = ? AND resolved_at IS NULL ORDER BY created_at DESC LIMIT 1",
-            (dedupe_key,), fetch=True,
-        )
-        resolved_alert_id = _resolve_alert_event(dedupe_key)
-        _record_alert_activity(resolved_alert_id, 'RESOLVED', from_state='open', to_state='resolved', metadata={"dedupe_key": dedupe_key, "resolve_type": "automatic_recovery"})
-        open_alerts.pop(dedupe_key, None)
-        if alert_row and str(alert_row['workflow_status'] or '').lower() == 'suppressed':
-            return
-        now_ts = _local_now_str()
-        object_name = interface_name if interface_name else dedupe_key
-        # 计算持续时长、影响时间窗、告警次数
+        if opened_at:
+            open_alerts[dedupe_key] = opened_at
+        elif resolved:
+            open_alerts.pop(dedupe_key, None)
+            webhook_last_sent.pop(dedupe_key, None)
+        elif currently_open:
+            open_alerts[dedupe_key] = currently_open
+        if notification_queued and not resolved:
+            webhook_last_sent[dedupe_key] = datetime.now(timezone.utc)
+    except Exception:
+        connection.rollback()
+        if previous_protocol_history is None:
+            protocol_transition_history.pop(dedupe_key, None)
+        else:
+            protocol_transition_history[dedupe_key] = previous_protocol_history
+        if previous_suppressed_until is None:
+            protocol_notify_suppressed_until.pop(dedupe_key, None)
+        else:
+            protocol_notify_suppressed_until[dedupe_key] = previous_suppressed_until
+        raise
+    finally:
+        if owns_connection:
+            connection.close()
+
+
+async def _run_monitoring_sync_work(function, *args: Any, **kwargs: Any) -> Any:
+    """Run blocking monitor persistence outside the loop and finish on cancellation."""
+    write_task = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
+    try:
+        return await asyncio.shield(write_task)
+    except asyncio.CancelledError:
+        # A worker thread cannot be cancelled. Wait for its transaction to
+        # finish before allowing this polling operation to be retried.
         try:
-            _dur_start = datetime.fromisoformat(currently_open)
-            _dur_end   = datetime.now()
-            _duration_seconds = max(0, int((_dur_end - _dur_start).total_seconds()))
-        except Exception:
-            _duration_seconds = None
-        _impact_window = (
-            f"{currently_open.split(' ')[-1]} → {now_ts.split(' ')[-1]}"
-            if ' ' in currently_open and ' ' in now_ts else None
-        )
-        _count_row = _db_quick(
-            "SELECT COUNT(*) AS cnt FROM alert_events WHERE dedupe_key = ?",
-            (dedupe_key,), fetch=True,
-        )
-        _alert_count = _count_row['cnt'] if _count_row else None
-        if notify and _protocol_transition_notify_allowed(dedupe_key):
-            maybe_notify_webhook(
-                dedupe_key, severity, title, message,
-                created_at=currently_open,
-                ip_address=ip_address,
-                object_name=object_name,
-                status='resolved',
-                last_occurrence=now_ts,
-                duration_seconds=_duration_seconds,
-                impact_window=_impact_window,
-                alert_count=_alert_count,
-                rule=rule,
-                alert_id=resolved_alert_id,
-                device_id=device_id,
+            await write_task
+        except Exception as exc:
+            logger.warning(
+                "Alert state transaction failed while cancellation was pending (%s)",
+                type(exc).__name__,
             )
+        raise
+
+
+async def _set_alert_state_off_loop(*args: Any, **kwargs: Any) -> None:
+    """Run the synchronous PostgreSQL alert transaction outside an asyncio loop."""
+    await _run_monitoring_sync_work(set_alert_state, *args, **kwargs)
+
+
+def _snapshot_alert_process_state(dedupe_keys: list[str]) -> dict[str, dict[str, tuple[bool, Any]]]:
+    state_maps = (
+        ("open_alerts", open_alerts),
+        ("alert_transition_states", alert_transition_states),
+        ("protocol_transition_history", protocol_transition_history),
+        ("protocol_notify_suppressed_until", protocol_notify_suppressed_until),
+        ("webhook_last_sent", webhook_last_sent),
+    )
+    snapshots: dict[str, dict[str, tuple[bool, Any]]] = {}
+    for dedupe_key in dedupe_keys:
+        snapshots[dedupe_key] = {
+            name: (dedupe_key in state_map, copy.deepcopy(state_map.get(dedupe_key)))
+            for name, state_map in state_maps
+        }
+    return snapshots
+
+
+def _restore_alert_process_state(snapshots: dict[str, dict[str, tuple[bool, Any]]]) -> None:
+    state_maps = (
+        ("open_alerts", open_alerts),
+        ("alert_transition_states", alert_transition_states),
+        ("protocol_transition_history", protocol_transition_history),
+        ("protocol_notify_suppressed_until", protocol_notify_suppressed_until),
+        ("webhook_last_sent", webhook_last_sent),
+    )
+    for dedupe_key, values in snapshots.items():
+        for name, state_map in state_maps:
+            existed, value = values[name]
+            if existed:
+                state_map[dedupe_key] = value
+            else:
+                state_map.pop(dedupe_key, None)
+
+
+def _set_alert_states_batched(alert_updates) -> None:
+    """Persist a bounded series of alert evaluations in shared transactions.
+
+    Lifecycle rows, activity and delivery outbox writes are performed inline
+    against the chunk connection. Hysteresis rows are upserted in one batch at
+    the end of that same transaction, so they commit or roll back together.
+    """
+    updates = iter(alert_updates)
+    while True:
+        chunk = list(islice(updates, _ALERT_STATE_BATCH_SIZE))
+        if not chunk:
+            return
+
+        dedupe_keys = list(dict.fromkeys(str(update["args"][0]) for update in chunk))
+        snapshots = _snapshot_alert_process_state(dedupe_keys)
+        connection = _LazyAlertBatchConnection()
+        connection_token = _alert_state_batch_connection.set(connection)
+        transition_rows: dict[tuple[str, str], tuple] = {}
+        rows_token = _alert_state_batch_transition_rows.set(transition_rows)
+        try:
+            for update in chunk:
+                set_alert_state(*update["args"], **update.get("kwargs", {}))
+            if transition_rows:
+                connection.executemany(_ALERT_RULE_STATE_UPSERT_SQL, list(transition_rows.values()))
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            _restore_alert_process_state(snapshots)
+            raise
+        finally:
+            _alert_state_batch_transition_rows.reset(rows_token)
+            _alert_state_batch_connection.reset(connection_token)
+            connection.close()
 
 
 def _set_device_reachability_alert(device_row: dict, ip_address: str, *, reachable: bool) -> None:
@@ -1590,13 +1842,13 @@ async def _process_device_raw(device, cycle_tick: int):
 
             if device['status'] != new_status:
                 if new_status == 'offline':
-                    _set_protocol_alerts_for_device_offline(device, ip)
+                    await _run_monitoring_sync_work(_set_protocol_alerts_for_device_offline, device, ip)
                     mark_offline_and_clear_cache()
-                    _set_device_reachability_alert(device, ip, reachable=False)
+                    await _run_monitoring_sync_work(_set_device_reachability_alert, device, ip, reachable=False)
                 else:
                     _db_quick('UPDATE devices SET status = ? WHERE id = ?', (new_status, dev_id))
                     _sync_device_status_tag(dev_id, new_status)
-                    _set_device_reachability_alert(device, ip, reachable=True)
+                    await _run_monitoring_sync_work(_set_device_reachability_alert, device, ip, reachable=True)
                 logger.info(
                     f"[Status Monitor] Device {ip} status changed to {new_status} via {probe_method}"
                 )
@@ -1604,8 +1856,8 @@ async def _process_device_raw(device, cycle_tick: int):
         except Exception:
             new_status = 'offline'
             if device.get('status') != 'offline':
-                _set_protocol_alerts_for_device_offline(device, ip)
-                _set_device_reachability_alert(device, ip, reachable=False)
+                await _run_monitoring_sync_work(_set_protocol_alerts_for_device_offline, device, ip)
+                await _run_monitoring_sync_work(_set_device_reachability_alert, device, ip, reachable=False)
                 _schedule_monitoring_target_sync(device)
             mark_offline_and_clear_cache()
 
@@ -1649,13 +1901,13 @@ async def _process_device_raw(device, cycle_tick: int):
             cpu_rule = resolve_alert_rule('cpu', device_row=device, ip_address=ip)
             cpu_threshold = float(cpu_rule['threshold']) if cpu_rule and cpu_rule.get('threshold') is not None else None
             if cpu_rule and cpu_threshold is not None and float(cpu_usage) >= cpu_threshold:
-                set_alert_state(
+                await _set_alert_state_off_loop(
                     cpu_key, True, cpu_rule.get('severity', 'major'), 'CPU Usage High',
                     f"{dev_label} CPU 利用率达到 {cpu_usage:.1f}%，超过阈值 {cpu_threshold}%",
                     dev_id, ip_address=ip, status='active', rule=cpu_rule,
                 )
             else:
-                set_alert_state(
+                await _set_alert_state_off_loop(
                     cpu_key, False, resolved_alert_severity(cpu_rule, 'major'), 'CPU Usage High',
                     f"{dev_label} CPU 利用率已恢复（当前 {cpu_usage:.1f}%）",
                     dev_id, ip_address=ip, status='resolved', rule=cpu_rule,
@@ -1665,13 +1917,13 @@ async def _process_device_raw(device, cycle_tick: int):
             memory_rule = resolve_alert_rule('memory', device_row=device, ip_address=ip)
             memory_threshold = float(memory_rule['threshold']) if memory_rule and memory_rule.get('threshold') is not None else None
             if memory_rule and memory_threshold is not None and float(memory_usage) >= memory_threshold:
-                set_alert_state(
+                await _set_alert_state_off_loop(
                     mem_key, True, memory_rule.get('severity', 'major'), 'Memory Usage High',
                     f"{dev_label} 内存利用率达到 {memory_usage:.1f}%，超过阈值 {memory_threshold}%",
                     dev_id, ip_address=ip, status='active', rule=memory_rule,
                 )
             else:
-                set_alert_state(
+                await _set_alert_state_off_loop(
                     mem_key, False, resolved_alert_severity(memory_rule, 'major'), 'Memory Usage High',
                     f"{dev_label} 内存利用率已恢复（当前 {memory_usage:.1f}%）",
                     dev_id, ip_address=ip, status='resolved', rule=memory_rule,
@@ -1682,7 +1934,7 @@ async def _process_device_raw(device, cycle_tick: int):
             temp_rule = resolve_alert_rule('temperature_high', device_row=device, ip_address=ip)
             temp_threshold = float(temp_rule['threshold']) if temp_rule and temp_rule.get('threshold') is not None else None
             temp_active = bool(temp_rule and temp_threshold is not None and float(temp) >= temp_threshold)
-            set_alert_state(
+            await _set_alert_state_off_loop(
                 temp_key,
                 temp_active,
                 (temp_rule or {}).get('severity', 'major'),
@@ -1699,7 +1951,7 @@ async def _process_device_raw(device, cycle_tick: int):
             fan_rule = resolve_alert_rule('fan_failure', device_row=device, ip_address=ip)
             fan_failed = _component_failure_state(fan)
             if fan_failed is not None:
-                set_alert_state(
+                await _set_alert_state_off_loop(
                     fan_key,
                     fan_failed,
                     (fan_rule or {}).get('severity', 'critical'),
@@ -1716,7 +1968,7 @@ async def _process_device_raw(device, cycle_tick: int):
             psu_rule = resolve_alert_rule('power_supply_failure', device_row=device, ip_address=ip)
             psu_failed = _component_failure_state(psu)
             if psu_failed is not None:
-                set_alert_state(
+                await _set_alert_state_off_loop(
                     psu_key,
                     psu_failed,
                     (psu_rule or {}).get('severity', 'critical'),
@@ -1815,7 +2067,7 @@ async def _process_device_raw(device, cycle_tick: int):
             # alert on every poll and silently close any legacy false positive.
             snmp_failure_streak.pop(dev_id, None)
             if snmp_key in open_alerts:
-                set_alert_state(
+                await _set_alert_state_off_loop(
                     snmp_key,
                     False,
                     resolved_alert_severity(snmp_rule, 'major'),
@@ -1829,7 +2081,7 @@ async def _process_device_raw(device, cycle_tick: int):
                 )
         elif snmp_available:
             snmp_failure_streak.pop(dev_id, None)
-            set_alert_state(
+            await _set_alert_state_off_loop(
                 snmp_key,
                 False,
                 resolved_alert_severity(snmp_rule, 'major'),
@@ -1843,7 +2095,7 @@ async def _process_device_raw(device, cycle_tick: int):
         else:
             snmp_failure_streak[dev_id] = snmp_failure_streak.get(dev_id, 0) + 1
             snmp_active = snmp_failure_streak[dev_id] >= 2
-            set_alert_state(
+            await _set_alert_state_off_loop(
                 snmp_key,
                 snmp_active,
                 (snmp_rule or {}).get('severity', 'major'),
@@ -1915,13 +2167,13 @@ async def process_device_fast(device):
 
         if device['status'] != new_status:
             if new_status == 'offline':
-                _set_protocol_alerts_for_device_offline(device, ip)
+                await _run_monitoring_sync_work(_set_protocol_alerts_for_device_offline, device, ip)
                 mark_offline_and_clear_cache()
-                _set_device_reachability_alert(device, ip, reachable=False)
+                await _run_monitoring_sync_work(_set_device_reachability_alert, device, ip, reachable=False)
             else:
                 _db_quick('UPDATE devices SET status = ? WHERE id = ?', (new_status, dev_id))
                 _sync_device_status_tag(dev_id, new_status)
-                _set_device_reachability_alert(device, ip, reachable=True)
+                await _run_monitoring_sync_work(_set_device_reachability_alert, device, ip, reachable=True)
             logger.info(
                 f"[Status Monitor] Device {ip} status changed to {new_status} via {probe_method}"
             )
@@ -1937,8 +2189,8 @@ async def process_device_fast(device):
         )
         new_status = 'offline'
         if device.get('status') != 'offline':
-            _set_protocol_alerts_for_device_offline(device, ip)
-            _set_device_reachability_alert(device, ip, reachable=False)
+            await _run_monitoring_sync_work(_set_protocol_alerts_for_device_offline, device, ip)
+            await _run_monitoring_sync_work(_set_device_reachability_alert, device, ip, reachable=False)
             _schedule_monitoring_target_sync(device)
         mark_offline_and_clear_cache()
 

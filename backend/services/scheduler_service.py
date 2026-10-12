@@ -7,7 +7,6 @@ import re
 from datetime import datetime
 from database import get_db_connection
 from services.automation_service import AutomationService
-from services.notification_service import dispatch_to_all_users
 from core.crypto import decrypt_credential
 from services.vault_service import resolve_device_credentials
 from services.network_access_limiter import limited_connect_handler
@@ -463,6 +462,7 @@ async def run_scheduled_automation_job(job_id: str):
                 "[Scheduler] Starting NSOT scheduled collection: %s (%s), target_devices=%s",
                 job['name'], job_id, len(device_ids),
             )
+            run_id = str(uuid.uuid4())
             try:
                 from services.ip_locator_service import run_unified_nsot_sync
 
@@ -493,11 +493,17 @@ async def run_scheduled_automation_job(job_id: str):
                     "UPDATE scheduled_jobs SET last_run_at = ?, last_run_status = ?, run_count = run_count + 1 WHERE id = ?",
                     (now, 'failed', job_id),
                 )
-                conn.commit()
                 logger.exception("[Scheduler] NSOT scheduled collection failed: %s (%s)", job['name'], job_id)
                 try:
-                    await notify_job_failure(job, [f"NSOT 事实库采集失败: {exc}"])
+                    await notify_job_failure(
+                        job,
+                        [f"NSOT 事实库采集失败: {exc}"],
+                        run_id=run_id,
+                        connection=conn,
+                    )
+                    conn.commit()
                 except Exception:
+                    conn.rollback()
                     logger.exception("[Scheduler] Failed to notify NSOT scheduled collection failure")
             return
 
@@ -950,28 +956,40 @@ async def run_scheduled_automation_job(job_id: str):
             "UPDATE scheduled_jobs SET last_run_at = ?, last_run_status = ?, run_count = run_count + 1 WHERE id = ?",
             (datetime.now().isoformat(), final_playbook_status, job_id)
         )
-        conn.commit()
-
-        # 7. 如果失败，触发告警
         if total_failed > 0:
-            await notify_job_failure(job, failure_details)
+            await notify_job_failure(
+                job,
+                failure_details,
+                run_id=execution_id,
+                connection=conn,
+            )
+        conn.commit()
 
     except Exception as e:
         logger.exception(f"Scheduled job {job_id} failed with exception")
+        conn.rollback()
     finally:
         conn.close()
 
-async def notify_job_failure(job, details):
-    # 获取活跃用户的通知偏好并分发
-    from services.notification_service import dispatch_to_all_users
-    
-    # 1. 优化告警标题：突出任务名称
+async def notify_job_failure(job, details, *, run_id: str, connection=None) -> str:
+    """Enqueue one failed-run notice for users in the job's owning tenant.
+
+    When the scheduler supplies its transaction, the failed execution status
+    and its outbox intent commit or roll back together. A standalone caller
+    owns a short transaction and receives the key only after it commits.
+    """
+    from services.monitoring_notification_outbox_service import enqueue_alert_delivery
+
+    tenant_id = str(job.get('tenant_id') or '').strip()
+    if not tenant_id:
+        raise ValueError('Scheduled job failure notification requires a tenant_id')
+    job_id = str(job.get('id') or '').strip()
+    normalized_run_id = str(run_id or '').strip()
+    if not job_id or not normalized_run_id:
+        raise ValueError('Scheduled job failure notification requires job and run IDs')
+
     alert_title = f"🔴 NetOps 异常告警: {job['name']}"
-    
-    # 2. 固定判定级别为 Major (主要告警)，避免过度干扰
     severity = "major"
-        
-    # 3. 构建结构化正文
     msg_body = (
         f"任务名称: {job['name']}\n"
         f"执行方式: 定时任务\n"
@@ -979,7 +997,7 @@ async def notify_job_failure(job, details):
         f"----------------------------\n"
         f"详细异常详情:\n" + "\n".join(details[:10])
     )
-    
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     alert = {
         "title": alert_title,
         "object_name": job['name'],
@@ -987,12 +1005,32 @@ async def notify_job_failure(job, details):
         "status": "active",
         "severity": severity,
         "message": msg_body,
-        "first_occurrence": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        "last_occurrence": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        "first_occurrence": now,
+        "last_occurrence": now,
+        "tenant_id": tenant_id,
+        "event_kind": "active",
     }
 
-    # 调用通知服务 (同步调用，调用方通常已经在子线程或独立进程中)
-    dispatch_to_all_users(alert)
+    delivery_key = f"scheduled-job:{job_id}:run:{normalized_run_id}:workspace:active"
+    owns_connection = connection is None
+    conn = connection or get_db_connection()
+    try:
+        enqueue_alert_delivery(
+            delivery_key=delivery_key,
+            channel='workspace',
+            payload=alert,
+            connection=conn,
+        )
+        if owns_connection:
+            conn.commit()
+        return delivery_key
+    except Exception:
+        if owns_connection:
+            conn.rollback()
+        raise
+    finally:
+        if owns_connection:
+            conn.close()
 
 def sync_scheduler_jobs(scheduler):
     """

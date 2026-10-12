@@ -285,7 +285,7 @@ def test_b_loop_offloads_snapshot_and_maintenance_after_twelve_successful_cycles
             assert maintenance_thread_ids[0] != loop_thread_id
             assert not cleanup_thread_ids
             assert len(sync_lldp_thread_ids) == 11
-            assert all(thread_id == loop_thread_id for thread_id in sync_lldp_thread_ids)
+            assert all(thread_id != loop_thread_id for thread_id in sync_lldp_thread_ids)
             assert all(call[2] != loop_thread_id for call in db_calls)
             assert successful_sync_count == 11
 
@@ -304,7 +304,7 @@ def test_b_loop_offloads_snapshot_and_maintenance_after_twelve_successful_cycles
             assert len(maintenance_calls) == 1
             assert cleanup_thread_ids == [loop_thread_id]
             assert len(sync_lldp_thread_ids) == 12
-            assert all(thread_id == loop_thread_id for thread_id in sync_lldp_thread_ids)
+            assert all(thread_id != loop_thread_id for thread_id in sync_lldp_thread_ids)
         finally:
             db_release.set()
             maintenance_release.set()

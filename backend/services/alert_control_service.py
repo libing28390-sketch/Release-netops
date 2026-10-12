@@ -273,14 +273,22 @@ def silence_matches(alert: dict[str, Any], scope: dict[str, Any]) -> bool:
     return bool(device_ids or site_ids or alert_types) or not scope
 
 
-def find_active_silence_for_alert(alert: dict[str, Any], *, now: datetime | None = None) -> dict[str, Any] | None:
+def find_active_silence_for_alert(
+    alert: dict[str, Any],
+    *,
+    now: datetime | None = None,
+    connection=None,
+) -> dict[str, Any] | None:
     """Return an active silence if present; failures fail open for alerting."""
     now_iso = _now(now).isoformat()
     tenant_id = str(alert.get("tenant_id") or "tenant-default")
     try:
-        from database import get_db_connection
-        with get_db_connection() as conn:
-            rows = conn.execute(
+        owns_connection = connection is None
+        if owns_connection:
+            from database import get_db_connection
+            connection = get_db_connection()
+        try:
+            rows = connection.execute(
                 "SELECT id, tenant_id, scope_json, reason, starts_at, ends_at, created_by FROM alert_silences WHERE status = 'active' AND (tenant_id = ? OR tenant_id = 'tenant-default') AND starts_at <= ? AND ends_at >= ? ORDER BY starts_at DESC",
                 (tenant_id, now_iso, now_iso),
             ).fetchall()
@@ -291,6 +299,9 @@ def find_active_silence_for_alert(alert: dict[str, Any], *, now: datetime | None
                     scope = {}
                 if silence_matches(alert, scope):
                     return {"id": row[0], "tenant_id": row[1], "scope": scope, "reason": row[3], "starts_at": row[4], "ends_at": row[5], "created_by": row[6]}
+        finally:
+            if owns_connection:
+                connection.close()
     except Exception:
         return None
     return None

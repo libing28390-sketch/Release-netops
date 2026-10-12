@@ -12,7 +12,9 @@
 | `.dockerignore` | 构建上下文忽略规则（必须在根目录才生效） |
 | `nginx/` | Nginx 配置与 SSL 证书目录 |
 
-`docker-compose.yml` 内置 Redis 7.4.2 Alpine 服务，默认随 Docker 栈启动；Redis 容器和主应用统一读取 `TZ`，未设置时使用 `Asia/Shanghai`。Redis 仅用于 IP 定位等可重建缓存，不能替代 PostgreSQL 的任务状态或事实数据。部署脚本可通过 `NETOPS_REDIS_ENABLED=0` 显式关闭 Redis。
+`docker-compose.yml` 内置 Redis 7.4.2 Alpine 服务，默认随 Docker 栈启动；Redis 容器和主应用统一读取 `TZ`，未设置时使用 `Asia/Shanghai`。缓存 Redis 仅用于 IP 定位等可重建缓存，不能替代 PostgreSQL 的任务状态或事实数据。部署脚本可通过 `NETOPS_REDIS_ENABLED=0` 显式关闭缓存 Redis；告警通知使用单独的 `alert-redis` Broker，不受此开关影响。
+
+告警通知经 PostgreSQL outbox、独立 Relay、专用 Redis Broker 和两个单并发 Celery Worker 处理。首次安装前需设置 `ALERT_NOTIFICATION_BROKER_PASSWORD`，可用 `openssl rand -hex 32` 生成 URL 安全随机值；空值会令 Compose 配置校验失败。Broker 仅连接内部告警网络，API 与其他容器不能直接访问；Broker 使用独立数据卷、AOF、`noeviction`、`nexora_alert_` 键前缀和受限 ACL，不要复用缓存 Redis 的密码/实例。
 
 数据库镜像固定基于 `pgvector/pgvector:0.8.6-pg18-bookworm`，并额外安装
 `postgresql-contrib-18`，因此迁移 `0104_ai_pgvector_rag` 所需的 `vector` 和
@@ -24,7 +26,7 @@ PostgreSQL 18 官方容器将数据目录设为 `/var/lib/postgresql/18/docker`�
 
 ## 容器资源上限与 Nginx worker
 
-所有服务均设置 CPU、内存和进程数上限。下面的 CPU 是使用上限，并不预留或独占对应核心；基础服务（未启用 `object-storage` profile）的默认内存上限合计 6272 MiB，启用 SeaweedFS 后合计 6784 MiB。按 2 CPU / 8 GiB 主机计算，启用全部服务时约留 1 GiB 给系统；设备数、采集并发、数据库查询和存储量增加时，按实际峰值调整部署机 `.env` 中的对应项。
+所有服务均设置 CPU、内存和进程数上限。告警 Broker、Relay 与 Worker 另设 `cpu_shares=64`，在 CPU 争用时降低其相对调度权重；每个告警容器同时有独立 CPU/内存硬上限。通知容器的 CPU 上限合计 0.85 核 / 1600 MiB，但这不限制 API 和 PostgreSQL 为告警评估、状态写入及投递状态更新消耗的资源。CPU 配额不预留或独占对应核心。原基础服务内存上限合计 6272 MiB，启用 SeaweedFS 后合计 6784 MiB；加上告警服务后分别为 7872 / 8384 MiB。容器限额不是资源预留，启用全部服务时不能按这些上限推断系统一定有可用余量；应按实际主机容量降低相应 `.env` 上限，保留足够系统与 Docker 余量，并通过同机压测确认主 API、数据库和通知延迟。
 
 | 服务 | CPU 上限 | 内存上限 | 内存配置项 |
 |---|---:|---:|---|
@@ -34,6 +36,10 @@ PostgreSQL 18 官方容器将数据目录设为 `/var/lib/postgresql/18/docker`�
 | grafana | 1 | 384 MiB | `GRAFANA_MEM_LIMIT` |
 | seaweedfs | 1 | 512 MiB | `SEAWEEDFS_MEM_LIMIT` |
 | redis | 1 | 1 GiB | `REDIS_MEM_LIMIT` |
+| alert-redis | 0.25 | 384 MiB | `ALERT_REDIS_MEM_LIMIT` |
+| alert-notify-relay | 0.1 | 192 MiB | `ALERT_RELAY_MEM_LIMIT` |
+| alert-notify-critical | 0.25 | 512 MiB | `ALERT_WORKER_CRITICAL_MEM_LIMIT` |
+| alert-notify-normal | 0.25 | 512 MiB | `ALERT_WORKER_NORMAL_MEM_LIMIT` |
 | nginx | 1 | 256 MiB | `NGINX_MEM_LIMIT` |
 | vmagent | 1 | 192 MiB | `VMAGENT_MEM_LIMIT` |
 | snmp-exporter | 1 | 128 MiB | `SNMP_EXPORTER_MEM_LIMIT` |
@@ -58,13 +64,22 @@ docker exec nexora-nginx ps aux
    ```bash
    git clone https://github.com/libing28390-sketch/Release-netops.git nexora-automation
    cd nexora-automation
-   # 编辑 .env，至少替换 SECRET_KEY、CREDENTIAL_ENCRYPTION_KEY、POSTGRES_PASSWORD、DATABASE_URL
+   # 编辑 .env，至少替换 SECRET_KEY、CREDENTIAL_ENCRYPTION_KEY、POSTGRES_PASSWORD、DATABASE_URL、ALERT_NOTIFICATION_BROKER_PASSWORD
+   openssl rand -hex 32
    ```
 2. 构建并启动（前端会在容器内自动编译）：
    ```bash
    bash scripts/deploy-docker.sh install
    ```
 3. 访问 `http://localhost`。
+
+## 本地进程开发与远端 Docker 部署
+
+开发机不需要安装 Docker、Celery Worker 或告警专用 Redis。`.env.example` 默认 `ALERT_NOTIFICATION_CELERY_ENABLED=0`；本地 FastAPI 按现有纯进程开发方式启动，并由进程内的 PostgreSQL outbox consumer 处理通知。这个兼容模式方便本地开发，但不隔离本机 CPU；Celery 官方不支持 Windows，因此隔离 Worker 固定运行在远端 Linux 虚机，不把 Windows 本地 Worker 作为开发模式（[Celery FAQ](https://docs.celeryq.dev/en/latest/faq.html#does-celery-support-windows)）。
+
+正式部署时，在远端 Linux 虚机执行上面的 Compose 部署。Compose 会为 API 设置 `ALERT_NOTIFICATION_CELERY_ENABLED=1`，并由同一虚机上的独立 Relay、专用 Redis 和 Worker 消费 PostgreSQL outbox；无需在开发机运行或连接告警 Broker。
+
+若要在共享测试/预发布环境中让本地 FastAPI 停止消费 outbox，可将本地 API 配置为 `ALERT_NOTIFICATION_CELERY_ENABLED=1`，并通过已配置的受控网络连接与远端 Relay/Worker 相同的 PostgreSQL。远端 Relay 会负责发布和发送；告警 Redis 仍只在 Docker 内部网络开放，本地 API 不需要访问 Broker。需先保证远端数据库迁移版本与本地代码兼容。远端 Relay/Worker 停止时，通知留在 PostgreSQL outbox 等待恢复，不会回退到 API 内同步发送。恢复本地独立开发模式时，将开关设回 `0` 并重启 FastAPI。
 
 ## S3 对象存储与 SeaweedFS
 

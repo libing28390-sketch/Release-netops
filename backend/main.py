@@ -343,12 +343,27 @@ async def lifespan(app: FastAPI):
         'interval', seconds=60, id='wan_line_probe_sampler', replace_existing=True,
         max_instances=1, coalesce=True,
     )
-    from services.monitoring_notification_outbox_service import process_alert_delivery_outbox
+    from services.monitoring_incident_service import (
+        INCIDENT_PROJECTION_SYNC_INTERVAL_SECONDS,
+        run_scheduled_incident_projection_sync,
+    )
     scheduler.add_job(
-        synchronized_scheduler_job('monitoring_alert_delivery_outbox', expire_seconds=55)(process_alert_delivery_outbox),
-        'interval', seconds=5, id='monitoring_alert_delivery_outbox', replace_existing=True,
+        synchronized_scheduler_job('monitoring_incident_projection', expire_seconds=55)(
+            run_scheduled_incident_projection_sync
+        ),
+        'interval', seconds=INCIDENT_PROJECTION_SYNC_INTERVAL_SECONDS,
+        id='monitoring_incident_projection', replace_existing=True,
         max_instances=1, coalesce=True,
     )
+    if not settings.ALERT_NOTIFICATION_CELERY_ENABLED:
+        # Development compatibility only. Production Compose disables this
+        # in-process sender and runs the isolated PostgreSQL-to-Celery relay.
+        from services.monitoring_notification_outbox_service import process_alert_delivery_outbox
+        scheduler.add_job(
+            synchronized_scheduler_job('monitoring_alert_delivery_outbox', expire_seconds=55)(process_alert_delivery_outbox),
+            'interval', seconds=5, id='monitoring_alert_delivery_outbox', replace_existing=True,
+            max_instances=1, coalesce=True,
+        )
     scheduler.add_job(
         synchronized_scheduler_job('monitoring_maintenance_reopen', expire_seconds=55)(
             alert_maintenance_service.reopen_expired_suppressed_alerts

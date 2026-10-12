@@ -13,10 +13,10 @@ from database import get_db_connection
 logger = logging.getLogger(__name__)
 
 _ALLOWED_CHANNELS = frozenset({
-    "workspace", "feishu", "dingtalk", "wechat", "email", "global_webhook",
+    "workspace", "feishu", "dingtalk", "wechat", "email", "global_webhook", "grafana_feishu",
 })
 _MAX_CLAIM_LIMIT = 100
-_LEASE_SECONDS = 120
+_LEASE_SECONDS = 90
 _SENSITIVE_KEY = re.compile(
     r"(?:password|passwd|secret|token|credential|authorization|signature|private.?key|"
     r"community|webhook.?url|api.?key|access.?key|email|recipient(?:_address|_list|_emails))",
@@ -133,12 +133,27 @@ def _sanitize_payload_value(value: Any, *, field_name: str = "") -> Any:
     raise TypeError(f"Unsupported outbox payload value: {type(value).__name__}")
 
 
-def enqueue_alert_delivery(*, delivery_key: str, channel: str, payload: dict) -> None:
+def _delivery_priority(payload: dict) -> str:
+    severity = str(payload.get('severity') or '').strip().lower()
+    return 'critical' if severity in {'critical', 'major', 'high', 'p1', 'emergency'} else 'normal'
+
+
+def enqueue_alert_delivery(
+    *,
+    delivery_key: str,
+    channel: str,
+    payload: dict,
+    connection=None,
+) -> None:
     """Persist one idempotent alert delivery request.
 
     Repeated calls with a delivery key already in the outbox are no-ops. The
     caller should provide a stable key for one alert transition and channel.
     Credential-like payload fields are redacted before JSONB persistence.
+
+    Pass an existing connection to include the notification intent in the
+    caller's transaction. In that mode this function never commits, rolls
+    back, or closes the borrowed connection.
     """
     normalized_key = str(delivery_key or "").strip()
     normalized_channel = str(channel or "").strip()
@@ -149,18 +164,20 @@ def enqueue_alert_delivery(*, delivery_key: str, channel: str, payload: dict) ->
     if not isinstance(payload, dict):
         raise TypeError("payload must be a dictionary")
 
-    connection = get_db_connection()
+    owns_connection = connection is None
+    db_connection = connection or get_db_connection()
     try:
         if normalized_channel == 'email':
             # A pre-m0256 worker may already have persisted the unsuffixed
             # delivery. Keep that durable row authoritative during rollout so
             # profile fan-out cannot duplicate the same alert transition.
-            legacy_base = connection.execute(
+            legacy_base = db_connection.execute(
                 "SELECT 1 FROM alert_delivery_outbox WHERE delivery_key = ? LIMIT 1",
                 (normalized_key,),
             ).fetchone()
             if legacy_base:
-                connection.commit()
+                if owns_connection:
+                    db_connection.commit()
                 return
         destinations = [(normalized_key, str(payload.get('destination_key') or normalized_channel), payload)]
         if normalized_channel == 'email':
@@ -169,7 +186,7 @@ def enqueue_alert_delivery(*, delivery_key: str, channel: str, payload: dict) ->
                 from services.notification_service import get_email_profiles_for_dispatch
 
                 profiles = get_email_profiles_for_dispatch(
-                    connection,
+                    db_connection,
                     tenant_id,
                     enabled_only=True,
                 )
@@ -195,12 +212,12 @@ def enqueue_alert_delivery(*, delivery_key: str, channel: str, payload: dict) ->
         for destination_delivery_key, destination_key, destination_payload in destinations:
             safe_payload = _sanitize_payload_value(destination_payload)
             payload_json = json.dumps(safe_payload, ensure_ascii=False, allow_nan=False)
-            inserted = connection.execute(
+            inserted = db_connection.execute(
                 """
                 INSERT INTO alert_delivery_outbox (
                     id, delivery_key, channel, payload, alert_id, tenant_id,
-                    event_kind, destination_key
-                ) VALUES (?, ?, ?, ?::jsonb, ?, ?, ?, ?)
+                    event_kind, destination_key, priority
+                ) VALUES (?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?)
                 ON CONFLICT (delivery_key) DO NOTHING
                 RETURNING id
                 """,
@@ -213,12 +230,13 @@ def enqueue_alert_delivery(*, delivery_key: str, channel: str, payload: dict) ->
                     str(destination_payload.get('tenant_id') or 'tenant-default'),
                     str(destination_payload.get('event_kind') or 'active'),
                     destination_key,
+                    _delivery_priority(destination_payload),
                 ),
             ).fetchone()
             if inserted:
                 alert_id = str(destination_payload.get('alert_id') or '') or None
                 _record_alert_activity(
-                    connection,
+                    db_connection,
                     alert_id,
                     'NOTIFICATION_QUEUED',
                     {
@@ -228,12 +246,15 @@ def enqueue_alert_delivery(*, delivery_key: str, channel: str, payload: dict) ->
                         'status': 'queued',
                     },
                 )
-        connection.commit()
+        if owns_connection:
+            db_connection.commit()
     except Exception:
-        connection.rollback()
+        if owns_connection:
+            db_connection.rollback()
         raise
     finally:
-        connection.close()
+        if owns_connection:
+            db_connection.close()
 
 
 def _claim_deliveries(*, limit: int, worker_id: str) -> list[dict[str, Any]]:
@@ -275,33 +296,209 @@ def _claim_deliveries(*, limit: int, worker_id: str) -> list[dict[str, Any]]:
             RETURNING delivery.id, delivery.delivery_key, delivery.channel,
                       delivery.payload, delivery.attempts, delivery.max_attempts,
                       delivery.alert_id, delivery.tenant_id, delivery.event_kind,
-                      delivery.destination_key
+                      delivery.destination_key, delivery.dispatch_generation,
+                      delivery.priority
             """,
             (limit, worker_id, _LEASE_SECONDS),
         ).fetchall()
-        connection.commit()
         items = [dict(row) for row in claimed]
-        if items:
-            audit_connection = get_db_connection()
-            try:
-                for item in items:
-                    _record_delivery_attempt(
-                        audit_connection,
-                        delivery_id=str(item['id']),
-                        alert_id=str(item.get('alert_id') or '') or None,
-                        tenant_id=str(item.get('tenant_id') or 'tenant-default'),
-                        channel=str(item.get('channel') or ''),
-                        event_kind=str(item.get('event_kind') or 'active'),
-                        attempt_no=int(item.get('attempts') or 1),
-                        status='sending',
-                    )
-                audit_connection.commit()
-            except Exception:
-                audit_connection.rollback()
-                logger.warning("Could not record notification delivery attempts", exc_info=True)
-            finally:
-                audit_connection.close()
+        for item in items:
+            _record_delivery_attempt(
+                connection,
+                delivery_id=str(item['id']),
+                alert_id=str(item.get('alert_id') or '') or None,
+                tenant_id=str(item.get('tenant_id') or 'tenant-default'),
+                channel=str(item.get('channel') or ''),
+                event_kind=str(item.get('event_kind') or 'active'),
+                attempt_no=int(item.get('attempts') or 1),
+                status='sending',
+            )
+        connection.commit()
         return items
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def _claim_delivery_by_generation(
+    *,
+    delivery_id: str,
+    dispatch_generation: int,
+    worker_id: str,
+) -> dict[str, Any] | None:
+    """Atomically claim one exact broker message and record its attempt."""
+    connection = get_db_connection()
+    try:
+        claimed = connection.execute(
+            """
+            UPDATE alert_delivery_outbox
+               SET status = 'processing',
+                   attempts = attempts + 1,
+                   lease_owner = ?,
+                   lease_until = clock_timestamp() + (? * INTERVAL '1 second'),
+                   updated_at = clock_timestamp()
+             WHERE id = ?
+               AND dispatch_generation = ?
+               AND status = 'pending'
+               AND available_at <= clock_timestamp()
+               AND attempts < max_attempts
+            RETURNING id, delivery_key, channel, payload, attempts, max_attempts,
+                      alert_id, tenant_id, event_kind, destination_key,
+                      dispatch_generation, priority
+            """,
+            (worker_id, _LEASE_SECONDS, delivery_id, dispatch_generation),
+        ).fetchone()
+        if not claimed:
+            connection.commit()
+            return None
+        delivery = dict(claimed)
+        _record_delivery_attempt(
+            connection,
+            delivery_id=str(delivery['id']),
+            alert_id=str(delivery.get('alert_id') or '') or None,
+            tenant_id=str(delivery.get('tenant_id') or 'tenant-default'),
+            channel=str(delivery.get('channel') or ''),
+            event_kind=str(delivery.get('event_kind') or 'active'),
+            attempt_no=int(delivery.get('attempts') or 1),
+            status='sending',
+        )
+        connection.commit()
+        return delivery
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def recover_expired_alert_delivery_leases(*, limit: int = 100) -> dict[str, int]:
+    """Fence executions whose PostgreSQL lease expired and schedule a new generation."""
+    try:
+        claim_limit = max(0, min(500, int(limit)))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("limit must be an integer") from exc
+    counts = {"recovered": 0, "failed": 0}
+    if claim_limit == 0:
+        return counts
+
+    connection = get_db_connection()
+    try:
+        rows = connection.execute(
+            """
+            SELECT id, alert_id, tenant_id, channel, event_kind, attempts,
+                   max_attempts, dispatch_generation, status
+              FROM alert_delivery_outbox
+             WHERE (status = 'processing' AND lease_until <= clock_timestamp())
+                OR (status = 'pending' AND attempts >= max_attempts
+                    AND available_at <= clock_timestamp())
+             ORDER BY COALESCE(lease_until, available_at), created_at, id
+             LIMIT ?
+             FOR UPDATE SKIP LOCKED
+            """,
+            (claim_limit,),
+        ).fetchall()
+        for raw_row in rows:
+            row = dict(raw_row)
+            delivery_id = str(row['id'])
+            attempt = int(row.get('attempts') or 0)
+            max_attempts = int(row.get('max_attempts') or 1)
+            generation = int(row.get('dispatch_generation') or 1)
+            expired_execution = str(row.get('status') or '') == 'processing'
+            terminal = not expired_execution or attempt >= max_attempts
+            error_code = (
+                'worker_lease_expired_retry_limit'
+                if terminal and expired_execution
+                else 'delivery_retry_limit_exhausted'
+                if terminal
+                else 'worker_lease_expired'
+            )
+            common = (
+                delivery_id,
+                attempt,
+            )
+            if terminal:
+                connection.execute(
+                    """
+                    UPDATE alert_delivery_outbox
+                       SET status = 'failed', lease_owner = '', lease_until = NULL,
+                           dispatch_generation = dispatch_generation + 1,
+                           publish_lease_owner = '', publish_lease_until = NULL,
+                           published_at = NULL, last_error = ?,
+                           completed_at = clock_timestamp(), updated_at = clock_timestamp()
+                     WHERE id = ?
+                    """,
+                    (error_code, delivery_id),
+                )
+                if expired_execution:
+                    connection.execute(
+                        """
+                        UPDATE alert_delivery_attempts
+                           SET status = 'failed', error_code = ?, error_summary = ?,
+                               finished_at = clock_timestamp()
+                         WHERE delivery_id = ? AND attempt_no = ? AND status = 'sending'
+                        """,
+                        (error_code, error_code, *common),
+                    )
+                _record_alert_activity(
+                    connection,
+                    str(row.get('alert_id') or '') or None,
+                    'NOTIFICATION_FAILED',
+                    {
+                        'channel': str(row.get('channel') or ''),
+                        'event_kind': str(row.get('event_kind') or 'active'),
+                        'attempt': attempt,
+                        'status': 'failed',
+                        'error_code': error_code,
+                        'retryable': expired_execution,
+                        'will_retry': False,
+                    },
+                )
+                counts['failed'] += 1
+                continue
+
+            backoff_seconds = min(3600, 5 * (2 ** max(0, attempt - 1)))
+            connection.execute(
+                """
+                UPDATE alert_delivery_outbox
+                   SET status = 'pending', lease_owner = '', lease_until = NULL,
+                       dispatch_generation = dispatch_generation + 1,
+                       publish_redrive_count = 0,
+                       available_at = clock_timestamp() + (? * INTERVAL '1 second'),
+                       publish_available_at = clock_timestamp() + (? * INTERVAL '1 second'),
+                       publish_lease_owner = '', publish_lease_until = NULL,
+                       published_at = NULL, last_error = ?, updated_at = clock_timestamp()
+                 WHERE id = ? AND dispatch_generation = ?
+                """,
+                (backoff_seconds, backoff_seconds, error_code, delivery_id, generation),
+            )
+            connection.execute(
+                """
+                UPDATE alert_delivery_attempts
+                   SET status = 'retrying', error_code = ?, error_summary = ?,
+                       finished_at = clock_timestamp()
+                 WHERE delivery_id = ? AND attempt_no = ? AND status = 'sending'
+                """,
+                (error_code, error_code, *common),
+            )
+            _record_alert_activity(
+                connection,
+                str(row.get('alert_id') or '') or None,
+                'NOTIFICATION_RETRYING',
+                {
+                    'channel': str(row.get('channel') or ''),
+                    'event_kind': str(row.get('event_kind') or 'active'),
+                    'attempt': attempt,
+                    'status': 'retrying',
+                    'error_code': error_code,
+                    'retryable': True,
+                    'will_retry': True,
+                },
+            )
+            counts['recovered'] += 1
+        connection.commit()
+        return counts
     except Exception:
         connection.rollback()
         raise
@@ -333,6 +530,18 @@ def _deliver(row: dict[str, Any]) -> None:
         ok, _response_body = _post_json(webhook_url, outbound_payload)
         if not ok:
             raise _DeliveryAttemptError("global_webhook_delivery_failed")
+        return
+
+    if row["channel"] == "grafana_feishu":
+        import os
+        from services.notification_service import send_feishu
+
+        webhook_url = os.environ.get("FEISHU_WEBHOOK_URL", "").strip()
+        if not webhook_url:
+            raise _DeliveryAttemptError("feishu_webhook_unconfigured", retryable=False)
+        ok, _response_body = send_feishu(webhook_url, payload)
+        if not ok:
+            raise _DeliveryAttemptError("feishu_webhook_delivery_failed")
         return
 
     if row["channel"] == "workspace":
@@ -405,6 +614,85 @@ def _deliver(row: dict[str, Any]) -> None:
     raise _DeliveryAttemptError("unsupported_delivery_channel", retryable=False)
 
 
+def process_alert_delivery_by_generation(
+    *,
+    delivery_id: str,
+    dispatch_generation: int,
+    worker_id: str,
+) -> str:
+    """Execute exactly one broker message after a fenced PostgreSQL claim.
+
+    Duplicate or stale-generation messages are harmless and do not increment
+    business attempts. Business backoff and final state remain PostgreSQL-only.
+    """
+    normalized_delivery_id = str(delivery_id or '').strip()
+    normalized_worker_id = str(worker_id or '').strip()
+    generation = int(dispatch_generation)
+    if not normalized_delivery_id:
+        raise ValueError('delivery_id is required')
+    if not normalized_worker_id:
+        raise ValueError('worker_id is required')
+    if generation < 1:
+        raise ValueError('dispatch_generation must be positive')
+
+    delivery = _claim_delivery_by_generation(
+        delivery_id=normalized_delivery_id,
+        dispatch_generation=generation,
+        worker_id=normalized_worker_id,
+    )
+    if delivery is None:
+        return 'ignored'
+
+    payload = delivery.get('payload')
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except (TypeError, ValueError):
+            payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    recipient_count = int(payload.get('recipient_count') or 0)
+    try:
+        _deliver(delivery)
+    except Exception as exc:
+        error_summary = _safe_failure_summary(exc)
+        logger.warning(
+            "Monitoring alert delivery %s failed (%s)",
+            normalized_delivery_id,
+            error_summary,
+        )
+        outcome = _finish_delivery(
+            delivery_id=normalized_delivery_id,
+            worker_id=normalized_worker_id,
+            dispatch_generation=generation,
+            success=False,
+            attempt=int(delivery['attempts']),
+            max_attempts=int(delivery['max_attempts']),
+            alert_id=str(delivery.get('alert_id') or '') or None,
+            tenant_id=str(delivery.get('tenant_id') or 'tenant-default'),
+            channel=str(delivery.get('channel') or ''),
+            event_kind=str(delivery.get('event_kind') or 'active'),
+            recipient_count=int(delivery.get('_recipient_count') or recipient_count),
+            retryable=bool(getattr(exc, 'retryable', True)),
+            error_summary=error_summary,
+        )
+    else:
+        outcome = _finish_delivery(
+            delivery_id=normalized_delivery_id,
+            worker_id=normalized_worker_id,
+            dispatch_generation=generation,
+            success=True,
+            attempt=int(delivery['attempts']),
+            max_attempts=int(delivery['max_attempts']),
+            alert_id=str(delivery.get('alert_id') or '') or None,
+            tenant_id=str(delivery.get('tenant_id') or 'tenant-default'),
+            channel=str(delivery.get('channel') or ''),
+            event_kind=str(delivery.get('event_kind') or 'active'),
+            recipient_count=int(delivery.get('_recipient_count') or recipient_count),
+        )
+    return outcome or 'lease_lost'
+
+
 def _safe_failure_summary(exc: Exception) -> str:
     if isinstance(exc, _DeliveryAttemptError):
         return exc.code
@@ -415,6 +703,7 @@ def _finish_delivery(
     *,
     delivery_id: str,
     worker_id: str,
+    dispatch_generation: int | None = None,
     success: bool,
     attempt: int,
     max_attempts: int,
@@ -426,74 +715,94 @@ def _finish_delivery(
     retryable: bool = True,
     error_summary: str = "",
 ) -> str | None:
-    """Release a claimed row only while this worker still owns its lease."""
+    """Release a delivery only while its lease and dispatch generation match."""
     connection = get_db_connection()
+    generation_clause = " AND dispatch_generation = ?" if dispatch_generation is not None else ""
     try:
         if success:
             result = connection.execute(
-                """
+                f"""
                 UPDATE alert_delivery_outbox
                    SET status = 'succeeded', lease_owner = '', lease_until = NULL,
                        last_error = '', completed_at = clock_timestamp(),
                        updated_at = clock_timestamp()
                  WHERE id = ? AND status = 'processing' AND lease_owner = ?
+                       {generation_clause}
                 """,
-                (delivery_id, worker_id),
+                (delivery_id, worker_id, *((dispatch_generation,) if dispatch_generation is not None else ())),
             )
-            if int(result.rowcount or 0) == 1:
-                _record_delivery_attempt(
-                    connection,
-                    delivery_id=delivery_id,
-                    alert_id=alert_id,
-                    tenant_id=tenant_id,
-                    channel=channel,
-                    event_kind=event_kind,
-                    attempt_no=attempt,
-                    status='succeeded',
-                    recipient_count=recipient_count,
-                )
-                _record_alert_activity(
-                    connection,
-                    alert_id,
-                    'NOTIFICATION_SENT',
-                    {
-                        'channel': channel,
-                        'event_kind': event_kind,
-                        'attempt': attempt,
-                        'status': 'succeeded',
-                        'recipient_count': max(0, int(recipient_count or 0)),
-                    },
-                )
+            if int(result.rowcount or 0) != 1:
+                connection.rollback()
+                return None
+            _record_delivery_attempt(
+                connection,
+                delivery_id=delivery_id,
+                alert_id=alert_id,
+                tenant_id=tenant_id,
+                channel=channel,
+                event_kind=event_kind,
+                attempt_no=attempt,
+                status='succeeded',
+                recipient_count=recipient_count,
+            )
+            _record_alert_activity(
+                connection,
+                alert_id,
+                'NOTIFICATION_SENT',
+                {
+                    'channel': channel,
+                    'event_kind': event_kind,
+                    'attempt': attempt,
+                    'status': 'succeeded',
+                    'recipient_count': max(0, int(recipient_count or 0)),
+                },
+            )
             connection.commit()
-            return "succeeded" if int(result.rowcount or 0) == 1 else None
+            return "succeeded"
 
         terminal = (not retryable) or attempt >= max_attempts
         backoff_seconds = min(3600, 5 * (2 ** max(0, attempt - 1)))
         if terminal:
             result = connection.execute(
-                """
+                f"""
                 UPDATE alert_delivery_outbox
                    SET status = 'failed', lease_owner = '', lease_until = NULL,
                        last_error = ?, completed_at = clock_timestamp(),
-                       updated_at = clock_timestamp()
+                       updated_at = clock_timestamp(),
+                       dispatch_generation = dispatch_generation + 1,
+                       publish_lease_owner = '', publish_lease_until = NULL,
+                       published_at = NULL
                  WHERE id = ? AND status = 'processing' AND lease_owner = ?
+                       {generation_clause}
                 """,
-                (error_summary, delivery_id, worker_id),
+                (error_summary, delivery_id, worker_id, *((dispatch_generation,) if dispatch_generation is not None else ())),
             )
         else:
             result = connection.execute(
-                """
+                f"""
                 UPDATE alert_delivery_outbox
                    SET status = 'pending', lease_owner = '', lease_until = NULL,
                        available_at = clock_timestamp() + (? * INTERVAL '1 second'),
-                       last_error = ?, updated_at = clock_timestamp()
+                       publish_available_at = clock_timestamp() + (? * INTERVAL '1 second'),
+                       last_error = ?, updated_at = clock_timestamp(),
+                       dispatch_generation = dispatch_generation + 1,
+                       publish_redrive_count = 0,
+                       publish_lease_owner = '', publish_lease_until = NULL,
+                       published_at = NULL
                  WHERE id = ? AND status = 'processing' AND lease_owner = ?
+                       {generation_clause}
                 """,
-                (backoff_seconds, error_summary, delivery_id, worker_id),
+                (backoff_seconds, backoff_seconds, error_summary, delivery_id, worker_id,
+                 *((dispatch_generation,) if dispatch_generation is not None else ())),
             )
+        if int(result.rowcount or 0) != 1:
+            connection.rollback()
+            return None
+
         skipped = error_summary in {
             'smtp_config_missing', 'email_no_recipients', 'smtp_invalid_recipient',
-            'feishu_unconfigured', 'dingtalk_unconfigured', 'wechat_unconfigured',
+            'feishu_unconfigured', 'feishu_webhook_unconfigured',
+            'dingtalk_unconfigured', 'wechat_unconfigured',
             'notification_group_no_recipients',
         }
         status = 'skipped' if terminal and skipped else 'failed' if terminal else 'retrying'
@@ -526,8 +835,6 @@ def _finish_delivery(
             },
         )
         connection.commit()
-        if int(result.rowcount or 0) != 1:
-            return None
         return "failed" if terminal else "retried"
     except Exception:
         connection.rollback()

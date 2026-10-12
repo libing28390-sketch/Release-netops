@@ -856,6 +856,7 @@ def reopen_expired_suppressed_alerts() -> list[dict[str, Any]]:
                                 if key != 'notification_group_names'
                             },
                         },
+                        connection=conn,
                     )
                 for channel in channels:
                     if channel not in {'workspace', 'feishu', 'dingtalk', 'wechat', 'email', 'global_webhook'}:
@@ -872,9 +873,12 @@ def reopen_expired_suppressed_alerts() -> list[dict[str, Any]]:
                             }
                             if channel == 'global_webhook' else payload
                         ),
+                        connection=conn,
                     )
             except Exception:
-                logger.warning('Failed to enqueue maintenance reopen notification', exc_info=True)
+                # Keep the alert lifecycle transition and its durable delivery
+                # intent atomic. The scheduler can retry the whole transaction.
+                raise
 
         if reopened:
             conn.commit()

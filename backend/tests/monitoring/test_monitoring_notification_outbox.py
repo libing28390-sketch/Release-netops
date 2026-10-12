@@ -4,7 +4,9 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 
 from database import get_db_connection
+from database.migrations.m0283_alert_delivery_celery_dispatch import upgrade as dispatch_upgrade
 from database.migrations.m0241_monitoring_notification_outbox import upgrade
+from services import alert_delivery_relay_service as relay
 from services import monitoring_notification_outbox_service as outbox
 
 
@@ -253,3 +255,230 @@ def test_expired_worker_lease_is_reclaimed_and_workers_claim_distinct_rows(isola
     assert all(result["claimed"] == 1 and result["succeeded"] == 1 for result in results)
     assert _get_delivery("alert:concurrent:one")["status"] == "succeeded"
     assert _get_delivery("alert:concurrent:two")["status"] == "succeeded"
+
+
+def test_enqueue_uses_borrowed_transaction_without_committing(isolated_db) -> None:
+    connection = get_db_connection()
+    try:
+        outbox.enqueue_alert_delivery(
+            delivery_key='alert:atomic:workspace',
+            channel='workspace',
+            payload={'tenant_id': 'tenant-default', 'title': 'Atomic'},
+            connection=connection,
+        )
+        connection.rollback()
+    finally:
+        connection.close()
+
+    check = get_db_connection()
+    try:
+        assert check.execute(
+            "SELECT 1 FROM alert_delivery_outbox WHERE delivery_key = ?",
+            ('alert:atomic:workspace',),
+        ).fetchone() is None
+    finally:
+        check.close()
+
+
+def test_exact_generation_claim_is_idempotent_and_fences_stale_messages(isolated_db, monkeypatch) -> None:
+    outbox.enqueue_alert_delivery(
+        delivery_key='alert:generation:workspace',
+        channel='workspace',
+        payload={'tenant_id': 'tenant-default', 'title': 'Generation', 'severity': 'warning'},
+    )
+    delivery = _get_delivery('alert:generation:workspace')
+    delivery_id = str(delivery['id'])
+    calls: list[str] = []
+    monkeypatch.setattr(outbox, '_deliver', lambda _row: calls.append('sent'))
+
+    assert outbox.process_alert_delivery_by_generation(
+        delivery_id=delivery_id,
+        dispatch_generation=2,
+        worker_id='stale-worker',
+    ) == 'ignored'
+    assert outbox.process_alert_delivery_by_generation(
+        delivery_id=delivery_id,
+        dispatch_generation=1,
+        worker_id='valid-worker',
+    ) == 'succeeded'
+    assert outbox.process_alert_delivery_by_generation(
+        delivery_id=delivery_id,
+        dispatch_generation=1,
+        worker_id='duplicate-worker',
+    ) == 'ignored'
+
+    current = _get_delivery('alert:generation:workspace')
+    assert current['status'] == 'succeeded'
+    assert current['attempts'] == 1
+    assert calls == ['sent']
+
+
+def test_expired_exact_generation_is_fenced_and_reissued(isolated_db, monkeypatch) -> None:
+    outbox.enqueue_alert_delivery(
+        delivery_key='alert:expired-generation:workspace',
+        channel='workspace',
+        payload={'tenant_id': 'tenant-default', 'title': 'Expired generation'},
+    )
+    delivery = _get_delivery('alert:expired-generation:workspace')
+    delivery_id = str(delivery['id'])
+    claimed = outbox._claim_delivery_by_generation(
+        delivery_id=delivery_id,
+        dispatch_generation=1,
+        worker_id='dead-worker',
+    )
+    assert claimed and claimed['attempts'] == 1
+
+    connection = get_db_connection()
+    try:
+        connection.execute(
+            "UPDATE alert_delivery_outbox SET lease_until = clock_timestamp() - INTERVAL '1 second' WHERE id = ?",
+            (delivery_id,),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    recovered = outbox.recover_expired_alert_delivery_leases(limit=10)
+    assert recovered == {'recovered': 1, 'failed': 0}
+    current = _get_delivery('alert:expired-generation:workspace')
+    assert current['status'] == 'pending'
+    assert current['dispatch_generation'] == 2
+    assert current['attempts'] == 1
+    connection = get_db_connection()
+    try:
+        connection.execute(
+            "UPDATE alert_delivery_outbox SET available_at = clock_timestamp() - INTERVAL '1 second' WHERE id = ?",
+            (delivery_id,),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    monkeypatch.setattr(outbox, '_deliver', lambda _row: None)
+    assert outbox.process_alert_delivery_by_generation(
+        delivery_id=delivery_id,
+        dispatch_generation=1,
+        worker_id='stale-worker',
+    ) == 'ignored'
+    assert outbox.process_alert_delivery_by_generation(
+        delivery_id=delivery_id,
+        dispatch_generation=2,
+        worker_id='replacement-worker',
+    ) == 'succeeded'
+
+
+def test_dispatch_migration_is_repeatable_and_builds_claim_indexes(isolated_db) -> None:
+    connection = get_db_connection()
+    try:
+        with connection.cursor() as cursor:
+            dispatch_upgrade(cursor, use_pg=True)
+            dispatch_upgrade(cursor, use_pg=True)
+        connection.commit()
+        columns = {
+            row['column_name']
+            for row in connection.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'alert_delivery_outbox'"
+            ).fetchall()
+        }
+        assert {
+            'dispatch_generation', 'published_generation', 'priority', 'publish_attempts',
+            'publish_redrive_count', 'publish_available_at', 'publish_lease_owner',
+            'publish_lease_until', 'published_at', 'publish_last_error',
+        } <= columns
+        indexes = {
+            row['indexname']
+            for row in connection.execute(
+                "SELECT indexname FROM pg_indexes WHERE schemaname = current_schema() AND tablename = 'alert_delivery_outbox'"
+            ).fetchall()
+        }
+        assert 'idx_alert_delivery_outbox_publish_ready' in indexes
+        assert 'idx_alert_delivery_outbox_expired_lease' in indexes
+    finally:
+        connection.close()
+
+
+def test_relay_redrives_unclaimed_generation_with_bounded_backoff_until_claimed(isolated_db, monkeypatch) -> None:
+    outbox.enqueue_alert_delivery(
+        delivery_key='alert:preclaim-recovery:workspace',
+        channel='workspace',
+        payload={'tenant_id': 'tenant-default', 'title': 'Pre-claim recovery'},
+    )
+    delivery = _get_delivery('alert:preclaim-recovery:workspace')
+    delivery_id = str(delivery['id'])
+    connection = get_db_connection()
+    try:
+        connection.execute(
+            """
+            UPDATE alert_delivery_outbox
+               SET published_generation = dispatch_generation,
+                   published_at = clock_timestamp() - INTERVAL '2 hours',
+                   publish_redrive_count = 4
+             WHERE id = ?
+            """,
+            (delivery_id,),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    published = []
+    monkeypatch.setattr(relay.app, 'send_task', lambda *args, **kwargs: published.append((args, kwargs)))
+    result = relay.publish_ready_alert_deliveries(limit=1)
+
+    assert result == {'claimed': 1, 'published': 1, 'failed': 0}
+    assert len(published) == 1
+    assert published[0][1]['args'] == [delivery_id, 1]
+    assert relay._claim_ready_deliveries(limit=1, relay_id='another-relay') == []
+    current = _get_delivery('alert:preclaim-recovery:workspace')
+    assert current['status'] == 'pending'
+    assert current['attempts'] == 0
+    assert current['dispatch_generation'] == 1
+    assert current['published_generation'] == 1
+    assert current['publish_redrive_count'] == 5
+
+    connection = get_db_connection()
+    try:
+        connection.execute(
+            """
+            UPDATE alert_delivery_outbox
+               SET attempts = 1,
+                   published_at = clock_timestamp() - INTERVAL '2 hours'
+             WHERE id = ?
+            """,
+            (delivery_id,),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    assert relay._claim_ready_deliveries(limit=1, relay_id='after-claim') == []
+
+
+def test_missing_grafana_feishu_webhook_is_terminally_skipped(isolated_db, monkeypatch) -> None:
+    monkeypatch.delenv('FEISHU_WEBHOOK_URL', raising=False)
+    outbox.enqueue_alert_delivery(
+        delivery_key='grafana-alert:missing-feishu-webhook',
+        channel='grafana_feishu',
+        payload={'tenant_id': 'tenant-default', 'title': 'Grafana alert'},
+    )
+    delivery = _get_delivery('grafana-alert:missing-feishu-webhook')
+
+    result = outbox.process_alert_delivery_by_generation(
+        delivery_id=str(delivery['id']),
+        dispatch_generation=1,
+        worker_id='missing-webhook-worker',
+    )
+
+    current = _get_delivery('grafana-alert:missing-feishu-webhook')
+    assert result == 'failed'
+    assert current['status'] == 'failed'
+    assert current['last_error'] == 'feishu_webhook_unconfigured'
+    connection = get_db_connection()
+    try:
+        attempt = connection.execute(
+            "SELECT status, error_code FROM alert_delivery_attempts WHERE delivery_id = ? ORDER BY created_at DESC, id DESC LIMIT 1",
+            (str(delivery['id']),),
+        ).fetchone()
+        assert tuple(attempt) == ('skipped', 'feishu_webhook_unconfigured')
+    finally:
+        connection.close()

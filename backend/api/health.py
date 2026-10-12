@@ -6,7 +6,7 @@ from fastapi import APIRouter, Query
 from core.config import settings
 from database import PROJECT_ROOT, get_db_connection, init_db
 from services import alert_maintenance_service
-from services import notification_service
+from services import monitoring_notification_outbox_service
 import logging
 import os
 import shutil
@@ -21,6 +21,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 HOST_RESOURCE_ALERT_SOURCE = "system_resource"
+HOST_RESOURCE_ALERT_TENANT_ID = "tenant-default"
 HOST_RESOURCE_SAMPLE_RETENTION_DAYS = 30
 DEFAULT_UI_LANGUAGE = getattr(settings, 'DEFAULT_LANGUAGE', 'zh')
 
@@ -147,17 +148,22 @@ def _local_alert_time(iso_value: str | None) -> str:
         return str(iso_value)
 
 
-def _dispatch_host_resource_notification(
+def _build_host_resource_notification_payload(
     alert: dict[str, Any],
     *,
     status: str,
+    event_kind: str,
+    alert_id: str,
     first_occurrence: str,
     last_occurrence: str | None = None,
     duration_seconds: int | None = None,
     impact_window: str | None = None,
     alert_count: int | None = None,
-) -> None:
+) -> dict[str, Any]:
     alert_info = {
+        'alert_id': alert_id,
+        'tenant_id': HOST_RESOURCE_ALERT_TENANT_ID,
+        'event_kind': event_kind,
         'title': alert.get('title') or _get_host_resource_alert_title(alert.get('metric_key')),
         'object_name': alert.get('metric_key') or alert.get('dedupe_key') or HOST_RESOURCE_ALERT_SOURCE,
         'ip_address': '',
@@ -174,10 +180,7 @@ def _dispatch_host_resource_notification(
         alert_info['impact_window'] = impact_window
     if alert_count is not None:
         alert_info['alert_count'] = alert_count
-
-    # 统一分发到所有用户的通道
-    from services.notification_service import dispatch_to_all_users
-    dispatch_to_all_users(alert_info)
+    return alert_info
 
 
 def _get_db_health() -> tuple[bool, str]:
@@ -333,11 +336,10 @@ def _get_host_resource_alerts(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
 def _sync_host_resource_alerts(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     desired_alerts = _get_host_resource_alerts(snapshot)
     desired_map = {item["dedupe_key"]: item for item in desired_alerts}
-    pending_notifications: list[tuple[dict[str, Any], dict[str, Any]]] = []
     conn = get_db_connection()
     try:
         open_rows = conn.execute(
-            "SELECT dedupe_key, severity, title, message, interface_name AS metric_key, created_at, workflow_status FROM alert_events WHERE source = ? AND resolved_at IS NULL",
+            "SELECT id, dedupe_key, severity, title, message, interface_name AS metric_key, created_at, workflow_status FROM alert_events WHERE source = ? AND resolved_at IS NULL",
             (HOST_RESOURCE_ALERT_SOURCE,),
         ).fetchall()
         open_map = {row["dedupe_key"]: dict(row) for row in open_rows}
@@ -375,6 +377,7 @@ def _sync_host_resource_alerts(snapshot: dict[str, Any]) -> list[dict[str, Any]]
             }, conn=conn)
             workflow_status = 'suppressed' if maintenance_window else 'open'
             note = f"Suppressed by maintenance window: {maintenance_window['name']}" if maintenance_window else ''
+            alert_id = str(uuid.uuid4())
             conn.execute(
                 '''
                 INSERT INTO alert_events (
@@ -384,7 +387,7 @@ def _sync_host_resource_alerts(snapshot: dict[str, Any]) -> list[dict[str, Any]]
                 VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, ?, ?, ?)
                 ''',
                 (
-                    str(uuid.uuid4()),
+                    alert_id,
                     dedupe_key,
                     HOST_RESOURCE_ALERT_SOURCE,
                     alert["severity"],
@@ -398,19 +401,27 @@ def _sync_host_resource_alerts(snapshot: dict[str, Any]) -> list[dict[str, Any]]
                 ),
             )
             if not maintenance_window:
-                pending_notifications.append((
+                event_kind = 'active'
+                payload = _build_host_resource_notification_payload(
                     alert,
-                    {
-                        'status': 'active',
-                        'first_occurrence': now_utc,
-                        'last_occurrence': now_utc,
-                    },
-                ))
+                    status=event_kind,
+                    event_kind=event_kind,
+                    alert_id=alert_id,
+                    first_occurrence=now_utc,
+                    last_occurrence=now_utc,
+                )
+                monitoring_notification_outbox_service.enqueue_alert_delivery(
+                    delivery_key=f"host-resource:{alert_id}:workspace:{event_kind}",
+                    channel='workspace',
+                    payload=payload,
+                    connection=conn,
+                )
 
         stale_keys = open_keys - set(desired_map)
         if stale_keys:
             resolved_rows = [
                 {
+                    'alert_id': open_map[dedupe_key].get('id'),
                     **open_map[dedupe_key],
                     'dedupe_key': dedupe_key,
                     'metric_key': open_map[dedupe_key].get('metric_key') or dedupe_key.split(':', 1)[-1],
@@ -436,31 +447,36 @@ def _sync_host_resource_alerts(snapshot: dict[str, Any]) -> list[dict[str, Any]]
                 impact_window = None
                 if ' ' in start_label and ' ' in end_label:
                     impact_window = f"{start_label.split(' ')[-1]} → {end_label.split(' ')[-1]}"
-                pending_notifications.append((
+                alert_id = str(row.get('alert_id') or '')
+                if not alert_id:
+                    # A host-resource event should always have its lifecycle ID.
+                    # Refuse to resolve silently if legacy/corrupt data cannot be
+                    # addressed by a stable outbox idempotency key.
+                    raise RuntimeError("Host resource alert is missing its lifecycle ID")
+                event_kind = 'resolved'
+                payload = _build_host_resource_notification_payload(
                     row,
-                    {
-                        'status': 'resolved',
-                        'first_occurrence': first_occurrence,
-                        'last_occurrence': now_utc,
-                        'duration_seconds': duration_seconds,
-                        'impact_window': impact_window,
-                        'alert_count': 1,
-                    },
-                ))
+                    status=event_kind,
+                    event_kind=event_kind,
+                    alert_id=alert_id,
+                    first_occurrence=first_occurrence,
+                    last_occurrence=now_utc,
+                    duration_seconds=duration_seconds,
+                    impact_window=impact_window,
+                    alert_count=1,
+                )
+                monitoring_notification_outbox_service.enqueue_alert_delivery(
+                    delivery_key=f"host-resource:{alert_id}:workspace:{event_kind}",
+                    channel='workspace',
+                    payload=payload,
+                    connection=conn,
+                )
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
-
-    # Dispatch only after the alert state is committed and its connection is
-    # returned to the pool. A delivery failure must not roll back that state.
-    for alert, notification_kwargs in pending_notifications:
-        try:
-            _dispatch_host_resource_notification(alert, **notification_kwargs)
-        except Exception as exc:
-            logger.error(
-                "Host resource notification dispatch failed (%s)",
-                type(exc).__name__,
-            )
     return desired_alerts
 
 

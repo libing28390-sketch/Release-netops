@@ -136,7 +136,13 @@ class TelemetryOrchestrator:
 
     async def b_loop(self):
         """B-Loop: 中低频任务 (60s+) - CPU/内存/硬件环境/接口全量性能数据"""
-        from services.background_monitor_service import process_device_slow, _run_telemetry_maintenance, sync_lldp_neighbor_alerts, _db_quick
+        from services.background_monitor_service import (
+            process_device_slow,
+            _run_monitoring_sync_work,
+            _run_telemetry_maintenance,
+            sync_lldp_neighbor_alerts,
+            _db_quick,
+        )
         import asyncio
         import sys
 
@@ -173,7 +179,7 @@ class TelemetryOrchestrator:
                     from engine.pool import ConnectionPool
                     ConnectionPool().cleanup()
 
-                sync_lldp_neighbor_alerts()
+                await _run_monitoring_sync_work(sync_lldp_neighbor_alerts)
             except Exception as e:
                 logger.error(f"[Orchestrator B-Loop] Error: {e}")
             await asyncio.sleep(60)

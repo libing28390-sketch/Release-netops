@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "NetOps Automation Platform"
     DATABASE_URL: str = ""
     REDIS_URL: str = "redis://localhost:6379/0"
+    ALERT_NOTIFICATION_CELERY_ENABLED: bool = False
     IP_LOCATOR_CACHE_BACKEND: str = "redis"
     IP_LOCATOR_REDIS_NAMESPACE: str = "nexora:production:locator:v1"
     IP_LOCATOR_REDIS_CONNECT_TIMEOUT_SECONDS: float = 1.0

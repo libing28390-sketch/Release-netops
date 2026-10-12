@@ -64,6 +64,5 @@ psutil>=5.9.0
 ping3>=4.0.4
 watchfiles>=0.21.0
 
-# Task Queue (optional, for future use)
-celery>=5.3.0
-redis>=5.0.0
+# Alert notification workers use a dedicated Redis broker.
+celery[redis]==5.6.3

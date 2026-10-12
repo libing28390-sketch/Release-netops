@@ -2547,7 +2547,7 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     CREATE TABLE IF NOT EXISTS alert_delivery_outbox (
         id TEXT PRIMARY KEY,
         delivery_key TEXT NOT NULL UNIQUE,
-        channel TEXT NOT NULL CHECK (channel IN ('workspace', 'global_webhook')),
+        channel TEXT NOT NULL CHECK (channel IN ('workspace', 'global_webhook', 'grafana_feishu')),
         payload JSONB NOT NULL DEFAULT '{}'::jsonb,
         status TEXT NOT NULL DEFAULT 'pending'
             CHECK (status IN ('pending', 'processing', 'succeeded', 'failed')),
@@ -2557,6 +2557,17 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         lease_owner TEXT NOT NULL DEFAULT '',
         lease_until TIMESTAMPTZ,
         last_error TEXT NOT NULL DEFAULT '',
+        dispatch_generation BIGINT NOT NULL DEFAULT 1,
+        published_generation BIGINT NOT NULL DEFAULT 0,
+        priority TEXT NOT NULL DEFAULT 'normal'
+            CHECK (priority IN ('critical', 'normal')),
+        publish_attempts INTEGER NOT NULL DEFAULT 0 CHECK (publish_attempts >= 0),
+        publish_redrive_count INTEGER NOT NULL DEFAULT 0 CHECK (publish_redrive_count >= 0),
+        publish_available_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+        publish_lease_owner TEXT NOT NULL DEFAULT '',
+        publish_lease_until TIMESTAMPTZ,
+        published_at TIMESTAMPTZ,
+        publish_last_error TEXT NOT NULL DEFAULT '',
         created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
         completed_at TIMESTAMPTZ
@@ -2571,7 +2582,6 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         'CREATE INDEX IF NOT EXISTS idx_alert_delivery_outbox_status_created '
         'ON alert_delivery_outbox (status, created_at DESC)'
     )
-
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS protocol_peer_state (
         metric_type TEXT NOT NULL,

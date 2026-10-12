@@ -76,9 +76,9 @@ def test_resource_read_routes_reuse_stored_sample_without_sampling_or_writing(is
     _patch_snapshot_inputs(monkeypatch)
     monkeypatch.setattr(health, "_get_host_resource_alerts", lambda _snapshot: [_alert()])
     monkeypatch.setattr(
-        health,
-        "_dispatch_host_resource_notification",
-        lambda *_args, **_kwargs: pytest.fail("read routes must not dispatch notifications"),
+        health.monitoring_notification_outbox_service,
+        "enqueue_alert_delivery",
+        lambda **_kwargs: pytest.fail("read routes must not enqueue notifications"),
     )
     seeded = health.record_host_resource_snapshot(sync_alerts=False)
     monkeypatch.setattr(
@@ -130,7 +130,7 @@ def test_resource_read_routes_return_empty_state_before_first_scheduled_sample(i
     assert history["sample_count"] == 0
 
 
-def test_background_sampler_dispatches_after_commit_and_connection_close(isolated_db, monkeypatch):
+def test_background_sampler_commits_alert_and_outbox_together(isolated_db, monkeypatch):
     _patch_snapshot_inputs(monkeypatch)
     alert = _alert()
     monkeypatch.setattr(health, "_get_host_resource_alerts", lambda _snapshot: [alert])
@@ -145,64 +145,87 @@ def test_background_sampler_dispatches_after_commit_and_connection_close(isolate
         return tracked
 
     monkeypatch.setattr(health, "get_db_connection", tracked_get_connection)
-    dispatched: list[dict] = []
-
-    def dispatch_after_commit(dispatched_alert, **kwargs):
-        assert tracked_connections[-1].closed
-        connection = original_get_connection()
-        try:
-            row = connection.execute(
-                "SELECT workflow_status FROM alert_events WHERE source = ? AND dedupe_key = ?",
-                (health.HOST_RESOURCE_ALERT_SOURCE, alert["dedupe_key"]),
-            ).fetchone()
-        finally:
-            connection.close()
-        assert row is not None
-        assert row["workflow_status"] == "open"
-        dispatched.append({"alert": dispatched_alert, **kwargs})
-
-    monkeypatch.setattr(health, "_dispatch_host_resource_notification", dispatch_after_commit)
-
     result = health.record_host_resource_snapshot()
 
-    assert result["active_alert_count"] == 1
-    assert len(dispatched) == 1
-    assert dispatched[0]["alert"]["dedupe_key"] == alert["dedupe_key"]
-    assert dispatched[0]["status"] == "active"
-
-
-def test_notification_failure_does_not_undo_committed_alert(isolated_db, monkeypatch, caplog):
-    _patch_snapshot_inputs(monkeypatch)
-    alert = _alert()
-    monkeypatch.setattr(health, "_get_host_resource_alerts", lambda _snapshot: [alert])
-    monkeypatch.setattr(health.alert_maintenance_service, "find_active_window_for_alert", lambda *_args, **_kwargs: None)
-    dispatch_attempts: list[str] = []
-
-    def failed_dispatch(dispatched_alert, **_kwargs):
-        dispatch_attempts.append(dispatched_alert["dedupe_key"])
-        raise RuntimeError("failed posting https://hooks.example.invalid/send?token=synthetic-canary")
-
-    monkeypatch.setattr(health, "_dispatch_host_resource_notification", failed_dispatch)
-
-    result = health.record_host_resource_snapshot()
-
-    connection = get_db_connection()
+    connection = original_get_connection()
     try:
-        row = connection.execute(
-            "SELECT workflow_status FROM alert_events WHERE source = ? AND dedupe_key = ?",
+        alert_row = connection.execute(
+            "SELECT id, workflow_status FROM alert_events WHERE source = ? AND dedupe_key = ?",
             (health.HOST_RESOURCE_ALERT_SOURCE, alert["dedupe_key"]),
         ).fetchone()
+        delivery_rows = connection.execute(
+            "SELECT delivery_key, tenant_id, event_kind, payload FROM alert_delivery_outbox WHERE alert_id = ?",
+            (alert_row["id"],),
+        ).fetchall()
     finally:
         connection.close()
 
     assert result["active_alert_count"] == 1
-    assert dispatch_attempts == [alert["dedupe_key"]]
-    assert row is not None
-    assert row["workflow_status"] == "open"
-    assert "synthetic-canary" not in caplog.text
+    assert tracked_connections[-1].closed
+    assert alert_row["workflow_status"] == "open"
+    assert len(delivery_rows) == 1
+    delivery = dict(delivery_rows[0])
+    assert delivery["delivery_key"] == f"host-resource:{alert_row['id']}:workspace:active"
+    assert delivery["tenant_id"] == "tenant-default"
+    assert delivery["event_kind"] == "active"
+    assert delivery["payload"]["status"] == "active"
+    assert delivery["payload"]["tenant_id"] == "tenant-default"
 
 
-def test_failed_alert_commit_does_not_dispatch(isolated_db, monkeypatch):
+def test_outbox_enqueue_failure_rolls_back_alert_then_reconciliation_retries(isolated_db, monkeypatch):
+    _patch_snapshot_inputs(monkeypatch)
+    alert = _alert()
+    monkeypatch.setattr(health, "_get_host_resource_alerts", lambda _snapshot: [alert])
+    monkeypatch.setattr(health.alert_maintenance_service, "find_active_window_for_alert", lambda *_args, **_kwargs: None)
+    original_enqueue = health.monitoring_notification_outbox_service.enqueue_alert_delivery
+
+    def fail_after_enqueue(**kwargs):
+        original_enqueue(**kwargs)
+        raise RuntimeError("simulated outbox failure")
+
+    monkeypatch.setattr(health.monitoring_notification_outbox_service, "enqueue_alert_delivery", fail_after_enqueue)
+
+    with pytest.raises(RuntimeError, match="simulated outbox failure"):
+        health.record_host_resource_snapshot()
+
+    connection = get_db_connection()
+    try:
+        alert_row = connection.execute(
+            "SELECT 1 FROM alert_events WHERE source = ? AND dedupe_key = ?",
+            (health.HOST_RESOURCE_ALERT_SOURCE, alert["dedupe_key"]),
+        ).fetchone()
+        delivery_count = connection.execute(
+            "SELECT COUNT(*) AS count FROM alert_delivery_outbox WHERE delivery_key LIKE 'host-resource:%:workspace:active'"
+        ).fetchone()["count"]
+    finally:
+        connection.close()
+
+    assert alert_row is None
+    assert delivery_count == 0
+
+    monkeypatch.setattr(health.monitoring_notification_outbox_service, "enqueue_alert_delivery", original_enqueue)
+    health._sync_host_resource_alerts(_snapshot())
+
+    connection = get_db_connection()
+    try:
+        alert_row = connection.execute(
+            "SELECT id, workflow_status FROM alert_events WHERE source = ? AND dedupe_key = ?",
+            (health.HOST_RESOURCE_ALERT_SOURCE, alert["dedupe_key"]),
+        ).fetchone()
+        delivery = connection.execute(
+            "SELECT delivery_key, alert_id, event_kind FROM alert_delivery_outbox WHERE alert_id = ?",
+            (alert_row["id"],),
+        ).fetchone()
+    finally:
+        connection.close()
+
+    assert alert_row["workflow_status"] == "open"
+    assert delivery["delivery_key"] == f"host-resource:{alert_row['id']}:workspace:active"
+    assert delivery["alert_id"] == alert_row["id"]
+    assert delivery["event_kind"] == "active"
+
+
+def test_failed_alert_outbox_commit_rolls_back_alert_and_delivery(isolated_db, monkeypatch):
     _patch_snapshot_inputs(monkeypatch)
     alert = _alert()
     monkeypatch.setattr(health, "_get_host_resource_alerts", lambda _snapshot: [alert])
@@ -220,31 +243,27 @@ def test_failed_alert_commit_does_not_dispatch(isolated_db, monkeypatch):
         return tracked
 
     monkeypatch.setattr(health, "get_db_connection", fail_alert_commit)
-    dispatch_attempts: list[str] = []
-    monkeypatch.setattr(
-        health,
-        "_dispatch_host_resource_notification",
-        lambda dispatched_alert, **_kwargs: dispatch_attempts.append(dispatched_alert["dedupe_key"]),
-    )
-
     with pytest.raises(RuntimeError, match="simulated commit failure"):
         health.record_host_resource_snapshot()
 
     connection = original_get_connection()
     try:
-        row = connection.execute(
+        alert_row = connection.execute(
             "SELECT 1 FROM alert_events WHERE source = ? AND dedupe_key = ?",
             (health.HOST_RESOURCE_ALERT_SOURCE, alert["dedupe_key"]),
         ).fetchone()
+        delivery_count = connection.execute(
+            "SELECT COUNT(*) AS count FROM alert_delivery_outbox"
+        ).fetchone()["count"]
     finally:
         connection.close()
 
-    assert dispatch_attempts == []
-    assert row is None
+    assert alert_row is None
+    assert delivery_count == 0
     assert tracked_connections[-1].closed
 
 
-def test_suppressed_alert_and_its_recovery_do_not_dispatch(isolated_db, monkeypatch):
+def test_suppressed_alert_and_its_recovery_do_not_enqueue(isolated_db, monkeypatch):
     alert = _alert()
     monkeypatch.setattr(health, "_get_host_resource_alerts", lambda _snapshot: [alert])
     monkeypatch.setattr(
@@ -252,13 +271,6 @@ def test_suppressed_alert_and_its_recovery_do_not_dispatch(isolated_db, monkeypa
         "find_active_window_for_alert",
         lambda *_args, **_kwargs: {"name": "planned maintenance"},
     )
-    dispatch_attempts: list[dict] = []
-    monkeypatch.setattr(
-        health,
-        "_dispatch_host_resource_notification",
-        lambda dispatched_alert, **kwargs: dispatch_attempts.append({"alert": dispatched_alert, **kwargs}),
-    )
-
     health._sync_host_resource_alerts(_snapshot())
 
     connection = get_db_connection()
@@ -287,11 +299,16 @@ def test_suppressed_alert_and_its_recovery_do_not_dispatch(isolated_db, monkeypa
 
     assert recovered["workflow_status"] == "resolved"
     assert recovered["resolved_at"] is not None
-    assert dispatch_attempts == []
+    connection = get_db_connection()
+    try:
+        assert connection.execute("SELECT COUNT(*) AS count FROM alert_delivery_outbox").fetchone()["count"] == 0
+    finally:
+        connection.close()
 
 
-def test_open_alert_recovery_dispatches_after_commit(isolated_db, monkeypatch):
+def test_open_alert_recovery_enqueues_resolved_event_with_same_lifecycle_id(isolated_db, monkeypatch):
     alert = _alert()
+    alert_id = str(uuid.uuid4())
     created_at = (datetime.now(timezone.utc) - timedelta(minutes=5)).replace(microsecond=0).isoformat()
     connection = get_db_connection()
     try:
@@ -303,7 +320,7 @@ def test_open_alert_recovery_dispatches_after_commit(isolated_db, monkeypatch):
             ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, 'open', '', ?)
             """,
             (
-                str(uuid.uuid4()), alert["dedupe_key"], health.HOST_RESOURCE_ALERT_SOURCE,
+                alert_id, alert["dedupe_key"], health.HOST_RESOURCE_ALERT_SOURCE,
                 "critical", alert["title"], alert["message"], alert["metric_key"],
                 created_at, created_at,
             ),
@@ -322,30 +339,30 @@ def test_open_alert_recovery_dispatches_after_commit(isolated_db, monkeypatch):
         return tracked
 
     monkeypatch.setattr(health, "get_db_connection", tracked_get_connection)
-    dispatches: list[dict] = []
-
-    def verify_recovery_after_commit(dispatched_alert, **kwargs):
-        assert tracked_connections[-1].closed
-        connection = original_get_connection()
-        try:
-            row = connection.execute(
-                "SELECT workflow_status, resolved_at FROM alert_events WHERE source = ? AND dedupe_key = ?",
-                (health.HOST_RESOURCE_ALERT_SOURCE, alert["dedupe_key"]),
-            ).fetchone()
-        finally:
-            connection.close()
-        assert row["workflow_status"] == "resolved"
-        assert row["resolved_at"] is not None
-        dispatches.append({"alert": dispatched_alert, **kwargs})
-
-    monkeypatch.setattr(health, "_dispatch_host_resource_notification", verify_recovery_after_commit)
-
     health._sync_host_resource_alerts(_snapshot())
 
-    assert len(dispatches) == 1
-    assert dispatches[0]["alert"]["dedupe_key"] == alert["dedupe_key"]
-    assert dispatches[0]["status"] == "resolved"
-    assert dispatches[0]["alert_count"] == 1
+    connection = original_get_connection()
+    try:
+        row = connection.execute(
+            "SELECT workflow_status, resolved_at FROM alert_events WHERE source = ? AND dedupe_key = ?",
+            (health.HOST_RESOURCE_ALERT_SOURCE, alert["dedupe_key"]),
+        ).fetchone()
+        delivery = connection.execute(
+            "SELECT delivery_key, alert_id, tenant_id, event_kind, payload FROM alert_delivery_outbox WHERE alert_id = ?",
+            (alert_id,),
+        ).fetchone()
+    finally:
+        connection.close()
+
+    assert tracked_connections[-1].closed
+    assert row["workflow_status"] == "resolved"
+    assert row["resolved_at"] is not None
+    assert delivery["delivery_key"] == f"host-resource:{alert_id}:workspace:resolved"
+    assert delivery["alert_id"] == alert_id
+    assert delivery["tenant_id"] == "tenant-default"
+    assert delivery["event_kind"] == "resolved"
+    assert delivery["payload"]["status"] == "resolved"
+    assert delivery["payload"]["alert_count"] == 1
 
 
 def test_live_request_progresses_while_resource_handler_waits(monkeypatch):

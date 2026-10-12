@@ -15,9 +15,12 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
 
+from database import get_db_connection
+
 
 INCIDENT_OPEN_STATUSES = {"open", "acknowledged", "investigating"}
 SEVERITY_RANK = {"critical": 0, "major": 1, "warning": 2, "minor": 3, "info": 4}
+INCIDENT_PROJECTION_SYNC_INTERVAL_SECONDS = 15
 _REACHABILITY_MARKERS = (
     "offline",
     "unreachable",
@@ -136,7 +139,11 @@ def _active_alerts(conn) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
-def sync_incidents(conn) -> list[dict[str, Any]]:
+def sync_incidents(
+    conn,
+    *,
+    return_incidents: bool = True,
+) -> list[dict[str, Any]] | None:
     """Reconcile active alert events into the incident projection.
 
     The operation is idempotent and runs in the caller's transaction.  A new
@@ -150,6 +157,7 @@ def sync_incidents(conn) -> list[dict[str, Any]]:
         groups[incident_group_key(alert)].append(alert)
 
     active_ids: list[str] = []
+    incident_alert_rows: list[tuple[str, str, str, int]] = []
     for group_key, alerts in groups.items():
         first_seen = str(alerts[0].get("created_at") or now)
         last_seen = str(alerts[-1].get("created_at") or first_seen)
@@ -167,11 +175,7 @@ def sync_incidents(conn) -> list[dict[str, Any]]:
             title = f"{title} (+{related_count - 1} related alerts)"
         summary = str(root_alert.get("message") or title)
         site = str(primary.get("site") or "")
-        existed = conn.execute(
-            "SELECT 1 FROM monitoring_incidents WHERE id = ?",
-            (incident_id_value,),
-        ).fetchone()
-        conn.execute(
+        incident_row = conn.execute(
             """
             INSERT INTO monitoring_incidents (
                 id, incident_key, title, summary, severity, status, source,
@@ -195,6 +199,22 @@ def sync_incidents(conn) -> list[dict[str, Any]]:
                 END,
                 resolved_at = NULL,
                 updated_at = excluded.updated_at
+            WHERE monitoring_incidents.title IS DISTINCT FROM excluded.title
+               OR monitoring_incidents.summary IS DISTINCT FROM excluded.summary
+               OR monitoring_incidents.severity IS DISTINCT FROM excluded.severity
+               OR monitoring_incidents.root_cause_alert_id IS DISTINCT FROM excluded.root_cause_alert_id
+               OR monitoring_incidents.primary_device_id IS DISTINCT FROM excluded.primary_device_id
+               OR monitoring_incidents.site IS DISTINCT FROM excluded.site
+               OR monitoring_incidents.last_seen_at IS DISTINCT FROM excluded.last_seen_at
+               OR monitoring_incidents.impact_device_count IS DISTINCT FROM excluded.impact_device_count
+               OR monitoring_incidents.impact_alert_count IS DISTINCT FROM excluded.impact_alert_count
+               OR monitoring_incidents.status IS DISTINCT FROM CASE
+                    WHEN monitoring_incidents.status IN ('acknowledged', 'investigating')
+                        THEN monitoring_incidents.status
+                    ELSE 'open'
+               END
+               OR monitoring_incidents.resolved_at IS NOT NULL
+            RETURNING (xmax = 0) AS inserted
             """,
             (
                 incident_id_value,
@@ -212,8 +232,8 @@ def sync_incidents(conn) -> list[dict[str, Any]]:
                 first_seen,
                 now,
             ),
-        )
-        if not existed:
+        ).fetchone()
+        if incident_row and incident_row["inserted"]:
             _append_timeline(
                 conn,
                 incident_id_value,
@@ -225,15 +245,50 @@ def sync_incidents(conn) -> list[dict[str, Any]]:
             )
         active_ids.append(incident_id_value)
         for alert in alerts:
-            conn.execute(
-                """
-                INSERT INTO monitoring_incident_alerts (incident_id, alert_id, linked_at, is_root)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT (incident_id, alert_id) DO UPDATE SET
-                    is_root = excluded.is_root
-                """,
-                (incident_id_value, str(alert.get("id") or ""), now, 1 if alert.get("id") == root_alert.get("id") else 0),
+            incident_alert_rows.append(
+                (
+                    incident_id_value,
+                    str(alert.get("id") or ""),
+                    now,
+                    1 if alert.get("id") == root_alert.get("id") else 0,
+                )
             )
+
+    # psycopg2's executemany still executes one statement per row. Keep each
+    # multi-VALUES statement comfortably below PostgreSQL's bind-parameter cap.
+    for offset in range(0, len(incident_alert_rows), 500):
+        batch = incident_alert_rows[offset : offset + 500]
+        values_sql = ", ".join("(?, ?, ?, ?)" for _ in batch)
+        parameters = tuple(value for row in batch for value in row)
+        conn.execute(
+            f"""
+            INSERT INTO monitoring_incident_alerts (incident_id, alert_id, linked_at, is_root)
+            VALUES {values_sql}
+            ON CONFLICT (incident_id, alert_id) DO UPDATE SET
+                is_root = excluded.is_root
+            WHERE monitoring_incident_alerts.is_root IS DISTINCT FROM excluded.is_root
+            """,
+            parameters,
+        )
+
+    # A previously selected root may have resolved while the incident remains
+    # active. Keep historical alert links, but make their root marker match the
+    # current incident projection.
+    for offset in range(0, len(active_ids), 500):
+        batch_ids = active_ids[offset : offset + 500]
+        placeholders = ", ".join("?" for _ in batch_ids)
+        conn.execute(
+            f"""
+            UPDATE monitoring_incident_alerts AS ia
+            SET is_root = CASE WHEN ia.alert_id = i.root_cause_alert_id THEN 1 ELSE 0 END
+            FROM monitoring_incidents AS i
+            WHERE ia.incident_id = i.id
+              AND i.id IN ({placeholders})
+              AND ia.is_root IS DISTINCT FROM
+                  CASE WHEN ia.alert_id = i.root_cause_alert_id THEN 1 ELSE 0 END
+            """,
+            tuple(batch_ids),
+        )
 
     if active_ids:
         placeholders = ", ".join("?" for _ in active_ids)
@@ -256,7 +311,21 @@ def sync_incidents(conn) -> list[dict[str, Any]]:
             (now, now),
         )
     conn.commit()
+    if not return_incidents:
+        return None
     return list_incidents(conn, status="all", sync=False)["items"]
+
+
+def run_scheduled_incident_projection_sync() -> None:
+    """Refresh incidents from the single-owner APScheduler job."""
+    conn = get_db_connection()
+    try:
+        sync_incidents(conn, return_incidents=False)
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def list_incidents(
@@ -269,10 +338,10 @@ def list_incidents(
     page: int = 1,
     page_size: int = 20,
     tenant_id: str | None = None,
-    sync: bool = True,
+    sync: bool = False,
 ) -> dict[str, Any]:
     if sync:
-        sync_incidents(conn)
+        sync_incidents(conn, return_incidents=False)
     clauses: list[str] = []
     params: list[Any] = []
     status_value = (status or "active").lower()
@@ -333,9 +402,9 @@ def list_incidents(
     }
 
 
-def get_incident(conn, incident_id_value: str, *, sync: bool = True) -> dict[str, Any] | None:
+def get_incident(conn, incident_id_value: str, *, sync: bool = False) -> dict[str, Any] | None:
     if sync:
-        sync_incidents(conn)
+        sync_incidents(conn, return_incidents=False)
     row = conn.execute(
         """
         SELECT i.*, d.hostname, d.ip_address
@@ -409,7 +478,7 @@ def get_incident(conn, incident_id_value: str, *, sync: bool = True) -> dict[str
     return item
 
 
-def get_incident_impact(conn, incident_id_value: str, *, sync: bool = True) -> dict[str, Any] | None:
+def get_incident_impact(conn, incident_id_value: str, *, sync: bool = False) -> dict[str, Any] | None:
     incident = get_incident(conn, incident_id_value, sync=sync)
     if incident is None:
         return None
