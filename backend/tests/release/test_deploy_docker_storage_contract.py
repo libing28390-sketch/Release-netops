@@ -98,6 +98,10 @@ def test_deploy_service_selection_includes_resource_limited_support_containers(t
     assert {
         "db",
         "netops",
+        "alert-redis",
+        "alert-notify-relay",
+        "alert-notify-critical",
+        "alert-notify-normal",
         "victoriametrics",
         "postgres-exporter",
         "snmp-exporter",

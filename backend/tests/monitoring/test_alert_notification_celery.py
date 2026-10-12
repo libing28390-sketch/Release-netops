@@ -148,6 +148,8 @@ def test_compose_alert_broker_is_only_attached_to_its_private_network():
 
     assert compose["networks"]["alert_notifications"]["internal"] is True
     assert compose["services"]["alert-redis"]["networks"] == ["alert_notifications"]
+    broker_command = " ".join(compose["services"]["alert-redis"]["command"]).lower()
+    assert "+publish" not in broker_command
     alert_services = (
         "alert-redis",
         "alert-notify-relay",
@@ -164,6 +166,13 @@ def test_compose_alert_broker_is_only_attached_to_its_private_network():
         assert service["cpu_shares"] == 64
         assert "cpus" in service
         assert "mem_limit" in service
+    for name in ("alert-notify-critical", "alert-notify-normal"):
+        command = compose["services"][name]["command"]
+        assert {
+            "--without-gossip",
+            "--without-mingle",
+            "--without-heartbeat",
+        }.issubset(command)
 
 
 def test_invalid_task_arguments_are_rejected_without_requeue(celery_modules):

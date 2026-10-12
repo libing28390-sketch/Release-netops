@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from services import alert_delivery_relay_service as relay
 
 
@@ -74,3 +76,96 @@ def test_relay_cycle_recovers_expired_execution_before_publishing(monkeypatch) -
         'terminal_failures': 1,
     }
     assert calls == [('recover', 8), ('publish', 8)]
+
+
+def test_relay_postgresql_batch_shares_preserve_normal_and_fill_idle_priority(isolated_db, monkeypatch) -> None:
+    database = isolated_db['module']
+    monkeypatch.setattr(relay, 'get_db_connection', database.get_db_connection)
+    published = []
+    monkeypatch.setattr(relay.app, 'send_task', lambda *args, **kwargs: published.append((args, kwargs)))
+
+    def insert_deliveries(*, prefix: str, critical: int, normal: int, severity_critical: int = 0) -> None:
+        connection = database.get_db_connection()
+        try:
+            for index in range(critical):
+                delivery_id = f'{prefix}-critical-{index}'
+                priority = 'normal' if index < severity_critical else 'critical'
+                severity = 'p1' if index < severity_critical else 'warning'
+                connection.execute(
+                    """
+                    INSERT INTO alert_delivery_outbox (id, delivery_key, channel, payload, priority)
+                    VALUES (?, ?, 'workspace', ?::jsonb, ?)
+                    """,
+                    (delivery_id, f'{prefix}:{delivery_id}', json.dumps({'severity': severity}), priority),
+                )
+            for index in range(normal):
+                delivery_id = f'{prefix}-normal-{index}'
+                connection.execute(
+                    """
+                    INSERT INTO alert_delivery_outbox (id, delivery_key, channel, payload, priority)
+                    VALUES (?, ?, 'workspace', ?::jsonb, 'normal')
+                    """,
+                    (delivery_id, f'{prefix}:{delivery_id}', json.dumps({'severity': 'warning'})),
+                )
+            connection.commit()
+        finally:
+            connection.close()
+
+    def clear_pending() -> None:
+        connection = database.get_db_connection()
+        try:
+            connection.execute(
+                "UPDATE alert_delivery_outbox SET status = 'succeeded' WHERE status = 'pending'"
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+    def publish_batch(*, limit: int) -> tuple[dict[str, int], list[tuple]]:
+        start = len(published)
+        result = relay.publish_ready_alert_deliveries(limit=limit)
+        assert result['claimed'] <= limit
+        assert result['published'] == result['claimed']
+        return result, published[start:]
+
+    # A continuous critical backlog must still leave two of every eight slots
+    # for normal deliveries. One normal-priority row is critical by severity.
+    insert_deliveries(prefix='share', critical=20, normal=6, severity_critical=1)
+    for _ in range(3):
+        result, batch = publish_batch(limit=8)
+        assert result == {'claimed': 8, 'published': 8, 'failed': 0}
+        priorities = [item[1]['queue'] for item in batch]
+        assert priorities.count(relay.ALERT_NOTIFY_CRITICAL_QUEUE) == 6
+        assert priorities.count(relay.ALERT_NOTIFY_NORMAL_QUEUE) == 2
+
+    # When normal is idle, the remaining critical rows can use its reserved slots.
+    clear_pending()
+    insert_deliveries(prefix='critical-only', critical=12, normal=0)
+    result, batch = publish_batch(limit=8)
+    assert result == {'claimed': 8, 'published': 8, 'failed': 0}
+    assert all(item[1]['queue'] == relay.ALERT_NOTIFY_CRITICAL_QUEUE for item in batch)
+
+    # A small critical backlog is included even with a larger normal backlog;
+    # normal rows then fill the unused critical allocation to the batch limit.
+    clear_pending()
+    insert_deliveries(prefix='mixed-short-critical', critical=2, normal=12)
+    result, batch = publish_batch(limit=8)
+    assert result == {'claimed': 8, 'published': 8, 'failed': 0}
+    priorities = [item[1]['queue'] for item in batch]
+    assert priorities.count(relay.ALERT_NOTIFY_CRITICAL_QUEUE) == 2
+    assert priorities.count(relay.ALERT_NOTIFY_NORMAL_QUEUE) == 6
+
+    # When critical is idle, normal rows can use the entire batch.
+    clear_pending()
+    insert_deliveries(prefix='normal-only', critical=0, normal=12)
+    result, batch = publish_batch(limit=8)
+    assert result == {'claimed': 8, 'published': 8, 'failed': 0}
+    assert all(item[1]['queue'] == relay.ALERT_NOTIFY_NORMAL_QUEUE for item in batch)
+
+    # A one-item batch retains critical-first compatibility without claiming
+    # a durable fairness guarantee for both priorities.
+    clear_pending()
+    insert_deliveries(prefix='single-slot', critical=1, normal=1)
+    result, batch = publish_batch(limit=1)
+    assert result == {'claimed': 1, 'published': 1, 'failed': 0}
+    assert batch[0][1]['queue'] == relay.ALERT_NOTIFY_CRITICAL_QUEUE

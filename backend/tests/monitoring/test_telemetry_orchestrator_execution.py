@@ -60,6 +60,22 @@ def test_fast_loop_collection_status_write_runs_off_event_loop(monkeypatch):
     assert persistence_thread_ids[0] != loop_thread_id
 
 
+def test_offline_fast_probe_uses_bounded_recheck_interval():
+    orchestrator = TelemetryOrchestrator()
+    orchestrator._offline_fast_probe_next_at = {}
+    device = {"id": "offline-device", "status": "offline"}
+
+    assert orchestrator._should_probe_fast_device(device, now_monotonic=100)
+    orchestrator._record_fast_probe_completed("offline-device", now_monotonic=100)
+    assert not orchestrator._should_probe_fast_device(device, now_monotonic=115)
+    assert not orchestrator._should_probe_fast_device(device, now_monotonic=159.9)
+    assert orchestrator._should_probe_fast_device(device, now_monotonic=160)
+
+    online_device = {"id": "offline-device", "status": "online"}
+    assert orchestrator._should_probe_fast_device(online_device, now_monotonic=116)
+    assert "offline-device" not in orchestrator._offline_fast_probe_next_at
+
+
 def test_offline_reachability_does_not_replace_native_hardware_values_with_zero(monkeypatch):
     db_updates: list[tuple[str, tuple]] = []
 

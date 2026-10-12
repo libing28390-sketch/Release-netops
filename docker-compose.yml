@@ -290,6 +290,9 @@ services:
       - celery_app:app
       - worker
       - --queues=alert_notify_critical
+      - --without-gossip
+      - --without-mingle
+      - --without-heartbeat
       - --concurrency=1
       - --prefetch-multiplier=1
       - --max-tasks-per-child=200
@@ -346,6 +349,9 @@ services:
       - celery_app:app
       - worker
       - --queues=alert_notify_normal
+      - --without-gossip
+      - --without-mingle
+      - --without-heartbeat
       - --concurrency=1
       - --prefetch-multiplier=1
       - --max-tasks-per-child=200

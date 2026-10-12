@@ -19,41 +19,119 @@ _MAX_CLAIM_LIMIT = 100
 
 
 def _claim_ready_deliveries(*, limit: int, relay_id: str) -> list[dict[str, Any]]:
+    normal_quota = max(1, limit // 4) if limit >= 2 else 0
+    critical_quota = limit - normal_quota
     connection = get_db_connection()
     try:
         rows = connection.execute(
             """
-            WITH candidates AS (
-                SELECT id
-                  FROM alert_delivery_outbox
-                 WHERE status = 'pending'
-                   AND available_at <= clock_timestamp()
-                   AND publish_available_at <= clock_timestamp()
-                   AND (publish_lease_until IS NULL OR publish_lease_until <= clock_timestamp())
+            WITH normal_candidates AS (
+                SELECT delivery.id, 'normal'::text AS priority
+                  FROM alert_delivery_outbox AS delivery
+                 WHERE delivery.status = 'pending'
+                   AND delivery.available_at <= clock_timestamp()
+                   AND delivery.publish_available_at <= clock_timestamp()
+                   AND (delivery.publish_lease_until IS NULL OR delivery.publish_lease_until <= clock_timestamp())
                    AND (
-                       published_generation < dispatch_generation
-                       OR published_at IS NULL
-                       OR (published_at <= clock_timestamp() - (
+                       delivery.published_generation < delivery.dispatch_generation
+                       OR delivery.published_at IS NULL
+                       OR (delivery.published_at <= clock_timestamp() - (
                                CASE
-                                   WHEN publish_redrive_count <= 0 THEN ?
-                                   WHEN publish_redrive_count = 1 THEN ?
-                                   WHEN publish_redrive_count = 2 THEN ?
-                                   WHEN publish_redrive_count = 3 THEN ?
-                                   WHEN publish_redrive_count = 4 THEN ?
-                                   WHEN publish_redrive_count = 5 THEN ?
+                                   WHEN delivery.publish_redrive_count <= 0 THEN ?
+                                   WHEN delivery.publish_redrive_count = 1 THEN ?
+                                   WHEN delivery.publish_redrive_count = 2 THEN ?
+                                   WHEN delivery.publish_redrive_count = 3 THEN ?
+                                   WHEN delivery.publish_redrive_count = 4 THEN ?
+                                   WHEN delivery.publish_redrive_count = 5 THEN ?
                                    ELSE ?
                                END * INTERVAL '1 second'
-                           ) AND attempts = 0)
+                           ) AND delivery.attempts = 0)
+                   )
+                   AND NOT (
+                       delivery.priority = 'critical'
+                       OR lower(COALESCE(delivery.payload->>'severity', ''))
+                          IN ('critical', 'major', 'high', 'p1', 'emergency')
+                   )
+                 ORDER BY delivery.publish_available_at, delivery.created_at, delivery.id
+                 LIMIT ?
+                 FOR UPDATE OF delivery SKIP LOCKED
+            ), critical_candidates AS (
+                SELECT delivery.id, 'critical'::text AS priority
+                  FROM alert_delivery_outbox AS delivery
+                 WHERE delivery.status = 'pending'
+                   AND delivery.available_at <= clock_timestamp()
+                   AND delivery.publish_available_at <= clock_timestamp()
+                   AND (delivery.publish_lease_until IS NULL OR delivery.publish_lease_until <= clock_timestamp())
+                   AND (
+                       delivery.published_generation < delivery.dispatch_generation
+                       OR delivery.published_at IS NULL
+                       OR (delivery.published_at <= clock_timestamp() - (
+                               CASE
+                                   WHEN delivery.publish_redrive_count <= 0 THEN ?
+                                   WHEN delivery.publish_redrive_count = 1 THEN ?
+                                   WHEN delivery.publish_redrive_count = 2 THEN ?
+                                   WHEN delivery.publish_redrive_count = 3 THEN ?
+                                   WHEN delivery.publish_redrive_count = 4 THEN ?
+                                   WHEN delivery.publish_redrive_count = 5 THEN ?
+                                   ELSE ?
+                               END * INTERVAL '1 second'
+                           ) AND delivery.attempts = 0)
+                   )
+                   AND (
+                       delivery.priority = 'critical'
+                       OR lower(COALESCE(delivery.payload->>'severity', ''))
+                          IN ('critical', 'major', 'high', 'p1', 'emergency')
+                   )
+                 ORDER BY delivery.publish_available_at, delivery.created_at, delivery.id
+                 LIMIT ?
+                 FOR UPDATE OF delivery SKIP LOCKED
+            ), quota_candidates AS MATERIALIZED (
+                SELECT id, priority FROM normal_candidates
+                UNION ALL
+                SELECT id, priority FROM critical_candidates
+            ), overflow_candidates AS (
+                SELECT delivery.id,
+                       CASE
+                           WHEN delivery.priority = 'critical' OR lower(COALESCE(delivery.payload->>'severity', ''))
+                                IN ('critical', 'major', 'high', 'p1', 'emergency')
+                           THEN 'critical' ELSE 'normal'
+                       END AS priority
+                  FROM alert_delivery_outbox AS delivery
+                 WHERE delivery.status = 'pending'
+                   AND delivery.available_at <= clock_timestamp()
+                   AND delivery.publish_available_at <= clock_timestamp()
+                   AND (delivery.publish_lease_until IS NULL OR delivery.publish_lease_until <= clock_timestamp())
+                   AND (
+                       delivery.published_generation < delivery.dispatch_generation
+                       OR delivery.published_at IS NULL
+                       OR (delivery.published_at <= clock_timestamp() - (
+                               CASE
+                                   WHEN delivery.publish_redrive_count <= 0 THEN ?
+                                   WHEN delivery.publish_redrive_count = 1 THEN ?
+                                   WHEN delivery.publish_redrive_count = 2 THEN ?
+                                   WHEN delivery.publish_redrive_count = 3 THEN ?
+                                   WHEN delivery.publish_redrive_count = 4 THEN ?
+                                   WHEN delivery.publish_redrive_count = 5 THEN ?
+                                   ELSE ?
+                               END * INTERVAL '1 second'
+                           ) AND delivery.attempts = 0)
+                   )
+                   AND NOT EXISTS (
+                       SELECT 1 FROM quota_candidates AS quota WHERE quota.id = delivery.id
                    )
                  ORDER BY
                        CASE
-                           WHEN priority = 'critical' OR lower(COALESCE(payload->>'severity', ''))
+                           WHEN delivery.priority = 'critical' OR lower(COALESCE(delivery.payload->>'severity', ''))
                                 IN ('critical', 'major', 'high', 'p1', 'emergency')
                            THEN 0 ELSE 1
                        END,
-                       publish_available_at, created_at, id
-                 LIMIT ?
-                 FOR UPDATE SKIP LOCKED
+                       delivery.publish_available_at, delivery.created_at, delivery.id
+                 LIMIT GREATEST(0, ? - (SELECT COUNT(*) FROM quota_candidates))
+                 FOR UPDATE OF delivery SKIP LOCKED
+            ), candidates AS (
+                SELECT id, priority FROM quota_candidates
+                UNION ALL
+                SELECT id, priority FROM overflow_candidates
             )
             UPDATE alert_delivery_outbox AS delivery
                SET publish_lease_owner = ?,
@@ -63,14 +141,16 @@ def _claim_ready_deliveries(*, limit: int, relay_id: str) -> list[dict[str, Any]
               FROM candidates
              WHERE delivery.id = candidates.id
             RETURNING delivery.id, delivery.dispatch_generation,
-                      CASE
-                          WHEN delivery.priority = 'critical' OR lower(COALESCE(delivery.payload->>'severity', ''))
-                               IN ('critical', 'major', 'high', 'p1', 'emergency')
-                          THEN 'critical' ELSE 'normal'
-                      END AS priority,
+                      candidates.priority AS priority,
                       (delivery.published_generation >= delivery.dispatch_generation) AS redrive
             """,
             (
+                *_PUBLISHED_RETRY_INTERVALS_SECONDS,
+                _PUBLISHED_RETRY_MAX_SECONDS,
+                normal_quota,
+                *_PUBLISHED_RETRY_INTERVALS_SECONDS,
+                _PUBLISHED_RETRY_MAX_SECONDS,
+                critical_quota,
                 *_PUBLISHED_RETRY_INTERVALS_SECONDS,
                 _PUBLISHED_RETRY_MAX_SECONDS,
                 limit,

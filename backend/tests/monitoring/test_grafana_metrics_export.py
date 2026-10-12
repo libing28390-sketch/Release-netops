@@ -100,6 +100,29 @@ class _MetricsConnection:
         if "FROM alert_delivery_outbox" in sql:
             if not self.outbox_available:
                 raise RuntimeError("table missing")
+            if "oldest_pending_age_seconds" in sql:
+                if not self.outbox_rows:
+                    return _Result([])
+                return _Result([
+                    {
+                        "priority": "critical",
+                        "pending_count": 3,
+                        "oldest_pending_age_seconds": 42.5,
+                        "unpublished_count": 2,
+                        "expired_publish_lease_count": 1,
+                        "expired_execution_lease_count": 0,
+                        "oldest_processing_age_seconds": 0,
+                    },
+                    {
+                        "priority": "normal",
+                        "pending_count": 5,
+                        "oldest_pending_age_seconds": 18,
+                        "unpublished_count": 4,
+                        "expired_publish_lease_count": 0,
+                        "expired_execution_lease_count": 1,
+                        "oldest_processing_age_seconds": 61,
+                    },
+                ])
             return _Result(self.outbox_rows)
         raise AssertionError(f"Unexpected metrics query: {sql}")
 
@@ -133,6 +156,13 @@ def test_metrics_export_contains_only_aggregate_allowlisted_labels(monkeypatch):
     assert "nexora_alert_retried_deliveries_24h 1" in body
     assert 'nexora_alert_open_events{severity="major"} 1' in body
     assert 'nexora_alert_delivery_attempts_24h{channel="email",status="failed"} 2' in body
+    assert 'nexora_alert_outbox_backlog_items{priority="critical"} 3' in body
+    assert 'nexora_alert_outbox_backlog_items{priority="normal"} 5' in body
+    assert 'nexora_alert_outbox_oldest_pending_age_seconds{priority="critical"} 42.5' in body
+    assert 'nexora_alert_outbox_unpublished_items{priority="critical"} 2' in body
+    assert 'nexora_alert_outbox_expired_publish_leases{priority="critical"} 1' in body
+    assert 'nexora_alert_outbox_expired_execution_leases{priority="normal"} 1' in body
+    assert 'nexora_alert_outbox_oldest_processing_age_seconds{priority="normal"} 61' in body
     assert "tenant_id" not in body
     assert "hostname" not in body
     assert "recipient" not in body
@@ -238,6 +268,9 @@ def test_metrics_export_reports_zero_for_empty_outbox_after_successful_query(mon
         assert (
             f'nexora_alert_outbox_items{{status="{status}"}} 0' in body
         )
+    for priority in ("critical", "normal", "unknown"):
+        assert f'nexora_alert_outbox_backlog_items{{priority="{priority}"}} 0' in body
+        assert f'nexora_alert_outbox_oldest_pending_age_seconds{{priority="{priority}"}} 0' in body
 
 
 def test_metrics_export_omits_outbox_when_query_fails(monkeypatch):
@@ -316,6 +349,9 @@ def test_metrics_export_runs_aggregate_queries_on_postgres(monkeypatch, isolated
     assert 'nexora_alert_open_events{severity="major"} 1' in body
     assert 'nexora_alert_delivery_attempts_24h{channel="email",status="succeeded"} 1' in body
     assert 'nexora_alert_outbox_items{status="pending"} 1' in body
+    assert 'nexora_alert_outbox_backlog_items{priority="normal"} 1' in body
+    assert 'nexora_alert_outbox_unpublished_items{priority="normal"} 1' in body
+    assert 'nexora_alert_outbox_expired_execution_leases{priority="normal"} 0' in body
 
 
 def test_metrics_export_includes_normalized_hardware_and_capability_without_addresses(monkeypatch, isolated_db):

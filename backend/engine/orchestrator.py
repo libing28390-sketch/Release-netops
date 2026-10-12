@@ -93,6 +93,7 @@ class TelemetryOrchestrator:
     A/B Dual Loops Telemetry Scheduler
     """
     _instance = None
+    OFFLINE_FAST_PROBE_RECHECK_SECONDS = 60
     
     def __new__(cls, *args, **kwargs):
         if not cls._instance:
@@ -105,11 +106,34 @@ class TelemetryOrchestrator:
         self.b_loop_task = None
         self.snmp_hardware_loop_task = None
         self.snmp_hardware_discovery_loop_task = None
+        self._offline_fast_probe_next_at = {}
         self.initialized = True
+
+    def _should_probe_fast_device(self, device, *, now_monotonic=None) -> bool:
+        device_id = str(device.get("id") or "")
+        status = str(device.get("status") or "").strip().lower()
+        if not device_id:
+            return True
+        if status != "offline":
+            self._offline_fast_probe_next_at.pop(device_id, None)
+            return True
+
+        next_probe_at = self._offline_fast_probe_next_at.get(device_id)
+        now = time.monotonic() if now_monotonic is None else float(now_monotonic)
+        return next_probe_at is None or now >= next_probe_at
+
+    def _record_fast_probe_completed(self, device_id, *, now_monotonic=None) -> None:
+        normalized_id = str(device_id or "")
+        if not normalized_id:
+            return
+        now = time.monotonic() if now_monotonic is None else float(now_monotonic)
+        self._offline_fast_probe_next_at[normalized_id] = (
+            now + self.OFFLINE_FAST_PROBE_RECHECK_SECONDS
+        )
 
     async def a_loop(self):
         """A-Loop: 高频任务 (15s) - Ping 探活及接口状态 (ifOperStatus) 检测"""
-        from services.background_monitor_service import process_device_fast, _db_quick
+        from services.background_monitor_service import process_device_fast, _as_dict, _db_quick
         import asyncio
         import sys
 
@@ -125,9 +149,20 @@ class TelemetryOrchestrator:
                     "SELECT * FROM devices WHERE ip_address IS NOT NULL AND ip_address != ''",
                     fetchall=True,
                 )
+                devices = [_as_dict(device) for device in devices]
+                current_device_ids = {str(device.get("id") or "") for device in devices}
+                self._offline_fast_probe_next_at = {
+                    device_id: next_probe_at
+                    for device_id, next_probe_at in self._offline_fast_probe_next_at.items()
+                    if device_id in current_device_ids
+                }
                 async def bounded_fast(d):
+                    device_id = str(d.get("id") or "")
+                    if not self._should_probe_fast_device(d):
+                        return
                     async with sem:
                         await process_device_fast(d)
+                    self._record_fast_probe_completed(device_id)
 
                 await asyncio.gather(*(bounded_fast(d) for d in devices))
             except Exception as e:

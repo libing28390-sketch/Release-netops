@@ -864,23 +864,30 @@ def load_persisted_interface_statuses(device_id: str) -> dict[str, str]:
     }
 
 def persist_protocol_peer_state(metric_type: str, device_id: str, peers: dict[str, str]):
-    _db_quick(
-        "DELETE FROM protocol_peer_state WHERE metric_type = ? AND device_id = ?",
-        (metric_type, device_id),
-    )
-    if not peers:
-        return
-    now_iso = _utc_now_iso()
-    _db_many(
-        '''
-        INSERT INTO protocol_peer_state (metric_type, device_id, peer, object_name, updated_at)
-        VALUES (?, ?, ?, ?, ?)
-        ''',
-        [
-            (metric_type, device_id, peer, object_name, now_iso)
-            for peer, object_name in peers.items()
-        ],
-    )
+    connection = get_db_connection()
+    try:
+        connection.execute(
+            "DELETE FROM protocol_peer_state WHERE metric_type = ? AND device_id = ?",
+            (metric_type, device_id),
+        )
+        if peers:
+            now_iso = _utc_now_iso()
+            connection.executemany(
+                '''
+                INSERT INTO protocol_peer_state (metric_type, device_id, peer, object_name, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ''',
+                [
+                    (metric_type, device_id, peer, object_name, now_iso)
+                    for peer, object_name in peers.items()
+                ],
+            )
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
 
 def sync_lldp_neighbor_alerts():
     links = _db_quick(
@@ -1112,26 +1119,38 @@ async def _collect_protocol_neighbor_alerts(device_row: dict, ip_address: str):
 
         down_peers = [str(event['peer']) for event in peer_events if event['is_down']]
         aggregate_active = len(down_peers) >= protocol_aggregate_threshold
-        for event in peer_events:
-            rule = resolve_alert_rule(metric_type, device_row=device_row, ip_address=ip_address, interface_name=event['object_name'])
-            if not rule:
-                continue
-            set_alert_state(
-                event['dedupe_key'],
-                event['is_down'],
-                rule.get('severity', 'critical'),
-                title,
-                event['message'],
-                device_row['id'],
-                event['object_name'],
-                ip_address=ip_address,
-                status='active' if event['is_down'] else 'resolved',
-                rule=rule,
-                notify=not aggregate_active,
-            )
 
-        protocol_peer_cache[(metric_type, device_row['id'])] = current_peers
+        def peer_alert_updates():
+            for event in peer_events:
+                rule = resolve_alert_rule(
+                    metric_type,
+                    device_row=device_row,
+                    ip_address=ip_address,
+                    interface_name=event['object_name'],
+                )
+                if not rule:
+                    continue
+                yield {
+                    "args": (
+                        event['dedupe_key'],
+                        event['is_down'],
+                        rule.get('severity', 'critical'),
+                        title,
+                        event['message'],
+                        device_row['id'],
+                        event['object_name'],
+                    ),
+                    "kwargs": {
+                        "ip_address": ip_address,
+                        "status": 'active' if event['is_down'] else 'resolved',
+                        "rule": rule,
+                        "notify": not aggregate_active,
+                    },
+                }
+
+        _set_alert_states_batched(peer_alert_updates())
         persist_protocol_peer_state(metric_type, device_row['id'], current_peers)
+        protocol_peer_cache[(metric_type, device_row['id'])] = current_peers
         _sync_protocol_aggregate_alert(metric_type, title, device_row, ip_address, down_peers)
         flapping_peers = [peer for peer in down_peers if _is_protocol_notification_suppressed(f"{metric_type}:{device_row['id']}:{peer}")]
         _sync_protocol_flap_alert(metric_type, title, device_row, ip_address, flapping_peers)
@@ -1154,31 +1173,44 @@ def _set_protocol_alerts_for_device_offline(device_row: dict, ip_address: str):
                 f"[Protocol Monitor] Device {ip_address} offline, marking {len(peer_map)} {metric_type} peer(s) as down"
             )
         aggregate_active = len(peer_map) >= protocol_aggregate_threshold
-        for peer, object_name in peer_map.items():
-            rule = resolve_alert_rule(metric_type, device_row=device_row, ip_address=ip_address, interface_name=object_name)
-            if not rule:
-                continue
-            down_peers.append(peer)
-            if metric_type == 'bgp_neighbor_down':
-                message = f"设备离线，BGP 邻居 {peer} 上一轮为 UP，现按 DOWN 处理"
-            elif metric_type == 'ospf_neighbor_down':
-                message = f"设备离线，OSPF 邻居 {peer} 上一轮为 UP，现按 DOWN 处理"
-            else:
-                suffix = f" ({object_name})" if object_name and object_name != peer else ''
-                message = f"设备离线，BFD 会话 {peer}{suffix} 上一轮为 UP，现按 DOWN 处理"
-            set_alert_state(
-                f"{metric_type}:{device_row['id']}:{peer}",
-                True,
-                rule.get('severity', 'critical'),
-                title,
-                message,
-                device_row['id'],
-                object_name,
-                ip_address=ip_address,
-                status='active',
-                rule=rule,
-                notify=not aggregate_active,
-            )
+
+        def peer_alert_updates():
+            for peer, object_name in peer_map.items():
+                rule = resolve_alert_rule(
+                    metric_type,
+                    device_row=device_row,
+                    ip_address=ip_address,
+                    interface_name=object_name,
+                )
+                if not rule:
+                    continue
+                down_peers.append(peer)
+                if metric_type == 'bgp_neighbor_down':
+                    message = f"设备离线，BGP 邻居 {peer} 上一轮为 UP，现按 DOWN 处理"
+                elif metric_type == 'ospf_neighbor_down':
+                    message = f"设备离线，OSPF 邻居 {peer} 上一轮为 UP，现按 DOWN 处理"
+                else:
+                    suffix = f" ({object_name})" if object_name and object_name != peer else ''
+                    message = f"设备离线，BFD 会话 {peer}{suffix} 上一轮为 UP，现按 DOWN 处理"
+                yield {
+                    "args": (
+                        f"{metric_type}:{device_row['id']}:{peer}",
+                        True,
+                        rule.get('severity', 'critical'),
+                        title,
+                        message,
+                        device_row['id'],
+                        object_name,
+                    ),
+                    "kwargs": {
+                        "ip_address": ip_address,
+                        "status": 'active',
+                        "rule": rule,
+                        "notify": not aggregate_active,
+                    },
+                }
+
+        _set_alert_states_batched(peer_alert_updates())
         _sync_protocol_aggregate_alert(metric_type, title, device_row, ip_address, down_peers)
         _sync_protocol_flap_alert(metric_type, title, device_row, ip_address, [])
 

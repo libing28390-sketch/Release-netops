@@ -676,6 +676,85 @@ def _collect_delivery(lines: list[str], conn: Any, cutoff_24h: str) -> None:
                 )
             )
 
+    backlog_name = "nexora_alert_outbox_backlog_items"
+    oldest_pending_name = "nexora_alert_outbox_oldest_pending_age_seconds"
+    oldest_processing_name = "nexora_alert_outbox_oldest_processing_age_seconds"
+    expired_execution_leases_name = "nexora_alert_outbox_expired_execution_leases"
+    expired_publish_leases_name = "nexora_alert_outbox_expired_publish_leases"
+    unpublished_name = "nexora_alert_outbox_unpublished_items"
+    for name, help_text in (
+        (backlog_name, "Pending alert outbox items by fixed priority."),
+        (oldest_pending_name, "Age of the oldest pending alert intent by fixed priority."),
+        (oldest_processing_name, "Age of the oldest currently processing alert delivery."),
+        (expired_execution_leases_name, "Processing alert deliveries whose PostgreSQL execution lease expired."),
+        (expired_publish_leases_name, "Pending alert deliveries whose PostgreSQL broker-publish lease expired."),
+        (unpublished_name, "Pending alert deliveries not yet confirmed published for the current generation."),
+    ):
+        _append_header(lines, name, help_text)
+
+    backlog_rows = _safe_query(
+        conn,
+        """
+            SELECT CASE WHEN priority IN ('critical', 'normal') THEN priority ELSE 'unknown' END AS priority,
+                   COUNT(*) FILTER (WHERE status = 'pending') AS pending_count,
+                   COALESCE(MAX(GREATEST(EXTRACT(EPOCH FROM (clock_timestamp() - created_at)), 0))
+                       FILTER (WHERE status = 'pending'), 0) AS oldest_pending_age_seconds,
+                   COUNT(*) FILTER (WHERE status = 'pending'
+                       AND (published_generation < dispatch_generation OR published_at IS NULL))
+                       AS unpublished_count,
+                   COUNT(*) FILTER (WHERE status = 'pending'
+                       AND publish_lease_until IS NOT NULL
+                       AND publish_lease_until <= clock_timestamp()) AS expired_publish_lease_count,
+                   COUNT(*) FILTER (WHERE status = 'processing'
+                       AND lease_until <= clock_timestamp()) AS expired_execution_lease_count,
+                   COALESCE(MAX(GREATEST(EXTRACT(EPOCH FROM (clock_timestamp() - updated_at)), 0))
+                       FILTER (WHERE status = 'processing'), 0) AS oldest_processing_age_seconds
+              FROM alert_delivery_outbox
+             WHERE status IN ('pending', 'processing')
+             GROUP BY 1
+        """,
+    )
+    if backlog_rows is None:
+        del lines[-12:]
+    else:
+        counts = {
+            priority: {
+                "pending_count": 0,
+                "oldest_pending_age_seconds": 0.0,
+                "unpublished_count": 0,
+                "expired_publish_lease_count": 0,
+                "expired_execution_lease_count": 0,
+                "oldest_processing_age_seconds": 0.0,
+            }
+            for priority in ("critical", "normal", "unknown")
+        }
+        for row in backlog_rows:
+            priority = str(_row_value(row, "priority", 0, "unknown") or "unknown").lower()
+            if priority not in counts:
+                priority = "unknown"
+            item = counts[priority]
+            for key, index in (
+                ("pending_count", 1),
+                ("unpublished_count", 3),
+                ("expired_publish_lease_count", 4),
+                ("expired_execution_lease_count", 5),
+            ):
+                item[key] = int(_numeric(_row_value(row, key, index, 0), 0))
+            for key, index in (
+                ("oldest_pending_age_seconds", 2),
+                ("oldest_processing_age_seconds", 6),
+            ):
+                item[key] = max(0.0, _numeric(_row_value(row, key, index, 0), 0))
+
+        for priority, item in counts.items():
+            labels = {"priority": priority}
+            lines.append(_metric_line(backlog_name, item["pending_count"], labels))
+            lines.append(_metric_line(oldest_pending_name, item["oldest_pending_age_seconds"], labels))
+            lines.append(_metric_line(unpublished_name, item["unpublished_count"], labels))
+            lines.append(_metric_line(expired_publish_leases_name, item["expired_publish_lease_count"], labels))
+            lines.append(_metric_line(expired_execution_leases_name, item["expired_execution_lease_count"], labels))
+            lines.append(_metric_line(oldest_processing_name, item["oldest_processing_age_seconds"], labels))
+
 
 def _hardware_stale_after_seconds(sensor: dict[str, Any]) -> float:
     from services.snmp_hardware_poller_service import hardware_stale_after_seconds
