@@ -362,16 +362,32 @@ def is_wan_link_in_maintenance(conn, link_id: str, site_id: str, now: str | None
             continue
         if recurrence == "daily":
             occurrence = local_start + timedelta(days=(local_current.date() - local_start.date()).days)
+            if occurrence > local_current:
+                occurrence -= timedelta(days=1)
         elif recurrence == "weekly":
             occurrence = local_start + timedelta(weeks=(local_current.date() - local_start.date()).days // 7)
+            if occurrence > local_current:
+                occurrence -= timedelta(weeks=1)
         elif recurrence == "monthly":
             months = (local_current.year - local_start.year) * 12 + local_current.month - local_start.month
+
+            def _occurrence_for_month(month_index: int) -> datetime:
+                year, month0 = divmod(month_index, 12)
+                month_start = datetime(year, month0 + 1, 1, tzinfo=local_zone)
+                next_month_start = (month_start + timedelta(days=32)).replace(day=1)
+                day = min(local_start.day, (next_month_start - timedelta(days=1)).day)
+                return month_start.replace(
+                    day=day,
+                    hour=local_start.hour,
+                    minute=local_start.minute,
+                    second=local_start.second,
+                    microsecond=0,
+                )
+
             month_index = local_start.year * 12 + local_start.month - 1 + max(0, months)
-            year, month0 = divmod(month_index, 12)
-            month_start = datetime(year, month0 + 1, 1, tzinfo=local_zone)
-            next_month_start = (month_start + timedelta(days=32)).replace(day=1)
-            day = min(local_start.day, (next_month_start - timedelta(days=1)).day)
-            occurrence = month_start.replace(day=day, hour=local_start.hour, minute=local_start.minute, second=local_start.second, microsecond=0)
+            occurrence = _occurrence_for_month(month_index)
+            if occurrence > local_current:
+                occurrence = _occurrence_for_month(month_index - 1)
         else:
             continue
         if occurrence <= local_current <= occurrence + duration:
