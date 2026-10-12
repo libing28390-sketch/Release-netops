@@ -1,0 +1,25 @@
+Value Filldown AGGREGATE_INTERFACE (\S+)
+Value Filldown AGGREGATION_MODE (\S+)
+Value Required INTERFACE (\S+)
+Value STATUS (\S+)
+Value PRIORITY (\d+)
+Value INDEX (\d+)
+Value OPER_KEY (\d+)
+Value FLAG (\{[A-Z]+\})
+
+Start
+  ^Aggregate Interface:\s+${AGGREGATE_INTERFACE}
+  ^Aggregation Mode:\s+${AGGREGATION_MODE}
+  ^\s+${INTERFACE}\s+${STATUS}\s+${PRIORITY}\s+${INDEX}\s+${OPER_KEY}\s+${FLAG}\s*$$ -> Record
+  ^Loadsharing Type:
+  ^Management VLANs:
+  ^System ID:
+  ^Creation Mode:
+  ^Local:
+  ^Remote:
+  ^Port\s+Status
+  ^Actor\s+Priority
+  ^Flags:
+  ^Role:
+  ^-+
+  ^.*

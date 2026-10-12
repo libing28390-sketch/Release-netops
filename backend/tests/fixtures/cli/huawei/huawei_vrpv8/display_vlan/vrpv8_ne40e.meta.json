@@ -1,0 +1,9 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://info.support.huawei.com/enterprise/en/doc/EDOC1100419268/221a9cda/configuration-examples-for-vlans",
+  "vendor": "Huawei",
+  "platform": "VRP8",
+  "model_family": "NE40E-M2",
+  "command": "display vlan",
+  "source_note": "Official display vlan verification example."
+}

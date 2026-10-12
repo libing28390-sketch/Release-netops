@@ -1,0 +1,9 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://support.huawei.com/enterprise/en/doc/EDOC1100381092/2825086b/checking-whether-a-stack-is-set-up-successfully",
+  "vendor": "Huawei",
+  "platform": "VRP8",
+  "model_family": "S220/S310/S530",
+  "command": "display stack",
+  "source_note": "Official stack verification example showing Master, Standby, and Slave members."
+}

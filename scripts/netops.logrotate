@@ -1,0 +1,19 @@
+# NetOps Automation — logrotate config.
+#
+# Install:
+#   sudo cp scripts/netops.logrotate /etc/logrotate.d/netops
+#
+# Applies to the container/bare-metal mode where uvicorn writes to a
+# nohup log file. systemd installs go through journald and don't need
+# this. Update the path if PROJECT_DIR is not /opt/nexora-automation.
+
+/opt/nexora-automation/data/netops.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    create 0640 root root
+}
