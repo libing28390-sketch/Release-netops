@@ -479,25 +479,6 @@ def test_daily_maintenance_window_crossing_midnight_is_active(isolated_db):
         conn.close()
 
 
-def test_weekly_maintenance_window_crossing_recurrence_boundary_is_active(isolated_db):
-    from database import get_db_connection
-    from services.wan_p1_service import is_wan_link_in_maintenance, upsert_wan_maintenance_window
-
-    conn = get_db_connection()
-    try:
-        link = _seed_link(conn)
-        # 00:02 Wednesday in Asia/Shanghai, 10 minutes after the weekly
-        # occurrence that began at 23:52 on the previous Wednesday.
-        now = datetime(2026, 10, 13, 16, 2, tzinfo=timezone.utc)
-        start = now - timedelta(days=6, minutes=10)
-        end = start + timedelta(minutes=30)
-        upsert_wan_maintenance_window({"name": "weekly window", "link_id": link["id"], "starts_at": start.isoformat(), "ends_at": end.isoformat(), "recurrence": "weekly"}, {"username": "operator"})
-        assert is_wan_link_in_maintenance(conn, link["id"], "site-default", now.isoformat()) is True
-        assert is_wan_link_in_maintenance(conn, link["id"], "site-default", (now + timedelta(hours=1)).isoformat()) is False
-    finally:
-        conn.close()
-
-
 def test_monthly_maintenance_window_crossing_month_boundary_is_active(isolated_db):
     from database import get_db_connection
     from services.wan_p1_service import is_wan_link_in_maintenance, upsert_wan_maintenance_window

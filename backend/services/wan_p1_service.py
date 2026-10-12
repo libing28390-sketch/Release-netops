@@ -366,8 +366,6 @@ def is_wan_link_in_maintenance(conn, link_id: str, site_id: str, now: str | None
                 occurrence -= timedelta(days=1)
         elif recurrence == "weekly":
             occurrence = local_start + timedelta(weeks=(local_current.date() - local_start.date()).days // 7)
-            if occurrence > local_current:
-                occurrence -= timedelta(weeks=1)
         elif recurrence == "monthly":
             months = (local_current.year - local_start.year) * 12 + local_current.month - local_start.month
 
