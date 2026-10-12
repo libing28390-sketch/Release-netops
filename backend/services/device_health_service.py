@@ -2,7 +2,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from database import get_db_connection, fetch_interface_data
+from database import get_db_connection, fetch_interface_data_for_devices
 from services.collection_status_service import COLLECTOR_STALE_SECONDS
 
 
@@ -618,11 +618,13 @@ def load_devices_for_health(
             ORDER BY d.hostname ASC''',
         tuple(params),
     ).fetchall()
-    res = []
-    for row in rows:
-        item = dict(row)
-        item['interface_data'] = fetch_interface_data(conn, item['id'])
-        res.append(item)
+    res = [dict(row) for row in rows]
+    interface_data_by_device = fetch_interface_data_for_devices(
+        conn,
+        [str(item['id']) for item in res if item.get('id')],
+    )
+    for item in res:
+        item['interface_data'] = interface_data_by_device.get(str(item.get('id') or ''), [])
     return res
 
 

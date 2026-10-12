@@ -8,6 +8,7 @@ from services.snmp_hardware_inventory_service import (
     build_sensor_key,
     list_hardware_capabilities,
     list_hardware_discovery_runs,
+    list_hardware_metric_rows,
     list_hardware_sensors,
     record_sensor_sample,
     render_hardware_metrics,
@@ -493,6 +494,67 @@ def test_measurement_upsert_sample_update_and_prometheus_rendering(isolated_db) 
         assert "must not become a Prometheus label" not in text
 
         assert not record_sensor_sample(conn, "hardware-render-device", "missing-sensor-key", 1, 1, "good", now)
+    finally:
+        conn.close()
+
+
+def test_metric_query_skips_only_types_the_prometheus_renderer_omits(isolated_db) -> None:
+    conn = database.get_db_connection()
+    try:
+        device_id = "hardware-metric-export-device"
+        _seed_device(conn, device_id)
+        at = datetime(2026, 9, 29, 3, 0, tzinfo=timezone.utc)
+        component_types = [
+            ("cpu", "cpu_usage_percent"),
+            ("voltage", "voltage_volts"),
+            ("current", "current_amperes"),
+            ("generic", "sensor_value"),
+            ("wireless", "wireless_sensor_value"),
+        ]
+        sensors = [
+            _sensor(
+                component_class=component_class,
+                measurement_type=measurement_type,
+                index={"entPhysicalIndex": index},
+                quality="good",
+                value=1,
+                raw_value="1",
+                sample_at=at,
+                metadata={"collection_version": "test-version"},
+            )
+            for index, (component_class, measurement_type) in enumerate(component_types, start=1)
+        ]
+        categories = [
+            _category("entity_sensor", component_class)
+            for component_class, _measurement_type in component_types
+        ]
+        upsert_discovery_run(
+            conn,
+            device_id,
+            "metric-export-run",
+            "rules-v3",
+            sensors,
+            categories,
+            at,
+            discovery_version="test-version",
+        )
+        conn.commit()
+
+        complete_sensor_rows = list_hardware_sensors(conn, device_id)
+        export_sensor_rows = list_hardware_metric_rows(conn, collection_version="test-version")
+        labels = {"tenant_id": "tenant-default", "asset_id": "asset-edge-01", "device_id": device_id}
+
+        assert {row["measurement_type"] for row in complete_sensor_rows} == {
+            measurement_type for _component_class, measurement_type in component_types
+        }
+        assert {row["measurement_type"] for row in export_sensor_rows} == {
+            "cpu_usage_percent",
+            "wireless_sensor_value",
+        }
+        assert render_hardware_metrics(complete_sensor_rows, labels) == render_hardware_metrics(
+            export_sensor_rows,
+            labels,
+        )
     finally:
         conn.close()
 

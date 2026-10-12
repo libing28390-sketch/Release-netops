@@ -121,6 +121,7 @@ export interface AssetSummary {
   total: number;
   by_type: Record<string, number>;
   by_status: Record<string, number>;
+  by_severity: Record<'critical' | 'major' | 'warning' | 'healthy', number>;
   by_vendor: Record<string, number>;
   by_site: Record<string, number>;
   by_department: Record<string, number>;

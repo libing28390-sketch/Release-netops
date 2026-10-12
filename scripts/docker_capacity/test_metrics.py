@@ -290,6 +290,35 @@ class MetricsCollectorTests(unittest.TestCase):
         self.assertIn("host_proc_stat", summary["critical_missing_metrics"])
         self.assertNotIn("host_loadavg", summary["critical_missing_metrics"])
 
+    def test_sustained_host_cpu_above_threshold_requests_stop(self) -> None:
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        callbacks: list[str] = []
+        collector = metrics.MetricsCollector(
+            {}, Path(temp_dir.name), interval=2.0, stop_callback=callbacks.append,
+            max_host_cpu_percent=80.0, host_cpu_stop_samples=2,
+        )
+        self.addCleanup(collector.stop)
+        cpu_samples = [
+            {"busy_seconds": 0.0, "iowait_seconds": 0.0, "total_seconds": 0.0},
+            {"busy_seconds": 90.0, "iowait_seconds": 0.0, "total_seconds": 100.0},
+            {"busy_seconds": 180.0, "iowait_seconds": 0.0, "total_seconds": 200.0},
+        ]
+        meminfo = {"MemAvailable": 4 * 1024**3, "MemTotal": 8 * 1024**3,
+                   "SwapTotal": 0, "SwapFree": 0}
+        with patch.object(collector, "_read_meminfo", return_value=meminfo), \
+             patch.object(collector, "_read_proc_cpu", side_effect=cpu_samples), \
+             patch.object(collector, "_read_proc_load", return_value=(0.1, 0.1, 0.1)), \
+             patch("scripts.docker_capacity.metrics.shutil.disk_usage",
+                   return_value=type("Usage", (), {"free": 1000, "total": 2000})()):
+            collector.sample_host_once()
+            collector.sample_host_once()
+            self.assertEqual(callbacks, [])
+            collector.sample_host_once()
+
+        self.assertEqual(callbacks, ["host_cpu_above_threshold"])
+        self.assertIn("host_cpu_above_threshold", collector.summary()["stop_reasons"])
+
     def test_optional_block_io_gap_does_not_hide_critical_cpu_memory_gaps(self) -> None:
         collector, _temp_dir, _callbacks = self.make_collector(status="running")
         collector.record_stats(CONTAINER_ID, stats_fixture(), sample_mono=1.0)

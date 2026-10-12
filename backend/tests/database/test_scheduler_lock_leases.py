@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -125,6 +126,32 @@ def test_scheduler_decorators_release_leases_after_sync_and_async_failure(isolat
 
     assert _lock_exists(sync_lock) is False
     assert _lock_exists(async_lock) is False
+
+
+def test_slow_synchronized_job_logs_lock_work_and_cleanup_duration(monkeypatch, caplog):
+    from core import scheduler_lock
+
+    class Lease:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, _exc_type, _exc_value, _traceback):
+            return None
+
+    monkeypatch.setattr(scheduler_lock, "SLOW_SYNCHRONIZED_JOB_WARNING_SECONDS", 0.0)
+    monkeypatch.setattr(scheduler_lock, "acquire_scheduler_lock", lambda *_args, **_kwargs: Lease())
+
+    @synchronized_scheduler_job("test_slow_scheduler_timing")
+    def job():
+        return "done"
+
+    with caplog.at_level(logging.WARNING, logger="core.scheduler_lock"):
+        assert job() == "done"
+
+    assert "Slow synchronized scheduler job test_slow_scheduler_timing" in caplog.text
+    assert "lock_wait=" in caplog.text
+    assert "work=" in caplog.text
+    assert "cleanup=" in caplog.text
 
 
 def test_dynamic_scheduler_releases_its_owner_fenced_lease(isolated_db, monkeypatch):

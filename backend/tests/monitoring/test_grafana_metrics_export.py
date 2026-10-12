@@ -245,6 +245,56 @@ def test_hardware_export_reuses_source_checks_without_dropping_sensor_rows(monke
     assert "temperature-untrusted" not in "\n".join(lines)
 
 
+def test_hardware_export_marks_stale_rows_without_mutating_fresh_rows(monkeypatch):
+    from services import librenms_source_policy, snmp_hardware_inventory_service
+
+    now = datetime.now(timezone.utc)
+    fresh = {
+        "source_type": "librenms_mib_rule",
+        "source_commit": "pinned-commit",
+        "device_id": "device-1",
+        "sensor_key": "fresh-sensor",
+        "last_quality": "good",
+        "last_success": now.isoformat(),
+    }
+    stale = {
+        **fresh,
+        "sensor_key": "stale-sensor",
+        "last_success": (now - timedelta(days=1)).isoformat(),
+    }
+    captured = []
+    monkeypatch.setattr(
+        snmp_hardware_inventory_service,
+        "list_hardware_metric_rows",
+        lambda conn, **kwargs: [fresh, stale],
+    )
+    monkeypatch.setattr(
+        snmp_hardware_inventory_service,
+        "render_hardware_metrics",
+        lambda sensors, labels: captured.extend(sensors) or "\n".join(
+            f'{sensor["sensor_key"]} {sensor["last_quality"]}' for sensor in sensors
+        ),
+    )
+    monkeypatch.setattr(librenms_source_policy, "hardware_sensor_trust_cache_key", lambda row: row["sensor_key"])
+    monkeypatch.setattr(librenms_source_policy, "is_trusted_hardware_sensor", lambda _row: True)
+    monkeypatch.setattr(grafana_metrics, "_hardware_stale_after_seconds", lambda _sensor: 60)
+
+    class EmptyConnection:
+        def execute(self, sql, params=()):
+            return _Result([])
+
+    lines = []
+    grafana_metrics._collect_hardware(lines, EmptyConnection(), now)
+
+    rendered = {sensor["sensor_key"]: sensor for sensor in captured}
+    assert fresh["last_quality"] == "good"
+    assert stale["last_quality"] == "good"
+    assert rendered["fresh-sensor"]["last_quality"] == "good"
+    assert rendered["stale-sensor"]["last_quality"] == "stale"
+    assert "fresh-sensor good" in lines
+    assert "stale-sensor stale" in lines
+
+
 def test_metrics_export_omits_unavailable_optional_source_instead_of_zero(monkeypatch):
     connection = _MetricsConnection(outbound_available=False)
     monkeypatch.setattr(grafana_metrics, "get_db_connection", lambda: connection)
@@ -570,7 +620,11 @@ def test_metrics_export_includes_normalized_hardware_and_capability_without_addr
     conn.close()
     monkeypatch.setattr(grafana_metrics, "get_db_connection", database.get_db_connection)
 
-    body = grafana_metrics.grafana_hardware_metrics().body.decode("utf-8")
+    response = grafana_metrics.grafana_hardware_metrics()
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "text/plain; version=0.0.4; charset=utf-8"
+    assert isinstance(response.body, bytes)
+    body = response.body.decode("utf-8")
 
     cpu_line = next(
         line for line in body.splitlines()

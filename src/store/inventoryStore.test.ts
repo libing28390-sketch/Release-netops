@@ -55,6 +55,28 @@ describe('network device inventory pagination', () => {
     expect(useInventoryStore.getState().inventoryError).toBeNull();
   });
 
+  it('stores server-side health counts for the full filtered inventory, not the current page', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        items: [{ id: 'device-page-1', hostname: 'page-one' }],
+        total: 219,
+        status_counts: { online: 15, offline: 204 },
+        health_counts: { healthy: 5, warning: 10, staging_maintenance: 10 },
+      }),
+    }));
+
+    await useInventoryStore.getState().fetchInventory();
+
+    expect(useInventoryStore.getState().inventoryRows).toHaveLength(1);
+    expect(useInventoryStore.getState().inventoryTotal).toBe(219);
+    expect(useInventoryStore.getState().inventoryHealthCounts).toEqual({
+      healthy: 5,
+      warning: 10,
+      staging_maintenance: 10,
+    });
+  });
+
   it('clears stale rows and shows an API error when the latest request fails', async () => {
     useInventoryStore.setState({
       inventoryRows: [{ id: 'old', hostname: 'stale-result' } as never],

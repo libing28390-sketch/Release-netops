@@ -70,6 +70,15 @@ def test_realtime_arp_lookup_uses_capability_rules_and_never_builds_zero_workers
     assert ip_locator_service._calc_ssh_workers(0) == 1
 
 
+def test_periodic_arp_sweep_uses_a_separate_low_worker_cap(monkeypatch):
+    monkeypatch.setattr(ip_locator_service, "ARP_SWEEP_MAX_WORKERS", 2)
+
+    assert ip_locator_service._calc_ssh_workers(10) == 5
+    assert ip_locator_service._calc_arp_sweep_workers(10) == 2
+    assert ip_locator_service._calc_arp_sweep_workers(100) == 2
+    assert ip_locator_service._calc_arp_sweep_workers(1) == 1
+
+
 def test_realtime_arp_hit_selection_prefers_prefix_gateway_over_completion_order():
     gateway = {"id": "gateway-1", "role": "gateway"}
     core = {"id": "core-1", "role": "core"}

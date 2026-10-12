@@ -7,6 +7,7 @@ import uuid
 
 from api import monitoring
 from database import fetch_interface_data, fetch_interface_data_for_devices, get_db_connection
+from services.device_health_service import load_devices_for_health
 
 
 class _CountingConnection:
@@ -63,6 +64,37 @@ def test_batched_interface_reader_matches_per_device_reader(isolated_db):
         assert counted.execute_count == 1
         assert fetch_interface_data_for_devices(counted, device_ids, chunk_size=1) == expected
         assert counted.execute_count == 3
+    finally:
+        conn.close()
+
+
+def test_device_health_snapshot_batches_interface_reads(isolated_db):
+    device_ids = [f"health-batch-device-{uuid.uuid4().hex[:8]}" for _ in range(12)]
+    conn = get_db_connection()
+    try:
+        conn.executemany(
+            "INSERT INTO devices (id, hostname, ip_address, platform, status) VALUES (?, ?, ?, ?, ?)",
+            [
+                (device_id, f"health-batch-{index}", f"192.0.2.{index}", "h3c_comware", "online")
+                for index, device_id in enumerate(device_ids, start=1)
+            ],
+        )
+        conn.executemany(
+            "INSERT INTO interfaces (id, device_id, interface_name, oper_status, speed) VALUES (?, ?, ?, ?, ?)",
+            [
+                (f"health-interface-{index}", device_id, f"GigabitEthernet0/{index}", "up", 1_000_000_000)
+                for index, device_id in enumerate(device_ids, start=1)
+            ],
+        )
+        conn.commit()
+
+        expected = {device_id: fetch_interface_data(conn, device_id) for device_id in device_ids}
+        counted = _CountingConnection(conn)
+        actual = load_devices_for_health(counted)
+
+        assert len(actual) == len(device_ids)
+        assert {item["id"]: item["interface_data"] for item in actual} == expected
+        assert counted.execute_count == 2
     finally:
         conn.close()
 

@@ -6,12 +6,42 @@ import asyncio
 import functools
 import logging
 import threading
+import time
 import uuid
 from typing import Any
 
 from database import get_db_connection
 
 logger = logging.getLogger(__name__)
+SLOW_SYNCHRONIZED_JOB_WARNING_SECONDS = 1.0
+
+
+def _log_slow_synchronized_job(
+    lock_name: str,
+    *,
+    started_at: float,
+    acquired_at: float,
+    work_started_at: float | None,
+    work_finished_at: float | None,
+    finished_at: float,
+) -> None:
+    total_seconds = max(0.0, finished_at - started_at)
+    if total_seconds < SLOW_SYNCHRONIZED_JOB_WARNING_SECONDS:
+        return
+    work_seconds = (
+        max(0.0, work_finished_at - work_started_at)
+        if work_started_at is not None and work_finished_at is not None
+        else 0.0
+    )
+    cleanup_started_at = work_finished_at if work_finished_at is not None else acquired_at
+    logger.warning(
+        "Slow synchronized scheduler job %s total=%.3fs lock_wait=%.3fs work=%.3fs cleanup=%.3fs",
+        lock_name,
+        total_seconds,
+        max(0.0, acquired_at - started_at),
+        work_seconds,
+        max(0.0, finished_at - cleanup_started_at),
+    )
 
 
 class SchedulerLockLease:
@@ -191,14 +221,31 @@ def synchronized_scheduler_job(lock_name: str, expire_seconds: int = 55):
 
             @functools.wraps(func)
             async def async_wrapper(*args: Any, **kwargs: Any):
+                started_at = time.perf_counter()
+                acquired_at = started_at
+                work_started_at = None
+                work_finished_at = None
                 lease = await _acquire_scheduler_lock_async(lock_name, expire_seconds)
+                acquired_at = time.perf_counter()
                 if lease is None:
                     logger.debug("Scheduler lock %s is already held. Skipping execution.", lock_name)
+                    _log_slow_synchronized_job(
+                        lock_name,
+                        started_at=started_at,
+                        acquired_at=acquired_at,
+                        work_started_at=None,
+                        work_finished_at=None,
+                        finished_at=time.perf_counter(),
+                    )
                     return None
                 try:
                     # Starting the heartbeat does not perform database I/O.
                     lease.__enter__()
-                    return await func(*args, **kwargs)
+                    work_started_at = time.perf_counter()
+                    try:
+                        return await func(*args, **kwargs)
+                    finally:
+                        work_finished_at = time.perf_counter()
                 except Exception as exc:
                     logger.error(
                         "Error executing synchronized scheduler job %s: %s",
@@ -208,19 +255,46 @@ def synchronized_scheduler_job(lock_name: str, expire_seconds: int = 55):
                     )
                     return None
                 finally:
-                    await _release_scheduler_lock_async(lease)
+                    try:
+                        await _release_scheduler_lock_async(lease)
+                    finally:
+                        _log_slow_synchronized_job(
+                            lock_name,
+                            started_at=started_at,
+                            acquired_at=acquired_at,
+                            work_started_at=work_started_at,
+                            work_finished_at=work_finished_at,
+                            finished_at=time.perf_counter(),
+                        )
 
             return async_wrapper
 
         @functools.wraps(func)
         def sync_wrapper(*args: Any, **kwargs: Any):
+            started_at = time.perf_counter()
+            acquired_at = started_at
+            work_started_at = None
+            work_finished_at = None
             lease = acquire_scheduler_lock(lock_name, expire_seconds)
+            acquired_at = time.perf_counter()
             if lease is None:
                 logger.debug("Scheduler lock %s is already held. Skipping execution.", lock_name)
+                _log_slow_synchronized_job(
+                    lock_name,
+                    started_at=started_at,
+                    acquired_at=acquired_at,
+                    work_started_at=None,
+                    work_finished_at=None,
+                    finished_at=time.perf_counter(),
+                )
                 return None
             try:
                 with lease:
-                    return func(*args, **kwargs)
+                    work_started_at = time.perf_counter()
+                    try:
+                        return func(*args, **kwargs)
+                    finally:
+                        work_finished_at = time.perf_counter()
             except Exception as exc:
                 logger.error(
                     "Error executing synchronized scheduler job %s: %s",
@@ -229,6 +303,15 @@ def synchronized_scheduler_job(lock_name: str, expire_seconds: int = 55):
                     exc_info=True,
                 )
                 return None
+            finally:
+                _log_slow_synchronized_job(
+                    lock_name,
+                    started_at=started_at,
+                    acquired_at=acquired_at,
+                    work_started_at=work_started_at,
+                    work_finished_at=work_finished_at,
+                    finished_at=time.perf_counter(),
+                )
 
         return sync_wrapper
 

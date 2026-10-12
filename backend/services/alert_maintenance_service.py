@@ -249,12 +249,15 @@ def _normalize_window_record(window: dict[str, Any]) -> dict[str, Any]:
     return item
 
 
-def alert_matches_window(window: dict[str, Any], alert: dict[str, Any]) -> bool:
-    item = _normalize_window_record(window)
+def _alert_matches_normalized_window(item: dict[str, Any], alert: dict[str, Any]) -> bool:
     if item['selection_mode'] == 'resources':
         alert_ip = str(alert.get('ip_address') or '').strip()
         return bool(alert_ip and alert_ip in set(item.get('target_ips') or []))
     return _match_conditions(item, alert)
+
+
+def alert_matches_window(window: dict[str, Any], alert: dict[str, Any]) -> bool:
+    return _alert_matches_normalized_window(_normalize_window_record(window), alert)
 
 
 def _normalize_window_payload(payload: dict[str, Any], validate_times: bool) -> dict[str, Any]:
@@ -707,31 +710,49 @@ def list_windows_paginated(status: str = 'all', search: str = '', page: int = 1,
     }
 
 
-def find_active_window_for_alert(alert: dict[str, Any], conn=None) -> dict[str, Any] | None:
-    external_conn = conn is not None
-    conn = conn or get_db_connection()
-    try:
-        rows = conn.execute(
-            '''
-                 SELECT id, name, target_ip, target_ips_json, selection_mode, condition_logic, match_conditions_json,
-                   title_pattern, message_pattern, starts_at, ends_at,
-                   notify_user_ids, reason, status, created_by, created_at, updated_at, last_match_count
-            FROM alert_maintenance_windows
-            WHERE status != 'cancelled'
-            ORDER BY starts_at DESC
-            '''
-        ).fetchall()
-        now_iso = utc_now_iso()
-        for row in rows:
-            item = _normalize_window_record(dict(row))
-            if _normalize_runtime_status(item, now_iso) != 'active':
-                continue
-            if alert_matches_window(item, alert):
-                return item
-        return None
-    finally:
-        if not external_conn:
-            conn.close()
+def load_maintenance_window_candidates(connection) -> list[dict[str, Any]]:
+    """Load and normalize all non-cancelled windows using a caller-owned connection."""
+    rows = connection.execute(
+        '''
+             SELECT id, name, target_ip, target_ips_json, selection_mode, condition_logic, match_conditions_json,
+               title_pattern, message_pattern, starts_at, ends_at,
+               notify_user_ids, reason, status, created_by, created_at, updated_at, last_match_count
+        FROM alert_maintenance_windows
+        WHERE status != 'cancelled'
+        ORDER BY starts_at DESC
+        '''
+    ).fetchall()
+    return [_normalize_window_record(dict(row)) for row in rows]
+
+
+def find_active_window_for_alert(
+    alert: dict[str, Any],
+    conn=None,
+    candidate_windows: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    if candidate_windows is None:
+        external_conn = conn is not None
+        conn = conn or get_db_connection()
+        try:
+            candidates = load_maintenance_window_candidates(conn)
+        finally:
+            if not external_conn:
+                conn.close()
+    else:
+        candidates = candidate_windows
+
+    # Window schedules can change state between alerts in one batch, so use a
+    # fresh timestamp for every lookup even when candidate rows are cached.
+    now_iso = utc_now_iso()
+    for candidate in candidates:
+        item = dict(candidate)
+        runtime_status = _normalize_runtime_status(item, now_iso)
+        item['runtime_status'] = runtime_status
+        if runtime_status != 'active':
+            continue
+        if _alert_matches_normalized_window(item, alert):
+            return item
+    return None
 
 
 def cancel_window(window_id: str) -> None:

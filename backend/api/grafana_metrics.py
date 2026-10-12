@@ -811,10 +811,14 @@ def _collect_hardware(lines: list[str], conn: Any, now: datetime) -> dict[str, A
         }
         if device_id not in by_device:
             by_device[device_id] = (labels, [])
-        sensor = dict(row)
-        last_success = _parse_utc(sensor.get("last_success"))
-        if str(sensor.get("last_quality") or "").casefold() == "good" and last_success is not None:
-            if (now - last_success).total_seconds() > _hardware_stale_after_seconds(sensor):
+        sensor = row
+        if str(row.get("last_quality") or "").casefold() == "good":
+            last_success = _parse_utc(row.get("last_success"))
+            if (
+                last_success is not None
+                and (now - last_success).total_seconds() > _hardware_stale_after_seconds(row)
+            ):
+                sensor = dict(row)
                 sensor["last_quality"] = "stale"
         by_device[device_id][1].append(sensor)
     timings["source_validation_ms"] = trust_validation_seconds * 1000
@@ -994,7 +998,8 @@ def grafana_hardware_metrics() -> Response:
                 pass
 
     body = "\n".join(line for line in lines if line) + ("\n" if lines else "")
-    body_bytes = len(body.encode("utf-8"))
+    response = Response(content=body.encode("utf-8"), media_type="text/plain; version=0.0.4; charset=utf-8")
+    body_bytes = len(response.body)
     logger.info(
         "Grafana hardware metrics scrape sensor_rows=%d devices=%d capabilities=%d "
         "render_errors=%d sensor_query_ms=%.1f sensor_decode_ms=%.1f "
@@ -1017,7 +1022,7 @@ def grafana_hardware_metrics() -> Response:
         (time.perf_counter() - scrape_started) * 1000,
         body_bytes,
     )
-    return Response(content=body, media_type="text/plain; version=0.0.4; charset=utf-8")
+    return response
 
 
 __all__ = ["router", "grafana_metrics", "grafana_hardware_metrics"]

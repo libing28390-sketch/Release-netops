@@ -557,7 +557,22 @@ def verified_librenms_mib_source_entries(
     expected_relative = _normalized_relative_path(relative_path) if relative_path else ""
     expected_hash = str(sha256 or "").strip().casefold()
     matches: list[Mapping[str, Any]] = []
-    for entry in values:
+    candidates = values
+    if expected_upstream.startswith("mibs/"):
+        manifest_path = LIBRENMS_BUNDLE_ROOT / "source-manifest.json"
+        try:
+            stat = manifest_path.stat()
+            root = str(LIBRENMS_BUNDLE_ROOT.resolve())
+        except OSError:
+            pass
+        else:
+            current_manifest = _read_manifest(root, stat.st_mtime_ns, stat.st_size)
+            if current_manifest is manifest:
+                candidates = _manifest_source_index(
+                    root, stat.st_mtime_ns, stat.st_size, "mibs",
+                ).get(expected_upstream, ())
+
+    for entry in candidates:
         if not isinstance(entry, Mapping):
             continue
         source_path = _normalized_relative_path(entry.get("upstream_path"))

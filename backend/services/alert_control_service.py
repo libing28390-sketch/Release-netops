@@ -273,35 +273,88 @@ def silence_matches(alert: dict[str, Any], scope: dict[str, Any]) -> bool:
     return bool(device_ids or site_ids or alert_types) or not scope
 
 
+def _normalize_silence_candidate(row: Any) -> dict[str, Any]:
+    if isinstance(row, dict):
+        values = row
+    else:
+        values = dict(row)
+
+    if "scope" in values:
+        raw_scope = values.get("scope")
+    else:
+        raw_scope = values.get("scope_json")
+    if isinstance(raw_scope, dict):
+        scope = raw_scope
+    else:
+        try:
+            scope = json.loads(raw_scope or "{}")
+        except (TypeError, ValueError):
+            scope = {}
+
+    return {
+        "id": values.get("id"),
+        "tenant_id": values.get("tenant_id"),
+        "scope": scope,
+        "reason": values.get("reason"),
+        "starts_at": values.get("starts_at"),
+        "ends_at": values.get("ends_at"),
+        "created_by": values.get("created_by"),
+    }
+
+
+def load_active_silence_candidates(connection) -> list[dict[str, Any]]:
+    """Load active silence records from a borrowed connection; failures fail open."""
+    try:
+        rows = connection.execute(
+            "SELECT id, tenant_id, scope_json, reason, starts_at, ends_at, created_by "
+            "FROM alert_silences WHERE status = 'active' ORDER BY starts_at DESC"
+        ).fetchall()
+        return [_normalize_silence_candidate(row) for row in rows]
+    except Exception:
+        return []
+
+
 def find_active_silence_for_alert(
     alert: dict[str, Any],
     *,
     now: datetime | None = None,
     connection=None,
+    candidates: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     """Return an active silence if present; failures fail open for alerting."""
     now_iso = _now(now).isoformat()
     tenant_id = str(alert.get("tenant_id") or "tenant-default")
     try:
-        owns_connection = connection is None
-        if owns_connection:
-            from database import get_db_connection
-            connection = get_db_connection()
-        try:
-            rows = connection.execute(
-                "SELECT id, tenant_id, scope_json, reason, starts_at, ends_at, created_by FROM alert_silences WHERE status = 'active' AND (tenant_id = ? OR tenant_id = 'tenant-default') AND starts_at <= ? AND ends_at >= ? ORDER BY starts_at DESC",
-                (tenant_id, now_iso, now_iso),
-            ).fetchall()
-            for row in rows:
-                try:
-                    scope = json.loads(row[2] or "{}")
-                except (TypeError, ValueError):
-                    scope = {}
-                if silence_matches(alert, scope):
-                    return {"id": row[0], "tenant_id": row[1], "scope": scope, "reason": row[3], "starts_at": row[4], "ends_at": row[5], "created_by": row[6]}
-        finally:
+        if candidates is None:
+            owns_connection = connection is None
             if owns_connection:
-                connection.close()
+                from database import get_db_connection
+                connection = get_db_connection()
+            try:
+                rows = connection.execute(
+                    "SELECT id, tenant_id, scope_json, reason, starts_at, ends_at, created_by FROM alert_silences WHERE status = 'active' AND (tenant_id = ? OR tenant_id = 'tenant-default') AND starts_at <= ? AND ends_at >= ? ORDER BY starts_at DESC",
+                    (tenant_id, now_iso, now_iso),
+                ).fetchall()
+            finally:
+                if owns_connection:
+                    connection.close()
+            silence_candidates = [_normalize_silence_candidate(row) for row in rows]
+        else:
+            silence_candidates = sorted(
+                (_normalize_silence_candidate(item) for item in candidates),
+                key=lambda item: str(item.get("starts_at") or ""),
+                reverse=True,
+            )
+
+        for silence in silence_candidates:
+            if str(silence.get("tenant_id") or "") not in {tenant_id, "tenant-default"}:
+                continue
+            starts_at = str(silence.get("starts_at") or "")
+            ends_at = str(silence.get("ends_at") or "")
+            if starts_at > now_iso or ends_at < now_iso:
+                continue
+            if silence_matches(alert, silence["scope"]):
+                return silence
     except Exception:
         return None
     return None

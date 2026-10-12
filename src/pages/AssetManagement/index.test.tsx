@@ -57,6 +57,7 @@ const assetSummary = (networkDevices: number, servers: number) => response({
   total: networkDevices + servers,
   by_type: { network_device: networkDevices, server: servers },
   by_status: {},
+  by_severity: { critical: 0, major: 0, warning: 0, healthy: networkDevices + servers },
   by_vendor: {},
   by_site: {},
   by_department: {},
@@ -132,6 +133,54 @@ describe('AssetManagementTab request states', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: 'Rack' }));
 
     expect(await screen.findByRole('columnheader', { name: 'Rack' })).toBeTruthy();
+  });
+
+  it('uses server severity counts and server-side pagination for severity cards', async () => {
+    window.localStorage.removeItem('netops:assets:columns:v1');
+    const onlineAsset = {
+      id: 'asset-online-1', asset_type: 'network_device', asset_tag: 'TAG-ONLINE-1',
+      hostname: 'online-device', management_ip: '192.0.2.31', status: 'active',
+      lifecycle_status: 'production', online_status: 'online', tags: [],
+    };
+    const offlineAsset = {
+      id: 'asset-offline-1', asset_type: 'network_device', asset_tag: 'TAG-OFFLINE-1',
+      hostname: 'offline-device', management_ip: '192.0.2.32', status: 'active',
+      lifecycle_status: 'production', online_status: 'offline', tags: [],
+    };
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input);
+      if (url.startsWith('/api/assets?')) {
+        const severity = new URL(url, 'http://test').searchParams.get('severity');
+        return severity === 'critical'
+          ? response({ items: [offlineAsset], total: 23 })
+          : response({ items: [onlineAsset], total: 30 });
+      }
+      if (url === '/api/assets/summary') return response({
+        total: 30,
+        by_type: { network_device: 30, server: 0 },
+        by_status: { active: 30 },
+        by_severity: { critical: 23, major: 2, warning: 3, healthy: 2 },
+        by_vendor: {}, by_site: {}, by_department: {}, warranty_expiring_soon: 0,
+      });
+      if (url === '/api/cmdb/sites') return response({ data: [] });
+      if (url === '/api/racks') return response({ success: true, data: [] });
+      if (url === '/api/tags/definitions') return response({ data: [] });
+      return response({});
+    });
+
+    renderAssetPage();
+    expect(await screen.findByText('online-device')).toBeTruthy();
+    const criticalCard = screen.getByRole('button', { name: /Critical/ });
+    expect(criticalCard.textContent).toContain('23');
+
+    fireEvent.click(criticalCard);
+
+    expect(await screen.findByText('offline-device')).toBeTruthy();
+    await waitFor(() => expect(
+      vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes('severity=critical')),
+    ).toBe(true));
+    expect(screen.queryByText('online-device')).toBeNull();
+    expect(screen.getByText('23 assets')).toBeTruthy();
   });
 
   it('refreshes the shared device count after an asset is saved', async () => {

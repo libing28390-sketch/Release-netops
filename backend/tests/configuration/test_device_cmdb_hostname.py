@@ -128,6 +128,38 @@ def test_device_list_search_and_sort_use_cmdb_hostname(isolated_db):
     ]
 
 
+def test_paged_network_device_health_counts_cover_the_filtered_inventory(isolated_db):
+    _seed_hostname_projection_rows()
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO physical_assets (id, asset_type, hostname, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            ("asset-health-server", "server", "health-server", "2026-10-01", "2026-10-01"),
+        )
+        conn.execute(
+            """
+            INSERT INTO devices (id, asset_id, hostname, ip_address, platform, status)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            ("device-health-server", "asset-health-server", "health-server", "192.0.2.99", "linux", "online"),
+        )
+        conn.commit()
+
+    result = _read_devices(
+        mode='light',
+        asset_type='network_device',
+        page=1,
+        page_size=1,
+    )
+
+    assert result['total'] == 3
+    assert len(result['items']) == 1
+    assert result['health_counts']['healthy'] == 3
+    assert result['health_counts']['warning'] == 0
+
+
 def test_device_list_displays_rack_name_instead_of_internal_rack_identifier(isolated_db):
     with get_db_connection() as conn:
         conn.execute(

@@ -82,6 +82,7 @@ HOST_CSV_COLUMNS = [
     "cpu_iowait_seconds",
     "cpu_busy_delta_seconds",
     "cpu_iowait_delta_seconds",
+    "cpu_busy_percent",
     "load_1m",
     "load_5m",
     "load_15m",
@@ -306,6 +307,8 @@ class MetricsCollector:
         min_host_available_bytes: int = 256 * 1024**2,
         min_host_available_percent: float = 10.0,
         max_container_memory_percent: float = 95.0,
+        max_host_cpu_percent: float = 90.0,
+        host_cpu_stop_samples: int = 5,
     ) -> None:
         self.output_dir = Path(output_dir)
         self.interval = max(0.05, float(interval))
@@ -314,6 +317,9 @@ class MetricsCollector:
         self.min_host_available_bytes = max(0, int(min_host_available_bytes))
         self.min_host_available_percent = float(min_host_available_percent)
         self.max_container_memory_percent = float(max_container_memory_percent)
+        self.max_host_cpu_percent = float(max_host_cpu_percent)
+        self.host_cpu_stop_samples = max(1, int(host_cpu_stop_samples))
+        self._host_cpu_high_samples = 0
 
         self._lock = threading.RLock()
         self._containers: dict[str, dict[str, Any]] = {}
@@ -352,6 +358,7 @@ class MetricsCollector:
             "load_15m_values": [],
             "cpu_busy_seconds": 0.0,
             "cpu_iowait_seconds": 0.0,
+            "cpu_busy_percent_values": [],
             "errors": [],
         }
 
@@ -1166,9 +1173,14 @@ class MetricsCollector:
         idle = ticks[3]
         iowait = ticks[4]
         busy = sum(ticks[:3]) + sum(ticks[5:])
+        total = sum(ticks)
         hz = _number(os.sysconf("SC_CLK_TCK")) if hasattr(os, "sysconf") else None
         hz = hz if hz and hz > 0 else 100.0
-        return {"busy_seconds": busy / hz, "iowait_seconds": iowait / hz}
+        return {
+            "busy_seconds": busy / hz,
+            "iowait_seconds": iowait / hz,
+            "total_seconds": total / hz,
+        }
 
     def _read_proc_load(self) -> tuple[float, float, float]:
         fields = (PROC_ROOT / "loadavg").read_text(encoding="utf-8").split()
@@ -1182,7 +1194,7 @@ class MetricsCollector:
     def _sample_host_once(self) -> None:
         errors: list[str] = []
         available = total = swap_total = swap_free = None
-        busy_seconds = iowait_seconds = None
+        busy_seconds = iowait_seconds = total_cpu_seconds = None
         loads: tuple[float, float, float] | None = None
         disk_free = disk_total = None
         try:
@@ -1201,6 +1213,7 @@ class MetricsCollector:
             cpu = self._read_proc_cpu()
             busy_seconds = cpu["busy_seconds"]
             iowait_seconds = cpu["iowait_seconds"]
+            total_cpu_seconds = cpu["total_seconds"]
         except Exception:
             self._record_missing("host_proc_stat")
             errors.append("host_proc_stat_unavailable")
@@ -1221,6 +1234,12 @@ class MetricsCollector:
         previous = self._host_previous
         busy_delta = _nonnegative_delta(busy_seconds, previous.get("busy_seconds") if previous else None)
         iowait_delta = _nonnegative_delta(iowait_seconds, previous.get("iowait_seconds") if previous else None)
+        total_cpu_delta = _nonnegative_delta(total_cpu_seconds, previous.get("total_cpu_seconds") if previous else None)
+        cpu_busy_percent = (
+            min(100.0, max(0.0, busy_delta / total_cpu_delta * 100.0))
+            if busy_delta is not None and total_cpu_delta is not None and total_cpu_delta > 0
+            else None
+        )
         with self._lock:
             self._ensure_output_files_locked()
             row = {
@@ -1235,6 +1254,7 @@ class MetricsCollector:
                 "cpu_iowait_seconds": iowait_seconds,
                 "cpu_busy_delta_seconds": busy_delta,
                 "cpu_iowait_delta_seconds": iowait_delta,
+                "cpu_busy_percent": cpu_busy_percent,
                 "load_1m": loads[0] if loads else None,
                 "load_5m": loads[1] if loads else None,
                 "load_15m": loads[2] if loads else None,
@@ -1255,6 +1275,7 @@ class MetricsCollector:
                 (loads[0] if loads else None, "load_1m_values"),
                 (loads[1] if loads else None, "load_5m_values"),
                 (loads[2] if loads else None, "load_15m_values"),
+                (cpu_busy_percent, "cpu_busy_percent_values"),
             ):
                 if value is not None:
                     summary[key].append(value)
@@ -1267,7 +1288,17 @@ class MetricsCollector:
             self._host_previous = {
                 "busy_seconds": busy_seconds,
                 "iowait_seconds": iowait_seconds,
-            } if busy_seconds is not None and iowait_seconds is not None else None
+                "total_cpu_seconds": total_cpu_seconds,
+            } if busy_seconds is not None and iowait_seconds is not None and total_cpu_seconds is not None else None
+
+            if cpu_busy_percent is not None and cpu_busy_percent >= self.max_host_cpu_percent:
+                self._host_cpu_high_samples += 1
+            else:
+                self._host_cpu_high_samples = 0
+            stop_for_cpu = self._host_cpu_high_samples >= self.host_cpu_stop_samples
+
+        if stop_for_cpu:
+            self._request_stop("__host__", "host_cpu_above_threshold")
 
         low_available = (available is not None and available < self.min_host_available_bytes) or (available_percent is not None and available_percent < self.min_host_available_percent)
         if low_available:
@@ -1403,6 +1434,7 @@ class MetricsCollector:
                 "maximum_load_1m": self._max_or_none(self._host_summary["load_1m_values"]),
                 "maximum_load_5m": self._max_or_none(self._host_summary["load_5m_values"]),
                 "maximum_load_15m": self._max_or_none(self._host_summary["load_15m_values"]),
+                "maximum_cpu_busy_percent": self._max_or_none(self._host_summary["cpu_busy_percent_values"]),
                 "cpu_busy_seconds": self._host_summary["cpu_busy_seconds"],
                 "cpu_iowait_seconds": self._host_summary["cpu_iowait_seconds"],
                 "errors": list(self._host_summary["errors"]),

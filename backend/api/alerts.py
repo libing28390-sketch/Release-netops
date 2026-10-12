@@ -3,6 +3,7 @@ import os
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Any
 from fastapi import APIRouter, Body, HTTPException, Query, Depends
 from core.rbac import require_role
 from core.config import settings
@@ -2137,140 +2138,200 @@ def receive_grafana_alert_webhook(payload: dict = Body(...)):
     """Persist Grafana lifecycle changes and their delivery intents atomically."""
     import hashlib
 
-    from services.monitoring_notification_outbox_service import enqueue_alert_delivery
+    from services.monitoring_notification_outbox_service import enqueue_alert_deliveries
 
-    alerts = payload.get('alerts', [])
+    alerts = list(payload.get('alerts') or [])
     if not alerts and ('title' in payload or 'ruleName' in payload):
         alerts = [payload]
 
+    batch_size = 200
     processed = []
     conn = get_db_connection()
     try:
-        for raw_alert in alerts:
-            status_raw = str(raw_alert.get('status') or payload.get('status') or 'firing').lower()
-            labels = raw_alert.get('labels') or payload.get('commonLabels') or {}
-            annotations = raw_alert.get('annotations') or payload.get('commonAnnotations') or {}
-
-            title = (
-                annotations.get('summary')
-                or labels.get('alertname')
-                or payload.get('title')
-                or 'Grafana 监控告警'
-            )
-            raw_sev = str(labels.get('severity') or 'major').lower()
-            if raw_sev in {'critical', 'crit', 'fatal', 'p1'}:
-                severity = 'critical'
-            elif raw_sev in {'warning', 'warn', 'medium', 'p3'}:
-                severity = 'warning'
-            else:
-                severity = 'major'
-
-            obj = (
-                labels.get('hostname')
-                or labels.get('instance')
-                or labels.get('device')
-                or labels.get('device_id')
-                or '-'
-            )
-            raw_instance = str(labels.get('instance') or '')
-            ip = (
-                labels.get('ip_address')
-                or labels.get('ip')
-                or (raw_instance.split(':')[0] if ':' in raw_instance else raw_instance)
-                or '-'
-            )
-            message = (
-                annotations.get('description')
-                or annotations.get('message')
-                or annotations.get('summary')
-                or f"Grafana 告警规则触发：{title}"
-            )
-            starts_at = str(raw_alert.get('startsAt') or raw_alert.get('starts_at') or _utc_now_iso())
-            is_resolved = status_raw in {'resolved', 'ok'}
-            now_utc = _utc_now_iso()
-            fingerprint = str(raw_alert.get('fingerprint') or '').strip()
-            stable_identity = fingerprint or '|'.join((str(labels.get('alertname') or title), str(obj), str(ip)))
-            identity_hash = hashlib.sha256(stable_identity.encode('utf-8')).hexdigest()[:32]
-            dedupe_key = f'grafana:{identity_hash}'
-
-            # Resolve a tenant only from a real device row. Alert labels may
-            # identify the device but can never supply tenant ownership.
-            device_row = None
-            supplied_device_id = str(labels.get('device_id') or '').strip()
-            supplied_hostname = str(labels.get('hostname') or labels.get('device') or '').strip()
-            if supplied_device_id:
-                device_row = conn.execute(
-                    "SELECT id, tenant_id FROM devices WHERE id = ? LIMIT 1",
-                    (supplied_device_id,),
-                ).fetchone()
-            if not device_row and supplied_hostname:
-                device_row = conn.execute(
-                    "SELECT id, tenant_id FROM devices WHERE hostname = ? LIMIT 1",
-                    (supplied_hostname,),
-                ).fetchone()
-            if not device_row and ip not in {'', '-'}:
-                device_row = conn.execute(
-                    "SELECT id, tenant_id FROM devices WHERE ip_address = ? LIMIT 1",
-                    (ip,),
-                ).fetchone()
-            resolved_device_id = str(device_row['id']) if device_row else None
-            tenant_id = str((device_row['tenant_id'] if device_row else None) or 'tenant-default')
-
-            existing = conn.execute(
-                "SELECT id, created_at, workflow_status FROM alert_events "
-                "WHERE dedupe_key = ? AND resolved_at IS NULL "
-                "ORDER BY created_at ASC LIMIT 1",
-                (dedupe_key,),
-            ).fetchone()
-            lifecycle_event = None
-            alert_id = None
-            first_occurrence = starts_at
-            if is_resolved:
-                if existing:
-                    alert_id = str(existing['id'])
-                    first_occurrence = str(existing['created_at'] or starts_at)
-                    conn.execute(
-                        "UPDATE alert_events SET resolved_at = ?, workflow_status = 'resolved', updated_at = ? WHERE id = ?",
-                        (now_utc, now_utc, alert_id),
-                    )
-                    lifecycle_event = 'resolved'
-            elif existing:
-                alert_id = str(existing['id'])
-                first_occurrence = str(existing['created_at'] or starts_at)
-                conn.execute(
-                    "UPDATE alert_events SET severity = ?, title = ?, message = ?, updated_at = ? WHERE id = ?",
-                    (severity, title, message, now_utc, alert_id),
+        for batch_offset in range(0, len(alerts), batch_size):
+            raw_batch = alerts[batch_offset:batch_offset + batch_size]
+            records: list[dict[str, Any]] = []
+            for raw_alert in raw_batch:
+                status_raw = str(raw_alert.get('status') or payload.get('status') or 'firing').lower()
+                labels = raw_alert.get('labels') or payload.get('commonLabels') or {}
+                annotations = raw_alert.get('annotations') or payload.get('commonAnnotations') or {}
+                title = (
+                    annotations.get('summary')
+                    or labels.get('alertname')
+                    or payload.get('title')
+                    or 'Grafana 监控告警'
                 )
-            else:
-                alert_id = str(uuid.uuid4())
-                conn.execute(
-                    '''INSERT INTO alert_events (
-                        id, dedupe_key, source, severity, title, message,
-                        device_id, interface_name, created_at, resolved_at,
-                        workflow_status, note, updated_at
-                    ) VALUES (?, ?, 'grafana_alert', ?, ?, ?, ?, ?, ?, NULL, 'open', '', ?)''',
-                    (
+                raw_sev = str(labels.get('severity') or 'major').lower()
+                if raw_sev in {'critical', 'crit', 'fatal', 'p1'}:
+                    severity = 'critical'
+                elif raw_sev in {'warning', 'warn', 'medium', 'p3'}:
+                    severity = 'warning'
+                else:
+                    severity = 'major'
+
+                obj = (
+                    labels.get('hostname')
+                    or labels.get('instance')
+                    or labels.get('device')
+                    or labels.get('device_id')
+                    or '-'
+                )
+                raw_instance = str(labels.get('instance') or '')
+                ip = (
+                    labels.get('ip_address')
+                    or labels.get('ip')
+                    or (raw_instance.split(':')[0] if ':' in raw_instance else raw_instance)
+                    or '-'
+                )
+                message = (
+                    annotations.get('description')
+                    or annotations.get('message')
+                    or annotations.get('summary')
+                    or f"Grafana 告警规则触发：{title}"
+                )
+                starts_at = str(raw_alert.get('startsAt') or raw_alert.get('starts_at') or _utc_now_iso())
+                fingerprint = str(raw_alert.get('fingerprint') or '').strip()
+                stable_identity = fingerprint or '|'.join((str(labels.get('alertname') or title), str(obj), str(ip)))
+                identity_hash = hashlib.sha256(stable_identity.encode('utf-8')).hexdigest()[:32]
+                records.append({
+                    'is_resolved': status_raw in {'resolved', 'ok'},
+                    'labels': labels,
+                    'title': title,
+                    'severity': severity,
+                    'object_name': obj,
+                    'ip_address': ip,
+                    'message': message,
+                    'starts_at': starts_at,
+                    'now_utc': _utc_now_iso(),
+                    'dedupe_key': f'grafana:{identity_hash}',
+                    'supplied_device_id': str(labels.get('device_id') or '').strip(),
+                    'supplied_hostname': str(labels.get('hostname') or labels.get('device') or '').strip(),
+                    'ip_lookup': str(ip or '').strip(),
+                })
+
+            device_ids = sorted({record['supplied_device_id'] for record in records if record['supplied_device_id']})
+            hostnames = sorted({record['supplied_hostname'] for record in records if record['supplied_hostname']})
+            ips = sorted({record['ip_lookup'] for record in records if record['ip_lookup'] not in {'', '-'}})
+            device_conditions = []
+            device_params: list[str] = []
+            for field, values in (('id', device_ids), ('hostname', hostnames), ('ip_address', ips)):
+                if not values:
+                    continue
+                device_conditions.append(f"{field} IN ({', '.join('?' for _ in values)})")
+                device_params.extend(values)
+            devices_by_id: dict[str, dict[str, Any]] = {}
+            devices_by_hostname: dict[str, dict[str, Any]] = {}
+            devices_by_ip: dict[str, dict[str, Any]] = {}
+            if device_conditions:
+                device_rows = conn.execute(
+                    "SELECT id, tenant_id, hostname, ip_address FROM devices WHERE "
+                    + ' OR '.join(device_conditions),
+                    tuple(device_params),
+                ).fetchall()
+                for row in device_rows:
+                    device = dict(row)
+                    devices_by_id.setdefault(str(device.get('id') or ''), device)
+                    hostname = str(device.get('hostname') or '').strip()
+                    ip_address = str(device.get('ip_address') or '').strip()
+                    if hostname:
+                        devices_by_hostname.setdefault(hostname, device)
+                    if ip_address:
+                        devices_by_ip.setdefault(ip_address, device)
+
+            unique_dedupe_keys = list(dict.fromkeys(record['dedupe_key'] for record in records))
+            dedupe_placeholders = ', '.join('?' for _ in unique_dedupe_keys)
+            existing_rows = conn.execute(
+                "SELECT id, dedupe_key, created_at, workflow_status FROM alert_events "
+                f"WHERE dedupe_key IN ({dedupe_placeholders}) AND resolved_at IS NULL "
+                "ORDER BY dedupe_key, created_at ASC, id ASC",
+                tuple(unique_dedupe_keys),
+            ).fetchall()
+            existing_by_dedupe: dict[str, list[dict[str, Any]]] = {}
+            for row in existing_rows:
+                existing_by_dedupe.setdefault(str(row['dedupe_key']), []).append(dict(row))
+
+            new_event_rows: dict[str, list[Any]] = {}
+            active_update_rows: dict[str, tuple[Any, ...]] = {}
+            resolved_update_rows: dict[str, tuple[Any, ...]] = {}
+            activity_rows: list[tuple[Any, ...]] = []
+            delivery_specs: list[tuple[str, str, dict[str, Any]]] = []
+            feishu_enabled = bool(os.environ.get('FEISHU_WEBHOOK_URL', '').strip())
+
+            for record in records:
+                labels = record['labels']
+                dedupe_key = record['dedupe_key']
+                starts_at = record['starts_at']
+                now_utc = record['now_utc']
+
+                device_row = (
+                    devices_by_id.get(record['supplied_device_id'])
+                    if record['supplied_device_id'] else None
+                )
+                if not device_row and record['supplied_hostname']:
+                    device_row = devices_by_hostname.get(record['supplied_hostname'])
+                if not device_row and record['ip_lookup'] not in {'', '-'}:
+                    device_row = devices_by_ip.get(record['ip_lookup'])
+                resolved_device_id = str(device_row['id']) if device_row else None
+                tenant_id = str((device_row['tenant_id'] if device_row else None) or 'tenant-default')
+
+                active_rows = existing_by_dedupe.setdefault(dedupe_key, [])
+                existing = active_rows[0] if active_rows else None
+                lifecycle_event = None
+                alert_id = None
+                first_occurrence = starts_at
+                if record['is_resolved']:
+                    if existing:
+                        alert_id = str(existing['id'])
+                        first_occurrence = str(existing.get('created_at') or starts_at)
+                        if alert_id in new_event_rows:
+                            event_row = new_event_rows[alert_id]
+                            event_row[8] = now_utc
+                            event_row[9] = 'resolved'
+                            event_row[11] = now_utc
+                        else:
+                            resolved_update_rows[alert_id] = (alert_id, now_utc, now_utc)
+                        active_rows.pop(0)
+                        lifecycle_event = 'resolved'
+                elif existing:
+                    alert_id = str(existing['id'])
+                    first_occurrence = str(existing.get('created_at') or starts_at)
+                    if alert_id in new_event_rows:
+                        event_row = new_event_rows[alert_id]
+                        event_row[2] = record['severity']
+                        event_row[3] = record['title']
+                        event_row[4] = record['message']
+                        event_row[11] = now_utc
+                    else:
+                        active_update_rows[alert_id] = (
+                            alert_id,
+                            record['severity'],
+                            record['title'],
+                            record['message'],
+                            now_utc,
+                        )
+                else:
+                    alert_id = str(uuid.uuid4())
+                    event_row = [
                         alert_id,
                         dedupe_key,
-                        severity,
-                        title,
-                        message,
+                        record['severity'],
+                        record['title'],
+                        record['message'],
                         resolved_device_id,
                         labels.get('ifName') or labels.get('interface') or '',
                         starts_at,
+                        None,
+                        'open',
+                        '',
                         now_utc,
-                    ),
-                )
-                lifecycle_event = 'active'
+                    ]
+                    new_event_rows[alert_id] = event_row
+                    active_rows.append({'id': alert_id, 'created_at': starts_at, 'workflow_status': 'open'})
+                    active_rows.sort(key=lambda row: (str(row.get('created_at') or ''), str(row.get('id') or '')))
+                    lifecycle_event = 'active'
 
-            if lifecycle_event:
-                conn.execute(
-                    """
-                    INSERT INTO alert_activity
-                        (id, alert_id, event_type, from_state, to_state, metadata_json, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?::jsonb, ?)
-                    """,
-                    (
+                if lifecycle_event:
+                    activity_rows.append((
                         f"aact_{uuid.uuid4().hex[:16]}",
                         alert_id,
                         'OPENED' if lifecycle_event == 'active' else 'RESOLVED',
@@ -2278,51 +2339,96 @@ def receive_grafana_alert_webhook(payload: dict = Body(...)):
                         'open' if lifecycle_event == 'active' else 'resolved',
                         json.dumps({'source': 'grafana_alert', 'dedupe_key': dedupe_key}, ensure_ascii=False),
                         now_utc,
-                    ),
-                )
-                alert_data = {
-                    'alert_id': alert_id,
-                    'tenant_id': tenant_id,
-                    'title': title,
-                    'object_name': obj,
-                    'ip_address': ip,
-                    'status': 'resolved' if lifecycle_event == 'resolved' else 'active',
-                    'severity': severity,
-                    'message': message,
-                    'first_occurrence': first_occurrence,
-                    'last_occurrence': now_utc,
-                    'event_kind': lifecycle_event,
-                    'destination_key': dedupe_key,
-                    'lang': 'zh',
-                }
-                enqueue_alert_delivery(
-                    delivery_key=f'{alert_id}:workspace:{lifecycle_event}',
-                    channel='workspace',
-                    payload=alert_data,
-                    connection=conn,
-                )
-                queued_channels = ['workspace']
-                # Keep the legacy host-configured Feishu webhook out of the
-                # payload and off the request thread; the dedicated worker
-                # reads this secret from its own environment.
-                if os.environ.get('FEISHU_WEBHOOK_URL', '').strip():
-                    enqueue_alert_delivery(
-                        delivery_key=f'{alert_id}:grafana_feishu:{lifecycle_event}',
-                        channel='grafana_feishu',
-                        payload=alert_data,
-                        connection=conn,
-                    )
-                    queued_channels.append('grafana_feishu')
-            else:
-                queued_channels = []
+                    ))
+                    alert_data = {
+                        'alert_id': alert_id,
+                        'tenant_id': tenant_id,
+                        'title': record['title'],
+                        'object_name': record['object_name'],
+                        'ip_address': record['ip_address'],
+                        'status': 'resolved' if lifecycle_event == 'resolved' else 'active',
+                        'severity': record['severity'],
+                        'message': record['message'],
+                        'first_occurrence': first_occurrence,
+                        'last_occurrence': now_utc,
+                        'event_kind': lifecycle_event,
+                        'destination_key': dedupe_key,
+                        'lang': 'zh',
+                    }
+                    delivery_specs.append((
+                        f'{alert_id}:workspace:{lifecycle_event}',
+                        'workspace',
+                        alert_data,
+                    ))
+                    queued_channels = ['workspace']
+                    if feishu_enabled:
+                        delivery_specs.append((
+                            f'{alert_id}:grafana_feishu:{lifecycle_event}',
+                            'grafana_feishu',
+                            alert_data,
+                        ))
+                        queued_channels.append('grafana_feishu')
+                else:
+                    queued_channels = []
 
-            processed.append({
-                'title': title,
-                'dedupe_key': dedupe_key,
-                'status': 'resolved' if is_resolved else 'active',
-                'alert_id': alert_id,
-                'queued_channels': queued_channels,
-            })
+                processed.append({
+                    'title': record['title'],
+                    'dedupe_key': dedupe_key,
+                    'status': 'resolved' if record['is_resolved'] else 'active',
+                    'alert_id': alert_id,
+                    'queued_channels': queued_channels,
+                })
+
+            def execute_values(statement: str, rows: list[tuple[Any, ...]], row_template: str) -> None:
+                for offset in range(0, len(rows), batch_size):
+                    batch = rows[offset:offset + batch_size]
+                    values_sql = ', '.join(row_template for _ in batch)
+                    parameters = tuple(value for row in batch for value in row)
+                    conn.execute(statement.format(values_sql=values_sql), parameters)
+
+            if new_event_rows:
+                execute_values(
+                    '''INSERT INTO alert_events (
+                           id, dedupe_key, source, severity, title, message,
+                           device_id, interface_name, created_at, resolved_at,
+                           workflow_status, note, updated_at
+                       ) VALUES {values_sql}''',
+                    list(new_event_rows.values()),
+                    "(?, ?, 'grafana_alert', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                )
+            if active_update_rows:
+                execute_values(
+                    '''UPDATE alert_events AS existing
+                          SET severity = incoming.severity,
+                              title = incoming.title,
+                              message = incoming.message,
+                              updated_at = incoming.updated_at
+                         FROM (VALUES {values_sql}) AS incoming(id, severity, title, message, updated_at)
+                        WHERE existing.id = incoming.id''',
+                    list(active_update_rows.values()),
+                    '(?, ?, ?, ?, ?)',
+                )
+            if resolved_update_rows:
+                execute_values(
+                    '''UPDATE alert_events AS existing
+                          SET resolved_at = incoming.resolved_at,
+                              workflow_status = 'resolved',
+                              updated_at = incoming.updated_at
+                         FROM (VALUES {values_sql}) AS incoming(id, resolved_at, updated_at)
+                        WHERE existing.id = incoming.id''',
+                    list(resolved_update_rows.values()),
+                    '(?, ?, ?)',
+                )
+            if activity_rows:
+                execute_values(
+                    '''INSERT INTO alert_activity
+                           (id, alert_id, event_type, from_state, to_state, metadata_json, created_at)
+                       VALUES {values_sql}''',
+                    activity_rows,
+                    '(?, ?, ?, ?, ?, ?::jsonb, ?)',
+                )
+            if delivery_specs:
+                enqueue_alert_deliveries(delivery_specs, connection=conn)
         conn.commit()
     except Exception:
         conn.rollback()

@@ -30,7 +30,12 @@ from services.collection_status_service import record_collection_result
 from services.vault_service import resolve_collector_credentials
 from services.collection_plan_service import should_collect
 from services import tag_service
-from services.alert_control_service import AlertState, find_active_silence_for_alert, transition_state
+from services.alert_control_service import (
+    AlertState,
+    find_active_silence_for_alert,
+    load_active_silence_candidates,
+    transition_state,
+)
 from core.crypto import decrypt_credential
 
 logger = logging.getLogger(__name__)
@@ -42,6 +47,14 @@ _alert_state_batch_connection: ContextVar[Any | None] = ContextVar(
 )
 _alert_state_batch_transition_rows: ContextVar[dict[tuple[str, str], tuple] | None] = ContextVar(
     "alert_state_batch_transition_rows",
+    default=None,
+)
+_alert_state_batch_maintenance_candidates: ContextVar[list[dict[str, Any]] | None] = ContextVar(
+    "alert_state_batch_maintenance_candidates",
+    default=None,
+)
+_alert_state_batch_silence_candidates: ContextVar[list[dict[str, Any]] | None] = ContextVar(
+    "alert_state_batch_silence_candidates",
     default=None,
 )
 
@@ -258,6 +271,24 @@ _ALERT_RULE_STATE_UPSERT_SQL = """
         last_status=excluded.last_status, last_transition_at=excluded.last_transition_at,
         updated_at=excluded.updated_at
     """
+
+
+_ALERT_RULE_STATE_UPSERT_BATCH_SQL = _ALERT_RULE_STATE_UPSERT_SQL.replace(
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "VALUES {values_sql}",
+)
+
+
+def _upsert_alert_rule_state_batch(connection, rows: list[tuple]) -> None:
+    """Persist bounded transition state rows in one PostgreSQL statement."""
+    if not rows:
+        return
+    values_sql = ", ".join(["(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"] * len(rows))
+    parameters = tuple(value for row in rows for value in row)
+    connection.execute(
+        _ALERT_RULE_STATE_UPSERT_BATCH_SQL.format(values_sql=values_sql),
+        parameters,
+    )
 
 
 def _persist_alert_transition(
@@ -1423,8 +1454,31 @@ def set_alert_state(dedupe_key: str, is_active: bool, severity: str, title: str,
                 'ip_address': ip_address,
                 'tenant_id': str(tenant_row['tenant_id'] or 'tenant-default') if tenant_row else 'tenant-default',
             }
-            maintenance_window = alert_maintenance_service.find_active_window_for_alert(alert_context, conn=connection)
-            silence = find_active_silence_for_alert(alert_context, connection=connection)
+            if not owns_connection:
+                maintenance_candidates = _alert_state_batch_maintenance_candidates.get()
+                if maintenance_candidates is None:
+                    maintenance_candidates = alert_maintenance_service.load_maintenance_window_candidates(connection)
+                    _alert_state_batch_maintenance_candidates.set(maintenance_candidates)
+                silence_candidates = _alert_state_batch_silence_candidates.get()
+                if silence_candidates is None:
+                    silence_candidates = load_active_silence_candidates(connection)
+                    _alert_state_batch_silence_candidates.set(silence_candidates)
+                maintenance_window = alert_maintenance_service.find_active_window_for_alert(
+                    alert_context,
+                    conn=connection,
+                    candidate_windows=maintenance_candidates,
+                )
+                silence = find_active_silence_for_alert(
+                    alert_context,
+                    connection=connection,
+                    candidates=silence_candidates,
+                )
+            else:
+                maintenance_window = alert_maintenance_service.find_active_window_for_alert(
+                    alert_context,
+                    conn=connection,
+                )
+                silence = find_active_silence_for_alert(alert_context, connection=connection)
             workflow_status = 'suppressed' if maintenance_window else 'open'
             note = (
                 f"Suppressed by maintenance window: {maintenance_window['name']}"
@@ -1618,17 +1672,21 @@ def _set_alert_states_batched(alert_updates) -> None:
         connection_token = _alert_state_batch_connection.set(connection)
         transition_rows: dict[tuple[str, str], tuple] = {}
         rows_token = _alert_state_batch_transition_rows.set(transition_rows)
+        maintenance_token = _alert_state_batch_maintenance_candidates.set(None)
+        silence_token = _alert_state_batch_silence_candidates.set(None)
         try:
             for update in chunk:
                 set_alert_state(*update["args"], **update.get("kwargs", {}))
             if transition_rows:
-                connection.executemany(_ALERT_RULE_STATE_UPSERT_SQL, list(transition_rows.values()))
+                _upsert_alert_rule_state_batch(connection, list(transition_rows.values()))
             connection.commit()
         except Exception:
             connection.rollback()
             _restore_alert_process_state(snapshots)
             raise
         finally:
+            _alert_state_batch_silence_candidates.reset(silence_token)
+            _alert_state_batch_maintenance_candidates.reset(maintenance_token)
             _alert_state_batch_transition_rows.reset(rows_token)
             _alert_state_batch_connection.reset(connection_token)
             connection.close()
@@ -2168,7 +2226,7 @@ async def process_device_fast(device):
             error_code='management_ip_missing',
             error_message='Management IP address is not configured',
         )
-        return
+        return False
 
     try:
         reachable, probe_method, _collector_credentials, snmp_probe_attempted = (
@@ -2210,6 +2268,7 @@ async def process_device_fast(device):
                 f"[Status Monitor] Device {ip} status changed to {new_status} via {probe_method}"
             )
             _schedule_monitoring_target_sync(device)
+        return bool(reachable)
     except Exception as exc:
         await asyncio.to_thread(record_collection_result,
             dev_id,
@@ -2225,6 +2284,7 @@ async def process_device_fast(device):
             await _run_monitoring_sync_work(_set_device_reachability_alert, device, ip, reachable=False)
             _schedule_monitoring_target_sync(device)
         mark_offline_and_clear_cache()
+        return False
 
 async def process_device_slow(device, cycle_tick: int = 0):
     """Run a low-frequency pass using the device role poll profile.

@@ -2,11 +2,31 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from api import alerts as alerts_api
 from database import get_db_connection
 from main import app
 
 
 client = TestClient(app)
+
+
+class _RecordingConnection:
+    def __init__(self, connection):
+        self.connection = connection
+        self.execute_calls: list[tuple[str, tuple[object, ...]]] = []
+
+    def execute(self, sql, params=()):
+        self.execute_calls.append((sql, tuple(params or ())))
+        return self.connection.execute(sql, params)
+
+    def commit(self):
+        self.connection.commit()
+
+    def rollback(self):
+        self.connection.rollback()
+
+    def close(self):
+        self.connection.close()
 
 
 def test_grafana_webhook_persists_lifecycle_and_queues_each_notification_once(isolated_db, monkeypatch):
@@ -92,7 +112,6 @@ def test_grafana_webhook_persists_lifecycle_and_queues_each_notification_once(is
         assert opened == 1
     finally:
         connection.close()
-
     resolved_payload = {
         "receiver": "Nexora-Webhook",
         "status": "resolved",
@@ -140,5 +159,102 @@ def test_grafana_webhook_persists_lifecycle_and_queues_each_notification_once(is
             (alert_id,),
         ).fetchone()[0]
         assert resolved_events == 1
+    finally:
+        connection.close()
+
+
+def test_grafana_webhook_batches_500_alerts_with_bounded_sql(isolated_db, monkeypatch):
+    monkeypatch.delenv("FEISHU_WEBHOOK_URL", raising=False)
+    recording_connections: list[_RecordingConnection] = []
+    original_get_connection = alerts_api.get_db_connection
+
+    def tracked_get_connection():
+        connection = _RecordingConnection(original_get_connection())
+        recording_connections.append(connection)
+        return connection
+
+    monkeypatch.setattr(alerts_api, "get_db_connection", tracked_get_connection)
+    payload = {
+        "status": "firing",
+        "alerts": [
+            {
+                "status": "firing",
+                "fingerprint": f"storm-test-{index}",
+                "labels": {"alertname": "StormTest", "severity": "warning"},
+                "annotations": {"summary": f"synthetic alert {index}"},
+            }
+            for index in range(500)
+        ],
+    }
+
+    response = client.post("/api/alerts/webhook/grafana", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["received_count"] == 500
+    assert len(recording_connections) == 1
+    sql_calls = [sql.lower() for sql, _params in recording_connections[0].execute_calls]
+    assert sum("where dedupe_key in" in sql for sql in sql_calls) == 3
+    assert sum("insert into alert_events" in sql for sql in sql_calls) == 3
+    assert sum("insert into alert_delivery_outbox" in sql for sql in sql_calls) == 3
+    assert not any("from devices" in sql for sql in sql_calls)
+    assert len(sql_calls) <= 18
+
+    connection = get_db_connection()
+    try:
+        assert connection.execute(
+            "SELECT COUNT(*) AS count FROM alert_events WHERE source = 'grafana_alert'"
+        ).fetchone()["count"] == 500
+        assert connection.execute(
+            "SELECT COUNT(*) AS count FROM alert_delivery_outbox WHERE channel = 'workspace'"
+        ).fetchone()["count"] == 500
+        assert connection.execute(
+            "SELECT COUNT(*) AS count FROM alert_activity WHERE event_type = 'OPENED' "
+            "AND alert_id IN (SELECT id FROM alert_events WHERE source = 'grafana_alert')"
+        ).fetchone()["count"] == 500
+    finally:
+        connection.close()
+
+
+def test_grafana_webhook_preserves_ordered_duplicate_lifecycle_in_one_batch(isolated_db, monkeypatch):
+    monkeypatch.delenv("FEISHU_WEBHOOK_URL", raising=False)
+    fingerprint = "same-payload-lifecycle"
+    base = {
+        "fingerprint": fingerprint,
+        "labels": {"alertname": "LifecycleTest", "severity": "critical"},
+        "annotations": {"summary": "same fingerprint lifecycle"},
+        "startsAt": "2026-10-12T08:00:00Z",
+    }
+
+    response = client.post("/api/alerts/webhook/grafana", json={
+        "alerts": [
+            {**base, "status": "firing"},
+            {**base, "status": "resolved"},
+            {**base, "status": "firing"},
+        ],
+    })
+
+    assert response.status_code == 200
+    processed = response.json()["processed"]
+    assert processed[0]["alert_id"] == processed[1]["alert_id"]
+    assert processed[2]["alert_id"] != processed[0]["alert_id"]
+    dedupe_key = processed[0]["dedupe_key"]
+    connection = get_db_connection()
+    try:
+        events = connection.execute(
+            "SELECT id, resolved_at, workflow_status FROM alert_events WHERE dedupe_key = ?",
+            (dedupe_key,),
+        ).fetchall()
+        assert len(events) == 2
+        assert sum(row["resolved_at"] is not None for row in events) == 1
+        assert sum(row["resolved_at"] is None for row in events) == 1
+        assert connection.execute(
+            "SELECT COUNT(*) AS count FROM alert_activity WHERE alert_id IN (?, ?) "
+            "AND event_type IN ('OPENED', 'RESOLVED')",
+            (processed[0]["alert_id"], processed[2]["alert_id"]),
+        ).fetchone()["count"] == 3
+        assert connection.execute(
+            "SELECT COUNT(*) AS count FROM alert_delivery_outbox WHERE alert_id IN (?, ?)",
+            (processed[0]["alert_id"], processed[2]["alert_id"]),
+        ).fetchone()["count"] == 3
     finally:
         connection.close()

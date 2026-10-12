@@ -16,6 +16,7 @@ _ALLOWED_CHANNELS = frozenset({
     "workspace", "feishu", "dingtalk", "wechat", "email", "global_webhook", "grafana_feishu",
 })
 _MAX_CLAIM_LIMIT = 100
+_MAX_ENQUEUE_BATCH_SIZE = 500
 _LEASE_SECONDS = 90
 _SENSITIVE_KEY = re.compile(
     r"(?:password|passwd|secret|token|credential|authorization|signature|private.?key|"
@@ -255,6 +256,138 @@ def enqueue_alert_delivery(
     finally:
         if owns_connection:
             db_connection.close()
+
+
+def enqueue_alert_deliveries(
+    deliveries: list[tuple[str, str, dict]],
+    *,
+    connection,
+) -> None:
+    """Persist a bounded batch of non-email alert delivery requests.
+
+    The caller owns the connection and its transaction. Duplicate delivery
+    keys are ignored (the first occurrence wins), and queued activities are
+    written only for outbox rows inserted by this call.
+    """
+    if connection is None:
+        raise TypeError("connection is required and must be owned by the caller")
+    if not isinstance(deliveries, list):
+        raise TypeError("deliveries must be a list of (delivery_key, channel, payload) tuples")
+
+    prepared: list[dict[str, Any]] = []
+    seen_delivery_keys: set[str] = set()
+    for delivery in deliveries:
+        if not isinstance(delivery, tuple) or len(delivery) != 3:
+            raise TypeError("each delivery must be a (delivery_key, channel, payload) tuple")
+        delivery_key, channel, payload = delivery
+        normalized_key = str(delivery_key or "").strip()
+        normalized_channel = str(channel or "").strip()
+        if not normalized_key or len(normalized_key) > 512:
+            raise ValueError("delivery_key must contain between 1 and 512 characters")
+        if normalized_channel not in _ALLOWED_CHANNELS:
+            raise ValueError(f"channel must be one of {sorted(_ALLOWED_CHANNELS)}")
+        if normalized_channel == "email":
+            raise ValueError(
+                "email deliveries must use enqueue_alert_delivery for profile fan-out"
+            )
+        if not isinstance(payload, dict):
+            raise TypeError("payload must be a dictionary")
+
+        # Validate and serialize every item before touching the borrowed
+        # transaction, so a malformed later item cannot leave partial writes.
+        safe_payload = _sanitize_payload_value(payload)
+        payload_json = json.dumps(safe_payload, ensure_ascii=False, allow_nan=False)
+        if normalized_key in seen_delivery_keys:
+            continue
+        seen_delivery_keys.add(normalized_key)
+        prepared.append({
+            "id": str(uuid.uuid4()),
+            "delivery_key": normalized_key,
+            "channel": normalized_channel,
+            "payload_json": payload_json,
+            "alert_id": str(payload.get("alert_id") or "") or None,
+            "tenant_id": str(payload.get("tenant_id") or "tenant-default"),
+            "event_kind": str(payload.get("event_kind") or "active"),
+            "destination_key": str(payload.get("destination_key") or normalized_channel),
+            "priority": _delivery_priority(payload),
+        })
+
+    for offset in range(0, len(prepared), _MAX_ENQUEUE_BATCH_SIZE):
+        batch = prepared[offset:offset + _MAX_ENQUEUE_BATCH_SIZE]
+        values_sql = ", ".join(
+            "(?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?)" for _ in batch
+        )
+        parameters = [
+            value
+            for delivery in batch
+            for value in (
+                delivery["id"],
+                delivery["delivery_key"],
+                delivery["channel"],
+                delivery["payload_json"],
+                delivery["alert_id"],
+                delivery["tenant_id"],
+                delivery["event_kind"],
+                delivery["destination_key"],
+                delivery["priority"],
+            )
+        ]
+        inserted_rows = connection.execute(
+            f"""
+            INSERT INTO alert_delivery_outbox (
+                id, delivery_key, channel, payload, alert_id, tenant_id,
+                event_kind, destination_key, priority
+            ) VALUES {values_sql}
+            ON CONFLICT (delivery_key) DO NOTHING
+            RETURNING alert_id, channel, event_kind, destination_key
+            """,
+            parameters,
+        ).fetchall()
+
+        activities = []
+        for inserted_row in inserted_rows:
+            inserted = dict(inserted_row)
+            alert_id = str(inserted.get("alert_id") or "")
+            if not alert_id:
+                continue
+            metadata_json = json.dumps(
+                {
+                    "channel": inserted["channel"],
+                    "event_kind": str(inserted["event_kind"] or "active"),
+                    "destination_key": inserted["destination_key"],
+                    "status": "queued",
+                },
+                ensure_ascii=False,
+                allow_nan=False,
+            )
+            activities.append((
+                f"aact_{uuid.uuid4().hex[:16]}",
+                alert_id,
+                metadata_json,
+            ))
+
+        for activity_offset in range(0, len(activities), _MAX_ENQUEUE_BATCH_SIZE):
+            activity_batch = activities[
+                activity_offset:activity_offset + _MAX_ENQUEUE_BATCH_SIZE
+            ]
+            activity_values_sql = ", ".join(
+                "(?, ?, 'NOTIFICATION_QUEUED', NULL, NULL, ?, clock_timestamp())"
+                for _ in activity_batch
+            )
+            activity_parameters = [
+                value
+                for activity in activity_batch
+                for value in activity
+            ]
+            connection.execute(
+                f"""
+                INSERT INTO alert_activity (
+                    id, alert_id, event_type, from_state, to_state,
+                    metadata_json, created_at
+                ) VALUES {activity_values_sql}
+                """,
+                activity_parameters,
+            )
 
 
 def _claim_deliveries(*, limit: int, worker_id: str) -> list[dict[str, Any]]:

@@ -14,6 +14,32 @@ SERVICES = (
     "db", "netops", "redis", "victoriametrics", "snmp-exporter", "vmagent",
     "docker-socket-proxy", "cadvisor", "grafana", "nginx", "seaweedfs",
 )
+RUNNER_CREDENTIAL_FIELDS = (
+    "db_user", "db_password", "db_name", "app_username", "app_password",
+    "redis_password", "grafana_user", "grafana_password", "s3_access_key",
+    "s3_secret_key", "s3_bucket",
+)
+ALERT_STORM_SCENARIO = "alert-storm"
+ALERT_STORM_SOURCE_CONTAINERS = {
+    "alert-redis": "nexora-alert-redis",
+    "alert-notify-critical": "nexora-alert-notify-critical",
+    "alert-notify-normal": "nexora-alert-notify-normal",
+    "alert-notify-relay": "nexora-alert-notify-relay",
+}
+ALERT_STORM_LIMITS = {
+    # The isolated lab must not consume each cloned container's full source
+    # quota on the same host as the live validation stack.
+    # Aggregate test-service quota is <= 0.77 CPU plus a <= 0.20 CPU runner,
+    # keeping the full test quota below half of the 2-vCPU validation host.
+    "db": (0.25, 768 * 1024**2),
+    "netops": (0.20, 768 * 1024**2),
+    "redis": (0.05, 192 * 1024**2),
+    "victoriametrics": (0.03, 192 * 1024**2),
+    "alert-redis": (0.03, 128 * 1024**2),
+    "alert-notify-critical": (0.08, 320 * 1024**2),
+    "alert-notify-normal": (0.08, 320 * 1024**2),
+    "alert-notify-relay": (0.05, 192 * 1024**2),
+}
 LABEL = "nexora.capacity.run"
 DEPENDENCIES = {
     "netops": {"db", "redis", "victoriametrics"},
@@ -21,6 +47,7 @@ DEPENDENCIES = {
     "grafana": {"victoriametrics"},
     "vmagent": {"victoriametrics", "snmp-exporter", "cadvisor"},
     "cadvisor": {"docker-socket-proxy"},
+    ALERT_STORM_SCENARIO: {"netops", "alert-redis", "alert-notify-critical", "alert-notify-normal", "alert-notify-relay"},
 }
 
 
@@ -53,15 +80,29 @@ def cpu_limit(info: dict) -> float | None:
     return None
 
 
-def inherited_limits(info: dict) -> list[str]:
+def inherited_limits(info: dict, *, cpu_cap: float | None = None,
+                     memory_cap: int | None = None) -> list[str]:
     host = info.get("HostConfig", {})
     flags = []
-    for field, flag in (("Memory", "--memory"), ("MemoryReservation", "--memory-reservation")):
-        if host.get(field, 0) > 0:
-            flags += [flag, str(host[field])]
-    if host.get("Memory", 0) and host.get("MemorySwap", 0):
+    source_memory = int(host.get("Memory", 0) or 0)
+    effective_memory = source_memory
+    if memory_cap is not None:
+        effective_memory = min(source_memory, memory_cap) if source_memory > 0 else memory_cap
+    if effective_memory > 0:
+        flags += ["--memory", str(effective_memory)]
+        reservation = int(host.get("MemoryReservation", 0) or 0)
+        if reservation > 0 and reservation < effective_memory:
+            flags += ["--memory-reservation", str(reservation)]
+    if memory_cap is not None:
+        # Keep alert test clones from silently borrowing host swap.
+        flags += ["--memory-swap", str(effective_memory)]
+    elif host.get("MemorySwap", 0):
         flags += ["--memory-swap", str(host["MemorySwap"])]
-    if host.get("NanoCpus", 0) > 0:
+    source_cpu = cpu_limit(info)
+    if cpu_cap is not None:
+        effective_cpu = min(source_cpu, cpu_cap) if source_cpu and source_cpu > 0 else cpu_cap
+        flags += ["--cpus", str(effective_cpu)]
+    elif host.get("NanoCpus", 0) > 0:
         flags += ["--cpus", str(host["NanoCpus"] / 1_000_000_000)]
     elif host.get("CpuQuota", 0) > 0:
         flags += ["--cpu-quota", str(host["CpuQuota"]), "--cpu-period", str(host.get("CpuPeriod", 0) or 100_000)]
@@ -89,14 +130,16 @@ def required_services(selected: list[str]) -> list[str]:
     while True:
         expanded = result | set().union(*(DEPENDENCIES.get(s, set()) for s in result))
         if expanded == result:
-            return [s for s in SERVICES if s in result]
+            standard = [s for s in SERVICES if s in result]
+            optional = [s for s in ALERT_STORM_SOURCE_CONTAINERS if s in result]
+            return [*standard, *optional]
         result = expanded
 
 
 class CapacityLab:
     def __init__(self, run_id: str, output: Path, services: list[str], dataset: dict,
                  snmp_targets: int, generator_cpus: float, generator_memory: int,
-                 should_stop: Callable[[], bool] | None = None):
+                 should_stop: Callable[[], bool] | None = None, *, alert_storm: bool = False):
         if len(run_id) != 32 or any(c not in "0123456789abcdef" for c in run_id):
             raise ValueError("INVALID_RUN_ID")
         self.run_id = run_id
@@ -106,7 +149,11 @@ class CapacityLab:
         self.files.mkdir(parents=True, exist_ok=True)
         self.scripts = Path(__file__).resolve().parent
         self.selected = services
-        self.required = required_services(services)
+        self.alert_storm = bool(alert_storm)
+        required_selection = list(services)
+        if self.alert_storm:
+            required_selection.append(ALERT_STORM_SCENARIO)
+        self.required = required_services(required_selection)
         self.dataset = dataset
         self.ports = list(range(1161, 1161 + snmp_targets))
         self.generator_cpus = generator_cpus
@@ -145,9 +192,11 @@ class CapacityLab:
             raise DockerError("LOCAL_UNIX_DOCKER_CONTEXT_REQUIRED")
         for service in set(self.required) | {"netops"}:
             try:
-                source = self.inspect("nexora-" + service)
+                source_name = ALERT_STORM_SOURCE_CONTAINERS.get(service, "nexora-" + service)
+                source = self.inspect(source_name)
             except DockerError as exc:
-                raise DockerError("SOURCE_CONTAINER_REQUIRED:nexora-" + service) from exc
+                required_name = ALERT_STORM_SOURCE_CONTAINERS.get(service, "nexora-" + service)
+                raise DockerError("SOURCE_CONTAINER_REQUIRED:" + required_name) from exc
             if source.get("State", {}).get("Status") != "running":
                 raise DockerError("SOURCE_CONTAINER_NOT_RUNNING:nexora-" + service)
             docker("image", "inspect", source["Image"])
@@ -189,7 +238,8 @@ class CapacityLab:
             flags += ["--cpus", str(self.generator_cpus), "--memory", str(self.generator_memory),
                       "--pids-limit", "1024"]
         else:
-            flags += inherited_limits(self.sources[source])
+            cpu_cap, memory_cap = ALERT_STORM_LIMITS.get(service, (None, None)) if self.alert_storm else (None, None)
+            flags += inherited_limits(self.sources[source], cpu_cap=cpu_cap, memory_cap=memory_cap)
         clean_env = {"HTTP_PROXY": "", "HTTPS_PROXY": "", "ALL_PROXY": "",
                      "http_proxy": "", "https_proxy": "", "all_proxy": "",
                      "NO_PROXY": "*", "no_proxy": "*", "NEXORA_CAPACITY_RUN_ID": self.run_id}
@@ -358,6 +408,8 @@ datasources:
                 self._file_mount(self.datasource, "/etc/grafana/provisioning/datasources/capacity.yml") +
                 ["--mount", f"type=volume,src={volume},dst=/var/lib/grafana"], aliases=["grafana-auth"])
             self._start(container)
+        if "alert-redis" in self.required:
+            self._build_alert_broker()
         if "netops" in self.required:
             self._build_netops()
         if "nginx" in self.required:
@@ -405,6 +457,13 @@ datasources:
                "REDIS_URL": f"redis://nexora:{creds['redis_password']}@redis:6379/0",
                "MONITORING_METRIC_BACKEND": "victoriametrics", "VICTORIAMETRICS_URL": "http://victoriametrics:8428",
                "VICTORIAMETRICS_ALLOWED_HOSTS": "victoriametrics", "WORKERS": "1", "STORAGE_BACKEND": "local"}
+        if self.alert_storm:
+            env.update({
+                "ALERT_NOTIFICATION_CELERY_ENABLED": "1",
+                "NEXORA_AUTOMATIC_NOTIFICATIONS_ENABLED": "0",
+                "ALERT_NOTIFY_WEBHOOK_URL": "",
+                "FEISHU_WEBHOOK_URL": "",
+            })
         original_env = dict(v.split("=", 1) for v in self.sources["netops"].get("Config", {}).get("Env", []) if "=" in v)
         for key in ("DB_POOL_SIZE", "DB_POOL_OVERFLOW_MAX", "DB_POOL_ACQUIRE_TIMEOUT_SECONDS", "WORKERS", "TEMPLATES_CACHE_TTL_SECONDS"):
             if key in original_env:
@@ -428,6 +487,82 @@ datasources:
                     break
                 time.sleep(3)
         raise DockerError("TEST_NETOPS_STARTUP_FAILED")
+
+    def _build_alert_broker(self) -> None:
+        password = secrets.token_hex(24)
+        self.credentials["alert_broker_password"] = password
+        self._redaction_values.add(password)
+        volume = self._volume("alert-broker-data")
+        acl_script = (
+            "set -eu; umask 077; "
+            'password_hash="$(printf \'%s\' "$CAPACITY_ALERT_BROKER_PASSWORD" | sha256sum | awk \'{print $1}\')"; '
+            "printf 'user default off\\nuser alert-broker on #%s ~nexora_alert_* +@read +@write +@transaction +@scripting -@dangerous +ping +auth +hello +select +quit +client|setinfo\\n' \"$password_hash\" > /data/alert-users.acl; "
+            "exec redis-server --appendonly yes --appendfsync everysec --maxmemory 128mb --maxmemory-policy noeviction --protected-mode yes --aclfile /data/alert-users.acl"
+        )
+        container = self._create(
+            "alert-redis", "alert-redis", {"CAPACITY_ALERT_BROKER_PASSWORD": password},
+            ["--mount", f"type=volume,src={volume},dst=/data"],
+            entrypoint="/bin/sh", command=["-ec", acl_script],
+        )
+        self._start(container)
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline and not self.should_stop():
+            try:
+                docker("exec", container, "sh", "-ec",
+                       'REDISCLI_AUTH="$CAPACITY_ALERT_BROKER_PASSWORD" redis-cli --user alert-broker ping', timeout=5)
+                return
+            except DockerError:
+                if self.inspect(container).get("State", {}).get("Status") == "exited":
+                    break
+                time.sleep(1)
+        self.diagnostic_services.add("alert-redis")
+        raise DockerError("TEST_ALERT_BROKER_STARTUP_FAILED")
+
+    def start_alert_workers(self) -> None:
+        """Start isolated alert workers/relay after the test outbox is seeded."""
+        if not self.alert_storm:
+            raise DockerError("ALERT_STORM_MODE_REQUIRED")
+        creds = self.credentials
+        secret_key = secrets.token_hex(32)
+        encryption_key = secrets.token_hex(32)
+        common_env = {
+            "ENVIRONMENT": "production",
+            "POSTGRES_USER": creds["db_user"],
+            "DATABASE_URL": f"postgresql://{creds['db_user']}:{creds['db_password']}@db:5432/{creds['db_name']}",
+            "SECRET_KEY": secret_key,
+            "CREDENTIAL_ENCRYPTION_KEY": encryption_key,
+            "ALERT_NOTIFICATION_CELERY_ENABLED": "1",
+            "ALERT_NOTIFICATION_BROKER_URL": (
+                f"redis://alert-broker:{creds['alert_broker_password']}@alert-redis:6379/0"
+            ),
+            "NEXORA_AUTOMATIC_NOTIFICATIONS_ENABLED": "0",
+            "ALERT_NOTIFY_WEBHOOK_URL": "",
+            "FEISHU_WEBHOOK_URL": "",
+            "DB_POOL_SIZE": "1",
+            "DB_POOL_MIN_SIZE": "1",
+            "DB_POOL_OVERFLOW_MAX": "0",
+        }
+        for key in ("SECRET_KEY", "CREDENTIAL_ENCRYPTION_KEY"):
+            self._redaction_values.add(common_env[key])
+        for worker_type in ("critical", "normal"):
+            service = "alert-notify-" + worker_type
+            queue_name = "alert_notify_" + worker_type
+            container = self._create(
+                service, service, common_env,
+                entrypoint="celery",
+                command=[
+                    "-A", "celery_app:app", "worker", f"--queues={queue_name}",
+                    "--without-gossip", "--without-mingle", "--without-heartbeat",
+                    "--concurrency=1", "--prefetch-multiplier=1", "--max-tasks-per-child=200",
+                    "--soft-time-limit=50", "--time-limit=60", "--loglevel=WARNING",
+                ],
+            )
+            self._start(container)
+        relay = self._create(
+            "alert-notify-relay", "alert-notify-relay", common_env,
+            entrypoint="python", command=["-m", "alert_delivery_relay"],
+        )
+        self._start(relay)
 
     def _redact_diagnostic(self, text: str) -> str:
         for value in sorted(self._redaction_values, key=len, reverse=True):
@@ -477,8 +612,12 @@ datasources:
         return result
 
     def runner_config(self) -> dict:
-        return {"run_id": self.run_id, "services": self.selected, "available_services": self.required, "dataset": self.dataset,
-                "credentials": self.credentials,
+        available_services = list(self.required)
+        if self.alert_storm:
+            available_services.append(ALERT_STORM_SCENARIO)
+        runner_credentials = {key: self.credentials[key] for key in RUNNER_CREDENTIAL_FIELDS}
+        return {"run_id": self.run_id, "services": self.selected, "available_services": available_services, "dataset": self.dataset,
+                "credentials": runner_credentials,
                 "targets": {"db": "db", "redis": "redis", "netops": "http://netops:8003",
                             "nginx": "https://nginx:443", "victoriametrics": "http://victoriametrics:8428",
                             "vmagent": "http://vmagent:8429", "snmp-exporter": "http://snmp-exporter:9116",
@@ -488,10 +627,16 @@ datasources:
                 "snmp_ports": self.ports, "snmp_auth": "capacity_v2", "snmp_module": "capacity_ifmib"}
 
     def create_runner(self, job: str) -> str:
+        if job.startswith("alertstorm-"):
+            command = "alert-storm"
+        elif job.startswith("seed-alertstorm-"):
+            command = "seed-alert-storm"
+        else:
+            command = job.split("-", 1)[0]
         return self._create("runner-" + job, "netops", generator=True,
             extra=["--interactive", "--read-only", "--tmpfs", "/tmp:rw,nosuid,size=64m"] + self._scripts_mount(),
             env={"PYTHONDONTWRITEBYTECODE": "1"}, entrypoint="python",
-            command=["/capacity/runner.py", job.split("-", 1)[0]])
+            command=["/capacity/runner.py", command])
 
     def owns(self, kind: str, name: str) -> bool:
         try:

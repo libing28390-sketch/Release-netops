@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import threading
 
+import pytest
+
 from database import get_db_connection
 from services import background_monitor_service as monitor
 from services import monitoring_notification_outbox_service as outbox
@@ -33,9 +35,11 @@ class _RecordingConnection:
         self.connection = connection
         self.commit_count = 0
         self.rollback_count = 0
+        self.execute_calls: list[tuple[str, tuple[object, ...]]] = []
         self.executemany_calls: list[tuple[str, int]] = []
 
     def execute(self, sql, params=()):
+        self.execute_calls.append((sql, tuple(params or ())))
         return self.connection.execute(sql, params)
 
     def executemany(self, sql, rows):
@@ -130,8 +134,9 @@ def test_async_alert_state_write_runs_in_worker_thread_and_persists_atomically(i
         _clear_process_state(dedupe_key)
 
 
-def test_alert_state_batch_bounds_transactions_and_batches_state_upserts(isolated_db, monkeypatch):
-    batch_count = monitor._ALERT_STATE_BATCH_SIZE + 1
+@pytest.mark.parametrize("batch_count", [monitor._ALERT_STATE_BATCH_SIZE + 1, 500])
+def test_alert_state_batch_bounds_transactions_and_batches_state_upserts(isolated_db, monkeypatch, batch_count):
+    expected_batch_count = (batch_count + monitor._ALERT_STATE_BATCH_SIZE - 1) // monitor._ALERT_STATE_BATCH_SIZE
     device_ids = [f"batch-alert-device-{index}" for index in range(batch_count)]
     dedupe_keys = [f"batch-alert-{index}" for index in range(batch_count)]
     rule_ids = [f"batch-rule-{index}" for index in range(batch_count)]
@@ -168,12 +173,26 @@ def test_alert_state_batch_bounds_transactions_and_batches_state_upserts(isolate
             for index in range(batch_count)
         ])
 
-        assert len(recording_connections) == 2
-        assert [recording_connection.commit_count for recording_connection in recording_connections] == [1, 1]
-        state_calls = [call for recording_connection in recording_connections for call in recording_connection.executemany_calls]
-        assert len(state_calls) == 2
-        assert all("INSERT INTO alert_rule_states" in sql for sql, _row_count in state_calls)
-        assert sorted(row_count for _sql, row_count in state_calls) == [1, monitor._ALERT_STATE_BATCH_SIZE]
+        assert len(recording_connections) == expected_batch_count
+        assert [recording_connection.commit_count for recording_connection in recording_connections] == [1] * expected_batch_count
+        state_calls = [
+            call
+            for recording_connection in recording_connections
+            for call in recording_connection.execute_calls
+            if "INSERT INTO alert_rule_states" in call[0]
+        ]
+        assert len(state_calls) == expected_batch_count
+        assert all(len(parameters) % 12 == 0 for _sql, parameters in state_calls)
+        assert sorted(len(parameters) // 12 for _sql, parameters in state_calls) == sorted(
+            [monitor._ALERT_STATE_BATCH_SIZE] * (batch_count // monitor._ALERT_STATE_BATCH_SIZE)
+            + ([batch_count % monitor._ALERT_STATE_BATCH_SIZE] if batch_count % monitor._ALERT_STATE_BATCH_SIZE else [])
+        )
+        assert not [
+            call
+            for recording_connection in recording_connections
+            for call in recording_connection.executemany_calls
+            if "INSERT INTO alert_rule_states" in call[0]
+        ]
 
         connection = get_db_connection()
         try:
@@ -197,6 +216,56 @@ def test_alert_state_batch_bounds_transactions_and_batches_state_upserts(isolate
             assert connection.execute(
                 f"SELECT COUNT(*) AS count FROM alert_rule_states WHERE rule_id IN ({rule_placeholders})",
                 rule_ids,
+            ).fetchone()["count"] == batch_count
+        finally:
+            connection.close()
+    finally:
+        for dedupe_key in dedupe_keys:
+            _clear_process_state(dedupe_key)
+
+
+def test_alert_state_batch_loads_suppression_candidates_once(isolated_db, monkeypatch):
+    batch_count = 50
+    device_id = "suppression-batch-device"
+    _insert_device(device_id)
+    dedupe_keys = [f"suppression-batch-alert-{index}" for index in range(batch_count)]
+    rule_ids = [f"suppression-batch-rule-{index}" for index in range(batch_count)]
+    for dedupe_key in dedupe_keys:
+        _clear_process_state(dedupe_key)
+    monkeypatch.setattr(monitor.settings, "ALERT_NOTIFY_WEBHOOK_URL", "")
+
+    recording_connections: list[_RecordingConnection] = []
+    original_get_db_connection = monitor.get_db_connection
+
+    def tracked_get_db_connection():
+        connection = _RecordingConnection(original_get_db_connection())
+        recording_connections.append(connection)
+        return connection
+
+    monkeypatch.setattr(monitor, "get_db_connection", tracked_get_db_connection)
+    try:
+        monitor._set_alert_states_batched([
+            {
+                **_active_alert_update(dedupe_keys[index], device_id, rule_ids[index]),
+                "kwargs": {
+                    **_active_alert_update(dedupe_keys[index], device_id, rule_ids[index])["kwargs"],
+                    "notify": False,
+                },
+            }
+            for index in range(batch_count)
+        ])
+
+        assert len(recording_connections) == 1
+        sql_calls = [sql.lower() for sql, _params in recording_connections[0].execute_calls]
+        assert sum("from alert_maintenance_windows" in sql for sql in sql_calls) == 1
+        assert sum("from alert_silences" in sql for sql in sql_calls) == 1
+
+        connection = get_db_connection()
+        try:
+            placeholders = ", ".join("?" for _ in dedupe_keys)
+            assert connection.execute(
+                f"SELECT COUNT(*) AS count FROM alert_events WHERE dedupe_key IN ({placeholders})",
+                dedupe_keys,
             ).fetchone()["count"] == batch_count
         finally:
             connection.close()

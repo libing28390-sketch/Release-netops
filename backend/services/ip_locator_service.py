@@ -71,11 +71,17 @@ def _calc_ssh_workers(device_count: int) -> int:
         return max(1, min(MAX_SSH_WORKERS_MIN, device_count))
     return max(1, min(MAX_SSH_WORKERS_MAX, max(MAX_SSH_WORKERS_MIN, device_count // 3)))
 
+
+def _calc_arp_sweep_workers(device_count: int) -> int:
+    """Bound full-table ARP sweep concurrency without changing realtime lookups."""
+    return max(1, min(_calc_ssh_workers(device_count), ARP_SWEEP_MAX_WORKERS))
+
 # ARP 缓存：按 target_ip 懒加载，不做全网全量预采集。
 # 周期全量扫描默认每 10 分钟执行一次；缓存至少保留两个扫描周期。
 ARP_SWEEP_INTERVAL_SECONDS = max(300, int(os.environ.get('ARP_SWEEP_INTERVAL_SECONDS', '600')))
 ARP_CACHE_TTL_SECONDS = max(ARP_SWEEP_INTERVAL_SECONDS * 2, 600)
 ARP_CACHE_MAX_ENTRIES = 5000
+ARP_SWEEP_MAX_WORKERS = max(1, min(8, int(os.environ.get('ARP_SWEEP_MAX_WORKERS', '2'))))
 ENDPOINT_CACHE_TTL_SECONDS = 600
 ENDPOINT_FACT_INTERVAL_SECONDS = max(900, int(os.environ.get('ENDPOINT_FACT_INTERVAL_SECONDS', '1800')))
 ROUTE_SWEEP_INTERVAL_SECONDS = max(300, int(os.environ.get('ROUTE_SWEEP_INTERVAL_SECONDS', '300')))
@@ -4664,7 +4670,7 @@ def _run_arp_sweep_locked(device_ids: set[str] | None = None) -> dict[str, Any]:
     all_entries: list[dict] = []
     device_results: list[dict[str, Any]] = []
     successful_device_ids: set[str] = set()
-    workers = _calc_ssh_workers(len(gateway_devices))
+    workers = _calc_arp_sweep_workers(len(gateway_devices))
 
     state_by_device = _load_arp_collection_state()
     status_updates: list[dict[str, Any]] = []

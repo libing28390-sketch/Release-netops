@@ -939,8 +939,10 @@ def list_hardware_metric_rows(
     timings: dict[str, float] | None = None,
     collection_version: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Load active sensors with safe device labels for the internal metrics API."""
+    """Load active sensors eligible for Prometheus export with safe device labels."""
     query_started = time.perf_counter() if timings is not None else 0.0
+    excluded_types = tuple(sorted(_METRIC_EXPORT_EXCLUDED_MEASUREMENT_TYPES))
+    excluded_placeholders = ", ".join("?" for _ in excluded_types)
     rows = conn.execute(
         f"""
         SELECT s.tenant_id, s.asset_id, s.device_id, s.sensor_key,
@@ -960,9 +962,10 @@ def list_hardware_metric_rows(
          WHERE s.lifecycle_status <> 'retired' AND s.enabled = TRUE
            AND s.data_origin IN ('librenms_native', 'legacy_snmp')
            {"AND s.metadata_json->>'collection_version' = ?" if collection_version else ""}
+           AND LOWER(BTRIM(COALESCE(s.measurement_type, ''))) NOT IN ({excluded_placeholders})
          ORDER BY s.device_id, s.component_class, s.sensor_key
         """,
-        (collection_version,) if collection_version else (),
+        (*((collection_version,) if collection_version else ()), *excluded_types),
     ).fetchall()
     if timings is not None:
         timings["sensor_query_ms"] = (time.perf_counter() - query_started) * 1000

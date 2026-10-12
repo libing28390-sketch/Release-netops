@@ -1,13 +1,41 @@
 from __future__ import annotations
 
+import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
+
+import pytest
 
 from database import get_db_connection
 from database.migrations.m0283_alert_delivery_celery_dispatch import upgrade as dispatch_upgrade
 from database.migrations.m0241_monitoring_notification_outbox import upgrade
 from services import alert_delivery_relay_service as relay
 from services import monitoring_notification_outbox_service as outbox
+
+
+class _RecordingConnection:
+    def __init__(self, connection):
+        self.connection = connection
+        self.execute_calls: list[tuple[str, tuple[object, ...]]] = []
+        self.commit_count = 0
+        self.rollback_count = 0
+        self.close_count = 0
+
+    def execute(self, sql, params=()):
+        self.execute_calls.append((sql, tuple(params or ())))
+        return self.connection.execute(sql, params)
+
+    def commit(self):
+        self.commit_count += 1
+        self.connection.commit()
+
+    def rollback(self):
+        self.rollback_count += 1
+        self.connection.rollback()
+
+    def close(self):
+        self.close_count += 1
+        self.connection.close()
 
 
 def _get_delivery(delivery_key: str) -> dict:
@@ -20,6 +48,28 @@ def _get_delivery(delivery_key: str) -> dict:
         return dict(row)
     finally:
         connection.close()
+
+
+def _insert_alert_events(connection, alert_ids: list[str]) -> None:
+    connection.executemany(
+        """
+        INSERT INTO alert_events (
+            id, dedupe_key, source, severity, title, message, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                alert_id,
+                f"dedupe:{alert_id}",
+                "grafana",
+                "warning",
+                "Batch test alert",
+                "Batch test message",
+                "2026-10-12T00:00:00Z",
+            )
+            for alert_id in alert_ids
+        ],
+    )
 
 
 def test_outbox_migration_is_idempotent_and_baseline_has_claim_indexes(isolated_db) -> None:
@@ -110,6 +160,190 @@ def test_enqueue_is_idempotent_and_redacts_credential_fields(isolated_db) -> Non
     assert stored["payload"]["signature"] == "[REDACTED]"
     assert "private-value" not in str(stored["payload"])
     assert "[REDACTED]" in stored["payload"]["message"]
+
+
+def test_enqueue_alert_deliveries_redacts_is_idempotent_and_records_inserted_activities(isolated_db) -> None:
+    alert_ids = ["batch-outbox-alert-one", "batch-outbox-alert-two"]
+    connection = get_db_connection()
+    try:
+        _insert_alert_events(connection, alert_ids)
+        deliveries = [
+            (
+                "batch-outbox:workspace:one",
+                "workspace",
+                {
+                    "alert_id": alert_ids[0],
+                    "severity": "critical",
+                    "title": "First value wins",
+                    "webhook_url": "https://hooks.invalid/send?key=private-value",
+                    "message": "token=private-value",
+                },
+            ),
+            (
+                "batch-outbox:grafana-feishu:two",
+                "grafana_feishu",
+                {
+                    "alert_id": alert_ids[1],
+                    "severity": "warning",
+                    "destination_key": "grafana-primary",
+                    "title": "Second alert",
+                    "metadata": {"api_key": "private-value"},
+                },
+            ),
+            (
+                "batch-outbox:workspace:one",
+                "workspace",
+                {"alert_id": alert_ids[0], "title": "Duplicate must not replace first"},
+            ),
+        ]
+
+        outbox.enqueue_alert_deliveries(deliveries, connection=connection)
+        outbox.enqueue_alert_deliveries(
+            [
+                (key, channel, {**payload, "title": "Retry must not replace first"})
+                for key, channel, payload in deliveries[:2]
+            ],
+            connection=connection,
+        )
+
+        stored = connection.execute(
+            """
+            SELECT delivery_key, channel, payload, priority, destination_key
+              FROM alert_delivery_outbox
+             WHERE delivery_key IN (?, ?)
+             ORDER BY delivery_key
+            """,
+            (deliveries[0][0], deliveries[1][0]),
+        ).fetchall()
+        by_key = {row["delivery_key"]: dict(row) for row in stored}
+        first = by_key[deliveries[0][0]]
+        assert first["payload"]["title"] == "First value wins"
+        assert first["payload"]["webhook_url"] == "[REDACTED]"
+        assert "private-value" not in str(first["payload"])
+        assert first["priority"] == "critical"
+        second = by_key[deliveries[1][0]]
+        assert second["channel"] == "grafana_feishu"
+        assert second["destination_key"] == "grafana-primary"
+        assert second["payload"]["metadata"]["api_key"] == "[REDACTED]"
+        assert second["priority"] == "normal"
+
+        activities = connection.execute(
+            """
+            SELECT alert_id, event_type, metadata_json
+              FROM alert_activity
+             WHERE alert_id IN (?, ?) AND event_type = 'NOTIFICATION_QUEUED'
+            """,
+            alert_ids,
+        ).fetchall()
+        assert len(activities) == 2
+        activity_by_alert = {row["alert_id"]: row for row in activities}
+        assert json.loads(activity_by_alert[alert_ids[0]]["metadata_json"])["channel"] == "workspace"
+        assert json.loads(activity_by_alert[alert_ids[1]]["metadata_json"])["destination_key"] == "grafana-primary"
+    finally:
+        connection.close()
+
+
+def test_enqueue_alert_deliveries_rejects_email_before_writing(isolated_db) -> None:
+    connection = get_db_connection()
+    recording_connection = _RecordingConnection(connection)
+    try:
+        with pytest.raises(ValueError, match="email deliveries must use enqueue_alert_delivery"):
+            outbox.enqueue_alert_deliveries(
+                [
+                    ("email-batch:valid", "workspace", {"title": "Would be valid"}),
+                    ("email-batch:email", "email", {"title": "Requires profile fan-out"}),
+                ],
+                connection=recording_connection,
+            )
+        assert recording_connection.execute_calls == []
+        assert recording_connection.commit_count == 0
+        assert recording_connection.rollback_count == 0
+        assert recording_connection.close_count == 0
+    finally:
+        connection.close()
+
+
+def test_enqueue_alert_deliveries_remains_inside_callers_transaction(isolated_db) -> None:
+    alert_id = "batch-outbox-rollback-alert"
+    connection = get_db_connection()
+    try:
+        _insert_alert_events(connection, [alert_id])
+        connection.commit()
+        outbox.enqueue_alert_deliveries(
+            [
+                (
+                    "batch-outbox:rollback",
+                    "workspace",
+                    {"alert_id": alert_id, "title": "Rolled back with caller transaction"},
+                ),
+            ],
+            connection=connection,
+        )
+        connection.rollback()
+    finally:
+        connection.close()
+
+    check = get_db_connection()
+    try:
+        assert check.execute(
+            "SELECT 1 FROM alert_delivery_outbox WHERE delivery_key = ?",
+            ("batch-outbox:rollback",),
+        ).fetchone() is None
+        assert check.execute(
+            "SELECT 1 FROM alert_activity WHERE alert_id = ? AND event_type = 'NOTIFICATION_QUEUED'",
+            (alert_id,),
+        ).fetchone() is None
+    finally:
+        check.close()
+
+
+def test_enqueue_alert_deliveries_uses_bounded_sql_batches_for_500_rows(isolated_db) -> None:
+    alert_ids = [f"batch-outbox-500-alert-{index}" for index in range(500)]
+    seed_connection = get_db_connection()
+    try:
+        _insert_alert_events(seed_connection, alert_ids)
+        seed_connection.commit()
+    finally:
+        seed_connection.close()
+
+    connection = get_db_connection()
+    recording_connection = _RecordingConnection(connection)
+    deliveries = [
+        (
+            f"batch-outbox-500:{index}",
+            "workspace" if index % 2 == 0 else "grafana_feishu",
+            {"alert_id": alert_ids[index], "severity": "warning", "title": f"Alert {index}"},
+        )
+        for index in range(500)
+    ]
+    try:
+        outbox.enqueue_alert_deliveries(deliveries, connection=recording_connection)
+
+        outbox_calls = [
+            call for call in recording_connection.execute_calls
+            if "INSERT INTO alert_delivery_outbox" in call[0]
+        ]
+        activity_calls = [
+            call for call in recording_connection.execute_calls
+            if "INSERT INTO alert_activity" in call[0]
+        ]
+        assert len(outbox_calls) == 1
+        assert len(activity_calls) == 1
+        assert len(outbox_calls[0][1]) // 9 == 500
+        assert len(activity_calls[0][1]) // 3 == 500
+        assert recording_connection.commit_count == 0
+        assert recording_connection.rollback_count == 0
+        assert recording_connection.close_count == 0
+
+        # Prove the borrowed connection remains usable and the caller retains
+        # control over committing the enclosing event transaction.
+        assert recording_connection.execute(
+            "SELECT COUNT(*) AS count FROM alert_delivery_outbox WHERE delivery_key LIKE ?",
+            ("batch-outbox-500:%",),
+        ).fetchone()["count"] == 500
+        connection.commit()
+    finally:
+        connection.close()
 
 
 def test_workspace_delivery_is_scoped_to_payload_tenant(isolated_db, monkeypatch) -> None:

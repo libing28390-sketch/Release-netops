@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from backend.tests.pg_test_utils import postgresql_test_driver
 from database.migrations.m0061_monitoring_incidents import upgrade
 from database.migrations.m0062_monitoring_incident_timeline import upgrade as upgrade_timeline
@@ -342,6 +344,79 @@ def test_sync_incidents_bulk_noop_is_stable_and_root_recovers_after_alert_resolu
             ).fetchall()
         }
         assert recovered_root_flags == {"a-000": 1, critical_alert_id: 0}
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("group_count", [500, 1000, 5000])
+def test_sync_incidents_batches_unique_group_projection_and_open_timeline(group_count: int) -> None:
+    conn = _connection()
+    try:
+        first_seen = datetime(2026, 8, 2, 1, 0, tzinfo=timezone.utc)
+        conn.executemany(
+            """
+            INSERT INTO alert_events
+                (id, dedupe_key, source, severity, title, message, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    f"batch-alert-{index:05d}",
+                    f"metric-alert:{index:05d}",
+                    "network_monitor",
+                    "warning",
+                    f"Metric alert {index}",
+                    "Synthetic isolated integration fixture",
+                    (first_seen + timedelta(seconds=index)).isoformat(),
+                )
+                for index in range(group_count)
+            ],
+        )
+
+        executed_statements: list[tuple[str, tuple[object, ...]]] = []
+        original_execute = conn.execute
+
+        def record_execute(statement: str, parameters=None):
+            executed_statements.append((statement, tuple(parameters or ())))
+            return original_execute(statement, parameters)
+
+        conn.execute = record_execute
+        expected_batches = (group_count + 499) // 500
+
+        assert sync_incidents(conn, return_incidents=False) is None
+        upsert_batches = [
+            parameters
+            for statement, parameters in executed_statements
+            if "INSERT INTO monitoring_incidents" in statement
+        ]
+        timeline_batches = [
+            parameters
+            for statement, parameters in executed_statements
+            if "INSERT INTO monitoring_incident_timeline" in statement
+        ]
+        assert len(upsert_batches) == expected_batches
+        assert sorted(len(parameters) // 14 for parameters in upsert_batches) == sorted(
+            [500] * (group_count // 500)
+            + ([group_count % 500] if group_count % 500 else [])
+        )
+        assert len(timeline_batches) == expected_batches
+        assert sorted(len(parameters) // 7 for parameters in timeline_batches) == sorted(
+            [500] * (group_count // 500)
+            + ([group_count % 500] if group_count % 500 else [])
+        )
+        assert conn.execute("SELECT COUNT(*) FROM monitoring_incidents").fetchone()[0] == group_count
+        assert conn.execute(
+            "SELECT COUNT(*) FROM monitoring_incident_timeline WHERE event_type = 'incident_opened'"
+        ).fetchone()[0] == group_count
+
+        assert sync_incidents(conn, return_incidents=False) is None
+        assert sum(
+            "INSERT INTO monitoring_incident_timeline" in statement
+            for statement, _parameters in executed_statements
+        ) == expected_batches
+        assert conn.execute(
+            "SELECT COUNT(*) FROM monitoring_incident_timeline WHERE event_type = 'incident_opened'"
+        ).fetchone()[0] == group_count
     finally:
         conn.close()
 

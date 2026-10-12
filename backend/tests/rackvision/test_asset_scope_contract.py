@@ -96,6 +96,10 @@ def test_asset_reads_are_site_scoped_and_secrets_are_not_projected(isolated_db, 
             (standalone_network_asset["id"],),
         )
         conn.execute(
+            "UPDATE physical_assets SET lifecycle_status = 'production' WHERE id IN (?, ?)",
+            (visible["id"], standalone_network_asset["id"]),
+        )
+        conn.execute(
             "DELETE FROM devices WHERE asset_id = ?",
             (standalone_network_asset["id"],),
         )
@@ -107,6 +111,10 @@ def test_asset_reads_are_site_scoped_and_secrets_are_not_projected(isolated_db, 
             """UPDATE devices SET status = 'offline', platform = 'huawei_vrp', tenant_id = ?
                WHERE asset_id = ?""",
             (tenant_a, visible["id"]),
+        )
+        conn.execute(
+            "UPDATE devices SET lifecycle_status = 'production' WHERE asset_id = ?",
+            (visible["id"],),
         )
         user = make_user("asset-scope-operator", role="Operator")
         conn.execute(
@@ -158,11 +166,20 @@ def test_asset_reads_are_site_scoped_and_secrets_are_not_projected(isolated_db, 
     assert summary.json()["total"] == 2
     assert summary.json()["by_type"] == {"server": 1, "network_device": 1}
     assert summary.json()["by_online_status"] == {"offline": 1, "online": 1}
+    assert summary.json()["by_severity"] == {"critical": 1, "major": 0, "warning": 0, "healthy": 1}
     expected_platform_counts = {}
     for item in (visible_item, standalone_item):
         platform = item["platform"] or "unknown"
         expected_platform_counts[platform] = expected_platform_counts.get(platform, 0) + 1
     assert summary.json()["by_platform"] == expected_platform_counts
+
+    critical_page = _request("GET", "/api/assets?severity=critical&page=1&page_size=1", headers=headers)
+    assert critical_page.status_code == 200, critical_page.text
+    assert critical_page.json()["total"] == 1
+    assert [item["id"] for item in critical_page.json()["items"]] == [visible["id"]]
+
+    invalid_severity = _request("GET", "/api/assets?severity=urgent", headers=headers)
+    assert invalid_severity.status_code == 422, invalid_severity.text
 
     tree = _request("GET", "/api/assets/tree", headers=headers)
     assert tree.status_code == 200, tree.text

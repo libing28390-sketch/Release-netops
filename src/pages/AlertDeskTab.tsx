@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Activity, AlertTriangle, Bell, CheckCircle2, CheckSquare, Clock, Eye, ExternalLink, MapPin, Network, RefreshCw, Repeat, Search, Square, UserCheck, Wrench, X } from 'lucide-react';
 import type { AlertDetailResponse, AlertListResponse, AlertRecord } from '../types';
@@ -78,6 +78,9 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
   const [statusFilter, setStatusFilter] = useState('open');
   const [severityFilter, setSeverityFilter] = useState('all');
   const [search, setSearch] = useState('');
+  const [appliedSearch, setAppliedSearch] = useState('');
+  const alertsRequestSequence = useRef(0);
+  const alertsRequestController = useRef<AbortController | null>(null);
   const [selectedAlertId, setSelectedAlertId] = useState<string | null>(null);
   const [selectedDetail, setSelectedDetail] = useState<AlertDetailResponse | null>(null);
   const [activity, setActivity] = useState<AlertActivityItem[]>([]);
@@ -99,13 +102,23 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
 
   useEffect(() => saveAlertDeskColumnVisibility(alertColumns), [alertColumns]);
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => setAppliedSearch(search), 250);
+    return () => window.clearTimeout(timer);
+  }, [search]);
+
+  useEffect(() => () => {
+    alertsRequestSequence.current += 1;
+    alertsRequestController.current?.abort();
+  }, []);
+
   const exportAllAlerts = async (): Promise<TableExportData> => {
     const params = new URLSearchParams({
       status: statusFilter,
       severity: severityFilter,
       site: 'all',
       assignee: 'all',
-      search,
+      search: appliedSearch,
     });
     const [items, sites] = await Promise.all([
       fetchAllPaginatedItems<AlertRecord>('/api/alerts', params, 100),
@@ -127,9 +140,14 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
   };
 
   const loadAlerts = async () => {
+    alertsRequestController.current?.abort();
+    const controller = new AbortController();
+    alertsRequestController.current = controller;
+    const requestSequence = ++alertsRequestSequence.current;
     setLoading(true);
     try {
       if (!localStorage.getItem('netops_token')) {
+        if (requestSequence !== alertsRequestSequence.current) return;
         setRows([]);
         setTotal(0);
         setStatusCounts({});
@@ -143,11 +161,15 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
         severity: severityFilter,
         site: 'all',
         assignee: 'all',
-        search,
+        search: appliedSearch,
       });
-      const resp = await fetch(`/api/alerts?${params.toString()}`, { headers: authHeaders() });
+      const resp = await fetch(`/api/alerts?${params.toString()}`, {
+        headers: authHeaders(),
+        signal: controller.signal,
+      });
       if (!resp.ok) throw new Error('Failed to load alerts');
       const data: AlertListResponse = await resp.json();
+      if (requestSequence !== alertsRequestSequence.current) return;
       const items = data.items || [];
       setRows(items);
       setTotal(data.total && data.total > 0 ? data.total : items.length);
@@ -158,10 +180,14 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
         setSelectedDetail(null);
       }
     } catch (error) {
+      if (controller.signal.aborted || requestSequence !== alertsRequestSequence.current) return;
       console.error(error);
       showToast(language === 'zh' ? '加载告警列表失败' : 'Failed to load alerts', 'error');
     } finally {
-      setLoading(false);
+      if (requestSequence === alertsRequestSequence.current) {
+        alertsRequestController.current = null;
+        setLoading(false);
+      }
     }
   };
 
@@ -184,7 +210,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
 
   useEffect(() => {
     void loadAlerts();
-  }, [page, pageSize, search, severityFilter, statusFilter]);
+  }, [page, pageSize, appliedSearch, severityFilter, statusFilter]);
 
   useEffect(() => {
     if (!selectedAlertId) return;
@@ -201,7 +227,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
     if (!autoRefresh) return;
     const timer = setInterval(() => { void loadAlerts(); }, 30000);
     return () => clearInterval(timer);
-  }, [autoRefresh, page, pageSize, search, severityFilter, statusFilter]);
+  }, [autoRefresh, page, pageSize, appliedSearch, severityFilter, statusFilter]);
 
   const closeDetail = () => {
     setSelectedAlertId(null);
@@ -407,6 +433,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
           <label className="alert-management-search relative">
             <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/40" />
             <input type="search"
+              aria-label={language === 'zh' ? '搜索告警标题、设备、接口或 IP' : 'Search alert title, device, interface, or IP'}
               value={search}
               onChange={(e) => {
                 setPage(1);
@@ -507,7 +534,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
               </tr>
             </thead>
             <tbody>
-              {loading ? (
+              {loading && rows.length === 0 ? (
                 <tr>
                   <td colSpan={visibleExportHeaders.length + 2} className="px-5 py-12 text-center text-sm text-black/40">
                     {language === 'zh' ? '正在加载告警...' : 'Loading alerts...'}

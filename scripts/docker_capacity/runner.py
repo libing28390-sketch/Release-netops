@@ -79,6 +79,11 @@ CREDENTIAL_FIELDS = (
 )
 
 TARGET_FIELDS = tuple(SUPPORTED_SERVICES)
+ALERT_STORM_SERVICE = "alert-storm"
+VIRTUAL_SERVICES = frozenset({ALERT_STORM_SERVICE})
+ALERT_STORM_AUXILIARY_SERVICES = frozenset({
+    "alert-redis", "alert-notify-critical", "alert-notify-normal", "alert-notify-relay",
+})
 RUN_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 SAFE_DB_NAME_RE = re.compile(r"^nexora_capacity_[0-9a-f]{32}$")
 SAFE_BUCKET_RE = re.compile(r"^nexora-capacity-[0-9a-f]{32}$")
@@ -122,6 +127,7 @@ class ValidatedConfig:
     snmp_ports: tuple[int, ...]
     snmp_auth: str
     snmp_module: str
+    alert_count: int
 
     def redacted(self) -> dict[str, Any]:
         """Return the subset safe to include in a result document."""
@@ -140,6 +146,7 @@ class ValidatedConfig:
             "snmp_ports": list(self.snmp_ports),
             "snmp_auth": self.snmp_auth,
             "snmp_module": self.snmp_module,
+            "alert_count": self.alert_count,
         }
 
 
@@ -175,7 +182,7 @@ def validate_config(config: Mapping[str, Any]) -> ValidatedConfig:
         raise CapacityError("invalid_config", "services must be a non-empty list")
     services: list[str] = []
     for service in services_value:
-        if not isinstance(service, str) or service not in SUPPORTED_SERVICES:
+        if not isinstance(service, str) or service not in (*SUPPORTED_SERVICES, *VIRTUAL_SERVICES):
             raise CapacityError("invalid_config", "services contains an unsupported service")
         if service in services:
             raise CapacityError("invalid_config", "services must not contain duplicates")
@@ -186,13 +193,17 @@ def validate_config(config: Mapping[str, Any]) -> ValidatedConfig:
         raise CapacityError("invalid_config", "available_services must be a non-empty list")
     available_services: list[str] = []
     for service in available_value:
-        if not isinstance(service, str) or service not in SUPPORTED_SERVICES:
+        if not isinstance(service, str) or service not in (
+            *SUPPORTED_SERVICES, *VIRTUAL_SERVICES, *ALERT_STORM_AUXILIARY_SERVICES,
+        ):
             raise CapacityError("invalid_config", "available_services contains an unsupported service")
         if service in available_services:
             raise CapacityError("invalid_config", "available_services must not contain duplicates")
         available_services.append(service)
     if not set(services).issubset(set(available_services)):
         raise CapacityError("invalid_config", "services must be included in available_services")
+    if ALERT_STORM_SERVICE in services and "netops" not in services:
+        raise CapacityError("invalid_config", "alert-storm requires the isolated NetOps service")
 
     duration_seconds = _as_float(config.get("duration_seconds", 120), "duration_seconds", maximum=86_400)
     rps = _as_float(config.get("rps", 20), "rps", maximum=100_000)
@@ -250,6 +261,9 @@ def validate_config(config: Mapping[str, Any]) -> ValidatedConfig:
     snmp_module = config.get("snmp_module", "capacity_ifmib")
     if not isinstance(snmp_auth, str) or not snmp_auth or not isinstance(snmp_module, str) or not snmp_module:
         raise CapacityError("invalid_config", "snmp_auth and snmp_module must be non-empty strings")
+    alert_count = _as_int(config.get("alert_count", 0), "alert_count", minimum=0, maximum=5000)
+    if alert_count and ALERT_STORM_SERVICE not in services:
+        raise CapacityError("invalid_config", "alert_count requires alert-storm mode")
 
     return ValidatedConfig(
         raw=config,
@@ -268,6 +282,7 @@ def validate_config(config: Mapping[str, Any]) -> ValidatedConfig:
         snmp_ports=ports,
         snmp_auth=snmp_auth,
         snmp_module=snmp_module,
+        alert_count=alert_count,
     )
 
 
@@ -645,6 +660,47 @@ class NetopsScenario(HttpScenario):
         )
 
 
+class AlertStormScenario(HttpScenario):
+    """Read the real alerts desk APIs against run-scoped synthetic alert rows."""
+
+    name = ALERT_STORM_SERVICE
+
+    def prepare_worker(self) -> dict[str, Any]:
+        return {
+            "token": self.context.token,
+            "client": HttpClient(timeout=self.cfg.timeout_seconds, verify_tls=not self.cfg.insecure_tls),
+        }
+
+    def close_worker(self, worker: Any) -> None:
+        if isinstance(worker, Mapping):
+            client = worker.get("client")
+            if client is not None:
+                client.close()
+
+    def request(self, worker: Mapping[str, Any], *, check: bool = False) -> ScenarioOutcome:
+        token = worker.get("token")
+        use_summary = not check and random.random() < 0.25
+        path = "/api/alerts/summary" if use_summary else "/api/alerts?status=all_active&page=1&page_size=100"
+
+        def semantic(response: HttpResponse) -> None:
+            value = _json_body(response, require_object=True)
+            if use_summary:
+                count = value.get("open_count")
+            else:
+                count = value.get("total")
+            if isinstance(count, bool) or not isinstance(count, int) or count != self.cfg.alert_count:
+                raise CapacityError("alert_dataset_mismatch", "isolated alert count did not match the stage")
+
+        return self._request(
+            "GET",
+            _join_url(self.cfg.targets["netops"], path),
+            client=worker.get("client"),
+            headers={"Accept": "application/json", **_bearer(token)},
+            allowed=(200,),
+            semantic=semantic,
+        )
+
+
 class NginxScenario(HttpScenario):
     name = "nginx"
 
@@ -922,6 +978,7 @@ class SeaweedScenario(Scenario):
 
 SCENARIO_TYPES: dict[str, type[Scenario]] = {
     "netops": NetopsScenario,
+    ALERT_STORM_SERVICE: AlertStormScenario,
     "nginx": NginxScenario,
     "db": DbScenario,
     "redis": RedisScenario,
@@ -1700,6 +1757,221 @@ class ScenarioExecutor:
         return self.stats
 
 
+def _alert_storm_prefix(cfg: ValidatedConfig) -> str:
+    return f"capacity-alert:{cfg.run_id}:"
+
+
+def _seed_alert_storm(cfg: ValidatedConfig) -> dict[str, Any]:
+    """Replace only this run's synthetic alert/outbox rows in its guarded test DB."""
+    if ALERT_STORM_SERVICE not in cfg.services or cfg.alert_count < 1:
+        raise CapacityError("invalid_alert_storm_stage", "alert-storm and a positive alert_count are required")
+    prefix = _alert_storm_prefix(cfg)
+    event_prefix = f"capacity_alert:{cfg.run_id}:"
+    connection = _connect_pg(cfg)
+    try:
+        cursor = connection.cursor()
+        try:
+            cursor.execute(
+                "DELETE FROM alert_activity WHERE alert_id IN "
+                "(SELECT id FROM alert_events WHERE LEFT(dedupe_key, LENGTH(%s::text)) = %s)",
+                (event_prefix, event_prefix),
+            )
+            cursor.execute(
+                "DELETE FROM alert_delivery_attempts WHERE delivery_id IN "
+                "(SELECT id FROM alert_delivery_outbox WHERE delivery_key LIKE %s)",
+                (prefix + "%",),
+            )
+            cursor.execute("DELETE FROM alert_delivery_outbox WHERE delivery_key LIKE %s", (prefix + "%",))
+            cursor.execute(
+                "DELETE FROM alert_events WHERE LEFT(dedupe_key, LENGTH(%s::text)) = %s",
+                (event_prefix, event_prefix),
+            )
+
+            created_at = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+            events: list[tuple[Any, ...]] = []
+            outbox: list[tuple[Any, ...]] = []
+            activity: list[tuple[Any, ...]] = []
+            for index in range(cfg.alert_count):
+                alert_id = f"capacity-alert-{cfg.run_id[:12]}-{cfg.alert_count}-{index:05d}"
+                event_key = f"capacity_alert:{cfg.run_id}:{cfg.alert_count}:{index:05d}"
+                severity = "critical" if index % 4 == 0 else "warning"
+                title = f"Synthetic capacity alert {index:05d}"
+                message = f"Isolated alert stress run {cfg.run_id[:8]}, item {index:05d}"
+                delivery_id = f"capacity-delivery-{cfg.run_id[:12]}-{cfg.alert_count}-{index:05d}"
+                delivery_key = prefix + f"{cfg.alert_count}:{index:05d}"
+                payload = json.dumps({
+                    "alert_id": alert_id,
+                    "tenant_id": "tenant-default",
+                    "event_kind": "active",
+                    "severity": severity,
+                    "title": title,
+                    "message": message,
+                    "synthetic_capacity_run": cfg.run_id,
+                }, ensure_ascii=False, allow_nan=False)
+                events.append((alert_id, event_key, "capacity_stress", severity, title, message,
+                               None, None, created_at, None, "open", None, None, None, "", created_at))
+                outbox.append((delivery_id, delivery_key, payload, alert_id,
+                               "critical" if severity == "critical" else "normal"))
+                activity_metadata = json.dumps({
+                    "channel": "workspace",
+                    "status": "pending",
+                    "synthetic_capacity_run": cfg.run_id,
+                }, ensure_ascii=False, allow_nan=False)
+                activity.append((f"capacity-alert-activity-{cfg.run_id[:8]}-{cfg.alert_count}-{index:05d}", alert_id,
+                                  "NOTIFICATION_QUEUED", None, "queued", activity_metadata, created_at))
+
+            _insert_rows(
+                connection,
+                "alert_events",
+                ["id", "dedupe_key", "source", "severity", "title", "message", "device_id",
+                 "interface_name", "created_at", "resolved_at", "workflow_status", "assignee",
+                 "ack_by", "ack_at", "note", "updated_at"],
+                events,
+                page_size=250,
+            )
+            cursor.execute("SAVEPOINT capacity_outbox_seed")
+            try:
+                statement = (
+                    "INSERT INTO alert_delivery_outbox "
+                    "(id, delivery_key, channel, payload, alert_id, tenant_id, event_kind, destination_key, priority) "
+                    "VALUES (%s, %s, 'workspace', %s::jsonb, %s, 'tenant-default', 'active', 'workspace', %s)"
+                )
+                for offset in range(0, len(outbox), 250):
+                    cursor.executemany(statement, outbox[offset:offset + 250])
+                activity_statement = (
+                    "INSERT INTO alert_activity "
+                    "(id, alert_id, event_type, actor_id, note, metadata_json, created_at) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s)"
+                )
+                for offset in range(0, len(activity), 250):
+                    cursor.executemany(activity_statement, activity[offset:offset + 250])
+            except Exception:
+                cursor.execute("ROLLBACK TO SAVEPOINT capacity_outbox_seed")
+                raise
+            connection.commit()
+        finally:
+            cursor.close()
+        return {"alerts_seeded": cfg.alert_count, "outbox_seeded": cfg.alert_count,
+                "run_prefix": prefix, "channels": ["workspace"], "external_notifications": False}
+    except CapacityError:
+        with contextlib.suppress(Exception):
+            connection.rollback()
+        raise
+    except Exception as exc:
+        with contextlib.suppress(Exception):
+            connection.rollback()
+        raise _redact_exception(exc, "alert_storm_seed_failed") from None
+    finally:
+        connection.close()
+
+
+def _alert_outbox_snapshot(cfg: ValidatedConfig) -> dict[str, Any]:
+    connection = _connect_pg(cfg)
+    try:
+        cursor = connection.cursor()
+        try:
+            cursor.execute(
+                "SELECT COUNT(*) AS total, "
+                "COUNT(*) FILTER (WHERE status='pending') AS pending, "
+                "COUNT(*) FILTER (WHERE status='processing') AS processing, "
+                "COUNT(*) FILTER (WHERE status='succeeded') AS succeeded, "
+                "COUNT(*) FILTER (WHERE status='failed') AS failed, "
+                "COALESCE(EXTRACT(EPOCH FROM clock_timestamp()-MIN(created_at)), 0) AS batch_age_seconds, "
+                "COALESCE(MAX(EXTRACT(EPOCH FROM clock_timestamp()-created_at)) "
+                "FILTER (WHERE status IN ('pending','processing')), 0) AS oldest_active_age_seconds "
+                "FROM alert_delivery_outbox WHERE delivery_key LIKE %s",
+                (_alert_storm_prefix(cfg) + "%",),
+            )
+            row = cursor.fetchone()
+            if not row:
+                raise CapacityError("alert_queue_snapshot_missing", "outbox snapshot was unavailable")
+            column_names = [str(item[0]) for item in cursor.description]
+            values = dict(zip(column_names, row))
+            float_fields = {"oldest_active_age_seconds", "batch_age_seconds"}
+            return {key: (float(value) if key in float_fields else int(value))
+                    for key, value in values.items()}
+        finally:
+            cursor.close()
+    except CapacityError:
+        raise
+    except Exception as exc:
+        raise _redact_exception(exc, "alert_queue_snapshot_failed") from None
+    finally:
+        connection.close()
+
+
+def alert_storm(cfg: ValidatedConfig) -> dict[str, Any]:
+    """Read a pre-seeded synthetic alert batch and drain its isolated Celery outbox."""
+    started_at = time.monotonic()
+    snapshot = _alert_outbox_snapshot(cfg)
+    if (snapshot["total"] != cfg.alert_count
+            or snapshot["pending"] + snapshot["processing"] + snapshot["succeeded"] + snapshot["failed"] != cfg.alert_count):
+        raise CapacityError("alert_dataset_mismatch", "isolated alert outbox does not match the requested stage")
+    queue_state: dict[str, Any] = {"snapshot": snapshot, "drained_seconds": None, "error": None}
+    queue_stop = threading.Event()
+
+    def watch_outbox() -> None:
+        while not queue_stop.is_set():
+            try:
+                current = _alert_outbox_snapshot(cfg)
+                queue_state["snapshot"] = current
+                if current["pending"] + current["processing"] == 0:
+                    if queue_state["drained_seconds"] is None:
+                        queue_state["drained_seconds"] = round(current["batch_age_seconds"], 3)
+            except Exception as exc:
+                queue_state["error"] = getattr(exc, "code", "alert_queue_snapshot_failed")
+                return
+            queue_stop.wait(2.0)
+
+    monitor = threading.Thread(target=watch_outbox, name="alert-storm-outbox-monitor", daemon=True)
+    monitor.start()
+    context = _make_context(cfg)
+    scenario = AlertStormScenario(cfg, context)
+    stats = ScenarioExecutor(
+        scenario,
+        duration=cfg.duration_seconds,
+        rps=cfg.rps,
+        concurrency=min(max(1, cfg.concurrency), 4),
+        timeout=cfg.timeout_seconds,
+    ).run()
+    deadline = time.monotonic() + 60.0
+    while (queue_state["drained_seconds"] is None and queue_state["error"] is None
+           and time.monotonic() < deadline):
+        time.sleep(0.25)
+    queue_stop.set()
+    monitor.join(timeout=3)
+    final_snapshot = _alert_outbox_snapshot(cfg)
+    scenario_result = _scenario_result(scenario.name, stats)
+    passed = (
+        scenario_result["status"] == "passed"
+        and final_snapshot["total"] == cfg.alert_count
+        and final_snapshot["succeeded"] == cfg.alert_count
+        and final_snapshot["pending"] == 0
+        and final_snapshot["processing"] == 0
+        and final_snapshot["failed"] == 0
+        and queue_state["error"] is None
+        and queue_state["drained_seconds"] is not None
+    )
+    return {
+        "status": "passed" if passed else "failed",
+        "command": ALERT_STORM_SERVICE,
+        "run_id": cfg.run_id,
+        "dataset": {"alerts": cfg.alert_count, "workspace_outbox_tasks": cfg.alert_count},
+        "api": scenario_result,
+        "outbox": {**final_snapshot, "drained_seconds": queue_state["drained_seconds"],
+                   "monitor_error": queue_state["error"]},
+        "external_notifications": False,
+        "delivery_semantics": "workspace notifications are disabled; succeeded means the isolated task completed without provider I/O",
+        "elapsed_seconds": round(time.monotonic() - started_at, 3),
+    }
+
+
+def seed_alert_storm(cfg: ValidatedConfig) -> dict[str, Any]:
+    """Create only run-scoped workspace outbox rows in the isolated test DB."""
+    return {"status": "passed", "command": "seed-alert-storm", "run_id": cfg.run_id,
+            "seed": _seed_alert_storm(cfg)}
+
+
 def _single_check(scenario: Scenario, *, retry_deadline: Optional[float] = None) -> tuple[dict[str, Any], ScenarioOutcome]:
     """Run one real request, recreating its client between transient attempts."""
 
@@ -1942,7 +2214,7 @@ def _safe_failure_location(exc: BaseException) -> dict[str, Any]:
 
 def main(argv: Optional[list[str]] = None) -> int:
     command = (argv or sys.argv[1:])
-    if len(command) != 1 or command[0] not in {"prepare", "check", "run"}:
+    if len(command) != 1 or command[0] not in {"prepare", "check", "run", "seed-alert-storm", "alert-storm"}:
         _emit({"status": "failed", "command": command[0] if command else "", "error": "invalid_command"})
         return 2
     try:
@@ -1951,6 +2223,10 @@ def main(argv: Optional[list[str]] = None) -> int:
             result = prepare(cfg)
         elif command[0] == "check":
             result = check(cfg)
+        elif command[0] == "alert-storm":
+            result = alert_storm(cfg)
+        elif command[0] == "seed-alert-storm":
+            result = seed_alert_storm(cfg)
         else:
             result = run(cfg)
         _emit(result)

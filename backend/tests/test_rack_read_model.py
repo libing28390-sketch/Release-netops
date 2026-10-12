@@ -228,7 +228,11 @@ def test_health_loader_applies_rack_scope(isolated_db, monkeypatch: pytest.Monke
     _insert_device(conn, device_b, asset_b, 'online')
     _insert_rack_device(conn, _new_id('rd'), rack_a, seed['dt_one'], 1, asset_id=asset_a)
     _insert_rack_device(conn, _new_id('rd'), rack_b, seed['dt_one'], 1, asset_id=asset_b)
-    monkeypatch.setattr(device_health_service, 'fetch_interface_data', lambda _conn, _device_id: [])
+    monkeypatch.setattr(
+        device_health_service,
+        'fetch_interface_data_for_devices',
+        lambda _conn, device_ids: {device_id: [] for device_id in device_ids},
+    )
 
     rows = device_health_service.load_devices_for_health(conn, rack_id=rack_a)
     assert [row['id'] for row in rows] == [device_a]

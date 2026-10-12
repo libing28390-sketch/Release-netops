@@ -50,12 +50,13 @@ def test_fast_loop_collection_status_write_runs_off_event_loop(monkeypatch):
         lambda *_args, **_kwargs: persistence_thread_ids.append(threading.get_ident()),
     )
 
-    asyncio.run(background_monitor_service.process_device_fast({
+    reachable = asyncio.run(background_monitor_service.process_device_fast({
         "id": "fast-loop-thread-test",
         "ip_address": "192.0.2.1",
         "status": "online",
     }))
 
+    assert reachable is True
     assert persistence_thread_ids
     assert persistence_thread_ids[0] != loop_thread_id
 
@@ -63,17 +64,34 @@ def test_fast_loop_collection_status_write_runs_off_event_loop(monkeypatch):
 def test_offline_fast_probe_uses_bounded_recheck_interval():
     orchestrator = TelemetryOrchestrator()
     orchestrator._offline_fast_probe_next_at = {}
+    orchestrator._offline_fast_probe_failures = {}
     device = {"id": "offline-device", "status": "offline"}
 
     assert orchestrator._should_probe_fast_device(device, now_monotonic=100)
-    orchestrator._record_fast_probe_completed("offline-device", now_monotonic=100)
+    orchestrator._record_fast_probe_completed("offline-device", reachable=False, now_monotonic=100)
     assert not orchestrator._should_probe_fast_device(device, now_monotonic=115)
     assert not orchestrator._should_probe_fast_device(device, now_monotonic=159.9)
     assert orchestrator._should_probe_fast_device(device, now_monotonic=160)
+    orchestrator._record_fast_probe_completed("offline-device", reachable=False, now_monotonic=160)
+    assert not orchestrator._should_probe_fast_device(device, now_monotonic=279.9)
+    assert orchestrator._should_probe_fast_device(device, now_monotonic=280)
+    orchestrator._record_fast_probe_completed("offline-device", reachable=False, now_monotonic=280)
+    assert not orchestrator._should_probe_fast_device(device, now_monotonic=519.9)
+    assert orchestrator._should_probe_fast_device(device, now_monotonic=520)
+    orchestrator._record_fast_probe_completed("offline-device", reachable=False, now_monotonic=520)
+    assert not orchestrator._should_probe_fast_device(device, now_monotonic=819.9)
+    assert orchestrator._should_probe_fast_device(device, now_monotonic=820)
 
     online_device = {"id": "offline-device", "status": "online"}
     assert orchestrator._should_probe_fast_device(online_device, now_monotonic=116)
     assert "offline-device" not in orchestrator._offline_fast_probe_next_at
+    assert "offline-device" not in orchestrator._offline_fast_probe_failures
+
+    orchestrator._record_fast_probe_completed("offline-device", reachable=False, now_monotonic=1000)
+    assert orchestrator._offline_fast_probe_next_at["offline-device"] == 1060
+    orchestrator._record_fast_probe_completed("offline-device", reachable=True, now_monotonic=1010)
+    assert "offline-device" not in orchestrator._offline_fast_probe_next_at
+    assert "offline-device" not in orchestrator._offline_fast_probe_failures
 
 
 def test_offline_reachability_does_not_replace_native_hardware_values_with_zero(monkeypatch):
@@ -96,12 +114,13 @@ def test_offline_reachability_does_not_replace_native_hardware_values_with_zero(
     monkeypatch.setattr(background_monitor_service, "_schedule_monitoring_target_sync", lambda *_args: None)
     monkeypatch.setattr(background_monitor_service, "record_collection_result", lambda *_args, **_kwargs: None)
 
-    asyncio.run(background_monitor_service.process_device_fast({
+    reachable = asyncio.run(background_monitor_service.process_device_fast({
         "id": "offline-native-values",
         "ip_address": "192.0.2.7",
         "status": "online",
     }))
 
+    assert reachable is False
     offline_update = next(sql for sql, _params in db_updates if "UPDATE devices" in sql)
     assert "cpu_usage" not in offline_update
     assert "memory_usage" not in offline_update

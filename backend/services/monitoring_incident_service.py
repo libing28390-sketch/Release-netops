@@ -71,6 +71,21 @@ def _append_timeline(
     )
 
 
+def _append_timeline_batch(conn, rows: list[tuple[str, str, str, str, str, str, str]]) -> None:
+    """Insert incident timeline events in bounded, atomic multi-row batches."""
+    for offset in range(0, len(rows), 500):
+        batch = rows[offset : offset + 500]
+        values_sql = ", ".join("(?, ?, ?, ?, ?, ?, ?)" for _ in batch)
+        parameters = tuple(value for row in batch for value in row)
+        conn.execute(
+            """
+            INSERT INTO monitoring_incident_timeline
+                (id, incident_id, event_type, actor, message, details_json, created_at)
+            VALUES """ + values_sql,
+            parameters,
+        )
+
+
 def append_incident_timeline(
     conn,
     incident_id_value: str,
@@ -157,6 +172,8 @@ def sync_incidents(
         groups[incident_group_key(alert)].append(alert)
 
     active_ids: list[str] = []
+    incident_rows: list[tuple[Any, ...]] = []
+    incident_open_details: dict[str, tuple[str, dict[str, Any], str]] = {}
     incident_alert_rows: list[tuple[str, str, str, int]] = []
     for group_key, alerts in groups.items():
         first_seen = str(alerts[0].get("created_at") or now)
@@ -175,74 +192,27 @@ def sync_incidents(
             title = f"{title} (+{related_count - 1} related alerts)"
         summary = str(root_alert.get("message") or title)
         site = str(primary.get("site") or "")
-        incident_row = conn.execute(
-            """
-            INSERT INTO monitoring_incidents (
-                id, incident_key, title, summary, severity, status, source,
-                root_cause_alert_id, primary_device_id, site, first_seen_at,
-                last_seen_at, impact_device_count, impact_alert_count,
-                created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, 'open', 'alert_events', ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (incident_key) DO UPDATE SET
-                title = excluded.title,
-                summary = excluded.summary,
-                severity = excluded.severity,
-                root_cause_alert_id = excluded.root_cause_alert_id,
-                primary_device_id = excluded.primary_device_id,
-                site = excluded.site,
-                last_seen_at = excluded.last_seen_at,
-                impact_device_count = excluded.impact_device_count,
-                impact_alert_count = excluded.impact_alert_count,
-                status = CASE
-                    WHEN monitoring_incidents.status IN ('acknowledged', 'investigating') THEN monitoring_incidents.status
-                    ELSE 'open'
-                END,
-                resolved_at = NULL,
-                updated_at = excluded.updated_at
-            WHERE monitoring_incidents.title IS DISTINCT FROM excluded.title
-               OR monitoring_incidents.summary IS DISTINCT FROM excluded.summary
-               OR monitoring_incidents.severity IS DISTINCT FROM excluded.severity
-               OR monitoring_incidents.root_cause_alert_id IS DISTINCT FROM excluded.root_cause_alert_id
-               OR monitoring_incidents.primary_device_id IS DISTINCT FROM excluded.primary_device_id
-               OR monitoring_incidents.site IS DISTINCT FROM excluded.site
-               OR monitoring_incidents.last_seen_at IS DISTINCT FROM excluded.last_seen_at
-               OR monitoring_incidents.impact_device_count IS DISTINCT FROM excluded.impact_device_count
-               OR monitoring_incidents.impact_alert_count IS DISTINCT FROM excluded.impact_alert_count
-               OR monitoring_incidents.status IS DISTINCT FROM CASE
-                    WHEN monitoring_incidents.status IN ('acknowledged', 'investigating')
-                        THEN monitoring_incidents.status
-                    ELSE 'open'
-               END
-               OR monitoring_incidents.resolved_at IS NOT NULL
-            RETURNING (xmax = 0) AS inserted
-            """,
-            (
-                incident_id_value,
-                incident_key,
-                title,
-                summary,
-                severity,
-                str(root_alert.get("id") or ""),
-                str(primary.get("device_id") or "") or None,
-                site,
-                first_seen,
-                last_seen,
-                len(device_ids),
-                related_count,
-                first_seen,
-                now,
-            ),
-        ).fetchone()
-        if incident_row and incident_row["inserted"]:
-            _append_timeline(
-                conn,
-                incident_id_value,
-                "incident_opened",
-                "system",
-                title,
-                {"root_alert_id": root_alert.get("id"), "alert_count": related_count, "device_count": len(device_ids)},
-                first_seen,
-            )
+        incident_rows.append((
+            incident_id_value,
+            incident_key,
+            title,
+            summary,
+            severity,
+            str(root_alert.get("id") or ""),
+            str(primary.get("device_id") or "") or None,
+            site,
+            first_seen,
+            last_seen,
+            len(device_ids),
+            related_count,
+            first_seen,
+            now,
+        ))
+        incident_open_details[incident_key] = (
+            title,
+            {"root_alert_id": root_alert.get("id"), "alert_count": related_count, "device_count": len(device_ids)},
+            first_seen,
+        )
         active_ids.append(incident_id_value)
         for alert in alerts:
             incident_alert_rows.append(
@@ -253,6 +223,74 @@ def sync_incidents(
                     1 if alert.get("id") == root_alert.get("id") else 0,
                 )
             )
+
+    incident_upsert_sql = """
+        INSERT INTO monitoring_incidents (
+            id, incident_key, title, summary, severity, status, source,
+            root_cause_alert_id, primary_device_id, site, first_seen_at,
+            last_seen_at, impact_device_count, impact_alert_count,
+            created_at, updated_at
+        ) VALUES {values_sql}
+        ON CONFLICT (incident_key) DO UPDATE SET
+            title = excluded.title,
+            summary = excluded.summary,
+            severity = excluded.severity,
+            root_cause_alert_id = excluded.root_cause_alert_id,
+            primary_device_id = excluded.primary_device_id,
+            site = excluded.site,
+            last_seen_at = excluded.last_seen_at,
+            impact_device_count = excluded.impact_device_count,
+            impact_alert_count = excluded.impact_alert_count,
+            status = CASE
+                WHEN monitoring_incidents.status IN ('acknowledged', 'investigating') THEN monitoring_incidents.status
+                ELSE 'open'
+            END,
+            resolved_at = NULL,
+            updated_at = excluded.updated_at
+        WHERE monitoring_incidents.title IS DISTINCT FROM excluded.title
+           OR monitoring_incidents.summary IS DISTINCT FROM excluded.summary
+           OR monitoring_incidents.severity IS DISTINCT FROM excluded.severity
+           OR monitoring_incidents.root_cause_alert_id IS DISTINCT FROM excluded.root_cause_alert_id
+           OR monitoring_incidents.primary_device_id IS DISTINCT FROM excluded.primary_device_id
+           OR monitoring_incidents.site IS DISTINCT FROM excluded.site
+           OR monitoring_incidents.last_seen_at IS DISTINCT FROM excluded.last_seen_at
+           OR monitoring_incidents.impact_device_count IS DISTINCT FROM excluded.impact_device_count
+           OR monitoring_incidents.impact_alert_count IS DISTINCT FROM excluded.impact_alert_count
+           OR monitoring_incidents.status IS DISTINCT FROM CASE
+                WHEN monitoring_incidents.status IN ('acknowledged', 'investigating')
+                    THEN monitoring_incidents.status
+                ELSE 'open'
+           END
+           OR monitoring_incidents.resolved_at IS NOT NULL
+        RETURNING (xmax = 0) AS inserted, incident_key, id
+    """
+    timeline_rows: list[tuple[str, str, str, str, str, str, str]] = []
+    # Fourteen bound values per incident. A 500-row chunk stays far below
+    # PostgreSQL's 65,535 bind-parameter limit.
+    for offset in range(0, len(incident_rows), 500):
+        batch = incident_rows[offset : offset + 500]
+        values_sql = ", ".join(
+            "(?, ?, ?, ?, ?, 'open', 'alert_events', ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            for _ in batch
+        )
+        parameters = tuple(value for row in batch for value in row)
+        inserted_rows = conn.execute(
+            incident_upsert_sql.format(values_sql=values_sql), parameters
+        ).fetchall()
+        for inserted in inserted_rows:
+            if not inserted["inserted"]:
+                continue
+            title, details, first_seen = incident_open_details[inserted["incident_key"]]
+            timeline_rows.append((
+                str(uuid.uuid4()),
+                str(inserted["id"]),
+                "incident_opened",
+                "system",
+                title,
+                json.dumps(details, ensure_ascii=False),
+                first_seen,
+            ))
+    _append_timeline_batch(conn, timeline_rows)
 
     # psycopg2's executemany still executes one statement per row. Keep each
     # multi-VALUES statement comfortably below PostgreSQL's bind-parameter cap.

@@ -149,6 +149,7 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
 
   const {
     inventoryRows, inventoryTotal, inventoryStatusCounts, inventoryPage, setInventoryPage,
+    inventoryHealthCounts,
     inventoryPageSize, setInventoryPageSize,
     inventorySearch, setInventorySearch,
     inventoryPlatformFilter, setInventoryPlatformFilter,
@@ -229,17 +230,9 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
   const offlineCount = inventoryStatusCounts['offline'] || 0;
   const onlineCount = inventoryStatusCounts['online'] || 0;
   
-  const warningCount = useMemo(() => {
-    return inventoryRows.filter(d => d.health_status === 'warning' || d.health_status === 'critical' || (d.open_alert_count && d.open_alert_count > 0)).length;
-  }, [inventoryRows]);
-
-  const stagingOrMaintCount = useMemo(() => {
-    return inventoryRows.filter(d => d.lifecycle_status === 'staging' || d.lifecycle_status === 'maintenance' || d.status === 'pending').length;
-  }, [inventoryRows]);
-
-  const healthyCount = useMemo(() => {
-    return inventoryRows.filter(d => d.status === 'online' && d.health_status !== 'warning' && d.health_status !== 'critical' && (!d.open_alert_count || d.open_alert_count === 0)).length;
-  }, [inventoryRows]);
+  const warningCount = inventoryHealthCounts?.warning ?? null;
+  const stagingOrMaintCount = inventoryHealthCounts?.staging_maintenance ?? null;
+  const healthyCount = inventoryHealthCounts?.healthy ?? null;
 
   // Client-side filtering pipeline
   const lifecycleRows = (inventoryLifecycleFilter && inventoryLifecycleFilter !== 'all')
@@ -392,7 +385,7 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
             },
             {
               key: 'warning',
-              value: warningCount,
+              value: warningCount ?? '—',
               label: zh ? '告警异常' : 'Alerts / Warning',
               sub: 'P2',
               Icon: AlertTriangle,
@@ -403,7 +396,7 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
             },
             {
               key: 'staging_maintenance',
-              value: stagingOrMaintCount,
+              value: stagingOrMaintCount ?? '—',
               label: zh ? '待投产 / 维护' : 'Staging / Maint',
               sub: 'P3',
               Icon: Shield,
@@ -414,7 +407,7 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
             },
             {
               key: 'healthy',
-              value: healthyCount,
+              value: healthyCount ?? '—',
               label: zh ? '运行正常' : 'Healthy Online',
               sub: zh ? '正常' : 'OK',
               Icon: CheckCircle2,
@@ -425,7 +418,10 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
             },
           ]).map(c => {
             const isActive = quickFilter === c.filterVal;
-            const pct = totalDevices > 0 ? Math.round((c.value / totalDevices) * 100) : 0;
+            const numericValue = typeof c.value === 'number' ? c.value : null;
+            const pct = numericValue === null || totalDevices <= 0
+              ? null
+              : Math.round((numericValue / totalDevices) * 100);
 
             return (
               <button
@@ -453,14 +449,20 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
                     <span className="nx-kpi-value text-gray-900 dark:text-white">
                       {c.value}
                     </span>
-                    <span className="nx-meta-text font-medium text-gray-400 tabular-nums">({pct}%)</span>
+                    <span className="nx-meta-text font-medium text-gray-400 tabular-nums">
+                      ({pct === null ? '—' : `${pct}%`})
+                    </span>
                   </div>
                 </div>
                 <div className="mt-3.5 pt-2.5 border-t border-gray-50 dark:border-zinc-800/60">
                   <div className="h-1.5 w-full bg-gray-100 dark:bg-zinc-800 rounded-full overflow-hidden">
                     <div
                       className={`h-full rounded-full transition-all duration-500 ${c.iconBg.split(' ')[0]}`}
-                      style={{ width: `${Math.max(c.value > 0 ? 6 : 0, pct)}%` }}
+                      style={{
+                        width: pct === null
+                          ? '0%'
+                          : `${Math.max((numericValue || 0) > 0 ? 6 : 0, pct)}%`,
+                      }}
                     />
                   </div>
                 </div>

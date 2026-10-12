@@ -126,6 +126,11 @@ interface InventoryState {
   inventoryRows: Device[];
   inventoryTotal: number;
   inventoryStatusCounts: Record<string, number>;
+  inventoryHealthCounts: {
+    healthy: number;
+    warning: number;
+    staging_maintenance: number;
+  } | null;
   inventoryLoading: boolean;
   inventoryError: string | null;
   inventoryRefreshTick: number;
@@ -176,6 +181,7 @@ export const useInventoryStore = create<InventoryState>((set, get) => ({
   inventoryRows: [],
   inventoryTotal: 0,
   inventoryStatusCounts: {},
+  inventoryHealthCounts: null,
   inventoryLoading: false,
   inventoryError: null,
   inventoryRefreshTick: 0,
@@ -257,6 +263,7 @@ export const useInventoryStore = create<InventoryState>((set, get) => ({
           inventoryRows: data.map(normalizeDeviceRecord),
           inventoryTotal: data.length,
           inventoryStatusCounts: {},
+          inventoryHealthCounts: null,
           inventoryError: null,
           inventoryLoading: false,
         });
@@ -270,6 +277,18 @@ export const useInventoryStore = create<InventoryState>((set, get) => ({
             data.status_counts && typeof data.status_counts === 'object'
               ? data.status_counts
               : {},
+          inventoryHealthCounts:
+            data.health_counts &&
+            typeof data.health_counts === 'object' &&
+            Number.isFinite(Number(data.health_counts.healthy)) &&
+            Number.isFinite(Number(data.health_counts.warning)) &&
+            Number.isFinite(Number(data.health_counts.staging_maintenance))
+              ? {
+                  healthy: Math.max(0, Number(data.health_counts.healthy)),
+                  warning: Math.max(0, Number(data.health_counts.warning)),
+                  staging_maintenance: Math.max(0, Number(data.health_counts.staging_maintenance)),
+                }
+              : null,
           inventoryError: null,
           inventoryLoading: false,
         });
@@ -280,6 +299,7 @@ export const useInventoryStore = create<InventoryState>((set, get) => ({
         inventoryRows: [],
         inventoryTotal: 0,
         inventoryStatusCounts: {},
+        inventoryHealthCounts: null,
         inventoryError: error instanceof Error ? error.message : '加载网络设备失败',
         inventoryLoading: false,
       });

@@ -47,7 +47,7 @@ import {
   normalizeImportedPlatform,
   isValidIpAddress,
 } from './constants';
-import { statusMeta, typeMeta, severityOf } from './helpers';
+import { statusMeta, typeMeta } from './helpers';
 import {
   ASSET_INFO_SHEET_RE,
   MANAGEMENT_ENTRY_SHEET_RE,
@@ -505,9 +505,10 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     if (deptFilter !== 'all') params.set('department', deptFilter);
     if (deviceCategoryFilter) params.set('device_category', deviceCategoryFilter);
     if (lifecycleFilter !== 'all') params.set('lifecycle_status', lifecycleFilter);
+    if (severityFilter !== 'all') params.set('severity', severityFilter);
     if (tagFilter.length > 0) params.set('tag_ids', tagFilter.join(','));
     return params;
-  }, [search, typeFilter, statusFilter, vendorFilter, dcFilter, deptFilter, deviceCategoryFilter, lifecycleFilter, tagFilter]);
+  }, [search, typeFilter, statusFilter, vendorFilter, dcFilter, deptFilter, deviceCategoryFilter, lifecycleFilter, severityFilter, tagFilter]);
 
   const fetchAssets = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
     const requestSequence = ++assetFetchSequenceRef.current;
@@ -544,10 +545,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       return { items: payload.items as Asset[], total: Number(payload.total) || 0 };
     });
 
-    const filteredAssets = severityFilter === 'all'
-      ? allAssets
-      : allAssets.filter((asset) => severityOf(asset) === severityFilter);
-    return buildAssetExportData(filteredAssets, ASSET_COLUMN_DEFS, zh ? 'zh' : 'en');
+    return buildAssetExportData(allAssets, ASSET_COLUMN_DEFS, zh ? 'zh' : 'en');
   }, [buildAssetParams, severityFilter, zh]);
 
   useEffect(() => { fetchSummary(); }, [fetchSummary]);
@@ -580,20 +578,15 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   );
   const deptList   = useMemo(() => summary?.by_department ? Object.keys(summary.by_department).sort() : [], [summary]);
 
-  const criticalCount  = (summary?.by_status?.['inactive'] ?? 0) + (summary?.by_status?.['decommissioned'] ?? 0);
-  const majorCount     = (summary?.by_status?.['maintenance'] ?? 0);
-  const warningCount   = (summary?.warranty_expiring_soon ?? 0) + (summary?.by_status?.['in_storage'] ?? 0);
-  const healthyCount   = summary?.by_status?.['active'] ?? 0;
+  const criticalCount  = summary?.by_severity?.critical ?? 0;
+  const majorCount     = summary?.by_severity?.major ?? 0;
+  const warningCount   = summary?.by_severity?.warning ?? 0;
+  const healthyCount   = summary?.by_severity?.healthy ?? 0;
   const totalCount     = summary
     ? (summary.by_type?.network_device ?? 0) + (summary.by_type?.server ?? 0)
     : 0;
 
-  const displayAssets = useMemo(() => {
-    let result = assets;
-    if (severityFilter !== 'all') result = result.filter(a => severityOf(a) === severityFilter);
-    if (lifecycleFilter !== 'all') result = result.filter(a => (a.lifecycle_status || 'staging') === lifecycleFilter);
-    return result;
-  }, [assets, severityFilter, lifecycleFilter]);
+  const displayAssets = assets;
 
   const hasFilters = Boolean(
     search.trim() ||
@@ -2346,7 +2339,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
               </div>
 
               <span className="ml-auto shrink-0 text-xs font-mono text-gray-400 tabular-nums whitespace-nowrap">
-                {zh ? `共 ${severityFilter !== 'all' ? displayAssets.length : total} 条资产` : `${severityFilter !== 'all' ? displayAssets.length : total} assets`}
+                {zh ? `共 ${total} 条资产` : `${total} assets`}
               </span>
             </div>
 
@@ -2479,7 +2472,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
             {/* Bottom Pagination */}
             <Pagination
               currentPage={page}
-              totalItems={severityFilter !== 'all' ? displayAssets.length : total}
+              totalItems={total}
               onPageChange={setPage}
               itemsPerPage={pageSize}
               onItemsPerPageChange={setPageSize}

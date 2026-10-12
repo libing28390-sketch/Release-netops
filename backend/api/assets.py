@@ -2109,6 +2109,33 @@ class BatchAssetDeleteRequest(BaseModel):
 
 # ── Summary ──────────────────────────────────────────────────────────
 
+_ASSET_SEVERITIES = frozenset({"critical", "major", "warning", "healthy"})
+
+
+def _asset_severity_sql() -> str:
+    """Keep server-side severity summaries and filters aligned with the inventory UI."""
+
+    online_status = "LOWER(COALESCE(NULLIF(TRIM(d.status), ''), CASE " \
+        "WHEN LOWER(COALESCE(pa.status, '')) = 'active' THEN 'online' " \
+        "WHEN LOWER(COALESCE(pa.status, '')) IN ('inactive', 'maintenance', 'decommissioned') THEN 'offline' " \
+        "ELSE 'pending' END))"
+    lifecycle_status = "LOWER(COALESCE(NULLIF(TRIM(d.lifecycle_status), ''), pa.lifecycle_status, ''))"
+    asset_status = "LOWER(COALESCE(pa.status, ''))"
+    return f"""CASE
+        WHEN {online_status} = 'offline'
+          OR {asset_status} IN ('inactive', 'decommissioned')
+          OR {lifecycle_status} = 'decommissioned'
+          THEN 'critical'
+        WHEN {asset_status} = 'maintenance' OR {lifecycle_status} = 'maintenance'
+          THEN 'major'
+        WHEN (
+            (COALESCE(pa.warranty_expiry, '') <> '' AND pa.warranty_expiry <= ? AND pa.warranty_expiry >= ?)
+            OR {asset_status} = 'in_storage'
+            OR {lifecycle_status} = 'staging'
+        ) THEN 'warning'
+        ELSE 'healthy'
+    END"""
+
 @router.get('/assets/summary')
 def asset_summary(_user=require_role("Viewer")):
     conn = get_db_connection()
@@ -2204,27 +2231,34 @@ def asset_summary(_user=require_role("Viewer")):
         platform_expr = "COALESCE(NULLIF(TRIM(pa.platform), ''), 'unknown')"
         by_online_status = {}
         by_platform = {}
+        by_severity = {severity: 0 for severity in _ASSET_SEVERITIES}
+        severity_expr = _asset_severity_sql()
         for row in conn.execute(
             f'''SELECT {online_status_expr} AS online_status,
                        {platform_expr} AS platform,
+                       {severity_expr} AS severity,
                        COUNT(DISTINCT pa.id) AS cnt
                   FROM physical_assets pa
                   LEFT JOIN devices d ON d.asset_id = pa.id
                   {availability_where}
-                 GROUP BY {online_status_expr}, {platform_expr}
-                 ORDER BY {platform_expr}, {online_status_expr}''',
-            scope_params,
+                 GROUP BY 1, 2, 3
+                 ORDER BY 2, 1''',
+            [future_str, now_str, *scope_params],
         ):
             count = int(row['cnt'])
             online_status = str(row['online_status'] or 'unknown').strip().lower() or 'unknown'
             platform = str(row['platform'] or 'unknown').strip() or 'unknown'
+            severity = str(row['severity'] or '').strip().lower()
             by_online_status[online_status] = by_online_status.get(online_status, 0) + count
             by_platform[platform] = by_platform.get(platform, 0) + count
+            if severity in by_severity:
+                by_severity[severity] += count
 
         return {
             'total': total,
             'by_type': {'server': servers, 'network_device': network},
             'by_online_status': by_online_status,
+            'by_severity': by_severity,
             'by_platform': by_platform,
             'warranty_expiring_soon': warranty_soon,
             'by_status': by_status,
@@ -2247,6 +2281,7 @@ def list_assets(
     device_category: str = '',
     lifecycle_status: str = '',
     status: str = 'all',
+    severity: str = 'all',
     device_role: str = '',
     tag_ids: str = '',
     tag_match_all: bool = True,
@@ -2255,6 +2290,9 @@ def list_assets(
     page_size: int = Query(50, ge=1, le=1000),
     _user=require_role("Viewer"),
 ):
+    if severity != 'all' and severity not in _ASSET_SEVERITIES:
+        raise HTTPException(status_code=422, detail='Invalid severity')
+
     conn = get_db_connection()
     try:
         conditions = []
@@ -2313,6 +2351,11 @@ def list_assets(
             )
             like = f'%{q}%'
             params.extend([like] * 10)
+        if severity != 'all':
+            now_str = _utc_now()[:10]
+            future_str = (datetime.now(timezone.utc) + timedelta(days=90)).strftime('%Y-%m-%d')
+            conditions.append(f"({_asset_severity_sql()}) = ?")
+            params.extend([future_str, now_str, severity])
 
         where = (' WHERE ' + ' AND '.join(conditions)) if conditions else ''
         total = conn.execute(

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -46,6 +48,29 @@ def _wireless_h3c_mib_rule() -> dict:
     }
 
 
+def _write_test_mib_bundle(
+    root: Path,
+    sources: list[tuple[str, bytes]],
+) -> list[dict]:
+    root.mkdir(parents=True)
+    entries = []
+    for upstream_path, content in sources:
+        destination = root / upstream_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(content)
+        entries.append({
+            "upstream_path": upstream_path,
+            "bundle_path": upstream_path,
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "size_bytes": len(content),
+        })
+    (root / "source-manifest.json").write_text(
+        json.dumps({"upstream_commit": PINNED_LIBRENMS_COMMIT, "mibs": entries}),
+        encoding="utf-8",
+    )
+    return entries
+
+
 def test_verified_librenms_mib_entries_bind_to_manifest_path_and_hash():
     entries = verified_librenms_mib_source_entries(
         module_name="HH3C-DOT11-ACMT-MIB",
@@ -64,6 +89,143 @@ def test_verified_librenms_mib_entries_bind_to_manifest_path_and_hash():
         relative_path="different/HH3C-DOT11-ACMT-MIB",
         sha256=entry["sha256"],
     ) == []
+
+
+def test_precise_mib_lookup_reuses_path_index_and_reverifies_candidate(monkeypatch):
+    policy._manifest_source_index.cache_clear()
+    verified_entries = []
+    original_verify = policy._entry_is_verified
+
+    def track_verification(entry, **kwargs):
+        verified_entries.append(entry)
+        return original_verify(entry, **kwargs)
+
+    monkeypatch.setattr(policy, "_entry_is_verified", track_verification)
+    expected_path = "mibs/comware/HH3C-DOT11-ACMT-MIB"
+
+    first = verified_librenms_mib_source_entries(upstream_path=expected_path)
+    first_cache = policy._manifest_source_index.cache_info()
+    second = verified_librenms_mib_source_entries(upstream_path=expected_path)
+    second_cache = policy._manifest_source_index.cache_info()
+
+    assert len(first) == 1
+    assert second == first
+    assert first_cache.misses == 1
+    assert second_cache.misses == first_cache.misses
+    assert second_cache.hits == first_cache.hits + 1
+    assert len(verified_entries) == 2
+
+
+def test_precise_mib_lookup_keeps_duplicate_module_names_vendor_scoped(tmp_path, monkeypatch):
+    root = tmp_path / "bundle"
+    _write_test_mib_bundle(root, [
+        ("mibs/huawei/SHARED-MIB", b"huawei mib"),
+        ("mibs/cisco/SHARED-MIB", b"cisco mib"),
+    ])
+    monkeypatch.setattr(policy, "LIBRENMS_BUNDLE_ROOT", root)
+    policy._manifest_source_index.cache_clear()
+
+    huawei = verified_librenms_mib_source_entries(
+        module_name="SHARED-MIB",
+        upstream_path="mibs/huawei/SHARED-MIB",
+    )
+    cisco = verified_librenms_mib_source_entries(
+        module_name="SHARED-MIB",
+        upstream_path="mibs/cisco/SHARED-MIB",
+    )
+
+    assert [entry["upstream_path"] for entry in huawei] == ["mibs/huawei/SHARED-MIB"]
+    assert [entry["upstream_path"] for entry in cisco] == ["mibs/cisco/SHARED-MIB"]
+
+
+def test_precise_mib_lookup_reindexes_replaced_manifest(tmp_path, monkeypatch):
+    root = tmp_path / "bundle"
+    first_entry = _write_test_mib_bundle(
+        root,
+        [("mibs/vendor/OLD-MIB", b"old mib")],
+    )[0]
+    monkeypatch.setattr(policy, "LIBRENMS_BUNDLE_ROOT", root)
+    policy._manifest_source_index.cache_clear()
+
+    assert verified_librenms_mib_source_entries(
+        upstream_path=first_entry["upstream_path"],
+    ) == [first_entry]
+    first_cache = policy._manifest_source_index.cache_info()
+
+    second_entry = {
+        "upstream_path": "mibs/vendor/NEWER-MIB",
+        "bundle_path": "mibs/vendor/NEWER-MIB",
+        "sha256": hashlib.sha256(b"new mib").hexdigest(),
+        "size_bytes": len(b"new mib"),
+    }
+    destination = root / second_entry["bundle_path"]
+    destination.write_bytes(b"new mib")
+    (root / "source-manifest.json").write_text(
+        json.dumps({
+            "upstream_commit": PINNED_LIBRENMS_COMMIT,
+            "mibs": [second_entry],
+        }),
+        encoding="utf-8",
+    )
+
+    assert verified_librenms_mib_source_entries(
+        upstream_path=first_entry["upstream_path"],
+    ) == []
+    assert verified_librenms_mib_source_entries(
+        upstream_path=second_entry["upstream_path"],
+    ) == [second_entry]
+    second_cache = policy._manifest_source_index.cache_info()
+
+    assert second_cache.misses == first_cache.misses + 1
+
+
+def test_precise_mib_lookup_fails_closed_when_indexed_file_is_tampered(tmp_path, monkeypatch):
+    root = tmp_path / "bundle"
+    entry = _write_test_mib_bundle(
+        root,
+        [("mibs/vendor/VERIFIED-MIB", b"verified mib")],
+    )[0]
+    monkeypatch.setattr(policy, "LIBRENMS_BUNDLE_ROOT", root)
+    policy._manifest_source_index.cache_clear()
+
+    assert verified_librenms_mib_source_entries(
+        upstream_path=entry["upstream_path"],
+    ) == [entry]
+    target = root / entry["bundle_path"]
+    original_stat = target.stat()
+    target.write_bytes(b"tampered mib")
+    os.utime(
+        target,
+        ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns + 1_000_000_000),
+    )
+
+    assert verified_librenms_mib_source_entries(
+        upstream_path=entry["upstream_path"],
+    ) == []
+
+
+def test_precise_mib_lookup_falls_back_for_unindexed_manifest(monkeypatch, tmp_path):
+    root = tmp_path / "bundle"
+    entry = _write_test_mib_bundle(
+        root,
+        [("mibs/vendor/MONKEYPATCHED-MIB", b"fixture mib")],
+    )[0]
+    monkeypatch.setattr(policy, "LIBRENMS_BUNDLE_ROOT", root)
+    policy._manifest_source_index.cache_clear()
+    monkeypatched_manifest = {
+        "upstream_commit": PINNED_LIBRENMS_COMMIT,
+        "mibs": [entry],
+    }
+    monkeypatch.setattr(policy, "_manifest", lambda: monkeypatched_manifest)
+
+    def fail_index(*_args):
+        raise AssertionError("unexpected cached index use")
+
+    monkeypatch.setattr(policy, "_manifest_source_index", fail_index)
+
+    assert verified_librenms_mib_source_entries(
+        upstream_path=entry["upstream_path"],
+    ) == [entry]
 
 
 def test_pinned_h3c_wireless_mib_rule_requires_exact_pinned_mib_set():

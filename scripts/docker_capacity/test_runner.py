@@ -431,5 +431,91 @@ class RunnerFailureDiagnosticsTests(unittest.TestCase):
         self.assertEqual(result["checks"]["victoriametrics_query"], {"ok": False, "error": "vm_no_result"})
 
 
+class AlertStormTests(unittest.TestCase):
+    def alert_config(self, count: int = 3):
+        return runner.validate_config(make_config(
+            services=["netops", "alert-storm"],
+            available_services=[
+                "netops", "db", "redis", "victoriametrics", "alert-storm",
+                "alert-redis", "alert-notify-critical", "alert-notify-normal", "alert-notify-relay",
+            ],
+            alert_count=count,
+        ))
+
+    def test_alert_storm_config_accepts_virtual_scenario_and_auxiliary_sources(self):
+        cfg = self.alert_config(500)
+        self.assertEqual(cfg.alert_count, 500)
+        self.assertIn("alert-storm", cfg.services)
+        self.assertIn("alert-notify-critical", cfg.available_services)
+        self.assertEqual(cfg.redacted()["alert_count"], 500)
+
+    def test_alert_count_requires_virtual_scenario(self):
+        config = make_config(services=["netops"], alert_count=500)
+        with self.assertRaises(runner.CapacityError) as raised:
+            runner.validate_config(config)
+        self.assertEqual(raised.exception.code, "invalid_config")
+
+    def test_seed_uses_run_scoped_keys_workspace_only_and_valid_activity_schema(self):
+        class Cursor:
+            def __init__(self):
+                self.statements = []
+                self.batches = []
+
+            def execute(self, statement, params=None):
+                self.statements.append((statement, params))
+
+            def executemany(self, statement, rows):
+                self.batches.append((statement, list(rows)))
+
+            def close(self):
+                pass
+
+        class Connection:
+            def __init__(self):
+                self.value = Cursor()
+                self.commits = 0
+                self.rollbacks = 0
+                self.closed = False
+
+            def cursor(self):
+                return self.value
+
+            def commit(self):
+                self.commits += 1
+
+            def rollback(self):
+                self.rollbacks += 1
+
+            def close(self):
+                self.closed = True
+
+        cfg = self.alert_config(3)
+        connection = Connection()
+        inserted = []
+        with mock.patch.object(runner, "_connect_pg", return_value=connection), \
+             mock.patch.object(runner, "_insert_rows", side_effect=lambda conn, table, columns, rows, **kwargs:
+                               inserted.append((table, columns, rows))):
+            result = runner._seed_alert_storm(cfg)
+
+        self.assertEqual(result["alerts_seeded"], 3)
+        self.assertEqual(result["channels"], ["workspace"])
+        self.assertEqual(connection.commits, 1)
+        self.assertEqual(connection.rollbacks, 0)
+        self.assertTrue(connection.closed)
+        delete_event = next(item for item in connection.value.statements if "DELETE FROM alert_events" in item[0])
+        self.assertEqual(delete_event[1], (f"capacity_alert:{cfg.run_id}:", f"capacity_alert:{cfg.run_id}:"))
+        self.assertEqual(inserted[0][0], "alert_events")
+        self.assertEqual(len(inserted[0][2]), 3)
+        self.assertEqual(inserted[0][2][0][1], f"capacity_alert:{cfg.run_id}:3:00000")
+        outbox_statement, outbox_rows = connection.value.batches[0]
+        self.assertIn("'workspace'", outbox_statement)
+        self.assertEqual(len(outbox_rows), 3)
+        self.assertTrue(all(f"capacity-alert:{cfg.run_id}:3:" in row[1] for row in outbox_rows))
+        activity_statement, activity_rows = connection.value.batches[1]
+        self.assertIn("(id, alert_id, event_type, actor_id, note, metadata_json, created_at)", activity_statement)
+        self.assertEqual(len(activity_rows[0]), 7)
+        self.assertNotIn("global_webhook", json.dumps(connection.value.statements + connection.value.batches))
+
+
 if __name__ == "__main__":
     unittest.main()

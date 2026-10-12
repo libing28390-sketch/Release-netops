@@ -34,6 +34,14 @@ class FakeDocker:
                 "State": {"Status": "running", "ExitCode": 0}, "RestartCount": 0,
                 "Mounts": [{"Source": "PRODUCTION-VOLUME", "Destination": "/var/lib/postgresql"}] if service == "db" else [],
             }
+        for service, source_name in lab.ALERT_STORM_SOURCE_CONTAINERS.items():
+            self.sources[source_name] = {
+                "Id": "source-" + service, "Image": "sha256:local-" + service,
+                "Name": "/" + source_name, "Config": {"Env": []},
+                "HostConfig": {"Memory": 512 * 1024**2, "NanoCpus": 250_000_000},
+                "State": {"Status": "running", "ExitCode": 0}, "RestartCount": 0,
+                "Mounts": [],
+            }
 
     def __call__(self, *args, stdin=None, env=None, timeout=60):
         self.calls.append((args, env))
@@ -119,6 +127,8 @@ class ControllerTests(unittest.TestCase):
         self.assertIn("grafana", lab.required_services(["nginx"]))
         self.assertIn("cadvisor", lab.required_services(["vmagent"]))
         self.assertEqual(lab.required_services(["db"]), ["db"])
+        self.assertTrue(set(lab.ALERT_STORM_SOURCE_CONTAINERS).issubset(
+            lab.required_services(["alert-storm"])))
 
     def test_effective_limits(self):
         info = {"HostConfig": {"Memory": 1234, "MemorySwap": -1, "CpuQuota": 150000,
@@ -129,6 +139,56 @@ class ControllerTests(unittest.TestCase):
         self.assertIn("--cpu-quota", flags)
         self.assertIn("--pids-limit", flags)
         self.assertNotIn("--memory", lab.inherited_limits({"HostConfig": {"Memory": 0}}))
+        capped = lab.inherited_limits(info, cpu_cap=0.5, memory_cap=800)
+        self.assertEqual(capped[capped.index("--cpus") + 1], "0.5")
+        self.assertEqual(capped[capped.index("--memory") + 1], "800")
+        self.assertEqual(capped[capped.index("--memory-swap") + 1], "800")
+
+    def test_alert_storm_clones_use_internal_network_and_disabled_workspace_delivery(self):
+        fake = FakeDocker()
+        dataset = dict(rows=100, redis_keys=100, objects=1, object_bytes=1024,
+                       series=100, history_points=2, interfaces=1)
+        with tempfile.TemporaryDirectory() as directory, patch("lab.docker", fake), \
+             patch.dict("os.environ", {"DOCKER_HOST": ""}):
+            test_lab = lab.CapacityLab(RUN_ID, Path(directory), ["netops"], dataset, 1, 0.25,
+                                       256 * 1024**2, alert_storm=True)
+            host = test_lab.discover()
+            test_lab.build(host)
+            runner_config = test_lab.runner_config()
+            self.assertNotIn("alert_broker_password", runner_config["credentials"])
+            self.assertNotIn(test_lab.credentials["alert_broker_password"], json.dumps(runner_config))
+            test_lab.start_alert_workers()
+            creates = [args for args, _env in fake.calls if args[0] == "create"]
+            netops_args = next(args for args in creates if args[args.index("--name") + 1].endswith("-netops"))
+            self.assertEqual(netops_args[netops_args.index("--cpus") + 1], "0.2")
+            self.assertEqual(netops_args[netops_args.index("--memory") + 1], str(768 * 1024**2))
+            netops_env = next(env for args, env in fake.calls if args == netops_args)
+            self.assertEqual(netops_env["NEXORA_AUTOMATIC_NOTIFICATIONS_ENABLED"], "0")
+            self.assertEqual(netops_env["ALERT_NOTIFICATION_CELERY_ENABLED"], "1")
+            self.assertEqual(netops_env["ALERT_NOTIFY_WEBHOOK_URL"], "")
+            broker_args = next(args for args in creates if args[args.index("--name") + 1].endswith("-alert-redis"))
+            self.assertIn("~nexora_alert_*", " ".join(broker_args))
+            self.assertTrue(any(args[:2] == ("network", "create") and "--internal" in args
+                                for args, _env in fake.calls))
+            critical_args = next(args for args in creates if args[args.index("--name") + 1].endswith("-alert-notify-critical"))
+            normal_args = next(args for args in creates if args[args.index("--name") + 1].endswith("-alert-notify-normal"))
+            self.assertIn("--queues=alert_notify_critical", critical_args)
+            self.assertIn("--queues=alert_notify_normal", normal_args)
+            self.assertIn("--concurrency=1", critical_args)
+            self.assertTrue(test_lab.cleanup()["complete"])
+
+    def test_alert_runner_jobs_map_to_seed_and_load_commands(self):
+        fake = FakeDocker()
+        with tempfile.TemporaryDirectory() as directory, patch("lab.docker", fake):
+            test_lab = lab.CapacityLab(RUN_ID, Path(directory), ["netops"], {}, 1, 0.25,
+                                       256 * 1024**2, alert_storm=True)
+            test_lab.discover()
+            test_lab.network = test_lab.prefix + "-internal"
+            test_lab.create_runner("seed-alertstorm-0")
+            test_lab.create_runner("alertstorm-0")
+            runner_commands = [args[-1] for args, _env in fake.calls if args[0] == "create"]
+            self.assertEqual(runner_commands, ["seed-alert-storm", "alert-storm"])
+            test_lab.cleanup()
 
     def test_full_stack_uses_owned_volumes_limits_and_no_pull(self):
         fake = FakeDocker()
@@ -234,11 +294,50 @@ class ControllerTests(unittest.TestCase):
         self.assertIn("db:REQUESTED_RATE_NOT_REACHED", main.evaluate_stage(success, args, 10)["failures"])
         self.assertFalse(main.evaluate_stage({"scenarios": {}}, args, 10)["passed"])
 
+    def test_alert_storm_defaults_and_slo_gate(self):
+        args = main.parse_args(["--alert-storm"])
+        self.assertEqual(args.services, ["netops"])
+        self.assertEqual(args.alert_counts, [500, 1000, 5000])
+        self.assertEqual(args.baseline_seconds, 10)
+        self.assertEqual(args.max_host_cpu_percent, 80)
+        passing = {
+            "status": "passed",
+            "api": {"status": "passed", "completed": 600, "successful": 600,
+                    "errors": 0, "dropped": 0, "success_rps": 2.0,
+                    "latency_ms": {"p95": 125}},
+            "outbox": {"total": 500, "pending": 0, "processing": 0,
+                       "succeeded": 500, "failed": 0, "drained_seconds": 35.5},
+        }
+        self.assertTrue(main.evaluate_alert_stage(passing, args, 500)["passed"])
+        passing["outbox"]["pending"] = 1
+        self.assertIn("ALERT_OUTBOX_HAS_UNFINISHED_OR_FAILED_ROWS",
+                      main.evaluate_alert_stage(passing, args, 500)["failures"])
+        with contextlib.redirect_stderr(io.StringIO()):
+            for arguments in (
+                ["--alert-storm", "--max-host-cpu-percent", "81"],
+                ["--alert-storm", "--host-cpu-stop-samples", "6"],
+                ["--alert-storm", "--alert-concurrency", "3"],
+                ["--alert-storm", "--baseline-seconds", "6"],
+            ):
+                with self.assertRaises(SystemExit):
+                    main.parse_args(arguments)
+
     def test_empty_output_report_and_success_latency(self):
         with tempfile.TemporaryDirectory() as directory:
             main.write_report(Path(directory), {"status": "incomplete", "stages": [], "cleanup": {"complete": True}})
             self.assertTrue((Path(directory) / "report.json").exists())
             self.assertIn("incomplete", (Path(directory) / "report.md").read_text(encoding="utf-8"))
+
+    def test_alert_report_uses_alert_counts_not_rps(self):
+        with tempfile.TemporaryDirectory() as directory:
+            main.write_report(Path(directory), {"mode": "alert_storm", "status": "passed",
+                "stages": [{"alert_count": 500, "evaluation": {"passed": True,
+                    "api_p95_ms": 125, "api_success_rps": 2.0,
+                    "outbox_drained_seconds": 35.5, "failures": []}}],
+                "highest_passing_alert_count": 500, "cleanup": {"complete": True}})
+            text = (Path(directory) / "report.md").read_text(encoding="utf-8")
+            self.assertIn("500", text)
+            self.assertIn("API p95", text)
 
     def _full_flow(self, *, failure=None, missing=False, optional_missing=False, fail_stop=False,
                    warmup_failure=False):
@@ -276,6 +375,74 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual(fake.networks, {})
             self.assertNotIn("not-for-the-report", json.dumps(report))
             return code, report, jobs
+
+    def test_alert_storm_orchestration_seeds_before_workers_and_cleans_owned_resources(self):
+        fake = FakeDocker()
+        jobs = []
+        stage_configs = []
+
+        def fixture_job(test_lab, job, config, stopped, output, timeout):
+            jobs.append(job)
+            if job.startswith("alertstorm-"):
+                stage_configs.append(dict(config))
+                count = config["alert_count"]
+                return {
+                    "status": "passed",
+                    "api": {"status": "passed", "completed": 10, "successful": 10,
+                            "errors": 0, "dropped": 0, "success_rps": config["rps"],
+                            "latency_ms": {"p95": 50}},
+                    "outbox": {"total": count, "pending": 0, "processing": 0,
+                               "succeeded": count, "failed": 0, "drained_seconds": 5.0},
+                }
+            if job.startswith("seed-alertstorm-"):
+                stage_configs.append(dict(config))
+                return {"status": "passed", "command": "seed-alert-storm"}
+            return {"status": "passed"}
+
+        with tempfile.TemporaryDirectory() as directory, patch("lab.docker", fake), \
+             patch("main.sys.platform", "linux"), patch("main.uuid.uuid4", return_value=uuid.UUID(hex=RUN_ID)), \
+             patch.dict("os.environ", {"DOCKER_HOST": ""}), patch("metrics.MetricsCollector", FakeMetrics), \
+             patch("main.host_cpu_samples_for_phase", return_value=[15.0, 20.0, 25.0]), \
+             patch("main.run_job", fixture_job), patch("main.pause"), \
+             contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            code = main.main(["--run", "--alert-storm", "--alert-counts", "500",
+                              "--alert-stage-seconds", "5", "--alert-rps", "2",
+                              "--baseline-seconds", "10", "--cooldown-seconds", "0",
+                              "--output-dir", directory])
+            report = json.loads((Path(directory) / "report.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(code, 0)
+        self.assertEqual(report["status"], "passed")
+        self.assertEqual(report["highest_passing_alert_count"], 500)
+        self.assertEqual(jobs, ["prepare", "check-preflight", "seed-alertstorm-0",
+                                "alertstorm-0", "check-final"])
+        self.assertEqual(stage_configs[0]["services"], ["netops", "alert-storm"])
+        self.assertEqual(stage_configs[0]["alert_count"], 500)
+        self.assertEqual(stage_configs[1]["alert_count"], 500)
+        self.assertTrue(report["cleanup"]["complete"])
+        self.assertEqual(fake.resources, {})
+        self.assertEqual(fake.volumes, {})
+        self.assertEqual(fake.networks, {})
+
+    def test_alert_storm_high_pretest_host_cpu_aborts_before_creating_clones(self):
+        fake = FakeDocker()
+        with tempfile.TemporaryDirectory() as directory, patch("lab.docker", fake), \
+             patch("main.sys.platform", "linux"), patch("main.uuid.uuid4", return_value=uuid.UUID(hex=RUN_ID)), \
+             patch.dict("os.environ", {"DOCKER_HOST": ""}), patch("metrics.MetricsCollector", FakeMetrics), \
+             patch("main.host_cpu_samples_for_phase", return_value=[75.0, 72.0, 71.0]), \
+             patch("main.run_job", side_effect=AssertionError("no workload should run")), patch("main.pause"), \
+             contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            code = main.main(["--run", "--alert-storm", "--alert-counts", "500",
+                              "--baseline-seconds", "10", "--output-dir", directory])
+            report = json.loads((Path(directory) / "report.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(code, 2)
+        self.assertEqual(report["status"], "aborted")
+        self.assertIn("host_cpu_baseline_above_pretest_threshold", report["diagnostics"])
+        self.assertTrue(report["cleanup"]["complete"])
+        self.assertEqual(fake.resources, {})
+        self.assertEqual(fake.volumes, {})
+        self.assertEqual(fake.networks, {})
 
     def test_orchestrated_full_flow_passes_and_cleans_up(self):
         code, report, jobs = self._full_flow()

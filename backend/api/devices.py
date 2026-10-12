@@ -1398,6 +1398,58 @@ def read_devices(
         ).fetchall()
         status_counts = {r['status']: r['cnt'] for r in status_count_rows}
 
+        health_counts = None
+        if asset_type == 'network_device':
+            health_count_row = conn.execute(
+                f'''WITH filtered_inventory AS (
+                        SELECT DISTINCT
+                               d.id,
+                               d.status,
+                               COALESCE(NULLIF(pa.lifecycle_status, ''),
+                                        NULLIF(d.lifecycle_status, ''),
+                                        'staging') AS lifecycle_status
+                          {from_clause}
+                          {where_sql}
+                    ),
+                    current_alerts AS (
+                        SELECT device_id, COUNT(*) AS open_alert_count
+                          FROM alert_events
+                         WHERE resolved_at IS NULL
+                           AND COALESCE(workflow_status, 'open') <> 'suppressed'
+                         GROUP BY device_id
+                    )
+                    SELECT
+                        COUNT(*) FILTER (
+                            WHERE inventory.status = 'online'
+                              AND COALESCE(latest_health.health_status, 'unknown') NOT IN ('warning', 'critical')
+                              AND COALESCE(current_alerts.open_alert_count, 0) = 0
+                        ) AS healthy,
+                        COUNT(*) FILTER (
+                            WHERE COALESCE(latest_health.health_status, 'unknown') IN ('warning', 'critical')
+                               OR COALESCE(current_alerts.open_alert_count, 0) > 0
+                        ) AS warning,
+                        COUNT(*) FILTER (
+                            WHERE inventory.lifecycle_status IN ('staging', 'maintenance')
+                               OR inventory.status = 'pending'
+                        ) AS staging_maintenance
+                      FROM filtered_inventory AS inventory
+                      LEFT JOIN LATERAL (
+                          SELECT health_status
+                            FROM device_health_samples
+                           WHERE device_id = inventory.id
+                           ORDER BY ts DESC
+                           LIMIT 1
+                      ) AS latest_health ON TRUE
+                      LEFT JOIN current_alerts
+                        ON current_alerts.device_id = inventory.id''',
+                tuple(params),
+            ).fetchone()
+            health_counts = {
+                'healthy': int(health_count_row['healthy'] or 0),
+                'warning': int(health_count_row['warning'] or 0),
+                'staging_maintenance': int(health_count_row['staging_maintenance'] or 0),
+            }
+
         facets = _device_list_facets(conn, from_clause, facet_where_sql, facet_params) if include_facets else None
 
         offset = (page - 1) * page_size
@@ -1421,6 +1473,8 @@ def read_devices(
             'page_size': page_size,
             'status_counts': status_counts,
         }
+        if health_counts is not None:
+            response['health_counts'] = health_counts
         if facets is not None:
             response['facets'] = facets
         return response
