@@ -7,6 +7,7 @@ from database import get_db_connection
 from services.snmp_mib_service import (
     MibParser,
     parse_and_store_mib,
+    list_mibs,
     list_mibs_page,
     get_mib_repository_stats,
     get_mib_detail,
