@@ -1,0 +1,14 @@
+Value Required IP (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})
+Value AGE (\S+)
+Value MAC ([0-9a-fA-F]{4}\.[0-9a-fA-F]{4}\.[0-9a-fA-F]{4})
+Value INTERFACE (\S+)
+Value EXTER_VLAN (\S+)
+Value INTER_VLAN (\S+)
+Value SUB_INTERFACE (\S+)
+
+Start
+  ^IP\s+Hardware
+  ^Address\s+Age
+  ^--------------------------------------------------------------------------------
+  ^${IP}\s+${AGE}\s+${MAC}\s+${INTERFACE}\s+${EXTER_VLAN}\s+${INTER_VLAN}\s+${SUB_INTERFACE}\s*$$ -> Record
+  ^${IP}\s+${AGE}\s+${MAC}\s+${INTERFACE}\s+${EXTER_VLAN}\s+${INTER_VLAN}\s*$$ -> Record

@@ -1,0 +1,16 @@
+# Workbook-based V5 diagnostic-information parser. The command has an
+# interactive save/display branch, so only stable operation milestones are
+# emitted as records.
+Value MODE ([YyNn])
+Value FILE_NAME (\S+)
+Value OUTPUT_PATH (\S+)
+Value RESULT (Save\s+succeeded\.)
+Value SECTION ([A-Za-z0-9_-]+)
+
+Start
+  ^\s*Save\s+or\s+display\s+diagnostic\s+information\s+\(Y=save,\s*N=display\)\?\s*\[Y/N\]\s*:\s*${MODE}\s*$$
+  ^\s*Please\s+input\s+the\s+file\s+name\(\*\.diag\)\s*\[flash:/default\.diag\]\s*:\s*${FILE_NAME}\s*$$
+  ^\s*Diagnostic\s+information\s+is\s+outputting\s+to\s+${OUTPUT_PATH}\.\s*$$
+  ^\s*${RESULT}\s*$$ -> Record
+  ^\s*=+\s*display\s+${SECTION}\s*=+\s*$$ -> Record
+  ^.*$$

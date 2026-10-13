@@ -1,0 +1,10 @@
+Value SLOT (\d+)
+Value BOARD_NAME (\S+)
+Value ONLINE (Present|Offline|\S+)
+Value STATUS (Normal|Forbidden|\S+)
+
+Start
+  ^SlotID\s+BoardName\s+Online\s+Status
+  ^-+
+  ^${SLOT}\s+${BOARD_NAME}\s+${ONLINE}\s+${STATUS}\s*$$ -> Record
+  ^${SLOT}\s+${ONLINE}\s+${STATUS}\s*$$ -> Record

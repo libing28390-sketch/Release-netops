@@ -1,0 +1,10 @@
+# Comware V5 transceiver alarm list.
+Value Filldown INTERFACE (\S+)
+Value Required ALARM (.+)
+
+Start
+  ^\s*${INTERFACE}\s+transceiver\s+current\s+alarm\s+information:\s*$$
+  ^\s+${ALARM}\s*$$ -> Record
+  ^\s*$$
+  ^.*$$
+

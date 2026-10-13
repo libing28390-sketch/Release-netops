@@ -1,0 +1,12 @@
+Value INTERFACE (\S+)
+Value SPEED (\S+)
+Value DUPLEX (\S+)
+Value AUTO (\S+)
+Value STATUS (up|down|\S+)
+Value VLAN ([\d,-]+)
+Value DESCRIPTION (.*)
+
+Start
+  ^port-name\s+speed\s+duplex\s+auto\s+state\s+VLAN\s+description
+  ^${INTERFACE}\s+${SPEED}\s+${DUPLEX}\s+${AUTO}\s+${STATUS}\s+${VLAN}\s+${DESCRIPTION}\s*$$ -> Record
+  ^${INTERFACE}\s+${SPEED}\s+${DUPLEX}\s+${AUTO}\s+${STATUS}\s+${VLAN}${DESCRIPTION}\s*$$ -> Record

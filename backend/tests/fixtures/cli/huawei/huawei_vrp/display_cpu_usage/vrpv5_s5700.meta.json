@@ -1,0 +1,13 @@
+{
+  "vendor": "Huawei",
+  "platform": "huawei_vrp",
+  "software_family": "VRP5",
+  "model": "S5700/S6700 family example",
+  "command": "display cpu-usage",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://support.huawei.com/enterprise/en/doc/DOC1000091883/3c3a4939/how-do-i-troubleshoot-a-spanning-tree-fault",
+  "source_title": "How Do I Troubleshoot a Spanning Tree Fault - Huawei",
+  "source_section": "Check CPU Usage",
+  "expected_record_count": 1,
+  "expected_fields": ["CPU_5_SEC", "CPU_1_MIN", "CPU_5_MIN"]
+}

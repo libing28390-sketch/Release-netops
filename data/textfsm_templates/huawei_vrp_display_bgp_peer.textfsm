@@ -1,0 +1,19 @@
+Value Filldown LOCAL_ROUTER_ID ((?:\d{1,3}\.){3}\d{1,3})
+Value Filldown LOCAL_AS_NUMBER (\d+)
+Value Required PEER ((?:\d{1,3}\.){3}\d{1,3})
+Value Required REMOTE_AS (\d+(?:\.\d+)?)
+Value MSG_RCVD (\d+)
+Value MSG_SENT (\d+)
+Value OUT_Q (\d+)
+Value UP_DOWN (\S+)
+Value Required STATE (\S+)
+Value PREF_RCVD (\d+)
+
+Start
+  ^\s*BGP\s+[Ll]ocal\s+router\s+ID\s*:\s*${LOCAL_ROUTER_ID}\s*$$
+  ^\s*Local\s+AS\s+number\s*:\s*${LOCAL_AS_NUMBER}\s*$$
+  ^\s*Peer\s+V\s+AS\s+MsgRcvd\s+MsgSent\s+OutQ\s+Up/Down\s+State\s+PrefRcv\s*$$
+  ^\s*${PEER}\s+\d+\s+${REMOTE_AS}\s+${MSG_RCVD}\s+${MSG_SENT}\s+${OUT_Q}\s+${UP_DOWN}\s+${STATE}\s+${PREF_RCVD}\s*$$ -> Record
+  ^.*$$
+  ^\s*$$
+  ^. -> Error

@@ -1,0 +1,21 @@
+# nexora-action-code: get_cpu
+# Comware V5 exposes the summary as one block per slot.  Keep only the
+# actionable summary fields; the optional history/detail block is deliberately
+# ignored so it cannot create empty or duplicate records.
+Value Filldown SLOT (\d+)
+Value CPU_5_SEC (\d+(?:\.\d+)?|--)
+Value CPU_1_MIN (\d+(?:\.\d+)?|--)
+Value Required CPU_5_MIN (\d+(?:\.\d+)?|--)
+
+Start
+  ^(?:Chassis\s+\d+\s+)?Slot\s+${SLOT}\s+(?:CPU\s+\d+\s+)?CPU\s+usage:\s*$$
+  ^CPU\s+usage:\s*$$
+  ^Unit\s+CPU\s+usage:\s*$$
+  ^\s*${CPU_5_SEC}%?\s+in\s+last\s+5\s+seconds\s*$$
+  ^\s*${CPU_1_MIN}%?\s+in\s+last\s+1\s+minute\s*$$
+  ^\s*${CPU_5_MIN}%?\s+in\s+last\s+5\s+minutes\s*$$ -> Record
+  ^\s*CPU\s+Last\s+5\s+sec\s+Last\s+1\s+min\s+Last\s+5\s+min\s*$$
+  ^\s*Slot\s+CPU\s+Last\s+5\s+sec\s+Last\s+1\s+min\s+Last\s+5\s+min\s*$$
+  ^\s*${SLOT}\s+(?:\d+\s+)?${CPU_5_SEC}%\s+${CPU_1_MIN}%\s+${CPU_5_MIN}%\s*$$ -> Record
+  ^\s*$$
+

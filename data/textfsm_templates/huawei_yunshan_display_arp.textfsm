@@ -1,0 +1,28 @@
+# nexora-action-code: get_arp_table
+Value Required IP_ADDRESS (\d+\.\d+\.\d+\.\d+)
+Value Required MAC_ADDRESS ([0-9A-Fa-f]{4}(?:-[0-9A-Fa-f]{4}){2}|Incomplete)
+Value EXPIRE (\d+|-)
+Value TYPE ([A-Z](?:-[A-Z0-9])?)
+Value Required INTERFACE ((?:[0-9]+)?[A-Za-z][A-Za-z0-9-]*\s*\d[\w/.-]*)
+Value VPN_INSTANCE (\S+)
+Value VLAN (\d+)
+
+Start
+  ^\s*IP\s+ADDRESS\s+MAC\s+ADDRESS\s+EXPIRE\(M\)\s+TYPE\s+INTERFACE(?:\s+VPN-INSTANCE)?\s*$$
+  ^\s*VLAN/CEVLAN\s+PVC\s*$$
+  ^\s*${IP_ADDRESS}\s+${MAC_ADDRESS}\s+${EXPIRE}\s+${TYPE}\s+${INTERFACE}(?:\s+${VPN_INSTANCE})?\s*$$ -> Entry
+  ^\s*[-=]+\s*$$
+  ^\s*Total\s*:.*$$
+  ^\s*<[^>]+>.*$$
+  ^\s*$$
+  ^. -> Error
+
+Entry
+  ^\s+${VLAN}(?:/\S+)?(?:\s+\S+)?\s*$$ -> Record Start
+  ^\s*\d+\.\d+\.\d+\.\d+\s+ -> Continue.Record
+  ^\s*${IP_ADDRESS}\s+${MAC_ADDRESS}\s+${EXPIRE}\s+${TYPE}\s+${INTERFACE}(?:\s+${VPN_INSTANCE})?\s*$$
+  ^\s*[-=]+\s*$$ -> Record Start
+  ^\s*Total\s*:.*$$ -> Record Start
+  ^\s*<[^>]+>.*$$ -> Record Start
+  ^\s*$$
+  ^. -> Error

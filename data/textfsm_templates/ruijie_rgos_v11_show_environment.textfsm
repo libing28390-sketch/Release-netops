@@ -1,0 +1,14 @@
+# nexora-action-code: get_temperature
+Value Filldown CPU_TEMP (-?\d+(?:\.\d+)?)
+Value Filldown MAINBOARD_TEMP (-?\d+(?:\.\d+)?)
+Value List FAN_ID (\d+)
+Value List FAN_STATUS (\w+)
+
+Start
+  ^.*#\s*show\s+ -> Next
+  ^---environment\s+information--- -> Next
+  ^CPU\s+Temperature:\s*${CPU_TEMP}(?:\.|\s*C)?\s*$$
+  ^Mainboard\s+Temperature:\s*${MAINBOARD_TEMP}(?:\.|\s*C)?\s*$$
+  ^FAN\s+${FAN_ID}\s+is\s+${FAN_STATUS}!?\s*$$
+  ^\s*$$
+  ^. -> Next

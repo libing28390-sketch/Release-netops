@@ -1,0 +1,14 @@
+Value SLOT (\S+)
+Value CARD (\S+)
+Value SENSOR (\S+)
+Value STATUS (\S+)
+Value TEMPERATURE (\S+)
+Value LOWER (\S+)
+Value LOWER_RESUME (\S+)
+Value UPPER (\S+)
+Value UPPER_RESUME (\S+)
+
+Start
+  ^\s*Slot\s+Card\s+Sensor\s+Status
+  ^\s*-+
+  ^\s*${SLOT}\s+${CARD}\s+${SENSOR}\s+${STATUS}\s+${TEMPERATURE}\s+${LOWER}\s+${LOWER_RESUME}\s+${UPPER}\s+${UPPER_RESUME}\s*$$ -> Record

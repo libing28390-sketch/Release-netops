@@ -1,0 +1,8 @@
+# Comware V5 scheduled reboot.
+Value Required REBOOT_TIME (.+?)
+Value Required REMAINING_TIME ([^)]+)
+
+Start
+  ^\s*System\s+will\s+reboot\s+at\s+${REBOOT_TIME}\s+\(in\s+${REMAINING_TIME}\)\.\s*$$ -> Record
+  ^.*$$
+
