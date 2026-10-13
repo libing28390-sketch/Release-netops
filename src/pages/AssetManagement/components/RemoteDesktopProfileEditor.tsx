@@ -55,7 +55,6 @@ function toDraft(profile: RemoteDesktopProfile): ProfileDraft {
 
 function toInput(protocol: RemoteDesktopProtocol, draft: ProfileDraft): RemoteDesktopProfileInput {
   const common = {
-    protocol,
     profile_name: draft.profile_name.trim() || protocol.toUpperCase(),
     port: Number(draft.port),
     enabled: draft.enabled,
@@ -63,7 +62,7 @@ function toInput(protocol: RemoteDesktopProtocol, draft: ProfileDraft): RemoteDe
     admin_credential_id: draft.admin_credential_id || null,
   };
   return protocol === 'rdp'
-    ? { ...common, rdp_domain: draft.rdp_domain.trim() || null, rdp_security_mode: draft.rdp_security_mode }
+    ? { ...common, rdp_domain: draft.rdp_domain.trim(), rdp_security_mode: draft.rdp_security_mode }
     : common;
 }
 

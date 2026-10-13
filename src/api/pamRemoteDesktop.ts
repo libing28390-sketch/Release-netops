@@ -6,7 +6,9 @@ import type {
 
 export type RemoteDesktopAccessLevel = 'normal' | 'admin';
 
-export interface RemoteDesktopProfileInput extends Omit<RemoteDesktopProfile, 'id' | 'asset_id'> {}
+export type RemoteDesktopProfileInput = Omit<RemoteDesktopProfile, 'id' | 'asset_id' | 'protocol' | 'rdp_domain'> & {
+  rdp_domain?: string;
+};
 
 export interface PamRemoteDesktopSession {
   session_id: string;

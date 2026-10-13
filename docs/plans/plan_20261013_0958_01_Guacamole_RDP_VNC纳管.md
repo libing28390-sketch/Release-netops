@@ -2,7 +2,7 @@
 
 ## 本次范围与状态
 
-用户已要求按清单开始执行。T01—T07 已实现；GitHub Actions 与 Linux 部署环境的 Compose 启动、服务健康、认证路由、迁移表和共享录像卷验收通过。真实 RDP/VNC 目标联调尚未执行：远端尚无已配置 profile 或指定测试目标。逐项结果记录于对应 walkthrough。
+用户已要求按清单开始执行。T01—T07 已实现；GitHub Actions 与 Linux 部署环境的 Compose 启动、服务健康、认证路由、迁移表和共享录像卷验收通过。用户已授权将本机 Windows 测试资产 LEERBON（192.168.204.1）纳入 WH-DC-02，并绑定 Nexora 已存的普通凭据 tete 与特权凭据 admin。RDP profile 保存时发现前端 body 多发了协议字段，后端 extra-forbid 校验拒绝；修复并部署后继续真实会话与录像验证。VNC 目标尚未指定。逐项结果记录于对应 walkthrough。
 
 用户已选择 Guacamole 容器化方案。实施前已重新核对工作树，确认 m0285 可用，并再次检查 Compose、PAM、权限、录像存储与前端调用链。
 
@@ -54,7 +54,7 @@ flowchart LR
 | T05 | 资产配置与访问中心图形客户端 | 主 Agent | T01/T03 契约先确定 | RDP/VNC 配置表单、协议筛选、普通/管理员入口、用途/MFA、全屏/缩放/键鼠、断开与错误态；批量加载配置 | 已实现；TypeScript 检查和生产构建通过 |
 | T06 | PAM 图形审计与原生录像播放 | 主 Agent | T04 契约先确定 | 正确标识协议、访问级别和录像格式；原生录像播放/暂停/进度；强制断开；SSH/Web 原有播放保持兼容 | 已实现；TypeScript 检查和生产构建通过 |
 | T07 | 两容器部署与运维配置 | 主 Agent | 无，可与 T01/T02 并行 | 固定一致版本；可选 profile；启用时检查密钥；内部网络及共享录像卷；无公开 4822/8080 端口；部署脚本和说明同步 | 已实现；部署契约通过；Linux 部署环境中的两个容器、版本、健康状态和共享卷检查通过 |
-| T08 | 集成、验证与交付记录 | 主 Agent | T01—T07 | 聚焦后端/迁移/权限/前端/Compose 检查；真实 RDP/VNC 联调单独记录；完成 walkthrough 与回滚说明 | GitHub Actions 与部署基础链路验收通过；真实目标会话和录像联调待配置测试资产 |
+| T08 | 集成、验证与交付记录 | 主 Agent | T01—T07 | 聚焦后端/迁移/权限/前端/Compose 检查；真实 RDP/VNC 联调单独记录；完成 walkthrough 与回滚说明 | 基础 CI 与部署验收通过；正在修正 RDP profile 请求契约并验证 RDP；VNC 目标待提供 |
 
 ## 各任务实施边界
 
@@ -131,7 +131,7 @@ flowchart LR
 
 ## 执行与集成
 
-实施期间曾尝试分派前后端工作，但运行时撤销了子 Agent 的应用网络权限；主 Agent 接手并完成实现，保留了工作树中已有的用户修改。部署配置、前后端、迁移、录像处理、文档和测试由主 Agent 集成检查。
+实施期间曾尝试分派前后端工作，但运行时撤销了子 Agent 的应用网络权限；主 Agent 接手并完成实现，保留了工作树中已有的用户修改。部署配置、前后端、迁移、录像处理、文档和测试由主 Agent 集成检查。实机联调中确认 `RemoteDesktopProfileInput` 不应把路径已明确的 `protocol` 再发送到 JSON body，且 `rdp_domain` 应按后端 `str` schema 提交空字符串而不是 null；前端输入类型与序列化逻辑需要同步修正。
 
 ## 验证结果与剩余联调
 
@@ -141,7 +141,7 @@ flowchart LR
 - 部署脚本：`bash -n scripts/deploy-docker.sh` 通过；YAML 由部署契约测试解析。
 - GitHub Actions 后端、前端、lint、构建及 release sync 全部通过；首次 CI 异步测试修复后的运行结果见交付记录。
 - Linux 部署环境已执行常规更新，并在新同步的 checkout 使用 `bash scripts/deploy-docker.sh update --force` 启动可选 profile；两容器运行、guacd 健康、应用健康接口和内部 Guacamole HTTP 均通过。数据库迁移对象和共享录像卷已核实。
-- 本机 Windows 未运行 Docker；未触碰远端数据库卷。远端当前 profile 数为 0，因此真实 RDP/VNC 连接、录像回放及录像对象写入仍待配置测试资产后联调。
+- 本机 Windows 未运行 Docker；未触碰远端数据库卷。已创建并按用户确认将本机 Windows 测试资产归属 WH-DC-02，普通/特权凭据已绑定；RDP profile 保存遇到前后端请求契约不一致，修正并部署后继续真实连接和录像联调。VNC 仍需一台运行 VNC Server 的目标资产。
 
 ## 风险与回滚思路
 
@@ -161,4 +161,4 @@ flowchart LR
 
 ## 本次完成记录
 
-T01—T07 已完成；T08 的自动验证与 Linux 部署基础链路验收通过。剩余工作是配置一台 RDP 和一台 VNC 测试资产，完成真实连接、断开与录像归档/回放联调。详见 [walkthrough](../walkthrough/walkthrough_20261013_0958_01_Guacamole_RDP_VNC纳管.md)。
+T01—T07 已完成；T08 的自动验证与 Linux 部署基础链路验收通过。剩余工作是修正并部署 RDP profile 请求契约，完成本机 RDP 真实连接、录像归档/回放联调；VNC 需提供运行 VNC Server 的目标资产。详见 [walkthrough](../walkthrough/walkthrough_20261013_0958_01_Guacamole_RDP_VNC纳管.md)。
