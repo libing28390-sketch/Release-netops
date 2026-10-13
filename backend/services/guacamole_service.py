@@ -146,6 +146,7 @@ def build_connection_parameters(
                 "username": username,
                 "password": password,
                 "security": mode,
+                "resize-method": "display-update",
                 "ignore-cert": "false",
                 "enable-drive": "false",
                 "enable-printing": "false",

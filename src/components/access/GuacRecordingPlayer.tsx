@@ -19,11 +19,22 @@ interface GuacRecordingPlayerProps {
   onClose: () => void;
 }
 
+type RecordingFitMode = 'fit' | 'width';
+
 function formatTime(milliseconds: number): string {
   const totalSeconds = Math.floor(Math.max(0, milliseconds) / 1000);
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+function formatAspectRatio(width: number, height: number): string {
+  const ratio = width / height;
+  if (Math.abs(ratio - 16 / 9) < 0.025) return '16:9';
+  if (Math.abs(ratio - 16 / 10) < 0.025) return '16:10';
+  if (Math.abs(ratio - 4 / 3) < 0.025) return '4:3';
+  if (Math.abs(ratio - 3 / 2) < 0.025) return '3:2';
+  return `${ratio.toFixed(2)}:1`;
 }
 
 function recordingErrorMessage(status: number, isZh: boolean): string {
@@ -40,10 +51,13 @@ export default function GuacRecordingPlayer({ sessionId, protocol, accessLevel, 
   const recordingRef = useRef<GuacSessionRecording | null>(null);
   const displayRef = useRef<GuacDisplay | null>(null);
   const blobRef = useRef<Blob | null>(null);
+  const fitModeRef = useRef<RecordingFitMode>('fit');
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [errorMessage, setErrorMessage] = useState('');
   const [retryCount, setRetryCount] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [fitMode, setFitMode] = useState<RecordingFitMode>('fit');
+  const [displaySize, setDisplaySize] = useState({ width: 0, height: 0 });
   const [duration, setDuration] = useState(0);
   const [position, setPosition] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -55,7 +69,10 @@ export default function GuacRecordingPlayer({ sessionId, protocol, accessLevel, 
     const width = display.getWidth();
     const height = display.getHeight();
     if (!width || !height) return;
-    const scale = Math.max(0.1, Math.min(2, surface.clientWidth / width, surface.clientHeight / height));
+    setDisplaySize(current => current.width === width && current.height === height ? current : { width, height });
+    const widthScale = surface.clientWidth / width;
+    const fitScale = Math.min(widthScale, surface.clientHeight / height);
+    const scale = fitModeRef.current === 'width' ? Math.min(2, widthScale) : Math.min(2, fitScale);
     display.scale(scale);
   }, []);
 
@@ -67,6 +84,7 @@ export default function GuacRecordingPlayer({ sessionId, protocol, accessLevel, 
     setLoadState('loading');
     setErrorMessage('');
     setIsPlaying(false);
+    setDisplaySize({ width: 0, height: 0 });
     setPosition(0);
     setDuration(0);
 
@@ -164,6 +182,11 @@ export default function GuacRecordingPlayer({ sessionId, protocol, accessLevel, 
   }, [applyScale, isZh, retryCount, sessionId]);
 
   useEffect(() => {
+    fitModeRef.current = fitMode;
+    applyScale();
+  }, [applyScale, fitMode]);
+
+  useEffect(() => {
     const handleFullscreenChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
@@ -214,9 +237,28 @@ export default function GuacRecordingPlayer({ sessionId, protocol, accessLevel, 
             {sessionMeta?.ip && <span className="font-mono">{sessionMeta.ip}</span>}
             {sessionMeta?.loginUser && <span>{isZh ? '账号' : 'Account'}: {sessionMeta.loginUser}</span>}
             <span>{accessLevel === 'admin' ? (isZh ? '管理员访问' : 'Administrator access') : (isZh ? '普通访问' : 'Normal access')}</span>
+            {displaySize.width > 0 && displaySize.height > 0 && (
+              <span className="font-mono text-slate-500">
+                {isZh ? '源画面' : 'Source'} {displaySize.width}×{displaySize.height} · {formatAspectRatio(displaySize.width, displaySize.height)}
+              </span>
+            )}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setFitMode('fit')}
+            aria-pressed={fitMode === 'fit'}
+            aria-label={isZh ? '完整适配录像画面' : 'Fit the complete recording display'}
+            className={`rounded-lg px-2 py-2 text-[10px] font-bold transition ${fitMode === 'fit' ? 'bg-cyan-600 text-white' : 'bg-white/10 text-slate-300 hover:bg-white/15'}`}
+          >{isZh ? '适配窗口' : 'Fit'}</button>
+          <button
+            type="button"
+            onClick={() => setFitMode('width')}
+            aria-pressed={fitMode === 'width'}
+            aria-label={isZh ? '按播放器宽度放大录像画面' : 'Scale recording to player width'}
+            className={`rounded-lg px-2 py-2 text-[10px] font-bold transition ${fitMode === 'width' ? 'bg-cyan-600 text-white' : 'bg-white/10 text-slate-300 hover:bg-white/15'}`}
+          >{isZh ? '适配宽度' : 'Fit width'}</button>
           <button type="button" onClick={downloadRecording} disabled={!blobRef.current} aria-label={isZh ? '下载录像' : 'Download recording'} className="rounded-lg bg-white/10 p-2 text-slate-300 hover:bg-white/15 disabled:opacity-40"><Download size={15} /></button>
           <button type="button" onClick={() => void toggleFullscreen()} aria-label={isFullscreen ? (isZh ? '退出全屏' : 'Exit fullscreen') : (isZh ? '全屏' : 'Fullscreen')} className="rounded-lg bg-white/10 p-2 text-slate-300 hover:bg-white/15">{isFullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}</button>
           <button type="button" onClick={onClose} aria-label={isZh ? '关闭播放器' : 'Close player'} className="rounded-lg bg-white/10 p-2 text-slate-300 hover:bg-white/15"><X size={15} /></button>
@@ -224,7 +266,7 @@ export default function GuacRecordingPlayer({ sessionId, protocol, accessLevel, 
       </header>
 
       <main className="relative min-h-0 flex-1 overflow-hidden bg-black">
-        <div ref={surfaceRef} className="flex h-full w-full items-center justify-center overflow-auto" />
+        <div ref={surfaceRef} className={`flex h-full w-full overflow-auto ${fitMode === 'fit' ? 'items-center justify-center' : 'items-start justify-start'}`} />
         {loadState === 'loading' && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/75 text-center">
             <Loader2 size={28} className="animate-spin text-cyan-400" />

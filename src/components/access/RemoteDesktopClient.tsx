@@ -84,6 +84,25 @@ interface RemoteDesktopClientProps {
 type ConnectionState = 'loading' | 'connecting' | 'connected' | 'closed' | 'error';
 type ZoomMode = 'fit' | '100' | '75' | '50';
 
+const REMOTE_DISPLAY_ASPECT_RATIO = 16 / 9;
+const MAX_REMOTE_DISPLAY_WIDTH = 1920;
+const MAX_REMOTE_DISPLAY_HEIGHT = 1080;
+
+function getPreferredDisplaySize(viewportWidth: number, viewportHeight: number): { width: number; height: number } | null {
+  if (viewportWidth <= 0 || viewportHeight <= 0) return null;
+
+  let width = viewportWidth;
+  let height = viewportHeight;
+  if (width / height > REMOTE_DISPLAY_ASPECT_RATIO) width = height * REMOTE_DISPLAY_ASPECT_RATIO;
+  else height = width / REMOTE_DISPLAY_ASPECT_RATIO;
+
+  const resolutionScale = Math.min(1, MAX_REMOTE_DISPLAY_WIDTH / width, MAX_REMOTE_DISPLAY_HEIGHT / height);
+  return {
+    width: Math.max(1, Math.round(width * resolutionScale)),
+    height: Math.max(1, Math.round(height * resolutionScale)),
+  };
+}
+
 let guacScriptPromise: Promise<GuacamoleNamespace> | null = null;
 
 export function loadGuacamole(): Promise<GuacamoleNamespace> {
@@ -189,7 +208,8 @@ export default function RemoteDesktopClient({ session, protocol, hostname, langu
             connectedRef.current = true;
             setState('connected');
             const bounds = surface.getBoundingClientRect();
-            if (bounds.width > 0 && bounds.height > 0) client?.sendSize(Math.round(bounds.width), Math.round(bounds.height));
+            const displaySize = getPreferredDisplaySize(bounds.width, bounds.height);
+            if (displaySize) client?.sendSize(displaySize.width, displaySize.height);
             applyScale();
             surface.focus({ preventScroll: true });
           } else if (connectionState === stateValues?.CONNECTING || connectionState === stateValues?.WAITING) {
@@ -211,7 +231,8 @@ export default function RemoteDesktopClient({ session, protocol, hostname, langu
           if (resizeTimer) window.clearTimeout(resizeTimer);
           resizeTimer = window.setTimeout(() => {
             const bounds = surface.getBoundingClientRect();
-            if (bounds.width > 0 && bounds.height > 0) client?.sendSize(Math.round(bounds.width), Math.round(bounds.height));
+            const displaySize = getPreferredDisplaySize(bounds.width, bounds.height);
+            if (displaySize) client?.sendSize(displaySize.width, displaySize.height);
             applyScale();
           }, 120);
         });

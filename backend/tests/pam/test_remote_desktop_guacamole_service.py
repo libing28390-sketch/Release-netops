@@ -50,6 +50,9 @@ def test_connection_parameters_keep_rdp_nla_and_certificate_validation_enabled()
     )
 
     assert parameters["security"] == "nla"
+    assert parameters["resize-method"] == "display-update"
+    assert "width" not in parameters
+    assert "height" not in parameters
     assert parameters["ignore-cert"] == "false"
     assert "cert-fingerprints" not in parameters
     assert parameters["recording-path"] == "/recordings/pam-rdp-test"
@@ -75,6 +78,7 @@ def test_vnc_parameters_allow_password_only_and_disable_file_transfer():
 
     assert parameters["password"] == TEST_PASSWORD
     assert "username" not in parameters
+    assert "resize-method" not in parameters
     assert parameters["recording-path"] == "/recordings/pam-vnc-test"
     assert parameters["recording-name"] == "pam-vnc-test.guac"
 
