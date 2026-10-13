@@ -42,9 +42,17 @@
 - 本次变更的 Python 文件 `py_compile` 通过；`scripts/validate_postgresql_only.py` 输出 0 项违规。
 - `bash -n scripts/deploy-docker.sh` 与 `git diff --check` 通过。
 
-## 尚未完成的环境联调
+## Linux 部署环境验收
 
-当前机器没有 Docker CLI，因而没有执行 `docker compose config/up`、镜像拉取或容器内录像卷权限验证。当前没有指定或可访问的测试目标，因此没有真实 RDP/VNC 建连、断开和录像回放测试。代码和离线验证已完成；上线前需要在部署主机启用 `NETOPS_REMOTE_DESKTOP_ENABLED=1`，检查 Compose 启动与共享卷权限，再用一台 RDP 和一台 VNC 目标完成端到端联调。
+本机为 Windows，未在本机运行 Docker。GitHub Actions 全部通过后，按用户授权连接 Linux 部署主机 `192.168.204.128`，执行 `bash scripts/deploy-docker.sh update` 更新发布代码；首次更新所在的旧 checkout 未启动新加入的可选远程桌面 profile。随后在已同步的新 checkout 执行 `bash scripts/deploy-docker.sh update --force`，完成镜像构建并启动 profile。远端结果：
+
+- `nexora-guacamole` 使用 `guacamole/guacamole:1.6.0`，状态为运行中；`nexora-guacd` 使用 `guacamole/guacd:1.6.0`，状态为运行中且健康检查通过。
+- Nexora、Guacamole 和 guacd 容器中的开关已启用，JSON 密钥存在且格式有效（密钥值未输出）；`STORAGE_BACKEND=s3`。
+- Nexora 容器访问 Guacamole 内部 HTTP 返回 200；`https://127.0.0.1/api/health/live` 返回 200；未认证的远程桌面 profile API 返回 401，说明路由受认证保护。
+- 数据库查询确认 `asset_remote_desktop_profiles` 表与 `pam_sessions.remote_desktop_protocol` 字段存在；当前 profile 数为 0。
+- Nexora 和 guacd 挂载同一个 `nexora-remote-desktop-recordings` 持久卷，guacd 以 UID 1000 运行且录像目录可用。
+
+尚未完成真实 RDP/VNC 建连、断开、录像生成/回放或 S3 对象验收，因为部署环境当前没有已配置的远程桌面 profile 和指定目标。S3 后端及录像归档配置已确认，但不能据此声称已写入实际录像对象。完成真实会话验收需要先配置一台可访问的 RDP 目标和一台 VNC 目标。
 
 ## 回滚
 
