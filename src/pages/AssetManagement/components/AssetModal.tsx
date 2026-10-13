@@ -193,6 +193,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
   );
   const selectedSnmpCredential = snmpCredentials.find(c => c.id === form.snmp_credential_id);
   const snmpCommunityConfigured = Boolean(form.snmp_community_set || selectedSnmpCredential?.has_snmp_community);
+  const isWindowsMachine = form.asset_type === 'server' && ['windows', 'windows_server'].includes(String(form.platform || '').toLowerCase());
   const requiresBreakGlassAck = form.ssh_algorithm_profile === 'legacy_break_glass'
     && (!isEditMode || editingAsset?.ssh_algorithm_profile !== 'legacy_break_glass');
   const showLookupLoading = isOpen && (lookupsLoading || (!lookupsLoaded && !lookupError));
@@ -637,7 +638,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                 )}
               </div>
 
-              {isEditMode && editingAsset?.id ? (
+              {isWindowsMachine && (isEditMode && editingAsset?.id ? (
                 <RemoteDesktopProfileEditor
                   assetId={editingAsset.id}
                   credentials={credentials}
@@ -648,7 +649,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                   <span className="font-bold text-violet-700">{zh ? 'RDP / VNC：' : 'RDP / VNC: '}</span>
                   {zh ? '请先保存资产以生成资产 ID，然后重新打开该资产并单独保存远程桌面配置。' : 'Save the asset first to create its ID, then reopen it and save its remote desktop profiles.'}
                 </div>
-              )}
+              ))}
 
               <div>
                 <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '设备子类' : 'Device Sub-category'}</label>

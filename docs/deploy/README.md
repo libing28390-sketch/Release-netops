@@ -13,7 +13,7 @@ Docker Compose 使用根目录 `.env.example`；原生 Ubuntu/systemd 使用 `.e
 
 两种方式功能完全一致，区别只在运行环境和安装门槛。
 
-- **v1.0.9 发布说明**：[Linux / Ubuntu / Docker Release Notes](./release-notes.md)
+- **V1.0.10 发布说明**：[Linux / Ubuntu / Docker Release Notes](./release-notes.md)
 - **Windows 工作站访问**：服务端部署在 Linux/Docker 后，Windows 用户仍可在浏览器访问，并安装 [Terminal Agent](./terminal-agent.md) 拉起本机浏览器和终端。
 - Windows Agent 开机启动排障：[Windows Agent startup](./terminal-agent-autostart.md)
 

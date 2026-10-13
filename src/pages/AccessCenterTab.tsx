@@ -893,7 +893,7 @@ export default function AccessCenterTab({
     </td>
   );
 
-  const renderDeviceCells = (dev: Device) => (
+  const renderDeviceCells = (dev: Device, displayPort: number = dev.management_port || 22) => (
     <>
       <td className="px-5 py-4">
         <div className="flex items-center gap-2.5">
@@ -924,7 +924,7 @@ export default function AccessCenterTab({
         </span>
       </td>
       <td className="px-5 py-4 font-mono">{dev.ip_address}</td>
-      <td className="px-5 py-4 font-mono">{dev.management_port || 22}</td>
+      <td className="px-5 py-4 font-mono">{displayPort}</td>
       <td className="px-5 py-4">{dev.site_name || dev.site || (isZh ? '未分配站点' : 'Unassigned site')}</td>
     </>
   );
@@ -955,7 +955,7 @@ export default function AccessCenterTab({
     }
     if (!profile) return <span className="text-[10px] font-semibold text-slate-300">—</span>;
     return (
-      <div className="flex flex-wrap items-center justify-center gap-2">
+      <div className="flex flex-nowrap items-center justify-center gap-1.5 whitespace-nowrap">
         <button
           type="button"
           onClick={() => openRemoteDesktop(dev, protocol, 'normal')}
@@ -1186,10 +1186,10 @@ export default function AccessCenterTab({
           <tbody className="divide-y divide-slate-100">
             {rows((dev) => (
               <tr key={dev.id} className="group transition-colors hover:bg-violet-50/30">
-                {renderDeviceCells(dev)}
+                {renderDeviceCells(dev, getRemoteDesktopProfile(dev, 'rdp')?.port || dev.management_port || 22)}
                 <td className="px-8 py-5"><span className="rounded-lg bg-violet-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-violet-700">RDP</span></td>
                 <td className="px-8 py-5 text-center" style={{ textAlign: 'center' }}>
-                  <div className="flex flex-col items-center gap-2">
+                  <div className="flex flex-nowrap items-center justify-center gap-1.5 whitespace-nowrap">
                     {renderRemoteDesktopActions(dev, 'rdp')}
                     {(dev.platform || '').toLowerCase().includes('windows') && renderWindowsServicesButton(dev)}
                   </div>
@@ -1220,7 +1220,7 @@ export default function AccessCenterTab({
           <tbody className="divide-y divide-slate-100">
             {rows((dev) => (
               <tr key={dev.id} className="group transition-colors hover:bg-blue-50/30">
-                {renderDeviceCells(dev)}
+                {renderDeviceCells(dev, getRemoteDesktopProfile(dev, 'vnc')?.port || dev.management_port || 22)}
                 <td className="px-8 py-5"><span className="rounded-lg bg-blue-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-blue-700">VNC</span></td>
                 <td className="px-8 py-5 text-center" style={{ textAlign: 'center' }}>{renderRemoteDesktopActions(dev, 'vnc')}</td>
               </tr>

@@ -6,6 +6,7 @@ on:
       - main
     tags:
       - 'v*'
+      - 'V*'
   workflow_dispatch:
 
 # Keep the release-repository synchronization behavior used at the end of
@@ -58,11 +59,11 @@ jobs:
           if (!pkg.version || lock.version !== pkg.version || lock.packages?.['']?.version !== pkg.version || backendVersion !== pkg.version) {
             throw new Error('Frontend, lockfile and backend release versions must match');
           }
-          const expectedTag = `v${pkg.version}`;
-          if (process.env.RELEASE_REF?.startsWith('refs/tags/') && process.env.RELEASE_TAG !== expectedTag) {
-            throw new Error(`Release tag must be ${expectedTag}`);
+          const expectedTags = [`v${pkg.version}`, `V${pkg.version}`];
+          if (process.env.RELEASE_REF?.startsWith('refs/tags/') && !expectedTags.includes(process.env.RELEASE_TAG)) {
+            throw new Error(`Release tag must be one of: ${expectedTags.join(', ')}`);
           }
-          console.log(`Release version verified: ${expectedTag}`);
+          console.log(`Release version verified: ${expectedTags.join(' or ')}`);
           NODE
 
       - name: Start PostgreSQL with pgvector

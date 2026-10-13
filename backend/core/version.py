@@ -1,11 +1,11 @@
 # NetOps Automation Platform - Version Information
 
 # The core version of the platform
-VERSION = "1.0.9"
+VERSION = "1.0.10"
 
 # The edition of the current deployment
 # Possible values: "Standard", "Professional", "Enterprise"
 EDITION = "Standard"
 
 # Build timestamp or metadata
-BUILD_DATE = "2026-10-02"
+BUILD_DATE = "2026-10-13"
