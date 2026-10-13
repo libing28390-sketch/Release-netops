@@ -337,8 +337,8 @@ def test_config_backup_driver_family_follows_vendor_on_mismatched_platform():
     assert normalize_device_platform("Huawei", "linux") == "huawei_vrp"
 
 
-def test_backup_policy_model_with_tftp_and_startup():
-    """Test policy model creation and parsing with startup config and TFTP fields."""
+def test_backup_policy_model_with_startup_config():
+    """Test policy model creation and parsing with startup config enabled."""
     conn = postgresql_test_driver.connect()
     conn.row_factory = postgresql_test_driver.Row
     conn.execute(
@@ -378,17 +378,13 @@ def test_backup_policy_model_with_tftp_and_startup():
 
     payload = {
         "name": "DataCenter-Full-Backup",
-        "description": "Daily DC running & startup backup with TFTP transfer",
+        "description": "Daily DC running & startup backup",
         "cron_expr": "0 3 * * *",
         "timezone": "Asia/Shanghai",
         "priority": 100,
         "scope": {"vendors": ["Huawei", "Cisco"]},
         "config_types": ["running", "startup"],
         "collect_startup_config": True,
-        "tftp_enabled": True,
-        "tftp_server": "192.168.10.50",
-        "tftp_port": 69,
-        "tftp_path_prefix": "dc_backups",
     }
 
     created = policy_service.create_policy(
@@ -399,29 +395,23 @@ def test_backup_policy_model_with_tftp_and_startup():
 
     assert created["name"] == "DataCenter-Full-Backup"
     assert created["collect_startup_config"] is True
-    assert created["tftp_enabled"] is True
-    assert created["tftp_server"] == "192.168.10.50"
-    assert created["tftp_path_prefix"] == "dc_backups"
 
     retrieved = policy_service.get_policy(conn, created["id"])
     assert retrieved is not None
     assert retrieved["collect_startup_config"] is True
-    assert retrieved["tftp_enabled"] is True
-    assert retrieved["tftp_server"] == "192.168.10.50"
 
     updated = policy_service.update_policy(
         conn,
         created["id"],
-        {"tftp_server": "192.168.10.55", "collect_startup_config": False},
+        {"collect_startup_config": False},
         actor="admin",
     )
-    assert updated["tftp_server"] == "192.168.10.55"
     assert updated["collect_startup_config"] is False
 
     conn.close()
 
 
-def test_finish_backup_run_records_counts_and_tftp(monkeypatch, tmp_path):
+def test_finish_backup_run_records_counts(monkeypatch, tmp_path):
     """Verify _finish_backup_run aggregates success count and updates config_backup_runs row."""
     from api.configs import _finish_backup_run
 
@@ -464,13 +454,7 @@ def test_finish_backup_run_records_counts_and_tftp(monkeypatch, tmp_path):
 
     monkeypatch.setattr("api.configs.get_db_connection", _get_conn)
 
-    _finish_backup_run(
-        "run-test-01",
-        tftp_status="success",
-        tftp_server="10.0.0.1",
-        tftp_log="Uploaded 2 files",
-        tftp_uploaded_count=2,
-    )
+    _finish_backup_run("run-test-01")
 
     check_conn = _get_conn()
     row = check_conn.execute("SELECT * FROM config_backup_runs WHERE id = 'run-test-01'").fetchone()
@@ -478,7 +462,4 @@ def test_finish_backup_run_records_counts_and_tftp(monkeypatch, tmp_path):
     assert row["success_count"] == 2
     assert row["failed_count"] == 0
     assert row["total_devices"] == 2
-    assert row["tftp_status"] == "success"
-    assert row["tftp_server"] == "10.0.0.1"
-    assert row["tftp_uploaded_count"] == 2
     check_conn.close()

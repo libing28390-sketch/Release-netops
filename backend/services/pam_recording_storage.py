@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,7 @@ RECORDING_CONTENT_TYPES = {
     ".apng": "image/apng",
     ".mp4": "video/mp4",
     ".zip": "application/zip",
+    ".guac": "application/octet-stream",
 }
 
 
@@ -67,6 +69,31 @@ def _row_value(row: Any, name: str, default: Any = "") -> Any:
         return row[name]
     except (KeyError, IndexError, TypeError):
         return default
+
+
+def _is_stable_guac_file(path: Path) -> bool:
+    """Require a closed, non-empty, stable native Guacamole recording."""
+    if path.is_symlink() or not path.is_file():
+        return False
+    previous: tuple[int, int] | None = None
+    stable = 0
+    for _ in range(3):
+        try:
+            stat = path.stat()
+        except OSError:
+            return False
+        current = (int(stat.st_size), int(stat.st_mtime_ns))
+        if stat.st_size <= 0:
+            return False
+        if current == previous:
+            stable += 1
+        else:
+            stable = 0
+        previous = current
+        if stable >= 1:
+            return True
+        time.sleep(0.2)
+    return False
 
 
 def _mark_storage_error(
@@ -134,6 +161,28 @@ def finalize_pam_recording(
         return False
 
     suffix = path.suffix.lower() or ".cast"
+    if suffix == ".guac":
+        if (
+            str(_row_value(row, "session_kind") or "") != "remote_desktop"
+            or not bool(_row_value(row, "remote_desktop_recording_closed", False))
+        ):
+            return False
+        if not _is_stable_guac_file(path):
+            if path.exists() and path.stat().st_size <= 0:
+                conn = get_db_connection()
+                try:
+                    conn.execute(
+                        """UPDATE pam_sessions
+                              SET recording_spool_path = '', recording_status = 'unavailable',
+                                  storage_status = 'ERROR', storage_error = 'Completed .guac recording is empty',
+                                  storage_updated_at = ?
+                            WHERE id = ? AND session_kind = 'remote_desktop'""",
+                        (datetime.now(timezone.utc).isoformat(), session_id),
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
+            return False
     existing_key = str(_row_value(row, "object_key") or "").strip()
     existing_status = str(_row_value(row, "storage_status", "LEGACY") or "LEGACY").upper()
     provider_id = str(_row_value(row, "storage_config_id", "") or "").strip()
@@ -217,6 +266,8 @@ def retry_pending_pam_recordings(limit: int = 50) -> dict[str, int]:
                FROM pam_sessions
                WHERE recording_spool_path <> ''
                  AND storage_status IN ('PENDING', 'ERROR')
+                 AND (session_kind <> 'remote_desktop'
+                      OR (remote_desktop_protocol <> '' AND remote_desktop_recording_closed = TRUE))
                ORDER BY created_at ASC LIMIT ?""",
             (max(1, min(int(limit), 500)),),
         ).fetchall()

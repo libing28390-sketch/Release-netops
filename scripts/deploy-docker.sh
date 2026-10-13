@@ -69,6 +69,9 @@ Environment:
                           Default: 1. With the default Redis URL, install
                           generates a URL-safe REDIS_PASSWORD and updates
                           REDIS_URL.
+  NETOPS_REMOTE_DESKTOP_ENABLED
+                          Set to 1 to run the optional Guacamole RDP/VNC
+                          gateway. The helper creates an independent JSON key.
   NETOPS_STARTUP_RECOVERY_TIMEOUT_SECONDS
                           Maximum wait after a transient Compose startup
                           health failure before the original error is returned
@@ -123,7 +126,18 @@ compose() {
     if storage_backend_is_s3; then
         profile_args+=(--profile object-storage)
     fi
+    if remote_desktop_is_enabled; then
+        profile_args+=(--profile remote-desktop)
+    fi
     docker compose --project-name "$project_name" "${COMPOSE_FILES[@]}" "${profile_args[@]}" "$@"
+}
+
+remote_desktop_is_enabled() {
+    local enabled="${NETOPS_REMOTE_DESKTOP_ENABLED:-}"
+    if [[ -z "$enabled" && -f .env ]]; then
+        enabled="$(env_value NETOPS_REMOTE_DESKTOP_ENABLED)"
+    fi
+    [[ "${enabled:-0}" == "1" ]]
 }
 
 compose_service_args() {
@@ -138,6 +152,9 @@ compose_service_args() {
     if [[ "${NETOPS_REDIS_ENABLED:-1}" != "0" ]]; then
         printf '%s\n' redis
     fi
+    if remote_desktop_is_enabled; then
+        printf '%s\n' guacamole guacd
+    fi
 }
 
 stop_disabled_redis() {
@@ -145,6 +162,15 @@ stop_disabled_redis() {
         # Redis remains defined in the unified Compose file. Stop an existing
         # container explicitly when an operator disables it for this run.
         compose stop redis >/dev/null 2>&1 || true
+    fi
+}
+
+stop_disabled_remote_desktop() {
+    if ! remote_desktop_is_enabled; then
+        # Activate the optional service definitions solely to stop containers
+        # left by a previous opt-in run. Do not tear down shared networks or
+        # the persistent recordings volume.
+        NETOPS_REMOTE_DESKTOP_ENABLED=1 compose stop guacamole guacd >/dev/null 2>&1 || true
     fi
 }
 
@@ -201,7 +227,7 @@ initialize_env() {
     fi
 
     require_command openssl
-    local db_user db_name db_password server_name redis_password redis_url grafana_password grafana_root_url
+    local db_user db_name db_password server_name redis_password redis_url grafana_password grafana_root_url guacamole_key
     db_user="$(env_value POSTGRES_USER)"
     db_name="$(env_value POSTGRES_DB)"
     db_user="${db_user:-postgres}"
@@ -225,6 +251,15 @@ initialize_env() {
     if is_placeholder "$(env_value GRAFANA_ADMIN_PASSWORD)"; then
         grafana_password="$(openssl rand -hex 24)"
         set_env_value GRAFANA_ADMIN_PASSWORD "$grafana_password"
+    fi
+
+    # Guacamole's JSON authentication key is independent from Nexora's
+    # credential encryption key and is only provisioned for opted-in stacks.
+    if remote_desktop_is_enabled; then
+        guacamole_key="$(env_value GUACAMOLE_JSON_SECRET_KEY)"
+        if [[ ! "$guacamole_key" =~ ^[[:xdigit:]]{32}$ ]]; then
+            set_env_value GUACAMOLE_JSON_SECRET_KEY "$(openssl rand -hex 16)"
+        fi
     fi
 
     # Docker deployments use the bundled SeaweedFS service by default. Keep
@@ -500,6 +535,7 @@ build_and_start() {
     ensure_postgres_monitoring_objects
     start_deferred_vmagent
     stop_disabled_redis
+    stop_disabled_remote_desktop
     if ! prune_legacy_grafana_dashboard; then
         log "Warning: legacy Grafana dashboard cleanup did not complete; retry with 'bash scripts/deploy-docker.sh prune-legacy-dashboard'"
     fi
@@ -676,6 +712,9 @@ required_images() {
     if [[ "${NETOPS_REDIS_ENABLED:-1}" != "0" ]]; then
         printf '%s\n' "redis:7.4.2-alpine"
     fi
+    if remote_desktop_is_enabled; then
+        printf '%s\n' "guacamole/guacamole:1.6.0" "guacamole/guacd:1.6.0"
+    fi
 }
 
 verify_required_images() {
@@ -727,6 +766,7 @@ start_offline() {
     start_compose_services offline "${service_args[@]}"
     ensure_postgres_monitoring_objects
     stop_disabled_redis
+    stop_disabled_remote_desktop
     if ! prune_legacy_grafana_dashboard; then
         log "Warning: legacy Grafana dashboard cleanup did not complete; retry with 'bash scripts/deploy-docker.sh prune-legacy-dashboard'"
     fi
@@ -818,6 +858,7 @@ case "$COMMAND" in
             service_args=()
             mapfile -t service_args < <(compose_service_args)
             stop_disabled_redis
+            stop_disabled_remote_desktop
             if ! prune_legacy_grafana_dashboard; then
                 log "Warning: legacy Grafana dashboard cleanup did not complete; retry with 'bash scripts/deploy-docker.sh prune-legacy-dashboard'"
             fi

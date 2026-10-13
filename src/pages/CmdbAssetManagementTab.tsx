@@ -590,16 +590,6 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
               : "Browse assets by site, type, product category and physical asset role."}
           </p>
         </div>
-        <button
-          onClick={() => {
-            void loadTree();
-            void loadAssets();
-          }}
-          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 shadow-sm hover:border-cyan-300 hover:text-cyan-700"
-        >
-          <RefreshCw size={14} />
-          {zh ? "刷新目录" : "Refresh catalog"}
-        </button>
       </div>
       {error && (
         <div className="mb-4 flex items-center justify-between rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700">

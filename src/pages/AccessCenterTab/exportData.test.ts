@@ -24,7 +24,7 @@ describe('buildAccessCenterExportData', () => {
 
   it('splits every capability in the aggregate view', () => {
     const result = buildAccessCenterExportData(devices, 'ALL', false);
-    expect(result.headers.slice(-4)).toEqual(['SSH', 'RDP', 'HTTP', 'HTTPS']);
-    expect(result.rows[0].slice(-4)).toEqual(['Enabled', 'Disabled', 'Enabled', 'Disabled']);
+    expect(result.headers.slice(-5)).toEqual(['SSH', 'RDP', 'VNC', 'HTTP', 'HTTPS']);
+    expect(result.rows[0].slice(-5)).toEqual(['Enabled', 'Disabled', 'Disabled', 'Enabled', 'Disabled']);
   });
 });

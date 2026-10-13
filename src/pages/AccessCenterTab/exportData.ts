@@ -11,11 +11,13 @@ export interface AccessCenterExportDevice {
   web_access_enabled?: boolean;
   web_http_enabled?: boolean;
   web_https_enabled?: boolean;
+  rdp_access_enabled?: boolean;
+  vnc_access_enabled?: boolean;
   connection_method?: string;
   vendor?: string;
 }
 
-export type AccessCenterExportCategory = 'ALL' | 'SSH' | 'RDP' | 'WEB';
+export type AccessCenterExportCategory = 'ALL' | 'SSH' | 'RDP' | 'VNC' | 'WEB';
 
 export function buildAccessCenterExportData(
   devices: AccessCenterExportDevice[],
@@ -23,12 +25,12 @@ export function buildAccessCenterExportData(
   isZh: boolean,
 ): TableExportData {
   const headers = isZh
-    ? ['设备名称', '平台', '厂商', '在线状态', '管理 IP', '端口', '站点', ...(category === 'WEB' ? ['HTTP', 'HTTPS'] : category === 'ALL' ? ['SSH', 'RDP', 'HTTP', 'HTTPS'] : ['协议'])]
-    : ['Device', 'Platform', 'Vendor', 'Status', 'Management IP', 'Port', 'Site', ...(category === 'WEB' ? ['HTTP', 'HTTPS'] : category === 'ALL' ? ['SSH', 'RDP', 'HTTP', 'HTTPS'] : ['Protocol'])];
+    ? ['设备名称', '平台', '厂商', '在线状态', '管理 IP', '端口', '站点', ...(category === 'WEB' ? ['HTTP', 'HTTPS'] : category === 'ALL' ? ['SSH', 'RDP', 'VNC', 'HTTP', 'HTTPS'] : ['协议'])]
+    : ['Device', 'Platform', 'Vendor', 'Status', 'Management IP', 'Port', 'Site', ...(category === 'WEB' ? ['HTTP', 'HTTPS'] : category === 'ALL' ? ['SSH', 'RDP', 'VNC', 'HTTP', 'HTTPS'] : ['Protocol'])];
 
   const enabled = (value: boolean | undefined) => value ? (isZh ? '已启用' : 'Enabled') : (isZh ? '未启用' : 'Disabled');
   const rows = devices.map((device) => {
-    const protocol = category === 'RDP' ? 'RDP' : category === 'SSH' ? 'SSH' : '';
+    const protocol = category === 'RDP' ? 'RDP' : category === 'VNC' ? 'VNC' : category === 'SSH' ? 'SSH' : '';
     const common = [
       device.hostname,
       device.platform || 'General Linux',
@@ -46,7 +48,8 @@ export function buildAccessCenterExportData(
       return [
         ...common,
         methods.includes('SSH') ? enabled(true) : enabled(false),
-        methods.includes('RDP') ? enabled(true) : enabled(false),
+        enabled(device.rdp_access_enabled),
+        enabled(device.vnc_access_enabled),
         enabled(device.web_http_enabled),
         enabled(device.web_https_enabled),
       ];

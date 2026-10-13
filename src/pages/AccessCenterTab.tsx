@@ -1,8 +1,8 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { 
-  Search, Terminal, Monitor, Lock, Info, 
+import {
+  Search, Terminal, Monitor, Lock, Info,
   Copy, ShieldCheck, RefreshCw, ChevronLeft, ChevronRight, Send, ChevronDown, UserCheck,
-  Database, Server, Cpu, Key, FolderTree, Globe, X, Activity, Wifi, Star, Settings
+  Database, Server, Cpu, Key, FolderTree, Globe, X, Activity, Wifi, Star, Settings, Loader2, AlertCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import TerminalWindow from '../components/access/TerminalWindow';
@@ -17,6 +17,10 @@ import { WebAccessRequestModal } from './AssetManagement/components/WebAccessReq
 import WindowsServiceModal from './AccessCenterTab/components/WindowsServiceModal';
 import { formatTerminalAgentError, getLocalTerminalConfig, TERMINAL_APP_LABELS } from '../utils/localTerminal';
 import { buildAccessCenterExportData } from './AccessCenterTab/exportData';
+import { listRemoteDesktopProfilesBatch, type RemoteDesktopAccessLevel } from '../api/pamRemoteDesktop';
+import { ApiError } from '../api/http';
+import type { RemoteDesktopProfile, RemoteDesktopProtocol } from './AssetManagement/types';
+import RemoteDesktopAccessModal from '../components/access/RemoteDesktopAccessModal';
 
 interface Device {
   id: string;
@@ -43,8 +47,8 @@ interface Device {
 }
 
 type WebScheme = 'http' | 'https';
-type AccessCategory = 'ALL' | 'SSH' | 'RDP' | 'WEB';
-type AllAccessMethod = 'ssh-terminal' | 'ssh-web' | 'rdp' | 'http' | 'https';
+type AccessCategory = 'ALL' | 'SSH' | 'RDP' | 'VNC' | 'WEB';
+type AllAccessMethod = 'ssh-terminal' | 'ssh-web' | 'rdp' | 'vnc' | 'http' | 'https';
 
 type AccessTreeKind = 'root' | 'site' | 'type' | 'role';
 interface AccessTreeNode {
@@ -147,7 +151,7 @@ export default function AccessCenterTab({
   const [selectedTreeKey, setSelectedTreeKey] = useState('root');
   const [expandedTreeKeys, setExpandedTreeKeys] = useState<Set<string>>(new Set(['root']));
   const [accessTreeCollapsed, setAccessTreeCollapsed] = useState(false);
-  
+
   // --- MFA Logic ---
   const [showMFAModal, setShowMFAModal] = useState(false);
   const [fixedPassword, setFixedPassword] = useState('');
@@ -173,6 +177,62 @@ export default function AccessCenterTab({
   const [webAccessReason, setWebAccessReason] = useState('');
   const [webAccessRequesting, setWebAccessRequesting] = useState(false);
   const [windowsServiceTarget, setWindowsServiceTarget] = useState<Device | null>(null);
+  const [remoteDesktopProfilesByAssetId, setRemoteDesktopProfilesByAssetId] = useState<Record<string, RemoteDesktopProfile[]>>({});
+  const [remoteDesktopProfilesLoading, setRemoteDesktopProfilesLoading] = useState(false);
+  const [remoteDesktopProfilesError, setRemoteDesktopProfilesError] = useState<{ status: number | null; message: string } | null>(null);
+  const [remoteDesktopProfilesRetry, setRemoteDesktopProfilesRetry] = useState(0);
+  const [remoteDesktopTarget, setRemoteDesktopTarget] = useState<{ device: Device; protocol: RemoteDesktopProtocol; profile: RemoteDesktopProfile; accessLevel: RemoteDesktopAccessLevel } | null>(null);
+
+  const remoteDesktopAssetIds = useMemo(
+    () => Array.from(new Set((devices || []).map(device => String(device.asset_id || '').trim()).filter(Boolean))),
+    [devices],
+  );
+  const remoteDesktopAssetIdsKey = remoteDesktopAssetIds.join(',');
+
+  useEffect(() => {
+    const assetIds = remoteDesktopAssetIdsKey ? remoteDesktopAssetIdsKey.split(',') : [];
+    const controller = new AbortController();
+    let active = true;
+    if (assetIds.length === 0) {
+      setRemoteDesktopProfilesByAssetId({});
+      setRemoteDesktopProfilesError(null);
+      setRemoteDesktopProfilesLoading(false);
+      return () => controller.abort();
+    }
+
+    setRemoteDesktopProfilesLoading(true);
+    setRemoteDesktopProfilesError(null);
+    listRemoteDesktopProfilesBatch(assetIds, controller.signal)
+      .then(profiles => {
+        if (!active) return;
+        const grouped: Record<string, RemoteDesktopProfile[]> = {};
+        profiles.forEach(profile => {
+          const assetId = String(profile.asset_id || '').trim();
+          if (!assetId || (profile.protocol !== 'rdp' && profile.protocol !== 'vnc')) return;
+          (grouped[assetId] ||= []).push(profile);
+        });
+        setRemoteDesktopProfilesByAssetId(grouped);
+      })
+      .catch((error: unknown) => {
+        if (!active || (error instanceof DOMException && error.name === 'AbortError')) return;
+        const status = error instanceof ApiError ? error.status : null;
+        const message = status === 401
+          ? (isZh ? '登录状态已失效，请重新登录后查看远程桌面入口。' : 'Your session has expired. Sign in again to view remote desktop entries.')
+          : status === 403
+            ? (isZh ? '你没有权限读取部分资产的远程桌面配置。' : 'You do not have permission to read remote desktop profiles for some assets.')
+            : (error instanceof Error ? error.message : (isZh ? '远程桌面入口加载失败。' : 'Remote desktop entries could not be loaded.'));
+        setRemoteDesktopProfilesByAssetId({});
+        setRemoteDesktopProfilesError({ status, message });
+      })
+      .finally(() => {
+        if (active) setRemoteDesktopProfilesLoading(false);
+      });
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [isZh, remoteDesktopAssetIdsKey, remoteDesktopProfilesRetry]);
 
   // Real current username from session
   const [currentUsername, setCurrentUsername] = useState<string>('');
@@ -205,11 +265,15 @@ export default function AccessCenterTab({
     fetchCurrentUser();
   }, []);
 
-  const getTerminalProtocol = (dev: Device): 'SSH' | 'RDP' | null => {
-    if (dev.connection_method === 'web' || dev.connection_method === 'none') return null;
-    const platform = (dev.platform || '').toLowerCase();
-    if (platform.includes('windows')) return 'RDP';
-    return 'SSH'; 
+  const getTerminalProtocol = (dev: Device): 'SSH' | null => {
+    if (dev.connection_method === 'web' || dev.connection_method === 'none' || dev.connection_method === 'winrm') return null;
+    if ((dev.platform || '').toLowerCase().includes('windows')) return null;
+    return 'SSH';
+  };
+
+  const getRemoteDesktopProfile = (dev: Device, protocol: RemoteDesktopProtocol) => {
+    const assetId = String(dev.asset_id || '').trim();
+    return (remoteDesktopProfilesByAssetId[assetId] || []).find(profile => profile.protocol === protocol && profile.enabled !== false);
   };
 
   // HTTP(S) management-page access is independent from the SSH terminal
@@ -227,9 +291,9 @@ export default function AccessCenterTab({
       // independent of device HTTP(S) management pages, so an SSH-only asset
       // must expose both the native-terminal and browser-terminal actions.
       methods.push('ssh-terminal', 'ssh-web');
-    } else if (terminalProtocol === 'RDP') {
-      methods.push('rdp');
     }
+    if (getRemoteDesktopProfile(dev, 'rdp')) methods.push('rdp');
+    if (getRemoteDesktopProfile(dev, 'vnc')) methods.push('vnc');
     if (dev.web_http_enabled) methods.push('http');
     if (dev.web_https_enabled) methods.push('https');
     return methods;
@@ -241,6 +305,7 @@ export default function AccessCenterTab({
         'ssh-terminal': 'SSH 终端',
         'ssh-web': 'Web SSH',
         rdp: 'RDP',
+        vnc: 'VNC',
         http: 'HTTP',
         https: 'HTTPS',
       }[method];
@@ -249,6 +314,7 @@ export default function AccessCenterTab({
       'ssh-terminal': 'SSH terminal',
       'ssh-web': 'Web SSH',
       rdp: 'RDP',
+      vnc: 'VNC',
       http: 'HTTP',
       https: 'HTTPS',
     }[method];
@@ -257,17 +323,21 @@ export default function AccessCenterTab({
   const baseFilteredDevices = useMemo(() => {
     const list = Array.isArray(devices) ? devices : [];
     const query = (searchQuery || '').toLowerCase();
-    
+
     return list.filter(d => {
       const terminalProtocol = getTerminalProtocol(d);
       const matchesCategory = activeCategory === 'ALL'
-        || (activeCategory === 'WEB' ? hasHttpWebAccess(d) : terminalProtocol === activeCategory);
+        || (activeCategory === 'WEB' ? hasHttpWebAccess(d)
+          : activeCategory === 'SSH' ? terminalProtocol === 'SSH'
+            : activeCategory === 'RDP' ? Boolean(getRemoteDesktopProfile(d, 'rdp'))
+              : activeCategory === 'VNC' ? Boolean(getRemoteDesktopProfile(d, 'vnc'))
+                : false);
       const name = (d?.hostname || '').toLowerCase();
       const ip = (d?.ip_address || '').toLowerCase();
       const matchesSearch = name.includes(query) || ip.includes(query);
       return matchesCategory && matchesSearch;
     });
-  }, [devices, searchQuery, activeCategory]);
+  }, [devices, searchQuery, activeCategory, remoteDesktopProfilesByAssetId]);
 
   const accessTree = useMemo(
     () => buildAccessTree(baseFilteredDevices, isZh),
@@ -289,8 +359,16 @@ export default function AccessCenterTab({
     return baseFilteredDevices.filter((device) => ids.has(device.id));
   }, [accessTreeIndex, baseFilteredDevices, selectedTreeKey]);
   const accessExportData = useMemo(
-    () => buildAccessCenterExportData(filteredDevices, activeCategory, isZh),
-    [filteredDevices, activeCategory, isZh],
+    () => buildAccessCenterExportData(
+      filteredDevices.map(device => ({
+        ...device,
+        rdp_access_enabled: Boolean(getRemoteDesktopProfile(device, 'rdp')),
+        vnc_access_enabled: Boolean(getRemoteDesktopProfile(device, 'vnc')),
+      })),
+      activeCategory,
+      isZh,
+    ),
+    [filteredDevices, activeCategory, isZh, remoteDesktopProfilesByAssetId],
   );
   const selectedTreeLabel = accessTreeIndex.get(selectedTreeKey)?.label || accessTree.label;
   const totalCount = filteredDevices.length;
@@ -303,7 +381,7 @@ export default function AccessCenterTab({
   const nodeStats = {
     total: filteredDevices.length,
     online: filteredDevices.filter((device) => device.status === 'online').length,
-    terminal: filteredDevices.filter((device) => Boolean(getTerminalProtocol(device))).length,
+    terminal: filteredDevices.filter((device) => Boolean(getTerminalProtocol(device) || getRemoteDesktopProfile(device, 'rdp') || getRemoteDesktopProfile(device, 'vnc'))).length,
     web: filteredDevices.filter((device) => hasHttpWebAccess(device)).length,
   };
 
@@ -459,8 +537,21 @@ export default function AccessCenterTab({
     setWindowsServiceTarget(dev);
   };
 
-  const handleUnavailableRdpAccess = () => {
-    showToast(isZh ? '当前版本未配置 RDP 网关' : 'The RDP gateway is not configured in this version', 'info');
+  const openRemoteDesktop = (dev: Device, protocol: RemoteDesktopProtocol, accessLevel: RemoteDesktopAccessLevel) => {
+    if (remoteDesktopProfilesError) {
+      showToast(remoteDesktopProfilesError.message, remoteDesktopProfilesError.status === 401 || remoteDesktopProfilesError.status === 403 ? 'info' : 'error');
+      return;
+    }
+    const profile = getRemoteDesktopProfile(dev, protocol);
+    if (!profile) {
+      showToast(isZh ? `请先在资产中配置并启用 ${protocol.toUpperCase()} 入口` : `Configure and enable a ${protocol.toUpperCase()} profile for this asset first`, 'info');
+      return;
+    }
+    if (!dev.asset_id) {
+      showToast(isZh ? '该设备尚未关联物理资产' : 'This device is not linked to a physical asset', 'info');
+      return;
+    }
+    setRemoteDesktopTarget({ device: dev, protocol, profile, accessLevel });
   };
 
   const closeMFAModal = () => {
@@ -642,10 +733,10 @@ export default function AccessCenterTab({
       const res = await fetch('/api/pam/mfa/request', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          user_id: 'current_user', 
+        body: JSON.stringify({
+          user_id: 'current_user',
           username: currentUsername || 'Admin',
-          approver_id: selectedApproverId 
+          approver_id: selectedApproverId
         })
       });
       const result = await res.json();
@@ -694,7 +785,7 @@ export default function AccessCenterTab({
 
   const requestSession = async (dev: Device, accessLevel: 'normal' | 'admin', mfaCode?: string, fixedPw?: string, mfaNonce?: string) => {
     const assetId = dev.asset_id || dev.id; // Fallback to id if asset_id is not mapped in UI properly yet
-    
+
     try {
       const res = await fetch('/api/pam/sessions', {
         method: 'POST',
@@ -713,7 +804,7 @@ export default function AccessCenterTab({
         })
       });
       const result = await res.json();
-      
+
       if (!res.ok) {
         showToast(result.detail || result.error || 'Failed to request session', 'error');
         if (autoLoginModeRef.current) {
@@ -722,7 +813,7 @@ export default function AccessCenterTab({
         }
         return;
       }
-      
+
       if (result.requires_mfa) {
         // Only trigger MFA if the backend says we need it (should only happen for admin without provided codes)
         setMfaTarget({ device: dev, appType: 'web', identity: 'privileged' });
@@ -838,36 +929,62 @@ export default function AccessCenterTab({
     </>
   );
 
-  const renderTerminalActions = (dev: Device, protocol: 'SSH' | 'RDP') => (
+  const renderTerminalActions = (dev: Device) => (
     <div className="flex flex-nowrap items-center justify-center gap-2.5 whitespace-nowrap">
       <button
-        onClick={() => protocol === 'RDP' ? handleUnavailableRdpAccess() : handleAccessRequest(dev, 'xshell', 'normal')}
+        onClick={() => handleAccessRequest(dev, 'xshell', 'normal')}
         className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-[10px] font-black text-slate-600 transition-all hover:border-emerald-500 hover:bg-emerald-50 hover:text-emerald-600"
-        title={protocol === 'RDP' ? (isZh ? 'RDP 网关未配置' : 'RDP gateway is not configured') : undefined}
       >
-        {protocol === 'RDP' ? <Monitor className="h-3.5 w-3.5" /> : <Terminal className="h-3.5 w-3.5" />}
+        <Terminal className="h-3.5 w-3.5" />
         {dev.normal_username || (isZh ? '普通' : 'user')}
       </button>
       <button
-        onClick={() => protocol === 'RDP' ? handleUnavailableRdpAccess() : handleAccessRequest(dev, 'xshell', 'privileged')}
+        onClick={() => handleAccessRequest(dev, 'xshell', 'privileged')}
         className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-[10px] font-black text-slate-600 transition-all hover:border-orange-500 hover:bg-orange-50 hover:text-orange-600"
-        title={protocol === 'RDP' ? (isZh ? 'RDP 网关未配置' : 'RDP gateway is not configured') : undefined}
       >
         <Lock className="h-3.5 w-3.5" />
         {dev.admin_username || (isZh ? '特权' : 'admin')}
       </button>
-      {protocol === 'RDP' && (
+    </div>
+  );
+
+  const renderRemoteDesktopActions = (dev: Device, protocol: RemoteDesktopProtocol) => {
+    const profile = getRemoteDesktopProfile(dev, protocol);
+    if (remoteDesktopProfilesLoading && !profile) {
+      return <span className="inline-flex items-center gap-1.5 text-[10px] text-slate-400"><Loader2 size={12} className="animate-spin" />{isZh ? '加载中' : 'Loading'}</span>;
+    }
+    if (!profile) return <span className="text-[10px] font-semibold text-slate-300">—</span>;
+    return (
+      <div className="flex flex-wrap items-center justify-center gap-2">
         <button
           type="button"
-          onClick={() => openWindowsServiceManagement(dev)}
-          className="flex items-center gap-2 rounded-xl border border-cyan-200 bg-cyan-50 px-3.5 py-2 text-[10px] font-black text-cyan-700 transition-all hover:border-cyan-500 hover:bg-cyan-100"
-          title={isZh ? '管理 Windows 服务' : 'Manage Windows services'}
+          onClick={() => openRemoteDesktop(dev, protocol, 'normal')}
+          className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[10px] font-black text-slate-600 transition-all hover:border-emerald-500 hover:bg-emerald-50 hover:text-emerald-700"
+          title={isZh ? `普通凭据 · ${profile.profile_name}` : `Normal credentials · ${profile.profile_name}`}
         >
-          <Settings className="h-3.5 w-3.5" />
-          {isZh ? '服务管理' : 'Services'}
+          <Monitor className="h-3.5 w-3.5" />{isZh ? '普通' : 'Normal'}
         </button>
-      )}
-    </div>
+        <button
+          type="button"
+          onClick={() => openRemoteDesktop(dev, protocol, 'admin')}
+          className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[10px] font-black text-slate-600 transition-all hover:border-orange-500 hover:bg-orange-50 hover:text-orange-700"
+          title={isZh ? `管理员凭据 · ${profile.profile_name}` : `Administrator credentials · ${profile.profile_name}`}
+        >
+          <Lock className="h-3.5 w-3.5" />{isZh ? '管理员' : 'Admin'}
+        </button>
+      </div>
+    );
+  };
+
+  const renderWindowsServicesButton = (dev: Device) => (
+    <button
+      type="button"
+      onClick={() => openWindowsServiceManagement(dev)}
+      className="inline-flex items-center gap-2 rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2 text-[10px] font-black text-cyan-700 transition-all hover:border-cyan-500 hover:bg-cyan-100"
+      title={isZh ? '管理 Windows 服务' : 'Manage Windows services'}
+    >
+      <Settings className="h-3.5 w-3.5" />{isZh ? '服务管理' : 'Services'}
+    </button>
   );
 
   // HTTP/HTTPS management-page login. This is used by the WEB category and
@@ -937,11 +1054,13 @@ export default function AccessCenterTab({
     const renderSelectedActions = () => {
       switch (selectedMethod) {
         case 'ssh-terminal':
-          return renderTerminalActions(dev, 'SSH');
+          return renderTerminalActions(dev);
         case 'ssh-web':
           return renderSshWebActions(dev);
         case 'rdp':
-          return renderTerminalActions(dev, 'RDP');
+          return renderRemoteDesktopActions(dev, 'rdp');
+        case 'vnc':
+          return renderRemoteDesktopActions(dev, 'vnc');
         case 'http':
           return renderHttpWebActions(dev, 'http');
         case 'https':
@@ -1069,7 +1188,41 @@ export default function AccessCenterTab({
               <tr key={dev.id} className="group transition-colors hover:bg-violet-50/30">
                 {renderDeviceCells(dev)}
                 <td className="px-8 py-5"><span className="rounded-lg bg-violet-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-violet-700">RDP</span></td>
-                <td className="px-8 py-5 text-center" style={{ textAlign: 'center' }}>{renderTerminalActions(dev, 'RDP')}</td>
+                <td className="px-8 py-5 text-center" style={{ textAlign: 'center' }}>
+                  <div className="flex flex-col items-center gap-2">
+                    {renderRemoteDesktopActions(dev, 'rdp')}
+                    {(dev.platform || '').toLowerCase().includes('windows') && renderWindowsServicesButton(dev)}
+                  </div>
+                </td>
+              </tr>
+            ), 4)}
+          </tbody>
+        </DataTable>
+      );
+    }
+
+    if (activeCategory === 'VNC') {
+      return (
+        <DataTable className="min-w-[1320px] text-left" style={{ minWidth: '1320px' }} exportConfig={{ filename: 'access-center-vnc', language: isZh ? 'zh' : 'en', disabled: filteredDevices.length === 0, exportData: accessExportData }}>
+          <thead>
+            <tr className="border-b border-slate-200 bg-blue-50/40">
+              {tableHeader(isZh ? '设备名称' : 'Device')}
+              {tableHeader(isZh ? '平台' : 'Platform')}
+              {tableHeader(isZh ? '厂商' : 'Vendor')}
+              {tableHeader(isZh ? '在线状态' : 'Status')}
+              {tableHeader(isZh ? '管理 IP' : 'Management IP')}
+              {tableHeader(isZh ? '端口' : 'Port')}
+              {tableHeader(isZh ? '站点' : 'Site')}
+              {tableHeader(isZh ? '协议' : 'Protocol')}
+              {tableHeader(isZh ? 'VNC 登录' : 'VNC login', 'center', true)}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {rows((dev) => (
+              <tr key={dev.id} className="group transition-colors hover:bg-blue-50/30">
+                {renderDeviceCells(dev)}
+                <td className="px-8 py-5"><span className="rounded-lg bg-blue-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-blue-700">VNC</span></td>
+                <td className="px-8 py-5 text-center" style={{ textAlign: 'center' }}>{renderRemoteDesktopActions(dev, 'vnc')}</td>
               </tr>
             ), 4)}
           </tbody>
@@ -1099,7 +1252,7 @@ export default function AccessCenterTab({
               <tr key={dev.id} className="group transition-colors hover:bg-emerald-50/30">
                 {renderDeviceCells(dev)}
                 <td className="px-8 py-5"><span className="rounded-lg bg-emerald-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-emerald-700">SSH</span></td>
-                <td className="px-8 py-5 text-center" style={{ textAlign: 'center' }}>{renderTerminalActions(dev, 'SSH')}</td>
+                <td className="px-8 py-5 text-center" style={{ textAlign: 'center' }}>{renderTerminalActions(dev)}</td>
                 <td className="px-8 py-5 text-center" style={{ textAlign: 'center' }}>{renderSshWebActions(dev)}</td>
               </tr>
             ), 5)}
@@ -1109,7 +1262,7 @@ export default function AccessCenterTab({
     }
 
     return (
-      <DataTable className="min-w-[1640px] text-left" style={{ minWidth: '1640px' }} exportConfig={{ filename: 'access-center-all', language: isZh ? 'zh' : 'en', disabled: filteredDevices.length === 0, exportData: accessExportData }}>
+      <DataTable className="min-w-[1720px] text-left" style={{ minWidth: '1720px' }} exportConfig={{ filename: 'access-center-all', language: isZh ? 'zh' : 'en', disabled: filteredDevices.length === 0, exportData: accessExportData }}>
         <thead>
           <tr className="border-b border-slate-200 bg-slate-50/70">
             {tableHeader(isZh ? '设备名称' : 'Device')}
@@ -1121,6 +1274,7 @@ export default function AccessCenterTab({
             {tableHeader(isZh ? '站点' : 'Site')}
             {tableHeader('SSH', 'center')}
             {tableHeader('RDP', 'center')}
+            {tableHeader('VNC', 'center')}
             {tableHeader('HTTP', 'center')}
             {tableHeader('HTTPS', 'center')}
             {tableHeader(isZh ? '登录方式' : 'Access method', 'center', true)}
@@ -1131,7 +1285,8 @@ export default function AccessCenterTab({
             <tr key={dev.id} className="group transition-colors hover:bg-slate-50">
               {renderDeviceCells(dev)}
               {renderFlagCell(getTerminalProtocol(dev) === 'SSH')}
-              {renderFlagCell(getTerminalProtocol(dev) === 'RDP')}
+              {renderFlagCell(Boolean(getRemoteDesktopProfile(dev, 'rdp')))}
+              {renderFlagCell(Boolean(getRemoteDesktopProfile(dev, 'vnc')))}
               {renderFlagCell(Boolean(dev.web_http_enabled))}
               {renderFlagCell(Boolean(dev.web_https_enabled))}
               <td className="px-8 py-5 text-center" style={{ textAlign: 'center' }}>
@@ -1176,7 +1331,7 @@ export default function AccessCenterTab({
         }
         extras={
           <div className="flex items-center gap-2">
-            {(['ALL', 'SSH', 'RDP', 'WEB'] as AccessCategory[]).map((category) => (
+            {(['ALL', 'SSH', 'RDP', 'VNC', 'WEB'] as AccessCategory[]).map((category) => (
               <button
                 key={category}
                 onClick={() => { setActiveCategory(category); setCurrentPage(1); }}
@@ -1195,6 +1350,15 @@ export default function AccessCenterTab({
 
       {/* Table Section */}
       <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+        {(remoteDesktopProfilesLoading || remoteDesktopProfilesError) && (
+          <div className={`mb-4 flex flex-wrap items-center gap-2 rounded-xl border px-3.5 py-2.5 text-xs ${remoteDesktopProfilesError ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-cyan-100 bg-cyan-50/60 text-cyan-800'}`}>
+            {remoteDesktopProfilesError ? <AlertCircle size={14} className="shrink-0" /> : <Loader2 size={14} className="shrink-0 animate-spin" />}
+            <span className="flex-1">{remoteDesktopProfilesError?.message || (isZh ? '正在批量加载 RDP / VNC 入口…' : 'Loading RDP / VNC entries in batches…')}</span>
+            {remoteDesktopProfilesError && remoteDesktopProfilesError.status !== 401 && remoteDesktopProfilesError.status !== 403 && (
+              <button type="button" onClick={() => setRemoteDesktopProfilesRetry(count => count + 1)} className="font-bold underline underline-offset-2">{isZh ? '重试' : 'Retry'}</button>
+            )}
+          </div>
+        )}
         <div className="mb-4 grid grid-cols-2 gap-3 xl:grid-cols-5">
           {[
             {
@@ -1339,11 +1503,24 @@ export default function AccessCenterTab({
         onClose={() => setWindowsServiceTarget(null)}
       />
 
+      {remoteDesktopTarget && (
+        <RemoteDesktopAccessModal
+          assetId={remoteDesktopTarget.device.asset_id || ''}
+          hostname={remoteDesktopTarget.device.hostname}
+          ipAddress={remoteDesktopTarget.device.ip_address}
+          protocol={remoteDesktopTarget.protocol}
+          profile={remoteDesktopTarget.profile}
+          initialAccessLevel={remoteDesktopTarget.accessLevel}
+          language={language}
+          onClose={() => setRemoteDesktopTarget(null)}
+        />
+      )}
+
       {/* Legacy webhook approval dialog kept unreachable for old state recovery. */}
       <AnimatePresence>
         {false && showMFAModal && (
           <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-            <motion.div 
+            <motion.div
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
@@ -1378,7 +1555,7 @@ export default function AccessCenterTab({
                     <div className="absolute left-4 top-1/2 -translate-y-1/2 w-8 h-8 bg-white rounded-lg border border-slate-100 flex items-center justify-center text-slate-300 group-focus-within:text-[#00bceb] group-focus-within:border-cyan-100 transition-all shadow-sm">
                        <UserCheck className="w-4 h-4" />
                     </div>
-                    <select 
+                    <select
                       value={selectedApproverId}
                       onChange={(e) => setSelectedApproverId(e.target.value)}
                       className="w-full pl-14 pr-10 py-4 bg-slate-50/50 border border-slate-100 rounded-2xl outline-none focus:border-[#00bceb] focus:bg-white focus:ring-4 focus:ring-[#00bceb]/5 transition-all text-sm font-bold text-slate-700 appearance-none cursor-pointer"
@@ -1430,7 +1607,7 @@ export default function AccessCenterTab({
                       <div className="absolute left-4 top-1/2 -translate-y-1/2 w-8 h-8 bg-white rounded-lg border border-slate-100 flex items-center justify-center text-slate-300 group-focus-within:text-[#00bceb] group-focus-within:border-cyan-100 transition-all shadow-sm">
                          <RefreshCw className={`w-4 h-4 ${isSending ? 'animate-spin' : ''}`} />
                       </div>
-                      <input 
+                      <input
                         type="text"
                         maxLength={6}
                         value={dynamicCode}
@@ -1439,7 +1616,7 @@ export default function AccessCenterTab({
                         placeholder="000000"
                       />
                     </div>
-                    <button 
+                    <button
                       onClick={sendMFACode}
                       disabled={isSending || countdown > 0 || !selectedApproverId}
                       className="min-w-[100px] bg-white border border-slate-200 text-[#00bceb] rounded-2xl font-black text-[10px] uppercase tracking-widest hover:border-[#00bceb] hover:bg-cyan-50 disabled:bg-slate-50 disabled:text-slate-300 disabled:border-slate-100 transition-all flex flex-col items-center justify-center gap-1 shadow-sm"
@@ -1461,7 +1638,7 @@ export default function AccessCenterTab({
 
                 {/* Footer Actions */}
                 <div className="pt-4 space-y-4">
-                  <button 
+                  <button
                     onClick={handleMFAVerify}
                     className="w-full py-5 bg-gradient-to-r from-[#00bceb] to-cyan-600 text-white font-black rounded-[1.5rem] hover:shadow-xl hover:shadow-[#00bceb]/30 active:scale-[0.98] transition-all flex items-center justify-center gap-3 text-sm uppercase tracking-widest group"
                   >

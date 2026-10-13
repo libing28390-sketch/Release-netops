@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 from typing import Iterable
 
 from services import tag_service
-from services.file_transfer_service import normalize_transfer_protocol
 
 
 DEFAULT_POLICY_ID = "backup-policy-default"
@@ -76,46 +75,23 @@ def normalize_scope(scope: dict | None) -> dict:
     return normalized
 
 
-def _decrypt_transfer_password(value: object) -> str:
-    raw = str(value or "")
-    if not raw:
-        return ""
-    try:
-        from core.crypto import decrypt_credential
-
-        return str(decrypt_credential(raw) or raw)
-    except Exception:
-        return raw
-
-
-def _encrypt_transfer_password(value: object) -> str:
-    raw = str(value or "")
-    if not raw:
-        return ""
-    try:
-        from core.crypto import encrypt_credential
-
-        return str(encrypt_credential(raw) or raw)
-    except Exception:
-        return raw
-
-
-def _row_to_policy(row, *, include_secret: bool = False) -> dict:
+def _row_to_policy(row) -> dict:
     item = dict(row)
     item["enabled"] = bool(item.get("enabled"))
     item["change_only"] = bool(item.get("change_only"))
     item["scope"] = normalize_scope(_json_object(item.pop("scope_json", "{}"), DEFAULT_SCOPE))
     item["config_types"] = _json_list(item.pop("config_types_json", '["running"]'), ["running"])
     item["collect_startup_config"] = bool(item.get("collect_startup_config", 0))
-    item["tftp_enabled"] = bool(item.get("tftp_enabled", 0))
-    item["tftp_server"] = str(item.get("tftp_server") or "")
-    item["tftp_port"] = int(item.get("tftp_port") or 69)
-    item["tftp_path_prefix"] = str(item.get("tftp_path_prefix") or "backups")
-    item["tftp_protocol"] = normalize_transfer_protocol(item.get("tftp_protocol"), default="tftp")
-    item["tftp_username"] = str(item.get("tftp_username") or "")
-    stored_password = str(item.get("tftp_password") or "")
-    item["tftp_password_configured"] = bool(stored_password)
-    item["tftp_password"] = _decrypt_transfer_password(stored_password) if include_secret else ""
+    for legacy_field in (
+        "tftp_enabled",
+        "tftp_server",
+        "tftp_port",
+        "tftp_path_prefix",
+        "tftp_protocol",
+        "tftp_username",
+        "tftp_password",
+    ):
+        item.pop(legacy_field, None)
     return item
 
 
@@ -141,10 +117,9 @@ def ensure_default_policy(conn) -> dict:
         (id, name, description, enabled, cron_expr, timezone, priority,
          scope_json, config_types_json, change_only, retention_days,
          max_versions_per_device, concurrency, retry_count, timeout_seconds,
-         collect_startup_config, tftp_enabled, tftp_server, tftp_port, tftp_path_prefix,
-         tftp_protocol, tftp_username, tftp_password,
+         collect_startup_config,
          created_by, updated_by, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             DEFAULT_POLICY_ID,
@@ -163,13 +138,6 @@ def ensure_default_policy(conn) -> dict:
             1,
             30,
             0,
-            0,
-            "",
-            69,
-            "backups",
-            "tftp",
-            "",
-            "",
             "system",
             "system",
             now,
@@ -210,12 +178,12 @@ def list_policies(conn, *, search: str = "", page: int = 1, page_size: int = 20)
     }
 
 
-def get_policy(conn, policy_id: str, *, include_secret: bool = False) -> dict | None:
+def get_policy(conn, policy_id: str) -> dict | None:
     row = conn.execute(
         "SELECT * FROM config_backup_policies WHERE id = ?",
         (policy_id,),
     ).fetchone()
-    return _row_to_policy(row, include_secret=include_secret) if row else None
+    return _row_to_policy(row) if row else None
 
 
 def list_enabled_policies(conn) -> list[dict]:
@@ -240,10 +208,9 @@ def create_policy(conn, payload: dict, *, actor: str) -> dict:
         (id, name, description, enabled, cron_expr, timezone, priority,
          scope_json, config_types_json, change_only, retention_days,
          max_versions_per_device, concurrency, retry_count, timeout_seconds,
-         collect_startup_config, tftp_enabled, tftp_server, tftp_port, tftp_path_prefix,
-         tftp_protocol, tftp_username, tftp_password,
+         collect_startup_config,
          created_by, updated_by, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             policy_id,
@@ -262,13 +229,6 @@ def create_policy(conn, payload: dict, *, actor: str) -> dict:
             int(payload.get("retry_count", 1)),
             int(payload.get("timeout_seconds", 30)),
             1 if payload.get("collect_startup_config") else 0,
-            1 if payload.get("tftp_enabled") else 0,
-            str(payload.get("tftp_server") or "").strip(),
-            int(payload.get("tftp_port") or 69),
-            str(payload.get("tftp_path_prefix") or "backups").strip(),
-            normalize_transfer_protocol(payload.get("tftp_protocol"), default="sftp"),
-            str(payload.get("tftp_username") or "").strip(),
-            _encrypt_transfer_password(payload.get("tftp_password")),
             actor,
             actor,
             now,
@@ -285,15 +245,6 @@ def update_policy(conn, policy_id: str, payload: dict, *, actor: str) -> dict | 
         return None
     merged = {**existing, **payload}
     scope = normalize_scope(merged.get("scope"))
-    stored_password_row = conn.execute(
-        "SELECT tftp_password FROM config_backup_policies WHERE id = ?",
-        (policy_id,),
-    ).fetchone()
-    submitted_password = str(merged.get("tftp_password") or "")
-    if submitted_password in {"***", "••••••", "********"} or not submitted_password:
-        transfer_password = str((stored_password_row[0] if stored_password_row else "") or "")
-    else:
-        transfer_password = _encrypt_transfer_password(submitted_password)
     conn.execute(
         """
         UPDATE config_backup_policies
@@ -301,8 +252,7 @@ def update_policy(conn, policy_id: str, payload: dict, *, actor: str) -> dict | 
             priority = ?, scope_json = ?, config_types_json = ?, change_only = ?,
             retention_days = ?, max_versions_per_device = ?, concurrency = ?,
             retry_count = ?, timeout_seconds = ?,
-            collect_startup_config = ?, tftp_enabled = ?, tftp_server = ?, tftp_port = ?, tftp_path_prefix = ?,
-            tftp_protocol = ?, tftp_username = ?, tftp_password = ?,
+            collect_startup_config = ?,
             updated_by = ?, updated_at = ?
         WHERE id = ?
         """,
@@ -322,13 +272,6 @@ def update_policy(conn, policy_id: str, payload: dict, *, actor: str) -> dict | 
             int(merged.get("retry_count", 1)),
             int(merged.get("timeout_seconds", 30)),
             1 if merged.get("collect_startup_config") else 0,
-            1 if merged.get("tftp_enabled") else 0,
-            str(merged.get("tftp_server") or "").strip(),
-            int(merged.get("tftp_port") or 69),
-            str(merged.get("tftp_path_prefix") or "backups").strip(),
-            normalize_transfer_protocol(merged.get("tftp_protocol"), default="tftp"),
-            str(merged.get("tftp_username") or "").strip(),
-            transfer_password,
             actor,
             _now(),
             policy_id,

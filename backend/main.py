@@ -22,6 +22,10 @@ from fastapi.staticfiles import StaticFiles
 from core.config import settings, validate_production_security
 from core.textfsm import configure_ntc_templates
 from core.logging import setup_logging, classify_request_log_level
+from core.request_log_redaction import (
+    UvicornAccessTicketRedactionFilter,
+    redact_remote_desktop_ticket_path,
+)
 from api.health import router as health_router, record_host_resource_snapshot
 from api.grafana_metrics import router as grafana_metrics_router
 from api.devices import router as devices_router
@@ -54,6 +58,7 @@ from api.ipam import router as ipam_router
 from api.assets import router as assets_router
 from api.pam import router as pam_router, ws_router as pam_ws_router
 from api.pam_web import router as pam_web_router
+from api.remote_desktop import router as remote_desktop_router, ws_router as remote_desktop_ws_router
 from api.change_orders import router as change_orders_router
 from api.setup import router as setup_router
 from api.ip_locator import router as ip_locator_router
@@ -115,7 +120,7 @@ from slowapi.errors import RateLimitExceeded
 
 # 初始化日志配置
 setup_logging()
-logger = logging.getLogger(__name__) 
+logger = logging.getLogger(__name__)
 
 # ── Startup ──
 
@@ -219,7 +224,7 @@ async def lifespan(app: FastAPI):
         logger.info("[Topology] Evidence graph projection synchronized.")
     except Exception as e:
         logger.warning(f"[Topology] Evidence graph projection skipped: {e}")
-    
+
     # ── One-time PAM stale-session recovery ──
     # After a server restart, sessions that were 'active' or 'connecting'
     # are orphaned (no WebSocket is alive for them). Close them once here.
@@ -229,17 +234,24 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"[PAM] Stale session recovery failed: {e}")
 
+    try:
+        from services.pam_remote_desktop import recover_expired_remote_desktop_sessions
+        recover_expired_remote_desktop_sessions()
+    except Exception as e:
+        logger.warning("[PAM] Remote desktop lease recovery failed: %s", type(e).__name__)
 
-    
+
+
     # Start core components immediately
     schedule_cfg = _get_schedule_from_db()
     scheduler.start()
-    
+
     # Register periodic jobs
     from services.ip_locator_invalidation_service import process_pending_locator_invalidations
     from services.ip_locator_run_worker_service import process_pending_locator_runs
     from services.ip_locator_task_service import cleanup_locator_tasks
     from services.pam_recording_storage import retry_pending_pam_recordings
+    from services.pam_remote_desktop import recover_expired_remote_desktop_sessions
     from services.config_snapshot_storage import retry_pending_config_snapshots
 
     storage_retry_seconds = max(10, int(getattr(settings, 'STORAGE_RETRY_INTERVAL_SECONDS', 60)))
@@ -248,6 +260,13 @@ async def lifespan(app: FastAPI):
             retry_pending_pam_recordings
         ),
         'interval', seconds=storage_retry_seconds, id='pam_recording_storage_retry',
+        replace_existing=True, max_instances=1, coalesce=True,
+    )
+    scheduler.add_job(
+        synchronized_scheduler_job('pam_remote_desktop_lease_recovery', expire_seconds=30)(
+            recover_expired_remote_desktop_sessions
+        ),
+        'interval', seconds=15, id='pam_remote_desktop_lease_recovery',
         replace_existing=True, max_instances=1, coalesce=True,
     )
     scheduler.add_job(
@@ -318,7 +337,7 @@ async def lifespan(app: FastAPI):
         'cron', hour=2, minute=25, id='database_consistency_patrol', replace_existing=True,
         max_instances=1, coalesce=True,
     )
-    
+
     from services.telemetry_service import record_device_telemetry_snapshot
     scheduler.add_job(
         synchronized_scheduler_job('device_telemetry_sampler', expire_seconds=55)(record_device_telemetry_snapshot),
@@ -418,9 +437,9 @@ async def lifespan(app: FastAPI):
         'cron', hour=4, minute=10, id='wan_capacity', replace_existing=True,
         max_instances=1, coalesce=True,
     )
-    
+
     reschedule_backup(schedule_cfg)
-    
+
     # Keep ARP tables fresh on the configured low-frequency interval. A
     # service-level lease serializes this job with manual and NSOT sweeps.
     from services.ip_locator_service import ARP_SWEEP_INTERVAL_SECONDS, run_arp_sweep
@@ -447,7 +466,7 @@ async def lifespan(app: FastAPI):
         id='prefix_discovery_sync', replace_existing=True,
         max_instances=1, coalesce=True,
     )
-    
+
     from services.inspection_service import run_scheduled_inspections
     try:
         inspection_trigger = CronTrigger.from_crontab(settings.INSPECTION_MASTER_CRON)
@@ -461,7 +480,7 @@ async def lifespan(app: FastAPI):
         synchronized_scheduler_job('inspection_scheduler', expire_seconds=1700)(run_scheduled_inspections),
         inspection_trigger, id='inspection_scheduler', replace_existing=True
     )
-    
+
     # Do not register a daily no-op when credential rotation is disabled. This
     # keeps the scheduler registry aligned with the features actually enabled
     # for the deployment while preserving the job when the feature is on.
@@ -525,6 +544,19 @@ app = FastAPI(
 )
 
 
+def _safe_logged_path(path: str) -> str:
+    """Do not write the single-use bearer ticket from the WebSocket path to logs."""
+    return redact_remote_desktop_ticket_path(path)
+
+
+# WebSocket handshakes bypass FastAPI's HTTP request-log middleware. Uvicorn's
+# access logger still records the raw request path unless its record is
+# filtered after Uvicorn configures logging and before the server accepts work.
+_uvicorn_access_logger = logging.getLogger("uvicorn.access")
+if not any(isinstance(item, UvicornAccessTicketRedactionFilter) for item in _uvicorn_access_logger.filters):
+    _uvicorn_access_logger.addFilter(UvicornAccessTicketRedactionFilter())
+
+
 @app.get("/docs", include_in_schema=False)
 async def redirect_docs():
     return RedirectResponse(url="/api/docs")
@@ -571,8 +603,9 @@ async def add_request_id_and_log(request: Request, call_next):
     request_id = resolve_request_id(request.headers.get("X-Request-ID"), prefix="req")
     req_token = request_id_var.set(request_id)
     user_token = user_var.set("anonymous")
-    route_token = route_var.set(request.url.path)
-    
+    safe_path = _safe_logged_path(request.url.path)
+    route_token = route_var.set(safe_path)
+
     auth_start_time = time.perf_counter()
     auth = request.headers.get('Authorization', '')
     request.state.nexora_session_auth_checked = False
@@ -602,7 +635,7 @@ async def add_request_id_and_log(request: Request, call_next):
         request_log_level = classify_request_log_level(response.status_code, duration_ms)
         logger.log(
             request_log_level,
-            f"Route: {request.method} {request.url.path} | "
+            f"Route: {request.method} {safe_path} | "
             f"Status: {response.status_code} | "
             f"Duration: {duration_ms:.2f}ms | "
             f"Auth: {auth_duration_ms:.2f}ms | Handler: {handler_duration_ms:.2f}ms"
@@ -613,7 +646,7 @@ async def add_request_id_and_log(request: Request, call_next):
         handler_duration_ms = (time.perf_counter() - handler_start_time) * 1000
         duration_ms = (time.perf_counter() - start_time) * 1000
         logger.error(
-            f"Route: {request.method} {request.url.path} | "
+            f"Route: {request.method} {safe_path} | "
             f"Failed: {exc} | "
             f"Duration: {duration_ms:.2f}ms | "
             f"Auth: {auth_duration_ms:.2f}ms | Handler: {handler_duration_ms:.2f}ms",
@@ -800,12 +833,14 @@ app.include_router(device_registry_router, prefix="/api")
 app.include_router(change_orders_router,  prefix="/api")
 app.include_router(pam_router,            prefix="/api")
 app.include_router(pam_web_router,        prefix="/api")
+app.include_router(remote_desktop_router, prefix="/api")
 app.include_router(audit_router,          prefix="/api")
 app.include_router(ai_router,             prefix="/api")
 # Versioned contract used by API clients; its prefix already contains /api/v1.
 app.include_router(ai_v1_chat_router)
 # PAM WebSocket 单独注册
 app.include_router(pam_ws_router,         prefix="/api")
+app.include_router(remote_desktop_ws_router, prefix="/api")
 
 # ── APScheduler ──────────────────────────────────────────────────────
 # scheduler is now imported from core.scheduler_manager
@@ -886,7 +921,7 @@ def seed_data():
     from ai.prompts.manager import prompt_manager
     from services.tag_service import seed_builtin_tags, sync_all_device_status_tags
     conn = get_db_connection()
-    
+
     try:
         # Keep the tag catalog available for both Device Inventory and
         # Asset Management. The operation is idempotent and only inserts
@@ -905,31 +940,31 @@ def seed_data():
 
         # Check if devices table is empty
         # Mock device seeding removed per user request
-        
+
         # Initial administrator provisioning is owned by database bootstrap.
         # Never recreate a known-password account during application seeding.
-        
+
         # Check if templates table is empty (we will sync all templates instead of skipping when count != 0)
         import uuid
         from datetime import datetime
         now = datetime.now().isoformat()
-        
+
         templates_seed = [
             # Cisco
-            ('Basic SSH Setup', 'cli', 'security', 'Cisco', 
-             'ip domain-name {{ domain_name | default("local.net") }}\ncrypto key generate rsa modulus {{ key_size | default(2048) }}\nip ssh version 2\nline vty 0 4\n transport input ssh\n login local', 
+            ('Basic SSH Setup', 'cli', 'security', 'Cisco',
+             'ip domain-name {{ domain_name | default("local.net") }}\ncrypto key generate rsa modulus {{ key_size | default(2048) }}\nip ssh version 2\nline vty 0 4\n transport input ssh\n login local',
              'no ip domain-name {{ domain_name | default("local.net") }}\ncrypto key zeroize rsa\nline vty 0 4\n transport input all\n no login local'),
-            ('Standard ACL', 'cli', 'security', 'Cisco', 
-             'access-list {{ acl_number | default(10) }} permit {{ source_network | default("192.168.1.0") }} {{ wildcard_mask | default("0.0.0.255") }}\naccess-list {{ acl_number | default(10) }} deny any\ninterface {{ interface_name | default("GigabitEthernet0/1") }}\n ip access-group {{ acl_number | default(10) }} in', 
+            ('Standard ACL', 'cli', 'security', 'Cisco',
+             'access-list {{ acl_number | default(10) }} permit {{ source_network | default("192.168.1.0") }} {{ wildcard_mask | default("0.0.0.255") }}\naccess-list {{ acl_number | default(10) }} deny any\ninterface {{ interface_name | default("GigabitEthernet0/1") }}\n ip access-group {{ acl_number | default(10) }} in',
              'interface {{ interface_name | default("GigabitEthernet0/1") }}\n no ip access-group {{ acl_number | default(10) }} in\nno access-list {{ acl_number | default(10) }}'),
-            ('BGP Configuration', 'cli', 'routing', 'Cisco', 
-             'router bgp {{ local_as | default(65000) }}\n bgp router-id {{ router_id | default("10.0.0.1") }}\n{% if group_name is defined and group_name %}\n neighbor {{ group_name }} peer-group\n neighbor {{ group_name }} remote-as {{ peer_as | default(65001) }}\n neighbor {{ peer_ip | default("10.0.0.2") }} peer-group {{ group_name }}\n{% else %}\n neighbor {{ peer_ip | default("10.0.0.2") }} remote-as {{ peer_as | default(65001) }}\n{% endif %}\n{% if address_family is defined and address_family %}\n address-family {{ address_family }}\n  neighbor {{ peer_ip | default("10.0.0.2") }} activate\n  {% if network_ip is defined and network_ip %}\n  network {{ network_ip }} mask {{ network_mask | default("255.255.255.0") }}\n  {% endif %}\n{% else %}\n  {% if network_ip is defined and network_ip %}\n  network {{ network_ip }} mask {{ network_mask | default("255.255.255.0") }}\n  {% endif %}\n{% endif %}', 
+            ('BGP Configuration', 'cli', 'routing', 'Cisco',
+             'router bgp {{ local_as | default(65000) }}\n bgp router-id {{ router_id | default("10.0.0.1") }}\n{% if group_name is defined and group_name %}\n neighbor {{ group_name }} peer-group\n neighbor {{ group_name }} remote-as {{ peer_as | default(65001) }}\n neighbor {{ peer_ip | default("10.0.0.2") }} peer-group {{ group_name }}\n{% else %}\n neighbor {{ peer_ip | default("10.0.0.2") }} remote-as {{ peer_as | default(65001) }}\n{% endif %}\n{% if address_family is defined and address_family %}\n address-family {{ address_family }}\n  neighbor {{ peer_ip | default("10.0.0.2") }} activate\n  {% if network_ip is defined and network_ip %}\n  network {{ network_ip }} mask {{ network_mask | default("255.255.255.0") }}\n  {% endif %}\n{% else %}\n  {% if network_ip is defined and network_ip %}\n  network {{ network_ip }} mask {{ network_mask | default("255.255.255.0") }}\n  {% endif %}\n{% endif %}',
              'no router bgp {{ local_as | default(65000) }}'),
-            ('OSPF Single Area', 'cli', 'routing', 'Cisco', 
-             'router ospf {{ ospf_process_id | default(1) }}\n router-id {{ router_id | default("10.0.0.1") }}\n network {{ network_ip | default("10.0.0.0") }} {{ wildcard_mask | default("0.0.0.255") }} area {{ area_id | default(0) }}', 
+            ('OSPF Single Area', 'cli', 'routing', 'Cisco',
+             'router ospf {{ ospf_process_id | default(1) }}\n router-id {{ router_id | default("10.0.0.1") }}\n network {{ network_ip | default("10.0.0.0") }} {{ wildcard_mask | default("0.0.0.255") }} area {{ area_id | default(0) }}',
              'no router ospf {{ ospf_process_id | default(1) }}'),
-            ('VLAN Creation', 'cli', 'switching', 'Cisco', 
-             'vlan {{ vlan_id | default(10) }}\n name {{ vlan_name | default("Users") }}', 
+            ('VLAN Creation', 'cli', 'switching', 'Cisco',
+             'vlan {{ vlan_id | default(10) }}\n name {{ vlan_name | default("Users") }}',
              'no vlan {{ vlan_id | default(10) }}'),
             ('Static Route', 'cli', 'routing', 'Cisco',
              'ip route {{ destination_network | default("192.168.2.0") }} {{ netmask | default("255.255.255.0") }} {{ next_hop_ip | default("10.0.0.2") }}',
@@ -945,20 +980,20 @@ def seed_data():
              'no ntp server {{ ntp_server_ip | default("10.0.0.254") }}'),
 
             # Juniper
-            ('Basic SSH Setup', 'cli', 'security', 'Juniper', 
-             'set system services ssh root-login {{ root_login | default("deny") }}\nset system services ssh protocol-version v2', 
+            ('Basic SSH Setup', 'cli', 'security', 'Juniper',
+             'set system services ssh root-login {{ root_login | default("deny") }}\nset system services ssh protocol-version v2',
              'delete system services ssh'),
-            ('Firewall Filter (ACL)', 'cli', 'security', 'Juniper', 
-             'set firewall family inet filter {{ filter_name | default("PROTECT") }} term 1 from source-address {{ source_network | default("192.168.1.0/24") }}\nset firewall family inet filter {{ filter_name | default("PROTECT") }} term 1 then accept\nset firewall family inet filter {{ filter_name | default("PROTECT") }} term 2 then reject', 
+            ('Firewall Filter (ACL)', 'cli', 'security', 'Juniper',
+             'set firewall family inet filter {{ filter_name | default("PROTECT") }} term 1 from source-address {{ source_network | default("192.168.1.0/24") }}\nset firewall family inet filter {{ filter_name | default("PROTECT") }} term 1 then accept\nset firewall family inet filter {{ filter_name | default("PROTECT") }} term 2 then reject',
              'delete firewall family inet filter {{ filter_name | default("PROTECT") }}'),
-            ('BGP Configuration', 'cli', 'routing', 'Juniper', 
-             'set routing-options autonomous-system {{ local_as | default(65000) }}\nset protocols bgp group {{ group_name | default("EXTERNAL") }} type external\nset protocols bgp group {{ group_name | default("EXTERNAL") }} peer-as {{ peer_as | default(65001) }}\nset protocols bgp group {{ group_name | default("EXTERNAL") }} neighbor {{ peer_ip | default("10.0.0.2") }}', 
+            ('BGP Configuration', 'cli', 'routing', 'Juniper',
+             'set routing-options autonomous-system {{ local_as | default(65000) }}\nset protocols bgp group {{ group_name | default("EXTERNAL") }} type external\nset protocols bgp group {{ group_name | default("EXTERNAL") }} peer-as {{ peer_as | default(65001) }}\nset protocols bgp group {{ group_name | default("EXTERNAL") }} neighbor {{ peer_ip | default("10.0.0.2") }}',
              'delete protocols bgp group {{ group_name | default("EXTERNAL") }}\ndelete routing-options autonomous-system {{ local_as | default(65000) }}'),
-            ('OSPF Single Area', 'cli', 'routing', 'Juniper', 
-             'set protocols ospf area {{ area_id | default("0.0.0.0") }} interface {{ interface_name | default("ge-0/0/0.0") }}', 
+            ('OSPF Single Area', 'cli', 'routing', 'Juniper',
+             'set protocols ospf area {{ area_id | default("0.0.0.0") }} interface {{ interface_name | default("ge-0/0/0.0") }}',
              'delete protocols ospf area {{ area_id | default("0.0.0.0") }} interface {{ interface_name | default("ge-0/0/0.0") }}'),
-            ('VLAN Creation', 'cli', 'switching', 'Juniper', 
-             'set vlans {{ vlan_name | default("USERS") }} vlan-id {{ vlan_id | default(10) }}', 
+            ('VLAN Creation', 'cli', 'switching', 'Juniper',
+             'set vlans {{ vlan_name | default("USERS") }} vlan-id {{ vlan_id | default(10) }}',
              'delete vlans {{ vlan_name | default("USERS") }}'),
             ('Static Route', 'cli', 'routing', 'Juniper',
              'set routing-options static route {{ destination_network | default("192.168.2.0/24") }} next-hop {{ next_hop_ip | default("10.0.0.2") }}',
@@ -971,22 +1006,22 @@ def seed_data():
              'delete snmp community {{ snmp_community | default("public") }}'),
 
             # Huawei
-            ('Basic SSH Setup', 'cli', 'security', 'Huawei', 
-             'rsa local-key-pair create {{ key_size | default(2048) }}\nuser-interface vty 0 4\n authentication-mode aaa\n protocol inbound ssh', 
+            ('Basic SSH Setup', 'cli', 'security', 'Huawei',
+             'rsa local-key-pair create {{ key_size | default(2048) }}\nuser-interface vty 0 4\n authentication-mode aaa\n protocol inbound ssh',
              'rsa local-key-pair destroy'),
-            ('Basic ACL', 'cli', 'security', 'Huawei', 
-             'acl number {{ acl_number | default(2000) }}\n rule 5 permit source {{ source_network | default("192.168.1.0") }} {{ wildcard_mask | default("0.0.0.255") }}\n rule 10 deny', 
+            ('Basic ACL', 'cli', 'security', 'Huawei',
+             'acl number {{ acl_number | default(2000) }}\n rule 5 permit source {{ source_network | default("192.168.1.0") }} {{ wildcard_mask | default("0.0.0.255") }}\n rule 10 deny',
              'undo acl {{ acl_number | default(2000) }}'),
             ('Advanced ACL', 'cli', 'security', 'Huawei',
              'acl number {{ acl_number | default(3000) }}\n rule 5 permit ip source {{ source_network | default("192.168.1.0") }} {{ wildcard_mask | default("0.0.0.255") }} destination {{ destination_network | default("10.0.0.0") }} {{ dest_wildcard_mask | default("0.0.0.255") }}\n rule 10 deny ip',
              'undo acl {{ acl_number | default(3000) }}'),
-            ('BGP Configuration', 'cli', 'routing', 'Huawei', 
-             'bgp {{ local_as | default(65000) }}\n router-id {{ router_id | default("10.0.0.1") }}\n peer {{ peer_ip | default("10.0.0.2") }} as-number {{ peer_as | default(65001) }}\n ipv4-family unicast\n  peer {{ peer_ip | default("10.0.0.2") }} enable\n  network {{ network_ip | default("192.168.1.0") }} {{ network_mask | default("255.255.255.0") }}', 
+            ('BGP Configuration', 'cli', 'routing', 'Huawei',
+             'bgp {{ local_as | default(65000) }}\n router-id {{ router_id | default("10.0.0.1") }}\n peer {{ peer_ip | default("10.0.0.2") }} as-number {{ peer_as | default(65001) }}\n ipv4-family unicast\n  peer {{ peer_ip | default("10.0.0.2") }} enable\n  network {{ network_ip | default("192.168.1.0") }} {{ network_mask | default("255.255.255.0") }}',
              'undo bgp {{ local_as | default(65000) }}'),
-            ('OSPF Single Area', 'cli', 'routing', 'Huawei', 
-             'ospf {{ ospf_process_id | default(1) }} router-id {{ router_id | default("10.0.0.1") }}\n area {{ area_id | default("0.0.0.0") }}\n  network {{ network_ip | default("10.0.0.0") }} {{ wildcard_mask | default("0.0.0.255") }}', 
+            ('OSPF Single Area', 'cli', 'routing', 'Huawei',
+             'ospf {{ ospf_process_id | default(1) }} router-id {{ router_id | default("10.0.0.1") }}\n area {{ area_id | default("0.0.0.0") }}\n  network {{ network_ip | default("10.0.0.0") }} {{ wildcard_mask | default("0.0.0.255") }}',
              'undo ospf {{ ospf_process_id | default(1) }}'),
-            ('VLAN Creation', 'cli', 'switching', 'Huawei', 
+            ('VLAN Creation', 'cli', 'switching', 'Huawei',
              'vlan {{ vlan_id | default(10) }}\n description {{ vlan_name | default("USERS") }}',
              'undo vlan {{ vlan_id | default(10) }}'),
             ('Static Route', 'cli', 'routing', 'Huawei',
@@ -1003,20 +1038,20 @@ def seed_data():
              'undo ntp-service unicast-server {{ ntp_server_ip | default("10.0.0.254") }}'),
 
             # Arista
-            ('Basic SSH Setup', 'cli', 'security', 'Arista', 
-             'management ssh\n server-port {{ ssh_port | default(22) }}\n no shutdown', 
+            ('Basic SSH Setup', 'cli', 'security', 'Arista',
+             'management ssh\n server-port {{ ssh_port | default(22) }}\n no shutdown',
              'management ssh\n shutdown'),
-            ('Standard ACL', 'cli', 'security', 'Arista', 
-             'ip access-list standard {{ acl_name | default("PROTECT") }}\n permit {{ source_network | default("192.168.1.0/24") }}\n deny any', 
+            ('Standard ACL', 'cli', 'security', 'Arista',
+             'ip access-list standard {{ acl_name | default("PROTECT") }}\n permit {{ source_network | default("192.168.1.0/24") }}\n deny any',
              'no ip access-list standard {{ acl_name | default("PROTECT") }}'),
-            ('BGP Configuration', 'cli', 'routing', 'Arista', 
-             'router bgp {{ local_as | default(65000) }}\n router-id {{ router_id | default("10.0.0.1") }}\n neighbor {{ peer_ip | default("10.0.0.2") }} remote-as {{ peer_as | default(65001) }}\n network {{ network_ip | default("192.168.1.0/24") }}', 
+            ('BGP Configuration', 'cli', 'routing', 'Arista',
+             'router bgp {{ local_as | default(65000) }}\n router-id {{ router_id | default("10.0.0.1") }}\n neighbor {{ peer_ip | default("10.0.0.2") }} remote-as {{ peer_as | default(65001) }}\n network {{ network_ip | default("192.168.1.0/24") }}',
              'no router bgp {{ local_as | default(65000) }}'),
-            ('OSPF Single Area', 'cli', 'routing', 'Arista', 
-             'router ospf {{ ospf_process_id | default(1) }}\n router-id {{ router_id | default("10.0.0.1") }}\n network {{ network_ip | default("10.0.0.0/24") }} area {{ area_id | default("0.0.0.0") }}', 
+            ('OSPF Single Area', 'cli', 'routing', 'Arista',
+             'router ospf {{ ospf_process_id | default(1) }}\n router-id {{ router_id | default("10.0.0.1") }}\n network {{ network_ip | default("10.0.0.0/24") }} area {{ area_id | default("0.0.0.0") }}',
              'no router ospf {{ ospf_process_id | default(1) }}'),
-            ('VLAN Creation', 'cli', 'switching', 'Arista', 
-             'vlan {{ vlan_id | default(10) }}\n name {{ vlan_name | default("Users") }}', 
+            ('VLAN Creation', 'cli', 'switching', 'Arista',
+             'vlan {{ vlan_id | default(10) }}\n name {{ vlan_name | default("Users") }}',
              'no vlan {{ vlan_id | default(10) }}'),
             ('Static Route', 'cli', 'routing', 'Arista',
              'ip route {{ destination_network | default("192.168.2.0/24") }} {{ next_hop_ip | default("10.0.0.2") }}',
@@ -1026,11 +1061,11 @@ def seed_data():
              'no snmp-server community {{ snmp_community | default("public") }}'),
 
             # H3C
-            ('Basic SSH Setup', 'cli', 'security', 'H3C', 
-             'public-key local create rsa\nuser-interface vty 0 4\n authentication-mode scheme\n protocol inbound ssh', 
+            ('Basic SSH Setup', 'cli', 'security', 'H3C',
+             'public-key local create rsa\nuser-interface vty 0 4\n authentication-mode scheme\n protocol inbound ssh',
              'public-key local destroy rsa'),
-            ('Basic ACL', 'cli', 'security', 'H3C', 
-             'acl basic {{ acl_number | default(2000) }}\n rule 5 permit source {{ source_network | default("192.168.1.0") }} {{ wildcard_mask | default("0.0.0.255") }}\n rule 10 deny', 
+            ('Basic ACL', 'cli', 'security', 'H3C',
+             'acl basic {{ acl_number | default(2000) }}\n rule 5 permit source {{ source_network | default("192.168.1.0") }} {{ wildcard_mask | default("0.0.0.255") }}\n rule 10 deny',
              'undo acl basic {{ acl_number | default(2000) }}'),
             ('Advanced ACL', 'cli', 'security', 'H3C',
              'acl advanced {{ acl_number | default(3000) }}\n rule 5 permit ip source {{ source_network | default("192.168.1.0") }} {{ wildcard_mask | default("0.0.0.255") }} destination {{ destination_network | default("10.0.0.0") }} {{ dest_wildcard_mask | default("0.0.0.255") }}\n rule 10 deny ip',
@@ -1048,7 +1083,7 @@ def seed_data():
              'snmp-agent community read {{ snmp_community | default("public") }} acl {{ acl_number | default(2000) }}\nsnmp-agent sys-info contact {{ contact_info | default("admin@local.net") }}',
              'undo snmp-agent community read {{ snmp_community | default("public") }}')
         ]
-        
+
         for name, type_, category, vendor, content, rollback in templates_seed:
             row = conn.execute('SELECT id FROM templates WHERE name = ? AND vendor = ?', (name, vendor)).fetchone()
             if row:
@@ -1133,4 +1168,3 @@ if __name__ == "__main__":
         uvicorn.run("main:app", host=host, port=port, workers=workers, loop="auto", access_log=False)
     else:
         uvicorn.run("main:app", host=host, port=port, loop="auto", access_log=False, **reload_kwargs)
-

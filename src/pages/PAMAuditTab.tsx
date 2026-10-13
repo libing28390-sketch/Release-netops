@@ -2,14 +2,14 @@ import { DataTable } from '../components/DataTable';
 import React, { useState, useEffect, useCallback } from 'react';
 import PageHero from '../components/PageHero';
 import { ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
-import { 
-  ShieldCheck, 
-  Terminal, 
-  Activity, 
-  User, 
-  Trash2, 
-  Download, 
-  PlayCircle, 
+import {
+  ShieldCheck,
+  Terminal,
+  Activity,
+  User,
+  Trash2,
+  Download,
+  PlayCircle,
   StopCircle,
   Search,
   RefreshCw,
@@ -21,6 +21,7 @@ import {
   Info
 } from 'lucide-react';
 import CastPlayer from '../components/access/CastPlayer';
+import GuacRecordingPlayer from '../components/access/GuacRecordingPlayer';
 import Pagination from '../components/Pagination';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 
@@ -33,6 +34,9 @@ interface PAMSession {
   asset_hostname: string;
   requester_username: string;
   access_level: 'normal' | 'admin';
+  protocol?: 'rdp' | 'vnc' | 'ssh' | 'web' | string;
+  remote_desktop_protocol?: 'rdp' | 'vnc' | string;
+  session_kind?: string;
   login_username: string;
   connect_method: 'web' | 'local';
   target_ip: string;
@@ -44,6 +48,8 @@ interface PAMSession {
   command_count: number;
   recording_path: string;
   recording_available?: boolean;
+  recording_format?: string | null;
+  recording_status?: string | null;
   storage_status?: string;
   created_at: string;
   /** Set to 1 when the underlying asset has been deleted; the session row
@@ -68,6 +74,31 @@ interface PAMCommandEvent {
   execution_status?: string | null;
   started_at?: string | null;
   finished_at?: string | null;
+}
+
+function isRemoteDesktopSession(session: PAMSession): boolean {
+  const protocol = session.remote_desktop_protocol || session.protocol;
+  return protocol === 'rdp' || protocol === 'vnc' || session.session_kind === 'remote_desktop';
+}
+
+function remoteDesktopProtocol(session: PAMSession): string {
+  return String(session.remote_desktop_protocol || session.protocol || 'remote desktop');
+}
+
+function isGuacRecording(session: PAMSession): boolean {
+  return String(session.recording_format || '').toLowerCase() === 'guac'
+    || String(session.recording_path || '').toLowerCase().endsWith('.guac')
+    || (isRemoteDesktopSession(session) && ['captured', 'uploaded', 'stored', 'ready'].includes(String(session.recording_status || '').toLowerCase()));
+}
+
+function recordingState(session: PAMSession): 'available' | 'pending' | 'error' | 'none' {
+  const status = String(session.storage_status || '').toUpperCase();
+  const recordStatus = String(session.recording_status || '').toUpperCase();
+  if (status === 'READY') return 'available';
+  if (['PENDING', 'UPLOADING'].includes(status) || ['RECORDING', 'CAPTURED', 'UPLOADED'].includes(recordStatus)) return 'pending';
+  if (['ERROR', 'DELETED'].includes(status) || ['UNAVAILABLE', 'ERROR'].includes(recordStatus)) return 'error';
+  if (session.recording_available || session.recording_path) return 'available';
+  return 'none';
 }
 
 const STATUS_CONFIG = {
@@ -191,6 +222,11 @@ const PAMAuditTab: React.FC<PAMAuditTabProps> = ({
       setCommandEvents([]);
       return;
     }
+    if (isRemoteDesktopSession(detailsTarget)) {
+      setCommandEvents([]);
+      setCommandEventsLoading(false);
+      return;
+    }
     let cancelled = false;
     setCommandEventsLoading(true);
     fetch(`/api/pam/sessions/${encodeURIComponent(detailsTarget.id)}/command-events?limit=100`, { headers: authHeaders() })
@@ -242,8 +278,24 @@ const PAMAuditTab: React.FC<PAMAuditTabProps> = ({
     }
   };
 
-  const handleDownload = (sessionId: string) => {
-    window.open(`/api/pam/sessions/${sessionId}/recording`, '_blank');
+  const handleDownload = async (session: PAMSession) => {
+    try {
+      const response = await fetch(`/api/pam/sessions/${encodeURIComponent(session.id)}/recording`, { headers: authHeaders() });
+      if (!response.ok) throw new Error(response.status === 403
+        ? (isZh ? '你没有权限下载此录像。' : 'You do not have permission to download this recording.')
+        : `HTTP ${response.status}`);
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = `${session.id}.${isGuacRecording(session) ? 'guac' : 'cast'}`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    } catch (error) {
+      showToast(isZh ? `录像下载失败：${error instanceof Error ? error.message : '未知错误'}` : `Recording download failed: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
+    }
   };
 
   const formatDuration = (sec: number) => {
@@ -286,7 +338,9 @@ const PAMAuditTab: React.FC<PAMAuditTabProps> = ({
           session.target_ip || '—',
           session.requester_username || '—',
           session.login_username || '—',
-          session.connect_method === 'local' ? (isZh ? '本地' : 'Local') : (isZh ? '浏览器' : 'Browser'),
+          isRemoteDesktopSession(session)
+            ? `${remoteDesktopProtocol(session).toUpperCase()} · ${isZh ? '图形会话' : 'Graphical session'}`
+            : session.connect_method === 'local' ? (isZh ? '本地' : 'Local') : (isZh ? '浏览器终端' : 'Browser terminal'),
           session.access_level === 'admin' ? (isZh ? '特权' : 'Admin') : (isZh ? '普通' : 'Normal'),
           formatTime(session.connected_at || session.created_at),
           formatTime(session.closed_at),
@@ -439,7 +493,7 @@ const PAMAuditTab: React.FC<PAMAuditTabProps> = ({
                             </div>
                           </div>
                           {(s as any).risk_level > 0 && (
-                            <div 
+                            <div
                               className={`group relative p-1.5 rounded-lg border ${(s as any).risk_level === 2 ? 'bg-rose-50 border-rose-200 text-rose-500' : 'bg-amber-50 border-amber-200 text-amber-500'}`}
                               title={(s as any).risk_summary}
                             >
@@ -472,7 +526,9 @@ const PAMAuditTab: React.FC<PAMAuditTabProps> = ({
                       </td>
 
                       <td className="px-6 py-4 text-xs text-slate-600">
-                        {(s as any).connect_method === 'local' ? (isZh ? '本地' : 'Local') : (isZh ? '浏览器' : 'Browser')}
+                        {isRemoteDesktopSession(s)
+                          ? <span className="inline-flex items-center gap-1.5"><span className="rounded bg-violet-50 px-1.5 py-0.5 text-[9px] font-black text-violet-700">{remoteDesktopProtocol(s).toUpperCase()}</span>{isZh ? '图形会话' : 'Graphical session'}</span>
+                          : s.connect_method === 'local' ? (isZh ? '本地' : 'Local') : (isZh ? '浏览器终端' : 'Browser terminal')}
                       </td>
 
                       {/* Access level */}
@@ -517,12 +573,12 @@ const PAMAuditTab: React.FC<PAMAuditTabProps> = ({
                               variant="danger"
                               onClick={() => setKillTarget(s)}
                             />
-                          ) : (s.recording_available || s.recording_path) ? (
+                          ) : recordingState(s) === 'available' ? (
                             <>
-                              <ActionIconButton icon={Download} label={isZh ? '下载录像' : 'Download Cast'} variant="accent" onClick={() => handleDownload(s.id)} />
+                              <ActionIconButton icon={Download} label={isZh ? '下载录像' : 'Download recording'} variant="accent" onClick={() => void handleDownload(s)} />
                               <ActionIconButton
                                 icon={PlayCircle}
-                                label={isZh ? '回溯回放' : 'Playback'}
+                                label={isGuacRecording(s) ? (isZh ? '播放图形录像' : 'Play graphical recording') : (isZh ? '回溯回放' : 'Playback')}
                                 variant="accent"
                                 onClick={() => {
                                   setSelectedSession(s);
@@ -530,6 +586,14 @@ const PAMAuditTab: React.FC<PAMAuditTabProps> = ({
                                 }}
                               />
                             </>
+                          ) : recordingState(s) === 'pending' ? (
+                            <span className="inline-flex items-center gap-1.5 rounded-lg bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-700">
+                              <RefreshCw size={11} className="animate-spin" />{isZh ? '录像归档 / 存储重试中' : 'Recording archive / storage retry in progress'}
+                            </span>
+                          ) : recordingState(s) === 'error' ? (
+                            <span className="inline-flex items-center gap-1.5 rounded-lg bg-rose-50 px-2 py-1 text-[10px] font-semibold text-rose-600" title={isZh ? '录像暂不可用，请检查存储状态' : 'Recording unavailable; check storage status'}>
+                              <AlertCircle size={11} />{isZh ? '录像不可用' : 'Recording unavailable'}
+                            </span>
                           ) : (
                             <span className="text-[10px] text-slate-300 px-2">
                               {s.connect_method === 'local'
@@ -573,22 +637,42 @@ const PAMAuditTab: React.FC<PAMAuditTabProps> = ({
 
       {/* ── CastPlayer Modal ── */}
       {showPlayback && selectedSession && (
-        <CastPlayer
-          sessionId={selectedSession.id}
-          totalDuration={selectedSession.duration_seconds || 0}
-          sessionMeta={{
-            hostname: selectedSession.asset_hostname,
-            ip: selectedSession.target_ip,
-            loginUser: selectedSession.login_username,
-            requester: selectedSession.requester_username,
-            connectedAt: selectedSession.connected_at,
-          }}
-          onClose={() => {
-            setShowPlayback(false);
-            setSelectedSession(null);
-          }}
-          isZh={isZh}
-        />
+        isGuacRecording(selectedSession) ? (
+          <GuacRecordingPlayer
+            sessionId={selectedSession.id}
+            protocol={remoteDesktopProtocol(selectedSession)}
+            accessLevel={selectedSession.access_level}
+            sessionMeta={{
+              hostname: selectedSession.asset_hostname,
+              ip: selectedSession.target_ip,
+              loginUser: selectedSession.login_username,
+              requester: selectedSession.requester_username,
+              connectedAt: selectedSession.connected_at,
+            }}
+            onClose={() => {
+              setShowPlayback(false);
+              setSelectedSession(null);
+            }}
+            isZh={isZh}
+          />
+        ) : (
+          <CastPlayer
+            sessionId={selectedSession.id}
+            totalDuration={selectedSession.duration_seconds || 0}
+            sessionMeta={{
+              hostname: selectedSession.asset_hostname,
+              ip: selectedSession.target_ip,
+              loginUser: selectedSession.login_username,
+              requester: selectedSession.requester_username,
+              connectedAt: selectedSession.connected_at,
+            }}
+            onClose={() => {
+              setShowPlayback(false);
+              setSelectedSession(null);
+            }}
+            isZh={isZh}
+          />
+        )
       )}
 
       {detailsTarget && (
@@ -606,13 +690,16 @@ const PAMAuditTab: React.FC<PAMAuditTabProps> = ({
                 [isZh ? '设备' : 'Device', `${detailsTarget.asset_hostname || '—'} (${detailsTarget.target_ip || '—'})`],
                 [isZh ? '请求者' : 'Requester', detailsTarget.requester_username || '—'],
                 [isZh ? '登录账号' : 'Login account', detailsTarget.login_username || '—'],
-                [isZh ? '访问方式' : 'Method', detailsTarget.connect_method === 'local' ? (isZh ? '本地终端' : 'Local terminal') : (isZh ? '浏览器终端' : 'Browser terminal')],
+                [isZh ? '协议 / 访问方式' : 'Protocol / Method', isRemoteDesktopSession(detailsTarget) ? `${remoteDesktopProtocol(detailsTarget).toUpperCase()} · ${isZh ? '图形会话' : 'Graphical session'}` : detailsTarget.connect_method === 'local' ? (isZh ? '本地终端' : 'Local terminal') : (isZh ? '浏览器终端' : 'Browser terminal')],
                 [isZh ? '权限' : 'Access', detailsTarget.access_level === 'admin' ? (isZh ? '特权' : 'Privileged') : (isZh ? '普通' : 'Normal')],
-                [isZh ? '命令数' : 'Commands', String(detailsTarget.command_count || 0)],
+                [isZh ? '命令数' : 'Commands', isRemoteDesktopSession(detailsTarget) ? '—' : String(detailsTarget.command_count || 0)],
                 [isZh ? '开始时间' : 'Started', formatTime(detailsTarget.connected_at || detailsTarget.created_at)],
                 [isZh ? '完成时间' : 'Completed', formatTime(detailsTarget.closed_at)],
                 [isZh ? '关闭原因' : 'Close reason', detailsTarget.close_reason || '—'],
-                [isZh ? '录像' : 'Recording', (detailsTarget.recording_available || detailsTarget.recording_path) ? (isZh ? '可用' : 'Available') : (isZh ? '无' : 'None')],
+                [isZh ? '录像' : 'Recording', recordingState(detailsTarget) === 'available'
+                  ? `${isGuacRecording(detailsTarget) ? '.guac' : detailsTarget.recording_format || '.cast'} · ${isZh ? '可用' : 'Available'}`
+                  : recordingState(detailsTarget) === 'pending' ? (isZh ? '归档或存储重试中' : 'Archiving or storage retrying')
+                    : recordingState(detailsTarget) === 'error' ? (isZh ? '暂不可用' : 'Unavailable') : (isZh ? '无' : 'None')],
               ].map(([label, value]) => (
                 <div key={label}>
                   <dt className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</dt>

@@ -154,6 +154,38 @@ S3 可用空间取决于 Docker 数据目录所在文件系统的剩余空间。
 当前应用没有前端容量设置；需要限制总容量时，应在宿主机文件系统配置磁盘配额，
 或使用带 bucket quota 的外部 S3 服务。不要把单卷大小误认为 S3 总容量。
 
+## 可选 Guacamole RDP/VNC 网关
+
+图形远程访问由 Apache Guacamole Web 与 `guacd` 两个官方容器提供，不新增 Guacamole 数据库或 Redis。默认关闭，不启用时 Nexora 仍按原有服务列表运行；开启后增加两个容器。被访问的 Windows/VNC 资产不需要安装 Nexora Agent，但需在目标端启用 RDP 或运行兼容 VNC Server。
+
+在部署机 `.env` 中设置：
+
+```dotenv
+NETOPS_REMOTE_DESKTOP_ENABLED=1
+GUACAMOLE_JSON_SECRET_KEY=
+```
+
+部署脚本会在首次安装/更新时生成独立的 128 位十六进制 JSON 密钥，并通过 `remote-desktop` profile 启动 `guacamole/guacamole:1.6.0` 和 `guacamole/guacd:1.6.0`。升级现有部署时先备份 `.env`，再执行：
+
+```bash
+bash scripts/deploy-docker.sh update --force
+```
+
+直接使用 Compose 的部署需自行生成随机密钥并设置开关，再启用 profile：
+
+```bash
+openssl rand -hex 16
+docker compose --profile remote-desktop up -d netops nginx guacamole guacd
+```
+
+Web 应用只能由 Nexora 后端经内部网络访问；`guacd:4822` 仅供 Guacamole Web 使用，不映射到宿主机。Nginx 只为现有后端图形 WebSocket 提供同源代理。只有 `guacd` 接入用于连接受管资产的出向网络；应在主机/目标防火墙中只放行来自 Nexora Docker 主机的必要目标网段与端口。Apache Guacamole 1.6.0 的 `guacd` 使用 UID/GID 1000，与 Nexora 镜像一致。Compose 会先启动 Nexora，由其预建并初始化共享录像卷的 UID 1000 目录，再启动 `guacd` 写入录像。
+
+RDP 通常使用 TCP/3389；目标 Windows 需启用远程桌面、授予登录权限并按组织要求启用 NLA。VNC 常用 TCP/5900，显示编号可能对应更高端口；目标需运行 VNC Server。资产配置分别保存 RDP/VNC 端口和现有凭据引用，管理员访问仍需完成 Nexora MFA。浏览器不接收目标密码。
+
+会话录像暂存在 `nexora-remote-desktop-recordings` volume，经 Nexora 后端归档到当前 PAM 存储。需为录像磁盘预留容量并纳入部署机备份策略；停用 profile 前确认待归档录像已处理。Guacamole 图形审计提供会话录像，不具备 SSH 终端的逐命令危险操作过滤能力。标准 VNC 是否加密取决于所选 VNC Server 认证/传输模式，HTTPS 仅保护浏览器到平台这一段。
+
+滚回时将 `NETOPS_REMOTE_DESKTOP_ENABLED` 设回 `0` 并按需重建/更新原有服务；新增 profile 和 PAM 审计记录保留，不需要删除数据库卷。不要执行 `docker compose down -v`。
+
 Docker Compose 默认启用 Prometheus-compatible 的 VictoriaMetrics 查询路径，
 并把 `netops` 编译发布的采集目标、SNMP 认证和 vmagent 配置通过
 `nexora-monitoring-artifacts` 共享卷交给 `vmagent` 与 `snmp-exporter`。

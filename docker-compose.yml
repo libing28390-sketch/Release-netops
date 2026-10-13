@@ -138,6 +138,12 @@ services:
       - S3_FORCE_PATH_STYLE=${S3_FORCE_PATH_STYLE:-true}
       - S3_VERIFY_TLS=${S3_VERIFY_TLS:-true}
       - S3_CONNECT_TIMEOUT_SECONDS=${S3_CONNECT_TIMEOUT_SECONDS:-5}
+      # Optional Guacamole integration. These remain harmless when the
+      # remote-desktop profile is disabled.
+      - NETOPS_REMOTE_DESKTOP_ENABLED=${NETOPS_REMOTE_DESKTOP_ENABLED:-0}
+      - GUACAMOLE_BASE_URL=${GUACAMOLE_BASE_URL:-http://guacamole:8080/guacamole}
+      - GUACAMOLE_JSON_SECRET_KEY=${GUACAMOLE_JSON_SECRET_KEY:-}
+      - GUACAMOLE_RECORDING_DIR=/app/data/remote_desktop_recordings
       - S3_READ_TIMEOUT_SECONDS=${S3_READ_TIMEOUT_SECONDS:-60}
       - CORS_ORIGINS=${CORS_ORIGINS:-}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
@@ -171,6 +177,7 @@ services:
       - LIBRENMS_REDIS_PASSWORD=
     volumes:
       - nexora-data:/app/data
+      - nexora-remote-desktop-recordings:/app/data/remote_desktop_recordings
       - nexora-backup:/app/backup
       - nexora-dist:/app/dist
       - nexora-monitoring-artifacts:/app/artifacts/monitoring
@@ -180,6 +187,7 @@ services:
     networks:
       - default
       - librenms_control
+      - remote_desktop_api
     restart: unless-stopped
     ulimits:
       nofile:
@@ -763,6 +771,57 @@ services:
       retries: 5
     logging: *container-logging
 
+  # Optional graphical remote access. Neither service publishes a host port;
+  # only Nexora can reach the web application and only Guacamole can reach
+  # guacd. The guacd-only egress network routes connections to managed hosts.
+  guacamole:
+    image: guacamole/guacamole:1.6.0
+    profiles: ["remote-desktop"]
+    container_name: nexora-guacamole
+    mem_limit: ${GUACAMOLE_MEM_LIMIT:-768m}
+    cpus: "${GUACAMOLE_CPUS:-1.0}"
+    pids_limit: 256
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      GUACD_HOSTNAME: guacd
+      GUACD_PORT: "4822"
+      JSON_ENABLED: "true"
+      JSON_SECRET_KEY: ${GUACAMOLE_JSON_SECRET_KEY:-}
+    expose:
+      - "8080"
+    networks:
+      - remote_desktop_api
+      - remote_desktop_protocol
+    depends_on:
+      guacd:
+        condition: service_started
+    restart: unless-stopped
+    logging: *container-logging
+
+  guacd:
+    image: guacamole/guacd:1.6.0
+    profiles: ["remote-desktop"]
+    container_name: nexora-guacd
+    # Apache's 1.6.0 image runs guacd as UID/GID 1000, matching Nexora.
+    user: "1000:1000"
+    mem_limit: ${GUACD_MEM_LIMIT:-1024m}
+    cpus: "${GUACD_CPUS:-2.0}"
+    pids_limit: 512
+    expose:
+      - "4822"
+    volumes:
+      - nexora-remote-desktop-recordings:/recordings
+    networks:
+      - remote_desktop_protocol
+      - remote_desktop_egress
+    # Start Nexora first so Docker initializes the shared named volume from
+    # the app image's pre-created, UID-1000 recording directory.
+    depends_on:
+      netops:
+        condition: service_started
+    restart: unless-stopped
+    logging: *container-logging
+
   # Optional single-node S3-compatible object storage.  The application stays
   # on local storage unless STORAGE_BACKEND=s3 and this profile is enabled.
   # `weed mini` is intentionally isolated on the internal Compose network;
@@ -964,6 +1023,8 @@ volumes:
     name: nexora-librenms-dbdata
   nexora-librenms-redis-data:
     name: nexora-librenms-redis-data
+  nexora-remote-desktop-recordings:
+    name: nexora-remote-desktop-recordings
 
 networks:
   default: {}
@@ -987,3 +1048,9 @@ networks:
     ipam:
       config:
         - subnet: ${GRAFANA_AUTH_PROXY_SUBNET:-172.30.254.0/29}
+  remote_desktop_api:
+    internal: true
+  remote_desktop_protocol:
+    internal: true
+  # Only guacd joins this non-internal network to reach managed RDP/VNC hosts.
+  remote_desktop_egress: {}

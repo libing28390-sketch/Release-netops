@@ -707,7 +707,7 @@ def _platform_from_vendor(vendor: str, asset_type: str = 'network_device') -> st
         return 'dptech_conplat'
     if any(x in v for x in ['ubuntu', 'debian', 'centos', 'redhat', 'linux']):
         return 'linux'
-    
+
     if asset_type == 'server':
         return 'linux'
     return 'cisco_iosxe'
@@ -1076,14 +1076,14 @@ def _create_linked_device(conn, asset_id: str, body, user: dict) -> str:
     # If credentials are provided during import, mark onboarding as verified
     # so the user doesn't have to manually verify each device before takeover.
     has_creds = bool((uname and pwd) or (admin_user and admin_pwd) or (normal_user and normal_pwd))
-    
+
     existing_cred_id = getattr(body, 'credential_id', '') or ''
     existing_admin_cred_id = getattr(body, 'admin_credential_id', '') or ''
     is_bound = False
     is_admin_bound = False
     credential_id = ''
     admin_credential_id = ''
-    
+
     if existing_cred_id:
         # Check if credential exists in DB (either by ID or by name)
         cred_row = conn.execute(
@@ -1100,7 +1100,7 @@ def _create_linked_device(conn, asset_id: str, body, user: dict) -> str:
             dec_enable = decrypt_credential(c_dict.get('enable_password')) or ''
             dec_snmp = decrypt_credential(c_dict.get('snmp_community')) or ''
             c_user = c_dict.get('username') or ''
-            
+
             # Sync back to local fields
             if not uname: uname = c_user
             if not normal_user: normal_user = c_user
@@ -1125,7 +1125,7 @@ def _create_linked_device(conn, asset_id: str, body, user: dict) -> str:
             dec_pwd = decrypt_credential(c_dict.get('encrypted_password')) or ''
             dec_enable = decrypt_credential(c_dict.get('enable_password')) or ''
             c_user = c_dict.get('username') or ''
-            
+
             # Sync back to local fields
             if not admin_user: admin_user = c_user
             if not admin_pwd: admin_pwd = dec_pwd
@@ -1312,7 +1312,7 @@ def _sync_device_from_asset(
     sync_snmp_credentials = changed_fields is None or bool(changed_fields & {
         'snmp_credential_id', 'snmp_community',
     })
-    
+
     # If a new credential_id is passed, update binding
     if (
         sync_primary_credentials
@@ -1331,7 +1331,7 @@ def _sync_device_from_asset(
                     conn.execute('UPDATE devices SET credential_id = ? WHERE id = ?', (input_id, device_id))
                     conn.execute('UPDATE physical_assets SET credential_id = ? WHERE id = ?', (input_id, asset_id))
                     credential_id = input_id
-                    
+
                     # Decrypt and sync to local fields
                     from core.crypto import decrypt_credential
                     c_dict = dict(cred_row)
@@ -1339,14 +1339,14 @@ def _sync_device_from_asset(
                     dec_enable = decrypt_credential(c_dict.get('enable_password')) or ''
                     dec_snmp = decrypt_credential(c_dict.get('snmp_community')) or ''
                     c_user = c_dict.get('username') or ''
-                    
+
                     conn.execute('''
                         UPDATE devices
                         SET normal_username = ?, normal_password = ?,
                             enable_password = ?, snmp_community = ?
                         WHERE id = ?
                     ''', (c_user, _safe_encrypt(dec_pwd), _safe_encrypt(dec_enable), _safe_encrypt_snmp_community(dec_snmp), device_id))
-                    
+
                     conn.execute('''
                         UPDATE physical_assets
                         SET normal_username = ?, normal_password = ?,
@@ -1378,20 +1378,20 @@ def _sync_device_from_asset(
                     conn.execute('UPDATE devices SET admin_credential_id = ? WHERE id = ?', (input_id, device_id))
                     conn.execute('UPDATE physical_assets SET admin_credential_id = ? WHERE id = ?', (input_id, asset_id))
                     admin_credential_id = input_id
-                    
+
                     # Decrypt and sync to local fields
                     from core.crypto import decrypt_credential
                     c_dict = dict(cred_row)
                     dec_pwd = decrypt_credential(c_dict.get('encrypted_password')) or ''
                     dec_enable = decrypt_credential(c_dict.get('enable_password')) or ''
                     c_user = c_dict.get('username') or ''
-                    
+
                     conn.execute('''
                         UPDATE devices
                         SET admin_username = ?, admin_password = ?, enable_password = ?
                         WHERE id = ?
                     ''', (c_user, _safe_encrypt(dec_pwd), _safe_encrypt(dec_enable), device_id))
-                    
+
                     conn.execute('''
                         UPDATE physical_assets
                         SET admin_username = ?, admin_password = ?, enable_password = ?
@@ -1461,7 +1461,7 @@ def _sync_device_from_asset(
                 enable_password=enable_pwd or '',
                 snmp_community=community or '',
             )
-            
+
             conn.execute('UPDATE devices SET credential_id = ? WHERE id = ?', (credential_id, device_id))
 
     # A normal credential may already exist while the privileged account was
@@ -1519,7 +1519,7 @@ def _sync_device_from_asset(
     if getattr(body, 'username', None) is not None and (changed_fields is None or 'username' in changed_fields): updates['username'] = body.username
     if getattr(body, 'normal_username', None) is not None and (changed_fields is None or 'normal_username' in changed_fields): updates['normal_username'] = body.normal_username
     if getattr(body, 'admin_username', None) is not None and (changed_fields is None or 'admin_username' in changed_fields): updates['admin_username'] = body.admin_username
-    
+
     if sync_primary_credentials or sync_admin_credentials:
         updates['password'] = ''
         updates['normal_password'] = ''
@@ -2812,7 +2812,11 @@ def delete_asset_web_profile(asset_id: str, profile_id: str, _user=require_role(
 # ── Create ───────────────────────────────────────────────────────────
 
 @router.post('/assets')
-def create_asset(body: AssetCreate, _user=require_role("Operator")):
+def create_asset(
+    body: AssetCreate,
+    background_tasks: BackgroundTasks = None,
+    _user=require_role("Operator"),
+):
     conn = get_db_connection()
     try:
         _pre_resolve_credential(conn, body)
@@ -2823,7 +2827,12 @@ def create_asset(body: AssetCreate, _user=require_role("Operator")):
             raise HTTPException(status_code=422, detail=str(exc))
         _enforce_asset_site_scope(conn, _user, body.site_id, 'create')
         asset_id = f"asset-{uuid.uuid4().hex[:12]}"
-        _resolve_snmp_credential_binding(conn, body)
+        snmp_profile_type = _resolve_snmp_credential_binding(conn, body)
+        declared_identity = {
+            'vendor': str(body.vendor or '').strip(),
+            'platform': str(body.platform or '').strip(),
+            'model': str(body.model or '').strip(),
+        }
         now = _utc_now()
         asset_origin = body.asset_origin if body.asset_origin in ('new', 'legacy') else 'new'
         body.platform = _normalize_asset_platform(body.vendor, body.platform, body.asset_type)
@@ -2936,12 +2945,37 @@ def create_asset(body: AssetCreate, _user=require_role("Operator")):
             details={'asset_type': body.asset_type, 'source': 'api'},
         )
         conn.commit()
-        try:
-            from services.collector_sync_service import trigger_async_monitoring_sync
-            trigger_async_monitoring_sync()
-        except Exception:
-            pass
-        return {'id': asset_id, 'device_id': device_id, 'legacy_exempt': legacy_production}
+        if body.asset_type == 'network_device' and device_id:
+            enrichment_item = {
+                'device_id': device_id,
+                'asset_tag': body.asset_tag or '',
+                'hostname': body.hostname or '',
+                'ip': body.management_ip or '',
+                'snmp_configured': bool(snmp_profile_type or body.snmp_community),
+                'declared_vendor': declared_identity['vendor'],
+                'declared_platform': declared_identity['platform'],
+                'declared_model': declared_identity['model'],
+            }
+            if background_tasks is not None:
+                background_tasks.add_task(
+                    _finish_manual_network_asset_enrichment,
+                    enrichment_item,
+                    _user,
+                )
+            else:
+                _finish_manual_network_asset_enrichment(enrichment_item, _user)
+        else:
+            _trigger_asset_monitoring_sync()
+        return {
+            'id': asset_id,
+            'device_id': device_id,
+            'legacy_exempt': legacy_production,
+            'enrichment_pending': bool(
+                body.asset_type == 'network_device'
+                and device_id
+                and background_tasks is not None
+            ),
+        }
     finally:
         conn.close()
 
@@ -3086,11 +3120,11 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True, _
                 # (body may carry new username/password that hasn't been persisted yet)
                 from services.vault_service import resolve_device_credentials
                 creds = resolve_device_credentials(device_row)
-                
+
                 auth_model = getattr(body, 'auth_model', None) or device_row.get('auth_model', 'single')
-                
+
                 ip = (getattr(body, 'management_ip', None) or device_row.get('ip_address', '') or '').strip()
-                
+
                 missing = []
                 if not ip:
                     missing.append('管理IP')
@@ -3345,10 +3379,10 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True, _
                                 dev_state = bg_conn_init.execute('SELECT auth_model, hostname FROM devices WHERE id = ?', (dev_id,)).fetchone()
                             finally:
                                 bg_conn_init.close()
-                                
+
                             auth_model = dev_state['auth_model'] if dev_state else 'single'
                             hostname = dev_state['hostname'] if dev_state else dev_id
-                            
+
                             # Start the atomic takeover sequence.
                             logger.info(f"[Takeover] Starting Admin role for {hostname}")
                             admin_result = rotate_password(dev_id, role='admin')
@@ -3502,6 +3536,55 @@ def _trigger_asset_monitoring_sync() -> None:
         trigger_async_monitoring_sync()
     except Exception:
         pass
+
+
+def _finish_manual_network_asset_enrichment(item: dict, actor) -> None:
+    """Run the same post-commit network-device enrichment used by imports."""
+    import asyncio
+
+    async def _enrich_device() -> None:
+        try:
+            from services.librenms_enrollment_service import enroll_imported_network_device
+
+            result = await enroll_imported_network_device(item['device_id'], actor=actor)
+            logger.info(
+                'Manual asset LibreNMS enrollment finished for device %s (%s)',
+                item['device_id'],
+                str(result.get('status') or 'unknown'),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                'Manual asset LibreNMS enrollment failed for device %s (%s)',
+                item['device_id'],
+                type(exc).__name__,
+            )
+
+        try:
+            from services.snmp_import_identification_service import identify_imported_device
+
+            result = await identify_imported_device(item, asyncio.Semaphore(1))
+            logger.info(
+                'Manual asset SNMP identification finished for device %s (%s)',
+                item['device_id'],
+                str(result.get('status') or 'unknown'),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                'Manual asset SNMP identification failed for device %s (%s)',
+                item['device_id'],
+                type(exc).__name__,
+            )
+
+    try:
+        asyncio.run(_enrich_device())
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            'Manual asset post-commit enrichment failed for device %s (%s)',
+            item.get('device_id') or '',
+            type(exc).__name__,
+        )
+    finally:
+        _trigger_asset_monitoring_sync()
 
 
 @router.post('/assets/batch-delete')
@@ -3902,26 +3985,28 @@ def import_assets(
                 device_id = _create_linked_device(conn, asset_id, body, _user)
                 _sync_asset_tags(conn, asset_id, requested_tag_ids)
                 if body.asset_type == 'network_device' and device_id:
-                    pending_librenms_enrollment.append({
+                    enrichment_item = {
                         'device_id': device_id,
                         'row': row_number,
                         'asset_tag': body.asset_tag or '',
                         'hostname': body.hostname or '',
                         'ip': body.management_ip or '',
-                    })
-                    # The identity probe also reads sysName.0 and owns hostname writeback,
-                    # avoiding a second network request for each newly created device.
-                    pending_snmp_identification.append({
-                        'device_id': device_id,
-                        'row': row_number,
-                        'asset_tag': body.asset_tag or '',
-                        'hostname': body.hostname or '',
-                        'ip': body.management_ip or '',
-                        'snmp_configured': bool(snmp_profile_type or body.snmp_community),
-                        'declared_vendor': declared_identity['vendor'],
-                        'declared_platform': declared_identity['platform'],
-                        'declared_model': declared_identity['model'],
-                    })
+                    }
+                    if str(body.management_ip or '').strip():
+                        pending_librenms_enrollment.append(enrichment_item)
+                        # The identity probe also reads sysName.0 and owns hostname writeback,
+                        # avoiding a second network request for each newly created device.
+                        pending_snmp_identification.append({
+                            **enrichment_item,
+                            'snmp_configured': bool(snmp_profile_type or body.snmp_community),
+                            'declared_vendor': declared_identity['vendor'],
+                            'declared_platform': declared_identity['platform'],
+                            'declared_model': declared_identity['model'],
+                        })
+                    else:
+                        # Keep the import result explicit when a new asset has no
+                        # management IP; there is no network target to enroll or identify.
+                        pending_hostname_sync.append(enrichment_item)
                 if legacy_production:
                     conn.execute(
                         "UPDATE devices SET lifecycle_status = 'production', rotation_status = 'exempt', is_managed = 0 WHERE id = ?",
@@ -4483,7 +4568,7 @@ def verify_asset_connectivity(asset_id: str, _user=require_role("Operator")):
         if not asset:
             raise HTTPException(status_code=404, detail="Asset not found")
         _enforce_asset_row_scope(_user, asset, 'verify')
-        
+
         asset = dict(asset)
         ip = asset.get('management_ip')
         if not ip:
@@ -4568,7 +4653,7 @@ def verify_asset_connectivity(asset_id: str, _user=require_role("Operator")):
         username = asset.get('username')
         password_enc = asset.get('password')
         password = decrypt_credential(password_enc) if password_enc else ''
-        
+
         if not username or not password:
             dev = conn.execute('SELECT * FROM devices WHERE asset_id = ?', (asset_id,)).fetchone()
             if dev:
@@ -4608,7 +4693,7 @@ def verify_asset_connectivity(asset_id: str, _user=require_role("Operator")):
                     "timeout_socket": _CONNECTIVITY_SSH_TIMEOUT_SECONDS,
                     "timeout_transport": _CONNECTIVITY_SSH_TIMEOUT_SECONDS,
                 }
-                
+
                 # Keep the onboarding probe on the same cross-vendor SSH
                 # algorithm profile as the normal drivers.
                 if platform_module.system() == 'Windows':
@@ -4715,10 +4800,10 @@ def _run_batch_takeover(tasks: list[dict]):
                 dev_state = bg_conn_init.execute('SELECT auth_model, hostname FROM devices WHERE id = ?', (dev_id,)).fetchone()
             finally:
                 bg_conn_init.close()
-                
+
             auth_model = dev_state['auth_model'] if dev_state else 'single'
             hostname = dev_state['hostname'] if dev_state else dev_id
-            
+
             # Start the atomic takeover sequence.
             logger.info(f"[Takeover] Starting Admin role for {hostname}")
             admin_result = rotate_password(dev_id, role='admin')
@@ -4788,7 +4873,7 @@ def batch_takeover(body: BatchTakeoverRequest, _user=require_role("Administrator
 
     results = []
     tasks = []
-    
+
     conn = get_db_connection()
     try:
         for asset_id in body.asset_ids:
@@ -4805,7 +4890,7 @@ def batch_takeover(body: BatchTakeoverRequest, _user=require_role("Administrator
                     raise HTTPException(status_code=404, detail='Asset not found')
                 _enforce_asset_row_scope(_user, row, 'update')
                 old_lc = row['lifecycle_status']
-                
+
                 # Check linked device
                 device_row = conn.execute(
                     'SELECT id, hostname, ip_address, credential_id, admin_credential_id '
@@ -4849,7 +4934,7 @@ def batch_takeover(body: BatchTakeoverRequest, _user=require_role("Administrator
                         'message': '该设备已绑定凭据，不能执行批量口令上收；请从凭据中心发起密码同步',
                     })
                     continue
-                
+
                 # Run update_asset with run_bg_rotate=False
                 update_asset(
                     asset_id,
@@ -4857,14 +4942,14 @@ def batch_takeover(body: BatchTakeoverRequest, _user=require_role("Administrator
                     run_bg_rotate=False,
                     _user=_user,
                 )
-                
+
                 tasks.append({
                     'dev_id': dev_id,
                     'a_id': asset_id,
                     'old_lc': old_lc,
                     'hostname': hostname
                 })
-                
+
                 results.append({
                     'id': asset_id,
                     'status': 'triggered',
@@ -4886,7 +4971,7 @@ def batch_takeover(body: BatchTakeoverRequest, _user=require_role("Administrator
                 })
     finally:
         conn.close()
-        
+
     if tasks:
         import threading
         threading.Thread(
@@ -4894,7 +4979,7 @@ def batch_takeover(body: BatchTakeoverRequest, _user=require_role("Administrator
             args=(tasks,),
             daemon=True
         ).start()
-        
+
     return {
         'results': results,
         'triggered_count': sum(1 for item in results if item['status'] == 'triggered'),

@@ -9,7 +9,6 @@ import TagConditionPicker, {
   type TagFilterConfig,
 } from '../../components/TagConditionPicker';
 import { ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
-import { PasswordInputField } from '../../components/ui/PasswordInputField';
 import { useEscapeClose } from '../../hooks/useEscapeClose';
 import type { Device } from '../../types';
 
@@ -40,14 +39,6 @@ interface BackupPolicy {
   retry_count: number;
   timeout_seconds: number;
   collect_startup_config?: boolean;
-  tftp_enabled?: boolean;
-  tftp_server?: string;
-  tftp_port?: number;
-  tftp_path_prefix?: string;
-  tftp_protocol?: 'sftp' | 'ftp' | 'tftp';
-  tftp_username?: string;
-  tftp_password?: string;
-  tftp_password_configured?: boolean;
   updated_at: string;
 }
 
@@ -56,13 +47,6 @@ interface PolicyDraft extends Omit<BackupPolicy, 'id' | 'updated_at' | 'scope'> 
   scope: BackupScope;
   tagFilter: TagFilterConfig;
   collect_startup_config: boolean;
-  tftp_enabled: boolean;
-  tftp_server: string;
-  tftp_port: number;
-  tftp_path_prefix: string;
-  tftp_protocol: 'sftp' | 'ftp' | 'tftp';
-  tftp_username: string;
-  tftp_password: string;
 }
 
 interface PreviewDevice {
@@ -134,25 +118,11 @@ const newDraft = (): PolicyDraft => ({
   retry_count: 1,
   timeout_seconds: 30,
   collect_startup_config: false,
-  tftp_enabled: false,
-  tftp_server: '',
-  tftp_port: 22,
-  tftp_path_prefix: 'backups',
-  tftp_protocol: 'sftp',
-  tftp_username: '',
-  tftp_password: '',
 });
 
 const toDraft = (policy: BackupPolicy): PolicyDraft => ({
   ...policy,
   collect_startup_config: Boolean(policy.collect_startup_config),
-  tftp_enabled: Boolean(policy.tftp_enabled),
-  tftp_server: policy.tftp_server || '',
-  tftp_port: policy.tftp_port || (policy.tftp_protocol === 'ftp' ? 21 : policy.tftp_protocol === 'tftp' ? 69 : 22),
-  tftp_path_prefix: policy.tftp_path_prefix || 'backups',
-  tftp_protocol: policy.tftp_protocol || 'tftp',
-  tftp_username: policy.tftp_username || '',
-  tftp_password: '',
   scope: {
     ...emptyScope(),
     ...policy.scope,
@@ -456,11 +426,6 @@ const BackupPolicyManager: React.FC<BackupPolicyManagerProps> = ({
                           {zh ? '启动配置' : 'Startup'}
                         </span>
                       )}
-                      {policy.tftp_enabled && (
-                        <span className="inline-flex items-center gap-0.5 rounded-md bg-cyan-50 border border-cyan-200 px-1.5 py-0.5 font-bold text-cyan-700">
-                          {policy.tftp_protocol ? policy.tftp_protocol.toUpperCase() : '文件归档'}
-                        </span>
-                      )}
                     </div>
                   </article>
                 );
@@ -551,7 +516,7 @@ const BackupPolicyManager: React.FC<BackupPolicyManagerProps> = ({
                       </label>
                       <label className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-xs text-slate-600">
                         <input type="checkbox" checked={draft.change_only} onChange={(event) => updateDraft({ change_only: event.target.checked })} className="accent-cyan-600" />
-                        {zh ? '配置未变化时不重复归档' : 'Archive only changes'}
+                        {zh ? '配置未变化时不重复保存' : 'Save only changed configurations'}
                       </label>
                       <label className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-xs text-slate-600 sm:col-span-2">
                         <input
@@ -568,101 +533,6 @@ const BackupPolicyManager: React.FC<BackupPolicyManagerProps> = ({
                         </span>
                       </label>
                     </div>
-                  </div>
-
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h4 className="text-xs font-bold text-slate-700">{zh ? '远端文件自动归档' : 'Remote File Archive'}</h4>
-                        <p className="mt-0.5 text-[10px] text-slate-400">{zh ? 'SFTP 主用，FTP 兼容，TFTP 仅作为老设备/实验环境兜底' : 'SFTP primary, FTP compatible, TFTP fallback for legacy or lab environments'}</p>
-                      </div>
-                      <label className="flex items-center gap-1.5 text-xs text-slate-600">
-                        <input
-                          type="checkbox"
-                          checked={draft.tftp_enabled}
-                          onChange={(event) => updateDraft({ tftp_enabled: event.target.checked })}
-                          className="accent-cyan-600"
-                        />
-                        <span className="font-medium text-slate-700">{zh ? '启用' : 'Enable'}</span>
-                      </label>
-                    </div>
-                    {draft.tftp_enabled && (
-                      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-4">
-                        <label className="text-[11px] font-semibold text-slate-500">
-                          {zh ? '传输协议' : 'Protocol'}
-                          <select
-                            value={draft.tftp_protocol}
-                            onChange={(event) => {
-                              const protocol = event.target.value as PolicyDraft['tftp_protocol'];
-                              updateDraft({
-                                tftp_protocol: protocol,
-                                tftp_port: protocol === 'sftp' ? 22 : protocol === 'ftp' ? 21 : 69,
-                              });
-                            }}
-                            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-cyan-400"
-                          >
-                            <option value="sftp">SFTP（推荐）</option>
-                            <option value="ftp">FTP（兼容）</option>
-                            <option value="tftp">TFTP（兜底）</option>
-                          </select>
-                        </label>
-                        <label className="text-[11px] font-semibold text-slate-500 sm:col-span-2">
-                          {zh ? '文件服务器 IP *' : 'Archive Server IP *'}
-                          <input
-                            type="text"
-                            placeholder="192.168.1.100"
-                            value={draft.tftp_server}
-                            onChange={(event) => updateDraft({ tftp_server: event.target.value })}
-                            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-cyan-400"
-                          />
-                        </label>
-                        <label className="text-[11px] font-semibold text-slate-500">
-                          {zh ? '端口' : 'Port'}
-                          <input
-                            type="number"
-                            min={1}
-                            max={65535}
-                            value={draft.tftp_port}
-                            onChange={(event) => updateDraft({ tftp_port: Number(event.target.value) })}
-                            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-cyan-400"
-                          />
-                        </label>
-                        {draft.tftp_protocol !== 'tftp' && (
-                          <>
-                            <label className="text-[11px] font-semibold text-slate-500">
-                              {zh ? '用户名 *' : 'Username *'}
-                              <input
-                                type="text"
-                                value={draft.tftp_username}
-                                onChange={(event) => updateDraft({ tftp_username: event.target.value })}
-                                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-cyan-400"
-                              />
-                            </label>
-                            <label className="text-[11px] font-semibold text-slate-500">
-                              {zh ? '密码' : 'Password'}
-                              <PasswordInputField
-                                showPasswordLabel={zh ? '显示密码' : 'Show password'}
-                                hidePasswordLabel={zh ? '隐藏密码' : 'Hide password'}
-                                placeholder={draft.tftp_password ? '' : (zh ? '留空保持已配置密码' : 'Leave blank to keep configured password')}
-                                value={draft.tftp_password}
-                                onChange={(event) => updateDraft({ tftp_password: event.target.value })}
-                                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-cyan-400"
-                              />
-                            </label>
-                          </>
-                        )}
-                        <label className="text-[11px] font-semibold text-slate-500 sm:col-span-4">
-                          {zh ? '远端目录前缀' : 'Remote Path Prefix'}
-                          <input
-                            type="text"
-                            placeholder="backups"
-                            value={draft.tftp_path_prefix}
-                            onChange={(event) => updateDraft({ tftp_path_prefix: event.target.value })}
-                            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-cyan-400"
-                          />
-                        </label>
-                      </div>
-                    )}
                   </div>
 
                   <div className={`rounded-2xl border p-4 ${preview ? 'border-cyan-200 bg-cyan-50/50' : 'border-dashed border-slate-300 bg-white'}`}>

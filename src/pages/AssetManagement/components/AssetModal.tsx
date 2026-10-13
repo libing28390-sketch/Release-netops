@@ -25,6 +25,7 @@ import { ActionIconButton } from '../../../components/ui/ActionIconButton';
 import { isReservedSystemSite } from '../../../utils/siteIdentity';
 import { ApiError, apiRequest, authHeaders } from '../../../api/http';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
+import RemoteDesktopProfileEditor from './RemoteDesktopProfileEditor';
 
 interface AssetModalProps {
   isOpen: boolean;
@@ -380,7 +381,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
               />
               <Field label={zh ? '资产编号' : 'Asset Tag'} value={form.asset_tag} onChange={v => setForm(f => ({ ...f, asset_tag: v }))} placeholder="e.g. SRV-BJ-001" disabled={isEditMode} />
               <Field label={zh ? '序列号 (S/N)' : 'Serial Number'} value={form.serial_number} onChange={v => setForm(f => ({ ...f, serial_number: v }))} disabled={isEditMode} />
-              
+
               <div>
                 <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '厂商' : 'Vendor'}</label>
                 {form.asset_type === 'server' ? (
@@ -635,7 +636,20 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                   <p className="mt-2 text-[9px] text-amber-600">{zh ? 'HTTP 会明文传输页面内容和用户输入，请仅用于不支持 HTTPS 的旧设备。' : 'HTTP transmits page content and user input in clear text; use it only for legacy devices.'}</p>
                 )}
               </div>
-              
+
+              {isEditMode && editingAsset?.id ? (
+                <RemoteDesktopProfileEditor
+                  assetId={editingAsset.id}
+                  credentials={credentials}
+                  language={language}
+                />
+              ) : (
+                <div className="col-span-2 rounded-xl border border-violet-100 bg-violet-50/35 px-3.5 py-3 text-[10px] leading-4 text-slate-500">
+                  <span className="font-bold text-violet-700">{zh ? 'RDP / VNC：' : 'RDP / VNC: '}</span>
+                  {zh ? '请先保存资产以生成资产 ID，然后重新打开该资产并单独保存远程桌面配置。' : 'Save the asset first to create its ID, then reopen it and save its remote desktop profiles.'}
+                </div>
+              )}
+
               <div>
                 <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '设备子类' : 'Device Sub-category'}</label>
                 <select
@@ -711,7 +725,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                   <Terminal size={12} className="text-[#00bceb]/60" />
                   <span className="text-[10px] font-bold text-black/30 uppercase tracking-wider">{zh ? '连接与凭据' : 'Connection & Credentials'}</span>
                 </div>
-                
+
                 <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">
                   <div>
                     <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '平台' : 'Platform'}</label>

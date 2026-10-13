@@ -7,7 +7,7 @@ sandbox_mode = "workspace-write"
 personality = "pragmatic"
 
 [features]
-context_management.experimental_mode = true
+"context_management.experimental_mode" = true
 
 [agents]
 enabled = true

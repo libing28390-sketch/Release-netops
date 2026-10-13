@@ -80,7 +80,7 @@ COPY --from=frontend-build /app/dist /app/frontend-dist
 RUN mkdir -p /app/dist && cp -a /app/frontend-dist/. /app/dist/
 
 # Create runtime directories
-RUN mkdir -p /app/data /app/backup /app/data/storage /app/data/spool /app/data/logs /app/artifacts/monitoring/versions /app/artifacts/monitoring/queue
+RUN mkdir -p /app/data /app/data/remote_desktop_recordings /app/backup /app/data/storage /app/data/spool /app/data/logs /app/artifacts/monitoring/versions /app/artifacts/monitoring/queue
 
 # Runtime environment
 ENV NODE_ENV=production

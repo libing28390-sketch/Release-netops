@@ -56,14 +56,6 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def _config_archive_name(run_id: object = "") -> str:
-    """Build a collision-resistant, time-based name for a remote ZIP bundle."""
-
-    safe_run_id = re.sub(r"[^A-Za-z0-9_-]+", "-", str(run_id or "")).strip("-_")[-24:]
-    suffix = f"_{safe_run_id}" if safe_run_id else f"_{uuid.uuid4().hex[:8]}"
-    return f"config_backup_{_utc_now().strftime('%Y%m%d_%H%M%S')}{suffix}.zip"
-
-
 def _build_device_scope_tree(rows: list[dict]) -> list[dict]:
     """Build the CMDB-compatible site/type/category/role hierarchy."""
     root = {
@@ -450,10 +442,6 @@ def _finish_backup_run(
     run_id: str,
     *,
     error_message: str = '',
-    tftp_status: str = 'none',
-    tftp_server: str = '',
-    tftp_log: str = '',
-    tftp_uploaded_count: int = 0,
 ) -> None:
     conn = get_db_connection()
     try:
@@ -475,8 +463,7 @@ def _finish_backup_run(
             '''UPDATE config_backup_runs
                SET status = ?, finished_at = ?, total_devices = ?,
                    success_count = ?, failed_count = ?, skipped_count = ?,
-                   error_message = ?,
-                   tftp_status = ?, tftp_server = ?, tftp_log = ?, tftp_uploaded_count = ?
+                   error_message = ?
                WHERE id = ?''',
             (
                 status,
@@ -486,10 +473,6 @@ def _finish_backup_run(
                 failed_count,
                 skipped_count,
                 error_message,
-                tftp_status,
-                tftp_server,
-                tftp_log,
-                tftp_uploaded_count,
                 run_id,
             ),
         )
@@ -929,6 +912,8 @@ def get_backup_run(
             (run_id,),
         ).fetchone()['total']
         run_payload = dict(run)
+        for legacy_field in ('tftp_status', 'tftp_server', 'tftp_log', 'tftp_uploaded_count'):
+            run_payload.pop(legacy_field, None)
         if int(ledger_total or 0) > 0:
             run_counts = conn.execute(
                 f'''SELECT COUNT(*) AS total_devices,
@@ -1971,7 +1956,7 @@ async def run_scheduled_backup(
     conn = get_db_connection()
     try:
         policy = (
-            config_backup_policy_service.get_policy(conn, policy_id, include_secret=True)
+            config_backup_policy_service.get_policy(conn, policy_id)
             if policy_id
             else None
         )
@@ -2114,7 +2099,6 @@ async def run_scheduled_backup(
 
     success_count = 0
     failed_count = 0
-    created_backup_items: list[dict] = []
     sem = asyncio.Semaphore(run_concurrency)
 
     collect_startup_config = bool((policy or {}).get('collect_startup_config')) or (
@@ -2137,7 +2121,7 @@ async def run_scheduled_backup(
 
     async def _backup_one(device) -> dict:
         """Back up a single device (running-config and optionally startup-config); returns a result dict."""
-        nonlocal success_count, failed_count, created_backup_items
+        nonlocal success_count, failed_count
 
         from core.platform_utils import normalize_device_platform
         from services.config_backup_command_service import (
@@ -2304,7 +2288,7 @@ async def run_scheduled_backup(
                 f"[Scheduled Backup] [X] {device['hostname']} ({cred_kind}): "
                 f"no valid config obtained (output length={len(output)})"
             )
-            
+
             err_str = 'Unknown error'
             if results and results[0]:
                 err_str = results[0].get('error') or results[0].get('stderr') or 'No config output'
@@ -2360,7 +2344,7 @@ async def run_scheduled_backup(
                         'hostname': device['hostname'],
                         'status': 'success',
                         'reason': '配置未变化',
-                        'detail': '标准化配置与最近版本一致，按策略未重复归档。',
+                        'detail': '标准化配置与最近版本一致，按策略未重复保存。',
                         'snapshot_id': latest['id'],
                         'unchanged': True,
                     }
@@ -2405,16 +2389,6 @@ async def run_scheduled_backup(
                     snap_id, ts, output, 'running', vendor=vendor,
                     hostname=device['hostname'], trigger=run_trigger, service=storage_service,
                 )
-            
-            created_backup_items.append({
-                'local_path': '',
-                'remote_name': os.path.basename(stored.object_key if stored else storage_fields[3]),
-                'archive_name': stored.object_key if stored else storage_fields[3],
-                'hostname': device['hostname'],
-                # Keep local snapshots encrypted, but publish readable config
-                # text when the completed snapshot is offloaded remotely.
-                'data': output.encode('utf-8'),
-            })
 
             # Optional Startup Config collection & Unsaved Drift Detection
             has_unsaved = 0
@@ -2485,13 +2459,6 @@ async def run_scheduled_backup(
                         finally:
                             conn_st.close()
 
-                        created_backup_items.append({
-                            'local_path': '',
-                            'remote_name': os.path.basename(st_stored.object_key if st_stored else startup_storage_fields[3]),
-                            'archive_name': st_stored.object_key if st_stored else startup_storage_fields[3],
-                            'hostname': device['hostname'],
-                            'data': startup_output.encode('utf-8'),
-                        })
                 except Exception as st_err:
                     logger.warning(f"[Scheduled Backup] Startup config process error for {device['hostname']}: {st_err}")
 
@@ -2567,69 +2534,8 @@ async def run_scheduled_backup(
 
     await asyncio.gather(*[_run_with_progress(dev) for dev in eligible])
 
-    # Remote file archive offloading.  Configuration collection above remains
-    # SSH/CLI based; this step only copies completed local snapshots.
-    tftp_enabled = bool((policy or {}).get('tftp_enabled'))
-    tftp_server = str((policy or {}).get('tftp_server') or '').strip()
-    tftp_port = int((policy or {}).get('tftp_port') or 69)
-    tftp_path_prefix = str((policy or {}).get('tftp_path_prefix') or 'backups').strip()
-    tftp_protocol = str((policy or {}).get('tftp_protocol') or 'tftp').strip().lower()
-    tftp_username = str((policy or {}).get('tftp_username') or '').strip()
-    tftp_password = str((policy or {}).get('tftp_password') or '')
-
-    tftp_status = 'none'
-    tftp_log = ''
-    tftp_uploaded_count = 0
-
-    if tftp_enabled and tftp_server:
-        try:
-            from services.file_transfer_service import batch_upload_configs
-            remote_archive_name = _config_archive_name(persisted_run_id)
-            summary_text = (
-                f"Nexora Config Backup Batch Summary\n"
-                f"Run ID: {persisted_run_id}\n"
-                f"Policy: {(policy or {}).get('name', 'Manual/Legacy')}\n"
-                f"Finished At: {_utc_now_iso()}\n"
-                f"Total Devices: {len(devices)}, Success: {success_count}, Failed: {failed_count}, Skipped: {skipped_count}\n"
-                f"Archive File: {remote_archive_name}\n"
-                f"Files In Archive: {len(created_backup_items)}\n"
-            )
-            tftp_res = await asyncio.to_thread(
-                batch_upload_configs,
-                protocol=tftp_protocol,
-                server_ip=tftp_server,
-                items=created_backup_items,
-                server_port=tftp_port,
-                username=tftp_username,
-                password=tftp_password,
-                path_prefix=tftp_path_prefix,
-                summary_log=summary_text,
-                archive_name=remote_archive_name,
-            )
-            tftp_status = tftp_res.get('status', 'failed')
-            tftp_uploaded_count = (
-                tftp_res.get('file_count', 0)
-                if tftp_status in ('success', 'partial')
-                else 0
-            )
-            tftp_log = "\n".join(tftp_res.get('details', []))
-            logger.info(
-                f"[Scheduled Backup] {tftp_protocol.upper()} archive offload completed "
-                f"with status={tftp_status} (archives={tftp_res.get('uploaded', 0)}, files={tftp_res.get('file_count', 0)})"
-            )
-        except Exception as tftp_exc:
-            tftp_status = 'failed'
-            tftp_log = f"{tftp_protocol.upper()} archive upload exception: {tftp_exc}"
-            logger.error(f"[Scheduled Backup] {tftp_protocol.upper()} archive offload error: {tftp_exc}")
-
     try:
-        _finish_backup_run(
-            persisted_run_id,
-            tftp_status=tftp_status,
-            tftp_server=tftp_server,
-            tftp_log=tftp_log,
-            tftp_uploaded_count=tftp_uploaded_count,
-        )
+        _finish_backup_run(persisted_run_id)
     except Exception:
         logger.exception("[Scheduled Backup] Could not finalize backup run %s", persisted_run_id)
 
@@ -2661,342 +2567,3 @@ async def run_scheduled_backup(
 
 
 # ──────────────────────────────────────────────
-# Remote File Archive Manual Sync & Test Endpoints
-# ──────────────────────────────────────────────
-
-class TFTPTestPayload(BaseModel):
-    server_ip: str = ""
-    server_port: int | None = None
-    path_prefix: str | None = None
-    protocol: str | None = None
-    username: str | None = None
-    password: str | None = None
-
-
-class TFTPSettingsPayload(BaseModel):
-    enabled: bool = False
-    server_ip: str = ""
-    server_port: int | None = None
-    path_prefix: str = "backups"
-    protocol: str | None = None
-    username: str = ""
-    password: str | None = None
-
-
-class TFTPSyncSnapshotPayload(BaseModel):
-    snapshot_id: str
-    server_ip: str = ""
-    server_port: int | None = None
-    path_prefix: str | None = None
-    protocol: str | None = None
-    username: str | None = None
-    password: str | None = None
-
-
-class TFTPSyncBatchPayload(BaseModel):
-    run_id: str
-    server_ip: str = ""
-    server_port: int | None = None
-    path_prefix: str | None = None
-    protocol: str | None = None
-    username: str | None = None
-    password: str | None = None
-
-
-def _decrypt_archive_password(value: object) -> str:
-    raw = str(value or "")
-    if not raw:
-        return ""
-    try:
-        from core.crypto import decrypt_credential
-
-        return str(decrypt_credential(raw) or raw)
-    except Exception:
-        return raw
-
-
-def _encrypt_archive_password(value: object) -> str:
-    raw = str(value or "")
-    if not raw:
-        return ""
-    try:
-        from core.crypto import encrypt_credential
-
-        return str(encrypt_credential(raw) or raw)
-    except Exception:
-        return raw
-
-
-def _read_saved_tftp_settings(conn=None) -> dict:
-    from services.file_transfer_service import default_transfer_port, normalize_transfer_protocol
-
-    owns_conn = conn is None
-    if owns_conn:
-        conn = get_db_connection()
-    try:
-        row = conn.execute("SELECT value FROM global_vars WHERE key = 'tftp_backup_settings'").fetchone()
-        saved = {}
-        if row:
-            try:
-                saved = json.loads(row['value']) or {}
-            except Exception:
-                saved = {}
-    finally:
-        if owns_conn:
-            conn.close()
-
-    protocol = normalize_transfer_protocol(saved.get('protocol'), default='tftp')
-    stored_password = saved.get('password_encrypted') or saved.get('password') or ''
-    return {
-        'enabled': bool(saved.get('enabled', False)),
-        'server_ip': str(saved.get('server_ip') or '').strip(),
-        'server_port': int(saved.get('server_port') or default_transfer_port(protocol)),
-        'path_prefix': str(saved.get('path_prefix') or 'backups').strip(),
-        'protocol': protocol,
-        'username': str(saved.get('username') or '').strip(),
-        'password': _decrypt_archive_password(stored_password),
-    }
-
-
-def _public_tftp_settings(settings: dict) -> dict:
-    return {
-        'enabled': bool(settings.get('enabled')),
-        'server_ip': str(settings.get('server_ip') or ''),
-        'server_port': int(settings.get('server_port') or 69),
-        'path_prefix': str(settings.get('path_prefix') or 'backups'),
-        'protocol': str(settings.get('protocol') or 'tftp'),
-        'username': str(settings.get('username') or ''),
-        'password': '',
-        'password_configured': bool(settings.get('password')),
-    }
-
-
-def _resolve_tftp_options(payload) -> dict:
-    from services.file_transfer_service import default_transfer_port, normalize_transfer_protocol
-
-    saved = _read_saved_tftp_settings()
-    protocol = normalize_transfer_protocol(payload.protocol or saved.get('protocol'), default='tftp')
-    password = payload.password
-    if password is None or password in {'', '***', '••••••', '********'}:
-        password = saved.get('password', '')
-    return {
-        'protocol': protocol,
-        'server_ip': str(payload.server_ip or '').strip() or saved.get('server_ip', ''),
-        'server_port': int(payload.server_port or saved.get('server_port') or default_transfer_port(protocol)),
-        'path_prefix': str(payload.path_prefix if payload.path_prefix is not None else saved.get('path_prefix') or 'backups').strip(),
-        'username': str(payload.username if payload.username is not None else saved.get('username') or '').strip(),
-        'password': str(password or ''),
-    }
-
-
-def _validate_archive_options(options: dict) -> None:
-    from services.file_transfer_service import transfer_protocol_label
-
-    if not options['server_ip']:
-        raise HTTPException(status_code=400, detail='未指定文件归档服务器地址，请先配置归档设置')
-    if options['protocol'] != 'tftp':
-        if not options['username']:
-            raise HTTPException(status_code=400, detail=f"{transfer_protocol_label(options['protocol'])} 需要用户名")
-        if not options['password']:
-            raise HTTPException(status_code=400, detail=f"{transfer_protocol_label(options['protocol'])} 需要密码")
-
-
-@router.get('/configs/tftp/settings')
-def get_tftp_settings():
-    return {"success": True, "data": _public_tftp_settings(_read_saved_tftp_settings())}
-
-
-@router.put('/configs/tftp/settings')
-def save_tftp_settings(payload: TFTPSettingsPayload):
-    conn = get_db_connection()
-    try:
-        current = _read_saved_tftp_settings(conn)
-        from services.file_transfer_service import default_transfer_port, normalize_transfer_protocol
-
-        protocol = normalize_transfer_protocol(payload.protocol or current.get('protocol'), default='tftp')
-        password = payload.password
-        if password is None or password in {'', '***', '••••••', '********'}:
-            password = current.get('password', '')
-        settings_payload = {
-            'enabled': bool(payload.enabled),
-            'server_ip': payload.server_ip.strip(),
-            'server_port': int(payload.server_port or default_transfer_port(protocol)),
-            'path_prefix': payload.path_prefix.strip() or 'backups',
-            'protocol': protocol,
-            'username': payload.username.strip(),
-            'password_encrypted': _encrypt_archive_password(password),
-        }
-        val = json.dumps(settings_payload, ensure_ascii=False)
-        row = conn.execute("SELECT id FROM global_vars WHERE key = 'tftp_backup_settings'").fetchone()
-        now_ts = _utc_now_iso()
-        if row:
-            conn.execute("UPDATE global_vars SET value = ?, updated_at = ? WHERE key = 'tftp_backup_settings'", (val, now_ts))
-        else:
-            var_id = f"gv-{uuid.uuid4().hex[:12]}"
-            conn.execute("INSERT INTO global_vars (id, key, value, created_at, updated_at) VALUES (?, 'tftp_backup_settings', ?, ?, ?)",
-                         (var_id, val, now_ts, now_ts))
-        conn.commit()
-        return {"success": True, "message": "文件归档配置已保存", "data": _public_tftp_settings({**settings_payload, 'password': password})}
-    finally:
-        conn.close()
-
-
-@router.post('/configs/tftp/test')
-async def test_tftp_connectivity(payload: TFTPTestPayload):
-    options = _resolve_tftp_options(payload)
-    _validate_archive_options(options)
-    from services.file_transfer_service import upload_bytes
-    probe_name = f"{options['path_prefix'].strip('/')}/_probe_test_{uuid.uuid4().hex[:6]}.tmp" if options['path_prefix'].strip() else f"_probe_test_{uuid.uuid4().hex[:6]}.tmp"
-    probe_data = f"Nexora archive probe\nTimestamp: {_utc_now_iso()}\nServer: {options['server_ip']}\n".encode('utf-8')
-    ok, msg = await asyncio.to_thread(
-        upload_bytes,
-        protocol=options['protocol'],
-        server_ip=options['server_ip'],
-        data=probe_data,
-        remote_filename=probe_name,
-        server_port=options['server_port'],
-        username=options['username'],
-        password=options['password'],
-        timeout=3.0,
-        retries=2,
-    )
-    if not ok:
-        return {"success": False, "message": f"{options['protocol'].upper()} 连接探测失败: {msg}"}
-    return {"success": True, "message": f"{options['protocol'].upper()} 文件服务器连接探测成功！({msg})"}
-
-
-@router.post('/configs/tftp/sync-snapshot')
-async def sync_snapshot_to_tftp(payload: TFTPSyncSnapshotPayload):
-    conn = get_db_connection()
-    try:
-        snap = conn.execute("SELECT * FROM config_snapshots WHERE id = ?", (payload.snapshot_id,)).fetchone()
-        if not snap:
-            raise HTTPException(status_code=404, detail="快照不存在")
-        snap_dict = dict(snap)
-        hostname = snap['hostname']
-        config_type = snap_dict.get('config_type') or 'running'
-    finally:
-        conn.close()
-
-    options = _resolve_tftp_options(payload)
-    _validate_archive_options(options)
-
-    object_name = str(snap_dict.get('object_key') or snap_dict.get('file_path') or snap_dict.get('id'))
-    remote_name = os.path.basename(object_name)
-    target_path = f"{options['path_prefix'].strip('/')}/{remote_name}" if options['path_prefix'].strip() else remote_name
-
-    content = read_snapshot_content(snap_dict)
-    if not content:
-        raise HTTPException(status_code=500, detail="配置文件解密失败或内容为空，未上传")
-
-    from services.file_transfer_service import upload_bytes
-    ok, msg = await asyncio.to_thread(
-        upload_bytes,
-        protocol=options['protocol'],
-        server_ip=options['server_ip'],
-        data=content.encode('utf-8'),
-        remote_filename=target_path,
-        server_port=options['server_port'],
-        username=options['username'],
-        password=options['password'],
-    )
-
-    if not ok:
-        raise HTTPException(status_code=500, detail=f"{options['protocol'].upper()} 上传失败: {msg}")
-
-    return {
-        "success": True,
-        "message": f"成功将 {hostname} 的 {config_type} 配置上传至 {options['protocol'].upper()} ({options['server_ip']}:{options['server_port']}/{target_path})",
-        "remote_path": target_path,
-    }
-
-
-@router.post('/configs/tftp/sync-batch')
-async def sync_batch_to_tftp(payload: TFTPSyncBatchPayload):
-    conn = get_db_connection()
-    try:
-        run = conn.execute("SELECT * FROM config_backup_runs WHERE id = ?", (payload.run_id,)).fetchone()
-        if not run:
-            raise HTTPException(status_code=404, detail="备份批次不存在")
-        snapshots = conn.execute("SELECT * FROM config_snapshots WHERE task_id = ?", (payload.run_id,)).fetchall()
-    finally:
-        conn.close()
-
-    options = _resolve_tftp_options(payload)
-    _validate_archive_options(options)
-
-    items = []
-    for s in snapshots:
-        snapshot_dict = dict(s)
-        content = read_snapshot_content(snapshot_dict)
-        object_name = str(snapshot_dict.get('object_key') or snapshot_dict.get('file_path') or snapshot_dict.get('id'))
-        if content:
-            items.append({
-                'local_path': '',
-                'remote_name': os.path.basename(object_name),
-                'archive_name': object_name,
-                'hostname': s['hostname'],
-                'data': content.encode('utf-8'),
-            })
-        else:
-            logger.warning("[Archive Sync] Could not decode snapshot %s; skipping remote upload", s['id'])
-
-    if not items:
-        raise HTTPException(status_code=400, detail="该批次没有可上传的有效备份快照文件")
-
-    from services.file_transfer_service import batch_upload_configs
-    remote_archive_name = _config_archive_name(payload.run_id)
-    summary_text = (
-        f"Nexora Config Backup Manual Archive Summary\n"
-        f"Run ID: {payload.run_id}\n"
-        f"Triggered At: {_utc_now_iso()}\n"
-        f"Archive File: {remote_archive_name}\n"
-        f"Files In Archive: {len(items)}\n"
-    )
-    tftp_res = await asyncio.to_thread(
-        batch_upload_configs,
-        protocol=options['protocol'],
-        server_ip=options['server_ip'],
-        items=items,
-        server_port=options['server_port'],
-        username=options['username'],
-        password=options['password'],
-        path_prefix=options['path_prefix'],
-        summary_log=summary_text,
-        archive_name=remote_archive_name,
-    )
-
-    tftp_status = tftp_res.get('status', 'failed')
-    archive_file_count = tftp_res.get('file_count', len(items))
-    archive_uploaded_count = tftp_res.get('uploaded', 0)
-    tftp_uploaded_count = archive_file_count if tftp_status in ('success', 'partial') else 0
-    tftp_log = "\n".join(tftp_res.get('details', []))
-
-    conn = get_db_connection()
-    try:
-        conn.execute(
-            """
-            UPDATE config_backup_runs
-            SET tftp_status = ?, tftp_server = ?, tftp_log = ?, tftp_uploaded_count = ?
-            WHERE id = ?
-            """,
-        (tftp_status, options['server_ip'], tftp_log, tftp_uploaded_count, payload.run_id),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-    return {
-        "success": tftp_status in ('success', 'partial'),
-        "status": tftp_status,
-        "uploaded": archive_uploaded_count,
-        "archive_count": archive_uploaded_count,
-        "total": tftp_res.get('total', 1),
-        "file_count": archive_file_count,
-        "archive_name": tftp_res.get('archive_name', remote_archive_name),
-        "details": tftp_res.get('details', []),
-        "message": (
-            f"{options['protocol'].upper()} 同步完成: 成功上传 {tftp_uploaded_count} 个归档包，"
-            f"包含 {archive_file_count} 个配置文件至 {options['server_ip']}:{options['server_port']}"
-        ),
-    }

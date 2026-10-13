@@ -1,6 +1,24 @@
 # 当前交接：页面卡顿、Docker 资源配额与 300 台容量验证
 
-> 更新时间：2026-10-07 03:48（Asia/Shanghai）。本节优先于下方早期检查点。用户已明确授权修复完成后提交并 push、跟进 Actions、登录 Docker 部署机自主修改和验证，最后关闭工作站；下方历史检查点中的旧限制已被本次授权取代。
+> 更新时间：2026-10-07 09:42（Asia/Shanghai）。本节优先于下方早期检查点。此前修复/发布的授权记录仍按其原任务保留；本轮页面卡顿续查的远端范围为只读性能采样与浏览器只读查看，不在生产写库、保存资产、重启或部署。
+
+## 2026-10-07 09:41（Asia/Shanghai）隔离压力测试保护性中止
+
+- 按用户要求再次尝试较长的隔离 API 压力测试，但两次都被宿主机负载保护器停止，未得到完整的两小时容量结果。
+- 首次 run `2899675dee4a` 于 01:17:11–01:33:48 UTC 运行。15秒预热和最终检查通过，1 RPS 阶段实际运行约14分钟；主机 `load1` 连续三次超过3（3.75、4.28、5.07）后于01:33:41 UTC停止。此窗口恰逢 Ubuntu `apt-daily`/`unattended-upgrade --download-only` 启动；该进程约占82.8% CPU。测试报告没有完整阶段统计，状态为 `aborted`。
+- 更新任务退出后重试 run `82d7e162c7b9`，隔离环境启动/预检期间主机 `load1` 连续三次为4.85、5.34、4.29，于01:40:42 UTC停止；没有进入任何计时压力档。该启动期间合成 DB/Grafana/NetOps 容器的 CPU 峰值分别约62%/55%/71%。
+- 两个报告均显示清理完成；按完整 run-id 过滤的测试容器、网络、卷均为空。生产11个容器仍运行、healthcheck 状态正常、无重启/OOM；应用内 `/api/health/live` 返回200（约10ms）。没有对生产数据库、资产或真实设备发写请求。
+- 结论边界：保护性中止说明共享两核主机在后台更新或额外隔离栈初始化期间没有足够稳定余量支撑本方案；不构成1/2 RPS阶段通过或失败的容量结论。远端报告保留于 `/tmp/nexora-soak-20261007-0056/two-hour/report/` 和 `/tmp/nexora-soak-20261007-0056/retry-after-update/report/`。不在该主机持续高负载时再次创建整套隔离栈。
+
+## 2026-10-07 08:41（Asia/Shanghai）页面卡顿续查
+
+- 当前最直接的生产慢点是 NetOps `/hardware-metrics`：`platform_hardware_inventory` 每60秒 scrape 一次。采样结束时的最新30分钟30次均为200，中位数1710.5ms、p95 4102.1ms、最大5578.7ms，慢耗时几乎全部位于 handler。同期另有17条成功 API 请求超过1秒，`/api/config-templates` 最大约3.96秒。
+- 生产有17台设备、15台绑定 SNMP、5296条活动硬件传感器；传感器表共5322行/约24MiB。该 handler 查询并读取近乎整张活动表，解码 JSONB、逐设备渲染 Prometheus 文本，再查询能力信息。此处能解释 Grafana 采集刷新变慢并可能占用应用处理资源；尚未证明它是所有页面卡顿的唯一原因。
+- 本轮生产只读 PG/API/资源采样实际完成5×600秒，时间为2026-10-06 23:59:37至2026-10-07 00:49:37 UTC（约50分钟）；第6段短文件不纳入统计，采样进程已停止。`snmp_mib_nodes` seq_scan保持1、seq_tup_read保持67612；`interface_telemetry_raw` seq_scan保持1。PG未见持续多秒SQL或锁等待；一次00:35:56 UTC的事务ID锁等待约191ms。00:20:18 UTC多条成功API耗时约1.3–2.0秒时，PG活动查询采样年龄约3ms。
+- 资产列表、新增表单和编辑表单在Chrome已登录会话中均能呈现，列表17条；未保存或提交。资产保存慢/报错仍未验证。采样 helper 对资产和 Grafana API 的未认证请求返回401，不代表已登录业务请求或真实 PromQL 耗时。
+- 全场景1/2 RPS短预检失败：Redis warmup有5次 `redis_command_failed`，且 VictoriaMetrics/Grafana/NetOps延迟高。隔离栈清理完成。本轮不启动两小时合成混合压力；50分钟生产只读采样后停止。失败预检不作生产根因证据。
+- 记录见 [两小时压力测试计划](docs/plans/plan_20261007_0750_01_两小时容器压力测试.md) 和 [阶段采样报告](docs/walkthrough/walkthrough_20261007_0750_01_两小时容器压力测试.md)。远端原始窗口位于 `/tmp/nexora-soak-20261007-075450/pg-01.jsonl` 及后续分段和 `.resources.jsonl`。
+- 历史生产采样结果见 [两小时压力测试计划](docs/plans/plan_20261007_0750_01_两小时容器压力测试.md) 和 [阶段采样报告](docs/walkthrough/walkthrough_20261007_0750_01_两小时容器压力测试.md)。当前结论：没有证据证明设备数量本身或持续 PG 慢查询是主因；最明确的监控慢点是每分钟 `/hardware-metrics` 应用处理4.48秒p95。资产保存仍未验证。长时隔离压测后来两次被主机负载保护器提前中止，不能表述为完成或通过。
 
 ## 当前目标与授权
 
@@ -435,3 +453,170 @@ Docker CLI not found (exit 2)
 - VictoriaMetrics 固定 v1.103.0；`vm_total_disk_space_bytes` 从 v1.124.0 才引入，存储面板改为已用数据量 `sum(vm_data_size_bytes)`，不再显示虚假的空间占用率。
 - 聚焦部署契约测试 7 passed；12 份 dashboard JSON 解析和目标生成同步检查通过；`git diff --check` 通过。监控目录全套测试运行约 38% 后中止，不计为通过。
 - 未更新或重启目标机容器，也未在线写入 Grafana。部署后应验证 Grafana/cAdvisor scrape 状态、cAdvisor 容器资源时序和动态清单数量；详情见 `docs/plans/plan_20260927_2013_01_监控平台容器指标全量采集.md` 与对应 walkthrough。
+
+## 2026-10-07 登录态页面卡顿复现与两小时 soak
+
+- 已登录 Chrome 交替打开 `/dashboard` 与 `/assets/dashboard` 三轮，6次导航均渲染成功，约1.35–1.71秒；资产列表及新增/编辑表单选项读取返回200。没有提交资产保存、执行连通性测试或访问真实设备。
+- `/monitor/telemetry` 的概览请求在生产现场重复失败：最近5分钟 Nginx 记录38次 `GET /api/monitoring/overview` 500；NetOps traceback 指向 `backend/api/monitoring.py:649`，数据库收到字面的 `""" + tenant_clause + """` 并报语法错误。该接口错误可解释监控概览缺数据和周期性失败，不是慢 SQL；源码同文件另有行347、674、708、747的类似三引号拼接点，均需修复并补验证。
+- Grafana 另一个已确认慢路径是每分钟调用 `/hardware-metrics`，读取/处理约5296条活动传感器记录，p95约4.10秒、最大5.58秒；既往50分钟PG采样未见持续慢SQL或锁等待。当前证据不支持17台设备的SNMP数量是主因；资产保存慢/报错仍未在生产写入验证。
+- 7200秒登录态只读 soak 已于2026-10-07 01:53:52 UTC启动，浏览器留在 `/assets/dashboard`，不再反复访问已知会500的监控中心。远端采样目录 `/tmp/nexora-live-soak-20261007-0953/`，进程PID `266359`；每60秒记录Nginx请求/状态汇总、后端失败路由、load、MemAvailable、`/data`空间、生产容器健康/重启/OOM，超过停止线自动结束。首样本为load1 1.77、MemAvailable约5.0GiB、11容器运行健康、窗口内0个5xx。必须等 `summary.json` 显示实际时长不少于7200秒后再交付完整两小时报告；不要把先前50分钟采样或中止的合成测试累计进去。
+- 登录后正常页面轮询会自然访问 `/api/health/resources`（该端点记录主机资源样本）；看板导航还会创建临时 Grafana session。除此之外没有业务数据写入。采样期间只允许低频切换看板/资产页，若 `load1>4.5` 连续3分钟、MemAvailable低于3GiB、容器 unhealthy/重启/OOM或Nginx每分钟5xx超过10连续3次则停止。
+- 最新延伸样本：登录资产页重复表单三轮，新增开窗0.771–0.858秒、编辑开窗0.811–0.875秒，取消未保存；列表重载0.536–1.476秒。Grafana iframe首屏6.6秒仍显示加载、约16.6秒时已可读；热重载可读到指标耗时3.554秒。与热重载对应的65秒Nginx窗口266请求，261×200、3×499（导航取消）、2×101（WebSocket），`/grafana/api/ds/query` 33次、VictoriaMetrics query 12次、backend failure 0；load1 3.32、MemAvailable 4.98GiB、11容器正常。
+- 采样器最新记录（01:58:52 UTC）为累计300.3秒、5个60秒样本，summary尚未生成；仍需等待到至少03:53:52 UTC并复核远端summary、JSONL、容器状态后才能完成目标。
+- 更新后的主要普通页面延迟候选：`src/App.tsx` 初始化/路由变化和120秒轮询都会请求 `/api/config-templates?page_size=200`。首次结果设置 `selectedTemplateId` 会改变 `fetchSharedLookups` callback 身份并触发依赖 effect 重跑；硬刷新日志可见约1秒间隔的成对请求。生产有132条模板，`backend/api/config_templates.py` 的 `_serialize_template()` 对每条执行版本查询、收藏查询、schema normalization/quality计算，约264条逐项SELECT/请求。两次慢请求日志总耗时p50约1.50秒、最大1.94秒，handler约1.47–1.89秒。慢请求日志只记录≥500ms或错误，不是全量p95。资产页刷新一次2.185秒，但表单开窗仍仅0.77–0.88秒；Grafana另有 `/hardware-metrics` p95约4.10秒与监控概览SQL 500。
+- 主soak截至02:09:52 UTC约16分钟、16个样本，最新load1 1.95、MemAvailable约5.07GiB、11个容器正常，窗口53个Nginx请求、0个5xx；资产页2.185秒刷新后仍返回完整页面。长时目标未完成。
+
+### 两小时现场只读 soak 最终结果（2026-10-07）
+
+- 已完成，不要继续等待：远端 `/tmp/nexora-live-soak-20261007-0953/summary.json` 显示 `actual_duration_sec=7200.2`、121样本、`stop_reason=duration_complete`；慢请求侧车7207.4秒后结束。完整原始文件留在同目录。
+- 资源分位数：load1 min/p50/p95/max=0.35/1.45/3.32/4.41；MemAvailable=4.79/4.93/5.06/5.10 GiB；swap空闲约2.00 GiB；`/data`空闲17.57–17.61 GiB。load1有短峰但没有连续3个样本超过4.5。11个容器结束时全部running、9个有healthcheck的服务healthy、0重启/0 OOM。
+- Nginx 65秒窗口每60秒采样的汇总状态为200:2547、499:15、101:3、401:6、5xx:0；5秒重叠，计数为窗口观察而不是唯一请求数。499为导航取消，101为Grafana WebSocket升级。401集中在登录态到期后：设备路由2次，其余notifications、health/resources、scheduled-jobs/future、playbooks各1次；浏览器约03:46 UTC返回登录页。
+- slow-log侧车只包括≥500ms或失败的已认证请求，不等于全量路由p95。79条慢日志里 `/api/config-templates` 有29条200：total p50/p95/max=1.239/1.935/2.157秒，handler=1.195/1.894/2.136秒，auth p50约32ms；132个模板逐条查版本与收藏、再逐条schema处理，是普通页面最强延迟证据。Grafana `/hardware-metrics` 每分钟处理5296条活动传感器，既往实测p95约4.10秒/max5.58秒；`/monitor/telemetry` 概览则因 `backend/api/monitoring.py:649` SQL拼接错误在最近5分钟产生38次500，错误本身不是慢查询。
+- 既往约50分钟PG采样没有持续多秒SQL或锁等待（最长活动SQL约1.07秒，单次锁等待约191ms）。两小时host load1 p95 3.32/max4.41，短时CPU竞争可能放大卡顿；但没有逐分钟SNMP关联数据，不能证明设备数量/扫描是主因。当前17台设备、15台SNMP绑定也不支持“设备数过多”的结论。
+- 资产新增/编辑表单只读打开分别0.771–0.858s / 0.811–0.875s；保存未提交，用户提到的保存慢/报错仍未验证。本轮未写业务数据、未做真实设备操作、未修改或部署代码。修复优先级：模板接口批量化并避免重复请求、修正监控SQL插值及同类分支、优化硬件指标导出；之后在明确允许的测试环境验证保存路径。
+
+## 2026-10-07 页面卡顿、监控与资产完整修复计划
+
+- 用户最新要求是制定完整修复计划。本轮计划已归档 `docs/plans/plan_20261007_1348_01_页面卡顿与监控资产完整修复.md`，对应走查 `docs/walkthrough/walkthrough_20261007_1348_01_页面卡顿与监控资产完整修复.md`；本轮未修改业务代码、运行业务测试或部署。
+- 顺序：阶段0专用PG与全量基线；P0修overview/search及同类SQL拼接并验证租户/缓存/错误态；P1模板列表四条批量数据查询+App选择状态引起的重复lookup；P1资产PUT成功/失败/回滚/跨租户/厂商切换；P2hardware分段计时与最小优化、Grafana冷热分解；SNMP/CPU关联验证；授权后分包部署与至少7200秒有效登录态复测。
+- 两名Luna只读审查确认：hardware没有sensor级N+1或现成缓存，短TTL对60秒scrape可能每轮miss；普通资产保存无直接SSH/SNMP，特定投产更新会启动密码轮换；collector在commit后异步防抖。资产保存原始慢点未复现，不能写成已修复。
+- 前端确认lookup callback依赖selectedTemplateId并重跑初始化effect；开发StrictMode另会双mount。资产列表/选项和监控hook有错误被吞的路径，计划补401/403/失败状态。Grafana iframe onLoad不等于关键指标可读。
+- 测试前置：backend/tests/conftest.py先对DATABASE_URL源库init_db，再建isolated template。只能指向专用本地/CI PostgreSQL，不能指向生产或日常应用库；显式mock轮换、collector及外部连接。本轮保留所有已有未提交变更。
+- 主Agent负责共享文件、计划/handoff和最终集成；每轮最多两个Luna 6 Max执行者，不重叠写文件、不重复公共回归。性能目标、阶段门禁、工作包、部署授权与回滚见新计划。下一步先做受控基线与最明确根因修复，不先降低SNMP频率或扩容。
+
+## 2026-10-07 页面卡顿修复执行与本地验收
+
+- 已修复 `backend/api/monitoring.py` 的 overview/search SQL 拼接与租户缓存隔离；模板列表批量读取版本/当前用户收藏；App lookup 按认证会话隔离，取消登出前请求并忽略迟到响应；监控和资产 UI 展示请求失败、权限、空态及重试；hardware exporter 窄字段读取并输出分段耗时。
+- 隔离 PG 合同确认现有 `backend/api/assets.py` / rack 服务正确维护 staging 资产/设备关联、冲突与 rack rollback、跨租户拒绝和 Cisco/Huawei/H3C 平台规范；未改生产写入服务。硬件导出/库存回归21项通过，资产 PUT 合同1项通过。
+- 后端组合回归47 passed，前端6文件18测试 passed，TypeScript、独立Vite生产构建、PostgreSQL-only（0 violations）和 Python 编译均通过。使用本机临时 PostgreSQL，不用 Docker、不连生产库。
+- 5296合成 sensors / 17设备 / 30次本机硬件导出 p95约1.246秒、最大1.248秒、输出约8.36 MB且30次一致；该基准不能外推到生产。阶段日志记录 SQL/解码/分组/渲染/能力查询/响应大小。
+- 修复计划与执行 walkthrough 已分别更新在 `docs/plans/plan_20261007_1348_01_页面卡顿与监控资产完整修复.md`、`docs/walkthrough/walkthrough_20261007_1348_01_页面卡顿与监控资产完整修复.md`；提交要求的 fix 记录为 `docs/fixes/fix_20261007_1434_01_页面卡顿与资产完整修复.md`。
+- 当前尚未推送或核验 Actions（待本轮最终步骤）。没有在远端部署，没有做 Grafana 10冷/10热浏览器验收或至少7200秒部署后长测，也没有更改 SNMP 周期/并发。生产保存错误仍属未复现；在部署和长测完成前不能称为全部线上问题解决。
+
+## 2026-10-09 多厂商硬件与无线采集最终核验
+
+- 已将 Python 采集修复部署至 `192.168.204.128`，当前镜像 `nexora-netops:final-fixes-v4-20261009`；生产容器内 `shutil.which("php")` 返回 `None`。规则来源固定为 LibreNMS commit `6c26b4fe4a40f7b392c19c36a44257212736e38c`，执行器为 Python；H3C Comware AP/无线因上游无 Wireless discovery，由显式标注的 Python H3C MIB adapter 实现。
+- 线上 `network_snmp` 9/9 UP，硬件 inventory scrape 1/1 UP；v7 当前 602 条活动传感器分解见 walkthrough，其中 2 条此前未单列的 Cisco HSRP 状态已补上。CPU 9/9、内存 7/9；温度/光功率/电压/电流/功耗/风扇状态/电源状态及 H3C 无线数据按设备实测返回。9 台设备 `sysUpTime` 均有有效值；当前没有风扇 RPM 样本。
+- AC_11 AP_12/AP_13 均为注册 `run`，无线指标链路有样本；四个无线电状态为 admin-disabled / oper-down。AP 客户端数与 controller 客户端数均观测为 0，不能将 AP 注册状态当成 radio 在线发射状态。
+- 更精确的状态判读：AP operation status 原始值 5 对应 MIB 定义的 `run`；radio Admin/Oper 对象使用 TruthValue，设备返回 false(2)。Python 映射与原始 SNMP 一致；现有 `dis wlan ap all` 输出只覆盖 AP join 状态，判断 radio 配置/运行状态还需设备 radio 专项输出。当前只收客户端计数，未收 `HH3C-DOT11-STATION-MIB` 逐客户端明细。
+- 原生无线规则并非只缺 H3C：固定快照有 14 个可轮询 profile，覆盖 Huawei、Cisco、Aruba、Extreme、Ruckus、MikroTik、Ubiquiti；另有 Stellar 非可轮询、5 个仅 RF profile、1 个 YAML-only profile，115 个 profile 无上游 wireless rule。各 profile 采集粒度不同，不能据此说其他厂商所有型号都支持完整 AP/终端表。
+- 回归：硬件/无线 55 passed，Grafana metrics/provider/PromQL 36 passed，`git diff --check` 通过。浏览器逐面板渲染没有取得认证成功证据；VM 指标和 provisioned dashboard 文件已核对。固定 LibreNMS 文件手工复核入口为 `backend/vendor/librenms/source-manifest.json`。
+- 计划与执行记录：`docs/plans/plan_20261009_1102_01_多厂商无线采集恢复.md`、`docs/walkthrough/walkthrough_20261009_1102_01_多厂商无线采集恢复.md`。旧 SNMP walkthrough 已加历史结论提示。
+
+## 2026-10-09 无线 LibreNMS 规则覆盖与 v8 发布续记
+
+- 用户追问所有无线 LibreNMS 规则是否适配；固定快照有 20 个 dispatcher rule key，Python 适配和来源校验为 20/20。H3C/Comware 是单独标注的项目 Python MIB adapter。当前 23 个 vendor 桶里 9 个有上游无线 OS rule；另外 13 个桶在该固定 commit 没有无线 OS rule，不能以 MIB 文件名推断有规则。Ruckus 的 ZD、Hotzone、SZ、Unleashed 都在 20 个 key 中。
+- Stellar 有 LibreNMS `pollWirelessClients()` 自定义 walk；Python 已适配 `apClientWlanService` 和每 SSID/总数聚合。修正了 README 里“空 OID 意味着不轮询”的旧描述。
+- 本轮定向回归无线/adapter/probe/poller 82 passed，来源策略/bundle manifest 23 passed；临时镜像里 21 项含来源元数据的规则（20 upstream + H3C）均验证通过。线上 v8 healthy、restart count 0，采集版本 `nexora-librenms-rules-hardware-v8`；9/9 设备、602 活动传感器、72 capability、render_errors=0。AC_11 的 AP 6/6、controller 2/2、radio 44/44 success；F1090-9/-10 无该无线数据，Cisco 设备无线 radio 为 unsupported。
+- Docker Hub 不可达导致远端 Dockerfile build 拉基础镜像失败。已从留存的 v4 生产镜像制作离线增量 v8，原启动配置/Compose 环境注入保留。回滚镜像：`nexora-netops:rollback-wireless-v8-20261009`；源码备份：`/data/nexora-automation/artifacts/codex-wireless-v8-20261009/predeploy-source.tar.gz`。数据库和其他采集/Grafana 容器未重启或修改。
+- 生产现场只有 Cisco 与 H3C，可完成真实设备验收；其他 vendor profiles（包括 Ruckus）有代码级测试与固定来源校验，但仍需对应型号设备作端到端 SNMP 验收。当前工作入口与详细记录仍是上述配对 plan/walkthrough。
+
+## 2026-10-10 SNMP 诊断系统信息与拓扑 LLDP 完整读取
+
+- `/monitor/snmp-walk` 恢复固定 MIB-2 系统信息与 LLDP 邻居视图；新增只接收 `device_id` 的授权诊断接口，不重新开放任意 OID。
+- LLDP collector 支持 `max_rows=None`；诊断与拓扑采集都显式无行数截断。拓扑过去每个 MIB 列最多 10,000 行。`/monitor/topology` 的 links/graph 页面过去固定请求 5,000 行，服务端缺省同样为 5,000、最大 20,000；当前缺省请求返回完整授权图，其他调用显式传 `limit` 仍保留兼容上限 20,000。
+- 超时核查：每 LLDP 列 walk 30 秒，9 列并发；UDP transport 1 秒、最多重试 2 次；全局 SNMP 并发默认 30，拓扑每批设备并发默认 6。单设备拓扑任务默认 300 秒，可配置 30–3600 秒；没有整轮 wall-clock deadline。walk semaphore 排队时间不计入单列 30 秒，但会被单设备外层 deadline 覆盖。超时仍返回 partial/failed 或触发既有 SSH fallback，不冒充完整快照。
+- 变更涉及 `backend/api/devices.py`、`backend/services/snmp_service.py`、`backend/services/topology_service.py`、`backend/api/topology.py`、`backend/services/topology_graph_service.py`、`src/components/SnmpMib/components/LiveWalkInspector.tsx`、`src/pages/SnmpWalkPage.tsx`、`src/hooks/useTopology.ts`；计划/执行记录为 `docs/plans/plan_20261010_0807_01_SNMP诊断恢复系统与LLDP.md`、`docs/walkthrough/walkthrough_20261010_0807_01_SNMP诊断恢复系统与LLDP.md`。
+- 验证：`npm run lint`、`npm run build`、5 个后端模块 `py_compile`、PostgreSQL-only policy scan（0 violations）、`git diff --check` 均通过；未运行测试、未部署。build wrapper 忽略 `--outDir` 并写入 `dist/`，其受跟踪的 `dist/index.html` 已恢复至任务开始时的干净状态。
+- 现场浏览器未验证：目标 HTTPS 页面返回 `ERR_CERT_AUTHORITY_INVALID`，未绕过证书提示；部署后仍需确认真实 LLDP 邻居是否完整。无行数上限会增加超大拓扑的响应与渲染开销。
+
+## 2026-10-10 SNMP 诊断结果易读化与运行时间修正
+
+- 用户截图显示同一设备运行时间摘要为 `0d 0h 0m`，详情却是 `1:51:45.880000`。根因是后端把所有以数字开头的字符串都当作 TimeTicks，误把小时字段的 `1` 当成 tick 数；现在识别 TimeTicks 与 `days, H:MM:SS.fraction` 两种格式，并向诊断响应增加可选 `uptime_seconds`。摘要和高级详情统一显示，例如“1小时51分45秒”，原始 SNMP 值保留在展开项。
+- `/monitor/snmp-walk` 增加三步只读操作提示；系统/LLDP 状态先以中文说明、邻居数及精简字段呈现，完整系统字段、邻居平台/长描述和诊断原文按需展开。LLDP 邻居直接遍历服务端完整结果，无切片、分页或新增行数上限。
+- 变更文件：`backend/services/snmp_service.py`、`backend/api/devices.py`、`src/components/SnmpMib/components/LiveWalkInspector.tsx`、`src/pages/SnmpWalkPage.tsx`；记录位于 `docs/plans/plan_20261010_0831_01_SNMP诊断结果易读化.md` 与 `docs/walkthrough/walkthrough_20261010_0831_01_SNMP诊断结果易读化.md`。
+- 验证：`python -m py_compile backend/api/devices.py backend/services/snmp_service.py`、`npm run lint`、`npm run build`、`git diff --check` 通过。构建生成的跟踪文件 `dist/index.html` 已恢复。
+- 浏览器确认 `http://192.168.56.1:5400/monitor/snmp-walk` 更新后的首屏、默认系统/LLDP 页和无设备空态。页面未选择设备，所以没有发起真实 SNMP 查询；设备结果布局通过源码、类型检查和构建确认，待用户选定设备后可再现场核对。
+
+## 2026-10-10 IPAM 网段与地址池合并
+
+- 目标：地址池作为网段子级分配范围管理；用户确认隐藏 DHCP 租约导航入口、保留现有数据和 API，不将无权威来源的人工租约纳入 IP 库存与利用率。
+- 分工：后端执行者负责 `backend/api/ipam.py` 与 `backend/services/ipam_service.py` 的地址池过滤/范围校验；前端执行者负责地址池嵌入网段界面和导航入口；主 Agent 统一负责范围收敛、回退 DHCP 联动字段、文档和最终审查。
+- 已完成：网段行提供地址池弹窗；地址池查询按 `prefix_id` 过滤，创建表单固定当前网段；校验地址族、CIDR 边界、起止顺序与重叠。隐藏独立地址池和 DHCP 菜单，旧页面兼容分支、租约数据及 `/api/ipam/leases` CRUD API 保留。移除了临时尝试的租约网段/地址池关联、迁移和库存联动。
+- 静态验证：后端 `py_compile` 与 `git diff --check` 通过；源码检索确认 DHCP 页面不再发送 `prefix_id`/`pool_id`，租约 API 路由保留。未运行 pytest、lint、构建或浏览器验证。
+- 计划/走查：`docs/plans/plan_20261010_1509_01_IPAM网段与地址池合并.md`、`docs/walkthrough/walkthrough_20261010_1509_01_IPAM网段与地址池合并.md`。
+- 未完成事项：无。没有执行提交、推送、部署或数据库迁移。
+
+## 2026-10-10 IPAM 页面布局自适应
+
+- 目标：修复用户截图中的 IP 定位 ARP 表和 IP 地址列表在不同视口下的拉伸、横向挤压及徽标逐字换行。
+- 分工：前端 Agent A 仅修改 `src/pages/IPLocatorPage.tsx`；前端 Agent B 仅修改 `src/pages/IPVlan/IPAddressTab.tsx`；主 Agent 维护 `src/pages/IPAMManagementTab.tsx` 公共宽度约束，统一审查并更新计划/走查。
+- 已完成：ARP 工具栏/分页固定在结果卡外，结果区独立滚动并设置可读列宽；IP 地址筛选器按响应式网格换行，表格固定 14 列及约 1613px 最小宽度，资产编号/序列号合并展示，徽标保持单行、长内容可悬停查看。接口和数据行为未改。
+- 验证：两个执行者及主 Agent 的 `git diff --check` 均通过；未运行测试、lint、构建或浏览器。窄屏运行时布局未验证。
+- 计划/走查：`docs/plans/plan_20261010_1551_01_IPAM页面布局自适应.md`、`docs/walkthrough/walkthrough_20261010_1551_01_IPAM页面布局自适应.md`。
+- 未提交、推送或部署。
+
+## 2026-10-10 IPAM 网段创建与分配简化
+
+- 目标：处理接口候选超过数千项时难以浏览、新增网段表单字段太多且输入 CIDR 时闪屏，以及 IP 分配/地址池流程复杂的问题。
+- 执行范围：后端工作者负责 `backend/api/ipam.py`、`backend/services/ipam_service.py`；前端工作者负责 `src/pages/IPVlan/PrefixManagementTab.tsx`；主 Agent 负责 `src/pages/IPVlan/IPAddressTab.tsx`、`src/pages/IPVlan/IPPoolTab.tsx`、计划/走查/handoff 和集成审查。保留工作区此前已有的其他修改。
+- 已完成：接口候选响应分页（默认25，服务端上限100）、状态筛选及全局摘要；显式 `candidate_ids` 与 `all_pending:true` 二选一，拒绝空选择；默认列待创建项，可确认全量待创建或逐页挑选。已存在项可以显式选择以补登记接口 IP。生成仍按精确 CIDR + 租户/站点/VRF 处理，不汇总相邻网段。
+- 已完成：新增网段表单收敛为 CIDR、网络用途、名称、网关 IP、网关设备等常用字段；名称/网关含义明确，父网段推荐与 IP 规划改为按需展开，高级字段折叠，表单高度固定并使用淡入。移除会随输入自动插入的大块规划器，修复内容跳动。网关接口字段需要数据库 ID，因此不再接受接口名自由文本，新建留空、编辑保留已有 ID。
+- 已完成：IP 分配的设备、接口、MAC、角色、状态、到期时间、描述折叠；地址池使用当前网段上下文并继承租户，说明其仅记录范围与利用率而非 DHCP 下发/手工分配限制；保存后的列表刷新不清空已展示数据。首次加载只有成功后才视为已加载，失败重试仍显示初始加载状态。
+- 静态验证：检索全仓接口候选 API 调用仅发现上述前端调用方；请求参数/响应字段与后端契约核对一致；`git diff --check -- backend/api/ipam.py backend/services/ipam_service.py src/pages/IPVlan/PrefixManagementTab.tsx src/pages/IPVlan/IPAddressTab.tsx src/pages/IPVlan/IPPoolTab.tsx` 通过。未运行测试、lint、构建或浏览器验证。
+- 已知限制：候选分页仍需在后端扫描全量接口以计算摘要；全部待创建生成仍是同步单事务，大规模批次可能触发 API/代理超时。需根据实际设备规模评估后台任务与进度接口，当前未引入调度器。
+- 计划/走查：`docs/plans/plan_20261010_1642_01_IPAM网段创建与分配简化.md`、`docs/walkthrough/walkthrough_20261010_1642_01_IPAM网段创建与分配简化.md`。未提交、推送、部署或改动数据库。
+
+## 2026-10-10 IPAM 运行页面精简、ARP 周期采集与 NSOT 协议评估
+
+- ARP 表筛选框/按钮改用公共控件；IP 对账重复说明已精简；利用率页 KPI、Top 5 和站点卡片已整理，无历史趋势时不再留大块空白。
+- APScheduler 新增 ARP 周期扫描，默认 10 分钟（最小 5 分钟）；复用现有 sweep 状态记录，不新增任务表。采集入口使用 `scheduler_locks` 租约互斥，手动触发冲突会返回清晰提示。
+- NSOT 代码核对结论（后续改造前）：系统为混合协议；ARP/LLDP 已有 SNMP 路径，接口有 IF-MIB 快照，MAC/FDB、路由和动态路由邻居仍以 CLI 为主。该结论是当时的状态，后由下方 SNMP 优先改造更新。
+- SNMP 可覆盖多类事实，但依赖设备 MIB 和字段完整度；MIB 标准参考 RFC 2863、4292、4363、4273、4750。后续宜按数据域影子比对迁移，保留 CLI 回退，尤其逐厂商核验 BGP/VRF。
+- 修改文件还包括 `backend/main.py`、`backend/services/ip_locator_service.py`、`backend/api/ip_locator.py`、`src/components/ui/IconInputField.tsx`、`src/pages/IPLocatorPage.tsx`、`src/pages/IPVlan/IPReconciliationTab.tsx`、`src/pages/IPVlan/IPUtilizationTab.tsx`。配套文档：`docs/plans/plan_20261010_1706_01_IPAM运行页面精简.md`、`docs/walkthrough/walkthrough_20261010_1706_01_IPAM运行页面精简.md`。
+- 验证仅做静态审查和 `git diff --check`；未运行测试、构建、浏览器验证，未部署或推送。
+
+## 2026-10-10 NSOT SNMP 优先采集与 LibreNMS 事实核对
+
+- 标准 SNMP 采集 helper 已加入完整 Q-BRIDGE FDB、IP-FORWARD IPv4/IPv6 路由、BGP4、OSPFv2/v3、ISIS 表采集；多列 walk 需覆盖同一完整索引集合，缺字段/解码/映射失败才回退，不截断行数。
+- 活跃端点 MAC/FDB 路径先用 Q-BRIDGE-MIB，映射失败回退 CLI；ARP 继续走 IP-MIB。`poll_endpoints_job` 仍是缓存投影步骤，旧设备采集代码在其提前返回后不可达，不将它描述为本轮新增的活动采集器。
+- 路由采集默认表先读 IP-FORWARD-MIB；已知非默认 VRF 沿用按范围 CLI 补采，新 VRF 或 SNMP 默认表失败时仍可走原 CLI 路径。动态路由邻居按协议先 SNMP；只为失败协议执行 CLI。统一 NSOT 不再硬编码禁用 EIGRP/RIP：RIPv2 先读 RIPv2-MIB，可选 peer 表不可用或空时回退；Cisco 平台先读 CISCO-EIGRP-MIB，其他平台直接走 CLI。BGP 的 local AS 与建立时间字段写入现有邻居记录。完整 BGP RIB 仍走 CLI/TextFSM，因当前 SNMP 实现不能证明 IPv6、VRF 和厂商 weight 的覆盖完整。
+- 追加采集结果完整性修正：ARP SNMP 与 MAC/FDB 记录要求全部可归一化；CLI/TextFSM 未匹配、空结果或部分坏行不再报告成功。FDB 仅替换完整成功设备的快照，失败设备保留旧记录；任一目标交换机 FDB 不完整时暂停终端位置重算。路由、BGP RIB 和 CLI 动态邻居仅在非空且所有结果行都有效时更新快照；不可证明的空表不会清除旧数据。SNMP 动态邻居 helper 明确报告完整空表时仍接受空快照。
+- 接口采集已分别使用 IF-MIB、IP-MIB、Q-BRIDGE-MIB 读取状态/描述/MAC/MTU/速率、地址、VLAN/端口成员；按域判断完整度，只有缺失域才调用 CLI fallback。统一 NSOT 流程关闭 `sync_topology_and_interfaces_job` 的旧接口 CLI 阶段，避免随后 `collect_interface_status_for_online_devices` 再采一次。接口字段服务的 MAC/MTU 没有专属 CLI category，不完整时保留原值；IP 地址 fallback 可能连带读取状态，但仍保留 IF-MIB 状态。
+- LibreNMS 资料核实：FDB 有当前表、创建/更新时间和周期清理，不是完整 MAC 移动事件轨迹；路由有历史保留但只按 discovery 周期更新，默认 1000 超限时通用 MIB 分支记录并跳过，非截取前 1000 条，OS 专用 `RouteDiscovery` 可能绕过通用分支；上游已有通用 ISIS-MIB 邻居发现/轮询。BGP Up/Down/Flap 日志依赖 polling 检测状态变化；`/api/v0/bgp` peer 记录与 `/api/v0/routing/bgp/cbgp` AFI/SAFI 前缀计数是不同数据集，前缀数不是基础 peer 通用字段。`discovery-protocols` 的 OSPF/OSPFv3 自动发现不等于邻居状态表采集。
+- 验证：对 `snmp_service.py`、`interface_collection_service.py`、`ip_locator_service.py`、`scheduler_service.py`、`collection_plan_service.py`、`nsot_collection_preview_service.py`、`topology_service.py` 做 Python AST 静态解析，并对本任务改动执行 `git diff --check`；未运行测试、构建、设备采集或部署。
+- 配套计划/走查：`docs/plans/plan_20261010_1734_01_SNMP优先NSOT采集与CLI回退.md`、`docs/walkthrough/walkthrough_20261010_1734_01_SNMP优先NSOT采集与CLI回退.md`。
+- 追加拓扑 LAG 首采：无论 LLDP 使用 SNMP 或 SSH，聚合关系都独立先用 IEEE8023-LAG-MIB `dot3adAggPortAttachedAggID`，通过 IF-MIB 映射 member/aggregator 接口。取消 4096 行上限，支持 SNMPv3 profile，整 walk 超时 30 秒；不完整或不支持时才启动该域的 `eth_trunk` CLI/TextFSM。完整 IF-MIB 能证实无聚合时接受空快照；两个来源无有效结果或 CLI 未匹配时保留旧关系。未做真实设备验证。
+
+## 2026-10-10 CMDB 设备骨架、VLAN 可读性与运行日志排查
+
+- `/cmdb/devices` 仅返回网络设备骨架；`/cmdb/vlans` 默认不展开行，摘要表保留 9 个主要字段，操作列详情图标打开完整信息，顶部摘要收敛为 3 项。保留筛选、分页、导出、编辑/删除及详情数据。
+- VLAN 当前页设备数对 device ID/hostname 去重。详情操作使用共享 action icon/table cell 组件。
+- Windows SSH 告警来源已定位：`device_telemetry_sampler` 每分钟调用 `record_device_telemetry_snapshot()`，Linux 脚本 `insp_linux_full` 的选择条件错误地将任意 `device_category` 含 `server` 的在线设备加入采集；`_execute_shell_script()` 仅用 `management_port`/`port`，空值默认 22，不路由 WinRM。当前只完成定位，未改该任务。
+- IP 定位失效日志来自 `ip_locator_cache_invalidation`（每 2 秒轮询 PG outbox）无法连 Redis 的重试。用户确认本机未配置 Redis；代码默认 `REDIS_URL=redis://localhost:6379/0` 和 Redis backend，因此仍会尝试本机 6379。多个近邻 warning 是多个 outbox event，不代表多次设备路径追踪。建议部署配置显式将 locator cache backend 设为 disabled 或配置 Redis；本轮未更改默认值。
+- 验证：`git diff --check`、CMDB Python 编译、`npm run lint` 和隔离目录 Vite 生产构建均通过。浏览器当前未登录，未做页面视觉复核。未运行测试、未部署、未提交或推送。
+- 配套计划/走查：`docs/plans/plan_20261010_2030_01_CMDB设备骨架与VLAN可读性.md`、`docs/walkthrough/walkthrough_20261010_2030_01_CMDB设备骨架与VLAN可读性.md`。
+
+## 2026-10-12 告警隔离压测续记
+
+- 目标：在用户授权的 Docker 验证 VM 上安全执行 500/1000/5000 合成告警队列压测；此前告警页 GET 2.34 秒中约 2.32 秒为默认 executor 认证等待，独立有界认证池后约 27 毫秒；整体 CPU 归因仍需要联合压力证据。
+- 主 Agent 完成 `scripts/docker_capacity` 的 alert-storm 专用 seed、告警 API 读取、隔离 Redis/Celery/Relay、资源限额及宿主 CPU 门槛。告警直接写入隔离测试 DB，不调用规则计算或外部通知；workspace task succeeded 只代表禁用通知后的安全收敛。
+- `/root/review_stress_harness` 做了只读审查并指出 runner 编排缺失、事件前缀不匹配、activity schema 不符、CPU 参数未传递及 Broker 密码被多余传给 runner；主 Agent 均已处理，执行者未改文件、未连接 VM。
+- 本地验证：17 个 metrics 测试、45 个 runner/main 测试通过；compileall、PostgreSQL-only（0 violations）、alert dry-run 和 `git diff --check` 通过。详细记录：`docs/plans/plan_20261012_1611_01_告警隔离压测.md`、`docs/walkthrough/walkthrough_20261012_1611_01_告警隔离压测.md`。
+- 已登录用户授权的 VM 并完成只读基线检查。30 秒预检宿主 CPU 峰值 81.02%，NetOps 83.27%、PostgreSQL 48.97%；两次后续预检都在任何克隆容器创建前安全退出，run 标签资源清理完整。没有向生产 DB 写入合成数据或发送通知。
+- 当前有 788 条告警、744 条未恢复、744 个活动 incident。788 行告警 count 执行 0.379ms，20 行列表执行 0.042ms；此查询当前不是 CPU 峰值来源。Outbox 1625 行中 Email/Feishu 各 802 行失败、workspace 21 行成功、pending/processing 为 0；失败正文尚未查看。
+- 高基线竞争路径：每分钟 `/hardware-metrics` 处理约 3902 个传感器行并返回约 7.5MB（1.28–2.44s）；ARP Sweep 对 10 台设备收集 62 项用时 2.1–2.4s，峰值样本与扫描重合；IP Locator invalidation/run worker 有 max-instances 跳过。PostgreSQL 累计统计中 SNMP 硬件传感器读写高于 incident 查询。告警通知 Worker 基本空闲；共享 2CPU PostgreSQL 仍构成告警资源隔离缺口。
+- 由于 6 秒预检只收到 2 个样本，alert-storm CLI 最短基线改为 10 秒；`test_main` 25 项和 Python 编译通过。必须先降低已有 CPU 基线到连续 30 秒峰值 <30%，再运行 500 条 30 秒 pilot，然后才跑 1000/5000 档。计划与完整实测证据见 `docs/plans/plan_20261012_1611_01_告警隔离压测.md` 和 `docs/walkthrough/walkthrough_20261012_1611_01_告警隔离压测.md`。
+
+## 2026-10-12 告警压测基线整改
+
+- 用户更正验证 VM 地址为 `192.168.204.128`；主机仍为 2 vCPU/7.7 GiB。已从 `/hardware-metrics` 阶段日志确认 3902 行/约 7.59 MB 的读取和渲染耗时为 1.27–3.89 秒。传感器分布中 378 个 voltage、378 个 current、12 个通用 sensor_value 行不会被导出；10 台设备 ARP sweep 用 5 并发收集 62 项耗时 2.1–2.4 秒，并与一次 CPU 峰值时间重合。告警总数/分页 SQL 当前分别为 0.379/0.042 ms，通知 Worker 基本空闲，不能把高 CPU 归因到告警通知 Celery。
+- 本地整改：硬件指标 SQL 复用渲染器排除集合过滤 768 个无输出行；新鲜 sensor 行不再逐条复制；完整 ARP sweep 使用独立默认并发 cap=2（环境变量上限8），实时定位并发保持不变。Locator invalidation outbox 查询无待处理记录，因此只记录其 max-instances 警告，不猜测性限频。
+- 验证：指标导出、PostgreSQL fixture 输出等价、ARP 合同测试合计 72 项通过；目标文件 `py_compile` 通过；PostgreSQL-only scanner 0 violations；`git diff --check` 通过。alert-storm 500 条 pilot 仍被宿主 CPU >30% 门槛阻止，尚未建立 CPU 基线整改后数据。
+- 当前浏览器只读检查通过：告警台 744 条待处理、75 页；资产设备 221，网络设备 219（204 离线），服务器2在线；资产与配置相关页面已加载，仪表盘重新登录后显示 221 台、17 台在线及资源摘要。未触发任何采集/诊断、备份或配置下发。
+- 用户已明确授权部署并测试。硬件过滤/ARP 并发已通过只覆盖后端的叠加镜像部署；设备健康 N+1 接口读取也改为批量并部署，PostgreSQL 等价/查询数测试通过（模块 3 passed）。当前运行 `nexora-netops:alert-health-batch-202610120952` 的镜像内容，仅 netops 重建；回滚标签保留。整改后三次基线峰值64.49/33.60/71.39%，均未创建压测资源，500 pilot未运行；不能声称整体CPU改善或卡顿已解决。
+- 慢调度计时本地9测试通过，仍未部署。全量回归原句柄和OS进程已消失、无最终结果，已重新运行并持久化 `logs/alert-backend-full-regression-20261012.log`。继续采集主进程调用栈及硬件导出热点；共享PG资源边界、ARP全周期及资产配置高负载响应仍需验证。
+- 续查py-spy捕获主事件循环硬件发现反复扫描MIB清单。Luna仅修改source_policy及其测试，对精准upstream使用现有签名索引、不缓存trust布尔；21项来源测试通过、40次2,360条清单查询等价，本地2.56s→0.042s。`nexora-netops:mib-index-20261012`仅覆盖这一文件并重建netops，镜像健康且运行文件哈希一致，回滚标签保留。慢调度计时未部署，全量pytest仍运行。修正Bearer Token后的160次低频API请求全200，告警/资产/设备/模板p95约94/432/505/127ms；未作为告警风暴验收。
+- 最新30秒预检仍因宿主52.13%峰值中止，未创建测试资源。随后60秒/30样本全进程容器采样host均值25.29%/p9565.79%/max72.05%；NetOps mean/max14.10/77.82%，PG5.03/32.11，SeaweedFS7.22/12.56，Grafana2.95/21.74，SNMP exporter3.93/11.75；告警两个Celery worker均值0.06/0.08，峰值0.49%。当前预检尖峰由多个服务任务交叠；告警Worker不是本次高基线主耗。证据/脚本见 walkthrough 与 `logs/nexora-all-process-cpu-20261012.json`。全量pytest session仍活跃，约23%，无失败输出，不能标通过。
+- 新 Locator 续查：最近10分钟 `max_instances` skip分别为 invalidations28次、runs12次；4张队列表按状态聚合为空，20秒PG活动查询每半秒采样结果为空。30秒py-spy对默认executor的 `claim_locator_invalidation` PG SELECT仅捕获1次。不能断言其在数据库慢/锁等待；应让 scheduler lock phase timings 测量当前实现后判断。主机 `/proc/pressure/cpu` some avg10约7.6%、full 0，硬件指标端点0.85-2.08s/分钟且约7.59MB。全量pytest目前31%；日志 `.log` 持续记录，无失败输出，仍在同一个 live process。
+- 第二个 postdeploy 60秒/30样本全host采样 host均值/p95/max 23.94/51.91/61.73%，NetOps mean/max15.16/90.13%，PG4.91/19.66%，告警normal/critical均值0.05/0.08、峰值0.49%。较上一窗口host均值/p95低，但NetOps max更高；未证明稳定降载，也不可启动alert pilot。结果在 `logs/nexora-all-process-cpu-window2-20261012.json`。全量pytest仍有活进程，进度33%。
+- 移除 `/hardware-metrics` 为字节计数多做的一次7.59MB UTF-8编码，Response对象复用同一body长度并计入总耗时。8项导出测试通过、PG-only/compile/diff通过。叠加镜像 `nexora-netops:single-encode-20261012` 已部署，run0、healthy；API200/7,585,572 bytes。部署后3次处理耗时0.905/0.926/1.150s，改动前相邻3次0.851/2.077/1.513s；小样本不证明宿主CPU改善。全量pytest进度53%，1 skip，无fail，仍运行。
+- 编码优化部署后3个实际样本耗时0.905/0.926/1.150s，主体字节数7,585,237–7,585,737，Content-Type未变；部署前相邻3个为0.851/2.077/1.513s，抖动仍有，不能声称稳定改善CPU。最新当前闲时 docker stats：netops0.28%、PG0.49%、告警两个worker0.06/0.04%，只是瞬时样本。全量pytest当前48%，仍同一活跃进程，无失败输出。
+- 单次编码优化后预检run0eba62e5d21e464d91aa03d816151955仍因host47.55%而安全拦截，cleanup complete且run标签资源为空；隔离报告在本机 `logs/nexora-alert-run-postencode-20261012-report.json`，未运行500pilot。post编码窗口3/4 host mean17.14/16.98、p95 37.18/35.56、peak47.87/51.26，NetOps mean7.05/7.17、peak36.37/40.67；旧window2为host mean23.94/p95 51.91/NetOps peak90.13。时段负载不同，不能据此因果归功于编码优化。最新backend全量pytest仍活跃，67%、1skip、无fail。
+
+## 2026-10-12 告警隔离最新状态
+
+- 后端全量 pytest 已结束：3655 passed、1 skipped、26 subtests passed、30 failed（6372.38秒）。输出见 `logs/alert-backend-full-regression-20261012.log`。失败分布在资产/变更单/凭据/拓扑等测试；其中 rack health scope 的过期 mock 已改为批量读取接口并聚焦验证。全量结果早于最近的告警状态 upsert 改动，不能标为通过。
+- 告警状态 upsert 本地改为最多100行一条多值 SQL；500行测试验证分5个事务写状态，并与事件、活动、outbox保持原子性。告警状态批次及 outbox 原子性聚焦测试6 passed。该补丁尚未部署，2.86/5.54秒两轮计时差异说明本机噪声较大，未证明CPU改善。
+- 最新30秒安全预检宿主CPU峰值71.50%（15个样本），高于pilot启动门槛30%；NetOps峰值51.45%、PostgreSQL30.68%，Alert normal/critical Worker只有0.20%/0.34%。预检在创建克隆容器前退出并清理；500条pilot未开始。主服务事件/规则/状态/outbox写入仍可能争用共享CPU和PostgreSQL，通知Worker配额不能隔离这些前置工作。
+- 任务最新结论与证据记录于 `docs/plans/plan_20261012_1611_01_告警隔离压测.md` 和 `docs/walkthrough/walkthrough_20261012_1611_01_告警隔离压测.md`。本轮只读 `docker exec` 指纹核验被自动审批以“approval required by policy, but AskForApproval is set to Never”拒绝；没有部署最新 upsert 补丁或在VM执行pilot。

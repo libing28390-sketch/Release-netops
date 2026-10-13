@@ -558,7 +558,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     const templateExample = zh
       ? ['A-01', '48U Network Cabinet', '北京第一数据中心', '302机房', 'A列', 48, 600, 1000, 1200, 12000, '是', '冷通道A区', '核心网络机柜']
       : ['A-01', '48U Network Cabinet', 'Beijing DC 1', '3F', 'Room 302', 'Row A', 48, 600, 1000, 1200, 'yes', 'Zone A', 'Core network rack'];
-    
+
     const ws = XLSX.utils.aoa_to_sheet([templateHeaders, templateExample]);
     ws['!cols'] = templateHeaders.map(() => ({ wch: 15 }));
     XLSX.utils.book_append_sheet(wb, ws, zh ? '机柜模板' : 'Rack Template');
@@ -577,7 +577,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
         const raw = XLSX.utils.sheet_to_json<Record<string, any>>(ws, { defval: '' });
-        
+
         for (const row of raw) {
           const obj: any = {};
           for (const [col, val] of Object.entries(row)) {
@@ -631,7 +631,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
           },
           body: JSON.stringify(mapped)
         });
-        
+
         if (r.ok) {
           refresh();
           alert(zh ? `导入完成：成功导入 ${mapped.length} 个机柜` : `Import done: ${mapped.length} racks successfully imported`);
@@ -669,7 +669,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     });
     setFormError(''); setShowRackModal(true);
   };
-  
+
   const openEditRack = (rack: Rack) => {
     setEditingRack(rack);
     setRackForm({
@@ -1010,9 +1010,9 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     );
 
     const scale = 4;
-    const uH = 32; 
-    const lw = 44; 
-    const rw = 520; 
+    const uH = 32;
+    const lw = 44;
+    const rw = 520;
     const totalW = lw + rw + lw;
     const headerH = 64;
     const footerH = 80;
@@ -1037,17 +1037,17 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     ctx.fillStyle = '#f8fafc';
     ctx.font = 'bold 20px system-ui, sans-serif';
     ctx.fillText(`${layout.name} - ${side === 'front' ? (zh ? '前视图' : 'Front') : (zh ? '后视图' : 'Rear')}`, totalW / 2, 24);
-    
+
     ctx.fillStyle = '#94a3b8';
     ctx.font = '12px system-ui, sans-serif';
     ctx.fillText(`${layout.datacenter}${layout.room ? ' / ' + layout.room : ''} | ${layout.total_used}U / ${totalU}U`, totalW / 2, 44);
 
     ctx.fillStyle = '#1e293b';
     ctx.fillRect(lw - 6, headerH - 6, rw + 12, totalU * uH + 12);
-    
+
     ctx.fillStyle = '#020617';
     ctx.fillRect(lw, headerH, rw, totalU * uH);
-    
+
     ctx.fillStyle = '#0f172a';
     ctx.fillRect(lw, headerH, 18, totalU * uH);
     ctx.fillRect(lw + rw - 18, headerH, 18, totalU * uH);
@@ -1064,7 +1064,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     for (let i = 0; i < totalU; i++) {
       const uNumber = totalU - i;
       const y = headerH + i * uH;
-      
+
       ctx.strokeStyle = '#1e293b';
       ctx.lineWidth = 0.5;
       ctx.beginPath();
@@ -1091,16 +1091,16 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
       if (device) {
         const h = device.u_height * uH;
         const rc = getNormalizedRoleColor(device.device_role, device.name, device.model);
-        
+
         const devGrad = ctx.createLinearGradient(lw + 2, y + 1, lw + 2, y + h - 1);
         devGrad.addColorStop(0, rc.bg);
         devGrad.addColorStop(1, rc.border);
         ctx.fillStyle = devGrad;
-        
+
         ctx.beginPath();
         ctx.roundRect(lw + 2, y + 1, rw - 4, h - 2, 2);
         ctx.fill();
-        
+
         ctx.strokeStyle = 'rgba(255,255,255,0.15)';
         ctx.lineWidth = 1;
         ctx.beginPath();
@@ -1111,7 +1111,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
         const ledX = lw + 32;
         const ledY = y + h / 2;
         const ledColor = device.status === 'active' ? '#4ade80' : device.status === 'planned' ? '#fbbf24' : '#ef4444';
-        
+
         ctx.shadowBlur = device.status === 'active' ? 8 : 0;
         ctx.shadowColor = ledColor;
         ctx.beginPath();
@@ -1122,7 +1122,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
 
         ctx.fillStyle = '#ffffff';
         ctx.textAlign = 'left';
-        
+
         ctx.font = 'bold 13px system-ui, sans-serif';
         ctx.fillText(device.name, lw + 48, y + h / 2);
         const nameW = ctx.measureText(device.name).width;
@@ -1158,7 +1158,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     ctx.textAlign = 'left';
     ctx.globalAlpha = 1;
     let lx = 20;
-    
+
     ctx.font = 'bold 10px system-ui, sans-serif';
     ctx.fillStyle = '#64748b';
     ctx.fillText(zh ? '状态:' : 'Status:', lx, legendY);
@@ -1262,7 +1262,6 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                   <ActionIconButton icon={Upload} label={zh ? '导入机柜' : 'Import racks'} variant="accent" onClick={() => fileInputRef.current?.click()} />
                 </>
               )}
-              <ActionIconButton icon={RefreshCw} label={zh ? '刷新' : 'Refresh'} onClick={refresh} />
             </ActionIconGroup>
           </>
         }

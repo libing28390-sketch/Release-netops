@@ -2620,11 +2620,12 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
         if (terminal && interfaceTerminalHandledRef.current !== jobId) {
           interfaceTerminalHandledRef.current = jobId;
           setInterfaceSyncing(false);
-          await load();
           const failed = Number(next.failed_count || 0);
           setNotice(zh
-            ? `接口采集${failed ? `完成，成功 ${next.success_count || 0} 台，失败 ${failed} 台` : '已完成'}；详情已显示在本页。`
-            : `Interface collection ${failed ? `finished: ${next.success_count || 0} succeeded, ${failed} failed` : 'completed'}; details are shown on this page.`);
+            ? `接口采集已结束：成功 ${next.success_count || 0} 台，失败 ${failed} 台。`
+            : `Interface collection finished: ${next.success_count || 0} succeeded, ${failed} failed.`);
+          setInterfaceJobStatus(null);
+          await load();
         }
       } catch {
         // Keep the durable job id; a transient polling failure must not hide it.
@@ -3114,7 +3115,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
         }
       };
       return (
-        <div className="flex max-w-[34rem] flex-wrap items-center gap-1">
+        <div className="flex max-w-[28rem] flex-wrap items-center gap-1">
           {displayList.slice(0, isExpanded ? displayList.length : 3).map((d: any) => (
             <span key={d.id} className="inline-flex items-center gap-1">
               <button
@@ -3311,7 +3312,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
   // Compute pagination values
   const totalForTab = (tab === 'sites' || tab === 'vrfs') ? genericListMeta.total : filteredRows.length;
   const totalPages = Math.max(1, Math.ceil(totalForTab / pageSize));
-  
+
   // Clamp page selection
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
@@ -3409,10 +3410,10 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
   const renderDataRow = (row: any, index: number | string) => (
     <tr key={idOf(row) || index} className="hover:bg-slate-50/80 transition-colors group">
       {tableColumns.map(c => (
-        <td key={c.key} className={`px-6 py-4 ${tab === 'interfaces' ? 'whitespace-nowrap' : ''}`}>{renderCell(row, c)}</td>
+        <td key={c.key} className={`${tab === 'credentials' ? 'px-4 py-3 align-middle' : 'px-6 py-4'} ${tab === 'interfaces' ? 'whitespace-nowrap' : ''}`}>{renderCell(row, c)}</td>
       ))}
       {(!isReadOnlyTab || (tab === 'interfaces' && canEditInterfaceProfile)) && (
-        <TableActionCell className="px-6 py-4 align-middle">
+        <TableActionCell className={tab === 'credentials' ? 'px-4 py-3 align-middle' : 'px-6 py-4 align-middle'}>
           <ActionIconGroup label={zh ? '记录操作' : 'Record actions'} className="opacity-0 transition-opacity group-hover:opacity-100">
             {tab === 'interfaces' ? (
               canEditInterfaceProfile && !String(row.id || '').startsWith('ipinv-') ? (
@@ -3513,10 +3514,12 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
   return (
     <div className="flex h-full min-h-0 min-w-0 w-full flex-col overflow-hidden">
       <PageHero
-        icon={Server}
-        eyebrow={zh ? '资产与配置 / CMDB' : 'Assets & Config / CMDB'}
-        title={zh ? 'CMDB 基础数据维护' : 'CMDB Inventory'}
-        subtitle={zh ? '管理设备、接口、凭据、站点、VRF、VLAN 与租户等核心配置数据。' : 'Manage devices, interfaces, credentials, sites, VRFs, VLANs and tenants.'}
+        icon={tab === 'credentials' ? KeyRound : Server}
+        eyebrow={tab === 'credentials' ? (zh ? '资产与配置 / 凭据' : 'Assets & Config / Credentials') : (zh ? '资产与配置 / CMDB' : 'Assets & Config / CMDB')}
+        title={tab === 'credentials' ? (zh ? '设备访问凭据' : 'Device Access Credentials') : (zh ? 'CMDB 基础数据维护' : 'CMDB Inventory')}
+        subtitle={tab === 'credentials'
+          ? (zh ? '维护设备登录与采集凭据，查看账号角色和设备绑定。' : 'Manage device login and collection credentials, roles, and device bindings.')
+          : (zh ? '管理设备、接口、凭据、站点、VRF、VLAN 与租户等核心配置数据。' : 'Manage devices, interfaces, credentials, sites, VRFs, VLANs and tenants.')}
         actions={
           <>
             {!isReadOnlyTab && (
@@ -3567,18 +3570,33 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                   <ActionIconButton icon={Upload} label={zh ? '上传凭据' : 'Upload credentials'} variant="accent" onClick={() => credentialImportInputRef.current?.click()} />
                   <ActionIconButton icon={Download} label={zh ? '导出凭据（密码为空）' : 'Export credentials (passwords blank)'} variant="accent" disabled={credentialExporting} iconClassName={credentialExporting ? 'animate-pulse' : undefined} onClick={exportCredentialInventory} />
                 </ActionIconGroup>
+                <span className="mx-1 h-6 w-px bg-slate-200" aria-hidden="true" />
+                <div className="relative w-52 shrink-0 xl:w-60">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    value={search}
+                    onChange={event => setSearch(event.target.value)}
+                    placeholder={zh ? '搜索凭据名称、用户名或角色…' : 'Search credential name, username or role…'}
+                    aria-label={zh ? '搜索凭据名称、用户名或角色' : 'Search credential name, username or role'}
+                    className="h-9 w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-8 text-xs text-slate-700 outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                  />
+                  {search && (
+                    <button
+                      type="button"
+                      onClick={() => setSearch('')}
+                      aria-label={zh ? '清除搜索' : 'Clear search'}
+                      className="search-clear-button absolute right-2.5 top-1/2 -translate-y-1/2"
+                    >
+                      <X size={13} />
+                    </button>
+                  )}
+                </div>
               </>
             )}
-            <button
-              onClick={load}
-              className="inline-flex h-10 items-center justify-center gap-1.5 rounded-full border border-[#d8e5ef] bg-[#f8fafc] px-4 text-xs font-semibold text-[#164e63] transition-all duration-200 hover:-translate-y-0.5 hover:border-[#9eeaf7] hover:bg-white hover:text-[#007d9d]"
-            >
-              <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-              {zh ? '刷新' : 'Refresh'}
-            </button>
           </>
         }
-        extras={tab === 'interfaces' ? undefined : (
+        extras={tab === 'interfaces' || tab === 'credentials' ? undefined : (
           <div className="flex items-center justify-end gap-4 mt-3 flex-wrap">
             {tab === 'vlans' && (
               <select
@@ -4088,16 +4106,44 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
             </section>
           </div>
         ) : (
-        <div className="min-w-0 max-w-full overflow-hidden rounded-[28px] border border-black/5 bg-white shadow-[0_16px_36px_rgba(11,35,64,0.06)]">
+        <div className={`min-w-0 max-w-full overflow-hidden rounded-[28px] border border-black/5 bg-white shadow-[0_16px_36px_rgba(11,35,64,0.06)] ${tab === 'credentials' ? 'mx-auto w-full max-w-[1480px]' : ''}`}>
           <div className="min-w-0 max-w-full overflow-x-auto">
-            <table ref={managementTableRef} className={`nx-data-table text-left ${tab === 'interfaces' ? 'min-w-[2200px]' : ''}`}>
+            <table ref={managementTableRef} className={`nx-data-table text-left ${tab === 'interfaces' ? 'min-w-[2200px]' : ''} ${tab === 'credentials' ? 'table-fixed min-w-[960px]' : ''}`}>
+              {tab === 'credentials' && (
+                <colgroup>
+                  <col style={{ width: '18%' }} />
+                  <col style={{ width: '13%' }} />
+                  <col style={{ width: '12%' }} />
+                  <col style={{ width: '13%' }} />
+                  <col style={{ width: hasTableActions ? '36%' : '44%' }} />
+                  {hasTableActions && <col style={{ width: '8%' }} />}
+                </colgroup>
+              )}
               <thead>
                 <tr className="border-b border-black/5 bg-slate-50 text-[11px] font-bold uppercase tracking-[0.16em] text-black/40">
                   {tableColumns.map((c, index) => (
-                    <th key={c.key} className="px-6 py-4">
+                    <th key={c.key} className={tab === 'credentials' ? 'px-4 py-3' : 'px-6 py-4'}>
                       {index === tableColumns.length - 1 && !hasTableActions ? (
                         <div className="flex w-full items-center justify-between gap-2">
                           <span>{zh ? c.label : c.labelEn}</span>
+                          {tab !== 'credentials' && (
+                            <TableExportMenu
+                              tableRef={managementTableRef}
+                              filename={`cmdb-${tab}`}
+                              language={zh ? 'zh' : 'en'}
+                              disabled={loading}
+                              exportData={buildManagementExport}
+                            />
+                          )}
+                        </div>
+                      ) : zh ? c.label : c.labelEn}
+                    </th>
+                  ))}
+                  {hasTableActions && (
+                    <TableActionHeader className={tab === 'credentials' ? 'px-4 py-3' : 'px-6 py-4'} style={{ width: tab === 'credentials' ? 112 : 120 }}>
+                      <div className="flex items-center justify-end gap-2">
+                        {tab === 'interfaces' ? (zh ? '配置' : 'Configure') : (zh ? '操作' : 'Actions')}
+                        {tab !== 'credentials' && (
                           <TableExportMenu
                             tableRef={managementTableRef}
                             filename={`cmdb-${tab}`}
@@ -4105,21 +4151,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                             disabled={loading}
                             exportData={buildManagementExport}
                           />
-                        </div>
-                      ) : zh ? c.label : c.labelEn}
-                    </th>
-                  ))}
-                  {hasTableActions && (
-                    <TableActionHeader className="px-6 py-4" style={{ width: 120 }}>
-                      <div className="flex items-center justify-end gap-2">
-                        {tab === 'interfaces' ? (zh ? '配置' : 'Configure') : (zh ? '操作' : 'Actions')}
-                        <TableExportMenu
-                          tableRef={managementTableRef}
-                          filename={`cmdb-${tab}`}
-                          language={zh ? 'zh' : 'en'}
-                          disabled={loading}
-                          exportData={buildManagementExport}
-                        />
+                        )}
                       </div>
                     </TableActionHeader>
                   )}
@@ -4503,14 +4535,14 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
             {tab === 'sites' && geoError && (
               <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{geoError}</div>
             )}
-            
+
             {error && (
               <div className="mt-4 max-h-24 shrink-0 overflow-y-auto rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-600 flex items-start gap-1.5" role="alert">
                 <ShieldAlert size={14} className="flex-shrink-0" />
                 <span><strong className="font-semibold">{zh ? '保存失败：' : 'Save failed: '}</strong>{error}</span>
               </div>
             )}
-            
+
             <div className="mt-6 flex shrink-0 justify-end gap-2 border-t border-black/5 pt-3">
               <button
                 onClick={() => setModalOpen(false)}
@@ -4865,7 +4897,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                 {zh ? '此操作不可撤销，确定要删除该记录吗？' : 'This action cannot be undone. Are you sure you want to delete this record?'}
               </p>
             </div>
-            
+
             {tab === 'sites' && (
               <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50/70 p-3 text-left">
                 <div className="text-xs font-semibold text-amber-900">

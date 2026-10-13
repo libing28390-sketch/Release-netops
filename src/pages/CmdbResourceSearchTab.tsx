@@ -315,10 +315,6 @@ const ResourceSearchTab: React.FC<Props> = ({ language = 'zh' }) => {
             {zh ? '跨站点查询全部设备，按标签、SN、IP 和技术属性快速定位资源。' : 'Search every device across sites by tags, serial numbers, IPs and technical attributes.'}
           </p>
         </div>
-        <button onClick={() => { void loadMetadata(); void loadResources(); }} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 shadow-sm hover:border-cyan-300 hover:text-cyan-700">
-          <RefreshCw size={14} className={loading || metadataLoading ? 'animate-spin' : ''} />
-          {zh ? '刷新资源' : 'Refresh resources'}
-        </button>
       </div>
 
       {error && (

@@ -23,6 +23,22 @@ export interface WebAccessProfile {
   updated_at?: string;
 }
 
+export type RemoteDesktopProtocol = 'rdp' | 'vnc';
+export type RemoteDesktopSecurityMode = 'any' | 'nla' | 'tls' | 'rdp';
+
+export interface RemoteDesktopProfile {
+  id?: string;
+  asset_id?: string;
+  protocol: RemoteDesktopProtocol;
+  profile_name: string;
+  port: number;
+  enabled: boolean;
+  normal_credential_id?: string | null;
+  admin_credential_id?: string | null;
+  rdp_domain?: string | null;
+  rdp_security_mode?: RemoteDesktopSecurityMode;
+}
+
 export interface AssetPlacement {
   id: string;
   asset_id: string;
@@ -115,6 +131,7 @@ export interface Asset {
   power_watts?: number | string;
   placement?: AssetPlacement | null;
   web_profiles?: WebAccessProfile[];
+  remote_desktop_profiles?: RemoteDesktopProfile[];
 }
 
 export interface AssetSummary {

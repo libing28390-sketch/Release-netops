@@ -1,12 +1,11 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Database, Download, Eye, RefreshCw, Search, X, FileText, Copy, ArrowLeftRight, Trash2, CheckCircle2, AlertTriangle, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, BarChart3, CalendarDays, UploadCloud, Server, Check } from 'lucide-react';
+import { Database, Download, Eye, RefreshCw, Search, X, FileText, Copy, ArrowLeftRight, Trash2, CheckCircle2, AlertTriangle, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, BarChart3, CalendarDays } from 'lucide-react';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
 import { DataTable } from '../components/DataTable';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
 import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
-import { PasswordInputField } from '../components/ui/PasswordInputField';
 import { authHeaders } from '../api/http';
 import { fetchAllPaginatedItems } from '../utils/pagination';
 import { buildBackupRunExportData } from './configBackupExport';
@@ -45,10 +44,6 @@ interface BackupRun {
   failed_count: number;
   skipped_count: number;
   error_message?: string;
-  tftp_status?: string;
-  tftp_server?: string;
-  tftp_log?: string;
-  tftp_uploaded_count?: number;
   site_summary?: Array<{
     site: string;
     total: number;
@@ -89,19 +84,6 @@ interface ConfigBackupTabProps {
   activeRunId?: string | null;
 }
 
-type ArchiveProtocol = 'sftp' | 'ftp' | 'tftp';
-
-interface ArchiveSettings {
-  enabled: boolean;
-  protocol: ArchiveProtocol;
-  server_ip: string;
-  server_port: number;
-  username: string;
-  password: string;
-  password_configured?: boolean;
-  path_prefix: string;
-}
-
 interface StorageStatus {
   backend: 'local' | 's3' | string;
   provider: string;
@@ -121,16 +103,6 @@ interface StorageStatus {
   };
   recent_errors: Array<{ kind: string; id: string; message: string; updated_at: string }>;
 }
-
-const archiveProtocolPort = (protocol: ArchiveProtocol): number => (
-  protocol === 'sftp' ? 22 : protocol === 'ftp' ? 21 : 69
-);
-
-const archiveProtocolLabel = (protocol: ArchiveProtocol): string => {
-  if (protocol === 'sftp') return 'SFTP';
-  if (protocol === 'ftp') return 'FTP';
-  return 'TFTP';
-};
 
 const copyTextToClipboard = async (text: string): Promise<boolean> => {
   if (window.isSecureContext && navigator.clipboard?.writeText) {
@@ -284,52 +256,8 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
   const [detailExpanded, setDetailExpanded] = useState(false);
   const detailRequestRef = useRef<AbortController | null>(null);
 
-  // Remote archive modal & actions state.  The endpoint keeps its legacy
-  // /tftp URL for compatibility, but the selected protocol is explicit.
-  const [tftpModalOpen, setTftpModalOpen] = useState(false);
-  const [tftpSettings, setTftpSettings] = useState<ArchiveSettings>({
-    enabled: false,
-    protocol: 'sftp',
-    server_ip: '',
-    server_port: 22,
-    username: '',
-    password: '',
-    password_configured: false,
-    path_prefix: 'backups',
-  });
-  const [tftpTesting, setTftpTesting] = useState(false);
-  const [tftpTestResult, setTftpTestResult] = useState<{ success: boolean; message: string } | null>(null);
-  const [tftpSaving, setTftpSaving] = useState(false);
-  const [tftpSyncing, setTftpSyncing] = useState(false);
-  const [tftpSyncingSnapshotId, setTftpSyncingSnapshotId] = useState<string | null>(null);
   const [storageStatus, setStorageStatus] = useState<StorageStatus | null>(null);
   const [storageStatusLoading, setStorageStatusLoading] = useState(false);
-
-  const loadTftpSettings = useCallback(async () => {
-    try {
-      const token = localStorage.getItem('netops_token');
-      const resp = await fetch('/api/configs/tftp/settings', {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (resp.ok) {
-        const res = await resp.json();
-        if (res.data) {
-          setTftpSettings({
-            enabled: Boolean(res.data.enabled),
-            protocol: (res.data.protocol === 'ftp' || res.data.protocol === 'tftp' ? res.data.protocol : 'sftp') as ArchiveProtocol,
-            server_ip: res.data.server_ip || '',
-            server_port: Number(res.data.server_port || archiveProtocolPort(res.data.protocol || 'sftp')),
-            username: res.data.username || '',
-            password: '',
-            password_configured: Boolean(res.data.password_configured),
-            path_prefix: res.data.path_prefix || 'backups',
-          });
-        }
-      }
-    } catch {
-      // ignore
-    }
-  }, []);
 
   const loadStorageStatus = useCallback(async () => {
     setStorageStatusLoading(true);
@@ -343,168 +271,6 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
       setStorageStatusLoading(false);
     }
   }, []);
-
-  const handleTestTftp = async () => {
-    if (!tftpSettings.server_ip.trim()) {
-      showToast(zh ? '请输入文件归档服务器地址' : 'Please input archive server address', 'info');
-      return;
-    }
-    setTftpTesting(true);
-    setTftpTestResult(null);
-    try {
-      const token = localStorage.getItem('netops_token');
-      const resp = await fetch('/api/configs/tftp/test', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          protocol: tftpSettings.protocol,
-          server_ip: tftpSettings.server_ip.trim(),
-          server_port: tftpSettings.server_port,
-          username: tftpSettings.username.trim(),
-          password: tftpSettings.password,
-          path_prefix: tftpSettings.path_prefix.trim(),
-        }),
-      });
-      const data = await resp.json();
-      setTftpTestResult({
-        success: Boolean(data.success),
-        message: data.message || (data.success ? (zh ? '探测成功' : 'Probe succeeded') : (data.detail || (zh ? '探测失败' : 'Probe failed'))),
-      });
-      if (data.success) {
-        showToast(zh ? `${archiveProtocolLabel(tftpSettings.protocol)} 文件服务器连通探测成功` : `${archiveProtocolLabel(tftpSettings.protocol)} probe succeeded`, 'success');
-      } else {
-        showToast(data.message || (zh ? '文件服务器探测失败' : 'Archive probe failed'), 'error');
-      }
-    } catch (err) {
-      setTftpTestResult({
-        success: false,
-        message: String(err),
-      });
-      showToast(zh ? '网络请求异常' : 'Network error', 'error');
-    } finally {
-      setTftpTesting(false);
-    }
-  };
-
-  const handleSaveTftpSettings = async () => {
-    setTftpSaving(true);
-    try {
-      const token = localStorage.getItem('netops_token');
-      const resp = await fetch('/api/configs/tftp/settings', {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify(tftpSettings),
-      });
-      if (!resp.ok) throw new Error('Failed to save');
-      showToast(zh ? '文件归档默认配置已保存' : 'Archive settings saved', 'success');
-    } catch {
-      showToast(zh ? '保存文件归档配置失败' : 'Failed to save archive settings', 'error');
-    } finally {
-      setTftpSaving(false);
-    }
-  };
-
-  const handleSyncLatestBatchToTftp = async () => {
-    if (!latestRun) {
-      showToast(zh ? '暂无可用备份批次' : 'No backup batch available', 'info');
-      return;
-    }
-    setTftpSyncing(true);
-    try {
-      const token = localStorage.getItem('netops_token');
-      const resp = await fetch('/api/configs/tftp/sync-batch', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          run_id: latestRun.id,
-          protocol: tftpSettings.protocol,
-          server_ip: tftpSettings.server_ip.trim(),
-          server_port: tftpSettings.server_port,
-          username: tftpSettings.username.trim(),
-          password: tftpSettings.password,
-          path_prefix: tftpSettings.path_prefix.trim(),
-        }),
-      });
-      const data = await resp.json();
-      if (!resp.ok) throw new Error(data.detail || data.message || 'Sync failed');
-      showToast(data.message || (zh ? '批次文件归档完成' : 'Batch archive completed'), data.success ? 'success' : 'info');
-      void loadBackupRuns();
-    } catch (err: any) {
-      showToast(err.message || (zh ? '文件归档失败' : 'Archive sync failed'), 'error');
-    } finally {
-      setTftpSyncing(false);
-    }
-  };
-
-  const handleSyncBatchFromModal = async (runId: string) => {
-    setTftpSyncing(true);
-    try {
-      const token = localStorage.getItem('netops_token');
-      const resp = await fetch('/api/configs/tftp/sync-batch', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          run_id: runId,
-          protocol: tftpSettings.protocol,
-          server_ip: tftpSettings.server_ip.trim(),
-          server_port: tftpSettings.server_port,
-          username: tftpSettings.username.trim(),
-          password: tftpSettings.password,
-          path_prefix: tftpSettings.path_prefix.trim(),
-        }),
-      });
-      const data = await resp.json();
-      if (!resp.ok) throw new Error(data.detail || data.message || 'Sync failed');
-      showToast(data.message || (zh ? '已将本批次归档' : 'Batch archived'), data.success ? 'success' : 'info');
-      void loadBackupRuns();
-    } catch (err: any) {
-      showToast(err.message || (zh ? '文件归档失败' : 'Archive sync failed'), 'error');
-    } finally {
-      setTftpSyncing(false);
-    }
-  };
-
-  const handleSyncSingleSnapshotToTftp = async (snapshotId: string) => {
-    setTftpSyncingSnapshotId(snapshotId);
-    try {
-      const token = localStorage.getItem('netops_token');
-      const resp = await fetch('/api/configs/tftp/sync-snapshot', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          snapshot_id: snapshotId,
-          protocol: tftpSettings.protocol,
-          server_ip: tftpSettings.server_ip.trim(),
-          server_port: tftpSettings.server_port,
-          username: tftpSettings.username.trim(),
-          password: tftpSettings.password,
-          path_prefix: tftpSettings.path_prefix.trim(),
-        }),
-      });
-      const data = await resp.json();
-      if (!resp.ok) throw new Error(data.detail || data.message || 'Upload failed');
-      showToast(data.message || (zh ? '已上传至文件归档服务器' : 'Uploaded to archive server'), 'success');
-    } catch (err: any) {
-      showToast(err.message || (zh ? '上传文件归档服务器失败' : 'Failed to upload to archive server'), 'error');
-    } finally {
-      setTftpSyncingSnapshotId(null);
-    }
-  };
 
   // Live progress state
   const [progress, setProgress] = useState<{
@@ -536,7 +302,7 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
       return;
     }
     const start = progress.started_at || (Date.now() / 1000);
-    
+
     if (progress.finished) {
       const end = progress.finished_at || (Date.now() / 1000);
       setElapsed(Math.max(0, Math.floor(end - start)));
@@ -1032,27 +798,12 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
         actions={
           <>
             <button
-              onClick={() => { void loadTftpSettings(); setTftpModalOpen(true); }}
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl border border-[#d8e1eb] bg-[#f7f9fc] px-4 text-sm font-semibold text-[#0e7490] transition-all duration-200 hover:-translate-y-0.5 hover:border-[#c7d4e2] hover:bg-white hover:text-[#0891b2]"
-              title={zh ? '配置文件归档服务器及同步协议' : 'Configure archive server and sync protocol'}
-            >
-              <UploadCloud size={15} />
-              {zh ? '文件归档' : 'File Archive'}
-            </button>
-            <button
               onClick={() => void handleBackupAllClick()}
               disabled={isTakingSnapshot}
               className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl bg-[#06b6d4] px-4 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(6,182,212,0.22)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#0891b2] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:translate-y-0"
             >
               {isTakingSnapshot ? <RefreshCw size={14} className="animate-spin" /> : <Database size={14} />}
               {zh ? '备份全部在线设备' : 'Backup All Online'}
-            </button>
-            <button
-              onClick={() => { void loadLatestBackups(); void loadBackupRuns(); void loadStorageStatus(); }}
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl border border-[#d8e1eb] bg-[#f7f9fc] px-4 text-sm font-semibold text-[#0e7490] transition-all duration-200 hover:-translate-y-0.5 hover:border-[#c7d4e2] hover:bg-white hover:text-[#0891b2]"
-            >
-              <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-              {zh ? '刷新' : 'Refresh'}
             </button>
           </>
         }
@@ -1289,7 +1040,7 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
                         </p>
                       </div>
                     </div>
-                    
+
                     {/* Progress Bar & Percentage */}
                     <div className="flex items-center gap-4">
                       <div className="flex-1 h-2.5 rounded-full bg-black/[0.05] overflow-hidden">
@@ -1492,14 +1243,6 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
                     <td className="px-5 py-4 align-top text-sm text-black/50 font-mono">{formatSize(row.size)}</td>
                     <TableActionCell className="px-5 py-4 align-top">
                       <ActionIconGroup label={zh ? '备份操作' : 'Backup actions'}>
-                        <ActionIconButton
-                          icon={tftpSyncingSnapshotId === row.id ? RefreshCw : UploadCloud}
-                          label={zh ? '上传此配置快照至文件归档服务器' : 'Upload this snapshot to archive server'}
-                          variant="accent"
-                          iconClassName={tftpSyncingSnapshotId === row.id ? 'animate-spin' : undefined}
-                          onClick={() => void handleSyncSingleSnapshotToTftp(row.id)}
-                          disabled={tftpSyncingSnapshotId === row.id || !row.id}
-                        />
                         <ActionIconButton
                           icon={backupingDeviceId === row.device_id ? RefreshCw : Database}
                           label={zh ? '备份此设备' : 'Backup this device'}
@@ -1763,29 +1506,8 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
                   <p className="mt-1 text-xs text-black/45">
                     {selectedRun.run.trigger || '--'} · {selectedRun.run.author || '--'} · {selectedRun.run.success_count || 0} {zh ? '成功' : 'success'} / {selectedRun.run.failed_count || 0} {zh ? '失败' : 'failed'} / {selectedRun.run.skipped_count || 0} {zh ? '跳过' : 'skipped'}
                   </p>
-                  {selectedRun.run.tftp_status && selectedRun.run.tftp_status !== 'none' && (
-                    <div className="mt-1.5 flex items-center gap-2">
-                      <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
-                        selectedRun.run.tftp_status === 'success'
-                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                          : 'bg-amber-50 text-amber-700 border border-amber-200'
-                      }`} title={selectedRun.run.tftp_log || ''}>
-                        文件归档: {selectedRun.run.tftp_status === 'success' ? (zh ? '已完成' : 'Completed') : (zh ? '部分/失败' : 'Failed')} ({selectedRun.run.tftp_uploaded_count || 0} {zh ? '个文件' : 'files'}) → {selectedRun.run.tftp_server}
-                      </span>
-                    </div>
-                  )}
                 </div>
                 <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void handleSyncBatchFromModal(selectedRun.run.id)}
-                    disabled={tftpSyncing}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-[#0e7490]/30 bg-[#ecfeff] px-3 py-1.5 text-xs font-semibold text-[#0e7490] transition-all hover:bg-[#cffafe] hover:border-[#0e7490] disabled:opacity-50"
-                    title={zh ? '将该批次所有快照及汇总日志推送到文件归档服务器' : 'Offload all snapshots and summary in this batch to archive server'}
-                  >
-                    {tftpSyncing ? <RefreshCw size={13} className="animate-spin" /> : <UploadCloud size={13} />}
-                    {zh ? '归档本批次' : 'Archive Batch'}
-                  </button>
                   <button title={zh ? '关闭' : 'Close'} onClick={closeBackupRunDetails} className="rounded-xl border border-black/10 p-2 text-black/55 hover:bg-black/[0.03]">
                     <X size={16} />
                   </button>
@@ -2048,165 +1770,7 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
           </motion.div>
         )}
       </AnimatePresence>
-      {/* Remote archive settings & sync modal */}
-      <AnimatePresence>
-        {tftpModalOpen && (
-          <motion.div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={() => setTftpModalOpen(false)}
-          >
-            <motion.div
-              className="flex w-full max-w-lg flex-col overflow-hidden rounded-3xl bg-white shadow-2xl border border-black/5"
-              onClick={(e) => e.stopPropagation()}
-              initial={{ scale: 0.96, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.96, opacity: 0 }}
-            >
-              <div className="flex items-center justify-between border-b border-black/5 px-6 py-4 bg-slate-50/50">
-                <div className="flex items-center gap-2.5">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-cyan-100/70 text-[#0891b2]">
-                    <UploadCloud size={18} />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-[#164e63]">{zh ? '文件远端归档与同步' : 'Remote File Archive & Synchronization'}</h3>
-                    <p className="text-[11px] text-black/40">{zh ? 'SFTP 主用，FTP 兼容，TFTP 仅作为老设备/实验环境兜底' : 'SFTP primary, FTP compatible, TFTP fallback for legacy or lab environments'}</p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setTftpModalOpen(false)}
-                  className="rounded-xl border border-black/10 p-1.5 text-black/45 hover:bg-black/5"
-                >
-                  <X size={16} />
-                </button>
-              </div>
 
-              <div className="p-6 space-y-4">
-                <div className="grid grid-cols-4 gap-3">
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-slate-700">{zh ? '传输协议' : 'Protocol'}</label>
-                    <select
-                      value={tftpSettings.protocol}
-                      onChange={(e) => {
-                        const protocol = e.target.value as ArchiveProtocol;
-                        setTftpSettings({ ...tftpSettings, protocol, server_port: archiveProtocolPort(protocol) });
-                      }}
-                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 focus:border-[#0891b2] focus:outline-none"
-                    >
-                      <option value="sftp">SFTP（推荐）</option>
-                      <option value="ftp">FTP（兼容）</option>
-                      <option value="tftp">TFTP（兜底）</option>
-                    </select>
-                  </div>
-                  <div className="col-span-2 space-y-1.5">
-                    <label className="text-xs font-semibold text-slate-700">{zh ? '文件服务器 IP / 主机名' : 'Archive Server IP / Host'}</label>
-                    <input
-                      type="text"
-                      placeholder="192.168.1.100"
-                      value={tftpSettings.server_ip}
-                      onChange={(e) => setTftpSettings({ ...tftpSettings, server_ip: e.target.value })}
-                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 focus:border-[#0891b2] focus:outline-none"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-slate-700">{zh ? '端口' : 'Port'}</label>
-                    <input
-                      type="number"
-                      placeholder={String(archiveProtocolPort(tftpSettings.protocol))}
-                      value={tftpSettings.server_port}
-                      onChange={(e) => setTftpSettings({ ...tftpSettings, server_port: parseInt(e.target.value, 10) || archiveProtocolPort(tftpSettings.protocol) })}
-                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 focus:border-[#0891b2] focus:outline-none"
-                    />
-                  </div>
-                </div>
-
-                {tftpSettings.protocol !== 'tftp' && (
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-slate-700">{zh ? '用户名' : 'Username'}</label>
-                      <input
-                        type="text"
-                        value={tftpSettings.username}
-                        onChange={(e) => setTftpSettings({ ...tftpSettings, username: e.target.value })}
-                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 focus:border-[#0891b2] focus:outline-none"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-slate-700">{zh ? '密码' : 'Password'}</label>
-                      <PasswordInputField
-                        showPasswordLabel={zh ? '显示密码' : 'Show password'}
-                        hidePasswordLabel={zh ? '隐藏密码' : 'Hide password'}
-                        placeholder={tftpSettings.password_configured ? (zh ? '已配置，留空保持不变' : 'Configured; leave blank to keep') : ''}
-                        value={tftpSettings.password}
-                        onChange={(e) => setTftpSettings({ ...tftpSettings, password: e.target.value })}
-                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 focus:border-[#0891b2] focus:outline-none"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-slate-700">{zh ? '远端目录 / 路径前缀' : 'Remote Directory / Prefix'}</label>
-                  <input
-                    type="text"
-                    placeholder="backups"
-                    value={tftpSettings.path_prefix}
-                    onChange={(e) => setTftpSettings({ ...tftpSettings, path_prefix: e.target.value })}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 focus:border-[#0891b2] focus:outline-none"
-                  />
-                  <p className="text-[10px] text-slate-400">{zh ? `本批次文件将压缩为一个 ZIP 后上传至 ${archiveProtocolLabel(tftpSettings.protocol)} 服务器的该前缀路径中（如 backups/config_backup_YYYYMMDD_HHMMSS.zip）` : `Each backup batch is compressed into one time-stamped ZIP archive under the ${archiveProtocolLabel(tftpSettings.protocol)} remote prefix`}</p>
-                </div>
-
-                {tftpTestResult && (
-                  <div className={`rounded-xl border p-3 text-xs ${tftpTestResult.success ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-800'}`}>
-                    <div className="flex items-center gap-1.5 font-bold">
-                      {tftpTestResult.success ? <CheckCircle2 size={14} className="text-emerald-600" /> : <AlertTriangle size={14} className="text-red-600" />}
-                      {tftpTestResult.success ? (zh ? '探测成功' : 'Connection Successful') : (zh ? '探测失败' : 'Connection Failed')}
-                    </div>
-                    <p className="mt-1 text-[11px] opacity-90">{tftpTestResult.message}</p>
-                  </div>
-                )}
-
-                <div className="flex items-center justify-between pt-2 border-t border-slate-100">
-                  <button
-                    type="button"
-                    onClick={() => void handleTestTftp()}
-                    disabled={tftpTesting}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-100 disabled:opacity-50"
-                  >
-                    {tftpTesting ? <RefreshCw size={13} className="animate-spin" /> : <Server size={13} />}
-                    {zh ? '测试连通性' : 'Test Connection'}
-                  </button>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => void handleSaveTftpSettings()}
-                      disabled={tftpSaving}
-                      className="inline-flex items-center gap-1.5 rounded-xl border border-cyan-200 bg-cyan-50 px-3.5 py-2 text-xs font-semibold text-[#0891b2] transition hover:bg-cyan-100 disabled:opacity-50"
-                    >
-                      {tftpSaving ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />}
-                      {zh ? '保存默认配置' : 'Save Default'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleSyncLatestBatchToTftp()}
-                      disabled={tftpSyncing || !latestRun}
-                      className="inline-flex items-center gap-1.5 rounded-xl bg-[#0891b2] px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-[#0e7490] disabled:opacity-40"
-                    >
-                      {tftpSyncing ? <RefreshCw size={13} className="animate-spin" /> : <UploadCloud size={13} />}
-                      {zh ? '归档最新批次' : 'Archive Latest Batch'}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
       </div>
     </div>
   );

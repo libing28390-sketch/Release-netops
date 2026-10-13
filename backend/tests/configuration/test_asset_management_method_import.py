@@ -9,6 +9,26 @@ from database import get_db_connection
 from schemas.web import WebAccessProfileInput
 
 
+def test_batch_import_without_management_ip_reports_missing_ip_without_network_enrichment(isolated_db):
+    result = assets.import_assets([
+        assets.AssetCreate(
+            asset_type="network_device",
+            hostname="imported-without-management-ip",
+            vendor="Cisco",
+            model="C9300",
+            platform="cisco_ios",
+        )
+    ])
+
+    assert result["created"] == 1
+    assert result["hostname_sync"]["total"] == 1
+    assert result["hostname_sync"]["succeeded"] == 0
+    assert result["hostname_sync"]["failed"] == 1
+    assert result["hostname_sync"]["failed_items"][0]["error"] == "缺少管理 IP"
+    assert result["librenms_enrollment"]["total"] == 0
+    assert result["snmp_identification"]["total"] == 0
+
+
 def test_batch_import_persists_web_only_management_method_and_sanitizes_password(isolated_db):
     result = assets.import_assets([
         assets.AssetCreate(

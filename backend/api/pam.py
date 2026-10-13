@@ -198,7 +198,12 @@ def recover_stale_sessions_on_startup():
     try:
         now = _utc_now()
         orphaned = conn.execute(
-            "SELECT * FROM pam_sessions WHERE status IN ('connecting', 'active')"
+            """SELECT * FROM pam_sessions
+                WHERE status IN ('connecting', 'active')
+                  AND (COALESCE(remote_desktop_protocol, '') = ''
+                       OR remote_desktop_lease_until IS NULL
+                       OR remote_desktop_lease_until < ?)""",
+            (now,),
         ).fetchall()
         stale_spools: list[tuple[str, str, str]] = []
         for orphan in orphaned:
@@ -211,8 +216,21 @@ def recover_stale_sessions_on_startup():
                 except Exception:
                     pass
             conn.execute(
-                "UPDATE pam_sessions SET status='closed', closed_at=?, close_reason='server_restart', "
-                "duration_seconds=?, updated_at=? WHERE id=?",
+                """UPDATE pam_sessions
+                      SET status='closed', closed_at=?, close_reason='server_restart',
+                          duration_seconds=?, updated_at=?,
+                          remote_desktop_recording_closed = CASE
+                              WHEN COALESCE(remote_desktop_protocol, '') <> '' THEN TRUE
+                              ELSE remote_desktop_recording_closed END,
+                          recording_status = CASE
+                              WHEN COALESCE(remote_desktop_protocol, '') <> ''
+                                   AND COALESCE(recording_spool_path, '') <> '' THEN 'captured'
+                              ELSE recording_status END,
+                          storage_status = CASE
+                              WHEN COALESCE(remote_desktop_protocol, '') <> ''
+                                   AND COALESCE(recording_spool_path, '') <> '' THEN 'PENDING'
+                              ELSE storage_status END
+                    WHERE id=?""",
                 (now, duration, now, oid),
             )
             spool = str(orphan['recording_spool_path'] or '') if 'recording_spool_path' in orphan.keys() else ''
@@ -294,7 +312,7 @@ def _resolve_session_creds(device: dict, asset: dict, access_level: str) -> dict
         if (not password and asset and (asset.get('normal_password') or asset.get('password'))):
             raw = asset.get('normal_password') or asset.get('password')
             password = decrypt_credential(raw) or ''
-        
+
         # Fallback to level-specific default if still empty
         if not username:
             username = 'user' if is_server else 'admin'
@@ -345,20 +363,20 @@ def _verify_mfa(username: str, fixed_pin: str, mfa_code: str, mfa_nonce: Optiona
     # Check dynamic MFA code from local in-memory store.
     # Atomically pop the code first so it cannot be consumed more than once.
     stored = mfa_store.pop(username, None)
-    
+
     if not stored:
         return False, '验证码不存在或已过期'
-    
+
     # Validation chain:
     # 1. Nonce check (if provided, must match to prevent out-of-order usage)
     if mfa_nonce and stored.get('nonce') != mfa_nonce:
         # If nonce doesn't match, we already popped it, so the code is invalidated.
         return False, '验证码索引不匹配，请使用最新的验证码'
-    
+
     # 2. Expiration check
     if time.time() > stored.get('expire', 0):
         return False, '验证码已过期'
-    
+
     # 3. Code match
     if str(stored.get('code')) != str(mfa_code):
         return False, '验证码错误'
@@ -474,7 +492,7 @@ def create_session(payload: SessionCreateIn, request: Request):
                     'asset_id': payload.asset_id,
                     'message': '特权访问需要 MFA 验证',
                 }
-            
+
             # Perform actual verification
             success, error = _verify_mfa_totp(requester, payload.fixed_pin, payload.mfa_code)
             if not success:
@@ -483,7 +501,7 @@ def create_session(payload: SessionCreateIn, request: Request):
         # 4. Resolve credentials (INTERNAL — never sent to frontend)
         creds = _resolve_session_creds(device, asset, level)
         logger.info(f"[PAM] Resolved creds for {device['hostname'] if device else asset['name']} (level={level}): user={creds['username']} has_pwd={'Yes' if creds['password'] else 'No'}")
-        
+
         if not creds['username']:
             raise HTTPException(
                 status_code=422,
@@ -665,11 +683,13 @@ def list_sessions(
             'storage_updated_at': "''",
             'agent_id': 'NULL',
             'last_heartbeat_at': 'NULL',
+            'remote_desktop_protocol': "''",
         }
         selected_columns = []
         for name in (
             'id', 'asset_id', 'device_id', 'requester_username', 'access_level',
             'session_kind', 'web_profile_id', 'login_username', 'connect_method',
+            'remote_desktop_protocol',
             'target_ip', 'target_port', 'target_scheme', 'target_path', 'status',
             'connected_at', 'closed_at', 'close_reason', 'duration_seconds',
             'command_count', 'recording_path', 'recording_status', 'agent_id',
@@ -869,17 +889,34 @@ def get_session_recording(session_id: str, user=require_permission('pam', 'view'
                 if user_tenant != 'tenant-default' and row_tenant not in {user_tenant, 'tenant-default'}:
                     raise HTTPException(status_code=404, detail='Recording not found')
         row_dict = dict(row)
+        if row_dict.get('session_kind') == 'remote_desktop' and isinstance(user, dict):
+            from services.pam_remote_desktop import enforce_asset_scope, load_asset
+
+            asset = load_asset(conn, str(row_dict.get('asset_id') or ''))
+            try:
+                enforce_asset_scope(user, asset, 'view')
+            except HTTPException as exc:
+                raise HTTPException(status_code=404, detail='Recording not found') from exc
         object_key = str(row_dict.get('object_key') or '').strip()
         storage_status = str(row_dict.get('storage_status') or 'LEGACY').upper()
         spool_path = str(row_dict.get('recording_spool_path') or '').strip()
         legacy_path = str(row_dict.get('recording_path') or '').strip()
         suffix = Path(object_key or spool_path or legacy_path).suffix.lower()
+        if row_dict.get('session_kind') == 'remote_desktop':
+            if not bool(row_dict.get('remote_desktop_recording_closed')):
+                raise HTTPException(status_code=409, detail='Recording is not complete')
+            if suffix == '.guac' and spool_path:
+                from services.pam_recording_storage import _is_stable_guac_file
+
+                if not _is_stable_guac_file(Path(spool_path)):
+                    raise HTTPException(status_code=409, detail='Recording is still being finalized')
         media_types = {
             '.cast': 'application/octet-stream',
             '.gif': 'image/gif',
             '.apng': 'image/apng',
             '.mp4': 'video/mp4',
             '.zip': 'application/zip',
+            '.guac': 'application/octet-stream',
         }
         extension = suffix if suffix in media_types else '.bin'
         safe_session_id = ''.join(char for char in str(session_id) if char.isalnum() or char in {'-', '_'})[:100] or 'session'
@@ -1061,9 +1098,9 @@ async def pam_terminal_ws(websocket: WebSocket, session_token: str):
             server_host_key_algs=ssh_algs.get('server_host_key_algs'),
         )
         logger.info(f"[PAM] SSH connection established to {ip}:{port}")
-        
+
         ssh_proc = await ssh_conn.create_process(
-            term_type='xterm-256color', 
+            term_type='xterm-256color',
             term_size=(80, 24),
             request_pty=True,
             encoding=None  # Get raw bytes to handle decoding manually
@@ -1095,7 +1132,7 @@ async def pam_terminal_ws(websocket: WebSocket, session_token: str):
     recording_filename = f"{session_id}.cast"
     recording_path = str(recording_spool_path(session_id, '.cast'))
     start_time = time.time()
-    
+
     try:
         # Asciinema v2 header
         with open(recording_path, 'w', encoding='utf-8') as f:
@@ -1250,7 +1287,7 @@ async def pam_terminal_ws(websocket: WebSocket, session_token: str):
                         output_str = output_bytes.decode('utf-8', errors='replace')
                         safe_output, _dlp_categories = redact_output(output_str)
                         output_command_event_id = active_command_event_id
-                        
+
                         # Relay to UI — if WebSocket send fails, the session
                         # is truly dead (client disconnected). Break out.
                         try:
@@ -1284,7 +1321,7 @@ async def pam_terminal_ws(websocket: WebSocket, session_token: str):
                                 execution_status='completed',
                                 finished_at=_utc_now(),
                             )
-                        
+
                         # Record to file (Asciinema format)
                         if recording_path:
                             try:
@@ -1460,7 +1497,7 @@ def _scan_session_for_risk(session_id: str, recording_path: str):
         summary = ""
         found_high = sorted(list(set(found_high)))
         found_med = sorted(list(set(found_med)))
-        
+
         if found_high:
             risk_level = 2
             summary = f"检测到极高风险指令: {', '.join(found_high)}"
@@ -1562,9 +1599,9 @@ def get_session_commands(session_id: str, user=require_permission('pam', 'view')
         recording_path = str(row['recording_spool_path'] or row['recording_path'] or '') if 'recording_spool_path' in row.keys() else str(row['recording_path'] or '')
         if not recording_path or not os.path.exists(recording_path):
             return {"commands": [], "risk_level": 0, "risk_summary": ""}
-        
+
         path = recording_path
-        
+
         # Trigger an on-demand scan if it hasn't been done yet
         if row['risk_level'] == 0:
             threading.Thread(target=_scan_session_for_risk, args=(session_id, path), daemon=True).start()
@@ -1576,7 +1613,7 @@ def get_session_commands(session_id: str, user=require_permission('pam', 'view')
         commands = []
         buffer = ""
         last_time = 0
-        
+
         with open(path, 'r', encoding='utf-8', errors='ignore') as f:
             for line in f:
                 if not line.strip(): continue
@@ -1584,10 +1621,10 @@ def get_session_commands(session_id: str, user=require_permission('pam', 'view')
                     event = json.loads(line)
                     if not isinstance(event, list) or event[1] != 'o':
                         continue
-                    
+
                     time_val = event[0]
                     data = event[2]
-                    
+
                     for char in data:
                         if char in ('\r', '\n'):
                             clean_cmd = _strip_ansi(buffer).strip()
@@ -1598,7 +1635,7 @@ def get_session_commands(session_id: str, user=require_permission('pam', 'view')
                                         parts = final_text.split(p)
                                         if len(parts) > 1 and parts[-1].strip():
                                             final_text = parts[-1].strip()
-                                
+
                                 if len(final_text) > 1 and not final_text.startswith('['):
                                     # Tag risk level
                                     cmd_risk = 0
@@ -1623,13 +1660,13 @@ def get_session_commands(session_id: str, user=require_permission('pam', 'view')
                                 buffer = buffer[:-1]
                 except:
                     continue
-        
+
         filtered = []
         for c in commands:
             if not filtered or filtered[-1]['text'] != c['text']:
                 if len(c['text']) < 120:
                     filtered.append(c)
-                
+
         return {
             "commands": filtered,
             "risk_level": row['risk_level'],
@@ -1943,9 +1980,9 @@ def _cleanup_old_sessions():
     try:
         row = conn.execute("SELECT value FROM system_settings WHERE key = 'pam_retention_days'").fetchone()
         days = int(row[0]) if row else 30
-        
+
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime('%Y-%m-%dT%H:%M:%S+00:00')
-        
+
         # Find sessions to purge
         old_sessions = conn.execute(
             """SELECT * FROM pam_sessions
@@ -1955,12 +1992,12 @@ def _cleanup_old_sessions():
                       OR COALESCE(object_key, '') <> '')""",
             (cutoff,)
         ).fetchall()
-        
+
         if not old_sessions:
             return
 
         logger.info(f"[PAM PURGE] Found {len(old_sessions)} sessions older than {days} days")
-        
+
         for s in old_sessions:
             sid = s['id']
             try:
@@ -2002,7 +2039,7 @@ def _update_session_status(session_id: str, status: str, close_reason: str = Non
                         duration = int((datetime.now(timezone.utc) - start).total_seconds())
                     except Exception:
                         pass
-            
+
             conn.execute(
                 """UPDATE pam_sessions
                    SET status=?, closed_at=?, close_reason=?, duration_seconds=?,
@@ -2022,7 +2059,7 @@ def _update_session_status(session_id: str, status: str, close_reason: str = Non
                 ).start()
             elif legacy_path:
                 threading.Thread(target=_scan_session_for_risk, args=(session_id, legacy_path), daemon=True).start()
-            
+
             threading.Thread(target=_cleanup_old_sessions, daemon=True).start()
         else:
             # Active sessions write only to the explicit local spool.  The
@@ -2170,7 +2207,7 @@ async def request_mfa(data: dict):
 
     username = data.get("username", "Admin")
     approver_id = data.get("approver_id")
-    
+
     if not approver_id:
         return {"success": False, "error": "请先选择审批人"}
 
@@ -2184,16 +2221,16 @@ async def request_mfa(data: dict):
     # 2. Generate code and 2-digit index (nonce)
     code = f"{random.randint(100000, 999999)}"
     index = f"{random.randint(1, 99):02d}"
-    
+
     mfa_store[username] = {
-        "code": code, 
+        "code": code,
         "nonce": index,
-        "expire": now + 300, 
+        "expire": now + 300,
         "last_sent_at": now
     }
-    
+
     logger.info(f"[MFA] Generated code [{index}] for user={username}, approver_id={approver_id}")
-    
+
     conn = get_db_connection()
     feishu_url = ""
     approver_name = "Admin"
@@ -2209,7 +2246,7 @@ async def request_mfa(data: dict):
                     feishu_url = feishu_cfg['webhook_url']
             except:
                 pass
-        
+
         # Fallback to global config if approver has no webhook
         if not feishu_url:
             global_row = conn.execute("SELECT webhook_url FROM global_notification_channels WHERE platform = 'feishu'").fetchone()
@@ -2227,7 +2264,7 @@ async def request_mfa(data: dict):
     ok, msg = notification_service.send_feishu_mfa_access_code(
         feishu_url, username, code, expires_min=5, approver_name=approver_name, index=index
     )
-    
+
     if ok:
         return {"success": True, "index": index, "message": f"验证码 [索引 #{index}] 已成功发送至审批人 {approver_name} 的飞书"}
     else:
@@ -2245,10 +2282,10 @@ async def export_session_video(session_id: str):
     agg_path = shutil.which('agg')
     if not agg_path:
         return {
-            "success": False, 
+            "success": False,
             "error": "服务器未安装渲染引擎 (agg)。请在服务器上安装 asciinema-agg 以支持视频导出。"
         }
-    
+
     # Logic to call agg would go here
     # agg --font-family "JetBrains Mono" input.cast output.gif
     # ffmpeg -i output.gif output.mp4
@@ -2262,7 +2299,7 @@ async def verify_mfa(data: dict):
     mfa_nonce = data.get("mfa_nonce")
     fixed_pw = data.get("fixed_password")
     current_username = data.get("current_username")
-    
+
     # Stand-alone verification follows the same per-user bcrypt PIN + TOTP
     # policy as device sessions; webhook-delivered codes are not accepted.
     success, error = _verify_mfa_totp(current_username, fixed_pw, mfa_code)
