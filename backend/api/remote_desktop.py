@@ -767,16 +767,7 @@ async def _proxy_tunnel(websocket: WebSocket, claimed: dict, lease_owner: str) -
         await asyncio.to_thread(_store_guacamole_connection, session_id, lease_owner, connection)
 
         try:
-            upstream = await websockets.connect(
-                connection.websocket_url,
-                subprotocols=["guacamole"],
-                origin=_guacamole_origin(connection.websocket_url),
-                open_timeout=10,
-                close_timeout=3,
-                max_size=MAX_WS_FRAME_BYTES,
-                ping_interval=20,
-                ping_timeout=20,
-            )
+            upstream = await _connect_guacamole_tunnel(connection)
         except Exception as exc:
             raise GuacamoleServiceError("GUACAMOLE_TUNNEL_FAILED") from exc
 
@@ -916,6 +907,21 @@ def _guacamole_origin(websocket_url: str) -> str:
     parsed = urlsplit(websocket_url)
     scheme = "https" if parsed.scheme == "wss" else "http"
     return f"{scheme}://{parsed.netloc}"
+
+
+async def _connect_guacamole_tunnel(connection: GuacamoleConnection):
+    """Connect directly to the internal Guacamole service, bypassing HTTP proxies."""
+    return await websockets.connect(
+        connection.websocket_url,
+        subprotocols=["guacamole"],
+        origin=_guacamole_origin(connection.websocket_url),
+        proxy=None,
+        open_timeout=10,
+        close_timeout=3,
+        max_size=MAX_WS_FRAME_BYTES,
+        ping_interval=20,
+        ping_timeout=20,
+    )
 
 
 def _audit_remote_desktop_closed(session_id: str, reason: str, error: Exception | None) -> None:

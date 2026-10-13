@@ -52,7 +52,15 @@
 - 数据库查询确认 `asset_remote_desktop_profiles` 表与 `pam_sessions.remote_desktop_protocol` 字段存在；当前 profile 数为 0。
 - Nexora 和 guacd 挂载同一个 `nexora-remote-desktop-recordings` 持久卷，guacd 以 UID 1000 运行且录像目录可用。
 
-尚未完成真实 RDP/VNC 建连、断开、录像生成/回放或 S3 对象验收，因为部署环境当前没有已配置的远程桌面 profile 和指定目标。S3 后端及录像归档配置已确认，但不能据此声称已写入实际录像对象。完成真实会话验收需要先配置一台可访问的 RDP 目标和一台 VNC 目标。
+S3 后端及录像归档配置已确认，但未生成实际录像对象。本机 RDP profile 已保存并提交一次会话申请；第一次会话在 Guacamole WebSocket 隧道阶段失败，因此尚未验证 Windows 登录、断开、录像生成/回放或 S3 对象。VNC 测试仍需一台运行 VNC Server 的目标。
+
+## 本机 RDP 联调进展（2026-10-13）
+
+- 按用户授权新增本机 Windows 10 Pro 资产 `LEERBON`（`192.168.204.1`），归属 `WH-DC-02`，资产上绑定原有普通凭据 `tete` 与特权凭据 `admin`；未读取或更改这两项密码。
+- 远程桌面 profile 编辑器最初因请求 body 多带 `protocol` 返回 Extra inputs 错误。修复并部署后，RDP profile 成功保存：启用 Access Center、端口 3389、Windows 域 `LEERBON`、凭据继承资产绑定项。Access Center 显示 `LEERBON` 的 RDP 已启用。
+- 第一条真实会话申请成功，但会话审计以 `GUACAMOLE_TUNNEL_FAILED` 失败，录像状态 `not_started`。该阶段尚未完成 Guacamole WebSocket 握手，因此不是 Windows 用户名/密码验证结果；目标账号认证仍未验证。
+- 远端后端环境包含 `HTTP_PROXY`/`HTTPS_PROXY`，运行 websockets 17.2。该版本从 websockets 15 开始默认读取代理环境变量，导致内部 `guacamole:8080` WebSocket 隧道错误走代理。已在代理连接修复中设置 `proxy=None` 并提升依赖最低版本，远程桌面定向回归测试通过（10 passed）；CI、远端重新部署和真实重试待完成。
+- 只有修复后连接已经到达 Windows 认证且现有账号被拒绝时，才继续创建本机测试账号。VNC 目标和录像/S3 端到端验证仍未完成。
 
 ## 回滚
 
