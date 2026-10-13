@@ -76,7 +76,7 @@ def test_vnc_parameters_allow_password_only_and_disable_file_transfer():
     assert parameters["recording-path"] == "/recordings/pam-vnc-test"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_connection_auth_uses_actual_data_source_and_connection_identifier(monkeypatch):
     monkeypatch.setenv("GUACAMOLE_JSON_SECRET_KEY", TEST_JSON_KEY)
     monkeypatch.setenv("GUACAMOLE_BASE_URL", "http://guacamole:8080/guacamole")
@@ -117,7 +117,7 @@ async def test_connection_auth_uses_actual_data_source_and_connection_identifier
     ]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_temporary_authorization_uses_guacamole_16_logout_endpoint(monkeypatch):
     monkeypatch.setenv("GUACAMOLE_BASE_URL", "http://guacamole:8080/guacamole")
     seen: list[httpx.Request] = []
