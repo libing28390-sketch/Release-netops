@@ -51,7 +51,9 @@ def test_connection_parameters_keep_rdp_nla_and_certificate_validation_enabled()
 
     assert parameters["security"] == "nla"
     assert parameters["ignore-cert"] == "false"
+    assert "cert-fingerprints" not in parameters
     assert parameters["recording-path"] == "/recordings/pam-rdp-test"
+    assert parameters["recording-name"] == "pam-rdp-test.guac"
     assert parameters["create-recording-path"] == "true"
     assert parameters["enable-drive"] == "false"
     assert parameters["enable-printing"] == "false"
@@ -74,6 +76,41 @@ def test_vnc_parameters_allow_password_only_and_disable_file_transfer():
     assert parameters["password"] == TEST_PASSWORD
     assert "username" not in parameters
     assert parameters["recording-path"] == "/recordings/pam-vnc-test"
+    assert parameters["recording-name"] == "pam-vnc-test.guac"
+
+
+def test_rdp_certificate_fingerprint_pins_sha256_without_ignoring_validation():
+    fingerprint = "4CE56BB09B6F1B96A521AE58EFCEA743ECBB632A9C8D29F999D01CE47F9FF80E"
+    parameters = guacamole_service.build_connection_parameters(
+        protocol="rdp",
+        hostname="win-01.example.test",
+        port=3389,
+        username="operator",
+        password=TEST_PASSWORD,
+        profile={"rdp_cert_fingerprint": fingerprint},
+        guac_recording_dir="/recordings/pam-rdp-pinned",
+        recording_name="pam-rdp-pinned",
+    )
+
+    assert parameters["ignore-cert"] == "false"
+    expected_fingerprint = ":".join(
+        fingerprint.lower()[index : index + 2] for index in range(0, len(fingerprint), 2)
+    )
+    assert parameters["cert-fingerprints"] == f"sha256:{expected_fingerprint}"
+
+
+def test_rdp_certificate_fingerprint_rejects_malformed_pin():
+    with pytest.raises(guacamole_service.GuacamoleServiceError, match="REMOTE_DESKTOP_INVALID_PROFILE"):
+        guacamole_service.build_connection_parameters(
+            protocol="rdp",
+            hostname="win-01.example.test",
+            port=3389,
+            username="operator",
+            password=TEST_PASSWORD,
+            profile={"rdp_cert_fingerprint": "not-a-sha256-fingerprint"},
+            guac_recording_dir="/recordings/pam-rdp-invalid-pin",
+            recording_name="pam-rdp-invalid-pin",
+        )
 
 
 @pytest.mark.anyio

@@ -26,6 +26,7 @@ interface ProfileDraft {
   admin_credential_id: string;
   rdp_domain: string;
   rdp_security_mode: RemoteDesktopSecurityMode;
+  rdp_cert_fingerprint: string;
 }
 
 type ProfileDraftMap = Record<RemoteDesktopProtocol, ProfileDraft>;
@@ -38,6 +39,7 @@ const defaultDraft = (protocol: RemoteDesktopProtocol): ProfileDraft => ({
   admin_credential_id: '',
   rdp_domain: '',
   rdp_security_mode: 'nla',
+  rdp_cert_fingerprint: '',
 });
 
 function toDraft(profile: RemoteDesktopProfile): ProfileDraft {
@@ -50,6 +52,7 @@ function toDraft(profile: RemoteDesktopProfile): ProfileDraft {
     admin_credential_id: profile.admin_credential_id || '',
     rdp_domain: profile.rdp_domain || '',
     rdp_security_mode: profile.rdp_security_mode || 'nla',
+    rdp_cert_fingerprint: profile.rdp_cert_fingerprint || '',
   };
 }
 
@@ -62,7 +65,12 @@ function toInput(protocol: RemoteDesktopProtocol, draft: ProfileDraft): RemoteDe
     admin_credential_id: draft.admin_credential_id || null,
   };
   return protocol === 'rdp'
-    ? { ...common, rdp_domain: draft.rdp_domain.trim(), rdp_security_mode: draft.rdp_security_mode }
+    ? {
+      ...common,
+      rdp_domain: draft.rdp_domain.trim(),
+      rdp_security_mode: draft.rdp_security_mode,
+      rdp_cert_fingerprint: draft.rdp_cert_fingerprint.trim().toUpperCase(),
+    }
     : common;
 }
 
@@ -128,6 +136,14 @@ export default function RemoteDesktopProfileEditor({ assetId, credentials, langu
     const port = Number(draft.port);
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
       setSaveErrors(current => ({ ...current, [protocol]: isZh ? '端口必须是 1 到 65535 之间的整数。' : 'Port must be an integer from 1 to 65535.' }));
+      return;
+    }
+    const certFingerprint = draft.rdp_cert_fingerprint.trim();
+    if (protocol === 'rdp' && certFingerprint && !/^[0-9A-Fa-f]{64}$/.test(certFingerprint)) {
+      setSaveErrors(current => ({
+        ...current,
+        [protocol]: isZh ? 'RDP 证书指纹必须是 64 位十六进制 SHA-256 值。' : 'RDP certificate fingerprint must be a 64-character hexadecimal SHA-256 value.',
+      }));
       return;
     }
 
@@ -248,6 +264,21 @@ export default function RemoteDesktopProfileEditor({ assetId, credentials, langu
                   <option value="rdp">RDP</option>
                   <option value="any">{isZh ? '自动协商' : 'Any'}</option>
                 </select>
+              </label>
+              <label className="block min-w-0 sm:col-span-2">
+                <span className="mb-1 block text-[10px] font-medium text-slate-500">{isZh ? 'RDP 证书 SHA-256 指纹（可选）' : 'RDP certificate SHA-256 fingerprint (optional)'}</span>
+                <input
+                  value={draft.rdp_cert_fingerprint}
+                  onChange={event => updateDraft(protocol, { rdp_cert_fingerprint: event.target.value })}
+                  disabled={loading || readOnly || saving}
+                  maxLength={64}
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 font-mono text-xs text-slate-700 outline-none focus:border-cyan-400 disabled:bg-slate-50"
+                />
+                <span className="mt-1 block text-[10px] leading-4 text-slate-400">
+                  {isZh ? '填写 64 位十六进制 SHA-256。设置后仅接受匹配证书；留空时仍执行系统证书校验，不会忽略证书错误。' : 'Enter 64 hexadecimal SHA-256 characters. When set, only a matching certificate is accepted; blank keeps system certificate validation enabled.'}
+                </span>
               </label>
             </>
           )}

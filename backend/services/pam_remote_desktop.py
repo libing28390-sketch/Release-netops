@@ -79,6 +79,7 @@ def public_profile(row: Any) -> dict:
         "admin_credential_id": profile.get("admin_credential_id") or "",
         "rdp_domain": profile.get("rdp_domain") or "",
         "rdp_security_mode": profile.get("rdp_security_mode") or "nla",
+        "rdp_cert_fingerprint": profile.get("rdp_cert_fingerprint") or "",
         "clipboard_enabled": bool(profile.get("clipboard_enabled")),
         "created_at": profile.get("created_at"),
         "updated_at": profile.get("updated_at"),
@@ -139,9 +140,12 @@ def normalize_profile_payload(protocol: str, payload: dict) -> dict:
 
     profile_name = str(payload.get("profile_name") or "").strip()
     domain = str(payload.get("rdp_domain") or "").strip()
-    if len(profile_name) > 120 or len(domain) > 255:
+    cert_fingerprint = str(payload.get("rdp_cert_fingerprint") or "").strip()
+    if len(profile_name) > 120 or len(domain) > 255 or len(cert_fingerprint) > 64:
         raise HTTPException(status_code=422, detail="Remote desktop profile field is too long")
-    if any(ord(char) < 0x20 for char in profile_name + domain):
+    if cert_fingerprint and not re.fullmatch(r"[0-9A-Fa-f]{64}", cert_fingerprint):
+        raise HTTPException(status_code=422, detail="RDP certificate fingerprint must be 64 hexadecimal characters")
+    if any(ord(char) < 0x20 for char in profile_name + domain + cert_fingerprint):
         raise HTTPException(status_code=422, detail="Remote desktop profile field contains control characters")
     return {
         "protocol": normalized_protocol,
@@ -152,6 +156,7 @@ def normalize_profile_payload(protocol: str, payload: dict) -> dict:
         "admin_credential_id": credential_ref("admin_credential_id"),
         "rdp_domain": domain if normalized_protocol == "rdp" else "",
         "rdp_security_mode": security_mode if normalized_protocol == "rdp" else "nla",
+        "rdp_cert_fingerprint": cert_fingerprint.upper() if normalized_protocol == "rdp" else "",
         "clipboard_enabled": bool(payload.get("clipboard_enabled", False)),
     }
 
@@ -185,8 +190,8 @@ def save_asset_profile(conn, asset_id: str, protocol: str, payload: dict, actor:
         """INSERT INTO asset_remote_desktop_profiles
                (id, asset_id, protocol, profile_name, enabled, port,
                 normal_credential_id, admin_credential_id, rdp_domain,
-                rdp_security_mode, clipboard_enabled, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                rdp_security_mode, rdp_cert_fingerprint, clipboard_enabled, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT (asset_id, protocol) DO UPDATE SET
                 profile_name = EXCLUDED.profile_name,
                 enabled = EXCLUDED.enabled,
@@ -195,6 +200,7 @@ def save_asset_profile(conn, asset_id: str, protocol: str, payload: dict, actor:
                 admin_credential_id = EXCLUDED.admin_credential_id,
                 rdp_domain = EXCLUDED.rdp_domain,
                 rdp_security_mode = EXCLUDED.rdp_security_mode,
+                rdp_cert_fingerprint = EXCLUDED.rdp_cert_fingerprint,
                 clipboard_enabled = EXCLUDED.clipboard_enabled,
                 updated_at = EXCLUDED.updated_at""",
         (
@@ -208,6 +214,7 @@ def save_asset_profile(conn, asset_id: str, protocol: str, payload: dict, actor:
             normalized["admin_credential_id"],
             normalized["rdp_domain"],
             normalized["rdp_security_mode"],
+            normalized["rdp_cert_fingerprint"],
             normalized["clipboard_enabled"],
             created_at,
             now,

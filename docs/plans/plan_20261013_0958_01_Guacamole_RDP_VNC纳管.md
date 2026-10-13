@@ -2,7 +2,7 @@
 
 ## 本次范围与状态
 
-用户已要求按清单开始执行。T01—T07 已实现；基础 GitHub Actions 与 Linux Compose 部署验收通过。用户已授权将本机 Windows 测试资产 LEERBON（192.168.204.1）纳入 WH-DC-02，并绑定 Nexora 已存的普通凭据 tete 与特权凭据 admin。RDP profile 请求契约已修复并部署，profile 保存成功；真实会话在建立 Nexora 到 Guacamole 的内部 WebSocket 隧道时失败（`GUACAMOLE_TUNNEL_FAILED`），尚未进入 Windows 凭据认证。远端后端使用 websockets 17.2，容器同时设置了 HTTP(S)_PROXY；websockets 15 起会自动使用系统/环境代理，因此内部 Guacamole 连接需显式禁用代理。现已设置 `proxy=None` 并将依赖下限提高到 15.0，定向单测通过；待 Actions、部署和真实 RDP 会话复验后，再判断是否需要本机测试账号。VNC 目标尚未指定。逐项结果记录于对应 walkthrough。
+用户已要求按清单执行 Guacamole RDP/VNC 纳管。T01—T07 已实现；用户授权将本机 Windows 资产 LEERBON（192.168.204.1）纳入 WH-DC-02，并绑定已有普通凭据 tete 与特权凭据 admin。用户选择固定证书指纹；已实现单资产 SHA-256 pin，空值保持严格系统证书校验。test 账号 NLA 认证成功后，已在访问中心实际显示 Windows 桌面；修复 WebSocket 子协议协商和活动态识别后，PAM 状态在 `ready/sync` 时转为 `active`，断开后归档状态为 S3 `READY`。Windows 10 Pro 的单交互桌面限制会切换/断开本机桌面，不要求注销。之后用户授权在 LEERBON 安装 TightVNC 测试服务；VNC 已从访问中心实机连通，录像归档状态为 S3 `READY`。
 
 用户已选择 Guacamole 容器化方案。实施前已重新核对工作树，确认 m0285 可用，并再次检查 Compose、PAM、权限、录像存储与前端调用链。
 
@@ -50,11 +50,44 @@ flowchart LR
 | T01 | 资产 RDP/VNC 配置与数据库迁移 | 主 Agent | 无 | 同一资产可分别配置 RDP/VNC；端口合法；凭据引用合法；租户和资产范围校验有效；迁移幂等且覆盖新装/升级 | 已实现；PostgreSQL 迁移测试通过 |
 | T02 | Guacamole 服务端认证适配 | 主 Agent | 无 | 正确实现官方 JSON 签名/加密及内部 Token 换取；支持 RDP/VNC 参数；错误脱敏；浏览器与日志不含目标密码或 Guacamole Token | 已实现；服务和日志脱敏测试通过 |
 | T03 | PAM 图形会话与 WebSocket 代理 | 主 Agent | T01、T02 | 短时票据原子消费且不能复用；管理员 MFA；建连/失败/关闭审计；跨 worker 强制断开；超时与异常回收 | 已实现；与 PAM 现有会话测试通过 |
-| T04 | 图形录像归档与恢复 | 主 Agent | T03、T07 | guacd 录像可写；关闭后归档到现有存储；失败保留待重试；恢复后可重试；未完成文件不标记可播放 | 已实现共享卷 UID/启动顺序和归档逻辑；容器共享卷及目录权限通过部署环境检查；真实会话录像归档待目标联调 |
+| T04 | 图形录像归档与恢复 | 主 Agent | T03、T07 | guacd 录像可写；关闭后归档到现有存储；失败保留待重试；恢复后可重试；未完成文件不标记可播放 | guacd 录像名与 `.guac` spool 路径对齐；远端会话已验证归档到 S3 并为 `READY` |
 | T05 | 资产配置与访问中心图形客户端 | 主 Agent | T01/T03 契约先确定 | RDP/VNC 配置表单、协议筛选、普通/管理员入口、用途/MFA、全屏/缩放/键鼠、断开与错误态；批量加载配置 | 已实现；TypeScript 检查和生产构建通过 |
 | T06 | PAM 图形审计与原生录像播放 | 主 Agent | T04 契约先确定 | 正确标识协议、访问级别和录像格式；原生录像播放/暂停/进度；强制断开；SSH/Web 原有播放保持兼容 | 已实现；TypeScript 检查和生产构建通过 |
 | T07 | 两容器部署与运维配置 | 主 Agent | 无，可与 T01/T02 并行 | 固定一致版本；可选 profile；启用时检查密钥；内部网络及共享录像卷；无公开 4822/8080 端口；部署脚本和说明同步 | 已实现；部署契约通过；Linux 部署环境中的两个容器、版本、健康状态和共享卷检查通过 |
-| T08 | 集成、验证与交付记录 | 主 Agent | T01—T07 | 聚焦后端/迁移/权限/前端/Compose 检查；真实 RDP/VNC 联调单独记录；完成 walkthrough 与回滚说明 | profile 请求契约和内网 WebSocket 代理设置已修复；定向测试通过，待 Actions、部署及真实 RDP 重试；VNC 目标待提供 |
+| T08 | 集成、验证与交付记录 | 主 Agent | T01—T07 | 聚焦后端/迁移/权限/前端/Compose 检查；真实 RDP/VNC 联调单独记录；完成 walkthrough 与回滚说明 | RDP、VNC 的浏览器建连、桌面显示、PAM 状态和 S3 `READY` 均已实机验证 |
+
+## T08 后续排查（2026-10-13）
+
+### 目标与现状
+
+- 已将 Nexora 的测试凭据校正为用户授权的 `test` 账号对应密码；Windows Security 4624 与 RemoteConnectionManager 1149 确认 NLA 登录成功，guacd 确认 RDPDR 用户登录。
+- 实测 Windows 主机当前为 Windows 10 Pro。桌面版单交互会话会令本机桌面与 RDP 会话互相切换；注销不是建立 RDP 的前提。
+- 最初前端一直停在“正在建立受控会话…”。诊断确认未协商浏览器请求的 `guacamole` WebSocket 子协议；修复后客户端正常收发 Guacamole 帧并显示桌面。后端最初只按 `ready` 更新活动态，实测可见画面同步 `sync` 但审计状态仍停在 `connecting`。
+
+### 影响范围与拟修改文件
+
+- 首选只读检查 Guacamole 客户端握手、Nginx WebSocket 代理和 FastAPI 双向转发；确认具体丢帧方向后再修复。
+- 如需安全诊断，修改范围限于 `backend/api/remote_desktop.py` 和 `backend/tests/pam/test_remote_desktop_tunnel_proxy.py`，仅记录协议指令名称/计数，不记录帧内容、票据或凭据；不得将明文或完整协议帧写入日志。
+- 更新本计划及对应 walkthrough；不修改 Windows 用户或会话策略，不注销/结束用户桌面应用。
+
+### 实施与验证步骤
+
+1. 检查浏览器 Guacamole.js 的握手及 WebSocket 路径、FastAPI `/api/pam/remote-desktop-ws/{ticket}` 双向代理、Nginx `Upgrade`/`Connection` 转发；代理必须协商客户端请求的 `guacamole` WebSocket 子协议。
+2. 在 Ubuntu 容器临时部署脱敏握手计数并通过现有授权的真实 RDP 资产复测，确认是否收到客户端 `select/size/connect`、服务端 `args/ready`，以及内部 tunnel UUID 是否正确协商。
+3. 已修复代理子协议协商，并在收到 Guacamole `ready` 或服务端首个 `sync` 画面指令时将 PAM 会话转为活动态；5 项后端定向 pytest、`py_compile` 和 `git diff --check` 通过。已将变更模块同步到授权 Ubuntu 环境并实测桌面渲染、PAM 状态与 S3 录像。
+4. RDP 实机验证完成后，按用户授权安装 VNC Server 并完成 VNC 实机联调；确认只允许网关来源、录像归档后更新 walkthrough。
+
+### 风险与回滚
+
+- 重连可能切换 LEERBON 的唯一交互桌面会话；不得执行注销，不保存或读取用户桌面内容。
+- 如临时诊断日志无法安全限定为指令名称/计数，则直接撤销诊断代码；部署回滚为恢复上一版本 `remote_desktop.py` 并重启 Nexora 容器，不动数据库、测试账号或录像。
+
+### 实际结果（2026-10-13）
+
+- FastAPI WebSocket 现在只在浏览器请求 `guacamole` 子协议时接受，并在握手中回显该协议；这使官方 Guacamole.js 能完成双向协议握手。活动态识别兼容 `ready` 和首个服务端 `sync`。
+- 用户授权的普通凭据 `test` 已通过 NLA 登录。`quser` 确认 `test` 的 RDP 会话为 `Active`；访问中心状态为“RDP 已连接”，画面显示 Windows 桌面。会话关闭后，数据库为 `closed/upstream_closed`，录像为 `uploaded/READY`，存储后端为 S3。
+- 为测试用 `tsdiscon 1` 断开本机 `tete` 会话，没有注销或关闭其应用；RDP 测试结束后 `tete` 与 `test` 均为 `Disc`。尝试用当前权限执行 `tscon 1 /dest:console` 恢复本机控制台时返回 Access Denied；需本机管理员操作恢复桌面会话。
+- 远端模块与工作区 SHA-256 一致；Ubuntu 上 Nexora 容器重启后健康接口 HTTP 200。VNC Server 后续由用户授权安装；实测结果见“VNC 实机验证收尾”。
 
 ## 各任务实施边界
 
@@ -141,9 +174,11 @@ flowchart LR
 - 部署脚本：`bash -n scripts/deploy-docker.sh` 通过；YAML 由部署契约测试解析。
 - GitHub Actions 后端、前端、lint、构建及 release sync 全部通过；首次 CI 异步测试修复后的运行结果见交付记录。
 - Linux 部署环境已执行常规更新，并在新同步的 checkout 使用 `bash scripts/deploy-docker.sh update --force` 启动可选 profile；两容器运行、guacd 健康、应用健康接口和内部 Guacamole HTTP 均通过。数据库迁移对象和共享录像卷已核实。
-- 2026-10-13 推送请求契约修复提交 `7c779c7e` 后，GitHub Actions `38361424851` 成功：后端 3,229 passed / 1 skipped，前端 501 passed；Windows Agent job 按 workflow 配置跳过。远端 `bash scripts/deploy-docker.sh update` 同步 Release commit `16c461c`，健康接口 HTTP 200，数据卷保留。profile 保存成功；第一条 RDP 会话审计显示 `GUACAMOLE_TUNNEL_FAILED`、录像未启动。日志表明失败发生在 Nexora→Guacamole WebSocket 隧道建立阶段，尚未到 Windows 密码验证。
-- 当前本机未运行 Docker；Windows 测试目标已启用 RDP，Nexora 容器此前可达 192.168.204.1:3389 并完成 RDP NLA 协商。仍需修复代理绕行、重试真实 RDP 会话与录像归档/回放；只有明确到达 Windows 认证并遭拒时才需要新增本机测试账号。VNC 仍需一台运行 VNC Server 的目标资产。
-- 代理绕行修复的远程桌面定向回归测试已通过：10 passed。GitHub Actions、远端部署和真实 RDP 重试待本次提交后执行。
+- 2026-10-13 请求契约修复提交 `7c779c7e` 的 GitHub Actions `38361424851` 成功：后端 3,229 passed / 1 skipped，前端 501 passed。代理绕行提交 `e5b7e50c` 的 GitHub Actions `38365533896` 成功；本次指纹格式修复的 Actions 尚未运行。
+- 为不等待 Actions，按用户授权将后端修改文件直接注入 Ubuntu 的 `nexora-netops` 容器并重启，健康接口均恢复 HTTP 200。内部隧道不再报 `GUACAMOLE_TUNNEL_FAILED`。实机发现 FreeRDP 2.11.7 要求 `cert-fingerprints` 的摘要字节带冒号分隔；后端现按该版本格式传值，保持 `ignore-cert=false`。
+- 同一会话的录像文件在 Nexora/guacd 共享卷内真实生成，但 guacd 按 `recording-name` 原样写入无扩展名文件，而数据库 spool 路径预期 `.guac`；实际 storage_status 为 `ERROR`、错误 `PAM recording spool is missing`，尚未上传到 S3。连接参数已修正为将录像名明确设为 `.guac`；与 profile 指纹、归档格式相关的 14 个定向测试通过，远端 S3 上传/播放待复验。
+- 用户选择 LEERBON 固定指纹。已确认 Windows `Win32_TSGeneralSetting` 的 RDP-Tcp SHA-1 指纹与 `LocalMachine\Remote Desktop` 证书 Thumbprint 相同，计算得到 SHA-256 `4CE56BB09B6F1B96A521AE58EFCEA743ECBB632A9C8D29F999D01CE47F9FF80E`。Profile 保存值为连续 64 位十六进制；后端适配 FreeRDP 2.11.7 的冒号分隔格式。重试的 guacd 日志不再报告 `Certificate validation failed`，而是 `RDPDR user logged on`；Windows Event 25 确认远端会话重连成功，随后 Event 40 code 5 表示被其他连接替换。`query user` 显示本机 `tete` 控制台仍活动。普通凭据已通过初始登录；稳定图形桌面待创建临时测试账号后复测。VNC 仍需一台运行 VNC Server 的目标资产。
+- 最新测试会话 `pam-rdp-5dd121aeb5fe4efb8c3a84faec419b2e` 已确认 profile pin 生效；guacd 不再报告证书错误，而 Windows Security 4625 显示 `TargetUserName=test`、`TargetDomainName=LEERBON`、`Status=0xc000006d`、`SubStatus=0xc000006a`，说明账号识别成功但提交的密码不匹配。凭据表中的测试记录存在非空加密密码；未读取明文。该失败会话仍生成录像并归档到 S3，数据库状态 `recording_status=uploaded`、`storage_status=READY`。需用户在凭据中心输入当前旧密码并将新密码设为用户选定值后再试。
 
 ## 风险与回滚思路
 
@@ -161,6 +196,15 @@ flowchart LR
 - [官方 JavaScript 客户端](https://guacamole.apache.org/doc/gug/writing-you-own-guacamole-app.html)
 - [官方录像播放说明](https://guacamole.apache.org/doc/gug/recording-playback.html)
 
+## VNC 实机验证收尾（2026-10-13）
+
+- 用户授权在 LEERBON 安装 VNC Server。已从 TightVNC 官方站点下载 2.8.90 64 位安装包并验证 Authenticode 签名有效；用户完成本机安装、许可和服务口令设置。服务以 Windows 服务运行，TCP 5900 监听。
+- LEERBON 的 Windows Defender 防火墙配置文件均处于关闭状态，因此没有把新增防火墙规则误当作有效隔离。用户授权的来源限制通过 TightVNC 自身 IP 访问控制实现：首条规则只放行 `192.168.204.128`，后续 IPv4 全地址规则拒绝其余来源；重启服务后读取到规则值且服务仍运行。应用层规则没有开启或修改整机防火墙。
+- Nexora 中为 LEERBON 启用了 VNC Access Center 入口，端口 5900，复用已有凭据引用 `test-rdp-leerbon`；VNC 连接只使用其密码字段，不发送用户名。没有在代码、文档或日志中记录密码值。
+- 从 Nexora 操作工作台发起普通级别的 VNC 会话，前端显示“LEERBON VNC 已连接”，实际显示 Windows 桌面。会话 ID 为 `pam-vnc-5adeb00d914f4f928951263e738da7fe`，持续 21 秒后主动断开；“我的历史记录”显示状态“已关闭”、方式“VNC 图形会话”、录像“可用”。
+- 数据库记录为 `closed`、`recording_status=uploaded`、`storage_status=READY`、对象键存在、录像大小 `1,401,015` 字节；这确认本次 `.guac` 录像已归档到现有 S3 兼容存储。
+- TightVNC 的传统 VNC 认证有效密码最多使用 8 个字符，且本次测试口令较弱，只适合受限测试环境。生产使用前应改为高熵唯一口令，并继续保持仅可信网关可达；当前 Windows 防火墙仍关闭。
+
 ## 本次完成记录
 
-T01—T07 已完成；T08 的自动验证、CI 与 Linux 部署基础链路已通过。内部 Guacamole WebSocket 代理绕行已修复，待 CI、重新部署和 RDP 会话复验；录像归档/回放联调仍待真实连接成功，VNC 需提供运行 VNC Server 的目标资产。详见 [walkthrough](../walkthrough/walkthrough_20261013_0958_01_Guacamole_RDP_VNC纳管.md)。
+T01—T07 已实现；RDP 与 VNC 均已通过浏览器内图形会话实机验证，PAM 关闭状态与 S3 录像归档均为 `READY`。详见 [walkthrough](../walkthrough/walkthrough_20261013_0958_01_Guacamole_RDP_VNC纳管.md)。

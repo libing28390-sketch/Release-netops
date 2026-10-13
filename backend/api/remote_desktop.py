@@ -88,6 +88,7 @@ class RemoteDesktopProfileInput(BaseModel):
     admin_credential_id: str | None = Field(default=None, max_length=200)
     rdp_domain: str = Field(default="", max_length=255)
     rdp_security_mode: Literal["any", "nla", "tls", "rdp"] = "nla"
+    rdp_cert_fingerprint: str = Field(default="", max_length=64)
     clipboard_enabled: bool = False
 
 
@@ -720,6 +721,47 @@ def _parse_instruction_name(value: str) -> set[str]:
     return names
 
 
+_DIAGNOSTIC_GUACAMOLE_INSTRUCTIONS = frozenset({
+    "ack",
+    "args",
+    "audio",
+    "connect",
+    "disconnect",
+    "error",
+    "image",
+    "nop",
+    "ready",
+    "select",
+    "size",
+    "sync",
+    "timezone",
+    "video",
+})
+
+
+def _record_instruction_diagnostics(counts: dict[str, int], value: str) -> None:
+    """Record only known Guacamole opcodes; never retain protocol arguments."""
+    for name in _parse_instruction_name(value):
+        label = "internal" if not name else (
+            name if name in _DIAGNOSTIC_GUACAMOLE_INSTRUCTIONS else "other"
+        )
+        counts[label] = counts.get(label, 0) + 1
+
+
+def _is_interactive_session_instruction(instruction_names: set[str]) -> bool:
+    """Recognize Guac readiness or the first server screen synchronization."""
+    return bool({"ready", "sync"} & instruction_names)
+
+
+def _supports_guacamole_subprotocol(header_value: str | None) -> bool:
+    """Return whether the WebSocket client requested the required subprotocol."""
+    return "guacamole" in {
+        protocol.strip()
+        for protocol in str(header_value or "").split(",")
+        if protocol.strip()
+    }
+
+
 async def _send_client_error(websocket: WebSocket, status: int, message: str) -> None:
     try:
         await websocket.send_json({"type": "error", "status": status, "message": message})
@@ -746,6 +788,10 @@ async def _proxy_tunnel(websocket: WebSocket, claimed: dict, lease_owner: str) -
     relay_started = False
     close_reason = "client_disconnect"
     error: Exception | None = None
+    client_instruction_counts: dict[str, int] = {}
+    server_instruction_counts: dict[str, int] = {}
+    client_frame_count = 0
+    server_frame_count = 0
     try:
         spool_path, guac_recording_dir = _new_remote_recording_location(session_id)
         parameters = build_connection_parameters(
@@ -758,6 +804,12 @@ async def _proxy_tunnel(websocket: WebSocket, claimed: dict, lease_owner: str) -
             guac_recording_dir=guac_recording_dir,
             recording_name=session_id,
         )
+        if protocol == "rdp":
+            logger.info(
+                "Remote desktop session %s: RDP certificate fingerprint pin %s",
+                session_id,
+                "configured" if parameters.get("cert-fingerprints") else "not configured",
+            )
         connection = await create_connection(
             session_id=session_id,
             protocol=protocol,
@@ -771,13 +823,18 @@ async def _proxy_tunnel(websocket: WebSocket, claimed: dict, lease_owner: str) -
         except Exception as exc:
             raise GuacamoleServiceError("GUACAMOLE_TUNNEL_FAILED") from exc
 
-        await websocket.accept()
+        if not _supports_guacamole_subprotocol(
+            websocket.headers.get("sec-websocket-protocol")
+        ):
+            raise RuntimeError("REMOTE_DESKTOP_SUBPROTOCOL_REQUIRED")
+        await websocket.accept(subprotocol="guacamole")
         relay_started = True
         opened_at = time.monotonic()
         last_refresh = 0.0
         session_active = False
 
         async def client_to_guacamole() -> None:
+            nonlocal client_frame_count
             while True:
                 incoming = await websocket.receive()
                 if incoming.get("type") == "websocket.disconnect":
@@ -789,16 +846,30 @@ async def _proxy_tunnel(websocket: WebSocket, claimed: dict, lease_owner: str) -
                     continue
                 if len(data) > MAX_WS_FRAME_BYTES:
                     raise RuntimeError("REMOTE_DESKTOP_FRAME_TOO_LARGE")
+                client_frame_count += 1
+                if isinstance(data, str):
+                    _record_instruction_diagnostics(client_instruction_counts, data)
                 await upstream.send(data)
 
         async def guacamole_to_client() -> None:
-            nonlocal session_active
+            nonlocal session_active, server_frame_count
             async for message in upstream:
+                server_frame_count += 1
+                diagnostic_message: str | None = None
                 if isinstance(message, str):
-                    instruction_names = _parse_instruction_name(message)
-                    if "ready" in instruction_names and not session_active:
+                    diagnostic_message = message
+                elif isinstance(message, bytes):
+                    try:
+                        diagnostic_message = message.decode("utf-8")
+                    except UnicodeDecodeError:
+                        pass
+                if diagnostic_message is not None:
+                    instruction_names = _parse_instruction_name(diagnostic_message)
+                    _record_instruction_diagnostics(server_instruction_counts, diagnostic_message)
+                    if _is_interactive_session_instruction(instruction_names) and not session_active:
                         session_active = await asyncio.to_thread(_mark_session_active, session_id, lease_owner)
                         ready_event.set()
+                if isinstance(message, str):
                     await websocket.send_text(message)
                 else:
                     await websocket.send_bytes(message)
@@ -893,6 +964,17 @@ async def _proxy_tunnel(websocket: WebSocket, claimed: dict, lease_owner: str) -
                     await websocket.close(code=1011, reason=safe_message)
                 except Exception:
                     pass
+        if relay_started and (error is not None or not ready_event.is_set()):
+            logger.warning(
+                "Remote desktop session %s tunnel handshake diagnostics: "
+                "client_frames=%s client_opcodes=%s server_frames=%s server_opcodes=%s ready=%s",
+                session_id,
+                client_frame_count,
+                sorted(client_instruction_counts.items()),
+                server_frame_count,
+                sorted(server_instruction_counts.items()),
+                ready_event.is_set(),
+            )
         if password:
             password = ""
         if username:

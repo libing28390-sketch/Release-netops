@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -84,6 +85,13 @@ def _api_url(base: str, suffix: str) -> str:
     return f"{base}/api/{suffix.lstrip('/')}"
 
 
+def _guacamole_recording_name(recording_name: str) -> str:
+    name = str(recording_name or "").strip()
+    if not name or any(char in name for char in "/\\\r\n"):
+        raise GuacamoleServiceError("REMOTE_DESKTOP_INVALID_RECORDING")
+    return name if name.lower().endswith(".guac") else f"{name}.guac"
+
+
 def build_connection_parameters(
     *,
     protocol: str,
@@ -121,7 +129,7 @@ def build_connection_parameters(
         "disable-paste": "false" if clipboard else "true",
         "recording-path": guac_recording_dir,
         "create-recording-path": "true",
-        "recording-name": recording_name,
+        "recording-name": _guacamole_recording_name(recording_name),
         "recording-exclude-output": "false",
         "recording-exclude-mouse": "false",
         "recording-exclude-keys": "false",
@@ -129,6 +137,9 @@ def build_connection_parameters(
     if protocol_name == "rdp":
         mode = str(profile.get("rdp_security_mode") or "nla").strip().lower()
         if mode not in {"any", "nla", "tls", "rdp"}:
+            raise GuacamoleServiceError("REMOTE_DESKTOP_INVALID_PROFILE")
+        cert_fingerprint = str(profile.get("rdp_cert_fingerprint") or "").strip()
+        if cert_fingerprint and not re.fullmatch(r"[0-9A-Fa-f]{64}", cert_fingerprint):
             raise GuacamoleServiceError("REMOTE_DESKTOP_INVALID_PROFILE")
         parameters.update(
             {
@@ -142,6 +153,15 @@ def build_connection_parameters(
                 "enable-sftp": "false",
             }
         )
+        if cert_fingerprint:
+            # The Guacamole image ships FreeRDP 2.11.x, whose fingerprint
+            # matcher compares the hash in colon-separated byte form.
+            normalized_fingerprint = cert_fingerprint.lower()
+            freerdp_fingerprint = ":".join(
+                normalized_fingerprint[index : index + 2]
+                for index in range(0, len(normalized_fingerprint), 2)
+            )
+            parameters["cert-fingerprints"] = f"sha256:{freerdp_fingerprint}"
         domain = str(profile.get("rdp_domain") or "").strip()
         if domain:
             parameters["domain"] = domain

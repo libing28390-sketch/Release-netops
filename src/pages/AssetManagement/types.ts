@@ -37,6 +37,7 @@ export interface RemoteDesktopProfile {
   admin_credential_id?: string | null;
   rdp_domain?: string | null;
   rdp_security_mode?: RemoteDesktopSecurityMode;
+  rdp_cert_fingerprint?: string;
 }
 
 export interface AssetPlacement {
