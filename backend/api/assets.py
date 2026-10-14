@@ -4094,6 +4094,11 @@ def import_assets(
             }
 
         for row_number, body in enumerate(items, start=1):
+            if isinstance(body, AssetCreate) and not isinstance(body, AssetImportCreate):
+                # Direct callers can bypass FastAPI's request-model coercion.
+                # Normalize legacy AssetCreate instances to the import model,
+                # whose remote-desktop profile list defaults to empty.
+                body = AssetImportCreate.model_validate(body.model_dump())
             savepoint = f"asset_import_row_{row_number}"
             if detailed and not atomic:
                 conn.execute(f'SAVEPOINT {savepoint}')
