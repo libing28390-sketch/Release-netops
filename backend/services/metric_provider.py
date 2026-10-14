@@ -352,11 +352,11 @@ class VictoriaMetricsMetricProvider(MetricProvider):
 
         if key == "device_uptime_seconds":
             # SNMPv2-MIB::sysUpTime is a TimeTicks value in centiseconds.
-            # generic_system_std is sampled every 15 minutes, longer than the
+            # generic_system_std is sampled every five minutes, close to the
             # PromQL instant-selector lookback. Read its latest sample within a
             # bounded window and advance the TimeTicks value by its sample age
-            # before converting to seconds, so uptime remains both visible and
-            # current between scheduled SNMP scrapes.
+            # before converting to seconds, so uptime remains visible and
+            # current when a scheduled SNMP scrape is delayed or missed.
             uptime_sample = (
                 f"last_over_time(sysUpTime{selector}[{SYSUPTIME_LOOKBACK}])"
                 if selector

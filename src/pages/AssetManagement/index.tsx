@@ -51,12 +51,16 @@ import { statusMeta, typeMeta } from './helpers';
 import {
   ASSET_INFO_SHEET_RE,
   MANAGEMENT_ENTRY_SHEET_RE,
+  REMOTE_DESKTOP_PROFILE_SHEET_RE,
   assetTypeForSheetName,
   normalizeImportHeader,
   mergeManagementMethods,
+  mergeRemoteDesktopProfiles,
   parseManagementMethodSheet,
+  parseRemoteDesktopProfileSheet,
   formatAssetImportError,
   type ManagementMethodImportRow,
+  type RemoteDesktopProfileImportRow,
 } from './importUtils';
 
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
@@ -1395,6 +1399,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         const mapped: Record<string, string>[] = [];
         const managementMethods: ManagementMethodImportRow[] = [];
         const managementMethodErrors: string[] = [];
+        const remoteDesktopProfiles: RemoteDesktopProfileImportRow[] = [];
+        const remoteDesktopProfileErrors: string[] = [];
         const templateMismatchRows: string[] = [];
         const snmpPreflightErrors: string[] = [];
         const sshProfilePreflightErrors: string[] = [];
@@ -1405,6 +1411,12 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
             const parsed = parseManagementMethodSheet(ws);
             managementMethods.push(...parsed.rows);
             managementMethodErrors.push(...parsed.errors);
+            continue;
+          }
+          if (REMOTE_DESKTOP_PROFILE_SHEET_RE.test(name.trim())) {
+            const parsed = parseRemoteDesktopProfileSheet(ws);
+            remoteDesktopProfiles.push(...parsed.rows);
+            remoteDesktopProfileErrors.push(...parsed.errors);
             continue;
           }
           const raw = XLSX.utils.sheet_to_json<Record<string, string>>(ws, { defval: '' });
@@ -1514,11 +1526,17 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         const merged = mergeManagementMethods(mapped, managementMethods, {
           requireEntryForAllAssets: hasAssetSheet,
         });
-        const methodErrors = [...managementMethodErrors, ...merged.errors];
+        const remoteDesktopMerged = mergeRemoteDesktopProfiles(merged.assets, remoteDesktopProfiles);
+        const methodErrors = [
+          ...managementMethodErrors,
+          ...merged.errors,
+          ...remoteDesktopProfileErrors,
+          ...remoteDesktopMerged.errors,
+        ];
         if (methodErrors.length > 0) {
           setFeedbackMsg({
             type: 'error',
-            text: zh ? '管理入口配置存在错误，请检查' : 'Management entry configuration has errors',
+            text: zh ? '管理入口或远程桌面配置存在错误，请检查' : 'Management entry or remote desktop configuration has errors',
             details: methodErrors.slice(0, 8),
           });
           return;
@@ -1600,7 +1618,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
 
     const guideRows = zh ? [
       ['资产导入填写说明'],
-      ['项目', '怎么填', '只需要填写“网络设备”“服务器”和“管理入口”；红色 * 表示必填；其它工作表仅供参考，不用修改。'],
+      ['项目', '怎么填', '填写“网络设备”“服务器”“管理入口”，需要远程桌面纳管时再填“远程桌面”；红色 * 表示必填，其它工作表仅供参考。'],
       ['网络设备', '每台设备一行', '只填写网络设备；资产类型固定填写“网络设备”，不要混入服务器。'],
       ['服务器', '每台设备一行', '只填写服务器；资产类型固定填写“服务器”，不要混入网络设备。'],
       ['资产类型', '必填', '按当前工作表填写对应值：“网络设备”或“服务器”。'],
@@ -1608,6 +1626,13 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ['录入来源', '必填', '填写“新设备”或“存量设备”。'],
       ['投产状态', '必填', '新设备填“待投产”；存量设备按实际状态填写。'],
       ['管理入口', '每个资产一行', '资产编号和主机名会从两张资产表自动带出；SSH 只填一行，导入后自动提供“SSH 终端”和“Web SSH”。'],
+      ['远程桌面', '必填规则', '* 协议必填；资产编号或主机名至少填写一项，两者可同时填写。'],
+      ['示例行', '替换或删除', '示例：SRV-BJ-001 / web-srv-01；导入前按实际情况替换或删除。'],
+      ['远程桌面凭据', '继承资产', '导入模板不重复填写凭据；RDP/VNC 使用资产的普通/管理员凭据。需要不同账号时，导入后在远程桌面配置中单独绑定。'],
+      ['RDP 域', 'AD 账号需要', 'Windows 域账号示例：CONTOSO；本地账号留空。这里不是 IP、DNS 后缀或站点。'],
+      ['RDP 安全模式', '默认 NLA', 'nla 为网络级别身份验证（推荐）；any 自动协商；tls 使用 TLS；rdp 为旧版兼容模式。'],
+      ['RDP 证书指纹', '可选', '填目标 RDP 服务器真实证书的 SHA-256（64 位十六进制）；格式示例见参数参考。留空仍校验证书。'],
+      ['允许剪贴板', '默认否', '是：允许浏览器和远程桌面双向复制/粘贴；否：禁止双向复制/粘贴。'],
       ['网页管理', '有网页才填', '只有设备自带 HTTP/HTTPS 管理页面才另填 HTTP 或 HTTPS；这不是 Web SSH。'],
       ['没有登录入口', '填 NONE', '协议填 NONE，其它入口信息留空。'],
       ['端口/路径', '可留空', 'SSH 默认 22；HTTP 默认 80；HTTPS 默认 443。SSH 和 Web SSH 不填路径。'],
@@ -1618,7 +1643,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ['重复资产', '会跳过', '主机名、资产编号、序列号或管理 IP 重复时跳过整行，不更新旧资产；修改旧资产请到资产管理编辑。'],
     ] : [
       ['Asset Import Instructions'],
-      ['Item', 'How to fill', 'Only complete Network Devices, Servers and Management Entries; a red * means required; other sheets are reference-only.'],
+      ['Item', 'How to fill', 'Complete Network Devices, Servers and Management Entries. Fill Remote Desktop only when needed; a red * means required. Other sheets are references.'],
       ['Network Devices', 'One row per device', 'Enter network devices only; keep Asset Type as network_device.'],
       ['Servers', 'One row per device', 'Enter servers only; keep Asset Type as server.'],
       ['Asset Type', 'Required', 'Use the value matching the current sheet: network_device or server.'],
@@ -1626,6 +1651,13 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ['Asset Origin', 'Required', 'Use new or legacy.'],
       ['Lifecycle', 'Required', 'Use staging for new devices; use the actual state for legacy devices.'],
       ['Management Entries', 'One row per asset', 'Asset Tag and Hostname are read from Network Devices and Servers. For SSH, enter one row only; the imported asset automatically provides SSH terminal and Web SSH.'],
+      ['Remote Desktop', 'Required fields', '* Protocol is required; enter Asset Tag or Hostname, or both.'],
+      ['Example rows', 'Replace or delete', 'Example: SRV-BJ-001 / web-srv-01; replace or delete before import.'],
+      ['Remote Desktop credentials', 'Inherit asset', 'The import template does not repeat credential fields. RDP/VNC inherit the asset normal/admin credentials. Bind a different account in the remote desktop profile after import.'],
+      ['RDP domain', 'AD accounts', 'Example Windows domain: CONTOSO. Leave blank for a local account. This is not an IP, DNS suffix, or site.'],
+      ['RDP security mode', 'NLA by default', 'nla is Network Level Authentication (recommended); any negotiates automatically; tls uses TLS; rdp is legacy compatibility.'],
+      ['RDP certificate fingerprint', 'Optional', 'Use the target RDP server certificate SHA-256 (64 hexadecimal characters); format example is in the reference sheet. Blank still validates the certificate.'],
+      ['Clipboard access', 'Off by default', 'Yes allows copy/paste both ways between browser and remote desktop; no disables both directions.'],
       ['Device Web Page', 'Only when present', 'Use HTTP or HTTPS only for the device\'s own web page; this is not Web SSH.'],
       ['No Login', 'Use NONE', 'Set the protocol to NONE and leave the remaining entry fields blank.'],
       ['Port / Path', 'Optional', 'Defaults are SSH 22, HTTP 80 and HTTPS 443. Leave SSH and Web SSH paths blank.'],
@@ -1721,6 +1753,21 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     wsMethods['!ref'] = 'A1:J6';
     XLSX.utils.book_append_sheet(wb, wsMethods, zh ? '管理入口' : 'Management Entries');
 
+    const remoteDesktopHeaders = zh
+      ? ['资产编号 *', '主机名 *', '远程桌面协议 *', '是否启用', '端口', 'RDP 域', 'RDP 安全模式', 'RDP 证书 SHA-256 指纹', '允许剪贴板', '配置名称']
+      : ['Asset Tag *', 'Hostname *', 'Protocol *', 'Enabled', 'Port', 'RDP Domain', 'RDP Security Mode', 'RDP Certificate SHA-256 Fingerprint', 'Clipboard Enabled', 'Profile Name'];
+    const remoteDesktopExamples = zh ? [
+      ['SRV-BJ-001', 'web-srv-01', 'RDP', '是', 3389, '', 'nla', '', '否', 'RDP 示例'],
+      ['SRV-BJ-001', 'web-srv-01', 'VNC', '是', 5900, '', '', '', '否', 'VNC 控制台'],
+    ] : [
+      ['SRV-BJ-001', 'web-srv-01', 'RDP', 'yes', 3389, '', 'nla', '', 'no', 'RDP Example'],
+      ['SRV-BJ-001', 'web-srv-01', 'VNC', 'yes', 5900, '', '', '', 'no', 'VNC Console'],
+    ];
+    const wsRemoteDesktop = XLSX.utils.aoa_to_sheet([remoteDesktopHeaders, ...remoteDesktopExamples]);
+    wsRemoteDesktop['!cols'] = [18, 20, 22, 11, 13, 17, 25, 34, 16, 24].map(wch => ({ wch }));
+    wsRemoteDesktop['!rows'] = [{ hpt: 42 }, ...remoteDesktopExamples.map(() => ({ hpt: 30 }))];
+    XLSX.utils.book_append_sheet(wb, wsRemoteDesktop, zh ? '远程桌面' : 'Remote Desktop');
+
     const optHeaders = zh
       ? ['分类类型', '参数名称 (Field Name)', '标准填写值 (Standard Value)', '值含义说明 (Description)']
       : ['Category', 'Field Name', 'Standard Value', 'Description'];
@@ -1766,6 +1813,17 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ['管理入口', 'SSH算法策略', '现代算法', '严格限制为现代算法；设备较旧时可能无法连接'],
       ['管理入口', 'SSH算法策略', '兼容旧算法', '受控启用 group14-sha1、ssh-rsa、AES-CBC、HMAC-SHA1 等安全旧算法'],
       ['管理入口', 'SSH算法策略', '极旧设备兼容', '紧急 break-glass 模式；可能启用 group1、ssh-dss、MD5、RC4 等高风险算法，必须审计'],
+      ['远程桌面', '协议', 'RDP', 'Windows 远程桌面协议；默认端口 3389'],
+      ['远程桌面', '协议', 'VNC', '虚拟网络控制台；默认端口 5900'],
+      ['远程桌面', '配置名称', '可选', '留空时自动使用 RDP 或 VNC 作为配置名称'],
+      ['远程桌面', '凭据来源', '继承资产', 'RDP/VNC 默认使用资产对应凭据；需不同账号时，导入后在远程桌面配置中绑定'],
+      ['远程桌面', 'RDP 域', 'CONTOSO', 'Windows AD 域账号示例；本地账号留空'],
+      ['远程桌面', 'RDP 安全模式', 'nla', '网络级别身份验证；默认且推荐'],
+      ['远程桌面', 'RDP 安全模式', 'any', '自动协商客户端与服务器支持的模式'],
+      ['远程桌面', 'RDP 安全模式', 'tls', '使用 TLS 安全模式'],
+      ['远程桌面', 'RDP 安全模式', 'rdp', '旧版 RDP 安全模式，仅兼容旧服务器'],
+      ['远程桌面', 'RDP 证书 SHA-256 指纹', '0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF', '仅为 64 位格式示例，不是真实服务器指纹；只能填写目标服务器的实际证书指纹'],
+      ['远程桌面', '允许剪贴板', '否 / 是', '否禁用双向复制粘贴；是允许浏览器与远程桌面之间复制粘贴；默认否'],
       ['服务器', '厂商 (Vendor)', 'Linux', '通用 Linux 服务器'],
       ['服务器', '厂商 (Vendor)', 'Dell', '戴尔'],
       ['服务器', '厂商 (Vendor)', 'HP', '惠普'],
@@ -1801,6 +1859,17 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ['Management Entry', 'SSH Algorithm Profile', 'modern', 'Strict modern-only policy; older devices may fail to connect'],
       ['Management Entry', 'SSH Algorithm Profile', 'legacy_compat', 'Controlled fallback for group14-sha1, ssh-rsa, AES-CBC and HMAC-SHA1'],
       ['Management Entry', 'SSH Algorithm Profile', 'legacy_break_glass', 'Emergency break-glass mode; may enable group1, ssh-dss, MD5 and RC4. Audit every use'],
+      ['Remote Desktop', 'Protocol', 'RDP', 'Windows Remote Desktop; default port 3389'],
+      ['Remote Desktop', 'Protocol', 'VNC', 'Virtual Network Computing; default port 5900'],
+      ['Remote Desktop', 'Profile Name', 'optional', 'Blank uses RDP or VNC as the profile name'],
+      ['Remote Desktop', 'Credential Source', 'inherit asset', 'RDP/VNC use the matching asset credential; bind a different account in the profile after import'],
+      ['Remote Desktop', 'RDP Domain', 'CONTOSO', 'Windows AD domain example; leave blank for a local account'],
+      ['Remote Desktop', 'RDP Security Mode', 'nla', 'Network Level Authentication; default and recommended'],
+      ['Remote Desktop', 'RDP Security Mode', 'any', 'Automatically negotiate a mode supported by client and server'],
+      ['Remote Desktop', 'RDP Security Mode', 'tls', 'Use TLS security mode'],
+      ['Remote Desktop', 'RDP Security Mode', 'rdp', 'Legacy RDP security mode for older servers only'],
+      ['Remote Desktop', 'RDP Certificate SHA-256 Fingerprint', '0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF', '64-character format example only, not a real server fingerprint; use the target server certificate'],
+      ['Remote Desktop', 'Clipboard', 'no / yes', 'No disables bidirectional copy/paste; yes enables copying between browser and remote desktop; default is no'],
       ['Common', 'Asset Origin', 'new', 'New device; always imported as staging'],
       ['Common', 'Asset Origin', 'legacy', 'Legacy device; may be imported as production with an exemption reason'],
       ['Server', 'Vendor', 'Linux', 'Linux Server'],
@@ -1826,15 +1895,17 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     const visibleOptRows = zh
       ? [
         ...optRows.slice(0, 8),
+        ...optRows.filter(row => row[0] === '远程桌面'),
         ['管理入口', '浏览器终端', 'Web SSH', 'SSH 只需填一行；导入后同时提供 SSH 终端和 Web SSH，不要另填一行'],
       ]
       : [
         ...optRows.slice(0, 2),
         ['Management Entry', 'Browser Terminal', 'Web SSH', 'One SSH row automatically provides both SSH terminal and Web SSH; do not add another row'],
         ...optRows.slice(2, 8),
+        ...optRows.filter(row => row[0] === 'Remote Desktop'),
       ];
     const wsOpt = XLSX.utils.aoa_to_sheet([optHeaders, ...visibleOptRows]);
-    wsOpt['!cols'] = optHeaders.map(() => ({ wch: 25 }));
+    wsOpt['!cols'] = [22, 34, 64, 76].map(wch => ({ wch }));
     XLSX.utils.book_append_sheet(wb, wsOpt, zh ? '参数可选值参考' : 'Option Reference');
 
     XLSX.writeFile(wb, zh ? '资产导入模板.xlsx' : 'asset_import_template.xlsx');

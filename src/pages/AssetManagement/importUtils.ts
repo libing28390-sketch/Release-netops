@@ -22,10 +22,27 @@ export const ASSET_INFO_SHEET_RE = /^(资产信息|asset[ _-]?(information|info|
 export const NETWORK_ASSET_SHEET_RE = /^(网络设备|网络设备信息|network[ _-]?(devices?|equipment|assets?))$/i;
 export const SERVER_ASSET_SHEET_RE = /^(服务器|服务器信息|servers?|server[ _-]?(information|assets?))$/i;
 export const MANAGEMENT_ENTRY_SHEET_RE = /^(管理入口|管理方式|management[ _-]?(entries|entry|methods?)|access[ _-]?entries)$/i;
+export const REMOTE_DESKTOP_PROFILE_SHEET_RE = /^(远程桌面|远程桌面配置|remote[ _-]?desktop([ _-]?(profiles?|configuration))?)$/i;
 // Backward-compatible export for older callers and imported workbooks.
 export const MANAGEMENT_METHOD_SHEET_RE = MANAGEMENT_ENTRY_SHEET_RE;
 
 export type AssetSheetType = 'network_device' | 'server';
+
+export type RemoteDesktopProfileImportRow = {
+  rowNumber: number;
+  assetTag: string;
+  hostname: string;
+  protocol: 'rdp' | 'vnc';
+  profileName: string;
+  enabled: boolean;
+  port: number | null;
+  normalCredentialId: string;
+  adminCredentialId: string;
+  rdpDomain: string;
+  rdpSecurityMode: 'any' | 'nla' | 'tls' | 'rdp';
+  rdpCertFingerprint: string;
+  clipboardEnabled: boolean;
+};
 
 export const assetTypeForSheetName = (name: string): AssetSheetType | null => {
   const normalized = name.trim();
@@ -113,6 +130,165 @@ const normalizeEnabled = (value: string): boolean => {
   if (!value) return true;
   return !['0', 'false', 'no', 'n', '否', '禁用'].includes(value.trim().toLowerCase());
 };
+
+const REMOTE_DESKTOP_HEADER_ALIASES: Record<keyof Omit<RemoteDesktopProfileImportRow, 'rowNumber' | 'enabled' | 'clipboardEnabled' | 'port' | 'protocol' | 'rdpSecurityMode'>, string[]> = {
+  assetTag: ['资产编号 *', '资产编号（关联键）', '资产编号', 'Asset Tag *', 'Asset Tag (link key)', 'Asset Tag', 'asset_tag'],
+  hostname: ['主机名 *', '主机名（关联键）', '主机名', 'Hostname *', 'Hostname (link key)', 'Hostname', 'hostname'],
+  profileName: ['配置名称', '入口名称', 'Profile Name', 'Entry Name', 'Name'],
+  // Preserve older workbooks that explicitly overrode remote desktop credentials.
+  normalCredentialId: ['远程桌面普通凭据 ID（可选覆盖）', '绑定普通凭据 ID', '绑定普通凭据ID（可留空继承资产）', '普通凭据 ID', '普通凭据ID', '普通凭据（ID）', 'Remote Desktop Normal Credential ID (optional override)', 'Normal Credential ID', 'Credential ID'],
+  adminCredentialId: ['远程桌面管理员凭据 ID（可选覆盖）', '绑定管理员凭据 ID', '绑定管理员凭据ID（可选）', '管理员凭据 ID', '管理员凭据ID', '管理员凭据（ID）', 'Remote Desktop Admin Credential ID (optional override)', 'Admin Credential ID', 'Admin Credential'],
+  rdpDomain: ['RDP 域（可选）', 'RDP 域', 'RDP域', 'RDP Domain', 'Domain'],
+  rdpCertFingerprint: ['RDP 证书 SHA-256 指纹（可选）', 'RDP 证书 SHA-256 指纹', 'RDP证书指纹', 'RDP Certificate SHA-256 Fingerprint', 'Certificate Fingerprint'],
+};
+
+const REMOTE_DESKTOP_SCALAR_HEADERS: Record<'protocol' | 'enabled' | 'port' | 'rdpSecurityMode' | 'clipboardEnabled', string[]> = {
+  protocol: ['远程桌面协议 *', '远程桌面协议（RDP/VNC）', '远程桌面协议', '协议', 'Protocol *', 'Protocol (RDP/VNC)', 'Remote Desktop Protocol *', 'Remote Desktop Protocol', 'Protocol'],
+  enabled: ['是否启用', '启用', 'Enabled'],
+  port: ['端口（可留空用默认值）', '端口（可留空）', '端口', 'Port (blank = default)', 'Port'],
+  rdpSecurityMode: ['RDP 安全模式（可留空默认 NLA）', 'RDP 安全模式', 'RDP安全模式', 'RDP Security Mode (blank = NLA)', 'RDP Security Mode'],
+  clipboardEnabled: ['允许剪贴板', '是否允许剪贴板', '剪贴板启用', 'Clipboard Enabled', 'Allow Clipboard'],
+};
+
+const remoteDesktopCellValue = (
+  row: Record<string, unknown>,
+  aliases: string[],
+): string => {
+  const header = aliases.find(candidate => Object.prototype.hasOwnProperty.call(row, candidate));
+  return header ? String(row[header] ?? '').trim() : '';
+};
+
+const normalizeRemoteDesktopProtocol = (value: string): 'rdp' | 'vnc' | null => {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'rdp' || normalized === '远程桌面（rdp）') return 'rdp';
+  if (normalized === 'vnc' || normalized === '虚拟网络计算（vnc）') return 'vnc';
+  return null;
+};
+
+const normalizeRdpSecurityMode = (value: string): RemoteDesktopProfileImportRow['rdpSecurityMode'] | null => {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized || normalized === 'nla') return 'nla';
+  if (normalized === 'any' || normalized === '自动') return 'any';
+  if (normalized === 'tls') return 'tls';
+  if (normalized === 'rdp') return 'rdp';
+  return null;
+};
+
+const normalizeOptionalBoolean = (value: string): boolean => {
+  if (!value) return false;
+  return !['0', 'false', 'no', 'n', '否', '禁用', '关闭'].includes(value.trim().toLowerCase());
+};
+
+export function parseRemoteDesktopProfileSheet(
+  worksheet: XLSX.WorkSheet,
+): { rows: RemoteDesktopProfileImportRow[]; errors: string[] } {
+  const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, { defval: '' });
+  const rows: RemoteDesktopProfileImportRow[] = [];
+  const errors: string[] = [];
+
+  rawRows.forEach((raw, index) => {
+    const rowNumber = index + 2;
+    const assetTag = remoteDesktopCellValue(raw, REMOTE_DESKTOP_HEADER_ALIASES.assetTag);
+    const hostname = remoteDesktopCellValue(raw, REMOTE_DESKTOP_HEADER_ALIASES.hostname);
+    const protocolValue = remoteDesktopCellValue(raw, REMOTE_DESKTOP_SCALAR_HEADERS.protocol);
+    if (!assetTag && !hostname && !protocolValue) return;
+    if (!assetTag && !hostname) {
+      errors.push(`远程桌面第 ${rowNumber} 行：资产编号和主机名至少填写一项`);
+      return;
+    }
+    const protocol = normalizeRemoteDesktopProtocol(protocolValue);
+    if (!protocol) {
+      errors.push(`远程桌面第 ${rowNumber} 行：协议必须填写 RDP 或 VNC`);
+      return;
+    }
+
+    const portValue = remoteDesktopCellValue(raw, REMOTE_DESKTOP_SCALAR_HEADERS.port);
+    const port = portValue ? Number(portValue) : null;
+    if (port !== null && (!Number.isInteger(port) || port < 1 || port > 65535)) {
+      errors.push(`远程桌面第 ${rowNumber} 行：端口必须是 1 到 65535 的整数`);
+      return;
+    }
+    const rdpSecurityMode = normalizeRdpSecurityMode(
+      remoteDesktopCellValue(raw, REMOTE_DESKTOP_SCALAR_HEADERS.rdpSecurityMode),
+    );
+    if (!rdpSecurityMode) {
+      errors.push(`远程桌面第 ${rowNumber} 行：RDP 安全模式必须是 any、nla、tls 或 rdp`);
+      return;
+    }
+    const rdpCertFingerprint = remoteDesktopCellValue(raw, REMOTE_DESKTOP_HEADER_ALIASES.rdpCertFingerprint).replace(/\s+/g, '').toUpperCase();
+    if (protocol === 'rdp' && rdpCertFingerprint && !/^[0-9A-F]{64}$/.test(rdpCertFingerprint)) {
+      errors.push(`远程桌面第 ${rowNumber} 行：RDP 证书指纹必须是 64 位十六进制 SHA-256 值`);
+      return;
+    }
+
+    rows.push({
+      rowNumber,
+      assetTag,
+      hostname,
+      protocol,
+      profileName: remoteDesktopCellValue(raw, REMOTE_DESKTOP_HEADER_ALIASES.profileName),
+      enabled: normalizeEnabled(remoteDesktopCellValue(raw, REMOTE_DESKTOP_SCALAR_HEADERS.enabled)),
+      port,
+      normalCredentialId: remoteDesktopCellValue(raw, REMOTE_DESKTOP_HEADER_ALIASES.normalCredentialId),
+      adminCredentialId: remoteDesktopCellValue(raw, REMOTE_DESKTOP_HEADER_ALIASES.adminCredentialId),
+      rdpDomain: remoteDesktopCellValue(raw, REMOTE_DESKTOP_HEADER_ALIASES.rdpDomain),
+      rdpSecurityMode,
+      rdpCertFingerprint: protocol === 'rdp' ? rdpCertFingerprint : '',
+      clipboardEnabled: normalizeOptionalBoolean(remoteDesktopCellValue(raw, REMOTE_DESKTOP_SCALAR_HEADERS.clipboardEnabled)),
+    });
+  });
+
+  return { rows, errors };
+}
+
+export function mergeRemoteDesktopProfiles(
+  assets: Record<string, any>[],
+  profiles: RemoteDesktopProfileImportRow[],
+): { assets: Record<string, any>[]; errors: string[] } {
+  const errors: string[] = [];
+  const byAssetTag = new Map<string, Record<string, any>>();
+  const byHostname = new Map<string, Record<string, any>>();
+  assets.forEach(asset => {
+    const assetTag = String(asset.asset_tag || '').trim().toLowerCase();
+    const hostname = String(asset.hostname || '').trim().toLowerCase();
+    if (assetTag) byAssetTag.set(assetTag, asset);
+    if (hostname) byHostname.set(hostname, asset);
+  });
+
+  const grouped = new Map<Record<string, any>, RemoteDesktopProfileImportRow[]>();
+  profiles.forEach(profile => {
+    const asset = (profile.assetTag && byAssetTag.get(profile.assetTag.toLowerCase()))
+      || (profile.hostname && byHostname.get(profile.hostname.toLowerCase()));
+    if (!asset) {
+      errors.push(`远程桌面第 ${profile.rowNumber} 行：找不到对应资产 ${profile.assetTag || profile.hostname}`);
+      return;
+    }
+    const existing = grouped.get(asset) || [];
+    if (existing.some(item => item.protocol === profile.protocol)) {
+      errors.push(`${asset.asset_tag || asset.hostname}：远程桌面配置中存在重复的 ${profile.protocol.toUpperCase()} 行`);
+      return;
+    }
+    existing.push(profile);
+    grouped.set(asset, existing);
+  });
+
+  grouped.forEach((assetProfiles, asset) => {
+    asset.remote_desktop_profiles = assetProfiles.map(profile => ({
+      protocol: profile.protocol,
+      profile_name: profile.profileName,
+      enabled: profile.enabled,
+      port: profile.port,
+      normal_credential_id: profile.normalCredentialId || null,
+      admin_credential_id: profile.adminCredentialId || null,
+      rdp_domain: profile.rdpDomain,
+      rdp_security_mode: profile.rdpSecurityMode,
+      rdp_cert_fingerprint: profile.rdpCertFingerprint,
+      clipboard_enabled: profile.clipboardEnabled,
+    }));
+  });
+
+  return { assets, errors };
+}
 
 const normalizeCredentialMode = (value: string): 'inherit_asset' | 'independent' => {
   const normalized = value.trim().toLowerCase();

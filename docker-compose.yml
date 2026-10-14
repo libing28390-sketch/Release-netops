@@ -276,6 +276,8 @@ services:
         condition: service_healthy
       alert-redis:
         condition: service_healthy
+      netops:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       disable: true

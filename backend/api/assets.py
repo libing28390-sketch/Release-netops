@@ -15,7 +15,7 @@ import ipaddress
 from pathlib import Path
 from collections import deque
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Literal, Optional
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, Field, field_validator
@@ -1953,6 +1953,23 @@ class AssetCreate(BaseModel):
             return 22
 
 
+class AssetImportRemoteDesktopProfile(BaseModel):
+    protocol: Literal['rdp', 'vnc']
+    profile_name: str = Field(default='', max_length=120)
+    enabled: bool = True
+    port: Optional[int] = Field(default=None, ge=1, le=65535)
+    normal_credential_id: Optional[str] = Field(default=None, max_length=200)
+    admin_credential_id: Optional[str] = Field(default=None, max_length=200)
+    rdp_domain: str = Field(default='', max_length=255)
+    rdp_security_mode: Literal['any', 'nla', 'tls', 'rdp'] = 'nla'
+    rdp_cert_fingerprint: str = Field(default='', max_length=64)
+    clipboard_enabled: bool = False
+
+
+class AssetImportCreate(AssetCreate):
+    remote_desktop_profiles: list[AssetImportRemoteDesktopProfile] = Field(default_factory=list)
+
+
 class AssetUpdate(BaseModel):
     asset_type: Optional[str] = None
     asset_tag: Optional[str] = None
@@ -3733,7 +3750,7 @@ def _asset_import_site_error(
 
 @router.post('/assets/import')
 def import_assets(
-    items: list[AssetCreate],
+    items: list[AssetImportCreate],
     atomic: bool = False,
     detailed: bool = False,
     background_tasks: BackgroundTasks = None,
@@ -3771,7 +3788,7 @@ def import_assets(
             logger.exception('Asset import row failed')
             return {'code': 'ASSET_IMPORT_ROW_FAILED', 'message': '资产导入行处理失败，请检查数据后重试。'}
 
-        def _import_one(body: AssetCreate, row_number: int) -> dict:
+        def _import_one(body: AssetImportCreate, row_number: int) -> dict:
             imported_hostname = str(body.hostname or '').strip()
             if not imported_hostname:
                 if body.asset_type == 'network_device' and str(body.management_ip or '').strip():
@@ -4023,6 +4040,31 @@ def import_assets(
                     'code': 'ASSET_WEB_PROFILE_INVALID', 'message': str(exc),
                 }) from exc
 
+            remote_desktop_profile_audit = []
+            if body.remote_desktop_profiles:
+                from services.pam_remote_desktop import save_asset_profile
+
+                for profile in body.remote_desktop_profiles:
+                    try:
+                        saved_profile = save_asset_profile(
+                            conn,
+                            asset_id,
+                            profile.protocol,
+                            profile.model_dump(),
+                            str(_user.get('username') or ''),
+                        )
+                    except HTTPException as exc:
+                        detail = exc.detail if isinstance(exc.detail, str) else '远程桌面配置无效，请检查协议、端口和凭据库 ID。'
+                        raise HTTPException(status_code=422, detail={
+                            'code': 'ASSET_REMOTE_DESKTOP_PROFILE_INVALID',
+                            'message': detail,
+                        }) from exc
+                    remote_desktop_profile_audit.append({
+                        'protocol': saved_profile['protocol'],
+                        'enabled': saved_profile['enabled'],
+                        'port': saved_profile['port'],
+                    })
+
             imported_row = conn.execute(
                 'SELECT * FROM physical_assets WHERE id = ?', (asset_id,)
             ).fetchone()
@@ -4039,6 +4081,7 @@ def import_assets(
                     'source': 'batch_import',
                     'batch_id': batch_id,
                     'row': row_number,
+                    'remote_desktop_profiles': remote_desktop_profile_audit,
                 },
             )
             return {
