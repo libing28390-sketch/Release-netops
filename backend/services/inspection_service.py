@@ -820,7 +820,11 @@ def _parse_sample_datetime(value: Any) -> datetime | None:
     return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
 
 
-def _collect_snmp_for_inspection(device: dict) -> tuple[dict, list[dict]]:
+def _collect_snmp_for_inspection(
+    device: dict,
+    *,
+    include_interface_snapshot: bool = False,
+) -> tuple[dict, list[dict]]:
     """
     Read fresh hardware values from the existing LibreNMS binding.
 
@@ -914,9 +918,11 @@ def _collect_snmp_for_inspection(device: dict) -> tuple[dict, list[dict]]:
     except Exception as e:
         logger.warning(f"SNMP event loop creation failed for {ip}: {e}")
 
-    snmp_interfaces, interface_error = _load_fresh_snmp_interface_snapshot(str(device.get('id') or ''))
-    if interface_error:
-        snmp_metrics['interface_status_error'] = interface_error
+    snmp_interfaces: list[dict] = []
+    if include_interface_snapshot:
+        snmp_interfaces, interface_error = _load_fresh_snmp_interface_snapshot(str(device.get('id') or ''))
+        if interface_error:
+            snmp_metrics['interface_status_error'] = interface_error
     return snmp_metrics, snmp_interfaces
 
 
@@ -1077,7 +1083,15 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
     snmp_interfaces: list[dict] = []
     non_protocol_snmp_items = [item for item in snmp_items if _inspection_routing_protocol(item) is None]
     if non_protocol_snmp_items:
-        snmp_metrics, snmp_interfaces = _collect_snmp_for_inspection(device)
+        needs_interface_snapshot = any(
+            'intf_down' in str(item.get('check_key') or '').casefold()
+            or 'interface_down' in str(item.get('check_key') or '').casefold()
+            for item in non_protocol_snmp_items
+        )
+        snmp_metrics, snmp_interfaces = _collect_snmp_for_inspection(
+            device,
+            include_interface_snapshot=needs_interface_snapshot,
+        )
         # 填充 result 的标准字段
         if snmp_metrics.get('cpu_usage') is not None:
             result['cpu_usage'] = snmp_metrics['cpu_usage']

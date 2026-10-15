@@ -42,7 +42,8 @@ def test_non_snmp_alerts_are_not_mislabeled_as_template_metrics() -> None:
     catalog = list_alert_metric_collections()
 
     assert catalog["lldp_neighbor_lost"]["collection_source"] == "ssh_cli"
-    assert catalog["bgp_neighbor_down"]["collection_source"] == "ssh_cli"
+    assert catalog["bgp_neighbor_down"]["collection_source"] == "snmp_cli_fallback"
+    assert catalog["bgp_neighbor_down"]["template_linked"] is False
     assert catalog["ping_unreachable"]["collection_source"] == "icmp"
     assert catalog["snmp_unreachable"]["collection_source"] == "snmp_probe"
     assert catalog["snmp_unreachable"]["default_oids"]["sys_uptime_oid"] == "1.3.6.1.2.1.1.3.0"

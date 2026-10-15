@@ -23,7 +23,7 @@ def test_inspection_hardware_values_come_from_fresh_librenms_rows(monkeypatch) -
     async def fake_diagnostic(_device):
         return {
             "processor_sensors": [_native_row(25), _native_row(74)],
-            "memory_pools": [_native_row(61)],
+            "memory_pools": [{"sensor_type": "memory_usage_percent", **_native_row(61)}],
             "hardware_sensors": [
                 {"sensor_class": "temperature", **_native_row(42)},
                 {"sensor_class": "temperature", **_native_row(35, "stale")},
@@ -84,4 +84,4 @@ def test_interface_down_inspection_without_librenms_rows_is_no_data() -> None:
     )
 
     assert value is None
-    assert "LibreNMS" in error
+    assert "IF-MIB" in error

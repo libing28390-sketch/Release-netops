@@ -134,6 +134,11 @@ def test_protocol_peer_transitions_use_batched_alert_writer_and_commit_snapshot_
     })
     monkeypatch.setattr(monitor, "protocol_aggregate_threshold", 10)
     monkeypatch.setattr(monitor, "decrypt_credential", lambda value: value)
+    monkeypatch.setattr(monitor, "should_collect", lambda *_args: True)
+    monkeypatch.setattr(monitor, "resolve_collector_credentials", lambda *_args: {
+        "snmp": {"configured": False},
+        "ssh": {"username": "test-user", "password": "test-password"},
+    })
     monkeypatch.setattr(monitor, "collect_operational_data", lambda *_args: {
         "categories": [
             {"key": "bgp", "success": True, "records": [{"neighbor": "192.0.2.2", "state": "Idle"}]},
