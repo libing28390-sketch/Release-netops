@@ -137,10 +137,6 @@ export const useUserProfile = ({
 
   const handleSaveProfile = useCallback(async () => {
     const profileUserId = currentUser.id ?? currentUserRecord?.id;
-    if (!profileUserId) {
-      showToast('Unable to identify current user', 'error');
-      return;
-    }
     if (!profileForm.username.trim()) {
       showToast(t('fillAllFields'), 'error');
       return;
@@ -174,7 +170,7 @@ export const useUserProfile = ({
         payload.old_password = profileForm.oldPassword;
       }
 
-      const response = await fetch(`/api/users/${profileUserId}`, {
+      const response = await fetch('/api/users/me/profile', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -190,11 +186,27 @@ export const useUserProfile = ({
           role: data.role,
           avatar_url: data.avatar_url || '',
         }));
-        setUsers((prev) => prev.map((u) => (String(u.id) === String(profileUserId) ? { ...u, ...data } : u)));
+        const savedUserId = data.id ?? profileUserId;
+        if (savedUserId) {
+          setUsers((prev) => prev.map((u) => (String(u.id) === String(savedUserId) ? { ...u, ...data } : u)));
+        }
         setShowProfileModal(false);
         showToast('Profile updated', 'success');
       } else {
-        showToast(`Error: ${data.detail || data.error}`, 'error');
+        const detail = data.detail;
+        const detailMessage = typeof detail === 'string'
+          ? detail
+          : detail && typeof detail === 'object' && typeof detail.message === 'string'
+            ? detail.message
+            : '';
+        const errorMessage = detailMessage
+          || (typeof data.error === 'string' ? data.error : '')
+          || response.statusText
+          || `HTTP ${response.status}`;
+        showToast(
+          `${language === 'zh' ? '保存个人设置失败' : 'Unable to save profile'}: ${errorMessage}`,
+          'error',
+        );
       }
     } catch {
       showToast('Connection error', 'error');

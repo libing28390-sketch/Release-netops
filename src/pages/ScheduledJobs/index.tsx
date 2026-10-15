@@ -1,11 +1,11 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   CalendarClock, Plus, X, Trash2, RotateCcw, Zap, Pencil,
   ChevronDown, Info, Shield, CheckCircle2, AlertTriangle,
   Database, Activity, Power, PowerOff, RefreshCw,
-  Search, FileCode, Eye, Target, FileText, Lock, ChevronUp, Filter, ShieldAlert, User, Layers, Settings2
+  Search, FileCode, Eye, Target, FileText, Lock, ChevronUp, Filter, ShieldAlert, User, Layers, Settings2, Terminal
 } from 'lucide-react';
 import { ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
 import { TableActionCell, TableActionHeader } from '../../components/ui/TableActionColumn';
@@ -21,6 +21,7 @@ import { INITIAL_FORM, ACTION_TYPES, MAJOR_CATEGORIES } from './constants';
 import { describeCron, describeScope } from './helpers';
 
 import { CandidateModal } from './components/CandidateModal';
+import CountdownText from './components/CountdownText';
 import { DeleteApprovalModal } from './components/DeleteApprovalModal';
 import { JobDetailModal } from './components/JobDetailModal';
 import { JobModal } from './components/JobModal';
@@ -85,12 +86,14 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
 
   // Approval (create & update)
   const [approvers, setApprovers] = useState<EligibleApprover[]>([]);
+  const [approverLoadStatus, setApproverLoadStatus] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle');
   const [approverUsername, setApproverUsername] = useState('');
   const [approvalMethod, setApprovalMethod] = useState<ApprovalVerificationMethod>('mfa');
   const [approvalToken, setApprovalToken] = useState('');
   const [approvalCode, setApprovalCode] = useState('');
-  const [approvalStatus, setApprovalStatus] = useState<'idle' | 'sending' | 'sent' | 'verified'>('idle');
+  const [approvalStatus, setApprovalStatus] = useState<'idle' | 'sending' | 'sent' | 'verifying' | 'verified'>('idle');
   const [approvalCountdown, setApprovalCountdown] = useState(0);
+  const [approvalDeadline, setApprovalDeadline] = useState(0);
   const [approvalError, setApprovalError] = useState('');
   const [approvalManifest, setApprovalManifest] = useState<ScheduledJobOperationManifest | null>(null);
   const [disableTarget, setDisableTarget] = useState<ScheduledJob | null>(null);
@@ -106,10 +109,22 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   const [deleteApprovalMethod, setDeleteApprovalMethod] = useState<ApprovalVerificationMethod>('mfa');
   const [deleteToken, setDeleteToken] = useState('');
   const [deleteCode, setDeleteCode] = useState('');
-  const [deleteStatus, setDeleteStatus] = useState<'idle' | 'sending' | 'sent' | 'verified'>('idle');
+  const [deleteStatus, setDeleteStatus] = useState<'idle' | 'sending' | 'sent' | 'verifying' | 'verified'>('idle');
   const [deleteCountdown, setDeleteCountdown] = useState(0);
+  const [deleteDeadline, setDeleteDeadline] = useState(0);
   const [deleteError, setDeleteError] = useState('');
   const [deleteApprovalManifest, setDeleteApprovalManifest] = useState<ScheduledJobOperationManifest | null>(null);
+  const approvalVerifyInFlightRef = useRef(false);
+  const deleteVerifyInFlightRef = useRef(false);
+
+  const expireApprovalCountdown = useCallback(() => {
+    setApprovalCountdown(0);
+    setApprovalDeadline(0);
+  }, []);
+  const expireDeleteCountdown = useCallback(() => {
+    setDeleteCountdown(0);
+    setDeleteDeadline(0);
+  }, []);
 
   // Enabling job tracker
   const [enablingJobId, setEnablingJobId] = useState<string | null>(null);
@@ -122,7 +137,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   const isEditMode = editingJob !== null;
 
   // Category & Filter state
-  const [activeCategory, setActiveCategory] = useState<'all' | 'system' | 'backup' | 'nsot' | 'inspection' | 'script_run'>('all');
+  const [activeCategory, setActiveCategory] = useState<'all' | 'system' | 'backup' | 'nsot' | 'inspection' | 'command' | 'script_run'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   // Keep platform schedules out of the way of user-created jobs by default.
   // Selecting the dedicated system category expands the small curated list.
@@ -173,9 +188,10 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
     const backupCnt = jobs.filter(j => j.action_type === 'backup').length;
     const nsotCnt = jobs.filter(j => j.action_type === 'nsot').length;
     const inspCnt = jobs.filter(j => j.action_type === 'inspection').length;
+    const commandCnt = jobs.filter(j => j.action_type === 'command').length;
     const scriptCnt = jobs.filter(j => j.action_type === 'script_run').length;
     const activeCnt = jobs.filter(j => j.enabled === 1).length;
-    return { backupCnt, nsotCnt, inspCnt, scriptCnt, activeCnt };
+    return { backupCnt, nsotCnt, inspCnt, commandCnt, scriptCnt, activeCnt };
   }, [jobs]);
 
   const authHeaders = useMemo(() => {
@@ -232,27 +248,79 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   }, [authHeaders]);
 
   const fetchApprovers = useCallback(async () => {
+    setApproverLoadStatus('loading');
     try {
       const r = await fetch('/api/config-approval/approvers', { headers: authHeaders });
-      if (r.ok) {
-        const j = await r.json();
-        const users = Array.isArray(j) ? j : (j.data || []);
-        setApprovers(users);
-      }
-    } catch { /* ignore */ }
+      if (!r.ok) throw new Error('Approver request failed');
+      const j = await r.json();
+      const users = Array.isArray(j) ? j : j?.data;
+      if (!Array.isArray(users)) throw new Error('Approver response is invalid');
+      setApprovers(users);
+      setApproverLoadStatus('loaded');
+    } catch {
+      setApproverLoadStatus('error');
+    }
   }, [authHeaders]);
 
+  const fetchCronPreview = useCallback(async (cronExpr: string, signal: AbortSignal): Promise<string[]> => {
+    const response = await fetch('/api/scheduled-jobs/cron-preview', {
+      method: 'POST',
+      headers: authHeaders,
+      signal,
+      body: JSON.stringify({ cron_expr: cronExpr }),
+    });
+    const payload = await response.json().catch(() => null) as {
+      success?: boolean;
+      data?: { occurrences?: unknown };
+      detail?: string;
+      message?: string;
+    } | null;
+    if (!response.ok || !payload || payload.success !== true) {
+      const message = response.status === 401
+        ? (zh ? '登录状态已失效，请重新登录后查看执行时间。' : 'Your session has expired. Sign in again to preview execution times.')
+        : response.status === 403
+          ? (zh ? '当前账号没有预览定时作业的权限。' : 'You do not have permission to preview this schedule.')
+          : payload?.detail || payload?.message || (zh ? '无法预览执行时间。' : 'Unable to preview execution times.');
+      throw Object.assign(new Error(message), { status: response.status });
+    }
+    const occurrences = payload.data?.occurrences;
+    if (!Array.isArray(occurrences) || occurrences.some(value => typeof value !== 'string')) {
+      throw new Error(zh ? '服务器返回的执行时间格式无效。' : 'The server returned invalid execution times.');
+    }
+    return occurrences.slice(0, 10);
+  }, [authHeaders, zh]);
+
   const [devices, setDevices] = useState<any[]>([]);
+  const [deviceLoadStatus, setDeviceLoadStatus] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle');
 
   const fetchDevices = useCallback(async () => {
+    const pageSize = 500;
+    const allDevices: any[] = [];
+    let page = 1;
+    let total: number | null = null;
+    setDeviceLoadStatus('loading');
     try {
-      const r = await fetch('/api/devices', { headers: authHeaders });
-      if (r.ok) {
+      while (true) {
+        const r = await fetch(`/api/devices?mode=light&page=${page}&page_size=${pageSize}`, { headers: authHeaders });
+        if (!r.ok) throw new Error('Device request failed');
         const j = await r.json();
-        const list = Array.isArray(j) ? j : (j.data?.items || j.data || []);
-        setDevices(list);
+        const payload = Array.isArray(j) ? j : (j?.data ?? j);
+        const items = Array.isArray(payload) ? payload : payload?.items;
+        if (!Array.isArray(items)) throw new Error('Device response is invalid');
+        allDevices.push(...items);
+
+        const responseTotal = Number(payload?.total);
+        if (Number.isFinite(responseTotal) && responseTotal >= 0) total = responseTotal;
+        if (items.length === 0 || (total !== null && allDevices.length >= total) || (total === null && items.length < pageSize)) {
+          break;
+        }
+        page += 1;
       }
-    } catch { /* ignore */ }
+      setDevices(allDevices);
+      setDeviceLoadStatus('loaded');
+    } catch {
+      setDeviceLoadStatus('error');
+    }
   }, [authHeaders]);
 
   const fetchScripts = useCallback(async () => {
@@ -273,9 +341,15 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
     if (showAddJob || editingJob) fetchDevices();
   }, [showAddJob, editingJob, fetchDevices]);
   useEffect(() => {
-    if (showAddJob || disableTarget) fetchApprovers();
-    if ((showAddJob || detailJob) && (form.action_type === 'script_run' || form.action_type === 'inspection' || detailJob?.action_type === 'script_run' || detailJob?.action_type === 'inspection')) fetchScripts();
-  }, [showAddJob, disableTarget, detailJob, isEditMode, fetchApprovers, fetchScripts, form.action_type]);
+    if (showAddJob || disableTarget?.id) fetchApprovers();
+  }, [showAddJob, disableTarget?.id, fetchApprovers]);
+  useEffect(() => {
+    const needsScripts = editingJob?.action_type === 'script_run'
+      || editingJob?.action_type === 'inspection'
+      || detailJob?.action_type === 'script_run'
+      || detailJob?.action_type === 'inspection';
+    if ((showAddJob || detailJob?.id) && needsScripts) fetchScripts();
+  }, [showAddJob, editingJob?.id, editingJob?.action_type, detailJob?.id, detailJob?.action_type, fetchScripts]);
 
   // Auto-load script content when detail modal opens for a script_run or inspection job
   useEffect(() => {
@@ -287,24 +361,13 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detailJob?.id, detailJob?.script_id]);
 
-  useEffect(() => {
-    if (approvalCountdown <= 0) return;
-    const t = setTimeout(() => setApprovalCountdown(c => c - 1), 1000);
-    return () => clearTimeout(t);
-  }, [approvalCountdown]);
-
-  useEffect(() => {
-    if (deleteCountdown <= 0) return;
-    const t = setTimeout(() => setDeleteCountdown(c => c - 1), 1000);
-    return () => clearTimeout(t);
-  }, [deleteCountdown]);
-
   /* === MODAL HELPERS === */
   const resetApprovalFlow = () => {
     setApprovalToken('');
     setApprovalCode('');
     setApprovalStatus('idle');
     setApprovalCountdown(0);
+    setApprovalDeadline(0);
     setApprovalError('');
     setApprovalManifest(null);
   };
@@ -314,6 +377,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
     setDeleteCode('');
     setDeleteStatus('idle');
     setDeleteCountdown(0);
+    setDeleteDeadline(0);
     setDeleteError('');
     setDeleteApprovalManifest(null);
   };
@@ -356,6 +420,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
 
   const toggleAddJob = () => {
     if (showAddJob) {
+      if (approvalStatus === 'sending' || approvalStatus === 'verifying') return;
       setShowAddJob(false);
       setEditingJob(null);
       setEnablingJobId(null);
@@ -385,6 +450,10 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   };
 
   const openEditModal = (job: ScheduledJob) => {
+    if (job.authorization_mode === 'system') {
+      showToast(zh ? '系统内置作业由平台托管，此处仅可查看。' : 'This built-in job is platform-managed and can only be viewed here.', 'info');
+      return;
+    }
     setEditingJob(job);
     setForm({
       name: job.name,
@@ -466,7 +535,12 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
 
   /* === APPROVAL (create & update) === */
   const requestApproval = async () => {
-    if (!approverUsername) return;
+    if (!disableTarget && editingJob?.authorization_mode === 'system') {
+      showToast(zh ? '系统内置作业由平台托管，此处仅可查看。' : 'This built-in job is platform-managed and can only be viewed here.', 'info');
+      return;
+    }
+    if (!approverUsername || approvalStatus === 'sending' || approvalStatus === 'verifying' || approvalStatus === 'verified') return;
+    if (approvalStatus === 'sent' && approvalCountdown > 0) return;
     // 在发送验证码前先校验必填项,避免半填状态下的无效审批流
     if (!disableTarget) {
       const err = validateForm();
@@ -480,6 +554,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
       ? 'execution_plan'
       : 'scheduled_job';
     setApprovalStatus('sending');
+    setApprovalCode('');
     setApprovalError('');
     try {
       const actionLabel = ACTION_TYPES.find(a => a.value === operationManifest.action);
@@ -509,6 +584,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
         setApprovalManifest(operationManifest);
         setApprovalStatus('sent');
         setApprovalCountdown(300);
+        setApprovalDeadline(Date.now() + 300_000);
         const message = approvalMethod === 'mfa'
           ? (zh ? '请输入审批人 MFA 验证器中的动态码' : 'Enter the approver’s authenticator code')
           : approvalMethod === 'email'
@@ -525,35 +601,46 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
     }
   };
 
-  const verifyApproval = async () => {
-    if (!approvalToken || !approvalCode || !approvalManifest) return;
+  const verifyApproval = async (code = approvalCode) => {
+    if (approvalVerifyInFlightRef.current || approvalStatus !== 'sent' || !approvalToken || code.length !== 6 || !approvalManifest) return;
+    approvalVerifyInFlightRef.current = true;
     const approvalType = disableTarget?.job_type === 'once' || (!disableTarget && isEditMode && editingJob?.job_type === 'once')
       ? 'execution_plan'
       : 'scheduled_job';
+    setApprovalStatus('verifying');
+    setApprovalError('');
     try {
       const r = await fetch('/api/config-approval/verify', {
         method: 'POST',
         headers: authHeaders,
-        body: JSON.stringify({ approval_token: approvalToken, code: approvalCode, approval_type: approvalType, operation_manifest: approvalManifest }),
+        body: JSON.stringify({ approval_token: approvalToken, code, approval_type: approvalType, operation_manifest: approvalManifest }),
       });
       const j = await r.json();
       if (r.ok && j.success) {
         setApprovalStatus('verified');
+        setApprovalCountdown(0);
+        setApprovalDeadline(0);
         showToast(zh ? '审批验证通过' : 'Approval verified', 'success');
       } else {
+        setApprovalStatus('sent');
         setApprovalError(j.detail || j.message || 'Invalid code');
       }
     } catch {
+      setApprovalStatus('sent');
       setApprovalError(zh ? '验证失败' : 'Verification failed');
+    } finally {
+      approvalVerifyInFlightRef.current = false;
     }
   };
 
   /* === APPROVAL (delete) === */
   const requestDeleteApproval = async () => {
-    if (!deleteApprover || !deleteTarget) return;
+    if (!deleteApprover || !deleteTarget || deleteStatus === 'sending' || deleteStatus === 'verifying' || deleteStatus === 'verified') return;
+    if (deleteStatus === 'sent' && deleteCountdown > 0) return;
     const deleteApprovalType = deleteTarget.job_type === 'once' ? 'execution_plan' : 'scheduled_job_delete';
     const operationManifest = buildJobOperationManifest('DELETE', deleteTarget);
     setDeleteStatus('sending');
+    setDeleteCode('');
     setDeleteError('');
     try {
       const r = await fetch('/api/config-approval/request', {
@@ -576,6 +663,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
         setDeleteApprovalManifest(operationManifest);
         setDeleteStatus('sent');
         setDeleteCountdown(300);
+        setDeleteDeadline(Date.now() + 300_000);
         const message = deleteApprovalMethod === 'mfa'
           ? (zh ? '请输入审批人 MFA 验证器中的动态码' : 'Enter the approver’s authenticator code')
           : deleteApprovalMethod === 'email'
@@ -592,24 +680,33 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
     }
   };
 
-  const verifyDeleteApproval = async () => {
-    if (!deleteToken || !deleteCode || !deleteTarget || !deleteApprovalManifest) return;
+  const verifyDeleteApproval = async (code = deleteCode) => {
+    if (deleteVerifyInFlightRef.current || deleteStatus !== 'sent' || !deleteToken || code.length !== 6 || !deleteTarget || !deleteApprovalManifest) return;
+    deleteVerifyInFlightRef.current = true;
     const deleteApprovalType = deleteTarget.job_type === 'once' ? 'execution_plan' : 'scheduled_job_delete';
+    setDeleteStatus('verifying');
+    setDeleteError('');
     try {
       const r = await fetch('/api/config-approval/verify', {
         method: 'POST',
         headers: authHeaders,
-        body: JSON.stringify({ approval_token: deleteToken, code: deleteCode, approval_type: deleteApprovalType, operation_manifest: deleteApprovalManifest }),
+        body: JSON.stringify({ approval_token: deleteToken, code, approval_type: deleteApprovalType, operation_manifest: deleteApprovalManifest }),
       });
       const j = await r.json();
       if (r.ok && j.success) {
         setDeleteStatus('verified');
+        setDeleteCountdown(0);
+        setDeleteDeadline(0);
         showToast(zh ? '删除审批验证通过' : 'Delete approval verified', 'success');
       } else {
+        setDeleteStatus('sent');
         setDeleteError(j.detail || j.message || 'Invalid code');
       }
     } catch {
+      setDeleteStatus('sent');
       setDeleteError(zh ? '验证失败' : 'Verification failed');
+    } finally {
+      deleteVerifyInFlightRef.current = false;
     }
   };
 
@@ -670,7 +767,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                   tags: (dev.tags || []).map((t: any) => ({
                     id: t.id, label: t.label, label_zh: t.label_zh, color: t.color || '#94a3b8',
                   })),
-                  selected: true,
+                  selected: false,
                 };
               }
             }
@@ -692,7 +789,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                       ip,
                       hostname: a.hostname || '',
                       tags: [],
-                      selected: true,
+                      selected: false,
                     };
                   }
                 }
@@ -706,7 +803,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
             ip: query,
             hostname: '',
             tags: [],
-            selected: true,
+            selected: false,
           };
         }
       }
@@ -845,6 +942,10 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   };
 
   const openDeleteApproval = async (job: ScheduledJob) => {
+    if (job.authorization_mode === 'system') {
+      showToast(zh ? '系统内置作业由平台托管，此处仅可查看。' : 'This built-in job is platform-managed and can only be viewed here.', 'info');
+      return;
+    }
     const currentJob = await fetchCurrentScheduledJob(job.id);
     if (!currentJob) return;
     setDeleteConfirmId(null);
@@ -864,6 +965,21 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   const validateForm = (): string | null => {
     if (!form.name.trim()) return zh ? '请填写作业名称' : 'Please enter job name';
     if (!form.action_type) return zh ? '请选择作业类型' : 'Please select a job type';
+    if (form.action_type === 'command' && !form.commands.trim()) {
+      return zh ? '请输入要执行的命令' : 'Enter the commands to run';
+    }
+    if (form.action_type === 'script_run' && !form.script_id.trim()) {
+      return zh ? '请选择一个已发布的自动化脚本' : 'Select a released automation script';
+    }
+    if (form.script_id.trim() && form.action_type !== 'command' && form.action_type !== 'script_run') {
+      return zh ? '当前作业类型不能关联自动化脚本' : 'This job type cannot use an automation script';
+    }
+    if (form.is_config && form.action_type !== 'command' && form.action_type !== 'script_run') {
+      return zh ? '配置变更模式只能用于命令或脚本作业' : 'Configuration-change mode is only available for command or script jobs';
+    }
+    if (form.is_config && !form.config_reason.trim()) {
+      return zh ? '请填写配置变更原因' : 'Enter the configuration change reason';
+    }
     if (!form.cron_expr.trim()) return zh ? '请配置调度时间(Cron)' : 'Please configure schedule (Cron)';
 
     // Cron 表达式必须是 5 段且每段非空
@@ -885,9 +1001,6 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
     }
 
     // 按作业类型继续校验
-    if (form.action_type === 'script_run' && !form.script_id) {
-      return zh ? '请选择一个要执行的脚本' : 'Please select a script to execute';
-    }
     // 智能巡检三种来源:
     //  - default: script_id 与 commands 都为空 → 通过 (后端启用全量默认指标)
     //  - script:  script_id 必填
@@ -951,6 +1064,10 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
 
   const updateJob = async () => {
     if (!editingJob) return;
+    if (editingJob.authorization_mode === 'system') {
+      showToast(zh ? '系统内置作业由平台托管，此处仅可查看。' : 'This built-in job is platform-managed and can only be viewed here.', 'info');
+      return;
+    }
     const err = validateForm();
     if (err) { showToast(err, 'error'); return; }
     if (approvalStatus !== 'verified') {
@@ -1043,6 +1160,10 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   };
 
   const toggleJobEnabled = async (job: ScheduledJob) => {
+    if (job.authorization_mode === 'system') {
+      showToast(zh ? '系统内置作业由平台托管，此处仅可查看。' : 'This built-in job is platform-managed and can only be viewed here.', 'info');
+      return;
+    }
     const currentJob = await fetchCurrentScheduledJob(job.id);
     if (!currentJob) return;
     const operation = Number(currentJob.enabled) ? 'DISABLE' : 'ENABLE';
@@ -1088,12 +1209,14 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
               </button>
             )}
             <button
+              type="button"
               onClick={toggleAddJob}
+              disabled={showAddJob && (approvalStatus === 'sending' || approvalStatus === 'verifying')}
               className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-bold shadow-sm transition-all active:scale-[0.97] ${
                 showAddJob
                   ? 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   : 'bg-gradient-to-r from-cyan-500 to-cyan-600 text-white hover:from-cyan-400 hover:to-cyan-500'
-              }`}
+              } disabled:cursor-not-allowed disabled:opacity-50`}
             >
               {showAddJob ? <X size={16} /> : <Plus size={16} />}
               {showAddJob ? (zh ? '取消新建' : 'Cancel') : (zh ? '新建定时作业' : 'New Scheduled Job')}
@@ -1102,59 +1225,14 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
         }
       />
 
-      <div className="flex-1 overflow-auto px-6 py-5 space-y-4">
-        <AnimatePresence mode="wait">
-          {showAddJob ? (
-            <JobModal
-              isOpen={showAddJob}
-              onClose={closeModal}
-              isEditMode={isEditMode}
-              enablingJobId={enablingJobId}
-              editingJob={editingJob}
-              form={form}
-              setForm={setForm}
-              tagFilter={tagFilter}
-              setTagFilter={setTagFilter}
-              ipInput={ipInput}
-              setIpInput={setIpInput}
-              ipValidating={ipValidating}
-              ipError={ipError}
-              setIpError={setIpError}
-              ipDevices={ipDevices}
-              removeIpDevice={removeIpDevice}
-              validateAndAddIps={validateAndAddIps}
-              presetOpen={presetOpen}
-              setPresetOpen={setPresetOpen}
-              scriptSearch={scriptSearch}
-              setScriptSearch={setScriptSearch}
-              showScriptDropdown={showScriptDropdown}
-              setShowScriptDropdown={setShowScriptDropdown}
-              availableScripts={availableScripts}
-              fetchScripts={fetchScripts}
-              approverUsername={approverUsername}
-              setApproverUsername={selectApprover}
-              approvers={approvers}
-              approvalMethod={approvalMethod}
-              setApprovalMethod={changeApprovalMethod}
-              approvalStatus={approvalStatus}
-              approvalCountdown={approvalCountdown}
-              approvalCode={approvalCode}
-              setApprovalCode={setApprovalCode}
-              approvalError={approvalError}
-              setApprovalError={setApprovalError}
-              requestApproval={requestApproval}
-              verifyApproval={verifyApproval}
-              submitForm={submitForm}
-              language={language}
-              devices={devices}
-            />
-          ) : (
+      <div className="relative min-h-0 flex-1 overflow-auto px-2 py-3 sm:px-3 lg:px-4">
             <motion.div
               key="list-view"
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="space-y-4"
+              className={`space-y-4 transition-[filter,opacity] duration-150 ${showAddJob ? 'pointer-events-none opacity-45 blur-[1px]' : ''}`}
+              aria-hidden={showAddJob}
+              inert={showAddJob}
             >
               {/* ═══ 顶层多维分类导航与搜索栏 ═══ */}
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-slate-100/90 p-1.5 rounded-2xl border border-slate-200/80 shadow-inner">
@@ -1229,6 +1307,19 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                     <Activity size={13} className={activeCategory === 'inspection' ? 'text-emerald-600' : 'text-slate-400'} />
                     <span>{zh ? '智能巡检' : 'Inspection'}</span>
                     <span className="text-[10px] opacity-60 font-mono">{stats.inspCnt}</span>
+                  </button>
+
+                  <button
+                    onClick={() => setActiveCategory('command')}
+                    className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 ${
+                      activeCategory === 'command'
+                        ? 'bg-white text-cyan-700 border border-cyan-100 shadow-sm'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+                    }`}
+                  >
+                    <Terminal size={13} className={activeCategory === 'command' ? 'text-cyan-600' : 'text-slate-400'} />
+                    <span>{zh ? '命令执行' : 'Commands'}</span>
+                    <span className="text-[10px] opacity-60 font-mono">{stats.commandCnt}</span>
                   </button>
 
                   <button
@@ -1386,6 +1477,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                       {activeCategory === 'backup' && (zh ? '配置自动备份作业' : 'Config Backup Jobs')}
                       {activeCategory === 'nsot' && (zh ? 'NSOT 网络事实库采集作业' : 'NSOT Facts Collection Jobs')}
                       {activeCategory === 'inspection' && (zh ? '智能巡检作业' : 'Smart Inspection Jobs')}
+                      {activeCategory === 'command' && (zh ? '命令执行作业' : 'Command Jobs')}
                       {activeCategory === 'script_run' && (zh ? '自动化脚本作业' : 'Automated Script Jobs')}
                     </span>
                     <span className="px-2 py-0.5 rounded-full bg-slate-200/70 text-slate-700 text-[10px] font-mono">
@@ -1428,6 +1520,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                       const isBackup = job.action_type === 'backup';
                       const isNsot = job.action_type === 'nsot';
                       const isScript = job.action_type === 'script_run';
+                      const isSystemManaged = job.authorization_mode === 'system';
                       return (
                         <motion.div
                           key={job.id}
@@ -1470,6 +1563,12 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                                   }`}>
                                     <div className={`w-1.5 h-1.5 rounded-full ${job.last_run_status === 'success' ? 'bg-emerald-500' : 'bg-rose-500'}`} />
                                     {job.last_run_status === 'success' ? (zh ? '执行成功' : 'Success') : (zh ? '执行失败' : 'Failed')}
+                                  </span>
+                                )}
+                                {isSystemManaged && (
+                                  <span className="inline-flex items-center gap-1 rounded border border-slate-200 bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
+                                    <Lock size={11} />
+                                    {zh ? '平台托管' : 'Platform managed'}
                                   </span>
                                 )}
                                 {job.use_admin_creds ? (
@@ -1530,41 +1629,45 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                                 label={zh ? '查看运行详情' : 'View Detail'}
                                 onClick={() => setDetailJob(job)}
                               />
-                              <ActionIconButton
-                                icon={Pencil}
-                                label={zh ? '编辑配置' : 'Edit'}
-                                onClick={() => openEditModal(job)}
-                              />
-                              <ActionIconButton
-                                icon={isEnabled ? PowerOff : Power}
-                                label={isEnabled ? (zh ? '暂停执行' : 'Disable') : (zh ? '恢复启动' : 'Enable')}
-                                variant={isEnabled ? 'default' : 'success'}
-                                onClick={() => toggleJobEnabled(job)}
-                              />
-                              {deleteConfirmId === job.id ? (
-                                <div className="flex items-center gap-1.5 ml-1">
-                                  <button
-                                    onClick={() => {
-                                      void openDeleteApproval(job);
-                                    }}
-                                    className="px-2.5 py-1.5 rounded-xl bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 transition-all shadow-sm"
-                                  >
-                                    {zh ? '确认删除' : 'Yes'}
-                                  </button>
-                                  <button
-                                    onClick={() => setDeleteConfirmId(null)}
-                                    className="px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-100 transition-all"
-                                  >
-                                    {zh ? '取消' : 'No'}
-                                  </button>
-                                </div>
-                              ) : (
-                                <ActionIconButton
-                                  icon={Trash2}
-                                  label={zh ? '删除作业' : 'Delete'}
-                                  variant="danger"
-                                  onClick={() => setDeleteConfirmId(job.id)}
-                                />
+                              {!isSystemManaged && (
+                                <>
+                                  <ActionIconButton
+                                    icon={Pencil}
+                                    label={zh ? '编辑配置' : 'Edit'}
+                                    onClick={() => openEditModal(job)}
+                                  />
+                                  <ActionIconButton
+                                    icon={isEnabled ? PowerOff : Power}
+                                    label={isEnabled ? (zh ? '暂停执行' : 'Disable') : (zh ? '恢复启动' : 'Enable')}
+                                    variant={isEnabled ? 'default' : 'success'}
+                                    onClick={() => toggleJobEnabled(job)}
+                                  />
+                                  {deleteConfirmId === job.id ? (
+                                    <div className="flex items-center gap-1.5 ml-1">
+                                      <button
+                                        onClick={() => {
+                                          void openDeleteApproval(job);
+                                        }}
+                                        className="px-2.5 py-1.5 rounded-xl bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 transition-all shadow-sm"
+                                      >
+                                        {zh ? '确认删除' : 'Yes'}
+                                      </button>
+                                      <button
+                                        onClick={() => setDeleteConfirmId(null)}
+                                        className="px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-100 transition-all"
+                                      >
+                                        {zh ? '取消' : 'No'}
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <ActionIconButton
+                                      icon={Trash2}
+                                      label={zh ? '删除作业' : 'Delete'}
+                                      variant="danger"
+                                      onClick={() => setDeleteConfirmId(job.id)}
+                                    />
+                                  )}
+                                </>
                               )}
                             </ActionIconGroup>
                           </div>
@@ -1608,9 +1711,60 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                 </div>
               )}
             </motion.div>
-          )}
-        </AnimatePresence>
       </div>
+
+      {showAddJob && (
+        <JobModal
+          isOpen={showAddJob}
+          onClose={closeModal}
+          isEditMode={isEditMode}
+          enablingJobId={enablingJobId}
+          editingJob={editingJob}
+          form={form}
+          setForm={setForm}
+          tagFilter={tagFilter}
+          setTagFilter={setTagFilter}
+          ipInput={ipInput}
+          setIpInput={setIpInput}
+          ipValidating={ipValidating}
+          ipError={ipError}
+          setIpError={setIpError}
+          ipDevices={ipDevices}
+          removeIpDevice={removeIpDevice}
+          validateAndAddIps={validateAndAddIps}
+          presetOpen={presetOpen}
+          setPresetOpen={setPresetOpen}
+          scriptSearch={scriptSearch}
+          setScriptSearch={setScriptSearch}
+          showScriptDropdown={showScriptDropdown}
+          setShowScriptDropdown={setShowScriptDropdown}
+          availableScripts={availableScripts}
+          fetchScripts={fetchScripts}
+          approverUsername={approverUsername}
+          setApproverUsername={selectApprover}
+          approvers={approvers}
+          approverLoadStatus={approverLoadStatus}
+          refreshApprovers={fetchApprovers}
+          approvalMethod={approvalMethod}
+          setApprovalMethod={changeApprovalMethod}
+          approvalStatus={approvalStatus}
+          approvalCountdown={approvalCountdown}
+          approvalDeadline={approvalDeadline}
+          onApprovalCountdownExpire={expireApprovalCountdown}
+          approvalCode={approvalCode}
+          setApprovalCode={setApprovalCode}
+          approvalError={approvalError}
+          setApprovalError={setApprovalError}
+          requestApproval={requestApproval}
+          verifyApproval={verifyApproval}
+          fetchCronPreview={fetchCronPreview}
+          submitForm={submitForm}
+          language={language}
+          devices={devices}
+          deviceLoadStatus={deviceLoadStatus}
+          refreshDevices={fetchDevices}
+        />
+      )}
 
       {/* --- Detail Modal --- */}
       <JobDetailModal
@@ -1631,15 +1785,15 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
             type="button"
             aria-label={zh ? '关闭作业审批' : 'Close job approval'}
             className="absolute inset-0 bg-slate-950/50 backdrop-blur-sm"
-            disabled={approvalStatus === 'sending' || disableSubmitting}
+            disabled={approvalStatus === 'sending' || approvalStatus === 'verifying' || disableSubmitting}
             onClick={() => {
               setDisableTarget(null);
               setDisableReason('');
               resetApprovalFlow();
             }}
           />
-          <div className="relative w-full max-w-md overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
-            <div className={`flex items-center justify-between border-b px-6 py-4 ${disableOperation === 'ENABLE' ? 'border-cyan-100 bg-cyan-50' : 'border-amber-100 bg-amber-50'}`}>
+          <div className="relative w-full max-w-sm overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+            <div className={`flex items-center justify-between border-b px-4 py-3 ${disableOperation === 'ENABLE' ? 'border-cyan-100 bg-cyan-50' : 'border-amber-100 bg-amber-50'}`}>
               <div>
                 <h3 className={`text-sm font-bold ${disableOperation === 'ENABLE' ? 'text-cyan-900' : 'text-amber-900'}`}>
                   {disableOperation === 'ENABLE'
@@ -1650,7 +1804,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
               </div>
               <button
                 type="button"
-                disabled={approvalStatus === 'sending' || disableSubmitting}
+                disabled={approvalStatus === 'sending' || approvalStatus === 'verifying' || disableSubmitting}
                 onClick={() => {
                   setDisableTarget(null);
                   setDisableReason('');
@@ -1659,11 +1813,10 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                 className="rounded-lg px-2 py-1 text-slate-400 hover:bg-white/70 hover:text-slate-700 disabled:opacity-40"
               >×</button>
             </div>
-            <div className="space-y-4 px-6 py-5 text-xs text-slate-700">
-              <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 font-mono text-[11px] text-slate-600">
-                <div>ID: {disableTarget.id}</div>
-                <div>{disableTarget.action_type} · {disableTarget.device_scope}</div>
-                <div>{disableTarget.cron_expr}</div>
+            <div className="space-y-3 px-4 py-4 text-xs text-slate-700">
+              <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-[11px] text-slate-600">
+                <div className="truncate font-semibold text-slate-800">{disableTarget.action_type} · {disableTarget.device_scope}</div>
+                <div className="mt-0.5 font-mono">{disableTarget.cron_expr}</div>
               </div>
               <label className="block space-y-1.5">
                 <span className="font-semibold">{zh ? '操作原因' : 'Reason'}</span>
@@ -1685,10 +1838,17 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                     >
                       <option value="">{zh ? '选择审批人...' : 'Select approver...'}</option>
                       {approvers.map(approver => (
-                        <option key={approver.id} value={approver.username}>{approver.username} ({approver.role})</option>
+                        <option key={approver.id} value={approver.username}>{approver.username}</option>
                       ))}
                     </select>
-                    {approvers.length === 0 && <span className="block text-amber-700">{zh ? '当前没有可用审批人。' : 'No eligible approvers are available.'}</span>}
+                    {approverLoadStatus === 'loading' && <span className="block text-slate-500">{zh ? '正在加载审批人…' : 'Loading approvers…'}</span>}
+                    {approverLoadStatus === 'error' && (
+                      <span className="flex items-center justify-between gap-2 text-rose-700">
+                        {zh ? '审批人加载失败，可能是登录或权限问题。' : 'Approver loading failed. Check your session or permissions.'}
+                        <button type="button" onClick={fetchApprovers} className="shrink-0 font-semibold underline">{zh ? '重试' : 'Retry'}</button>
+                      </span>
+                    )}
+                    {approverLoadStatus === 'loaded' && approvers.length === 0 && <span className="block text-amber-700">{zh ? '当前没有可用审批人。' : 'No eligible approvers are available.'}</span>}
                   </label>
                   {approvalMethod && (approvers.find(item => item.username === approverUsername)?.verification_methods.length || 0) > 0 && (
                     <label className="block space-y-1.5">
@@ -1715,7 +1875,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                 </>
               )}
               {approvalStatus === 'sending' && <div className="rounded-xl bg-slate-50 px-3 py-2 text-slate-600">{zh ? '正在发送验证码...' : 'Sending approval code...'}</div>}
-              {approvalStatus === 'sent' && (
+              {(approvalStatus === 'sent' || approvalStatus === 'verifying') && (
                 <div className="space-y-2 rounded-xl border border-slate-100 bg-slate-50 p-3">
                   <label className="block font-semibold" htmlFor="scheduled-job-disable-code">
                     {approvalMethod === 'mfa' ? (zh ? '输入审批人的 6 位 MFA 动态码' : 'Enter approver’s 6-digit MFA code') : (zh ? '输入 6 位工单验证码' : 'Enter the 6-digit approval code')}
@@ -1724,30 +1884,36 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                     <input
                       id="scheduled-job-disable-code"
                       value={approvalCode}
-                      onChange={event => { setApprovalCode(event.target.value.replace(/\D/g, '').slice(0, 6)); setApprovalError(''); }}
+                      disabled={approvalStatus === 'verifying'}
+                      onChange={event => {
+                        const code = event.target.value.replace(/\D/g, '').slice(0, 6);
+                        setApprovalCode(code);
+                        setApprovalError('');
+                        if (code.length === 6) verifyApproval(code);
+                      }}
                       inputMode="numeric"
                       maxLength={6}
-                      className="w-36 rounded-xl border border-slate-200 px-3 py-2 text-center font-mono tracking-[0.25em] outline-none focus:border-emerald-500"
+                      className="w-36 rounded-xl border border-slate-200 px-3 py-1.5 text-center font-mono tracking-[0.25em] outline-none focus:border-emerald-500 disabled:bg-slate-100"
                     />
-                    <button
-                      type="button"
-                      onClick={verifyApproval}
-                      disabled={approvalCode.length !== 6}
-                      className="rounded-xl bg-emerald-600 px-4 py-2 font-bold text-white hover:bg-emerald-700 disabled:opacity-40"
-                    >
-                      {zh ? '验证' : 'Verify'}
-                    </button>
+                    {approvalStatus === 'verifying' && <span className="text-[11px] text-cyan-700">{zh ? '正在验证…' : 'Verifying…'}</span>}
                   </div>
-                  {approvalCountdown > 0 && <p className="text-slate-500">{zh ? '验证码有效期' : 'Code expires in'} {Math.floor(approvalCountdown / 60)}:{String(approvalCountdown % 60).padStart(2, '0')}</p>}
+                  <p className="text-[10px] text-slate-400">{zh ? '输入满 6 位后自动验证；失败后修改验证码即可重试。' : 'Verification starts after 6 digits; edit the code to retry if it fails.'}</p>
+                  {approvalCountdown > 0 && (
+                    <CountdownText deadline={approvalDeadline} onExpire={expireApprovalCountdown}>
+                      {secondsRemaining => (
+                        <p className="text-slate-500">{zh ? '验证码有效期' : 'Code expires in'} {Math.floor(secondsRemaining / 60)}:{String(secondsRemaining % 60).padStart(2, '0')}</p>
+                      )}
+                    </CountdownText>
+                  )}
                 </div>
               )}
               {approvalStatus === 'verified' && <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 font-semibold text-emerald-800">{zh ? '审批验证通过。' : 'Approval verified.'}</div>}
               {approvalError && <div role="alert" className="rounded-xl bg-rose-50 px-3 py-2 text-rose-700">{approvalError}</div>}
             </div>
-            <div className="flex justify-end gap-2 border-t border-slate-100 px-6 py-4">
+            <div className="flex justify-end gap-2 border-t border-slate-100 px-4 py-3">
               <button
                 type="button"
-                disabled={approvalStatus === 'sending' || disableSubmitting}
+                disabled={approvalStatus === 'sending' || approvalStatus === 'verifying' || disableSubmitting}
                 onClick={() => {
                   setDisableTarget(null);
                   setDisableReason('');
@@ -1781,11 +1947,15 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
         setDeleteApprovalMethod={changeDeleteApprovalMethod}
         deleteStatus={deleteStatus}
         deleteCountdown={deleteCountdown}
+        deleteDeadline={deleteDeadline}
+        onDeleteCountdownExpire={expireDeleteCountdown}
         deleteCode={deleteCode}
         setDeleteCode={setDeleteCode}
         deleteError={deleteError}
         setDeleteError={setDeleteError}
         approvers={approvers}
+        approverLoadStatus={approverLoadStatus}
+        refreshApprovers={fetchApprovers}
         requestDeleteApproval={requestDeleteApproval}
         verifyDeleteApproval={verifyDeleteApproval}
         executeDeleteJob={executeDeleteJob}

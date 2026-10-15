@@ -788,10 +788,16 @@ async def execute_task(request: Request, payload: dict = Body(...), user: dict =
 
 @router.get("/config-approval/approvers")
 def list_config_approval_approvers(user: dict = Depends(get_operator)):
-    """List same-tenant approvers and their configured factors without secrets."""
+    """List eligible approvers across tenants, excluding the current requester."""
+    requester_id = str(user.get('user_id') or user.get('id') or '').strip()
+    if not requester_id:
+        raise HTTPException(status_code=401, detail='Authenticated user ID is unavailable')
     return {
         "success": True,
-        "data": list_approvers_with_methods(str(user.get('tenant_id') or '')),
+        "data": list_approvers_with_methods(
+            str(user.get('tenant_id') or ''),
+            requester_id=requester_id,
+        ),
     }
 
 

@@ -1,14 +1,13 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { CalendarClock, Plus, X, RotateCcw } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import PageHero from '../../components/PageHero';
 import { ActionButton } from '../../components/ui/ActionIconButton';
 import { useSystem } from '../../hooks/useSystem';
-import type { ExecutionScheduleTabProps, ScheduledJob, FormState, ValidatedDevice, EligibleApprover, UnifiedExecutionLog, InspSubTab, InspDetailTab, PlaybookExecutionApproval } from './types';
+import type { ExecutionScheduleTabProps, ScheduledJob, FormState, ValidatedDevice, EligibleApprover, UnifiedExecutionLog, InspSubTab, InspDetailTab, PlaybookExecutionApproval, ConfigBackupRunDetail, ConfigBackupRunDevice, BackupDetailStatus } from './types';
 import { INITIAL_FORM } from './constants';
 import { serializeTagFilter, EMPTY_TAG_FILTER } from '../../components/TagConditionPicker';
 import { fmtDateTime } from './helpers';
-import { fetchAllPaginatedItems } from '../../utils/pagination';
-import { fetchAllInspectionRuns, type InspectionRunExportRecord } from '../inspectionExport';
 
 // Components
 import ScheduleEditor from './components/ScheduleEditor';
@@ -46,6 +45,52 @@ interface PendingScheduleOperation {
 const normalizeCheckItems = (items: unknown): string[] => {
   const values = Array.isArray(items) ? items : String(items || '').split(/[,\n]+/);
   return values.map(item => String(item).trim()).filter(Boolean);
+};
+
+const normalizeExecutionHistoryItem = (item: any, zh: boolean): UnifiedExecutionLog => {
+  const source: UnifiedExecutionLog['source'] = item?.source === 'config_backup'
+    ? 'config_backup'
+    : item?.source === 'playbook' ? 'playbook' : 'inspection';
+  const triggerType: UnifiedExecutionLog['trigger_type'] = ['manual', 'plan', 'job'].includes(item?.trigger_type)
+    ? item.trigger_type
+    : 'manual';
+  const id = String(item?.id || item?.backup_run_id || '');
+  return {
+    id,
+    source,
+    ...(source === 'config_backup' ? { backup_run_id: String(item?.backup_run_id || id) } : {}),
+    started_at: String(item?.started_at || item?.created_at || ''),
+    trigger_type: triggerType,
+    status: String(item?.status || 'unknown'),
+    total_devices: Number(item?.total_devices || 0),
+    success_count: Number(item?.success_count || 0),
+    failed_count: Number(item?.failed_count || 0),
+    partial_count: Number(item?.partial_count || 0),
+    skipped_count: Number(item?.skipped_count || 0),
+    avg_health_score: item?.avg_health_score == null ? undefined : Number(item.avg_health_score),
+    created_by: String(item?.created_by || item?.author || (source === 'inspection' ? 'system' : 'admin')),
+    name: String(item?.name || item?.scenario_name || item?.schedule_name || (source === 'config_backup'
+      ? (zh ? '配置备份批次' : 'Configuration backup batch')
+      : source === 'playbook'
+        ? (zh ? '快捷命令执行' : 'Quick Playbook')
+        : (zh ? '网络巡检' : 'Network Inspection'))),
+  };
+};
+
+const escapeHtml = (value: unknown): string => String(value ?? '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;');
+
+const downloadBlob = (blob: Blob, filename: string) => {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
 
 const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
@@ -105,6 +150,8 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
   const [customEnd, setCustomEnd] = useState('');
   const futureSchedulesControllerRef = useRef<AbortController | null>(null);
   const executionHistoryControllerRef = useRef<AbortController | null>(null);
+  const backupDetailRequestRef = useRef<AbortController | null>(null);
+  const selectedLogRequestIdRef = useRef(0);
 
   // Unified execution history states
   const [unifiedLogs, setUnifiedLogs] = useState<UnifiedExecutionLog[]>([]);
@@ -114,6 +161,10 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
   const [selectedLog, setSelectedLog] = useState<UnifiedExecutionLog | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [logDetailLoading, setLogDetailLoading] = useState(false);
+  const [backupRunDetail, setBackupRunDetail] = useState<ConfigBackupRunDetail | null>(null);
+  const [backupRunError, setBackupRunError] = useState('');
+  const [backupDevicePage, setBackupDevicePage] = useState(1);
+  const [backupDeviceStatusFilter, setBackupDeviceStatusFilter] = useState<BackupDetailStatus>('all');
   const [selectedInspDeviceId, setSelectedInspDeviceId] = useState<string | null>(null);
   const [collapsedCmds, setCollapsedCmds] = useState<Record<string, boolean>>({});
   
@@ -415,38 +466,30 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
         headers: authHeaders,
         signal: controller.signal,
       });
-      if (!response.ok) throw new Error('Execution history request failed');
+      if (response.status === 401) {
+        window.dispatchEvent(new Event('netops:auth-expired'));
+        throw new Error(zh ? '登录状态已过期，请重新登录' : 'Your session has expired. Sign in again.');
+      }
+      if (response.status === 403) throw new Error(zh ? '没有查看执行历史的权限' : 'You do not have permission to view execution history.');
+      if (!response.ok) throw new Error(zh ? `执行历史请求失败 (${response.status})` : `Execution history request failed (${response.status})`);
       const payload = await response.json();
-      const data = payload.data || {};
+      const data = payload.data || payload;
       const items = Array.isArray(data.items) ? data.items : [];
       if (controller.signal.aborted) return;
 
-      const logs: UnifiedExecutionLog[] = items.map((item: any) => ({
-        id: String(item.id),
-        source: (item.source === 'playbook' ? 'playbook' : 'inspection') as UnifiedExecutionLog['source'],
-        started_at: item.started_at || '',
-        trigger_type: (item.trigger_type || 'manual') as UnifiedExecutionLog['trigger_type'],
-        status: item.status || 'unknown',
-        total_devices: Number(item.total_devices || 0),
-        success_count: Number(item.success_count || 0),
-        failed_count: Number(item.failed_count || 0),
-        partial_count: Number(item.partial_count || 0),
-        avg_health_score: item.avg_health_score == null ? undefined : Number(item.avg_health_score),
-        created_by: item.created_by || (item.source === 'playbook' ? 'admin' : 'system'),
-        name: item.name || (item.source === 'playbook'
-          ? (zh ? '快捷命令执行' : 'Quick Playbook')
-          : (zh ? '网络巡检' : 'Network Inspection')),
-      }));
+      const logs: UnifiedExecutionLog[] = items.map((item: any) => normalizeExecutionHistoryItem(item, zh));
       const total = Number(data.total || 0);
       setUnifiedLogs(logs);
       setInspRunTotal(total);
       const lastPage = Math.max(1, Math.ceil(total / inspRunPageSize));
       if (inspRunPage > lastPage) setInspRunPage(lastPage);
-    } catch {
+    } catch (cause) {
       if (!controller.signal.aborted) {
         setUnifiedLogs([]);
         setInspRunTotal(0);
-        setInspRunsError(zh ? '加载执行历史失败，请重试' : 'Failed to load execution history. Try again.');
+        setInspRunsError(cause instanceof Error
+          ? cause.message
+          : (zh ? '加载执行历史失败，请重试' : 'Failed to load execution history. Try again.'));
       }
     } finally {
       if (!controller.signal.aborted) setInspRunsLoading(false);
@@ -454,54 +497,28 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
   }, [authHeaders, zh, inspRunPage, inspRunPageSize, executionTypeFilter, executionHistorySearch]);
 
   const loadAllExecutionLogs = useCallback(async (): Promise<UnifiedExecutionLog[]> => {
-    interface InspectionHistoryRecord extends InspectionRunExportRecord {
-      status?: string | null;
-      success_count?: number | null;
-      failed_count?: number | null;
-      schedule_name?: string | null;
-      name?: string | null;
+    const allLogs: UnifiedExecutionLog[] = [];
+    const pageSize = 100;
+    let page = 1;
+    let total = Number.POSITIVE_INFINITY;
+    while (allLogs.length < total) {
+      const params = new URLSearchParams({ page: String(page), page_size: String(pageSize), trigger_type: 'all' });
+      const response = await fetch(`/api/inspections/execution-history?${params.toString()}`, { headers: authHeaders });
+      if (response.status === 401) {
+        window.dispatchEvent(new Event('netops:auth-expired'));
+        throw new Error(zh ? '登录状态已过期，请重新登录' : 'Your session has expired. Sign in again.');
+      }
+      if (!response.ok) throw new Error(zh ? `执行历史导出失败 (${response.status})` : `Failed to load history for export (${response.status})`);
+      const payload = await response.json();
+      const data = payload.data || payload;
+      const items = Array.isArray(data.items) ? data.items : [];
+      allLogs.push(...items.map((item: any) => normalizeExecutionHistoryItem(item, zh)));
+      const reportedTotal = data.total == null ? Number.NaN : Number(data.total);
+      total = Number.isFinite(reportedTotal) ? reportedTotal : allLogs.length + (items.length === pageSize ? 1 : 0);
+      if (items.length === 0 || allLogs.length >= total) break;
+      page += 1;
     }
-    const inspections = await fetchAllInspectionRuns<InspectionHistoryRecord>(authHeaders);
-
-    const playbooks = await fetchAllPaginatedItems<any>('/api/playbooks', new URLSearchParams({ status: 'all' })).catch((error: unknown) => {
-      if (error instanceof Error && error.message.includes('(HTTP 403)')) return [];
-      throw error;
-    });
-    const normalizedInspections: UnifiedExecutionLog[] = inspections.map((run) => ({
-      id: run.id,
-      source: 'inspection',
-      started_at: run.started_at || '',
-      trigger_type: run.trigger_type === 'manual' ? 'manual' : 'plan',
-      status: run.status,
-      total_devices: run.total_devices || 0,
-      success_count: run.success_count || 0,
-      failed_count: run.failed_count || 0,
-      avg_health_score: run.avg_health_score,
-      created_by: run.created_by || 'system',
-      name: run.schedule_name || run.name || (zh ? '网络巡检' : 'Network Inspection'),
-    }));
-    const normalizedPlaybooks: UnifiedExecutionLog[] = playbooks.map((playbook) => {
-      const isScheduled = playbook.author === 'scheduler' || playbook.author === 'system'
-        || (playbook.scenario_id && String(playbook.scenario_id).startsWith('scheduled:'));
-      return {
-        id: playbook.id,
-        source: 'playbook',
-        started_at: playbook.created_at,
-        trigger_type: isScheduled ? 'job' : 'manual',
-        status: playbook.status,
-        total_devices: playbook.total_devices || 0,
-        success_count: playbook.success_count || 0,
-        failed_count: playbook.failed_count || 0,
-        partial_count: playbook.partial_count || 0,
-        created_by: playbook.author || 'admin',
-        name: playbook.scenario_name || playbook.task_name || (zh ? '快捷命令执行' : 'Quick Playbook'),
-      };
-    });
-    return [...normalizedInspections, ...normalizedPlaybooks].sort((left, right) => {
-      const timeLeft = left.started_at ? new Date(left.started_at).getTime() : 0;
-      const timeRight = right.started_at ? new Date(right.started_at).getTime() : 0;
-      return (Number.isNaN(timeRight) ? 0 : timeRight) - (Number.isNaN(timeLeft) ? 0 : timeLeft);
-    });
+    return allLogs;
   }, [authHeaders, zh]);
 
   const handleExecutionTypeFilterChange = useCallback((filter: 'all' | 'manual' | 'plan' | 'job') => {
@@ -519,6 +536,59 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
     setInspRunPage(1);
   }, []);
 
+  const loadBackupRunDetails = useCallback(async (
+    log: UnifiedExecutionLog,
+    page = 1,
+    status: BackupDetailStatus = 'all',
+  ) => {
+    const runId = log.backup_run_id || log.id;
+    if (!runId || log.source !== 'config_backup') return;
+    backupDetailRequestRef.current?.abort();
+    const controller = new AbortController();
+    backupDetailRequestRef.current = controller;
+    setLogDetailLoading(true);
+    setBackupRunError('');
+
+    try {
+      const params = new URLSearchParams({ page: String(page), page_size: '100', status });
+      const response = await fetch(`/api/configs/backup-runs/${encodeURIComponent(runId)}?${params.toString()}`, {
+        headers: authHeaders,
+        signal: controller.signal,
+      });
+      if (response.status === 401) {
+        window.dispatchEvent(new Event('netops:auth-expired'));
+        throw new Error(zh ? '登录状态已过期，请重新登录' : 'Your session has expired. Sign in again.');
+      }
+      if (response.status === 403) {
+        throw new Error(zh ? '没有查看此配置备份批次的权限' : 'You do not have permission to view this backup batch.');
+      }
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const detail = payload?.detail?.message || payload?.detail || payload?.message;
+        throw new Error(typeof detail === 'string' ? detail : (zh ? `备份批次详情加载失败 (${response.status})` : `Failed to load backup batch details (${response.status})`));
+      }
+      if (controller.signal.aborted) return;
+      const devices = Array.isArray(payload?.devices) ? payload.devices : [];
+      setBackupRunDetail({
+        run: payload?.run && typeof payload.run === 'object' ? payload.run : {},
+        devices,
+        total: Number(payload?.total ?? devices.length),
+        page: Number(payload?.page ?? page),
+        page_size: Number(payload?.page_size ?? 100),
+      });
+      setBackupDevicePage(Number(payload?.page ?? page));
+      setBackupDeviceStatusFilter(status);
+    } catch (cause) {
+      if (controller.signal.aborted) return;
+      setBackupRunDetail(null);
+      setBackupRunError(cause instanceof Error
+        ? cause.message
+        : (zh ? '备份批次详情加载失败，请重试' : 'Failed to load backup batch details. Try again.'));
+    } finally {
+      if (backupDetailRequestRef.current === controller) setLogDetailLoading(false);
+    }
+  }, [authHeaders, zh]);
+
   // ESC to close the execution detail modal and the schedule detail modal
   useEffect(() => {
     if (!isDetailModalOpen && !showScheduleDetail) return;
@@ -534,9 +604,16 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
   }, [isDetailModalOpen, showScheduleDetail]);
 
   const handleSelectLog = async (log: UnifiedExecutionLog) => {
+    const requestId = ++selectedLogRequestIdRef.current;
+    backupDetailRequestRef.current?.abort();
+    backupDetailRequestRef.current = null;
     setSelectedLog(log);
     setIsDetailModalOpen(true);
     setLogDetailLoading(true);
+    setBackupRunDetail(null);
+    setBackupRunError('');
+    setBackupDevicePage(1);
+    setBackupDeviceStatusFilter('all');
     setInspectionDetail(null);
     setPbDetail(null);
     setPbDevices([]);
@@ -546,9 +623,11 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
     setPbApprovalError('');
 
     try {
-      if (log.source === 'inspection') {
+      if (log.source === 'config_backup') {
+        await loadBackupRunDetails(log, 1, 'all');
+      } else if (log.source === 'inspection') {
         const resp = await fetch(`/api/inspections/${log.id}`, { headers: authHeaders });
-        if (resp.ok) {
+        if (resp.ok && requestId === selectedLogRequestIdRef.current) {
           const j = await resp.json();
           setInspectionDetail(j.data);
           if (j.data?.results?.length > 0) {
@@ -557,10 +636,11 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
         }
       } else {
         const pbResp = await fetch(`/api/playbooks/${log.id}`, { headers: authHeaders });
-        if (pbResp.ok) {
+        if (pbResp.ok && requestId === selectedLogRequestIdRef.current) {
           const j = await pbResp.json();
           setPbDetail(j);
         }
+        if (requestId !== selectedLogRequestIdRef.current) return;
         if (log.status === 'awaiting_approval') {
           setPbApprovalsLoading(true);
           try {
@@ -578,7 +658,7 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
           }
         }
         const devResp = await fetch(`/api/playbooks/${log.id}/devices?page=1&page_size=100`, { headers: authHeaders });
-        if (devResp.ok) {
+        if (devResp.ok && requestId === selectedLogRequestIdRef.current) {
           const j = await devResp.json();
           const devs = Array.isArray(j) ? j : (j.items || []);
           setPbDevices(devs);
@@ -595,9 +675,36 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
     } catch (e) {
       console.error(e);
     } finally {
-      setLogDetailLoading(false);
+      if (requestId === selectedLogRequestIdRef.current) setLogDetailLoading(false);
     }
   };
+
+  const handleBackupDeviceStatusFilterChange = (status: BackupDetailStatus) => {
+    if (!selectedLog || selectedLog.source !== 'config_backup') return;
+    setBackupDeviceStatusFilter(status);
+    setBackupDevicePage(1);
+    void loadBackupRunDetails(selectedLog, 1, status);
+  };
+
+  const handleBackupDevicePageChange = (page: number) => {
+    if (!selectedLog || selectedLog.source !== 'config_backup') return;
+    setBackupDevicePage(page);
+    void loadBackupRunDetails(selectedLog, page, backupDeviceStatusFilter);
+  };
+
+  const closeExecutionDetail = () => {
+    backupDetailRequestRef.current?.abort();
+    backupDetailRequestRef.current = null;
+    selectedLogRequestIdRef.current += 1;
+    setIsDetailModalOpen(false);
+  };
+
+  useEffect(() => {
+    if (!isDetailModalOpen) {
+      backupDetailRequestRef.current?.abort();
+      backupDetailRequestRef.current = null;
+    }
+  }, [isDetailModalOpen]);
 
   const handlePlaybookApproval = async (approval: PlaybookExecutionApproval, decision: 'approve' | 'reject') => {
     if (!selectedLog || selectedLog.source !== 'playbook' || approval.status !== 'PENDING') return;
@@ -731,11 +838,11 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
 
   const fetchApprovers = useCallback(async () => {
     try {
-      const r = await fetch('/api/users', { headers: authHeaders });
+      const r = await fetch('/api/config-approval/approvers', { headers: authHeaders });
       if (r.ok) {
         const j = await r.json();
-        const users = Array.isArray(j) ? j : (j.data || []);
-        setApprovers(users.filter((u: EligibleApprover) => u.role === 'Administrator' || u.role === 'Operator'));
+        const users = Array.isArray(j) ? j : (Array.isArray(j.data) ? j.data : []);
+        setApprovers(users);
       }
     } catch { /* ignore */ }
   }, [authHeaders]);
@@ -975,7 +1082,136 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
     await startScheduleOperation(Number(sch.enabled) ? 'DISABLE' : 'ENABLE', sch.job_id || sch.id);
   };
 
+  const fetchAllBackupRunDeviceResults = async (runId: string): Promise<{ run: ConfigBackupRunDetail['run']; devices: ConfigBackupRunDevice[] }> => {
+    const pageSize = 100;
+    const devices: ConfigBackupRunDevice[] = [];
+    let run: ConfigBackupRunDetail['run'] = {};
+    let total = Number.POSITIVE_INFINITY;
+    let page = 1;
+    while (devices.length < total) {
+      const params = new URLSearchParams({ page: String(page), page_size: String(pageSize), status: 'all' });
+      const response = await fetch(`/api/configs/backup-runs/${encodeURIComponent(runId)}?${params.toString()}`, { headers: authHeaders });
+      if (response.status === 401) {
+        window.dispatchEvent(new Event('netops:auth-expired'));
+        throw new Error(zh ? '登录状态已过期，请重新登录' : 'Your session has expired. Sign in again.');
+      }
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const detail = payload?.detail?.message || payload?.detail || payload?.message;
+        throw new Error(typeof detail === 'string'
+          ? detail
+          : response.status === 403
+            ? (zh ? '没有导出此配置备份批次的权限' : 'You do not have permission to export this backup batch.')
+            : (zh ? `备份批次导出失败 (${response.status})` : `Failed to export backup batch (${response.status})`));
+      }
+      const data = payload?.data && Array.isArray(payload.data.devices) ? payload.data : payload;
+      const pageItems = Array.isArray(data?.devices) ? data.devices as ConfigBackupRunDevice[] : [];
+      if (data?.run && typeof data.run === 'object') run = data.run;
+      devices.push(...pageItems);
+      const reportedTotal = data?.total == null ? Number.NaN : Number(data.total);
+      total = Number.isFinite(reportedTotal) ? reportedTotal : devices.length + (pageItems.length === pageSize ? 1 : 0);
+      if (pageItems.length === 0 || devices.length >= total) break;
+      page += 1;
+    }
+    return { run, devices };
+  };
+
+  const handleExportBackupRunReport = async (logId: string, format: string) => {
+    const printWindow = format === 'pdf' ? window.open('', '_blank') : null;
+    if (format === 'pdf' && !printWindow) {
+      showToast(zh ? '浏览器拦截了打印窗口，请允许弹出窗口后重试' : 'The browser blocked the print window. Allow pop-ups and try again.', 'error');
+      return;
+    }
+    try {
+      const log = unifiedLogs.find((item) => item.source === 'config_backup' && (item.id === logId || item.backup_run_id === logId));
+      const runId = log?.backup_run_id || log?.id || logId;
+      const { run, devices: deviceResults } = await fetchAllBackupRunDeviceResults(runId);
+      const backupLog = log || normalizeExecutionHistoryItem({ ...run, id: runId, source: 'config_backup' }, zh);
+      const dateLabel = backupLog.started_at ? new Date(backupLog.started_at).toLocaleString(zh ? 'zh-CN' : 'en-US') : '--';
+      const summary = zh
+        ? {
+          '批次 ID': runId,
+          '批次名称': backupLog.name,
+          '执行时间': dateLabel,
+          '状态': backupLog.status,
+          '总设备数': backupLog.total_devices,
+          '成功设备数': backupLog.success_count,
+          '失败设备数': backupLog.failed_count,
+          '部分完成设备数': backupLog.partial_count || 0,
+          '跳过设备数': backupLog.skipped_count || 0,
+          '执行人': backupLog.created_by,
+        }
+        : {
+          'Batch ID': runId,
+          'Batch Name': backupLog.name,
+          'Started At': dateLabel,
+          'Status': backupLog.status,
+          'Total Devices': backupLog.total_devices,
+          'Successful Devices': backupLog.success_count,
+          'Failed Devices': backupLog.failed_count,
+          'Partial Devices': backupLog.partial_count || 0,
+          'Skipped Devices': backupLog.skipped_count || 0,
+          'Operator': backupLog.created_by,
+        };
+      const deviceRows = deviceResults.map((device) => {
+        const isFailure = ['failed', 'unknown', 'unreachable', 'error'].includes(String(device.status || '').toLowerCase());
+        const isSkipped = String(device.status || '').toLowerCase() === 'skipped';
+        return zh
+          ? {
+            '设备名称': device.hostname || '--',
+            '设备 ID': device.device_id || '--',
+            'IP 地址': device.ip_address || '--',
+            '状态': device.status || 'unknown',
+            '原因': isFailure || isSkipped ? device.reason || '' : '',
+            '详细说明': isFailure ? device.detail || '' : '',
+            '耗时(ms)': device.duration_ms ?? '',
+          }
+          : {
+            'Device': device.hostname || '--',
+            'Device ID': device.device_id || '--',
+            'IP Address': device.ip_address || '--',
+            'Status': device.status || 'unknown',
+            'Reason': isFailure || isSkipped ? device.reason || '' : '',
+            'Detail': isFailure ? device.detail || '' : '',
+            'Duration (ms)': device.duration_ms ?? '',
+          };
+      });
+      const deviceHeaders = zh
+        ? ['设备名称', '设备 ID', 'IP 地址', '状态', '原因', '详细说明', '耗时(ms)']
+        : ['Device', 'Device ID', 'IP Address', 'Status', 'Reason', 'Detail', 'Duration (ms)'];
+      const reportHtml = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(backupLog.name)}</title><style>body{font:13px Arial,sans-serif;color:#172033;margin:28px}h1{font-size:20px}h2{font-size:15px;margin-top:28px}table{width:100%;border-collapse:collapse;margin-top:10px}th,td{border:1px solid #d8dee9;padding:7px;text-align:left;vertical-align:top;word-break:break-word}th{background:#f1f5f9} @media print{body{margin:12mm}tr{break-inside:avoid}}</style></head><body><h1>${escapeHtml(backupLog.name)}</h1><h2>${zh ? '批次汇总' : 'Batch summary'}</h2><table><thead><tr>${Object.keys(summary).map((key) => `<th>${escapeHtml(key)}</th>`).join('')}</tr></thead><tbody><tr>${Object.values(summary).map((value) => `<td>${escapeHtml(value)}</td>`).join('')}</tr></tbody></table><h2>${zh ? '设备结果' : 'Device results'} (${deviceRows.length})</h2><table><thead><tr>${deviceHeaders.map((key) => `<th>${escapeHtml(key)}</th>`).join('')}</tr></thead><tbody>${deviceRows.map((row) => `<tr>${Object.values(row).map((value) => `<td>${escapeHtml(value)}</td>`).join('')}</tr>`).join('')}</tbody></table></body></html>`;
+      const safeRunId = runId.replace(/[^a-z0-9_-]/gi, '_').slice(0, 64) || 'batch';
+      const safeSystemName = String(systemInfo?.system_name || 'Nexora').replace(/[^a-z0-9_-]/gi, '_').slice(0, 40);
+      const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const prefix = `${safeSystemName}_ConfigBackup_Report_${safeRunId}_${today}`;
+
+      if (format === 'xlsx') {
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet([summary]), zh ? '批次汇总' : 'Batch Summary');
+        XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(deviceRows, { header: deviceHeaders }), zh ? '设备结果' : 'Device Results');
+        XLSX.writeFile(workbook, `${prefix}.xlsx`);
+      } else if (format === 'json') {
+        downloadBlob(new Blob([JSON.stringify({ batch: summary, devices: deviceRows }, null, 2)], { type: 'application/json;charset=utf-8' }), `${prefix}.json`);
+      } else if (format === 'html') {
+        downloadBlob(new Blob([reportHtml], { type: 'text/html;charset=utf-8' }), `${prefix}.html`);
+      } else if (format === 'pdf' && printWindow) {
+        printWindow.document.open();
+        printWindow.document.write(reportHtml);
+        printWindow.document.close();
+        window.setTimeout(() => { printWindow.focus(); printWindow.print(); }, 300);
+      }
+    } catch (cause) {
+      printWindow?.close();
+      console.error('Config backup batch export failed:', cause);
+      showToast(cause instanceof Error ? cause.message : (zh ? `${format.toUpperCase()} 导出失败` : `${format.toUpperCase()} export failed`), 'error');
+    }
+  };
+
   const handleExportReport = async (logId: string, format: string, source: string = 'inspection') => {
+    if (source === 'config_backup') {
+      await handleExportBackupRunReport(logId, format);
+      return;
+    }
     try {
       const sourceParam = source === 'playbook' ? '&source=playbook' : '';
       const resp = await fetch(`/api/inspections/${logId}/export?format=${format}${sourceParam}`, { headers: authHeaders });
@@ -1323,7 +1559,7 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
                     >
                       <option value="">{zh ? '选择审批人...' : 'Select approver...'}</option>
                       {approvers.map(approver => (
-                        <option key={approver.id} value={approver.username}>{approver.username} ({approver.role})</option>
+                        <option key={approver.id} value={approver.username}>{approver.username} ({approver.role} · {approver.tenant_id || (zh ? '未分配租户' : 'Unassigned tenant')})</option>
                       ))}
                     </select>
                     {approvers.length === 0 && <span className="block text-amber-700">{zh ? '当前没有可用审批人。' : 'No eligible approvers are available.'}</span>}
@@ -1424,7 +1660,7 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
         open={isDetailModalOpen}
         selectedLog={selectedLog}
         logDetailLoading={logDetailLoading}
-        onClose={() => setIsDetailModalOpen(false)}
+        onClose={closeExecutionDetail}
         onExport={handleExportReport}
         inspectionDetail={inspectionDetail}
         selectedInspDeviceId={selectedInspDeviceId}
@@ -1457,6 +1693,15 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
         selectedPbDevice={selectedPbDevice}
         pbDeviceDetail={pbDeviceDetail}
         onSelectPbDevice={handleSelectPbDevice}
+        backupRunDetail={backupRunDetail}
+        backupRunError={backupRunError}
+        backupDevicePage={backupDevicePage}
+        backupDeviceStatusFilter={backupDeviceStatusFilter}
+        onBackupDevicePageChange={handleBackupDevicePageChange}
+        onBackupDeviceStatusFilterChange={handleBackupDeviceStatusFilterChange}
+        onRetryBackupRunDetails={() => {
+          if (selectedLog?.source === 'config_backup') void loadBackupRunDetails(selectedLog, backupDevicePage, backupDeviceStatusFilter);
+        }}
         devices={devices}
       />
 

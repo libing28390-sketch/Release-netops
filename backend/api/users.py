@@ -1344,15 +1344,29 @@ async def forgot_password_mfa_reset(request: Request, payload: dict = Body(...))
         conn.close()
 
 
-@router.put("/users/{user_id}")
-async def update_user(user_id: str, request: Request, user: dict = Body(...)):
+def _user_update_session(request: Request) -> tuple[str, dict]:
     auth_header = request.headers.get('Authorization', '')
     session_token = auth_header.replace('Bearer ', '', 1) if auth_header.startswith('Bearer ') else ''
     session = validate_session_token(session_token)
     if not session:
         raise HTTPException(status_code=401, detail='Not authenticated')
+
+    return session_token, session
+
+
+async def _update_user_record(
+    user_id: str,
+    request: Request,
+    user: dict,
+    session: dict,
+    session_token: str,
+    *,
+    self_profile: bool = False,
+):
+    """Update a user row after the caller has resolved the authenticated session."""
+    is_self = self_profile or str(session.get('user_id') or '') == str(user_id)
     is_admin = session.get('role') == 'Administrator'
-    if str(session.get('user_id')) != str(user_id) and not is_admin:
+    if not is_self and not is_admin:
         raise HTTPException(status_code=403, detail='You may only update your own profile')
 
     conn = get_db_connection()
@@ -1360,31 +1374,35 @@ async def update_user(user_id: str, request: Request, user: dict = Body(...)):
         existing = conn.execute('SELECT * FROM users WHERE id = ?', (user_id,)).fetchone()
         if not existing:
             raise HTTPException(status_code=404, detail="User not found")
+        can_manage_user = is_admin and not is_self
         global_admin = is_global_administrator(session)
         actor_tenant_id = str(session.get('tenant_id') or '').strip()
         existing_tenant_id = str(existing['tenant_id'] or '').strip()
-        if is_admin:
+        if can_manage_user:
             if not global_admin and (not actor_tenant_id or existing_tenant_id != actor_tenant_id):
                 raise HTTPException(status_code=404, detail='User not found')
             enforce_resource_scope(
                 session, 'user', 'update',
                 tenant_id=None if global_admin else actor_tenant_id,
             )
-        username = user.get('username', existing['username']) if is_admin else existing['username']
-        role = user.get('role', existing['role']) if is_admin else existing['role']
-        if is_admin:
+        # A user's personal settings use this endpoint too. Even an Administrator
+        # updating their own profile must not enter the account-management path or
+        # be able to alter role, username, groups, or resource scopes via this form.
+        username = user.get('username', existing['username']) if can_manage_user else existing['username']
+        role = user.get('role', existing['role']) if can_manage_user else existing['role']
+        if can_manage_user:
             if role not in ('Administrator', 'Viewer'):
                 raise HTTPException(status_code=400, detail='Account type must be Administrator or Viewer')
             role_profile = 'Change Requester' if role == 'Viewer' else ''
         else:
             role_profile = str(existing['role_profile'] or '')
         avatar_url = user.get('avatar_url', existing['avatar_url'])
-        group_name = str((user.get('group_name', existing['group_name']) if is_admin else existing['group_name']) or '').strip()
+        group_name = str((user.get('group_name', existing['group_name']) if can_manage_user else existing['group_name']) or '').strip()
         try:
             existing_change_groups = json.loads(existing['change_groups_json'] or '[]') if 'change_groups_json' in existing.keys() else []
         except Exception:
             existing_change_groups = []
-        change_groups = _normalize_change_groups(user.get('change_groups', existing_change_groups) if is_admin else existing_change_groups)
+        change_groups = _normalize_change_groups(user.get('change_groups', existing_change_groups) if can_manage_user else existing_change_groups)
         preferred_language = user.get('preferred_language', existing['preferred_language'] if 'preferred_language' in (existing.keys() if existing else []) else 'zh')
         if preferred_language not in ('zh', 'en'):
             preferred_language = 'zh'
@@ -1417,7 +1435,7 @@ async def update_user(user_id: str, request: Request, user: dict = Body(...)):
                     creator = auth_username
                 else:
                     creator = existing_global['creator_username'] or auth_username
-                    if auth_username == creator or is_admin:
+                    if auth_username == creator or global_admin or can_manage_user:
                         if '***' not in new_url and '****' not in new_url and new_url != '':
                             final_url = new_url
                         else:
@@ -1480,7 +1498,7 @@ async def update_user(user_id: str, request: Request, user: dict = Body(...)):
             )
         if password:
             conn.execute('DELETE FROM sessions WHERE user_id = ? AND token != ?', (user_id, session_token))
-        if is_admin:
+        if can_manage_user:
             scope_mode = 'restricted' if role_profile == 'Change Requester' else 'legacy'
             conn.execute('UPDATE users SET scope_mode = ? WHERE id = ?', (scope_mode, user_id))
             if role_profile == 'Change Requester':
@@ -1529,6 +1547,24 @@ async def update_user(user_id: str, request: Request, user: dict = Body(...)):
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         conn.close()
+
+
+@router.put("/users/me/profile")
+async def update_own_profile(request: Request, user: dict = Body(...)):
+    """Update the authenticated user's profile without trusting a client target ID."""
+    session_token, session = _user_update_session(request)
+    user_id = str(session.get('user_id') or '').strip()
+    if not user_id:
+        raise HTTPException(status_code=401, detail='Authenticated user ID is unavailable')
+    return await _update_user_record(
+        user_id, request, user, session, session_token, self_profile=True,
+    )
+
+
+@router.put("/users/{user_id}")
+async def update_user(user_id: str, request: Request, user: dict = Body(...)):
+    session_token, session = _user_update_session(request)
+    return await _update_user_record(user_id, request, user, session, session_token)
 
 @router.get("/session")
 def check_session(request: Request):

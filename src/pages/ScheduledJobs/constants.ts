@@ -1,4 +1,4 @@
-import { Database, Activity, Zap, RefreshCw } from 'lucide-react';
+import { Database, Activity, Zap, RefreshCw, Terminal } from 'lucide-react';
 import { FormState } from './types';
 
 export const CRON_PRESETS = [
@@ -22,6 +22,7 @@ export const ACTION_TYPES = [
   { value: 'backup', labelZh: '核心配置备份', labelEn: 'Config Backup', icon: Database, category: 'collection' },
   { value: 'nsot', labelZh: 'NSOT 事实库采集', labelEn: 'NSOT Facts Collection', icon: RefreshCw, category: 'collection' },
   { value: 'inspection', labelZh: '智能巡检', labelEn: 'Smart Inspection', icon: Activity, category: 'collection' },
+  { value: 'command', labelZh: '命令执行', labelEn: 'Command Execution', icon: Terminal, category: 'change' },
   { value: 'script_run', labelZh: '自动化脚本', labelEn: 'Automated Script', icon: Zap, category: 'change' },
 ];
 

@@ -37,6 +37,28 @@ export interface QuickQueryTable {
   category: any;
   records: Record<string, any>[];
   columns: string[];
+  deviceResults?: QuickQueryDeviceProvenance[];
+}
+
+export interface QuickQueryDeviceProvenance {
+  device_id: string;
+  hostname: string;
+  ip_address: string;
+  platform: string;
+  request_status: 'success' | 'failed';
+  parser?: string;
+  parser_platform?: string;
+  source?: string;
+  command_source?: string;
+  adapter?: unknown;
+  template?: string;
+  template_source?: string;
+  template_action_code?: string;
+  parser_selection?: string;
+  parse_status: string;
+  commands: string[];
+  count: number;
+  error_code?: string;
 }
 
 export interface DeviceExecutionPhase {

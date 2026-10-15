@@ -305,8 +305,25 @@ def _approval_methods_for_user(connection, approver: dict) -> list[str]:
     return methods
 
 
-def list_approvers_with_methods(tenant_id: str) -> list[dict]:
-    """Return eligible approvers and safe method flags, never secrets/addresses."""
+def _approver_scope_allowed(approver: dict, requester_tenant_id: str | None) -> bool:
+    """Keep tenant-scoped grants local while allowing explicit global grants."""
+    tenant_id = _normalized_tenant_id(requester_tenant_id)
+    return (
+        authorize_resource(approver, 'pam', 'approve', tenant_id=tenant_id)
+        or authorize_resource(approver, 'pam', 'approve')
+    )
+
+
+def list_approvers_with_methods(
+    requester_tenant_id: str,
+    *,
+    requester_id: str,
+) -> list[dict]:
+    """Return eligible approvers except the requester; never expose secrets or addresses."""
+    stable_requester_id = str(requester_id or '').strip()
+    if not stable_requester_id:
+        return []
+
     conn = get_db_connection()
     try:
         rows = conn.execute(
@@ -314,18 +331,18 @@ def list_approvers_with_methods(tenant_id: str) -> list[dict]:
             SELECT id, username, role, role_profile, status, email, group_name,
                    tenant_id, scope_mode, mfa_enabled, mfa_secret, notification_channels
               FROM users
-             WHERE COALESCE(NULLIF(tenant_id, ''), 'tenant-default') = ?
-               AND status = 'active'
+             WHERE status = 'active'
              ORDER BY username
-            """,
-            (_normalized_tenant_id(tenant_id),),
+            """
         ).fetchall()
         result = []
         for row in rows:
             approver = dict(row)
+            if str(approver.get('id') or '').strip() == stable_requester_id:
+                continue
             if not resource_action_allowed(approver, 'pam', 'approve'):
                 continue
-            if not authorize_resource(approver, 'pam', 'approve', tenant_id=_normalized_tenant_id(tenant_id)):
+            if not _approver_scope_allowed(approver, requester_tenant_id):
                 continue
             methods = _approval_methods_for_user(conn, approver)
             if methods:
@@ -333,6 +350,7 @@ def list_approvers_with_methods(tenant_id: str) -> list[dict]:
                     'id': str(approver.get('id') or ''),
                     'username': str(approver.get('username') or ''),
                     'role': str(approver.get('role') or ''),
+                    'tenant_id': _normalized_tenant_id(approver.get('tenant_id')),
                     'verification_methods': methods,
                 })
         return result
@@ -394,11 +412,8 @@ def _get_approver_for_request(
         if not str(requester_tenant_id or '').strip():
             return None, '审批申请人未分配租户，无法发起审批'
 
-        expected_tenant = _normalized_tenant_id(requester_tenant_id)
-        if _normalized_tenant_id(approver.get('tenant_id')) != expected_tenant:
-            return None, '审批人与当前操作账号不属于同一租户'
-        if not authorize_resource(approver, 'pam', 'approve', tenant_id=expected_tenant):
-            return None, '所选审批人没有当前租户的审批授权'
+        if not _approver_scope_allowed(approver, requester_tenant_id):
+            return None, '所选审批人没有当前租户或全局审批授权'
         return approver, None
     finally:
         conn.close()
@@ -538,26 +553,12 @@ def request_approval(
     tc = type_config.get(approval_type, type_config['config'])
 
     if method == 'email':
-        email_result = notification_service.send_email(
+        email_result = notification_service.send_approval_verification_email(
             smtp_profile,
             email_recipients,
-            {
-                'title': f'{sys_name} 安全审批验证码',
-                'severity': 'info',
-                'status': 'active',
-                'object_name': tc['title'],
-                'ip_address': '-',
-                'message': (
-                    f'审批人：{approver_username}\n'
-                    f'申请人：{requester_username}\n'
-                    f'审批事项：{tc["title"]}\n'
-                    f'申请人说明（自由填写）：{str(config_reason or "-")[:2000]}\n'
-                    f'服务端审批清单（敏感值已脱敏）：\n{manifest_display}\n'
-                    f'清单 SHA-256：{binding_hash}\n\n'
-                    f'验证码：{code}\n验证码 5 分钟内有效，最多允许 3 次验证。'
-                ),
-                'first_occurrence': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            },
+            approval_item=tc['title'],
+            requester=requester_username,
+            code=code,
         )
         if not email_result.get('success'):
             _revoke_approval(approval_token)
@@ -718,10 +719,7 @@ def verify_code(
         if (
             not approver
             or approver.get('status') != 'active'
-            or not authorize_resource(
-                approver, 'pam', 'approve',
-                tenant_id=str(record.get('requester_tenant_id') or '') or None,
-            )
+            or not _approver_scope_allowed(approver, str(record.get('requester_tenant_id') or ''))
         ):
             conn.execute("UPDATE config_approval_requests SET status = 'revoked' WHERE token_hash = ?", (token_hash,))
             conn.commit()
@@ -830,9 +828,10 @@ def consume_approval(
         if expected_approval_type and not str(record.get('binding_hash') or '').strip():
             return None
 
-        # Revalidate both parties at the last irreversible boundary.  A code
-        # that was verified before an account was disabled, moved to another
-        # tenant, or stripped of approval rights must not remain executable.
+        # Revalidate both parties at the last irreversible boundary. A code
+        # that was verified before an account was disabled or stripped of
+        # approval rights must not remain executable. Approvers may belong to
+        # a different tenant from the requester.
         requester_row = conn.execute(
             "SELECT id, username, status, tenant_id FROM users WHERE id = ?",
             (str(record.get('requester_id') or ''),),
@@ -858,8 +857,7 @@ def consume_approval(
             not approver
             or approver.get('status') != 'active'
             or str(approver.get('id') or '') == str(record.get('requester_id') or '')
-            or _normalized_tenant_id(approver.get('tenant_id')) != bound_tenant
-            or not authorize_resource(approver, 'pam', 'approve', tenant_id=bound_tenant)
+            or not _approver_scope_allowed(approver, bound_tenant)
         ):
             conn.execute("UPDATE config_approval_requests SET status = 'revoked' WHERE token_hash = ?", (token_hash,))
             conn.commit()

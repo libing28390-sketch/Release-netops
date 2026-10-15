@@ -232,6 +232,7 @@ def _create_alert_event(
     workflow_status: str = 'open',
     note: str = '',
     connection=None,
+    source: str = 'network_monitor',
 ):
     alert_id = str(uuid.uuid4())
     now_utc = _utc_now_iso()
@@ -242,7 +243,7 @@ def _create_alert_event(
             created_at, resolved_at, workflow_status, note, updated_at
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
-    ''', (alert_id, dedupe_key, 'network_monitor', severity, title, message, device_id, interface_name, now_utc, workflow_status, note, now_utc), connection=connection)
+    ''', (alert_id, dedupe_key, source, severity, title, message, device_id, interface_name, now_utc, workflow_status, note, now_utc), connection=connection)
     return alert_id, now_local
 
 def _resolve_alert_event(dedupe_key: str, connection=None):
@@ -1031,12 +1032,12 @@ def _bgp_peer_state(record: dict) -> tuple[str, bool | None]:
 def _ospf_peer_state(record: dict) -> tuple[str, bool | None]:
     peer = _record_value(record, ('neighbor_id', 'neighbor', 'router_id', 'address', 'ip_address'), ('neighbor', 'router', 'address'))
     state = _record_value(record, ('state', 'adj_state', 'adjacency_state', 'status'), ('state', 'status'))
-    normalized_state = _normalize_protocol_text(state)
+    normalized_state = _normalize_protocol_text(state).replace('-', '_').replace(' ', '_')
     if not peer or not normalized_state:
         return peer, None
-    if 'full' in normalized_state or '2way' in normalized_state:
+    if 'full' in normalized_state or normalized_state in {'two_way', 'twoway', '2way'}:
         return peer, False
-    down_tokens = ('down', 'init', 'exstart', 'exchange', 'attempt', 'loading')
+    down_tokens = ('down', 'init', 'exstart', 'exchange_start', 'exchange', 'attempt', 'loading')
     if any(token in normalized_state for token in down_tokens):
         return peer, True
     return peer, None
@@ -1060,20 +1061,91 @@ def _bfd_peer_state(record: dict) -> tuple[str, str, bool | None]:
     return peer, interface_name, None
 
 async def _collect_protocol_neighbor_alerts(device_row: dict, ip_address: str):
-    username = str(device_row.get('username') or '').strip()
-    decrypted_password = decrypt_credential(device_row.get('password')) or ''
-    if not username or not decrypted_password:
-        return
-
     device_info = dict(device_row)
-    device_info['password'] = decrypted_password
     try:
-        payload = await asyncio.to_thread(collect_operational_data, device_info, ['bgp', 'ospf', 'bfd'])
+        collector_credentials = await asyncio.to_thread(resolve_collector_credentials, device_row)
     except Exception as exc:
-        logger.debug(f"[Protocol Monitor] {ip_address} collection failed: {exc}")
-        return
+        collector_credentials = {}
+        logger.debug(
+            "[Protocol Monitor] Credential resolution for %s failed (%s)",
+            ip_address,
+            type(exc).__name__,
+        )
 
-    categories = {str(item.get('key') or ''): item for item in (payload.get('categories') or []) if isinstance(item, dict)}
+    snmp_credentials = (collector_credentials.get('snmp') or {}) if isinstance(collector_credentials, Mapping) else {}
+    ssh_credentials = (collector_credentials.get('ssh') or {}) if isinstance(collector_credentials, Mapping) else {}
+    username = str(ssh_credentials.get('username') or device_row.get('username') or '').strip()
+    decrypted_password = str(ssh_credentials.get('password') or decrypt_credential(device_row.get('password')) or '')
+    has_ssh_credentials = bool(username and decrypted_password)
+    if has_ssh_credentials:
+        device_info['username'] = username
+        device_info['password'] = decrypted_password
+        device_info['enable_password'] = ssh_credentials.get('enable_password') or device_info.get('enable_password') or ''
+
+    categories: dict[str, dict[str, Any]] = {}
+    cli_categories: list[str] = []
+    for protocol in ('bgp', 'ospf'):
+        if not should_collect(device_row, protocol):
+            continue
+        if not snmp_credentials.get('configured'):
+            cli_categories.append(protocol)
+            continue
+        try:
+            from services.routing_neighbor_service import collect_device_routing_neighbors_snmp
+
+            snapshot = await asyncio.to_thread(
+                collect_device_routing_neighbors_snmp,
+                device_info,
+                protocol,
+                snmp_credentials=snmp_credentials,
+            )
+            if snapshot.get('status') != 'success' or not snapshot.get('records'):
+                # An empty or incomplete table is not a peer-down snapshot.
+                cli_categories.append(protocol)
+                continue
+            categories[protocol] = {
+                'key': protocol,
+                'success': True,
+                'records': snapshot['records'],
+            }
+        except Exception as exc:
+            logger.info(
+                "SNMP %s neighbor collection for %s failed (%s); trying CLI fallback",
+                protocol,
+                device_row.get('hostname') or ip_address,
+                type(exc).__name__,
+            )
+            cli_categories.append(protocol)
+
+    # BFD remains on its existing CLI collector. Only attempt CLI when its
+    # resolved read-only device credentials are available.
+    if has_ssh_credentials and should_collect(device_row, 'bfd'):
+        cli_categories.append('bfd')
+
+    if cli_categories and has_ssh_credentials:
+        try:
+            payload = await asyncio.to_thread(collect_operational_data, device_info, cli_categories)
+            for item in payload.get('categories') or []:
+                if not isinstance(item, dict):
+                    continue
+                category_key = str(item.get('key') or '')
+                if category_key not in cli_categories:
+                    continue
+                # An unmatched CLI parser can report success with zero rows.
+                # Preserve the last known peer set instead of treating that as
+                # a complete table and raising false missing-neighbor alerts.
+                if category_key in {'bgp', 'ospf'} and not item.get('records'):
+                    continue
+                categories[category_key] = item
+        except Exception as exc:
+            logger.debug(
+                "[Protocol Monitor] CLI fallback for %s failed (%s)",
+                ip_address,
+                type(exc).__name__,
+            )
+
+    if not categories:
+        return
     def _sync_protocol_category(metric_type: str, category_key: str, title: str):
         category = categories.get(category_key, {})
         if not category or not bool(category.get('success')):
@@ -1390,7 +1462,7 @@ def maybe_notify_webhook(dedupe_key: str, severity: str, title: str, message: st
 def set_alert_state(dedupe_key: str, is_active: bool, severity: str, title: str, message: str,
                      device_id: str, interface_name: str | None = None,
                      ip_address: str = '', status: str = '', rule: dict | None = None,
-                     notify: bool = True):
+                     notify: bool = True, source: str = 'network_monitor'):
     alert_rule = rule or {}
     connection = _alert_state_batch_connection.get()
     owns_connection = connection is None
@@ -1403,7 +1475,29 @@ def set_alert_state(dedupe_key: str, is_active: bool, severity: str, title: str,
     notification_queued = False
     try:
         currently_open = open_alerts.get(dedupe_key)
-        if currently_open is None:
+        if source == 'config_backup' and device_id:
+            # Overlapping backup batches can finish together. Lock their device
+            # row on PostgreSQL and refresh the durable alert projection while
+            # holding that lock, so this lifecycle cannot create two active
+            # events for the same device when the process cache is stale.
+            from database.core import _USE_PG
+
+            if _USE_PG:
+                _db_quick(
+                    'SELECT id FROM devices WHERE id = ? FOR UPDATE',
+                    (device_id,), fetch=True, connection=connection,
+                )
+            existing = _db_quick(
+                'SELECT created_at FROM alert_events WHERE dedupe_key = ? AND resolved_at IS NULL '
+                'ORDER BY created_at ASC LIMIT 1',
+                (dedupe_key,), fetch=True, connection=connection,
+            )
+            currently_open = str(existing['created_at'] or '') if existing else None
+            if currently_open:
+                open_alerts[dedupe_key] = currently_open
+            else:
+                open_alerts.pop(dedupe_key, None)
+        elif currently_open is None:
             # Rehydrate the open projection and hysteresis from the same
             # transaction that may create or resolve the lifecycle event.
             existing = _db_quick(
@@ -1490,6 +1584,7 @@ def set_alert_state(dedupe_key: str, is_active: bool, severity: str, title: str,
                 workflow_status=workflow_status,
                 note=note,
                 connection=connection,
+                source=source,
             )
             _record_alert_activity(
                 alert_id,
@@ -1497,7 +1592,7 @@ def set_alert_state(dedupe_key: str, is_active: bool, severity: str, title: str,
                 to_state=workflow_status,
                 metadata={
                     "dedupe_key": dedupe_key,
-                    "source": "network_monitor",
+                    "source": source,
                     "silence_id": silence.get('id') if silence else None,
                 },
                 connection=connection,
@@ -1980,6 +2075,25 @@ async def _process_device_raw(device, cycle_tick: int):
         fan = None
         psu = None
         hardware_metrics: dict[str, Any] = {}
+
+        # The dedicated Nexora hardware poller owns SNMP walks. Read its latest
+        # trusted, fresh fan/PSU samples from inventory instead of polling the
+        # device again from this reachability worker.
+        try:
+            from services.snmp_hardware_status_service import load_current_hardware_component_statuses
+
+            component_statuses = await asyncio.to_thread(
+                load_current_hardware_component_statuses,
+                dev_id,
+            )
+            fan = component_statuses.get('fan_status')
+            psu = component_statuses.get('psu_status')
+        except Exception as component_err:
+            logger.debug(
+                "SNMP hardware component status lookup failed for %s (%s)",
+                dev_id,
+                type(component_err).__name__,
+            )
 
         # Device hardware fields and history are populated by the native-result
         # projection. Leaving them untouched here prevents the reachability

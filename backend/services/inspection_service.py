@@ -24,6 +24,7 @@ from typing import Any
 
 import asyncio
 from database import get_db_connection, fetch_interface_data
+from core.interface_utils import normalize_interface_name
 from services.device_health_service import (
     evaluate_device_health,
     _build_open_alert_stats,
@@ -573,11 +574,117 @@ def _get_last_metrics_dict(device_id: str) -> dict | None:
     return None
 
 
+def _inspection_routing_protocol(item: dict) -> str | None:
+    """Recognize explicit BGP/OSPF neighbor metrics without treating route metrics as peers."""
+    check_key = str(item.get('check_key') or '').casefold()
+    tokens = set(re.split(r'[^a-z0-9]+', check_key))
+    if 'bgp' in tokens and tokens.intersection({'neighbor', 'peer', 'down', 'adjacency'}):
+        return 'bgp'
+    if 'ospf' in tokens and tokens.intersection({'neighbor', 'peer', 'down', 'adjacency'}):
+        return 'ospf'
+    return None
+
+
+def _routing_neighbor_is_healthy(state: str, protocol: str) -> bool:
+    if protocol == 'bgp':
+        return state in {'established', 'up'}
+    return state in {'full', 'two_way', 'twoway', '2way', 'up'} or state.startswith(('full_', 'two_way_'))
+
+
+def _routing_neighbor_state_snapshot(
+    records: list[dict],
+    protocol: str,
+) -> tuple[int, dict[str, str], str]:
+    """Normalize a complete SNMP table to a down count and stable peer states."""
+    allowed_states = (
+        {'idle', 'connect', 'active', 'opensent', 'openconfirm', 'established', 'up'}
+        if protocol == 'bgp'
+        else {'down', 'attempt', 'init', 'two_way', 'twoway', '2way', 'exchange_start', 'exchange', 'loading', 'full', 'up'}
+    )
+    peer_states: dict[str, str] = {}
+    for record in records:
+        if protocol == 'bgp':
+            peer = str(
+                record.get('neighbor_ip') or record.get('peer_ip')
+                or record.get('bgp_neigh') or record.get('neighbor') or ''
+            ).strip()
+        else:
+            peer_id = str(
+                record.get('router_id') or record.get('neighbor_id')
+                or record.get('neighbor_ip') or record.get('address') or ''
+            ).strip()
+            interface = str(record.get('interface') or record.get('if_index') or '').strip()
+            peer = f'{peer_id}@{interface}' if interface else peer_id
+        raw_state = record.get('state') or record.get('state_pfxrcd') or record.get('status') or record.get('up_down') or ''
+        state = re.sub(r'[^a-z0-9]+', '_', str(raw_state).strip().casefold()).strip('_')
+        if protocol == 'bgp' and state.isdigit():
+            state = 'established'
+        if not peer:
+            return 0, {}, f'{protocol.upper()} SNMP neighbor row has no peer identity'
+        if protocol == 'bgp' and str(record.get('admin_status') or '').casefold() == 'stopped':
+            state = 'idle'
+        if state not in allowed_states and not (protocol == 'ospf' and state.startswith(('full_', 'two_way_'))):
+            return 0, {}, f'{protocol.upper()} SNMP neighbor row has an unknown state'
+        if peer in peer_states:
+            return 0, {}, f'{protocol.upper()} SNMP neighbor table contains duplicate peers'
+        peer_states[peer] = state
+
+    down_count = sum(1 for state in peer_states.values() if not _routing_neighbor_is_healthy(state, protocol))
+    return down_count, peer_states, ''
+
+
+def _record_routing_neighbor_state_changes(
+    item: dict,
+    peer_states: dict[str, str],
+    previous_metrics: dict,
+    metrics: dict,
+    findings: list[dict],
+) -> int:
+    """Persist per-peer states and add findings for changes since the last run."""
+    check_key = str(item.get('check_key') or '')
+    state_key = f'{check_key}_neighbor_states'
+    previous = previous_metrics.get(state_key)
+    previous_states = previous if isinstance(previous, dict) else {}
+    current_states = dict(peer_states)
+    for peer, old_state in previous_states.items():
+        if peer not in current_states:
+            current_states[str(peer)] = 'missing'
+
+    metrics[state_key] = current_states
+    if not isinstance(previous, dict):
+        return 0
+
+    changes = 0
+    protocol = _inspection_routing_protocol(item) or 'routing'
+    name = item.get('name_zh') or item.get('name') or check_key
+    for peer, current_state in current_states.items():
+        old_state = str(previous_states.get(peer) or '').strip().casefold()
+        if not old_state or old_state == str(current_state).casefold():
+            continue
+        changes += 1
+        is_down = current_state == 'missing' or not _routing_neighbor_is_healthy(str(current_state), protocol)
+        direction = '状态异常' if is_down else '状态恢复'
+        findings.append(make_finding(
+            'data_error' if is_down else 'data_change',
+            f'{name} 邻居 {peer} 状态变化: {old_state} → {current_state}（{direction}）',
+            severity='warning' if is_down else 'info',
+        ))
+
+    # Missing peers are part of the observed down count after a complete
+    # snapshot; persisting "missing" prevents repeating the same transition.
+    metrics[check_key] = sum(
+        1 for state in current_states.values()
+        if not _routing_neighbor_is_healthy(str(state), protocol)
+    )
+    return changes
+
+
 def _extract_snmp_item_value(item: dict, snmp_metrics: dict, snmp_interfaces: list[dict]) -> tuple[Any, str]:
     """
     从 SNMP 采集结果中提取指标值。
-    snmp_metrics 来自 LibreNMS 原生硬件快照；接口状态来自独立 IF-MIB 采集。
-    snmp_interfaces 来自 collect_interface_data(): [{name, status, ...}, ...]
+    snmp_metrics 来自 LibreNMS 原生硬件快照；接口状态来自最近一次完整的
+    SNMP/IF-MIB CMDB 快照，避免巡检重复轮询设备。
+    snmp_interfaces: [{name, status, admin_status}, ...]
 
     根据 check_key 后缀匹配:
       *_cpu / *cpu           -> cpu_usage
@@ -627,7 +734,14 @@ def _extract_snmp_item_value(item: dict, snmp_metrics: dict, snmp_interfaces: li
     # Interface Down count
     if 'intf_down' in check_key or 'interface_down' in check_key:
         if not snmp_interfaces:
-            return None, 'LibreNMS interface status is unavailable because no supported YAML rule produced interface rows'
+            return None, snmp_metrics.get('interface_status_error') or '没有可用的完整 IF-MIB 接口状态快照'
+        unknown_count = sum(
+            1 for iface in snmp_interfaces
+            if str(iface.get('status') or '').casefold() == 'unknown'
+            or str(iface.get('admin_status') or '').casefold() == 'unknown'
+        )
+        if unknown_count:
+            return None, f'IF-MIB 完整快照中有 {unknown_count} 个接口状态无法判定'
         down_count = sum(
             1 for iface in snmp_interfaces
             if str(iface.get('status', '')).lower() in ('down', '2', 'notconnect')
@@ -638,13 +752,81 @@ def _extract_snmp_item_value(item: dict, snmp_metrics: dict, snmp_interfaces: li
     return None, f'未知的 SNMP 指标 check_key: {check_key}'
 
 
+def _load_fresh_snmp_interface_snapshot(device_id: str) -> tuple[list[dict], str]:
+    """Read the latest complete SNMP-owned interface snapshot from CMDB."""
+    try:
+        from services.collection_status_service import list_collection_status
+
+        status_rows = list_collection_status(device_id=device_id, collector='interface_status')
+        snapshot = next((item for item in status_rows if item.get('collector') == 'interface_status'), None)
+        if not snapshot or snapshot.get('effective_status') != 'success':
+            return [], 'IF-MIB 接口状态快照不存在或已过期，请先完成设备接口刷新'
+        metadata = snapshot.get('metadata') if isinstance(snapshot.get('metadata'), dict) else {}
+        if str(metadata.get('parser') or '').casefold() != 'snmp':
+            return [], '最近一次完整接口状态快照来自 CLI，不是 SNMP/IF-MIB'
+        if metadata.get('complete') is not True:
+            return [], '最近一次 IF-MIB 接口状态快照未标记为完整'
+        observed_from = metadata.get('snapshot_started_at')
+        expected_count = int(snapshot.get('coverage_total') or 0)
+        if not observed_from or expected_count <= 0:
+            return [], 'IF-MIB 接口状态快照缺少完整性标记'
+
+        conn = get_db_connection()
+        try:
+            rows = conn.execute(
+                '''SELECT interface_name, admin_status, oper_status, last_seen
+                   FROM interfaces WHERE device_id = ?''',
+                (device_id,),
+            ).fetchall()
+        finally:
+            conn.close()
+
+        observed_at = _parse_sample_datetime(observed_from)
+        if observed_at is None:
+            return [], 'IF-MIB 接口状态快照时间无效'
+        by_name: dict[str, dict] = {}
+        for row in rows:
+            item = dict(row)
+            row_seen = _parse_sample_datetime(item.get('last_seen'))
+            key = normalize_interface_name(item.get('interface_name'))
+            if not key or row_seen is None or row_seen < observed_at:
+                continue
+            current = by_name.get(key)
+            if current is None or str(item.get('last_seen') or '') > str(current.get('last_seen') or ''):
+                by_name[key] = item
+        if len(by_name) != expected_count:
+            return [], 'IF-MIB 接口状态快照不完整，CMDB 当前行数与采集覆盖数不一致'
+        return [
+            {
+                'name': item.get('interface_name') or '',
+                'status': item.get('oper_status') or 'unknown',
+                'admin_status': item.get('admin_status') or 'unknown',
+            }
+            for item in by_name.values()
+        ], ''
+    except Exception as exc:
+        logger.info('SNMP interface snapshot lookup failed for %s (%s)', device_id, type(exc).__name__)
+        return [], '读取 IF-MIB 接口状态快照失败'
+
+
+def _parse_sample_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(value or '').replace('Z', '+00:00'))
+        except (TypeError, ValueError):
+            return None
+    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+
+
 def _collect_snmp_for_inspection(device: dict) -> tuple[dict, list[dict]]:
     """
     Read fresh hardware values from the existing LibreNMS binding.
 
     Hardware rows without a native sample timestamp are deliberately excluded
-    from inspection thresholds. Interface profile OIDs are not queried here;
-    this executor has no pinned LibreNMS YAML interface rule.
+    from inspection thresholds. Interface status is read from the latest
+    complete SNMP-owned CMDB snapshot to avoid a second IF-MIB walk.
     """
     ip = device.get('ip_address') or ''
 
@@ -685,12 +867,45 @@ def _collect_snmp_for_inspection(device: dict) -> tuple[dict, list[dict]]:
                 ('memory_usage', memory_rows),
                 ('temp', temperature_rows),
             ):
+                if key == 'memory_usage':
+                    rows = [row for row in rows if str(row.get('sensor_type') or '').casefold() == 'memory_usage_percent']
                 values = fresh_values(rows)
                 if values:
                     # Keep every native entity in the diagnostic response. The
                     # legacy inspection rule contract accepts one scalar, so
                     # its device-level threshold uses the highest fresh row.
                     snmp_metrics[key] = max(values)
+
+            state_codes = {0: 'ok', 1: 'warning', 2: 'failed', 3: 'unknown'}
+            state_priorities = {'ok': 0, 'unknown': 1, 'warning': 2, 'failed': 3}
+            status_rows = {'fan_state': [], 'power_supply_state': []}
+            for row in native.get('hardware_sensors') or []:
+                sensor_class = str(row.get('sensor_class') or '').casefold()
+                if sensor_class not in status_rows:
+                    continue
+                if (
+                    not row.get('active')
+                    or row.get('sensor_type') != 'component_state'
+                    or row.get('value_status') != 'available'
+                    or row.get('freshness') != 'fresh'
+                ):
+                    continue
+                try:
+                    state_number = float(row.get('sensor_current'))
+                except (TypeError, ValueError, OverflowError):
+                    continue
+                if (
+                    state_number == state_number
+                    and abs(state_number) != float('inf')
+                    and state_number.is_integer()
+                    and int(state_number) in state_codes
+                ):
+                    status_rows[sensor_class].append(state_codes[int(state_number)])
+
+            for source_class, metric_name in (('fan_state', 'fan_status'), ('power_supply_state', 'psu_status')):
+                values = status_rows[source_class]
+                if values:
+                    snmp_metrics[metric_name] = max(values, key=lambda value: state_priorities[value])
         except Exception as e:
             logger.warning("LibreNMS inspection snapshot failed for %s: %s", ip, type(e).__name__)
             snmp_metrics = {}
@@ -699,6 +914,9 @@ def _collect_snmp_for_inspection(device: dict) -> tuple[dict, list[dict]]:
     except Exception as e:
         logger.warning(f"SNMP event loop creation failed for {ip}: {e}")
 
+    snmp_interfaces, interface_error = _load_fresh_snmp_interface_snapshot(str(device.get('id') or ''))
+    if interface_error:
+        snmp_metrics['interface_status_error'] = interface_error
     return snmp_metrics, snmp_interfaces
 
 
@@ -747,7 +965,7 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
         'platform': platform_name,
         'role': device.get('role') or '',
         'site': device.get('site') or '',
-        'ping_ok': 0, 'ssh_ok': 0, 'ssh_error': '',
+        'ping_ok': 0, 'ssh_ok': None, 'ssh_error': '',
         'ping_latency_ms': None,
         'health_score': 100,
         'health_status': 'healthy',
@@ -785,11 +1003,80 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
     # ── 分流：SNMP 性能指标 vs CLI 协议/合规指标 ──
     cli_items = [it for it in inspection_items if (it.get('method') or '').upper() == 'CLI']
     snmp_items = [it for it in inspection_items if (it.get('method') or '').upper() == 'SNMP']
+    routing_protocol_items = {
+        protocol: [it for it in snmp_items if _inspection_routing_protocol(it) == protocol]
+        for protocol in ('bgp', 'ospf')
+    }
+    routing_protocol_items = {protocol: items for protocol, items in routing_protocol_items.items() if items}
+    routing_protocol_snapshots: dict[str, dict[str, Any]] = {}
+    routing_protocol_errors: dict[str, str] = {}
+    routing_cli_fallback_failed = False
+
+    for protocol in routing_protocol_items:
+        try:
+            from services.routing_neighbor_service import collect_device_routing_neighbors_snmp
+
+            snapshot = collect_device_routing_neighbors_snmp(device, protocol)
+            if snapshot.get('status') == 'no_neighbors':
+                raise RuntimeError(f'{protocol.upper()} SNMP neighbor table returned no rows')
+            down_count, peer_states, state_error = _routing_neighbor_state_snapshot(snapshot['records'], protocol)
+            if state_error:
+                raise RuntimeError(state_error)
+            routing_protocol_snapshots[protocol] = {
+                'records': snapshot['records'],
+                'down_count': down_count,
+                'peer_states': peer_states,
+                'source': 'snmp',
+            }
+        except Exception as exc:
+            # Do not expose transport details or secrets in ordinary results.
+            routing_protocol_errors[protocol] = f'SNMP {protocol.upper()} 邻居采集失败（{type(exc).__name__}）'
+
+    if routing_protocol_errors:
+        try:
+            from services.operational_data_service import collect_operational_data
+
+            fallback_protocols = list(routing_protocol_errors)
+            fallback_payload = collect_operational_data(device, categories=fallback_protocols)
+            fallback_categories = {
+                str(category.get('key') or ''): category
+                for category in (fallback_payload.get('categories') or [])
+                if isinstance(category, dict)
+            }
+            for protocol in fallback_protocols:
+                category = fallback_categories.get(protocol) or {}
+                if not category.get('success'):
+                    error_code = str(category.get('error_code') or 'CLI fallback unavailable')
+                    routing_protocol_errors[protocol] = f'{protocol.upper()} SNMP 失败且 CLI 回退失败（{error_code}）'
+                    routing_cli_fallback_failed = True
+                    continue
+                records = category.get('records') or []
+                if not records:
+                    routing_protocol_errors[protocol] = f'{protocol.upper()} CLI 回退未返回邻居记录'
+                    routing_cli_fallback_failed = True
+                    continue
+                down_count, peer_states, state_error = _routing_neighbor_state_snapshot(records, protocol)
+                if state_error:
+                    routing_protocol_errors[protocol] = f'{protocol.upper()} CLI 回退解析失败'
+                    routing_cli_fallback_failed = True
+                    continue
+                routing_protocol_snapshots[protocol] = {
+                    'records': records,
+                    'down_count': down_count,
+                    'peer_states': peer_states,
+                    'source': 'cli_fallback',
+                }
+                routing_protocol_errors.pop(protocol, None)
+        except Exception as exc:
+            for protocol in list(routing_protocol_errors):
+                routing_protocol_errors[protocol] = f'{protocol.upper()} SNMP 失败且 CLI 回退失败（{type(exc).__name__}）'
+            routing_cli_fallback_failed = True
 
     # 2a. SNMP 采集（不需要 SSH）
     snmp_metrics: dict = {}
     snmp_interfaces: list[dict] = []
-    if snmp_items:
+    non_protocol_snmp_items = [item for item in snmp_items if _inspection_routing_protocol(item) is None]
+    if non_protocol_snmp_items:
         snmp_metrics, snmp_interfaces = _collect_snmp_for_inspection(device)
         # 填充 result 的标准字段
         if snmp_metrics.get('cpu_usage') is not None:
@@ -806,7 +1093,11 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
         if snmp_interfaces:
             result['interface_total'] = len(snmp_interfaces)
             result['interface_up'] = sum(1 for i in snmp_interfaces if str(i.get('status', '')).lower() in ('up', '1'))
-            result['interface_down'] = result['interface_total'] - result['interface_up']
+            result['interface_down'] = sum(
+                1 for i in snmp_interfaces
+                if str(i.get('status', '')).lower() in ('down', '2', 'notconnect')
+                and str(i.get('admin_status', '')).lower() not in ('down', '2')
+            )
 
     # 2b. SSH/CLI 采集（仅在有 CLI 指标或自定义 check_items 时执行）
     raw_outputs: dict[str, str] = {}
@@ -832,7 +1123,11 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
             cli_items = []  # 清空 CLI 指标，不再尝试 SSH 采集
         else:
             # 3. 收集所有需要的命令（去重）
-            commands_set = {item.get('command') or '' for item in cli_items if item.get('command')}
+            commands_set = {
+                item.get('command') or ''
+                for item in cli_items
+                if item.get('command')
+            }
             if check_items:
                 matched_cmds_and_keys = {item.get('command') for item in inspection_items} | {item.get('check_key') for item in inspection_items}
                 for ci in check_items:
@@ -891,8 +1186,17 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
                     cli_items = []  # 不再处理 CLI 指标
             result['ssh_ok'] = 1
     else:
-        # 无 CLI 指标，跳过 SSH，标记 ssh_ok = 1
-        result['ssh_ok'] = 1
+        # No CLI checks means SSH was not tested. A successful CLI fallback
+        # for a routing-protocol SNMP item is the exception: that path did
+        # open an SSH session and can report it as checked.
+        result['ssh_ok'] = (
+            1 if any(
+                snapshot.get('source') == 'cli_fallback'
+                for snapshot in routing_protocol_snapshots.values()
+            ) else None
+        )
+    if routing_cli_fallback_failed:
+        result['ssh_ok'] = 0
 
     # R2.8: Enable 提权失败 — 记录 warning finding，但继续执行
     enable_err = raw_outputs.pop('__ENABLE_FAILED__', None)
@@ -919,10 +1223,20 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
         warn_threshold = item.get('warning_threshold')
         crit_threshold = item.get('critical_threshold')
         item_method = (item.get('method') or '').upper()
+        item_protocol = _inspection_routing_protocol(item) if item_method == 'SNMP' else None
+        item_peer_states: dict[str, str] | None = None
 
         # 根据采集方式调度提取器
         if item_method == 'SNMP':
-            value, err = _extract_snmp_item_value(item, snmp_metrics, snmp_interfaces)
+            if item_protocol and item_protocol in routing_protocol_snapshots:
+                protocol_snapshot = routing_protocol_snapshots[item_protocol]
+                value = protocol_snapshot['down_count']
+                item_peer_states = protocol_snapshot['peer_states']
+                err = ''
+            elif item_protocol:
+                value, err = None, routing_protocol_errors.get(item_protocol, f'{item_protocol.upper()} SNMP 邻居采集失败')
+            else:
+                value, err = _extract_snmp_item_value(item, snmp_metrics, snmp_interfaces)
         else:
             value, err = _extract_item_value(item, raw_outputs)
 
@@ -941,6 +1255,17 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
             continue
 
         metrics[check_key] = value
+        if item_protocol and item_protocol in routing_protocol_snapshots:
+            metrics[f'{check_key}_collector'] = routing_protocol_snapshots[item_protocol].get('source', 'snmp')
+        if item_peer_states is not None:
+            _record_routing_neighbor_state_changes(
+                item,
+                item_peer_states,
+                last_metrics_raw,
+                metrics,
+                findings,
+            )
+            value = metrics.get(check_key, value)
         is_abnormal = False
 
         # 阈值判定
@@ -1006,13 +1331,20 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
             normal_keywords = ('normal', 'ok', 'up', 'true', '1', 'running', 'operational')
             is_normal = any(kw in val_str for kw in normal_keywords)
             if not is_normal and val_str not in ('', 'none', 'n/a'):
+                failed_component_state = (
+                    (check_key.lower().endswith('_fan') or check_key.lower().endswith('_psu'))
+                    and val_str in {'failed', 'fail', 'failure'}
+                )
+                severity = 'critical' if failed_component_state else 'warning'
                 findings.append(make_finding(
                     'data_error',
                     f"{name_zh} 状态异常: {value}",
-                    severity='warning',
+                    severity=severity,
                 ))
-                health_deduct += 10
-                if result['health_status'] == 'healthy':
+                health_deduct += 20 if failed_component_state else 10
+                if failed_component_state:
+                    result['health_status'] = 'critical'
+                elif result['health_status'] == 'healthy':
                     result['health_status'] = 'warning'
                 is_abnormal = True
 

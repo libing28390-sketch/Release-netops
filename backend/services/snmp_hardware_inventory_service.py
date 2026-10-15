@@ -320,7 +320,30 @@ def _upsert_sensor(conn, *, device: Mapping[str, Any], sensor: Mapping[str, Any]
             native_instance_id = EXCLUDED.native_instance_id,
             native_device_id = EXCLUDED.native_device_id,
             native_entity_id = EXCLUDED.native_entity_id,
-            index_labels_json = EXCLUDED.index_labels_json,
+            index_labels_json = CASE
+                WHEN EXCLUDED.metadata_json->>'rule_key' = 'wireless_h3c_comware'
+                 AND EXCLUDED.metadata_json->>'wireless_sensor_class' = 'ap-state'
+                THEN EXCLUDED.index_labels_json
+                    || CASE
+                        WHEN EXCLUDED.metadata_json->>'ap_name_enriched' = 'true' THEN '{}'::jsonb
+                        ELSE jsonb_strip_nulls(jsonb_build_object(
+                            'ap_name', COALESCE(
+                                NULLIF(snmp_hardware_sensors.index_labels_json->>'ap_name', ''),
+                                EXCLUDED.index_labels_json->>'ap_name'
+                            )
+                        ))
+                    END
+                    || CASE
+                        WHEN EXCLUDED.metadata_json->>'ap_model_enriched' = 'true' THEN '{}'::jsonb
+                        ELSE jsonb_strip_nulls(jsonb_build_object(
+                            'ap_model', COALESCE(
+                                NULLIF(snmp_hardware_sensors.index_labels_json->>'ap_model', ''),
+                                NULLIF(EXCLUDED.index_labels_json->>'ap_model', '')
+                            )
+                        ))
+                    END
+                ELSE EXCLUDED.index_labels_json
+            END,
             oid = EXCLUDED.oid,
             unit = EXCLUDED.unit,
             scale = EXCLUDED.scale,
@@ -328,8 +351,20 @@ def _upsert_sensor(conn, *, device: Mapping[str, Any], sensor: Mapping[str, Any]
             states_json = EXCLUDED.states_json,
             thresholds_json = EXCLUDED.thresholds_json,
             metadata_json = EXCLUDED.metadata_json,
-            sensor_name = EXCLUDED.sensor_name,
-            entity_name = EXCLUDED.entity_name,
+            sensor_name = CASE
+                WHEN EXCLUDED.metadata_json->>'rule_key' = 'wireless_h3c_comware'
+                 AND EXCLUDED.metadata_json->>'wireless_sensor_class' = 'ap-state'
+                 AND EXCLUDED.metadata_json->>'ap_name_enriched' = 'false'
+                THEN COALESCE(NULLIF(snmp_hardware_sensors.sensor_name, ''), EXCLUDED.sensor_name)
+                ELSE EXCLUDED.sensor_name
+            END,
+            entity_name = CASE
+                WHEN EXCLUDED.metadata_json->>'rule_key' = 'wireless_h3c_comware'
+                 AND EXCLUDED.metadata_json->>'wireless_sensor_class' = 'ap-state'
+                 AND EXCLUDED.metadata_json->>'ap_name_enriched' = 'false'
+                THEN COALESCE(NULLIF(snmp_hardware_sensors.entity_name, ''), EXCLUDED.entity_name)
+                ELSE EXCLUDED.entity_name
+            END,
             group_name = EXCLUDED.group_name,
             rule_version = EXCLUDED.rule_version,
             discovery_status = EXCLUDED.discovery_status,
@@ -552,7 +587,8 @@ def _retire_unseen_sensors(
 ) -> None:
     rows = conn.execute(
         """
-        SELECT sensor_key, missing_success_count, last_missing_run_id
+        SELECT sensor_key, missing_success_count, last_missing_run_id,
+               component_class, measurement_type, states_json, last_sample_at
           FROM snmp_hardware_sensors
          WHERE device_id = ? AND source_type = ? AND component_class = ?
            AND lifecycle_status <> 'retired'
@@ -565,6 +601,56 @@ def _retire_unseen_sensors(
         if sensor_key in seen_sensor_keys or str(_row_value(row, "last_missing_run_id", 2) or "") == run_id:
             continue
         missing_count = int(_row_value(row, "missing_success_count", 1) or 0) + 1
+        if (
+            str(_row_value(row, "component_class", 3) or "").casefold() == "wireless_access_point"
+            and str(_row_value(row, "measurement_type", 4) or "").casefold() == "component_state"
+        ):
+            previous_sample_at = _row_value(row, "last_sample_at", 6)
+            if previous_sample_at is not None and previous_sample_at > observed_at:
+                # Do not let an older complete discovery snapshot replace a
+                # newer recorded state.
+                continue
+            # A complete AP inventory snapshot that omits an existing AP does
+            # not prove that AP was removed or disconnected. Keep its state
+            # identity exportable and distinguish it from a reported state.
+            states = _decode_json_field(_row_value(row, "states_json", 5), fallback={})
+            if isinstance(states, list):
+                states = [item for item in states if not (
+                    isinstance(item, Mapping) and str(item.get("value") or "") == "not_reported"
+                )]
+                states.append({
+                    "value": "not_reported",
+                    "generic": "unknown",
+                    "descr": "not_reported",
+                })
+            else:
+                states = dict(states) if isinstance(states, Mapping) else {}
+                states["not_reported"] = {"generic": "unknown", "descr": "not_reported"}
+            conn.execute(
+                """
+                UPDATE snmp_hardware_sensors
+                   SET states_json = ?::jsonb,
+                       last_value = 3,
+                       last_raw_value = 'not_reported',
+                       last_quality = 'good',
+                       missing_success_count = ?, last_missing_run_id = ?,
+                       lifecycle_status = 'active', discovery_status = 'not_present',
+                       enabled = TRUE,
+                       last_success = CASE
+                           WHEN last_success IS NULL THEN ? ELSE GREATEST(last_success, ?) END,
+                       last_seen = CASE WHEN last_seen IS NULL THEN ? ELSE GREATEST(last_seen, ?) END,
+                       last_sample_at = CASE
+                           WHEN last_sample_at IS NULL THEN ? ELSE GREATEST(last_sample_at, ?) END,
+                       updated_at = GREATEST(updated_at, ?)
+                 WHERE device_id = ? AND sensor_key = ?
+                """,
+                (
+                    _json_text(states), missing_count, run_id,
+                    observed_at, observed_at, observed_at, observed_at,
+                    observed_at, observed_at, observed_at, device_id, sensor_key,
+                ),
+            )
+            continue
         lifecycle_status = "retired" if missing_count >= 2 else "pending_retirement"
         conn.execute(
             """
@@ -691,6 +777,14 @@ def upsert_discovery_run(
         accepted_scopes.add(scope)
         if result["status"] in {"success", "partial"}:
             for sensor in discovered:
+                if (
+                    scope[1] == "wireless_access_point"
+                    and sensor["measurement_type"] == "component_state"
+                    and not result["coverage_complete"]
+                ):
+                    # AP state only changes on a complete AP inventory. Partial
+                    # snapshots may still refresh independent child metrics.
+                    continue
                 _upsert_sensor(
                     conn,
                     device=device,
@@ -699,16 +793,16 @@ def upsert_discovery_run(
                     run_id=resolved_run_id,
                     observed_at=at,
                 )
-            if result["status"] in {"success", "not_found"} and result["coverage_complete"]:
-                _retire_unseen_sensors(
-                    conn,
-                    device_id=resolved_device_id,
-                    source_type=scope[0],
-                    component_class=scope[1],
-                    seen_sensor_keys={sensor["sensor_key"] for sensor in discovered},
-                    run_id=resolved_run_id,
-                    observed_at=at,
-                )
+        if result["status"] in {"success", "not_found"} and result["coverage_complete"]:
+            _retire_unseen_sensors(
+                conn,
+                device_id=resolved_device_id,
+                source_type=scope[0],
+                component_class=scope[1],
+                seen_sensor_keys={sensor["sensor_key"] for sensor in discovered},
+                run_id=resolved_run_id,
+                observed_at=at,
+            )
 
         active_count = _active_count(conn, resolved_device_id, scope[0], scope[1])
         conn.execute(

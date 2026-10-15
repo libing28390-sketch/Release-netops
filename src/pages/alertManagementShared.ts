@@ -279,6 +279,8 @@ export const collectorSourceLabel = (source: string, language: string) => {
   switch (source) {
     case 'snmp': return language === 'zh' ? 'SNMP' : 'SNMP';
     case 'ssh_cli': return language === 'zh' ? 'SSH/CLI' : 'SSH/CLI';
+    case 'snmp_cli_fallback': return language === 'zh' ? 'SNMP（CLI 回退）' : 'SNMP (CLI fallback)';
+    case 'config_backup': return language === 'zh' ? '配置备份' : 'Config backup';
     case 'icmp_tcp': return language === 'zh' ? 'ICMP/TCP' : 'ICMP/TCP';
     case 'system': return language === 'zh' ? '系统采集' : 'System';
     default: return source;

@@ -135,9 +135,9 @@ def list_execution_history(
     query: str = Query('', max_length=200),
     user=require_role('Viewer'),
 ):
-    # Inspections retain the existing Viewer access. Playbook rows are an
-    # optional source and must pass the same resource authorization as
-    # GET /api/playbooks; denied users still receive inspection history.
+    # Inspections retain the existing Viewer access. Playbook rows must pass
+    # their resource authorization; sensitive backup-batch metadata is only
+    # included for Administrators.
     include_playbooks = authorize_resource(user, 'playbook', 'view')
     data = get_execution_history(
         page=page,
@@ -146,6 +146,7 @@ def list_execution_history(
         query=query,
         user=user,
         include_playbooks=include_playbooks,
+        include_backup_runs=user.get('role') == 'Administrator',
     )
     return {'success': True, 'data': data, 'message': ''}
 

@@ -49,6 +49,13 @@ interface InspectionItemFacets {
   methods: Record<string, number>;
 }
 
+const getRoutingProtocolFromCheckKey = (checkKey?: string | null): 'bgp' | 'ospf' | null => {
+  const tokens = String(checkKey || '').toLowerCase().split(/[^a-z0-9]+/);
+  if (tokens.includes('bgp') && tokens.some(token => ['neighbor', 'peer', 'down', 'adjacency'].includes(token))) return 'bgp';
+  if (tokens.includes('ospf') && tokens.some(token => ['neighbor', 'peer', 'down', 'adjacency'].includes(token))) return 'ospf';
+  return null;
+};
+
 
 const VENDORS = [
   'Generic',
@@ -580,14 +587,23 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                     </select>
                   </div>
                   {form.method === 'SNMP' && (
-                    <div>
-                      <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? 'OID' : 'OID'}</label>
-                      <input
-                        type="text" value={form.oid || ''} onChange={e => setForm({ ...form, oid: e.target.value })}
-                        className="w-full px-3.5 py-2 rounded-xl border border-black/[0.08] text-sm focus:outline-none shadow-sm"
-                        placeholder={zh ? "请输入 OID" : "1.3.6.1..."}
-                      />
-                    </div>
+                    getRoutingProtocolFromCheckKey(form.check_key) ? (
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? 'SNMP 邻居表' : 'SNMP neighbor table'}</label>
+                        <div className="rounded-xl border border-cyan-100 bg-cyan-50/70 px-3.5 py-2 text-xs text-cyan-800">
+                          {zh ? '按 BGP/OSPF 标准 MIB 自动采集，无需填写单个 OID' : 'Uses the BGP/OSPF standard MIB table; no scalar OID is needed'}
+                        </div>
+                      </div>
+                    ) : (
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? 'OID' : 'OID'}</label>
+                        <input
+                          type="text" value={form.oid || ''} onChange={e => setForm({ ...form, oid: e.target.value })}
+                          className="w-full px-3.5 py-2 rounded-xl border border-black/[0.08] text-sm focus:outline-none shadow-sm"
+                          placeholder={zh ? "请输入 OID" : "1.3.6.1..."}
+                        />
+                      </div>
+                    )
                   )}
                   <div>
                     <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '告警阈值 (%)' : 'Warn Threshold (%)'}</label>
@@ -741,7 +757,9 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                         </td>
                         <td className="px-6 py-4 text-[10px] text-black/45">{boundScriptName || '—'}</td>
                         <td className="px-6 py-4 font-mono text-[10px]">
-                          {isEditing && form.method === 'SNMP' ? (
+                          {isEditing && form.method === 'SNMP' && getRoutingProtocolFromCheckKey(form.check_key) ? (
+                            <span className="text-[10px] font-medium text-cyan-700">{zh ? '标准邻居 MIB' : 'Standard neighbor MIB'}</span>
+                          ) : isEditing && form.method === 'SNMP' ? (
                             <input type="text" value={form.oid || ''} onChange={e => setForm({ ...form, oid: e.target.value })} onClick={e => e.stopPropagation()} className="w-full px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none" placeholder="OID" />
                           ) : item.oid || '—'}
                         </td>

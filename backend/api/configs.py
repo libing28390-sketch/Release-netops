@@ -481,6 +481,94 @@ def _finish_backup_run(
         conn.close()
 
 
+def _sync_backup_failure_alerts(run_id: str) -> None:
+    """Open or resolve device-level alerts from each affected device's latest result."""
+    conn = get_db_connection()
+    try:
+        affected_rows = conn.execute(
+            '''SELECT DISTINCT device_id
+               FROM config_backup_run_devices
+               WHERE run_id = ? AND device_id IS NOT NULL
+                 AND status IN ('success', 'failed')''',
+            (run_id,),
+        ).fetchall()
+        device_ids = [str(row['device_id']) for row in affected_rows if row['device_id']]
+        if not device_ids:
+            return
+
+        placeholders = ','.join('?' for _ in device_ids)
+        latest_rows = conn.execute(
+            f'''SELECT device_id, status, hostname, ip_address, reason, run_id
+                FROM (
+                    SELECT rd.device_id, rd.status, rd.hostname, rd.ip_address, rd.reason,
+                           r.id AS run_id,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY rd.device_id
+                               ORDER BY COALESCE(rd.finished_at, r.finished_at, r.started_at) DESC,
+                                        r.started_at DESC, rd.id DESC
+                           ) AS result_order
+                    FROM config_backup_run_devices rd
+                    JOIN config_backup_runs r ON r.id = rd.run_id
+                    WHERE rd.device_id IN ({placeholders})
+                      AND rd.status IN ('success', 'failed')
+                      AND r.finished_at IS NOT NULL
+                ) latest
+                WHERE result_order = 1''',
+            tuple(device_ids),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    from services.background_monitor_service import set_alert_state
+
+    alert_rule = {
+        'id': 'config_backup_failure',
+        'for_duration_seconds': 0,
+        'recovery_threshold': 1,
+        'recovery_duration_seconds': 0,
+    }
+    for row in latest_rows:
+        device_id = str(row['device_id'] or '')
+        if not device_id:
+            continue
+        hostname = str(row['hostname'] or row['ip_address'] or device_id)
+        ip_address = str(row['ip_address'] or '')
+        is_failed = str(row['status'] or '').casefold() == 'failed'
+        dedupe_key = f'config_backup_failure:{device_id}'
+        if is_failed:
+            title = f'配置备份失败：{hostname}'
+            reason = str(row['reason'] or '备份失败')
+            message = (
+                f'设备 {hostname}（{ip_address or "未知 IP"}）最近一次配置备份失败。'
+                f'批次 ID：{row["run_id"]}；原因：{reason}。请查看自动化执行历史中的批次详情。'
+            )
+        else:
+            title = f'配置备份恢复：{hostname}'
+            message = (
+                f'设备 {hostname}（{ip_address or "未知 IP"}）最近一次配置备份已成功，'
+                f'此前的备份失败告警已恢复。'
+            )
+        try:
+            set_alert_state(
+                dedupe_key=dedupe_key,
+                is_active=is_failed,
+                severity='warning',
+                title=title,
+                message=message,
+                device_id=device_id,
+                ip_address=ip_address,
+                status='active' if is_failed else 'resolved',
+                rule=alert_rule,
+                source='config_backup',
+            )
+        except Exception:
+            logger.exception(
+                '[Scheduled Backup] Could not update failure alert for device %s (run %s)',
+                device_id,
+                run_id,
+            )
+
+
 # ──────────────────────────────────────────────
 # Endpoints
 # ──────────────────────────────────────────────
@@ -1946,7 +2034,6 @@ async def run_scheduled_backup(
     import asyncio
     from services.automation_service import AutomationService
     from core.crypto import decrypt_credential
-    from api.devices import _record_instant_execution
     import time as _time
 
     persisted_run_id = run_id or f"run-{uuid.uuid4().hex[:12]}"
@@ -2243,15 +2330,6 @@ async def run_scheduled_backup(
                         if collect_startup_config and len(results) > 1 and results[1].get('success', False):
                             startup_output = results[1].get('output') or results[1].get('stdout') or ''
                         if not _looks_like_error(output) and not output.startswith('% '):
-                            _record_instant_execution(
-                                d['id'],
-                                f"Config Backup · {(policy or {}).get('name', 'Manual')}",
-                                commands,
-                                'completed',
-                                platform=d.get('platform'),
-                                output=output,
-                                device_info=d,
-                            )
                             break
                     err = (
                         results[0].get('error')
@@ -2534,10 +2612,17 @@ async def run_scheduled_backup(
 
     await asyncio.gather(*[_run_with_progress(dev) for dev in eligible])
 
+    run_finalized = False
     try:
         _finish_backup_run(persisted_run_id)
+        run_finalized = True
     except Exception:
         logger.exception("[Scheduled Backup] Could not finalize backup run %s", persisted_run_id)
+    if run_finalized:
+        try:
+            await asyncio.to_thread(_sync_backup_failure_alerts, persisted_run_id)
+        except Exception:
+            logger.exception("[Scheduled Backup] Could not update failure alerts for run %s", persisted_run_id)
 
     duration = round(_time.time() - start_time, 2)
     logger.info(

@@ -594,33 +594,34 @@ def test_wireless_and_interface_dashboards_share_reference_semantic_colors():
     assert overview[8]["targets"][0]["expr"] == overview_client_expr
 
 
-def test_wireless_ap_counts_use_collected_state_rows_and_explicit_statuses():
+def test_wireless_ap_counts_use_stable_inventory_and_offline_statuses():
     dashboard = build_wireless_dashboard()
     panels = {panel["title"]: panel for panel in dashboard["panels"]}
 
-    total_panel = panels["采集 AP"]
+    total_panel = panels["纳管 AP"]
     total_expression = total_panel["targets"][0]["expr"]
     assert "count by (site_name,vendor,role,hostname)" in total_expression
     assert 'nexora_hw_component_state{' in total_expression
     assert 'component_class="wireless_access_point"' in total_expression
     assert "hwWlanApTotalNum" not in total_expression
-    assert any(term in total_panel["description"] for term in ("实际采集", "已采集", "已采到"))
-    assert "控制器配置" in total_panel["description"]
-    assert "不等" in total_panel["description"]
+    assert "控制器 AP 清单" in total_panel["description"]
+    assert "最近一次完整采集保留" in total_panel["description"]
+    assert "单次缺行不会缩减总数" in total_panel["description"]
 
     online_expression = panels["在线 AP"]["targets"][0]["expr"]
-    assert 'state_description=~"^(associated|run)$"' in online_expression
+    assert 'state_description=~"^(associated|run|online)$"' in online_expression
     assert 'coverage_complete="true"' in online_expression
     assert 'sensor_class="ap-count"' in online_expression  # Actual aggregate fallback for platforms without a complete AP detail set.
     assert "unless on(site_name,vendor,role,hostname)" in online_expression
 
     offline_panel = panels["离线 AP"]
     offline_expression = offline_panel["targets"][0]["expr"]
-    assert 'state_description=~"^(deassociated|idle)$"' in offline_expression
+    assert 'state_description=~"^(deassociated|idle|down|disconnected|not_reported)$"' in offline_expression
+    assert 'state_description=~"^(associated|run|online|active|deassociated|idle|down|disconnected|not_reported|join|joinConfirm|joining|joinack|download|config|data check|image load|downloading image)$"' in offline_expression
     assert 'coverage_complete="true"' in offline_expression
     assert "hwWlanApTotalNum" not in offline_expression
-    assert any(term in offline_panel["description"] for term in ("不从", "不用"))
-    assert "在线数" in offline_panel["description"]
+    assert "明确断连" in offline_panel["description"]
+    assert "仍纳管但未上报" in offline_panel["description"]
     assert "推算" in offline_panel["description"]
 
 

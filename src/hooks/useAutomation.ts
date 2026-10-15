@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import type { Job, ScheduledTask, Script, ConfigTemplate, SessionUser, Device } from '../types';
 import { isAutomationPlatformSupported, normalizeAutomationPlatform } from '../pages/AutomationExecute/helpers';
+import type { QuickQueryDeviceProvenance } from '../pages/AutomationExecute/types';
 import { authHeaders } from '../api/http';
 
 const QUICK_QUERY_TIMEOUT_MS = 45_000;
@@ -1071,7 +1072,10 @@ export const useAutomation = ({
       Object.keys(item || {}).forEach((key) => columnSet.add(key));
     });
     const columns: string[] = Array.from(columnSet.values());
-    return { category, records, columns };
+    const deviceResults: QuickQueryDeviceProvenance[] = Array.isArray(payload?.device_results)
+      ? payload.device_results
+      : [];
+    return { category, records, columns, deviceResults };
   }, []);
 
   const exportQuickQueryTable = useCallback((commands: string[]) => {
@@ -1095,7 +1099,7 @@ export const useAutomation = ({
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, dataSheet, 'Data');
 
-        const metaRows = [
+        const metaRows: Array<{ key: string; value: string }> = [
           { key: language === 'zh' ? '查询名称' : 'Query', value: quickQueryLabel },
           { key: language === 'zh' ? '设备' : 'Device', value: quickQueryStructured?.device?.hostname || '' },
           { key: language === 'zh' ? '平台' : 'Platform', value: quickQueryStructured?.device?.platform || '' },
@@ -1104,6 +1108,29 @@ export const useAutomation = ({
           { key: language === 'zh' ? '记录数' : 'Records', value: String(table.records.length) },
           { key: language === 'zh' ? '实际执行命令' : 'Executed Commands', value: commands.join('\n') },
         ];
+        const deviceResults: QuickQueryDeviceProvenance[] = Array.isArray(quickQueryStructured?.device_results)
+          ? quickQueryStructured.device_results
+          : [];
+        deviceResults.forEach((deviceResult) => {
+          const details = [
+            deviceResult.platform,
+            deviceResult.parser ? `parser=${deviceResult.parser}` : '',
+            deviceResult.parser_platform ? `parser_platform=${deviceResult.parser_platform}` : '',
+            deviceResult.source ? `source=${deviceResult.source}` : '',
+            deviceResult.command_source ? `command_source=${deviceResult.command_source}` : '',
+            deviceResult.adapter ? `adapter=${typeof deviceResult.adapter === 'string' ? deviceResult.adapter : JSON.stringify(deviceResult.adapter)}` : '',
+            deviceResult.template ? `template=${deviceResult.template}` : '',
+            deviceResult.template_source ? `template_source=${deviceResult.template_source}` : '',
+            deviceResult.commands.length ? `commands=${deviceResult.commands.join('; ')}` : '',
+            deviceResult.error_code ? `error_code=${deviceResult.error_code}` : '',
+            `status=${deviceResult.parse_status}`,
+            `records=${deviceResult.count}`,
+          ].filter(Boolean).join(' · ');
+          metaRows.push({
+            key: `${language === 'zh' ? '设备来源' : 'Device source'} · ${deviceResult.hostname || deviceResult.ip_address}`,
+            value: details,
+          });
+        });
         const metaSheet = XLSX.utils.json_to_sheet(metaRows);
         XLSX.utils.book_append_sheet(workbook, metaSheet, 'Meta');
 
@@ -1199,31 +1226,27 @@ export const useAutomation = ({
       let combinedRecords: any[] = [];
       let combinedOutput = '';
       let backendCmds: string[] = [];
-      let backendParseStatus = 'unmatched';
-      let backendParser = '';
-      let backendSource = '';
-      let backendAdapter: any = null;
       const backendErrors: Array<{ code?: string; message: string }> = [];
+      const deviceResults: QuickQueryDeviceProvenance[] = [];
 
       results.forEach((res) => {
         if (!res.ok) {
           combinedOutput += `--- ${res.device.hostname} ---\nError: ${res.error}\n\n`;
+          deviceResults.push({
+            device_id: String(res.device.id || ''),
+            hostname: String(res.device.hostname || ''),
+            ip_address: String(res.device.ip_address || ''),
+            platform: String(res.device.platform || ''),
+            request_status: 'failed',
+            parse_status: 'request_failed',
+            commands: [],
+            count: 0,
+            error_code: 'REQUEST_FAILED',
+          });
           return;
         }
         const firstCat = Array.isArray(res.data?.categories) ? res.data.categories[0] : null;
         if (firstCat) {
-          if (firstCat.parser) {
-            backendParser = String(firstCat.parser);
-          }
-          if (firstCat.parse_status) {
-            backendParseStatus = firstCat.parse_status;
-          }
-          if (firstCat.source) {
-            backendSource = String(firstCat.source);
-          }
-          if (firstCat.adapter) {
-            backendAdapter = firstCat.adapter;
-          }
           if (firstCat.error || firstCat.error_code) {
             backendErrors.push({
               code: firstCat.error_code ? String(firstCat.error_code) : undefined,
@@ -1242,16 +1265,62 @@ export const useAutomation = ({
             combinedRecords = [...combinedRecords, ...recordsWithHost];
           }
         }
+        const categoryRecords = Array.isArray(firstCat?.records) ? firstCat.records : [];
+        deviceResults.push({
+          device_id: String(res.device.id || ''),
+          hostname: String(res.device.hostname || ''),
+          ip_address: String(res.device.ip_address || ''),
+          platform: String(res.device.platform || ''),
+          request_status: 'success',
+          parser: firstCat?.parser ? String(firstCat.parser) : undefined,
+          parser_platform: firstCat?.parser_platform ? String(firstCat.parser_platform) : undefined,
+          source: firstCat?.source ? String(firstCat.source) : undefined,
+          command_source: firstCat?.command_source ? String(firstCat.command_source) : undefined,
+          adapter: firstCat?.adapter,
+          template: firstCat?.template ? String(firstCat.template) : undefined,
+          template_source: firstCat?.template_source ? String(firstCat.template_source) : undefined,
+          template_action_code: firstCat?.template_action_code ? String(firstCat.template_action_code) : undefined,
+          parser_selection: firstCat?.parser_selection ? String(firstCat.parser_selection) : undefined,
+          parse_status: String(firstCat?.parse_status || 'unreported'),
+          commands: Array.isArray(firstCat?.commands) ? firstCat.commands.map(String) : [],
+          count: Number(firstCat?.count ?? categoryRecords.length ?? 0),
+          error_code: firstCat?.error_code ? String(firstCat.error_code) : undefined,
+        });
         if (res.data) {
           combinedOutput += `--- ${res.device.hostname} ---\n${formatQuickQueryRawOutput(res.data)}\n\n`;
         }
       });
+
+      const summarizeProvenance = (field: keyof QuickQueryDeviceProvenance): unknown => {
+        const values = deviceResults.map((item) => item[field]);
+        const presentValues = values.filter((value) => value !== undefined && value !== null && value !== '');
+        if (presentValues.length === 0) return undefined;
+        const signatures = new Set(presentValues.map((value) => JSON.stringify(value)));
+        if (signatures.size > 1 || values.some((value) => value === undefined || value === null || value === '')) {
+          return 'mixed';
+        }
+        return presentValues[0];
+      };
+      const summarizeText = (field: keyof QuickQueryDeviceProvenance): string | undefined => {
+        const value = summarizeProvenance(field);
+        if (value === undefined || value === null) return undefined;
+        return typeof value === 'string' ? value : JSON.stringify(value);
+      };
 
       if (backendCmds.length > 0) {
         setQuickQueryCommands([...new Set(backendCmds)]);
       }
 
       const hasStructuredRecords = combinedRecords.length > 0;
+      const parserMetadataIsMixed = [
+        summarizeText('parser'),
+        summarizeText('parser_platform'),
+        summarizeText('template'),
+        summarizeText('template_source'),
+      ].includes('mixed');
+      const parserSummary = parserMetadataIsMixed
+        ? 'mixed'
+        : summarizeText('parser') || (operationalCategory ? 'platform-registry' : 'platform-parser');
       const mockStructured = {
         device: {
           hostname: targets.length === 1 ? targets[0].hostname : (language === 'zh' ? '多选聚合' : 'Aggregate'),
@@ -1260,17 +1329,24 @@ export const useAutomation = ({
         categories: [
           {
             name: categoryKey,
-            parser: backendParser || (operationalCategory ? 'platform-registry' : 'platform-parser'),
+            parser: parserSummary,
+            parser_platform: summarizeText('parser_platform'),
             count: combinedRecords.length,
             records: combinedRecords,
-            parse_status: backendParseStatus,
-            source: backendSource || undefined,
-            adapter: backendAdapter || undefined,
+            parse_status: summarizeText('parse_status') || 'unreported',
+            source: summarizeText('source'),
+            command_source: summarizeText('command_source'),
+            adapter: summarizeProvenance('adapter'),
+            template: summarizeText('template'),
+            template_source: summarizeText('template_source'),
+            template_action_code: summarizeText('template_action_code'),
+            parser_selection: summarizeText('parser_selection'),
             errors: backendErrors,
             error_code: backendErrors[0]?.code,
             error: backendErrors[0]?.message || undefined,
           },
         ],
+        device_results: deviceResults,
       };
 
       setQuickQueryStructured(mockStructured);

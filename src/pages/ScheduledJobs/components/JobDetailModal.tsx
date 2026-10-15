@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Info, X, CalendarClock, Target, FileText, FileCode } from 'lucide-react';
+import { Info, X, CalendarClock, Target, FileText, FileCode, Lock } from 'lucide-react';
 import { NsotCollectionPreview, ScheduledJob } from '../types';
 import { describeCron } from '../helpers';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
@@ -436,15 +436,22 @@ export const JobDetailModal: React.FC<JobDetailModalProps> = ({
             >
               {zh ? '关闭' : 'Close'}
             </button>
-            <button
-              onClick={() => {
-                onClose();
-                openEditModal(detailJob);
-              }}
-              className="px-6 py-2 rounded-xl bg-[#164e63] text-white text-xs font-bold shadow-lg shadow-cyan-900/10 hover:bg-[#0891b2] transition-all"
-            >
-              {zh ? '编辑该作业' : 'Edit Job'}
-            </button>
+            {detailJob.authorization_mode === 'system' ? (
+              <p className="inline-flex items-center gap-1.5 text-xs text-slate-500" role="note">
+                <Lock size={13} />
+                {zh ? '系统内置作业由平台托管，此处仅可查看。' : 'This built-in job is platform-managed and read-only here.'}
+              </p>
+            ) : (
+              <button
+                onClick={() => {
+                  onClose();
+                  openEditModal(detailJob);
+                }}
+                className="px-6 py-2 rounded-xl bg-[#164e63] text-white text-xs font-bold shadow-lg shadow-cyan-900/10 hover:bg-[#0891b2] transition-all"
+              >
+                {zh ? '编辑该作业' : 'Edit Job'}
+              </button>
+            )}
           </div>
         </motion.div>
       </motion.div>

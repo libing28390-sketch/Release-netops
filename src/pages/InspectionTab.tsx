@@ -51,7 +51,7 @@ interface InspectionResult {
   site: string;
   ping_ok: number;
   ping_latency_ms: number | null;
-  ssh_ok: number;
+  ssh_ok: number | null;
   ssh_error: string;
   health_score: number | null;
   health_status: string;
@@ -829,6 +829,7 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
                     ) : (
                       selectedRunDetail.results.map((res) => {
                         const tone = statusToneMap[res.health_status] || statusToneMap.unknown;
+                        const sshChecked = res.ssh_ok === 0 || res.ssh_ok === 1;
                         return (
                           <tr key={res.id} className="hover:bg-black/[0.01] dark:hover:bg-white/[0.01]">
                             <td className="px-4 py-3 font-bold text-slate-800 dark:text-slate-200">{res.hostname || '—'}</td>
@@ -852,7 +853,13 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
                             <td className="px-4 py-3 text-[11px] font-mono text-slate-700 dark:text-slate-300">{res.interface_total}</td>
                             <td className="px-4 py-3 text-[11px] font-mono text-slate-700 dark:text-slate-300">{res.interface_down}</td>
                             <td className={`px-4 py-3 text-[11px] font-semibold ${res.ping_ok ? 'text-emerald-600' : 'text-rose-500'}`}>{res.ping_ok ? '✓' : '✗'}</td>
-                            <td className={`px-4 py-3 text-[11px] font-semibold ${res.ssh_ok ? 'text-emerald-600' : 'text-rose-500'}`}>{res.ssh_ok ? '✓' : '✗'}</td>
+                            <td
+                              className={`px-4 py-3 text-[11px] font-semibold ${!sshChecked ? 'text-slate-400 dark:text-slate-500' : res.ssh_ok === 1 ? 'text-emerald-600' : 'text-rose-500'}`}
+                              title={!sshChecked ? (isZh ? '未检查 SSH' : 'SSH not checked') : undefined}
+                              aria-label={!sshChecked ? (isZh ? '未检查 SSH' : 'SSH not checked') : undefined}
+                            >
+                              {!sshChecked ? (isZh ? '未检查' : 'Not checked') : res.ssh_ok === 1 ? '✓' : '✗'}
+                            </td>
                           </tr>
                         );
                       })

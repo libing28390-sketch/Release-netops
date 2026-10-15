@@ -259,8 +259,16 @@ def _email_body(alert: dict, *, html: bool = False, test_mode: bool = False) -> 
     return f'<html><body><h2>{escape(title)}</h2><table>{table}</table>{link}</body></html>'
 
 
-def send_email(smtp_config: dict, recipients, alert: dict, *, test_mode: bool = False) -> dict:
-    """Send an alert or explicit configuration-test email with a safe result."""
+def _send_email_message(
+    smtp_config: dict,
+    recipients,
+    *,
+    subject: str,
+    text_body: str,
+    html_body: str,
+    test_mode: bool = False,
+) -> dict:
+    """Send a prepared email through the shared, rate-limited SMTP transport."""
     addresses = _email_recipients(recipients)
     if not addresses:
         return {'success': False, 'error_code': 'smtp_invalid_recipient', 'recipient_count': 0}
@@ -298,14 +306,14 @@ def send_email(smtp_config: dict, recipients, alert: dict, *, test_mode: bool = 
         password = str(decrypt_credential(config.get('password_ciphertext')) or '')
     username = str(config.get('username') or '').strip()
     message = EmailMessage()
-    message['Subject'] = _email_subject(alert, test_mode=test_mode)
+    message['Subject'] = str(subject)[:240]
     message['From'] = formataddr((str(config.get('from_name') or 'Nexora').strip(), from_address))
     message['To'] = ', '.join(addresses)
     reply_to = str(config.get('reply_to') or '').strip()
     if reply_to and _EMAIL_ADDRESS_RE.fullmatch(reply_to):
         message['Reply-To'] = reply_to
-    message.set_content(_email_body(alert, html=False, test_mode=test_mode))
-    message.add_alternative(_email_body(alert, html=True, test_mode=test_mode), subtype='html')
+    message.set_content(text_body)
+    message.add_alternative(html_body, subtype='html')
 
     smtp = None
     try:
@@ -346,6 +354,69 @@ def send_email(smtp_config: dict, recipients, alert: dict, *, test_mode: bool = 
                     smtp.close()
                 except Exception:
                     pass
+
+
+def send_email(smtp_config: dict, recipients, alert: dict, *, test_mode: bool = False) -> dict:
+    """Send an alert or explicit configuration-test email with a safe result."""
+    return _send_email_message(
+        smtp_config,
+        recipients,
+        subject=_email_subject(alert, test_mode=test_mode),
+        text_body=_email_body(alert, html=False, test_mode=test_mode),
+        html_body=_email_body(alert, html=True, test_mode=test_mode),
+        test_mode=test_mode,
+    )
+
+
+def send_approval_verification_email(
+    smtp_config: dict,
+    recipients,
+    *,
+    approval_item: str,
+    requester: str,
+    code: str,
+) -> dict:
+    """Send the minimal approval verification message without alert metadata."""
+    def display_value(value: object) -> str:
+        text = re.sub(r'[\r\n\t]+', ' ', str(value or '')).strip()
+        return text[:200] or '-'
+
+    def escape(value: str) -> str:
+        return (
+            value.replace('&', '&amp;')
+            .replace('<', '&lt;')
+            .replace('>', '&gt;')
+            .replace('"', '&quot;')
+        )
+
+    item_text = display_value(approval_item)
+    requester_text = display_value(requester)
+    code_text = display_value(code)
+    text_body = '\n'.join((
+        f'审批事项：{item_text}',
+        f'申请人：{requester_text}',
+        f'验证码：{code_text}',
+        '有效期：5 分钟',
+        '最多验证：3 次',
+        '安全提示：请勿转发此邮件或验证码。',
+    ))
+    html_body = (
+        '<html><body>'
+        f'<p><strong>审批事项：</strong>{escape(item_text)}</p>'
+        f'<p><strong>申请人：</strong>{escape(requester_text)}</p>'
+        f'<p><strong>验证码：</strong>{escape(code_text)}</p>'
+        '<p>有效期：5 分钟</p>'
+        '<p>最多验证：3 次</p>'
+        '<p>安全提示：请勿转发此邮件或验证码。</p>'
+        '</body></html>'
+    )
+    return _send_email_message(
+        smtp_config,
+        recipients,
+        subject='Nexora 安全审批验证码',
+        text_body=text_body,
+        html_body=html_body,
+    )
 
 
 def test_smtp_connection(smtp_config: dict) -> dict:

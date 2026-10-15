@@ -164,22 +164,31 @@ const HistoryList: React.FC<HistoryListProps> = ({
       success: zh ? '已完成' : 'Completed',
       running: zh ? '执行中' : 'Running',
       failed: zh ? '已失败' : 'Failed',
+      partial: zh ? '部分完成' : 'Partial',
+      partial_failure: zh ? '部分失败' : 'Partial failure',
+      partial_success: zh ? '部分成功' : 'Partial success',
+      skipped: zh ? '已跳过' : 'Skipped',
+      unknown: zh ? '未知' : 'Unknown',
       awaiting_approval: zh ? '待审批' : 'Awaiting approval',
       approval_rejected: zh ? '审批拒绝' : 'Approval rejected',
     };
     return {
       headers: zh
-        ? ['触发时间', '任务名称', '来源', '执行方式', '状态', '设备数', '成功设备数', '失败设备数', '健康评分', '执行人']
-        : ['Triggered At', 'Task Name', 'Source', 'Type', 'Status', 'Total Devices', 'Successful Devices', 'Failed Devices', 'Health Score', 'Operator'],
+        ? ['触发时间', '任务名称', '来源', '执行方式', '状态', '设备数', '成功设备数', '失败设备数', '部分完成设备数', '跳过设备数', '健康评分', '执行人']
+        : ['Triggered At', 'Task Name', 'Source', 'Type', 'Status', 'Total Devices', 'Successful Devices', 'Failed Devices', 'Partial Devices', 'Skipped Devices', 'Health Score', 'Operator'],
       rows: matchingLogs.map((log) => [
         log.started_at ? new Date(log.started_at).toLocaleString(zh ? 'zh-CN' : 'en-US', { hour12: false }) : '--',
         log.name || '--',
-        log.source === 'inspection' ? (zh ? '巡检执行' : 'Inspection') : (zh ? '自动化执行' : 'Automation'),
+        log.source === 'config_backup'
+          ? (zh ? '配置备份' : 'Config Backup')
+          : log.source === 'inspection' ? (zh ? '巡检执行' : 'Inspection') : (zh ? '自动化执行' : 'Automation'),
         typeLabels[log.trigger_type] || log.trigger_type,
-        statusLabels[log.status] || log.status,
+        statusLabels[log.status] || log.status || (zh ? '未知' : 'Unknown'),
         log.total_devices ?? 0,
         log.success_count ?? 0,
         log.failed_count ?? 0,
+        log.partial_count ?? 0,
+        log.skipped_count ?? 0,
         log.avg_health_score == null ? '' : Number(log.avg_health_score).toFixed(1),
         log.created_by || 'admin',
       ]),
@@ -267,19 +276,21 @@ const HistoryList: React.FC<HistoryListProps> = ({
             <p className="text-xs font-medium">{errorMessage}</p>
           </div>
         ) : logs.length > 0 ? (
-          <DataTable unstyled exportConfig={{ filename: 'execution-history', language: zh ? 'zh' : 'en', disabled: logs.length === 0, exportData: exportHistory }} className="w-full min-w-[1200px] table-fixed border-collapse">
+          <DataTable unstyled exportConfig={{ filename: 'execution-history', language: zh ? 'zh' : 'en', disabled: logs.length === 0, exportData: exportHistory }} className="w-full min-w-[1400px] table-fixed border-collapse">
             <colgroup>
               <col style={{ width: '12%' }} /> {/* 触发时间 */}
               <col style={{ width: '19%' }} /> {/* 任务名称 */}
               <col style={{ width: '8%' }} /> {/* 来源 */}
               <col style={{ width: '10%' }} /> {/* 执行方式 */}
               <col style={{ width: '9%' }} /> {/* 状态 */}
-              <col style={{ width: '7%' }} /> {/* 设备数 */}
-              <col style={{ width: '7%' }} /> {/* 成功 */}
-              <col style={{ width: '7%' }} /> {/* 失败 */}
-              <col style={{ width: '7%' }} /> {/* 健康评分 */}
-              <col style={{ width: '7%' }} /> {/* 执行人 */}
-              <col style={{ width: '7%' }} /> {/* 操作 */}
+              <col style={{ width: '4%' }} /> {/* 设备数 */}
+              <col style={{ width: '4%' }} /> {/* 成功 */}
+              <col style={{ width: '4%' }} /> {/* 失败 */}
+              <col style={{ width: '4%' }} /> {/* 部分 */}
+              <col style={{ width: '4%' }} /> {/* 跳过 */}
+              <col style={{ width: '6%' }} /> {/* 健康评分 */}
+              <col style={{ width: '8%' }} /> {/* 执行人 */}
+              <col style={{ width: '8%' }} /> {/* 操作 */}
             </colgroup>
             <thead>
               <tr className="border-b border-slate-100 bg-slate-50/60 text-[11px] font-bold uppercase tracking-wider text-slate-500">
@@ -291,6 +302,8 @@ const HistoryList: React.FC<HistoryListProps> = ({
                 <th className="py-3.5 px-4 text-left">{zh ? '设备数' : 'Total Devices'}</th>
                 <th className="py-3.5 px-4 text-left">{zh ? '成功设备数' : 'Successful Devices'}</th>
                 <th className="py-3.5 px-4 text-left">{zh ? '失败设备数' : 'Failed Devices'}</th>
+                <th className="py-3.5 px-4 text-left">{zh ? '部分完成设备数' : 'Partial Devices'}</th>
+                <th className="py-3.5 px-4 text-left">{zh ? '跳过设备数' : 'Skipped Devices'}</th>
                 <th className="py-3.5 px-4 text-left">{zh ? '健康评分' : 'Health Score'}</th>
                 <th className="py-3.5 px-4 text-left">{zh ? '执行人' : 'Operator'}</th>
                 <TableActionHeader className="py-3.5 px-4 text-right pr-6">{zh ? '操作' : 'Actions'}</TableActionHeader>
@@ -303,6 +316,10 @@ const HistoryList: React.FC<HistoryListProps> = ({
                   success: { label: zh ? '已完成' : 'Completed', badgeCls: 'bg-emerald-50 text-emerald-700 border-emerald-200/60', dotCls: 'bg-emerald-500' },
                   running: { label: zh ? '执行中' : 'Running', badgeCls: 'bg-blue-50 text-blue-700 border-blue-200/60', dotCls: 'bg-blue-500 animate-pulse' },
                   failed: { label: zh ? '已失败' : 'Failed', badgeCls: 'bg-rose-50 text-rose-700 border-rose-200/60', dotCls: 'bg-rose-500' },
+                  partial: { label: zh ? '部分完成' : 'Partial', badgeCls: 'bg-amber-50 text-amber-700 border-amber-200/60', dotCls: 'bg-amber-500' },
+                  partial_failure: { label: zh ? '部分失败' : 'Partial failure', badgeCls: 'bg-amber-50 text-amber-700 border-amber-200/60', dotCls: 'bg-amber-500' },
+                  partial_success: { label: zh ? '部分成功' : 'Partial success', badgeCls: 'bg-amber-50 text-amber-700 border-amber-200/60', dotCls: 'bg-amber-500' },
+                  skipped: { label: zh ? '已跳过' : 'Skipped', badgeCls: 'bg-slate-50 text-slate-600 border-slate-200', dotCls: 'bg-slate-400' },
                   awaiting_approval: { label: zh ? '待审批' : 'Awaiting approval', badgeCls: 'bg-amber-50 text-amber-700 border-amber-200/60', dotCls: 'bg-amber-500' },
                   approval_rejected: { label: zh ? '审批拒绝' : 'Approval rejected', badgeCls: 'bg-rose-50 text-rose-700 border-rose-200/60', dotCls: 'bg-rose-500' },
                 };
@@ -335,7 +352,9 @@ const HistoryList: React.FC<HistoryListProps> = ({
 
                     {/* Source */}
                     <td className="py-3.5 px-4 text-xs text-slate-500">
-                      {log.source === 'inspection' ? (zh ? '巡检执行' : 'Inspection') : (zh ? '自动化执行' : 'Automation')}
+                      {log.source === 'config_backup'
+                        ? (zh ? '配置备份' : 'Config Backup')
+                        : log.source === 'inspection' ? (zh ? '巡检执行' : 'Inspection') : (zh ? '自动化执行' : 'Automation')}
                     </td>
 
                     {/* Trigger Type */}
@@ -358,6 +377,8 @@ const HistoryList: React.FC<HistoryListProps> = ({
                     <td className="py-3.5 px-4 text-xs font-bold text-slate-700 font-mono">{log.total_devices}</td>
                     <td className="py-3.5 px-4 text-xs font-semibold text-emerald-600 font-mono">{log.success_count}</td>
                     <td className="py-3.5 px-4 text-xs font-semibold text-rose-600 font-mono">{log.failed_count}</td>
+                    <td className="py-3.5 px-4 text-xs font-semibold text-amber-600 font-mono">{log.partial_count || 0}</td>
+                    <td className="py-3.5 px-4 text-xs font-semibold text-slate-500 font-mono">{log.skipped_count || 0}</td>
                     <td className={`py-3.5 px-4 text-xs font-bold tabular-nums ${
                       (log.avg_health_score || 0) >= 80 ? 'text-emerald-600' : (log.avg_health_score || 0) >= 60 ? 'text-amber-600' : 'text-rose-600'
                     }`}>

@@ -92,6 +92,7 @@ def test_h3c_wireless_mib_adapter_discovers_ap_states_counts_and_identity(monkey
         ("HH3C-DOT11-ACMT-MIB", "hh3cDot11TotalAPconnected"): "1.3.6.1.4.1.55555.1",
         ("HH3C-DOT11-ACMT-MIB", "hh3cDot11StationCurAssocSum"): "1.3.6.1.4.1.55555.2",
         ("HH3C-DOT11-APMT-MIB", "hh3cDot11APOperationStatus"): "1.3.6.1.4.1.55555.3",
+        ("HH3C-DOT11-APMT-MIB", "hh3cDot11APConnectionType"): "1.3.6.1.4.1.55555.21",
         ("HH3C-DOT11-APMT-MIB", "hh3cDot11CurrAPName"): "1.3.6.1.4.1.55555.4",
         ("HH3C-DOT11-APMT-MIB", "hh3cDot11CurrAPModelName"): "1.3.6.1.4.1.55555.5",
         ("HH3C-DOT11-APMT-MIB", "hh3cDot11APIPAddress"): "1.3.6.1.4.1.55555.6",
@@ -127,6 +128,9 @@ def test_h3c_wireless_mib_adapter_discovers_ap_states_counts_and_identity(monkey
         symbols[("HH3C-DOT11-ACMT-MIB", "hh3cDot11StationCurAssocSum")]: [("0", "15")],
         symbols[("HH3C-DOT11-APMT-MIB", "hh3cDot11APOperationStatus")]: [
             ("1.50", "run(5)"), ("1.49", "5"), ("1.51", "download(3)"),
+        ],
+        symbols[("HH3C-DOT11-APMT-MIB", "hh3cDot11APConnectionType")]: [
+            ("1.50", "master(1)"), ("1.49", "slave(2)"), ("1.51", "master(1)"),
         ],
         symbols[("HH3C-DOT11-APMT-MIB", "hh3cDot11CurrAPName")]: [("1.50", "AP_12"), ("1.49", "AP_13")],
         symbols[("HH3C-DOT11-APMT-MIB", "hh3cDot11CurrAPModelName")]: [("1.50", "WA6320-HCL"), ("1.49", "WA6320-HCL")],
@@ -169,6 +173,8 @@ def test_h3c_wireless_mib_adapter_discovers_ap_states_counts_and_identity(monkey
     assert by_source["h3c:wireless:clients:controller"]["value"] == 15
     assert by_source["h3c:wireless:ap-state:2"]["raw_value"] == "run(5)"
     assert by_source["h3c:wireless:ap-state:2"]["value"] == 0
+    assert by_source["h3c:wireless:ap-state:2"]["states"]["run(5)"]["descr"] == "online"
+    assert by_source["h3c:wireless:ap-state:2"]["index_labels"]["ap_serial"] == "2"
     assert probe._mapped_state(
         by_source["h3c:wireless:ap-state:2"]["raw_value"],
         by_source["h3c:wireless:ap-state:2"]["states"],
@@ -208,6 +214,7 @@ def test_h3c_wireless_mib_adapter_reports_empty_table_as_complete_not_found(monk
         ("HH3C-DOT11-ACMT-MIB", "hh3cDot11TotalAPconnected"): "1.3.6.1.4.1.55556.1",
         ("HH3C-DOT11-ACMT-MIB", "hh3cDot11StationCurAssocSum"): "1.3.6.1.4.1.55556.2",
         ("HH3C-DOT11-APMT-MIB", "hh3cDot11APOperationStatus"): "1.3.6.1.4.1.55556.3",
+        ("HH3C-DOT11-APMT-MIB", "hh3cDot11APConnectionType"): "1.3.6.1.4.1.55556.21",
         ("HH3C-DOT11-APMT-MIB", "hh3cDot11CurrAPName"): "1.3.6.1.4.1.55556.4",
         ("HH3C-DOT11-APMT-MIB", "hh3cDot11CurrAPModelName"): "1.3.6.1.4.1.55556.5",
         ("HH3C-DOT11-APMT-MIB", "hh3cDot11APIPAddress"): "1.3.6.1.4.1.55556.6",

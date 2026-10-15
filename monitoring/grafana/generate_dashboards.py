@@ -100,13 +100,19 @@ AP_STATE_VALUE_MAPPINGS = [
         "options": {
             "associated": {"text": "在线", "color": HEALTHY_COLOR},
             "run": {"text": "在线", "color": HEALTHY_COLOR},
+            "online": {"text": "在线", "color": HEALTHY_COLOR},
             "active": {"text": "在线", "color": HEALTHY_COLOR},
             "deassociated": {"text": "离线", "color": CRITICAL_COLOR},
             "idle": {"text": "离线", "color": CRITICAL_COLOR},
             "down": {"text": "离线", "color": CRITICAL_COLOR},
+            "disconnected": {"text": "离线", "color": CRITICAL_COLOR},
+            "not_reported": {"text": "未上报", "color": UNKNOWN_COLOR},
+            "unknown": {"text": "未知", "color": UNKNOWN_COLOR},
             "join": {"text": "接入中", "color": WARNING_COLOR},
+            "joinConfirm": {"text": "接入中", "color": WARNING_COLOR},
             "joining": {"text": "接入中", "color": WARNING_COLOR},
             "joinack": {"text": "接入中", "color": WARNING_COLOR},
+            "download": {"text": "接入中", "color": WARNING_COLOR},
             "config": {"text": "接入中", "color": WARNING_COLOR},
             "data check": {"text": "接入中", "color": WARNING_COLOR},
             "image load": {"text": "接入中", "color": WARNING_COLOR},
@@ -1860,9 +1866,9 @@ def build_wireless_dashboard():
     # Controller counts are also read only from normalized inventory.
     ap_state_selector = f'{wireless_inventory_sel},component_class="wireless_access_point"'
     ap_state_rows = f"nexora_hw_component_state{{{ap_state_selector}}}"
-    ap_state_online_rows = f'nexora_hw_component_state{{{ap_state_selector},state_description=~"^(associated|run)$"}}'
-    ap_state_offline_rows = f'nexora_hw_component_state{{{ap_state_selector},state_description=~"^(deassociated|idle)$"}}'
-    ap_state_known_rows = f'nexora_hw_component_state{{{ap_state_selector},state_description=~"^(associated|run|deassociated|idle|downloading image)$"}}'
+    ap_state_online_rows = f'nexora_hw_component_state{{{ap_state_selector},state_description=~"^(associated|run|online)$"}}'
+    ap_state_offline_rows = f'nexora_hw_component_state{{{ap_state_selector},state_description=~"^(deassociated|idle|down|disconnected|not_reported)$"}}'
+    ap_state_known_rows = f'nexora_hw_component_state{{{ap_state_selector},state_description=~"^(associated|run|online|active|deassociated|idle|down|disconnected|not_reported|join|joinConfirm|joining|joinack|download|config|data check|image load|downloading image)$"}}'
     ap_state_count = f"count by ({device_labels}) ({ap_state_rows})"
     ap_state_known_count = f"count by ({device_labels}) ({ap_state_known_rows})"
     ap_state_complete = (
@@ -1899,9 +1905,9 @@ def build_wireless_dashboard():
         f"({ac_total} - {ac_online_targets}) or on() (({ac_total} > 0) * 0)"
     )
     missing_wireless_data_note = "暂无数据不代表数量为 0。"
-    ap_total_description = f"统计已采到状态的 AP，不等于控制器配置总数。{missing_wireless_data_note}"
+    ap_total_description = f"按控制器 AP 清单及最近一次完整采集保留的纳管身份计数；单次缺行不会缩减总数。{missing_wireless_data_note}"
     ap_online_description = "优先按 AP 状态统计；覆盖不完整时采用 LibreNMS 规则采集的控制器上报数。"
-    ap_offline_description = "只统计明确离线的 AP，不用总数减在线数推算。"
+    ap_offline_description = "统计明确断连，以及完整采集后仍纳管但未上报状态的 AP；未上报状态会单独标记，不以总数减在线数推算。"
     ap_client_rows = f'topk(20, nexora_wireless_sensor_value{{{wireless_inventory_sel},component_class="wireless_access_point",sensor_class="clients"}})'
     wireless_sensor_rows = (
         f'topk(100, nexora_wireless_sensor_value{{{wireless_inventory_sel},'
@@ -1920,7 +1926,7 @@ def build_wireless_dashboard():
     panels = [
         stat_panel(15, "在线 AC", ac_online, 0, 0, 3, 3, color=HEALTHY_COLOR, description="只统计 up 值为 1 的无线控制器；目标存在但全部离线时显示 0。", no_value=NO_VALUE_TEXT),
         stat_panel(14, "离线 AC", ac_offline, 3, 0, 3, 3, thresholds=OFFLINE_COUNT_THRESHOLDS, description="纳管 AC 数减去在线 AC 数；没有 AC 目标时显示无数据。", no_value=NO_VALUE_TEXT),
-        stat_panel(1, "采集 AP", f"sum({ap_state_count})", 6, 0, 3, 3, color=NEUTRAL_COLOR, description=ap_total_description, no_value=NO_VALUE_TEXT),
+        stat_panel(1, "纳管 AP", f"sum({ap_state_count})", 6, 0, 3, 3, color=NEUTRAL_COLOR, description=ap_total_description, no_value=NO_VALUE_TEXT),
         stat_panel(2, "在线 AP", f"sum({ap_online})", 9, 0, 3, 3, color=HEALTHY_COLOR, description=ap_online_description, no_value=NO_VALUE_TEXT),
         stat_panel(3, "离线 AP", f"sum({ap_offline})", 12, 0, 3, 3, thresholds=OFFLINE_COUNT_THRESHOLDS, description=ap_offline_description, no_value=NO_VALUE_TEXT),
         stat_panel(4, "在线终端数", f"sum({clients})", 15, 0, 3, 3, color=NEUTRAL_COLOR, no_value=NO_VALUE_TEXT),
@@ -1935,18 +1941,23 @@ def build_wireless_dashboard():
             timeseries_color_override("byName", "关联终端", CLIENT_COLOR),
         ]),
         bar_gauge_panel(
-            8, "采集到的 AP 状态分布", f"count by (state_description) ({ap_state_rows})",
+            8, "AP 状态分布", f"count by (state_description) ({ap_state_rows})",
             14, 4, 10, 7, unit="short", legend_format="{{state_description}}", max_value=None,
             thresholds=[], color=NEUTRAL_COLOR, color_overrides=[
                 timeseries_color_override("byName", "associated", HEALTHY_COLOR),
                 timeseries_color_override("byName", "run", HEALTHY_COLOR),
+                timeseries_color_override("byName", "online", HEALTHY_COLOR),
                 timeseries_color_override("byName", "active", HEALTHY_COLOR),
                 timeseries_color_override("byName", "deassociated", CRITICAL_COLOR),
                 timeseries_color_override("byName", "idle", CRITICAL_COLOR),
                 timeseries_color_override("byName", "down", CRITICAL_COLOR),
+                timeseries_color_override("byName", "disconnected", CRITICAL_COLOR),
+                timeseries_color_override("byName", "not_reported", UNKNOWN_COLOR),
                 timeseries_color_override("byName", "join", WARNING_COLOR),
+                timeseries_color_override("byName", "joinConfirm", WARNING_COLOR),
                 timeseries_color_override("byName", "joining", WARNING_COLOR),
                 timeseries_color_override("byName", "joinack", WARNING_COLOR),
+                timeseries_color_override("byName", "download", WARNING_COLOR),
                 timeseries_color_override("byName", "config", WARNING_COLOR),
                 timeseries_color_override("byName", "data check", WARNING_COLOR),
                 timeseries_color_override("byName", "image load", WARNING_COLOR),
@@ -1967,7 +1978,7 @@ def build_wireless_dashboard():
             ),
             extra_value_mappings={"状态说明": AP_STATE_VALUE_MAPPINGS},
             extra_color_mapped_cells={"状态说明": "color-background"},
-            description=f"只显示已采到状态的 AP。{missing_wireless_data_note}",
+            description=f"展示最近一次完整 AP 清单中的纳管身份和当前状态；离线但未上报的身份会标记为未上报。{missing_wireless_data_note}",
         ),
         table_panel(
             10, "AP 当前关联客户端 Top 20",

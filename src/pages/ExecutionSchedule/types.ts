@@ -85,11 +85,14 @@ export interface EligibleApprover {
   id: string;
   username: string;
   role: string;
+  tenant_id?: string;
 }
 
 export interface UnifiedExecutionLog {
   id: string;
-  source: 'inspection' | 'playbook';
+  source: 'inspection' | 'playbook' | 'config_backup';
+  /** Backup run ID; kept separate from the list identity for source-safe joins. */
+  backup_run_id?: string;
   started_at: string;
   trigger_type: 'manual' | 'plan' | 'job';
   status: string;
@@ -97,10 +100,43 @@ export interface UnifiedExecutionLog {
   success_count: number;
   failed_count: number;
   partial_count?: number;
+  skipped_count?: number;
   avg_health_score?: number;
   created_by: string;
   name: string;
 }
+
+export interface ConfigBackupRunDevice {
+  device_id?: string | null;
+  hostname?: string | null;
+  ip_address?: string | null;
+  status: string;
+  reason?: string | null;
+  detail?: string | null;
+  duration_ms?: number | null;
+  snapshot_id?: string | null;
+}
+
+export interface ConfigBackupRunDetail {
+  run: {
+    id?: string;
+    status?: string;
+    started_at?: string;
+    author?: string;
+    total_devices?: number;
+    success_count?: number;
+    failed_count?: number;
+    partial_count?: number;
+    skipped_count?: number;
+    [key: string]: unknown;
+  };
+  devices: ConfigBackupRunDevice[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export type BackupDetailStatus = 'all' | 'success' | 'failed' | 'unknown' | 'skipped';
 
 export interface PlaybookExecutionApproval {
   id: string;

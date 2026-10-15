@@ -1132,13 +1132,14 @@ def _merge_cli_interface_addresses(
     return merged
 
 
-def collect_interface_status_target(
+def _collect_interface_status_target(
     device_id: str,
     *,
     require_online_network_device: bool = False,
 ) -> dict[str, Any]:
     """Collect one device's interface status and project it into IPAM Prefixes."""
     device = _load_device(device_id)
+    snapshot_started_at = _now()
     if require_online_network_device and not is_online_network_device_for_interface_collection(device):
         raise RuntimeError("接口采集目标已离线或不再属于网络设备")
     inventory = _load_ip_inventory(device_id)
@@ -1314,7 +1315,7 @@ def collect_interface_status_target(
             exc_info=True,
         )
         vlan_sync = {"observed": 0, "created": 0, "updated": 0, "error": str(vlan_exc)}
-    return {
+    result = {
         "success": True,
         "device_id": device_id,
         "hostname": device.get("hostname") or device_id,
@@ -1341,6 +1342,78 @@ def collect_interface_status_target(
         "prefix_sync": prefix_sync,
         "vlan_sync": vlan_sync,
     }
+    if collect_interfaces:
+        status_name_rows = (
+            [item.get('name') for item in snmp_interfaces]
+            if result['parser'] == 'snmp'
+            else [item.get('interface_name') for item in rows]
+        )
+        unique_status_names = {
+            normalize_interface_name(name)
+            for name in status_name_rows
+            if normalize_interface_name(name) and _looks_like_interface_name(name)
+        }
+        status_count = len(unique_status_names)
+        try:
+            from services.collection_status_service import record_collection_result
+
+            complete = status_count > 0
+            record_collection_result(
+                device_id,
+                'interface_status',
+                status='success' if complete else 'no_data',
+                transport='snmp' if result['parser'] == 'snmp' else 'ssh',
+                source='interface_collection',
+                coverage_total=status_count,
+                coverage_supported=status_count,
+                error_code='' if complete else 'interface_status_snapshot_empty',
+                error_message='' if complete else 'Complete interface status collection returned no interface rows',
+                metadata={
+                    'parser': result['parser'],
+                    'complete': complete,
+                    'snapshot_started_at': snapshot_started_at,
+                },
+            )
+        except Exception:
+            logger.debug("Unable to record interface status collection for %s", device_id, exc_info=True)
+    return result
+
+
+def collect_interface_status_target(
+    device_id: str,
+    *,
+    require_online_network_device: bool = False,
+) -> dict[str, Any]:
+    """Collect and record one interface-status snapshot without masking failure."""
+    try:
+        return _collect_interface_status_target(
+            device_id,
+            require_online_network_device=require_online_network_device,
+        )
+    except Exception as exc:
+        should_record_status = True
+        try:
+            from services.collection_plan_service import should_collect
+
+            should_record_status = should_collect(_load_device(device_id), 'interface_status')
+        except Exception:
+            pass
+        if should_record_status:
+            try:
+                from services.collection_status_service import record_collection_result
+
+                record_collection_result(
+                    device_id,
+                    'interface_status',
+                    status='failed',
+                    source='interface_collection',
+                    error_code='interface_status_snapshot_failed',
+                    error_message='Complete interface status collection failed',
+                    metadata={'error_type': type(exc).__name__},
+                )
+            except Exception:
+                logger.debug("Unable to record failed interface status collection for %s", device_id, exc_info=True)
+        raise
 
 
 def _select_interface_collection_devices(device_rows: list[dict[str, Any]]) -> list[str]:

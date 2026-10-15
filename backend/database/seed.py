@@ -9,10 +9,10 @@ def _build_network_inspection_items(now: str) -> list[tuple]:
 
     def _item(id_, name, name_zh, category, check_key, desc, cmd, vendor,
               w, c, parse_type, textfsm_template, parse_field,
-              parse_filter='', fallback_regex=''):
+              parse_filter='', fallback_regex='', method='CLI'):
         items.append((
             id_, name, name_zh, category, check_key, desc,
-            'CLI', cmd, '',
+            method, cmd, '',
             w, c, vendor, '', now, now,
             parse_type, textfsm_template, parse_field,
             parse_filter, fallback_regex, 1,
@@ -42,9 +42,12 @@ def _build_network_inspection_items(now: str) -> list[tuple]:
     _snmp_item('net_cisco_ios_intf_down', 'Cisco IOS Interface Down', 'Cisco IOS 接口 Down 数', 'Network', 'cisco_ios_intf_down',
               '统计 down 的接口数量 (SNMP)', 'cisco_ios', '1.3.6.1.2.1.2.2.1.8', 1, 3, 'count')
     _item('net_cisco_ios_bgp_down', 'Cisco IOS BGP Peer Down', 'Cisco IOS BGP 邻居 Down 数', 'Network', 'cisco_ios_bgp_down',
-          '统计非 Established 的 BGP 邻居', 'show ip bgp summary', 'cisco_ios',
+          '通过标准 BGP4-MIB 采集邻居状态，SNMP 不支持时回退 CLI', 'show ip bgp summary', 'cisco_ios',
           1, 2, 'count', 'cisco_ios_show_ip_bgp_summary', 'STATE_OR_PREFIXES_RECEIVED',
-          parse_filter='{"field":"STATE_OR_PREFIXES_RECEIVED","op":"not_numeric"}')
+          parse_filter='{"field":"STATE_OR_PREFIXES_RECEIVED","op":"not_numeric"}', method='SNMP')
+    _item('net_cisco_ios_ospf_down', 'Cisco IOS OSPF Peer Down', 'Cisco IOS OSPF 邻居 Down 数', 'Network', 'cisco_ios_ospf_down',
+          '通过标准 OSPF-MIB 采集邻居状态，SNMP 不支持时回退 CLI', 'show ip ospf neighbor', 'cisco_ios',
+          1, 2, 'count', '', '', method='SNMP')
     _item('net_cisco_ios_route_total', 'Cisco IOS Route Total', 'Cisco IOS 路由总数', 'Network', 'cisco_ios_route_total',
           '路由总数（与上次对比，变化 >10% 告警）', 'show ip route summary', 'cisco_ios',
           10, 30, 'diff', 'cisco_ios_show_ip_route_summary', 'TOTAL_ROUTE_COUNT')
@@ -63,9 +66,12 @@ def _build_network_inspection_items(now: str) -> list[tuple]:
     _snmp_item('net_cisco_nxos_intf_down', 'Cisco NX-OS Interface Down', 'Cisco NX-OS 接口 Down 数', 'Network', 'cisco_nxos_intf_down',
               '统计 down 的接口数量 (SNMP)', 'cisco_nxos', '1.3.6.1.2.1.2.2.1.8', 1, 3, 'count')
     _item('net_cisco_nxos_bgp_down', 'Cisco NX-OS BGP Peer Down', 'Cisco NX-OS BGP 邻居 Down 数', 'Network', 'cisco_nxos_bgp_down',
-          '统计非 Established 的 BGP 邻居', 'show ip bgp summary', 'cisco_nxos',
+          '通过标准 BGP4-MIB 采集邻居状态，SNMP 不支持时回退 CLI', 'show ip bgp summary', 'cisco_nxos',
           1, 2, 'count', 'cisco_nxos_show_ip_bgp_summary', 'STATE_PFXRCD',
-          parse_filter='{"field":"STATE_PFXRCD","op":"not_numeric"}')
+          parse_filter='{"field":"STATE_PFXRCD","op":"not_numeric"}', method='SNMP')
+    _item('net_cisco_nxos_ospf_down', 'Cisco NX-OS OSPF Peer Down', 'Cisco NX-OS OSPF 邻居 Down 数', 'Network', 'cisco_nxos_ospf_down',
+          '通过标准 OSPF-MIB 采集邻居状态，SNMP 不支持时回退 CLI', 'show ip ospf neighbors', 'cisco_nxos',
+          1, 2, 'count', '', '', method='SNMP')
 
     # 华为 VRPv5
     _snmp_item('net_huawei_vrp_cpu', '华为 VRPv5 CPU', '华为 VRPv5 CPU 利用率', 'Network', 'huawei_vrp_cpu',
@@ -81,9 +87,12 @@ def _build_network_inspection_items(now: str) -> list[tuple]:
     _snmp_item('net_huawei_vrp_intf_down', '华为 VRPv5 Interface Down', '华为 VRPv5 接口 Down 数', 'Network', 'huawei_vrp_intf_down',
               '统计 down 的接口数量 (SNMP)', 'huawei_vrp', '1.3.6.1.2.1.2.2.1.8', 1, 3, 'count')
     _item('net_huawei_vrp_bgp_down', '华为 VRPv5 BGP Peer Down', '华为 VRPv5 BGP 邻居 Down 数', 'Network', 'huawei_vrp_bgp_down',
-          '统计非 Established 的 BGP 邻居', 'display bgp peer', 'huawei_vrp',
+          '通过标准 BGP4-MIB 采集邻居状态，SNMP 不支持时回退 CLI', 'display bgp peer', 'huawei_vrp',
           1, 2, 'count', 'huawei_vrp_display_bgp_peer', 'STATE',
-          parse_filter='{"field":"STATE","op":"!=","value":"Established"}')
+          parse_filter='{"field":"STATE","op":"!=","value":"Established"}', method='SNMP')
+    _item('net_huawei_vrp_ospf_down', '华为 VRPv5 OSPF Peer Down', '华为 VRPv5 OSPF 邻居 Down 数', 'Network', 'huawei_vrp_ospf_down',
+          '通过标准 OSPF-MIB 采集邻居状态，SNMP 不支持时回退 CLI', 'display ospf peer brief', 'huawei_vrp',
+          1, 2, 'count', '', '', method='SNMP')
     _item('net_huawei_vrp_route_total', '华为 VRPv5 Route Total', '华为 VRPv5 路由总数', 'Network', 'huawei_vrp_route_total',
           '路由总数（与上次对比）', 'display ip routing-table statistics', 'huawei_vrp',
           10, 30, 'diff', 'huawei_vrp_display_ip_routing_table_statistics', 'ACTIVE_COUNT',
@@ -102,6 +111,13 @@ def _build_network_inspection_items(now: str) -> list[tuple]:
               '电源状态 (SNMP)', 'huawei_vrpv8', '1.3.6.1.4.1.2011.5.25.31.1.1.13.1.2', None, None, 'status')
     _snmp_item('net_huawei_vrpv8_intf_down', '华为 VRPv8 Interface Down', '华为 VRPv8 接口 Down 数', 'Network', 'huawei_vrpv8_intf_down',
               '统计 down 的接口数量 (SNMP)', 'huawei_vrpv8', '1.3.6.1.2.1.2.2.1.8', 1, 3, 'count')
+    _item('net_huawei_vrpv8_bgp_down', '华为 VRPv8 BGP Peer Down', '华为 VRPv8 BGP 邻居 Down 数', 'Network', 'huawei_vrpv8_bgp_down',
+          '通过标准 BGP4-MIB 采集邻居状态，SNMP 不支持时回退 CLI', 'display bgp peer', 'huawei_vrpv8',
+          1, 2, 'count', 'huawei_vrp_display_bgp_peer', 'STATE',
+          parse_filter='{"field":"STATE","op":"!=","value":"Established"}', method='SNMP')
+    _item('net_huawei_vrpv8_ospf_down', '华为 VRPv8 OSPF Peer Down', '华为 VRPv8 OSPF 邻居 Down 数', 'Network', 'huawei_vrpv8_ospf_down',
+          '通过标准 OSPF-MIB 采集邻居状态，SNMP 不支持时回退 CLI', 'display ospf peer brief', 'huawei_vrpv8',
+          1, 2, 'count', '', '', method='SNMP')
     _item('net_huawei_vrpv8_route_total', '华为 VRPv8 Route Total', '华为 VRPv8 路由总数', 'Network', 'huawei_vrpv8_route_total',
           '路由总数（与上次对比）', 'display ip routing-table statistics', 'huawei_vrpv8',
           10, 30, 'diff', 'huawei_vrp_display_ip_routing_table_statistics', 'ACTIVE_COUNT',
@@ -121,9 +137,12 @@ def _build_network_inspection_items(now: str) -> list[tuple]:
     _snmp_item('net_h3c_intf_down', 'H3C Comware Interface Down', 'H3C Comware 接口 Down 数', 'Network', 'h3c_comware_intf_down',
               '统计 down 的接口数量 (SNMP)', 'h3c_comware', '1.3.6.1.2.1.2.2.1.8', 1, 3, 'count')
     _item('net_h3c_bgp_down', 'H3C Comware BGP Peer Down', 'H3C Comware BGP 邻居 Down 数', 'Network', 'h3c_comware_bgp_down',
-          '统计非 Established 的 BGP 邻居', 'display bgp peer ipv4 unicast', 'h3c_comware',
+          '通过标准 BGP4-MIB 采集邻居状态，SNMP 不支持时回退 CLI', 'display bgp peer ipv4 unicast', 'h3c_comware',
           1, 2, 'count', 'h3c_comware_v7_display_bgp_peer_ipv4_unicast', 'STATE',
-          parse_filter='{"field":"STATE","op":"!=","value":"Established"}')
+          parse_filter='{"field":"STATE","op":"!=","value":"Established"}', method='SNMP')
+    _item('net_h3c_ospf_down', 'H3C Comware OSPF Peer Down', 'H3C Comware OSPF 邻居 Down 数', 'Network', 'h3c_comware_ospf_down',
+          '通过标准 OSPF-MIB 采集邻居状态，SNMP 不支持时回退 CLI', 'display ospf peer', 'h3c_comware',
+          1, 2, 'count', '', '', method='SNMP')
     _item('net_h3c_route_total', 'H3C Comware Route Total', 'H3C Comware 路由总数', 'Network', 'h3c_comware_route_total',
           '路由总数（与上次对比）', 'display ip routing-table statistics', 'h3c_comware',
           10, 30, 'diff', 'h3c_comware_v7_display_ip_routing_table_statistics', 'ACTIVE',
@@ -142,6 +161,12 @@ def _build_network_inspection_items(now: str) -> list[tuple]:
               '电源状态 (SNMP)', 'juniper_junos', '1.3.6.1.4.1.2636.3.1.13.1.6', None, None, 'status')
     _snmp_item('net_juniper_intf_down', 'Juniper JunOS Interface Down', 'Juniper JunOS 接口 Down 数', 'Network', 'juniper_junos_intf_down',
               '统计 down 的接口数量 (SNMP)', 'juniper_junos', '1.3.6.1.2.1.2.2.1.8', 1, 3, 'count')
+    _item('net_juniper_bgp_down', 'Juniper JunOS BGP Peer Down', 'Juniper JunOS BGP 邻居 Down 数', 'Network', 'juniper_junos_bgp_down',
+          '通过标准 BGP4-MIB 采集邻居状态，SNMP 不支持时回退 CLI', 'show bgp summary', 'juniper_junos',
+          1, 2, 'count', '', '', method='SNMP')
+    _item('net_juniper_ospf_down', 'Juniper JunOS OSPF Peer Down', 'Juniper JunOS OSPF 邻居 Down 数', 'Network', 'juniper_junos_ospf_down',
+          '通过标准 OSPF-MIB 采集邻居状态，SNMP 不支持时回退 CLI', 'show ospf neighbor', 'juniper_junos',
+          1, 2, 'count', '', '', method='SNMP')
     _item('net_juniper_route_total', 'Juniper JunOS Route Total', 'Juniper JunOS 路由总数', 'Network', 'juniper_junos_route_total',
           '路由总数（与上次对比）', 'show route summary', 'juniper_junos',
           10, 30, 'diff', 'juniper_junos_show_route_summary', 'ACTIVE_ROUTE_COUNT')
@@ -159,6 +184,12 @@ def _build_network_inspection_items(now: str) -> list[tuple]:
               '电源状态 (SNMP)', 'arista_eos', '1.3.6.1.2.1.99.1.1.1.4', None, None, 'status')
     _snmp_item('net_arista_intf_down', 'Arista EOS Interface Down', 'Arista EOS 接口 Down 数', 'Network', 'arista_eos_intf_down',
               '统计 down 的接口数量 (SNMP)', 'arista_eos', '1.3.6.1.2.1.2.2.1.8', 1, 3, 'count')
+    _item('net_arista_bgp_down', 'Arista EOS BGP Peer Down', 'Arista EOS BGP 邻居 Down 数', 'Network', 'arista_eos_bgp_down',
+          '通过标准 BGP4-MIB 采集邻居状态，SNMP 不支持时回退 CLI', 'show ip bgp summary', 'arista_eos',
+          1, 2, 'count', '', '', method='SNMP')
+    _item('net_arista_ospf_down', 'Arista EOS OSPF Peer Down', 'Arista EOS OSPF 邻居 Down 数', 'Network', 'arista_eos_ospf_down',
+          '通过标准 OSPF-MIB 采集邻居状态，SNMP 不支持时回退 CLI', 'show ip ospf neighbor', 'arista_eos',
+          1, 2, 'count', '', '', method='SNMP')
 
     # 合规检查指标（R8.1, R8.2）
     _item('compliance_cisco_ios_ntp', 'NTP Status', 'NTP 时钟同步状态', 'compliance', 'cisco_ios_ntp_status',

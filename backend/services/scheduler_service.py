@@ -359,12 +359,29 @@ def _authorize_scheduled_job_run(conn, job: dict) -> dict | None:
         raise PermissionError(f'Scheduled job content is no longer valid: {exc}') from exc
     if not current_hash or current_hash != str(job.get('authorization_manifest_hash') or ''):
         raise PermissionError('Scheduled job content changed after approval')
-    if bool(job.get('is_config')):
-        raise PermissionError('Configuration-changing scheduled jobs require an execution grant')
-    if str(job.get('action_type') or '') not in {'backup', 'inspection', 'server_check', 'health_check', 'nsot'}:
-        raise PermissionError('Scheduled action has no approved read-only execution policy')
-    if str(job.get('action_type') or '') in {'command', 'script_run'} or str(job.get('script_id') or '').strip():
-        raise PermissionError('Raw command and script jobs require a controlled published execution grant')
+    action_type = str(job.get('action_type') or '')
+    allowed_actions = {
+        'backup', 'inspection', 'server_check', 'health_check', 'nsot',
+        'command', 'script_run',
+    }
+    if action_type not in allowed_actions:
+        raise PermissionError('Scheduled action has no approved execution policy')
+    commands = str(job.get('commands') or '').strip()
+    script_id = str(job.get('script_id') or '').strip()
+    if action_type == 'command' and bool(commands) == bool(script_id):
+        raise PermissionError('Command job must contain exactly one approved command source')
+    if action_type == 'script_run' and (not script_id or commands):
+        raise PermissionError('Script job must use exactly one approved published script')
+    if str(job.get('script_id') or '').strip() and action_type not in {'command', 'script_run'}:
+        raise PermissionError('Published scripts can only be used by command or script jobs')
+    if bool(job.get('is_config')) and action_type not in {'command', 'script_run'}:
+        raise PermissionError('Configuration-change mode requires a command or script job')
+    if bool(job.get('is_config')) and not str(job.get('config_reason') or '').strip():
+        raise PermissionError('Configuration-change job has no approved change reason')
+    if bool(job.get('use_admin_creds')) and not authorize_resource(
+        owner, 'credential', 'use', tenant_id=str(job.get('tenant_id') or ''),
+    ):
+        raise PermissionError('Scheduled job owner no longer has privileged credential authorization')
     return owner
 
 
@@ -514,7 +531,7 @@ async def run_scheduled_automation_job(job_id: str):
             raise PermissionError('Scheduled job has no tenant boundary')
         if job['device_scope'] == 'all':
             rows = conn.execute(
-                "SELECT id FROM devices WHERE tenant_id = ? AND (is_active = 1 OR is_active IS NULL)",
+                "SELECT id FROM devices WHERE tenant_id = ?",
                 (tenant_id,),
             ).fetchall()
             device_ids = [r['id'] for r in rows]
@@ -531,7 +548,7 @@ async def run_scheduled_automation_job(job_id: str):
                 or not any(str(value or '').strip() for value in comp.values())
             ):
                 raise ValueError('Empty or unsupported composite device filter; refusing to widen scope')
-            conditions = ["tenant_id = ?", "(is_active = 1 OR is_active IS NULL)"]
+            conditions = ["tenant_id = ?"]
             params = [tenant_id]
             if comp.get('site'):
                 conditions.append("site = ?")
@@ -549,10 +566,10 @@ async def run_scheduled_automation_job(job_id: str):
             rows = conn.execute(f"SELECT id FROM devices{where_clause}", params).fetchall()
             device_ids = [r['id'] for r in rows]
         elif job['device_scope'] == 'site':
-            rows = conn.execute("SELECT id FROM devices WHERE tenant_id = ? AND site = ? AND (is_active = 1 OR is_active IS NULL)", (tenant_id, job['device_filter'])).fetchall()
+            rows = conn.execute("SELECT id FROM devices WHERE tenant_id = ? AND site = ?", (tenant_id, job['device_filter'])).fetchall()
             device_ids = [r['id'] for r in rows]
         elif job['device_scope'] == 'role':
-            rows = conn.execute("SELECT id FROM devices WHERE tenant_id = ? AND role = ? AND (is_active = 1 OR is_active IS NULL)", (tenant_id, job['device_filter'])).fetchall()
+            rows = conn.execute("SELECT id FROM devices WHERE tenant_id = ? AND role = ?", (tenant_id, job['device_filter'])).fetchall()
             device_ids = [r['id'] for r in rows]
         elif job['device_scope'] in ('tag', 'tags'):
             # Resolve the saved AND/OR/NOT expression with the same tag
@@ -817,9 +834,13 @@ async def run_scheduled_automation_job(job_id: str):
                 else:
                     # Plain CLI commands (both Linux and network devices)
                     cmds_snapshot = list(commands)  # capture for lambda closure
+                    # is_config selects network-device configuration mode.
+                    # Linux hosts execute shell commands directly; sending them
+                    # through a network driver's config path would be invalid.
+                    use_network_config_mode = bool(job.get('is_config')) and not is_server
                     exec_results = await loop.run_in_executor(
                         None,
-                        lambda: service.execute_commands(d, cmds_snapshot, is_config=bool(job['is_config']))
+                        lambda: service.execute_commands(d, cmds_snapshot, is_config=use_network_config_mode)
                     )
                     log_summary = [(r.get('success'), r.get('stderr') or r.get('error') or '') for r in exec_results]
                     logger.info(f"[Scheduler] CLI execution raw result for {d.get('hostname')}: {log_summary}")

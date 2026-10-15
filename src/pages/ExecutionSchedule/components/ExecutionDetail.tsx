@@ -9,7 +9,8 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, Resp
 import OutputActions from '../../../components/OutputActions';
 import { ActionIconButton, ActionIconGroup } from '../../../components/ui/ActionIconButton';
 import { TableExportMenu } from '../../../components/ui/TableExportMenu';
-import type { UnifiedExecutionLog, InspDetailTab, PlaybookExecutionApproval } from '../types';
+import Pagination from '../../../components/Pagination';
+import type { UnifiedExecutionLog, InspDetailTab, PlaybookExecutionApproval, ConfigBackupRunDetail, BackupDetailStatus } from '../types';
 import type { Device } from '../../../types';
 import { splitOutputByCommand, downloadInspJSON } from '../helpers';
 import { buildExecutionSnapshotExportData, getExecutionSnapshotCells } from '../executionSnapshotExport';
@@ -56,6 +57,13 @@ interface ExecutionDetailProps {
   selectedPbDevice: any;
   pbDeviceDetail: any;
   onSelectPbDevice: (deviceId: string) => void;
+  backupRunDetail: ConfigBackupRunDetail | null;
+  backupRunError: string;
+  backupDevicePage: number;
+  backupDeviceStatusFilter: BackupDetailStatus;
+  onBackupDevicePageChange: (page: number) => void;
+  onBackupDeviceStatusFilterChange: (status: BackupDetailStatus) => void;
+  onRetryBackupRunDetails: () => void;
   devices: Device[];
 }
 
@@ -109,7 +117,9 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = ({
   onParseCmd, onCopyText, onFetchTrend,
   setCollapsedCmds, setInspParseResults,
   pbDetail, pbDevices, pbApprovals, pbApprovalsLoading, pbApprovalActionId, pbApprovalError, onPlaybookApproval,
-  selectedPbDevice, pbDeviceDetail, onSelectPbDevice, devices,
+  selectedPbDevice, pbDeviceDetail, onSelectPbDevice,
+  backupRunDetail, backupRunError, backupDevicePage, backupDeviceStatusFilter,
+  onBackupDevicePageChange, onBackupDeviceStatusFilterChange, onRetryBackupRunDetails, devices,
 }) => {
   useEscapeClose(open, onClose);
   if (!selectedLog) return null;
@@ -224,6 +234,19 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = ({
                   onFetchTrend={onFetchTrend}
                   setCollapsedCmds={setCollapsedCmds}
                   setInspParseResults={setInspParseResults}
+                />
+              ) : selectedLog.source === 'config_backup' ? (
+                <ConfigBackupRunView
+                  zh={zh}
+                  selectedLog={selectedLog}
+                  detail={backupRunDetail}
+                  error={backupRunError}
+                  loading={logDetailLoading}
+                  page={backupDevicePage}
+                  statusFilter={backupDeviceStatusFilter}
+                  onPageChange={onBackupDevicePageChange}
+                  onStatusFilterChange={onBackupDeviceStatusFilterChange}
+                  onRetry={onRetryBackupRunDetails}
                 />
               ) : (
                 <PlaybookView
@@ -771,6 +794,136 @@ const RawOutputTab: React.FC<{
     </div>
   </>
 );
+
+/* ═══════════════════════════════════════════════════════ */
+/*  Configuration Backup Batch Detail                     */
+/* ═══════════════════════════════════════════════════════ */
+
+const ConfigBackupRunView: React.FC<{
+  zh: boolean;
+  selectedLog: UnifiedExecutionLog;
+  detail: ConfigBackupRunDetail | null;
+  error: string;
+  loading: boolean;
+  page: number;
+  statusFilter: BackupDetailStatus;
+  onPageChange: (page: number) => void;
+  onStatusFilterChange: (status: BackupDetailStatus) => void;
+  onRetry: () => void;
+}> = ({ zh, selectedLog, detail, error, loading, page, statusFilter, onPageChange, onStatusFilterChange, onRetry }) => {
+  const counts = [
+    { label: zh ? '設備總數' : 'Total', value: selectedLog.total_devices, tone: 'text-slate-700' },
+    { label: zh ? '成功' : 'Success', value: selectedLog.success_count, tone: 'text-emerald-600' },
+    { label: zh ? '失败' : 'Failed', value: selectedLog.failed_count, tone: 'text-rose-600' },
+    { label: zh ? '部分完成' : 'Partial', value: selectedLog.partial_count || 0, tone: 'text-amber-600' },
+    { label: zh ? '跳过' : 'Skipped', value: selectedLog.skipped_count || 0, tone: 'text-slate-500' },
+  ];
+  const filters: Array<{ key: BackupDetailStatus; label: string }> = [
+    { key: 'all', label: zh ? '全部' : 'All' },
+    { key: 'success', label: zh ? '成功' : 'Success' },
+    { key: 'failed', label: zh ? '失败' : 'Failed' },
+    { key: 'unknown', label: zh ? '未知' : 'Unknown' },
+    { key: 'skipped', label: zh ? '跳过' : 'Skipped' },
+  ];
+  const statusLabel = (status: string) => {
+    const normalized = status.toLowerCase();
+    if (['success', 'completed'].includes(normalized)) return zh ? '成功' : 'Success';
+    if (['failed', 'error', 'unreachable'].includes(normalized)) return zh ? '失败' : 'Failed';
+    if (normalized === 'skipped') return zh ? '跳过' : 'Skipped';
+    if (['unknown', 'pending'].includes(normalized)) return zh ? '未知' : 'Unknown';
+    return status || (zh ? '未知' : 'Unknown');
+  };
+  const statusTone = (status: string) => {
+    const normalized = status.toLowerCase();
+    if (['success', 'completed'].includes(normalized)) return 'bg-emerald-50 text-emerald-700';
+    if (['failed', 'error', 'unreachable'].includes(normalized)) return 'bg-rose-50 text-rose-700';
+    if (normalized === 'skipped') return 'bg-slate-100 text-slate-600';
+    return 'bg-amber-50 text-amber-700';
+  };
+  const needsReason = (status: string) => ['failed', 'error', 'unreachable', 'unknown', 'skipped'].includes(status.toLowerCase());
+
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-slate-50/50">
+      <div className="shrink-0 border-b border-black/5 bg-white px-5 py-4">
+        <div className="flex flex-wrap gap-2">
+          {counts.map((count) => (
+            <div key={count.label} className="min-w-[90px] rounded-xl border border-black/5 bg-slate-50 px-3 py-2">
+              <div className="text-[10px] font-medium text-black/40">{count.label}</div>
+              <div className={`mt-0.5 text-sm font-bold tabular-nums ${count.tone}`}>{count.value}</div>
+            </div>
+          ))}
+        </div>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+          <span className="text-[10px] text-black/35">
+            {zh ? '只读批次结果；设备配置内容不会显示在此处。' : 'Read-only batch outcomes. Device configuration content is not shown here.'}
+          </span>
+          <div className="flex flex-wrap items-center gap-1 rounded-xl bg-black/[0.04] p-1">
+            {filters.map((filter) => (
+              <button
+                key={filter.key}
+                type="button"
+                onClick={() => onStatusFilterChange(filter.key)}
+                disabled={loading}
+                className={`rounded-lg px-2.5 py-1.5 text-[10px] font-semibold transition-colors disabled:opacity-50 ${statusFilter === filter.key ? 'bg-white text-cyan-800 shadow-sm' : 'text-black/45 hover:text-black/70'}`}
+              >
+                {filter.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-auto p-4">
+        {error ? (
+          <div role="alert" className="flex min-h-40 flex-col items-center justify-center gap-2 rounded-2xl border border-rose-100 bg-rose-50 px-5 py-8 text-center text-rose-700">
+            <AlertTriangle size={20} />
+            <p className="text-xs font-semibold">{error}</p>
+            <button type="button" onClick={onRetry} className="mt-1 rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-[10px] font-semibold text-rose-700 hover:bg-rose-100">{zh ? '重试' : 'Retry'}</button>
+          </div>
+        ) : loading ? (
+          <div className="flex min-h-40 items-center justify-center gap-2 text-xs text-black/35"><RotateCcw size={16} className="animate-spin" />{zh ? '正在加载设备结果…' : 'Loading device results…'}</div>
+        ) : !detail?.devices.length ? (
+          <div className="flex min-h-40 items-center justify-center rounded-2xl border border-dashed border-black/10 text-xs text-black/35">
+            {detail?.total === 0 && statusFilter === 'all' ? (zh ? '该批次没有设备结果' : 'This batch has no device results') : (zh ? '此筛选条件下没有设备结果' : 'No device results match this filter')}
+          </div>
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-black/5 bg-white">
+            <table className="w-full min-w-[820px] border-collapse text-left">
+              <thead>
+                <tr className="border-b border-black/5 bg-slate-50 text-[10px] font-bold uppercase tracking-wide text-black/40">
+                  <th className="px-3 py-3">{zh ? '设备' : 'Device'}</th>
+                  <th className="px-3 py-3">IP</th>
+                  <th className="px-3 py-3">{zh ? '状态' : 'Status'}</th>
+                  <th className="px-3 py-3">{zh ? '原因' : 'Reason'}</th>
+                  <th className="px-3 py-3">{zh ? '详细说明' : 'Details'}</th>
+                  <th className="px-3 py-3 text-right">{zh ? '耗时' : 'Duration'}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-black/[0.04]">
+                {detail.devices.map((device, index) => (
+                  <tr key={device.device_id || device.ip_address || `${device.hostname || 'device'}-${index}`} className="align-top hover:bg-slate-50/60">
+                    <td className="max-w-[220px] px-3 py-3 text-xs font-semibold text-[#164e63]">{device.hostname || device.device_id || '--'}</td>
+                    <td className="whitespace-nowrap px-3 py-3 font-mono text-[11px] text-black/55">{device.ip_address || '--'}</td>
+                    <td className="whitespace-nowrap px-3 py-3"><span className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold ${statusTone(device.status)}`}>{statusLabel(device.status)}</span></td>
+                    <td className="max-w-[240px] break-words px-3 py-3 text-[11px] text-black/65">{needsReason(device.status) ? (device.reason || '--') : '—'}</td>
+                    <td className="max-w-[360px] break-words px-3 py-3 text-[11px] leading-relaxed text-black/50">{['failed', 'error', 'unreachable'].includes(device.status.toLowerCase()) ? (device.detail || '--') : '—'}</td>
+                    <td className="whitespace-nowrap px-3 py-3 text-right font-mono text-[10px] text-black/40">{device.duration_ms == null ? '--' : `${device.duration_ms} ms`}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {!!detail && detail.total > detail.page_size && (
+        <div className="shrink-0 border-t border-black/5 bg-white px-4 py-2">
+          <Pagination currentPage={page} totalItems={detail.total} itemsPerPage={detail.page_size} onPageChange={onPageChange} language={zh ? 'zh' : 'en'} />
+        </div>
+      )}
+    </div>
+  );
+};
 
 /* ═══════════════════════════════════════════════════════ */
 /*  Playbook Detail Sub-View                               */

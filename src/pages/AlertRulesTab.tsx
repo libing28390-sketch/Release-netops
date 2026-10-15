@@ -400,7 +400,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
   const [historyExpanded, setHistoryExpanded] = useState(false);
 
   // Approval verification states
-  const [approvers, setApprovers] = useState<{ id: string; username: string; role: string }[]>([]);
+  const [approvers, setApprovers] = useState<{ id: string; username: string; role: string; tenant_id?: string }[]>([]);
   const [approverUsername, setApproverUsername] = useState('');
   const [configReason, setConfigReason] = useState('');
   const [approvalToken, setApprovalToken] = useState('');
@@ -770,14 +770,14 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
   useEffect(() => {
     const fetchApprovers = async () => {
       try {
-        const resp = await fetch('/api/users', {
+        const resp = await fetch('/api/config-approval/approvers', {
           headers: getHeaders(false),
         });
         if (resp.ok) {
           const j = await resp.json();
-          const users = j.data?.items || j.data || j;
+          const users = Array.isArray(j) ? j : (Array.isArray(j.data) ? j.data : []);
           if (Array.isArray(users)) {
-            setApprovers(users.filter((u: any) => u.role === 'Administrator' || u.role === 'Operator'));
+            setApprovers(users);
           }
         }
       } catch (e) {
@@ -2111,7 +2111,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                               <option value="">{language === 'zh' ? '选择审批人...' : 'Select approver...'}</option>
                               {approvers.map((u) => (
                                 <option key={u.id} value={u.username}>
-                                  {u.username} ({u.role})
+                                  {u.username} ({u.role} · {u.tenant_id || (language === 'zh' ? '未分配租户' : 'Unassigned tenant')})
                                 </option>
                               ))}
                             </select>
@@ -2445,7 +2445,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                         >
                           <option value="">{language === 'zh' ? '选择审批人...' : 'Select approver...'}</option>
                           {approvers.map(u => (
-                            <option key={u.id} value={u.username}>{u.username} ({u.role})</option>
+                            <option key={u.id} value={u.username}>{u.username} ({u.role} · {u.tenant_id || (language === 'zh' ? '未分配租户' : 'Unassigned tenant')})</option>
                           ))}
                         </select>
                         <button

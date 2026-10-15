@@ -432,6 +432,7 @@ const App: React.FC = () => {
     if (activeTab === 'network-monitoring') return 'paged-light';
     if (activeTab === 'inventory') return 'full';
     if (activeTab === 'automation' && automationPage === 'execute') return 'all-network-light';
+    if (activeTab === 'automation' && ['inspection', 'inspection-records'].includes(automationPage)) return 'all-light';
     if (activeTab === 'automation') return 'full';
     // Topology needs interface telemetry as well as device identity, while
     // config histories are not used by the graph.

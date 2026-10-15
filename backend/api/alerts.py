@@ -113,7 +113,9 @@ def _alert_collector_source(metric_type: str) -> str:
         'power_supply_failure', 'interface_error_rate_high', 'interface_flap',
     }:
         return 'snmp'
-    if metric_type in {'lldp_neighbor_lost', 'bgp_neighbor_down', 'ospf_neighbor_down', 'bfd_session_down'}:
+    if metric_type in {'bgp_neighbor_down', 'ospf_neighbor_down'}:
+        return 'snmp_cli_fallback'
+    if metric_type in {'lldp_neighbor_lost', 'bfd_session_down'}:
         return 'ssh_cli'
     if metric_type in {'ping_unreachable', 'device_offline'}:
         return 'icmp_tcp'

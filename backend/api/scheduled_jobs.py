@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 import uuid
 import logging
 import os
+from pydantic import BaseModel, Field
 
 from database import get_db_connection
 from core.rbac import require_role, authorize_resource, is_global_administrator
@@ -32,8 +33,13 @@ from services.nsot_collection_preview_service import (
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+
+class CronPreviewRequest(BaseModel):
+    cron_expr: str = Field(..., min_length=1, max_length=120)
+
 _CRON_ACTION_TYPES = frozenset({
     "backup",
+    "command",
     "inspection",
     "script_run",
     "server_check",
@@ -94,6 +100,37 @@ def _require_job_collection_permission(user: dict, action: str) -> None:
         raise HTTPException(status_code=403, detail="当前账号未分配租户")
     if not authorize_resource(user, "scheduled_job", action, tenant_id=tenant_id or None):
         raise HTTPException(status_code=403, detail="当前账号没有计划作业资源权限")
+
+
+@router.post("/scheduled-jobs/cron-preview")
+def preview_scheduled_job_cron(payload: CronPreviewRequest, user=require_role("Viewer")):
+    """Return the next ten local scheduler fire times without creating a job."""
+    _require_job_collection_permission(user, "view")
+    expression = " ".join(payload.cron_expr.split())
+    if len(expression.split()) != 5:
+        raise HTTPException(status_code=400, detail="Cron 表达式必须包含 5 个字段")
+
+    try:
+        from apscheduler.triggers.cron import CronTrigger
+        from core.scheduler_manager import scheduler
+
+        trigger = CronTrigger.from_crontab(expression, timezone=scheduler.timezone)
+        next_run = None
+        now = datetime.now(scheduler.timezone)
+        occurrences = []
+        for _ in range(10):
+            next_run = trigger.get_next_fire_time(next_run, now)
+            if next_run is None:
+                break
+            occurrences.append(next_run.isoformat())
+            now = next_run + timedelta(microseconds=1)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail="Cron 表达式无效") from exc
+    except Exception as exc:
+        logger.warning("Unable to preview scheduled job cron: %s", type(exc).__name__)
+        raise HTTPException(status_code=400, detail="Cron 表达式无效或无法计算") from exc
+
+    return {"success": True, "data": {"occurrences": occurrences}}
 
 
 # ── List ──
@@ -428,7 +465,7 @@ def create_scheduled_job(
     if not name:
         raise HTTPException(status_code=400, detail="作业名称不能为空")
     if job_type == "cron" and action_type not in _CRON_ACTION_TYPES:
-        raise HTTPException(status_code=400, detail="定时作业支持：配置备份、网络巡检、服务器巡检、健康检查、脚本执行及 NSOT 事实库采集")
+        raise HTTPException(status_code=400, detail="定时作业支持：配置备份、命令执行、自动化脚本、巡检、服务器检查及 NSOT 事实库采集")
     if job_type == "cron" and not cron_expr:
         raise HTTPException(status_code=400, detail="定时作业需要 cron 表达式")
     if job_type == "once" and not scheduled_at:
@@ -437,8 +474,16 @@ def create_scheduled_job(
         raise HTTPException(status_code=400, detail="命令类型作业需要命令或脚本")
     if action_type == "script_run" and not script_id:
         raise HTTPException(status_code=400, detail="自动化变更作业需要选择一个已发布的脚本")
-    if action_type in {"command", "script_run"} or script_id or is_config:
-        raise HTTPException(status_code=403, detail="原始命令、脚本和配置变更作业暂不支持计划执行；请使用受控 Playbook 与变更工单执行")
+    if action_type == "command" and script_id and commands:
+        raise HTTPException(status_code=400, detail="命令执行作业只能选择直接命令或已发布脚本其中一种")
+    if action_type == "script_run" and commands:
+        raise HTTPException(status_code=400, detail="自动化脚本作业的执行内容来自已发布脚本，不能再提交单独命令")
+    if script_id and action_type not in {"command", "script_run"}:
+        raise HTTPException(status_code=400, detail="脚本只能用于命令执行或自动化脚本作业")
+    if is_config and action_type not in {"command", "script_run"}:
+        raise HTTPException(status_code=400, detail="配置变更模式只能用于命令或脚本作业")
+    if is_config and not config_reason:
+        raise HTTPException(status_code=400, detail="配置变更作业必须填写变更原因")
     if action_type == "nsot" and (commands or script_id or is_config or use_admin_creds):
         raise HTTPException(status_code=400, detail="NSOT 事实库采集不接受命令、脚本、配置模式或管理凭据")
     if use_admin_creds and not authorize_resource(
@@ -774,13 +819,21 @@ def update_scheduled_job(
         name = manifest["name"]
         action_type = manifest["action"]
         if manifest["job_type"] == "cron" and action_type not in _CRON_ACTION_TYPES:
-            raise HTTPException(status_code=400, detail="定时作业支持：配置备份、网络巡检、服务器巡检、健康检查、脚本执行及 NSOT 事实库采集")
+            raise HTTPException(status_code=400, detail="定时作业支持：配置备份、命令执行、自动化脚本、巡检、服务器检查及 NSOT 事实库采集")
         if action_type == "command" and not manifest["commands"] and not manifest["script_id"]:
             raise HTTPException(status_code=400, detail="命令类型作业需要命令或脚本")
         if action_type == "script_run" and not manifest["script_id"]:
             raise HTTPException(status_code=400, detail="自动化变更作业需要选择一个已发布的脚本")
-        if action_type in {"command", "script_run"} or manifest["script_id"] or manifest["is_config"]:
-            raise HTTPException(status_code=403, detail="原始命令、脚本和配置变更作业暂不支持计划执行；请使用受控 Playbook 与变更工单执行")
+        if action_type == "command" and manifest["script_id"] and manifest["commands"]:
+            raise HTTPException(status_code=400, detail="命令执行作业只能选择直接命令或已发布脚本其中一种")
+        if action_type == "script_run" and manifest["commands"]:
+            raise HTTPException(status_code=400, detail="自动化脚本作业的执行内容来自已发布脚本，不能再提交单独命令")
+        if manifest["script_id"] and action_type not in {"command", "script_run"}:
+            raise HTTPException(status_code=400, detail="脚本只能用于命令执行或自动化脚本作业")
+        if manifest["is_config"] and action_type not in {"command", "script_run"}:
+            raise HTTPException(status_code=400, detail="配置变更模式只能用于命令或脚本作业")
+        if manifest["is_config"] and not manifest["config_reason"]:
+            raise HTTPException(status_code=400, detail="配置变更作业必须填写变更原因")
         if manifest["use_admin_creds"] and not authorize_resource(
             user, "credential", "use", tenant_id=_actor_tenant(user) or None,
         ):

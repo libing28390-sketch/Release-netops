@@ -460,7 +460,7 @@ const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                       >
                         <option value="">{zh ? '选择审批人...' : 'Select approver...'}</option>
                         {approvers.map(u => (
-                          <option key={u.id} value={u.username}>{u.username} ({u.role})</option>
+                          <option key={u.id} value={u.username}>{u.username} ({u.role} · {u.tenant_id || (zh ? '未分配租户' : 'Unassigned tenant')})</option>
                         ))}
                       </select>
                       <button

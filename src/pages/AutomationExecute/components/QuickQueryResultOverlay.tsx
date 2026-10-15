@@ -3,7 +3,7 @@ import { RotateCcw, Monitor, Terminal, Minimize2, Maximize2, X, Search } from 'l
 import OutputActions from '../../../components/OutputActions';
 import { TableExportMenu } from '../../../components/ui/TableExportMenu';
 import type { Device } from '../../../types';
-import type { QuickQueryTable } from '../types';
+import type { QuickQueryDeviceProvenance, QuickQueryTable } from '../types';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 interface QuickQueryResultOverlayProps {
@@ -31,6 +31,7 @@ interface QuickQueryResultOverlayProps {
 export const formatParserLabel = (value: unknown, isZh: boolean): string => {
   const raw = String(value || '').trim();
   if (!raw) return isZh ? '未声明解析器' : 'Parser not reported';
+  if (raw === 'mixed') return isZh ? '多种解析器（按设备）' : 'Mixed parsers (per device)';
 
   if (raw.toLowerCase().startsWith('textfsm:')) {
     const filename = raw.slice('textfsm:'.length).trim();
@@ -43,6 +44,55 @@ export const formatParserLabel = (value: unknown, isZh: boolean): string => {
     return isZh ? 'TextFSM 解析（模板未回传）' : 'TextFSM parser (template not reported)';
   }
   return raw;
+};
+
+const DeviceProvenanceDetails: React.FC<{
+  isZh: boolean;
+  items?: QuickQueryDeviceProvenance[];
+}> = ({ isZh, items = [] }) => {
+  if (items.length < 2) return null;
+  return (
+    <details className="rounded-xl border border-white/[0.06] bg-white/[0.02]">
+      <summary className="cursor-pointer px-4 py-3 text-[11px] font-semibold text-cyan-100/75">
+        {isZh ? '逐设备解析器与采集来源' : 'Per-device parser and collection source'}
+        <span className="ml-2 text-white/35">· {items.length}</span>
+      </summary>
+      <div className="max-h-56 divide-y divide-white/[0.05] overflow-auto border-t border-white/[0.05] px-4">
+        {items.map((deviceResult) => (
+          <div key={deviceResult.device_id || `${deviceResult.hostname}-${deviceResult.ip_address}`} className="flex flex-col gap-1.5 py-3 text-[10px] sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+            <div className="min-w-0">
+              <div className="truncate font-semibold text-white/75">
+                {deviceResult.hostname || deviceResult.ip_address || '—'}
+                <span className="ml-2 font-normal text-white/35">{deviceResult.platform || '—'}</span>
+              </div>
+              <div className="mt-1 break-all text-white/40">
+                {[
+                  deviceResult.parser_platform ? `parser_platform=${deviceResult.parser_platform}` : '',
+                  deviceResult.source ? `source=${deviceResult.source}` : '',
+                  deviceResult.command_source ? `command_source=${deviceResult.command_source}` : '',
+                  deviceResult.adapter ? `adapter=${typeof deviceResult.adapter === 'string' ? deviceResult.adapter : JSON.stringify(deviceResult.adapter)}` : '',
+                  deviceResult.template ? `template=${deviceResult.template}` : '',
+                  deviceResult.template_source ? `template_source=${deviceResult.template_source}` : '',
+                  deviceResult.commands.length ? `commands=${deviceResult.commands.join('; ')}` : '',
+                  deviceResult.error_code ? `error_code=${deviceResult.error_code}` : '',
+                ].filter(Boolean).join(' · ') || (isZh ? '未返回来源明细' : 'No source details reported')}
+              </div>
+            </div>
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              <span className="rounded-full border border-cyan-400/15 bg-cyan-400/[0.07] px-2 py-1 text-cyan-100/70">
+                {formatParserLabel(deviceResult.parser, isZh)}
+              </span>
+              <span className={`rounded-full px-2 py-1 ${deviceResult.request_status === 'failed' ? 'bg-rose-500/10 text-rose-300' : 'bg-white/[0.05] text-white/45'}`}>
+                {deviceResult.request_status === 'failed'
+                  ? (isZh ? '请求失败' : 'Request failed')
+                  : `${isZh ? '解析' : 'Parse'}: ${deviceResult.parse_status}`}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </details>
+  );
 };
 
 export const QuickQueryResultOverlay: React.FC<QuickQueryResultOverlayProps> = ({
@@ -277,6 +327,7 @@ export const QuickQueryResultOverlay: React.FC<QuickQueryResultOverlayProps> = (
                   </div>
                 </div>
               </div>
+              <DeviceProvenanceDetails isZh={isZh} items={quickQueryTable.deviceResults} />
               {quickQueryTable.records.length > 0 ? (
                 <div
                   className={
@@ -367,6 +418,10 @@ export const QuickQueryResultOverlay: React.FC<QuickQueryResultOverlayProps> = (
                   )}
                 </div>
               </div>
+              <DeviceProvenanceDetails
+                isZh={isZh}
+                items={Array.isArray(quickQueryStructured?.device_results) ? quickQueryStructured.device_results : []}
+              />
               {(quickQueryStructured?.categories?.[0]?.parse_status === 'unmatched' ||
                 quickQueryStructured?.categories?.[0]?.parse_status === 'failed' ||
                 quickQueryStructured?.categories?.[0]?.parse_status === 'device_error') && (

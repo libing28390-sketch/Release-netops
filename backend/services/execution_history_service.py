@@ -1,4 +1,4 @@
-"""Read and paginate the unified inspection and Playbook execution history."""
+"""Read and paginate unified inspection, Playbook, and backup execution history."""
 
 from __future__ import annotations
 
@@ -16,8 +16,9 @@ def get_execution_history(
     query: str,
     user: dict[str, Any],
     include_playbooks: bool,
+    include_backup_runs: bool,
 ) -> dict[str, Any]:
-    """Return one globally ordered page, with Playbooks limited like their list API."""
+    """Return one globally ordered page across the authorized execution sources."""
     inspection_select = '''
         SELECT
             ir.id AS id,
@@ -30,6 +31,7 @@ def get_execution_history(
             COALESCE(ir.success_count, 0) AS success_count,
             COALESCE(ir.failed_count, 0) AS failed_count,
             0 AS partial_count,
+            0 AS skipped_count,
             ir.avg_health_score AS avg_health_score,
             COALESCE(ir.created_by, 'system') AS created_by,
             COALESCE(NULLIF(TRIM(ins.name), ''), NULLIF(TRIM(job.name), '')) AS name,
@@ -49,11 +51,15 @@ def get_execution_history(
     source_params: list[Any] = []
 
     if include_playbooks:
-        playbook_where = ''
+        playbook_conditions = [
+            "NOT (COALESCE(pb.scenario_id, '') = 'instant' "
+            "AND COALESCE(pb.scenario_name, '') LIKE 'Config Backup · %')"
+        ]
         if user.get('role') != 'Administrator':
             # Match GET /api/playbooks: tenant users cannot see unassociated rows.
-            playbook_where = 'WHERE tenant_id = ?'
+            playbook_conditions.append('pb.tenant_id = ?')
             source_params.append(str(user.get('tenant_id') or ''))
+        playbook_where = 'WHERE ' + ' AND '.join(playbook_conditions)
         source_selects.append(f'''
             SELECT
                 pb.id AS id,
@@ -71,12 +77,52 @@ def get_execution_history(
                 COALESCE(pb.success_count, 0) AS success_count,
                 COALESCE(pb.failed_count, 0) AS failed_count,
                 COALESCE(pb.partial_count, 0) AS partial_count,
+                0 AS skipped_count,
                 NULL AS avg_health_score,
                 COALESCE(pb.author, 'admin') AS created_by,
                 NULLIF(TRIM(pb.scenario_name), '') AS name,
                 COALESCE(NULLIF(TRIM(pb.scenario_name), ''), 'Quick Playbook 快捷命令执行') AS search_name
             FROM playbook_executions pb
             {playbook_where}
+        ''')
+
+    if include_backup_runs:
+        source_selects.append('''
+            SELECT
+                r.id AS id,
+                'config_backup' AS source,
+                r.started_at AS started_at,
+                CASE
+                    WHEN LOWER(COALESCE(r.trigger, '')) = 'manual' THEN 'manual'
+                    ELSE 'job'
+                END AS trigger_type,
+                CASE
+                    WHEN r.status = 'running' THEN 'running'
+                    WHEN COALESCE(r.failed_count, 0) > 0 AND COALESCE(r.success_count, 0) = 0 THEN 'failed'
+                    WHEN COALESCE(r.failed_count, 0) > 0 THEN 'partial_failure'
+                    WHEN COALESCE(r.success_count, 0) = 0 AND COALESCE(r.skipped_count, 0) > 0 THEN 'skipped'
+                    ELSE 'success'
+                END AS status,
+                COALESCE(r.total_devices, 0) AS total_devices,
+                NULL AS device_ids,
+                COALESCE(r.success_count, 0) AS success_count,
+                COALESCE(r.failed_count, 0) AS failed_count,
+                0 AS partial_count,
+                COALESCE(r.skipped_count, 0) AS skipped_count,
+                NULL AS avg_health_score,
+                COALESCE(r.author, 'system') AS created_by,
+                'Config Backup · ' || COALESCE(
+                    NULLIF(TRIM(backup_policy.name), ''),
+                    NULLIF(TRIM(r.trigger), ''),
+                    'backup'
+                ) AS name,
+                'Config Backup · ' || COALESCE(
+                    NULLIF(TRIM(backup_policy.name), ''),
+                    NULLIF(TRIM(r.trigger), ''),
+                    'backup'
+                ) AS search_name
+            FROM config_backup_runs r
+            LEFT JOIN config_backup_policies backup_policy ON backup_policy.id = r.policy_id
         ''')
 
     where_clauses: list[str] = []
@@ -106,7 +152,7 @@ def get_execution_history(
         rows = conn.execute(
             f'''WITH history AS ({history_sql})
                 SELECT id, source, started_at, trigger_type, status,
-                       total_devices, device_ids, success_count, failed_count, partial_count,
+                       total_devices, device_ids, success_count, failed_count, partial_count, skipped_count,
                        avg_health_score, created_by, name
                 FROM history
                 {where_sql}

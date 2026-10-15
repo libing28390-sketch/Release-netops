@@ -19,6 +19,7 @@ export interface ScheduledJob {
   last_run_status: string;
   run_count: number;
   use_admin_creds?: number;
+  authorization_mode?: string;
   created_by: string;
   created_at: string;
   major_type?: string;
@@ -68,6 +69,7 @@ export interface EligibleApprover {
   id: string;
   username: string;
   role: string;
+  tenant_id: string;
   verification_methods: ApprovalVerificationMethod[];
 }
 

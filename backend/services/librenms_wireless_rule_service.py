@@ -676,6 +676,17 @@ _H3C_STATUS = {
     "run": ("run", 0),
     "run(5)": ("run", 0),
 }
+_H3C_CONNECTION_TYPE = {
+    "1": ("master", 0),
+    "master": ("master", 0),
+    "master(1)": ("master", 0),
+    "2": ("slave", 0),
+    "slave": ("slave", 0),
+    "slave(2)": ("slave", 0),
+    "3": ("disconnected", 2),
+    "notavailable": ("disconnected", 2),
+    "notavailable(3)": ("disconnected", 2),
+}
 
 
 def _row_map(result: Any) -> dict[str, str]:
@@ -1032,6 +1043,7 @@ async def _probe_h3c_wireless(
         "ap_count": ("HH3C-DOT11-ACMT-MIB", "hh3cDot11TotalAPconnected"),
         "client_count": ("HH3C-DOT11-ACMT-MIB", "hh3cDot11StationCurAssocSum"),
         "ap_status": ("HH3C-DOT11-APMT-MIB", "hh3cDot11APOperationStatus"),
+        "ap_connection_type": ("HH3C-DOT11-APMT-MIB", "hh3cDot11APConnectionType"),
         "ap_name": ("HH3C-DOT11-APMT-MIB", "hh3cDot11CurrAPName"),
         "ap_model": ("HH3C-DOT11-APMT-MIB", "hh3cDot11CurrAPModelName"),
         "ap_ip": ("HH3C-DOT11-APMT-MIB", "hh3cDot11APIPAddress"),
@@ -1109,17 +1121,26 @@ async def _probe_h3c_wireless(
     ap_count = scalar_sensor("ap_count", "ap-count", "Connected APs")
     client_count = scalar_sensor("client_count", "clients", "Associated clients")
 
-    ap_status_rows = rows.get("ap_status", {})
-    ap_rows: dict[str, str] = {}
-    ap_status_suffixes: dict[str, str] = {}
-    ap_invalid_index_count = 0
-    for suffix, raw_status in ap_status_rows.items():
-        ap_id = _decode_octet_string_index(suffix)
-        if ap_id is None:
-            ap_invalid_index_count += 1
-            continue
-        ap_rows[ap_id] = raw_status
-        ap_status_suffixes[ap_id] = suffix
+    def indexed_ap_rows(key: str) -> tuple[dict[str, str], dict[str, str], int]:
+        values: dict[str, str] = {}
+        suffixes: dict[str, str] = {}
+        invalid_indexes = 0
+        for suffix, raw in rows.get(key, {}).items():
+            ap_serial = _decode_octet_string_index(suffix)
+            if ap_serial is None:
+                invalid_indexes += 1
+                continue
+            ap_serial = ap_serial.strip()
+            if not ap_serial:
+                invalid_indexes += 1
+                continue
+            values[ap_serial] = raw
+            suffixes[ap_serial] = suffix
+        return values, suffixes, invalid_indexes
+
+    ap_operation_statuses, operation_status_suffixes, ap_invalid_index_count = indexed_ap_rows("ap_status")
+    ap_connection_types, connection_type_suffixes, invalid_connection_indexes = indexed_ap_rows("ap_connection_type")
+    ap_invalid_index_count += invalid_connection_indexes
     ap_names, invalid_name_indexes = _indexed_octet_rows(rows.get("ap_name", {}))
     ap_models, invalid_model_indexes = _indexed_octet_rows(rows.get("ap_model", {}))
     ap_ips, invalid_ip_indexes = _indexed_octet_rows(rows.get("ap_ip", {}))
@@ -1139,41 +1160,94 @@ async def _probe_h3c_wireless(
         invalid_name_indexes, invalid_model_indexes, invalid_ip_indexes,
         invalid_mac_indexes, invalid_client_indexes, invalid_cpu_indexes,
     ))
-    unknown_ap_statuses = [
-        raw_status for raw_status in ap_rows.values()
-        if str(raw_status).strip().casefold() not in _H3C_STATUS
-    ]
-    for ap_id, raw_status in sorted(ap_rows.items()):
-        state = _H3C_STATUS.get(str(raw_status).strip().casefold())
-        if state is None:
-            continue
+    ap_ids = set(ap_operation_statuses) | set(ap_connection_types)
+    unknown_ap_states = 0
+    ap_index_suffixes = {
+        **operation_status_suffixes,
+        **connection_type_suffixes,
+    }
+    for ap_id in sorted(ap_ids):
+        raw_operation_status = ap_operation_statuses.get(ap_id)
+        raw_connection_type = ap_connection_types.get(ap_id)
+        operation_state = _H3C_STATUS.get(str(raw_operation_status or "").strip().casefold())
+        connection_state = _H3C_CONNECTION_TYPE.get(str(raw_connection_type or "").strip().casefold())
+
+        if operation_state and operation_state[0] != "run":
+            # Preserve H3C's explicit joining/downloading/configuration phases.
+            operation_description, state_value = operation_state
+            state_description = operation_description
+            raw_state = str(raw_operation_status)
+        elif connection_state and connection_state[0] == "disconnected":
+            raw_state = str(raw_connection_type)
+            state_description, state_value = "disconnected", 2
+        elif operation_state:
+            operation_description, state_value = operation_state
+            if operation_description == "run":
+                if connection_state and connection_state[0] in {"master", "slave"}:
+                    state_description = "online"
+                    raw_state = str(raw_operation_status)
+                else:
+                    # A version-specific or absent connection enum must not
+                    # turn the operation status into an online/offline claim.
+                    state_description, state_value = "unknown", 3
+                    unknown_ap_states += 1
+                    raw_state = str(raw_connection_type or raw_operation_status)
+            else:
+                raw_state = str(raw_operation_status)
+        else:
+            raw_state = str(raw_connection_type or raw_operation_status or "unknown")
+            state_description, state_value = "unknown", 3
+            unknown_ap_states += 1
+
         ap_name = str(ap_names.get(ap_id) or f"AP {ap_id}")[:120]
         ap_model = str(ap_models.get(ap_id) or "")[:120]
         ap_ip = str(ap_ips.get(ap_id) or "")[:64]
         ap_mac = str(ap_macs.get(ap_id) or "")[:64]
         labels = {
             "ap_id": ap_id,
+            "ap_serial": ap_id,
             "ap_name": ap_name,
             "ap_model": ap_model,
             "ap_ip": ap_ip,
             "ap_mac": ap_mac,
         }
+        states = {
+            raw: {
+                "generic": generic,
+                "descr": "online" if description == "run" else description,
+            }
+            for raw, (description, generic) in _H3C_STATUS.items()
+        }
+        states.update({
+            raw: {"generic": generic, "descr": description}
+            for raw, (description, generic) in _H3C_CONNECTION_TYPE.items()
+        })
+        # Numeric values overlap between APOperationStatus and APConnectionType
+        # (for example, operation download(3) versus notAvailable(3)). The
+        # chosen raw value's source determines this sensor's interpretation.
+        states[raw_state] = {"generic": state_value, "descr": state_description}
         sensor = _sensor(
             source_id=f"h3c:wireless:ap-state:{ap_id}",
             component_class="wireless_access_point",
             measurement_type="component_state",
-            oid=symbols["ap_status"],
-            suffix=ap_status_suffixes[ap_id],
-            raw_value=raw_status,
-            value=float(state[1]),
+            oid=symbols.get("ap_connection_type") or symbols.get("ap_status", ""),
+            suffix=ap_index_suffixes[ap_id],
+            raw_value=raw_state,
+            value=float(state_value),
             unit="state",
             name=ap_name,
             labels=labels,
-            metadata={**lineage, "wireless_sensor_class": "ap-state"},
-            states={
-                raw: {"generic": generic, "descr": description}
-                for raw, (description, generic) in _H3C_STATUS.items()
+            metadata={
+                **lineage,
+                "wireless_sensor_class": "ap-state",
+                "ap_state_source": "hh3cDot11APConnectionType+hh3cDot11APOperationStatus",
+                "ap_name_enriched": bool(str(ap_names.get(ap_id) or "").strip()),
+                "ap_model_enriched": bool(str(ap_models.get(ap_id) or "").strip()),
             },
+            states=states,
+            # AP state is derived from the complete inventory snapshot, since
+            # polling only APOperationStatus would erase disconnected state.
+            poll_plan={"kind": "snapshot_only"},
         )
         if sensor:
             sensors.append(sensor)
@@ -1194,7 +1268,7 @@ async def _probe_h3c_wireless(
                 oid=oid,
                 suffix=next(
                     (index for index in rows.get(key, {}) if _decode_octet_string_index(index) == ap_id),
-                    ap_status_suffixes[ap_id],
+                    ap_index_suffixes[ap_id],
                 ),
                 raw_value=raw,
                 value=value,
@@ -1207,12 +1281,13 @@ async def _probe_h3c_wireless(
                 sensors.append(metric_sensor)
 
     ap_walk_keys = {
-        "ap_status", "ap_name", "ap_model", "ap_ip", "ap_mac", "ap_clients", "ap_cpu",
+        "ap_status", "ap_connection_type", "ap_name", "ap_model", "ap_ip", "ap_mac", "ap_clients", "ap_cpu",
     }
+    operation_ids_missing_connection_type = set(ap_operation_statuses) - set(ap_connection_types)
     ap_complete = (
         all(complete.get(key, False) for key in ap_walk_keys)
-        and not unknown_ap_statuses
         and ap_invalid_index_count == 0
+        and not operation_ids_missing_connection_type
         and not any(
             item.split("::", 1)[-1] in {requests[key][1] for key in ap_walk_keys}
             for item in missing
@@ -1227,13 +1302,11 @@ async def _probe_h3c_wireless(
         "wireless_access_point",
         status="success" if ap_sensor_count and ap_complete else "partial" if ap_sensor_count else "not_found" if ap_complete else "failed",
         complete=ap_complete,
-        reason_code="h3c_wireless_ap_table" if ap_sensor_count and ap_complete else "unrecognized_h3c_ap_status" if unknown_ap_statuses else "invalid_h3c_ap_index" if ap_invalid_index_count else "no_h3c_wireless_ap_rows" if ap_complete else "h3c_wireless_ap_walk_incomplete",
-        reason=f"Pinned H3C wireless MIB walks returned {ap_sensor_count} AP row(s)." if ap_sensor_count and ap_complete else f"H3C AP status table included {len(unknown_ap_statuses)} unrecognized status value(s)." if unknown_ap_statuses else f"H3C AP tables included {ap_invalid_index_count} row(s) with an unrecognized index." if ap_invalid_index_count else "No H3C AP rows were returned by the pinned MIB table." if ap_complete else "One or more H3C AP table walks or symbol lookups did not complete.",
+        reason_code="unrecognized_h3c_ap_status" if unknown_ap_states else "h3c_ap_connection_type_missing" if operation_ids_missing_connection_type else "h3c_wireless_ap_table" if ap_sensor_count and ap_complete else "invalid_h3c_ap_index" if ap_invalid_index_count else "no_h3c_wireless_ap_rows" if ap_complete else "h3c_wireless_ap_walk_incomplete",
+        reason=f"Pinned H3C wireless MIB walks returned {ap_sensor_count} AP row(s), including {unknown_ap_states} unknown state(s)." if unknown_ap_states else f"Pinned H3C operation status contained {len(operation_ids_missing_connection_type)} AP row(s) without a connection-type row." if operation_ids_missing_connection_type else f"Pinned H3C wireless MIB walks returned {ap_sensor_count} AP row(s)." if ap_sensor_count and ap_complete else f"H3C AP tables included {ap_invalid_index_count} row(s) with an unrecognized index." if ap_invalid_index_count else "No H3C AP rows were returned by the pinned MIB table." if ap_complete else "One or more H3C AP table walks or symbol lookups did not complete.",
     )
     if missing:
         ap_result["reason"] += f" Missing MIB symbol(s): {len(missing)}."
-        if any(item.split("::", 1)[-1] in {requests[key][1] for key in ap_walk_keys} for item in missing):
-            ap_result["coverage_complete"] = False
 
     controller_complete = complete.get("ap_count", False) and complete.get("client_count", False)
     controller_sensors = [

@@ -106,6 +106,68 @@ def test_profile_update_cannot_grant_approval_or_forge_actor(make_user, monkeypa
     assert events[-1]['actor_role'] == 'Operator'
 
 
+def test_tenant_admin_can_update_own_profile_without_user_management_scope(make_user, monkeypatch):
+    actor, _request = _session(make_user, role='Administrator')
+    with get_db_connection() as conn:
+        conn.execute(
+            "UPDATE users SET tenant_id = ?, scope_mode = 'restricted' WHERE id = ?",
+            ('tenant-default', actor['user_id']),
+        )
+        conn.commit()
+
+    monkeypatch.setattr(users, 'log_audit_event', lambda **_event: None)
+    app = FastAPI()
+    app.include_router(users.router, prefix='/api')
+    response = TestClient(app).put('/api/users/me/profile', headers={
+        'Authorization': 'Bearer audit-token',
+    }, json={
+        'username': 'forged-username',
+        'user_id': 'not-the-current-user',
+        'role': 'Viewer',
+        'role_profile': 'Change Requester',
+        'group_name': 'forged-group',
+        'change_groups': ['final_approver'],
+        'display_name': 'Updated Profile',
+        'email': 'profile@example.com',
+    })
+
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result['username'] == actor['username']
+    assert result['role'] == 'Administrator'
+    assert result['role_profile'] == ''
+    assert result['group_name'] == ''
+    assert result['change_groups'] == []
+    assert result['display_name'] == 'Updated Profile'
+    assert result['email'] == 'profile@example.com'
+    with get_db_connection() as conn:
+        scope_mode = conn.execute(
+            'SELECT scope_mode FROM users WHERE id = ?', (actor['user_id'],),
+        ).fetchone()['scope_mode']
+        scope_count = conn.execute(
+            'SELECT COUNT(*) AS count FROM user_resource_scopes WHERE user_id = ?',
+            (actor['user_id'],),
+        ).fetchone()['count']
+    assert scope_mode == 'restricted'
+    assert scope_count == 0
+
+
+def test_tenant_admin_still_needs_scope_to_update_another_user(make_user):
+    actor, request = _session(make_user, role='Administrator')
+    target = make_user('scoped_admin_target', role='Operator', tenant_id='tenant-default')
+    with get_db_connection() as conn:
+        conn.execute(
+            "UPDATE users SET tenant_id = ?, scope_mode = 'restricted' WHERE id = ?",
+            ('tenant-default', actor['user_id']),
+        )
+        conn.commit()
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(users.update_user(target['user_id'], request, {'display_name': 'Must Not Change'}))
+    assert error.value.status_code == 403
+    assert error.value.detail['code'] == 'RESOURCE_SCOPE_DENIED'
+
+
 @pytest.mark.parametrize('route', ['profile', 'setup'])
 def test_password_change_revokes_other_sessions(make_user, route):
     actor, request = _session(make_user)

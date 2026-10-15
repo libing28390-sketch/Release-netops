@@ -2,12 +2,13 @@ import React, { useState, useMemo } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   CalendarClock, X, Zap, ChevronDown, Search, FileCode, CheckCircle2,
-  Trash2, RotateCcw, Shield, AlertTriangle, Database, Activity, RefreshCw,
+  Trash2, RotateCcw, Shield, Database, Activity, RefreshCw,
   Target, Globe, Server, Check, Terminal, Radio, ChevronRight, Clock,
   Sparkles, Layers, Sliders, ShieldCheck, CheckCheck
 } from 'lucide-react';
 import TagConditionPicker, { hasTagFilterConditions, type TagFilterConfig } from '../../../components/TagConditionPicker';
 import { ActionIconButton } from '../../../components/ui/ActionIconButton';
+import CountdownText from './CountdownText';
 import { ScheduledJob, EligibleApprover, FormState, ValidatedDevice, type ApprovalVerificationMethod, type CollectionPlanFilters } from '../types';
 import {
   CRON_PRESETS, CRON_FIELD_LABELS_ZH, CRON_FIELD_LABELS_EN,
@@ -45,23 +46,46 @@ interface JobModalProps {
   approverUsername: string;
   setApproverUsername: (val: string) => void;
   approvers: EligibleApprover[];
+  approverLoadStatus: 'idle' | 'loading' | 'loaded' | 'error';
+  refreshApprovers: () => void;
   approvalMethod: ApprovalVerificationMethod;
   setApprovalMethod: (val: ApprovalVerificationMethod) => void;
-  approvalStatus: 'idle' | 'sending' | 'sent' | 'verified';
+  approvalStatus: 'idle' | 'sending' | 'sent' | 'verifying' | 'verified';
   approvalCountdown: number;
+  approvalDeadline: number;
+  onApprovalCountdownExpire: () => void;
   approvalCode: string;
   setApprovalCode: (val: string) => void;
   approvalError: string;
   setApprovalError: (val: string) => void;
   requestApproval: () => void;
-  verifyApproval: () => void;
+  verifyApproval: (code?: string) => void;
+  fetchCronPreview: (cronExpr: string, signal: AbortSignal) => Promise<string[]>;
   submitForm: () => void;
   language: string;
   devices?: any[];
+  deviceLoadStatus: 'idle' | 'loading' | 'loaded' | 'error';
+  refreshDevices: () => void;
 }
 
 const getDeviceCategory = (device: { category?: string | null; device_category?: string | null; role?: string | null }): string =>
   device.category || device.device_category || (device.role?.toLowerCase().includes('server') ? 'Server' : 'Network');
+
+const normalizeScriptPlatformFamily = (value?: string | null): string => {
+  const platform = String(value || '').toLowerCase().trim().replace(/[\s.-]+/g, '_');
+  const linuxPlatforms = ['linux', 'ubuntu', 'centos', 'debian', 'redhat', 'rhel', 'rocky', 'alma', 'almalinux', 'oracle_linux', 'oraclelinux', 'fedora', 'suse', 'opensuse'];
+  if (linuxPlatforms.some(alias => platform === alias || platform.startsWith(`${alias}_`) || platform.startsWith(`${alias}v`))) return 'linux';
+  if (platform === 'win' || platform.includes('windows') || platform.includes('winrm')) return 'windows';
+  return platform;
+};
+
+const areScriptPlatformsCompatible = (devicePlatform: string, requiredPlatform: string): boolean => {
+  const deviceKey = String(devicePlatform || '').toLowerCase().trim();
+  const requiredKey = String(requiredPlatform || '').toLowerCase().trim();
+  return normalizeScriptPlatformFamily(deviceKey) === normalizeScriptPlatformFamily(requiredKey)
+    || deviceKey.includes(requiredKey)
+    || requiredKey.includes(deviceKey);
+};
 
 export const JobModal: React.FC<JobModalProps> = ({
   isOpen,
@@ -92,19 +116,26 @@ export const JobModal: React.FC<JobModalProps> = ({
   approverUsername,
   setApproverUsername,
   approvers,
+  approverLoadStatus,
+  refreshApprovers,
   approvalMethod,
   setApprovalMethod,
   approvalStatus,
   approvalCountdown,
+  approvalDeadline,
+  onApprovalCountdownExpire,
   approvalCode,
   setApprovalCode,
   approvalError,
   setApprovalError,
   requestApproval,
   verifyApproval,
+  fetchCronPreview,
   submitForm,
   language,
   devices = [],
+  deviceLoadStatus,
+  refreshDevices,
 }) => {
   const zh = language === 'zh';
   const selectedApprover = approvers.find(item => item.username === approverUsername);
@@ -123,8 +154,52 @@ export const JobModal: React.FC<JobModalProps> = ({
   const [scriptAssetCategory, setScriptAssetCategory] = useState<'network' | 'server'>('network');
   const [scriptProtocolChannel, setScriptProtocolChannel] = useState<'cli' | 'snmp' | 'shell'>('cli');
   
-  // Right panel device search
-  const [deviceSearchQuery, setDeviceSearchQuery] = useState('');
+  const [flowStep, setFlowStep] = useState(0);
+  const [cronOccurrences, setCronOccurrences] = useState<string[]>([]);
+  const [cronPreviewStatus, setCronPreviewStatus] = useState<'idle' | 'loading' | 'loaded' | 'invalid' | 'error'>('idle');
+  const [cronPreviewError, setCronPreviewError] = useState('');
+  const [cronPreviewRetry, setCronPreviewRetry] = useState(0);
+
+  React.useEffect(() => {
+    if (isOpen) setFlowStep(0);
+  }, [isOpen]);
+
+  React.useEffect(() => {
+    if (!isOpen || flowStep !== 1) {
+      setCronPreviewStatus('idle');
+      return;
+    }
+
+    const expression = form.cron_expr.trim();
+    if (expression.split(/\s+/).length !== 5) {
+      setCronPreviewStatus('invalid');
+      setCronPreviewError(zh ? 'Cron 表达式需要包含 5 个字段。' : 'A cron expression must contain 5 fields.');
+      return;
+    }
+
+    const controller = new AbortController();
+    setCronPreviewError('');
+    setCronPreviewStatus('loading');
+    const timeout = window.setTimeout(() => {
+      void fetchCronPreview(expression, controller.signal)
+        .then(occurrences => {
+          if (controller.signal.aborted) return;
+          setCronOccurrences(occurrences.slice(0, 10));
+          setCronPreviewStatus('loaded');
+        })
+        .catch(error => {
+          if (controller.signal.aborted) return;
+          const status = (error as { status?: number })?.status;
+          setCronPreviewStatus(status === 400 || status === 422 ? 'invalid' : 'error');
+          setCronPreviewError(error instanceof Error ? error.message : (zh ? '无法预览执行时间。' : 'Unable to preview execution times.'));
+        });
+    }, 250);
+
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [isOpen, flowStep, form.cron_expr, fetchCronPreview, cronPreviewRetry, zh]);
 
   React.useEffect(() => {
     if (isOpen && form.action_type === 'inspection') {
@@ -227,33 +302,11 @@ export const JobModal: React.FC<JobModalProps> = ({
       return all.filter(d => d.role === form.device_filter);
     }
     if (form.device_scope === 'ip') {
-      const ips = new Set(ipDevices.map(d => d.ip));
-      return all.filter(d => ips.has(d.ip_address));
+      const ips = new Set(ipDevices.map(d => String(d.ip || '').trim()));
+      return all.filter(d => ips.has(String(d.ip_address || '').trim()));
     }
     return all;
   }, [devices, form.device_scope, form.device_filter, compositeFilter, ipDevices]);
-
-  // Filter matched devices by search query
-  const displayedMatchedDevices = useMemo(() => {
-    if (!deviceSearchQuery.trim()) return matchedDevices;
-    const q = deviceSearchQuery.toLowerCase();
-    return matchedDevices.filter(d =>
-      (d.hostname || '').toLowerCase().includes(q) ||
-      (d.ip_address || '').includes(q) ||
-      (d.platform || '').toLowerCase().includes(q) ||
-      (d.site || '').toLowerCase().includes(q)
-    );
-  }, [matchedDevices, deviceSearchQuery]);
-
-  // Platform breakdown for matched devices
-  const platformBreakdown = useMemo(() => {
-    const counts: Record<string, number> = {};
-    matchedDevices.forEach(d => {
-      const p = d.platform || 'generic';
-      counts[p] = (counts[p] || 0) + 1;
-    });
-    return counts;
-  }, [matchedDevices]);
 
   const onlineCount = useMemo(() => {
     return matchedDevices.filter(d => d.status === 'online' || d.is_active === 1 || d.ping_status === 'up').length;
@@ -292,19 +345,23 @@ export const JobModal: React.FC<JobModalProps> = ({
     if (!selectedScript || !selectedScript.platform || selectedScript.platform === 'any' || selectedScript.platform === 'all') return 0;
     const reqPlatform = selectedScript.platform.toLowerCase();
     return matchedDevices.filter(d => {
-      const p = (d.platform || '').toLowerCase();
-      return p && !p.includes(reqPlatform) && !reqPlatform.includes(p);
+      const platform = String(d.platform || '').toLowerCase().trim();
+      return platform && !areScriptPlatformsCompatible(platform, reqPlatform);
     }).length;
   }, [selectedScript, matchedDevices]);
 
   if (!isOpen) return null;
 
-  // Form ready calculation
-  const isFormReady = (() => {
-    if (!form.name.trim()) return false;
-    if (!form.action_type) return false;
-    const cronParts = form.cron_expr.trim().split(/\s+/);
-    if (cronParts.length !== 5 || cronParts.some(p => !p)) return false;
+  const isTaskReady = (() => {
+    if (!form.name.trim() || !form.action_type) return false;
+    if (form.action_type === 'command' && !form.commands.trim()) return false;
+    if (form.action_type === 'script_run' && !form.script_id.trim()) return false;
+    if (form.is_config && !form.config_reason.trim()) return false;
+    if (form.action_type === 'inspection' && (inspSource === 'script' || form.script_id.trim())) return false;
+    return true;
+  })();
+
+  const isScopeReady = (() => {
     if (!form.device_scope) return false;
     if (form.device_scope === 'ip' && ipDevices.length === 0) return false;
     if (form.device_scope === 'composite' && !hasCompositeFilter) return false;
@@ -312,12 +369,18 @@ export const JobModal: React.FC<JobModalProps> = ({
       if (!hasTagFilterConditions(tagFilter)) return false;
     }
     if ((form.device_scope === 'site' || form.device_scope === 'role') && !form.device_filter.trim()) return false;
-    if (form.action_type === 'script_run' && !form.script_id) return false;
-    if (form.action_type === 'inspection' && inspSource === 'script' && !form.script_id) return false;
     return true;
   })();
 
-  const cronParts = form.cron_expr.split(/\s+/);
+  const cronParts = form.cron_expr.trim().split(/\s+/);
+  const isScheduleReady = cronParts.length === 5 && cronParts.every(Boolean);
+  const isTaskAndTargetReady = isTaskReady && isScopeReady;
+  const isFormReady = isTaskAndTargetReady && isScheduleReady;
+  const flowStepLabels = zh ? ['任务与目标', '调度与审批'] : ['Task & targets', 'Schedule & approval'];
+  const actionLabel = ACTION_TYPES.find(action => action.value === form.action_type);
+  const scopeLabel = SCOPE_OPTIONS.find(scope => scope.value === form.device_scope);
+  const canAdvance = flowStep === 0 && isTaskAndTargetReady;
+
   const cronFields = [
     cronParts[0] ?? '0',
     cronParts[1] ?? '*',
@@ -336,25 +399,32 @@ export const JobModal: React.FC<JobModalProps> = ({
     <AnimatePresence mode="wait">
       <motion.div
         key="add-form"
-        initial={{ opacity: 0, y: 15 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: -15 }}
-        className="w-full bg-white rounded-3xl border border-slate-200 shadow-xl overflow-hidden"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/45 p-2 backdrop-blur-sm sm:p-4"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="scheduled-job-form-title"
       >
-        {/* Top Gradient Banner */}
-        <div className="h-1 bg-gradient-to-r from-cyan-500 via-sky-500 to-blue-600" />
-        
-        {/* Clean Top Header */}
-        <div className="px-8 py-5 flex items-center justify-between border-b border-slate-100 bg-white">
+        <motion.div
+          initial={{ opacity: 0, y: 10, scale: 0.985 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: 8, scale: 0.985 }}
+          className="flex max-h-[min(860px,calc(100dvh-1rem))] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl sm:max-h-[min(860px,calc(100dvh-2rem))] sm:rounded-3xl"
+        >
+        <div className="h-1 shrink-0 bg-gradient-to-r from-cyan-500 via-sky-500 to-blue-600" />
+
+        <div className="flex shrink-0 items-center justify-between border-b border-slate-100 bg-white px-4 py-3 sm:px-5">
           <div className="flex items-center gap-3.5">
-            <div className="w-11 h-11 rounded-2xl bg-cyan-50 border border-cyan-100 flex items-center justify-center text-cyan-600 shadow-sm">
-              <CalendarClock size={22} />
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-cyan-100 bg-cyan-50 text-cyan-600 shadow-sm">
+              <CalendarClock size={19} />
             </div>
             <div>
-              <h2 className="text-base font-bold text-slate-900 tracking-tight">
+              <h2 id="scheduled-job-form-title" className="text-sm font-bold tracking-tight text-slate-900 sm:text-base">
                 {isEditMode ? (zh ? '编辑周期性定时作业' : 'Edit Scheduled Job') : (zh ? '创建周期性定时作业' : 'Create Scheduled Job')}
               </h2>
-              <p className="text-xs text-slate-400 mt-0.5">
+              <p className="mt-0.5 hidden text-[11px] text-slate-400 sm:block">
                 {zh ? '配置执行动作、调度周期与目标设备，实现全网巡检、备份与自动化执行' : 'Configure strategy, schedule, and target fleet for network automation'}
               </p>
             </div>
@@ -362,23 +432,61 @@ export const JobModal: React.FC<JobModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+            disabled={approvalStatus === 'sending' || approvalStatus === 'verifying'}
+            className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 disabled:opacity-40"
           >
-            <X size={20} />
+            <X size={18} />
           </button>
         </div>
 
-        {/* Full-Width Dual-Column Balanced Workspace */}
-        <form onSubmit={e => { e.preventDefault(); submitForm(); }}>
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 p-6 lg:p-8 bg-slate-50/30">
+        {/* The form body scrolls inside the compact dialog while the header and actions stay visible. */}
+        <form className="flex min-h-0 flex-1 flex-col overflow-hidden" onSubmit={e => {
+          e.preventDefault();
+          if (flowStep === 0) {
+            if (canAdvance) setFlowStep(step => step + 1);
+            return;
+          }
+          if (isFormReady && approvalStatus === 'verified') submitForm();
+        }}>
+          <div className="shrink-0 bg-white px-3 pt-3 sm:px-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" aria-label={zh ? '作业创建步骤' : 'Job setup steps'}>
+              {flowStepLabels.map((label, index) => {
+                const isCurrent = flowStep === index;
+                const isComplete = flowStep > index;
+                return (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() => { if (index < flowStep) setFlowStep(index); }}
+                    disabled={index >= flowStep}
+                    className={`flex items-center gap-2.5 rounded-xl border px-3 py-2 text-left transition-colors ${
+                      isCurrent ? 'border-cyan-200 bg-cyan-50 text-cyan-800' :
+                      isComplete ? 'border-emerald-100 bg-emerald-50/60 text-emerald-700 hover:bg-emerald-50' :
+                      'border-slate-100 bg-slate-50 text-slate-400'
+                    }`}
+                    aria-current={isCurrent ? 'step' : undefined}
+                  >
+                    <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${
+                      isCurrent ? 'bg-cyan-600 text-white' : isComplete ? 'bg-emerald-500 text-white' : 'bg-slate-200 text-slate-500'
+                    }`}>
+                      {isComplete ? <Check size={13} /> : index + 1}
+                    </span>
+                    <span className="text-xs font-semibold">{label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div className="grid min-h-0 flex-1 grid-cols-1 content-start gap-3 overflow-y-auto bg-slate-50/40 p-3 sm:gap-4 sm:p-4 lg:grid-cols-12">
             
             {/* ═══════════════════════════════════════════════════════════════════
                 LEFT COLUMN (56% / 7 cols): 执行策略配置与目标资产范围
                ═══════════════════════════════════════════════════════════════════ */}
-            <div className="lg:col-span-7 space-y-6">
+            {flowStep === 0 ? (
+            <div className="lg:col-span-12 space-y-4">
               
               {/* Block 1: 基本属性 */}
-              <div className="p-6 rounded-2xl bg-white border border-slate-200/90 shadow-2xs space-y-4">
+              <div className="p-4 lg:p-5 rounded-2xl bg-white border border-slate-200/90 shadow-2xs space-y-4">
                 <div className="flex items-center gap-2">
                   <div className="w-2 h-2 rounded-full bg-cyan-500" />
                   <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">{zh ? '基本信息' : 'Basic Info'}</h3>
@@ -399,18 +507,19 @@ export const JobModal: React.FC<JobModalProps> = ({
               </div>
 
               {/* Block 2: 执行动作与驱动协议 */}
-              <div className="p-6 rounded-2xl bg-white border border-slate-200/90 shadow-2xs space-y-4">
+              <div className="p-4 lg:p-5 rounded-2xl bg-white border border-slate-200/90 shadow-2xs space-y-4">
                 <div className="flex items-center gap-2">
                   <div className="w-2 h-2 rounded-full bg-blue-500" />
                   <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">{zh ? '执行动作与驱动策略' : 'Action & Driver Strategy'}</h3>
                 </div>
 
-                {/* 4 Action Types */}
-                <div className="p-1 bg-slate-100 rounded-xl grid grid-cols-2 sm:grid-cols-4 gap-1">
+                {/* Action Types */}
+                <div className="p-1 bg-slate-100 rounded-xl grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-1">
                   <button
                     type="button"
                     onClick={() => {
-                      setForm(f => ({ ...f, action_type: 'inspection', major_type: 'collection' }));
+                      setForm(f => ({ ...f, action_type: 'inspection', major_type: 'collection', commands: '', script_id: '', is_config: false, config_reason: '', use_admin_creds: false }));
+                      setApproverUsername('');
                     }}
                     className={`py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
                       form.action_type === 'inspection'
@@ -424,7 +533,8 @@ export const JobModal: React.FC<JobModalProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      setForm(f => ({ ...f, action_type: 'backup', major_type: 'collection', script_id: '' }));
+                      setForm(f => ({ ...f, action_type: 'backup', major_type: 'collection', commands: '', script_id: '', is_config: false, config_reason: '', use_admin_creds: false }));
+                      setApproverUsername('');
                     }}
                     className={`py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
                       form.action_type === 'backup'
@@ -445,8 +555,10 @@ export const JobModal: React.FC<JobModalProps> = ({
                         commands: '',
                         script_id: '',
                         is_config: false,
+                        config_reason: '',
                         use_admin_creds: false,
                       }));
+                      setApproverUsername('');
                     }}
                     className={`py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
                       form.action_type === 'nsot'
@@ -460,18 +572,34 @@ export const JobModal: React.FC<JobModalProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      setForm(f => ({ ...f, action_type: 'script_run', major_type: 'change' }));
+                      setForm(f => ({ ...f, action_type: 'command', major_type: 'change', commands: '', script_id: '', is_config: false, config_reason: '', use_admin_creds: false }));
+                      setApproverUsername('');
+                    }}
+                    className={`py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${form.action_type === 'command' ? 'bg-white shadow-2xs text-cyan-700' : 'text-slate-600 hover:text-slate-900'}`}
+                  >
+                    <Terminal className="w-3.5 h-3.5 text-cyan-600" />
+                    {zh ? '命令执行' : 'Command'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setForm(f => ({ ...f, action_type: 'script_run', major_type: 'change', commands: '', script_id: '', is_config: false, config_reason: '', use_admin_creds: false }));
+                      setApproverUsername('');
                       fetchScripts();
                     }}
-                    className={`py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
-                      form.action_type === 'script_run'
-                        ? 'bg-white shadow-2xs text-cyan-700 font-bold'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
+                    className={`py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${form.action_type === 'script_run' ? 'bg-white shadow-2xs text-cyan-700' : 'text-slate-600 hover:text-slate-900'}`}
                   >
                     <FileCode className="w-3.5 h-3.5 text-cyan-600" />
                     {zh ? '脚本执行' : 'Script Run'}
                   </button>
+                </div>
+                <div className="flex items-start gap-2 rounded-xl border border-amber-100 bg-amber-50/70 px-3 py-2 text-[11px] leading-relaxed text-amber-800">
+                  <ShieldCheck size={14} className="mt-0.5 shrink-0 text-amber-600" />
+                  <span>
+                    {zh
+                      ? '命令和脚本会按周期重复执行，创建前必须由其他审批人验证；运行内容与脚本发布版本绑定，修改后需重新审批。'
+                      : 'Commands and scripts run repeatedly on schedule and require approval by another user. The approved content and released script version are pinned; changes require re-approval.'}
+                  </span>
                 </div>
 
                 {/* Sub-Action: Inspection */}
@@ -482,7 +610,8 @@ export const JobModal: React.FC<JobModalProps> = ({
                         type="button"
                         onClick={() => {
                           setInspSource('default');
-                          setForm(f => ({ ...f, script_id: '', commands: '' }));
+                          setForm(f => ({ ...f, script_id: '', commands: '', is_config: false }));
+                          setApproverUsername('');
                         }}
                         className={`py-1.5 px-2 rounded-lg text-[11px] font-bold transition-all text-center ${
                           inspSource === 'default' ? 'bg-white text-cyan-700 shadow-2xs' : 'text-slate-500 hover:text-slate-800'
@@ -494,7 +623,8 @@ export const JobModal: React.FC<JobModalProps> = ({
                         type="button"
                         onClick={() => {
                           setInspSource('network');
-                          setForm(f => ({ ...f, script_id: '', commands: 'cpu,memory,temperature,fan,psu,interface_errors,interface_flapping,reachability' }));
+                          setForm(f => ({ ...f, script_id: '', commands: 'cpu,memory,temperature,fan,psu,interface_errors,interface_flapping,reachability', is_config: false }));
+                          setApproverUsername('');
                         }}
                         className={`py-1.5 px-2 rounded-lg text-[11px] font-bold transition-all text-center ${
                           inspSource === 'network' ? 'bg-white text-cyan-700 shadow-2xs' : 'text-slate-500 hover:text-slate-800'
@@ -506,7 +636,8 @@ export const JobModal: React.FC<JobModalProps> = ({
                         type="button"
                         onClick={() => {
                           setInspSource('server');
-                          setForm(f => ({ ...f, script_id: '', commands: 'cpu,memory,disk,loadavg,system_services,reachability' }));
+                          setForm(f => ({ ...f, script_id: '', commands: 'cpu,memory,disk,loadavg,system_services,reachability', is_config: false }));
+                          setApproverUsername('');
                         }}
                         className={`py-1.5 px-2 rounded-lg text-[11px] font-bold transition-all text-center ${
                           inspSource === 'server' ? 'bg-white text-cyan-700 shadow-2xs' : 'text-slate-500 hover:text-slate-800'
@@ -516,13 +647,13 @@ export const JobModal: React.FC<JobModalProps> = ({
                       </button>
                       <button
                         type="button"
+                        disabled
+                        title={zh ? '定时作业暂不支持关联脚本；请选择内置巡检套件' : 'Scheduled jobs do not support attached scripts; choose a built-in inspection suite'}
                         onClick={() => {
                           setInspSource('script');
                           setForm(f => ({ ...f, commands: '' }));
                         }}
-                        className={`py-1.5 px-2 rounded-lg text-[11px] font-bold transition-all text-center ${
-                          inspSource === 'script' ? 'bg-white text-cyan-700 shadow-2xs' : 'text-slate-500 hover:text-slate-800'
-                        }`}
+                        className="py-1.5 px-2 rounded-lg text-[11px] font-bold transition-all text-center text-slate-400 cursor-not-allowed"
                       >
                         {zh ? '📜 关联巡检脚本' : 'Bound Script'}
                       </button>
@@ -621,6 +752,25 @@ export const JobModal: React.FC<JobModalProps> = ({
                   <div className="p-3 rounded-xl bg-cyan-50/50 border border-cyan-100 text-xs text-cyan-800 flex items-center gap-2">
                     <RefreshCw size={15} className="text-cyan-600 shrink-0" />
                     <span>{zh ? 'NSOT 事实库：只采集上方范围内的在线设备，并遵循各设备的采集模板；只读采集，不执行用户命令或配置变更。' : 'Collects online devices in the selected scope using each device template; read-only, with no user commands or configuration changes.'}</span>
+                  </div>
+                )}
+
+                {form.action_type === 'command' && (
+                  <div className="space-y-1.5">
+                    <label htmlFor="scheduled-job-commands" className="text-[11px] font-semibold text-slate-600">
+                      {zh ? '执行命令' : 'Commands'} <span className="text-rose-500">*</span>
+                    </label>
+                    <textarea
+                      id="scheduled-job-commands"
+                      rows={4}
+                      value={form.commands}
+                      onChange={event => setForm(current => ({ ...current, commands: event.target.value }))}
+                      placeholder={zh ? '每行一条命令' : 'Enter one command per line'}
+                      className="w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2.5 font-mono text-xs text-slate-800 outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
+                    />
+                    <p className="text-[10px] leading-relaxed text-slate-500">
+                      {zh ? '命令将按上方目标范围和 Cron 周期执行，每次运行都会记录结果。' : 'Commands run against the selected targets on this schedule, with every run recorded.'}
+                    </p>
                   </div>
                 )}
 
@@ -764,14 +914,55 @@ export const JobModal: React.FC<JobModalProps> = ({
                     </div>
                   </div>
                 )}
+
+                {(form.action_type === 'command' || form.action_type === 'script_run') && (
+                  <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+                    <label className="flex cursor-pointer items-start gap-2.5 text-xs text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={form.is_config}
+                        onChange={event => setForm(current => ({
+                          ...current,
+                          is_config: event.target.checked,
+                          config_reason: event.target.checked ? current.config_reason : '',
+                        }))}
+                        className="mt-0.5 h-3.5 w-3.5 rounded border-slate-300 text-cyan-600 focus:ring-cyan-500"
+                      />
+                      <span>
+                        <span className="font-semibold">{zh ? '标记为配置变更' : 'Mark as a configuration change'}</span>
+                        <span className="mt-0.5 block text-[10px] leading-relaxed text-slate-500">
+                          {zh ? '配置变更需填写原因并纳入本次审批清单。' : 'Configuration changes require a reason and are included in the approval manifest.'}
+                        </span>
+                      </span>
+                    </label>
+                    {form.is_config && (
+                      <textarea
+                        rows={2}
+                        value={form.config_reason}
+                        onChange={event => setForm(current => ({ ...current, config_reason: event.target.value }))}
+                        placeholder={zh ? '填写配置变更原因' : 'Enter the configuration change reason'}
+                        className="w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
+                      />
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Block 3: 目标资产范围设定 */}
-              <div className="p-6 rounded-2xl bg-white border border-slate-200/90 shadow-2xs space-y-4">
+              <div className="p-4 lg:p-5 rounded-2xl bg-white border border-slate-200/90 shadow-2xs space-y-4">
                 <div className="flex items-center gap-2">
                   <div className="w-2 h-2 rounded-full bg-indigo-500" />
                   <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">{zh ? '目标资产范围' : 'Target Fleet Scope'}</h3>
                 </div>
+
+                {deviceLoadStatus === 'loading' || deviceLoadStatus === 'idle' ? (
+                  <p className="rounded-xl bg-slate-50 px-3 py-2 text-[11px] text-slate-500">{zh ? '正在加载设备清单，加载完成后可继续。' : 'Loading the device inventory. Continue when it finishes.'}</p>
+                ) : deviceLoadStatus === 'error' ? (
+                  <div className="flex items-center justify-between gap-3 rounded-xl border border-rose-100 bg-rose-50 px-3 py-2 text-[11px] text-rose-700" role="alert">
+                    <span>{zh ? '设备清单加载失败，可能是登录状态或权限问题。' : 'The inventory failed to load. Check your session or permissions.'}</span>
+                    <button type="button" onClick={refreshDevices} className="shrink-0 font-semibold underline">{zh ? '重试' : 'Retry'}</button>
+                  </div>
+                ) : null}
 
                 <div className="space-y-3">
                   <div>
@@ -887,7 +1078,7 @@ export const JobModal: React.FC<JobModalProps> = ({
                           onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); validateAndAddIps(ipInput); } }}
                           disabled={ipValidating}
                           className="w-full pl-3.5 pr-12 py-2.5 rounded-xl border border-slate-200 text-xs bg-white font-mono focus:ring-2 focus:ring-cyan-500/20"
-                          placeholder={zh ? '输入 IP 后回车查询添加' : 'Enter IP and press Enter'}
+                          placeholder={zh ? '输入 IP 回车查询，再勾选目标' : 'Search IPs, then select targets'}
                         />
                         <button
                           type="button"
@@ -935,99 +1126,81 @@ export const JobModal: React.FC<JobModalProps> = ({
                 </div>
               </div>
             </div>
+            ) : (
+              <div className="lg:col-span-12 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-2xs">
+                <div className="mb-2 flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-cyan-500" />
+                  <h3 className="text-xs font-bold text-slate-800">{zh ? '任务摘要' : 'Task summary'}</h3>
+                </div>
+                <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs sm:grid-cols-3 xl:grid-cols-5">
+                  <div className="min-w-0">
+                    <dt className="text-[10px] text-slate-400">{zh ? '作业名称' : 'Job name'}</dt>
+                    <dd className="truncate font-semibold text-slate-800">{form.name || (zh ? '未填写' : 'Not set')}</dd>
+                  </div>
+                  <div className="min-w-0">
+                    <dt className="text-[10px] text-slate-400">{zh ? '执行动作' : 'Action'}</dt>
+                    <dd className="truncate font-semibold text-slate-800">{zh ? actionLabel?.labelZh : actionLabel?.labelEn}</dd>
+                  </div>
+                  <div className="min-w-0">
+                    <dt className="text-[10px] text-slate-400">{zh ? '目标范围' : 'Target scope'}</dt>
+                    <dd className="truncate font-semibold text-slate-800">{zh ? scopeLabel?.labelZh : scopeLabel?.labelEn}</dd>
+                  </div>
+                  <div className="min-w-0">
+                    <dt className="text-[10px] text-slate-400">{zh ? '设备 / 在线' : 'Devices / online'}</dt>
+                    <dd className="font-bold text-cyan-700">{deviceLoadStatus === 'loaded' ? `${matchedDevices.length} / ${onlineCount}` : deviceLoadStatus === 'error' ? (zh ? '加载失败' : 'Load failed') : (zh ? '加载中' : 'Loading')}</dd>
+                  </div>
+                  <div className="min-w-0">
+                    <dt className="text-[10px] text-slate-400">{zh ? '运行周期' : 'Schedule'}</dt>
+                    <dd className="truncate font-semibold text-slate-800">{describeCron(form.cron_expr, zh)}</dd>
+                  </div>
+                </dl>
+              </div>
+            )}
 
-            {/* ═══════════════════════════════════════════════════════════════════
-                RIGHT COLUMN (44% / 5 cols): 实时资产大盘 & 调度控制
-               ═══════════════════════════════════════════════════════════════════ */}
-            <div className="lg:col-span-5 space-y-5">
-              
-              {/* Card 1: 🎯 实时匹配目标资产大盘 */}
-              <div className="p-6 rounded-2xl bg-white border border-slate-200/90 shadow-2xs space-y-3.5">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            {/* Keep the schedule primary and group target preview and approval in a compact side rail. */}
+            {flowStep === 1 && (
+            <div className="lg:col-span-12 grid grid-cols-1 items-start gap-4 xl:grid-cols-2 2xl:grid-cols-12">
+              <div className="order-2 p-4 rounded-2xl bg-white border border-slate-200/90 shadow-2xs space-y-2.5 xl:col-start-2 xl:row-start-1 2xl:col-span-3 2xl:col-start-7 2xl:row-start-1">
+                <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
-                    <Target size={16} className="text-cyan-600" />
-                    <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">{zh ? '实时匹配目标资产' : 'Matching Fleet'}</h3>
+                    <Target size={15} className="text-cyan-600" />
+                    <h3 className="text-xs font-bold text-slate-800">{zh ? '目标设备预览' : 'Target preview'}</h3>
                   </div>
-                  <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-cyan-100 text-cyan-800 font-mono">
-                    {matchedDevices.length} {zh ? '台设备' : 'devs'}
+                  <span className="text-[11px] font-semibold text-cyan-700">
+                    {deviceLoadStatus === 'loaded'
+                      ? `${matchedDevices.length} ${zh ? '台设备' : 'devices'} · ${onlineCount} ${zh ? '在线' : 'online'}`
+                      : deviceLoadStatus === 'error' ? (zh ? '加载失败' : 'Load failed') : (zh ? '加载中…' : 'Loading…')}
                   </span>
                 </div>
-
-                {/* Status Bar */}
-                <div className="flex items-center justify-between text-xs bg-slate-50 px-3 py-2 rounded-xl border border-slate-100">
-                  <span className="flex items-center gap-1.5 text-emerald-600 font-bold">
-                    <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                    {onlineCount} {zh ? '台在线 (就绪)' : 'online'}
-                  </span>
-                  {matchedDevices.length - onlineCount > 0 && (
-                    <span className="flex items-center gap-1.5 text-slate-400 font-medium">
-                      <span className="w-2 h-2 rounded-full bg-slate-300" />
-                      {matchedDevices.length - onlineCount} {zh ? '台离线' : 'offline'}
-                    </span>
-                  )}
-                </div>
-
-                {/* Platform Breakdown Badges */}
-                {Object.keys(platformBreakdown).length > 0 && (
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {Object.entries(platformBreakdown).map(([platform, count]) => (
-                      <span key={platform} className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-slate-100 text-[10px] text-slate-700 font-mono">
-                        <span className="font-bold text-slate-900">{platform}</span>: {count}
-                      </span>
-                    ))}
+                {deviceLoadStatus === 'error' ? (
+                  <div className="flex items-center justify-between gap-2 rounded-lg bg-rose-50 px-3 py-2 text-[11px] text-rose-700">
+                    <span>{zh ? '设备清单加载失败，无法计算目标数量。' : 'The inventory could not be loaded.'}</span>
+                    <button type="button" onClick={refreshDevices} className="shrink-0 font-semibold underline">{zh ? '重试' : 'Retry'}</button>
                   </div>
-                )}
-
-                {/* Incompatible Warning */}
-                {scriptIncompatibleCount > 0 && (
-                  <div className="flex items-start gap-2 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800">
-                    <AlertTriangle size={14} className="text-amber-600 shrink-0 mt-0.5" />
-                    <span>
-                      {zh 
-                        ? `提示：当前脚本限定平台为 [${selectedScript?.platform}]，其中 ${scriptIncompatibleCount} 台不兼容设备将被跳过。` 
-                        : `Warning: ${scriptIncompatibleCount} devices incompatible with [${selectedScript?.platform}].`}
-                    </span>
-                  </div>
-                )}
-
-                {/* Quick Search inside preview */}
-                <div className="relative">
-                  <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input
-                    type="search"
-                    value={deviceSearchQuery}
-                    onChange={e => setDeviceSearchQuery(e.target.value)}
-                    placeholder={zh ? "在命中结果中快速搜索..." : "Filter matched devices..."}
-                    className="w-full pl-8 pr-3 py-1.5 rounded-xl border border-slate-200 text-xs bg-slate-50/50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20"
-                  />
-                </div>
-
-                {/* Device Stream Box */}
-                <div className="rounded-xl border border-slate-100 bg-slate-50/40 p-2 space-y-1 max-h-52 overflow-y-auto custom-scrollbar">
-                  {displayedMatchedDevices.length === 0 ? (
-                    <div className="py-8 text-center text-xs text-slate-400 italic">
-                      {zh ? '暂无匹配设备，请调整左侧范围过滤条件' : 'No devices match current filter'}
-                    </div>
-                  ) : (
-                    displayedMatchedDevices.map(dev => (
-                      <div key={dev.id || dev.ip_address} className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-white border border-slate-100 text-xs shadow-2xs">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className={`w-2 h-2 rounded-full shrink-0 ${dev.status === 'online' || dev.is_active === 1 || dev.ping_status === 'up' ? 'bg-emerald-500' : 'bg-slate-300'}`} />
-                          <span className="font-bold text-slate-800 truncate">{dev.hostname || dev.ip_address}</span>
-                          <span className="text-slate-400 font-mono text-[11px]">({dev.ip_address})</span>
-                        </div>
-                        <div className="flex items-center gap-1.5 shrink-0 text-[11px] text-slate-500 font-mono">
-                          {dev.site && <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-600">{dev.site}</span>}
-                          <span className="text-cyan-700 font-semibold">{dev.platform || 'generic'}</span>
-                        </div>
+                ) : (deviceLoadStatus === 'loading' || deviceLoadStatus === 'idle') && matchedDevices.length === 0 ? (
+                  <p className="rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-500">{zh ? '正在加载完整设备清单…' : 'Loading the complete device inventory…'}</p>
+                ) : matchedDevices.length === 0 ? (
+                  <p className="rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-500">{zh ? '当前范围没有匹配设备。' : 'No devices match this scope.'}</p>
+                ) : (
+                  <div className="space-y-1">
+                    {matchedDevices.slice(0, 4).map(dev => (
+                      <div key={dev.id || dev.ip_address} className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-2.5 py-1.5 text-[11px]">
+                        <span className="min-w-0 truncate font-medium text-slate-700">{dev.hostname || dev.ip_address}</span>
+                        <span className="shrink-0 font-mono text-slate-500">{dev.ip_address}</span>
                       </div>
-                    ))
-                  )}
-                </div>
+                    ))}
+                    {matchedDevices.length > 4 && (
+                      <p className="pt-0.5 text-right text-[10px] text-slate-400">{zh ? `另有 ${matchedDevices.length - 4} 台设备` : `and ${matchedDevices.length - 4} more`}</p>
+                    )}
+                  </div>
+                )}
+                {scriptIncompatibleCount > 0 && (
+                  <p className="text-[11px] text-amber-700">{zh ? `${scriptIncompatibleCount} 台设备与脚本平台不兼容，将被跳过。` : `${scriptIncompatibleCount} devices do not match the script platform and will be skipped.`}</p>
+                )}
               </div>
 
-              {/* Card 2: ⏰ Cron 调度周期与执行时间 */}
-              <div className="p-6 rounded-2xl bg-white border border-slate-200/90 shadow-2xs space-y-3.5">
+              {/* Cron schedule and approval share the same final setup step. */}
+              <div className="order-1 p-4 rounded-2xl bg-white border border-slate-200/90 shadow-2xs space-y-3.5 xl:col-start-1 xl:row-start-1 2xl:col-span-6 2xl:col-start-1 2xl:row-start-1">
                 <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                   <div className="flex items-center gap-2">
                     <Clock size={16} className="text-cyan-600" />
@@ -1094,35 +1267,84 @@ export const JobModal: React.FC<JobModalProps> = ({
                 <div className="text-xs text-cyan-700 font-medium text-center bg-cyan-50/70 py-1 rounded-xl border border-cyan-100">
                   {describeCron(form.cron_expr, zh)}
                 </div>
+                <div className="min-h-[170px] rounded-xl border border-slate-100 bg-slate-50/70 p-3" aria-live="polite" aria-busy={cronPreviewStatus === 'loading'}>
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-semibold text-slate-700">{zh ? '未来 10 次执行时间' : 'Next 10 runs'}</span>
+                    {cronPreviewStatus === 'loading' && <span className="text-[10px] text-slate-400">{zh ? '计算中…' : 'Calculating…'}</span>}
+                  </div>
+                  {cronPreviewStatus === 'invalid' || cronPreviewStatus === 'error' ? (
+                    <div className={`flex items-center justify-between gap-2 text-[11px] ${cronPreviewStatus === 'invalid' ? 'text-amber-700' : 'text-rose-700'}`} role="status">
+                      <span>{cronPreviewError}</span>
+                      {cronPreviewStatus === 'error' && (
+                        <button type="button" onClick={() => setCronPreviewRetry(retry => retry + 1)} className="shrink-0 font-semibold underline">{zh ? '重试' : 'Retry'}</button>
+                      )}
+                    </div>
+                  ) : cronPreviewStatus === 'loaded' && cronOccurrences.length === 0 ? (
+                    <p className="text-[11px] text-amber-700">{zh ? '该表达式没有可预览的执行时间。' : 'No upcoming execution time was returned for this expression.'}</p>
+                  ) : cronOccurrences.length > 0 ? (
+                    <ol className={`grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-slate-600 transition-opacity ${cronPreviewStatus === 'loading' ? 'opacity-50' : 'opacity-100'}`}>
+                      {cronOccurrences.map((occurrence, index) => (
+                        <li key={`${occurrence}-${index}`} className="flex gap-2">
+                          <span className="w-4 shrink-0 text-right text-slate-400">{index + 1}.</span>
+                          <time dateTime={occurrence}>{new Date(occurrence).toLocaleString(zh ? 'zh-CN' : 'en-US', { hour12: false })}</time>
+                        </li>
+                      ))}
+                    </ol>
+                  ) : cronPreviewStatus === 'idle' || cronPreviewStatus === 'loading' ? (
+                    <p className="text-[11px] text-slate-400">{cronPreviewStatus === 'loading' ? (zh ? '计算中…' : 'Calculating…') : (zh ? '等待预览…' : 'Waiting for preview…')}</p>
+                  ) : null}
+                </div>
               </div>
 
-              {/* Card 3: 🛡️ 安全审批授权 */}
-              <div className="p-6 rounded-2xl bg-white border border-slate-200/90 shadow-2xs space-y-3.5">
+              <div className="order-3 p-4 rounded-2xl bg-white border border-slate-200/90 shadow-2xs space-y-3.5 xl:col-span-2 xl:col-start-1 xl:row-start-2 2xl:col-span-3 2xl:col-start-10 2xl:row-start-1">
                 <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                   <div className="flex items-center gap-2">
                     <Shield size={16} className="text-cyan-600" />
                     <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">{zh ? '安全审批授权' : 'Approval Gate'}</h3>
                   </div>
-                  {approvalStatus === 'verified' && (
+                  {approvalStatus === 'verified' ? (
                     <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
                       <Check size={12} />
                       {zh ? '已授权通过' : 'Verified'}
                     </span>
-                  )}
+                  ) : approvalStatus === 'verifying' ? (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-cyan-700">
+                      <RotateCcw size={12} className="animate-spin" />
+                      {zh ? '正在验证' : 'Verifying'}
+                    </span>
+                  ) : null}
                 </div>
 
                 <div className="space-y-2">
                   <select
                     value={approverUsername}
                     onChange={e => setApproverUsername(e.target.value)}
-                    disabled={approvalStatus === 'verified'}
+                    disabled={approvalStatus === 'sending' || approvalStatus === 'verifying' || approvalStatus === 'verified'}
                     className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs bg-slate-50/50 hover:bg-white focus:bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-500 text-slate-700 font-medium transition-all"
                   >
                     <option value="">{zh ? '请选择安全审批人...' : 'Select approver...'}</option>
                     {approvers.map(a => (
-                      <option key={a.id} value={a.username}>{a.username} ({a.role})</option>
+                      <option key={a.id} value={a.username}>{a.username}</option>
                     ))}
                   </select>
+
+                  {approverLoadStatus === 'loading' && (
+                    <p className="text-[11px] text-slate-500">{zh ? '正在加载审批人…' : 'Loading approvers…'}</p>
+                  )}
+                  {approverLoadStatus === 'error' && (
+                    <div className="flex items-center justify-between gap-3 rounded-xl border border-rose-100 bg-rose-50 px-3 py-2 text-[11px] text-rose-700">
+                      <span>{zh ? '审批人列表加载失败，请检查登录状态或权限后重试。' : 'Approvers could not be loaded. Check your session or permissions and retry.'}</span>
+                      <button type="button" onClick={refreshApprovers} className="shrink-0 font-semibold underline">{zh ? '重试' : 'Retry'}</button>
+                    </div>
+                  )}
+                  {approverLoadStatus === 'loaded' && approvers.length === 0 && (
+                    <div className="rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-800">
+                      {zh
+                        ? '当前没有可用审批人。审批人账号需启用、具有 PAM 审批权限，并配置 MFA、邮箱或飞书验证方式；受限账号还需有当前租户或全局审批范围。'
+                        : 'No eligible approver is available. Accounts must be active, have PAM approval permission, and have MFA, email, or Feishu configured. Restricted accounts also need request-tenant or global approval scope.'}
+                      <button type="button" onClick={refreshApprovers} className="ml-2 font-semibold underline">{zh ? '刷新' : 'Refresh'}</button>
+                    </div>
+                  )}
 
                   {approverUsername && availableApprovalMethods.length > 0 && (
                     <div className="space-y-1">
@@ -1140,34 +1362,46 @@ export const JobModal: React.FC<JobModalProps> = ({
                     </div>
                   )}
 
-                  {approverUsername && approvalStatus !== 'verified' && (
+                  {approverUsername && (approvalStatus === 'sent' || approvalStatus === 'verifying') && (
                     <div className="flex items-center gap-2">
-                      {approvalStatus === 'sent' && (
-                        <input
-                          type="text"
-                          inputMode="numeric"
-                          maxLength={6}
-                          value={approvalCode}
-                          onChange={e => setApprovalCode(e.target.value.replace(/\\D/g, '').slice(0, 6))}
-                          placeholder={zh ? '输入 6 位动态码/验证码' : 'Enter 6-digit code'}
-                          className="flex-1 px-3 py-2 rounded-xl border border-slate-200 text-xs font-mono bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20"
-                        />
-                      )}
-                      <button
-                        type="button"
-                        onClick={approvalStatus === 'sent' ? verifyApproval : requestApproval}
-                        disabled={approvalStatus === 'sending' || (approvalStatus === 'sent' && approvalCode.length !== 6)}
-                        className="px-4 py-2 rounded-xl text-xs font-bold bg-slate-800 text-white hover:bg-slate-900 transition-all disabled:opacity-40 shrink-0"
-                      >
-                        {approvalStatus === 'sent'
-                          ? (zh ? '确认' : 'Verify')
-                          : approvalCountdown > 0
-                          ? `${approvalCountdown}s`
-                          : approvalMethod === 'mfa'
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={6}
+                        value={approvalCode}
+                        disabled={approvalStatus === 'verifying'}
+                        onChange={e => {
+                          const code = e.target.value.replace(/\D/g, '').slice(0, 6);
+                          setApprovalCode(code);
+                          setApprovalError('');
+                          if (code.length === 6) verifyApproval(code);
+                        }}
+                        placeholder={zh ? '输入 6 位动态码/验证码' : 'Enter 6-digit code'}
+                        className="min-w-0 flex-1 px-3 py-2 rounded-xl border border-slate-200 text-xs font-mono bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20 disabled:bg-slate-50"
+                      />
+                      {approvalStatus === 'verifying' && <span className="shrink-0 text-[11px] text-cyan-700">{zh ? '正在验证…' : 'Verifying…'}</span>}
+                    </div>
+                  )}
+                  {approverUsername && (approvalStatus === 'idle' || approvalStatus === 'sending' || (approvalStatus === 'sent' && approvalCountdown === 0)) && (
+                    <button
+                      type="button"
+                      onClick={requestApproval}
+                      disabled={approvalStatus === 'sending'}
+                      className="w-full rounded-xl bg-slate-800 px-4 py-2 text-xs font-bold text-white hover:bg-slate-900 disabled:opacity-40"
+                    >
+                      {approvalStatus === 'sending'
+                        ? (zh ? '正在发送…' : 'Sending…')
+                        : approvalMethod === 'mfa'
                           ? (zh ? '开始 MFA 验证' : 'Start MFA verification')
                           : (zh ? '发送验证码' : 'Send code')}
-                      </button>
-                    </div>
+                    </button>
+                  )}
+                  {approvalStatus === 'sent' && approvalCountdown > 0 && (
+                    <CountdownText deadline={approvalDeadline} onExpire={onApprovalCountdownExpire}>
+                      {secondsRemaining => (
+                        <p className="text-[10px] text-slate-400">{zh ? `可在 ${secondsRemaining} 秒后重新发送` : `Resend available in ${secondsRemaining}s`}</p>
+                      )}
+                    </CountdownText>
                   )}
 
                   {approvalError && (
@@ -1176,40 +1410,75 @@ export const JobModal: React.FC<JobModalProps> = ({
                 </div>
               </div>
             </div>
+            )}
           </div>
 
           {/* ═══════════════════════════════════════════════════════════════════
               FOOTER: 全局就绪状态栏与提交按钮
              ═══════════════════════════════════════════════════════════════════ */}
-          <div className="px-8 py-4 bg-white border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="flex shrink-0 flex-col items-center justify-between gap-2 border-t border-slate-200 bg-white px-3 py-3 sm:flex-row sm:px-4">
             <div className="flex items-center gap-2 text-xs text-slate-500">
               <Sparkles size={14} className="text-cyan-600" />
               <span>
-                {zh 
-                  ? `当前配置：面向 ${matchedDevices.length} 台设备 (${onlineCount} 在线)，按周期 [${describeCron(form.cron_expr, zh)}] 调度执行` 
-                  : `Target: ${matchedDevices.length} devices, Schedule: ${describeCron(form.cron_expr, zh)}`}
+                {flowStep === 0
+                  ? deviceLoadStatus === 'error'
+                    ? (zh ? '设备清单加载失败，请检查权限后重试。' : 'Inventory loading failed. Check access and retry.')
+                    : deviceLoadStatus !== 'loaded'
+                      ? (zh ? '设备清单加载中…' : 'Loading device inventory…')
+                      : (zh ? '先配置任务和目标设备。' : 'Start by choosing the task and target devices.')
+                  : deviceLoadStatus === 'loaded'
+                    ? (zh ? `目标 ${matchedDevices.length} 台（${onlineCount} 台在线）` : `${matchedDevices.length} targets (${onlineCount} online)`)
+                    : deviceLoadStatus === 'error'
+                      ? (zh ? '设备数量暂不可用' : 'Device count unavailable')
+                      : (zh ? '设备清单加载中…' : 'Loading device inventory…')}
+                {flowStep === 1 && approvalStatus !== 'verified' && (
+                  <span className="ml-2 text-amber-700">{zh ? '完成审批验证后即可创建。' : 'Complete approval verification to create the job.'}</span>
+                )}
               </span>
             </div>
 
-            <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+            <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
               <button
                 type="button"
                 onClick={onClose}
-                className="px-5 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition-all"
+                disabled={approvalStatus === 'sending' || approvalStatus === 'verifying'}
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition-all hover:bg-slate-50 disabled:opacity-40"
               >
                 {zh ? '取消' : 'Cancel'}
               </button>
-              <button
-                type="submit"
-                disabled={!isFormReady}
-                className="flex items-center gap-2 px-8 py-2.5 rounded-xl text-xs font-bold bg-gradient-to-r from-cyan-500 via-sky-600 to-blue-600 text-white hover:from-cyan-400 hover:to-blue-500 transition-all shadow-md shadow-cyan-500/20 disabled:opacity-40 disabled:cursor-not-allowed active:scale-98"
-              >
-                <CheckCircle2 size={16} />
-                {isEditMode ? (zh ? '保存配置修改' : 'Save Changes') : (zh ? '创建并启用定时作业' : 'Create & Enable Job')}
-              </button>
+              {flowStep > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setFlowStep(step => Math.max(0, step - 1))}
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition-all hover:bg-slate-50"
+                >
+                  {zh ? '上一步' : 'Back'}
+                </button>
+              )}
+              {flowStep === 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setFlowStep(1)}
+                  disabled={!canAdvance}
+                  className="flex items-center gap-2 rounded-lg bg-gradient-to-r from-cyan-500 via-sky-600 to-blue-600 px-4 py-2 text-xs font-bold text-white shadow-md shadow-cyan-500/20 transition-all disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {zh ? `下一步：${flowStepLabels[flowStep + 1]}` : `Next: ${flowStepLabels[flowStep + 1]}`}
+                  <ChevronRight size={14} />
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={!isFormReady || approvalStatus !== 'verified'}
+                  className="flex items-center gap-2 rounded-lg bg-gradient-to-r from-cyan-500 via-sky-600 to-blue-600 px-4 py-2 text-xs font-bold text-white shadow-md shadow-cyan-500/20 transition-all hover:from-cyan-400 hover:to-blue-500 active:scale-98 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <CheckCircle2 size={16} />
+                  {isEditMode ? (zh ? '保存修改' : 'Save changes') : (zh ? '创建并启用' : 'Create & enable')}
+                </button>
+              )}
             </div>
           </div>
         </form>
+        </motion.div>
       </motion.div>
     </AnimatePresence>
   );

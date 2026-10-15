@@ -5648,7 +5648,7 @@
           "type": "row"
         },
         "1": {
-          "title": "采集 AP",
+          "title": "纳管 AP",
           "type": "stat",
           "fieldConfig": {
             "defaults": {
@@ -6003,7 +6003,7 @@
           }
         },
         "8": {
-          "title": "采集到的 AP 状态分布",
+          "title": "AP 状态分布",
           "type": "bargauge",
           "fieldConfig": {
             "defaults": {
