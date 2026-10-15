@@ -5755,12 +5755,8 @@
                     "value": null
                   },
                   {
-                    "color": "#F59E0B",
-                    "value": 1
-                  },
-                  {
                     "color": "#F43F5E",
-                    "value": 5
+                    "value": 1
                   }
                 ]
               },
@@ -6019,7 +6015,7 @@
               {
                 "matcher": {
                   "id": "byName",
-                  "options": "associated"
+                  "options": "在线"
                 },
                 "properties": [
                   {
@@ -6034,37 +6030,7 @@
               {
                 "matcher": {
                   "id": "byName",
-                  "options": "run"
-                },
-                "properties": [
-                  {
-                    "id": "color",
-                    "value": {
-                      "mode": "fixed",
-                      "fixedColor": "#22C55E"
-                    }
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "active"
-                },
-                "properties": [
-                  {
-                    "id": "color",
-                    "value": {
-                      "mode": "fixed",
-                      "fixedColor": "#22C55E"
-                    }
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "deassociated"
+                  "options": "离线"
                 },
                 "properties": [
                   {
@@ -6079,37 +6045,7 @@
               {
                 "matcher": {
                   "id": "byName",
-                  "options": "idle"
-                },
-                "properties": [
-                  {
-                    "id": "color",
-                    "value": {
-                      "mode": "fixed",
-                      "fixedColor": "#F43F5E"
-                    }
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "down"
-                },
-                "properties": [
-                  {
-                    "id": "color",
-                    "value": {
-                      "mode": "fixed",
-                      "fixedColor": "#F43F5E"
-                    }
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "join"
+                  "options": "接入中"
                 },
                 "properties": [
                   {
@@ -6124,89 +6060,14 @@
               {
                 "matcher": {
                   "id": "byName",
-                  "options": "joining"
+                  "options": "未知"
                 },
                 "properties": [
                   {
                     "id": "color",
                     "value": {
                       "mode": "fixed",
-                      "fixedColor": "#F59E0B"
-                    }
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "joinack"
-                },
-                "properties": [
-                  {
-                    "id": "color",
-                    "value": {
-                      "mode": "fixed",
-                      "fixedColor": "#F59E0B"
-                    }
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "config"
-                },
-                "properties": [
-                  {
-                    "id": "color",
-                    "value": {
-                      "mode": "fixed",
-                      "fixedColor": "#F59E0B"
-                    }
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "data check"
-                },
-                "properties": [
-                  {
-                    "id": "color",
-                    "value": {
-                      "mode": "fixed",
-                      "fixedColor": "#F59E0B"
-                    }
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "image load"
-                },
-                "properties": [
-                  {
-                    "id": "color",
-                    "value": {
-                      "mode": "fixed",
-                      "fixedColor": "#F59E0B"
-                    }
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "downloading image"
-                },
-                "properties": [
-                  {
-                    "id": "color",
-                    "value": {
-                      "mode": "fixed",
-                      "fixedColor": "#F59E0B"
+                      "fixedColor": "#64748B"
                     }
                   }
                 ]
@@ -6308,6 +6169,18 @@
                           "downloading image": {
                             "text": "接入中",
                             "color": "#F59E0B"
+                          },
+                          "not_reported": {
+                            "text": "离线",
+                            "color": "#F43F5E"
+                          },
+                          "online": {
+                            "text": "在线",
+                            "color": "#22C55E"
+                          },
+                          "disconnected": {
+                            "text": "离线",
+                            "color": "#F43F5E"
                           }
                         }
                       },
@@ -6349,7 +6222,7 @@
                   {
                     "id": "custom.cellOptions",
                     "value": {
-                      "type": "color-text"
+                      "type": "color-background"
                     }
                   }
                 ]
@@ -6358,7 +6231,7 @@
           }
         },
         "10": {
-          "title": "AP 当前关联客户端 Top 20",
+          "title": "AP 关联终端 Top 20",
           "type": "table",
           "fieldConfig": {
             "defaults": {
@@ -6375,7 +6248,7 @@
               {
                 "matcher": {
                   "id": "byName",
-                  "options": "客户端数"
+                  "options": "终端数"
                 },
                 "properties": [
                   {
@@ -6788,8 +6661,12 @@
             "overrides": []
           }
         },
-        "21": {
-          "title": "无线传感器明细",
+        "906": {
+          "title": "无线专网流量",
+          "type": "row"
+        },
+        "22": {
+          "title": "AP 在线时长 Top 20（天）",
           "type": "table",
           "fieldConfig": {
             "defaults": {
@@ -6802,12 +6679,34 @@
                 "filterable": true
               }
             },
-            "overrides": []
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "在线天数"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "none"
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#22D3EE"
+                    }
+                  },
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "color-text"
+                    }
+                  }
+                ]
+              }
+            ]
           }
-        },
-        "906": {
-          "title": "无线专网流量",
-          "type": "row"
         }
       }
     },

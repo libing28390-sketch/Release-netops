@@ -189,7 +189,7 @@ def test_dashboards_suite_completeness():
     ap_wireless_client_panel = next(panel for panel in wireless_dashboard["panels"] if panel["id"] == 10)
     assert 'component_class="wireless_access_point",sensor_class="clients"' in ap_wireless_client_panel["targets"][0]["expr"]
     assert 'vendor=~"$vendor"' in ap_wireless_client_panel["targets"][0]["expr"]
-    assert "AP 当前关联客户端" in ap_wireless_client_panel["title"]
+    assert ap_wireless_client_panel["title"] == "AP 关联终端 Top 20"
 
     interface_dashboard_path = os.path.join(dashboard_dir, "nexora-network-interface.json")
     with open(interface_dashboard_path, "r", encoding="utf-8") as f:
@@ -287,7 +287,7 @@ def test_wireless_dashboard_uses_hardware_inventory_job_and_joins_by_device():
 
     for title in (
         "AP 当前状态明细",
-        "AP 当前关联客户端 Top 20",
+        "AP 关联终端 Top 20",
         "Radio 利用率 Top 10",
         "AP 无线单元（BSS）客户端 Top 20",
         "SSID 客户端 Top 20",
@@ -297,12 +297,7 @@ def test_wireless_dashboard_uses_hardware_inventory_job_and_joins_by_device():
         assert 'source_type=~"librenms_rule|librenms_mib_rule"' in expression
         assert 'job="network_snmp"' not in expression
 
-    wireless_sensor_panel = panels["无线传感器明细"]
-    wireless_sensor_query = wireless_sensor_panel["targets"][0]["expr"]
-    assert 'source_type=~"librenms_rule|librenms_mib_rule"' in wireless_sensor_query
-    assert 'component_class=~"wireless_.*"' in wireless_sensor_query
-    assert wireless_sensor_panel["gridPos"] == {"h": 9, "w": 24, "x": 0, "y": 68}
-    assert "不推断 AP 或 Radio 归属" in wireless_sensor_panel["description"]
+    assert "无线传感器明细" not in panels
 
     assert 'vendor=~"$vendor"' in query("AP 当前状态明细")
     assert 'component_class="wireless_access_point"' in query("AP 当前状态明细")
@@ -409,7 +404,10 @@ def test_wireless_dashboard_homepage_groups_actual_metrics_by_wireless_layer():
     assert len(trend_targets) == 2
     assert {target["legendFormat"] for target in trend_targets} == {"在线 AP", "关联终端"}
     assert panels[8]["type"] == "bargauge"
-    assert 'count by (state_description)' in panels[8]["targets"][0]["expr"]
+    assert 'sum by (ap_state)' in panels[8]["targets"][0]["expr"]
+    assert '"在线"' in panels[8]["targets"][0]["expr"]
+    assert '"离线"' in panels[8]["targets"][0]["expr"]
+    assert panels[8]["targets"][0]["legendFormat"] == "{{ap_state}}"
     assert "description" not in panels[8]
 
     assert panels[4]["title"] == "在线终端数"
@@ -493,8 +491,7 @@ def test_wireless_and_interface_dashboards_share_reference_semantic_colors():
     assert wireless_panels[2]["fieldConfig"]["defaults"]["thresholds"]["steps"][0]["color"] == HEALTHY_COLOR
     assert wireless_panels[3]["fieldConfig"]["defaults"]["thresholds"]["steps"] == [
         {"color": HEALTHY_COLOR, "value": None},
-        {"color": WARNING_COLOR, "value": 1},
-        {"color": CRITICAL_COLOR, "value": 5},
+        {"color": CRITICAL_COLOR, "value": 1},
     ]
     trend_colors = {
         override["matcher"]["options"]: override["properties"][0]["value"]["fixedColor"]
@@ -514,9 +511,10 @@ def test_wireless_and_interface_dashboards_share_reference_semantic_colors():
         }
         for override in ap_state_distribution["fieldConfig"]["overrides"]
     }
-    assert state_color_overrides["associated"]["color"]["fixedColor"] == HEALTHY_COLOR
-    assert state_color_overrides["idle"]["color"]["fixedColor"] == CRITICAL_COLOR
-    assert state_color_overrides["join"]["color"]["fixedColor"] == WARNING_COLOR
+    assert state_color_overrides["在线"]["color"]["fixedColor"] == HEALTHY_COLOR
+    assert state_color_overrides["离线"]["color"]["fixedColor"] == CRITICAL_COLOR
+    assert state_color_overrides["接入中"]["color"]["fixedColor"] == WARNING_COLOR
+    assert state_color_overrides["未知"]["color"]["fixedColor"] == NEUTRAL_COLOR
 
     ap_state_table = wireless_panels[9]
     state_mapping = next(
@@ -526,19 +524,34 @@ def test_wireless_and_interface_dashboards_share_reference_semantic_colors():
     )["properties"][0]["value"]
     state_options = state_mapping[0]["options"]
     assert state_options["associated"] == {"text": "在线", "color": HEALTHY_COLOR}
+    assert state_options["online"] == {"text": "在线", "color": HEALTHY_COLOR}
     assert state_options["idle"] == {"text": "离线", "color": CRITICAL_COLOR}
+    assert state_options["not_reported"] == {"text": "离线", "color": CRITICAL_COLOR}
+    assert state_options["disconnected"] == {"text": "离线", "color": CRITICAL_COLOR}
     assert state_options["join"] == {"text": "接入中", "color": WARNING_COLOR}
     assert any(
         override["matcher"] == {"id": "byName", "options": "状态说明"}
         and any(
             prop["id"] == "custom.cellOptions"
-            and prop["value"] == {"type": "color-text"}
+            and prop["value"] == {"type": "color-background"}
             for prop in override["properties"]
         )
         for override in ap_state_table["fieldConfig"]["overrides"]
     )
     organized_fields = ap_state_table["transformations"][0]["options"]["excludeByName"]
     assert organized_fields["Value"] is True
+    assert organized_fields["data_origin"] is True
+
+    ap_client_top = wireless_panels[10]
+    assert ap_client_top["title"] == "AP 关联终端 Top 20"
+    assert "topk(20, max by (" in ap_client_top["targets"][0]["expr"]
+    assert ap_client_top["gridPos"]["y"] == wireless_panels[22]["gridPos"]["y"]
+    ap_uptime_top = wireless_panels[22]
+    assert ap_uptime_top["title"] == "AP 在线时长 Top 20（天）"
+    assert "sensor_class=\"ap-online-duration\"" in ap_uptime_top["targets"][0]["expr"]
+    assert "/ 86400" in ap_uptime_top["targets"][0]["expr"]
+    assert "and on(device_id,ap_mac)" in ap_uptime_top["targets"][0]["expr"]
+    assert ap_uptime_top["gridPos"]["y"] < wireless_panels[902]["gridPos"]["y"]
 
     interface = dashboards_by_uid["nexora-network-interface"]
     interface_panels = {panel["id"]: panel for panel in interface["panels"]}

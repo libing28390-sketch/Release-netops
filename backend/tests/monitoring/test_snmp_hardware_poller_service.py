@@ -433,3 +433,14 @@ def test_staleness_threshold_covers_three_configured_poll_intervals(monkeypatch)
     monkeypatch.delenv("SNMP_HARDWARE_STALE_SECONDS", raising=False)
 
     assert poller.hardware_stale_after_seconds({"metadata": {"poll_interval_seconds": 300}}) == 900
+
+
+def test_snapshot_only_inventory_metrics_stay_fresh_until_next_discovery(monkeypatch) -> None:
+    monkeypatch.setenv("SNMP_HARDWARE_SAMPLE_INTERVAL_SECONDS", "60")
+    monkeypatch.setenv("SNMP_HARDWARE_STALE_SECONDS", "180")
+
+    threshold = poller.hardware_stale_after_seconds({
+        "metadata": {"poll_plan": {"kind": "snapshot_only"}},
+    })
+
+    assert threshold == poller.DISCOVERY_INTERVAL_SECONDS + poller.PARTIAL_DISCOVERY_RETRY_SECONDS

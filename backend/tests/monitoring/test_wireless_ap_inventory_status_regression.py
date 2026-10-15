@@ -16,6 +16,7 @@ from services.snmp_hardware_inventory_service import (
     render_hardware_metrics,
     upsert_discovery_run,
 )
+from services.snmp_hardware_poller_service import DISCOVERY_VERSION
 
 
 def _serial_suffix(serial: str) -> str:
@@ -65,6 +66,7 @@ def _ap_state(
         "unit": "state",
         "states": {raw_state: {"generic": value, "descr": description}},
         "metadata": {
+            "collection_version": DISCOVERY_VERSION,
             "rule_key": rule_key,
             "wireless_sensor_class": "ap-state",
             "poll_plan": {"kind": "snapshot_only"},
@@ -227,7 +229,7 @@ def test_h3c_connection_enum_uses_serial_and_keeps_unknown_states_unknown(monkey
     "rule_key",
     ["wireless_h3c_comware", "wireless_huawei_vrp", "wireless_cisco_wlc"],
 )
-def test_complete_ap_absence_is_not_reported_and_recovery_reuses_identity(isolated_db, rule_key):
+def test_complete_ap_absence_is_not_reported_and_recovery_reuses_identity(isolated_db, rule_key, monkeypatch):
     conn = database.get_db_connection()
     try:
         device_id = f"ap-availability-{rule_key}"
@@ -240,6 +242,14 @@ def test_complete_ap_absence_is_not_reported_and_recovery_reuses_identity(isolat
             ap_name="AP-B-Original" if rule_key == "wireless_h3c_comware" else None,
             ap_model="WA6320-HCL" if rule_key == "wireless_h3c_comware" else "",
         )
+        # Existing inventory rows may predate snapshot-only AP state polling.
+        # A complete snapshot that loses the AP identity must migrate that
+        # stale direct poll plan so it cannot overwrite `not_reported`.
+        ap_b["metadata"]["poll_plan"] = {
+            "kind": "direct",
+            "oid": ap_b["oid"],
+            "index": ".".join(str(part) for part in ap_b["index"]),
+        }
         client_b = _ap_client("SN-B", start, rule_key=rule_key)
         upsert_discovery_run(
             conn,
@@ -327,8 +337,30 @@ def test_complete_ap_absence_is_not_reported_and_recovery_reuses_identity(isolat
         assert missing_state["enabled"] is True
         assert missing_state["missing_success_count"] == 1
         assert missing_state["last_success"] == observed
+        assert missing_state["metadata"]["poll_plan"] == {"kind": "snapshot_only"}
+        assert missing_state["metadata"]["collection_version"] == DISCOVERY_VERSION
 
-        export_rows = list_hardware_metric_rows(conn)
+        persisted_samples: list[dict[str, object]] = []
+        monkeypatch.setattr(
+            probe,
+            "_persist_hardware_sensor_samples",
+            lambda batch: persisted_samples.extend(batch),
+        )
+
+        async def unexpected_walk(*_args, **_kwargs):
+            raise AssertionError("a missing AP must not be polled through its stale row OID")
+
+        missing_state.update({"device_id": device_id, "enabled": True})
+        sample_result = asyncio.run(probe.poll_hardware_inventory(
+            "192.0.2.83", "test-only-community", 161, "2c",
+            [missing_state], walk_func=unexpected_walk,
+        ))
+        assert sample_result == {"good": 0, "missing": 0, "invalid": 0, "unsupported_mapping": 0}
+        assert persisted_samples == []
+        assert _stored_ap_state(conn, device_id, "SN-B")["last_raw_value"] == "not_reported"
+
+        # Exercise the same version gate used by the production Grafana exporter.
+        export_rows = list_hardware_metric_rows(conn, collection_version=DISCOVERY_VERSION)
         ap_state_rows = [
             row for row in export_rows
             if row["device_id"] == device_id

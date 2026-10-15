@@ -53,7 +53,14 @@ def hardware_stale_after_seconds(sensor: Mapping[str, Any] | None = None) -> flo
         configured = float(os.environ.get("SNMP_HARDWARE_STALE_SECONDS", 180))
     except (TypeError, ValueError):
         configured = 180.0
-    return max(180.0, configured, 3.0 * max(hardware_sample_interval_seconds(), registered))
+    threshold = max(180.0, configured, 3.0 * max(hardware_sample_interval_seconds(), registered))
+    poll_plan = metadata.get("poll_plan") if isinstance(metadata, Mapping) else None
+    if isinstance(poll_plan, Mapping) and str(poll_plan.get("kind") or "").casefold() == "snapshot_only":
+        # Snapshot-only sensors have no periodic sample to refresh last_success.
+        # Keep their values until the next scheduled inventory discovery rather
+        # than expiring them on the polling freshness window.
+        threshold = max(threshold, DISCOVERY_INTERVAL_SECONDS + PARTIAL_DISCOVERY_RETRY_SECONDS)
+    return threshold
 
 _SERVER_PLATFORMS = {"linux", "ubuntu", "debian", "centos", "rhel", "redhat", "server"}
 

@@ -630,6 +630,12 @@ def _retire_unseen_sensors(
                 """
                 UPDATE snmp_hardware_sensors
                    SET states_json = ?::jsonb,
+                       metadata_json = jsonb_set(
+                           COALESCE(metadata_json, '{}'::jsonb),
+                           '{poll_plan}',
+                           ?::jsonb,
+                           TRUE
+                       ),
                        last_value = 3,
                        last_raw_value = 'not_reported',
                        last_quality = 'good',
@@ -645,7 +651,8 @@ def _retire_unseen_sensors(
                  WHERE device_id = ? AND sensor_key = ?
                 """,
                 (
-                    _json_text(states), missing_count, run_id,
+                    _json_text(states), _json_text({"kind": "snapshot_only"}),
+                    missing_count, run_id,
                     observed_at, observed_at, observed_at, observed_at,
                     observed_at, observed_at, observed_at, device_id, sensor_key,
                 ),

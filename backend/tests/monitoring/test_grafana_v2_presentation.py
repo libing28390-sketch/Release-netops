@@ -251,7 +251,7 @@ def test_overview_hides_asset_id_and_keeps_device_name_drilldown(catalog):
         assert "var-asset_id=${__data.fields[\"资产 ID\"]}" in links[0]["url"]
 
 
-def test_mapped_tables_use_text_colors_and_have_no_duplicate_matchers(catalog):
+def test_mapped_tables_use_text_colors_except_ap_state_and_have_no_duplicate_matchers(catalog):
     table_panels = [
         panel
         for dashboard in catalog.values()
@@ -262,7 +262,11 @@ def test_mapped_tables_use_text_colors_and_have_no_duplicate_matchers(catalog):
 
     for panel in table_panels:
         field_config = panel.get("fieldConfig", {})
-        assert "color-background" not in json.dumps(field_config), panel.get("title")
+        has_background_mapping = "color-background" in json.dumps(field_config)
+        if panel.get("title") == "AP 当前状态明细":
+            assert has_background_mapping
+        else:
+            assert not has_background_mapping, panel.get("title")
 
         seen_matchers = set()
         seen_properties = set()

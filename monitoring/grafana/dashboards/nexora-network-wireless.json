@@ -370,12 +370,8 @@
                 "value": null
               },
               {
-                "color": "#F59E0B",
-                "value": 1
-              },
-              {
                 "color": "#F43F5E",
-                "value": 5
+                "value": 1
               }
             ]
           },
@@ -808,7 +804,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "associated"
+              "options": "在线"
             },
             "properties": [
               {
@@ -823,37 +819,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "run"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#22C55E"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "active"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#22C55E"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "deassociated"
+              "options": "离线"
             },
             "properties": [
               {
@@ -868,37 +834,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "idle"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#F43F5E"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "down"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#F43F5E"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "join"
+              "options": "接入中"
             },
             "properties": [
               {
@@ -913,89 +849,14 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "joining"
+              "options": "未知"
             },
             "properties": [
               {
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#F59E0B"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "joinack"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#F59E0B"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "config"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#F59E0B"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "data check"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#F59E0B"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "image load"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#F59E0B"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "downloading image"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#F59E0B"
+                  "fixedColor": "#64748B"
                 }
               }
             ]
@@ -1014,8 +875,8 @@
       },
       "targets": [
         {
-          "expr": "count by (state_description) (nexora_hw_component_state{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",source_type=~\"librenms_rule|librenms_mib_rule\",component_class=\"wireless_access_point\"})",
-          "legendFormat": "{{state_description}}",
+          "expr": "sum by (ap_state) (label_replace((nexora_hw_component_state{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",source_type=~\"librenms_rule|librenms_mib_rule\",component_class=\"wireless_access_point\",state_description=~\"^(associated|run|online)$\"}) * 0 + 1, \"ap_state\", \"在线\", \"state_description\", \".*\") or label_replace((nexora_hw_component_state{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",source_type=~\"librenms_rule|librenms_mib_rule\",component_class=\"wireless_access_point\",state_description=~\"^(deassociated|idle|down|disconnected|not_reported)$\"}) * 0 + 1, \"ap_state\", \"离线\", \"state_description\", \".*\") or label_replace((nexora_hw_component_state{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",source_type=~\"librenms_rule|librenms_mib_rule\",component_class=\"wireless_access_point\",state_description=~\"^(join|joinConfirm|joining|joinack|download|config|data check|image load|downloading image)$\"}) * 0 + 1, \"ap_state\", \"接入中\", \"state_description\", \".*\") or label_replace((nexora_hw_component_state{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",source_type=~\"librenms_rule|librenms_mib_rule\",component_class=\"wireless_access_point\",state_description=~\"^(unknown|unclassified)$\"}) * 0 + 1, \"ap_state\", \"未知\", \"state_description\", \".*\"))",
+          "legendFormat": "{{ap_state}}",
           "instant": true,
           "refId": "A"
         }
@@ -1044,7 +905,7 @@
       },
       "gridPos": {
         "h": 9,
-        "w": 14,
+        "w": 24,
         "x": 0,
         "y": 14
       },
@@ -1135,6 +996,18 @@
                       "downloading image": {
                         "text": "接入中",
                         "color": "#F59E0B"
+                      },
+                      "not_reported": {
+                        "text": "离线",
+                        "color": "#F43F5E"
+                      },
+                      "online": {
+                        "text": "在线",
+                        "color": "#22C55E"
+                      },
+                      "disconnected": {
+                        "text": "离线",
+                        "color": "#F43F5E"
                       }
                     }
                   },
@@ -1176,7 +1049,7 @@
               {
                 "id": "custom.cellOptions",
                 "value": {
-                  "type": "color-text"
+                  "type": "color-background"
                 }
               }
             ]
@@ -1224,6 +1097,7 @@
               "sysName": true,
               "nexora_interface_role": true,
               "Value": true,
+              "data_origin": true,
               "source_type": true,
               "measurement_type": true,
               "component_class": true,
@@ -1280,11 +1154,11 @@
           }
         }
       ],
-      "description": "展示最近一次完整 AP 清单中的纳管身份和当前状态；离线但未上报的身份会标记为未上报。暂无数据不代表数量为 0。"
+      "description": "展示最近一次完整 AP 清单中的纳管身份和状态；已知 AP 未上报时按离线显示。暂无数据不代表数量为 0。"
     },
     {
       "id": 10,
-      "title": "AP 当前关联客户端 Top 20",
+      "title": "AP 关联终端 Top 20",
       "type": "table",
       "datasource": {
         "type": "prometheus",
@@ -1292,9 +1166,9 @@
       },
       "gridPos": {
         "h": 9,
-        "w": 10,
-        "x": 14,
-        "y": 14
+        "w": 12,
+        "x": 0,
+        "y": 23
       },
       "fieldConfig": {
         "defaults": {
@@ -1311,7 +1185,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "客户端数"
+              "options": "终端数"
             },
             "properties": [
               {
@@ -1345,7 +1219,7 @@
       },
       "targets": [
         {
-          "expr": "topk(20, nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",source_type=~\"librenms_rule|librenms_mib_rule\",component_class=\"wireless_access_point\",sensor_class=\"clients\"})",
+          "expr": "topk(20, max by (site_name,vendor,role,hostname,device_id,ap_id,ap_mac,ap_name,ap_ip,ap_model) (nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",source_type=~\"librenms_rule|librenms_mib_rule\",component_class=\"wireless_access_point\",sensor_class=\"clients\"}))",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -1421,14 +1295,164 @@
               "utilization_warn_pct": "预警阈值 (%)",
               "utilization_high_pct": "高位阈值 (%)",
               "utilization_critical_pct": "严重阈值 (%)",
-              "Value": "客户端数",
+              "Value": "终端数",
               "ap_name": "AP 名称",
               "ap_ip": "AP 管理 IP",
               "ap_model": "型号"
             }
           }
         }
-      ]
+      ],
+      "description": "按 AP 当前关联终端数从多到少排名；没有采集到终端数的 AP 不视为 0。"
+    },
+    {
+      "id": 22,
+      "title": "AP 在线时长 Top 20（天）",
+      "type": "table",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 23
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "暂无采集数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "在线天数"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#22D3EE"
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "footer": {
+          "show": false
+        },
+        "enablePagination": true
+      },
+      "targets": [
+        {
+          "expr": "topk(20, (max by (site_name,vendor,role,hostname,device_id,ap_id,ap_mac,ap_name,ap_ip,ap_model) (nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",source_type=~\"librenms_rule|librenms_mib_rule\",component_class=\"wireless_access_point\",sensor_class=\"ap-online-duration\"}) / 86400) and on(device_id,ap_mac) (nexora_hw_component_state{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",source_type=~\"librenms_rule|librenms_mib_rule\",component_class=\"wireless_access_point\",state_description=~\"^(associated|run|online|active|present)$\"}))",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "ifIndex": true,
+              "asset_id": true,
+              "nexora_asset_id": true,
+              "nexora_hostname": true,
+              "nexora_module": true,
+              "nexora_platform": true,
+              "nexora_role": true,
+              "nexora_site_id": true,
+              "nexora_site_name": true,
+              "nexora_tenant_id": true,
+              "nexora_vendor": true,
+              "job": true,
+              "tenant_id": true,
+              "site_id": true,
+              "platform": true,
+              "sysName": true,
+              "nexora_interface_role": true,
+              "source_type": true,
+              "measurement_type": true,
+              "component_class": true,
+              "source_id": true,
+              "sensor_key": true,
+              "window": true,
+              "unit": true,
+              "device_id": true,
+              "ap_id": true,
+              "ap_mac": true,
+              "ap_serial": true,
+              "discovery_status": true,
+              "lifecycle_status": true,
+              "instance": true,
+              "rule_version": true
+            },
+            "indexByName": {
+              "site_name": 0,
+              "hostname": 1,
+              "instance": 2,
+              "ifName": 3,
+              "ifDescr": 4,
+              "vendor": 2,
+              "role": 6,
+              "interface_role": 7,
+              "utilization_warn_pct": 8,
+              "utilization_high_pct": 9,
+              "utilization_critical_pct": 10,
+              "Value": 5,
+              "ap_name": 0,
+              "ap_ip": 3,
+              "ap_model": 4
+            },
+            "renameByName": {
+              "sysName": "设备名称",
+              "hostname": "所属 AC",
+              "instance": "采集目标",
+              "site_name": "站点",
+              "ifName": "接口全称",
+              "ifDescr": "接口描述",
+              "vendor": "厂商",
+              "role": "角色",
+              "interface_role": "接口用途",
+              "utilization_warn_pct": "预警阈值 (%)",
+              "utilization_high_pct": "高位阈值 (%)",
+              "utilization_critical_pct": "严重阈值 (%)",
+              "Value": "在线天数",
+              "ap_name": "AP 名称",
+              "ap_ip": "AP 管理 IP",
+              "ap_model": "型号"
+            }
+          }
+        }
+      ],
+      "description": "按在线 AP 时长排名（天）；H3C 为上电时长，Cisco 为加入控制器时长。"
     },
     {
       "id": 902,
@@ -1439,7 +1463,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 23
+        "y": 32
       },
       "panels": []
     },
@@ -1455,7 +1479,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 24
+        "y": 33
       },
       "fieldConfig": {
         "defaults": {
@@ -1518,7 +1542,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 32
+        "y": 41
       },
       "panels": []
     },
@@ -1534,7 +1558,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 33
+        "y": 42
       },
       "fieldConfig": {
         "defaults": {
@@ -1679,7 +1703,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 33
+        "y": 42
       },
       "fieldConfig": {
         "defaults": {
@@ -1807,7 +1831,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 52
+        "y": 61
       },
       "panels": []
     },
@@ -1823,7 +1847,7 @@
         "h": 4,
         "w": 6,
         "x": 0,
-        "y": 53
+        "y": 62
       },
       "fieldConfig": {
         "defaults": {
@@ -1901,7 +1925,7 @@
         "h": 4,
         "w": 6,
         "x": 6,
-        "y": 53
+        "y": 62
       },
       "fieldConfig": {
         "defaults": {
@@ -1979,7 +2003,7 @@
         "h": 14,
         "w": 10,
         "x": 14,
-        "y": 53
+        "y": 62
       },
       "fieldConfig": {
         "defaults": {
@@ -2025,7 +2049,7 @@
         "h": 10,
         "w": 14,
         "x": 0,
-        "y": 57
+        "y": 66
       },
       "fieldConfig": {
         "defaults": {
@@ -2101,136 +2125,6 @@
         }
       ],
       "description": "按无线控制器 AC 汇总接口计数器，不表示单终端流量。"
-    },
-    {
-      "id": 21,
-      "title": "无线传感器明细",
-      "type": "table",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "victoriametrics"
-      },
-      "gridPos": {
-        "h": 9,
-        "w": 24,
-        "x": 0,
-        "y": 68
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none",
-          "noValue": "暂无采集数据",
-          "color": {
-            "mode": "thresholds"
-          },
-          "custom": {
-            "filterable": true
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "cellHeight": "sm",
-        "showHeader": true,
-        "footer": {
-          "show": false
-        },
-        "enablePagination": true
-      },
-      "targets": [
-        {
-          "expr": "topk(100, nexora_wireless_sensor_value{job=\"platform_hardware_inventory\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",source_type=~\"librenms_rule|librenms_mib_rule\",component_class=~\"wireless_.*\"})",
-          "format": "table",
-          "instant": true,
-          "refId": "A"
-        }
-      ],
-      "transformations": [
-        {
-          "id": "organize",
-          "options": {
-            "excludeByName": {
-              "Time": true,
-              "__name__": true,
-              "ifIndex": true,
-              "asset_id": true,
-              "nexora_asset_id": true,
-              "nexora_hostname": true,
-              "nexora_module": true,
-              "nexora_platform": true,
-              "nexora_role": true,
-              "nexora_site_id": true,
-              "nexora_site_name": true,
-              "nexora_tenant_id": true,
-              "nexora_vendor": true,
-              "job": true,
-              "tenant_id": true,
-              "site_id": true,
-              "platform": true,
-              "sysName": true,
-              "nexora_interface_role": true,
-              "data_origin": true,
-              "device_id": true,
-              "discovery_status": true,
-              "instance": true,
-              "lifecycle_status": true,
-              "measurement_type": true,
-              "native_device_id": true,
-              "native_entity_id": true,
-              "native_instance_id": true,
-              "role": true,
-              "rule_version": true,
-              "sensor_key": true,
-              "site_name": true,
-              "source_id": true,
-              "source_type": true,
-              "window": true
-            },
-            "indexByName": {
-              "site_name": 0,
-              "hostname": 0,
-              "instance": 2,
-              "ifName": 3,
-              "ifDescr": 4,
-              "vendor": 5,
-              "role": 6,
-              "interface_role": 7,
-              "utilization_warn_pct": 8,
-              "utilization_high_pct": 9,
-              "utilization_critical_pct": 10,
-              "Value": 6,
-              "sensor_name": 1,
-              "sensor_class": 2,
-              "ap_name": 3,
-              "radio_id": 4,
-              "ssid": 5,
-              "unit": 7
-            },
-            "renameByName": {
-              "sysName": "设备名称",
-              "hostname": "设备",
-              "instance": "采集目标",
-              "site_name": "站点",
-              "ifName": "接口全称",
-              "ifDescr": "接口描述",
-              "vendor": "厂商",
-              "role": "角色",
-              "interface_role": "接口用途",
-              "utilization_warn_pct": "预警阈值 (%)",
-              "utilization_high_pct": "高位阈值 (%)",
-              "utilization_critical_pct": "严重阈值 (%)",
-              "Value": "数值",
-              "sensor_name": "传感器",
-              "sensor_class": "类别",
-              "ap_name": "AP 名称",
-              "radio_id": "Radio",
-              "ssid": "SSID",
-              "unit": "单位"
-            }
-          }
-        }
-      ],
-      "description": "本地 SNMP 或可选外部采集的无线值；不推断 AP 或 Radio 归属。"
     }
   ],
   "refresh": "30s",
@@ -2351,5 +2245,5 @@
   "timezone": "browser",
   "title": "03 无线专网监控 (Wireless AP & Clients)",
   "uid": "nexora-network-wireless",
-  "version": 30
+  "version": 33
 }

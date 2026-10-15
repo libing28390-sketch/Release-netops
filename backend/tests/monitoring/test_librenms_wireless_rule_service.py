@@ -98,6 +98,7 @@ def test_h3c_wireless_mib_adapter_discovers_ap_states_counts_and_identity(monkey
         ("HH3C-DOT11-APMT-MIB", "hh3cDot11APIPAddress"): "1.3.6.1.4.1.55555.6",
         ("HH3C-DOT11-APMT-MIB", "hh3cDot11APMacAddress"): "1.3.6.1.4.1.55555.7",
         ("HH3C-DOT11-APMT-MIB", "hh3cDot11CurrAPStationAssocCount"): "1.3.6.1.4.1.55555.8",
+        ("HH3C-DOT11-APMT-MIB", "hh3cDot11APSysUpTime2"): "1.3.6.1.4.1.55555.22",
         ("HH3C-DOT11-APMT-MIB", "hh3cDot11APCpuUsage"): "1.3.6.1.4.1.55555.9",
         ("HH3C-DOT11-APMT-MIB", "hh3cDot11AdminStatus"): "1.3.6.1.4.1.55555.10",
         ("HH3C-DOT11-APMT-MIB", "hh3cDot11OperStatus"): "1.3.6.1.4.1.55555.11",
@@ -137,6 +138,7 @@ def test_h3c_wireless_mib_adapter_discovers_ap_states_counts_and_identity(monkey
         symbols[("HH3C-DOT11-APMT-MIB", "hh3cDot11APIPAddress")]: [("1.50", "192.0.2.12"), ("1.49", "192.0.2.13")],
         symbols[("HH3C-DOT11-APMT-MIB", "hh3cDot11APMacAddress")]: [("1.50", "00:11:22:33:44:12"), ("1.49", "00:11:22:33:44:13")],
         symbols[("HH3C-DOT11-APMT-MIB", "hh3cDot11CurrAPStationAssocCount")]: [("1.50", "8"), ("1.49", "7")],
+        symbols[("HH3C-DOT11-APMT-MIB", "hh3cDot11APSysUpTime2")]: [("1.50", "1:02:03"), ("1.49", "4:51:37")],
         symbols[("HH3C-DOT11-APMT-MIB", "hh3cDot11APCpuUsage")]: [("1.50", "18"), ("1.49", "21")],
         symbols[("HH3C-DOT11-APMT-MIB", "hh3cDot11AdminStatus")]: [("1.50.1", "true(1)"), ("1.50.2", "false(2)")],
         symbols[("HH3C-DOT11-APMT-MIB", "hh3cDot11OperStatus")]: [
@@ -183,6 +185,9 @@ def test_h3c_wireless_mib_adapter_discovers_ap_states_counts_and_identity(monkey
     assert by_source["h3c:wireless:ap-state:2"]["index_labels"]["ap_model"] == "WA6320-HCL"
     assert by_source["h3c:wireless:ap-state:2"]["index_labels"]["ap_mac"] == "00:11:22:33:44:12"
     assert by_source["h3c:wireless:ap:clients:2"]["value"] == 8
+    assert by_source["h3c:wireless:ap:online-duration:2"]["value"] == 3723
+    assert by_source["h3c:wireless:ap:online-duration:2"]["metadata"]["wireless_sensor_class"] == "ap-online-duration"
+    assert by_source["h3c:wireless:ap:online-duration:2"]["metadata"]["poll_plan"] == {"kind": "snapshot_only"}
     assert by_source["h3c:wireless:ap:cpu:1"]["value"] == 21
     assert by_source["h3c:wireless:radio-state:2:1"]["value"] == 0
     assert by_source["h3c:wireless:radio-state:2:2"]["value"] == 2
@@ -220,6 +225,7 @@ def test_h3c_wireless_mib_adapter_reports_empty_table_as_complete_not_found(monk
         ("HH3C-DOT11-APMT-MIB", "hh3cDot11APIPAddress"): "1.3.6.1.4.1.55556.6",
         ("HH3C-DOT11-APMT-MIB", "hh3cDot11APMacAddress"): "1.3.6.1.4.1.55556.7",
         ("HH3C-DOT11-APMT-MIB", "hh3cDot11CurrAPStationAssocCount"): "1.3.6.1.4.1.55556.8",
+        ("HH3C-DOT11-APMT-MIB", "hh3cDot11APSysUpTime2"): "1.3.6.1.4.1.55556.22",
         ("HH3C-DOT11-APMT-MIB", "hh3cDot11APCpuUsage"): "1.3.6.1.4.1.55556.9",
         ("HH3C-DOT11-APMT-MIB", "hh3cDot11AdminStatus"): "1.3.6.1.4.1.55556.10",
         ("HH3C-DOT11-APMT-MIB", "hh3cDot11OperStatus"): "1.3.6.1.4.1.55556.11",
@@ -667,6 +673,7 @@ def test_cisco_wlc_interference_poll_plan_reapplies_the_upstream_offset(monkeypa
     radio_index = f"{ap_index}.1"
     rows = {
         oid_by_key["ap_name"]: [(ap_index, "AP-01")],
+        oid_by_key["ap_online_duration"]: [(ap_index, "1:02:03")],
         oid_by_key["radio_type"]: [(radio_index, "802.11ax")],
         oid_by_key["channel"]: [(radio_index, "36")],
         oid_by_key["tx_power"]: [(radio_index, "3")],
@@ -680,6 +687,12 @@ def test_cisco_wlc_interference_poll_plan_reapplies_the_upstream_offset(monkeypa
     ))
 
     interference = next(item for item in result["sensors"] if item["metadata"]["wireless_sensor_class"] == "interference")
+    ap_online_duration = next(
+        item for item in result["sensors"]
+        if item["metadata"]["wireless_sensor_class"] == "ap-online-duration"
+    )
+    assert ap_online_duration["value"] == 3723
+    assert ap_online_duration["metadata"]["poll_plan"] == {"kind": "snapshot_only"}
     assert interference["value"] == 48
     assert interference["metadata"]["poll_plan"] == {
         "kind": "table_value", "oid": oid_by_key["interference"],

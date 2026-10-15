@@ -219,6 +219,7 @@ _PROFILE_WIRELESS_RULES: dict[str, dict[str, Any]] = {
         },
         "mib_sources": {
             "AIRESPACE-WIRELESS-MIB": "mibs/cisco/AIRESPACE-WIRELESS-MIB",
+            "CISCO-LWAPP-AP-MIB": "mibs/cisco/CISCO-LWAPP-AP-MIB",
             "CISCO-LWAPP-WLAN-MIB": "mibs/cisco/CISCO-LWAPP-WLAN-MIB",
             **_CISCO_CELLULAR_MIB_SOURCES,
         },
@@ -230,6 +231,7 @@ _PROFILE_WIRELESS_RULES: dict[str, dict[str, Any]] = {
         },
         "detail_symbols": {
             "ap_name": ("AIRESPACE-WIRELESS-MIB", "bsnAPName"),
+            "ap_online_duration": ("CISCO-LWAPP-AP-MIB", "cLLwappUpTime"),
             "radio_type": ("AIRESPACE-WIRELESS-MIB", "bsnAPIfType"),
             "channel": ("AIRESPACE-WIRELESS-MIB", "bsnAPIfPhyChannelNumber"),
             "tx_power": ("AIRESPACE-WIRELESS-MIB", "bsnAPIfPhyTxPowerLevel"),
@@ -1049,6 +1051,7 @@ async def _probe_h3c_wireless(
         "ap_ip": ("HH3C-DOT11-APMT-MIB", "hh3cDot11APIPAddress"),
         "ap_mac": ("HH3C-DOT11-APMT-MIB", "hh3cDot11APMacAddress"),
         "ap_clients": ("HH3C-DOT11-APMT-MIB", "hh3cDot11CurrAPStationAssocCount"),
+        "ap_online_duration": ("HH3C-DOT11-APMT-MIB", "hh3cDot11APSysUpTime2"),
         "ap_cpu": ("HH3C-DOT11-APMT-MIB", "hh3cDot11APCpuUsage"),
         "radio_admin_status": ("HH3C-DOT11-APMT-MIB", "hh3cDot11AdminStatus"),
         "radio_oper_status": ("HH3C-DOT11-APMT-MIB", "hh3cDot11OperStatus"),
@@ -1092,6 +1095,7 @@ async def _probe_h3c_wireless(
         "rule_implementation": "Nexora Python MIB adapter",
         "identity_os_key": "comware",
     }
+    from services.snmp_service import parse_snmp_uptime_seconds
 
     def scalar_sensor(key: str, sensor_class: str, label: str) -> int:
         count = 0
@@ -1251,6 +1255,30 @@ async def _probe_h3c_wireless(
         )
         if sensor:
             sensors.append(sensor)
+
+        raw_online_duration = rows.get("ap_online_duration", {}).get(ap_index_suffixes[ap_id])
+        online_duration_seconds = parse_snmp_uptime_seconds(raw_online_duration)
+        if online_duration_seconds is not None and online_duration_seconds >= 0:
+            uptime_sensor = _sensor(
+                source_id=f"h3c:wireless:ap:online-duration:{ap_id}",
+                component_class="wireless_access_point",
+                measurement_type="wireless_sensor_value",
+                oid=symbols.get("ap_online_duration", ""),
+                suffix=ap_index_suffixes[ap_id],
+                raw_value=raw_online_duration,
+                value=online_duration_seconds,
+                unit="seconds",
+                name=f"{ap_name} AP uptime",
+                labels=labels,
+                metadata={
+                    **lineage,
+                    "wireless_sensor_class": "ap-online-duration",
+                    "duration_semantics": "ap_powered_on_time",
+                },
+                poll_plan={"kind": "snapshot_only"},
+            )
+            if uptime_sensor:
+                sensors.append(uptime_sensor)
 
         for key, sensor_class, measurement, unit, values in (
             ("ap_clients", "clients", "wireless_sensor_value", "count", ap_clients),
@@ -2135,6 +2163,8 @@ async def _probe_controller_ap_radio_detail(
         return True
 
     if os_key in {"ciscowlc", "iosxe"}:
+        from services.snmp_service import parse_snmp_uptime_seconds
+
         ap_names: dict[str, tuple[str, str]] = {}
         for suffix, raw_name in sorted(rows.get("ap_name", {}).items()):
             decoded = _decode_mac_index(suffix)
@@ -2149,6 +2179,22 @@ async def _probe_controller_ap_radio_detail(
             ap_names[mac] = (name, suffix)
             labels = {"ap_mac": mac, "ap_name": name}
             emit_presence(mac=mac, suffix=suffix, name=name, labels=labels)
+            raw_online_duration = rows.get("ap_online_duration", {}).get(suffix)
+            online_duration_seconds = parse_snmp_uptime_seconds(raw_online_duration)
+            if online_duration_seconds is not None and online_duration_seconds >= 0:
+                emit(
+                    suffix=mac,
+                    source_suffix=suffix,
+                    oid_key="ap_online_duration",
+                    component_class="wireless_access_point",
+                    sensor_class="ap-online-duration",
+                    raw=raw_online_duration,
+                    value=online_duration_seconds,
+                    unit="seconds",
+                    name=f"{name} AP association duration",
+                    labels=labels,
+                    poll_plan={"kind": "snapshot_only"},
+                )
 
         radio_suffixes = set().union(*(
             set(rows.get(key, {}))

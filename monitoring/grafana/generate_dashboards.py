@@ -12,7 +12,7 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 DASHBOARDS_DIR = ROOT_DIR / "monitoring" / "grafana" / "dashboards"
 PRESENTATION_CONFIG_PATH = ROOT_DIR / "monitoring" / "grafana" / "dashboard_presentation_v2.json"
 DS_UID = "victoriametrics"
-DASHBOARD_VERSION = 30
+DASHBOARD_VERSION = 33
 NO_VALUE_TEXT = "暂无采集数据"
 
 # Nexora NOC Dark V2 palette. These defaults also keep newly authored panels
@@ -93,6 +93,10 @@ OFFLINE_COUNT_THRESHOLDS = [
     {"color": WARNING_COLOR, "value": 1},
     {"color": CRITICAL_COLOR, "value": 5},
 ]
+AP_OFFLINE_COUNT_THRESHOLDS = [
+    {"color": HEALTHY_COLOR, "value": None},
+    {"color": CRITICAL_COLOR, "value": 1},
+]
 
 AP_STATE_VALUE_MAPPINGS = [
     {
@@ -106,7 +110,7 @@ AP_STATE_VALUE_MAPPINGS = [
             "idle": {"text": "离线", "color": CRITICAL_COLOR},
             "down": {"text": "离线", "color": CRITICAL_COLOR},
             "disconnected": {"text": "离线", "color": CRITICAL_COLOR},
-            "not_reported": {"text": "未上报", "color": UNKNOWN_COLOR},
+            "not_reported": {"text": "离线", "color": CRITICAL_COLOR},
             "unknown": {"text": "未知", "color": UNKNOWN_COLOR},
             "join": {"text": "接入中", "color": WARNING_COLOR},
             "joinConfirm": {"text": "接入中", "color": WARNING_COLOR},
@@ -1868,6 +1872,8 @@ def build_wireless_dashboard():
     ap_state_rows = f"nexora_hw_component_state{{{ap_state_selector}}}"
     ap_state_online_rows = f'nexora_hw_component_state{{{ap_state_selector},state_description=~"^(associated|run|online)$"}}'
     ap_state_offline_rows = f'nexora_hw_component_state{{{ap_state_selector},state_description=~"^(deassociated|idle|down|disconnected|not_reported)$"}}'
+    ap_state_transition_rows = f'nexora_hw_component_state{{{ap_state_selector},state_description=~"^(join|joinConfirm|joining|joinack|download|config|data check|image load|downloading image)$"}}'
+    ap_state_unknown_rows = f'nexora_hw_component_state{{{ap_state_selector},state_description=~"^(unknown|unclassified)$"}}'
     ap_state_known_rows = f'nexora_hw_component_state{{{ap_state_selector},state_description=~"^(associated|run|online|active|deassociated|idle|down|disconnected|not_reported|join|joinConfirm|joining|joinack|download|config|data check|image load|downloading image)$"}}'
     ap_state_count = f"count by ({device_labels}) ({ap_state_rows})"
     ap_state_known_count = f"count by ({device_labels}) ({ap_state_known_rows})"
@@ -1908,11 +1914,25 @@ def build_wireless_dashboard():
     ap_total_description = f"按控制器 AP 清单及最近一次完整采集保留的纳管身份计数；单次缺行不会缩减总数。{missing_wireless_data_note}"
     ap_online_description = "优先按 AP 状态统计；覆盖不完整时采用 LibreNMS 规则采集的控制器上报数。"
     ap_offline_description = "统计明确断连，以及完整采集后仍纳管但未上报状态的 AP；未上报状态会单独标记，不以总数减在线数推算。"
-    ap_client_rows = f'topk(20, nexora_wireless_sensor_value{{{wireless_inventory_sel},component_class="wireless_access_point",sensor_class="clients"}})'
-    wireless_sensor_rows = (
-        f'topk(100, nexora_wireless_sensor_value{{{wireless_inventory_sel},'
-        'component_class=~"wireless_.*"})'
+    ap_rank_labels = f"{device_labels},device_id,ap_id,ap_mac,ap_name,ap_ip,ap_model"
+    ap_client_samples = f'nexora_wireless_sensor_value{{{wireless_inventory_sel},component_class="wireless_access_point",sensor_class="clients"}}'
+    ap_client_rows = f"topk(20, max by ({ap_rank_labels}) ({ap_client_samples}))"
+    ap_online_duration_samples = f'nexora_wireless_sensor_value{{{wireless_inventory_sel},component_class="wireless_access_point",sensor_class="ap-online-duration"}}'
+    ap_online_duration_online = f'nexora_hw_component_state{{{ap_state_selector},state_description=~"^(associated|run|online|active|present)$"}}'
+    ap_online_duration_rows = (
+        f"topk(20, (max by ({ap_rank_labels}) ({ap_online_duration_samples}) / 86400) "
+        f"and on(device_id,ap_mac) ({ap_online_duration_online}))"
     )
+    ap_state_distribution_rows = " or ".join(
+        f'label_replace(({rows}) * 0 + 1, "ap_state", "{label}", "state_description", ".*")'
+        for rows, label in (
+            (ap_state_online_rows, "在线"),
+            (ap_state_offline_rows, "离线"),
+            (ap_state_transition_rows, "接入中"),
+            (ap_state_unknown_rows, "未知"),
+        )
+    )
+    ap_state_distribution = f"sum by (ap_state) ({ap_state_distribution_rows})"
     radio_utilization_labels = "site_name,vendor,role,hostname,ap_id,ap_name,radio_id"
     radio_utilization_samples = f'nexora_wireless_sensor_value{{{wireless_inventory_sel},component_class="wireless_radio",sensor_class="utilization"}}'
     radio_utilization_rows = f"max by ({radio_utilization_labels}) ({radio_utilization_samples})"
@@ -1928,7 +1948,7 @@ def build_wireless_dashboard():
         stat_panel(14, "离线 AC", ac_offline, 3, 0, 3, 3, thresholds=OFFLINE_COUNT_THRESHOLDS, description="纳管 AC 数减去在线 AC 数；没有 AC 目标时显示无数据。", no_value=NO_VALUE_TEXT),
         stat_panel(1, "纳管 AP", f"sum({ap_state_count})", 6, 0, 3, 3, color=NEUTRAL_COLOR, description=ap_total_description, no_value=NO_VALUE_TEXT),
         stat_panel(2, "在线 AP", f"sum({ap_online})", 9, 0, 3, 3, color=HEALTHY_COLOR, description=ap_online_description, no_value=NO_VALUE_TEXT),
-        stat_panel(3, "离线 AP", f"sum({ap_offline})", 12, 0, 3, 3, thresholds=OFFLINE_COUNT_THRESHOLDS, description=ap_offline_description, no_value=NO_VALUE_TEXT),
+        stat_panel(3, "离线 AP", f"sum({ap_offline})", 12, 0, 3, 3, thresholds=AP_OFFLINE_COUNT_THRESHOLDS, description=ap_offline_description, no_value=NO_VALUE_TEXT),
         stat_panel(4, "在线终端数", f"sum({clients})", 15, 0, 3, 3, color=NEUTRAL_COLOR, no_value=NO_VALUE_TEXT),
         stat_panel(5, "高利用率 Radio", high_utilization_radio_count, 18, 0, 3, 3, thresholds=OFFLINE_COUNT_THRESHOLDS, description="统计利用率达到 75% 的 Radio，仅用于定位热点。", no_value=NO_VALUE_TEXT),
         stat_panel(6, "平均 Radio 利用率", f"avg({radio_utilization_rows})", 21, 0, 3, 3, unit="percent", thresholds=UTILIZATION_THRESHOLDS, no_value=NO_VALUE_TEXT),
@@ -1941,27 +1961,13 @@ def build_wireless_dashboard():
             timeseries_color_override("byName", "关联终端", CLIENT_COLOR),
         ]),
         bar_gauge_panel(
-            8, "AP 状态分布", f"count by (state_description) ({ap_state_rows})",
-            14, 4, 10, 7, unit="short", legend_format="{{state_description}}", max_value=None,
+            8, "AP 状态分布", ap_state_distribution,
+            14, 4, 10, 7, unit="short", legend_format="{{ap_state}}", max_value=None,
             thresholds=[], color=NEUTRAL_COLOR, color_overrides=[
-                timeseries_color_override("byName", "associated", HEALTHY_COLOR),
-                timeseries_color_override("byName", "run", HEALTHY_COLOR),
-                timeseries_color_override("byName", "online", HEALTHY_COLOR),
-                timeseries_color_override("byName", "active", HEALTHY_COLOR),
-                timeseries_color_override("byName", "deassociated", CRITICAL_COLOR),
-                timeseries_color_override("byName", "idle", CRITICAL_COLOR),
-                timeseries_color_override("byName", "down", CRITICAL_COLOR),
-                timeseries_color_override("byName", "disconnected", CRITICAL_COLOR),
-                timeseries_color_override("byName", "not_reported", UNKNOWN_COLOR),
-                timeseries_color_override("byName", "join", WARNING_COLOR),
-                timeseries_color_override("byName", "joinConfirm", WARNING_COLOR),
-                timeseries_color_override("byName", "joining", WARNING_COLOR),
-                timeseries_color_override("byName", "joinack", WARNING_COLOR),
-                timeseries_color_override("byName", "download", WARNING_COLOR),
-                timeseries_color_override("byName", "config", WARNING_COLOR),
-                timeseries_color_override("byName", "data check", WARNING_COLOR),
-                timeseries_color_override("byName", "image load", WARNING_COLOR),
-                timeseries_color_override("byName", "downloading image", WARNING_COLOR),
+                timeseries_color_override("byName", "在线", HEALTHY_COLOR),
+                timeseries_color_override("byName", "离线", CRITICAL_COLOR),
+                timeseries_color_override("byName", "接入中", WARNING_COLOR),
+                timeseries_color_override("byName", "未知", UNKNOWN_COLOR),
             ], instant=True,
             description=None,
         ),
@@ -1969,41 +1975,55 @@ def build_wireless_dashboard():
         table_panel(
             9, "AP 当前状态明细",
             ap_state_rows,
-            0, 12, 14, 9, unit="short",
+            0, 12, 24, 9, unit="short",
             transformations=clean_organize_transformation(
                 "状态",
                 extra_renames={"ap_name": "AP 名称", "ap_ip": "AP 管理 IP", "ap_model": "型号", "state_description": "状态说明", "hostname": "所属 AC"},
                 extra_indices={"ap_name": 0, "state_description": 1, "ap_ip": 2, "hostname": 3, "vendor": 4, "ap_model": 5},
-                extra_excludes={"Value": True, "source_type": True, "measurement_type": True, "component_class": True, "source_id": True, "sensor_key": True, "window": True, "raw_state": True, "device_id": True, "ap_id": True, "ap_mac": True, "ap_serial": True, "platform": True, "discovery_status": True, "lifecycle_status": True, "instance": True, "rule_version": True},
+                extra_excludes={"Value": True, "data_origin": True, "source_type": True, "measurement_type": True, "component_class": True, "source_id": True, "sensor_key": True, "window": True, "raw_state": True, "device_id": True, "ap_id": True, "ap_mac": True, "ap_serial": True, "platform": True, "discovery_status": True, "lifecycle_status": True, "instance": True, "rule_version": True},
             ),
             extra_value_mappings={"状态说明": AP_STATE_VALUE_MAPPINGS},
             extra_color_mapped_cells={"状态说明": "color-background"},
-            description=f"展示最近一次完整 AP 清单中的纳管身份和当前状态；离线但未上报的身份会标记为未上报。{missing_wireless_data_note}",
+            description=f"展示最近一次完整 AP 清单中的纳管身份和状态；已知 AP 未上报时按离线显示。{missing_wireless_data_note}",
         ),
         table_panel(
-            10, "AP 当前关联客户端 Top 20",
+            10, "AP 关联终端 Top 20",
             ap_client_rows,
-            14, 12, 10, 9, unit="short",
+            0, 21, 12, 9, unit="short",
             transformations=clean_organize_transformation(
-                "客户端数",
+                "终端数",
                 extra_renames={"ap_name": "AP 名称", "ap_ip": "AP 管理 IP", "ap_model": "型号", "hostname": "所属 AC"},
                 extra_indices={"ap_name": 0, "hostname": 1, "vendor": 2, "ap_ip": 3, "ap_model": 4, "Value": 5},
                 extra_excludes={"source_type": True, "measurement_type": True, "component_class": True, "source_id": True, "sensor_key": True, "window": True, "unit": True, "device_id": True, "ap_id": True, "ap_mac": True, "ap_serial": True, "platform": True, "discovery_status": True, "lifecycle_status": True, "instance": True, "rule_version": True},
             ),
-            description=None,
+            value_col_name="终端数",
+            description="按 AP 当前关联终端数从多到少排名；没有采集到终端数的 AP 不视为 0。",
         ),
-        row_panel(902, "Radio 热点", 21),
+        table_panel(
+            22, "AP 在线时长 Top 20（天）",
+            ap_online_duration_rows,
+            12, 21, 12, 9, unit="none",
+            transformations=clean_organize_transformation(
+                "在线天数",
+                extra_renames={"ap_name": "AP 名称", "ap_ip": "AP 管理 IP", "ap_model": "型号", "hostname": "所属 AC"},
+                extra_indices={"ap_name": 0, "hostname": 1, "vendor": 2, "ap_ip": 3, "ap_model": 4, "Value": 5},
+                extra_excludes={"source_type": True, "measurement_type": True, "component_class": True, "source_id": True, "sensor_key": True, "window": True, "unit": True, "device_id": True, "ap_id": True, "ap_mac": True, "ap_serial": True, "platform": True, "discovery_status": True, "lifecycle_status": True, "instance": True, "rule_version": True},
+            ),
+            value_col_name="在线天数",
+            description="按在线 AP 时长排名（天）；H3C 为上电时长，Cisco 为加入控制器时长。",
+        ),
+        row_panel(902, "Radio 热点", 30),
         bar_gauge_panel(
             11, "Radio 利用率 Top 10", f"topk(10, {radio_utilization_rows})",
-            0, 22, 24, 8, unit="percent", legend_format="{{hostname}} / {{ap_name}} / Radio {{radio_id}}",
+            0, 31, 24, 8, unit="percent", legend_format="{{hostname}} / {{ap_name}} / Radio {{radio_id}}",
             thresholds=UTILIZATION_THRESHOLDS, max_value=100, instant=True,
             description=None,
         ),
-        row_panel(903, "SSID / BSS 客户端明细", 30),
+        row_panel(903, "SSID / BSS 客户端明细", 39),
         table_panel(
             12, "AP 无线单元（BSS）客户端 Top 20",
             bss_client_rows,
-            0, 31, 12, 8, unit="short",
+            0, 40, 12, 8, unit="short",
             transformations=clean_organize_transformation(
                 "客户端数",
                 extra_renames={"ap_name": "AP 名称", "radio_id": "Radio", "ssid": "SSID", "hostname": "所属 AC", "wlan_id": "WLAN ID"},
@@ -2014,7 +2034,7 @@ def build_wireless_dashboard():
         table_panel(
             13, "SSID 客户端 Top 20",
             ssid_client_rows,
-            12, 31, 12, 8, unit="short",
+            12, 40, 12, 8, unit="short",
             transformations=clean_organize_transformation(
                 "客户端数",
                 extra_renames={"ssid": "SSID"},
@@ -2022,18 +2042,18 @@ def build_wireless_dashboard():
             ),
             description="优先采用控制器 SSID 统计，缺失时按同名 BSS 汇总；暂无数据不代表数量为 0。",
         ),
-        row_panel(906, "无线专网流量", 50),
+        row_panel(906, "无线专网流量", 59),
         stat_panel(
             17, "AC 接口入向流量",
             f"sum({wireless_in_rate} {wireless_interface_join}) * 8",
-            0, 51, 6, 4, unit="bps", color=INBOUND_COLOR,
+            0, 60, 6, 4, unit="bps", color=INBOUND_COLOR,
             description="按 AC 在线接口计数器汇总，不拆分单终端流量。",
             no_value=NO_VALUE_TEXT,
         ),
         stat_panel(
             18, "AC 接口出向流量",
             f"sum({wireless_out_rate} {wireless_interface_join}) * 8",
-            6, 51, 6, 4, unit="bps", color=OUTBOUND_COLOR,
+            6, 60, 6, 4, unit="bps", color=OUTBOUND_COLOR,
             description="按 AC 在线接口计数器汇总，不拆分单终端流量。",
             no_value=NO_VALUE_TEXT,
         ),
@@ -2048,7 +2068,7 @@ def build_wireless_dashboard():
                     "legendFormat": "{{hostname}} 出向", "refId": "B",
                 },
             ],
-            0, 55, 14, 10, unit="bps", legend_display_mode="list",
+            0, 64, 14, 10, unit="bps", legend_display_mode="list",
             legend_placement="bottom", legend_calcs=[], color_overrides=[
                 timeseries_color_override("byRegexp", ".*入向$", INBOUND_COLOR),
                 timeseries_color_override("byRegexp", ".*出向$", OUTBOUND_COLOR),
@@ -2057,59 +2077,9 @@ def build_wireless_dashboard():
         ),
         bar_gauge_panel(
             20, "AC 接口吞吐 Top 10", f"topk(10, {wireless_total_rate})",
-            14, 51, 10, 14, unit="bps", legend_format="{{hostname}} / {{ifName}}",
+            14, 60, 10, 14, unit="bps", legend_format="{{hostname}} / {{ifName}}",
             thresholds=[], max_value=None, color=INFO_COLOR, instant=True,
             description="按在线 AC 接口入向与出向吞吐之和排名。",
-        ),
-        table_panel(
-            21, "无线传感器明细",
-            wireless_sensor_rows,
-            0, 66, 24, 9,
-            transformations=clean_organize_transformation(
-                "数值",
-                extra_renames={
-                    "hostname": "设备",
-                    "sensor_name": "传感器",
-                    "sensor_class": "类别",
-                    "ap_name": "AP 名称",
-                    "radio_id": "Radio",
-                    "ssid": "SSID",
-                    "unit": "单位",
-                },
-                extra_indices={
-                    "hostname": 0,
-                    "sensor_name": 1,
-                    "sensor_class": 2,
-                    "ap_name": 3,
-                    "radio_id": 4,
-                    "ssid": 5,
-                    "Value": 6,
-                    "unit": 7,
-                },
-                extra_excludes={
-                    "asset_id": True,
-                    "data_origin": True,
-                    "device_id": True,
-                    "discovery_status": True,
-                    "instance": True,
-                    "job": True,
-                    "lifecycle_status": True,
-                    "measurement_type": True,
-                    "native_device_id": True,
-                    "native_entity_id": True,
-                    "native_instance_id": True,
-                    "platform": True,
-                    "role": True,
-                    "rule_version": True,
-                    "sensor_key": True,
-                    "site_name": True,
-                    "source_id": True,
-                    "source_type": True,
-                    "tenant_id": True,
-                    "window": True,
-                },
-            ),
-            description="本地 SNMP 或可选外部采集的无线值；不推断 AP 或 Radio 归属。",
         ),
     ]
 
