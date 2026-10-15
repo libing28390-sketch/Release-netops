@@ -391,21 +391,11 @@ class RAGRetriever:
         return re.sub(r"[\s_-]+", "", str(value or "").strip().lower())
 
     def _filter_sql(self, request: RetrievalRequest, columns: set[str]) -> tuple[str, list[Any]]:
-        # ``tenant-default`` is the owner of the shared official corpus, not a
-        # wildcard for private documents.  Keep the shared branch explicit so
-        # another tenant's internal/user documents never enter the candidate
-        # query in the first place.
-        if "knowledge_source_type" in columns:
-            shared_scope = (
-                "LOWER(COALESCE(d.knowledge_source_type, '')) IN "
-                "('official_vendor', 'official_url', 'official_local', 'official_template')"
-            )
-        elif "source_trust_level" in columns:
-            shared_scope = "LOWER(COALESCE(d.source_trust_level, '')) = 'official'"
-        else:
-            shared_scope = "0 = 1"
-        where = ["d.status = ?", f"(d.tenant_id = ? OR (d.tenant_id = 'tenant-default' AND {shared_scope}))"]
-        params: list[Any] = [request.status, request.tenant_id]
+        # Stored tenant labels describe provenance only in single-organization
+        # mode. Source trust, lifecycle status, explicit filters and document
+        # ACL checks below continue to govern which records may be returned.
+        where = ["d.status = ?"]
+        params: list[Any] = [request.status]
         if "exclude_from_rag" in columns:
             where.append("COALESCE(d.exclude_from_rag, 0) = 0")
 
@@ -754,8 +744,9 @@ class RAGRetriever:
     ) -> tuple[dict[str, dict[str, float]], dict[str, Any]]:
         """Run bounded PostgreSQL FTS/trigram/vector scores.
 
-        The tenant/status/ACL eligibility query has already produced the IDs;
-        every accelerator query is therefore bounded to that candidate set.
+        The status and metadata query has already produced the IDs; every
+        accelerator query is bounded to that candidate set. Per-document ACLs
+        are enforced before candidate chunks enter the user-visible result.
         """
         debug: dict[str, Any] = {
             "fts_stage": "disabled",
@@ -1128,7 +1119,7 @@ class RAGRetriever:
             resolution = product_resolver.resolve_query(
                 query,
                 resolved_filters,
-                tenant_id=tenant_id or "tenant-default",
+                tenant_id=None,
             )
             if not resolution.ambiguous:
                 resolved_filters.update({

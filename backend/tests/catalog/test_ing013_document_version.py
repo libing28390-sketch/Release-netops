@@ -121,7 +121,7 @@ def test_ing013_same_content_replays_document_version_without_duplicate(isolated
         conn.close()
 
 
-def test_ing013_hash_and_tenant_conflicts_fail_closed(isolated_db, make_user):
+def test_ing013_hash_conflicts_fail_closed_and_other_tenant_label_can_replay(isolated_db, make_user):
     user = make_user("ing013-boundary", role="Administrator", tenant_id="tenant-default")
     first = import_single_official_url(
         user,
@@ -148,9 +148,9 @@ def test_ing013_hash_and_tenant_conflicts_fail_closed(isolated_db, make_user):
 
     other = dict(user)
     other["tenant_id"] = "tenant-other"
-    with pytest.raises(DocumentVersionError) as cross_tenant:
-        record_document_version(first["source"], first["version"], other)
-    assert cross_tenant.value.code == "DOCUMENT_TENANT_CONFLICT"
+    cross_tenant = record_document_version(first["source"], first["version"], other)
+    assert cross_tenant["decision"] == "replay_same_document_content"
+    assert cross_tenant["replayed"] is True
 
 
 def test_ing013_source_reference_is_used_when_raw_bytes_are_not_retained(isolated_db, make_user):

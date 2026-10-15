@@ -74,7 +74,7 @@ def test_rendered_alert_report_is_metadata_only():
     assert "password" not in report
 
 
-def test_alert_aggregation_is_tenant_scoped_and_keeps_records_out_of_result(isolated_db):
+def test_alert_aggregation_crosses_historical_tenants_and_keeps_records_out_of_result(isolated_db):
     from database import get_db_connection
 
     connection = get_db_connection()
@@ -114,16 +114,43 @@ def test_alert_aggregation_is_tenant_scoped_and_keeps_records_out_of_result(isol
         )
     )
 
-    assert result["matched_count"] == 3
+    assert result["matched_count"] == 4
     assert result["data"] == []
     assert result["analysis"]["alerts"] == {
-        "total_count": 3,
-        "active_count": 2,
-        "recent_24h_count": 2,
-        "active_by_severity": {"critical": 1, "major": 1},
-        "recent_24h_by_severity": {"critical": 1, "warning": 1},
+        "total_count": 4,
+        "active_count": 3,
+        "recent_24h_count": 3,
+        "active_by_severity": {"critical": 2, "major": 1},
+        "recent_24h_by_severity": {"critical": 2, "warning": 1},
     }
     assert "alert-device-b" not in result["summary"]
+
+
+def test_asset_analysis_includes_devices_from_legacy_tenant_labels(isolated_db):
+    from database import get_db_connection
+
+    connection = get_db_connection()
+    try:
+        connection.executemany(
+            "INSERT INTO devices (id, hostname, tenant_id, vendor, status) VALUES (?, ?, ?, ?, ?)",
+            [
+                ("asset-history-a", "edge-a", "tenant-history-a", "Huawei", "online"),
+                ("asset-history-b", "edge-b", "tenant-history-b", "Huawei", "online"),
+            ],
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    result = asyncio.run(
+        natural_query_service.execute_asset_analysis(
+            "统计设备",
+            tenant_id="tenant-history-a",
+        )
+    )
+
+    assert result["matched_count"] >= 2
+    assert {item["id"] for item in result["data"]} >= {"asset-history-a", "asset-history-b"}
 
 
 def test_link_aggregation_configuration_is_not_asset_analysis():

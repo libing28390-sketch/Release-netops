@@ -20,6 +20,7 @@ from core.interface_utils import normalize_interface_name
 # Import inspection service to handle specialized inspection jobs
 from services.inspection_service import run_inspection
 from core.rbac import authorize_resource
+from core.tenant_policy import TENANT_ISOLATION_ENABLED
 from services.scheduled_job_authorization import execution_snapshot, manifest_hash
 
 logger = logging.getLogger(__name__)
@@ -268,12 +269,15 @@ def _resolve_nsot_target_device_ids(job: dict, conn) -> list[str]:
     if job.get('authorization_mode') == 'system':
         rows = conn.execute("SELECT * FROM devices WHERE status = 'online'").fetchall()
     else:
-        if not tenant_id:
+        if TENANT_ISOLATION_ENABLED and not tenant_id:
             raise ValueError('Scheduled NSOT job has no tenant boundary')
-        rows = conn.execute(
-            "SELECT * FROM devices WHERE status = 'online' AND tenant_id = ?",
-            (tenant_id,),
-        ).fetchall()
+        if TENANT_ISOLATION_ENABLED:
+            rows = conn.execute(
+                "SELECT * FROM devices WHERE status = 'online' AND tenant_id = ?",
+                (tenant_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM devices WHERE status = 'online'").fetchall()
     online_devices = [dict(row) for row in rows]
     scope = str(job.get('device_scope') or 'all').strip().lower()
     tagged_device_ids = None
@@ -337,7 +341,7 @@ def _authorize_scheduled_job_run(conn, job: dict) -> dict | None:
         raise PermissionError('System job identity does not match the built-in NSOT collection job')
     if job.get('authorization_mode') != 'snapshot':
         raise PermissionError('Scheduled job requires re-authorization before execution')
-    if not str(job.get('created_by_id') or '').strip() or not str(job.get('tenant_id') or '').strip():
+    if not str(job.get('created_by_id') or '').strip() or (TENANT_ISOLATION_ENABLED and not str(job.get('tenant_id') or '').strip()):
         raise PermissionError('Scheduled job owner or tenant is missing')
     owner_row = conn.execute(
         """SELECT id, username, role, role_profile, status, tenant_id, scope_mode
@@ -347,10 +351,12 @@ def _authorize_scheduled_job_run(conn, job: dict) -> dict | None:
     if not owner_row:
         raise PermissionError('Scheduled job owner no longer exists')
     owner = dict(owner_row)
-    if owner.get('status') != 'active' or str(owner.get('tenant_id') or '') != str(job.get('tenant_id') or ''):
-        raise PermissionError('Scheduled job owner is inactive or no longer belongs to its tenant')
+    if owner.get('status') != 'active':
+        raise PermissionError('Scheduled job owner is inactive')
+    if TENANT_ISOLATION_ENABLED and str(owner.get('tenant_id') or '') != str(job.get('tenant_id') or ''):
+        raise PermissionError('Scheduled job owner no longer belongs to its tenant')
     if not authorize_resource(
-        owner, 'scheduled_job', 'execute', tenant_id=str(job.get('tenant_id') or ''),
+        owner, 'scheduled_job', 'execute', tenant_id=str(job.get('tenant_id') or '') or None,
     ):
         raise PermissionError('Scheduled job owner no longer has execution authorization')
     try:
@@ -379,7 +385,7 @@ def _authorize_scheduled_job_run(conn, job: dict) -> dict | None:
     if bool(job.get('is_config')) and not str(job.get('config_reason') or '').strip():
         raise PermissionError('Configuration-change job has no approved change reason')
     if bool(job.get('use_admin_creds')) and not authorize_resource(
-        owner, 'credential', 'use', tenant_id=str(job.get('tenant_id') or ''),
+        owner, 'credential', 'use', tenant_id=str(job.get('tenant_id') or '') or None,
     ):
         raise PermissionError('Scheduled job owner no longer has privileged credential authorization')
     return owner
@@ -400,7 +406,7 @@ def _authorize_scheduled_job_targets(conn, owner: dict, job: dict, device_ids: l
     for device_id in unique_ids:
         device = device_map[device_id]
         tenant_id = str(device.get('tenant_id') or '')
-        if tenant_id != str(job.get('tenant_id') or ''):
+        if TENANT_ISOLATION_ENABLED and tenant_id != str(job.get('tenant_id') or ''):
             raise PermissionError('Scheduled job target is outside its approved tenant')
         scope = {
             'tenant_id': tenant_id,
@@ -527,13 +533,13 @@ async def run_scheduled_automation_job(job_id: str):
         # 1. 确定设备范围
         device_ids = []
         tenant_id = str(job.get('tenant_id') or '').strip()
-        if not tenant_id:
+        if TENANT_ISOLATION_ENABLED and not tenant_id:
             raise PermissionError('Scheduled job has no tenant boundary')
         if job['device_scope'] == 'all':
-            rows = conn.execute(
-                "SELECT id FROM devices WHERE tenant_id = ?",
-                (tenant_id,),
-            ).fetchall()
+            if TENANT_ISOLATION_ENABLED:
+                rows = conn.execute("SELECT id FROM devices WHERE tenant_id = ?", (tenant_id,)).fetchall()
+            else:
+                rows = conn.execute("SELECT id FROM devices").fetchall()
             device_ids = [r['id'] for r in rows]
         elif job['device_scope'] == 'composite':
             try:
@@ -548,8 +554,8 @@ async def run_scheduled_automation_job(job_id: str):
                 or not any(str(value or '').strip() for value in comp.values())
             ):
                 raise ValueError('Empty or unsupported composite device filter; refusing to widen scope')
-            conditions = ["tenant_id = ?"]
-            params = [tenant_id]
+            conditions = ["tenant_id = ?"] if TENANT_ISOLATION_ENABLED else []
+            params = [tenant_id] if TENANT_ISOLATION_ENABLED else []
             if comp.get('site'):
                 conditions.append("site = ?")
                 params.append(comp['site'])
@@ -566,10 +572,14 @@ async def run_scheduled_automation_job(job_id: str):
             rows = conn.execute(f"SELECT id FROM devices{where_clause}", params).fetchall()
             device_ids = [r['id'] for r in rows]
         elif job['device_scope'] == 'site':
-            rows = conn.execute("SELECT id FROM devices WHERE tenant_id = ? AND site = ?", (tenant_id, job['device_filter'])).fetchall()
+            tenant_clause = " AND tenant_id = ?" if TENANT_ISOLATION_ENABLED else ""
+            params = (job['device_filter'], tenant_id) if TENANT_ISOLATION_ENABLED else (job['device_filter'],)
+            rows = conn.execute(f"SELECT id FROM devices WHERE site = ?{tenant_clause}", params).fetchall()
             device_ids = [r['id'] for r in rows]
         elif job['device_scope'] == 'role':
-            rows = conn.execute("SELECT id FROM devices WHERE tenant_id = ? AND role = ?", (tenant_id, job['device_filter'])).fetchall()
+            tenant_clause = " AND tenant_id = ?" if TENANT_ISOLATION_ENABLED else ""
+            params = (job['device_filter'], tenant_id) if TENANT_ISOLATION_ENABLED else (job['device_filter'],)
+            rows = conn.execute(f"SELECT id FROM devices WHERE role = ?{tenant_clause}", params).fetchall()
             device_ids = [r['id'] for r in rows]
         elif job['device_scope'] in ('tag', 'tags'):
             # Resolve the saved AND/OR/NOT expression with the same tag
@@ -615,7 +625,9 @@ async def run_scheduled_automation_job(job_id: str):
             target_ips = [i.strip() for i in (job['device_filter'] or '').split(',') if i.strip()]
             if target_ips:
                 placeholders = ','.join(['?'] * len(target_ips))
-                rows = conn.execute(f"SELECT id FROM devices WHERE tenant_id = ? AND ip_address IN ({placeholders})", [tenant_id, *target_ips]).fetchall()
+                tenant_clause = " AND tenant_id = ?" if TENANT_ISOLATION_ENABLED else ""
+                params = [*target_ips, tenant_id] if TENANT_ISOLATION_ENABLED else target_ips
+                rows = conn.execute(f"SELECT id FROM devices WHERE ip_address IN ({placeholders}){tenant_clause}", params).fetchall()
                 device_ids = [r['id'] for r in rows]
         else: # ids
             device_ids = [i.strip() for i in (job['device_filter'] or '').split(',') if i.strip()]

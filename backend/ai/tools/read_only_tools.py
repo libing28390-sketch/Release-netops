@@ -23,13 +23,14 @@ def _freshness(value: Any) -> str:
         return "unknown"
 
 
-def tool_search_ip(ip: str, tenant_id: str = "tenant-default") -> Dict[str, Any]:
+def tool_search_ip(ip: str, tenant_id: str | None = None) -> Dict[str, Any]:
     """Search IP address in CMDB & ARP cache."""
+    del tenant_id  # Historical tenant labels are not an AI device visibility boundary.
     res = {"ip": ip, "device": None, "arp": None}
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT hostname, platform, vendor, status FROM devices WHERE ip_address = ? AND tenant_id = ?", (ip, tenant_id))
+            cursor.execute("SELECT hostname, platform, vendor, status FROM devices WHERE ip_address = ?", (ip,))
             row = cursor.fetchone()
             if row:
                 res["device"] = {"hostname": row[0], "platform": row[1], "vendor": row[2], "status": row[3]}
@@ -40,14 +41,15 @@ def tool_search_ip(ip: str, tenant_id: str = "tenant-default") -> Dict[str, Any]
     return sanitize_data(res)
 
 
-def tool_search_mac(mac: str, tenant_id: str = "tenant-default") -> Dict[str, Any]:
+def tool_search_mac(mac: str, tenant_id: str | None = None) -> Dict[str, Any]:
     """Search MAC address in ARP cache & MAC table."""
+    del tenant_id
     result: Dict[str, Any] = {"mac": mac, "found": False, "vlan": None, "interface": None, "evidence": []}
     try:
         with get_db_connection() as conn:
             row = conn.execute(
-                "SELECT vlan_id, interface_name FROM mac_table WHERE lower(mac_address) = lower(?) AND tenant_id = ? LIMIT 1",
-                (mac, tenant_id),
+                "SELECT vlan_id, interface_name FROM mac_table WHERE lower(mac_address) = lower(?) LIMIT 1",
+                (mac,),
             ).fetchone()
             if row:
                 result.update({"found": True, "vlan": row[0], "interface": row[1], "evidence": [{"source_type": "mac_table"}]})
@@ -56,8 +58,9 @@ def tool_search_mac(mac: str, tenant_id: str = "tenant-default") -> Dict[str, An
     return sanitize_data(result)
 
 
-def tool_get_device_neighbors(device_id: str, tenant_id: str = "tenant-default") -> Dict[str, Any]:
+def tool_get_device_neighbors(device_id: str, tenant_id: str | None = None) -> Dict[str, Any]:
     """Get LLDP neighbors of device."""
+    del tenant_id
     neighbors: list[dict[str, Any]] = []
     try:
         with get_db_connection() as conn:
@@ -69,11 +72,9 @@ def tool_get_device_neighbors(device_id: str, tenant_id: str = "tenant-default")
                 JOIN devices sd ON sd.id = l.source_device_id
                 JOIN devices td ON td.id = l.target_device_id
                 WHERE (l.source_device_id = ? OR l.target_device_id = ?)
-                  AND sd.tenant_id = ?
-                  AND td.tenant_id = ?
                 ORDER BY l.updated_at DESC LIMIT 100
                 """,
-                (device_id, device_id, tenant_id, tenant_id),
+                (device_id, device_id),
             ).fetchall()
             for row in rows:
                 source = row[0]
@@ -83,8 +84,9 @@ def tool_get_device_neighbors(device_id: str, tenant_id: str = "tenant-default")
     return sanitize_data({"device_id": device_id, "neighbors": neighbors, "evidence": [{"source_type": "topology_links"}] if neighbors else []})
 
 
-def tool_get_active_alarms(device_id: Optional[str] = None, tenant_id: str = "tenant-default") -> Dict[str, Any]:
+def tool_get_active_alarms(device_id: Optional[str] = None, tenant_id: str | None = None) -> Dict[str, Any]:
     """Get active alarms from Nexora alarm center."""
+    del tenant_id
     alarms: list[dict[str, Any]] = []
     try:
         with get_db_connection() as conn:
@@ -94,10 +96,9 @@ def tool_get_active_alarms(device_id: Optional[str] = None, tenant_id: str = "te
                     SELECT a.title, a.severity, a.device_id
                     FROM alert_events a JOIN devices d ON d.id = a.device_id
                     WHERE a.resolved_at IS NULL AND a.device_id = ?
-                      AND d.tenant_id = ?
                     ORDER BY a.created_at DESC LIMIT 100
                     """,
-                    (device_id, tenant_id),
+                    (device_id,),
                 ).fetchall()
             else:
                 rows = conn.execute(
@@ -105,10 +106,8 @@ def tool_get_active_alarms(device_id: Optional[str] = None, tenant_id: str = "te
                     SELECT a.title, a.severity, a.device_id
                     FROM alert_events a JOIN devices d ON d.id = a.device_id
                     WHERE a.resolved_at IS NULL
-                      AND d.tenant_id = ?
                     ORDER BY a.created_at DESC LIMIT 100
-                    """,
-                    (tenant_id,),
+                    """
                 ).fetchall()
             alarms = [{"title": row[0], "severity": row[1], "device": row[2]} for row in rows]
     except Exception:
@@ -116,15 +115,17 @@ def tool_get_active_alarms(device_id: Optional[str] = None, tenant_id: str = "te
     return sanitize_data({"alarms": alarms, "evidence": [{"source_type": "alert_events"}] if alarms else []})
 
 
-def tool_get_config_diff(device_id: str, tenant_id: str = "tenant-default") -> Dict[str, Any]:
+def tool_get_config_diff(device_id: str, tenant_id: str | None = None) -> Dict[str, Any]:
     """Get latest configuration diff for device from Nexora Diff Engine."""
+    del tenant_id
     # The read-only tool returns a summary/diff view only.  Raw configurations
     # are intentionally not loaded into the agent context.
     return sanitize_data({"device_id": device_id, "changes": [], "evidence": [], "freshness": "not_available"})
 
 
-def tool_get_asset(device_id: str, tenant_id: str = "tenant-default") -> Dict[str, Any]:
-    """Return a tenant-scoped CMDB asset projection without credentials."""
+def tool_get_asset(device_id: str, tenant_id: str | None = None) -> Dict[str, Any]:
+    """Return a CMDB asset projection without credentials."""
+    del tenant_id
     result: Dict[str, Any] = {"device_id": device_id, "asset": None, "evidence": []}
     try:
         with get_db_connection() as conn:
@@ -134,9 +135,9 @@ def tool_get_asset(device_id: str, tenant_id: str = "tenant-default") -> Dict[st
                        d.role, d.site, d.site_id, p.id, p.name, p.asset_tag
                 FROM devices d
                 LEFT JOIN physical_assets p ON p.id = d.asset_id
-                WHERE d.id = ? AND d.tenant_id = ?
+                WHERE d.id = ?
                 """,
-                (device_id, tenant_id),
+                (device_id,),
             ).fetchone()
             if row:
                 result["asset"] = {
@@ -152,17 +153,31 @@ def tool_get_asset(device_id: str, tenant_id: str = "tenant-default") -> Dict[st
     return sanitize_data(result)
 
 
-def tool_get_device_status(device_id: str, tenant_id: str = "tenant-default") -> Dict[str, Any]:
+def tool_get_device_status(device_id: str, tenant_id: str | None = None) -> Dict[str, Any]:
     """Return health and collector status as a safe read-only projection."""
+    del tenant_id
     result: Dict[str, Any] = {"device_id": device_id, "device": None, "collectors": [], "evidence": []}
     try:
         with get_db_connection() as conn:
+            columns_cursor = conn.execute("SELECT * FROM devices WHERE 1 = 0")
+            available = {str(column[0]) for column in (columns_cursor.description or [])}
+            selected = [
+                column for column in ("id", "hostname", "status", "last_seen", "last_seen_at", "updated_at")
+                if column in available
+            ]
             row = conn.execute(
-                "SELECT id, hostname, status, last_seen, updated_at FROM devices WHERE id = ? AND tenant_id = ?",
-                (device_id, tenant_id),
+                f"SELECT {', '.join(selected)} FROM devices WHERE id = ?",
+                (device_id,),
             ).fetchone()
             if row:
-                result["device"] = {"id": row[0], "hostname": row[1], "status": row[2], "last_seen": row[3], "updated_at": row[4]}
+                values = dict(zip(selected, row))
+                result["device"] = {
+                    "id": values.get("id"),
+                    "hostname": values.get("hostname"),
+                    "status": values.get("status"),
+                    "last_seen": values.get("last_seen") or values.get("last_seen_at"),
+                    "updated_at": values.get("updated_at"),
+                }
                 result["evidence"].append({"source_type": "cmdb", "source_id": str(device_id)})
             if result["device"]:
                 rows = conn.execute(
@@ -187,25 +202,28 @@ def tool_get_device_status(device_id: str, tenant_id: str = "tenant-default") ->
     return sanitize_data(result)
 
 
-def tool_get_arp_entry(ip: str | None = None, device_id: str | None = None, tenant_id: str = "tenant-default") -> Dict[str, Any]:
+def tool_get_arp_entry(ip: str | None = None, device_id: str | None = None, tenant_id: str | None = None) -> Dict[str, Any]:
     """Locate ARP evidence; never infer a physical edge from it."""
+    del tenant_id
     entries: list[dict[str, Any]] = []
     try:
         with get_db_connection() as conn:
-            where = ["d.tenant_id = ?"]
-            params: list[Any] = [tenant_id]
+            where: list[str] = []
+            params: list[Any] = []
             if ip:
                 where.append("a.ip_address = ?")
                 params.append(ip)
             if device_id:
                 where.append("a.device_id = ?")
                 params.append(device_id)
+            where_sql = f"WHERE {' AND '.join(where)}" if where else ""
             rows = conn.execute(
                 f"""
                 SELECT a.device_id, d.hostname, a.ip_address, a.mac_address,
                        a.interface_name, a.vlan_id, a.last_updated
                 FROM arp_table a JOIN devices d ON d.id = a.device_id
-                WHERE {' AND '.join(where)} ORDER BY a.last_updated DESC LIMIT 100
+                {where_sql}
+                ORDER BY a.last_updated DESC LIMIT 100
                 """,
                 tuple(params),
             ).fetchall()
@@ -215,13 +233,14 @@ def tool_get_arp_entry(ip: str | None = None, device_id: str | None = None, tena
     return sanitize_data({"ip": ip, "device_id": device_id, "entries": entries, "evidence": [{"source_type": "arp", "source_id": str(item["device_id"])} for item in entries], "freshness": _freshness(entries[0].get("last_updated") if entries else None)})
 
 
-def tool_get_mac_entry(mac: str, device_id: str | None = None, tenant_id: str = "tenant-default") -> Dict[str, Any]:
+def tool_get_mac_entry(mac: str, device_id: str | None = None, tenant_id: str | None = None) -> Dict[str, Any]:
     """Locate MAC-table evidence; it is an endpoint hint, not a physical link."""
+    del tenant_id
     entries: list[dict[str, Any]] = []
     try:
         with get_db_connection() as conn:
-            where = ["lower(m.mac_address) = lower(?)", "d.tenant_id = ?"]
-            params: list[Any] = [mac, tenant_id]
+            where = ["lower(m.mac_address) = lower(?)"]
+            params: list[Any] = [mac]
             if device_id:
                 where.append("m.device_id = ?")
                 params.append(device_id)
@@ -240,13 +259,13 @@ def tool_get_mac_entry(mac: str, device_id: str | None = None, tenant_id: str = 
     return sanitize_data({"mac": mac, "entries": entries, "evidence": [{"source_type": "mac_table", "source_id": str(item["device_id"])} for item in entries], "freshness": _freshness(entries[0].get("last_updated") if entries else None)})
 
 
-def tool_get_lldp_neighbors(device_id: str, tenant_id: str = "tenant-default") -> Dict[str, Any]:
+def tool_get_lldp_neighbors(device_id: str, tenant_id: str | None = None) -> Dict[str, Any]:
     """Return LLDP/CDP physical observations only."""
     neighbors = tool_get_device_neighbors(device_id, tenant_id=tenant_id).get("neighbors", [])
     return sanitize_data({"device_id": device_id, "neighbors": neighbors, "relation_type": "PHYSICAL", "evidence": [{"source_type": "lldp", "source_id": device_id}] if neighbors else [], "freshness": "database_snapshot"})
 
 
-def tool_find_ip_location(ip: str, tenant_id: str = "tenant-default") -> Dict[str, Any]:
+def tool_find_ip_location(ip: str, tenant_id: str | None = None) -> Dict[str, Any]:
     """Run the deterministic IP → ARP → MAC → topology lookup chain."""
     arp = tool_get_arp_entry(ip=ip, tenant_id=tenant_id)
     first = (arp.get("entries") or [None])[0]
@@ -269,8 +288,9 @@ def tool_find_ip_location(ip: str, tenant_id: str = "tenant-default") -> Dict[st
     })
 
 
-def tool_get_running_config(device_id: str, tenant_id: str = "tenant-default") -> Dict[str, Any]:
+def tool_get_running_config(device_id: str, tenant_id: str | None = None) -> Dict[str, Any]:
     """Return config snapshot metadata, never the raw configuration body."""
+    del tenant_id
     snapshots: list[dict[str, Any]] = []
     try:
         with get_db_connection() as conn:
@@ -280,10 +300,10 @@ def tool_get_running_config(device_id: str, tenant_id: str = "tenant-default") -
                        s.raw_hash, s.normalized_hash, s.line_count, s.section_count,
                        s.integrity_status, s.config_type
                 FROM config_snapshots s JOIN devices d ON d.id = s.device_id
-                WHERE s.device_id = ? AND d.tenant_id = ?
+                WHERE s.device_id = ?
                 ORDER BY s.timestamp DESC LIMIT 20
                 """,
-                (device_id, tenant_id),
+                (device_id,),
             ).fetchall()
             snapshots = [{"id": r[0], "device_id": r[1], "timestamp": r[2], "trigger": r[3], "author": r[4], "size": r[5], "raw_hash": r[6], "normalized_hash": r[7], "line_count": r[8], "section_count": r[9], "integrity_status": r[10], "config_type": r[11]} for r in rows]
     except Exception:
@@ -291,7 +311,7 @@ def tool_get_running_config(device_id: str, tenant_id: str = "tenant-default") -
     return sanitize_data({"device_id": device_id, "snapshots": snapshots, "raw_available": False, "evidence": [{"source_type": "config_snapshot", "source_id": str(item["id"])} for item in snapshots], "freshness": _freshness(snapshots[0].get("timestamp") if snapshots else None)})
 
 
-def tool_compare_config(device_id: str, before_snapshot_id: str | None = None, after_snapshot_id: str | None = None, tenant_id: str = "tenant-default") -> Dict[str, Any]:
+def tool_compare_config(device_id: str, before_snapshot_id: str | None = None, after_snapshot_id: str | None = None, tenant_id: str | None = None) -> Dict[str, Any]:
     """Return a safe diff summary using hashes/line counts, not raw config text."""
     current = tool_get_running_config(device_id, tenant_id=tenant_id)
     snapshots = current.get("snapshots") or []

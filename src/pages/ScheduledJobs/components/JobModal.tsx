@@ -1340,8 +1340,8 @@ export const JobModal: React.FC<JobModalProps> = ({
                   {approverLoadStatus === 'loaded' && approvers.length === 0 && (
                     <div className="rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-800">
                       {zh
-                        ? '当前没有可用审批人。审批人账号需启用、具有 PAM 审批权限，并配置 MFA、邮箱或飞书验证方式；受限账号还需有当前租户或全局审批范围。'
-                        : 'No eligible approver is available. Accounts must be active, have PAM approval permission, and have MFA, email, or Feishu configured. Restricted accounts also need request-tenant or global approval scope.'}
+                        ? '当前没有可用审批人。审批人账号需启用、具有 PAM 审批权限，并配置 MFA、邮箱或飞书验证方式。'
+                        : 'No eligible approver is available. Accounts must be active, have PAM approval permission, and have MFA, email, or Feishu configured.'}
                       <button type="button" onClick={refreshApprovers} className="ml-2 font-semibold underline">{zh ? '刷新' : 'Refresh'}</button>
                     </div>
                   )}

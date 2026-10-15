@@ -91,7 +91,6 @@ export const navConfig: NavGroup[] = [
       { id: 'cmdb-vrfs',        label: 'VRF管理',  labelEn: 'VRFs',        path: '/cmdb/vrfs',        icon: 'Network', requiredRole: 'Operator' },
       { id: 'cmdb-vlans',       label: 'VLAN管理', labelEn: 'VLANs',       path: '/cmdb/vlans',       icon: 'Layers', requiredRole: 'Operator' },
       { id: 'cmdb-vlan-business', label: 'VLAN业务', labelEn: 'VLAN Business', path: '/cmdb/vlan-business', icon: 'Users', requiredRole: 'Operator' },
-      { id: 'cmdb-tenants',     label: '租户管理', labelEn: 'Tenants',     path: '/cmdb/tenants',     icon: 'Users', requiredRole: 'Operator' },
     ],
   },
   {

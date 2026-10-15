@@ -442,7 +442,7 @@ def test_alert_delivery_and_outbox_use_their_real_state_enums(catalog):
     ("uid", "panel_id", "field_name"),
     [
         ("nexora-network-wireless", 9, "状态"),
-        ("nexora-network-wireless", 10, "客户端数"),
+        ("nexora-network-wireless", 10, "终端数"),
         ("nexora-network-wireless", 12, "客户端数"),
         ("nexora-network-wireless", 13, "客户端数"),
         ("nexora-linux-metrics", 11, "磁盘使用率"),

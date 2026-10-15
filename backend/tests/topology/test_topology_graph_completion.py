@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from backend.tests.pg_test_utils import postgresql_test_driver
 import pytest
-from fastapi import HTTPException
 
 from api.topology import _filter_resolved_topology_links_to_scope, _resolve_graph_tenant
 from database.migrations.m0105_ai_security_operations_graph import upgrade as upgrade_graph_base
@@ -21,13 +20,11 @@ from services.topology_graph_service import (
 )
 
 
-def test_graph_tenant_scope_defaults_to_session_and_rejects_cross_tenant_access():
+def test_graph_tenant_is_a_data_selector_not_an_access_boundary_in_single_org_mode():
     operator = {"role": "Operator", "tenant_id": "tenant-a"}
-    assert _resolve_graph_tenant(operator) == "tenant-a"
+    assert _resolve_graph_tenant(operator) == "tenant-default"
     assert _resolve_graph_tenant(operator, "tenant-a") == "tenant-a"
-    with pytest.raises(HTTPException) as exc_info:
-        _resolve_graph_tenant(operator, "tenant-b")
-    assert exc_info.value.status_code == 403
+    assert _resolve_graph_tenant(operator, "tenant-b") == "tenant-b"
     assert _resolve_graph_tenant({"role": "Administrator"}, "tenant-b") == "tenant-b"
 
 

@@ -69,8 +69,6 @@ def _asset_view_scope(conn, user: dict[str, Any]):
     if not isinstance(user, dict) or not resource_action_allowed(user, "asset", "view"):
         raise NSOTPreviewPermissionError("Insufficient permission for the device scope")
     scope = allowed_resource_scope(conn, user, "asset", "view")
-    if user.get("role") != "Administrator" and not str(user.get("tenant_id") or "").strip():
-        raise NSOTPreviewPermissionError("Authenticated user is not assigned to a tenant")
     if scope.site_ids == ():
         raise NSOTPreviewPermissionError("Insufficient permission for the device scope")
     return scope

@@ -22,6 +22,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
 from database import get_db_connection
 from core.config import settings
+from core.tenant_policy import tenant_id_for_write
 from schemas.web import WebSessionCreateInput, WebSessionExchangeInput, WebSessionStatusInput
 from services.audit_service import log_audit_event
 from services.pam_recording_storage import finalize_pam_recording
@@ -112,17 +113,28 @@ def _callback_session(conn, session_id: str, callback_token: str, agent_id: str 
 @router.post("/pam/web-sessions")
 def create_web_session(payload: WebSessionCreateInput, request: Request):
     requester = _authenticated_requester(request)
-    tenant_id = str(requester.get("tenant_id") or "tenant-default")
+    from api.pam import _authorize_pam_session_create
+
+    if payload.access_level == "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Privileged Web sessions require PAM PIN and MFA step-up, which this flow does not support",
+        )
+    tenant_id = tenant_id_for_write(user=requester)
     username = str(requester.get("username") or "unknown")
     now = _now()
 
     conn = get_db_connection()
     try:
         row = conn.execute(
-            """SELECT pa.id AS asset_id, pa.hostname, pa.management_ip, pa.asset_type,
-                      d.id AS device_id,
+            """SELECT pa.*, pa.id AS asset_id, pa.hostname, pa.management_ip, pa.asset_type,
+                      s.tenant_id AS site_tenant_id,
+                      d.id AS device_id, d.tenant_id AS device_tenant_id,
+                      d.site_id AS device_site_id, d.site AS device_site,
+                      d.device_group_id AS device_group_id,
                       wp.id AS web_profile_id, wp.profile_name, wp.scheme, wp.port, wp.path, wp.enabled
                FROM physical_assets pa
+               LEFT JOIN sites s ON s.id = pa.site_id
                JOIN asset_web_access_profiles wp ON wp.asset_id = pa.id
                LEFT JOIN devices d ON d.asset_id = pa.id
                WHERE pa.id = ? AND wp.id = ?""",
@@ -133,6 +145,14 @@ def create_web_session(payload: WebSessionCreateInput, request: Request):
         target = dict(row)
         if not bool(target.get("enabled")):
             raise HTTPException(status_code=409, detail="Asset Web profile is disabled")
+        device = {
+            "id": target.get("device_id"),
+            "tenant_id": target.get("device_tenant_id"),
+            "site_id": target.get("device_site_id"),
+            "site": target.get("device_site"),
+            "device_group_id": target.get("device_group_id"),
+        }
+        _authorize_pam_session_create(requester, target, device if device.get("id") else None)
 
         # Validate all target components before creating durable audit rows.
         _target_url(
@@ -147,9 +167,8 @@ def create_web_session(payload: WebSessionCreateInput, request: Request):
         session_token = f"pam-web-token-{secrets.token_urlsafe(32)}"
         expires_at = _expires_at()
 
-        # In phase one normal/admin are audit labels only.  Both are approved
-        # immediately; stricter workflows can be layered on later without
-        # changing the session contract.
+        # Normal Web sessions are approved immediately. Privileged Web access
+        # remains fail-closed until this flow can collect PAM MFA step-up.
         conn.execute(
             """INSERT INTO pam_access_requests
                    (id, asset_id, device_id, requester_user_id, requester_username,

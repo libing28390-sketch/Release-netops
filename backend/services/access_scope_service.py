@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from database import get_db_connection
 from services.audit_service import log_audit_event
 from core.rbac import RESOURCE_ACTION_CATALOG, enforce_resource_scope, is_global_administrator
+from core.tenant_policy import TENANT_ISOLATION_ENABLED, tenant_scope_for_user
 
 
 VALID_SCOPE_TYPES = {'global', 'tenant', 'site', 'device_group'}
@@ -24,14 +25,14 @@ def _get_authorized_target_user(conn, user_id: str, actor: dict | None, action: 
     target = dict(row)
     if actor is None:
         return target
-    tenant_id = str(actor.get('tenant_id') or '').strip()
+    tenant_id = tenant_scope_for_user(actor)
     target_tenant_id = str(target.get('tenant_id') or '').strip()
     global_admin = is_global_administrator(actor)
-    if not global_admin and (not tenant_id or tenant_id != target_tenant_id):
+    if TENANT_ISOLATION_ENABLED and not global_admin and (not tenant_id or tenant_id != target_tenant_id):
         raise PermissionError('User is outside the administrator tenant')
     enforce_resource_scope(
         actor, 'user', action,
-        tenant_id=None if global_admin else tenant_id,
+        tenant_id=None if global_admin or not TENANT_ISOLATION_ENABLED else tenant_id,
     )
     return target
 
@@ -91,19 +92,19 @@ def replace_user_scopes(
                 target_tenant_id = str(user.get('tenant_id') or '').strip()
                 if scope_type == 'global':
                     raise ValueError('Tenant administrators cannot assign global scopes')
-                if scope_type == 'tenant' and scope_id != target_tenant_id:
+                if TENANT_ISOLATION_ENABLED and scope_type == 'tenant' and scope_id != target_tenant_id:
                     raise ValueError('Tenant administrators can only assign the user tenant scope')
                 if scope_type == 'site':
                     site = conn.execute(
-                        'SELECT 1 FROM sites WHERE id = ? AND tenant_id = ?',
-                        (scope_id, target_tenant_id),
+                        'SELECT 1 FROM sites WHERE id = ?' + (' AND tenant_id = ?' if TENANT_ISOLATION_ENABLED else ''),
+                        (scope_id, target_tenant_id) if TENANT_ISOLATION_ENABLED else (scope_id,),
                     ).fetchone()
                     if not site:
                         raise ValueError('Site scope must belong to the user tenant')
                 if scope_type == 'device_group':
                     group = conn.execute(
-                        'SELECT 1 FROM devices WHERE device_group_id = ? AND tenant_id = ? LIMIT 1',
-                        (scope_id, target_tenant_id),
+                        'SELECT 1 FROM devices WHERE device_group_id = ?' + (' AND tenant_id = ?' if TENANT_ISOLATION_ENABLED else '') + ' LIMIT 1',
+                        (scope_id, target_tenant_id) if TENANT_ISOLATION_ENABLED else (scope_id,),
                     ).fetchone()
                     if not group:
                         raise ValueError('Device-group scope must belong to the user tenant')

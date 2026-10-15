@@ -11,6 +11,7 @@ from database import get_db_connection
 import logging
 import asyncio
 
+from core.tenant_policy import TENANT_ISOLATION_ENABLED, tenant_id_for_write, tenant_scope_for_user
 from services.automation_service import AutomationService
 from services.audit_service import log_audit_event
 from api.devices import _assert_operational_data_device_scope, _record_instant_execution
@@ -87,6 +88,8 @@ def _script_tenant_for_actor(user: dict, requested_tenant: str = '') -> str:
     actor_tenant = str(user.get('tenant_id') or '').strip()
     global_admin = is_global_administrator(user)
     requested_tenant = str(requested_tenant or '').strip()
+    if not TENANT_ISOLATION_ENABLED:
+        return tenant_id_for_write(requested=requested_tenant, user=user)
     if requested_tenant:
         if not global_admin and requested_tenant != actor_tenant:
             raise HTTPException(status_code=403, detail='脚本只能归属当前账号所在租户')
@@ -100,9 +103,9 @@ def _script_tenant_for_actor(user: dict, requested_tenant: str = '') -> str:
 
 def _assert_script_row_scope(user: dict, row: dict, action: str) -> str:
     tenant_id = str(row.get('tenant_id') or '').strip()
-    if not tenant_id and not is_global_administrator(user):
+    if TENANT_ISOLATION_ENABLED and not tenant_id and not is_global_administrator(user):
         raise HTTPException(status_code=404, detail='Script not found')
-    if not is_global_administrator(user) and str(user.get('tenant_id') or '').strip() != tenant_id:
+    if TENANT_ISOLATION_ENABLED and not is_global_administrator(user) and tenant_scope_for_user(user) != tenant_id:
         raise HTTPException(status_code=404, detail='Script not found')
     enforce_resource_scope(user, 'script', action, tenant_id=tenant_id)
     return tenant_id
@@ -112,13 +115,16 @@ def _resolve_script_approver(conn, approver_username: str, tenant_id: str, reque
     username = str(approver_username or '').strip()
     if not username:
         raise HTTPException(status_code=400, detail='请选择脚本审批人')
-    row = conn.execute(
-        """SELECT id, username, role, role_profile, status, tenant_id, scope_mode
-             FROM users WHERE LOWER(username) = LOWER(?) AND tenant_id = ?""",
-        (username, tenant_id),
-    ).fetchone()
+    query = """SELECT id, username, role, role_profile, status, tenant_id, scope_mode
+                 FROM users WHERE LOWER(username) = LOWER(?)"""
+    params = (username,)
+    if TENANT_ISOLATION_ENABLED:
+        query += " AND tenant_id = ?"
+        params = (username, tenant_id)
+    row = conn.execute(query, params).fetchone()
     if not row or str(row['status'] or '') != 'active':
-        raise HTTPException(status_code=400, detail='审批人必须是当前租户内的有效账号')
+        message = '审批人必须是当前租户内的有效账号' if TENANT_ISOLATION_ENABLED else '审批人必须是有效账号'
+        raise HTTPException(status_code=400, detail=message)
     approver = dict(row)
     if str(approver.get('id') or '') == str(requester_id or ''):
         raise HTTPException(status_code=403, detail='审批回避原则：审核人不能是提单人本人')
@@ -145,13 +151,15 @@ async def read_scripts(
     try:
         clauses: list[str] = []
         params: list[str] = []
-        if is_global_administrator(user):
-            enforce_resource_scope(user, 'script', 'view')
-        else:
-            tenant_id = _script_tenant_for_actor(user)
+        tenant_id = None if is_global_administrator(user) else tenant_scope_for_user(user)
+        if TENANT_ISOLATION_ENABLED and tenant_id is None and not is_global_administrator(user):
+            _script_tenant_for_actor(user)
+        if tenant_id is not None:
             enforce_resource_scope(user, 'script', 'view', tenant_id=tenant_id)
             clauses.append('tenant_id = ?')
             params.append(tenant_id)
+        else:
+            enforce_resource_scope(user, 'script', 'view')
         if q.strip():
             clauses.append("(LOWER(id) LIKE ? OR LOWER(name) LIKE ? OR LOWER(COALESCE(description, '')) LIKE ?)")
             fuzzy = f"%{q.strip().lower()}%"
@@ -213,11 +221,13 @@ def list_script_approvers(user: dict = Depends(get_operator)):
     enforce_resource_scope(user, 'script', 'submit', tenant_id=tenant_id)
     conn = get_db_connection()
     try:
-        rows = conn.execute(
-            """SELECT id, username, role, role_profile, status, tenant_id, scope_mode
-                 FROM users WHERE tenant_id = ? AND status = 'active' ORDER BY username""",
-            (tenant_id,),
-        ).fetchall()
+        query = """SELECT id, username, role, role_profile, status, tenant_id, scope_mode
+                     FROM users WHERE status = 'active'"""
+        params = ()
+        if TENANT_ISOLATION_ENABLED:
+            query += " AND tenant_id = ?"
+            params = (tenant_id,)
+        rows = conn.execute(query + " ORDER BY username", params).fetchall()
         items = []
         for row in rows:
             approver = dict(row)
@@ -522,7 +532,7 @@ async def _execute_approved_change_order(
     approver_id = str(order.get('final_approver_id') or order.get('approver_id') or '')
     if not actor_id or actor_id != executor_id:
         raise HTTPException(status_code=403, detail='当前账号不是变更工单指定的实施人')
-    if not tenant_id or str(user.get('tenant_id') or '') != tenant_id:
+    if TENANT_ISOLATION_ENABLED and (not tenant_id or tenant_scope_for_user(user) != tenant_id):
         raise HTTPException(status_code=404, detail='变更工单不存在')
     if approver_id and approver_id == actor_id:
         raise HTTPException(status_code=403, detail='终审人不能作为该工单的实施人')
@@ -570,7 +580,7 @@ async def _execute_approved_change_order(
         raise HTTPException(status_code=409, detail='工单目标设备已从资产库删除')
     for device in devices_by_id.values():
         device_tenant = str(device.get('tenant_id') or '')
-        if device_tenant != tenant_id:
+        if TENANT_ISOLATION_ENABLED and device_tenant != tenant_id:
             raise HTTPException(status_code=403, detail='工单包含其他租户的设备')
         scope = {
             'tenant_id': device_tenant,
@@ -795,7 +805,7 @@ def list_config_approval_approvers(user: dict = Depends(get_operator)):
     return {
         "success": True,
         "data": list_approvers_with_methods(
-            str(user.get('tenant_id') or ''),
+            tenant_id_for_write(user=user),
             requester_id=requester_id,
         ),
     }
@@ -826,6 +836,7 @@ def _build_approval_manifest(approval_type: str, payload: dict, user: dict) -> d
     if approval_type in {'scheduled_job', 'scheduled_job_delete', 'execution_plan'}:
         conn = get_db_connection()
         try:
+            manifest_tenant_id = tenant_id_for_write(user=user)
             operation = str(source.get('operation') or '').upper()
             job_id = str(source.get('job_id') or '').strip()
             if operation != 'CREATE':
@@ -835,6 +846,7 @@ def _build_approval_manifest(approval_type: str, payload: dict, user: dict) -> d
                 if not row:
                     raise HTTPException(status_code=404, detail='计划作业不存在')
                 current = dict(row)
+                manifest_tenant_id = str(current.get('tenant_id') or '')
                 action = {
                     'UPDATE': 'update', 'ENABLE': 'enable', 'DISABLE': 'disable', 'DELETE': 'delete',
                 }.get(operation)
@@ -850,7 +862,7 @@ def _build_approval_manifest(approval_type: str, payload: dict, user: dict) -> d
             try:
                 manifest = normalize_job_manifest(
                     source, operation=operation, requester_id=requester_id,
-                    tenant_id=tenant_id, script_sha256=script_sha, job_id=job_id,
+                    tenant_id=manifest_tenant_id, script_sha256=script_sha, job_id=job_id,
                 )
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -884,7 +896,7 @@ async def request_config_approval(payload: dict = Body(...), user: dict = Depend
         approver_username=approver_username,
         requester_username=requester,
         requester_id=str(user.get('user_id') or ''),
-        requester_tenant_id=str(user.get('tenant_id') or ''),
+        requester_tenant_id=tenant_id_for_write(user=user),
         config_reason=config_reason,
         device_hostname=str(payload.get('device_hostname') or ''),
         command_preview=str(payload.get('command_preview') or ''),

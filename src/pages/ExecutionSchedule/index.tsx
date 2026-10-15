@@ -1559,7 +1559,7 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
                     >
                       <option value="">{zh ? '选择审批人...' : 'Select approver...'}</option>
                       {approvers.map(approver => (
-                        <option key={approver.id} value={approver.username}>{approver.username} ({approver.role} · {approver.tenant_id || (zh ? '未分配租户' : 'Unassigned tenant')})</option>
+                        <option key={approver.id} value={approver.username}>{approver.username}</option>
                       ))}
                     </select>
                     {approvers.length === 0 && <span className="block text-amber-700">{zh ? '当前没有可用审批人。' : 'No eligible approvers are available.'}</span>}

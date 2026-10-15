@@ -100,7 +100,7 @@ def test_cat016_resolution_unknown_legacy_and_rollback_fail_closed():
     assert data["rollback"]["data"] == "retain_reviewed_seed_artifact_and_all_v1_metadata"
 
 
-def test_cat016_product_adapter_exposes_tenant_scoped_h3c_seed_and_exact_version():
+def test_cat016_product_adapter_exposes_org_wide_h3c_seed_and_exact_version():
     from services.product_catalog_service import ProductCatalogError, list_product_catalog
 
     default_user = {"id": "cat016-viewer", "role": "Viewer", "tenant_id": "tenant-default-reviewed"}
@@ -111,7 +111,7 @@ def test_cat016_product_adapter_exposes_tenant_scoped_h3c_seed_and_exact_version
     versioned = list_product_catalog(default_user, software_version="CMW710-R6823")
     assert versioned["total"] == 3
     assert {item["vendor_id"] for item in versioned["items"]} == {"h3c"}
-    assert list_product_catalog({"role": "Viewer", "tenant_id": "tenant-other"}, vendor_id="h3c")["total"] == 0
+    assert list_product_catalog({"role": "Viewer", "tenant_id": "tenant-other"}, vendor_id="h3c")["total"] == 3
     with pytest.raises(ProductCatalogError) as invalid:
         # Control characters must never become a catalog filter or lookup key.
         list_product_catalog(default_user, software_version="CMW710\nR6823")

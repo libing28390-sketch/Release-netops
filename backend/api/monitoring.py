@@ -14,6 +14,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
 from api.users import validate_session_token
 from core.rbac import enforce_resource_scope, require_role, resource_action_allowed
+from core.tenant_policy import tenant_scope_for_user
 from database import get_db_connection, fetch_interface_data, fetch_interface_data_for_devices
 from services.audit_service import log_audit_event
 from services.device_health_service import annotate_devices_with_health, build_health_overview, load_devices_for_health
@@ -33,7 +34,7 @@ from services.monitoring_incident_service import (
     update_incident_status,
 )
 from services.metric_provider import extract_instant_metric_value, provider_from_environment
-from services.rack_scope_service import allowed_resource_scope
+from services.rack_scope_service import RackScope, allowed_resource_scope, device_scope_predicate
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -48,17 +49,44 @@ def _require_monitoring_session(request: Request) -> dict:
     return session
 
 
-def _monitoring_tenant_scope(user: Any, *, device_alias: str | None = None) -> tuple[str, tuple[Any, ...]]:
-    """Return an object-level tenant predicate for legacy monitoring routes.
+def _monitoring_scope(conn, user: Any) -> RackScope:
+    """Resolve asset visibility for a device-backed monitoring operation."""
+    if not isinstance(user, dict):
+        # Keep direct legacy helper callers independent from FastAPI Depends.
+        return RackScope()
+    return allowed_resource_scope(conn, user, 'asset', 'view')
 
-    Direct unit callers from the pre-RBAC API pass no user and retain the
-    historical unrestricted helper behavior; HTTP requests resolve a Viewer
-    or Operator dependency and are filtered before any telemetry is read.
-    """
-    if not isinstance(user, dict) or str(user.get('role') or '') == 'Administrator':
-        return '', ()
-    tenant_column = f"{device_alias}.tenant_id" if device_alias else "tenant_id"
-    return f" AND COALESCE({tenant_column}, 'tenant-default') = ?", (str(user.get('tenant_id') or 'tenant-default'),)
+
+def _monitoring_scope_predicate(
+    scope: RackScope,
+    *,
+    device_alias: str = 'd',
+) -> tuple[str, tuple[Any, ...]]:
+    predicate, params = device_scope_predicate(scope, device_alias=device_alias)
+    clauses = [predicate] if predicate else []
+    values = list(params)
+    if scope.tenant_id:
+        clauses.append(f"COALESCE({device_alias}.tenant_id, 'tenant-default') = ?")
+        values.append(scope.tenant_id)
+    return ' AND '.join(clauses), tuple(values)
+
+
+def _monitoring_tenant_scope(
+    user: Any,
+    *,
+    device_alias: str | None = None,
+    conn=None,
+) -> tuple[str, tuple[Any, ...]]:
+    """Return the device visibility predicate used by legacy monitoring SQL."""
+    owned_connection = conn is None and isinstance(user, dict)
+    scope_conn = get_db_connection() if owned_connection else conn
+    try:
+        scope = _monitoring_scope(scope_conn, user) if scope_conn is not None else RackScope()
+        predicate, params = _monitoring_scope_predicate(scope, device_alias=device_alias or 'd')
+        return (f' AND ({predicate})' if predicate else ''), params
+    finally:
+        if owned_connection and scope_conn is not None:
+            scope_conn.close()
 
 _SERVER_PLATFORMS = {'linux', 'ubuntu', 'centos', 'debian', 'redhat'}
 
@@ -88,29 +116,35 @@ _overview_inflight: dict[tuple[str, str], threading.Event] = {}
 
 
 def _monitoring_tenant_id(user: Any) -> str | None:
-    if isinstance(user, dict) and str(user.get('role') or '') == 'Administrator':
-        return None
-    return str(user.get('tenant_id') or 'tenant-default') if isinstance(user, dict) else 'tenant-default'
+    return tenant_scope_for_user(user)
 
 
 def _assert_monitoring_device_visible(conn, device_id: str, user: Any) -> None:
-    tenant_id = _monitoring_tenant_id(user)
-    if tenant_id is None:
-        return
+    scope = _monitoring_scope(conn, user)
+    scope_predicate, scope_params = _monitoring_scope_predicate(scope, device_alias='d')
+    where_parts = ['d.id = ?']
+    params: list[Any] = [device_id]
+    if scope_predicate:
+        where_parts.append(scope_predicate)
+        params.extend(scope_params)
     row = conn.execute(
-        "SELECT 1 FROM devices WHERE id = ? AND COALESCE(tenant_id, 'tenant-default') = ?",
-        (device_id, tenant_id),
+        f"SELECT 1 FROM devices d WHERE {' AND '.join(where_parts)}",
+        tuple(params),
     ).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail='Device not found')
 
 
 def _assert_monitoring_incident_visible(conn, incident_id: str, user: Any) -> None:
-    tenant_id = _monitoring_tenant_id(user)
-    if tenant_id is None:
+    scope = _monitoring_scope(conn, user)
+    if scope.tenant_id is None and scope.site_ids is None and scope.device_group_ids is None:
         return
+    primary_predicate, primary_params = _monitoring_scope_predicate(scope, device_alias='primary_device')
+    related_predicate, related_params = _monitoring_scope_predicate(scope, device_alias='related_device')
+    primary_filter = f' AND {primary_predicate}' if primary_predicate else ''
+    related_filter = f' AND {related_predicate}' if related_predicate else ''
     row = conn.execute(
-        """
+        f"""
         SELECT i.id
           FROM monitoring_incidents i
          WHERE i.id = ?
@@ -118,21 +152,99 @@ def _assert_monitoring_incident_visible(conn, incident_id: str, user: Any) -> No
            AND EXISTS (
                SELECT 1 FROM devices primary_device
                 WHERE primary_device.id = i.primary_device_id
-                  AND COALESCE(primary_device.tenant_id, 'tenant-default') = ?
+                  {primary_filter}
            )
            AND NOT EXISTS (
                SELECT 1
                  FROM monitoring_incident_alerts ia
                  JOIN alert_events a ON a.id = ia.alert_id
-                 LEFT JOIN devices d ON d.id = a.device_id
                 WHERE ia.incident_id = i.id
-                  AND (a.device_id IS NULL OR COALESCE(d.tenant_id, 'tenant-default') <> ?)
+                  AND (a.device_id IS NULL OR NOT EXISTS (
+                      SELECT 1 FROM devices related_device
+                       WHERE related_device.id = a.device_id
+                         {related_filter}
+                  ))
            )
         """,
-        (incident_id, tenant_id, tenant_id),
+        (incident_id, *primary_params, *related_params),
     ).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail='Incident not found')
+
+
+def _filter_monitoring_incident_impact(conn, impact: dict[str, Any], scope: RackScope) -> dict[str, Any]:
+    """Remove topology neighbors and business details outside device scope."""
+    if scope.tenant_id is None and scope.site_ids is None and scope.device_group_ids is None:
+        return impact
+    nodes = [item for item in impact.get('nodes') or [] if isinstance(item, dict)]
+    candidate_ids = sorted({str(item.get('id') or '').strip() for item in nodes if item.get('id')})
+    if candidate_ids:
+        scope_sql, scope_params = _monitoring_scope_predicate(scope, device_alias='d')
+        placeholders = ','.join('?' for _ in candidate_ids)
+        where = [f'd.id IN ({placeholders})']
+        params: list[Any] = list(candidate_ids)
+        if scope_sql:
+            where.append(scope_sql)
+            params.extend(scope_params)
+        visible_rows = conn.execute(
+            f"SELECT d.id, COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, '')) AS site_id "
+            "FROM devices d LEFT JOIN physical_assets pa ON pa.id = d.asset_id "
+            f"WHERE {' AND '.join(where)}",
+            tuple(params),
+        ).fetchall()
+        visible_ids = {str(row['id']) for row in visible_rows}
+        visible_site_ids = {str(row['site_id']) for row in visible_rows if row['site_id']}
+    else:
+        visible_ids = set()
+        visible_site_ids = set()
+
+    filtered_nodes = [item for item in nodes if str(item.get('id') or '') in visible_ids]
+    filtered_links = [
+        item for item in impact.get('links') or []
+        if isinstance(item, dict)
+        and str(item.get('source_device_id') or '') in visible_ids
+        and str(item.get('target_device_id') or '') in visible_ids
+    ]
+    impact['nodes'] = filtered_nodes
+    impact['links'] = filtered_links
+    summary = impact.setdefault('summary', {})
+    summary['topology_nodes'] = len(filtered_nodes)
+    summary['related_links'] = len(filtered_links)
+    summary['topology_available'] = bool(filtered_links)
+    inference = impact.get('inference')
+    if isinstance(inference, dict) and str(inference.get('candidate_device_id') or '') not in visible_ids:
+        inference.update({'candidate_device_id': None, 'candidate_hostname': None, 'candidate_score': None})
+
+    business_impact = impact.get('business_impact')
+    if isinstance(business_impact, dict):
+        if visible_site_ids:
+            placeholders = ','.join('?' for _ in visible_site_ids)
+            site_rows = conn.execute(
+                f"SELECT id, site_name FROM sites WHERE id IN ({placeholders})",
+                tuple(sorted(visible_site_ids)),
+            ).fetchall()
+            visible_site_names = {
+                str(value)
+                for row in site_rows
+                for value in (row['id'], row['site_name'])
+                if value
+            }
+        else:
+            visible_site_names = set()
+        business_impact['sites'] = [
+            value for value in business_impact.get('sites') or []
+            if str(value) in visible_site_names
+        ]
+        business_impact['contacts'] = [
+            item for item in business_impact.get('contacts') or []
+            if isinstance(item, dict) and str(item.get('site_id') or '') in visible_site_ids
+        ]
+        # The service returns these aggregates without their source site IDs;
+        # they cannot be safely split across the remaining authorized sites.
+        business_impact['services'] = []
+        business_impact['business_units'] = []
+        business_impact['owners'] = []
+    return impact
 
 
 class MonitoringIncidentStatusRequest(BaseModel):
@@ -156,17 +268,33 @@ def monitoring_collection_status(
     user=require_role('Viewer'),
 ):
     """Return secret-free collector health for monitoring and topology UIs."""
-    tenant_id = _monitoring_tenant_id(user)
+    conn = get_db_connection()
+    try:
+        scope = _monitoring_scope(conn, user)
+    finally:
+        conn.close()
     if device_id:
         conn = get_db_connection()
         try:
             _assert_monitoring_device_visible(conn, device_id, user)
         finally:
             conn.close()
-    items = list_collection_status(device_id=device_id, site_id=site_id, collector=collector, tenant_id=tenant_id)
+    items = list_collection_status(
+        device_id=device_id,
+        site_id=site_id,
+        collector=collector,
+        tenant_id=scope.tenant_id,
+        site_ids=scope.site_ids,
+        device_group_ids=scope.device_group_ids,
+    )
     return {
         'items': items,
-        'summary': collection_status_summary(site_id=site_id, tenant_id=tenant_id),
+        'summary': collection_status_summary(
+            site_id=site_id,
+            tenant_id=scope.tenant_id,
+            site_ids=scope.site_ids,
+            device_group_ids=scope.device_group_ids,
+        ),
     }
 
 
@@ -175,9 +303,15 @@ def monitoring_device_collection_status(device_id: str, user=require_role('Viewe
     conn = get_db_connection()
     try:
         _assert_monitoring_device_visible(conn, device_id, user)
+        scope = _monitoring_scope(conn, user)
     finally:
         conn.close()
-    items = list_collection_status(device_id=device_id, tenant_id=_monitoring_tenant_id(user))
+    items = list_collection_status(
+        device_id=device_id,
+        tenant_id=scope.tenant_id,
+        site_ids=scope.site_ids,
+        device_group_ids=scope.device_group_ids,
+    )
     return {
         'device_id': device_id,
         'items': items,
@@ -400,10 +534,10 @@ def list_monitoring_network_devices(
     site_name_expr = "COALESCE(NULLIF(s.site_name, ''), CASE WHEN SUBSTR(COALESCE(d.site, ''), 1, 5) = 'site-' THEN '' ELSE COALESCE(d.site, '') END, {site_id_expr}, '')".format(site_id_expr=site_id_expr)
     where_parts = [network_predicate]
     where_params: list[Any] = []
-    tenant_id = (user.get('tenant_id') if isinstance(user, dict) and str(user.get('role') or '') != 'Administrator' else None)
-    if isinstance(user, dict):
-        where_parts.append("COALESCE(d.tenant_id, 'tenant-default') = ?")
-        where_params.append(str(tenant_id or 'tenant-default'))
+    scope_clause, scope_params = _monitoring_tenant_scope(user, device_alias='d')
+    if scope_clause:
+        where_parts.append(scope_clause.removeprefix(' AND ').strip())
+        where_params.extend(scope_params)
     if qv:
         pattern = f"%{qv}%"
         where_parts.append("(LOWER(COALESCE(d.hostname, '')) LIKE LOWER(?) OR LOWER(COALESCE(d.ip_address, '')) LIKE LOWER(?))")
@@ -511,11 +645,10 @@ def search_monitoring_network_devices(
     """
     where = [network_predicate]
     params: list[Any] = []
-    if isinstance(user, dict):
-        role = str(user.get('role') or '')
-        tenant_id = user.get('tenant_id') if role != 'Administrator' else None
-        where.append("COALESCE(d.tenant_id, 'tenant-default') = ?")
-        params.append(str(tenant_id or 'tenant-default'))
+    scope_clause, scope_params = _monitoring_tenant_scope(user, device_alias='d')
+    if scope_clause:
+        where.append(scope_clause.removeprefix(' AND ').strip())
+        params.extend(scope_params)
 
     pattern = f"%{qv}%"
     where.append("(LOWER(COALESCE(d.hostname, '')) LIKE LOWER(?) OR LOWER(COALESCE(d.ip_address, '')) LIKE LOWER(?))")
@@ -551,11 +684,13 @@ def search_monitoring_network_devices(
 @router.get('/monitoring/overview')
 def monitoring_overview(force_refresh: bool = Query(default=False), user=require_role('Viewer')):
     now_utc = datetime.now(timezone.utc).replace(microsecond=0)
-    # HTTP dependencies are intentionally resolved through the route below;
-    # keep this legacy helper restricted to the default tenant until callers
-    # pass an explicit user scope.
-    tenant_id = _monitoring_tenant_id(user)
-    cache_key = ('administrator', '') if tenant_id is None else ('tenant', tenant_id)
+    scope_conn = get_db_connection() if isinstance(user, dict) else None
+    try:
+        monitoring_scope = _monitoring_scope(scope_conn, user) if scope_conn is not None else RackScope()
+    finally:
+        if scope_conn is not None:
+            scope_conn.close()
+    cache_key = ('asset', monitoring_scope.cache_key)
     waited_for_refresh = False
     while True:
         with _overview_cache_lock:
@@ -591,8 +726,9 @@ def monitoring_overview(force_refresh: bool = Query(default=False), user=require
         stats_window_minutes = 60
         stats_window_start = (now_utc - timedelta(minutes=stats_window_minutes)).isoformat()
         hot_interface_limit = 24
-        tenant_clause = "" if tenant_id is None else " AND COALESCE(d.tenant_id, 'tenant-default') = ?"
-        tenant_params: tuple[Any, ...] = () if tenant_id is None else (tenant_id,)
+        device_scope, device_scope_params = _monitoring_scope_predicate(monitoring_scope, device_alias='d')
+        tenant_clause = f" AND ({device_scope})" if device_scope else ''
+        tenant_params = device_scope_params
 
         device_counts = conn.execute(
             """
@@ -799,7 +935,11 @@ def monitoring_overview(force_refresh: bool = Query(default=False), user=require
         payload['collection_anomaly_devices'] = payload['device_health_summary']['collection_anomaly_devices']
         payload['data_confidence_avg'] = payload['device_health_summary']['data_confidence_avg']
         payload['last_collection_at'] = payload['device_health_summary']['last_collection_at']
-        collection_summary = collection_status_summary(tenant_id=tenant_id)
+        collection_summary = collection_status_summary(
+            tenant_id=monitoring_scope.tenant_id,
+            site_ids=monitoring_scope.site_ids,
+            device_group_ids=monitoring_scope.device_group_ids,
+        )
         by_status = collection_summary.get('by_status') or {}
         collector_count = len(collection_summary.get('by_collector') or {})
         collector_failures = sum(int(by_status.get(key) or 0) for key in ('failed', 'stale', 'partial_failed', 'unknown'))
@@ -866,7 +1006,15 @@ def monitoring_overview(force_refresh: bool = Query(default=False), user=require
             'sweeps': collection_summary.get('sweeps') or {},
             'updated_at': now_utc.isoformat(),
         }
-        incident_page = list_incidents(conn, status='active', page=1, page_size=100, tenant_id=tenant_id)
+        incident_page = list_incidents(
+            conn,
+            status='active',
+            page=1,
+            page_size=100,
+            tenant_id=monitoring_scope.tenant_id,
+            site_ids=monitoring_scope.site_ids,
+            device_group_ids=monitoring_scope.device_group_ids,
+        )
         incident_items = incident_page['items']
         payload['active_incidents'] = int(incident_page['total'])
         payload['critical_incidents'] = sum(1 for item in incident_items if str(item.get('severity') or '').lower() == 'critical')
@@ -899,10 +1047,10 @@ def monitoring_device_realtime(
 ):
     conn = get_db_connection()
     try:
-        tenant_clause, tenant_params = _monitoring_tenant_scope(user)
+        tenant_clause, tenant_params = _monitoring_tenant_scope(user, device_alias='d', conn=conn)
         device = conn.execute(
-            "SELECT id, hostname, ip_address, platform, status, device_category, "
-            "sys_name, asset_id FROM devices WHERE id = ?" + tenant_clause,
+            "SELECT d.id, d.hostname, d.ip_address, d.platform, d.status, d.device_category, "
+            "d.sys_name, d.asset_id FROM devices d WHERE d.id = ?" + tenant_clause,
             (device_id, *tenant_params),
         ).fetchone()
         if not device:
@@ -1175,9 +1323,9 @@ def monitoring_device_trend(
 ):
     conn = get_db_connection()
     try:
-        tenant_clause, tenant_params = _monitoring_tenant_scope(user)
+        tenant_clause, tenant_params = _monitoring_tenant_scope(user, device_alias='d', conn=conn)
         device = conn.execute(
-            "SELECT id, hostname, ip_address, platform, status, device_category, asset_id FROM devices WHERE id = ?" + tenant_clause,
+            "SELECT d.id, d.hostname, d.ip_address, d.platform, d.status, d.device_category, d.asset_id FROM devices d WHERE d.id = ?" + tenant_clause,
             (device_id, *tenant_params),
         ).fetchone()
         if not device:
@@ -1603,8 +1751,16 @@ def monitoring_health_devices(
     """
     conn = get_db_connection()
     try:
-        tenant_id = _monitoring_tenant_id(user)
-        evaluated = annotate_devices_with_health(conn, load_devices_for_health(conn, tenant_id=tenant_id))
+        scope = _monitoring_scope(conn, user)
+        evaluated = annotate_devices_with_health(
+            conn,
+            load_devices_for_health(
+                conn,
+                tenant_id=scope.tenant_id,
+                site_ids=scope.site_ids,
+                device_group_ids=scope.device_group_ids,
+            ),
+        )
         health_filter = (health_status or 'all').strip().lower()
         availability_filter = (availability_status or 'all').strip().lower()
         collection_filter = (collection_status or 'all').strip().lower()
@@ -1689,6 +1845,7 @@ def monitoring_incidents(
     """Return the incident projection for NOC triage and drill-down."""
     conn = get_db_connection()
     try:
+        scope = _monitoring_scope(conn, _user)
         return list_incidents(
             conn,
             status=status,
@@ -1697,7 +1854,9 @@ def monitoring_incidents(
             device_id=device_id,
             page=page,
             page_size=page_size,
-            tenant_id=_monitoring_tenant_id(_user),
+            tenant_id=scope.tenant_id,
+            site_ids=scope.site_ids,
+            device_group_ids=scope.device_group_ids,
         )
     finally:
         conn.close()
@@ -1722,10 +1881,11 @@ def monitoring_incident_impact(incident_id: str, _user=require_role('Viewer')):
     conn = get_db_connection()
     try:
         _assert_monitoring_incident_visible(conn, incident_id, _user)
+        scope = _monitoring_scope(conn, _user)
         item = get_incident_impact(conn, incident_id)
         if item is None:
             raise HTTPException(status_code=404, detail='Incident not found')
-        return item
+        return _filter_monitoring_incident_impact(conn, item, scope)
     finally:
         conn.close()
 

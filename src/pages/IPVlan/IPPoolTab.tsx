@@ -227,7 +227,6 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t, prefixId = '', embed
       { header: zh ? '结束IP' : 'End IP', value: (pool) => pool.end_ip },
       { header: zh ? '已用IP数' : 'Used IPs', value: (pool) => pool.used_ips },
       { header: zh ? '总IP数' : 'Total IPs', value: (pool) => pool.total_ips },
-      { header: zh ? '所属租户' : 'Tenant', value: (pool) => pool.tenant_name || '-' },
       { header: zh ? '状态' : 'Status', value: (pool) => pool.status.toUpperCase() },
       { header: zh ? '利用率' : 'Utilization', value: (pool) => `${pool.utilization}%` },
     ], allPools);
@@ -331,7 +330,6 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t, prefixId = '', embed
                   <th className="px-4 py-4">{zh ? '结束IP' : 'End IP'}</th>
                   <th className="px-4 py-4">{zh ? '已用IP数' : 'Used IPs'}</th>
                   <th className="px-4 py-4">{zh ? '总IP数' : 'Total IPs'}</th>
-                  <th className="px-4 py-4">{zh ? '所属租户' : 'Tenant'}</th>
                   <th className="px-4 py-4">{zh ? '状态' : 'Status'}</th>
                   <th className="px-4 py-4">{zh ? '利用率' : 'Utilization'}</th>
                   <TableActionHeader className="pr-6 py-4 text-right">{zh ? '操作' : 'Actions'}</TableActionHeader>
@@ -350,7 +348,6 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t, prefixId = '', embed
                       <td className="px-4 py-4 font-mono text-xs text-gray-700">{node.end_ip}</td>
                       <td className="px-4 py-4 text-xs text-gray-600 font-semibold">{node.used_ips}</td>
                       <td className="px-4 py-4 text-xs text-gray-600 font-semibold">{node.total_ips}</td>
-                      <td className="px-4 py-4 text-xs text-gray-500 font-medium">{node.tenant_name || '-'}</td>
                       <td className="px-4 py-4">
                         <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-600 border border-emerald-500/10`}>
                           <span className="w-1 h-1 rounded-full bg-emerald-500" />

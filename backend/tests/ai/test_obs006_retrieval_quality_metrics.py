@@ -84,7 +84,7 @@ def test_retrieval_trace_runtime_quality_projection_is_bounded():
             },
         },
     )
-    row = get_retrieval_trace(tenant_id="tenant-obs006", trace_id=trace_id)
+    row = get_retrieval_trace(tenant_id=None, trace_id=trace_id)
     assert row is not None
     assert row["runtime"]["quality"]["no_match"] is True
     assert row["runtime"]["quality"]["wrong_vendor_count"] == 2

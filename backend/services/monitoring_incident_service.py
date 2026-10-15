@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from database import get_db_connection
+from services.rack_scope_service import RackScope, device_scope_predicate
 
 
 INCIDENT_OPEN_STATUSES = {"open", "acknowledged", "investigating"}
@@ -376,6 +377,8 @@ def list_incidents(
     page: int = 1,
     page_size: int = 20,
     tenant_id: str | None = None,
+    site_ids: tuple[str, ...] | list[str] | None = None,
+    device_group_ids: tuple[str, ...] | list[str] | None = None,
     sync: bool = False,
 ) -> dict[str, Any]:
     if sync:
@@ -397,22 +400,48 @@ def list_incidents(
     if device_id:
         clauses.append("EXISTS (SELECT 1 FROM monitoring_incident_alerts ia2 JOIN alert_events a2 ON a2.id = ia2.alert_id WHERE ia2.incident_id = i.id AND a2.device_id = ?)")
         params.append(device_id)
-    if tenant_id:
-        clauses.append(
-            "i.primary_device_id IS NOT NULL AND EXISTS ("
-            "SELECT 1 FROM devices primary_device WHERE primary_device.id = i.primary_device_id "
-            "AND COALESCE(primary_device.tenant_id, 'tenant-default') = ?)"
+    normalized_site_ids = tuple(site_ids) if site_ids is not None else None
+    normalized_group_ids = tuple(device_group_ids) if device_group_ids is not None else None
+    has_scope_filter = tenant_id is not None or normalized_site_ids is not None or normalized_group_ids is not None
+    if has_scope_filter:
+        scope = RackScope(
+            tenant_id=tenant_id,
+            site_ids=normalized_site_ids,
+            device_group_ids=normalized_group_ids,
         )
-        params.append(tenant_id)
+        primary_scope, primary_scope_params = device_scope_predicate(scope, device_alias="primary_device")
+        alert_scope, alert_scope_params = device_scope_predicate(scope, device_alias="scope_device")
+        primary_conditions = ["primary_device.id = i.primary_device_id"]
+        if primary_scope:
+            primary_conditions.append(primary_scope)
+        if tenant_id:
+            primary_conditions.append("COALESCE(primary_device.tenant_id, 'tenant-default') = ?")
         clauses.append(
-            "NOT EXISTS ("
-            "SELECT 1 FROM monitoring_incident_alerts scope_ia "
+            "EXISTS (SELECT 1 FROM devices primary_device WHERE "
+            + " AND ".join(primary_conditions)
+            + ")"
+        )
+        params.extend(primary_scope_params)
+        if tenant_id:
+            params.append(tenant_id)
+
+        related_conditions = ["scope_device.id = scope_alert.device_id"]
+        if alert_scope:
+            related_conditions.append(alert_scope)
+        if tenant_id:
+            related_conditions.append("COALESCE(scope_device.tenant_id, 'tenant-default') = ?")
+        hidden_alert_params = [*alert_scope_params]
+        if tenant_id:
+            hidden_alert_params.append(tenant_id)
+        clauses.append(
+            "NOT EXISTS (SELECT 1 FROM monitoring_incident_alerts scope_ia "
             "JOIN alert_events scope_alert ON scope_alert.id = scope_ia.alert_id "
-            "LEFT JOIN devices scope_device ON scope_device.id = scope_alert.device_id "
-            "WHERE scope_ia.incident_id = i.id AND (scope_alert.device_id IS NULL "
-            "OR COALESCE(scope_device.tenant_id, 'tenant-default') <> ?))"
+            "WHERE scope_ia.incident_id = i.id AND (scope_alert.device_id IS NULL OR NOT EXISTS ("
+            "SELECT 1 FROM devices scope_device WHERE "
+            + " AND ".join(related_conditions)
+            + ")))"
         )
-        params.append(tenant_id)
+        params.extend(hidden_alert_params)
     where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     total = conn.execute(f"SELECT COUNT(*) AS c FROM monitoring_incidents i {where_sql}", tuple(params)).fetchone()["c"]
     offset = (page - 1) * page_size

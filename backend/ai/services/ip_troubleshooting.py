@@ -26,7 +26,7 @@ class IPTroubleshootingService:
         *,
         tenant_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        tenant = tenant_id or "tenant-default"
+        del tenant_id  # Legacy tenant labels do not partition the single-org device inventory.
         facts: Dict[str, Any] = {
             "target_ip": ip_address,
             "arp_record": None,
@@ -43,11 +43,11 @@ class IPTroubleshootingService:
                     """
                     SELECT id, hostname, platform, vendor, status
                     FROM devices
-                    WHERE ip_address = ? AND tenant_id = ?
+                    WHERE ip_address = ?
                     ORDER BY id
                     LIMIT 1
                     """,
-                    (ip_address, tenant),
+                    (ip_address,),
                 )
                 dev_row = cursor.fetchone()
                 if dev_row:
@@ -67,11 +67,10 @@ class IPTroubleshootingService:
                         FROM arp_table a
                         JOIN devices d ON d.id = a.device_id
                         WHERE a.ip_address = ?
-                          AND d.tenant_id = ?
                         ORDER BY a.last_updated DESC
                         LIMIT 1
                         """,
-                        (ip_address, tenant),
+                        (ip_address,),
                     )
                     arp_row = cursor.fetchone()
                     if arp_row:
@@ -84,12 +83,8 @@ class IPTroubleshootingService:
                         }
                 except Exception:
                     try:
-                        # arp_cache predates tenant scoping.  Never use this
-                        # unscoped compatibility table for a non-default
-                        # tenant; the normalized arp_table above is the
-                        # authoritative tenant-scoped source.
-                        if tenant != "tenant-default":
-                            raise LookupError("unscoped arp_cache is not eligible for this tenant")
+                        # arp_cache predates tenant labels and remains a
+                        # compatibility fallback for the single-org inventory.
                         cursor.execute(
                             """
                             SELECT mac, vlan_id, source_device_id, cached_at
@@ -158,7 +153,7 @@ class IPTroubleshootingService:
             "将历史快照与设备当前 MAC 表、接口状态和 LLDP 邻居进行交叉核对。",
         ]
         if not has_location:
-            recommendations.insert(0, "确认目标 IP 属于当前租户和已纳管网段。")
+            recommendations.insert(0, "确认目标 IP 属于当前已纳管网段。")
         return {
             "ip": facts.get("target_ip"),
             "located_mac": arp.get("mac_address"),

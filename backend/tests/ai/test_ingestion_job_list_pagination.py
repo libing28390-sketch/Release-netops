@@ -8,7 +8,12 @@ from services.ingestion_pipeline_service import IngestionPipeline, ingestion_pip
 
 
 @pytest.fixture(autouse=True)
-def _reset_global_pipeline():
+def _reset_global_pipeline(monkeypatch):
+    from api import knowledge_ingestion
+    from core import tenant_policy
+
+    monkeypatch.setattr(tenant_policy, "TENANT_ISOLATION_ENABLED", True)
+    monkeypatch.setattr(knowledge_ingestion, "authorize_resource", lambda user, resource, action, **scope: action == "manage")
     ingestion_pipeline.reset_for_tests()
     yield
     ingestion_pipeline.reset_for_tests()

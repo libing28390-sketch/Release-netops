@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, Optional
 
 from database.core import _USE_PG, get_db_connection
+from core.tenant_policy import tenant_id_for_write
 from ai.chunking.engine import ChunkingEngine
 from ai.providers.embedding import (
     EmbeddingProviderError,
@@ -243,17 +244,17 @@ class KnowledgeReindexService:
         return {str(description[0]) for description in (cursor.description or [])}
 
     def _scope_clause(self, cursor, scope: Dict[str, Any], tenant_id: str) -> tuple[str, list[Any]]:
+        del tenant_id
         columns = self._table_columns(cursor, "ai_document")
-        where = ["d.status = 'active'", "(d.tenant_id = ? OR d.tenant_id = 'tenant-default')"]
-        params: list[Any] = [tenant_id]
+        where = ["d.status = 'active'"]
+        params: list[Any] = []
         if scope.get("document_id"):
             key = str(scope["document_id"])
-            if "document_id" in columns:
-                where.append("(d.id = ? OR d.document_id = ?)")
-                params.extend([key, key])
-            else:
-                where.append("d.id = ?")
-                params.append(key)
+            # Lifecycle actions and the public reindex contract identify one
+            # stable ai_document object. Do not expand that object ID through
+            # semantic metadata that may be shared by multiple legacy rows.
+            where.append("d.id = ?")
+            params.append(key)
         if scope.get("vendor") and "vendor" in columns:
             where.append("LOWER(d.vendor) = LOWER(?)")
             params.append(str(scope["vendor"]))
@@ -347,6 +348,17 @@ class KnowledgeReindexService:
         safe_batch_size = _clamp_batch_size(batch_size)
         job_id = f"reindex_{uuid.uuid4().hex[:16]}"
         now = _now()
+        if scope.get("document_id"):
+            # A document-scoped job follows the source document identity so a
+            # legacy tenant label cannot make the stable object disappear.
+            with get_db_connection() as conn:
+                row = conn.execute(
+                    "SELECT tenant_id FROM ai_document WHERE id = ?",
+                    (str(scope["document_id"]),),
+                ).fetchone()
+            tenant_id = str((row[0] if row else None) or tenant_id_for_write(requested=tenant_id))
+        else:
+            tenant_id = tenant_id_for_write(requested=tenant_id)
         total = self._count_documents(scope, tenant_id)
         with get_db_connection() as conn:
             cursor = conn.cursor()

@@ -206,7 +206,7 @@ def test_asset_http_put_preserves_sync_scope_and_rollback_contracts(
     assert state["asset_platform"] == state["device_platform"] == "cisco_iosxe"
     assert state["management_ip"] == state["ip_address"] == before_update["management_ip"]
     assert state["asset_site_id"] == state["device_site_id"] == site_a
-    assert state["device_tenant_id"] == tenant_a
+    assert state["device_tenant_id"] == "tenant-default"
     assert state["department"] == "Network Operations"
 
     before_conflict = _asset_state(primary_id)

@@ -35,13 +35,14 @@ def _insert_alert(conn, *, alert_id: str, device_id: str, title: str, dedupe_key
     )
 
 
-def test_alert_list_summary_and_details_are_scoped_to_authenticated_tenant(isolated_db, monkeypatch):
+def test_alert_list_summary_and_details_ignore_legacy_tenant_in_single_org(isolated_db, monkeypatch):
     tenant_a = _id("tenant-alert-a")
     tenant_b = _id("tenant-alert-b")
     device_a = _id("device-alert-a")
     device_b = _id("device-alert-b")
     alert_a = _id("alert-a")
     alert_b = _id("alert-b")
+    alert_global = _id("alert-global")
     conn = get_db_connection()
     try:
         conn.execute("INSERT INTO tenants (id, name) VALUES (?, ?)", (tenant_a, tenant_a))
@@ -63,7 +64,7 @@ def test_alert_list_summary_and_details_are_scoped_to_authenticated_tenant(isola
                 interface_name, created_at, resolved_at, workflow_status, note, updated_at
             ) VALUES (?, 'system-event', 'monitoring', 'critical', 'Unscoped system event', 'system', NULL, '', CURRENT_TIMESTAMP, NULL, 'open', '', CURRENT_TIMESTAMP)
             """,
-            (_id("alert-global"),),
+            (alert_global,),
         )
         conn.commit()
     finally:
@@ -81,23 +82,23 @@ def test_alert_list_summary_and_details_are_scoped_to_authenticated_tenant(isola
     listing = _request("GET", "/api/alerts?status=all", headers=headers)
     assert listing.status_code == 200, listing.text
     data = listing.json()
-    assert data["total"] == 1
-    assert [item["id"] for item in data["items"]] == [alert_a]
-    assert data["filters"]["sites"] == ["Tenant A Site"]
-    assert data["status_counts"]["all"] == 1
+    assert data["total"] == 3
+    assert {item["id"] for item in data["items"]} == {alert_a, alert_b, alert_global}
+    assert data["filters"]["sites"] == ["Tenant A Site", "Tenant B Site"]
+    assert data["status_counts"]["all"] == 3
 
     summary = _request("GET", "/api/alerts/summary", headers=headers)
     assert summary.status_code == 200, summary.text
-    assert summary.json()["open_count"] == 1
-    assert summary.json()["critical_open"] == 1
+    assert summary.json()["open_count"] == 3
+    assert summary.json()["critical_open"] == 3
 
     visible_detail = _request("GET", f"/api/alerts/{alert_a}", headers=headers)
     hidden_detail = _request("GET", f"/api/alerts/{alert_b}", headers=headers)
     assert visible_detail.status_code == 200, visible_detail.text
-    assert hidden_detail.status_code == 404
+    assert hidden_detail.status_code == 200
 
 
-def test_tenant_operator_cannot_acknowledge_another_tenants_alert(isolated_db, monkeypatch):
+def test_operator_can_acknowledge_alert_in_another_legacy_tenant(isolated_db, monkeypatch):
     tenant_a = _id("tenant-ack-a")
     tenant_b = _id("tenant-ack-b")
     device_b = _id("device-ack-b")
@@ -128,12 +129,12 @@ def test_tenant_operator_cannot_acknowledge_another_tenants_alert(isolated_db, m
         headers={"Authorization": "Bearer tenant-a-operator-token"},
         json={"actor_username": "forged-admin"},
     )
-    assert response.status_code == 404, response.text
+    assert response.status_code == 200, response.text
 
     conn = get_db_connection()
     try:
         row = conn.execute("SELECT workflow_status, ack_by FROM alert_events WHERE id = ?", (alert_b,)).fetchone()
-        assert row["workflow_status"] == "open"
-        assert row["ack_by"] is None
+        assert row["workflow_status"] == "acknowledged"
+        assert row["ack_by"] == actor["username"]
     finally:
         conn.close()

@@ -74,12 +74,12 @@ def test_server_asset_web_session_is_credential_free_and_single_use(isolated_db,
         WebSessionCreateInput(
             asset_id="asset-bmc-1",
             web_profile_id="web-bmc-1",
-            access_level="admin",
+            access_level="normal",
             reason="BMC inspection",
         ),
         request=None,
     )
-    assert created["access_level"] == "admin"
+    assert created["access_level"] == "normal"
     assert "target_url" not in created
     assert "password" not in repr(created).lower()
 
@@ -117,12 +117,13 @@ def test_server_asset_web_session_is_credential_free_and_single_use(isolated_db,
 
     with get_db_connection() as conn:
         row = conn.execute(
-            "SELECT device_id, session_kind, access_level, status, recording_status FROM pam_sessions WHERE id = ?",
+            "SELECT tenant_id, device_id, session_kind, access_level, status, recording_status FROM pam_sessions WHERE id = ?",
             (created["session_id"],),
         ).fetchone()
+    assert row["tenant_id"] == "tenant-default"
     assert row["device_id"] == ""
     assert row["session_kind"] == "device_web"
-    assert row["access_level"] == "admin"
+    assert row["access_level"] == "normal"
     assert row["status"] == "closed"
     assert row["recording_status"] == "pending_upload"
 
@@ -228,3 +229,52 @@ def test_web_recording_upload_is_callback_bound_and_path_safe(isolated_db, monke
             )
         )
     assert oversized.value.status_code == 413
+
+
+def test_privileged_web_session_fails_closed_without_mfa_step_up(isolated_db, monkeypatch):
+    _seed_asset()
+    monkeypatch.setattr(
+        pam_web,
+        "_authenticated_requester",
+        lambda request: {
+            "id": "user-1", "username": "alice", "role": "Operator",
+            "tenant_id": "tenant-history-a",
+        },
+    )
+
+    with pytest.raises(HTTPException) as error:
+        pam_web.create_web_session(
+            WebSessionCreateInput(
+                asset_id="asset-bmc-1",
+                web_profile_id="web-bmc-1",
+                access_level="admin",
+                reason="Privileged access requires MFA",
+            ),
+            request=None,
+        )
+    assert error.value.status_code == 403
+
+    with get_db_connection() as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM pam_sessions WHERE session_kind = 'device_web'",
+        ).fetchone()[0]
+    assert count == 0
+
+
+def test_web_session_requires_operator_role(isolated_db, monkeypatch):
+    _seed_asset()
+    monkeypatch.setattr(
+        pam_web,
+        "_authenticated_requester",
+        lambda request: {
+            "id": "viewer-1", "username": "viewer", "role": "Viewer",
+            "tenant_id": "tenant-history-a",
+        },
+    )
+
+    with pytest.raises(HTTPException) as error:
+        pam_web.create_web_session(
+            WebSessionCreateInput(asset_id="asset-bmc-1", web_profile_id="web-bmc-1"),
+            request=None,
+        )
+    assert error.value.status_code == 403

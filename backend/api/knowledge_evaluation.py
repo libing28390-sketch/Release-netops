@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from core.rbac import require_permission
+from core.tenant_policy import tenant_scope_for_user, tenant_scope_is_enabled
 from services.knowledge_evaluation_service import (
     KnowledgeEvaluationError,
     get_gold_400_fixture_summary,
@@ -37,6 +38,13 @@ def _call(fn, *args, **kwargs):
         raise HTTPException(status_code=404, detail={"code": "EVAL_OBSERVABILITY_NOT_FOUND", "message": "Experiment observability was not found"}) from exc
     except Exception as exc:  # pragma: no cover - defensive API boundary
         raise HTTPException(status_code=500, detail={"code": "EVAL_API_ERROR", "message": "Evaluation operation failed"}) from exc
+
+
+def _tenant_scope(user: dict[str, Any]) -> str | None:
+    tenant_id = tenant_scope_for_user(user)
+    if tenant_id is not None:
+        return tenant_id[:128]
+    return "tenant-default" if tenant_scope_is_enabled() else None
 
 
 @router.get("")
@@ -72,7 +80,7 @@ def api_get_experiment_observability(
     limit: int = Query(default=50, ge=1, le=100),
     user=require_permission("knowledge_source", "read"),
 ):
-    tenant_id = str(user.get("tenant_id") or "tenant-default")[:128]
+    tenant_id = _tenant_scope(user)
     return {
         "success": True,
         "data": _call(get_experiment_observability, tenant_id=tenant_id, limit=limit),

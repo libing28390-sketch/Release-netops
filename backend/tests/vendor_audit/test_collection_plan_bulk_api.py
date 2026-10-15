@@ -30,6 +30,8 @@ def bulk_api_context(monkeypatch):
             device_category TEXT,
             tenant_id TEXT,
             site_id TEXT,
+            asset_id TEXT,
+            device_group_id TEXT,
             collection_policy_json TEXT DEFAULT '{}'
         );
         CREATE TABLE sites (
@@ -37,6 +39,7 @@ def bulk_api_context(monkeypatch):
             site_code TEXT NOT NULL,
             site_name TEXT NOT NULL
         );
+        CREATE TABLE physical_assets (id TEXT PRIMARY KEY, site_id TEXT);
         CREATE TABLE users (id TEXT PRIMARY KEY, role_profile TEXT);
         CREATE TABLE user_resource_scopes (
             user_id TEXT,
@@ -75,12 +78,13 @@ def _seed(
     category: str | None = "Switch",
     tenant_id: str = "tenant-default",
     site_id: str | None = None,
+    device_group_id: str | None = None,
     policy: str = "{}",
 ) -> None:
     connection.execute(
         "INSERT INTO devices "
-        "(id, hostname, ip_address, role, site, site_id, platform, status, device_category, tenant_id, collection_policy_json) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "(id, hostname, ip_address, role, site, site_id, platform, status, device_category, tenant_id, device_group_id, collection_policy_json) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             device_id,
             hostname or device_id,
@@ -92,6 +96,7 @@ def _seed(
             status,
             category,
             tenant_id,
+            device_group_id,
             policy,
         ),
     )
@@ -122,7 +127,7 @@ def test_bulk_options_and_exact_and_category_fallback(bulk_api_context):
     assert options.status_code == 200, options.text
     option_data = options.json()["data"]
     assert {item["value"]: item["count"] for item in option_data["sites"]} == {
-        "site-a": 3,
+        "site-a": 4,
         "site-b": 1,
     }
     assert {item["value"]: item["label"] for item in option_data["sites"]} == {
@@ -133,7 +138,7 @@ def test_bulk_options_and_exact_and_category_fallback(bulk_api_context):
         "Network": 1,
         "Router": 1,
         "Server": 1,
-        "Switch": 1,
+        "Switch": 2,
     }
 
     preview = client.post(
@@ -146,9 +151,9 @@ def test_bulk_options_and_exact_and_category_fallback(bulk_api_context):
         },
     )
     assert preview.status_code == 200, preview.text
-    assert preview.json()["data"]["matched_count"] == 1
+    assert preview.json()["data"]["matched_count"] == 2
     assert preview.json()["data"]["overridden_count"] == 1
-    assert [row["device_id"] for row in preview.json()["data"]["sample"]] == ["sw-1"]
+    assert {row["device_id"] for row in preview.json()["data"]["sample"]} == {"sw-1", "foreign-tenant"}
 
     # Category matching is case-sensitive exact matching; fallback labels are
     # based on legacy role, with a blank category treated as missing.
@@ -234,7 +239,7 @@ def test_bulk_requires_a_filter_and_operator_to_preview(bulk_api_context):
     assert client.get("/api/collection-plans/bulk-options", headers=_headers()).status_code == 200
 
 
-def test_bulk_options_and_preview_are_limited_to_authenticated_tenant(bulk_api_context):
+def test_bulk_options_and_preview_ignore_legacy_tenant_ids_in_single_org(bulk_api_context):
     client, connection, _user = bulk_api_context
     _seed(connection, "tenant-a-device", tenant_id="tenant-default", site="WH")
     _seed(connection, "tenant-b-device", tenant_id="tenant-other", site="WH")
@@ -248,7 +253,10 @@ def test_bulk_options_and_preview_are_limited_to_authenticated_tenant(bulk_api_c
         json={"operation": "apply", "template_id": "basic", "filters": {"site": "WH"}},
     )
     assert preview.status_code == 200, preview.text
-    assert [row["device_id"] for row in preview.json()["data"]["sample"]] == ["tenant-a-device"]
+    assert [row["device_id"] for row in preview.json()["data"]["sample"]] == [
+        "tenant-a-device",
+        "tenant-b-device",
+    ]
 
 
 def test_tenantless_administrator_retains_global_bulk_access(bulk_api_context):
@@ -267,16 +275,17 @@ def test_tenantless_administrator_retains_global_bulk_access(bulk_api_context):
     assert preview.json()["data"]["matched_count"] == 2
 
 
-def test_non_admin_without_tenant_is_denied(bulk_api_context):
-    client, _connection, user = bulk_api_context
+def test_non_admin_without_tenant_keeps_legacy_role_access_in_single_org(bulk_api_context):
+    client, connection, user = bulk_api_context
     user["tenant_id"] = ""
+    _seed(connection, "tenantless-device", tenant_id="tenant-other", site="site-a")
     preview = client.post(
         "/api/collection-plans/bulk-preview",
         headers=_headers(),
         json={"operation": "reset", "filters": {"site": "site-a"}},
     )
-    assert preview.status_code == 403
-    assert preview.json()["detail"] == "Authenticated user is not assigned to a tenant"
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["data"]["matched_count"] == 1
 
 
 def test_site_scoped_operator_cannot_preview_outside_granted_sites(bulk_api_context):
@@ -302,6 +311,78 @@ def test_site_scoped_operator_cannot_preview_outside_granted_sites(bulk_api_cont
     assert blocked.status_code == 200, blocked.text
     assert blocked.json()["data"]["matched_count"] == 0
     assert blocked.json()["data"]["sample"] == []
+
+
+def test_device_group_only_scope_filters_collection_plan_options_and_preview(bulk_api_context):
+    client, connection, user = bulk_api_context
+    user["scope_mode"] = "restricted"
+    _seed(connection, "group-a-device", site="East", tenant_id="tenant-other", device_group_id="group-a")
+    _seed(connection, "group-b-device", site="West", device_group_id="group-b")
+    connection.execute(
+        "INSERT INTO user_resource_scopes (user_id, resource_type, scope_type, scope_id, actions_json) "
+        "VALUES (?, 'asset', 'device_group', 'group-a', ?)",
+        (user["id"], '["view", "update"]'),
+    )
+    connection.commit()
+
+    options = client.get("/api/collection-plans/bulk-options", headers=_headers())
+    assert options.status_code == 200, options.text
+    assert {item["value"] for item in options.json()["data"]["sites"]} == {"East"}
+
+    preview = client.post(
+        "/api/collection-plans/bulk-preview",
+        headers=_headers(),
+        json={"operation": "reset", "filters": {"site": "East"}},
+    )
+    assert preview.status_code == 200, preview.text
+    assert [row["device_id"] for row in preview.json()["data"]["sample"]] == ["group-a-device"]
+
+
+def test_site_and_device_group_grants_form_a_union(bulk_api_context):
+    client, connection, user = bulk_api_context
+    user["scope_mode"] = "restricted"
+    _seed(connection, "group-a-device", site="East", device_group_id="group-a")
+    _seed(connection, "site-only-device", site="West", device_group_id="group-b")
+    _seed(connection, "outside-device", site="South", device_group_id="group-c")
+    connection.executemany(
+        "INSERT INTO user_resource_scopes (user_id, resource_type, scope_type, scope_id, actions_json) "
+        "VALUES (?, 'asset', ?, ?, ?)",
+        [
+            (user["id"], "site", "site-id-West", '["view", "update"]'),
+            (user["id"], "device_group", "group-a", '["view", "update"]'),
+        ],
+    )
+    connection.commit()
+
+    options = client.get("/api/collection-plans/bulk-options", headers=_headers())
+    assert options.status_code == 200, options.text
+    assert {item["value"] for item in options.json()["data"]["sites"]} == {"East", "West"}
+
+    preview = client.post(
+        "/api/collection-plans/bulk-preview",
+        headers=_headers(),
+        json={"operation": "reset", "filters": {"role": "Switch"}},
+    )
+    assert preview.status_code == 200, preview.text
+    assert {row["device_id"] for row in preview.json()["data"]["sample"]} == {
+        "group-a-device",
+        "site-only-device",
+    }
+
+
+def test_restricted_collection_scope_without_grants_fails_closed(bulk_api_context):
+    client, connection, user = bulk_api_context
+    user["scope_mode"] = "restricted"
+    _seed(connection, "invisible-device", site="East", device_group_id="group-a")
+
+    options = client.get("/api/collection-plans/bulk-options", headers=_headers())
+    preview = client.post(
+        "/api/collection-plans/bulk-preview",
+        headers=_headers(),
+        json={"operation": "reset", "filters": {"site": "East"}},
+    )
+    assert options.status_code == 403
+    assert preview.status_code == 403
 
 
 def test_bulk_apply_and_reset_clear_device_overrides(bulk_api_context, monkeypatch):
@@ -587,7 +668,7 @@ def test_lookup_collection_plan_by_ip_validates_input_and_hides_misses(bulk_api_
     assert missing.status_code == 404
 
 
-def test_lookup_collection_plan_by_ip_obeys_tenant_and_site_scopes(bulk_api_context):
+def test_lookup_collection_plan_by_ip_ignores_tenant_and_obeys_site_scope(bulk_api_context):
     client, connection, user = bulk_api_context
     _seed(connection, "own-tenant", ip_address="192.0.2.11", site="allowed", site_id="site-allowed")
     _seed(
@@ -614,13 +695,19 @@ def test_lookup_collection_plan_by_ip_obeys_tenant_and_site_scopes(bulk_api_cont
     )
     assert own_tenant.status_code == 200, own_tenant.text
 
-    for ip in ("192.0.2.12", "192.0.2.14"):
-        denied = client.get(
-            "/api/collection-plans/devices/by-ip",
-            params={"ip": ip},
-            headers=_headers(),
-        )
-        assert denied.status_code == 404
+    foreign_tenant_same_site = client.get(
+        "/api/collection-plans/devices/by-ip",
+        params={"ip": "192.0.2.12"},
+        headers=_headers(),
+    )
+    assert foreign_tenant_same_site.status_code == 200, foreign_tenant_same_site.text
+
+    blocked_site = client.get(
+        "/api/collection-plans/devices/by-ip",
+        params={"ip": "192.0.2.14"},
+        headers=_headers(),
+    )
+    assert blocked_site.status_code == 404
 
     allowed_site = client.get(
         "/api/collection-plans/devices/by-ip",
@@ -656,7 +743,7 @@ def test_lookup_collection_plan_by_ip_reports_equivalent_ipv6_text_as_ambiguous(
     assert response.status_code == 409
 
 
-def test_device_collection_plan_id_routes_obey_tenant_and_site_scope(bulk_api_context):
+def test_device_collection_plan_id_routes_ignore_tenant_and_obey_site_scope(bulk_api_context):
     client, connection, user = bulk_api_context
     _seed(connection, "own-site-device", site_id="site-allowed")
     _seed(
@@ -676,22 +763,30 @@ def test_device_collection_plan_id_routes_obey_tenant_and_site_scope(bulk_api_co
 
     listed = client.get("/api/collection-plans/devices", headers=_headers())
     assert listed.status_code == 200, listed.text
-    assert {item["device"]["id"] for item in listed.json()["data"]} == {"own-site-device"}
+    assert {item["device"]["id"] for item in listed.json()["data"]} == {
+        "own-site-device",
+        "foreign-tenant-same-site",
+    }
 
     visible = client.get("/api/collection-plans/devices/own-site-device", headers=_headers())
     assert visible.status_code == 200, visible.text
-    for device_id in ("foreign-tenant-same-site", "blocked-site-device"):
-        assert client.get(
-            f"/api/collection-plans/devices/{device_id}", headers=_headers()
-        ).status_code == 404
-        assert client.put(
-            f"/api/collection-plans/devices/{device_id}",
-            headers=_headers(),
-            json={"template": "firewall"},
-        ).status_code == 404
-        assert client.delete(
-            f"/api/collection-plans/devices/{device_id}", headers=_headers()
-        ).status_code == 404
+    foreign = "foreign-tenant-same-site"
+    assert client.get(f"/api/collection-plans/devices/{foreign}", headers=_headers()).status_code == 200
+    assert client.put(
+        f"/api/collection-plans/devices/{foreign}",
+        headers=_headers(),
+        json={"template": "firewall"},
+    ).status_code == 200
+    assert client.delete(f"/api/collection-plans/devices/{foreign}", headers=_headers()).status_code == 200
+
+    blocked = "blocked-site-device"
+    assert client.get(f"/api/collection-plans/devices/{blocked}", headers=_headers()).status_code == 404
+    assert client.put(
+        f"/api/collection-plans/devices/{blocked}",
+        headers=_headers(),
+        json={"template": "firewall"},
+    ).status_code == 404
+    assert client.delete(f"/api/collection-plans/devices/{blocked}", headers=_headers()).status_code == 404
 
     preserved = {
         row["id"]: row["collection_policy_json"]
@@ -702,6 +797,6 @@ def test_device_collection_plan_id_routes_obey_tenant_and_site_scope(bulk_api_co
         ).fetchall()
     }
     assert preserved == {
-        "foreign-tenant-same-site": '{"template":"firewall"}',
+        "foreign-tenant-same-site": '{"template": "role_default", "collectors": {}}',
         "blocked-site-device": '{"template":"router"}',
     }

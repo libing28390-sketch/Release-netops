@@ -34,7 +34,10 @@ def _trace(status: str = "hit") -> dict:
     }
 
 
-def test_kui017_store_is_bounded_redacted_and_tenant_scoped():
+def test_kui017_store_is_bounded_redacted_and_tenant_scoped(monkeypatch):
+    from core import tenant_policy
+
+    monkeypatch.setattr(tenant_policy, "TENANT_ISOLATION_ENABLED", True)
     from ai.services.retrieval_trace_store import (
         clear_retrieval_traces,
         get_retrieval_trace,

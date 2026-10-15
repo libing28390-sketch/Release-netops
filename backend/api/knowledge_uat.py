@@ -8,6 +8,7 @@ from fastapi import APIRouter, Body, HTTPException, Path, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from core.rbac import authorize_resource, require_permission
+from core.tenant_policy import tenant_id_for_write, tenant_scope_for_user, tenant_scope_is_enabled
 from services.knowledge_uat_service import (
     CAMPAIGN_ID,
     KnowledgeUATError,
@@ -28,8 +29,11 @@ class UATSignoffRequest(BaseModel):
     evidence_ref: str = Field(default="", max_length=1024)
 
 
-def _tenant(user: dict) -> str:
-    return str(user.get("tenant_id") or "tenant-default")[:128]
+def _tenant_scope(user: dict) -> str | None:
+    tenant_id = tenant_scope_for_user(user)
+    if tenant_id is not None:
+        return tenant_id[:128]
+    return "tenant-default" if tenant_scope_is_enabled() else None
 
 
 def _call(fn, *args, **kwargs):
@@ -53,14 +57,14 @@ def api_list_uat_cases(
 ):
     data = _call(
         list_uat_cases,
-        tenant_id=_tenant(user),
+        tenant_id=_tenant_scope(user),
         campaign_id=campaign_id,
         suite=suite,
         vendor=vendor,
         status=status,
         search=search,
     )
-    data["can_sign"] = authorize_resource(user, "knowledge_uat", "sign", tenant_id=_tenant(user))
+    data["can_sign"] = authorize_resource(user, "knowledge_uat", "sign", tenant_id=_tenant_scope(user))
     data["current_reviewer"] = {
         "id": str(user.get("id") or user.get("user_id") or user.get("username") or ""),
         "name": str(user.get("display_name") or user.get("username") or ""),
@@ -78,7 +82,7 @@ def api_sign_uat_case(
     data = _call(
         sign_uat_case,
         case_id,
-        tenant_id=_tenant(user),
+        tenant_id=tenant_id_for_write(user=user),
         campaign_id=campaign_id,
         user=user,
         decision=payload.decision,
@@ -97,7 +101,7 @@ def api_list_uat_case_history(
     data = _call(
         list_uat_case_history,
         case_id,
-        tenant_id=_tenant(user),
+        tenant_id=_tenant_scope(user),
         campaign_id=campaign_id,
     )
     return {"success": True, "data": data, "message": ""}

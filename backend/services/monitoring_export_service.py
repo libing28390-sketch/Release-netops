@@ -22,8 +22,31 @@ from openpyxl.utils import get_column_letter
 
 from database import get_db_connection
 from services.metric_provider import VictoriaMetricsMetricProvider, normalized_hardware_metric_query
+from services.rack_scope_service import RackScope, device_scope_predicate
 
 logger = logging.getLogger(__name__)
+
+
+def _report_scope_filter(filters: dict[str, Any], *, device_alias: str = "d") -> tuple[str, tuple[Any, ...]]:
+    tenant_id = str(filters.get("tenant_id") or "").strip() or None
+    site_ids_raw = filters.get("site_ids")
+    group_ids_raw = filters.get("device_group_ids")
+    site_ids = tuple(str(value) for value in site_ids_raw) if site_ids_raw is not None else None
+    device_group_ids = tuple(str(value) for value in group_ids_raw) if group_ids_raw is not None else None
+    predicate, params = device_scope_predicate(
+        RackScope(
+            tenant_id=tenant_id,
+            site_ids=site_ids,
+            device_group_ids=device_group_ids,
+        ),
+        device_alias=device_alias,
+    )
+    clauses = [predicate] if predicate else []
+    values = list(params)
+    if tenant_id:
+        clauses.append(f"COALESCE({device_alias}.tenant_id, 'tenant-default') = ?")
+        values.append(tenant_id)
+    return " AND ".join(clauses), tuple(values)
 
 HEADER_FILL = PatternFill(start_color="1E3A8A", end_color="1E3A8A", fill_type="solid")
 HEADER_FONT = Font(name="Microsoft YaHei", size=11, bold=True, color="FFFFFF")
@@ -181,8 +204,8 @@ def fetch_interfaces_report_data(
         conn = get_db_connection()
         should_close = True
     try:
-        tenant_id = str(filters.get("tenant_id") or "").strip()
-        tenant_filter = "WHERE COALESCE(d.tenant_id, 'tenant-default') = ?" if tenant_id else ""
+        scope_filter, scope_params = _report_scope_filter(filters, device_alias="d")
+        where = f"WHERE {scope_filter}" if scope_filter else ""
         query = f"""
             SELECT i.id, i.device_id, i.if_index, i.interface_name, i.description, i.admin_status,
                    i.oper_status, i.speed, i.mac_address,
@@ -191,10 +214,10 @@ def fetch_interfaces_report_data(
               FROM interfaces i
               JOIN devices d ON i.device_id = d.id
               LEFT JOIN sites s ON d.site_id = s.id
-              {tenant_filter}
+              {where}
              ORDER BY d.hostname, i.interface_name
         """
-        rows = conn.execute(query, (tenant_id,) if tenant_id else ()).fetchall()
+        rows = conn.execute(query, scope_params).fetchall()
     finally:
         if should_close:
             conn.close()
@@ -435,17 +458,17 @@ def fetch_devices_report_data(
         conn = get_db_connection()
         should_close = True
     try:
-        tenant_id = str(filters.get("tenant_id") or "").strip()
-        tenant_filter = "WHERE COALESCE(d.tenant_id, 'tenant-default') = ?" if tenant_id else ""
+        scope_filter, scope_params = _report_scope_filter(filters, device_alias="d")
+        where = f"WHERE {scope_filter}" if scope_filter else ""
         query = f"""
             SELECT d.id, d.hostname, d.ip_address, d.vendor, d.platform, d.role, d.status,
                    COALESCE(s.site_name, d.site, '默认站点') as site_name
               FROM devices d
               LEFT JOIN sites s ON d.site_id = s.id
-              {tenant_filter}
+              {where}
              ORDER BY d.hostname
         """
-        rows = conn.execute(query, (tenant_id,) if tenant_id else ()).fetchall()
+        rows = conn.execute(query, scope_params).fetchall()
     finally:
         if should_close:
             conn.close()
@@ -626,9 +649,21 @@ def fetch_outbound_report_data(
     """Fetch probe configuration with the latest real result and recent loss."""
     filters = filters or {}
     tenant_id = str(filters.get("tenant_id") or "").strip()
+    site_scope = filters.get("site_ids")
+    group_scope = filters.get("device_group_ids")
+    scope_restricted = site_scope is not None or group_scope is not None
     recent_cutoff = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
-    where = "WHERE COALESCE(t.tenant_id, 'tenant-default') = ?" if tenant_id else ""
-    params: tuple[Any, ...] = (recent_cutoff, tenant_id) if tenant_id else (recent_cutoff,)
+    where_conditions: list[str] = []
+    if tenant_id:
+        where_conditions.append("COALESCE(t.tenant_id, 'tenant-default') = ?")
+    if scope_restricted:
+        # Outbound probe targets are global records with no device/site/group
+        # relation. A restricted asset grant cannot safely authorize them.
+        where_conditions.append("1 = 0")
+    where = f"WHERE {' AND '.join(where_conditions)}" if where_conditions else ""
+    params: tuple[Any, ...] = (
+        (recent_cutoff, tenant_id) if tenant_id else (recent_cutoff,)
+    )
     should_close = False
     if conn is None:
         conn = get_db_connection()

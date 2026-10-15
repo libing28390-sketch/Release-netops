@@ -124,7 +124,7 @@ class _ApplyConnection:
     def execute(self, statement, params=()):
         if statement.startswith("SELECT id, name, enabled"):
             return _Result({"id": "plan-1", "name": "Interface baseline", "enabled": 1})
-        if statement.startswith("SELECT id FROM monitoring_collectors"):
+        if "FROM monitoring_collectors" in statement:
             return _Result(rows=[{"id": "collector-local"}])
         return _Result()
 

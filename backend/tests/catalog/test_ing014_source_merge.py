@@ -108,7 +108,7 @@ def test_ing014_different_urls_changed_content_keep_separate_documents(isolated_
     assert second["merged"] is False
 
 
-def test_ing014_cross_tenant_same_hash_never_merges(isolated_db, make_user):
+def test_ing014_same_hash_merges_across_historical_tenant_labels(isolated_db, make_user):
     first_user = make_user("ing014-tenant-a", role="Administrator", tenant_id="tenant-a")
     second_user = make_user("ing014-tenant-b", role="Administrator", tenant_id="tenant-b")
     body = b"same bytes are not a cross-tenant cache"
@@ -124,8 +124,10 @@ def test_ing014_cross_tenant_same_hash_never_merges(isolated_db, make_user):
         transport=_transport(body),
         resolver=_public,
     )
-    assert first["document"]["id"] != second["document"]["id"]
-    assert second["merged"] is False
+    assert first["document"]["tenant_id"] == "tenant-default"
+    assert second["document"]["tenant_id"] == "tenant-default"
+    assert first["document"]["id"] == second["document"]["id"]
+    assert second["merged"] is True
 
 
 def test_ing014_deduplication_uses_authoritative_registry_facts(isolated_db, make_user):

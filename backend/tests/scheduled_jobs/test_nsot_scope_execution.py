@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 
+import pytest
+
 from services import scheduler_service
 from services.scheduled_job_authorization import execution_snapshot, manifest_hash
 
@@ -10,7 +12,7 @@ from services.scheduled_job_authorization import execution_snapshot, manifest_ha
 def test_scheduled_nsot_passes_only_online_devices_from_saved_site_scope(isolated_db, make_user, monkeypatch):
     conn = isolated_db["module"].get_db_connection()
     now = datetime.now().isoformat()
-    owner = make_user("nsot_scope_owner", role="Administrator")
+    owner = make_user("nsot_scope_owner", role="Operator")
     try:
         conn.execute(
             "UPDATE users SET tenant_id = 'tenant-nsot', scope_mode = 'legacy' WHERE id = ?",
@@ -19,13 +21,15 @@ def test_scheduled_nsot_passes_only_online_devices_from_saved_site_scope(isolate
         for device_id, site, status in (
             ("nsot-wh-access-1", "WH-DC-02", "online"),
             ("nsot-wh-gateway-1", "WH-DC-02", "online"),
+            ("nsot-wh-old-tenant-1", "WH-DC-02", "online"),
             ("nsot-hq-access-1", "HQ", "online"),
             ("nsot-wh-offline-1", "WH-DC-02", "offline"),
         ):
+            device_tenant = "tenant-history-old" if device_id == "nsot-wh-old-tenant-1" else "tenant-nsot"
             conn.execute(
                 "INSERT INTO devices (id, hostname, ip_address, platform, status, role, site, tenant_id) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (device_id, device_id, "192.0.2.10", "h3c_comware", status, "Access Switch", site, "tenant-nsot"),
+                (device_id, device_id, "192.0.2.10", "h3c_comware", status, "Access Switch", site, device_tenant),
             )
         job = {
             "id": "nsot-site-job",
@@ -43,7 +47,7 @@ def test_scheduled_nsot_passes_only_online_devices_from_saved_site_scope(isolate
             "use_admin_creds": 0,
             "enabled": 1,
             "created_by_id": owner["user_id"],
-            "tenant_id": "tenant-nsot",
+            "tenant_id": "tenant-history-job",
         }
         job["authorization_manifest_hash"] = manifest_hash(execution_snapshot(conn, job))
         conn.execute(
@@ -75,7 +79,7 @@ def test_scheduled_nsot_passes_only_online_devices_from_saved_site_scope(isolate
 
     asyncio.run(scheduler_service.run_scheduled_automation_job("nsot-site-job"))
 
-    assert observed_scopes == [{"nsot-wh-access-1", "nsot-wh-gateway-1"}]
+    assert observed_scopes == [{"nsot-wh-access-1", "nsot-wh-gateway-1", "nsot-wh-old-tenant-1"}]
     conn = isolated_db["module"].get_db_connection()
     try:
         run = conn.execute(
@@ -86,3 +90,68 @@ def test_scheduled_nsot_passes_only_online_devices_from_saved_site_scope(isolate
         conn.close()
     assert run["last_run_status"] == "success"
     assert run["run_count"] == 1
+
+
+def test_historical_scheduled_job_keeps_owner_action_and_device_scope_checks(isolated_db, make_user):
+    conn = isolated_db["module"].get_db_connection()
+    owner = make_user("history_job_owner", role="Operator", tenant_id="tenant-history-owner")
+    try:
+        for device_id, tenant_id, site in (
+            ("history-job-device-in-scope", "tenant-history-a", "site-allowed"),
+            ("history-job-device-out-of-scope", "tenant-history-b", "site-denied"),
+        ):
+            conn.execute(
+                "INSERT INTO devices (id, hostname, status, site, tenant_id) VALUES (?, ?, 'online', ?, ?)",
+                (device_id, device_id, site, tenant_id),
+            )
+
+        job = {
+            "id": "history-scheduled-job",
+            "name": "History scheduled job",
+            "job_type": "cron",
+            "action_type": "inspection",
+            "cron_expr": "*/15 * * * *",
+            "scheduled_at": "",
+            "device_scope": "all",
+            "device_filter": "",
+            "commands": "",
+            "script_id": "",
+            "is_config": 0,
+            "config_reason": "",
+            "use_admin_creds": 0,
+            "enabled": 1,
+            "created_by_id": owner["user_id"],
+            "tenant_id": "tenant-history-job",
+            "authorization_mode": "snapshot",
+        }
+        job["authorization_manifest_hash"] = manifest_hash(execution_snapshot(conn, job))
+
+        revalidated_owner = scheduler_service._authorize_scheduled_job_run(conn, job)
+        assert revalidated_owner["id"] == owner["user_id"]
+        assert set(scheduler_service._authorize_scheduled_job_targets(
+            conn, revalidated_owner, job, ["history-job-device-in-scope"],
+        )) == {"history-job-device-in-scope"}
+
+        conn.execute("UPDATE users SET scope_mode = 'restricted' WHERE id = ?", (owner["user_id"],))
+        conn.execute(
+            """INSERT INTO user_resource_scopes
+               (id, user_id, resource_type, scope_type, scope_id, actions_json, created_at)
+               VALUES ('history-job-site-scope', ?, 'scheduled_job', 'site', 'site-allowed', '[\"execute\"]', ?)""",
+            (owner["user_id"], datetime.now().isoformat()),
+        )
+        conn.commit()
+
+        scoped_owner = {**revalidated_owner, "scope_mode": "restricted"}
+        with pytest.raises(PermissionError, match="no longer has scheduled execution access"):
+            scheduler_service._authorize_scheduled_job_targets(
+                conn, scoped_owner, job,
+                ["history-job-device-in-scope", "history-job-device-out-of-scope"],
+            )
+
+        viewer = make_user("history_job_viewer", role="Viewer", tenant_id="tenant-history-owner")
+        viewer_job = {**job, "created_by_id": viewer["user_id"]}
+        viewer_job["authorization_manifest_hash"] = manifest_hash(execution_snapshot(conn, viewer_job))
+        with pytest.raises(PermissionError, match="execution authorization"):
+            scheduler_service._authorize_scheduled_job_run(conn, viewer_job)
+    finally:
+        conn.close()

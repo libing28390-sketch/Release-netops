@@ -126,7 +126,7 @@ def render_asset_analysis(query: str, analysis: Dict[str, Any]) -> str:
 
 
 def render_alert_analysis(query: str, analysis: Dict[str, Any]) -> str:
-    """Render tenant-scoped alert aggregates without exposing alert records."""
+    """Render alert aggregates without exposing alert records."""
     del query  # The raw question is not needed in the factual local report.
     alerts = analysis.get("alerts") if isinstance(analysis.get("alerts"), dict) else {}
     total = int(alerts.get("total_count", 0) or 0)
@@ -135,7 +135,7 @@ def render_alert_analysis(query: str, analysis: Dict[str, Any]) -> str:
     lines = [
         "## Nexora 告警查询结果",
         "",
-        "> 数据来源：PostgreSQL `alert_events` 与租户范围内的 `devices` 只读快照；不调用外部模型。",
+        "> 数据来源：PostgreSQL `alert_events` 与设备只读快照；不调用外部模型。",
         "",
         f"- 当前未恢复告警：**{active}** 条。",
         f"- 最近 24 小时新增告警：**{recent}** 条。",
@@ -149,7 +149,7 @@ def render_alert_analysis(query: str, analysis: Dict[str, Any]) -> str:
     if recent_by_severity:
         lines.extend(["", *_bucket_table("最近 24 小时新增告警严重级别", "严重级别", recent_by_severity, recent)])
     if not total:
-        lines.extend(["", "当前租户和请求范围内没有匹配的告警记录。"])
+        lines.extend(["", "当前查询范围内没有匹配的告警记录。"])
     lines.extend([
         "",
         "> 以上为系统按实际告警字段聚合的只读统计；未查询到的告警不会被补写或推断。",
@@ -171,12 +171,18 @@ class NaturalQueryService:
     """Safely executes structured asset queries based on natural language intent."""
 
     def search_devices(self, filters: Dict[str, Any], tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Search the single-organization device inventory.
+
+        ``tenant_id`` remains accepted for callers on the legacy contract, but
+        stored tenant labels no longer partition device visibility.
+        """
+        del tenant_id
         results = []
         try:
             with get_db_connection() as conn:
                 cursor = conn.cursor()
-                query = "SELECT id, hostname, ip_address, platform, vendor, model, version, role, site, device_category, status FROM devices WHERE (tenant_id = ? OR tenant_id IS NULL)"
-                params = [tenant_id or "tenant-default"]
+                query = "SELECT id, hostname, ip_address, platform, vendor, model, version, role, site, device_category, status FROM devices WHERE 1 = 1"
+                params: list[Any] = []
                 
                 if filters.get("vendor"):
                     query += " AND LOWER(vendor) LIKE ?"
@@ -211,11 +217,10 @@ class NaturalQueryService:
         filters: Optional[Dict[str, Any]] = None,
         tenant_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Build a deterministic, tenant-scoped CMDB report from PostgreSQL facts."""
+        """Build a deterministic, single-organization CMDB report from PostgreSQL facts."""
         filters = filters or {}
-        effective_tenant = tenant_id or "tenant-default"
-        conditions = ["(d.tenant_id = ? OR d.tenant_id IS NULL)"]
-        params: List[Any] = [effective_tenant]
+        conditions: list[str] = []
+        params: List[Any] = []
 
         for column in ("vendor", "role", "status", "device_category"):
             value = _text(filters.get(column))
@@ -228,7 +233,7 @@ class NaturalQueryService:
             conditions.append("LOWER(COALESCE(s.site_name, s.site_code, d.site, d.site_id, '')) LIKE ?")
             params.append(f"%{site_filter.lower()}%")
 
-        where_clause = " AND ".join(conditions)
+        where_clause = " AND ".join(conditions) if conditions else "1 = 1"
         rows: List[Any] = []
         alert_rows: List[Any] = []
         try:
@@ -253,9 +258,7 @@ class NaturalQueryService:
                     SELECT a.created_at, a.resolved_at, a.severity, a.device_id
                     FROM alert_events a
                     LEFT JOIN devices d ON d.id = a.device_id
-                    WHERE (d.tenant_id = ? OR d.tenant_id IS NULL)
                     """,
-                    (effective_tenant,),
                 ).fetchall()
         except Exception as exc:
             logger.exception("Deterministic CMDB asset analysis failed")
@@ -380,11 +383,10 @@ class NaturalQueryService:
         filters: Optional[Dict[str, Any]] = None,
         tenant_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Build a deterministic, tenant-scoped alert aggregate from PostgreSQL facts."""
+        """Build a deterministic, single-organization alert aggregate from PostgreSQL facts."""
         filters = filters or {}
-        effective_tenant = tenant_id or "tenant-default"
-        conditions = ["(d.tenant_id = ? OR d.tenant_id IS NULL)"]
-        params: List[Any] = [effective_tenant]
+        conditions: list[str] = []
+        params: List[Any] = []
 
         alarm_id = _text(filters.get("alarm_id"))
         if alarm_id:
@@ -416,7 +418,7 @@ class NaturalQueryService:
             conditions.append("a.created_at >= ?")
             params.append(range_start.isoformat())
 
-        where_clause = " AND ".join(conditions)
+        where_clause = " AND ".join(conditions) if conditions else "1 = 1"
         alert_rows: List[Any] = []
         try:
             with get_db_connection() as conn:

@@ -15,6 +15,7 @@ import Pagination from '../../components/Pagination';
 import { ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
 import { TableExportMenu } from '../../components/ui/TableExportMenu';
 import { useEscapeClose } from '../../hooks/useEscapeClose';
+import { DEFAULT_TENANT_ID } from '../../types/cmdb';
 import { buildVisibleIpamExportData, fetchAllIpamExportItems } from './ipamExport';
 
 import { TableActionCell, TableActionHeader } from '../../components/ui/TableActionColumn';
@@ -47,8 +48,8 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
 
   const [vips, setVips] = useState<VIP[]>([]);
   const [devices, setDevices] = useState<any[]>([]);
-  const [tenants, setTenants] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
   const [page, setPage] = useState(1);
@@ -72,7 +73,6 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
     real_servers: '',
     description: '',
     status: 'active',
-    tenant_id: 'tenant-default',
   });
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -83,6 +83,7 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
 
   const loadData = useCallback(async () => {
     setLoading(true);
+    setLoadError('');
     const hdrs = authHeaders();
     try {
       const vipQuery = new URLSearchParams({
@@ -92,10 +93,9 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
         page_size: String(pageSize),
       });
       if (prefixId) vipQuery.set('prefix_id', prefixId);
-      const [vipRes, devRes, tenantRes] = await Promise.all([
+      const [vipRes, devRes] = await Promise.all([
         fetch(`/api/ipam/vips?${vipQuery.toString()}`, { headers: hdrs }),
         fetch('/api/devices?mode=light', { headers: hdrs }),
-        fetch('/api/cmdb/tenants', { headers: hdrs }),
       ]);
       const unwrap = (j: any) => (Array.isArray(j) ? j : (j?.data ?? j?.items ?? []));
       if (vipRes.ok) {
@@ -103,17 +103,34 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
         const data = payload?.data && !Array.isArray(payload.data) ? payload.data : payload;
         setVips(Array.isArray(data) ? data : (data?.items || []));
         setTotalVips(Array.isArray(data) ? data.length : Number(data?.total || 0));
+      } else {
+        setVips([]);
+        setTotalVips(0);
+        const error = await vipRes.json().catch(() => null);
+        const detail = typeof error?.detail === 'string' ? error.detail : null;
+        setLoadError(vipRes.status === 401
+          ? (zh ? '登录已过期，请重新登录后重试。' : 'Your session has expired. Sign in and retry.')
+          : vipRes.status === 403
+            ? (zh ? '当前账号没有查看 VIP 的权限。' : 'You do not have permission to view VIPs.')
+            : (detail || (zh ? '加载 VIP 列表失败，请重试。' : 'Failed to load VIPs. Please retry.')));
       }
       if (devRes.ok) {
         setDevices(unwrap(await devRes.json()));
+      } else {
+        setDevices([]);
+        setLoadError((current) => current || (devRes.status === 401
+          ? (zh ? '登录已过期，请重新登录后重试。' : 'Your session has expired. Sign in and retry.')
+          : devRes.status === 403
+            ? (zh ? '当前账号没有读取设备选项的权限。' : 'You do not have permission to load device options.')
+            : (zh ? '加载设备选项失败。' : 'Failed to load device options.')));
       }
-      if (tenantRes.ok) setTenants(unwrap(await tenantRes.json()));
     } catch (e) {
       console.error(e);
+      setLoadError(zh ? '加载 VIP 配置失败，请检查网络后重试。' : 'Failed to load VIP data. Check the connection and retry.');
     } finally {
       setLoading(false);
     }
-  }, [authHeaders, page, pageSize, prefixId, search, typeFilter]);
+  }, [authHeaders, page, pageSize, prefixId, search, typeFilter, zh]);
 
   useEffect(() => {
     loadData();
@@ -136,7 +153,6 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
         real_servers: vipItem.real_servers || '',
         description: vipItem.description || '',
         status: vipItem.status || 'active',
-        tenant_id: vipItem.tenant_id || 'tenant-default',
       });
     } else {
       setEditingVip(null);
@@ -149,7 +165,6 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
         real_servers: '',
         description: '',
         status: 'active',
-        tenant_id: prefixScope?.tenant_id || 'tenant-default',
       });
     }
     setShowAddEdit(true);
@@ -166,7 +181,7 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
       ...form,
       device_id: form.device_id || null,
       backup_device_id: form.backup_device_id || null,
-      tenant_id: form.tenant_id || 'tenant-default',
+      tenant_id: DEFAULT_TENANT_ID,
       ...(prefixId ? { prefix_id: prefixId } : {}),
     };
 
@@ -229,7 +244,6 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
       { header: zh ? '备用/Standby 设备' : 'Standby Device', value: (vip) => deviceName(vip.backup_device_id, vip.backup_device_name) },
       { header: zh ? '控制接口' : 'Interface', value: (vip) => vip.interface_name || '-' },
       { header: zh ? '物理服务器组 (Real Servers)' : 'Underlying Real Servers', value: (vip) => vip.real_servers || '-' },
-      { header: zh ? '所属租户' : 'Tenant', value: (vip) => vip.tenant_name || '-' },
       { header: zh ? '状态' : 'Status', value: (vip) => vip.status.toUpperCase() },
       { header: zh ? '备注说明' : 'Description', value: (vip) => vip.description || '-' },
     ], allVips);
@@ -287,6 +301,15 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
         }
       />
 
+      {loadError && (
+        <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-semibold text-rose-700">
+          <span>{loadError}</span>
+          <button type="button" onClick={() => void loadData()} disabled={loading} className="shrink-0 rounded-lg bg-white px-3 py-1.5 text-rose-700 shadow-sm hover:bg-rose-100 disabled:opacity-50">
+            {zh ? '重试' : 'Retry'}
+          </button>
+        </div>
+      )}
+
       {/* Main Table Card */}
       <div className="flex-1 min-h-0 bg-white rounded-[28px] border border-black/5 shadow-[0_16px_36px_rgba(11,35,64,0.06)] overflow-hidden flex flex-col">
         <div className="flex-1 overflow-auto">
@@ -304,7 +327,6 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
                   <th className="px-4 py-4">{zh ? '备用/Standby 设备' : 'Standby Device'}</th>
                   <th className="px-4 py-4">{zh ? '控制接口' : 'Interface'}</th>
                   <th className="px-4 py-4">{zh ? '物理服务器组 (Real Servers)' : 'Underlying Real Servers'}</th>
-                  <th className="px-4 py-4">{zh ? '所属租户' : 'Tenant'}</th>
                   <th className="px-4 py-4">{zh ? '状态' : 'Status'}</th>
                   <th className="px-4 py-4">{zh ? '备注说明' : 'Description'}</th>
                   <TableActionHeader className="pr-6 py-4 text-right">{zh ? '操作' : 'Actions'}</TableActionHeader>
@@ -338,7 +360,6 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
                           '-'
                         )}
                       </td>
-                      <td className="px-4 py-4 text-xs text-gray-500 font-medium">{node.tenant_name || '-'}</td>
                       <td className="px-4 py-4">
                         <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-600 border border-emerald-500/10`}>
                           <span className="w-1 h-1 rounded-full bg-emerald-500" />
@@ -496,20 +517,6 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
                       placeholder="e.g. VIP100"
                       className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                     />
-                  </div>
-
-                  {/* Tenant Select */}
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '归属租户' : 'Tenant'}</label>
-                    <select
-                      value={form.tenant_id}
-                      onChange={(e) => setForm({ ...form, tenant_id: e.target.value })}
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
-                    >
-                      {tenants.map((item) => (
-                        <option key={item.id} value={item.id}>{item.name}</option>
-                      ))}
-                    </select>
                   </div>
 
                   {/* Real Server IPs */}

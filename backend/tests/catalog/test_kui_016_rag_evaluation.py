@@ -67,15 +67,17 @@ def test_kui016_projection_redacts_ids_and_debug(monkeypatch):
     assert report["gates"] and all(item["passed"] for item in report["gates"])
 
 
-def test_kui016_tenant_projection_is_request_scoped(monkeypatch):
+def test_kui016_single_org_report_is_visible_across_tenants(monkeypatch):
     import services.knowledge_evaluation_service as service
+    from core import tenant_policy
 
+    monkeypatch.setattr(tenant_policy, "TENANT_ISOLATION_ENABLED", False)
     monkeypatch.setattr(service, "_LAST_REPORT", None)
     monkeypatch.setattr(service, "_run_postgresql_baseline", _raw_report)
     first = service.run_evaluation(_user("tenant-a"))
     second = service.get_evaluation_report(_user("tenant-b"))
-    assert first["tenant_id"] == "tenant-a"
-    assert second["tenant_id"] == "tenant-b"
+    assert first["tenant_id"] == "tenant-default"
+    assert second["tenant_id"] == "tenant-default"
     assert second["baseline_id"] == "kui016-test"
 
 

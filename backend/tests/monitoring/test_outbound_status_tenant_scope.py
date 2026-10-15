@@ -99,7 +99,7 @@ def test_outbound_status_only_returns_authenticated_tenant_targets_and_samples(i
     assert all(point['total_targets'] == 1 for point in response['history'])
 
 
-def test_outbound_status_route_passes_the_authenticated_tenant(monkeypatch):
+def test_outbound_status_route_uses_organization_wide_scope(monkeypatch):
     captured = {}
 
     def fake_get_outbound_status(*, history_hours, tenant_id):
@@ -112,4 +112,4 @@ def test_outbound_status_route_passes_the_authenticated_tenant(monkeypatch):
     response = monitoring.get_monitoring_outbound_status(history_hours=12, user=user)
 
     assert response == {"current": None, "history": [], "targets": []}
-    assert captured == {"history_hours": 12, "tenant_id": "tenant-route-a"}
+    assert captured == {"history_hours": 12, "tenant_id": None}

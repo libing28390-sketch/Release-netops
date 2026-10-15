@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from typing import Any, Mapping
 
 from ai.security.sanitizer import sanitize_log_text
+from core.tenant_policy import tenant_id_for_write
 
 
 MAX_TRACES = 200
@@ -477,7 +478,8 @@ def _project(
 
 def record_retrieval_trace(*, tenant_id: str, user_id: str | None, query: str, trace: Mapping[str, Any], observation: Mapping[str, Any] | None = None, request_id: str | None = None) -> str:
     trace_id = f"rt_{uuid.uuid4().hex[:24]}"
-    projected = _project(trace_id=trace_id, tenant_id=tenant_id or "tenant-default", user_id=user_id, query=query, trace=trace, observation=observation, request_id=request_id)
+    stored_tenant = tenant_id_for_write(requested=tenant_id)
+    projected = _project(trace_id=trace_id, tenant_id=stored_tenant, user_id=user_id, query=query, trace=trace, observation=observation, request_id=request_id)
     with _LOCK:
         _TRACES.appendleft(projected)
     return trace_id
@@ -517,18 +519,22 @@ def update_retrieval_trace(trace_id: str, *, citations: list[Mapping[str, Any]] 
             return
 
 
-def list_retrieval_traces(*, tenant_id: str, limit: int = 50, status: str = "all") -> list[dict[str, Any]]:
+def list_retrieval_traces(*, tenant_id: str | None, limit: int = 50, status: str = "all") -> list[dict[str, Any]]:
     bounded = max(1, min(int(limit or 50), MAX_TRACES))
     status_filter = _text(status or "all", 32).lower()
     with _LOCK:
-        rows = [dict(item) for item in _TRACES if item.get("tenant_id") == (tenant_id or "tenant-default") and (status_filter in {"", "all"} or item.get("status") == status_filter)]
+        rows = [
+            dict(item) for item in _TRACES
+            if (tenant_id is None or item.get("tenant_id") == tenant_id)
+            and (status_filter in {"", "all"} or item.get("status") == status_filter)
+        ]
     return rows[:bounded]
 
 
-def get_retrieval_trace(*, tenant_id: str, trace_id: str) -> dict[str, Any] | None:
+def get_retrieval_trace(*, tenant_id: str | None, trace_id: str) -> dict[str, Any] | None:
     with _LOCK:
         for item in _TRACES:
-            if item.get("trace_id") == trace_id and item.get("tenant_id") == (tenant_id or "tenant-default"):
+            if item.get("trace_id") == trace_id and (tenant_id is None or item.get("tenant_id") == tenant_id):
                 return dict(item)
     return None
 

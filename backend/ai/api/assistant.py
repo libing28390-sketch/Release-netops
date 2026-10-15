@@ -9,6 +9,7 @@ import time
 from typing import Any, Dict, List, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from pydantic import BaseModel, ConfigDict, Field
+from core.tenant_policy import tenant_id_for_write
 from ai.gateway.exceptions import AISecurityBlockedException
 from ai.security.classification import request_policy_findings
 from ai.security.gateway import ai_security_gateway
@@ -694,7 +695,7 @@ def knowledge_retrieval_test(
     It never returns provider credentials, raw SQL or unbounded document data.
     """
 
-    tenant_id = str(user.get("tenant_id") or "tenant-default")
+    tenant_id = None
     user_id = str(user.get("username") or "")
     roles = [str(user.get("role"))] if user.get("role") else []
     metadata = intent_parser.parse_knowledge_metadata(payload.query)
@@ -770,7 +771,7 @@ def knowledge_retrieval_test(
 async def locate_ip(req: IPLocationRequest, user=Depends(require_ai_permission("ai.use"))):
     """Intelligent IP Location & Troubleshooting Endpoint."""
     user_id = user.get("username", "user")
-    tenant_id = user.get("tenant_id") or "tenant-default"
+    tenant_id = None
     return await ip_troubleshooting_service.troubleshoot_ip(
         req.ip,
         user_id=user_id,
@@ -782,7 +783,7 @@ async def locate_ip(req: IPLocationRequest, user=Depends(require_ai_permission("
 async def locate_mac(req: MACLocationRequest, user=Depends(require_ai_permission("ai.use"))):
     """Intelligent MAC Location Endpoint."""
     user_id = user.get("username", "user")
-    tenant_id = user.get("tenant_id") or "tenant-default"
+    tenant_id = None
     return await mac_troubleshooting_service.troubleshoot_mac(
         req.mac,
         user_id=user_id,
@@ -794,7 +795,7 @@ async def locate_mac(req: MACLocationRequest, user=Depends(require_ai_permission
 @router.get("/knowledge-bases")
 def list_knowledge_bases(user=Depends(require_ai_permission("ai.view"))):
     """List Knowledge Bases."""
-    return knowledge_service.list_knowledge_bases(tenant_id=user.get("tenant_id") or "tenant-default")
+    return knowledge_service.list_knowledge_bases(tenant_id=None)
 
 
 @router.post("/knowledge-bases")
@@ -804,7 +805,7 @@ def create_knowledge_base(payload: KnowledgeBaseCreateRequest, user=Depends(requ
         name=payload.name,
         description=payload.description,
         created_by=user.get("username", "admin"),
-        tenant_id=user.get("tenant_id") or "tenant-default",
+        tenant_id=tenant_id_for_write(user=user),
         acl=payload.acl,
     )
 
@@ -812,7 +813,7 @@ def create_knowledge_base(payload: KnowledgeBaseCreateRequest, user=Depends(requ
 @router.get("/knowledge-stats")
 def get_knowledge_stats(user=Depends(require_ai_permission("ai.view"))):
     """Get metrics on Total Documents, Chunks, Vendors, Ready Indexes."""
-    return knowledge_service.get_knowledge_stats(tenant_id=user.get("tenant_id") or "tenant-default")
+    return knowledge_service.get_knowledge_stats(tenant_id=None)
 
 
 @router.get("/knowledge-options")
@@ -831,7 +832,7 @@ def start_knowledge_reindex(payload: KnowledgeReindexRequest | None = None, user
         if getattr(payload, key)
     }
     return knowledge_reindex_service.create_job(
-        tenant_id=user.get("tenant_id") or "tenant-default",
+        tenant_id=tenant_id_for_write(user=user),
         scope=scope,
         dry_run=payload.dry_run,
         run_async=payload.run_async,
@@ -845,7 +846,7 @@ def start_knowledge_reindex(payload: KnowledgeReindexRequest | None = None, user
 @router.get("/knowledge-reindex/{job_id}")
 def get_knowledge_reindex_status(job_id: str, user=Depends(require_ai_permission("ai.view"))):
     status = knowledge_reindex_service.get_status(job_id)
-    if not status or status.get("tenant_id") not in {user.get("tenant_id"), "tenant-default"}:
+    if not status:
         raise HTTPException(status_code=404, detail="reindex job not found")
     return status
 
@@ -854,7 +855,7 @@ def get_knowledge_reindex_status(job_id: str, user=Depends(require_ai_permission
 def retry_knowledge_reindex(job_id: str, user=Depends(require_ai_permission("ai.knowledge.manage"))):
     try:
         status = knowledge_reindex_service.get_status(job_id)
-        if not status or status.get("tenant_id") not in {user.get("tenant_id"), "tenant-default"}:
+        if not status:
             raise KeyError(job_id)
         return knowledge_reindex_service.retry(job_id, run_async=True)
     except KeyError as exc:
@@ -863,15 +864,14 @@ def retry_knowledge_reindex(job_id: str, user=Depends(require_ai_permission("ai.
 
 @router.get("/knowledge-directories")
 def list_knowledge_directories(user=Depends(require_ai_permission("ai.view"))):
-    """Return the tenant's nested import directory tree."""
-    tenant_id = user.get("tenant_id") or "tenant-default"
+    """Return the nested import directory tree."""
     knowledge_base = knowledge_service.get_or_create_default_knowledge_base(
-        tenant_id=tenant_id,
+        tenant_id=None,
         created_by=user.get("username", "admin"),
     )
     return knowledge_service.list_knowledge_directories(
         knowledge_base_id=knowledge_base["id"],
-        tenant_id=tenant_id,
+        tenant_id=None,
         created_by=user.get("username", "admin"),
     )
 
@@ -879,10 +879,10 @@ def list_knowledge_directories(user=Depends(require_ai_permission("ai.view"))):
 @router.post("/knowledge-directories")
 def create_knowledge_directory(payload: KnowledgeDirectoryCreateRequest, user=Depends(require_ai_permission("ai.knowledge.manage"))):
     """Create a root directory or a child below an existing directory."""
-    tenant_id = user.get("tenant_id") or "tenant-default"
+    tenant_id = tenant_id_for_write(user=user)
     try:
         knowledge_base = knowledge_service.get_or_create_default_knowledge_base(
-            tenant_id=tenant_id,
+            tenant_id=None,
             created_by=user.get("username", "admin"),
         )
         return knowledge_service.create_knowledge_directory(
@@ -906,7 +906,7 @@ def rename_knowledge_directory(directory_id: str, payload: KnowledgeDirectoryRen
         return knowledge_service.rename_knowledge_directory(
             directory_id=directory_id,
             name=payload.name,
-            tenant_id=user.get("tenant_id") or "tenant-default",
+            tenant_id=None,
         )
     except ValueError as exc:
         raise HTTPException(
@@ -921,7 +921,7 @@ def delete_knowledge_directory(directory_id: str, user=Depends(require_ai_permis
     try:
         return knowledge_service.delete_knowledge_directory(
             directory_id=directory_id,
-            tenant_id=user.get("tenant_id") or "tenant-default",
+            tenant_id=None,
         )
     except ValueError as exc:
         raise HTTPException(
@@ -980,7 +980,7 @@ def list_documents(
         page_size=page_size,
         sort_by=sort_by,
         sort_order=sort_order,
-        tenant_id=user.get("tenant_id") or "tenant-default",
+        tenant_id=None,
     )
     allowed_sort_fields = {"created_at", "name", "vendor", "platform", "status", "chunk_count"}
     normalized_sort = sort_by.strip().lower() if sort_by.strip().lower() in allowed_sort_fields else "created_at"
@@ -1036,7 +1036,7 @@ def export_knowledge_documents(
     """
     try:
         bundle = knowledge_export_service.build_export(
-            tenant_id=user.get("tenant_id") or "tenant-default",
+            tenant_id=None,
             source_type=source_type,
             knowledge_scope=knowledge_scope,
             search=search,
@@ -1094,14 +1094,14 @@ def list_document_facets(
         product_family=product_family,
         product_series=product_series,
         metadata_governance_status=metadata_governance_status,
-        tenant_id=user.get("tenant_id") or "tenant-default",
+        tenant_id=None,
     )
 
 
 @router.post("/documents")
 def add_document(payload: KnowledgeDocumentCreateRequest, user=Depends(require_ai_permission("ai.knowledge.manage"))):
     """Add document and perform automatic chunking + embedding."""
-    tenant_id = user.get("tenant_id") or "tenant-default"
+    tenant_id = tenant_id_for_write(user=user)
     if payload.metadata_confirmation_token or payload.metadata_confirmed:
         try:
             validate_metadata_confirmation(
@@ -1122,7 +1122,7 @@ def add_document(payload: KnowledgeDocumentCreateRequest, user=Depends(require_a
             if exc.details is not None:
                 detail["details"] = exc.details
             raise HTTPException(status_code=exc.status_code, detail=detail) from exc
-    kb_list = knowledge_service.list_knowledge_bases(tenant_id=tenant_id)
+    kb_list = knowledge_service.list_knowledge_bases(tenant_id=None)
     kb_id = kb_list[0]["id"] if kb_list else knowledge_service.create_knowledge_base("Default KB", tenant_id=tenant_id)["id"]
     return knowledge_service.add_document_and_chunk(
         knowledge_base_id=kb_id,
@@ -1159,7 +1159,7 @@ async def import_document_bundle(
     try:
         result = import_knowledge_bundle(
             content,
-            tenant_id=user.get("tenant_id") or "tenant-default",
+            tenant_id=tenant_id_for_write(user=user),
             request_id=request_id_var.get("-"),
         )
     except KnowledgeBundleImportError as exc:
@@ -1202,15 +1202,15 @@ def preview_document_metadata_endpoint(
 @router.post("/clear-sample-knowledge")
 def clear_sample_knowledge(user=Depends(require_ai_permission("ai.knowledge.manage"))):
     """Clear all sample knowledge documents."""
-    return knowledge_service.clear_sample_knowledge(tenant_id=user.get("tenant_id") or "tenant-default")
+    return knowledge_service.clear_sample_knowledge(tenant_id=None)
 
 
 @router.get("/documents/{doc_id}")
 def get_document_detail(doc_id: str, user=Depends(require_ai_permission("ai.view"))):
-    """Return a tenant-safe document detail view with ordered chunk content."""
+    """Return a document detail view with ordered chunk content."""
     document = knowledge_service.get_document_detail(
         doc_id,
-        tenant_id=user.get("tenant_id") or "tenant-default",
+        tenant_id=None,
     )
     if not document:
         raise HTTPException(status_code=404, detail="文档不存在或无权查看")
@@ -1223,7 +1223,7 @@ def get_document_action_impact(doc_id: str, user=Depends(require_ai_permission("
     try:
         return knowledge_service.get_document_action_impact(
             doc_id=doc_id,
-            tenant_id=user.get("tenant_id") or "tenant-default",
+            tenant_id=None,
         )
     except KnowledgeDocumentActionError as exc:
         raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
@@ -1239,7 +1239,7 @@ def _execute_knowledge_document_action(
         return knowledge_service.execute_document_action(
             doc_id=doc_id,
             action=action,
-            tenant_id=user.get("tenant_id") or "tenant-default",
+            tenant_id=None,
             actor_id=user.get("id") or user.get("user_id") or user.get("username") or "system",
             actor_username=user.get("username") or "system",
             confirm=payload.confirm,
@@ -1336,7 +1336,7 @@ def batch_delete_documents(payload: KnowledgeBatchDeleteRequest, user=Depends(re
                 "message": "explicit confirmation is required for batch deletion",
             },
         )
-    tenant_id = user.get("tenant_id") or "tenant-default"
+    tenant_id = tenant_id_for_write(user=user)
     actions = []
     for doc_id in payload.doc_ids:
         try:

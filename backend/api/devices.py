@@ -19,6 +19,8 @@ from services.platform_registry_service import PLATFORM_CATALOG_METADATA, list_p
 from services import tag_service
 from core.crypto import encrypt_credential, decrypt_credential
 from core.rbac import authorize_resource, is_global_administrator, require_role
+from core.tenant_policy import TENANT_ISOLATION_ENABLED, tenant_id_for_write
+from services.rack_scope_service import allowed_resource_scope, device_scope_predicate
 from services.vault_service import resolve_device_credentials, resolve_collector_credentials, write_credentials as vault_write, vault_available
 from services.snmp_mib_service import (
     list_mibs_page,
@@ -130,14 +132,8 @@ def _utc_now() -> str:
 
 
 def _tenant_id_from_authenticated_user(user: dict) -> str:
-    """Return the non-empty tenant that owns a newly written device."""
-    tenant_id = str(user.get('tenant_id') or '').strip() if isinstance(user, dict) else ''
-    if not tenant_id:
-        raise HTTPException(
-            status_code=403,
-            detail='Authenticated user is not assigned to a tenant',
-        )
-    return tenant_id
+    """Return the persisted tenant label for a new device row."""
+    return tenant_id_for_write(user=user)
 
 
 def _assert_operational_data_device_scope(user: dict, device: dict) -> None:
@@ -153,10 +149,10 @@ def _assert_operational_data_device_scope(user: dict, device: dict) -> None:
     user_tenant = str(user.get('tenant_id') or '').strip()
     device_tenant = str(device.get('tenant_id') or '').strip()
 
-    # Non-admin users must be explicitly tenant-scoped and the device must
-    # carry the same tenant.  This also fails closed for legacy rows without a
-    # tenant instead of allowing credential-backed collection by id alone.
-    if not global_admin and (not user_tenant or not device_tenant or user_tenant != device_tenant):
+    # Tenant equality is enforced only when tenant isolation is enabled.
+    # Single-organization mode still checks role/action and any explicit
+    # site/device-group scopes before credential-backed collection.
+    if TENANT_ISOLATION_ENABLED and not global_admin and (not user_tenant or not device_tenant or user_tenant != device_tenant):
         raise HTTPException(status_code=403, detail={
             'code': 'RESOURCE_SCOPE_DENIED',
             'message': 'Device belongs to another or unscoped tenant',
@@ -1200,11 +1196,22 @@ def read_devices(
     page_size: Optional[int] = Query(default=None, ge=1, le=1000),
     include_facets: bool = Query(default=False),
     asset_type: Optional[str] = Query(default='all'),
+    user=require_role("Viewer"),
 ):
     conn = get_db_connection()
     try:
         base_where_clauses: list[str] = []
         base_params: list[Any] = []
+
+        if isinstance(user, dict):
+            scope = allowed_resource_scope(conn, user, 'asset', 'view')
+            scope_sql, scope_params = device_scope_predicate(scope, device_alias='d')
+            if scope_sql:
+                base_where_clauses.append(scope_sql)
+                base_params.extend(scope_params)
+            if scope.tenant_id:
+                base_where_clauses.append("COALESCE(d.tenant_id, 'tenant-default') = ?")
+                base_params.append(scope.tenant_id)
 
         if asset_type and asset_type != 'all':
             # Default unlinked devices to 'network_device'
@@ -1501,13 +1508,15 @@ def read_devices_summary(
             )
             params.append(asset_type)
 
-        # Device rows are tenant-owned.  Administrators retain the existing
-        # cross-tenant read behavior; all other sessions use the same default
-        # tenant fallback as the monitoring read APIs.
-        if isinstance(user, dict) and user.get('role') != 'Administrator':
-            tenant_id = str(user.get('tenant_id') or 'tenant-default').strip() or 'tenant-default'
-            where_clauses.append("COALESCE(d.tenant_id, 'tenant-default') = ?")
-            params.append(tenant_id)
+        if isinstance(user, dict):
+            scope = allowed_resource_scope(conn, user, 'asset', 'view')
+            scope_sql, scope_params = device_scope_predicate(scope, device_alias='d')
+            if scope_sql:
+                where_clauses.append(scope_sql)
+                params.extend(scope_params)
+            if scope.tenant_id:
+                where_clauses.append("COALESCE(d.tenant_id, 'tenant-default') = ?")
+                params.append(scope.tenant_id)
 
         where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ''
         platform_expr = "COALESCE(NULLIF(TRIM(d.platform), ''), 'unknown')"
@@ -1527,6 +1536,7 @@ def read_devices_summary(
                                        THEN d.id END) AS unknown_count
               FROM devices d
               LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+              LEFT JOIN sites s ON s.id = COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''))
               {where_sql}
              GROUP BY {platform_expr}
              ORDER BY {platform_expr}
@@ -2985,7 +2995,7 @@ def _assert_snmp_diagnostic_device_scope(user: dict, device: dict) -> None:
 
     user_tenant = str(user.get("tenant_id") or "").strip()
     device_tenant = str(device.get("site_tenant_id") or device.get("tenant_id") or "").strip()
-    if not user_tenant or not device_tenant or user_tenant != device_tenant:
+    if TENANT_ISOLATION_ENABLED and (not user_tenant or not device_tenant or user_tenant != device_tenant):
         raise HTTPException(
             status_code=403,
             detail={"code": "RESOURCE_SCOPE_DENIED", "message": "Device belongs to another or unscoped tenant"},

@@ -100,7 +100,7 @@ def test_cat017_resolution_unknown_legacy_and_rollback_fail_closed():
     assert data["rollback"]["data"] == "retain_reviewed_seed_artifact_and_all_v1_metadata"
 
 
-def test_cat017_product_adapter_exposes_tenant_scoped_ruijie_seed_and_exact_version():
+def test_cat017_product_adapter_exposes_org_wide_ruijie_seed_and_exact_version():
     from services.product_catalog_service import ProductCatalogError, list_product_catalog
 
     default_user = {"id": "cat017-viewer", "role": "Viewer", "tenant_id": "tenant-default-reviewed"}
@@ -111,7 +111,7 @@ def test_cat017_product_adapter_exposes_tenant_scoped_ruijie_seed_and_exact_vers
     versioned = list_product_catalog(default_user, software_version="RGOS 11.0(5)B9P59")
     assert versioned["total"] == 3
     assert {item["vendor_id"] for item in versioned["items"]} == {"ruijie"}
-    assert list_product_catalog({"role": "Viewer", "tenant_id": "tenant-other"}, vendor_id="ruijie")["total"] == 0
+    assert list_product_catalog({"role": "Viewer", "tenant_id": "tenant-other"}, vendor_id="ruijie")["total"] == 3
     with pytest.raises(ProductCatalogError) as invalid:
         list_product_catalog(default_user, software_version="RGOS\n11.0(5)B9P59")
     assert invalid.value.code == "CATALOG_FILTER_INVALID"

@@ -12,6 +12,7 @@ import uuid
 from contextlib import nullcontext
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
+from core.tenant_policy import tenant_id_for_write
 from database.core import get_db_connection
 from psycopg2.extras import Json
 from ai.chunking.engine import ChunkingEngine
@@ -68,6 +69,19 @@ _CHUNK_DETAIL_SENSITIVE_KEY_RE = re.compile(
     re.IGNORECASE,
 )
 _CHUNK_DETAIL_MAX_TEXT = 20_000
+
+
+def _legacy_tenant_filter(tenant_id: str | None, *, alias: str = "") -> tuple[str, list[Any]]:
+    """Build an optional legacy tenant predicate for internal scoped callers.
+
+    User-facing single-organization routes pass ``None`` so SQL omits this
+    predicate entirely. The stored tenant label remains available for
+    provenance and object-linked revision records.
+    """
+    if tenant_id is None:
+        return "", []
+    column = f"{alias}tenant_id"
+    return f" AND (COALESCE({column}, 'tenant-default') = ? OR {column} = 'tenant-default')", [tenant_id]
 
 
 def _directory_filter_sql(
@@ -208,9 +222,10 @@ class KnowledgeService:
         name: str,
         description: Optional[str] = None,
         created_by: Optional[str] = "admin",
-        tenant_id: str = "tenant-default",
+        tenant_id: str | None = None,
         acl: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        tenant_id = tenant_id_for_write(requested=tenant_id)
         now_iso = datetime.now(timezone.utc).isoformat()
         kb_id = f"kb_{uuid.uuid4().hex[:12]}"
         with get_db_connection() as conn:
@@ -222,10 +237,15 @@ class KnowledgeService:
             conn.commit()
         return {"id": kb_id, "name": name, "description": description, "tenant_id": tenant_id, "acl": acl or {}, "created_at": now_iso}
 
-    def list_knowledge_bases(self, tenant_id: str = "tenant-default") -> List[Dict[str, Any]]:
+    def list_knowledge_bases(self, tenant_id: str | None = None) -> List[Dict[str, Any]]:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT id, name, description, enabled, created_by, tenant_id, acl_json, created_at FROM ai_knowledge_base WHERE enabled = 1 AND (tenant_id = ? OR tenant_id = 'tenant-default')", (tenant_id,))
+            tenant_filter, tenant_params = _legacy_tenant_filter(tenant_id)
+            cursor.execute(
+                "SELECT id, name, description, enabled, created_by, tenant_id, acl_json, created_at "
+                "FROM ai_knowledge_base WHERE enabled = 1" + tenant_filter + " ORDER BY created_at, id",
+                tenant_params,
+            )
             rows = cursor.fetchall()
             result = []
             for r in rows:
@@ -238,10 +258,10 @@ class KnowledgeService:
 
     def get_or_create_default_knowledge_base(
         self,
-        tenant_id: str = "tenant-default",
+        tenant_id: str | None = None,
         created_by: str = "admin",
     ) -> Dict[str, Any]:
-        """Return the first enabled tenant KB, creating the default one when needed."""
+        """Return the first enabled KB, creating a default KB when needed."""
         knowledge_bases = self.list_knowledge_bases(tenant_id=tenant_id)
         if knowledge_bases:
             return knowledge_bases[0]
@@ -249,7 +269,7 @@ class KnowledgeService:
             name="Default KB",
             description="Enterprise network knowledge base",
             created_by=created_by,
-            tenant_id=tenant_id,
+            tenant_id=tenant_id_for_write(requested=tenant_id),
         )
 
     @staticmethod
@@ -346,23 +366,23 @@ class KnowledgeService:
     def list_knowledge_directories(
         self,
         knowledge_base_id: str,
-        tenant_id: str = "tenant-default",
+        tenant_id: str | None = None,
         created_by: str = "admin",
     ) -> Dict[str, Any]:
-        """Return a nested directory tree for one tenant knowledge base."""
+        """Return the nested directory tree for one knowledge base."""
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            self._ensure_default_directories(cursor, knowledge_base_id, tenant_id, created_by)
+            seed_tenant = tenant_id_for_write(requested=tenant_id)
+            self._ensure_default_directories(cursor, knowledge_base_id, seed_tenant, created_by)
             conn.commit()
+            tenant_filter, tenant_params = _legacy_tenant_filter(tenant_id)
             cursor.execute(
                 """
                 SELECT id, knowledge_base_id, tenant_id, parent_id, name, path, depth,
                        is_system, sort_order, created_by, created_at, updated_at
-                FROM ai_knowledge_directory
-                WHERE knowledge_base_id = ? AND tenant_id = ?
-                ORDER BY depth ASC, sort_order ASC, LOWER(name) ASC, name ASC
-                """,
-                (knowledge_base_id, tenant_id),
+                FROM ai_knowledge_directory WHERE knowledge_base_id = ?
+                """ + tenant_filter + " ORDER BY depth ASC, sort_order ASC, LOWER(name) ASC, name ASC, tenant_id ASC, id ASC",
+                [knowledge_base_id, *tenant_params],
             )
             nodes = {str(row[0]): self._directory_node_from_row(row) for row in cursor.fetchall()}
 
@@ -375,11 +395,11 @@ class KnowledgeService:
                 roots.append(node)
 
         def sort_children(node: Dict[str, Any]) -> None:
-            node["children"].sort(key=lambda child: (child["sort_order"], str(child["name"]).lower(), child["name"]))
+            node["children"].sort(key=lambda child: (child["sort_order"], str(child["name"]).lower(), child["name"], str(child["tenant_id"]), str(child["id"])))
             for child in node["children"]:
                 sort_children(child)
 
-        roots.sort(key=lambda node: (node["sort_order"], str(node["name"]).lower(), node["name"]))
+        roots.sort(key=lambda node: (node["sort_order"], str(node["name"]).lower(), node["name"], str(node["tenant_id"]), str(node["id"])))
         for root in roots:
             sort_children(root)
         return {"items": roots, "total": len(nodes)}
@@ -389,28 +409,33 @@ class KnowledgeService:
         knowledge_base_id: str,
         name: str,
         parent_id: Optional[str] = None,
-        tenant_id: str = "tenant-default",
+        tenant_id: str | None = None,
         created_by: str = "admin",
     ) -> Dict[str, Any]:
-        """Create one root or child directory after validating tenant ownership."""
+        """Create a default root or extend the identity of an existing parent."""
         directory_name = self._validate_directory_name(name)
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            self._ensure_default_directories(cursor, knowledge_base_id, tenant_id, created_by)
+            tenant_id = tenant_id_for_write(requested=tenant_id)
 
             parent: Optional[Any] = None
             if parent_id:
                 cursor.execute(
                     """
-                    SELECT id, path, depth
+                    SELECT id, path, depth, tenant_id
                     FROM ai_knowledge_directory
-                    WHERE id = ? AND knowledge_base_id = ? AND tenant_id = ?
+                    WHERE id = ? AND knowledge_base_id = ?
                     """,
-                    (parent_id, knowledge_base_id, tenant_id),
+                    (parent_id, knowledge_base_id),
                 )
                 parent = cursor.fetchone()
                 if not parent:
-                    raise ValueError("父目录不存在或无权访问")
+                    raise ValueError("父目录不存在")
+                # A child remains in the parent directory's stored namespace;
+                # this is an object identity relationship, not a user scope.
+                tenant_id = str(parent[3] or "tenant-default")
+
+            self._ensure_default_directories(cursor, knowledge_base_id, tenant_id, created_by)
 
             if parent:
                 directory_path = f"{parent[1]}/{directory_name}"
@@ -480,7 +505,7 @@ class KnowledgeService:
         self,
         directory_id: str,
         name: str,
-        tenant_id: str = "tenant-default",
+        tenant_id: str | None = None,
     ) -> Dict[str, Any]:
         """Rename a directory and keep every descendant path consistent."""
         directory_name = self._validate_directory_name(name)
@@ -490,15 +515,16 @@ class KnowledgeService:
                 """
                 SELECT id, knowledge_base_id, tenant_id, parent_id, name, path, depth
                 FROM ai_knowledge_directory
-                WHERE id = ? AND tenant_id = ?
+                WHERE id = ?
                 """,
-                (directory_id, tenant_id),
+                (directory_id,),
             )
             row = cursor.fetchone()
             if not row:
-                raise ValueError("目录不存在或无权访问")
+                raise ValueError("目录不存在")
 
             knowledge_base_id = row[1]
+            tenant_id = str(row[2] or "tenant-default")
             parent_id = row[3]
             if parent_id:
                 cursor.execute(
@@ -562,18 +588,18 @@ class KnowledgeService:
                 raise RuntimeError("目录重命名后无法读取")
             return self._directory_node_from_row(renamed)
 
-    def delete_knowledge_directory(self, directory_id: str, tenant_id: str = "tenant-default") -> Dict[str, Any]:
+    def delete_knowledge_directory(self, directory_id: str, tenant_id: str | None = None) -> Dict[str, Any]:
         """Delete one directory and all of its descendants, leaving documents intact."""
         with get_db_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT id, knowledge_base_id, path FROM ai_knowledge_directory WHERE id = ? AND tenant_id = ?",
-                (directory_id, tenant_id),
+                "SELECT id, knowledge_base_id, tenant_id, path FROM ai_knowledge_directory WHERE id = ?",
+                (directory_id,),
             )
             row = cursor.fetchone()
             if not row:
-                raise ValueError("目录不存在或无权访问")
-            knowledge_base_id, directory_path = row[1], str(row[2])
+                raise ValueError("目录不存在")
+            knowledge_base_id, tenant_id, directory_path = row[1], str(row[2] or "tenant-default"), str(row[3])
             cursor.execute(
                 "SELECT id FROM ai_knowledge_directory WHERE knowledge_base_id = ? AND tenant_id = ? AND (path = ? OR path LIKE ?) ORDER BY depth DESC",
                 (knowledge_base_id, tenant_id, directory_path, f"{directory_path}/%"),
@@ -584,26 +610,30 @@ class KnowledgeService:
             conn.commit()
             return {"deleted_count": len(ids), "directory_id": directory_id}
 
-    def get_knowledge_stats(self, tenant_id: str = "tenant-default") -> Dict[str, Any]:
+    def get_knowledge_stats(self, tenant_id: str | None = None) -> Dict[str, Any]:
         """Return metrics: total_documents, total_chunks, total_vendors, ready_indexes."""
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            scope = "COALESCE(tenant_id, 'tenant-default') IN (?, 'tenant-default')"
-            cursor.execute(f"SELECT COUNT(*) FROM ai_document WHERE status = 'active' AND {scope}", (tenant_id,))
+            tenant_filter, tenant_params = _legacy_tenant_filter(tenant_id)
+            cursor.execute(
+                "SELECT COUNT(*) FROM ai_document WHERE status = 'active'" + tenant_filter,
+                tenant_params,
+            )
             total_docs = (cursor.fetchone() or [0])[0]
 
+            joined_filter, joined_params = _legacy_tenant_filter(tenant_id, alias="d.")
             cursor.execute(
                 "SELECT COUNT(*) FROM ai_document_chunk c "
                 "JOIN ai_document d ON d.id = c.document_id "
-                f"WHERE d.status = 'active' AND {scope.replace('tenant_id', 'd.tenant_id')}",
-                (tenant_id,),
+                "WHERE d.status = 'active'" + joined_filter,
+                joined_params,
             )
             total_chunks = (cursor.fetchone() or [0])[0]
 
             cursor.execute(
-                f"SELECT COUNT(DISTINCT vendor) FROM ai_document WHERE status = 'active' "
-                f"AND vendor IS NOT NULL AND vendor != 'all' AND {scope}",
-                (tenant_id,),
+                "SELECT COUNT(DISTINCT vendor) FROM ai_document WHERE status = 'active' "
+                "AND vendor IS NOT NULL AND vendor != 'all'" + tenant_filter,
+                tenant_params,
             )
             total_vendors = (cursor.fetchone() or [0])[0]
 
@@ -656,7 +686,7 @@ class KnowledgeService:
         knowledge_source_type: Optional[str] = None,
         directory_path: Optional[str] = None,
         knowledge_scope: Optional[str] = None,
-        tenant_id: str = "tenant-default",
+        tenant_id: str | None = None,
         search: str = "",
         vendor: str = "",
         product_family: str = "",
@@ -677,7 +707,7 @@ class KnowledgeService:
         sort_by: str = "created_at",
         sort_order: str = "desc",
     ) -> Dict[str, Any]:
-        """List tenant-safe document summaries with semantic server-side filtering.
+        """List document summaries with semantic server-side filtering.
 
         The physical ``kb_import`` path is an internal storage detail.  It is
         accepted only as a server-side directory selector and is never copied
@@ -703,10 +733,13 @@ class KnowledgeService:
         with get_db_connection() as conn:
             cursor = conn.cursor()
             document_columns = self._table_columns(cursor, "ai_document")
-            where = [
-                "(d.tenant_id = ? OR d.tenant_id = 'tenant-default')",
-            ]
-            params: List[Any] = [tenant_id]
+            where = ["1 = 1"]
+            tenant_filter, tenant_params = _legacy_tenant_filter(tenant_id, alias="d.")
+            if tenant_filter:
+                where.append(tenant_filter.removeprefix(" AND "))
+                params: List[Any] = list(tenant_params)
+            else:
+                params = []
             normalized_status = str(status or "active").strip().lower()
             allowed_statuses = {"active", "draft", "published", "quarantined", "superseded", "disabled", "all"}
             if normalized_status not in allowed_statuses:
@@ -882,7 +915,7 @@ class KnowledgeService:
     def list_document_facets(
         self,
         *,
-        tenant_id: str = "tenant-default",
+        tenant_id: str | None = None,
         knowledge_source_type: Optional[str] = None,
         directory_path: Optional[str] = None,
         knowledge_scope: Optional[str] = None,
@@ -899,8 +932,13 @@ class KnowledgeService:
             required = {"vendor", "product_family", "product_series", "metadata_json"}
             if not required <= document_columns:
                 return {"vendors": [], "families": [], "series": [], "unknown_count": 0}
-            where = ["(d.tenant_id = ? OR d.tenant_id = 'tenant-default')"]
-            params: List[Any] = [tenant_id]
+            where = ["1 = 1"]
+            tenant_filter, tenant_params = _legacy_tenant_filter(tenant_id, alias="d.")
+            if tenant_filter:
+                where.append(tenant_filter.removeprefix(" AND "))
+                params: List[Any] = list(tenant_params)
+            else:
+                params = []
             normalized_status = str(status or "active").strip().lower()
             if normalized_status not in {"active", "draft", "published", "quarantined", "superseded", "disabled", "all"}:
                 normalized_status = "active"
@@ -1000,7 +1038,7 @@ class KnowledgeService:
     def get_document_detail(
         self,
         doc_id: str,
-        tenant_id: str = "tenant-default",
+        tenant_id: str | None = None,
         *,
         include_inactive: bool = False,
     ) -> Optional[Dict[str, Any]]:
@@ -1027,12 +1065,13 @@ class KnowledgeService:
             ]
             selected_optional = [field for field in optional_columns if field in document_columns]
             status_clause = "" if include_inactive else " AND d.status = 'active'"
+            tenant_filter, tenant_params = _legacy_tenant_filter(tenant_id, alias="d.")
             cursor.execute(
                 f"SELECT {', '.join(f'd.{field}' for field in base_columns + selected_optional)} "
                 "FROM ai_document d "
                 f"WHERE d.id = ?{status_clause} "
-                "AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default')",
-                (doc_id, tenant_id),
+                + tenant_filter,
+                [doc_id, *tenant_params],
             )
             row = cursor.fetchone()
             if not row:
@@ -1157,13 +1196,14 @@ class KnowledgeService:
                 ).fetchone()
             )
             if revision_table_exists:
+                document_tenant = str(row_values.get("tenant_id") or "tenant-default")
                 cursor.execute(
                     "SELECT id, revision_no, legacy_source_version_id, content_hash, status, "
                     "lifecycle_status, mime_type, byte_size, canonical_url, source_kind, "
                     "fetched_at, created_at FROM ai_document_revision "
                     "WHERE tenant_id = ? AND document_id = ? AND record_type = 'document_revision' "
                     "ORDER BY revision_no DESC, created_at DESC, id DESC",
-                    (tenant_id, doc_id),
+                    (document_tenant, doc_id),
                 )
                 revision_rows = cursor.fetchall()
             else:
@@ -1225,14 +1265,15 @@ class KnowledgeService:
                 "chunks": chunks,
             }
 
-    def clear_sample_knowledge(self, tenant_id: str = "tenant-default") -> Dict[str, Any]:
+    def clear_sample_knowledge(self, tenant_id: str | None = None) -> Dict[str, Any]:
         """Delete all documents and chunks tagged as sample."""
         with get_db_connection() as conn:
             cursor = conn.cursor()
+            tenant_filter, tenant_params = _legacy_tenant_filter(tenant_id)
             cursor.execute(
                 "SELECT id FROM ai_document WHERE knowledge_source_type = 'sample' "
-                "AND COALESCE(tenant_id, 'tenant-default') = ?",
-                (tenant_id,),
+                + tenant_filter,
+                tenant_params,
             )
             doc_ids = [r[0] for r in cursor.fetchall()]
             
@@ -1244,14 +1285,15 @@ class KnowledgeService:
             retrieval_cache.invalidate_documents(doc_ids)
             return {"deleted_count": len(doc_ids)}
 
-    def delete_document(self, doc_id: str, tenant_id: str = "tenant-default") -> Dict[str, Any]:
+    def delete_document(self, doc_id: str, tenant_id: str | None = None) -> Dict[str, Any]:
         """Delete a single document and its chunks by ID."""
         with get_db_connection() as conn:
             cursor = conn.cursor()
+            tenant_filter, tenant_params = _legacy_tenant_filter(tenant_id)
             cursor.execute(
                 "SELECT id FROM ai_document WHERE id = ? "
-                "AND COALESCE(tenant_id, 'tenant-default') = ?",
-                (doc_id, tenant_id),
+                + tenant_filter,
+                [doc_id, *tenant_params],
             )
             row = cursor.fetchone()
             if not row:
@@ -1263,18 +1305,19 @@ class KnowledgeService:
             retrieval_cache.invalidate_documents([doc_id])
             return {"deleted": True, "id": doc_id}
 
-    def batch_delete_documents(self, doc_ids: List[str], tenant_id: str = "tenant-default") -> Dict[str, Any]:
+    def batch_delete_documents(self, doc_ids: List[str], tenant_id: str | None = None) -> Dict[str, Any]:
         """Delete multiple documents and their chunks by IDs."""
         if not doc_ids:
             return {"deleted_count": 0}
         with get_db_connection() as conn:
             cursor = conn.cursor()
+            tenant_filter, tenant_params = _legacy_tenant_filter(tenant_id)
             deleted = 0
             for doc_id in doc_ids:
                 cursor.execute(
                     "SELECT id FROM ai_document WHERE id = ? "
-                    "AND COALESCE(tenant_id, 'tenant-default') = ?",
-                    (doc_id, tenant_id),
+                    + tenant_filter,
+                    [doc_id, *tenant_params],
                 )
                 if cursor.fetchone():
                     cursor.execute("DELETE FROM ai_document_chunk WHERE document_id = ?", (doc_id,))
@@ -1371,16 +1414,16 @@ class KnowledgeService:
             "reference_scope": "ai_document_revision",
         }
 
-    def get_document_action_impact(self, *, doc_id: str, tenant_id: str = "tenant-default") -> Dict[str, Any]:
+    def get_document_action_impact(self, *, doc_id: str, tenant_id: str | None = None) -> Dict[str, Any]:
         """Return a safe, read-only impact/recovery preview before confirmation."""
         doc_id = self._safe_action_text(doc_id, field="document_id", maximum=256, required=True)
-        tenant_id = self._safe_action_text(tenant_id or "tenant-default", field="tenant_id", maximum=256, required=True)
+        del tenant_id
         with get_db_connection() as conn:
             cursor = conn.cursor()
             row = cursor.execute(
                 "SELECT id, name, status, tenant_id, document_id FROM ai_document "
-                "WHERE id = ? AND COALESCE(tenant_id, 'tenant-default') = ?",
-                (doc_id, tenant_id),
+                "WHERE id = ?",
+                (doc_id,),
             ).fetchone()
             if not row:
                 raise KnowledgeDocumentActionError("KNOWLEDGE_DOCUMENT_NOT_FOUND", "document was not found", status_code=404)
@@ -1398,7 +1441,7 @@ class KnowledgeService:
                     "enable": "POST /api/ai/assistant/documents/{id}/actions/disable",
                     "reparse": "rechunk or reindex the same document if body/index becomes stale",
                     "rechunk": "reindex the same document if embedding/index repair is required",
-                    "reindex": "retry the returned tenant-scoped job",
+                    "reindex": "retry the returned reindex job",
                     "delete": "restore from the approved PostgreSQL backup; no in-place undelete",
                 },
                 "safe_to_confirm": True,
@@ -1409,24 +1452,24 @@ class KnowledgeService:
         *,
         doc_id: str,
         action: str,
-        tenant_id: str = "tenant-default",
+        tenant_id: str | None = None,
         actor_id: str = "system",
         actor_username: str = "system",
         confirm: bool = False,
         reason: str = "",
     ) -> Dict[str, Any]:
-        """Execute one explicitly confirmed, tenant-scoped document action.
+        """Execute one explicitly confirmed document action by stable object ID.
 
         Delete/disable/enable are committed in one transaction with the
-        action ledger.  Reparse/rechunk/reindex create a tenant-scoped job
-        carrying the action id; the worker owns the subsequent transactional
-        document/chunk replacement.
+        default-tenant action ledger. Reparse/rechunk/reindex retain the source
+        document's stored tenant label as a content identity for the worker.
         """
         action = self._safe_action_text(action, field="action", maximum=32, required=True).lower()
         if action not in _DOCUMENT_ACTIONS:
             raise KnowledgeDocumentActionError("KNOWLEDGE_ACTION_NOT_ALLOWED", "document action is not allowed")
         doc_id = self._safe_action_text(doc_id, field="document_id", maximum=256, required=True)
-        tenant_id = self._safe_action_text(tenant_id or "tenant-default", field="tenant_id", maximum=256, required=True)
+        del tenant_id
+        ledger_tenant_id = tenant_id_for_write()
         actor_id = self._safe_action_text(actor_id or "system", field="actor_id", maximum=256, required=True)
         actor_username = self._safe_action_text(actor_username or actor_id, field="actor_username", maximum=256, required=True)
         reason = self._safe_action_text(reason, field="reason", maximum=1024)
@@ -1444,21 +1487,22 @@ class KnowledgeService:
             cursor = conn.cursor()
             row = cursor.execute(
                 "SELECT id, name, status, tenant_id FROM ai_document "
-                "WHERE id = ? AND COALESCE(tenant_id, 'tenant-default') = ?",
-                (doc_id, tenant_id),
+                "WHERE id = ?",
+                (doc_id,),
             ).fetchone()
             if not row:
                 raise KnowledgeDocumentActionError("KNOWLEDGE_DOCUMENT_NOT_FOUND", "document was not found", status_code=404)
             row_values = dict(row) if hasattr(row, "keys") else {
                 "id": row[0], "name": row[1], "status": row[2], "tenant_id": row[3],
             }
+            document_tenant_id = str(row_values.get("tenant_id") or "tenant-default")
             impact = self._document_action_impact(cursor, row_values)
             recovery = {
                 "disable": "POST /api/ai/assistant/documents/{id}/actions/enable",
                 "enable": "POST /api/ai/assistant/documents/{id}/actions/disable",
                 "reparse": "rechunk or reindex the same document if body/index becomes stale",
                 "rechunk": "reindex the same document if embedding/index repair is required",
-                "reindex": "retry the returned tenant-scoped job",
+                "reindex": "retry the returned reindex job",
                 "delete": "restore from the approved PostgreSQL backup; no in-place undelete",
             }[action]
             queued = action in {"reparse", "rechunk", "reindex"}
@@ -1468,7 +1512,7 @@ class KnowledgeService:
                  actor_username, reason, impact_json, recovery_json, created_at)
                 VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)""",
                 (
-                    action_id, tenant_id, doc_id, action, "queued" if queued else "running",
+                    action_id, ledger_tenant_id, doc_id, action, "queued" if queued else "running",
                     actor_id, actor_username, reason, self._action_json(impact),
                     self._action_json({"recovery": recovery}), now,
                 ),
@@ -1478,9 +1522,8 @@ class KnowledgeService:
                 current = str(row_values.get("status") or "active")
                 if current != target:
                     cursor.execute(
-                        "UPDATE ai_document SET status = ?, updated_at = ? WHERE id = ? "
-                        "AND COALESCE(tenant_id, 'tenant-default') = ?",
-                        (target, now, doc_id, tenant_id),
+                        "UPDATE ai_document SET status = ?, updated_at = ? WHERE id = ?",
+                        (target, now, doc_id),
                     )
                 cursor.execute(
                     "UPDATE ai_knowledge_document_action SET status = 'succeeded', completed_at = ? WHERE id = ?",
@@ -1499,7 +1542,7 @@ class KnowledgeService:
                     "recovery": {"recovery": recovery},
                 }
                 self._write_action_audit(
-                    action_id=action_id, action=action, document_id=doc_id, tenant_id=tenant_id,
+                    action_id=action_id, action=action, document_id=doc_id, tenant_id=ledger_tenant_id,
                     actor_id=actor_id, actor_username=actor_username, status="succeeded",
                     impact=impact, reason=reason,
                 )
@@ -1508,8 +1551,8 @@ class KnowledgeService:
             if action == "delete":
                 cursor.execute("DELETE FROM ai_document_chunk WHERE document_id = ?", (doc_id,))
                 cursor.execute(
-                    "DELETE FROM ai_document WHERE id = ? AND COALESCE(tenant_id, 'tenant-default') = ?",
-                    (doc_id, tenant_id),
+                    "DELETE FROM ai_document WHERE id = ?",
+                    (doc_id,),
                 )
                 cursor.execute(
                     "UPDATE ai_knowledge_document_action SET status = 'succeeded', completed_at = ? WHERE id = ?",
@@ -1525,7 +1568,7 @@ class KnowledgeService:
                     "recovery": {"recovery": recovery},
                 }
                 self._write_action_audit(
-                    action_id=action_id, action=action, document_id=doc_id, tenant_id=tenant_id,
+                    action_id=action_id, action=action, document_id=doc_id, tenant_id=ledger_tenant_id,
                     actor_id=actor_id, actor_username=actor_username, status="succeeded",
                     impact=impact, reason=reason,
                 )
@@ -1537,7 +1580,7 @@ class KnowledgeService:
             from ai.services.knowledge_reindex_service import knowledge_reindex_service
 
             pending_job = knowledge_reindex_service.create_job(
-                tenant_id=tenant_id,
+                tenant_id=document_tenant_id,
                 scope={"document_id": doc_id},
                 operation=action,
                 action_id=action_id,
@@ -1561,7 +1604,7 @@ class KnowledgeService:
                 "job": pending_job,
             }
             self._write_action_audit(
-                action_id=action_id, action=action, document_id=doc_id, tenant_id=tenant_id,
+                action_id=action_id, action=action, document_id=doc_id, tenant_id=ledger_tenant_id,
                 actor_id=actor_id, actor_username=actor_username, status="queued",
                 impact=impact, reason=reason, job_id=job_id,
             )
@@ -1614,6 +1657,8 @@ class KnowledgeService:
         invalidate_cache: bool = True,
         diagnostic_callback: Optional[Callable[[str, str, Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
+        tenant_id = tenant_id_for_write(requested=tenant_id)
+
         def notify(stage: str, status: str, **details: Any) -> None:
             """Report optional ingestion diagnostics without affecting writes."""
 

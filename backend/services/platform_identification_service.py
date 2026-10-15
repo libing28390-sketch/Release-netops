@@ -10,6 +10,7 @@ from typing import Any
 
 from database import get_db_connection
 from core.rbac import authorize_resource
+from core.tenant_policy import TENANT_ISOLATION_ENABLED, tenant_scope_for_user
 from services.platform_registry_service import (
     PLATFORM_CATALOG_METADATA,
     PlatformRegistryError,
@@ -93,9 +94,9 @@ def _load_device(conn, device_id: str, user: dict[str, Any], *, lock: bool = Fal
     ).fetchone())
     if not row:
         raise PlatformRegistryError("DEVICE_NOT_FOUND", "Device not found", status_code=404)
-    user_tenant = str(user.get("tenant_id") or "")
     device_tenant = str(row.get("tenant_id") or "")
-    if user_tenant and device_tenant != user_tenant:
+    user_tenant = tenant_scope_for_user(user)
+    if TENANT_ISOLATION_ENABLED and user_tenant and device_tenant != user_tenant:
         raise _scope_denied()
     if not authorize_resource(
         user,
@@ -117,8 +118,8 @@ def _assert_device_view(conn, device_id: str, user: dict[str, Any]) -> dict[str,
     if not row:
         raise PlatformRegistryError("DEVICE_NOT_FOUND", "Device not found", status_code=404)
     tenant_id = str(row.get("tenant_id") or "")
-    user_tenant = str(user.get("tenant_id") or "")
-    if user_tenant and tenant_id != user_tenant:
+    user_tenant = tenant_scope_for_user(user)
+    if TENANT_ISOLATION_ENABLED and user_tenant and tenant_id != user_tenant:
         raise _scope_denied()
     if not authorize_resource(
         user,
@@ -410,9 +411,10 @@ def list_identification_conflicts(user: dict[str, Any], *, status: str = "OPEN",
     try:
         clauses = ["c.status = ?"]
         params: list[Any] = [normalized_status]
-        if user.get("role") != "Administrator" or user.get("tenant_id"):
+        tenant_id = tenant_scope_for_user(user)
+        if tenant_id is not None:
             clauses.append("c.tenant_id = ?")
-            params.append(str(user.get("tenant_id") or ""))
+            params.append(tenant_id)
         rows = conn.execute(
             """SELECT c.id, c.tenant_id, c.device_id, c.status, c.conflict_fingerprint,
                       c.platform_candidates_json, c.observation_commands_json,
@@ -461,10 +463,10 @@ def identify_platforms(
     normalized_observations = {str(key).strip(): str(value or "") for key, value in observations.items() if str(key).strip()}
     conn = get_db_connection()
     try:
-        tenant_id = str(user.get("tenant_id") or "")
+        tenant_id = tenant_scope_for_user(user)
         clauses = ["p.status <> 'ARCHIVED'"]
         params: list[Any] = []
-        if user.get("role") != "Administrator" or tenant_id:
+        if tenant_id is not None:
             clauses.append("(p.tenant_id IS NULL OR p.tenant_id = ?)")
             params.append(tenant_id)
         if platform_code:
@@ -698,8 +700,8 @@ def _find_inventory_profile(conn, profile_code: str, user: dict[str, Any]) -> di
         return None
     clauses = ["p.platform_code = ?", "p.status <> 'ARCHIVED'"]
     params: list[Any] = [profile_code]
-    tenant_id = str(user.get("tenant_id") or "")
-    if user.get("role") != "Administrator" or tenant_id:
+    tenant_id = tenant_scope_for_user(user)
+    if tenant_id is not None:
         clauses.append("(p.tenant_id IS NULL OR p.tenant_id = ?)")
         params.append(tenant_id)
     row = conn.execute(
@@ -1106,8 +1108,13 @@ def bind_device(
         profile = _assert_profile_access(conn, platform_profile_id, user)
         _assert_profile_active(profile)
         profile_tenant = str(profile.get("tenant_id") or "")
-        user_tenant = str(user.get("tenant_id") or "")
-        if profile_tenant and profile_tenant != user_tenant and user.get("role") != "Administrator":
+        user_tenant = tenant_scope_for_user(user)
+        if (
+            TENANT_ISOLATION_ENABLED
+            and profile_tenant
+            and profile_tenant != user_tenant
+            and user.get("role") != "Administrator"
+        ):
             raise _scope_denied("PLATFORM_SCOPE_DENIED")
         device = _load_device(conn, device_id, user, lock=True)
         existing_profile_id = str(device.get("platform_profile_id") or "").strip()

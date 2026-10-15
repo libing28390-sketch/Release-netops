@@ -7,6 +7,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from core.rbac import enforce_resource_scope, require_permission, require_role
+from core.tenant_policy import TENANT_ISOLATION_ENABLED, tenant_id_for_write
 from database import get_db_connection
 from schemas.schemas import (
     PrefixCreate, PrefixUpdate,
@@ -111,6 +112,14 @@ def _address_scope(address_id: str) -> dict:
         conn.close()
 
 
+def _new_ipam_child_tenant_id(requested_tenant_id: str | None, user: dict, prefix_id: str | None) -> str:
+    """Keep child records attached to a legacy prefix's stored identity key."""
+    normalized_prefix_id = str(prefix_id or '').strip()
+    if normalized_prefix_id and not TENANT_ISOLATION_ENABLED:
+        return str(_prefix_scope(normalized_prefix_id).get('tenant_id') or 'tenant-default')
+    return tenant_id_for_write(requested=requested_tenant_id, user=user)
+
+
 # ── Prefixes (Subnets) ──────────────────────────
 
 @router.get('/ipam/subnets')
@@ -186,14 +195,15 @@ def api_generate_interface_prefixes(
 
 @router.post('/ipam/subnets', status_code=201)
 def api_create_subnet(body: PrefixCreate, user=require_permission('prefix', 'create')):
-    enforce_resource_scope(user, 'prefix', 'create', tenant_id=body.tenant_id, site_id=body.site_id)
+    tenant_id = tenant_id_for_write(requested=body.tenant_id, user=user)
+    enforce_resource_scope(user, 'prefix', 'create', tenant_id=tenant_id, site_id=body.site_id)
     try:
         result = create_subnet(
             prefix=body.prefix,
             vrf_id=body.vrf_id,
             vlan_id=body.vlan_id,
             site_id=body.site_id,
-            tenant_id=body.tenant_id,
+            tenant_id=tenant_id,
             status=body.status,
             name=body.name,
             gateway=body.gateway,
@@ -225,6 +235,7 @@ def api_create_subnet(body: PrefixCreate, user=require_permission('prefix', 'cre
 def api_update_subnet(subnet_id: str, body: PrefixUpdate, user=require_permission('prefix', 'update')):
     enforce_resource_scope(user, 'prefix', 'update', **_prefix_scope(subnet_id))
     fields = body.model_dump(exclude_none=True)
+    fields.pop('tenant_id', None)
     if not update_subnet(subnet_id, **fields):
         raise HTTPException(status_code=404, detail='Prefix not found')
 
@@ -509,6 +520,7 @@ def api_list_pools(
 
 @router.post('/ipam/pools', status_code=201)
 def api_create_pool(body: IPPoolCreate, user=require_role("Operator")):
+    tenant_id = _new_ipam_child_tenant_id(body.tenant_id, user, body.prefix_id)
     try:
         result = create_pool(
             name=body.name,
@@ -517,7 +529,7 @@ def api_create_pool(body: IPPoolCreate, user=require_role("Operator")):
             end_ip=body.end_ip,
             description=body.description,
             status=body.status,
-            tenant_id=body.tenant_id,
+            tenant_id=tenant_id,
         )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -540,6 +552,7 @@ def api_create_pool(body: IPPoolCreate, user=require_role("Operator")):
 @router.put('/ipam/pools/{pool_id}')
 def api_update_pool(pool_id: str, body: IPPoolUpdate, user=require_role("Operator")):
     fields = body.model_dump(exclude_none=True)
+    fields.pop('tenant_id', None)
     try:
         if not update_pool(pool_id, **fields):
             raise HTTPException(status_code=404, detail='IP Pool not found')
@@ -597,6 +610,7 @@ def api_list_vips(
 
 @router.post('/ipam/vips', status_code=201)
 def api_create_vip(body: VIPCreate, user=require_role("Operator")):
+    tenant_id = _new_ipam_child_tenant_id(body.tenant_id, user, body.prefix_id)
     try:
         result = create_vip(
             address=body.address,
@@ -607,7 +621,7 @@ def api_create_vip(body: VIPCreate, user=require_role("Operator")):
             description=body.description,
             real_servers=body.real_servers,
             status=body.status,
-            tenant_id=body.tenant_id,
+            tenant_id=tenant_id,
             prefix_id=body.prefix_id,
         )
     except ValueError as e:
@@ -631,6 +645,7 @@ def api_create_vip(body: VIPCreate, user=require_role("Operator")):
 @router.put('/ipam/vips/{vip_id}')
 def api_update_vip(vip_id: str, body: VIPUpdate, user=require_role("Operator")):
     fields = body.model_dump(exclude_none=True)
+    fields.pop('tenant_id', None)
     try:
         if not update_vip(vip_id, **fields):
             raise HTTPException(status_code=404, detail='VIP not found')

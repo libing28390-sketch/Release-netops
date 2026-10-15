@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 
 from database import get_db_connection
 from core.rbac import authorize_resource, is_global_administrator, require_permission, require_role
+from core.tenant_policy import TENANT_ISOLATION_ENABLED, tenant_id_for_write, tenant_scope_for_user
 from services.audit_service import log_audit_event
 from core.crypto import decrypt_credential
 from core.read_cache import (
@@ -241,7 +242,9 @@ def _prepare_playbook_execution_for_run(execution_id: str) -> tuple[dict, dict]:
 
         is_global_admin = is_global_administrator(run_as)
         operator_tenant = str(run_as.get('tenant_id') or '')
-        if not is_global_admin and (not operator_tenant or operator_tenant != execution_tenant):
+        if TENANT_ISOLATION_ENABLED and not is_global_admin and (
+            not operator_tenant or operator_tenant != execution_tenant
+        ):
             raise _playbook_execution_start_error('EXECUTION_TENANT_SCOPE_DENIED', 'Original operator is outside the execution tenant')
         if not authorize_resource(run_as, 'playbook', 'execute', tenant_id=execution_tenant or None):
             raise _playbook_execution_start_error('EXECUTION_PERMISSION_REVOKED', 'Original operator no longer has Playbook execution permission')
@@ -389,8 +392,10 @@ def _assert_execution_scope(conn, execution_id: str, user: dict, *, action: str 
         return execution
 
     execution_tenant = str(execution.get('tenant_id') or '')
-    user_tenant = str(user.get('tenant_id') or '')
-    if not execution_tenant or not user_tenant or execution_tenant != user_tenant:
+    user_tenant = tenant_scope_for_user(user)
+    if TENANT_ISOLATION_ENABLED and (
+        not execution_tenant or not user_tenant or execution_tenant != user_tenant
+    ):
         raise HTTPException(status_code=403, detail={
             'code': 'RESOURCE_SCOPE_DENIED',
             'message': 'Execution belongs to another tenant or has no tenant scope',
@@ -438,7 +443,9 @@ def _assert_execution_scope(conn, execution_id: str, user: dict, *, action: str 
                 'site_id': str(device.get('site_id') or device.get('site') or ''),
                 'device_group_id': str(device.get('device_group_id') or ''),
             }
-            if scope['tenant_id'] != execution_tenant or not authorize_resource(user, 'playbook', action, **scope):
+            if (
+                TENANT_ISOLATION_ENABLED and scope['tenant_id'] != execution_tenant
+            ) or not authorize_resource(user, 'playbook', action, **scope):
                 raise HTTPException(status_code=403, detail={
                     'code': 'RESOURCE_SCOPE_DENIED',
                     'message': 'Insufficient permission for an execution device scope',
@@ -476,11 +483,13 @@ def _assert_playbook_device_scope(conn, device_ids: list[str], user: dict) -> li
         })
 
     is_global_admin = is_global_administrator(user)
-    user_tenant = str(user.get('tenant_id') or '')
+    user_tenant = tenant_scope_for_user(user)
     for device_id in normalized_ids:
         device = by_id[device_id]
         device_tenant = str(device.get('tenant_id') or '')
-        if not is_global_admin and (not user_tenant or not device_tenant or user_tenant != device_tenant):
+        if TENANT_ISOLATION_ENABLED and not is_global_admin and (
+            not user_tenant or not device_tenant or user_tenant != device_tenant
+        ):
             raise HTTPException(status_code=403, detail={
                 'code': 'RESOURCE_SCOPE_DENIED',
                 'message': 'Selected device belongs to another or unscoped tenant',
@@ -551,8 +560,8 @@ async def list_platforms(user=require_permission("playbook", "view")):
 @router.get("/playbooks/scenarios")
 async def list_scenarios(user=require_permission("playbook", "view")):
     """Return built-in and custom scenario templates."""
-    tenant_id = None if is_global_administrator(user) else str(user.get('tenant_id') or '') or None
-    return _all_scenarios(tenant_id)
+    tenant_scope = None if is_global_administrator(user) else tenant_scope_for_user(user)
+    return _all_scenarios(tenant_scope)
 
 
 @router.post("/playbooks/scenarios", status_code=201)
@@ -600,7 +609,7 @@ async def create_custom_scenario(request: Request, payload: dict = Body(...), us
     try:
         conn.execute(
             'INSERT INTO custom_scenarios (id, data_json, tenant_id, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
-            (scenario_id, json.dumps(scenario_doc), user.get('tenant_id'), user.get('username') or 'admin', now, now)
+            (scenario_id, json.dumps(scenario_doc), tenant_id_for_write(user=user), user.get('username') or 'admin', now, now)
         )
         conn.commit()
     finally:
@@ -634,7 +643,11 @@ def list_playbooks(
     user=require_permission("playbook", "view"),
 ):
     """Return paginated playbook execution summaries (no bulky results_json / phases_json)."""
-    scope_key = f"{user.get('role', '')}:{user.get('tenant_id') or ''}"
+    scope_key = ':'.join((
+        str(user.get('id') or user.get('user_id') or user.get('username') or ''),
+        str(user.get('role') or ''),
+        str(tenant_scope_for_user(user) or ''),
+    ))
     cache_key = f'{scope_key}:{page}:{page_size}:{status}:{scenario}'
     cache_hit, cached = read_cache.get('playbooks', cache_key)
     if cache_hit:
@@ -645,11 +658,10 @@ def list_playbooks(
     try:
         where_clauses = []
         params: list = []
-        if user.get('role') != 'Administrator':
-            # Legacy rows without tenant_id are intentionally invisible to
-            # tenant users until they are explicitly re-associated.
+        tenant_scope = None if is_global_administrator(user) else tenant_scope_for_user(user)
+        if tenant_scope:
             where_clauses.append("tenant_id = ?")
-            params.append(str(user.get('tenant_id') or ''))
+            params.append(tenant_scope)
         if status != 'all':
             where_clauses.append("status = ?")
             params.append(status)
@@ -657,11 +669,6 @@ def list_playbooks(
             where_clauses.append("scenario_name LIKE ?")
             params.append(f"%{scenario}%")
         where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
-        total = conn.execute(
-            f"SELECT COUNT(*) FROM playbook_executions {where_sql}", params
-        ).fetchone()[0]
-        logger.debug(f"[Playbooks] Found {total} total executions (status={status}, scenario={scenario})")
-        offset = (page - 1) * page_size
         rows = conn.execute(
             f'''SELECT id, scenario_id, scenario_name, platform, device_ids,
                        variables, status, dry_run, author, concurrency,
@@ -669,18 +676,26 @@ def list_playbooks(
                        total_devices, success_count, failed_count, partial_count,
                        created_at, updated_at
                 FROM playbook_executions {where_sql}
-                ORDER BY created_at DESC LIMIT ? OFFSET ?''',
-            [*params, page_size, offset]
+                ORDER BY created_at DESC''',
+            params
         ).fetchall()
-        items = []
+        authorized_rows = []
         for r in rows:
+            try:
+                _assert_execution_scope(conn, str(r['id']), user, action='view')
+            except HTTPException:
+                continue
             row_dict = dict(r)
             if not row_dict.get('total_devices'):
                 try:
                     row_dict['total_devices'] = len(json.loads(row_dict.get('device_ids', '[]')))
                 except Exception:
                     row_dict['total_devices'] = 0
-            items.append(row_dict)
+            authorized_rows.append(row_dict)
+        total = len(authorized_rows)
+        logger.debug(f"[Playbooks] Found {total} authorized executions (status={status}, scenario={scenario})")
+        offset = (page - 1) * page_size
+        items = authorized_rows[offset:offset + page_size]
         response = {"items": items, "total": total, "page": page, "page_size": page_size}
         read_cache.set('playbooks', cache_key, response, PLAYBOOK_CACHE_TTL_SECONDS)
         return response
@@ -1259,7 +1274,7 @@ async def preview_playbook(payload: dict = Body(...), user=require_permission("p
     requested_platform = payload.get('platform', 'cisco_ios')
     platform = _normalize_playbook_platform(requested_platform)
 
-    tenant_id = None if is_global_administrator(user) else str(user.get('tenant_id') or '') or None
+    tenant_id = None if is_global_administrator(user) else tenant_scope_for_user(user)
     try:
         scenarios = _all_scenarios(tenant_id)
     except TypeError:
@@ -1440,7 +1455,7 @@ async def execute_playbook(
         selected_version = _call_playbook_version(get_version, requested_version_id, user)
         version_tenant = str(selected_version.get('tenant_id') or '')
         user_tenant = str(user.get('tenant_id') or '')
-        if not is_global_administrator(user) and version_tenant and version_tenant != user_tenant:
+        if TENANT_ISOLATION_ENABLED and not is_global_administrator(user) and version_tenant and version_tenant != user_tenant:
             raise HTTPException(status_code=403, detail={
                 'code': 'RESOURCE_SCOPE_DENIED',
                 'message': 'Playbook version is outside the current tenant scope',
@@ -1459,8 +1474,9 @@ async def execute_playbook(
     requested_platform = payload.get('platform') or version_definition.get('platform') or 'cisco_ios'
     platform = _normalize_playbook_platform(requested_platform)
 
-    tenant_id = None if is_global_administrator(user) else str(user.get('tenant_id') or '') or None
-    scenario = None if selected_version else next((s for s in _all_scenarios(tenant_id) if s['id'] == scenario_id), None)
+    tenant_scope = None if is_global_administrator(user) else tenant_scope_for_user(user)
+    tenant_id = tenant_id_for_write(user=user)
+    scenario = None if selected_version else next((s for s in _all_scenarios(tenant_scope) if s['id'] == scenario_id), None)
     # Allow custom playbooks (scenario can be None — user provides commands directly)
     custom_phases = version_definition.get('phases') if selected_version else payload.get('phases')
     if not scenario and not custom_phases:

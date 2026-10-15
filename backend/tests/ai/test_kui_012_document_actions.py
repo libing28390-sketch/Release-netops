@@ -82,7 +82,7 @@ def test_confirmation_is_required_before_any_mutation(monkeypatch):
 def test_impact_preview_is_read_only_and_counts_references(monkeypatch):
     conn = _connection()
     monkeypatch.setattr(knowledge_service_module, "get_db_connection", lambda: conn)
-    preview = knowledge_service_module.KnowledgeService().get_document_action_impact(doc_id="doc-a", tenant_id="tenant-a")
+    preview = knowledge_service_module.KnowledgeService().get_document_action_impact(doc_id="doc-a", tenant_id="tenant-b")
     assert preview["safe_to_confirm"] is True
     assert preview["impact"] == {
         "documents": 1,
@@ -99,7 +99,7 @@ def test_impact_preview_is_read_only_and_counts_references(monkeypatch):
     assert conn.execute("SELECT COUNT(*) FROM ai_knowledge_document_action").fetchone()[0] == 0
 
 
-def test_disable_is_tenant_scoped_idempotent_and_audited(monkeypatch):
+def test_disable_uses_stable_document_id_and_writes_default_tenant_ledger(monkeypatch):
     conn = _connection()
     monkeypatch.setattr(knowledge_service_module, "get_db_connection", lambda: conn)
     monkeypatch.setattr(knowledge_service_module.retrieval_cache, "invalidate_documents", lambda ids: None)
@@ -111,12 +111,13 @@ def test_disable_is_tenant_scoped_idempotent_and_audited(monkeypatch):
     assert conn.execute("SELECT status FROM ai_document WHERE id = 'doc-a'").fetchone()[0] == "disabled"
     audit = conn.execute("SELECT action, status, confirmed, reason FROM ai_knowledge_document_action").fetchone()
     assert tuple(audit) == ("disable", "succeeded", 1, "retire")
+    assert conn.execute("SELECT tenant_id FROM ai_knowledge_document_action").fetchone()[0] == "tenant-default"
 
-    with pytest.raises(knowledge_service_module.KnowledgeDocumentActionError) as exc:
-        knowledge_service_module.KnowledgeService().execute_document_action(
-            doc_id="doc-a", action="enable", tenant_id="tenant-b", confirm=True,
-        )
-    assert exc.value.code == "KNOWLEDGE_DOCUMENT_NOT_FOUND"
+    enabled = knowledge_service_module.KnowledgeService().execute_document_action(
+        doc_id="doc-a", action="enable", tenant_id="tenant-b", confirm=True,
+    )
+    assert enabled["status"] == "succeeded"
+    assert conn.execute("SELECT status FROM ai_document WHERE id = 'doc-a'").fetchone()[0] == "active"
 
 
 def test_delete_action_removes_chunks_but_keeps_redacted_ledger(monkeypatch):
@@ -155,6 +156,7 @@ def test_reparse_rechunk_reindex_are_distinct_confirmed_job_operations(monkeypat
         assert result["job_id"] == f"job-{operation}"
     assert [item["operation"] for item in jobs] == ["reparse", "rechunk", "reindex"]
     assert all(item["scope"] == {"document_id": "doc-a"} for item in jobs)
+    assert all(item["tenant_id"] == "tenant-a" for item in jobs)
     assert conn.execute("SELECT COUNT(*) FROM ai_knowledge_document_action WHERE status = 'queued'").fetchone()[0] == 3
 
 

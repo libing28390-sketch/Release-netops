@@ -21,6 +21,7 @@ from typing import Any
 
 from database import get_db_connection
 from services.playbook_output_service import protect_output
+from core.tenant_policy import TENANT_ISOLATION_ENABLED, tenant_id_for_write, tenant_scope_for_user
 
 logger = logging.getLogger(__name__)
 
@@ -631,12 +632,12 @@ def _row_dict(row: Any) -> dict[str, Any] | None:
 
 
 def _authorize_action_device(user: dict[str, Any], device: dict[str, Any]) -> None:
-    """Fail closed for tenantless device rows and enforce the device scope."""
+    """Enforce command action and object-level authorization for a device."""
     from core.rbac import authorize_resource, is_global_administrator
 
     user_tenant = str(user.get("tenant_id") or "").strip()
     device_tenant = str(device.get("tenant_id") or "").strip()
-    if not is_global_administrator(user) and (
+    if TENANT_ISOLATION_ENABLED and not is_global_administrator(user) and (
         not user_tenant or not device_tenant or user_tenant != device_tenant
     ):
         raise PlatformRegistryError(
@@ -781,43 +782,137 @@ class PlatformActionSession:
 
 
 def _profile_scope_clause(user: dict[str, Any]) -> tuple[str, list[Any]]:
-    tenant_id = str(user.get("tenant_id") or "")
+    """Return a legacy tenant filter only while tenant isolation is enabled."""
+    from core.rbac import is_global_administrator
+
+    if is_global_administrator(user):
+        return "", []
+    tenant_id = tenant_scope_for_user(user)
     if tenant_id:
         return "AND (p.tenant_id IS NULL OR p.tenant_id = ?)", [tenant_id]
     return "", []
 
 
-def _device_stats_join(user: dict[str, Any]) -> tuple[str, list[Any]]:
-    """Return tenant-scoped device aggregates for registry read views.
+def _device_scope_filter(conn, user: dict[str, Any], *, action: str = "view") -> tuple[str, tuple[Any, ...]]:
+    """Build the shared asset tenant/site/group filter for device aggregates."""
+    from core.rbac import is_global_administrator, resource_action_allowed
 
-    System profiles are visible to a tenant, but their device counts must not
-    disclose devices belonging to another tenant.  Administrators without a
-    tenant context retain the existing all-scope behaviour.
-    """
-    tenant_id = str(user.get("tenant_id") or "")
+    if not resource_action_allowed(user, "asset", action):
+        return "1 = 0", ()
+    if is_global_administrator(user):
+        return "", ()
+
+    user_id = str(user.get("id") or user.get("user_id") or "").strip()
+    rows = conn.execute(
+        """SELECT scope_type, scope_id, actions_json
+           FROM user_resource_scopes
+           WHERE user_id = ? AND resource_type IN ('asset', '*')""",
+        (user_id,),
+    ).fetchall() if user_id else []
+    restricted = str(user.get("scope_mode") or "legacy") == "restricted"
+    tenant_id = tenant_scope_for_user(user)
+    clauses: list[str] = []
+    params: list[Any] = []
+    if tenant_id and TENANT_ISOLATION_ENABLED:
+        clauses.append("d.tenant_id = ?")
+        params.append(tenant_id)
+
+    if not rows:
+        return (" AND ".join(clauses), tuple(params)) if not restricted else ("1 = 0", ())
+
+    def action_matches(raw_actions: Any) -> bool:
+        try:
+            actions = {str(value).strip().lower() for value in json.loads(raw_actions or "[]")}
+        except (TypeError, ValueError):
+            return False
+        normalized = str(action or "view").strip().lower()
+        return "*" in actions or normalized in actions or (normalized == "view" and "read" in actions) or (normalized == "read" and "view" in actions)
+
+    global_allowed = False
+    tenant_allowed = False
+    site_ids: set[str] = set()
+    group_ids: set[str] = set()
+    for row in rows:
+        if not action_matches(row["actions_json"]):
+            continue
+        scope_type = str(row["scope_type"] or "").strip().lower()
+        scope_id = str(row["scope_id"] or "").strip()
+        if scope_type == "global":
+            global_allowed = True
+        elif scope_type == "tenant":
+            if not TENANT_ISOLATION_ENABLED and scope_id:
+                tenant_allowed = True
+            elif tenant_id and scope_id == tenant_id:
+                tenant_allowed = True
+        elif scope_type == "site" and scope_id:
+            site_ids.add(scope_id)
+        elif scope_type == "device_group" and scope_id:
+            group_ids.add(scope_id)
+
+    if global_allowed or tenant_allowed:
+        return (" AND ".join(clauses), tuple(params))
+    scoped_clauses: list[str] = []
+    scoped_params: list[Any] = []
+    if site_ids:
+        sites = sorted(site_ids)
+        marks = ",".join("?" for _ in sites)
+        scoped_clauses.append(
+            f"(NULLIF(d.site_id, '') IN ({marks}) OR NULLIF(d.site, '') IN ({marks}) "
+            f"OR EXISTS (SELECT 1 FROM physical_assets scope_asset WHERE scope_asset.id = d.asset_id AND scope_asset.site_id IN ({marks})))"
+        )
+        scoped_params.extend(sites + sites + sites)
+    if group_ids:
+        groups = sorted(group_ids)
+        marks = ",".join("?" for _ in groups)
+        scoped_clauses.append(f"d.device_group_id IN ({marks})")
+        scoped_params.extend(groups)
+    if not scoped_clauses:
+        return "1 = 0", ()
+    clauses.append(f"({' OR '.join(scoped_clauses)})")
+    params.extend(scoped_params)
+    return (" AND ".join(clauses), tuple(params))
+
+
+def _device_stats_join(conn, user: dict[str, Any]) -> tuple[str, list[Any]]:
+    """Aggregate only devices visible under the caller's asset scope."""
+    device_scope_sql, device_scope_params = _device_scope_filter(conn, user, action="view")
+    where = f"WHERE {device_scope_sql}" if device_scope_sql else ""
     return (
-        """
+        f"""
         LEFT JOIN (
             SELECT d.platform_profile_id,
                    COUNT(*) AS bound_device_count,
                    SUM(CASE WHEN LOWER(COALESCE(d.status, '')) IN ('online', 'active', 'up') THEN 1 ELSE 0 END) AS online_device_count
             FROM devices d
-            WHERE (? = '' OR d.tenant_id = ?)
+            {where}
             GROUP BY d.platform_profile_id
         ) device_stats ON device_stats.platform_profile_id = p.id
         """,
-        [tenant_id, tenant_id],
+        list(device_scope_params),
     )
+
+
+def _authorize_profile_action(user: dict[str, Any], profile: dict[str, Any], action: str = "view") -> None:
+    from core.rbac import authorize_resource
+
+    if not authorize_resource(user, "platform", action, tenant_id=profile.get("tenant_id")):
+        raise PlatformRegistryError(
+            "PLATFORM_SCOPE_DENIED",
+            "Platform action is outside the current role or resource scope",
+            status_code=403,
+        )
 
 
 def _assert_profile_access(conn, profile_id: str, user: dict[str, Any]) -> dict[str, Any]:
     profile = _row_dict(conn.execute("SELECT * FROM platform_profiles WHERE id = ?", (profile_id,)).fetchone())
     if not profile:
         raise PlatformRegistryError("PLATFORM_NOT_FOUND", "Platform profile not found", status_code=404)
-    user_tenant = str(user.get("tenant_id") or "")
+    user_tenant = tenant_scope_for_user(user)
     profile_tenant = str(profile.get("tenant_id") or "")
-    if profile_tenant and profile_tenant != user_tenant and user.get("role") != "Administrator":
+    from core.rbac import is_global_administrator
+    if TENANT_ISOLATION_ENABLED and profile_tenant and profile_tenant != user_tenant and not is_global_administrator(user):
         raise PlatformRegistryError("PLATFORM_SCOPE_DENIED", "Platform profile is outside the current tenant scope", status_code=403)
+    _authorize_profile_action(user, profile, "view")
     return profile
 
 
@@ -825,7 +920,7 @@ def list_profiles(user: dict[str, Any]) -> list[dict[str, Any]]:
     conn = get_db_connection()
     try:
         scope_sql, params = _profile_scope_clause(user)
-        device_stats_sql, device_stats_params = _device_stats_join(user)
+        device_stats_sql, device_stats_params = _device_stats_join(conn, user)
         rows = conn.execute(
             f"""SELECT p.*, r.release_number AS current_release_number, r.checksum AS current_release_checksum,
                        r.status AS current_release_status, r.validation_status AS current_release_validation_status,
@@ -837,7 +932,15 @@ def list_profiles(user: dict[str, Any]) -> list[dict[str, Any]]:
                 WHERE p.status <> 'ARCHIVED' {scope_sql} ORDER BY p.source, p.platform_code""",
             [*device_stats_params, *params],
         ).fetchall()
-        return [_with_platform_catalog_metadata(_row_dict(row) or {}) for row in rows]
+        visible = []
+        for row in rows:
+            profile = _row_dict(row) or {}
+            try:
+                _authorize_profile_action(user, profile, "view")
+            except PlatformRegistryError:
+                continue
+            visible.append(_with_platform_catalog_metadata(profile))
+        return visible
     finally:
         conn.close()
 
@@ -846,7 +949,7 @@ def get_profile(profile_id: str, user: dict[str, Any]) -> dict[str, Any]:
     conn = get_db_connection()
     try:
         scope_sql, params = _profile_scope_clause(user)
-        device_stats_sql, device_stats_params = _device_stats_join(user)
+        device_stats_sql, device_stats_params = _device_stats_join(conn, user)
         row = conn.execute(
             f"""SELECT p.*, r.release_number AS current_release_number, r.checksum AS current_release_checksum,
                        r.status AS current_release_status, r.validation_status AS current_release_validation_status,
@@ -861,6 +964,7 @@ def get_profile(profile_id: str, user: dict[str, Any]) -> dict[str, Any]:
         if not row:
             raise PlatformRegistryError("PLATFORM_NOT_FOUND", "Platform profile not found", status_code=404)
         result = _row_dict(row) or {}
+        _assert_profile_access(conn, profile_id, user)
         result["releases"] = [_row_dict(item) for item in conn.execute("SELECT * FROM platform_releases WHERE profile_id = ? ORDER BY release_number DESC", (profile_id,)).fetchall()]
         result["identification_rules"] = [
             _row_dict(item) for item in conn.execute(
@@ -880,9 +984,10 @@ def create_profile(payload: dict[str, Any], user: dict[str, Any]) -> dict[str, A
     driver = str(payload.get("connection_driver") or "").strip().lower()
     if driver not in ALLOWED_CONNECTION_DRIVERS:
         raise PlatformRegistryError("INVALID_CONNECTION_DRIVER", "connection_driver is not in the system allowlist")
-    tenant_id = str(user.get("tenant_id") or payload.get("tenant_id") or "") or None
-    if not tenant_id and user.get("role") != "Administrator":
-        raise PlatformRegistryError("TENANT_REQUIRED", "Tenant users must create tenant-scoped profiles")
+    tenant_id = tenant_id_for_write(user=user)
+    from core.rbac import authorize_resource
+    if not authorize_resource(user, "platform", "create", tenant_id=tenant_id):
+        raise PlatformRegistryError("PLATFORM_SCOPE_DENIED", "Platform create permission is required", status_code=403)
     profile_id = str(uuid.uuid4())
     now = _now()
     conn = get_db_connection()
@@ -1255,8 +1360,12 @@ def preview_platform_migration(user: dict[str, Any]) -> dict[str, Any]:
     """
     conn = get_db_connection()
     try:
-        tenant_id = str(user.get("tenant_id") or "")
-        device_scope = "WHERE (? = '' OR d.tenant_id = ?)"
+        from core.rbac import authorize_resource
+
+        if not authorize_resource(user, "platform", "view", tenant_id=tenant_scope_for_user(user)):
+            raise PlatformRegistryError("PLATFORM_SCOPE_DENIED", "Platform view permission is required", status_code=403)
+        device_scope_sql, device_scope_params = _device_scope_filter(conn, user, action="view")
+        device_scope = f"WHERE {device_scope_sql}" if device_scope_sql else ""
         device_rows = conn.execute(
             f"""SELECT d.id, d.hostname, d.platform, d.platform_profile_id,
                        d.platform_source, d.platform_locked, d.tenant_id,
@@ -1266,7 +1375,7 @@ def preview_platform_migration(user: dict[str, Any]) -> dict[str, Any]:
                 LEFT JOIN platform_profiles p ON p.id = d.platform_profile_id
                 {device_scope}
                 ORDER BY d.hostname, d.id""",
-            (tenant_id, tenant_id),
+            device_scope_params,
         ).fetchall()
 
         known_aliases = set(PLATFORM_ALIASES)

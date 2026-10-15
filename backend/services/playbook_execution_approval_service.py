@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from core.rbac import authorize_resource
+from core.tenant_policy import tenant_id_for_write
 from database import get_db_connection
 from api.playbooks.scenarios import extract_approval_steps
 
@@ -45,11 +46,8 @@ def _load_execution(conn, execution_id: str, *, lock: bool = False) -> dict[str,
 
 def _assert_scope(conn, execution_id: str, user: dict[str, Any], *, action: str) -> dict[str, Any]:
     execution = _load_execution(conn, execution_id)
-    if user.get('role') == 'Administrator':
-        return execution
     tenant_id = str(execution.get('tenant_id') or '')
-    user_tenant_id = str(user.get('tenant_id') or '')
-    if not tenant_id or tenant_id != user_tenant_id or not authorize_resource(user, 'playbook', action, tenant_id=tenant_id):
+    if not authorize_resource(user, 'playbook', action, tenant_id=tenant_id or None):
         raise PlaybookApprovalError('RESOURCE_SCOPE_DENIED', 'Execution is outside the current Playbook scope', status_code=403)
     return execution
 
@@ -66,7 +64,7 @@ def create_execution_approvals(conn, execution_id: str, phases: object, user: di
         approval = {
             'id': str(uuid.uuid4()),
             'execution_id': execution_id,
-            'tenant_id': str(user.get('tenant_id') or '') or None,
+            'tenant_id': tenant_id_for_write(user=user),
             'step_path': step['step_path'],
             'title': step['title'],
             'message': step['message'],

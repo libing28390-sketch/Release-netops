@@ -376,18 +376,19 @@ _OBSERVABILITY_RUN_COLUMNS = (
 )
 
 
-def list_experiment_runs(*, tenant_id: str, limit: int = 20) -> list[dict[str, Any]]:
-    """Return only metadata for runs owned by one tenant."""
+def list_experiment_runs(*, tenant_id: str | None, limit: int = 20) -> list[dict[str, Any]]:
+    """Return only metadata for one tenant, or all history when unscoped."""
 
     _require_pg()
-    tenant = _code(tenant_id, field="tenant_id", maximum=128)
+    tenant = _code(tenant_id, field="tenant_id", maximum=128) if tenant_id is not None else None
     bounded_limit = max(1, min(int(limit), 100))
+    where = " WHERE tenant_id = ?" if tenant is not None else ""
+    params: tuple[Any, ...] = (tenant, bounded_limit) if tenant is not None else (bounded_limit,)
     with get_db_connection() as conn:
         rows = conn.execute(
             f"SELECT {', '.join(_OBSERVABILITY_RUN_COLUMNS)} "
-            "FROM ai_experiment_run WHERE tenant_id = ? "
-            "ORDER BY created_at DESC LIMIT ?",
-            (tenant, bounded_limit),
+            "FROM ai_experiment_run" + where + " ORDER BY created_at DESC LIMIT ?",
+            params,
         ).fetchall()
     return [_observability_run_projection(row, _OBSERVABILITY_RUN_COLUMNS) for row in rows]
 
@@ -611,20 +612,20 @@ def get_runtime_rollout(*, tenant_id: str, component: str) -> dict[str, Any] | N
     return _row_to_dict(row, _ROLLOUT_COLUMNS) if row else None
 
 
-def list_runtime_rollouts(*, tenant_id: str, limit: int = 20) -> list[dict[str, Any]]:
-    """Return tenant-scoped rollout pointers for the observability UI."""
+def list_runtime_rollouts(*, tenant_id: str | None, limit: int = 20) -> list[dict[str, Any]]:
+    """Return rollout pointers for one tenant or the single-org history."""
 
     _require_pg()
-    tenant = _code(tenant_id, field="tenant_id", maximum=128)
+    tenant = _code(tenant_id, field="tenant_id", maximum=128) if tenant_id is not None else None
     bounded_limit = max(1, min(int(limit), 100))
+    where = " WHERE tenant_id = ?" if tenant is not None else ""
+    params: tuple[Any, ...] = (tenant, bounded_limit) if tenant is not None else (bounded_limit,)
+    columns = _ROLLOUT_COLUMNS[0:1] + _ROLLOUT_COLUMNS[2:]
     with get_db_connection() as conn:
         rows = conn.execute(
-            f"SELECT {', '.join(_ROLLOUT_COLUMNS[0:1] + _ROLLOUT_COLUMNS[2:])} "
-            "FROM ai_runtime_rollout WHERE tenant_id = ? "
-            "ORDER BY updated_at DESC LIMIT ?",
-            (tenant, bounded_limit),
+            f"SELECT {', '.join(columns)} FROM ai_runtime_rollout" + where + " ORDER BY updated_at DESC LIMIT ?",
+            params,
         ).fetchall()
-    columns = _ROLLOUT_COLUMNS[0:1] + _ROLLOUT_COLUMNS[2:]
     result: list[dict[str, Any]] = []
     for row in rows:
         item = _row_to_dict(row, columns)
@@ -876,24 +877,26 @@ def _rank_deltas(baseline: list[str], candidate: list[str]) -> list[dict[str, An
     return deltas
 
 
-def list_shadow_observations(*, tenant_id: str, limit: int = 50) -> list[dict[str, Any]]:
-    """Return redacted ranking differences for one tenant only."""
+def list_shadow_observations(*, tenant_id: str | None, limit: int = 50) -> list[dict[str, Any]]:
+    """Return redacted ranking differences for one tenant or all history."""
 
     _require_pg()
-    tenant = _code(tenant_id, field="tenant_id", maximum=128)
+    tenant = _code(tenant_id, field="tenant_id", maximum=128) if tenant_id is not None else None
     bounded_limit = max(1, min(int(limit), 200))
+    where = " WHERE tenant_id = ?" if tenant is not None else ""
+    params: tuple[Any, ...] = (tenant, bounded_limit) if tenant is not None else (bounded_limit,)
     with get_db_connection() as conn:
         rows = conn.execute(
             f"SELECT {', '.join(_OBSERVATION_COLUMNS)} "
-            "FROM ai_shadow_observation WHERE tenant_id = ? "
-            "ORDER BY observed_at DESC LIMIT ?",
-            (tenant, bounded_limit),
+            "FROM ai_shadow_observation" + where + " ORDER BY observed_at DESC LIMIT ?",
+            params,
         ).fetchall()
     result: list[dict[str, Any]] = []
     for row in rows:
         item = _row_to_dict(row, _OBSERVATION_COLUMNS)
-        baseline = _rank_hashes(item.get("baseline_ranked_ids"), tenant)
-        candidate = _rank_hashes(item.get("candidate_ranked_ids"), tenant)
+        tenant_salt = tenant or "tenant-default"
+        baseline = _rank_hashes(item.get("baseline_ranked_ids"), tenant_salt)
+        candidate = _rank_hashes(item.get("candidate_ranked_ids"), tenant_salt)
         result.append({
             "observation_id": str(item.get("id") or "")[:128],
             "experiment_run_id": str(item.get("experiment_run_id") or "")[:128] or None,
@@ -915,15 +918,15 @@ def list_shadow_observations(*, tenant_id: str, limit: int = 50) -> list[dict[st
     return result
 
 
-def get_experiment_observability(*, tenant_id: str, limit: int = 50) -> dict[str, Any]:
-    """Build the tenant-safe OBS-002 read model from PostgreSQL evidence."""
+def get_experiment_observability(*, tenant_id: str | None, limit: int = 50) -> dict[str, Any]:
+    """Build the redacted OBS-002 read model from PostgreSQL evidence."""
 
     _require_pg()
-    tenant = _code(tenant_id, field="tenant_id", maximum=128)
+    tenant = _code(tenant_id, field="tenant_id", maximum=128) if tenant_id is not None else None
     bounded_limit = max(1, min(int(limit), 100))
     return {
         "schema_version": "obs-002-v1",
-        "tenant_id": tenant,
+        "tenant_id": tenant or "tenant-default",
         "database": "PostgreSQL",
         "redacted": True,
         "contains_prompt_or_answer": False,

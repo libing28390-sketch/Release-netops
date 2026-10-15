@@ -37,7 +37,7 @@ def test_directory_tree_seeds_once_and_supports_nested_crud(monkeypatch):
     monkeypatch.setattr(knowledge_service_module, "get_db_connection", lambda: connection)
     service = knowledge_service_module.KnowledgeService()
 
-    tree = service.list_knowledge_directories("kb-1", tenant_id="tenant-a")
+    tree = service.list_knowledge_directories("kb-1", tenant_id=None)
     assert tree["total"] == 30
     assert [node["name"] for node in tree["items"]] == [
         "01_product",
@@ -56,28 +56,49 @@ def test_directory_tree_seeds_once_and_supports_nested_crud(monkeypatch):
 
     renamed = service.rename_knowledge_directory(product["children"][0]["id"], "huawei_devices", tenant_id="tenant-a")
     assert renamed["path"] == "01_product/huawei_devices"
-    refreshed = service.list_knowledge_directories("kb-1", tenant_id="tenant-a")
+    refreshed = service.list_knowledge_directories("kb-1", tenant_id=None)
     assert any(node["path"] == "01_product/huawei_devices/models" for node in refreshed["items"][0]["children"][0]["children"])
 
     with pytest.raises(ValueError, match="同级目录"):
         service.create_knowledge_directory("kb-1", "HUAWEI_DEVICES", parent_id=product["id"], tenant_id="tenant-a")
 
     service.delete_knowledge_directory(renamed["id"], tenant_id="tenant-a")
-    after_delete = service.list_knowledge_directories("kb-1", tenant_id="tenant-a")
+    after_delete = service.list_knowledge_directories("kb-1", tenant_id=None)
     assert after_delete["total"] == 29
     assert all(node["name"] != "huawei_devices" for node in after_delete["items"][0]["children"])
 
 
-def test_directory_tree_is_tenant_scoped(monkeypatch):
+def test_directory_tree_lists_historical_tenants_and_new_roots_use_default(monkeypatch):
     connection = _knowledge_connection()
     monkeypatch.setattr(knowledge_service_module, "get_db_connection", lambda: connection)
     service = knowledge_service_module.KnowledgeService()
 
-    tenant_b = service.list_knowledge_directories("kb-1", tenant_id="tenant-b")
-    tenant_a = service.list_knowledge_directories("kb-1", tenant_id="tenant-a")
-    assert tenant_b["total"] == 30
-    assert tenant_a["total"] == 30
-    assert {node["id"] for node in tenant_a["items"]}.isdisjoint({node["id"] for node in tenant_b["items"]})
+    service._ensure_default_directories(connection.cursor(), "kb-1", "tenant-a", "legacy-a")
+    service._ensure_default_directories(connection.cursor(), "kb-1", "tenant-b", "legacy-b")
+    connection.commit()
+
+    tree = service.list_knowledge_directories("kb-1", tenant_id=None)
+    assert tree["total"] == 90
+    assert {node["tenant_id"] for node in tree["items"]} == {"tenant-a", "tenant-b", "tenant-default"}
+
+    new_root = service.create_knowledge_directory(
+        "kb-1", "new-root", tenant_id="tenant-history-c", created_by="tester",
+    )
+    assert new_root["tenant_id"] == "tenant-default"
+
+
+def test_new_knowledge_base_uses_default_tenant(monkeypatch):
+    connection = _knowledge_connection()
+    monkeypatch.setattr(knowledge_service_module, "get_db_connection", lambda: connection)
+
+    created = knowledge_service_module.KnowledgeService().create_knowledge_base(
+        "New single-org KB", tenant_id="tenant-history-c",
+    )
+
+    assert created["tenant_id"] == "tenant-default"
+    assert connection.execute(
+        "SELECT tenant_id FROM ai_knowledge_base WHERE id = ?", (created["id"],),
+    ).fetchone()[0] == "tenant-default"
 
 
 def test_document_listing_filters_by_directory_metadata(monkeypatch):
@@ -113,7 +134,7 @@ def test_document_listing_filters_by_directory_metadata(monkeypatch):
     monkeypatch.setattr(knowledge_service_module, "get_db_connection", lambda: connection)
 
     result = knowledge_service_module.KnowledgeService().list_documents(
-        tenant_id="tenant-a",
+        tenant_id=None,
         directory_path="01_product/huawei",
     )
 

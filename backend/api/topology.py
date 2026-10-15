@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from api.users import validate_session_token
 from core.rbac import require_role
+from core.tenant_policy import DEFAULT_TENANT_ID, TENANT_ISOLATION_ENABLED, tenant_id_for_write
 from database import get_db_connection
 from core.read_cache import (
     TOPOLOGY_CACHE_TTL_SECONDS,
@@ -43,7 +44,7 @@ from services.topology_graph_service import (
 from services import rack_scope_service
 
 
-# All topology data is tenant-scoped operational data.  Require an
+# Tenant labels remain part of the topology graph identity. Require an
 # authenticated viewer at the router boundary and make state-changing or
 # device-affecting operations declare their stronger role below.
 router = APIRouter(dependencies=[require_role("Viewer")])
@@ -76,8 +77,11 @@ def _get_authenticated_session(request: Request) -> dict:
 
 
 def _resolve_graph_tenant(session: dict, requested_tenant: object = None) -> str:
-    """Keep graph reads and writes inside the caller's tenant boundary."""
+    """Resolve a topology data partition, enforcing it as access scope only when enabled."""
     session_tenant = str(session.get('tenant_id') or 'tenant-default').strip() or 'tenant-default'
+    if not TENANT_ISOLATION_ENABLED:
+        requested = str(requested_tenant or '').strip()
+        return requested or DEFAULT_TENANT_ID
     requested = str(requested_tenant or session_tenant).strip() or session_tenant
     if str(session.get('role') or '').lower() == 'administrator':
         return requested
@@ -597,7 +601,7 @@ def rebuild_evidence_graph(request: Request, payload: dict = Body(...), _user=re
     to the discovery evidence retention path and is not copied into the graph.
     """
     session = _get_authenticated_session(request)
-    tenant_id = _resolve_graph_tenant(session, payload.get('tenant_id'))
+    tenant_id = tenant_id_for_write(user=session)
     nodes = payload.get('nodes') if isinstance(payload.get('nodes'), list) else []
     observations = payload.get('observations') if isinstance(payload.get('observations'), list) else []
     graph = build_graph(nodes, observations, tenant_id=tenant_id)

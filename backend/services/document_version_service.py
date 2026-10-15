@@ -10,7 +10,6 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
-import re
 from typing import Any
 
 from core.rbac import authorize_resource
@@ -23,9 +22,6 @@ from services.knowledge_v1_source_service import (
 )
 
 
-_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
-
-
 class DocumentVersionError(ValueError):
     """Stable, user-safe document revision error."""
 
@@ -35,13 +31,6 @@ class DocumentVersionError(ValueError):
         self.message = message
         self.status_code = status_code
         self.details = details
-
-
-def _tenant(user: dict[str, Any]) -> str:
-    tenant_id = str(user.get("tenant_id") or "tenant-default").strip()
-    if not tenant_id or len(tenant_id) > 256 or _CONTROL_RE.search(tenant_id):
-        raise DocumentVersionError("DOCUMENT_TENANT_INVALID", "tenant_id is invalid")
-    return tenant_id
 
 
 def _text(value: Any) -> str:
@@ -106,10 +95,6 @@ def record_document_version(
     document_kind: str = "official_manual",
 ) -> dict[str, Any]:
     del collection_id
-    source_tenant = _text(source.get("tenant_id"))
-    actor_tenant = _tenant(user)
-    if source_tenant and source_tenant != actor_tenant:
-        raise DocumentVersionError("DOCUMENT_TENANT_CONFLICT", "source and actor tenant do not match", status_code=403)
     try:
         return _record_document_version(
             source,
@@ -126,17 +111,16 @@ def record_document_version(
 
 
 def list_document_versions(document_id: str, user: dict[str, Any]) -> list[dict[str, Any]]:
-    tenant_id = _tenant(user)
-    if not authorize_resource(user, "knowledge_source", "read", tenant_id=tenant_id):
+    if not authorize_resource(user, "knowledge_source", "read", tenant_id=None):
         raise DocumentVersionError("DOCUMENT_PERMISSION_DENIED", "Insufficient permission for document revision read", status_code=403)
     document_id = _text(document_id)
     if not document_id:
         raise DocumentVersionError("DOCUMENT_ID_REQUIRED", "document_id is required")
     with get_db_connection() as conn:
         rows = conn.execute(
-            "SELECT * FROM ai_document_revision WHERE tenant_id = ? AND document_id = ? "
+            "SELECT * FROM ai_document_revision WHERE document_id = ? "
             "AND record_type = 'document_revision' ORDER BY revision_no DESC, created_at DESC, id DESC",
-            (tenant_id, document_id),
+            (document_id,),
         ).fetchall()
         return [_decode_v1(_row_dict(row) or {}) for row in rows]
 
@@ -147,8 +131,7 @@ def compare_document_versions(
     right_version_id: str,
     user: dict[str, Any],
 ) -> dict[str, Any]:
-    tenant_id = _tenant(user)
-    if not authorize_resource(user, "knowledge_source", "read", tenant_id=tenant_id):
+    if not authorize_resource(user, "knowledge_source", "read", tenant_id=None):
         raise DocumentVersionError("DOCUMENT_PERMISSION_DENIED", "Insufficient permission for document revision read", status_code=403)
     document_id = _text(document_id)
     left_id = _text(left_version_id)
@@ -161,9 +144,9 @@ def compare_document_versions(
         rows: list[dict[str, Any]] = []
         for version_id in (left_id, right_id):
             row = _row_dict(conn.execute(
-                "SELECT * FROM ai_document_revision WHERE tenant_id = ? AND document_id = ? "
+                "SELECT * FROM ai_document_revision WHERE document_id = ? "
                 "AND id = ? AND record_type = 'document_revision'",
-                (tenant_id, document_id, version_id),
+                (document_id, version_id),
             ).fetchone())
             if not row:
                 raise DocumentVersionError("DOCUMENT_VERSION_NOT_FOUND", "document revision was not found", status_code=404)

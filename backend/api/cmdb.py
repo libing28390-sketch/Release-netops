@@ -16,13 +16,13 @@ from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from database import get_db_connection
 from core.rbac import require_role
+from core.tenant_policy import tenant_id_for_write
 from core.read_cache import (
     REFERENCE_CACHE_TTL_SECONDS,
     invalidate_read_cache,
     read_cache,
 )
 from schemas.schemas import (
-    TenantCreate, TenantUpdate,
     SiteCreate, SiteUpdate, SiteImportRequest,
     VrfCreate, VrfUpdate,
     VlanCreate, VlanUpdate,
@@ -308,8 +308,6 @@ def _cmdb_interface_resource_scope(conn, user, action: str) -> tuple[str | None,
     from services.rack_scope_service import allowed_resource_scope
 
     scope = allowed_resource_scope(conn, user, "asset", action)
-    if not scope.tenant_id:
-        raise HTTPException(status_code=403, detail="Authenticated user is not assigned to a tenant")
     if scope.site_ids == ():
         raise HTTPException(status_code=403, detail="Insufficient permission for the interface scope")
     return scope.tenant_id, scope.site_ids
@@ -524,43 +522,30 @@ def api_list_tenants(_user=require_role("Viewer")):
         conn.close()
 
 
-@router.post("/cmdb/tenants", status_code=201)
-def api_create_tenant(body: TenantCreate, user=require_role("Administrator")):
-    conn = get_db_connection()
-    try:
-        t = cmdb_service.create_tenant(conn, **body.model_dump())
-        _audit(user, "tenant.create", "info", f"Created tenant '{body.name}'", "tenant", t.get("id"), body.name)
-        return {"success": True, "data": t, "message": "Tenant created"}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    finally:
-        conn.close()
+@router.post("/cmdb/tenants", status_code=410)
+def api_create_tenant(_user=require_role("Administrator")):
+    raise HTTPException(
+        status_code=410,
+        detail={"code": "MULTI_TENANCY_DISABLED", "message": "Tenant management is disabled in single-organization mode"},
+    )
 
 
 @router.put("/cmdb/tenants/{tenant_id}")
-def api_update_tenant(tenant_id: str, body: TenantUpdate, user=require_role("Administrator")):
-    conn = get_db_connection()
-    try:
-        t = cmdb_service.update_tenant(conn, tenant_id, **body.model_dump(exclude_unset=True))
-        _audit(user, "tenant.update", "info", f"Updated tenant {tenant_id}", "tenant", tenant_id)
-        return {"success": True, "data": t, "message": "Tenant updated"}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    finally:
-        conn.close()
+def api_update_tenant(tenant_id: str, _user=require_role("Administrator")):
+    del tenant_id
+    raise HTTPException(
+        status_code=410,
+        detail={"code": "MULTI_TENANCY_DISABLED", "message": "Tenant management is disabled in single-organization mode"},
+    )
 
 
 @router.delete("/cmdb/tenants/{tenant_id}")
-def api_delete_tenant(tenant_id: str, user=require_role("Administrator")):
-    conn = get_db_connection()
-    try:
-        cmdb_service.delete_tenant(conn, tenant_id)
-        _audit(user, "tenant.delete", "warning", f"Deleted tenant {tenant_id}", "tenant", tenant_id)
-        return {"success": True, "data": None, "message": "Tenant deleted"}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    finally:
-        conn.close()
+def api_delete_tenant(tenant_id: str, _user=require_role("Administrator")):
+    del tenant_id
+    raise HTTPException(
+        status_code=410,
+        detail={"code": "MULTI_TENANCY_DISABLED", "message": "Tenant management is disabled in single-organization mode"},
+    )
 
 
 # ─── Sites ──────────────────────────────────────────────
@@ -658,7 +643,8 @@ def api_import_sites(body: SiteImportRequest, user=require_role("Operator")):
         for row_number, row in enumerate(body.rows, start=2):
             payload = row.model_dump()
             normalized_name = str(payload.get('site_name') or '').strip().casefold()
-            tenant_key = str(payload.get('tenant_id') or 'tenant-default').strip()
+            tenant_key = tenant_id_for_write(requested=payload.get('tenant_id'), user=user)
+            payload['tenant_id'] = tenant_key
             name_key = (tenant_key, normalized_name)
             if name_key in seen_names:
                 errors.append({'row': row_number, 'message': '站点名称在导入文件中重复'})
@@ -721,7 +707,9 @@ def api_get_site(site_id: str, _user=require_role("Viewer")):
 def api_create_site(body: SiteCreate, user=require_role("Operator")):
     conn = get_db_connection()
     try:
-        s = cmdb_service.create_site(conn, **body.model_dump())
+        payload = body.model_dump()
+        payload['tenant_id'] = tenant_id_for_write(requested=payload.get('tenant_id'), user=user)
+        s = cmdb_service.create_site(conn, **payload)
         _audit(user, "site.create", "info", f"Created site '{s.get('site_code')}'", "site", s.get("id"), s.get("site_code"))
         invalidate_read_cache('references')
         invalidate_read_cache('rack_page')
@@ -736,7 +724,9 @@ def api_create_site(body: SiteCreate, user=require_role("Operator")):
 def api_update_site(site_id: str, body: SiteUpdate, user=require_role("Operator")):
     conn = get_db_connection()
     try:
-        s = cmdb_service.update_site(conn, site_id, **body.model_dump(exclude_unset=True))
+        payload = body.model_dump(exclude_unset=True)
+        payload.pop('tenant_id', None)
+        s = cmdb_service.update_site(conn, site_id, **payload)
         _audit(user, "site.update", "info", f"Updated site {site_id}", "site", site_id)
         invalidate_read_cache('references')
         invalidate_read_cache('rack_page')
@@ -785,7 +775,9 @@ def api_list_vrfs(tenant_id: str = Query('', description="Filter by tenant"),
 def api_create_vrf(body: VrfCreate, user=require_role("Operator")):
     conn = get_db_connection()
     try:
-        v = cmdb_service.create_vrf(conn, **body.model_dump())
+        payload = body.model_dump()
+        payload['tenant_id'] = tenant_id_for_write(requested=payload.get('tenant_id'), user=user)
+        v = cmdb_service.create_vrf(conn, **payload)
         _audit(user, "vrf.create", "info", f"Created VRF '{body.vrf_name}'", "vrf", v.get("id"), body.vrf_name)
         return {"success": True, "data": v, "message": "VRF created"}
     except ValueError as e:
@@ -798,7 +790,9 @@ def api_create_vrf(body: VrfCreate, user=require_role("Operator")):
 def api_update_vrf(vrf_id: str, body: VrfUpdate, user=require_role("Operator")):
     conn = get_db_connection()
     try:
-        v = cmdb_service.update_vrf(conn, vrf_id, **body.model_dump(exclude_unset=True))
+        payload = body.model_dump(exclude_unset=True)
+        payload.pop('tenant_id', None)
+        v = cmdb_service.update_vrf(conn, vrf_id, **payload)
         _audit(user, "vrf.update", "info", f"Updated VRF {vrf_id}", "vrf", vrf_id)
         return {"success": True, "data": v, "message": "VRF updated"}
     except ValueError as e:
@@ -857,7 +851,9 @@ def api_list_vlans(site_id: str = Query('', description="Filter by site"),
 def api_create_vlan(body: VlanCreate, user=require_role("Operator")):
     conn = get_db_connection()
     try:
-        v = cmdb_service.create_vlan(conn, **body.model_dump())
+        payload = body.model_dump()
+        payload['tenant_id'] = tenant_id_for_write(requested=payload.get('tenant_id'), user=user)
+        v = cmdb_service.create_vlan(conn, **payload)
         _audit(user, "vlan.create", "info", f"Created VLAN {body.vlan_id}", "vlan", v.get("id"), body.name)
         return {"success": True, "data": v, "message": "VLAN created"}
     except ValueError as e:
@@ -870,7 +866,9 @@ def api_create_vlan(body: VlanCreate, user=require_role("Operator")):
 def api_update_vlan(vlan_pk: str, body: VlanUpdate, user=require_role("Operator")):
     conn = get_db_connection()
     try:
-        v = cmdb_service.update_vlan(conn, vlan_pk, **body.model_dump(exclude_unset=True))
+        payload = body.model_dump(exclude_unset=True)
+        payload.pop('tenant_id', None)
+        v = cmdb_service.update_vlan(conn, vlan_pk, **payload)
         _audit(user, "vlan.update", "info", f"Updated VLAN {vlan_pk}", "vlan", vlan_pk)
         return {"success": True, "data": v, "message": "VLAN updated"}
     except ValueError as e:

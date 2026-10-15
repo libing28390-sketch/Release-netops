@@ -187,7 +187,10 @@ def test_unreviewed_version_remains_unknown():
     assert result.retrieval_eligible is False
 
 
-def test_cross_tenant_snapshot_is_rejected():
+def test_cross_tenant_snapshot_is_rejected_when_tenant_isolation_is_enabled(monkeypatch):
+    from core import tenant_policy
+
+    monkeypatch.setattr(tenant_policy, "TENANT_ISOLATION_ENABLED", True)
     result = resolve_document_entities(
         _metadata(),
         tenant_id=TENANT,
@@ -207,6 +210,107 @@ def test_seed_catalog_is_not_treated_as_active_fact():
 
     assert result.outcome is EntityResolutionOutcome.UNKNOWN
     assert "ENTITY_CATALOG_REVIEW_ONLY" in {item.code for item in result.issues}
+
+
+def test_single_org_resolution_searches_active_historical_snapshots_by_object_identity(monkeypatch):
+    from core import tenant_policy
+    from services.catalog_version_service import (
+        get_active_catalog_snapshots,
+        import_catalog_version,
+        list_catalog_versions,
+        reset_catalog_version_state_for_tests,
+    )
+
+    reset_catalog_version_state_for_tests()
+    try:
+        monkeypatch.setattr(tenant_policy, "TENANT_ISOLATION_ENABLED", True)
+        owners = [
+            {"id": "entity-history-a", "role": "Administrator", "tenant_id": "tenant-history-a"},
+            {"id": "entity-history-b", "role": "Administrator", "tenant_id": "tenant-history-b"},
+        ]
+        for index, owner in enumerate(owners):
+            tenant = owner["tenant_id"]
+            baseline = list_catalog_versions(owner)["active_version_id"]
+            import_catalog_version(
+                owner,
+                {
+                    "version": f"entity-history-v{index + 1}",
+                    "models": [{
+                        "product_model_id": f"history-model-{index + 1}",
+                        "tenant_id": tenant,
+                        "vendor_id": "cisco",
+                        "vendor_name": "Cisco",
+                        "family_code": "catalyst_9300",
+                        "family_name": "Catalyst 9300",
+                        "series_code": "c9300",
+                        "series_name": "Catalyst 9300",
+                        "model_code": "HISTORY-C9300",
+                        "display_name": "Shared Historical C9300",
+                        "status": "active",
+                        "review_status": "approved",
+                        "software_scope": {
+                            "os_family": "IOS-XE",
+                            "software_train": "IOS-XE",
+                            "software_versions": ["17.9.4"],
+                        },
+                        "platform_binding_advisory": {"cli_platform": "cisco_ios_xe"},
+                    }, {
+                        "product_model_id": f"draft-model-{index + 1}",
+                        "tenant_id": tenant,
+                        "vendor_id": "cisco",
+                        "vendor_name": "Cisco",
+                        "family_code": "catalyst_9300",
+                        "family_name": "Catalyst 9300",
+                        "series_code": "c9300",
+                        "series_name": "Catalyst 9300",
+                        "model_code": "HISTORY-C9300-DRAFT",
+                        "display_name": "Shared Historical C9300 Draft",
+                        "status": "draft",
+                    }],
+                    "aliases": [{
+                        "id": f"history-alias-{index + 1}",
+                        "tenant_id": tenant,
+                        "product_model_id": f"history-model-{index + 1}",
+                        "alias": "Shared Historical C9300",
+                        "alias_kind": "canonical",
+                        "status": "active",
+                    }, {
+                        "id": f"draft-alias-{index + 1}",
+                        "tenant_id": tenant,
+                        "product_model_id": f"draft-model-{index + 1}",
+                        "alias": "Draft-only historical C9300",
+                        "alias_kind": "canonical",
+                        "status": "active",
+                    }],
+                },
+                expected_active_version_id=baseline,
+                confirm=True,
+            )
+
+        snapshots = {
+            item["tenant_id"]: item
+            for item in get_active_catalog_snapshots(tenant_id=None)
+            if item["tenant_id"] in {"tenant-history-a", "tenant-history-b"}
+        }
+        monkeypatch.setattr(tenant_policy, "TENANT_ISOLATION_ENABLED", False)
+        result = resolve_document_entities(
+            _metadata(product_model="Shared Historical C9300"),
+            tenant_id=None,
+        )
+
+        assert result.outcome is EntityResolutionOutcome.AMBIGUOUS
+        assert result.retrieval_eligible is False
+        assert {(item["tenant_id"], item["product_model_id"]) for item in result.candidates} == {
+            ("tenant-history-a", "history-model-1"),
+            ("tenant-history-b", "history-model-2"),
+        }
+        for candidate in result.candidates:
+            snapshot = snapshots[candidate["tenant_id"]]
+            assert candidate["catalog_version_id"] == snapshot["version_id"]
+            assert candidate["catalog_content_hash"] == snapshot["content_hash"]
+        assert result.metadata_hash
+    finally:
+        reset_catalog_version_state_for_tests()
 
 
 def test_upstream_quarantine_short_circuits_resolution():

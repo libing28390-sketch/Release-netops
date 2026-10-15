@@ -2,7 +2,8 @@ import logging
 import uuid
 from fastapi import APIRouter, HTTPException, Body
 from database import get_db_connection
-from core.rbac import enforce_resource_scope, is_global_administrator, require_role
+from core.rbac import enforce_resource_scope, require_role
+from core.tenant_policy import TENANT_ISOLATION_ENABLED, tenant_scope_for_user
 from services.audit_service import log_audit_event
 from services.change_order_service import get_change_order, update_change_order
 from api.change_orders.helpers import (
@@ -56,8 +57,9 @@ def api_transition_change_order(order_id: str, body: dict = Body(...), user=requ
         actor_groups = _load_actor_change_groups(conn, str(user.get('user_id') or ''))
         is_admin = user.get('role') == 'Administrator'
         tenant_id = str(existing.get('tenant_id') or '').strip()
-        if not is_global_administrator(user):
-            if not tenant_id or not str(user.get('tenant_id') or '').strip() or tenant_id != str(user.get('tenant_id') or '').strip():
+        if TENANT_ISOLATION_ENABLED:
+            actor_tenant_id = tenant_scope_for_user(user)
+            if not tenant_id or not actor_tenant_id or tenant_id != actor_tenant_id:
                 raise HTTPException(status_code=404, detail='Change order not found')
         permission_action = (
             'approve' if new_status == 'approved' or (current_status == 'final_review' and new_status in {'rejected', 'initial_review'})

@@ -15,6 +15,8 @@ import time
 from pathlib import Path
 from typing import Any, Mapping
 
+from core.tenant_policy import tenant_id_for_write
+
 
 class KnowledgeEvaluationError(Exception):
     """Stable, redacted errors exposed by the evaluation API."""
@@ -270,7 +272,7 @@ def _project_report(raw: Mapping[str, Any], *, tenant_id: str, started_at: float
 def get_evaluation_report(user: Mapping[str, Any], *, include_cases: bool = True) -> dict[str, Any]:
     """Return the last in-process PostgreSQL evaluation, or a safe empty state."""
 
-    tenant_id = str(user.get("tenant_id") or "tenant-default")[:128]
+    tenant_id = tenant_id_for_write(user=user)
     catalog = _load_case_catalog()
     report = dict(_LAST_REPORT) if _LAST_REPORT else None
     if report is not None:
@@ -353,7 +355,7 @@ def run_evaluation(user: Mapping[str, Any]) -> dict[str, Any]:
     """Execute the bounded PG baseline and retain only its safe projection."""
 
     global _LAST_REPORT
-    tenant_id = str(user.get("tenant_id") or "tenant-default")[:128]
+    tenant_id = tenant_id_for_write(user=user)
     with _RUN_LOCK:
         started = time.time()
         raw = _run_postgresql_baseline()

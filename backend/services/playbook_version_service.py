@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from database import get_db_connection
+from core.tenant_policy import TENANT_ISOLATION_ENABLED, tenant_id_for_write, tenant_scope_for_user
 
 
 class PlaybookVersionError(ValueError):
@@ -56,10 +57,10 @@ def _assert_playbook_id(playbook_id: str) -> str:
 
 def _assert_scope(row: dict[str, Any], user: dict[str, Any]) -> None:
     row_tenant = str(row.get("tenant_id") or "")
-    user_tenant = str(user.get("tenant_id") or "")
-    if row_tenant and row_tenant != user_tenant and user.get("role") != "Administrator":
+    user_tenant = tenant_scope_for_user(user)
+    if TENANT_ISOLATION_ENABLED and row_tenant and row_tenant != user_tenant and user.get("role") != "Administrator":
         raise PlaybookVersionError("PLAYBOOK_SCOPE_DENIED", "Playbook version is outside the current tenant scope", status_code=403)
-    if not row_tenant and user.get("role") != "Administrator" and not user_tenant:
+    if TENANT_ISOLATION_ENABLED and not row_tenant and user.get("role") != "Administrator" and not user_tenant:
         raise PlaybookVersionError("PLAYBOOK_SCOPE_DENIED", "A tenant-scoped user is required", status_code=403)
 
 
@@ -130,8 +131,8 @@ def list_versions(playbook_id: str, user: dict[str, Any], *, include_snapshots: 
     try:
         params: list[Any] = [playbook_id]
         where = "playbook_id = ?"
-        if user.get("role") != "Administrator":
-            tenant_id = str(user.get("tenant_id") or "")
+        tenant_id = tenant_scope_for_user(user)
+        if TENANT_ISOLATION_ENABLED and user.get("role") != "Administrator":
             if not tenant_id:
                 raise PlaybookVersionError("PLAYBOOK_SCOPE_DENIED", "A tenant-scoped user is required", status_code=403)
             where += " AND (tenant_id IS NULL OR tenant_id = ?)"
@@ -178,8 +179,8 @@ def create_version(playbook_id: str, payload: dict[str, Any], user: dict[str, An
     name = str(payload.get("name") or definition.get("name") or playbook_id).strip()[:200]
     if not name:
         raise PlaybookVersionError("INVALID_PLAYBOOK_NAME", "Playbook version name is required")
-    tenant_id = str(user.get("tenant_id") or "") or None
-    if user.get("role") != "Administrator" and not tenant_id:
+    tenant_id = tenant_id_for_write(user=user)
+    if TENANT_ISOLATION_ENABLED and user.get("role") != "Administrator" and not tenant_scope_for_user(user):
         raise PlaybookVersionError("PLAYBOOK_SCOPE_DENIED", "A tenant-scoped user is required", status_code=403)
     conn = get_db_connection()
     try:

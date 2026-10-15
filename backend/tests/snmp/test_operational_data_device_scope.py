@@ -42,23 +42,26 @@ def _operator(**overrides):
     return user
 
 
-def test_operational_data_denies_cross_tenant_device_before_collection(monkeypatch):
+def test_operational_data_allows_historical_tenant_device_when_command_scope_allows(monkeypatch):
     device = _device(tenant_id="tenant-b")
-    called = False
+    seen = {}
+    result = {"success": True, "categories": []}
 
-    def should_not_collect(*_args, **_kwargs):
-        nonlocal called
-        called = True
+    def allow(user, resource_type, action, **scope):
+        seen.update(resource_type=resource_type, action=action, scope=scope)
+        return True
 
     monkeypatch.setattr(devices_api, "get_db_connection", lambda: _Connection(device))
-    monkeypatch.setattr(devices_api, "collect_operational_data", should_not_collect)
+    monkeypatch.setattr(devices_api, "authorize_resource", allow)
+    monkeypatch.setattr(devices_api, "collect_operational_data", lambda *_args, **_kwargs: result)
+    monkeypatch.setattr(devices_api, "_record_instant_execution", lambda *_args, **_kwargs: None)
 
-    with pytest.raises(HTTPException) as error:
-        devices_api.collect_device_operational_data("device-scope-1", {}, user=_operator())
-
-    assert error.value.status_code == 403
-    assert error.value.detail["code"] == "RESOURCE_SCOPE_DENIED"
-    assert called is False
+    assert devices_api.collect_device_operational_data("device-scope-1", {}, user=_operator()) == result
+    assert seen == {
+        "resource_type": "command",
+        "action": "execute",
+        "scope": {"tenant_id": "tenant-b", "site_id": "site-a", "device_group_id": "group-a"},
+    }
 
 
 def test_operational_data_passes_device_scope_to_command_authorization(monkeypatch):

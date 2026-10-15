@@ -12,6 +12,8 @@ import ipaddress
 import json
 from typing import Any
 
+from services.rack_scope_service import RackScope, device_scope_predicate
+
 
 COLLECTORS = (
     "reachability",
@@ -552,21 +554,26 @@ def _bulk_scope_clauses(
     *,
     tenant_id: str | None,
     site_ids: tuple[str, ...] | None,
+    device_group_ids: tuple[str, ...] | None = None,
     table_alias: str = "",
 ) -> tuple[list[str], tuple[str, ...]]:
     clauses: list[str] = []
     params: list[str] = []
     prefix = f"{table_alias}." if table_alias else ""
     if tenant_id:
-        clauses.append(f"{prefix}tenant_id = ?")
+        clauses.append(f"COALESCE({prefix}tenant_id, 'tenant-default') = ?")
         params.append(tenant_id)
-    if site_ids is not None:
-        normalized_site_ids = tuple(sorted({str(site_id) for site_id in site_ids if str(site_id)}))
-        if normalized_site_ids:
-            clauses.append(f"{prefix}site_id IN ({','.join('?' for _ in normalized_site_ids)})")
-            params.extend(normalized_site_ids)
-        else:
-            clauses.append("1 = 0")
+    scope_predicate, scope_params = device_scope_predicate(
+        RackScope(
+            tenant_id=tenant_id,
+            site_ids=site_ids,
+            device_group_ids=device_group_ids,
+        ),
+        device_alias=table_alias or "d",
+    )
+    if scope_predicate:
+        clauses.append(scope_predicate)
+        params.extend(str(value) for value in scope_params)
     return clauses, tuple(params)
 
 
@@ -578,6 +585,7 @@ def _bulk_snapshot_token(
     template_id: str | None,
     tenant_id: str | None,
     site_ids: tuple[str, ...] | None,
+    device_group_ids: tuple[str, ...] | None,
 ) -> str:
     # Keep the exact previous database value in the hash input so even a
     # malformed legacy JSON value changing between preview and apply is stale.
@@ -587,6 +595,7 @@ def _bulk_snapshot_token(
         "template_id": template_id if operation == "apply" else "role_default",
         "tenant_id": tenant_id,
         "site_ids": None if site_ids is None else sorted(set(site_ids)),
+        "device_group_ids": None if device_group_ids is None else sorted(set(device_group_ids)),
         "devices": [
             {"id": str(row.get("id") or ""), "policy": row.get("collection_policy_json")}
             for row in sorted(rows, key=lambda item: str(item.get("id") or ""))
@@ -608,11 +617,13 @@ def _bulk_target_rows(
     *,
     tenant_id: str | None = None,
     site_ids: tuple[str, ...] | None = None,
+    device_group_ids: tuple[str, ...] | None = None,
     lock: bool = False,
 ) -> list[dict[str, Any]]:
     filter_clauses, filter_params = _bulk_where(filters)
     scope_clauses, scope_params = _bulk_scope_clauses(
-        tenant_id=tenant_id, site_ids=site_ids, table_alias="d"
+        tenant_id=tenant_id, site_ids=site_ids,
+        device_group_ids=device_group_ids, table_alias="d"
     )
     where_clause = " AND ".join([filter_clauses, *scope_clauses])
     params = (*filter_params, *scope_params)
@@ -640,11 +651,15 @@ def bulk_collection_plan_options(
     *,
     tenant_id: str | None = None,
     site_ids: tuple[str, ...] | None = None,
+    device_group_ids: tuple[str, ...] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """Return value/count pairs for the small set of supported bulk filters."""
     options: dict[str, list[dict[str, Any]]] = {}
     scope_clauses, scope_params = _bulk_scope_clauses(
-        tenant_id=tenant_id, site_ids=site_ids, table_alias="d"
+        tenant_id=tenant_id,
+        site_ids=site_ids,
+        device_group_ids=device_group_ids,
+        table_alias="d",
     )
     for key, expression in _BULK_OPTION_SQL.items():
         if key == "site":
@@ -699,12 +714,16 @@ def collection_plan_for_ip(
     *,
     tenant_id: str | None = None,
     site_ids: tuple[str, ...] | None = None,
+    device_group_ids: tuple[str, ...] | None = None,
 ) -> dict[str, Any] | None:
     """Find a single visible device by normalized IP and resolve its plan."""
     raw_ip = str(ip or "").strip()
     normalized_ip = normalize_device_ip(raw_ip)
     scope_clauses, scope_params = _bulk_scope_clauses(
-        tenant_id=tenant_id, site_ids=site_ids, table_alias="d"
+        tenant_id=tenant_id,
+        site_ids=site_ids,
+        device_group_ids=device_group_ids,
+        table_alias="d",
     )
 
     def _query_matches(ip_predicate: str, ip_params: tuple[str, ...]):
@@ -765,6 +784,7 @@ def preview_bulk_collection_plan(
     filters: Any,
     tenant_id: str | None = None,
     site_ids: tuple[str, ...] | None = None,
+    device_group_ids: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     """Preview a filtered collection-plan update without writing any rows."""
     if operation not in {"apply", "reset"}:
@@ -772,7 +792,13 @@ def preview_bulk_collection_plan(
     if operation == "apply" and template_id not in _BULK_PRESET_TEMPLATES:
         raise ValueError("template_id must be an assignable preset template")
     normalized_filters = normalize_bulk_filters(filters)
-    rows = _bulk_target_rows(conn, normalized_filters, tenant_id=tenant_id, site_ids=site_ids)
+    rows = _bulk_target_rows(
+        conn,
+        normalized_filters,
+        tenant_id=tenant_id,
+        site_ids=site_ids,
+        device_group_ids=device_group_ids,
+    )
     sample = []
     for row in rows[:10]:
         sample.append(
@@ -797,6 +823,7 @@ def preview_bulk_collection_plan(
             template_id=template_id,
             tenant_id=tenant_id,
             site_ids=site_ids,
+            device_group_ids=device_group_ids,
         ),
         "operation": operation,
         "template_id": template_id if operation == "apply" else "role_default",
@@ -812,6 +839,7 @@ def apply_bulk_collection_plan(
     snapshot_token: str,
     tenant_id: str | None = None,
     site_ids: tuple[str, ...] | None = None,
+    device_group_ids: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     """Atomically update all currently matching devices after snapshot validation."""
     if operation not in {"apply", "reset"}:
@@ -831,6 +859,7 @@ def apply_bulk_collection_plan(
             normalized_filters,
             tenant_id=tenant_id,
             site_ids=site_ids,
+            device_group_ids=device_group_ids,
             lock=True,
         )
         current_token = _bulk_snapshot_token(
@@ -840,6 +869,7 @@ def apply_bulk_collection_plan(
             template_id=template_id,
             tenant_id=tenant_id,
             site_ids=site_ids,
+            device_group_ids=device_group_ids,
         )
         if current_token != snapshot_token:
             conn.rollback()

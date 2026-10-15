@@ -7,11 +7,15 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from core.tenant_policy import tenant_id_for_write
 from database.core import get_db_connection
 from ai.services.knowledge_metadata import parse_markdown_document
 from ai.services.document_entity_resolution import resolve_document_entities
 from ai.services.product_alias_service import normalize_alias, trigram_similarity
 from ai.services.query_normalizer import NormalizedQuery, normalize_query
+
+
+MAX_RESOLUTION_CANDIDATES = 70
 
 
 @dataclass
@@ -87,6 +91,54 @@ class ProductResolver:
         },
     }
 
+    @staticmethod
+    def _candidate_identity(candidate: Dict[str, Any]) -> tuple[str, ...]:
+        """Return a stable source-aware identity for resolver candidates.
+
+        Catalog snapshots are separate evidence even when they describe the
+        same model. Keep their tenant/version/content hash in the key so a
+        merge cannot collapse historical identities into the static alias.
+        """
+        tenant = str(candidate.get("tenant_id") or "").strip()
+        version = str(candidate.get("catalog_version_id") or candidate.get("version_id") or "").strip()
+        content_hash = str(candidate.get("catalog_content_hash") or candidate.get("content_hash") or "").strip().casefold()
+        vendor_value = str(candidate.get("vendor_id") or candidate.get("vendor") or "").strip()
+        vendor = normalize_alias(vendor_value) if vendor_value else ""
+        model_value = (
+            candidate.get("product_model_id")
+            or candidate.get("product_model")
+            or candidate.get("model_code")
+            or candidate.get("display_name")
+            or candidate.get("alias")
+        )
+        model_text = str(model_value or "").strip()
+        model = normalize_alias(model_text) if model_text else ""
+        if not model:
+            model = json.dumps(candidate, ensure_ascii=False, sort_keys=True, default=str)
+        return tenant, version, content_hash, vendor, model
+
+    @classmethod
+    def _merge_candidates(
+        cls,
+        preferred: List[Dict[str, Any]],
+        additional: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Merge bounded resolver evidence in stable order without losing snapshot identity."""
+        merged: list[dict[str, Any]] = []
+        seen: set[tuple[str, ...]] = set()
+        for source in (preferred, additional):
+            for candidate in source:
+                if not isinstance(candidate, dict):
+                    continue
+                identity = cls._candidate_identity(candidate)
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                merged.append(dict(candidate))
+                if len(merged) >= MAX_RESOLUTION_CANDIDATES:
+                    return merged
+        return merged
+
     @classmethod
     def _canonical_series(cls, value: Any) -> Optional[str]:
         if not value:
@@ -129,7 +181,7 @@ class ProductResolver:
 
     @classmethod
     def _reviewed_registry_os_family(cls, resolution: EntityResolution) -> Optional[str]:
-        """Return one concrete OS family supplied by a unique registry row."""
+        """Return one concrete OS family agreed on by reviewed registry evidence."""
         requested = resolution.metadata.get("os_family")
         registry_candidates = [
             item
@@ -141,7 +193,7 @@ class ProductResolver:
             for item in registry_candidates
             if item.get("os_family")
         }
-        if len(registry_candidates) != 1 or len(families) != 1:
+        if not registry_candidates or len(families) != 1:
             return None
         candidate = next(iter(families))
         return candidate if cls._os_family_compatible(requested, candidate) else None
@@ -157,7 +209,7 @@ class ProductResolver:
             return {}
 
     @classmethod
-    def _query_alias_candidates(cls, query: str, *, tenant_id: str) -> list[dict[str, Any]]:
+    def _query_alias_candidates(cls, query: str, *, tenant_id: str | None = None) -> list[dict[str, Any]]:
         """Resolve reviewed aliases without choosing across a conflict.
 
         The physical DB-006 catalog remains release-gated.  This adapter uses
@@ -165,6 +217,7 @@ class ProductResolver:
         bounded candidates; it never authorizes a driver or a write action.
         """
         normalized = normalize_alias(query)
+        identity_tenant = tenant_id_for_write(requested=tenant_id)
         candidates: list[dict[str, Any]] = []
         def series_for(model: str) -> str:
             if model.lower().startswith("ce6"):
@@ -202,7 +255,7 @@ class ProductResolver:
                         if "-" in str(alias):
                             break
                 candidates.append({
-                    "tenant_id": tenant_id,
+                    "tenant_id": identity_tenant,
                     "product_model": candidate_model,
                     "product_series": series_for(model),
                     "alias": query,
@@ -213,7 +266,7 @@ class ProductResolver:
                 continue
             if any(alias.startswith(normalized) or normalized.startswith(alias) for alias in normalized_aliases if len(normalized) >= 2):
                 candidates.append({
-                    "tenant_id": tenant_id,
+                    "tenant_id": identity_tenant,
                     "product_model": model,
                     "product_series": series_for(model),
                     "alias": query,
@@ -225,7 +278,7 @@ class ProductResolver:
             score = max((trigram_similarity(normalized, alias) for alias in normalized_aliases), default=0.0)
             if score >= 0.58:
                 candidates.append({
-                    "tenant_id": tenant_id,
+                    "tenant_id": identity_tenant,
                     "product_model": model,
                     "product_series": series_for(model),
                     "alias": query,
@@ -265,10 +318,11 @@ class ProductResolver:
         query: str,
         metadata: Optional[Dict[str, Any]] = None,
         *,
-        tenant_id: str = "tenant-default",
+        tenant_id: str | None = None,
     ) -> EntityResolution:
         """Resolve an operator query with exact/canonical/prefix/trigram evidence."""
-        normalized = normalize_query(query, tenant_id=tenant_id)
+        identity_tenant = tenant_id_for_write(requested=tenant_id)
+        normalized = normalize_query(query, tenant_id=identity_tenant)
         projected = self._metadata_from_normalized(normalized)
         merged = {key: value for key, value in projected.items() if value not in (None, "")}
         merged.update({key: value for key, value in dict(metadata or {}).items() if value not in (None, "")})
@@ -279,7 +333,7 @@ class ProductResolver:
         identity_query = normalized.model or (
             normalized.product if normalized.product != "CloudEngine 6800" else None
         )
-        candidates = self._query_alias_candidates(identity_query or query, tenant_id=tenant_id) if identity_query else []
+        candidates = self._query_alias_candidates(identity_query or query, tenant_id=identity_tenant) if identity_query else []
         # An exact/canonical identity must not become ambiguous merely because
         # a neighbouring product happens to clear the fuzzy trigram threshold
         # (for example Catalyst 3850 versus Catalyst 9300).  Preserve the full
@@ -314,8 +368,14 @@ class ProductResolver:
             match_method = "prefix"
             ambiguous = True
         result = self.resolve(merged, tenant_id=tenant_id)
-        result.candidates = candidates[:20] or result.candidates
+        # Keep the reviewed alias order first for compatibility, then include
+        # catalog/legacy evidence. Each source is already bounded (20 aliases,
+        # up to 50 catalog/registry candidates), so this merge has a fixed cap
+        # while preserving distinct historical tenant/version/hash identities.
+        result.candidates = self._merge_candidates(candidates, result.candidates)
         result.ambiguous = result.ambiguous or ambiguous
+        if result.ambiguous:
+            result.driver_selection_allowed = False
         result.match_method = match_method if candidates else result.evidence
         result.match_score = match_score
         result.normalized_query = normalized.normalized_text
@@ -334,7 +394,7 @@ class ProductResolver:
             # become S5735 (or another future S57 variant).
         return result
 
-    def resolve(self, metadata: Dict[str, Any], *, tenant_id: str = "tenant-default") -> EntityResolution:
+    def resolve(self, metadata: Dict[str, Any], *, tenant_id: str | None = None) -> EntityResolution:
         v2_resolution = resolve_document_entities(metadata, tenant_id=tenant_id)
         if v2_resolution.catalog_ready:
             return EntityResolution(
@@ -362,12 +422,12 @@ class ProductResolver:
             try:
                 with get_db_connection() as conn:
                     cursor = conn.cursor()
+                    # The legacy product registry is part of the shared
+                    # single-organization knowledge corpus. Keep the active
+                    # lifecycle check and deterministic ordering while
+                    # omitting caller-tenant visibility from this SQL query.
                     cursor.execute(
-                        "SELECT * FROM ai_document "
-                        "WHERE status = 'active' "
-                        "AND (tenant_id = ? OR tenant_id = 'tenant-default' OR tenant_id IS NULL) "
-                        "ORDER BY id",
-                        (tenant_id or "tenant-default",),
+                        "SELECT * FROM ai_document WHERE status = 'active' ORDER BY id",
                     )
                     descriptions = [str(item[0]) for item in (cursor.description or [])]
                     for row in cursor.fetchall():

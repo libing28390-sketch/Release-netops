@@ -33,7 +33,7 @@ class MACTroubleshootingService:
     ) -> Dict[str, Any]:
         norm_mac = self.normalize_mac(raw_mac)
         compact_mac = re.sub(r"[^a-fA-F0-9]", "", raw_mac).lower()
-        tenant = tenant_id or "tenant-default"
+        del tenant_id
         facts: Dict[str, Any] = {
             "raw_mac": raw_mac,
             "normalized_mac": norm_mac,
@@ -51,11 +51,10 @@ class MACTroubleshootingService:
                         FROM arp_table a
                         JOIN devices d ON d.id = a.device_id
                         WHERE lower(replace(replace(replace(a.mac_address, ':', ''), '-', ''), '.', '')) = ?
-                          AND d.tenant_id = ?
                         ORDER BY a.last_updated DESC
                         LIMIT 1
                         """,
-                        (compact_mac, tenant),
+                        (compact_mac,),
                     )
                     row = cursor.fetchone()
                     if row:
@@ -82,11 +81,9 @@ class MACTroubleshootingService:
                                    m.device_id, d.hostname, m.last_updated
                             FROM mac_table m
                             JOIN devices d ON d.id = m.device_id
-                            WHERE d.tenant_id = ?
                             ORDER BY m.last_updated DESC
                             LIMIT 500
-                            """,
-                            (tenant,),
+                            """
                         ).fetchall()
                         for item in rows:
                             if re.sub(r"[^a-fA-F0-9]", "", str(item[0] or "")).lower() != compact_mac:
@@ -119,7 +116,7 @@ class MACTroubleshootingService:
         else:
             path_summary = "本地 ARP/MAC 快照暂未找到目标 MAC 的确定性端口证据。"
             recommendations = [
-                "确认目标 MAC 属于当前租户和已纳管网络。",
+                "确认目标 MAC 属于当前已纳管网络。",
                 "刷新交换机 MAC 表与 ARP 采集后重新定位。",
             ]
         return {

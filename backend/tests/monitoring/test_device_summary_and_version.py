@@ -10,7 +10,7 @@ from services.monitoring_compiler import CompileError, _parse_variant_oid_config
 from services.platform_identification_service import _persist_discovered_version
 
 
-def test_summary_counts_over_200_and_respects_tenant_and_asset_type(isolated_db):
+def test_summary_counts_over_200_across_historical_tenants_and_respects_asset_type(isolated_db):
     connection = get_db_connection()
     try:
         connection.execute("DELETE FROM devices")
@@ -39,10 +39,13 @@ def test_summary_counts_over_200_and_respects_tenant_and_asset_type(isolated_db)
     viewer = {"role": "Viewer", "tenant_id": "summary-a"}
     summary = read_devices_summary(asset_type="network_device", user=viewer)
     assert summary == {
-        "total": 313, "online": 313, "offline": 0, "pending": 0, "unknown": 0,
-        "by_platform": [{"platform": "h3c_comware", "count": 313}],
+        "total": 314, "online": 313, "offline": 1, "pending": 0, "unknown": 0,
+        "by_platform": [
+            {"platform": "h3c_comware", "count": 313},
+            {"platform": "unknown", "count": 1},
+        ],
     }
-    assert read_devices_summary(asset_type="all", user=viewer)["total"] == 314
+    assert read_devices_summary(asset_type="all", user=viewer)["total"] == 315
     admin = read_devices_summary(asset_type="network_device", user={"role": "Administrator"})
     assert admin["total"] == 314 and admin["offline"] == 1
 

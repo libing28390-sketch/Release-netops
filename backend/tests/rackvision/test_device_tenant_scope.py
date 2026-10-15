@@ -25,7 +25,7 @@ def _request(method: str, path: str, **kwargs) -> httpx.Response:
     return asyncio.run(run())
 
 
-def test_device_create_and_import_use_session_tenant_and_require_auth(
+def test_device_create_and_import_use_default_org_label_and_require_auth(
     isolated_db,
     make_user,
     monkeypatch,
@@ -147,20 +147,20 @@ def test_device_create_and_import_use_session_tenant_and_require_auth(
             (created_id, imported_id),
         ).fetchall()
         assert [dict(row) for row in rows] == [
-            {"id": created_id, "tenant_id": tenant_id},
-            {"id": imported_id, "tenant_id": tenant_id},
+            {"id": created_id, "tenant_id": "tenant-default"},
+            {"id": imported_id, "tenant_id": "tenant-default"},
         ]
         asset_rows = conn.execute(
             "SELECT id, hostname, tenant_id FROM devices "
             "WHERE id = ? OR hostname IN (?, ?) ORDER BY hostname",
             (asset_created_device_id, "asset-created-device", "asset-imported-device"),
         ).fetchall()
-        assert [dict(row)["tenant_id"] for row in asset_rows] == [tenant_id, tenant_id]
+        assert [dict(row)["tenant_id"] for row in asset_rows] == ["tenant-default", "tenant-default"]
     finally:
         conn.close()
 
 
-def test_device_write_rejects_authenticated_user_without_tenant(isolated_db, monkeypatch):
+def test_device_write_accepts_authenticated_user_without_tenant(isolated_db, monkeypatch):
     user_payload = {
         "user_id": _id("tenantless-user"),
         "id": _id("tenantless-user-id"),
@@ -170,11 +170,18 @@ def test_device_write_rejects_authenticated_user_without_tenant(isolated_db, mon
     }
     monkeypatch.setattr(users, "validate_session_token", lambda token: user_payload)
 
+    hostname = _id("tenantless-device")
     response = _request(
         "POST",
         "/api/devices/import",
         headers={"Authorization": "Bearer tenantless-token"},
-        json={"devices": [{"hostname": "tenantless", "ip_address": "192.0.2.13"}]},
+        json={"devices": [{"hostname": hostname, "ip_address": "192.0.2.13"}]},
     )
-    assert response.status_code == 403, response.text
-    assert "tenant" in response.json()["detail"].lower()
+    assert response.status_code == 200, response.text
+    conn = get_db_connection()
+    try:
+        row = conn.execute("SELECT tenant_id FROM devices WHERE hostname = ?", (hostname,)).fetchone()
+        assert row is not None
+        assert row["tenant_id"] == "tenant-default"
+    finally:
+        conn.close()

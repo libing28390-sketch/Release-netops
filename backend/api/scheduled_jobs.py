@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from database import get_db_connection
 from core.rbac import require_role, authorize_resource, is_global_administrator
+from core.tenant_policy import TENANT_ISOLATION_ENABLED, tenant_id_for_write, tenant_scope_for_user
 from core.read_cache import (
     SCHEDULED_JOBS_CACHE_TTL_SECONDS,
     invalidate_read_cache,
@@ -66,7 +67,7 @@ def _actor_id(user: dict) -> str:
 
 
 def _actor_tenant(user: dict) -> str:
-    return str(user.get("tenant_id") or "").strip()
+    return tenant_id_for_write(user=user)
 
 
 def _authorize_job(user: dict, row: dict, action: str) -> None:
@@ -76,7 +77,15 @@ def _authorize_job(user: dict, row: dict, action: str) -> None:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
-def _prepare_manifest(conn, source: dict, user: dict, operation: str, *, job_id: str | None = None) -> dict:
+def _prepare_manifest(
+    conn,
+    source: dict,
+    user: dict,
+    operation: str,
+    *,
+    job_id: str | None = None,
+    tenant_id: str | None = None,
+) -> dict:
     script_id = str(source.get("script_id") or "").strip()
     try:
         script_sha, _ = script_snapshot(
@@ -86,7 +95,7 @@ def _prepare_manifest(conn, source: dict, user: dict, operation: str, *, job_id:
             source,
             operation=operation,
             requester_id=_actor_id(user),
-            tenant_id=_actor_tenant(user),
+            tenant_id=tenant_id if tenant_id is not None else tenant_id_for_write(user=user),
             script_sha256=script_sha,
             job_id=job_id,
         )
@@ -95,10 +104,10 @@ def _prepare_manifest(conn, source: dict, user: dict, operation: str, *, job_id:
 
 
 def _require_job_collection_permission(user: dict, action: str) -> None:
-    tenant_id = _actor_tenant(user)
-    if not tenant_id and not is_global_administrator(user):
+    tenant_id = tenant_scope_for_user(user)
+    if TENANT_ISOLATION_ENABLED and not tenant_id and not is_global_administrator(user):
         raise HTTPException(status_code=403, detail="当前账号未分配租户")
-    if not authorize_resource(user, "scheduled_job", action, tenant_id=tenant_id or None):
+    if not authorize_resource(user, "scheduled_job", action, tenant_id=tenant_id):
         raise HTTPException(status_code=403, detail="当前账号没有计划作业资源权限")
 
 
@@ -147,9 +156,11 @@ def list_scheduled_jobs(
     conn = get_db_connection()
     try:
         where, params = [], []
-        if not is_global_administrator(user):
+        tenant_scope = tenant_scope_for_user(user)
+        if tenant_scope:
             where.append("tenant_id = ?")
-            params.append(_actor_tenant(user))
+            params.append(tenant_scope)
+        if not is_global_administrator(user):
             if user.get("role") != "Administrator":
                 where.append("(created_by_id = ? OR authorization_mode = 'system')")
                 params.append(_actor_id(user))
@@ -307,7 +318,7 @@ def list_future_execution_plans(
     safe_page_size = page_size or 20
     cache_key = '|'.join((
         str(user.get("user_id") or user.get("id") or ""),
-        str(user.get("tenant_id") or ""),
+        str(tenant_scope_for_user(user) or ""),
         time_range or '', start_time or '', end_time or '', query or '',
         'paged' if pagination_requested else 'legacy',
         str(safe_page) if pagination_requested else '',
@@ -353,9 +364,11 @@ def list_future_execution_plans(
     try:
         sql = "SELECT * FROM scheduled_jobs WHERE enabled = 1"
         params = []
-        if not is_global_administrator(user):
+        tenant_scope = tenant_scope_for_user(user)
+        if tenant_scope:
             sql += " AND tenant_id = ?"
-            params.append(_actor_tenant(user))
+            params.append(tenant_scope)
+        if not is_global_administrator(user):
             if user.get("role") != "Administrator":
                 sql += " AND (created_by_id = ? OR authorization_mode = 'system')"
                 params.append(_actor_id(user))
@@ -613,7 +626,10 @@ def toggle_scheduled_job(
         current = dict(row)
         _authorize_job(user, current, "enable" if enabled else "disable")
         source = merge_job_source(current, {**payload, "enabled": enabled}, "ENABLE" if enabled else "DISABLE")
-        manifest = _prepare_manifest(conn, source, user, "ENABLE" if enabled else "DISABLE", job_id=job_id)
+        manifest = _prepare_manifest(
+            conn, source, user, "ENABLE" if enabled else "DISABLE",
+            job_id=job_id, tenant_id=str(current.get("tenant_id") or ""),
+        )
         required_approval_type = scheduled_job_approval_type(manifest)
         approval_token = str(payload.get("approval_token") or "").strip()
         approval_code = str(payload.get("approval_code") or "").strip()
@@ -699,7 +715,8 @@ def delete_scheduled_job(
         if payload.get("skip_approval") or payload.get("skip_approval_verification"):
             raise HTTPException(status_code=400, detail="不支持跳过计划作业审批")
         manifest = _prepare_manifest(
-            conn, job_manifest_source_from_row(current, "DELETE"), user, "DELETE", job_id=job_id,
+            conn, job_manifest_source_from_row(current, "DELETE"), user, "DELETE",
+            job_id=job_id, tenant_id=str(current.get("tenant_id") or ""),
         )
         approval_token = str((payload or {}).get("approval_token") or approval_token or "").strip()
         approval_code = str((payload or {}).get("approval_code") or (payload or {}).get("code") or approval_code or "").strip()
@@ -815,7 +832,10 @@ def update_scheduled_job(
         current = dict(row)
         _authorize_job(user, current, "update")
         source = merge_job_source(current, payload, "UPDATE")
-        manifest = _prepare_manifest(conn, source, user, "UPDATE", job_id=job_id)
+        manifest = _prepare_manifest(
+            conn, source, user, "UPDATE", job_id=job_id,
+            tenant_id=str(current.get("tenant_id") or ""),
+        )
         name = manifest["name"]
         action_type = manifest["action"]
         if manifest["job_type"] == "cron" and action_type not in _CRON_ACTION_TYPES:

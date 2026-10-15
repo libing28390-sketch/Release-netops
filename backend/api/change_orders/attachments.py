@@ -6,6 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, File, Form, UploadFile
 from database import get_db_connection, PROJECT_ROOT
 from core.rbac import enforce_resource_scope, is_global_administrator, require_role
+from core.tenant_policy import TENANT_ISOLATION_ENABLED, tenant_scope_for_user
 from services.audit_service import log_audit_event
 from services.change_order_service import get_change_order
 
@@ -15,8 +16,8 @@ router = APIRouter()
 
 def _require_order_update_scope(order: dict, user: dict) -> None:
     tenant_id = str(order.get('tenant_id') or '').strip()
-    if not is_global_administrator(user) and (
-        not tenant_id or tenant_id != str(user.get('tenant_id') or '').strip()
+    if TENANT_ISOLATION_ENABLED and not is_global_administrator(user) and (
+        not tenant_id or tenant_id != tenant_scope_for_user(user)
     ):
         raise HTTPException(status_code=404, detail='Change order not found')
     enforce_resource_scope(user, 'change_order', 'update', tenant_id=tenant_id or None)

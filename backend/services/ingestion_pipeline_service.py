@@ -887,6 +887,22 @@ class IngestionPipeline:
             raise IngestionPipelineError("JOB_NOT_FOUND", "The ingestion job was not found", status_code=404)
         return job
 
+    def _job_for_access_locked(
+        self, job_id: str, *, tenant_id: str | None, owner_id: str | None = None,
+    ) -> IngestionJob:
+        job = self._jobs.get(str(job_id))
+        if not job:
+            raise IngestionPipelineError("JOB_NOT_FOUND", "The ingestion job was not found", status_code=404)
+        if tenant_id is not None:
+            tenant = _clean_text(tenant_id, field="tenant_id", maximum=128, required=True)
+            if job.tenant_id != tenant:
+                raise IngestionPipelineError("JOB_NOT_FOUND", "The ingestion job was not found", status_code=404)
+        if owner_id is not None:
+            owner = _clean_text(owner_id, field="owner_id", maximum=256, required=True)
+            if job.created_by != owner and job.created_by != "system":
+                raise IngestionPipelineError("JOB_NOT_FOUND", "The ingestion job was not found", status_code=404)
+        return job
+
     def claim_job(
         self,
         job_id: str,
@@ -941,7 +957,8 @@ class IngestionPipeline:
         self,
         job_id: str,
         *,
-        tenant_id: str,
+        tenant_id: str | None,
+        owner_id: str | None = None,
         actor: str,
         reason: str = "",
         request_id: str = "",
@@ -955,10 +972,9 @@ class IngestionPipeline:
         Repeated requests return the same snapshot and do not create extra
         work or audit side effects.
         """
-        tenant = _clean_text(tenant_id, field="tenant_id", maximum=128, required=True)
         actor_value = _clean_text(actor, field="actor", maximum=256, required=True)
         with self._lock:
-            job = self._job_for_tenant_locked(job_id, tenant)
+            job = self._job_for_access_locked(job_id, tenant_id=tenant_id, owner_id=owner_id)
             job.request_cancel(actor_value, reason=reason, request_id=request_id)
             if acknowledge_unclaimed and job.execution_state == ExecutionState.CANCEL_REQUESTED.value and not job.lease_owner:
                 job.acknowledge_cancel(actor_value, request_id=request_id)
@@ -968,7 +984,9 @@ class IngestionPipeline:
         self,
         job_id: str,
         *,
-        tenant_id: str,
+        tenant_id: str | None,
+        owner_id: str | None = None,
+        write_tenant_id: str | None = None,
         actor: str,
         request_id: str = "",
     ) -> IngestionJob:
@@ -979,13 +997,27 @@ class IngestionPipeline:
         key.  This keeps idempotency and side-effect boundaries explicit until
         the durable Import Job migration is enabled by ING-017/MIG gates.
         """
-        tenant = _clean_text(tenant_id, field="tenant_id", maximum=128, required=True)
         actor_value = _clean_text(actor, field="actor", maximum=256, required=True)
         request_value = _clean_text(request_id, field="request_id", maximum=256)
         with self._lock:
             original = self._jobs.get(str(job_id))
-            if not original or original.tenant_id != tenant:
+            if not original:
                 raise IngestionPipelineError("JOB_NOT_FOUND", "The ingestion job was not found", status_code=404)
+            if tenant_id is not None:
+                tenant = _clean_text(tenant_id, field="tenant_id", maximum=128, required=True)
+                if original.tenant_id != tenant:
+                    raise IngestionPipelineError("JOB_NOT_FOUND", "The ingestion job was not found", status_code=404)
+            if owner_id is not None:
+                owner = _clean_text(owner_id, field="owner_id", maximum=256, required=True)
+                if original.created_by != owner and original.created_by != "system":
+                    raise IngestionPipelineError("JOB_NOT_FOUND", "The ingestion job was not found", status_code=404)
+            tenant = original.tenant_id
+            write_tenant = _clean_text(
+                write_tenant_id if write_tenant_id is not None else tenant,
+                field="tenant_id",
+                maximum=128,
+                required=True,
+            )
             if original.execution_state == ExecutionState.RETRY_WAIT.value:
                 raise IngestionPipelineError("RETRY_ALREADY_SCHEDULED", "The ingestion job is already waiting for a retry", status_code=409)
             if original.execution_state != ExecutionState.FAILED.value:
@@ -996,7 +1028,7 @@ class IngestionPipeline:
             # tenant/request idempotency key and prevents duplicate attempts.
             children = [
                 item for item in self._jobs.values()
-                if item.tenant_id == tenant and item.retry_of_job_id == original.id
+                if (tenant_id is None or item.tenant_id == tenant) and item.retry_of_job_id == original.id
             ]
             active_children = [item for item in children if not item.terminal]
             if active_children:
@@ -1011,7 +1043,7 @@ class IngestionPipeline:
                 retry_key = retry_key[:256]
             child = IngestionJob(
                 id=f"ing_{uuid.uuid4().hex}",
-                tenant_id=tenant,
+                tenant_id=write_tenant,
                 job_kind=original.job_kind,
                 idempotency_key=retry_key,
                 scope_fingerprint=original.scope_fingerprint,
@@ -1032,7 +1064,7 @@ class IngestionPipeline:
             original._touch(actor_value)
             original._audit("retry_requested", actor=actor_value, request_id=request_value, retry_job_id=child.id)
             self._jobs[child.id] = child
-            self._idempotency[(tenant, retry_key)] = child.id
+            self._idempotency[(write_tenant, retry_key)] = child.id
             ai_metrics.job_event(child._metrics_kind(), "enqueued")
             ai_metrics.job_event(child._metrics_kind(), "retry_created")
             return child
@@ -1076,25 +1108,37 @@ class IngestionPipeline:
             ai_metrics.job_event(job._metrics_kind(), "enqueued")
             return job
 
-    def get_job(self, job_id: str, *, tenant_id: str) -> IngestionJob | None:
-        tenant = _clean_text(tenant_id, field="tenant_id", maximum=128, required=True)
+    def get_job(self, job_id: str, *, tenant_id: str | None, owner_id: str | None = None) -> IngestionJob | None:
         with self._lock:
             job = self._jobs.get(str(job_id))
-            if not job or job.tenant_id != tenant:
+            if not job:
+                return None
+            if tenant_id is not None and job.tenant_id != _clean_text(tenant_id, field="tenant_id", maximum=128, required=True):
+                return None
+            if owner_id is not None and job.created_by not in {
+                _clean_text(owner_id, field="owner_id", maximum=256, required=True), "system",
+            }:
                 return None
             return job
 
-    def list_jobs(self, *, tenant_id: str, execution_state: str = "") -> list[dict[str, Any]]:
-        tenant = _clean_text(tenant_id, field="tenant_id", maximum=128, required=True)
+    def list_jobs(self, *, tenant_id: str | None, execution_state: str = "", owner_id: str | None = None) -> list[dict[str, Any]]:
+        tenant = _clean_text(tenant_id, field="tenant_id", maximum=128, required=True) if tenant_id is not None else None
+        owner = _clean_text(owner_id, field="owner_id", maximum=256, required=True) if owner_id is not None else None
         state = _enum_value(ExecutionState, execution_state, field="execution_state") if execution_state else ""
         with self._lock:
-            values = [job.to_dict() for job in self._jobs.values() if job.tenant_id == tenant and (not state or job.execution_state == state)]
+            values = [
+                job.to_dict() for job in self._jobs.values()
+                if (tenant is None or job.tenant_id == tenant)
+                and (owner is None or job.created_by in {owner, "system"})
+                and (not state or job.execution_state == state)
+            ]
         return sorted(values, key=lambda item: (item["created_at"] or "", item["id"]))
 
     def list_jobs_page(
         self,
         *,
-        tenant_id: str,
+        tenant_id: str | None,
+        owner_id: str | None = None,
         execution_state: str = "",
         phase: str = "",
         job_kind: str = "",
@@ -1110,7 +1154,8 @@ class IngestionPipeline:
         PostgreSQL query, and prevents the list endpoint from returning the
         full error/audit payload for every job.
         """
-        tenant = _clean_text(tenant_id, field="tenant_id", maximum=128, required=True)
+        tenant = _clean_text(tenant_id, field="tenant_id", maximum=128, required=True) if tenant_id is not None else None
+        owner = _clean_text(owner_id, field="owner_id", maximum=256, required=True) if owner_id is not None else None
         state = _enum_value(ExecutionState, execution_state, field="execution_state") if execution_state else ""
         phase_value = _enum_value(IngestionPhase, phase, field="phase") if phase else ""
         kind_value = _enum_value(JobKind, job_kind, field="job_kind") if job_kind else ""
@@ -1120,7 +1165,9 @@ class IngestionPipeline:
         with self._lock:
             values = []
             for job in self._jobs.values():
-                if job.tenant_id != tenant:
+                if tenant is not None and job.tenant_id != tenant:
+                    continue
+                if owner is not None and job.created_by not in {owner, "system"}:
                     continue
                 if state and job.execution_state != state:
                     continue

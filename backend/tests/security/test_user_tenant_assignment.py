@@ -23,7 +23,7 @@ def _unique_id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:10]}"
 
 
-def test_user_create_rejects_foreign_payload_tenant_and_inherits_actor_tenant(
+def test_user_create_ignores_foreign_payload_tenant_and_uses_default_tenant(
     isolated_db,
     make_user,
     monkeypatch,
@@ -58,13 +58,13 @@ def test_user_create_rejects_foreign_payload_tenant_and_inherits_actor_tenant(
 
     monkeypatch.setattr(users, "_hash_password", fake_hash)
     monkeypatch.setattr(users, "log_audit_event", lambda **_event: None)
-    attacker_username = f"rejected-{uuid.uuid4().hex[:10]}"
+    foreign_tenant_username = f"foreign-tenant-{uuid.uuid4().hex[:10]}"
     response = _request(
         "POST",
         "/api/users",
         headers={"Authorization": "Bearer tenant-admin-token"},
         json={
-            "username": attacker_username,
+            "username": foreign_tenant_username,
             "password": "Strong-Test!257",
             "role": "Viewer",
             "display_name": "Tenant User",
@@ -74,18 +74,19 @@ def test_user_create_rejects_foreign_payload_tenant_and_inherits_actor_tenant(
         },
     )
 
-    assert response.status_code == 403, response.text
+    assert response.status_code == 200, response.text
     conn = get_db_connection()
     try:
-        assert conn.execute(
-            "SELECT 1 FROM users WHERE username = ?",
-            (attacker_username,),
-        ).fetchone() is None
+        created_with_foreign_tenant = conn.execute(
+            "SELECT tenant_id FROM users WHERE username = ?",
+            (foreign_tenant_username,),
+        ).fetchone()
+        assert created_with_foreign_tenant["tenant_id"] == "tenant-default"
     finally:
         conn.close()
 
     username = f"created-{uuid.uuid4().hex[:10]}"
-    inherited = _request(
+    defaulted = _request(
         "POST",
         "/api/users",
         headers={"Authorization": "Bearer tenant-admin-token"},
@@ -98,14 +99,14 @@ def test_user_create_rejects_foreign_payload_tenant_and_inherits_actor_tenant(
             "email": "tenant-user@example.test",
         },
     )
-    assert inherited.status_code == 200, inherited.text
+    assert defaulted.status_code == 200, defaulted.text
     conn = get_db_connection()
     try:
         created = conn.execute(
             "SELECT tenant_id FROM users WHERE username = ?",
             (username,),
         ).fetchone()
-        assert created["tenant_id"] == actor_tenant
+        assert created["tenant_id"] == "tenant-default"
     finally:
         conn.close()
 

@@ -15,10 +15,12 @@ from services.platform_registry_service import (
     delete_profile,
     delete_release,
     execute_platform_action,
+    get_profile,
     is_safe_read_command,
     list_profiles,
     list_release_actions,
     preview_platform_action,
+    preview_platform_migration,
     transition_release,
     update_profile,
     update_release_action,
@@ -110,7 +112,7 @@ def test_read_command_guard_rejects_config_and_shell_chaining():
     assert not is_safe_read_command("show version\nshow running-config", "cisco_ios")
 
 
-def test_registry_read_model_returns_tenant_scoped_binding_stats(isolated_db):
+def test_registry_read_model_crosses_history_but_keeps_visible_device_stats(isolated_db):
     conn = isolated_db["module"].get_db_connection()
     try:
         conn.executemany(
@@ -128,10 +130,86 @@ def test_registry_read_model_returns_tenant_scoped_binding_stats(isolated_db):
 
     profiles = list_profiles({"role": "Viewer", "tenant_id": "tenant-1"})
     cisco = next(item for item in profiles if item["platform_code"] == "cisco_ios")
-    assert cisco["bound_device_count"] == 1
-    assert cisco["online_device_count"] == 1
+    assert cisco["bound_device_count"] == 2
+    assert cisco["online_device_count"] == 2
     assert cisco["current_release_status"] == "PUBLISHED"
     assert cisco["current_action_count"] > 0
+
+
+def test_single_org_profile_access_and_create_use_default_tenant_and_keep_platform_action(isolated_db):
+    user = {"id": "profile-operator", "username": "profile-operator", "role": "Operator", "tenant_id": "tenant-history-a"}
+    profile = create_profile(
+        {"platform_code": "history_lab", "name_en": "History Lab", "connection_driver": "netmiko", "parser_platform": "cisco_ios", "tenant_id": "tenant-history-a"},
+        user,
+    )
+    assert profile["tenant_id"] == "tenant-default"
+
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        conn.execute("UPDATE platform_profiles SET tenant_id = 'tenant-history-b' WHERE id = ?", (profile["id"],))
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert get_profile(profile["id"], user)["tenant_id"] == "tenant-history-b"
+    assert profile["id"] in {row["id"] for row in list_profiles(user)}
+    updated = update_profile(profile["id"], {"description": "history remains editable"}, user)
+    assert updated["description"] == "history remains editable"
+
+    viewer = {"id": "platform-viewer", "role": "Operator", "role_profile": "Platform Viewer", "tenant_id": "tenant-history-a"}
+    with pytest.raises(PlatformRegistryError) as denied:
+        create_profile(
+            {"platform_code": "history_denied", "connection_driver": "netmiko", "parser_platform": "cisco_ios"},
+            viewer,
+        )
+    assert denied.value.status_code == 403
+
+
+def test_profile_stats_and_migration_preview_use_asset_site_group_scope(isolated_db, make_user):
+    scope_user = make_user(
+        "asset-scope-reader", role="Operator", tenant_id="tenant-history-x",
+    )
+    scope_user_id = scope_user["user_id"]
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        conn.executemany(
+            """INSERT INTO devices
+               (id, hostname, platform, status, platform_profile_id, tenant_id, site_id, device_group_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            [
+                ("asset-scope-site", "scope-site", "unknown_site_platform", "online", None, "tenant-history-a", "site-allowed", "group-other"),
+                ("asset-scope-group", "scope-group", "unknown_group_platform", "online", "system-profile-cisco_ios", "tenant-history-b", "site-other", "group-allowed"),
+                ("asset-scope-hidden", "scope-hidden", "unknown_hidden_platform", "online", "system-profile-cisco_ios", "tenant-history-c", "site-hidden", "group-hidden"),
+            ],
+        )
+        conn.executemany(
+            """INSERT INTO user_resource_scopes
+               (id, user_id, resource_type, scope_type, scope_id, actions_json, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, '2026-10-15T00:00:00+00:00')""",
+            [
+                ("scope-platform-view", scope_user_id, "platform", "global", "", '["view"]'),
+                ("scope-asset-site", scope_user_id, "asset", "site", "site-allowed", '["view"]'),
+                ("scope-asset-group", scope_user_id, "asset", "device_group", "group-allowed", '["view"]'),
+            ],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    user = {
+        **scope_user,
+        "id": scope_user_id,
+        "role_profile": "Platform Viewer",
+        "scope_mode": "restricted",
+    }
+    cisco = next(item for item in list_profiles(user) if item["platform_code"] == "cisco_ios")
+    assert cisco["bound_device_count"] == 1
+    assert cisco["online_device_count"] == 1
+
+    preview = preview_platform_migration(user)
+    assert preview["devices"]["total"] == 2
+    conflict_device_ids = {item.get("device_id") for item in preview["device_conflicts"]}
+    assert conflict_device_ids == {"asset-scope-site", "asset-scope-group"}
 
 
 def test_custom_profile_can_be_updated_and_unbound_profile_archived(isolated_db):
@@ -317,12 +395,21 @@ def test_release_submitter_can_withdraw_in_review_release(isolated_db):
     assert withdrawn["status"] == "DRAFT"
 
 
-def test_execute_uses_published_release_and_returns_traceability(isolated_db):
+def test_execute_uses_published_release_and_returns_traceability(isolated_db, make_user):
+    restricted_user = make_user(
+        "platform-scope-denied", role="Operator", tenant_id="tenant-history-b",
+    )
     conn = isolated_db["module"].get_db_connection()
     try:
         conn.execute(
-            """INSERT INTO devices (id, hostname, ip_address, platform, status, username, password, connection_method, platform_profile_id, platform_source, tenant_id)
-               VALUES ('device-1', 'edge-1', '192.0.2.10', 'cisco_ios', 'active', 'u', 'p', 'mock', 'system-profile-cisco_ios', 'SYSTEM', 'tenant-1')"""
+            """INSERT INTO devices (id, hostname, ip_address, platform, status, username, password, connection_method, platform_profile_id, platform_source, tenant_id, site_id)
+               VALUES ('device-1', 'edge-1', '192.0.2.10', 'cisco_ios', 'active', 'u', 'p', 'mock', 'system-profile-cisco_ios', 'SYSTEM', 'tenant-1', 'site-bound')"""
+        )
+        conn.execute(
+            """INSERT INTO user_resource_scopes
+               (id, user_id, resource_type, scope_type, scope_id, actions_json, created_at)
+               VALUES (?, ?, 'command', 'site', 'site-out-of-scope', '[\"execute\"]', '2026-10-15T00:00:00+00:00')""",
+            ("platform-command-site-deny", restricted_user["user_id"]),
         )
         conn.commit()
     finally:
@@ -397,7 +484,11 @@ def test_execute_uses_published_release_and_returns_traceability(isolated_db):
         execute_platform_action(
             "device-1",
             "get_clock",
-            user={"id": "operator-2", "username": "operator-2", "role": "Operator"},
+            user={
+                **restricted_user,
+                "id": restricted_user["user_id"],
+                "scope_mode": "restricted",
+            },
             driver_factory=FakeFactory,
         )
     assert scope_error.value.code == "DEVICE_SCOPE_DENIED"

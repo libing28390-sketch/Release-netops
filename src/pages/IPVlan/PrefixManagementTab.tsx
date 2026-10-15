@@ -26,6 +26,7 @@ import { ActionButton, ActionIconButton, ActionIconGroup } from '../../component
 import { TableExportMenu } from '../../components/ui/TableExportMenu';
 import { buildVisibleIpamExportData, fetchAllIpamExportItems } from './ipamExport';
 import { useEscapeClose } from '../../hooks/useEscapeClose';
+import { DEFAULT_TENANT_ID } from '../../types/cmdb';
 import { useNavigate } from 'react-router-dom';
 import { isValidIPv4, isValidIPv6, toNum } from './helpers';
 import IPPoolTab from './IPPoolTab';
@@ -175,7 +176,6 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   const [sites, setSites] = useState<any[]>([]);
   const [vrfs, setVrfs] = useState<any[]>([]);
   const [vlans, setVlans] = useState<any[]>([]);
-  const [tenants, setTenants] = useState<any[]>([]);
   const [devices, setDevices] = useState<any[]>([]);
 
   // Modals
@@ -223,7 +223,6 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
     vrf_id: '',
     vlan_id: '',
     site_id: '',
-    tenant_id: 'tenant-default',
     status: 'active',
     gateway: '',
     description: '',
@@ -488,18 +487,16 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   const fetchLookups = useCallback(async () => {
     const hdrs = authHeaders();
     try {
-      const [sitesRes, vrfsRes, vlansRes, tenantsRes, devicesRes] = await Promise.all([
+      const [sitesRes, vrfsRes, vlansRes, devicesRes] = await Promise.all([
         fetch('/api/cmdb/sites', { headers: hdrs }),
         fetch('/api/cmdb/vrfs', { headers: hdrs }),
         fetch('/api/cmdb/vlans', { headers: hdrs }),
-        fetch('/api/cmdb/tenants', { headers: hdrs }),
         fetch('/api/devices?mode=light', { headers: hdrs }),
       ]);
       const unwrap = (j: any) => (Array.isArray(j) ? j : (j?.data ?? j?.items ?? []));
       if (sitesRes.ok) setSites(unwrap(await sitesRes.json()));
       if (vrfsRes.ok) setVrfs(unwrap(await vrfsRes.json()));
       if (vlansRes.ok) setVlans(unwrap(await vlansRes.json()));
-      if (tenantsRes.ok) setTenants(unwrap(await tenantsRes.json()));
       if (devicesRes.ok) {
         setDevices(unwrap(await devicesRes.json()));
       }
@@ -717,7 +714,6 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
         vrf_id: prefixItem.vrf_id || '',
         vlan_id: prefixItem.vlan_id ? String(prefixItem.vlan_id) : '',
         site_id: prefixItem.site_id || '',
-        tenant_id: prefixItem.tenant_id || 'tenant-default',
         status: prefixItem.status || 'active',
         gateway: prefixItem.gateway || '',
         description: prefixItem.description || '',
@@ -734,7 +730,6 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
         vrf_id: '',
         vlan_id: '',
         site_id: '',
-        tenant_id: 'tenant-default',
         status: 'active',
         gateway: '',
         description: '',
@@ -780,7 +775,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
       vrf_id: form.vrf_id || null,
       vlan_id: form.vlan_id ? form.vlan_id : null,
       site_id: form.site_id || null,
-      tenant_id: form.tenant_id || 'tenant-default',
+      tenant_id: DEFAULT_TENANT_ID,
       gateway_device_id: form.gateway_device_id || null,
       gateway_interface_id: editingPrefix?.gateway_interface_id || null,
     };
@@ -1983,20 +1978,6 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                       <option value="">{zh ? '请选择站点' : 'None'}</option>
                       {sites.map((item) => (
                         <option key={item.id} value={item.id}>{item.site_name} ({item.site_code})</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Tenant Select */}
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '所属租户' : 'Tenant'}</label>
-                    <select
-                      value={form.tenant_id}
-                      onChange={(e) => setForm({ ...form, tenant_id: e.target.value })}
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
-                    >
-                      {tenants.map((item) => (
-                        <option key={item.id} value={item.id}>{item.name}</option>
                       ))}
                     </select>
                   </div>

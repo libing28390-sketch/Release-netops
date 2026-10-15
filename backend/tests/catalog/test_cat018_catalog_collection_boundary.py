@@ -78,19 +78,47 @@ def test_cat018_custom_create_is_server_owned_and_opaque_reference_only():
     assert unknown.value.code == "COLLECTION_FIELD_FORBIDDEN"
 
 
-def test_cat018_custom_collections_are_tenant_scoped_and_rbac_bounded():
+def test_cat018_custom_collections_are_org_wide_and_rbac_bounded():
     created = create_custom_collection(MAINTAINER, {"code": "tenant-only", "name": "Tenant Only"})
+    assert created["tenant_id"] == "tenant-default"
     assert list_custom_collections(MAINTAINER)["total"] == 1
-    assert list_custom_collections(OTHER_TENANT)["total"] == 0
-    with pytest.raises(CatalogCollectionError) as cross_tenant:
-        update_custom_collection(OTHER_TENANT, created["id"], {"name": "cross-tenant"})
-    assert cross_tenant.value.code == "COLLECTION_NOT_FOUND"
+    assert list_custom_collections(OTHER_TENANT)["total"] == 1
+    updated = update_custom_collection(OTHER_TENANT, created["id"], {"name": "cross-tenant"})
+    assert updated["tenant_id"] == "tenant-default"
+    assert updated["name"] == "cross-tenant"
     with pytest.raises(CatalogCollectionError) as permission:
         create_custom_collection(VIEWER, {"code": "viewer-write", "name": "Denied"})
     assert permission.value.code == "COLLECTION_PERMISSION_DENIED"
     with pytest.raises(CatalogCollectionError) as archive_permission:
         archive_custom_collection(VIEWER, created["id"], expected_updated_at=created["updated_at"])
     assert archive_permission.value.code == "COLLECTION_PERMISSION_DENIED"
+
+
+def test_cat018_single_org_manages_historical_collections_by_stable_id(monkeypatch):
+    from core import rbac, tenant_policy
+
+    monkeypatch.setattr(tenant_policy, "TENANT_ISOLATION_ENABLED", True)
+    monkeypatch.setattr(rbac, "TENANT_ISOLATION_ENABLED", True)
+    owner_a = {"id": "collection-history-a", "role": "Administrator", "tenant_id": "tenant-history-a"}
+    owner_b = {"id": "collection-history-b", "role": "Administrator", "tenant_id": "tenant-history-b"}
+    collection_a = create_custom_collection(owner_a, {"code": "same-code", "name": "History A"})
+    collection_b = create_custom_collection(owner_b, {"code": "same-code", "name": "History B"})
+    assert collection_a["tenant_id"] == "tenant-history-a"
+    assert collection_b["tenant_id"] == "tenant-history-b"
+    assert collection_a["id"] != collection_b["id"]
+    with pytest.raises(CatalogCollectionError) as scoped:
+        update_custom_collection(owner_b, collection_a["id"], {"name": "Must remain scoped"})
+    assert scoped.value.code == "COLLECTION_NOT_FOUND"
+
+    monkeypatch.setattr(tenant_policy, "TENANT_ISOLATION_ENABLED", False)
+    monkeypatch.setattr(rbac, "TENANT_ISOLATION_ENABLED", False)
+    assert {item["id"] for item in list_custom_collections(owner_b)["items"]} >= {collection_a["id"], collection_b["id"]}
+    updated_a = update_custom_collection(owner_b, collection_a["id"], {"name": "Updated History A"})
+    assert updated_a["tenant_id"] == "tenant-history-a"
+    assert updated_a["name"] == "Updated History A"
+    archived_b = archive_custom_collection(owner_a, collection_b["id"])
+    assert archived_b["tenant_id"] == "tenant-history-b"
+    assert archived_b["status"] == "archived"
 
 
 def test_cat018_update_archive_and_optimistic_concurrency_fail_closed():

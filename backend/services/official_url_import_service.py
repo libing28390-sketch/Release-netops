@@ -15,6 +15,7 @@ import re
 from typing import Any
 from urllib.parse import urlsplit
 
+from core.tenant_policy import tenant_id_for_write
 from services.ingestion_pipeline_service import (
     IngestionPipelineError,
     classify_ingestion_error,
@@ -60,7 +61,7 @@ def _text(value: Any, *, field: str, maximum: int, required: bool = False) -> st
 
 
 def _tenant(user: dict[str, Any]) -> str:
-    tenant = _text(user.get("tenant_id") or "tenant-default", field="tenant_id", maximum=128, required=True)
+    tenant = _text(tenant_id_for_write(user=user), field="tenant_id", maximum=128, required=True)
     return tenant
 
 
@@ -182,7 +183,7 @@ def import_single_official_url(
     """
     if not isinstance(payload, dict):
         raise OfficialUrlImportError("IMPORT_INPUT_INVALID", "Import payload must be an object")
-    actor = _text(user.get("id") or user.get("username") or "system", field="actor", maximum=256, required=True)
+    actor = _text(user.get("id") or user.get("user_id") or user.get("username") or "system", field="actor", maximum=256, required=True)
     tenant_id = _tenant(user)
     raw_url = payload.get("url") or payload.get("canonical_url")
     raw_url = _text(raw_url, field="url", maximum=4096, required=True)

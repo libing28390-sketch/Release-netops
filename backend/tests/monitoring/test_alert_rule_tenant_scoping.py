@@ -33,7 +33,7 @@ def _insert_active_user(connection, tenant_id: str, group_name: str) -> None:
     )
 
 
-def test_alert_rule_groups_and_rules_are_tenant_scoped(isolated_db):
+def test_alert_rule_service_supports_partitions_but_api_is_organization_wide(isolated_db):
     conn = get_db_connection()
     try:
         conn.execute("INSERT INTO tenants (id, name) VALUES ('tenant-a', 'Tenant A') ON CONFLICT DO NOTHING")
@@ -60,8 +60,8 @@ def test_alert_rule_groups_and_rules_are_tenant_scoped(isolated_db):
     api_groups = read_alert_rule_notification_groups(user={"tenant_id": "tenant-a"})
     from api.alerts import read_alert_rule_scope_catalog
     api_scope_catalog = read_alert_rule_scope_catalog(user={"tenant_id": "tenant-a"})
-    assert {row["id"] for row in api_rules["items"]} == {tenant_a_rule["id"]}
-    assert api_groups == {"items": [{"name": "noc", "member_count": 1}]}
+    assert {tenant_a_rule["id"], tenant_b_rule["id"]} <= {row["id"] for row in api_rules["items"]}
+    assert {row["name"]: row["member_count"] for row in api_groups["items"]}["noc"] == 2
     assert api_scope_catalog == {
         'sites': [], 'roles': [], 'categories': [], 'platforms': [],
         'devices': [], 'device_total': 0, 'missing_device_ids': [],
@@ -167,7 +167,7 @@ def test_rule_service_rejects_empty_structured_asset_scope(isolated_db, scope_ty
         )
 
 
-def test_scope_catalog_only_contains_current_tenant_assets(isolated_db):
+def test_scope_catalog_service_selector_and_api_are_organization_wide(isolated_db):
     conn = get_db_connection()
     try:
         conn.execute("INSERT INTO tenants (id, name) VALUES ('tenant-scope-a', 'Scope A') ON CONFLICT DO NOTHING")
@@ -198,8 +198,14 @@ def test_scope_catalog_only_contains_current_tenant_assets(isolated_db):
     assert [device['id'] for device in selected_result['devices']] == ['scope-device-a']
     assert selected_result['missing_device_ids'] == ['scope-device-b', 'missing-device']
     from api.alerts import read_alert_rule_scope_catalog
-    api_search = read_alert_rule_scope_catalog(search='edge-a', user={'tenant_id': 'tenant-scope-a'})
+    api_search = read_alert_rule_scope_catalog(
+        search='edge-a', user={'id': 'scope-catalog-viewer', 'role': 'Viewer', 'tenant_id': 'tenant-scope-a'},
+    )
     assert [device['id'] for device in api_search['devices']] == ['scope-device-a']
+    api_cross_tenant_search = read_alert_rule_scope_catalog(
+        search='edge-b', user={'id': 'scope-catalog-viewer', 'role': 'Viewer', 'tenant_id': 'tenant-scope-a'},
+    )
+    assert [device['id'] for device in api_cross_tenant_search['devices']] == ['scope-device-b']
     with pytest.raises(ValueError, match="workspace"):
         alert_rule_service.create_rule(
             _payload("Host", metric_type="host_cpu", notification_channels=["email"], notification_group_names=[]),

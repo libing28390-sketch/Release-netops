@@ -15,6 +15,7 @@ Usage in API routes:
 
 import json
 import logging
+from core.tenant_policy import TENANT_ISOLATION_ENABLED, tenant_scope_for_user
 from fastapi import Request, HTTPException, Depends
 
 logger = logging.getLogger(__name__)
@@ -271,11 +272,12 @@ def authorize_resource(
     if not _action_allowed(user, resource_type, action):
         return False
     user_tenant = str(user.get('tenant_id') or '')
+    effective_tenant_id = str(tenant_id) if tenant_id is not None and TENANT_ISOLATION_ENABLED else None
     system_admin = role == 'Administrator' and user.get('role_profile') == 'System Administrator'
     global_admin = role == 'Administrator' and (not user_tenant or system_admin)
-    if tenant_id is not None and not global_admin and not user_tenant:
+    if effective_tenant_id is not None and not global_admin and not user_tenant:
         return False
-    if user_tenant and tenant_id is not None and user_tenant != str(tenant_id) and not system_admin:
+    if user_tenant and effective_tenant_id is not None and user_tenant != effective_tenant_id and not system_admin:
         return False
     if global_admin:
         return True
@@ -285,7 +287,7 @@ def authorize_resource(
         # Tenant-scoped and restricted decisions require a stable subject ID
         # so the explicit scope rows can be evaluated. Preserve only the
         # legacy, unscoped compatibility path for old internal callers.
-        return tenant_id is None and str(user.get('scope_mode') or 'legacy') != 'restricted'
+        return effective_tenant_id is None and str(user.get('scope_mode') or 'legacy') != 'restricted'
     try:
         from database import get_db_connection
         conn = get_db_connection()
@@ -306,7 +308,7 @@ def authorize_resource(
 
     candidates = {
         'global': '',
-        'tenant': str(tenant_id or ''),
+        'tenant': str(effective_tenant_id or ''),
         'site': str(site_id or ''),
         'device_group': str(device_group_id or ''),
     }
@@ -314,7 +316,12 @@ def authorize_resource(
         scope_type = row['scope_type']
         if scope_type not in candidates:
             continue
-        if scope_type != 'global' and str(row['scope_id'] or '') != candidates[scope_type]:
+        if scope_type == 'tenant' and not TENANT_ISOLATION_ENABLED:
+            # Tenant grants become organization-wide grants in single-org
+            # mode; site and device-group grants remain object-specific.
+            if not str(row['scope_id'] or '').strip():
+                continue
+        elif scope_type != 'global' and str(row['scope_id'] or '') != candidates[scope_type]:
             continue
         try:
             actions = set(json.loads(row['actions_json'] or '[]'))
@@ -360,12 +367,12 @@ def require_change_requester(request: Request):
     user = _get_current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Authentication required")
-    tenant_id = str(user.get('tenant_id') or '').strip()
+    tenant_id = tenant_scope_for_user(user)
     is_global_admin = (
         user.get('role') == 'Administrator'
         and (not tenant_id or user.get('role_profile') == 'System Administrator')
     )
-    if not tenant_id and not is_global_admin:
+    if TENANT_ISOLATION_ENABLED and not tenant_id and not is_global_admin:
         raise HTTPException(status_code=403, detail='A tenant assignment is required for change requests')
     return enforce_resource_scope(
         user,

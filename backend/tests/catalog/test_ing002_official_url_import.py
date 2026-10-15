@@ -232,7 +232,10 @@ def test_ing012_same_url_changed_content_is_a_new_version(isolated_db, make_user
     assert second["continuation_required"] is True
 
 
-def test_ing012_same_url_content_is_tenant_scoped(isolated_db, make_user):
+def test_ing012_same_url_content_is_tenant_scoped(isolated_db, make_user, monkeypatch):
+    from core import tenant_policy
+
+    monkeypatch.setattr(tenant_policy, "TENANT_ISOLATION_ENABLED", True)
     first_user = make_user("ing012-tenant-a", role="Administrator", tenant_id="tenant-a")
     second_user = make_user("ing012-tenant-b", role="Administrator", tenant_id="tenant-b")
     body = b"tenant-isolated-content"

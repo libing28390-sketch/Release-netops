@@ -7,6 +7,7 @@ import json
 from typing import Any
 
 from core.rbac import authorize_resource, is_global_administrator
+from core.tenant_policy import TENANT_ISOLATION_ENABLED, tenant_scope_for_user
 from services.config_approval_service import approval_manifest_hash
 
 
@@ -232,10 +233,10 @@ def authorize_job_resource(user: dict[str, Any], row: dict[str, Any], action: st
     tenant_id = _string(row.get("tenant_id"))
     actor_id = _string(user.get("user_id") or user.get("id"))
     owner_id = _string(row.get("created_by_id"))
-    if not tenant_id and row.get("authorization_mode") != "system":
+    if TENANT_ISOLATION_ENABLED and not tenant_id and row.get("authorization_mode") != "system":
         raise PermissionError("计划作业未关联租户，必须重新授权")
     if not is_global_administrator(user):
-        if _string(user.get("tenant_id")) != tenant_id:
+        if TENANT_ISOLATION_ENABLED and tenant_scope_for_user(user) != tenant_id:
             raise PermissionError("计划作业不属于当前租户")
         if (
             row.get("authorization_mode") != "system"

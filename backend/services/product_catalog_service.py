@@ -24,6 +24,7 @@ from ai.services.product_alias_service import (
     list_alias_candidates,
 )
 from core.rbac import authorize_resource
+from core.tenant_policy import tenant_id_for_write, tenant_scope_for_user, tenant_scope_is_enabled
 from database import get_db_connection
 from services.audit_service import log_audit_event
 
@@ -215,8 +216,17 @@ def _load(path: Path) -> dict[str, Any]:
     return value
 
 
+def _tenant_scope(user: dict[str, Any]) -> str | None:
+    """Return an authorization/query tenant only while isolation is enabled."""
+    scope = tenant_scope_for_user(user)
+    if scope is None and tenant_scope_is_enabled():
+        return tenant_id_for_write(user=user)
+    return scope
+
+
 def _tenant(user: dict[str, Any]) -> str:
-    return str(user.get("tenant_id") or "tenant-default-reviewed").strip()
+    """Return the tenant key for new catalog objects and response metadata."""
+    return tenant_id_for_write(user=user)
 
 
 def _seed_model_rows() -> list[dict[str, Any]]:
@@ -275,31 +285,37 @@ def _model_rows(tenant_id: str | None = None) -> list[dict[str, Any]]:
     return rows
 
 
-def _custom_model_rows(tenant_id: str) -> list[dict[str, Any]]:
-    """Load only durable tenant-owned models from the master-data tables."""
+def _custom_model_rows(tenant_id: str | None) -> list[dict[str, Any]]:
+    """Load durable custom models, retaining each row's true tenant identity."""
+    tenant_clause = " WHERE m.tenant_id = ?" if tenant_id is not None else ""
     with get_db_connection() as conn:
         rows = conn.execute(
-            _CUSTOM_MODEL_SELECT + " WHERE m.tenant_id = ? ORDER BY m.created_at ASC, m.id ASC",
-            (tenant_id,),
+            _CUSTOM_MODEL_SELECT + tenant_clause + " ORDER BY m.created_at ASC, m.id ASC",
+            (tenant_id,) if tenant_id is not None else (),
         ).fetchall()
     return [_custom_model_from_row(row) for row in rows]
 
 
-def _tenant_model_rows(tenant_id: str) -> list[dict[str, Any]]:
-    """Return only the caller's catalog projection.
+def _tenant_model_rows(tenant_id: str | None) -> list[dict[str, Any]]:
+    """Return the caller's catalog projection or all rows in single-org mode.
 
     The reviewed seed predates the runtime bootstrap tenant and is labelled
     ``tenant-default-reviewed`` in its source artifacts.  The built-in
     ``tenant-default`` admin tenant is allowed a read-only projection of that
     same official seed, with the response rows relabelled to the caller's
-    tenant.  No other tenant receives the seed, and imported tenant snapshots
-    remain authoritative when present.
+    tenant.  In single-org mode the default snapshot supplies the catalog
+    projection and durable custom rows are read across historical tenants.
+    Tenant IDs on custom rows and imported snapshot members remain intact for
+    their composite relationships and audit history.
     """
-    rows = _model_rows(tenant_id)
-    if tenant_id == _RUNTIME_DEFAULT_TENANT and rows and all(
+    snapshot_tenant = tenant_id or _RUNTIME_DEFAULT_TENANT
+    rows = _model_rows(snapshot_tenant)
+    if (tenant_id is None or tenant_id == _RUNTIME_DEFAULT_TENANT) and rows and all(
         str(item.get("tenant_id") or "") == _REVIEWED_SEED_TENANT for item in rows
     ):
-        official_rows = [{**item, "tenant_id": tenant_id} for item in rows]
+        official_rows = [{**item, "tenant_id": snapshot_tenant} for item in rows]
+    elif tenant_id is None:
+        official_rows = rows
     else:
         official_rows = [item for item in rows if str(item.get("tenant_id") or "") == tenant_id]
     return official_rows + _custom_model_rows(tenant_id)
@@ -391,7 +407,7 @@ def _collection_boundary() -> dict[str, Any]:
     return collection_boundary()
 
 
-def _alias_records(model_rows: list[dict[str, Any]], *, tenant_id: str) -> tuple[list[dict[str, Any]], list[AliasRecord], dict[str, dict[str, Any]]]:
+def _alias_records(model_rows: list[dict[str, Any]], *, tenant_id: str | None) -> tuple[list[dict[str, Any]], list[AliasRecord], dict[str, dict[str, Any]]]:
     data = _load(_ALIAS_FILE)
     model_by_id = {item["product_model_id"]: item for item in model_rows}
     samples = data.get("alias_samples") or []
@@ -405,9 +421,10 @@ def _alias_records(model_rows: list[dict[str, Any]], *, tenant_id: str) -> tuple
         model_id = str(sample.get("product_model_id") or "")
         if model_id not in model_by_id:
             continue
+        model_tenant_id = str(model_by_id[model_id].get("tenant_id") or tenant_id or _RUNTIME_DEFAULT_TENANT)
         record = build_alias_record({
             "id": sample.get("sample_id"),
-            "tenant_id": tenant_id,
+            "tenant_id": model_tenant_id,
             "product_model_id": model_id,
             "alias": sample.get("alias"),
             "alias_kind": sample.get("alias_kind"),
@@ -436,7 +453,7 @@ def list_product_catalog(
     search: str = "",
 ) -> dict[str, Any]:
     tenant_id = _tenant(user)
-    rows = _tenant_model_rows(tenant_id)
+    rows = _tenant_model_rows(_tenant_scope(user))
     all_rows = list(rows)
     filters = {
         "vendor_id": _safe_text(vendor_id, field="vendor_id", max_length=64).casefold(),
@@ -594,11 +611,13 @@ def _ensure_custom_parent(
     return parent_id_value
 
 
-def _custom_model_row(cursor, model_id: str, tenant_id: str, *, lock: bool = False):
+def _custom_model_row(cursor, model_id: str, tenant_id: str | None, *, lock: bool = False):
     suffix = " FOR UPDATE" if lock else ""
+    tenant_clause = "m.tenant_id = ? AND " if tenant_id is not None else ""
+    params = (tenant_id, model_id) if tenant_id is not None else (model_id,)
     return cursor.execute(
-        _CUSTOM_MODEL_SELECT + f" WHERE m.tenant_id = ? AND m.id = ?{suffix}",
-        (tenant_id, model_id),
+        _CUSTOM_MODEL_SELECT + f" WHERE {tenant_clause}m.id = ?{suffix}",
+        params,
     ).fetchone()
 
 
@@ -681,6 +700,7 @@ def create_custom_product_model(user: dict[str, Any], payload: dict[str, Any]) -
 def update_custom_product_model(user: dict[str, Any], model_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     tenant_id = _tenant(user)
     _catalog_action(user, "update", tenant_id)
+    tenant_scope = _tenant_scope(user)
     model_id = _safe_text(model_id, field="model_id", max_length=256)
     reason = _safe_text(payload.get("change_reason") or "Catalog model updated", field="change_reason", max_length=500)
     expected_updated_at = payload.get("expected_updated_at")
@@ -701,13 +721,14 @@ def update_custom_product_model(user: dict[str, Any], model_id: str, payload: di
         expected_updated_at = _safe_text(expected_updated_at, field="expected_updated_at", max_length=80)
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        row = _custom_model_row(cursor, model_id, tenant_id, lock=True)
+        row = _custom_model_row(cursor, model_id, tenant_scope, lock=True)
         if not row:
-            official = any(item.get("product_model_id") == model_id and not item.get("mutable") for item in _tenant_model_rows(tenant_id))
+            official = any(item.get("product_model_id") == model_id and not item.get("mutable") for item in _tenant_model_rows(tenant_scope))
             if official:
                 raise ProductCatalogError("CATALOG_OFFICIAL_READ_ONLY", "Official catalog models cannot be edited", status_code=403)
             raise ProductCatalogError("CATALOG_MODEL_NOT_FOUND", "Custom catalog model not found", status_code=404)
         before = _custom_model_from_row(row)
+        model_tenant_id = str(row[1])
         if expected_updated_at is not None and str(row[18]) != expected_updated_at:
             raise ProductCatalogError("CATALOG_VERSION_CONFLICT", "Catalog model changed since it was loaded", status_code=409)
         if not values:
@@ -726,9 +747,9 @@ def update_custom_product_model(user: dict[str, Any], model_id: str, payload: di
                 params.append(encoded_values[key] if key in encoded_values and encoded_values[key] is not None else values[key])
         now_iso = datetime.now(timezone.utc).isoformat()
         fields.extend(["updated_by = ?", "updated_at = ?"])
-        params.extend([str(user.get("username") or user.get("id") or "system"), now_iso, tenant_id, model_id])
+        params.extend([str(user.get("username") or user.get("id") or "system"), now_iso, model_tenant_id, model_id])
         cursor.execute(f"UPDATE kb_product_model SET {', '.join(fields)} WHERE tenant_id = ? AND id = ?", tuple(params))
-        after = _custom_model_from_row(_custom_model_row(cursor, model_id, tenant_id))
+        after = _custom_model_from_row(_custom_model_row(cursor, model_id, model_tenant_id))
         _write_catalog_model_audit(
             conn, user, operation="update", model=after, before=_custom_model_audit_snapshot(before),
             details={"change_reason": reason, "changed_fields": list(values)},
@@ -740,25 +761,27 @@ def update_custom_product_model(user: dict[str, Any], model_id: str, payload: di
 def delete_custom_product_model(user: dict[str, Any], model_id: str, *, reason: str = "Catalog model archived") -> dict[str, Any]:
     tenant_id = _tenant(user)
     _catalog_action(user, "delete", tenant_id)
+    tenant_scope = _tenant_scope(user)
     model_id = _safe_text(model_id, field="model_id", max_length=256)
     reason = _safe_text(reason, field="reason", max_length=500)
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        row = _custom_model_row(cursor, model_id, tenant_id, lock=True)
+        row = _custom_model_row(cursor, model_id, tenant_scope, lock=True)
         if not row:
-            official = any(item.get("product_model_id") == model_id and not item.get("mutable") for item in _tenant_model_rows(tenant_id))
+            official = any(item.get("product_model_id") == model_id and not item.get("mutable") for item in _tenant_model_rows(tenant_scope))
             if official:
                 raise ProductCatalogError("CATALOG_OFFICIAL_READ_ONLY", "Official catalog models cannot be deleted", status_code=403)
             raise ProductCatalogError("CATALOG_MODEL_NOT_FOUND", "Custom catalog model not found", status_code=404)
         before = _custom_model_from_row(row)
+        model_tenant_id = str(row[1])
         if before["status"] == "deleted":
             return before
         now_iso = datetime.now(timezone.utc).isoformat()
         cursor.execute(
             "UPDATE kb_product_model SET status = 'deleted', updated_by = ?, updated_at = ? WHERE tenant_id = ? AND id = ?",
-            (str(user.get("username") or user.get("id") or "system"), now_iso, tenant_id, model_id),
+            (str(user.get("username") or user.get("id") or "system"), now_iso, model_tenant_id, model_id),
         )
-        after = _custom_model_from_row(_custom_model_row(cursor, model_id, tenant_id))
+        after = _custom_model_from_row(_custom_model_row(cursor, model_id, model_tenant_id))
         _write_catalog_model_audit(
             conn, user, operation="delete", model=after, before=_custom_model_audit_snapshot(before),
             details={"change_reason": reason, "soft_delete": True},
@@ -775,7 +798,8 @@ def list_product_aliases(
     conflict_status: str = "all",
 ) -> dict[str, Any]:
     tenant_id = _tenant(user)
-    rows, records, _ = _alias_records(_tenant_model_rows(tenant_id), tenant_id=tenant_id)
+    tenant_scope = _tenant_scope(user)
+    rows, records, _ = _alias_records(_tenant_model_rows(tenant_scope), tenant_id=tenant_scope)
     annotated, conflicts = detect_alias_conflicts(records)
     annotated_by_id = {item.id: item for item in annotated}
     alias_filter = _safe_text(alias, field="alias", max_length=256).casefold()
@@ -783,7 +807,7 @@ def list_product_aliases(
     conflict_filter = _safe_text(conflict_status, field="conflict_status", max_length=64).casefold() or "all"
     output: list[dict[str, Any]] = []
     for row in rows:
-        if row["tenant_id"] != tenant_id:
+        if tenant_scope is not None and row["tenant_id"] != tenant_scope:
             continue
         record = annotated_by_id[row["id"]]
         result = dict(row)
@@ -806,7 +830,7 @@ def list_product_aliases(
         "persistence_status": PERSISTENCE_STATUS,
         "tenant_id": tenant_id,
         "items": output,
-        "conflicts": [item.to_dict() for item in conflicts if item.tenant_id == tenant_id],
+        "conflicts": [item.to_dict() for item in conflicts if tenant_scope is None or item.tenant_id == tenant_scope],
         "total": len(output),
         "read_only": True,
         "collection_kind": "official_catalog",
@@ -818,11 +842,12 @@ def list_product_aliases(
 
 def resolve_product_alias_dry_run(user: dict[str, Any], query: str, *, limit: int = 20) -> dict[str, Any]:
     tenant_id = _tenant(user)
+    tenant_scope = _tenant_scope(user)
     query_text = _safe_text(query, field="query", max_length=256)
     if not query_text:
         raise ProductCatalogError("CATALOG_QUERY_REQUIRED", "query is required")
-    model_rows = _tenant_model_rows(tenant_id)
-    _, records, model_by_id = _alias_records(model_rows, tenant_id=tenant_id)
+    model_rows = _tenant_model_rows(tenant_scope)
+    _, records, model_by_id = _alias_records(model_rows, tenant_id=tenant_scope)
     candidates: AliasCandidateList = list_alias_candidates(query_text, records, tenant_id=tenant_id, limit=limit)
     payload = candidates.to_dict()
     payload["candidates"] = [

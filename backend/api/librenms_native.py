@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from core.crypto import decrypt_credential
 from core.rbac import authorize_resource, require_role
+from core.tenant_policy import TENANT_ISOLATION_ENABLED
 from database import get_db_connection
 from services.audit_service import log_audit_event
 from services.librenms_runtime_client import (
@@ -151,7 +152,7 @@ def _instance_secret(instance: dict[str, Any]) -> str:
 
 def _target_for_binding(conn, device_id: str, user: dict[str, Any]) -> dict[str, Any]:
     row = conn.execute(
-        """SELECT d.id, d.asset_id, d.tenant_id, d.site_id, d.hostname,
+        """SELECT d.id, d.asset_id, d.tenant_id, d.site_id, d.device_group_id, d.hostname,
                   pa.site_id AS asset_site_id, s.tenant_id AS site_tenant_id
              FROM devices d
              LEFT JOIN physical_assets pa ON pa.id = d.asset_id
@@ -164,9 +165,16 @@ def _target_for_binding(conn, device_id: str, user: dict[str, Any]) -> dict[str,
     target = dict(row)
     tenant_id = str(target.get("tenant_id") or target.get("site_tenant_id") or "tenant-default").strip()
     site_id = str(target.get("asset_site_id") or target.get("site_id") or "").strip()
-    if str(user.get("role") or "") != "Administrator" and str(user.get("tenant_id") or "tenant-default") != tenant_id:
+    if TENANT_ISOLATION_ENABLED and str(user.get("role") or "") != "Administrator" and str(user.get("tenant_id") or "tenant-default") != tenant_id:
         raise HTTPException(status_code=404, detail="Managed network device asset not found")
-    if not authorize_resource(user, "asset", "update", tenant_id=tenant_id, site_id=site_id or None):
+    if not authorize_resource(
+        user,
+        "asset",
+        "update",
+        tenant_id=tenant_id,
+        site_id=site_id or None,
+        device_group_id=str(target.get("device_group_id") or "").strip() or None,
+    ):
         raise HTTPException(status_code=403, detail="Insufficient permission for this asset")
     target["tenant_id"] = tenant_id
     target["site_id"] = site_id
@@ -503,14 +511,12 @@ def list_bindings(user=require_role("Viewer")):
         if scope.tenant_id:
             where_parts.append("b.tenant_id = ?")
             params.append(scope.tenant_id)
-        if scope.site_ids is not None:
-            if not scope.site_ids:
-                return {"success": True, "data": []}
-            placeholders = ", ".join("?" for _ in scope.site_ids)
-            where_parts.append(
-                f"COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, '')) IN ({placeholders})"
-            )
-            params.extend(scope.site_ids)
+        from services.rack_scope_service import device_scope_predicate
+
+        scope_predicate, scope_params = device_scope_predicate(scope, device_alias="d")
+        if scope_predicate:
+            where_parts.append(scope_predicate)
+            params.extend(scope_params)
         where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
         rows = conn.execute(
             f"""SELECT b.id, b.tenant_id, b.asset_id, b.device_id, b.instance_id,

@@ -9,7 +9,7 @@ from api import configs
 from database import get_db_connection
 
 
-def test_snapshot_content_and_download_enforce_asset_tenant_scope(isolated_db, monkeypatch, make_user):
+def test_snapshot_content_and_download_ignore_tenant_but_enforce_explicit_site_scope(isolated_db, monkeypatch, make_user):
     tenant_a = f"tenant-{uuid.uuid4().hex[:12]}"
     tenant_b = f"tenant-{uuid.uuid4().hex[:12]}"
     site_a = f"site-{uuid.uuid4().hex[:12]}"
@@ -91,7 +91,6 @@ def test_snapshot_content_and_download_enforce_asset_tenant_scope(isolated_db, m
 
     visible = configs.get_snapshot_content(snapshot_a, user=user)
     assert visible["content"] == f"config for {device_a}"
-    assert read_ids == [snapshot_a]
 
     for endpoint in (configs.get_snapshot_content, configs.download_snapshot):
         for snapshot_id, reader in (
@@ -100,11 +99,8 @@ def test_snapshot_content_and_download_enforce_asset_tenant_scope(isolated_db, m
             (snapshot_legacy_site, user),
             (snapshot_a, tenantless_user),
         ):
-            with pytest.raises(HTTPException) as denied:
-                endpoint(snapshot_id, user=reader)
-            assert denied.value.status_code == 404
-
-    assert read_ids == [snapshot_a]
+            assert endpoint(snapshot_id, user=reader)
+    assert {snapshot_a, snapshot_b, snapshot_mismatched_tenant, snapshot_legacy_site} <= set(read_ids)
 
     scoped_user = make_user("snapshot-site-viewer", role="Viewer")
     scoped_user["tenant_id"] = tenant_a
@@ -122,7 +118,13 @@ def test_snapshot_content_and_download_enforce_asset_tenant_scope(isolated_db, m
         conn.close()
     scoped_visible = configs.get_snapshot_content(snapshot_a, user=scoped_user)
     assert scoped_visible["content"] == f"config for {device_a}"
+    # Tenant labels no longer limit reads when the device is in an authorized site.
+    scoped_historical_tenant_visible = configs.get_snapshot_content(snapshot_mismatched_tenant, user=scoped_user)
+    assert scoped_historical_tenant_visible["content"] == f"config for {device_mismatched_tenant}"
+    with pytest.raises(HTTPException) as blocked_site:
+        configs.get_snapshot_content(snapshot_b, user=scoped_user)
+    assert blocked_site.value.status_code == 404
     with pytest.raises(HTTPException) as ambiguous_site:
         configs.get_snapshot_content(snapshot_legacy_site, user=scoped_user)
     assert ambiguous_site.value.status_code == 404
-    assert read_ids == [snapshot_a, snapshot_a]
+    assert read_ids[-2:] == [snapshot_a, snapshot_mismatched_tenant]

@@ -662,7 +662,7 @@ def test_platform_binding_is_immutable_after_first_assignment(isolated_db):
     assert changed.value.code == "PLATFORM_BINDING_LOCKED"
 
 
-def test_platform_identification_returns_conflict_and_rejects_cross_tenant(isolated_db):
+def test_platform_identification_uses_org_wide_inventory_across_historical_tenants(isolated_db):
     user = _user("tenant-1")
     other = _user("tenant-2")
     first = create_profile(
@@ -690,12 +690,10 @@ def test_platform_identification_returns_conflict_and_rejects_cross_tenant(isola
     assert {item["platform_code"] for item in queue[0]["platform_candidates"]} == {"match_first", "match_second"}
     bind_device(device_id, first["id"], user)
     assert list_identification_conflicts(user) == []
-    with pytest.raises(PlatformRegistryError) as denied:
-        identify_device(other_device, {"show version": "SAME"}, user)
-    assert denied.value.code == "DEVICE_SCOPE_DENIED"
-    with pytest.raises(PlatformRegistryError) as bind_denied:
-        bind_device(device_id, first["id"], other)
-    assert bind_denied.value.code in {"DEVICE_SCOPE_DENIED", "PLATFORM_SCOPE_DENIED"}
+    historical_device = identify_device(other_device, {"show version": "SAME"}, user)
+    assert historical_device["status"] == "IDENTIFICATION_CONFLICT"
+    rebound = bind_device(device_id, first["id"], other)
+    assert rebound["platform_profile_id"] == first["id"]
 
 
 def test_live_identification_uses_bound_profile_connection_driver(isolated_db, monkeypatch):

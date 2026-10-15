@@ -216,13 +216,13 @@ def test_local_pack_imports_and_retrieves_in_an_isolated_postgres_tenant(
     with database.get_db_connection() as conn:
         raw_rows = conn.execute(
             "SELECT tenant_id, status, knowledge_source_type, COUNT(*) "
-            "FROM ai_document WHERE tenant_id = ? "
+            "FROM ai_document WHERE knowledge_base_id = ? "
             "GROUP BY tenant_id, status, knowledge_source_type "
             "ORDER BY tenant_id, status, knowledge_source_type",
-            (tenant_id,),
+            (knowledge_base["id"],),
         ).fetchall()
     assert {(row[0], row[1], row[2], int(row[3])) for row in raw_rows} == {
-        (tenant_id, "active", "user_document", 94),
+        ("tenant-default", "active", "user_document", 94),
     }
 
     documents = knowledge_service.list_documents(
@@ -243,8 +243,8 @@ def test_local_pack_imports_and_retrieves_in_an_isolated_postgres_tenant(
     with __import__("database").get_db_connection() as conn:
         trust_rows = conn.execute(
             "SELECT source_trust_level, knowledge_source_type, COUNT(*) "
-            "FROM ai_document WHERE tenant_id = ? GROUP BY source_trust_level, knowledge_source_type",
-            (tenant_id,),
+            "FROM ai_document WHERE knowledge_base_id = ? GROUP BY source_trust_level, knowledge_source_type",
+            (knowledge_base["id"],),
         ).fetchall()
     assert {(row[0], row[1], int(row[2])) for row in trust_rows} == {
         ("internal", "user_document", 94),

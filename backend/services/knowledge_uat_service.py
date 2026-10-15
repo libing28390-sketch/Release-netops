@@ -13,6 +13,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from core.tenant_policy import tenant_id_for_write, tenant_scope_is_enabled
 from database import get_db_connection
 from database.core import _USE_PG
 
@@ -118,7 +119,7 @@ class KnowledgeUATError(ValueError):
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _text(value: Any, maximum: int) -> str:
@@ -159,6 +160,7 @@ def _summary(items: list[dict[str, Any]]) -> dict[str, Any]:
 def _decorate(case: dict[str, Any], signoff: dict[str, Any] | None, history_count: int) -> dict[str, Any]:
     return {
         **case,
+        "tenant_id": str((signoff or {}).get("tenant_id") or "tenant-default"),
         "signoff_status": str((signoff or {}).get("status") or "pending"),
         "reviewer_id": (signoff or {}).get("reviewer_id") or None,
         "reviewer_name": (signoff or {}).get("reviewer_name") or None,
@@ -178,7 +180,7 @@ def _validate_campaign(campaign_id: str) -> str:
 
 def list_uat_cases(
     *,
-    tenant_id: str,
+    tenant_id: str | None,
     campaign_id: str = CAMPAIGN_ID,
     suite: str = "",
     vendor: str = "",
@@ -193,24 +195,26 @@ def list_uat_cases(
     vendor = _text(vendor, 64)
     search = _text(search, 256).lower()
 
+    tenant_clause = "tenant_id = ? AND " if tenant_id is not None else ""
+    tenant_params: tuple[Any, ...] = (tenant_id,) if tenant_id is not None else ()
     with get_db_connection() as conn:
-        signoffs = {
-            str(row["case_id"]): dict(row)
-            for row in conn.execute(
-                "SELECT * FROM ai_uat_case_signoffs WHERE tenant_id = ? AND campaign_id = ?",
-                (tenant_id, campaign_id),
-            ).fetchall()
-        }
+        signoff_rows = conn.execute(
+            "SELECT * FROM ai_uat_case_signoffs WHERE " + tenant_clause + "campaign_id = ? "
+            "ORDER BY updated_at DESC, created_at DESC, tenant_id DESC, id DESC",
+            (*tenant_params, campaign_id),
+        ).fetchall()
+        signoffs: dict[str, dict[str, Any]] = {}
+        for row in signoff_rows:
+            signoffs.setdefault(str(row["case_id"]), dict(row))
         history_counts = {
             str(row["case_id"]): int(row["count"])
             for row in conn.execute(
                 """
                 SELECT case_id, COUNT(*) AS count
                 FROM ai_uat_case_signoff_events
-                WHERE tenant_id = ? AND campaign_id = ?
-                GROUP BY case_id
-                """,
-                (tenant_id, campaign_id),
+                WHERE """ + tenant_clause + "campaign_id = ? """
+                "GROUP BY case_id",
+                (*tenant_params, campaign_id),
             ).fetchall()
         }
 
@@ -270,7 +274,7 @@ def sign_uat_case(
     comment = _text(comment, 4000)
     if decision in {"partial", "rejected"} and not comment:
         raise KnowledgeUATError("UAT_COMMENT_REQUIRED", "A comment is required for a partial or rejected sign-off")
-    tenant_id = _text(tenant_id, 128)
+    tenant_id = tenant_id_for_write(requested=_text(tenant_id, 128))
     reviewer_id = _text(user.get("id") or user.get("user_id") or user.get("username"), 256)
     reviewer_name = _text(user.get("display_name") or user.get("username") or reviewer_id, 256)
     if not reviewer_id:
@@ -280,9 +284,16 @@ def sign_uat_case(
     signoff_id = _signoff_id(tenant_id, campaign_id, case_id)
     event_id = f"uat_event_{uuid.uuid4().hex}"
     lock_suffix = " FOR UPDATE" if _USE_PG else ""
+    lookup_tenant_clause = "tenant_id = ? AND " if tenant_scope_is_enabled() else ""
+    lookup_tenant_params: tuple[Any, ...] = (tenant_id,) if tenant_scope_is_enabled() else ()
 
     with get_db_connection() as conn:
-        conn.execute(
+        latest = conn.execute(
+            "SELECT status FROM ai_uat_case_signoffs WHERE " + lookup_tenant_clause +
+            "campaign_id = ? AND case_id = ? ORDER BY updated_at DESC, tenant_id DESC, id DESC LIMIT 1" + lock_suffix,
+            (*lookup_tenant_params, campaign_id, case_id),
+        ).fetchone()
+        inserted_signoff = conn.execute(
             """
             INSERT INTO ai_uat_case_signoffs (
                 id, tenant_id, campaign_id, case_id, status, created_at, updated_at
@@ -291,12 +302,16 @@ def sign_uat_case(
             """,
             (signoff_id, tenant_id, campaign_id, case_id, now, now),
         )
-        existing = conn.execute(
+        signoff_created = int(getattr(inserted_signoff, "rowcount", 0) or 0) == 1
+        write_target = conn.execute(
             "SELECT * FROM ai_uat_case_signoffs "
             "WHERE tenant_id = ? AND campaign_id = ? AND case_id = ?" + lock_suffix,
             (tenant_id, campaign_id, case_id),
         ).fetchone()
-        previous_status = str(existing["status"] if existing else "pending")
+        if not signoff_created and write_target:
+            previous_status = str(write_target["status"])
+        else:
+            previous_status = str(latest["status"] if latest else (write_target["status"] if write_target else "pending"))
         conn.execute(
             """
             UPDATE ai_uat_case_signoffs
@@ -336,23 +351,26 @@ def sign_uat_case(
 def list_uat_case_history(
     case_id: str,
     *,
-    tenant_id: str,
+    tenant_id: str | None,
     campaign_id: str = CAMPAIGN_ID,
 ) -> list[dict[str, Any]]:
     campaign_id = _validate_campaign(campaign_id)
     case_id = _text(case_id, 128)
     if case_id not in _CASE_BY_ID:
         raise KnowledgeUATError("UAT_CASE_NOT_FOUND", "The requested UAT case was not found", status_code=404)
+    clauses = ["campaign_id = ?", "case_id = ?"]
+    params: list[Any] = [campaign_id, case_id]
+    if tenant_id is not None:
+        clauses.append("tenant_id = ?")
+        params.append(_text(tenant_id, 128))
     with get_db_connection() as conn:
         rows = conn.execute(
             """
             SELECT id, case_id, previous_status, new_status, reviewer_id,
                    reviewer_name, comment, evidence_ref, created_at
             FROM ai_uat_case_signoff_events
-            WHERE tenant_id = ? AND campaign_id = ? AND case_id = ?
-            ORDER BY created_at DESC, id DESC
-            """,
-            (tenant_id, campaign_id, case_id),
+            WHERE """ + " AND ".join(clauses) + " ORDER BY created_at DESC, id DESC",
+            tuple(params),
         ).fetchall()
     return [dict(row) for row in rows]
 

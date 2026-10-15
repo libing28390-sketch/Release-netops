@@ -10,7 +10,8 @@ from typing import Any
 from fastapi import APIRouter, Body, File, Form, HTTPException, Query, Response, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
 
-from core.rbac import require_permission
+from core.rbac import authorize_resource, require_permission
+from core.tenant_policy import tenant_id_for_write, tenant_scope_for_user, tenant_scope_is_enabled
 from services.enterprise_sop_import_service import EnterpriseSopImportError, import_enterprise_sop_file
 from services.local_official_file_import_service import LocalOfficialFileImportError, import_local_official_file
 from services.official_url_import_service import OfficialUrlImportError, import_single_official_url
@@ -103,8 +104,22 @@ def _job_actor(user: dict[str, Any]) -> str:
     return str(user.get("id") or user.get("user_id") or user.get("username") or "system").strip() or "system"
 
 
-def _job_tenant(user: dict[str, Any]) -> str:
-    return str(user.get("tenant_id") or "tenant-default").strip() or "tenant-default"
+def _job_tenant(user: dict[str, Any]) -> str | None:
+    tenant_id = tenant_scope_for_user(user)
+    if tenant_id is not None:
+        return tenant_id
+    return "tenant-default" if tenant_scope_is_enabled() else None
+
+
+def _job_write_tenant(user: dict[str, Any]) -> str:
+    return tenant_id_for_write(user=user)
+
+
+def _job_owner_scope(user: dict[str, Any]) -> str | None:
+    """Keep user-created jobs private unless the caller can manage all jobs."""
+    if authorize_resource(user, "knowledge_import", "manage", tenant_id=None):
+        return None
+    return _job_actor(user)
 
 
 def _call_job_control(fn, *args, **kwargs):
@@ -205,7 +220,7 @@ def api_list_ingestion_jobs(
     page_size: int = Query(default=20, ge=1, le=100),
     user=require_permission("knowledge_import", "read"),
 ):
-    """Return bounded tenant-scoped progress snapshots; counters remain server-owned."""
+    """Return bounded progress snapshots; counters remain server-owned."""
     # Direct service-level tests call this function without FastAPI dependency
     # injection, so Query defaults arrive as FieldInfo objects. Normalize them
     # while preserving FastAPI's runtime validation for HTTP requests.
@@ -218,6 +233,7 @@ def api_list_ingestion_jobs(
     rows, total = _call_job_control(
         ingestion_pipeline.list_jobs_page,
         tenant_id=_job_tenant(user),
+        owner_id=_job_owner_scope(user),
         execution_state=execution_state_value,
         phase=phase_value,
         job_kind=job_kind_value,
@@ -243,7 +259,7 @@ def api_get_ingestion_job(
     job_id: str,
     user=require_permission("knowledge_import", "read"),
 ):
-    job = ingestion_pipeline.get_job(job_id, tenant_id=_job_tenant(user))
+    job = ingestion_pipeline.get_job(job_id, tenant_id=_job_tenant(user), owner_id=_job_owner_scope(user))
     if job is None:
         raise HTTPException(status_code=404, detail={"code": "JOB_NOT_FOUND", "message": "The ingestion job was not found"})
     return {"success": True, "data": _public_job_snapshot(job)}
@@ -254,7 +270,7 @@ def api_get_ingestion_job_errors(
     job_id: str,
     user=require_permission("knowledge_import", "read"),
 ):
-    job = ingestion_pipeline.get_job(job_id, tenant_id=_job_tenant(user))
+    job = ingestion_pipeline.get_job(job_id, tenant_id=_job_tenant(user), owner_id=_job_owner_scope(user))
     if job is None:
         raise HTTPException(status_code=404, detail={"code": "JOB_NOT_FOUND", "message": "The ingestion job was not found"})
     snapshot = _public_job_snapshot(job)
@@ -283,6 +299,7 @@ def api_cancel_ingestion_job(
         ingestion_pipeline.request_cancel,
         job_id,
         tenant_id=_job_tenant(user),
+        owner_id=_job_owner_scope(user),
         actor=_job_actor(user),
         reason=body.reason,
         request_id=body.request_id,
@@ -301,6 +318,8 @@ def api_retry_ingestion_job(
         ingestion_pipeline.retry_job,
         job_id,
         tenant_id=_job_tenant(user),
+        write_tenant_id=_job_write_tenant(user),
+        owner_id=_job_owner_scope(user),
         actor=_job_actor(user),
         request_id=body.request_id,
     )

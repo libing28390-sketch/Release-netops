@@ -23,6 +23,7 @@ from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from core.rbac import require_role
+from core.tenant_policy import tenant_scope_for_user
 from core.metrics import metrics_registry
 from core.crypto import decrypt_credential
 from database import get_db_connection
@@ -55,6 +56,7 @@ from services.monitoring_compiler import (
 )
 from services.monitoring_health_service import classify_collection_health, summarize_collection_health
 from services.collector_artifact_service import ArtifactStoreError, CollectorArtifactStore
+from services.rack_scope_service import RackScope, allowed_resource_scope, device_scope_predicate
 
 
 router = APIRouter(prefix="/monitoring", tags=["monitoring-v1"])
@@ -130,18 +132,76 @@ def _scope_list(value: Any, *, field: str, max_items: int = 128) -> list[str]:
 def _tenant_id(user: Any) -> str | None:
     if not isinstance(user, dict) or str(user.get("role") or "") == "Administrator":
         return None
-    return str(user.get("tenant_id") or "tenant-default").strip() or "tenant-default"
+    return tenant_scope_for_user(user)
+
+
+def _asset_scope(conn, user: Any, action: str = "view") -> RackScope:
+    if not isinstance(user, dict):
+        return RackScope()
+    return allowed_resource_scope(conn, user, "asset", action)
+
+
+def _device_scope_filter(scope: RackScope, alias: str = "d") -> tuple[str, tuple[Any, ...]]:
+    predicate, params = device_scope_predicate(scope, device_alias=alias)
+    clauses = [predicate] if predicate else []
+    values = list(params)
+    if scope.tenant_id:
+        clauses.append(f"COALESCE({alias}.tenant_id, 'tenant-default') = ?")
+        values.append(scope.tenant_id)
+    return " AND ".join(clauses), tuple(values)
+
+
+def _physical_asset_scope_filter(scope: RackScope, alias: str = "pa") -> tuple[str, tuple[Any, ...]]:
+    """Build site/group visibility for unpaired physical-asset projections."""
+    predicates: list[str] = []
+    params: list[Any] = []
+    if scope.site_ids is not None and scope.site_ids:
+        placeholders = ",".join("?" for _ in scope.site_ids)
+        predicates.append(f"{alias}.site_id IN ({placeholders})")
+        params.extend(scope.site_ids)
+    if scope.device_group_ids is not None and scope.device_group_ids:
+        placeholders = ",".join("?" for _ in scope.device_group_ids)
+        predicates.append(
+            f"EXISTS (SELECT 1 FROM devices scope_device "
+            f"WHERE scope_device.asset_id = {alias}.id "
+            f"AND scope_device.device_group_id IN ({placeholders}))"
+        )
+        params.extend(scope.device_group_ids)
+    if scope.site_ids is None and scope.device_group_ids is None:
+        predicates = []
+    elif not predicates:
+        return "1 = 0", ()
+    if scope.tenant_id:
+        predicates.append(
+            f"EXISTS (SELECT 1 FROM sites scope_site WHERE scope_site.id = {alias}.site_id "
+            "AND scope_site.tenant_id = ?)"
+        )
+        params.append(scope.tenant_id)
+    return " AND ".join(predicates), tuple(params)
+
+
+def _report_scope_filters(user: Any) -> dict[str, Any]:
+    conn = get_db_connection()
+    try:
+        scope = _asset_scope(conn, user, "view")
+    finally:
+        conn.close()
+    return {
+        "tenant_id": scope.tenant_id,
+        "site_ids": scope.site_ids,
+        "device_group_ids": scope.device_group_ids,
+    }
 
 
 def _assert_asset_visible(asset_id: str, user: Any) -> None:
-    tenant = _tenant_id(user)
-    if tenant is None:
-        return
     conn = get_db_connection()
     try:
+        scope = _asset_scope(conn, user, "view")
+        scope_sql, scope_params = _device_scope_filter(scope, "d")
+        scope_clause = f" AND {scope_sql}" if scope_sql else ""
         row = conn.execute(
-            "SELECT id FROM devices WHERE id = ? AND COALESCE(tenant_id, 'tenant-default') = ?",
-            (asset_id, tenant),
+            "SELECT d.id FROM devices d WHERE d.id = ?" + scope_clause,
+            (asset_id, *scope_params),
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Device not found")
@@ -746,11 +806,10 @@ def preview_monitoring_plan(plan_id: str, _user=require_role("Viewer")):
                 LEFT JOIN sites s ON (s.id = d.site_id OR s.id = d.site OR s.site_code = d.site OR s.site_name = d.site)
                 WHERE (d.status IS NULL OR LOWER(d.status) = 'online')
             """
-            device_params: tuple[Any, ...] = ()
-            tenant = _tenant_id(_user)
-            if tenant is not None:
-                device_sql += " AND COALESCE(d.tenant_id, 'tenant-default') = ?"
-                device_params = (tenant,)
+            monitoring_scope = _asset_scope(conn, _user)
+            scope_sql, device_params = _device_scope_filter(monitoring_scope, "d")
+            if scope_sql:
+                device_sql += f" AND ({scope_sql})"
             devices = conn.execute(device_sql, device_params).fetchall()
         except Exception:
             conn.rollback()
@@ -990,14 +1049,19 @@ def apply_monitoring_plan(plan_id: str, _user=require_role("Operator")):
             raise HTTPException(status_code=404, detail="Collection plan not found")
         if not bool(row["enabled"] if hasattr(row, "keys") else row[2]):
             raise HTTPException(status_code=409, detail="Disabled collection plan cannot be applied")
-        tenant = _tenant_id(_user)
-        if tenant is None:
-            collector_rows = conn.execute("SELECT id FROM monitoring_collectors WHERE enabled = 1 ORDER BY id").fetchall()
-        else:
-            collector_rows = conn.execute(
-                "SELECT c.id FROM monitoring_collectors c WHERE c.enabled = 1 AND (c.id = 'collector-local' OR c.site_id IN (SELECT DISTINCT site_id FROM devices WHERE COALESCE(tenant_id, 'tenant-default') = ?)) ORDER BY c.id",
-                (tenant,),
-            ).fetchall()
+        monitoring_scope = _asset_scope(conn, _user)
+        scope_sql, scope_params = _device_scope_filter(monitoring_scope, "d")
+        device_visibility = f" AND ({scope_sql})" if scope_sql else ""
+        collector_rows = conn.execute(
+            f"""SELECT c.id FROM monitoring_collectors c
+                WHERE c.enabled = 1 AND EXISTS (
+                    SELECT 1 FROM devices d
+                     WHERE 1 = 1{device_visibility}
+                       AND (c.id = 'collector-local' OR c.site_id IS NULL OR c.site_id = ''
+                            OR c.site_id IN (d.site_id, d.site))
+                ) ORDER BY c.id""",
+            scope_params,
+        ).fetchall()
         collectors = [str(item["id"] if hasattr(item, "keys") else item[0]) for item in collector_rows]
     finally:
         conn.close()
@@ -1064,12 +1128,12 @@ def list_assignments(collector_id: str | None = Query(default=None), asset_id: s
     conn = get_db_connection()
     try:
         clauses, params = ["1=1"], []
-        tenant = _tenant_id(_user)
-        join = ""
-        if tenant is not None:
-            join = " JOIN devices d ON d.id = a.asset_id"
-            clauses.append("COALESCE(d.tenant_id, 'tenant-default') = ?")
-            params.append(tenant)
+        monitoring_scope = _asset_scope(conn, _user)
+        scope_sql, scope_params = _device_scope_filter(monitoring_scope, "d")
+        join = " JOIN devices d ON d.id = a.asset_id"
+        if scope_sql:
+            clauses.append(scope_sql)
+            params.extend(scope_params)
         if collector_id:
             clauses.append("a.collector_id = ?"); params.append(collector_id)
         if asset_id:
@@ -1139,7 +1203,7 @@ def preview_device_assignments(device_id: str, _user=require_role("Viewer")):
 
 
 def _load_compile_inputs(conn, collector_id: str, user: Any = None):
-    tenant = _tenant_id(user)
+    monitoring_scope = _asset_scope(conn, user)
     device_sql = """
         SELECT d.*,
                COALESCE(profile.verification_status, '') AS snmp_profile_verification_status,
@@ -1149,11 +1213,13 @@ def _load_compile_inputs(conn, collector_id: str, user: Any = None):
         LEFT JOIN sites s ON (s.id = d.site_id OR s.id = d.site OR s.site_code = d.site OR s.site_name = d.site)
         WHERE d.status IS NULL OR LOWER(d.status) = 'online'
     """
-    device_params: tuple[Any, ...] = ()
-    if tenant is not None:
-        device_sql += " AND COALESCE(d.tenant_id, 'tenant-default') = ?"
-        device_params = (tenant,)
+    device_scope_sql, device_params = _device_scope_filter(monitoring_scope, "d")
+    if device_scope_sql:
+        device_sql += f" AND ({device_scope_sql})"
     devices = [_dict(row) for row in conn.execute(device_sql, device_params).fetchall()]
+    physical_scope_sql, physical_scope_params = _physical_asset_scope_filter(monitoring_scope, "pa")
+    physical_scope_clause = f" AND ({physical_scope_sql})" if physical_scope_sql else ""
+    device_scope_clause = f" AND ({device_scope_sql})" if device_scope_sql else ""
     server_sql = """
         SELECT pa.id, 'server' AS asset_type, pa.management_ip, pa.hostname, pa.platform, pa.status,
                COALESCE(NULLIF(s.site_name, ''), NULLIF(s.site_code, ''), '') AS site_name,
@@ -1162,6 +1228,7 @@ def _load_compile_inputs(conn, collector_id: str, user: Any = None):
         LEFT JOIN sites s ON s.id = pa.site_id
         WHERE pa.asset_type = 'server'
           AND (pa.status IS NULL OR pa.status = 'active' OR pa.status = 'in_production' OR pa.status = 'online')
+          {physical_scope_clause}
         UNION
         SELECT COALESCE(d.asset_id, d.id) AS id, 'server' AS asset_type, d.ip_address AS management_ip, d.hostname, d.platform, d.status,
                COALESCE(NULLIF(s.site_name, ''), NULLIF(s.site_code, ''), CASE WHEN SUBSTR(COALESCE(d.site, ''), 1, 5) = 'site-' THEN '' ELSE COALESCE(d.site, '') END, '') AS site_name,
@@ -1170,8 +1237,13 @@ def _load_compile_inputs(conn, collector_id: str, user: Any = None):
         LEFT JOIN sites s ON (s.id = d.site_id OR s.id = d.site OR s.site_code = d.site OR s.site_name = d.site)
         WHERE (d.role = 'server' OR LOWER(COALESCE(d.device_category, '')) LIKE ? OR LOWER(COALESCE(d.platform, '')) IN ('linux', 'ubuntu', 'centos', 'debian', 'redhat', 'windows', 'windows_server'))
           AND (d.status IS NULL OR LOWER(d.status) = 'online' OR LOWER(d.status) = 'active')
+          {device_scope_clause}
     """
-    server_params: tuple[Any, ...] = ('%server%',)
+    server_sql = server_sql.format(
+        physical_scope_clause=physical_scope_clause,
+        device_scope_clause=device_scope_clause,
+    )
+    server_params: tuple[Any, ...] = (*physical_scope_params, '%server%', *device_params)
     try:
         servers = [_dict(row) for row in conn.execute(server_sql, server_params).fetchall()]
     except Exception as exc:
@@ -1188,9 +1260,9 @@ def _load_compile_inputs(conn, collector_id: str, user: Any = None):
         WHERE (d.status IS NULL OR LOWER(d.status) = 'online')
     """
     interface_params: tuple[Any, ...] = ()
-    if tenant is not None:
-        interface_sql += " AND COALESCE(d.tenant_id, 'tenant-default') = ?"
-        interface_params = (tenant,)
+    if device_scope_sql:
+        interface_sql += f" AND ({device_scope_sql})"
+        interface_params = device_params
     try:
         interface_profiles = [
             _dict(row) for row in conn.execute(interface_sql, interface_params).fetchall()
@@ -1569,10 +1641,11 @@ def collection_health(collector_id: str | None = Query(default=None), _user=requ
     conn = get_db_connection()
     try:
         clauses, params = ["1=1"], []
-        tenant = _tenant_id(_user)
-        if tenant is not None:
-            clauses.append("COALESCE(d.tenant_id, 'tenant-default') = ?")
-            params.append(tenant)
+        monitoring_scope = _asset_scope(conn, _user)
+        scope_sql, scope_params = _device_scope_filter(monitoring_scope, "d")
+        if scope_sql:
+            clauses.append(scope_sql)
+            params.extend(scope_params)
         if collector_id:
             clauses.append("a.collector_id = ?")
             params.append(collector_id)
@@ -1618,7 +1691,7 @@ def get_monitoring_report_data(
     _user=require_role("Viewer"),
 ):
     filters = {
-        "tenant_id": None if str(_user.get("role") or "") == "Administrator" else str(_user.get("tenant_id") or "tenant-default"),
+        **_report_scope_filters(_user),
         "keyword": keyword,
         "vendor": vendor,
         "site": site,
@@ -1650,7 +1723,7 @@ def export_interfaces_report(
     _user=require_role("Viewer"),
 ):
     filters = {
-        "tenant_id": None if str(_user.get("role") or "") == "Administrator" else str(_user.get("tenant_id") or "tenant-default"),
+        **_report_scope_filters(_user),
         "keyword": keyword,
         "vendor": vendor,
         "site": site,
@@ -1679,7 +1752,7 @@ def export_devices_report(
     _user=require_role("Viewer"),
 ):
     filters = {
-        "tenant_id": None if str(_user.get("role") or "") == "Administrator" else str(_user.get("tenant_id") or "tenant-default"),
+        **_report_scope_filters(_user),
         "keyword": keyword,
         "vendor": vendor,
         "site": site,
@@ -1704,7 +1777,7 @@ def export_outbound_report(
     _user=require_role("Viewer"),
 ):
     filters = {
-        "tenant_id": None if str(_user.get("role") or "") == "Administrator" else str(_user.get("tenant_id") or "tenant-default"),
+        **_report_scope_filters(_user),
         "keyword": keyword,
         "isp": isp,
         "target_type": target_type,
@@ -1722,10 +1795,11 @@ def shadow_comparisons(asset_id: str | None = Query(default=None), metric_key: s
     conn = get_db_connection()
     try:
         clauses, params = ["1=1"], []
-        tenant = _tenant_id(_user)
-        if tenant is not None:
-            clauses.append("COALESCE(d.tenant_id, 'tenant-default') = ?")
-            params.append(tenant)
+        monitoring_scope = _asset_scope(conn, _user)
+        scope_sql, scope_params = _device_scope_filter(monitoring_scope, "d")
+        if scope_sql:
+            clauses.append(scope_sql)
+            params.extend(scope_params)
         if asset_id:
             clauses.append("s.asset_id = ?")
             params.append(asset_id)

@@ -88,7 +88,7 @@ def test_ing015_superseded_version_keeps_published_replacement(isolated_db, make
     assert result["document"]["retrieval_eligible"] is True
 
 
-def test_ing015_rejects_invalid_transition_stale_cas_cross_tenant_and_viewer(isolated_db, make_user):
+def test_ing015_rejects_invalid_transition_stale_cas_and_viewer_but_allows_historical_tenant(isolated_db, make_user):
     user = make_user("ing015-boundary", role="Administrator", tenant_id="tenant-default")
     imported = import_single_official_url(user, _payload(idempotency_key="ing015-boundary"), transport=_transport(b"boundary lifecycle"), resolver=_public)
     document_id = imported["document"]["id"]
@@ -105,11 +105,22 @@ def test_ing015_rejects_invalid_transition_stale_cas_cross_tenant_and_viewer(iso
         transition_document_lifecycle(document_id, "published", viewer, document_version_id=version_id, request_id="ing015-viewer")
     assert denied.value.code == "DOCUMENT_LIFECYCLE_PERMISSION_DENIED"
 
+    connection = isolated_db["module"].get_db_connection()
+    try:
+        connection.execute("UPDATE ai_document SET tenant_id = ? WHERE id = ?", ("tenant-history-a", document_id))
+        connection.execute("UPDATE ai_document_revision SET tenant_id = ? WHERE document_id = ?", ("tenant-history-a", document_id))
+        connection.commit()
+    finally:
+        connection.close()
+
     other = dict(user)
-    other["tenant_id"] = "tenant-other"
-    with pytest.raises(DocumentLifecycleError) as not_found:
-        get_document_lifecycle(document_id, other)
-    assert not_found.value.code == "DOCUMENT_NOT_FOUND"
+    other["tenant_id"] = "tenant-history-b"
+    historical = get_document_lifecycle(document_id, other)
+    assert historical["document"]["id"] == document_id
+    managed = transition_document_lifecycle(
+        document_id, "published", other, document_version_id=version_id, request_id="ing015-history-publish",
+    )
+    assert managed["document"]["lifecycle_status"] == "published"
 
 
 def test_ing015_api_contract_exposes_lifecycle_routes():

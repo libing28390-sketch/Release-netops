@@ -51,15 +51,12 @@ def test_shared_facet_normalization_and_unknown_governance() -> None:
 
 
 def test_assistant_builds_scope_and_directory_into_retrieval_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    resolver_calls: list[dict[str, object]] = []
     monkeypatch.setattr(
         assistant_module.product_resolver,
         "resolve_query",
-        lambda *args, **kwargs: assistant_module.EntityResolution(
-            metadata={
-                "vendor": "Huawei",
-                "document_category": "configuration",
-                "product_series": "CloudEngine 6800",
-            }
+        lambda *args, **kwargs: resolver_calls.append(kwargs) or assistant_module.EntityResolution(
+            metadata={"vendor": "Huawei", "document_category": "configuration", "product_series": "CloudEngine 6800"}
         ),
     )
 
@@ -84,6 +81,7 @@ def test_assistant_builds_scope_and_directory_into_retrieval_request(monkeypatch
     assert request.directory_path == "03_configuration/huawei"
     assert request.tenant_id == "tenant-a"
     assert request.roles == ["Operator"]
+    assert resolver_calls[0]["tenant_id"] is None
 
 
 def test_assistant_keeps_explicit_canonical_cli_platform_when_resolver_returns_alias(
@@ -116,7 +114,7 @@ def test_assistant_keeps_explicit_canonical_cli_platform_when_resolver_returns_a
     assert request.cli_platform == "huawei_vrp"
 
 
-def test_retrieval_applies_scope_directory_tenant_and_acl_in_postgresql(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_retrieval_ignores_legacy_tenant_scope_but_keeps_acl_in_postgresql(monkeypatch: pytest.MonkeyPatch) -> None:
     connection = postgresql_test_driver.connect()
     connection.executescript(
         """
@@ -216,7 +214,7 @@ def test_retrieval_applies_scope_directory_tenant_and_acl_in_postgresql(monkeypa
             feature="vlan",
             knowledge_scope="official",
             directory_path="03_configuration/huawei",
-            tenant_id="tenant-a",
+            tenant_id=None,
             roles=["Operator"],
         )
     )
@@ -234,17 +232,38 @@ def test_retrieval_applies_scope_directory_tenant_and_acl_in_postgresql(monkeypa
         )
     )
 
-    assert [item["storage_document_id"] for item in official["results"]] == ["official"]
+    assert [item["storage_document_id"] for item in official["results"]] == ["official", "other-tenant"]
     assert [item["storage_document_id"] for item in enterprise["results"]] == ["enterprise"]
+    assert "tenant_id" not in official["debug"]["metadata_filter"]
     assert document_is_visible(
-        {"tenant_id": "tenant-a", "acl_json": '{"roles":["Operator"]}'},
-        tenant_id="tenant-a",
+        {"tenant_id": "tenant-history-a", "acl_json": '{"roles":["Operator"]}'},
+        tenant_id="tenant-history-b",
         roles=["Operator"],
     ) is True
     assert document_is_visible(
         {"tenant_id": "tenant-a", "acl_json": '{"roles":["Administrator"]}'},
-        tenant_id="tenant-a",
+        tenant_id="tenant-history-b",
         roles=["Operator"],
+    ) is False
+    assert document_is_visible(
+        {"tenant_id": "tenant-history-a", "acl_json": '{"users":["alice"]}'},
+        tenant_id="tenant-history-b",
+        user_id="alice",
+    ) is True
+    assert document_is_visible(
+        {"tenant_id": "tenant-history-a", "acl_json": '{"sites":["site-a"]}'},
+        tenant_id="tenant-history-b",
+        site_ids=["site-a"],
+    ) is True
+    assert document_is_visible(
+        {"tenant_id": "tenant-history-a", "acl_json": '{"sites":["site-a"]}'},
+        tenant_id="tenant-history-b",
+        site_ids=["site-b"],
+    ) is False
+    assert document_is_visible(
+        {"tenant_id": "tenant-history-a", "acl_json": "not-json"},
+        tenant_id="tenant-history-b",
+        roles=["Administrator"],
     ) is False
     connection.close()
 
@@ -316,7 +335,7 @@ def test_retrieval_directory_filter_keeps_legacy_semantic_rows_visible(monkeypat
             document_category="configuration",
             knowledge_scope="official",
             directory_path="03_configuration/huawei",
-            tenant_id="tenant-a",
+            tenant_id=None,
         )
     )
 

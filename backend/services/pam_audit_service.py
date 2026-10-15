@@ -12,10 +12,23 @@ from typing import Any
 
 from database import get_db_connection
 from ai.security.sanitizer import sanitize_text
+from core.tenant_policy import TENANT_ISOLATION_ENABLED, tenant_id_for_write
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _tenant_id_for_write(tenant_id: str | None) -> str:
+    """Keep tenant labels on audit rows while defaulting new rows in single-org mode."""
+    return tenant_id_for_write(requested=tenant_id)
+
+
+def _tenant_filter(column: str, tenant_id: str | None) -> tuple[str, tuple[str, ...]]:
+    """Return a tenant predicate only while tenant isolation is enabled."""
+    if TENANT_ISOLATION_ENABLED and tenant_id:
+        return f" AND {column} = ?", (str(tenant_id),)
+    return "", ()
 
 
 class CommandAssembler:
@@ -255,8 +268,9 @@ def record_operation_event(
     decision: CommandDecision,
     previous_hash: str | None = None,
 ) -> dict[str, Any]:
+    write_tenant_id = _tenant_id_for_write(tenant_id)
     safe_event = {
-        "tenant_id": tenant_id,
+        "tenant_id": write_tenant_id,
         "session_id": session_id,
         "source_type": source_type,
         "actor_id": actor_id,
@@ -280,7 +294,7 @@ def record_operation_event(
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    event_id, tenant_id, session_id, source_type, actor_id, device_id,
+                    event_id, write_tenant_id, session_id, source_type, actor_id, device_id,
                     action_code, decision.risk_level, decision.policy_decision,
                     safe_event["accepted_state"], json.dumps(safe_event["metadata"], ensure_ascii=False),
                     previous_hash, event_hash, _now(),
@@ -379,7 +393,7 @@ def build_command_submission(
     execution_status = "executing" if audit_only else "blocked" if decision.policy_decision == "BLOCK" else "pending"
     operation_event_id = f"ope_{uuid.uuid4().hex[:16]}"
     operation_payload = {
-        "tenant_id": tenant_id,
+        "tenant_id": _tenant_id_for_write(tenant_id),
         "session_id": session_id,
         "source_type": source_type,
         "actor_id": actor_id,
@@ -581,36 +595,45 @@ def create_approval_request(
     metadata. They never copy raw terminal input or output.
     """
     approval_id = f"apr_{uuid.uuid4().hex[:16]}"
+    if not str(session_id or "").strip():
+        raise ValueError("session is required")
+    write_tenant_id = _tenant_id_for_write(tenant_id)
     now = datetime.now(timezone.utc)
     expires_at = (now.timestamp() + max(60, min(int(ttl_seconds or 900), 86400)))
     expires_iso = datetime.fromtimestamp(expires_at, timezone.utc).replace(microsecond=0).isoformat()
     with get_db_connection() as conn:
-        if session_id:
-            row = conn.execute(
-                """
-                SELECT e.policy_decision, e.risk_level
-                FROM pam_command_events e
-                JOIN pam_sessions s ON s.id = e.session_id AND s.tenant_id = ?
-                WHERE e.id = ? AND e.session_id = ?
-                """,
-                (tenant_id, command_event_id, session_id),
-            ).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT policy_decision, risk_level FROM pam_command_events WHERE id = ?",
-                (command_event_id,),
-            ).fetchone()
+        tenant_clause = " AND s.tenant_id = ?" if TENANT_ISOLATION_ENABLED else ""
+        params = (command_event_id, session_id, tenant_id) if TENANT_ISOLATION_ENABLED else (command_event_id, session_id)
+        row = conn.execute(
+            f"""
+            SELECT e.policy_decision, e.risk_level, e.approval_id,
+                   s.requester_username
+            FROM pam_command_events e
+            JOIN pam_sessions s ON s.id = e.session_id
+            WHERE e.id = ? AND e.session_id = ?{tenant_clause}
+            """,
+            params,
+        ).fetchone()
         if not row:
             raise ValueError("command event not found")
         if str(row[0]) != "CONFIRM":
             raise ValueError("only CONFIRM commands may request approval")
+        if str(row[2] or "").strip():
+            raise ValueError("command event already has an approval request")
+        if str(row[3] or "") != str(requester_id or ""):
+            raise ValueError("requester does not own this session")
         conn.execute(
             "INSERT INTO pam_approval_requests (id, tenant_id, session_id, command_event_id, requester_id, state, reason, expires_at, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)",
-            (approval_id, tenant_id, session_id, command_event_id, requester_id, str(reason or "")[:500], expires_iso, _now()),
+            (approval_id, write_tenant_id, session_id, command_event_id, requester_id, str(reason or "")[:500], expires_iso, _now()),
         )
-        conn.execute("UPDATE pam_command_events SET accepted_state = 'pending', approval_id = ? WHERE id = ?", (approval_id, command_event_id))
+        updated = conn.execute(
+            "UPDATE pam_command_events SET accepted_state = 'pending', approval_id = ? WHERE id = ? AND session_id = ? AND policy_decision = 'CONFIRM' AND (approval_id IS NULL OR approval_id = '')",
+            (approval_id, command_event_id, session_id),
+        )
+        if updated.rowcount != 1:
+            raise ValueError("command event is no longer eligible for approval")
         conn.commit()
-    return {"id": approval_id, "tenant_id": tenant_id, "session_id": session_id, "command_event_id": command_event_id, "state": "pending", "expires_at": expires_iso}
+    return {"id": approval_id, "tenant_id": write_tenant_id, "session_id": session_id, "command_event_id": command_event_id, "state": "pending", "expires_at": expires_iso}
 
 
 def decide_approval(
@@ -624,20 +647,41 @@ def decide_approval(
 ) -> dict[str, Any]:
     """Approve/deny a pending command, requiring a distinct MFA-verified approver."""
     with get_db_connection() as conn:
-        if tenant_id:
-            row = conn.execute("SELECT * FROM pam_approval_requests WHERE id = ? AND tenant_id = ?", (approval_id, tenant_id)).fetchone()
-        else:
-            row = conn.execute("SELECT * FROM pam_approval_requests WHERE id = ?", (approval_id,)).fetchone()
+        tenant_clause, tenant_params = _tenant_filter("a.tenant_id", tenant_id)
+        session_clause = " AND s.tenant_id = ?" if TENANT_ISOLATION_ENABLED and tenant_id else ""
+        session_params = (str(tenant_id),) if session_clause else ()
+        row = conn.execute(
+            f"""SELECT a.*, e.session_id AS bound_event_session_id,
+                       e.approval_id AS bound_approval_id,
+                       s.tenant_id AS bound_session_tenant_id
+                FROM pam_approval_requests a
+                JOIN pam_sessions s ON s.id = a.session_id
+                LEFT JOIN pam_command_events e
+                  ON e.id = a.command_event_id AND e.session_id = a.session_id
+                WHERE a.id = ?{tenant_clause}{session_clause}""",
+            (approval_id, *tenant_params, *session_params),
+        ).fetchone()
         if not row:
             raise ValueError("approval request not found")
         item = dict(row)
+        if (
+            not item.get("session_id")
+            or not item.get("command_event_id")
+            or item.get("bound_event_session_id") != item.get("session_id")
+            or item.get("bound_approval_id") != approval_id
+            or (TENANT_ISOLATION_ENABLED and item.get("bound_session_tenant_id") != tenant_id)
+        ):
+            raise ValueError("approval request is not bound to its command event")
         if item.get("state") != "pending":
             raise ValueError("approval request is no longer pending")
         if str(item.get("requester_id") or "") == str(approver_id or ""):
             raise ValueError("requester cannot approve their own command")
         expires_at = str(item.get("expires_at") or "")
         if expires_at and datetime.fromisoformat(expires_at.replace("Z", "+00:00")) < datetime.now(timezone.utc):
-            conn.execute("UPDATE pam_approval_requests SET state = 'expired', decided_at = ? WHERE id = ?", (_now(), approval_id))
+            conn.execute(
+                "UPDATE pam_approval_requests SET state = 'expired', decided_at = ? WHERE id = ? AND state = 'pending' AND session_id = ? AND command_event_id = ?",
+                (_now(), approval_id, item.get("session_id"), item.get("command_event_id")),
+            )
             conn.commit()
             raise ValueError("approval request expired")
         if approved and not mfa_verified:
@@ -645,14 +689,18 @@ def decide_approval(
         state = "approved" if approved else "denied"
         accepted = "accepted" if approved else "blocked"
         execution = "pending" if approved else "blocked"
-        conn.execute(
-            "UPDATE pam_approval_requests SET state = ?, approver_id = ?, mfa_verified = ?, decided_at = ?, decision_note = ? WHERE id = ?",
-            (state, approver_id, int(bool(mfa_verified)), _now(), str(decision_note or "")[:500], approval_id),
+        updated = conn.execute(
+            "UPDATE pam_approval_requests SET state = ?, approver_id = ?, mfa_verified = ?, decided_at = ?, decision_note = ? WHERE id = ? AND state = 'pending' AND session_id = ? AND command_event_id = ?",
+            (state, approver_id, int(bool(mfa_verified)), _now(), str(decision_note or "")[:500], approval_id, item.get("session_id"), item.get("command_event_id")),
         )
-        conn.execute(
-            "UPDATE pam_command_events SET accepted_state = ?, execution_status = ?, approval_id = ? WHERE id = ?",
-            (accepted, execution, approval_id, item.get("command_event_id")),
+        if updated.rowcount != 1:
+            raise ValueError("approval request is no longer pending")
+        event_update = conn.execute(
+            "UPDATE pam_command_events SET accepted_state = ?, execution_status = ?, approval_id = ? WHERE id = ? AND session_id = ? AND approval_id = ? AND policy_decision = 'CONFIRM'",
+            (accepted, execution, approval_id, item.get("command_event_id"), item.get("session_id"), approval_id),
         )
+        if event_update.rowcount != 1:
+            raise ValueError("approval request is not bound to its command event")
         conn.commit()
         return {"id": approval_id, "state": state, "approver_id": approver_id, "mfa_verified": bool(mfa_verified), "command_event_id": item.get("command_event_id")}
 
@@ -674,6 +722,7 @@ def create_change_transaction(
 ) -> dict[str, Any]:
     """Create a durable change plan; execution remains outside this V1 API."""
     transaction_id = f"chg_{uuid.uuid4().hex[:16]}"
+    tenant_id = _tenant_id_for_write(tenant_id)
     now = _now()
     result = {
         "id": transaction_id, "tenant_id": tenant_id, "session_id": session_id,
@@ -708,6 +757,7 @@ def record_session_intervention(*, tenant_id: str, session_id: str, action: str,
     action_value = str(action or "").strip().lower()
     if action_value not in {"pause", "resume", "terminate", "notify"}:
         raise ValueError("unsupported intervention")
+    tenant_id = _tenant_id_for_write(tenant_id)
     result = {"id": f"int_{uuid.uuid4().hex[:16]}", "tenant_id": tenant_id, "session_id": session_id, "action": action_value, "actor_id": actor_id, "reason": str(reason or "")[:500], "created_at": _now()}
     with get_db_connection() as conn:
         conn.execute(
@@ -779,6 +829,7 @@ def create_jit_grant(
     denied = _safe_action_list(denied_actions)
     if set(allowed) & set(denied):
         raise ValueError("an action cannot be both allowed and denied")
+    tenant_id = _tenant_id_for_write(tenant_id)
     grant_id = f"jit_{uuid.uuid4().hex[:16]}"
     result = {
         "id": grant_id,
@@ -825,21 +876,36 @@ def create_jit_grant(
 def revoke_jit_grant(grant_id: str, *, tenant_id: str, actor_id: str) -> dict[str, Any]:
     """Revoke a grant; the actor is retained in the reason-safe audit field."""
     with get_db_connection() as conn:
-        row = conn.execute("SELECT id, tenant_id, state FROM pam_jit_grants WHERE id = ? AND tenant_id = ?", (grant_id, tenant_id)).fetchone()
+        tenant_clause, tenant_params = _tenant_filter("tenant_id", tenant_id)
+        row = conn.execute(
+            f"SELECT id, tenant_id, state FROM pam_jit_grants WHERE id = ?{tenant_clause}",
+            (grant_id, *tenant_params),
+        ).fetchone()
         if not row:
             raise ValueError("JIT grant not found")
         if str(row[2]) != "active":
             raise ValueError("JIT grant is not active")
-        conn.execute("UPDATE pam_jit_grants SET state = 'revoked', revoked_at = ? WHERE id = ? AND tenant_id = ?", (_now(), grant_id, tenant_id))
+        row_tenant_id = str(row[1] or "")
+        update_tenant_clause, update_tenant_params = _tenant_filter("tenant_id", tenant_id)
+        updated = conn.execute(
+            f"UPDATE pam_jit_grants SET state = 'revoked', revoked_at = ? WHERE id = ?{update_tenant_clause} AND state = 'active'",
+            (_now(), grant_id, *update_tenant_params),
+        )
+        if updated.rowcount != 1:
+            raise ValueError("JIT grant is no longer active")
         conn.commit()
-    return {"id": grant_id, "tenant_id": tenant_id, "state": "revoked", "revoked_by": actor_id, "revoked_at": _now()}
+    return {"id": grant_id, "tenant_id": row_tenant_id, "state": "revoked", "revoked_by": actor_id, "revoked_at": _now()}
 
 
 def check_jit_grant(*, grant_id: str, tenant_id: str, subject_user_id: str, action: str, at: str | None = None) -> dict[str, Any]:
     """Evaluate a grant with fail-closed defaults for expired or unknown records."""
     moment = _parse_time(at, default=datetime.now(timezone.utc))
     with get_db_connection() as conn:
-        row = conn.execute("SELECT * FROM pam_jit_grants WHERE id = ? AND tenant_id = ? AND subject_user_id = ?", (grant_id, tenant_id, subject_user_id)).fetchone()
+        tenant_clause, tenant_params = _tenant_filter("tenant_id", tenant_id)
+        row = conn.execute(
+            f"SELECT * FROM pam_jit_grants WHERE id = ? AND subject_user_id = ?{tenant_clause}",
+            (grant_id, subject_user_id, *tenant_params),
+        ).fetchone()
     if not row:
         return {"allowed": False, "reason": "grant_not_found"}
     item = dict(row)
@@ -864,15 +930,27 @@ def check_jit_grant(*, grant_id: str, tenant_id: str, subject_user_id: str, acti
 def review_break_glass(*, grant_id: str, tenant_id: str, reviewed_by: str, accepted: bool, note: str = "") -> dict[str, Any]:
     state = "accepted" if accepted else "rejected"
     with get_db_connection() as conn:
-        row = conn.execute("SELECT id FROM pam_break_glass_events WHERE grant_id = ? AND tenant_id = ?", (grant_id, tenant_id)).fetchone()
+        tenant_clause, tenant_params = _tenant_filter("b.tenant_id", tenant_id)
+        grant_tenant_clause, grant_tenant_params = _tenant_filter("g.tenant_id", tenant_id)
+        row = conn.execute(
+            f"""SELECT b.id, b.tenant_id, b.subject_user_id, g.subject_user_id AS grant_subject
+                FROM pam_break_glass_events b
+                JOIN pam_jit_grants g ON g.id = b.grant_id AND g.subject_user_id = b.subject_user_id
+                WHERE b.grant_id = ?{tenant_clause}{grant_tenant_clause}""",
+            (grant_id, *tenant_params, *grant_tenant_params),
+        ).fetchone()
         if not row:
             raise ValueError("break-glass event not found")
+        if str(row[2] or "") != str(row[3] or ""):
+            raise ValueError("break-glass event subject binding is invalid")
+        update_tenant_clause, update_tenant_params = _tenant_filter("tenant_id", tenant_id)
+        event_id = str(row[0])
         conn.execute(
-            "UPDATE pam_break_glass_events SET post_review_state = ?, reviewed_by = ?, reviewed_at = ?, reason = substr(reason || ' Review: ' || ?, 1, 1000) WHERE grant_id = ? AND tenant_id = ?",
-            (state, reviewed_by, _now(), str(note or "")[:500], grant_id, tenant_id),
+            f"UPDATE pam_break_glass_events SET post_review_state = ?, reviewed_by = ?, reviewed_at = ?, reason = substr(reason || ' Review: ' || ?, 1, 1000) WHERE id = ? AND grant_id = ?{update_tenant_clause}",
+            (state, reviewed_by, _now(), str(note or "")[:500], event_id, grant_id, *update_tenant_params),
         )
         conn.commit()
-    return {"grant_id": grant_id, "tenant_id": tenant_id, "post_review_state": state, "reviewed_by": reviewed_by, "reviewed_at": _now()}
+    return {"grant_id": grant_id, "tenant_id": str(row[1] or ""), "post_review_state": state, "reviewed_by": reviewed_by, "reviewed_at": _now()}
 
 
 def evaluate_file_transfer_policy(*, file_name: str, direction: str, approved: bool = False, mfa_verified: bool = False) -> dict[str, Any]:
@@ -905,6 +983,7 @@ def record_file_transfer(
     mfa_verified: bool = False,
 ) -> dict[str, Any]:
     policy = evaluate_file_transfer_policy(file_name=file_name, direction=direction, approved=approved, mfa_verified=mfa_verified)
+    tenant_id = _tenant_id_for_write(tenant_id)
     safe_hash = re.sub(r"[^A-Fa-f0-9]", "", str(content_hash or ""))[:128]
     result = {
         "id": f"file_{uuid.uuid4().hex[:16]}", "tenant_id": tenant_id, "session_id": session_id,
@@ -936,6 +1015,7 @@ def create_batch_operation(*, tenant_id: str, created_by: str, target_ids: list[
         raise ValueError("batch operation requires targets")
     if not 0 < float(failure_threshold) <= 1:
         raise ValueError("failure threshold must be between 0 and 1")
+    tenant_id = _tenant_id_for_write(tenant_id)
     risk = calculate_batch_risk(command_risk_score=command_risk_score, asset_criticality=asset_criticality, target_count=len(target_ids), topology_impact=topology_impact, concurrency=concurrency)
     now = _now()
     operation_id = f"batch_{uuid.uuid4().hex[:16]}"
@@ -951,7 +1031,11 @@ def create_batch_operation(*, tenant_id: str, created_by: str, target_ids: list[
 
 def update_batch_progress(*, operation_id: str, tenant_id: str, completed_count: int, failed_count: int) -> dict[str, Any]:
     with get_db_connection() as conn:
-        row = conn.execute("SELECT max_targets, failure_threshold, state FROM pam_batch_operations WHERE id = ? AND tenant_id = ?", (operation_id, tenant_id)).fetchone()
+        tenant_clause, tenant_params = _tenant_filter("tenant_id", tenant_id)
+        row = conn.execute(
+            f"SELECT max_targets, failure_threshold, state, tenant_id FROM pam_batch_operations WHERE id = ?{tenant_clause}",
+            (operation_id, *tenant_params),
+        ).fetchone()
         if not row:
             raise ValueError("batch operation not found")
         total = max(0, int(completed_count)) + max(0, int(failed_count))
@@ -962,9 +1046,13 @@ def update_batch_progress(*, operation_id: str, tenant_id: str, completed_count:
             state, stopped_reason = "stopped", "failure_rate_threshold_exceeded"
         elif total >= int(row[0] or 0):
             state = "completed"
-        conn.execute("UPDATE pam_batch_operations SET state = ?, completed_count = ?, failed_count = ?, stopped_reason = ?, updated_at = ? WHERE id = ? AND tenant_id = ?", (state, max(0, int(completed_count)), max(0, int(failed_count)), stopped_reason, _now(), operation_id, tenant_id))
+        update_tenant_clause, update_tenant_params = _tenant_filter("tenant_id", tenant_id)
+        conn.execute(
+            f"UPDATE pam_batch_operations SET state = ?, completed_count = ?, failed_count = ?, stopped_reason = ?, updated_at = ? WHERE id = ?{update_tenant_clause}",
+            (state, max(0, int(completed_count)), max(0, int(failed_count)), stopped_reason, _now(), operation_id, *update_tenant_params),
+        )
         conn.commit()
-    return {"id": operation_id, "tenant_id": tenant_id, "state": state, "completed_count": max(0, int(completed_count)), "failed_count": max(0, int(failed_count)), "failure_rate": round(failure_rate, 4), "stopped_reason": stopped_reason}
+    return {"id": operation_id, "tenant_id": str(row[3] or ""), "state": state, "completed_count": max(0, int(completed_count)), "failed_count": max(0, int(failed_count)), "failure_rate": round(failure_rate, 4), "stopped_reason": stopped_reason}
 
 
 def create_deferred_action(*, tenant_id: str, session_id: str | None, command_event_id: str | None, action_code: str, execute_at: str, created_by: str, risk_level: str = "L3", reason: str = "") -> dict[str, Any]:
@@ -973,6 +1061,7 @@ def create_deferred_action(*, tenant_id: str, session_id: str | None, command_ev
         raise ValueError("deferred action must be scheduled in the future")
     if str(action_code or "").upper() in {"CREDENTIAL_INPUT", "DESTRUCTIVE_CHANGE"}:
         raise ValueError("credential and destructive actions cannot be deferred")
+    tenant_id = _tenant_id_for_write(tenant_id)
     result = {"id": f"def_{uuid.uuid4().hex[:16]}", "tenant_id": tenant_id, "session_id": session_id, "command_event_id": command_event_id, "action_code": re.sub(r"[^A-Za-z0-9_.:/-]", "_", str(action_code or "OTHER"))[:120], "execute_at": when.replace(microsecond=0).isoformat(), "state": "scheduled", "risk_level": str(risk_level or "L3"), "reason": str(reason or "")[:500], "created_by": created_by, "created_at": _now(), "updated_at": _now()}
     with get_db_connection() as conn:
         conn.execute("INSERT INTO pam_deferred_actions (id, tenant_id, session_id, command_event_id, action_code, execute_at, state, risk_level, reason, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", tuple(result.values()))
@@ -990,6 +1079,7 @@ def detect_behavior_risk(*, tenant_id: str, user_id: str | None, session_id: str
         "many_writes": int(metrics.get("write_commands") or 0) >= 20,
     }
     score = min(100, sum(20 if key in {"critical_asset", "blocked_commands"} else 15 for key, matched in rules.items() if matched))
+    tenant_id = _tenant_id_for_write(tenant_id)
     result = {"id": f"beh_{uuid.uuid4().hex[:16]}", "tenant_id": tenant_id, "user_id": user_id, "session_id": session_id, "risk_level": _risk_level(score), "risk_score": score, "signals": {key: value for key, value in rules.items() if value}, "state": "open" if score >= 30 else "informational", "created_at": _now()}
     if score >= 30:
         with get_db_connection() as conn:
@@ -1002,6 +1092,7 @@ def reconcile_tacacs_event(*, tenant_id: str, session_id: str | None, command_ev
     safe_nexora = re.sub(r"[^A-Za-z0-9_.:/ -]", "_", str(nexora_action or "").strip())[:200]
     safe_external = re.sub(r"[^A-Za-z0-9_.:/ -]", "_", str(external_action or "").strip())[:200]
     matched = safe_nexora.casefold() == safe_external.casefold()
+    tenant_id = _tenant_id_for_write(tenant_id)
     result = {"id": f"tac_{uuid.uuid4().hex[:16]}", "tenant_id": tenant_id, "session_id": session_id, "command_event_id": command_event_id, "nexora_action": safe_nexora, "external_action": safe_external, "matched": matched, "details": {"mismatch": not matched, "metadata": dict(metadata or {})}, "created_at": _now()}
     with get_db_connection() as conn:
         conn.execute("INSERT INTO pam_tacacs_reconciliations (id, tenant_id, session_id, command_event_id, nexora_action, external_action, matched, details_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (result["id"], tenant_id, session_id, command_event_id, safe_nexora, safe_external, int(matched), json.dumps(result["details"], ensure_ascii=False), result["created_at"]))
@@ -1012,6 +1103,7 @@ def reconcile_tacacs_event(*, tenant_id: str, session_id: str | None, command_ev
 def create_rollback_checkpoint(*, tenant_id: str, change_transaction_id: str, device_id: str | None, checkpoint_type: str = "pre_change", snapshot_id: str | None = None, details: dict[str, Any] | None = None) -> dict[str, Any]:
     if checkpoint_type not in {"pre_change", "post_change", "health_check"}:
         raise ValueError("unsupported checkpoint type")
+    tenant_id = _tenant_id_for_write(tenant_id)
     now = _now()
     result = {"id": f"chk_{uuid.uuid4().hex[:16]}", "tenant_id": tenant_id, "change_transaction_id": change_transaction_id, "device_id": device_id, "checkpoint_type": checkpoint_type, "snapshot_id": snapshot_id, "health_state": "unknown", "verification_state": "pending", "rollback_state": "not_requested", "details": dict(details or {}), "created_at": now, "updated_at": now}
     with get_db_connection() as conn:
@@ -1027,25 +1119,38 @@ def verify_rollback_checkpoint(*, checkpoint_id: str, tenant_id: str, health_sta
     verification = "passed" if passed else "failed"
     rollback_state = "not_requested" if passed else "requested"
     with get_db_connection() as conn:
-        row = conn.execute("SELECT id FROM pam_rollback_checkpoints WHERE id = ? AND tenant_id = ?", (checkpoint_id, tenant_id)).fetchone()
+        tenant_clause, tenant_params = _tenant_filter("tenant_id", tenant_id)
+        row = conn.execute(
+            f"SELECT id, tenant_id, change_transaction_id FROM pam_rollback_checkpoints WHERE id = ?{tenant_clause}",
+            (checkpoint_id, *tenant_params),
+        ).fetchone()
         if not row:
             raise ValueError("rollback checkpoint not found")
-        conn.execute("UPDATE pam_rollback_checkpoints SET health_state = ?, verification_state = ?, rollback_state = ?, details_json = ?, updated_at = ? WHERE id = ? AND tenant_id = ?", (state, verification, rollback_state, json.dumps(dict(details or {}), ensure_ascii=False), _now(), checkpoint_id, tenant_id))
+        row_tenant_id = str(row[1] or "")
+        update_tenant_clause, update_tenant_params = _tenant_filter("tenant_id", tenant_id)
+        updated = conn.execute(
+            f"UPDATE pam_rollback_checkpoints SET health_state = ?, verification_state = ?, rollback_state = ?, details_json = ?, updated_at = ? WHERE id = ? AND change_transaction_id = ?{update_tenant_clause}",
+            (state, verification, rollback_state, json.dumps(dict(details or {}), ensure_ascii=False), _now(), checkpoint_id, row[2], *update_tenant_params),
+        )
+        if updated.rowcount != 1:
+            raise ValueError("rollback checkpoint binding changed")
         conn.commit()
-    return {"id": checkpoint_id, "tenant_id": tenant_id, "health_state": state, "verification_state": verification, "rollback_state": rollback_state, "rollback_execution": "not_started" if not passed else "not_required"}
+    return {"id": checkpoint_id, "tenant_id": row_tenant_id, "health_state": state, "verification_state": verification, "rollback_state": rollback_state, "rollback_execution": "not_started" if not passed else "not_required"}
 
 
 def generate_session_summary(*, tenant_id: str, session_id: str, generated_by: str = "deterministic") -> dict[str, Any]:
     with get_db_connection() as conn:
+        tenant_clause = " AND s.tenant_id = ?" if TENANT_ISOLATION_ENABLED else ""
+        params = (session_id, tenant_id) if TENANT_ISOLATION_ENABLED else (session_id,)
         rows = conn.execute(
-            """
+            f"""
             SELECT e.canonical_action, e.risk_level, e.policy_decision,
                    e.accepted_state, e.execution_status
             FROM pam_command_events e
-            JOIN pam_sessions s ON s.id = e.session_id AND s.tenant_id = ?
-            WHERE e.session_id = ?
+            JOIN pam_sessions s ON s.id = e.session_id
+            WHERE e.session_id = ?{tenant_clause}
             """,
-            (tenant_id, session_id),
+            params,
         ).fetchall()
         summary = {"session_id": session_id, "command_count": len(rows), "configuration_command_count": 0, "high_risk_count": 0, "blocked_count": 0, "commands_by_action": {}, "final_verification": "unknown"}
         for row in rows:
@@ -1060,22 +1165,25 @@ def generate_session_summary(*, tenant_id: str, session_id: str, generated_by: s
         summary["final_verification"] = "PASS" if rows and summary["blocked_count"] == 0 else "REVIEW"
         summary["generated_at"] = _now()
         summary_id = f"sum_{uuid.uuid4().hex[:16]}"
-        conn.execute("INSERT INTO pam_session_summaries (id, tenant_id, session_id, summary_json, generated_by, created_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(tenant_id, session_id) DO UPDATE SET summary_json = excluded.summary_json, generated_by = excluded.generated_by, created_at = excluded.created_at", (summary_id, tenant_id, session_id, json.dumps(summary, ensure_ascii=False), generated_by, summary["generated_at"]))
+        write_tenant_id = _tenant_id_for_write(tenant_id)
+        conn.execute("INSERT INTO pam_session_summaries (id, tenant_id, session_id, summary_json, generated_by, created_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(tenant_id, session_id) DO UPDATE SET summary_json = excluded.summary_json, generated_by = excluded.generated_by, created_at = excluded.created_at", (summary_id, write_tenant_id, session_id, json.dumps(summary, ensure_ascii=False), generated_by, summary["generated_at"]))
         conn.commit()
-    return {"id": summary_id, "tenant_id": tenant_id, **summary}
+    return {"id": summary_id, "tenant_id": write_tenant_id, **summary}
 
 
 def explain_command_risk(*, command_event_id: str, tenant_id: str) -> dict[str, Any]:
     with get_db_connection() as conn:
+        tenant_clause = " AND s.tenant_id = ?" if TENANT_ISOLATION_ENABLED else ""
+        params = (command_event_id, tenant_id) if TENANT_ISOLATION_ENABLED else (command_event_id,)
         row = conn.execute(
-            """
+            f"""
             SELECT e.canonical_action, e.risk_level, e.risk_dimensions_json,
                    e.policy_decision, e.confirmation_required
             FROM pam_command_events e
-            JOIN pam_sessions s ON s.id = e.session_id AND s.tenant_id = ?
-            WHERE e.id = ?
+            JOIN pam_sessions s ON s.id = e.session_id
+            WHERE e.id = ?{tenant_clause}
             """,
-            (tenant_id, command_event_id),
+            params,
         ).fetchone()
     if not row:
         raise ValueError("command event not found")
@@ -1099,6 +1207,7 @@ def queue_external_event(*, tenant_id: str, session_id: str | None, event_type: 
         raise ValueError("unsupported external event destination")
     forbidden = {"raw_command", "raw_output", "command_raw", "output_raw", "password", "secret", "token", "private_key"}
     safe_payload = {str(key): value for key, value in payload.items() if str(key).lower() not in forbidden}
+    tenant_id = _tenant_id_for_write(tenant_id)
     event_id = f"ext_{uuid.uuid4().hex[:16]}"
     created_at = _now()
     with get_db_connection() as conn:

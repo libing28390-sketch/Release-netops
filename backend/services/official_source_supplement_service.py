@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from core.tenant_policy import tenant_id_for_write
 from database import get_db_connection
 from services.official_source_suggestion_service import suggest_official_sources
 from services.official_url_import_service import OfficialUrlImportError, import_single_official_url
@@ -35,11 +36,12 @@ def _row(row: Any) -> dict[str, Any] | None:
 def record_official_source_suggestions(
     request: Any,
     *,
-    tenant_id: str,
+    tenant_id: str | None,
     trace_id: str,
     request_id: str = "",
     query: str = "",
 ) -> list[dict[str, Any]]:
+    tenant = tenant_id_for_write(requested=tenant_id)
     suggestions = suggest_official_sources(request, limit=3)
     if not suggestions:
         return []
@@ -51,7 +53,7 @@ def record_official_source_suggestions(
     query_hash = hashlib.sha256(str(query or "").encode("utf-8", errors="replace")).hexdigest()
     with get_db_connection() as conn:
         for suggestion in suggestions:
-            suggestion_key = f"{tenant_id}:{trace_id}:{suggestion['url']}"
+            suggestion_key = f"{tenant}:{trace_id}:{suggestion['url']}"
             suggestion_id = f"oss_{uuid.uuid5(uuid.NAMESPACE_URL, suggestion_key).hex[:24]}"
             conn.execute(
                 """
@@ -63,21 +65,24 @@ def record_official_source_suggestions(
                 ON CONFLICT (tenant_id, trace_id, suggested_url) DO NOTHING
                 """,
                 (
-                    suggestion_id, tenant_id, trace_id, request_id or None, query_hash,
+                    suggestion_id, tenant, trace_id, request_id or None, query_hash,
                     vendor, model or None, release or None, feature or None,
                     _text(suggestion.get("label"), 256), _text(suggestion.get("url")),
                     _text(suggestion.get("source_kind"), 64), now, now,
                 ),
             )
         conn.commit()
-    return list_official_source_suggestions(tenant_id=tenant_id, trace_id=trace_id, page=1, page_size=10)["items"]
+    return list_official_source_suggestions(tenant_id=tenant, trace_id=trace_id, page=1, page_size=10)["items"]
 
 
 def list_official_source_suggestions(
-    *, tenant_id: str, status: str = "all", search: str = "", trace_id: str = "", page: int = 1, page_size: int = 20
+    *, tenant_id: str | None, status: str = "all", search: str = "", trace_id: str = "", page: int = 1, page_size: int = 20
 ) -> dict[str, Any]:
-    clauses = ["tenant_id = ?"]
-    params: list[Any] = [tenant_id]
+    clauses: list[str] = []
+    params: list[Any] = []
+    if tenant_id is not None:
+        clauses.append("tenant_id = ?")
+        params.append(_text(tenant_id, 128))
     if status and status != "all":
         clauses.append("status = ?")
         params.append(status)
@@ -88,7 +93,7 @@ def list_official_source_suggestions(
         pattern = f"%{search.strip().lower()}%"
         clauses.append("(LOWER(vendor) LIKE ? OR LOWER(COALESCE(product_model, '')) LIKE ? OR LOWER(COALESCE(feature, '')) LIKE ? OR LOWER(suggested_url) LIKE ?)")
         params.extend([pattern] * 4)
-    where = " AND ".join(clauses)
+    where = " AND ".join(clauses) or "TRUE"
     bounded_page = max(1, int(page or 1))
     bounded_size = max(1, min(100, int(page_size or 20)))
     with get_db_connection() as conn:
@@ -101,19 +106,25 @@ def list_official_source_suggestions(
 
 
 def review_official_source_suggestion(
-    suggestion_id: str, *, tenant_id: str, user: dict[str, Any], decision: str, fields: dict[str, Any]
+    suggestion_id: str, *, tenant_id: str | None, user: dict[str, Any], decision: str, fields: dict[str, Any]
 ) -> dict[str, Any]:
+    lookup = "SELECT * FROM official_source_suggestion WHERE id = ?"
+    lookup_params: list[Any] = [suggestion_id]
+    if tenant_id is not None:
+        lookup += " AND tenant_id = ?"
+        lookup_params.append(_text(tenant_id, 128))
     with get_db_connection() as conn:
-        current = _row(conn.execute("SELECT * FROM official_source_suggestion WHERE id = ? AND tenant_id = ?", (suggestion_id, tenant_id)).fetchone())
+        current = _row(conn.execute(lookup, tuple(lookup_params)).fetchone())
     if not current:
         raise OfficialSourceSupplementError("OFFICIAL_SUGGESTION_NOT_FOUND", "Official source suggestion was not found", status_code=404)
+    stored_tenant = _text(current.get("tenant_id"), 128)
     if current["status"] not in {"pending", "failed"}:
         raise OfficialSourceSupplementError("OFFICIAL_SUGGESTION_ALREADY_REVIEWED", "Official source suggestion has already been reviewed", status_code=409)
     reviewer = _text(user.get("id") or user.get("username") or "system", 256)
     now = _now()
     if decision == "reject":
         with get_db_connection() as conn:
-            conn.execute("UPDATE official_source_suggestion SET status = 'rejected', reviewer_id = ?, reviewed_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?", (reviewer, now, now, suggestion_id, tenant_id))
+            conn.execute("UPDATE official_source_suggestion SET status = 'rejected', reviewer_id = ?, reviewed_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?", (reviewer, now, now, suggestion_id, stored_tenant))
             conn.commit()
         return {**current, "status": "rejected", "reviewer_id": reviewer, "reviewed_at": now}
     if decision != "approve":
@@ -130,7 +141,7 @@ def review_official_source_suggestion(
     with get_db_connection() as conn:
         conn.execute(
             "UPDATE official_source_suggestion SET vendor = ?, product_model = ?, software_release = ?, feature = ?, reviewed_url = ?, source_kind = ?, status = 'approved', reviewer_id = ?, reviewed_at = ?, updated_at = ?, error_code = NULL WHERE id = ? AND tenant_id = ?",
-            (vendor, model, release, feature, reviewed_url, source_kind, reviewer, now, now, suggestion_id, tenant_id),
+            (vendor, model, release, feature, reviewed_url, source_kind, reviewer, now, now, suggestion_id, stored_tenant),
         )
         conn.commit()
     try:
@@ -156,7 +167,7 @@ def review_official_source_suggestion(
         )
     except OfficialUrlImportError as exc:
         with get_db_connection() as conn:
-            conn.execute("UPDATE official_source_suggestion SET status = 'failed', error_code = ?, updated_at = ? WHERE id = ? AND tenant_id = ?", (exc.code, _now(), suggestion_id, tenant_id))
+            conn.execute("UPDATE official_source_suggestion SET status = 'failed', error_code = ?, updated_at = ? WHERE id = ? AND tenant_id = ?", (exc.code, _now(), suggestion_id, stored_tenant))
             conn.commit()
         raise OfficialSourceSupplementError(exc.code, exc.message, status_code=exc.status_code) from exc
 
@@ -173,7 +184,7 @@ def review_official_source_suggestion(
             recheck = ai_assistant_service.retrieve_knowledge(
                 recheck_query,
                 {"metadata": {"vendor": vendor, "product_model": model, "software_release": release, "feature": feature}},
-                tenant_id=tenant_id,
+                tenant_id=tenant_id_for_write(user=user),
                 user_id=reviewer,
                 request_id=f"recheck-{suggestion_id}",
             )
@@ -185,10 +196,10 @@ def review_official_source_suggestion(
         conn.execute(
             """UPDATE official_source_suggestion SET status = ?, source_registry_id = ?, ingestion_job_id = ?, document_id = ?,
                recheck_trace_id = ?, recheck_status = ?, error_code = NULL, updated_at = ? WHERE id = ? AND tenant_id = ?""",
-            (status, source.get("id"), job.get("id"), document.get("id") or document.get("document_id"), recheck_trace_id or None, recheck_status, _now(), suggestion_id, tenant_id),
+            (status, source.get("id"), job.get("id"), document.get("id") or document.get("document_id"), recheck_trace_id or None, recheck_status, _now(), suggestion_id, stored_tenant),
         )
         conn.commit()
-        updated = _row(conn.execute("SELECT * FROM official_source_suggestion WHERE id = ? AND tenant_id = ?", (suggestion_id, tenant_id)).fetchone())
+        updated = _row(conn.execute("SELECT * FROM official_source_suggestion WHERE id = ? AND tenant_id = ?", (suggestion_id, stored_tenant)).fetchone())
     return updated or current
 
 

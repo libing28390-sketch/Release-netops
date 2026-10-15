@@ -5,7 +5,7 @@ import pytest
 
 from api.knowledge_documents import router
 from services.document_lifecycle_service import rollback_document_version, transition_document_lifecycle
-from services.document_version_service import DocumentVersionError, compare_document_versions
+from services.document_version_service import DocumentVersionError, compare_document_versions, list_document_versions
 from services.ingestion_pipeline_service import ingestion_pipeline
 from services.official_url_import_service import import_single_official_url
 
@@ -108,7 +108,7 @@ def test_kui014_compare_publish_supersede_and_atomic_rollback(isolated_db, make_
     assert replay["idempotent"] is True
 
 
-def test_kui014_compare_is_tenant_scoped_and_routes_are_confirmed(isolated_db, make_user):
+def test_kui014_versions_are_visible_across_historical_tenant_labels_and_routes_are_confirmed(isolated_db, make_user):
     user = make_user("kui014-scope", role="Administrator", tenant_id="tenant-default")
     imported = import_single_official_url(
         user,
@@ -116,16 +116,26 @@ def test_kui014_compare_is_tenant_scoped_and_routes_are_confirmed(isolated_db, m
         transport=_transport(b"scope body", '"kui014-scope"'),
         resolver=_public,
     )
+    second = import_single_official_url(
+        user,
+        _payload(idempotency_key="kui014-scope-second"),
+        transport=_transport(b"scope body v2", '"kui014-scope-second"'),
+        resolver=_public,
+    )
+    assert second["document"]["id"] == imported["document"]["id"]
     other = dict(user)
     other["tenant_id"] = "tenant-kui014-other"
-    with pytest.raises(DocumentVersionError) as exc:
-        compare_document_versions(
-            imported["document"]["id"],
-            imported["document_version"]["id"],
-            "missing-version",
-            other,
-        )
-    assert exc.value.code == "DOCUMENT_VERSION_NOT_FOUND"
+    visible = list_document_versions(imported["document"]["id"], other)
+    assert {item["id"] for item in visible} >= {
+        imported["document_version"]["id"], second["document_version"]["id"],
+    }
+    compared = compare_document_versions(
+        imported["document"]["id"],
+        imported["document_version"]["id"],
+        second["document_version"]["id"],
+        other,
+    )
+    assert compared["content_changed"] is True
 
     routes = {(route.path, tuple(sorted(route.methods or ()))) for route in router.routes}
     assert any(path.endswith("/{document_id}/versions") and "GET" in methods for path, methods in routes)

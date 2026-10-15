@@ -4,6 +4,7 @@ from typing import Any
 
 from database import get_db_connection, fetch_interface_data_for_devices
 from services.collection_status_service import COLLECTOR_STALE_SECONDS
+from services.rack_scope_service import RackScope, device_scope_predicate
 
 
 DEVICE_HEALTH_RETENTION_DAYS = 30
@@ -34,19 +35,26 @@ _EXPECTED_COLLECTORS = ('reachability', 'snmp_metrics', 'snmp_interfaces')
 def _health_scope_sql(
     tenant_id: str | None = None,
     site_ids: tuple[str, ...] | list[str] | None = None,
+    device_group_ids: tuple[str, ...] | list[str] | None = None,
     *,
     site_alias: str = 's',
+    device_alias: str = 'd',
 ) -> tuple[list[str], list[str]]:
-    """Build a site/tenant predicate for health reads and snapshots."""
+    """Build a tenant/site/device-group predicate for health reads."""
 
     clauses: list[str] = []
     params: list[str] = []
-    if site_ids is not None:
-        if not site_ids:
-            return ['1 = 0'], []
-        placeholders = ','.join('?' for _ in site_ids)
-        clauses.append(f'{site_alias}.id IN ({placeholders})')
-        params.extend(str(item) for item in site_ids)
+    scope_predicate, scope_params = device_scope_predicate(
+        RackScope(
+            tenant_id=tenant_id,
+            site_ids=tuple(site_ids) if site_ids is not None else None,
+            device_group_ids=tuple(device_group_ids) if device_group_ids is not None else None,
+        ),
+        device_alias=device_alias,
+    )
+    if scope_predicate:
+        clauses.append(scope_predicate)
+        params.extend(str(item) for item in scope_params)
     if tenant_id:
         clauses.append(f'{site_alias}.tenant_id = ?')
         params.append(str(tenant_id))
@@ -587,10 +595,11 @@ def load_devices_for_health(
     rack_id: str | None = None,
     tenant_id: str | None = None,
     site_ids: tuple[str, ...] | list[str] | None = None,
+    device_group_ids: tuple[str, ...] | list[str] | None = None,
 ) -> list[dict[str, Any]]:
     conditions: list[str] = []
     params: list[str] = []
-    scope_clauses, scope_params = _health_scope_sql(tenant_id, site_ids)
+    scope_clauses, scope_params = _health_scope_sql(tenant_id, site_ids, device_group_ids)
     conditions.extend(scope_clauses)
     params.extend(scope_params)
     if device_id:
@@ -632,12 +641,18 @@ def record_device_health_snapshot(
     *,
     tenant_id: str | None = None,
     site_ids: tuple[str, ...] | list[str] | None = None,
+    device_group_ids: tuple[str, ...] | list[str] | None = None,
 ) -> dict[str, Any]:
     conn = get_db_connection()
     try:
         devices = annotate_devices_with_health(
             conn,
-            load_devices_for_health(conn, tenant_id=tenant_id, site_ids=site_ids),
+            load_devices_for_health(
+                conn,
+                tenant_id=tenant_id,
+                site_ids=site_ids,
+                device_group_ids=device_group_ids,
+            ),
         )
         ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
         if devices:
@@ -708,10 +723,17 @@ def fetch_device_health_history(
     *,
     tenant_id: str | None = None,
     site_ids: tuple[str, ...] | list[str] | None = None,
+    device_group_ids: tuple[str, ...] | list[str] | None = None,
 ) -> dict[str, Any]:
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=max(1, range_hours))).replace(microsecond=0).isoformat()
-    scope_clauses, scope_params = _health_scope_sql(tenant_id, site_ids)
-    scope_where = ' AND ' + ' AND '.join(scope_clauses) if scope_clauses else ''
+    history_scope_clauses, history_scope_params = _health_scope_sql(
+        tenant_id, site_ids, device_group_ids, device_alias='hd'
+    )
+    history_scope_where = ' AND ' + ' AND '.join(history_scope_clauses) if history_scope_clauses else ''
+    alert_scope_clauses, alert_scope_params = _health_scope_sql(
+        tenant_id, site_ids, device_group_ids, device_alias='ad'
+    )
+    alert_scope_where = ' AND ' + ' AND '.join(alert_scope_clauses) if alert_scope_clauses else ''
     if _table_has_column(conn, 'device_health_samples', 'device_id'):
         rows = conn.execute(
             f'''
@@ -732,13 +754,13 @@ def fetch_device_health_history(
             JOIN devices hd ON hd.id = hs.device_id
             LEFT JOIN physical_assets hpa ON hpa.id = hd.asset_id
             LEFT JOIN sites s ON s.id = COALESCE(NULLIF(hpa.site_id, ''), NULLIF(hd.site_id, ''))
-            WHERE hs.ts >= ?{scope_where}
+            WHERE hs.ts >= ?{history_scope_where}
             GROUP BY hs.ts
             ORDER BY hs.ts ASC
             ''',
-            tuple([cutoff, *scope_params]),
+            tuple([cutoff, *history_scope_params]),
         ).fetchall()
-    elif scope_clauses:
+    elif history_scope_clauses:
         # A legacy sample table without device identity cannot be scoped
         # safely; fail closed rather than aggregate another tenant's history.
         rows = []
@@ -773,10 +795,10 @@ def fetch_device_health_history(
                   JOIN devices ad ON ad.id = ae.device_id
                   LEFT JOIN physical_assets apa ON apa.id = ad.asset_id
                   LEFT JOIN sites s ON s.id = COALESCE(NULLIF(apa.site_id, ''), NULLIF(ad.site_id, ''))
-                 WHERE (ae.created_at >= ? OR ae.resolved_at >= ?){scope_where}''',
-            tuple([cutoff, cutoff, *scope_params]),
+                 WHERE (ae.created_at >= ? OR ae.resolved_at >= ?){alert_scope_where}''',
+            tuple([cutoff, cutoff, *alert_scope_params]),
         ).fetchall()
-    elif scope_clauses:
+    elif alert_scope_clauses:
         alert_rows = []
     else:
         alert_rows = conn.execute(
@@ -835,8 +857,9 @@ def fetch_device_health_trend(
     *,
     tenant_id: str | None = None,
     site_ids: tuple[str, ...] | list[str] | None = None,
+    device_group_ids: tuple[str, ...] | list[str] | None = None,
 ) -> dict[str, Any]:
-    scope_clauses, scope_params = _health_scope_sql(tenant_id, site_ids)
+    scope_clauses, scope_params = _health_scope_sql(tenant_id, site_ids, device_group_ids)
     scope_where = ' AND ' + ' AND '.join(scope_clauses) if scope_clauses else ''
     device_row = conn.execute(
         f'''SELECT d.id, d.asset_id, d.sn,

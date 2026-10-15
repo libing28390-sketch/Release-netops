@@ -23,6 +23,7 @@ import yaml
 
 import database as _database
 from core.rbac import authorize_resource
+from core.tenant_policy import tenant_id_for_write, tenant_scope_for_user, tenant_scope_is_enabled
 from database import get_db_connection
 from services.audit_service import log_audit_event
 from services.source_version_manifest_service import SourceVersionManifestError, build_source_version_manifest
@@ -347,7 +348,12 @@ def _policy_hash(policy: dict[str, Any]) -> str:
 
 
 def _tenant_for_user(user: dict[str, Any], requested: str | None = None, *, allow_all: bool = False) -> str | None:
-    user_tenant = _text(user.get("tenant_id"))
+    if not tenant_scope_is_enabled():
+        # In single-organization mode tenant_id is a stored label, not an
+        # access boundary. An explicit list filter remains a user-selected
+        # data filter; omitted filters include historical tenant labels.
+        return _text(requested) or None
+    user_tenant = tenant_scope_for_user(user) or "tenant-default"
     role = _text(user.get("role"))
     requested = _text(requested) or None
     if role != "Administrator" and _text(user.get("role_profile")) != "System Administrator":
@@ -427,20 +433,32 @@ def _source_row(conn, source_id: str, user: dict[str, Any], *, tenant_id: str | 
     ).fetchone()
     if row:
         return _row_dict(row)
+    legacy_clauses = ["legacy_source_id = ?"]
+    legacy_params: list[Any] = [source_id]
     if scoped_tenant:
-        legacy = conn.execute(
-            "SELECT document_id FROM ai_document_revision "
-            "WHERE tenant_id = ? AND legacy_source_id = ? "
-            "ORDER BY CASE WHEN record_type = 'document_revision' THEN 0 ELSE 1 END, revision_no LIMIT 1",
-            (scoped_tenant, source_id),
+        legacy_clauses.append("tenant_id = ?")
+        legacy_params.append(scoped_tenant)
+    legacy_matches = conn.execute(
+        "SELECT DISTINCT tenant_id, document_id FROM ai_document_revision WHERE " + " AND ".join(legacy_clauses) +
+        " ORDER BY tenant_id, document_id LIMIT 2",
+        tuple(legacy_params),
+    ).fetchall()
+    # Old source IDs were not guaranteed to be globally unique. Fail closed
+    # when a cross-tenant lookup cannot identify one document unambiguously.
+    if len(legacy_matches) == 1:
+        legacy = legacy_matches[0]
+        legacy_tenant = _text(legacy[0])
+        document_clauses = ["id = ?"]
+        document_params: list[Any] = [_text(legacy[1])]
+        if legacy_tenant:
+            document_clauses.append("tenant_id = ?")
+            document_params.append(legacy_tenant)
+        row = conn.execute(
+            "SELECT * FROM ai_document WHERE " + " AND ".join(document_clauses),
+            tuple(document_params),
         ).fetchone()
-        if legacy:
-            row = conn.execute(
-                "SELECT * FROM ai_document WHERE tenant_id = ? AND id = ?",
-                (scoped_tenant, _text(legacy[0])),
-            ).fetchone()
-            if row:
-                return _row_dict(row)
+        if row:
+            return _row_dict(row)
     return None
 
 
@@ -581,7 +599,7 @@ def create_source(payload: dict[str, Any], user: dict[str, Any]) -> dict[str, An
     metadata["collection_policy"] = policy
     metadata["source_kind"] = source_kind
     metadata["policy_version"] = 1
-    tenant_id = _tenant_for_user(user)
+    tenant_id = tenant_id_for_write(user=user)
     _authorize(user, "create", tenant_id)
     conn = get_db_connection()
     try:

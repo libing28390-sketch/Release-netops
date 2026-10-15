@@ -159,9 +159,11 @@ def test_ing004_viewer_cannot_create_local_official_file_job(isolated_db, make_u
     assert exc.value.code == "SOURCE_PERMISSION_DENIED"
 
 
-def test_ing004_server_owns_hash_and_rejects_cross_tenant_replay(isolated_db, make_user):
+def test_ing004_server_owns_hash_and_rejects_cross_tenant_replay(isolated_db, make_user, monkeypatch):
+    from core import tenant_policy
     from services.local_official_file_import_service import import_local_official_file
 
+    monkeypatch.setattr(tenant_policy, "TENANT_ISOLATION_ENABLED", True)
     first_user = make_user("ing004-tenant-a", role="Administrator", tenant_id="tenant-default")
     other_user = make_user("ing004-tenant-b", role="Administrator", tenant_id="tenant-ing004-b")
     body = _pdf()

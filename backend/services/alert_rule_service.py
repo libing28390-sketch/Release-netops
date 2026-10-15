@@ -7,6 +7,7 @@ from typing import Any
 import uuid
 
 from database import get_db_connection
+from services.rack_scope_service import RackScope, device_scope_predicate
 from services.snmp_metric_profile_service import (
     get_alert_metric_collection,
     list_alert_metric_collections,
@@ -390,19 +391,21 @@ def _write_history(conn, rule: dict[str, Any]) -> None:
     )
 
 
-def list_rules(tenant_id: str = 'tenant-default') -> list[dict[str, Any]]:
-    tenant_id = _tenant_id(tenant_id)
+def list_rules(tenant_id: str | None = 'tenant-default') -> list[dict[str, Any]]:
     conn = get_db_connection()
     try:
-        rows = conn.execute(
-            '''
-            SELECT *
-            FROM alert_rules
-            WHERE tenant_id = ?
-            ORDER BY metric_type ASC, enabled DESC, scope_type DESC, updated_at DESC, name ASC
-            ''',
-            (tenant_id,),
-        ).fetchall()
+        if tenant_id is None:
+            rows = conn.execute(
+                '''SELECT * FROM alert_rules
+                   ORDER BY metric_type ASC, enabled DESC, scope_type DESC, updated_at DESC, name ASC'''
+            ).fetchall()
+        else:
+            tenant_id = _tenant_id(tenant_id)
+            rows = conn.execute(
+                '''SELECT * FROM alert_rules WHERE tenant_id = ?
+                   ORDER BY metric_type ASC, enabled DESC, scope_type DESC, updated_at DESC, name ASC''',
+                (tenant_id,),
+            ).fetchall()
         return [_normalize_rule_row(row) for row in rows]
     finally:
         conn.close()
@@ -416,9 +419,9 @@ def _get_metric_category(metric_type: str) -> str:
     return 'network'
 
 
-def _supported_metric_types_for_tenant(tenant_id: str) -> list[str]:
+def _supported_metric_types_for_tenant(tenant_id: str | None) -> list[str]:
     supported = SUPPORTED_METRIC_TYPES
-    if _tenant_id(tenant_id) != 'tenant-default':
+    if tenant_id is not None and _tenant_id(tenant_id) != 'tenant-default':
         supported = frozenset(metric for metric in supported if not metric.startswith('host_'))
     return sorted(supported)
 
@@ -430,9 +433,10 @@ def list_rules_paginated(
     category: str = 'all',
     page: int = 1,
     page_size: int = 20,
-    tenant_id: str = 'tenant-default',
+    tenant_id: str | None = 'tenant-default',
 ) -> dict[str, Any]:
-    tenant_id = _tenant_id(tenant_id)
+    if tenant_id is not None:
+        tenant_id = _tenant_id(tenant_id)
     enabled_filter = str(enabled or 'all').strip().lower()
     metric_filter = str(metric_type or 'all').strip().lower()
     cat_filter = str(category or 'all').strip().lower()
@@ -440,8 +444,11 @@ def list_rules_paginated(
     current_page = max(1, int(page or 1))
     current_page_size = max(1, int(page_size or 20))
 
-    base_conditions = ['tenant_id = ?']
-    base_params: list[Any] = [tenant_id]
+    base_conditions: list[str] = []
+    base_params: list[Any] = []
+    if tenant_id is not None:
+        base_conditions.append('tenant_id = ?')
+        base_params.append(tenant_id)
     if enabled_filter == 'enabled':
         base_conditions.append('COALESCE(enabled, 0) <> 0')
     elif enabled_filter == 'disabled':
@@ -460,7 +467,7 @@ def list_rules_paginated(
         "CASE WHEN metric_type IN ('host_cpu', 'host_memory', 'host_disk') THEN 'host' "
         "WHEN SUBSTR(metric_type, 1, 4) = 'srv_' THEN 'server' ELSE 'network' END"
     )
-    base_where_sql = ' AND '.join(base_conditions)
+    base_where_sql = f"WHERE {' AND '.join(base_conditions)}" if base_conditions else ''
     filtered_conditions = list(base_conditions)
     filtered_params = list(base_params)
     conn = get_db_connection()
@@ -469,7 +476,7 @@ def list_rules_paginated(
             f'''
             SELECT {category_expression} AS category, COUNT(*) AS count
             FROM alert_rules
-            WHERE {base_where_sql}
+            {base_where_sql}
             GROUP BY {category_expression}
             ''',
             tuple(base_params),
@@ -489,9 +496,9 @@ def list_rules_paginated(
             filtered_conditions.append('metric_type = ?')
             filtered_params.append(metric_filter)
 
-        filtered_where_sql = ' AND '.join(filtered_conditions)
+        filtered_where_sql = f"WHERE {' AND '.join(filtered_conditions)}" if filtered_conditions else ''
         total_row = conn.execute(
-            f'SELECT COUNT(*) AS count FROM alert_rules WHERE {filtered_where_sql}',
+            f'SELECT COUNT(*) AS count FROM alert_rules {filtered_where_sql}',
             tuple(filtered_params),
         ).fetchone()
         total = int(total_row['count'] or 0) if total_row else 0
@@ -500,7 +507,7 @@ def list_rules_paginated(
             f'''
             SELECT *
             FROM alert_rules
-            WHERE {filtered_where_sql}
+            {filtered_where_sql}
             ORDER BY metric_type ASC, enabled DESC, scope_type DESC, updated_at DESC, name ASC
             LIMIT ? OFFSET ?
             ''',
@@ -521,11 +528,14 @@ def list_rules_paginated(
     }
 
 
-def get_rule(rule_id: str, tenant_id: str = 'tenant-default') -> dict[str, Any] | None:
-    tenant_id = _tenant_id(tenant_id)
+def get_rule(rule_id: str, tenant_id: str | None = 'tenant-default') -> dict[str, Any] | None:
     conn = get_db_connection()
     try:
-        row = conn.execute('SELECT * FROM alert_rules WHERE id = ? AND tenant_id = ?', (rule_id, tenant_id)).fetchone()
+        if tenant_id is None:
+            row = conn.execute('SELECT * FROM alert_rules WHERE id = ?', (rule_id,)).fetchone()
+        else:
+            tenant_id = _tenant_id(tenant_id)
+            row = conn.execute('SELECT * FROM alert_rules WHERE id = ? AND tenant_id = ?', (rule_id, tenant_id)).fetchone()
         return _normalize_rule_row(row) if row else None
     finally:
         conn.close()
@@ -690,18 +700,23 @@ def create_rule(payload: dict[str, Any], tenant_id: str = 'tenant-default') -> d
         conn.close()
 
 
-def update_rule(rule_id: str, payload: dict[str, Any], tenant_id: str = 'tenant-default') -> dict[str, Any]:
-    tenant_id = _tenant_id(tenant_id)
+def update_rule(rule_id: str, payload: dict[str, Any], tenant_id: str | None = 'tenant-default') -> dict[str, Any]:
+    if tenant_id is not None:
+        tenant_id = _tenant_id(tenant_id)
     conn = get_db_connection()
     try:
-        existing_row = conn.execute('SELECT * FROM alert_rules WHERE id = ? AND tenant_id = ?', (rule_id, tenant_id)).fetchone()
+        if tenant_id is None:
+            existing_row = conn.execute('SELECT * FROM alert_rules WHERE id = ?', (rule_id,)).fetchone()
+        else:
+            existing_row = conn.execute('SELECT * FROM alert_rules WHERE id = ? AND tenant_id = ?', (rule_id, tenant_id)).fetchone()
         if not existing_row:
             raise ValueError('Alert rule not found')
         existing = _normalize_rule_row(existing_row)
-        updated_fields = _validate_rule_payload(payload, existing, conn=conn, tenant_id=tenant_id)
+        effective_tenant_id = tenant_id or _tenant_id(existing.get('tenant_id'))
+        updated_fields = _validate_rule_payload(payload, existing, conn=conn, tenant_id=effective_tenant_id)
         updated = {
             **existing,
-            'tenant_id': tenant_id,
+            'tenant_id': effective_tenant_id,
             **updated_fields,
             'updated_by': str(payload.get('updated_by') or existing.get('updated_by') or 'system').strip() or 'system',
             'updated_at': _utc_now_iso(),
@@ -737,7 +752,7 @@ def update_rule(rule_id: str, payload: dict[str, Any], tenant_id: str = 'tenant-
                 updated['updated_by'],
                 updated['updated_at'],
                 rule_id,
-                tenant_id,
+                effective_tenant_id,
             ),
         )
         if any(existing.get(key) != updated.get(key) for key in updated.keys() if key not in {'updated_at'}):
@@ -748,11 +763,14 @@ def update_rule(rule_id: str, payload: dict[str, Any], tenant_id: str = 'tenant-
         conn.close()
 
 
-def delete_rule(rule_id: str, tenant_id: str = 'tenant-default') -> None:
-    tenant_id = _tenant_id(tenant_id)
+def delete_rule(rule_id: str, tenant_id: str | None = 'tenant-default') -> None:
     conn = get_db_connection()
     try:
-        deleted = conn.execute('DELETE FROM alert_rules WHERE id = ? AND tenant_id = ?', (rule_id, tenant_id)).rowcount
+        if tenant_id is None:
+            deleted = conn.execute('DELETE FROM alert_rules WHERE id = ?', (rule_id,)).rowcount
+        else:
+            tenant_id = _tenant_id(tenant_id)
+            deleted = conn.execute('DELETE FROM alert_rules WHERE id = ? AND tenant_id = ?', (rule_id, tenant_id)).rowcount
         if not deleted:
             raise ValueError('Alert rule not found')
         conn.commit()
@@ -914,11 +932,18 @@ def select_rule(rules: list[dict[str, Any]], metric_type: str, context: dict[str
     return candidates[0]
 
 
-def list_rule_history(limit: int = 20, rule_id: str | None = None, tenant_id: str = 'tenant-default') -> list[dict[str, Any]]:
-    tenant_id = _tenant_id(tenant_id)
+def list_rule_history(limit: int = 20, rule_id: str | None = None, tenant_id: str | None = 'tenant-default') -> list[dict[str, Any]]:
+    if tenant_id is not None:
+        tenant_id = _tenant_id(tenant_id)
     conn = get_db_connection()
     try:
-        if rule_id:
+        if rule_id and tenant_id is None:
+            rows = conn.execute(
+                '''SELECT id, settings_id, rule_id, tenant_id, snapshot_json, changed_by, created_at
+                   FROM alert_rule_history WHERE rule_id = ? ORDER BY created_at DESC LIMIT ?''',
+                (rule_id, limit),
+            ).fetchall()
+        elif rule_id:
             rows = conn.execute(
                 '''
                 SELECT id, settings_id, rule_id, tenant_id, snapshot_json, changed_by, created_at
@@ -928,6 +953,12 @@ def list_rule_history(limit: int = 20, rule_id: str | None = None, tenant_id: st
                 LIMIT ?
                 ''',
                 (rule_id, tenant_id, limit),
+            ).fetchall()
+        elif tenant_id is None:
+            rows = conn.execute(
+                '''SELECT id, settings_id, rule_id, tenant_id, snapshot_json, changed_by, created_at
+                   FROM alert_rule_history ORDER BY created_at DESC LIMIT ?''',
+                (limit,),
             ).fetchall()
         else:
             rows = conn.execute(
@@ -945,21 +976,25 @@ def list_rule_history(limit: int = 20, rule_id: str | None = None, tenant_id: st
         conn.close()
 
 
-def list_notification_groups(tenant_id: str = 'tenant-default') -> list[dict[str, Any]]:
+def list_notification_groups(tenant_id: str | None = 'tenant-default') -> list[dict[str, Any]]:
     """Return active user groups visible to one tenant, without user details."""
-    tenant_id = _tenant_id(tenant_id)
+    if tenant_id is not None:
+        tenant_id = _tenant_id(tenant_id)
     conn = get_db_connection()
     try:
-        rows = conn.execute(
-            """
-            SELECT group_name AS name, COUNT(*) AS member_count
-            FROM users
-            WHERE tenant_id = ? AND status = 'active' AND COALESCE(group_name, '') <> ''
-            GROUP BY group_name
-            ORDER BY group_name ASC
-            """,
-            (tenant_id,),
-        ).fetchall()
+        if tenant_id is None:
+            rows = conn.execute(
+                """SELECT group_name AS name, COUNT(*) AS member_count FROM users
+                   WHERE status = 'active' AND COALESCE(group_name, '') <> ''
+                   GROUP BY group_name ORDER BY group_name ASC"""
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT group_name AS name, COUNT(*) AS member_count FROM users
+                   WHERE tenant_id = ? AND status = 'active' AND COALESCE(group_name, '') <> ''
+                   GROUP BY group_name ORDER BY group_name ASC""",
+                (tenant_id,),
+            ).fetchall()
         return [
             {'name': str(row['name']), 'member_count': int(row['member_count'])}
             for row in rows
@@ -969,17 +1004,37 @@ def list_notification_groups(tenant_id: str = 'tenant-default') -> list[dict[str
 
 
 def get_scope_catalog(
-    tenant_id: str = 'tenant-default',
+    tenant_id: str | None = 'tenant-default',
     *,
     search: str = '',
     device_ids: list[str] | None = None,
+    site_ids: tuple[str, ...] | list[str] | None = None,
+    device_group_ids: tuple[str, ...] | list[str] | None = None,
 ) -> dict[str, Any]:
-    """Return tenant filter options and a bounded CMDB device search result."""
-    tenant_id = _tenant_id(tenant_id)
+    """Return authorized filter options and a bounded CMDB device search result."""
+    if tenant_id is not None:
+        tenant_id = _tenant_id(tenant_id)
     conn = get_db_connection()
     try:
+        scope_predicate, scope_params = device_scope_predicate(
+            RackScope(
+                tenant_id=tenant_id,
+                site_ids=tuple(site_ids) if site_ids is not None else None,
+                device_group_ids=tuple(device_group_ids) if device_group_ids is not None else None,
+            ),
+            device_alias='d',
+        )
+        base_conditions: list[str] = []
+        base_params: list[Any] = []
+        if tenant_id is not None:
+            base_conditions.append("COALESCE(d.tenant_id, 'tenant-default') = ?")
+            base_params.append(tenant_id)
+        if scope_predicate:
+            base_conditions.append(scope_predicate)
+            base_params.extend(scope_params)
+        base_where = f"WHERE {' AND '.join(base_conditions)}" if base_conditions else ''
         rows = conn.execute(
-            '''
+            f'''
             SELECT site, role, category, platform, COUNT(*) AS device_count
             FROM (
                 SELECT
@@ -994,12 +1049,12 @@ def get_scope_catalog(
                 FROM devices d
                 LEFT JOIN physical_assets pa ON pa.id = d.asset_id
                 LEFT JOIN sites s ON s.id = COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''))
-                WHERE COALESCE(d.tenant_id, 'tenant-default') = ?
+                {base_where}
             ) scoped_devices
             GROUP BY site, role, category, platform
             ORDER BY site, role, category, platform
             ''',
-            (tenant_id,),
+            tuple(base_params),
         ).fetchall()
         counts: dict[str, dict[str, int]] = {
             'sites': {}, 'roles': {}, 'categories': {}, 'platforms': {},
@@ -1028,11 +1083,11 @@ def get_scope_catalog(
         device_items: list[dict[str, Any]] = []
         device_total = 0
         missing_device_ids: list[str] = []
-        device_where = "COALESCE(d.tenant_id, 'tenant-default') = ?"
-        device_params: list[Any] = [tenant_id]
+        device_where = ' AND '.join(base_conditions)
+        device_params: list[Any] = list(base_params)
         if normalized_device_ids:
             placeholders = ','.join('?' for _ in normalized_device_ids)
-            device_where += f' AND d.id IN ({placeholders})'
+            device_where = f"{device_where} AND d.id IN ({placeholders})" if device_where else f"d.id IN ({placeholders})"
             device_params.extend(normalized_device_ids)
         elif str(search or '').strip():
             query = f"%{str(search).strip().lower()}%"
@@ -1040,9 +1095,10 @@ def get_scope_catalog(
                 "d.id", "d.hostname", "d.ip_address", "d.sn", "pa.hostname",
                 "pa.management_ip", "pa.business_ip", "pa.asset_tag", "pa.serial_number",
             )
-            device_where += ' AND (' + ' OR '.join(
+            search_clause = '(' + ' OR '.join(
                 f"LOWER(COALESCE({field}, '')) LIKE ?" for field in searchable_fields
             ) + ')'
+            device_where = f"{device_where} AND {search_clause}" if device_where else search_clause
             device_params.extend([query] * len(searchable_fields))
 
         if normalized_device_ids or str(search or '').strip():
@@ -1051,7 +1107,7 @@ def get_scope_catalog(
                 SELECT COUNT(*) AS count
                 FROM devices d
                 LEFT JOIN physical_assets pa ON pa.id = d.asset_id
-                WHERE {device_where}
+                {f'WHERE {device_where}' if device_where else ''}
                 ''',
                 device_params,
             ).fetchone()
@@ -1074,7 +1130,7 @@ def get_scope_catalog(
                 FROM devices d
                 LEFT JOIN physical_assets pa ON pa.id = d.asset_id
                 LEFT JOIN sites s ON s.id = COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''))
-                WHERE {device_where}
+                {f'WHERE {device_where}' if device_where else ''}
                 ORDER BY COALESCE(NULLIF(pa.hostname, ''), NULLIF(d.hostname, ''), d.id), d.id
                 LIMIT ?
                 ''',

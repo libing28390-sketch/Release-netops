@@ -67,23 +67,26 @@ def test_tc_neg_01_cross_vendor_pollution_strictly_blocked(monkeypatch):
     assert result["debug"]["wrong_vendor_count"] == 0
 
 
-def test_tc_neg_02_cross_tenant_isolation_strictly_blocked(monkeypatch):
+def test_tc_neg_02_historical_tenants_share_only_matching_site_acl(monkeypatch):
     """
-    [TC-NEG-02] 跨租户隔离负向门禁：
-    租户 tenant-alpha 发起的检索，绝对不能召回属于 tenant-beta 的私有知识库文档。
+    [TC-NEG-02] 历史 tenant 标签不限制单组织检索，但文档 site ACL 仍然有效。
     """
     connection = _setup_mock_db()
     connection.execute(
-        "INSERT INTO ai_document VALUES ('doc-alpha', 'Alpha Private SOP', 'Cisco', 'cisco_ios', 'tenant-alpha', 'active', '{}', 'internal', 'alpha.sop.01', 'sop', NULL, NULL, NULL, 'cisco_ios', 'routing', 'bgp', 0, '{}')"
+        "INSERT INTO ai_document VALUES ('doc-alpha', 'Alpha Private SOP', 'Cisco', 'cisco_ios', 'tenant-alpha', 'active', '{\"sites\":[\"site-a\"]}', 'internal', 'alpha.sop.01', 'sop', NULL, NULL, NULL, 'cisco_ios', 'routing', 'bgp', 0, '{}')"
     )
     connection.execute(
-        "INSERT INTO ai_document VALUES ('doc-beta', 'Beta Secret SOP', 'Cisco', 'cisco_ios', 'tenant-beta', 'active', '{}', 'internal', 'beta.sop.01', 'sop', NULL, NULL, NULL, 'cisco_ios', 'routing', 'bgp', 0, '{}')"
+        "INSERT INTO ai_document VALUES ('doc-beta', 'Beta Shared Site SOP', 'Cisco', 'cisco_ios', 'tenant-beta', 'active', '{\"sites\":[\"site-a\"]}', 'internal', 'beta.sop.01', 'sop', NULL, NULL, NULL, 'cisco_ios', 'routing', 'bgp', 0, '{}')"
+    )
+    connection.execute(
+        "INSERT INTO ai_document VALUES ('doc-other-site', 'Other Site SOP', 'Cisco', 'cisco_ios', 'tenant-gamma', 'active', '{\"sites\":[\"site-b\"]}', 'internal', 'gamma.sop.01', 'sop', NULL, NULL, NULL, 'cisco_ios', 'routing', 'bgp', 0, '{}')"
     )
     connection.executemany(
         "INSERT INTO ai_document_chunk VALUES (?, ?, ?, ?, '{}', 'BGP', '2026-01-01', 1, 'child', NULL, 1, NULL)",
         [
             ("c-alpha", "doc-alpha", "router bgp 65001\nneighbor 10.1.1.1 remote-as 65002", json.dumps([1.0, 0.0])),
             ("c-beta", "doc-beta", "router bgp 65099\nneighbor 10.9.9.9 remote-as 65099", json.dumps([1.0, 0.0])),
+            ("c-other-site", "doc-other-site", "router bgp 65088\nneighbor 10.8.8.8 remote-as 65088", json.dumps([1.0, 0.0])),
         ],
     )
     monkeypatch.setattr(module, "get_db_connection", lambda: connection)
@@ -93,19 +96,21 @@ def test_tc_neg_02_cross_tenant_isolation_strictly_blocked(monkeypatch):
         query="router bgp configuration",
         tenant_id="tenant-alpha",
         top_k=5,
+        site_ids=["site-a"],
     )
     result_alpha = RAGRetriever().search(request_alpha, min_relevance=0.0)
     returned_alpha = [item["document_id"] for item in result_alpha["results"]]
 
     assert "alpha.sop.01" in returned_alpha
-    assert "beta.sop.01" not in returned_alpha
+    assert "beta.sop.01" in returned_alpha
+    assert "gamma.sop.01" not in returned_alpha
 
 
-def test_tc_neg_02b_default_tenant_internal_documents_are_not_shared(monkeypatch):
-    """The shared default tenant exposes official corpus only, never private SOPs."""
+def test_tc_neg_02b_default_tenant_internal_document_still_obeys_site_acl(monkeypatch):
+    """Default tenant is not a public ACL bypass in single-organization mode."""
     connection = _setup_mock_db()
     connection.execute(
-        "INSERT INTO ai_document VALUES ('doc-default-private', 'Default Private SOP', 'Cisco', 'cisco_ios', 'tenant-default', 'active', '{}', 'internal', 'default.sop.01', 'sop', NULL, NULL, NULL, 'cisco_ios', 'routing', 'bgp', 0, '{}')"
+        "INSERT INTO ai_document VALUES ('doc-default-private', 'Default Private SOP', 'Cisco', 'cisco_ios', 'tenant-default', 'active', '{\"sites\":[\"site-a\"]}', 'internal', 'default.sop.01', 'sop', NULL, NULL, NULL, 'cisco_ios', 'routing', 'bgp', 0, '{}')"
     )
     connection.executemany(
         "INSERT INTO ai_document_chunk VALUES (?, ?, ?, ?, '{}', 'BGP', '2026-01-01', 1, 'child', NULL, 1, NULL)",
@@ -114,12 +119,18 @@ def test_tc_neg_02b_default_tenant_internal_documents_are_not_shared(monkeypatch
     monkeypatch.setattr(module, "get_db_connection", lambda: connection)
     monkeypatch.setattr(module.embedding_provider, "embed_text", lambda text: [1.0, 0.0])
 
-    result = RAGRetriever().search(
-        RetrievalRequest(query="router bgp configuration", tenant_id="tenant-alpha", top_k=5),
+    matching_site = RAGRetriever().search(
+        RetrievalRequest(query="router bgp configuration", tenant_id="tenant-alpha", site_ids=["site-a"], top_k=5),
         min_relevance=0.0,
     )
-    assert result["results"] == []
-    assert result["debug"]["metadata_candidate_documents"] == 0
+    assert [item["document_id"] for item in matching_site["results"]] == ["default.sop.01"]
+
+    other_site = RAGRetriever().search(
+        RetrievalRequest(query="router bgp configuration", tenant_id="tenant-alpha", site_ids=["site-b"], top_k=5),
+        min_relevance=0.0,
+    )
+    assert other_site["results"] == []
+    assert other_site["debug"]["candidate_count"] > 0
 
 
 def test_tc_neg_03_reranker_failure_and_timeout_fail_safe():

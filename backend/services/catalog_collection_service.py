@@ -17,10 +17,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 from core.rbac import authorize_resource
+from core.tenant_policy import tenant_id_for_write, tenant_scope_for_user, tenant_scope_is_enabled
 
 
 PERSISTENCE_STATUS = "contract_only_ephemeral_custom_collection_registry"
-DEFAULT_TENANT = "tenant-default-reviewed"
+DEFAULT_TENANT = "tenant-default"
 CUSTOM_KIND = "custom"
 OFFICIAL_KIND = "official_catalog"
 COLLECTION_STATUSES = {"draft", "active", "disabled", "archived"}
@@ -77,8 +78,14 @@ def _next_timestamp(previous: str) -> str:
 
 
 def _tenant(user: dict[str, Any]) -> str:
-    tenant = str(user.get("tenant_id") or DEFAULT_TENANT).strip()
-    return tenant or DEFAULT_TENANT
+    return tenant_id_for_write(user=user)
+
+
+def _tenant_scope(user: dict[str, Any]) -> str | None:
+    scope = tenant_scope_for_user(user)
+    if scope is None and tenant_scope_is_enabled():
+        return tenant_id_for_write(user=user)
+    return scope
 
 
 def _actor(user: dict[str, Any]) -> str:
@@ -151,6 +158,18 @@ def _state(tenant_id: str) -> dict[str, dict[str, Any]]:
     return _STATES.setdefault(tenant_id, {})
 
 
+def _find_collection(collection_id: str, tenant_scope: str | None) -> tuple[dict[str, dict[str, Any]], dict[str, Any]] | None:
+    if tenant_scope is not None:
+        state = _STATES.get(tenant_scope)
+        row = state.get(collection_id) if state is not None else None
+        return (state, row) if row is not None else None
+    for state in _STATES.values():
+        row = state.get(collection_id)
+        if row is not None:
+            return state, row
+    return None
+
+
 def _public(row: dict[str, Any]) -> dict[str, Any]:
     return copy.deepcopy(row)
 
@@ -183,12 +202,14 @@ def collection_boundary() -> dict[str, Any]:
 
 def list_custom_collections(user: dict[str, Any], *, status: str = "all") -> dict[str, Any]:
     tenant_id = _tenant(user)
+    tenant_scope = _tenant_scope(user)
     _authorize(user, "read", tenant_id)
     status_filter = _text(status, field="status", maximum=32).casefold() or "all"
     if status_filter != "all" and status_filter not in COLLECTION_STATUSES:
         raise CatalogCollectionError("COLLECTION_STATUS_INVALID", "status filter is invalid")
     with _LOCK:
-        rows = [row for row in _state(tenant_id).values() if status_filter == "all" or row["status"] == status_filter]
+        states = [_STATES.get(tenant_scope, {})] if tenant_scope is not None else list(_STATES.values())
+        rows = [row for state in states for row in state.values() if status_filter == "all" or row["status"] == status_filter]
         rows.sort(key=lambda row: (row["code"], row["id"]))
         return {
             "persistence_status": PERSISTENCE_STATUS,
@@ -258,6 +279,7 @@ def update_custom_collection(
     audit_writer: AuditWriter | None = None,
 ) -> dict[str, Any]:
     tenant_id = _tenant(user)
+    tenant_scope = _tenant_scope(user)
     _authorize(user, "update", tenant_id)
     if not isinstance(payload, dict):
         raise CatalogCollectionError("COLLECTION_PAYLOAD_INVALID", "collection payload must be an object")
@@ -269,9 +291,10 @@ def update_custom_collection(
     if set(payload) - allowed:
         raise CatalogCollectionError("COLLECTION_FIELD_FORBIDDEN", "Collection field is not mutable")
     with _LOCK:
-        row = _state(tenant_id).get(str(collection_id).strip())
-        if not row:
+        found = _find_collection(str(collection_id).strip(), tenant_scope)
+        if not found:
             raise CatalogCollectionError("COLLECTION_NOT_FOUND", "Custom collection was not found", status_code=404)
+        state, row = found
         if row.get("collection_kind") != CUSTOM_KIND or row.get("official"):
             raise CatalogCollectionError("COLLECTION_OFFICIAL_READ_ONLY", "Official catalog collections are read-only", status_code=403)
         if row["status"] == "archived":
@@ -298,7 +321,6 @@ def update_custom_collection(
         candidate["updated_at"] = _next_timestamp(row["updated_at"])
         candidate["updated_by"] = _actor(user)
         _audit(user, "update", candidate, before_status=before_status, writer=audit_writer)
-        state = _state(tenant_id)
         state[candidate["id"]] = candidate
         return _public(candidate)
 
@@ -311,11 +333,13 @@ def archive_custom_collection(
     audit_writer: AuditWriter | None = None,
 ) -> dict[str, Any]:
     tenant_id = _tenant(user)
+    tenant_scope = _tenant_scope(user)
     _authorize(user, "archive", tenant_id)
     with _LOCK:
-        row = _state(tenant_id).get(str(collection_id).strip())
-        if not row:
+        found = _find_collection(str(collection_id).strip(), tenant_scope)
+        if not found:
             raise CatalogCollectionError("COLLECTION_NOT_FOUND", "Custom collection was not found", status_code=404)
+        state, row = found
         if row.get("collection_kind") != CUSTOM_KIND or row.get("official"):
             raise CatalogCollectionError("COLLECTION_OFFICIAL_READ_ONLY", "Official catalog collections are read-only", status_code=403)
         if expected_updated_at and expected_updated_at != row["updated_at"]:
@@ -326,6 +350,5 @@ def archive_custom_collection(
         candidate["updated_at"] = _next_timestamp(row["updated_at"])
         candidate["updated_by"] = _actor(user)
         _audit(user, "archive", candidate, before_status=before_status, writer=audit_writer)
-        state = _state(tenant_id)
         state[candidate["id"]] = candidate
         return _public(candidate)

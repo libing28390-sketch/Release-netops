@@ -22,9 +22,16 @@ from ai.services.ai_experiment_service import (
 from database.migrations.m0202_ai_experiment_observability import downgrade, upgrade
 
 
-def _create_run() -> dict:
+@pytest.fixture(autouse=True)
+def _tenant_scoped_contract_tests(monkeypatch):
+    from core import tenant_policy
+
+    monkeypatch.setattr(tenant_policy, "TENANT_ISOLATION_ENABLED", True)
+
+
+def _create_run(tenant_id: str = "tenant-experiment") -> dict:
     return create_experiment_run(
-        tenant_id="tenant-experiment",
+        tenant_id=tenant_id,
         dataset_id="dataset-anchors-50-v1",
         git_sha="abc1234",
         prompt_version="prompt.v1",
@@ -387,3 +394,17 @@ def test_m0202_observability_projection_is_tenant_scoped_and_redacted(isolated_d
     assert "request-sensitive-001" not in rendered
     assert get_experiment_observability(tenant_id="tenant-other", limit=20)["runs"] == []
     assert list_shadow_observations(tenant_id="tenant-other", limit=20) == []
+
+
+def test_m0202_single_org_observability_reads_all_historical_tenants(isolated_db, monkeypatch):
+    from core import tenant_policy
+
+    monkeypatch.setattr(tenant_policy, "TENANT_ISOLATION_ENABLED", True)
+    historical_a = _create_run("tenant-history-a")
+    historical_b = _create_run("tenant-history-b")
+    monkeypatch.setattr(tenant_policy, "TENANT_ISOLATION_ENABLED", False)
+
+    projection = get_experiment_observability(tenant_id=None, limit=20)
+
+    assert projection["tenant_id"] == "tenant-default"
+    assert {item["run_id"] for item in projection["runs"]} >= {historical_a["id"], historical_b["id"]}

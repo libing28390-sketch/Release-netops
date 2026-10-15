@@ -634,7 +634,7 @@ class AIAssistantService:
         resolution = product_resolver.resolve_query(
             message,
             plan.to_resolver_metadata(),
-            tenant_id=tenant_id or "tenant-default",
+            tenant_id=None,
         )
         retrieval_values = plan.to_retrieval_values()
         # Product Registry evidence is authoritative for identity. Retain its

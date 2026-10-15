@@ -6,7 +6,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -33,6 +33,7 @@ from services.nsot_collection_preview_service import (
     NSOTPreviewPermissionError,
     build_operation_catalog,
 )
+from services.rack_scope_service import RackScope, allowed_resource_scope, device_scope_predicate
 
 
 router = APIRouter(prefix="/collection-plans", tags=["collection-plans"])
@@ -73,24 +74,27 @@ class BulkCollectionPlanApplyRequest(BulkCollectionPlanRequest):
 def _device_scope_clauses(
     tenant_id: str | None,
     site_ids: tuple[str, ...] | None,
+    device_group_ids: tuple[str, ...] | None = None,
     *,
     alias: str = "d",
-) -> tuple[list[str], list[str]]:
-    """Build the tenant/site predicates used by device policy read/write APIs."""
+) -> tuple[list[str], list[Any]]:
+    """Build the tenant/site/device-group predicates used by policy APIs."""
     clauses: list[str] = []
-    params: list[str] = []
+    params: list[Any] = []
     if tenant_id:
-        clauses.append(f"{alias}.tenant_id = ?")
+        clauses.append(f"COALESCE({alias}.tenant_id, 'tenant-default') = ?")
         params.append(tenant_id)
-    if site_ids is not None:
-        normalized_site_ids = tuple(sorted({str(site_id) for site_id in site_ids if str(site_id)}))
-        if not normalized_site_ids:
-            clauses.append("1 = 0")
-        else:
-            clauses.append(
-                f"{alias}.site_id IN ({','.join('?' for _ in normalized_site_ids)})"
-            )
-            params.extend(normalized_site_ids)
+    scope_predicate, scope_params = device_scope_predicate(
+        RackScope(
+            tenant_id=tenant_id,
+            site_ids=site_ids,
+            device_group_ids=device_group_ids,
+        ),
+        device_alias=alias,
+    )
+    if scope_predicate:
+        clauses.append(scope_predicate)
+        params.extend(scope_params)
     return clauses, params
 
 
@@ -100,8 +104,9 @@ def _device_row(
     *,
     tenant_id: str | None,
     site_ids: tuple[str, ...] | None,
+    device_group_ids: tuple[str, ...] | None,
 ):
-    clauses, params = _device_scope_clauses(tenant_id, site_ids)
+    clauses, params = _device_scope_clauses(tenant_id, site_ids, device_group_ids)
     where = ["d.id = ?", *clauses]
     return conn.execute(
         "SELECT d.* FROM devices d WHERE " + " AND ".join(where),
@@ -109,40 +114,35 @@ def _device_row(
     ).fetchone()
 
 
-def _bulk_collection_access_scope(conn, user: dict, action: str) -> tuple[str | None, tuple[str, ...] | None]:
-    """Resolve bulk operation scope; tenant-less administrators remain global."""
+def _bulk_collection_access_scope(
+    conn,
+    user: dict,
+    action: str,
+) -> tuple[str | None, tuple[str, ...] | None, tuple[str, ...] | None]:
+    """Resolve bulk operation scope from role/action and explicit object grants."""
     if not isinstance(user, dict):
         raise HTTPException(status_code=401, detail="Authentication required")
     if user.get("role") == "Administrator":
-        return None, None
-
-    tenant_id = str(user.get("tenant_id") or "").strip()
-    if not tenant_id:
-        raise HTTPException(status_code=403, detail="Authenticated user is not assigned to a tenant")
-
-    from services.rack_scope_service import allowed_resource_scope
+        return None, None, None
 
     scope = allowed_resource_scope(conn, user, "asset", action)
-    if scope.site_ids == ():
+    if scope.site_ids == () and scope.device_group_ids == ():
         raise HTTPException(status_code=403, detail="Insufficient permission for the device scope")
-    return scope.tenant_id or tenant_id, scope.site_ids
+    return scope.tenant_id, scope.site_ids, scope.device_group_ids
 
 
-def _device_ip_lookup_scope(conn, user: dict) -> tuple[str | None, tuple[str, ...] | None]:
+def _device_ip_lookup_scope(
+    conn,
+    user: dict,
+) -> tuple[str | None, tuple[str, ...] | None, tuple[str, ...] | None]:
     """Resolve asset:view scope while masking scope-denied IP lookups as misses."""
     if not isinstance(user, dict):
-        return None, ()
+        return None, (), ()
     if user.get("role") == "Administrator":
-        return None, None
-
-    tenant_id = str(user.get("tenant_id") or "").strip()
-    if not tenant_id:
-        return None, ()
-
-    from services.rack_scope_service import allowed_resource_scope
+        return None, None, None
 
     scope = allowed_resource_scope(conn, user, "asset", "view")
-    return scope.tenant_id or tenant_id, scope.site_ids
+    return scope.tenant_id, scope.site_ids, scope.device_group_ids
 
 
 @router.get("/catalog")
@@ -341,8 +341,13 @@ def get_nsot_collection_operation_catalog(
 def get_bulk_collection_plan_options(user=require_role("Viewer")):
     conn = get_db_connection()
     try:
-        tenant_id, site_ids = _bulk_collection_access_scope(conn, user, "view")
-        options = bulk_collection_plan_options(conn, tenant_id=tenant_id, site_ids=site_ids)
+        tenant_id, site_ids, device_group_ids = _bulk_collection_access_scope(conn, user, "view")
+        options = bulk_collection_plan_options(
+            conn,
+            tenant_id=tenant_id,
+            site_ids=site_ids,
+            device_group_ids=device_group_ids,
+        )
     finally:
         conn.close()
     return {"success": True, "data": options, "message": ""}
@@ -357,13 +362,14 @@ def get_device_collection_plan_by_ip(ip: str, user=require_role("Viewer")):
 
     conn = get_db_connection()
     try:
-        tenant_id, site_ids = _device_ip_lookup_scope(conn, user)
+        tenant_id, site_ids, device_group_ids = _device_ip_lookup_scope(conn, user)
         try:
             result = collection_plan_for_ip(
                 conn,
                 ip,
                 tenant_id=tenant_id,
                 site_ids=site_ids,
+                device_group_ids=device_group_ids,
             )
         except MultipleDevicesForIPAddress as exc:
             raise HTTPException(status_code=409, detail="多个授权设备使用该 IP") from exc
@@ -384,7 +390,7 @@ def preview_bulk_collection_plan_api(
     conn = get_db_connection()
     try:
         try:
-            tenant_id, site_ids = _bulk_collection_access_scope(conn, user, "update")
+            tenant_id, site_ids, device_group_ids = _bulk_collection_access_scope(conn, user, "update")
             preview = preview_bulk_collection_plan(
                 conn,
                 operation=body.operation,
@@ -392,6 +398,7 @@ def preview_bulk_collection_plan_api(
                 filters=filters,
                 tenant_id=tenant_id,
                 site_ids=site_ids,
+                device_group_ids=device_group_ids,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -410,7 +417,7 @@ def apply_bulk_collection_plan_api(
     conn = get_db_connection()
     try:
         try:
-            tenant_id, site_ids = _bulk_collection_access_scope(conn, user, "update")
+            tenant_id, site_ids, device_group_ids = _bulk_collection_access_scope(conn, user, "update")
             result = apply_bulk_collection_plan(
                 conn,
                 operation=body.operation,
@@ -419,6 +426,7 @@ def apply_bulk_collection_plan_api(
                 snapshot_token=body.snapshot_token,
                 tenant_id=tenant_id,
                 site_ids=site_ids,
+                device_group_ids=device_group_ids,
             )
         except BulkSnapshotConflict as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -448,6 +456,7 @@ def apply_bulk_collection_plan_api(
                 "filters": filters,
                 "tenant_id": tenant_id,
                 "site_ids": None if site_ids is None else list(site_ids),
+                "device_group_ids": None if device_group_ids is None else list(device_group_ids),
                 "affected_count": result["affected_count"],
             },
         )
@@ -466,8 +475,8 @@ def apply_bulk_collection_plan_api(
 def list_device_collection_plans(user=require_role("Viewer")):
     conn = get_db_connection()
     try:
-        tenant_id, site_ids = _bulk_collection_access_scope(conn, user, "view")
-        clauses, params = _device_scope_clauses(tenant_id, site_ids)
+        tenant_id, site_ids, device_group_ids = _bulk_collection_access_scope(conn, user, "view")
+        clauses, params = _device_scope_clauses(tenant_id, site_ids, device_group_ids)
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
         rows = conn.execute(
             "SELECT d.id, d.hostname, d.ip_address, d.platform, d.role, d.status, d.collection_policy_json "
@@ -500,8 +509,14 @@ def list_device_collection_plans(user=require_role("Viewer")):
 def get_device_collection_plan(device_id: str, user=require_role("Viewer")):
     conn = get_db_connection()
     try:
-        tenant_id, site_ids = _bulk_collection_access_scope(conn, user, "view")
-        row = _device_row(conn, device_id, tenant_id=tenant_id, site_ids=site_ids)
+        tenant_id, site_ids, device_group_ids = _bulk_collection_access_scope(conn, user, "view")
+        row = _device_row(
+            conn,
+            device_id,
+            tenant_id=tenant_id,
+            site_ids=site_ids,
+            device_group_ids=device_group_ids,
+        )
         if not row:
             raise HTTPException(status_code=404, detail="设备不存在")
         device = dict(row)
@@ -533,8 +548,14 @@ def update_device_collection_plan(
 ):
     conn = get_db_connection()
     try:
-        tenant_id, site_ids = _bulk_collection_access_scope(conn, user, "update")
-        row = _device_row(conn, device_id, tenant_id=tenant_id, site_ids=site_ids)
+        tenant_id, site_ids, device_group_ids = _bulk_collection_access_scope(conn, user, "update")
+        row = _device_row(
+            conn,
+            device_id,
+            tenant_id=tenant_id,
+            site_ids=site_ids,
+            device_group_ids=device_group_ids,
+        )
         if not row:
             raise HTTPException(status_code=404, detail="设备不存在")
         payload = body.get("policy", body)
@@ -562,16 +583,22 @@ def update_device_collection_plan(
             monitoring = previous_policy.get("monitoring") or previous_policy.get("monitoring_modules")
         if monitoring is not None:
             stored_policy["monitoring"] = monitoring
-        clauses, scope_params = _device_scope_clauses(tenant_id, site_ids)
-        where = ["id = ?", *clauses]
+        clauses, scope_params = _device_scope_clauses(tenant_id, site_ids, device_group_ids)
+        where = ["d.id = ?", *clauses]
         cursor = conn.execute(
-            "UPDATE devices SET collection_policy_json = ? WHERE " + " AND ".join(where),
+            "UPDATE devices AS d SET collection_policy_json = ? WHERE " + " AND ".join(where),
             (json.dumps(stored_policy, ensure_ascii=False), device_id, *scope_params),
         )
         if cursor.rowcount != 1:
             raise HTTPException(status_code=404, detail="设备不存在")
         conn.commit()
-        updated = dict(_device_row(conn, device_id, tenant_id=tenant_id, site_ids=site_ids))
+        updated = dict(_device_row(
+            conn,
+            device_id,
+            tenant_id=tenant_id,
+            site_ids=site_ids,
+            device_group_ids=device_group_ids,
+        ))
     finally:
         conn.close()
 
@@ -591,14 +618,20 @@ def update_device_collection_plan(
 def reset_device_collection_plan(device_id: str, user=require_role("Operator")):
     conn = get_db_connection()
     try:
-        tenant_id, site_ids = _bulk_collection_access_scope(conn, user, "update")
-        row = _device_row(conn, device_id, tenant_id=tenant_id, site_ids=site_ids)
+        tenant_id, site_ids, device_group_ids = _bulk_collection_access_scope(conn, user, "update")
+        row = _device_row(
+            conn,
+            device_id,
+            tenant_id=tenant_id,
+            site_ids=site_ids,
+            device_group_ids=device_group_ids,
+        )
         if not row:
             raise HTTPException(status_code=404, detail="设备不存在")
-        clauses, scope_params = _device_scope_clauses(tenant_id, site_ids)
-        where = ["id = ?", *clauses]
+        clauses, scope_params = _device_scope_clauses(tenant_id, site_ids, device_group_ids)
+        where = ["d.id = ?", *clauses]
         cursor = conn.execute(
-            "UPDATE devices SET collection_policy_json = ? WHERE " + " AND ".join(where),
+            "UPDATE devices AS d SET collection_policy_json = ? WHERE " + " AND ".join(where),
             (
                 json.dumps({"template": "role_default", "collectors": {}}, ensure_ascii=False),
                 device_id,
@@ -608,7 +641,13 @@ def reset_device_collection_plan(device_id: str, user=require_role("Operator")):
         if cursor.rowcount != 1:
             raise HTTPException(status_code=404, detail="设备不存在")
         conn.commit()
-        updated = dict(_device_row(conn, device_id, tenant_id=tenant_id, site_ids=site_ids))
+        updated = dict(_device_row(
+            conn,
+            device_id,
+            tenant_id=tenant_id,
+            site_ids=site_ids,
+            device_group_ids=device_group_ids,
+        ))
     finally:
         conn.close()
     return {"success": True, "data": resolve_collection_plan(updated), "message": "已恢复角色默认采集计划"}

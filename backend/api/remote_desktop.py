@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from core.config import settings
 from core.rbac import require_permission
+from core.tenant_policy import tenant_id_for_write
 from database import get_db_connection
 from services.audit_service import log_audit_event
 from services.guacamole_service import (
@@ -280,7 +281,7 @@ def create_remote_desktop_session(payload: RemoteDesktopSessionInput, user: dict
             (payload.asset_id,),
         ).fetchone()
         device_id = str(device_row["id"] or "") if device_row else ""
-        tenant_id = str(asset.get("site_tenant_id") or "").strip() or str(user.get("tenant_id") or "tenant-default")
+        tenant_id = tenant_id_for_write(user=user)
         target_name = str(asset.get("hostname") or target_host)
         conn.execute(
             """INSERT INTO pam_sessions (

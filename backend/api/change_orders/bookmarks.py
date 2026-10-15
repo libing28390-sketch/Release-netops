@@ -2,6 +2,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 from database import get_db_connection
 from core.rbac import enforce_resource_scope, is_global_administrator, require_role
+from core.tenant_policy import TENANT_ISOLATION_ENABLED, tenant_scope_for_user
 from services.change_order_service import (
     get_change_order,
     toggle_bookmark,
@@ -19,8 +20,8 @@ def api_toggle_bookmark(order_id: str, user=require_role("Viewer")):
         if not order:
             raise HTTPException(status_code=404, detail='Change order not found')
         tenant_id = str(order.get('tenant_id') or '').strip()
-        if not is_global_administrator(user) and (
-            not tenant_id or tenant_id != str(user.get('tenant_id') or '').strip()
+        if TENANT_ISOLATION_ENABLED and not is_global_administrator(user) and (
+            not tenant_id or tenant_id != tenant_scope_for_user(user)
         ):
             raise HTTPException(status_code=404, detail='Change order not found')
         enforce_resource_scope(user, 'change_order', 'view', tenant_id=tenant_id or None)

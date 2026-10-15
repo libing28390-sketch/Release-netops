@@ -22,11 +22,13 @@ from typing import Any, Callable
 import yaml
 
 from ai.services.product_alias_service import ProductAliasError, normalize_alias
+from core.tenant_policy import tenant_id_for_write, tenant_scope_for_user, tenant_scope_is_enabled
 from services.product_catalog_service import _ALIAS_FILE, _seed_model_rows
 
 
 PERSISTENCE_STATUS = "contract_only_ephemeral_version_registry"
-DEFAULT_TENANT = "tenant-default-reviewed"
+DEFAULT_TENANT = "tenant-default"
+REVIEWED_SEED_TENANT = "tenant-default-reviewed"
 MODEL_STATUSES = {"draft", "active", "disabled", "archived", "deleted", "purged"}
 ALIAS_KINDS = {"exact", "canonical", "prefix", "trigram"}
 ALIAS_STATUSES = MODEL_STATUSES
@@ -63,7 +65,14 @@ def _now() -> str:
 
 
 def _tenant(user: dict[str, Any]) -> str:
-    return str(user.get("tenant_id") or DEFAULT_TENANT).strip() or DEFAULT_TENANT
+    return tenant_id_for_write(user=user)
+
+
+def _tenant_scope(user: dict[str, Any]) -> str | None:
+    scope = tenant_scope_for_user(user)
+    if scope is None and tenant_scope_is_enabled():
+        return tenant_id_for_write(user=user)
+    return scope
 
 
 def _actor(user: dict[str, Any]) -> str:
@@ -104,7 +113,8 @@ def _seed_aliases(model_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         raw = yaml.safe_load(_ALIAS_FILE.read_text(encoding="utf-8")) or {}
     except (OSError, yaml.YAMLError) as exc:
         raise CatalogVersionError("CATALOG_SEED_UNAVAILABLE", "Alias seed is unavailable", status_code=503) from exc
-    model_ids = {str(row.get("product_model_id")) for row in model_rows}
+    model_by_id = {str(row.get("product_model_id")): row for row in model_rows}
+    model_ids = set(model_by_id)
     output: list[dict[str, Any]] = []
     for item in raw.get("alias_samples") or []:
         if not isinstance(item, dict) or str(item.get("product_model_id") or "") not in model_ids:
@@ -115,7 +125,7 @@ def _seed_aliases(model_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             raise CatalogVersionError("CATALOG_SEED_INVALID", "Alias seed contains an invalid alias", details={"code": exc.code}, status_code=503) from exc
         output.append({
             "id": str(item.get("sample_id") or ""),
-            "tenant_id": str(item.get("tenant_id") or DEFAULT_TENANT),
+            "tenant_id": str(model_by_id[str(item.get("product_model_id") or "")].get("tenant_id") or DEFAULT_TENANT),
             "product_model_id": str(item.get("product_model_id")),
             "alias": str(item.get("alias") or "").strip(),
             "normalized_alias": normalized,
@@ -129,8 +139,8 @@ def _normalize_model(raw: Any, tenant_id: str, index: int) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise CatalogVersionError("BUNDLE_MODEL_INVALID", f"models[{index}] must be an object")
     _assert_safe(raw, f"models[{index}]")
-    requested_tenant = str(raw.get("tenant_id") or tenant_id).strip()
-    if requested_tenant != tenant_id:
+    requested_tenant = str(raw.get("tenant_id") or "").strip() or tenant_id
+    if tenant_scope_is_enabled() and requested_tenant != tenant_id:
         raise CatalogVersionError("TENANT_SCOPE_DENIED", "Catalog version cannot cross tenant boundaries", status_code=403)
     status = str(raw.get("status") or "draft").strip().lower()
     if status not in MODEL_STATUSES:
@@ -147,7 +157,7 @@ def _normalize_model(raw: Any, tenant_id: str, index: int) -> dict[str, Any]:
     normalized_advisory = copy.deepcopy(advisory)
     return {
         "product_model_id": _text(raw.get("product_model_id"), field=f"models[{index}].product_model_id", maximum=256),
-        "tenant_id": tenant_id,
+        "tenant_id": requested_tenant,
         "vendor_id": _text(raw.get("vendor_id"), field=f"models[{index}].vendor_id", maximum=64).casefold(),
         "vendor_name": _text(raw.get("vendor_name") or raw.get("vendor_id"), field=f"models[{index}].vendor_name", maximum=256),
         "family_code": _text(raw.get("family_code"), field=f"models[{index}].family_code", maximum=64).casefold(),
@@ -165,16 +175,19 @@ def _normalize_model(raw: Any, tenant_id: str, index: int) -> dict[str, Any]:
     }
 
 
-def _normalize_alias(raw: Any, tenant_id: str, index: int, model_ids: set[str]) -> dict[str, Any]:
+def _normalize_alias(raw: Any, tenant_id: str, index: int, model_tenants: dict[str, str]) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise CatalogVersionError("BUNDLE_ALIAS_INVALID", f"aliases[{index}] must be an object")
     _assert_safe(raw, f"aliases[{index}]")
-    requested_tenant = str(raw.get("tenant_id") or tenant_id).strip()
-    if requested_tenant != tenant_id:
+    requested_tenant = str(raw.get("tenant_id") or "").strip()
+    if tenant_scope_is_enabled() and requested_tenant and requested_tenant != tenant_id:
         raise CatalogVersionError("TENANT_SCOPE_DENIED", "Catalog version cannot cross tenant boundaries", status_code=403)
     model_id = _text(raw.get("product_model_id"), field=f"aliases[{index}].product_model_id", maximum=256)
-    if model_id not in model_ids:
+    model_tenant_id = model_tenants.get(model_id)
+    if model_tenant_id is None:
         raise CatalogVersionError("ALIAS_MODEL_NOT_FOUND", "Alias target is not present in the imported model set")
+    if requested_tenant and requested_tenant != model_tenant_id:
+        raise CatalogVersionError("ALIAS_TENANT_MISMATCH", "Alias tenant_id must match its catalog model")
     alias_kind = str(raw.get("alias_kind") or "").strip().lower()
     if alias_kind not in ALIAS_KINDS:
         raise CatalogVersionError("ALIAS_KIND_INVALID", "Alias kind is not in the DB-006 allowlist")
@@ -188,7 +201,7 @@ def _normalize_alias(raw: Any, tenant_id: str, index: int, model_ids: set[str]) 
         raise CatalogVersionError("ALIAS_STATUS_INVALID", "Alias status is invalid")
     return {
         "id": str(raw.get("id") or f"alias-{uuid.uuid4().hex[:12]}"),
-        "tenant_id": tenant_id,
+        "tenant_id": model_tenant_id,
         "product_model_id": model_id,
         "alias": alias,
         "normalized_alias": normalized,
@@ -202,7 +215,7 @@ def _snapshot(version: str, tenant_id: str, models: list[dict[str, Any]], aliase
         "version": version,
         "tenant_id": tenant_id,
         "models": sorted(models, key=lambda row: row["product_model_id"]),
-        "aliases": sorted(aliases, key=lambda row: (row["normalized_alias"], row["alias_kind"], row["product_model_id"])),
+        "aliases": sorted(aliases, key=lambda row: (row["tenant_id"], row["normalized_alias"], row["alias_kind"], row["product_model_id"])),
     }
     content_hash = hashlib.sha256(_json(body).encode("utf-8")).hexdigest()
     return {
@@ -235,10 +248,11 @@ def _prepare_bundle(user: dict[str, Any], bundle: dict[str, Any]) -> dict[str, A
     raw_aliases = bundle.get("aliases") or []
     if not isinstance(raw_aliases, list) or len(raw_aliases) > MAX_ALIASES:
         raise CatalogVersionError("ALIAS_COUNT_INVALID", f"aliases must contain 0..{MAX_ALIASES} rows")
-    aliases = [_normalize_alias(item, tenant_id, index, set(model_ids)) for index, item in enumerate(raw_aliases)]
-    alias_groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    model_tenants = {row["product_model_id"]: row["tenant_id"] for row in models}
+    aliases = [_normalize_alias(item, tenant_id, index, model_tenants) for index, item in enumerate(raw_aliases)]
+    alias_groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     for row in aliases:
-        alias_groups.setdefault((row["normalized_alias"], row["alias_kind"]), []).append(row)
+        alias_groups.setdefault((row["tenant_id"], row["normalized_alias"], row["alias_kind"]), []).append(row)
     for grouped in alias_groups.values():
         if len(grouped) > 1 and any(row["status"] == "active" for row in grouped):
             raise CatalogVersionError("ALIAS_DUPLICATE_ACTIVE", "An ambiguous Alias must remain pending review before activation")
@@ -249,7 +263,15 @@ def _state_for(tenant_id: str) -> dict[str, Any]:
     state = _STATES.get(tenant_id)
     if state is not None:
         return state
-    seed_models = [row for row in _seed_model_rows() if str(row.get("tenant_id")) == tenant_id]
+    source_models = _seed_model_rows()
+    if tenant_id == DEFAULT_TENANT:
+        seed_models = [
+            {**row, "tenant_id": tenant_id}
+            for row in source_models
+            if str(row.get("tenant_id")) == REVIEWED_SEED_TENANT
+        ]
+    else:
+        seed_models = [row for row in source_models if str(row.get("tenant_id")) == tenant_id]
     seed_aliases = _seed_aliases(seed_models)
     seed = _snapshot("seed", tenant_id, seed_models, seed_aliases, is_seed=True, created_by="system")
     state = {"active_version_id": seed["version_id"], "history": {seed["version_id"]: seed}, "audit": []}
@@ -275,9 +297,18 @@ def _metadata(snapshot: dict[str, Any], active_version_id: str) -> dict[str, Any
 def _diff(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
     changes: list[dict[str, Any]] = []
     counts = {"model": {"added": 0, "removed": 0, "changed": 0}, "alias": {"added": 0, "removed": 0, "changed": 0}}
+
+    def alias_identity(row: dict[str, Any]) -> str:
+        return _json([
+            row["tenant_id"],
+            row["normalized_alias"],
+            row["alias_kind"],
+            row["product_model_id"],
+        ])
+
     for entity, key_fn in (
         ("model", lambda row: row["product_model_id"]),
-        ("alias", lambda row: f"{row['normalized_alias']}|{row['alias_kind']}"),
+        ("alias", alias_identity),
     ):
         old = {key_fn(row): row for row in before["models" if entity == "model" else "aliases"]}
         new = {key_fn(row): row for row in after["models" if entity == "model" else "aliases"]}
@@ -342,6 +373,7 @@ def get_active_catalog_snapshot(*, tenant_id: str | None = None) -> dict[str, An
     return {
         "tenant_id": tenant,
         "version_id": active["version_id"],
+        "content_hash": active["content_hash"],
         "is_seed": bool(active["is_seed"]),
         "models": active["models"],
         "aliases": active["aliases"],
@@ -349,18 +381,61 @@ def get_active_catalog_snapshot(*, tenant_id: str | None = None) -> dict[str, An
     }
 
 
+def get_active_catalog_snapshots(*, tenant_id: str | None = None) -> list[dict[str, Any]]:
+    """Return active catalog snapshots, preserving each snapshot's tenant key.
+
+    Passing a tenant returns that tenant's active snapshot.  ``None`` is the
+    single-organization read path: it includes all already-known historical
+    tenant states plus both built-in default seed projections.  Seed snapshots
+    remain marked as review-only so callers cannot promote them by merging.
+    """
+    with _LOCK:
+        if tenant_id is not None:
+            tenant_states = {tenant_id: _state_for(tenant_id)}
+        else:
+            _state_for(DEFAULT_TENANT)
+            _state_for("tenant-default-reviewed")
+            tenant_states = dict(_STATES)
+        output = []
+        for tenant, state in sorted(tenant_states.items()):
+            active = copy.deepcopy(state["history"][state["active_version_id"]])
+            output.append({
+                "tenant_id": tenant,
+                "version_id": active["version_id"],
+                "content_hash": active["content_hash"],
+                "is_seed": bool(active["is_seed"]),
+                "models": active["models"],
+                "aliases": active["aliases"],
+                "source": PERSISTENCE_STATUS,
+            })
+        return output
+
+
 def list_catalog_versions(user: dict[str, Any]) -> dict[str, Any]:
     tenant_id = _tenant(user)
+    tenant_scope = _tenant_scope(user)
     with _LOCK:
-        state = _state_for(tenant_id)
-        versions = [_metadata(item, state["active_version_id"]) for item in state["history"].values()]
+        primary_state = _state_for(tenant_scope or tenant_id)
+        states = (
+            {tenant_scope: primary_state}
+            if tenant_scope is not None
+            else {**_STATES, tenant_id: primary_state}
+        )
+        versions = [
+            _metadata(item, state["active_version_id"])
+            for state in states.values()
+            for item in state["history"].values()
+        ]
         versions.sort(key=lambda item: (not item["active"], item["created_at"], item["version_id"]))
+        audit_events = [event for state in states.values() for event in state["audit"]]
+        audit_events.sort(key=lambda event: (event.get("created_at") or "", event.get("event_id") or ""))
         return {
             "persistence_status": PERSISTENCE_STATUS,
             "tenant_id": tenant_id,
-            "active_version_id": state["active_version_id"],
+            "active_version_id": primary_state["active_version_id"],
+            "active_version_ids": {key: state["active_version_id"] for key, state in states.items()},
             "versions": versions,
-            "audit_events": copy.deepcopy(state["audit"]),
+            "audit_events": copy.deepcopy(audit_events),
             "rollback_supported": True,
         }
 
@@ -455,9 +530,19 @@ def rollback_catalog_version(
     if not confirm:
         raise CatalogVersionError("ROLLBACK_CONFIRMATION_REQUIRED", "Rollback requires explicit confirm=true")
     target_id = _text(target_version_id, field="target_version_id", maximum=128)
-    tenant_id = _tenant(user)
+    tenant_scope = _tenant_scope(user)
     with _LOCK:
-        state = _state_for(tenant_id)
+        if tenant_scope is not None:
+            state = _state_for(tenant_scope)
+            tenant_id = tenant_scope
+        else:
+            located = next(
+                ((state_tenant, candidate) for state_tenant, candidate in _STATES.items() if target_id in candidate["history"]),
+                None,
+            )
+            if located is None:
+                raise CatalogVersionError("CATALOG_VERSION_NOT_FOUND", "Rollback target was not found", status_code=404)
+            tenant_id, state = located
         active_id = state["active_version_id"]
         if expected_active_version_id and expected_active_version_id != active_id:
             raise CatalogVersionError("STALE_ACTIVE_VERSION", "Active catalog changed; refresh before rollback", status_code=409)

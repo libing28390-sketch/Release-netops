@@ -16,7 +16,7 @@ class _Connection:
         self.closed = False
 
     def execute(self, statement, _params=()):
-        if statement.startswith("SELECT id, hostname"):
+        if "FROM devices" in statement:
             return _Result({
                 "id": "device-1",
                 "hostname": "edge-1",

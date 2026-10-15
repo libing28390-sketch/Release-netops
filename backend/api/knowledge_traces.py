@@ -5,14 +5,18 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Path, Query
 
 from core.rbac import require_permission
+from core.tenant_policy import tenant_scope_for_user, tenant_scope_is_enabled
 from ai.services.retrieval_trace_store import get_retrieval_trace, list_retrieval_traces
 
 
 router = APIRouter(prefix="/knowledge/retrieval-traces", tags=["knowledge-retrieval-traces"])
 
 
-def _tenant(user: dict) -> str:
-    return str(user.get("tenant_id") or "tenant-default")[:128]
+def _tenant(user: dict) -> str | None:
+    tenant_id = tenant_scope_for_user(user)
+    if tenant_id is not None:
+        return tenant_id[:128]
+    return "tenant-default" if tenant_scope_is_enabled() else None
 
 
 @router.get("")

@@ -11,6 +11,7 @@ from core.rbac import (
     require_change_requester,
     require_role,
 )
+from core.tenant_policy import TENANT_ISOLATION_ENABLED, tenant_id_for_write, tenant_scope_for_user
 from services.audit_service import log_audit_event
 from services.monitoring_incident_service import append_incident_timeline
 from services.change_order_service import (
@@ -46,10 +47,10 @@ def _require_change_order_access(order: dict, user: dict, action: str = 'view') 
     """Apply tenant, resource-action, and requester ownership checks to an order."""
     tenant_id = str(order.get('tenant_id') or '').strip()
     user_id = str(user.get('user_id') or user.get('id') or '').strip()
-    if not is_global_administrator(user):
+    if TENANT_ISOLATION_ENABLED and not is_global_administrator(user):
         if not tenant_id or not str(user.get('tenant_id') or '').strip():
             raise HTTPException(status_code=404, detail='Change order not found')
-        if tenant_id != str(user.get('tenant_id') or '').strip():
+        if tenant_id != tenant_scope_for_user(user):
             raise HTTPException(status_code=404, detail='Change order not found')
     if user.get('role_profile') == 'Change Requester':
         if not user_id or str(order.get('requester_id') or '') != user_id:
@@ -73,12 +74,11 @@ def _parse_iso_to_utc(value: str) -> Optional[datetime]:
 def api_change_order_summary(user=require_role("Viewer")):
     conn = get_db_connection()
     try:
-        tenant_scope = '' if is_global_administrator(user) else str(user.get('tenant_id') or '').strip()
-        if not tenant_scope and not is_global_administrator(user):
+        tenant_scope = '' if is_global_administrator(user) else (tenant_scope_for_user(user) or '')
+        if TENANT_ISOLATION_ENABLED and not tenant_scope and not is_global_administrator(user):
             raise HTTPException(status_code=403, detail='A tenant assignment is required')
-        if tenant_scope:
-            enforce_resource_scope(user, 'pam', 'view', tenant_id=tenant_scope)
-            enforce_resource_scope(user, 'change_order', 'view', tenant_id=tenant_scope)
+        enforce_resource_scope(user, 'pam', 'view', tenant_id=tenant_scope or None)
+        enforce_resource_scope(user, 'change_order', 'view', tenant_id=tenant_scope or None)
         requester_scope = (
             str(user.get('user_id') or '')
             if user.get('role_profile') == 'Change Requester'
@@ -123,12 +123,11 @@ def api_list_change_orders(
 ):
     conn = get_db_connection()
     try:
-        tenant_scope = '' if is_global_administrator(user) else str(user.get('tenant_id') or '').strip()
-        if not tenant_scope and not is_global_administrator(user):
+        tenant_scope = '' if is_global_administrator(user) else (tenant_scope_for_user(user) or '')
+        if TENANT_ISOLATION_ENABLED and not tenant_scope and not is_global_administrator(user):
             raise HTTPException(status_code=403, detail='A tenant assignment is required')
-        if tenant_scope:
-            enforce_resource_scope(user, 'pam', 'view', tenant_id=tenant_scope)
-            enforce_resource_scope(user, 'change_order', 'view', tenant_id=tenant_scope)
+        enforce_resource_scope(user, 'pam', 'view', tenant_id=tenant_scope or None)
+        enforce_resource_scope(user, 'change_order', 'view', tenant_id=tenant_scope or None)
         requester_scope = (
             str(user.get('user_id') or '')
             if user.get('role_profile') == 'Change Requester'
@@ -183,7 +182,7 @@ def api_validate_change_ticket(order_number: str, user=require_role("Viewer")):
         scheduled_end = order.get('scheduled_end', '')
 
         # Check status: only approved/implementing orders allow execution
-        executable_statuses = {'implementing'}
+        executable_statuses = {'approved', 'implementing'}
         if status not in executable_statuses:
             return {
                 'success': True,
@@ -194,7 +193,7 @@ def api_validate_change_ticket(order_number: str, user=require_role("Viewer")):
                     'status': status,
                     'title': order.get('title', ''),
                     'order_number': order.get('order_number', ''),
-                    'message': f'工单状态为 {status}，必须完成实施授权并处于实施中才能执行',
+                    'message': f'工单状态为 {status}，必须已审批通过或处于实施中才能执行',
                 },
             }
 
@@ -330,8 +329,8 @@ def api_validate_template(body: TemplateValidateRequest, user=require_role("View
 def api_create_change_order(body: ChangeOrderCreate, user=require_change_requester):
     conn = get_db_connection()
     try:
-        tenant_id = str(user.get('tenant_id') or '').strip()
-        if not tenant_id and not is_global_administrator(user):
+        tenant_id = tenant_id_for_write(user=user)
+        if TENANT_ISOLATION_ENABLED and not tenant_scope_for_user(user) and not is_global_administrator(user):
             raise HTTPException(status_code=403, detail='A tenant assignment is required to create a change order')
         enforce_resource_scope(user, 'pam', 'create_change', tenant_id=tenant_id or None)
         enforce_resource_scope(user, 'change_order', 'create', tenant_id=tenant_id or None)

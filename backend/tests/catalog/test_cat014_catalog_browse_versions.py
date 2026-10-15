@@ -43,9 +43,9 @@ def test_cat014_hierarchy_is_a_bounded_vendor_family_series_model_index():
     assert "software_scope" not in model
 
 
-def test_cat014_version_filter_is_exact_and_tenant_scoped():
+def test_cat014_version_filter_is_exact_and_org_wide():
     assert list_product_catalog(DEFAULT_USER, software_version="17.9")["total"] == 0
-    assert list_product_catalog({"role": "Viewer", "tenant_id": "tenant-other"}, software_version="17.9.x")["total"] == 0
+    assert list_product_catalog({"role": "Viewer", "tenant_id": "tenant-other"}, software_version="17.9.x")["total"] == 3
 
 
 def test_cat014_invalid_version_filter_fails_closed():

@@ -22,8 +22,9 @@ def test_obs001_records_bounded_retrieval_observation_without_raw_payloads():
             "final_chunks": [{"document_id": "doc-private", "chunk_id": "chunk-private", "context_chunk_ids": ["chunk-private", "chunk-neighbor"], "context_chunk_count": 2, "relevance_score": 0.91}],
         },
     )
-    item = get_retrieval_trace(tenant_id="tenant-obs001", trace_id=trace_id)
+    item = get_retrieval_trace(tenant_id=None, trace_id=trace_id)
     assert item is not None
+    assert item["tenant_id"] == "tenant-default"
     observation = item["observation"]
     assert observation["schema"] == "nxa.retrieval.observation.v1"
     assert observation["query"]["raw_query_captured"] is True
@@ -41,7 +42,7 @@ def test_obs001_records_bounded_retrieval_observation_without_raw_payloads():
     assert "chunk-private" not in rendered
 
 
-def test_obs001_observation_remains_tenant_scoped_and_bounded():
+def test_obs001_observation_reads_single_org_history_and_remains_bounded():
     from ai.services.retrieval_trace_store import clear_retrieval_traces, get_retrieval_trace, record_retrieval_trace
 
     clear_retrieval_traces()
@@ -52,9 +53,9 @@ def test_obs001_observation_remains_tenant_scoped_and_bounded():
         trace={"status": "no_match"},
         observation={"candidates": [{"document_id": str(index), "relevance_score": index / 100} for index in range(150)]},
     )
-    assert get_retrieval_trace(tenant_id="tenant-obs001-b", trace_id=trace_id) is None
-    item = get_retrieval_trace(tenant_id="tenant-obs001-a", trace_id=trace_id)
+    item = get_retrieval_trace(tenant_id=None, trace_id=trace_id)
     assert item is not None
+    assert item["tenant_id"] == "tenant-default"
     assert len(item["observation"]["candidates"]) == 100
     assert len(item["observation"]["scores"]) == 100
 
@@ -91,7 +92,7 @@ def test_obs002_runtime_projection_records_reranker_citations_latency_tokens_pro
             "tokens": {"input": 100, "output": 25},
         },
     )
-    item = get_retrieval_trace(tenant_id="tenant-obs002", trace_id=trace_id)
+    item = get_retrieval_trace(tenant_id=None, trace_id=trace_id)
     assert item is not None
     runtime = item["runtime"]
     assert runtime["reranker"]["stage"] == "applied"
@@ -123,7 +124,7 @@ def test_obs003_trace_projection_and_log_sanitizer_drop_raw_secrets_before_write
             "entities": {"intent": "password=trace-secret"},
         },
     )
-    item = get_retrieval_trace(tenant_id="tenant-obs003", trace_id=trace_id)
+    item = get_retrieval_trace(tenant_id=None, trace_id=trace_id)
     assert item is not None
     rendered = str(item)
     assert "trace-secret" not in rendered
@@ -157,7 +158,7 @@ def test_obs004_shadow_rank_delta_is_hashed_and_retained():
             },
         },
     )
-    item = get_retrieval_trace(tenant_id="tenant-obs004", trace_id=trace_id)
+    item = get_retrieval_trace(tenant_id=None, trace_id=trace_id)
     shadow = item["runtime"]["shadow"]
     assert shadow["stage"] == "shadow_observed"
     assert shadow["order_changed"] is True

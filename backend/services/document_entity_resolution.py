@@ -1,8 +1,9 @@
-"""Tenant-scoped Product/OS/Version resolution for the Knowledge Engine.
+"""Product/OS/Version resolution for the Knowledge Engine.
 
 This module is deliberately read-only. It resolves metadata against an
-active, tenant-scoped catalog snapshot and never turns a draft seed, body
-text, software train, or CLI hint into a canonical entity or driver choice.
+active catalog snapshot set and never turns a draft seed, body text, software
+train, or CLI hint into a canonical entity or driver choice. Tenant isolation
+controls whether one snapshot or the known single-organization history is read.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
 from core.enum_compat import StrEnum
+from core.tenant_policy import tenant_id_for_write, tenant_scope_is_enabled
 
 
 MAX_CANDIDATES = 20
@@ -62,6 +64,7 @@ class EntityCatalogSnapshot:
     models: tuple[Mapping[str, Any], ...] = ()
     aliases: tuple[Mapping[str, Any], ...] = ()
     version_id: str = ""
+    content_hash: str = ""
     is_seed: bool = False
     source: str = "active_catalog"
 
@@ -79,6 +82,7 @@ class EntityCatalogSnapshot:
             models=tuple(item for item in models if isinstance(item, Mapping)),
             aliases=tuple(item for item in aliases if isinstance(item, Mapping)),
             version_id=_safe_text(value.get("version_id"), "version_id"),
+            content_hash=_safe_text(value.get("content_hash"), "content_hash", 128),
             is_seed=bool(value.get("is_seed", False)),
             source=_safe_text(value.get("source") or "active_catalog", "source"),
         )
@@ -243,7 +247,10 @@ def _status_active(row: Mapping[str, Any]) -> bool:
 
 
 def _row_tenant(row: Mapping[str, Any]) -> str:
-    return _safe_text(row.get("tenant_id"), "tenant_id", 128)
+    tenant_id = _safe_text(row.get("tenant_id"), "tenant_id", 128)
+    if not tenant_id:
+        raise ValueError("ENTITY_TENANT_REQUIRED")
+    return tenant_id
 
 
 def _display_model(row: Mapping[str, Any]) -> dict[str, Any]:
@@ -307,11 +314,14 @@ def _display_model(row: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _candidate_sort(item: Mapping[str, Any]) -> tuple[str, str, str]:
+def _candidate_sort(item: Mapping[str, Any]) -> tuple[str, str, str, str, str, str]:
     return (
         str(item.get("vendor_id") or ""),
         str(item.get("series_code") or ""),
         str(item.get("product_model_id") or ""),
+        str(item.get("tenant_id") or ""),
+        str(item.get("catalog_version_id") or ""),
+        str(item.get("catalog_content_hash") or ""),
     )
 
 
@@ -351,11 +361,28 @@ def _unique(values: Sequence[str]) -> list[str]:
     return output
 
 
-def _load_snapshot(tenant_id: str) -> EntityCatalogSnapshot:
-    from services.catalog_version_service import get_active_catalog_snapshot
+def _load_snapshots(tenant_id: str | None) -> list[EntityCatalogSnapshot]:
+    from services.catalog_version_service import get_active_catalog_snapshot, get_active_catalog_snapshots
 
-    raw = get_active_catalog_snapshot(tenant_id=tenant_id)
-    return EntityCatalogSnapshot.from_mapping(raw)
+    raw_snapshots = (
+        [get_active_catalog_snapshot(tenant_id=tenant_id)]
+        if tenant_id is not None
+        else get_active_catalog_snapshots(tenant_id=None)
+    )
+    return [EntityCatalogSnapshot.from_mapping(raw) for raw in raw_snapshots]
+
+
+def _coerce_snapshots(value: Any) -> list[EntityCatalogSnapshot]:
+    if isinstance(value, EntityCatalogSnapshot):
+        return [value]
+    if isinstance(value, Mapping):
+        return [EntityCatalogSnapshot.from_mapping(value)]
+    if isinstance(value, (list, tuple)):
+        return [
+            item if isinstance(item, EntityCatalogSnapshot) else EntityCatalogSnapshot.from_mapping(item)
+            for item in value
+        ]
+    raise ValueError("ENTITY_CATALOG_INVALID")
 
 
 def _base_result(
@@ -400,14 +427,15 @@ def _base_result(
 def resolve_document_entities(
     metadata: Mapping[str, Any] | None = None,
     *,
-    tenant_id: str = "tenant-default",
-    catalog: EntityCatalogSnapshot | Mapping[str, Any] | None = None,
+    tenant_id: str | None = "tenant-default",
+    catalog: EntityCatalogSnapshot | Mapping[str, Any] | Sequence[EntityCatalogSnapshot | Mapping[str, Any]] | None = None,
     metadata_result: Any = None,
-    catalog_loader: Callable[[str], EntityCatalogSnapshot] | None = None,
+    catalog_loader: Callable[[str | None], Any] | None = None,
 ) -> DocumentEntityResolution:
     """Resolve Product, OS generation and Software Version without guessing."""
 
-    tenant = _tenant(tenant_id)
+    tenant_scope = _tenant(tenant_id) if tenant_scope_is_enabled() else None
+    tenant = tenant_scope or tenant_id_for_write(requested=tenant_id)
     if metadata_result is not None:
         allowed = bool(getattr(metadata_result, "entity_resolution_allowed", False))
         source_metadata = getattr(metadata_result, "metadata", None)
@@ -439,14 +467,13 @@ def resolve_document_entities(
         )
 
     try:
-        snapshot = (
-            catalog
-            if isinstance(catalog, EntityCatalogSnapshot)
-            else EntityCatalogSnapshot.from_mapping(catalog)
-            if isinstance(catalog, Mapping)
-            else (catalog_loader or _load_snapshot)(tenant)
-        )
-        if snapshot.tenant_id != tenant:
+        if catalog is not None:
+            snapshots = _coerce_snapshots(catalog)
+        elif catalog_loader is not None:
+            snapshots = _coerce_snapshots(catalog_loader(tenant_scope))
+        else:
+            snapshots = _load_snapshots(tenant_scope)
+        if tenant_scope is not None and any(snapshot.tenant_id != tenant_scope for snapshot in snapshots):
             return _base_result(
                 outcome=EntityResolutionOutcome.CONFLICT,
                 decision=EntityResolutionDecision.QUARANTINE,
@@ -455,7 +482,10 @@ def resolve_document_entities(
                 issues=(EntityResolutionIssue("ENTITY_TENANT_SCOPE_DENIED", "tenant_id", "block"),),
                 clarification_fields=("tenant_id",),
             )
-        if snapshot.is_seed:
+        if tenant_scope is not None and len(snapshots) != 1:
+            raise ValueError("ENTITY_CATALOG_INVALID")
+        active_snapshots = [snapshot for snapshot in snapshots if not snapshot.is_seed]
+        if tenant_scope is not None and snapshots and snapshots[0].is_seed:
             return _base_result(
                 outcome=EntityResolutionOutcome.UNKNOWN,
                 decision=EntityResolutionDecision.REVIEW,
@@ -465,6 +495,18 @@ def resolve_document_entities(
                 clarification_fields=("catalog",),
                 warnings=("reviewed_seed_is_not_active_catalog",),
             )
+        if tenant_scope is None and not active_snapshots and any(snapshot.is_seed for snapshot in snapshots):
+            return _base_result(
+                outcome=EntityResolutionOutcome.UNKNOWN,
+                decision=EntityResolutionDecision.REVIEW,
+                tenant_id=tenant,
+                metadata=safe,
+                issues=(EntityResolutionIssue("ENTITY_CATALOG_REVIEW_ONLY", "catalog", "review"),),
+                clarification_fields=("catalog",),
+                warnings=("reviewed_seed_is_not_active_catalog",),
+            )
+        if not active_snapshots:
+            raise ValueError("ENTITY_CATALOG_EMPTY")
     except Exception:
         return _base_result(
             outcome=EntityResolutionOutcome.DEPENDENCY_UNAVAILABLE,
@@ -476,17 +518,43 @@ def resolve_document_entities(
         )
 
     try:
-        models = [
-            _display_model(row)
-            for row in snapshot.models
-            if _row_tenant(row) == tenant and _status_active(row)
-        ]
-        aliases = [
-            row
-            for row in snapshot.aliases
-            if _safe_text(row.get("tenant_id"), "tenant_id", 128) == tenant
-            and _safe_text(row.get("status"), "status", 32).casefold() == "active"
-        ]
+        models: list[dict[str, Any]] = []
+        snapshot_model_identities: dict[tuple[str, str, str], set[tuple[str, str, str, str]]] = {}
+        for snapshot in active_snapshots:
+            snapshot_key = (snapshot.tenant_id, snapshot.version_id, snapshot.content_hash)
+            scoped_identities = snapshot_model_identities.setdefault(snapshot_key, set())
+            for row in snapshot.models:
+                row_tenant_id = _row_tenant(row)
+                if tenant_scope is not None and row_tenant_id != tenant_scope:
+                    continue
+                if not _status_active(row):
+                    continue
+                model = _display_model(row)
+                model["tenant_id"] = row_tenant_id
+                model["catalog_version_id"] = snapshot.version_id
+                model["catalog_content_hash"] = snapshot.content_hash
+                models.append(model)
+                scoped_identities.add((row_tenant_id, model["product_model_id"], snapshot.version_id, snapshot.content_hash))
+        aliases: list[dict[str, Any]] = []
+        for snapshot in active_snapshots:
+            snapshot_key = (snapshot.tenant_id, snapshot.version_id, snapshot.content_hash)
+            scoped_identities = snapshot_model_identities.get(snapshot_key, set())
+            for row in snapshot.aliases:
+                row_tenant_id = _safe_text(row.get("tenant_id"), "tenant_id", 128)
+                product_model_id = _safe_text(row.get("product_model_id"), "product_model_id", 256)
+                model_identity = (row_tenant_id, product_model_id, snapshot.version_id, snapshot.content_hash)
+                if (
+                    model_identity in scoped_identities
+                    and (tenant_scope is None or row_tenant_id == tenant_scope)
+                    and _safe_text(row.get("status"), "status", 32).casefold() == "active"
+                ):
+                    aliases.append({
+                        **dict(row),
+                        "tenant_id": row_tenant_id,
+                        "product_model_id": product_model_id,
+                        "catalog_version_id": snapshot.version_id,
+                        "catalog_content_hash": snapshot.content_hash,
+                    })
     except Exception:
         return _base_result(
             outcome=EntityResolutionOutcome.DEPENDENCY_UNAVAILABLE,
@@ -515,7 +583,12 @@ def resolve_document_entities(
             or _token(item["display_name"]) == model_token
         ]
         alias_targets = {
-            _safe_text(row.get("product_model_id"), "product_model_id", 256)
+            (
+                _safe_text(row.get("tenant_id"), "tenant_id", 128),
+                _safe_text(row.get("product_model_id"), "product_model_id", 256),
+                _safe_text(row.get("catalog_version_id"), "catalog_version_id", 128),
+                _safe_text(row.get("catalog_content_hash"), "catalog_content_hash", 128),
+            )
             for row in aliases
             if _token(row.get("alias")) == model_token
             and _safe_text(row.get("alias_kind"), "alias_kind", 32).casefold()
@@ -523,18 +596,26 @@ def resolve_document_entities(
         }
         candidates = direct + [
             item for item in models
-            if item["product_model_id"] in alias_targets and item not in direct
+            if (item["tenant_id"], item["product_model_id"], item["catalog_version_id"], item["catalog_content_hash"]) in alias_targets and item not in direct
         ]
         match_kind = "exact" if direct else "alias"
         if not candidates:
             prefix_targets = {
-                _safe_text(row.get("product_model_id"), "product_model_id", 256)
+                (
+                    _safe_text(row.get("tenant_id"), "tenant_id", 128),
+                    _safe_text(row.get("product_model_id"), "product_model_id", 256),
+                    _safe_text(row.get("catalog_version_id"), "catalog_version_id", 128),
+                    _safe_text(row.get("catalog_content_hash"), "catalog_content_hash", 128),
+                )
                 for row in aliases
                 if _token(row.get("alias")) == model_token
                 and _safe_text(row.get("alias_kind"), "alias_kind", 32).casefold()
                 in {"prefix", "trigram"}
             }
-            candidates = [item for item in models if item["product_model_id"] in prefix_targets]
+            candidates = [
+                item for item in models
+                if (item["tenant_id"], item["product_model_id"], item["catalog_version_id"], item["catalog_content_hash"]) in prefix_targets
+            ]
             match_kind = "candidate"
     elif requested_series:
         series_token = _token(requested_series)
@@ -593,7 +674,7 @@ def resolve_document_entities(
             clarification_fields=("product_model",),
             catalog_ready=True,
         )
-    if len({item["product_model_id"] for item in candidates}) > 1 or match_kind == "candidate":
+    if len({(item["tenant_id"], item["product_model_id"], item["catalog_version_id"], item["catalog_content_hash"]) for item in candidates}) > 1 or match_kind == "candidate":
         return _base_result(
             outcome=EntityResolutionOutcome.AMBIGUOUS,
             decision=EntityResolutionDecision.REVIEW,

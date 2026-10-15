@@ -22,6 +22,7 @@ from database import get_db_connection
 from services import notification_service
 from core.config import settings
 from core.rbac import authorize_resource, resource_action_allowed
+from core.tenant_policy import TENANT_ISOLATION_ENABLED, tenant_id_for_write
 
 logger = logging.getLogger(__name__)
 
@@ -306,7 +307,7 @@ def _approval_methods_for_user(connection, approver: dict) -> list[str]:
 
 
 def _approver_scope_allowed(approver: dict, requester_tenant_id: str | None) -> bool:
-    """Keep tenant-scoped grants local while allowing explicit global grants."""
+    """Keep role/action and resource grants while applying the active tenant policy."""
     tenant_id = _normalized_tenant_id(requester_tenant_id)
     return (
         authorize_resource(approver, 'pam', 'approve', tenant_id=tenant_id)
@@ -409,7 +410,7 @@ def _get_approver_for_request(
 
         if str(approver.get('id') or '') == str(requester_id or ''):
             return None, '申请人不能审批自己的请求'
-        if not str(requester_tenant_id or '').strip():
+        if TENANT_ISOLATION_ENABLED and not str(requester_tenant_id or '').strip():
             return None, '审批申请人未分配租户，无法发起审批'
 
         if not _approver_scope_allowed(approver, requester_tenant_id):
@@ -499,7 +500,9 @@ def request_approval(
         'approver': approver_username,
         'requester_id': str(requester_id or ''),
         'requester': requester_username,
-        'requester_tenant_id': _normalized_tenant_id(requester_tenant_id or approver.get('tenant_id')),
+        'requester_tenant_id': tenant_id_for_write(
+            requested=requester_tenant_id or approver.get('tenant_id'),
+        ),
         'config_reason': config_reason,
         # Client-supplied display fields can misrepresent the approved action.
         # Notifications below are rendered from the canonical bound manifest.
@@ -848,7 +851,10 @@ def consume_approval(
             not requester
             or requester.get('status') != 'active'
             or str(requester.get('username') or '') != str(record.get('requester_username') or '')
-            or _normalized_tenant_id(requester.get('tenant_id')) != bound_tenant
+            or (
+                TENANT_ISOLATION_ENABLED
+                and _normalized_tenant_id(requester.get('tenant_id')) != bound_tenant
+            )
         ):
             conn.execute("UPDATE config_approval_requests SET status = 'revoked' WHERE token_hash = ?", (token_hash,))
             conn.commit()

@@ -37,6 +37,20 @@ def parse_acl(value: Any) -> dict[str, list[str]]:
     return {str(key): _as_list(item) for key, item in value.items()}
 
 
+def _is_empty_acl(value: Any) -> bool:
+    if value is None or value == "":
+        return True
+    if isinstance(value, dict):
+        return not value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError):
+            return False
+        return isinstance(parsed, dict) and not parsed
+    return False
+
+
 def document_is_visible(
     document: dict[str, Any],
     *,
@@ -45,19 +59,16 @@ def document_is_visible(
     roles: Iterable[str] | None = None,
     site_ids: Iterable[str] | None = None,
 ) -> bool:
-    """Apply tenant and optional document ACL checks before retrieval.
+    """Apply document ACL checks before retrieval.
 
-    Empty ACL means the document is visible only to its owning tenant.  The
-    default tenant is deliberately not treated as a wildcard for other
-    tenants, which prevents a legacy document from becoming cross-tenant.
+    Tenant labels remain for provenance. A non-empty ACL grants access only
+    through configured user, role or site dimensions.
     """
-    tenant = str(tenant_id or "tenant-default")
-    owner = str(document.get("tenant_id") or "tenant-default")
-    if owner not in {tenant, "*"}:
-        return False
-    acl = parse_acl(document.get("acl_json") or document.get("acl"))
+    del tenant_id
+    raw_acl = document.get("acl_json") or document.get("acl")
+    acl = parse_acl(raw_acl)
     if not acl:
-        return True
+        return _is_empty_acl(raw_acl)
     user_values = {str(user_id or "")}
     role_values = {str(item) for item in (roles or [])}
     site_values = {str(item) for item in (site_ids or [])}

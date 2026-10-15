@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from fastapi import APIRouter, Body, HTTPException, Query, Depends
 from core.rbac import require_role
+from core.tenant_policy import TENANT_ISOLATION_ENABLED, tenant_id_for_write, tenant_scope_for_user
 from core.config import settings
 from core.crypto import decrypt_credential, encrypt_credential
 from services.config_approval_service import (
@@ -19,6 +20,7 @@ from services import alert_rule_service
 from services.audit_service import log_audit_event
 from services.alert_control_service import AlertState, check_no_data, compute_health, correlate_alerts, detect_storm, suppress_dependency_alerts, transition_state
 from services import notification_service
+from services.rack_scope_service import RackScope, allowed_resource_scope, device_scope_predicate
 
 
 router = APIRouter()
@@ -146,28 +148,68 @@ def _row_to_alert(row) -> dict:
 
 
 def _alert_read_tenant(user: dict | None) -> str | None:
-    """Return the tenant scope for an alert API caller; administrators stay global."""
-    if not isinstance(user, dict) or str(user.get('role') or '') == 'Administrator':
-        return None
-    return str(user.get('tenant_id') or 'tenant-default').strip() or 'tenant-default'
+    """Return the caller tenant filter (disabled in single-organization mode)."""
+    return tenant_scope_for_user(user)
 
 
-def _alert_tenant_predicate(user: dict | None, alias: str = 'a') -> tuple[str, tuple[str, ...]]:
-    tenant_id = _alert_read_tenant(user)
-    if tenant_id is None:
-        return '', ()
-    return (
-        f"EXISTS (SELECT 1 FROM devices alert_scope_device "
-        f"WHERE alert_scope_device.id = {alias}.device_id "
-        "AND COALESCE(alert_scope_device.tenant_id, 'tenant-default') = ?)",
-        (tenant_id,),
-    )
+def _alert_resource_scope(conn, user: dict | None) -> RackScope:
+    if not isinstance(user, dict):
+        return RackScope()
+    return allowed_resource_scope(conn, user, 'asset', 'view')
+
+
+def _alert_scope_device_filter(scope: RackScope, alias: str = 'd') -> tuple[str, tuple[Any, ...]]:
+    predicate, params = device_scope_predicate(scope, device_alias=alias)
+    clauses = [predicate] if predicate else []
+    values = list(params)
+    if scope.tenant_id:
+        clauses.append(f"COALESCE({alias}.tenant_id, 'tenant-default') = ?")
+        values.append(scope.tenant_id)
+    return ' AND '.join(clauses), tuple(values)
+
+
+def _alert_tenant_predicate(
+    user: dict | None,
+    alias: str = 'a',
+    *,
+    conn=None,
+    scope: RackScope | None = None,
+) -> tuple[str, tuple[Any, ...]]:
+    """Return the device/site/group visibility predicate for alert rows."""
+    owned_connection = conn is None and scope is None and isinstance(user, dict)
+    scope_conn = get_db_connection() if owned_connection else conn
+    try:
+        resolved_scope = scope or (
+            _alert_resource_scope(scope_conn, user) if scope_conn is not None else RackScope()
+        )
+        device_filter, device_params = _alert_scope_device_filter(resolved_scope, 'alert_scope_device')
+        full_scope = (
+            resolved_scope.tenant_id is None
+            and resolved_scope.site_ids is None
+            and resolved_scope.device_group_ids is None
+        )
+        exists_filter = f"alert_scope_device.id = {alias}.device_id"
+        if device_filter:
+            exists_filter += f' AND {device_filter}'
+        if full_scope:
+            # Preserve global/system alerts for callers that can see the whole
+            # asset inventory. Restricted scopes require a visible device.
+            return (
+                f"({alias}.device_id IS NULL OR EXISTS (SELECT 1 FROM devices alert_scope_device "
+                f"WHERE {exists_filter}))",
+                device_params,
+            )
+        return (
+            f"EXISTS (SELECT 1 FROM devices alert_scope_device WHERE {exists_filter})",
+            device_params,
+        )
+    finally:
+        if owned_connection and scope_conn is not None:
+            scope_conn.close()
 
 
 def _assert_alert_visible(conn, alert_id: str, user: dict | None) -> None:
-    predicate, params = _alert_tenant_predicate(user)
-    if not predicate:
-        return
+    predicate, params = _alert_tenant_predicate(user, conn=conn)
     row = conn.execute(
         f"SELECT 1 FROM alert_events a WHERE a.id = ? AND {predicate}",
         (alert_id, *params),
@@ -195,6 +237,8 @@ def list_alert_activity(alert_id: str, limit: int = Query(default=100, ge=1, le=
                 item['metadata'] = {}
             items.append(item)
         return {'items': items, 'alert_id': alert_id, 'limit': limit, 'offset': offset}
+    except HTTPException:
+        raise
     except Exception:
         # Keep the endpoint compatible with installations before m0105.
         return {'items': [], 'alert_id': alert_id, 'limit': limit, 'offset': offset}
@@ -216,6 +260,8 @@ def _list_alert_deliveries(conn, alert_id: str, limit: int = 100) -> dict:
             """,
             (alert_id, limit),
         ).fetchall()
+    except HTTPException:
+        raise
     except Exception:
         return {'items': [], 'summary': {}}
     items = [dict(row) for row in rows]
@@ -270,6 +316,8 @@ def list_alert_correlations(alert_id: str, limit: int = Query(default=100, ge=1,
                 item['evidence'] = []
             items.append(item)
         return {'items': items, 'alert_id': alert_id}
+    except HTTPException:
+        raise
     except Exception:
         return {'items': [], 'alert_id': alert_id}
     finally:
@@ -419,7 +467,7 @@ def create_alert_silence(payload: dict = Body(...), user=require_role("Operator"
     silence_id = f"silence_{uuid.uuid4().hex[:16]}"
     now = _utc_now_iso()
     created_by = str(user.get('username') or 'system')[:128] if isinstance(user, dict) else 'system'
-    tenant_id = _alert_read_tenant(user) or str(payload.get('tenant_id') or 'tenant-default')[:128]
+    tenant_id = tenant_id_for_write(user=user)
     conn = get_db_connection()
     try:
         conn.execute(
@@ -457,7 +505,7 @@ def get_alert_summary(user=require_role("Viewer")):
     try:
         now = datetime.now(timezone.utc)
         since_24h = (now - timedelta(hours=24)).replace(microsecond=0).isoformat()
-        tenant_predicate, tenant_params = _alert_tenant_predicate(user)
+        tenant_predicate, tenant_params = _alert_tenant_predicate(user, conn=conn)
 
         def scoped_where(condition: str) -> str:
             predicates = [condition]
@@ -465,7 +513,7 @@ def get_alert_summary(user=require_role("Viewer")):
                 predicates.append(tenant_predicate)
             return f"WHERE {' AND '.join(predicates)}"
 
-        # Compute all counters in one tenant-scoped scan. Dashboard polling must
+        # Compute all counters in one caller-scoped scan. Dashboard polling must
         # not rescan alert history once for every summary card during a storm.
         counts = conn.execute(
             f'''
@@ -549,7 +597,12 @@ def list_alerts(
     try:
         where = []
         params = []
-        tenant_predicate, tenant_params = _alert_tenant_predicate(user)
+        resource_scope = _alert_resource_scope(conn, user)
+        tenant_predicate, tenant_params = _alert_tenant_predicate(
+            user,
+            conn=conn,
+            scope=resource_scope,
+        )
         if tenant_predicate:
             where.append(tenant_predicate)
             params.extend(tenant_params)
@@ -627,7 +680,12 @@ def list_alerts(
         ).fetchone()['c']
 
         offset = (page - 1) * page_size
-        occurrence_predicate, occurrence_params = _alert_tenant_predicate(user, alias='a2')
+        occurrence_predicate, occurrence_params = _alert_tenant_predicate(
+            user,
+            alias='a2',
+            conn=conn,
+            scope=resource_scope,
+        )
         occurrence_scope_sql = f" AND {occurrence_predicate}" if occurrence_predicate else ""
         rows = conn.execute(
             f'''
@@ -664,21 +722,18 @@ def list_alerts(
             tuple([*occurrence_params, *params, page_size, offset]),
         ).fetchall()
 
-        tenant_id = _alert_read_tenant(user)
-        if tenant_id is None:
-            sites = conn.execute("SELECT DISTINCT site FROM devices WHERE site IS NOT NULL AND site != '' ORDER BY site ASC").fetchall()
-            assignees = conn.execute("SELECT DISTINCT assignee FROM alert_events WHERE assignee IS NOT NULL AND assignee != '' ORDER BY assignee ASC").fetchall()
-        else:
-            sites = conn.execute(
-                "SELECT DISTINCT site FROM devices WHERE site IS NOT NULL AND site != '' AND COALESCE(tenant_id, 'tenant-default') = ? ORDER BY site ASC",
-                (tenant_id,),
-            ).fetchall()
-            assignees = conn.execute(
-                "SELECT DISTINCT a.assignee FROM alert_events a WHERE a.assignee IS NOT NULL AND a.assignee != '' "
-                "AND EXISTS (SELECT 1 FROM devices d_scope WHERE d_scope.id = a.device_id "
-                "AND COALESCE(d_scope.tenant_id, 'tenant-default') = ?) ORDER BY a.assignee ASC",
-                (tenant_id,),
-            ).fetchall()
+        device_filter, device_filter_params = _alert_scope_device_filter(resource_scope, 'd')
+        sites_where = f"WHERE {device_filter} AND site IS NOT NULL AND site != ''" if device_filter else "WHERE site IS NOT NULL AND site != ''"
+        sites = conn.execute(
+            f"SELECT DISTINCT site FROM devices d {sites_where} ORDER BY site ASC",
+            device_filter_params,
+        ).fetchall()
+        assignees = conn.execute(
+            "SELECT DISTINCT a.assignee FROM alert_events a "
+            f"WHERE a.assignee IS NOT NULL AND a.assignee != '' AND {tenant_predicate} "
+            "ORDER BY a.assignee ASC",
+            tenant_params,
+        ).fetchall()
 
         status_row = conn.execute(
             f'''
@@ -844,7 +899,7 @@ def read_alert_rules(
         category=category,
         page=page,
         page_size=page_size,
-        tenant_id=_notification_tenant_id(user),
+        tenant_id=_notification_tenant_scope(user),
     )
 
 
@@ -858,7 +913,7 @@ def read_alert_rule_collection_catalog(user=require_role("Viewer")):
 
 @router.get('/alerts/rules/notification-groups')
 def read_alert_rule_notification_groups(user=require_role("Viewer")):
-    return {'items': alert_rule_service.list_notification_groups(_notification_tenant_id(user))}
+    return {'items': alert_rule_service.list_notification_groups(_notification_tenant_scope(user))}
 
 
 @router.get('/alerts/rules/scope-catalog')
@@ -871,17 +926,28 @@ def read_alert_rule_scope_catalog(
     selected_id_query = device_ids if isinstance(device_ids, str) else ''
     selected_ids = [value.strip() for value in selected_id_query.split(',') if value.strip()]
     try:
+        conn = get_db_connection()
+        try:
+            scope = _alert_resource_scope(conn, user)
+        finally:
+            conn.close()
         return alert_rule_service.get_scope_catalog(
-            _notification_tenant_id(user),
+            scope.tenant_id,
             search=search_query,
             device_ids=selected_ids,
+            site_ids=scope.site_ids,
+            device_group_ids=scope.device_group_ids,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _notification_tenant_id(user: dict | None = None) -> str:
-    return str((user or {}).get('tenant_id') or 'tenant-default').strip() or 'tenant-default'
+    return tenant_id_for_write(user=user)
+
+
+def _notification_tenant_scope(user: dict | None = None) -> str | None:
+    return tenant_scope_for_user(user)
 
 
 def _safe_smtp_config(row) -> dict:
@@ -1043,6 +1109,7 @@ def _validated_recipient_targets(conn, tenant_id: str, value, *, allow_empty: bo
         raise HTTPException(status_code=400, detail='recipient_targets must be an array')
     targets = []
     seen = set()
+    tenant_clause = ' AND tenant_id = ?' if TENANT_ISOLATION_ENABLED else ''
     for item in value:
         if not isinstance(item, dict):
             raise HTTPException(status_code=400, detail='recipient_targets items must be objects')
@@ -1052,8 +1119,8 @@ def _validated_recipient_targets(conn, tenant_id: str, value, *, allow_empty: bo
             if not group_name:
                 raise HTTPException(status_code=400, detail='group_name is required')
             exists = conn.execute(
-                "SELECT 1 FROM users WHERE tenant_id = ? AND status = 'active' AND group_name = ? LIMIT 1",
-                (tenant_id, group_name),
+                f"SELECT 1 FROM users WHERE status = 'active' AND group_name = ?{tenant_clause} LIMIT 1",
+                (group_name, tenant_id) if TENANT_ISOLATION_ENABLED else (group_name,),
             ).fetchone()
             if not exists:
                 raise HTTPException(status_code=400, detail=f'Unknown active user group: {group_name}')
@@ -1064,8 +1131,8 @@ def _validated_recipient_targets(conn, tenant_id: str, value, *, allow_empty: bo
             if not user_id:
                 raise HTTPException(status_code=400, detail='user_id is required')
             exists = conn.execute(
-                "SELECT 1 FROM users WHERE tenant_id = ? AND status = 'active' AND id = ? LIMIT 1",
-                (tenant_id, user_id),
+                f"SELECT 1 FROM users WHERE status = 'active' AND id = ?{tenant_clause} LIMIT 1",
+                (user_id, tenant_id) if TENANT_ISOLATION_ENABLED else (user_id,),
             ).fetchone()
             if not exists:
                 raise HTTPException(status_code=400, detail=f'Unknown active tenant user: {user_id}')
@@ -1203,14 +1270,15 @@ def list_alert_email_profiles(user=require_role('Viewer')):
 
 @router.get('/alerts/notification-channels/email/recipients')
 def list_alert_email_recipients(user=require_role('Administrator')):
-    tenant_id = _notification_tenant_id(user)
+    tenant_id = _alert_read_tenant(user)
     conn = get_db_connection()
     try:
+        tenant_clause = ' AND tenant_id = ?' if tenant_id is not None else ''
         rows = [dict(row) for row in conn.execute(
             """SELECT id, username, display_name, email, group_name
-               FROM users WHERE tenant_id = ? AND status = 'active'
+               FROM users WHERE status = 'active'""" + tenant_clause + """
                ORDER BY COALESCE(NULLIF(display_name, ''), username), username""",
-            (tenant_id,),
+            (tenant_id,) if tenant_id is not None else (),
         ).fetchall()]
         groups = {}
         for row in rows:
@@ -1347,7 +1415,13 @@ def _test_profile_recipient(payload: dict, user: dict, conn) -> str:
         return recipient
     recipient = str(user.get('email') or '').strip()
     if not recipient and user.get('user_id'):
-        row = conn.execute("SELECT email FROM users WHERE tenant_id = ? AND id = ? AND status = 'active'", (_notification_tenant_id(user), user['user_id'])).fetchone()
+        tenant_id = _alert_read_tenant(user)
+        tenant_clause = ' AND tenant_id = ?' if tenant_id is not None else ''
+        params = (user['user_id'], tenant_id) if tenant_id is not None else (user['user_id'],)
+        row = conn.execute(
+            f"SELECT email FROM users WHERE id = ? AND status = 'active'{tenant_clause}",
+            params,
+        ).fetchone()
         recipient = str(row['email'] or '').strip() if row else ''
     if not _EMAIL_ADDRESS_RE.fullmatch(recipient):
         raise HTTPException(status_code=400, detail='Administrator email is not configured')
@@ -1665,7 +1739,7 @@ def read_alert_rules_preview(user=require_role("Viewer")):
 
 @router.get('/alerts/rules/history')
 def read_alert_rules_history(limit: int = Query(default=20, ge=1, le=100), rule_id: str | None = Query(default=None), user=require_role("Viewer")):
-    return {'items': alert_rule_service.list_rule_history(limit=limit, rule_id=rule_id, tenant_id=_notification_tenant_id(user))}
+    return {'items': alert_rule_service.list_rule_history(limit=limit, rule_id=rule_id, tenant_id=_notification_tenant_scope(user))}
 
 
 @router.put('/alerts/rules/{rule_id}')
@@ -1673,7 +1747,7 @@ def update_alert_rules(rule_id: str, payload: dict = Body(...), user=require_rol
     actor_username = user.get("username", "unknown")
     _verify_alert_rule_approval(payload, user=user, approval_type='alert_rule', operation='UPDATE', rule_id=rule_id)
     try:
-        rule = alert_rule_service.update_rule(rule_id, payload, tenant_id=_notification_tenant_id(user))
+        rule = alert_rule_service.update_rule(rule_id, payload, tenant_id=_notification_tenant_scope(user))
     except alert_rule_service.UnsupportedMetricTypeError as exc:
         raise HTTPException(
             status_code=400,
@@ -1721,7 +1795,7 @@ def delete_alert_rule(
         operation='DELETE', rule_id=rule_id,
     )
     try:
-        tenant_id = _notification_tenant_id(user)
+        tenant_id = _notification_tenant_scope(user)
         existing = alert_rule_service.get_rule(rule_id, tenant_id=tenant_id)
         alert_rule_service.delete_rule(rule_id, tenant_id=tenant_id)
     except ValueError as exc:
@@ -1972,7 +2046,7 @@ def batch_assign_alerts(payload: dict = Body(...), user=require_role("Operator")
 def get_alert_detail(alert_id: str, user=require_role("Viewer")):
     conn = get_db_connection()
     try:
-        tenant_predicate, tenant_params = _alert_tenant_predicate(user)
+        tenant_predicate, tenant_params = _alert_tenant_predicate(user, conn=conn)
         tenant_filter_sql = f" AND {tenant_predicate}" if tenant_predicate else ""
         row = conn.execute(
             f'''

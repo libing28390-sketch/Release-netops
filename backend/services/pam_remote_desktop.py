@@ -14,6 +14,7 @@ from fastapi import HTTPException
 
 from core.crypto import decrypt_credential
 from core.rbac import is_global_administrator
+from core.tenant_policy import TENANT_ISOLATION_ENABLED, tenant_scope_for_user
 from database import get_db_connection
 from services.audit_service import log_audit_event
 from services.rack_scope_service import allowed_resource_scope, enforce_loaded_resource
@@ -54,7 +55,10 @@ def enforce_asset_scope(user: dict, asset: dict, action: str = "view") -> None:
     if (
         not str(asset.get("site_id") or "").strip()
         and not is_global_administrator(user)
-        and (str(user.get("tenant_id") or "").strip() or user.get("scope_mode") == "restricted")
+        and (
+            (TENANT_ISOLATION_ENABLED and tenant_scope_for_user(user))
+            or user.get("scope_mode") == "restricted"
+        )
     ):
         raise HTTPException(status_code=404, detail="Asset not found")
     try:

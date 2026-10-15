@@ -38,19 +38,17 @@ def test_normal_execution_credentials_never_receive_enable_secret(monkeypatch):
     assert privileged["enable_password"] == "enable-secret"
 
 
-def test_platform_actions_deny_tenantless_device_for_tenant_admin():
-    from services.platform_registry_service import PlatformRegistryError, _authorize_action_device
+def test_platform_actions_allow_legacy_tenant_device_when_tenant_isolation_is_disabled():
+    from services.platform_registry_service import _authorize_action_device
 
-    tenant_admin = {
-        "id": "tenant-admin-id",
-        "role": "Administrator",
-        "role_profile": "Tenant Administrator",
+    automation_operator = {
+        "id": "automation-operator-id",
+        "role": "Operator",
+        "role_profile": "Automation Operator",
         "tenant_id": "tenant-a",
     }
 
-    with pytest.raises(PlatformRegistryError) as error:
-        _authorize_action_device(tenant_admin, {"id": "legacy-device", "tenant_id": ""})
-    assert error.value.status_code == 403
+    _authorize_action_device(automation_operator, {"id": "legacy-device", "tenant_id": "tenant-b"})
 
 
 def test_enable_secret_requires_credential_use_for_user_actions():

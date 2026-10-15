@@ -226,7 +226,7 @@ def test_ing021_preview_endpoint_and_confirmed_document_write(monkeypatch):
     )
     result = add_document(payload=payload, user=USER)
     assert result["id"] == "doc-ing021"
-    assert calls and calls[0]["tenant_id"] == "tenant-ing021"
+    assert calls and calls[0]["tenant_id"] == "tenant-default"
 
     invalid_payload = payload.model_copy(update={"content": "# Guide\n\nchanged"})
     with pytest.raises(HTTPException) as invalid:

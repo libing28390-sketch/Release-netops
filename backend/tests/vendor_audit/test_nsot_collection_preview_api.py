@@ -141,7 +141,12 @@ def test_operation_catalog_requires_asset_view_scope(isolated_db):
         collection_plans_api.get_nsot_collection_operation_catalog(
             platform_profile_id=None,
             role="switch",
-            user={"id": "tenantless-operator", "username": "operator", "role": "Operator"},
+            user={
+                "id": "tenantless-operator",
+                "username": "operator",
+                "role": "Operator",
+                "scope_mode": "restricted",
+            },
         )
     assert denied.value.status_code == 403
 

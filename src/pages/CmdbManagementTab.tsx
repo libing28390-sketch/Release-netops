@@ -14,7 +14,7 @@ import { buildCmdbExportData, buildCmdbVlanExportData } from './cmdbExport';
 
 /* ────────────────────────────────────────────────────────────
  * CMDB Management — unified CRUD for the foundational CMDB tables:
- *   credentials · devices · interfaces · sites · vrfs · vlans · tenants
+ *   credentials · devices · interfaces · sites · vrfs · vlans
  * Consumes the /api/credentials and /api/cmdb/* endpoints.
  * ──────────────────────────────────────────────────────────── */
 
@@ -24,7 +24,7 @@ interface Props {
   currentUser?: { role?: string };
 }
 
-type EntityKey = 'credentials' | 'devices' | 'interfaces' | 'sites' | 'vrfs' | 'vlans' | 'vlan-business' | 'tenants';
+type EntityKey = 'credentials' | 'devices' | 'interfaces' | 'sites' | 'vrfs' | 'vlans' | 'vlan-business';
 
 /**
  * Interface descriptions are supplied by the dedicated interface-description
@@ -1798,7 +1798,6 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     { key: 'vrfs', label: 'VRF', labelEn: 'VRFs', icon: <Network size={14} /> },
     { key: 'vlans', label: 'VLAN', labelEn: 'VLANs', icon: <Layers size={14} /> },
     { key: 'vlan-business', label: 'VLAN业务', labelEn: 'VLAN Business', icon: <UsersIcon size={14} /> },
-    { key: 'tenants', label: '租户', labelEn: 'Tenants', icon: <UsersIcon size={14} /> },
   ];
 
   const vrfOptions = useMemo(
@@ -2091,10 +2090,6 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
       ] },
       { key: 'description', label: '描述', labelEn: 'Description' },
       { key: 'updated_at', label: '最后确认', labelEn: 'Last Confirmed', hideInForm: true },
-    ],
-    tenants: [
-      { key: 'name', label: '租户名称', labelEn: 'Name', required: true },
-      { key: 'description', label: '描述', labelEn: 'Description' },
     ],
   }), []);
 
@@ -3519,7 +3514,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
         title={tab === 'credentials' ? (zh ? '设备访问凭据' : 'Device Access Credentials') : (zh ? 'CMDB 基础数据维护' : 'CMDB Inventory')}
         subtitle={tab === 'credentials'
           ? (zh ? '维护设备登录与采集凭据，查看账号角色和设备绑定。' : 'Manage device login and collection credentials, roles, and device bindings.')
-          : (zh ? '管理设备、接口、凭据、站点、VRF、VLAN 与租户等核心配置数据。' : 'Manage devices, interfaces, credentials, sites, VRFs, VLANs and tenants.')}
+          : (zh ? '管理设备、接口、凭据、站点、VRF 与 VLAN 等核心配置数据。' : 'Manage devices, interfaces, credentials, sites, VRFs, and VLANs.')}
         actions={
           <>
             {!isReadOnlyTab && (

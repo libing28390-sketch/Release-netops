@@ -7,6 +7,7 @@ import uuid
 
 from api import monitoring
 from database import fetch_interface_data, fetch_interface_data_for_devices, get_db_connection
+from services.rack_scope_service import RackScope
 from services.device_health_service import load_devices_for_health
 
 
@@ -99,10 +100,10 @@ def test_device_health_snapshot_batches_interface_reads(isolated_db):
         conn.close()
 
 
-def test_forced_overview_refresh_is_single_flight_per_tenant(isolated_db, monkeypatch):
+def test_forced_overview_refresh_is_single_flight_per_asset_scope(isolated_db, monkeypatch):
     tenant_id = f"overview-single-flight-{uuid.uuid4().hex[:8]}"
     device_ids = [f"single-flight-device-{uuid.uuid4().hex[:8]}" for _ in range(2)]
-    cache_key = ("tenant", tenant_id)
+    cache_key = ("asset", RackScope().cache_key)
     user = {"username": "viewer", "role": "Viewer", "tenant_id": tenant_id}
     entered_summary = threading.Event()
     release_summary = threading.Event()
@@ -166,7 +167,7 @@ def test_forced_overview_refresh_is_single_flight_per_tenant(isolated_db, monkey
             batch_calls += 1
         return original_batch_reader(connection, device_ids)
 
-    def slow_collection_summary(*, tenant_id):
+    def slow_collection_summary(*, tenant_id=None, site_ids=None, device_group_ids=None):
         nonlocal summary_calls
         with counter_lock:
             summary_calls += 1

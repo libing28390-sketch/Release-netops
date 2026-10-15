@@ -16,9 +16,8 @@ def _internal_payload(url: str = "https://kb.internal.example/docs/network") -> 
     }
 
 
-def test_cat003_create_validate_enable_disable_and_tenant_scope(isolated_db, make_user):
+def test_cat003_create_validate_enable_disable_by_stable_source_id(isolated_db, make_user):
     from services.source_registry_service import (
-        SourceRegistryError,
         create_source,
         disable_source,
         enable_source,
@@ -41,9 +40,7 @@ def test_cat003_create_validate_enable_disable_and_tenant_scope(isolated_db, mak
     assert get_source(source["id"], operator)["status"] == "disabled"
 
     other_tenant = make_user("cat003-other", role="Administrator", tenant_id="tenant-other")
-    with pytest.raises(SourceRegistryError) as denied:
-        get_source(source["id"], other_tenant)
-    assert denied.value.code == "SOURCE_NOT_FOUND"
+    assert get_source(source["id"], other_tenant)["status"] == "disabled"
 
 
 def test_cat003_official_validation_fails_closed_until_catalog_review(isolated_db, make_user):
@@ -144,13 +141,12 @@ def test_cat003_api_contract_exposes_crud_lifecycle_validation_and_versions():
     assert any(path.endswith("/{source_id}/versions") and "POST" in methods for path, methods in paths)
 
 
-def test_kui015_source_refresh_status_is_bounded_and_tenant_scoped(isolated_db, make_user):
+def test_kui015_source_refresh_status_is_bounded_and_read_by_stable_id(isolated_db, make_user):
     from services.source_registry_service import (
         create_source,
         enable_source,
         get_source_refresh_status,
         record_source_refresh_observation,
-        SourceRegistryError,
     )
 
     operator = make_user("kui015-status", role="Administrator", tenant_id="tenant-default")
@@ -174,9 +170,9 @@ def test_kui015_source_refresh_status_is_bounded_and_tenant_scoped(isolated_db, 
     assert status["counts"]["unchanged"] == 1
     assert "body" not in str(status).lower()
     other = make_user("kui015-other", role="Administrator", tenant_id="tenant-kui015-other")
-    with pytest.raises(SourceRegistryError) as denied:
-        get_source_refresh_status(source["id"], other)
-    assert denied.value.code == "SOURCE_NOT_FOUND"
+    visible = get_source_refresh_status(source["id"], other)
+    assert visible["freshness_status"] == "healthy"
+    assert visible["observation_count"] == 1
 
     from api.knowledge_sources import router
     paths = {(route.path, tuple(sorted(route.methods or ()))) for route in router.routes}

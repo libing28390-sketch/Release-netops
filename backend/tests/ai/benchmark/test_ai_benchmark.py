@@ -48,10 +48,10 @@ def test_benchmark_gateway_blocks_secret_and_keeps_fake_token_opaque() -> None:
     assert gateway.resolve_output("[[NXA_DEV_FAKE]]", tenant_id="t-a", task_id="task") == "[[NXA_DEV_FAKE]]"
 
 
-def test_benchmark_rag_acl_is_tenant_and_scope_safe() -> None:
+def test_benchmark_rag_acl_crosses_history_but_keeps_site_scope() -> None:
     doc = {"tenant_id": "tenant-a", "acl_json": '{"sites": ["site-a"]}'}
     assert document_is_visible(doc, tenant_id="tenant-a", site_ids=["site-a"])
-    assert not document_is_visible(doc, tenant_id="tenant-b", site_ids=["site-a"])
+    assert document_is_visible(doc, tenant_id="tenant-b", site_ids=["site-a"])
     assert not document_is_visible(doc, tenant_id="tenant-a", site_ids=["site-b"])
 
 

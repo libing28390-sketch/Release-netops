@@ -22,15 +22,17 @@ class _Connection:
         self.rows = rows
         self.closed = False
 
-    def execute(self, _sql, params):
-        tenant_id = params[0]
-        return _Rows([row for row in self.rows if row["tenant_id"] == tenant_id])
+    def execute(self, sql, params):
+        if "tenant_id = ?" in sql:
+            tenant_id = params[0]
+            return _Rows([row for row in self.rows if row["tenant_id"] == tenant_id])
+        return _Rows(self.rows)
 
     def close(self):
         self.closed = True
 
 
-def test_authorized_locator_devices_apply_tenant_site_and_asset_scope(monkeypatch):
+def test_authorized_locator_devices_apply_site_and_asset_scope_across_tenants(monkeypatch):
     rows = [
         {"id": "a-core", "tenant_id": "tenant-a", "site_id": "site-a", "site": ""},
         {"id": "a-access", "tenant_id": "tenant-a", "site_id": "site-b", "site": ""},
@@ -44,7 +46,7 @@ def test_authorized_locator_devices_apply_tenant_site_and_asset_scope(monkeypatc
         lambda user, resource, action, **scope: (
             resource == "asset"
             and action == "read"
-            and scope.get("tenant_id") == "tenant-a"
+            and scope.get("tenant_id") in {"tenant-a", "tenant-b"}
             and scope.get("site_id") in {"site-a", "site-b"}
         ),
     )
@@ -54,18 +56,18 @@ def test_authorized_locator_devices_apply_tenant_site_and_asset_scope(monkeypatc
         site_id="site-a",
     )
 
-    assert selected == ["a-core"]
+    assert selected == ["a-core", "b-core"]
     assert connection.closed is True
 
 
-def test_authorized_locator_device_candidates_fail_closed_without_tenant(monkeypatch):
-    monkeypatch.setattr(
-        ip_locator,
-        "get_db_connection",
-        lambda: (_ for _ in ()).throw(AssertionError("must not query without tenant")),
-    )
+def test_authorized_locator_device_candidates_do_not_require_tenant_assignment(monkeypatch):
+    rows = [{"id": "device-a", "tenant_id": "tenant-b", "site_id": "site-a", "site": ""}]
+    connection = _Connection(rows)
+    monkeypatch.setattr(ip_locator, "get_db_connection", lambda: connection)
+    monkeypatch.setattr(ip_locator, "authorize_resource", lambda *args, **kwargs: True)
 
-    assert ip_locator._authorized_locator_device_ids({"role": "Viewer", "tenant_id": ""}) == []
+    assert ip_locator._authorized_locator_device_ids({"role": "Viewer", "tenant_id": ""}) == ["device-a"]
+    assert connection.closed is True
 
 
 _USER = {"id": "viewer-1", "role": "Viewer", "tenant_id": "tenant-a"}
@@ -99,6 +101,7 @@ def _mock_run_service(monkeypatch, run, *, cancelled=None):
 
 
 @pytest.mark.parametrize("operation", ["get", "cancel"])
+@pytest.mark.parametrize("run_tenant", ["tenant-a", "tenant-b"])
 @pytest.mark.parametrize(
     "stats",
     [
@@ -108,9 +111,9 @@ def _mock_run_service(monkeypatch, run, *, cancelled=None):
     ids=["decoded-stats", "json-stats"],
 )
 def test_locator_run_access_is_accepted_when_current_scope_still_covers_run(
-    monkeypatch, operation, stats
+    monkeypatch, operation, run_tenant, stats
 ):
-    run = _run(stats=stats)
+    run = _run(tenant_id=run_tenant, stats=stats)
     cancelled = {**run, "status": "cancelled"}
     calls = _mock_run_service(monkeypatch, run, cancelled=cancelled)
     authorization_checks = []
@@ -138,14 +141,13 @@ def test_locator_run_access_is_accepted_when_current_scope_still_covers_run(
 @pytest.mark.parametrize(
     "run,current_devices",
     [
-        (_run(tenant_id="tenant-b"), ["device-a"]),
         (_run(site_id=None), ["device-a"]),
         (_run(), []),
         (_run(), ["device-b"]),
     ],
-    ids=["tenant-mismatch", "malformed-site", "site-scope-empty", "device-revoked"],
+    ids=["malformed-site", "site-scope-empty", "device-revoked"],
 )
-def test_locator_run_denies_tenant_or_revoked_device_scope_with_404(
+def test_locator_run_denies_malformed_or_revoked_device_scope_with_404(
     monkeypatch, operation, run, current_devices
 ):
     calls = _mock_run_service(monkeypatch, run)

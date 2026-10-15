@@ -35,7 +35,7 @@ def _insert_open_alert(conn, *, alert_id: str, device_id: str, title: str) -> No
     )
 
 
-def test_monitoring_overview_queries_execute_and_remain_tenant_scoped(isolated_db, monkeypatch):
+def test_monitoring_overview_queries_ignore_legacy_tenants_and_cache_by_object_scope(isolated_db, monkeypatch):
     tenant_a = f"overview-a-{uuid.uuid4().hex[:8]}"
     tenant_b = f"overview-b-{uuid.uuid4().hex[:8]}"
     administrator_named_tenant = "administrator"
@@ -75,14 +75,14 @@ def test_monitoring_overview_queries_execute_and_remain_tenant_scoped(isolated_d
     overview_b = _request("GET", "/api/monitoring/overview?force_refresh=true", token="overview-tenant-b")
     assert overview_a.status_code == 200, overview_a.text
     assert overview_b.status_code == 200, overview_b.text
-    assert overview_a.json()["total_devices"] == 1
-    assert overview_a.json()["open_alerts"] == 1
-    assert [item["id"] for item in overview_a.json()["recent_open_alerts"]] == [alerts[tenant_a]]
-    assert overview_b.json()["total_devices"] == 1
-    assert [item["id"] for item in overview_b.json()["recent_open_alerts"]] == [alerts[tenant_b]]
+    assert overview_a.json()["total_devices"] == len(tenants)
+    assert overview_a.json()["open_alerts"] == len(tenants)
+    assert {item["id"] for item in overview_a.json()["recent_open_alerts"]} == set(alerts.values())
+    assert overview_b.json()["total_devices"] == len(tenants)
+    assert {item["id"] for item in overview_b.json()["recent_open_alerts"]} == set(alerts.values())
 
-    # A tenant named "administrator" must have a distinct cache entry from
-    # the administrator's unscoped overview.
+    # In single-organization mode, historical tenant labels do not partition
+    # either the query result or its scope-sensitive cache key.
     administrator_overview = _request(
         "GET", "/api/monitoring/overview?force_refresh=true", token="overview-admin"
     )
@@ -94,7 +94,7 @@ def test_monitoring_overview_queries_execute_and_remain_tenant_scoped(isolated_d
     assert special_tenant_overview.status_code == 200, special_tenant_overview.text
     assert cached_administrator_overview.status_code == 200, cached_administrator_overview.text
     assert administrator_overview.json()["total_devices"] == len(tenants)
-    assert special_tenant_overview.json()["total_devices"] == 1
+    assert special_tenant_overview.json()["total_devices"] == len(tenants)
     assert cached_administrator_overview.json()["total_devices"] == len(tenants)
 
     search_a = _request(
@@ -104,11 +104,15 @@ def test_monitoring_overview_queries_execute_and_remain_tenant_scoped(isolated_d
     assert [item["id"] for item in search_a.json()["items"]] == [devices[tenant_a]]
 
 
-def test_monitoring_overview_returns_zeroes_for_an_empty_tenant(isolated_db, monkeypatch):
+def test_monitoring_overview_ignores_empty_legacy_tenant_label(isolated_db, monkeypatch):
     tenant_id = f"overview-empty-{uuid.uuid4().hex[:8]}"
     conn = get_db_connection()
     try:
         conn.execute("INSERT INTO tenants (id, name) VALUES (?, ?)", (tenant_id, tenant_id))
+        conn.execute(
+            "INSERT INTO devices (id, hostname, ip_address, platform, status, tenant_id) VALUES (?, ?, ?, ?, ?, ?)",
+            ("legacy-other-device", "other-tenant-edge", "192.0.2.201", "h3c_comware", "online", "legacy-other"),
+        )
         conn.commit()
     finally:
         conn.close()
@@ -123,7 +127,7 @@ def test_monitoring_overview_returns_zeroes_for_an_empty_tenant(isolated_db, mon
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["total_devices"] == 0
-    assert payload["online_devices"] == 0
+    assert payload["total_devices"] == 1
+    assert payload["online_devices"] == 1
     assert payload["open_alerts"] == 0
     assert payload["open_alert_severity_counts"] == {"critical": 0, "major": 0, "warning": 0}

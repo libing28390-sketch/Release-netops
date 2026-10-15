@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlsplit
 
+from core.tenant_policy import tenant_id_for_write, tenant_scope_for_user, tenant_scope_is_enabled
 from services.official_url_import_service import OfficialUrlImportError, import_single_official_url
 from services.knowledge_v1_source_service import SourceRegistryError, validate_official_url_input
 
@@ -76,7 +77,7 @@ rate_limiter = _TenantHostRateLimiter()
 
 
 def _tenant(user: Mapping[str, Any]) -> str:
-    return str(user.get("tenant_id") or "tenant-default").strip() or "tenant-default"
+    return tenant_id_for_write(user=user)
 
 
 def _bounded_text(value: Any, *, maximum: int = 256) -> str:
@@ -275,12 +276,19 @@ def list_site_anomaly_alerts(
         raise OfficialSeedBatchError("SITE_ALERT_STATUS_INVALID", "status must be open or resolved", status_code=400)
     from database import get_db_connection
 
+    tenant_id = tenant_scope_for_user(user)
+    if tenant_id is None and tenant_scope_is_enabled():
+        tenant_id = "tenant-default"
+    clauses = ["record_type = 'site_alert'"]
+    params: list[Any] = []
+    if tenant_id is not None:
+        clauses.append("tenant_id = ?")
+        params.append(tenant_id)
     with get_db_connection() as conn:
         rows = conn.execute(
-            "SELECT id, metadata_json, created_at FROM ai_document_revision "
-            "WHERE tenant_id = ? AND record_type = 'site_alert' "
-            "ORDER BY created_at DESC, id DESC LIMIT 1000",
-            (_tenant(user),),
+            "SELECT id, metadata_json, created_at FROM ai_document_revision WHERE " + " AND ".join(clauses) +
+            " ORDER BY created_at DESC, id DESC LIMIT 1000",
+            tuple(params),
         ).fetchall()
     latest: dict[tuple[str, str], dict[str, Any]] = {}
     for row in rows:

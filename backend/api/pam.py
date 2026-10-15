@@ -30,7 +30,8 @@ from typing import Optional
 from fastapi import APIRouter, Body, HTTPException, WebSocket, WebSocketDisconnect, Query, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
-from core.rbac import require_permission
+from core.rbac import ROLE_HIERARCHY, enforce_resource_scope, require_permission
+from core.tenant_policy import TENANT_ISOLATION_ENABLED, tenant_id_for_write, tenant_scope_for_user
 
 from database import get_db_connection
 from core.config import settings
@@ -125,6 +126,37 @@ def _enforce_requester_scope(requester_username: str, user: dict) -> None:
                 'message': 'Only administrators can query another requester',
             },
         )
+
+
+def _pam_session_tenant_allowed(user: dict, row_tenant_id: object) -> bool:
+    """Enforce the legacy tenant boundary only while isolation is enabled."""
+    if not TENANT_ISOLATION_ENABLED:
+        return True
+    user_tenant = tenant_scope_for_user(user) or 'tenant-default'
+    row_tenant = str(row_tenant_id or 'tenant-default').strip() or 'tenant-default'
+    return user_tenant == 'tenant-default' or row_tenant in {user_tenant, 'tenant-default'}
+
+
+def _authorize_pam_session_create(user: dict, asset: dict, device: dict | None = None) -> None:
+    """Require an operator session role plus PAM and target asset scope."""
+    role = str(user.get('role') or '')
+    if ROLE_HIERARCHY.get(role, 0) < ROLE_HIERARCHY['Operator']:
+        raise HTTPException(status_code=403, detail='Insufficient permissions')
+    device = device or {}
+    site_id = str(
+        asset.get('site_id') or device.get('site_id') or device.get('site') or ''
+    ).strip() or None
+    device_group_id = str(device.get('device_group_id') or '').strip() or None
+    device_tenant = str(device.get('tenant_id') or '').strip() or None
+    asset_tenant = str(asset.get('site_tenant_id') or asset.get('tenant_id') or '').strip() or None
+    enforce_resource_scope(
+        user, 'pam', 'view', tenant_id=device_tenant or asset_tenant,
+        site_id=site_id, device_group_id=device_group_id,
+    )
+    enforce_resource_scope(
+        user, 'asset', 'view', tenant_id=asset_tenant or device_tenant,
+        site_id=site_id, device_group_id=device_group_id,
+    )
 
 
 def _pam_session_columns(conn) -> set[str]:
@@ -448,12 +480,15 @@ def create_session(payload: SessionCreateIn, request: Request):
     conn = get_db_connection()
     try:
         # 1. Resolve asset and linked device
-        asset = conn.execute(
-            'SELECT * FROM physical_assets WHERE id = ?', (payload.asset_id,)
+        asset_row = conn.execute(
+            '''SELECT pa.*, s.tenant_id AS site_tenant_id
+                 FROM physical_assets pa
+                 LEFT JOIN sites s ON s.id = pa.site_id
+                WHERE pa.id = ?''', (payload.asset_id,)
         ).fetchone()
-        if not asset:
+        if not asset_row:
             raise HTTPException(status_code=404, detail='Asset not found')
-        asset = dict(asset)
+        asset = dict(asset_row)
 
         device = conn.execute(
             'SELECT * FROM devices WHERE asset_id = ?', (payload.asset_id,)
@@ -475,10 +510,11 @@ def create_session(payload: SessionCreateIn, request: Request):
         if not auth_session or not auth_session.get('username'):
             raise HTTPException(status_code=401, detail='Not authenticated')
         requester = auth_session['username']
-        tenant_id = str(auth_session.get('tenant_id') or 'tenant-default')
-        device_tenant = str(device.get('tenant_id') or 'tenant-default')
-        if tenant_id != 'tenant-default' and device_tenant not in {tenant_id, 'tenant-default'}:
+        if TENANT_ISOLATION_ENABLED and not _pam_session_tenant_allowed(
+            auth_session, device.get('tenant_id') or asset.get('site_tenant_id') or asset.get('tenant_id'),
+        ):
             raise HTTPException(status_code=404, detail='Asset not found')
+        _authorize_pam_session_create(auth_session, asset, device)
 
         # 3. Access control: admin requires MFA
         level = (payload.access_level or 'normal').strip().lower()
@@ -524,7 +560,7 @@ def create_session(payload: SessionCreateIn, request: Request):
                 created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
         ''', (
-            session_id, tenant_id, payload.asset_id, device['id'], requester,
+            session_id, tenant_id_for_write(user=auth_session), payload.asset_id, device['id'], requester,
             level, creds['username'], payload.connect_method,
             ip, target_port,
             asset.get('hostname') or device.get('hostname') or ip,
@@ -605,8 +641,10 @@ def list_sessions(
         session_columns = _pam_session_columns(conn)
         conditions = []
         params = []
-        tenant_id = str(user.get('tenant_id') or 'tenant-default') if isinstance(user, dict) else None
-        if tenant_id and 'tenant_id' in session_columns:
+        tenant_id = tenant_scope_for_user(user) if isinstance(user, dict) else None
+        if TENANT_ISOLATION_ENABLED and not tenant_id and isinstance(user, dict):
+            tenant_id = 'tenant-default'
+        if TENANT_ISOLATION_ENABLED and tenant_id and 'tenant_id' in session_columns:
             conditions.append("(tenant_id = ? OR tenant_id = 'tenant-default' OR tenant_id IS NULL)")
             params.append(tenant_id)
         if status:
@@ -829,9 +867,7 @@ async def kill_session(session_id: str, user=require_permission('pam', 'interven
         if not row:
             raise HTTPException(status_code=404, detail='Session not found')
         if isinstance(user, dict):
-            row_tenant = str((dict(row).get('tenant_id') or 'tenant-default'))
-            user_tenant = str(user.get('tenant_id') or 'tenant-default')
-            if user_tenant != 'tenant-default' and row_tenant not in {user_tenant, 'tenant-default'}:
+            if not _pam_session_tenant_allowed(user, dict(row).get('tenant_id')):
                 raise HTTPException(status_code=404, detail='Session not found')
         if row['status'] in ('closed', 'error'):
             # Still pop from memory map in case of leftover WS
@@ -884,9 +920,7 @@ def get_session_recording(session_id: str, user=require_permission('pam', 'view'
         if isinstance(user, dict):
             session_row = conn.execute('SELECT tenant_id FROM pam_sessions WHERE id = ?', (session_id,)).fetchone()
             if session_row:
-                row_tenant = str(session_row['tenant_id'] or 'tenant-default')
-                user_tenant = str(user.get('tenant_id') or 'tenant-default')
-                if user_tenant != 'tenant-default' and row_tenant not in {user_tenant, 'tenant-default'}:
+                if not _pam_session_tenant_allowed(user, session_row['tenant_id']):
                     raise HTTPException(status_code=404, detail='Recording not found')
         row_dict = dict(row)
         if row_dict.get('session_kind') == 'remote_desktop' and isinstance(user, dict):
@@ -1545,9 +1579,7 @@ def get_session_commands(session_id: str, user=require_permission('pam', 'view')
             return {"commands": [], "risk_level": 0, "risk_summary": ""}
 
         if isinstance(user, dict):
-            row_tenant = str(row['tenant_id'] or 'tenant-default')
-            user_tenant = str(user.get('tenant_id') or 'tenant-default')
-            if user_tenant != 'tenant-default' and row_tenant not in {user_tenant, 'tenant-default'}:
+            if not _pam_session_tenant_allowed(user, row['tenant_id']):
                 raise HTTPException(status_code=404, detail='Session not found')
 
         # Prefer the structured, redacted command audit projection. The
@@ -1690,9 +1722,7 @@ def get_session_command_events(
             session_row = conn.execute('SELECT tenant_id FROM pam_sessions WHERE id = ?', (session_id,)).fetchone()
             if not session_row:
                 raise HTTPException(status_code=404, detail='Session not found')
-            row_tenant = str(session_row['tenant_id'] or 'tenant-default')
-            user_tenant = str(user.get('tenant_id') or 'tenant-default')
-            if user_tenant != 'tenant-default' and row_tenant not in {user_tenant, 'tenant-default'}:
+            if not _pam_session_tenant_allowed(user, session_row['tenant_id']):
                 raise HTTPException(status_code=404, detail='Session not found')
         rows = conn.execute(
             """

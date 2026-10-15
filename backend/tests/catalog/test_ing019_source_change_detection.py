@@ -41,10 +41,10 @@ def _public(*_args):
     return ["72.163.4.161"]
 
 
-def _import_official(user, body: bytes, *, key: str):
+def _import_official(user, body: bytes, *, key: str, url: str = OFFICIAL_URL):
     return import_single_official_url(
         user,
-        _payload(idempotency_key=key),
+        _payload(url=url, idempotency_key=key),
         transport=_transport(
             lambda request: httpx.Response(
                 200,
@@ -251,14 +251,20 @@ def test_ing019_safe_replacement_quarantines_but_canonical_equivalent_redirect_d
     assert replacement_observation["replacement_url"] == replacement_url
 
     equivalent_user = make_user("ing019-equivalent", role="Administrator", tenant_id="tenant-equivalent")
-    equivalent = _import_official(equivalent_user, b"equivalent body", key="ing019-equivalent")
+    equivalent_url = OFFICIAL_URL + "/"
+    equivalent = _import_official(
+        equivalent_user,
+        b"equivalent body",
+        key="ing019-equivalent",
+        url=equivalent_url,
+    )
     equivalent_source_id = equivalent["source"]["id"]
-    equivalent_redirect = OFFICIAL_URL.replace("https://www.cisco.com", "https://www.cisco.com:443")
+    equivalent_redirect = equivalent_url.replace("https://www.cisco.com", "https://www.cisco.com:443")
     equivalent_calls = []
 
     def equivalent_handler(request: httpx.Request) -> httpx.Response:
         equivalent_calls.append(str(request.url))
-        if len(equivalent_calls) == 1:
+        if len(equivalent_calls) == 1 and str(request.url) == equivalent_url:
             return httpx.Response(302, headers={"location": equivalent_redirect}, request=request)
         return httpx.Response(200, headers={"content-type": "text/plain"}, content=b"equivalent body", request=request)
 
@@ -299,7 +305,7 @@ def test_ing019_non_official_source_is_not_acted_on(isolated_db, make_user):
     assert get_source(source["id"], user)["status"] == "active"
 
 
-def test_ing019_detection_is_tenant_isolated_idempotent_and_exposes_redacted_signal(isolated_db, make_user):
+def test_ing019_detection_is_source_id_scoped_idempotent_and_exposes_redacted_signal(isolated_db, make_user):
     from api.knowledge_sources import api_list_source_refresh_observations
     from services.official_source_change_service import apply_official_source_detection
     from services.source_registry_service import get_source, record_source_refresh_observation
@@ -307,7 +313,13 @@ def test_ing019_detection_is_tenant_isolated_idempotent_and_exposes_redacted_sig
     tenant_a = make_user("ing019-tenant-a", role="Administrator", tenant_id="tenant-a")
     tenant_b = make_user("ing019-tenant-b", role="Administrator", tenant_id="tenant-b")
     source_a = _import_official(tenant_a, b"tenant a", key="ing019-tenant-a")
-    source_b = _import_official(tenant_b, b"tenant b", key="ing019-tenant-b")
+    source_b = _import_official(
+        tenant_b,
+        b"tenant b",
+        key="ing019-tenant-b",
+        url="https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9300/software/release/17-18/command_reference/b_1718_9300_cr/system_management_commands.html",
+    )
+    assert source_a["source"]["id"] != source_b["source"]["id"]
     _publish(source_a, tenant_a, request_id="ing019-tenant-a-publish")
     _publish(source_b, tenant_b, request_id="ing019-tenant-b-publish")
 

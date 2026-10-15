@@ -1208,72 +1208,9 @@ def backfill_field_authority(conn) -> dict:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def list_tenants(conn) -> list[dict]:
-    rows = conn.execute("SELECT * FROM tenants ORDER BY name").fetchall()
-    return [_row_to_dict(r) for r in rows]
-
-
-def get_tenant(conn, tenant_id: str) -> dict:
-    row = conn.execute("SELECT * FROM tenants WHERE id = ?", (tenant_id,)).fetchone()
-    if not row:
-        raise ValueError(f"Tenant not found: {tenant_id}")
-    return _row_to_dict(row)
-
-
-def create_tenant(conn, *, name: str, description: str = '') -> dict:
-    exists = conn.execute("SELECT 1 FROM tenants WHERE name = ?", (name,)).fetchone()
-    if exists:
-        raise ValueError(f"Tenant name already exists: {name}")
-    tenant_id = _new_id('tenant')
-    conn.execute(
-        "INSERT INTO tenants (id, name, description) VALUES (?, ?, ?)",
-        (tenant_id, name, description),
-    )
-    conn.commit()
-    logger.info(f"[CmdbService] Created tenant '{name}'")
-    return get_tenant(conn, tenant_id)
-
-
-def update_tenant(conn, tenant_id: str, **fields) -> dict:
-    get_tenant(conn, tenant_id)
-    if 'name' in fields and fields['name'] is not None:
-        dup = conn.execute(
-            "SELECT 1 FROM tenants WHERE name = ? AND id != ?", (fields['name'], tenant_id)
-        ).fetchone()
-        if dup:
-            raise ValueError(f"Tenant name already exists: {fields['name']}")
-    updates, params = [], []
-    for key in ('name', 'description'):
-        if key in fields and fields[key] is not None:
-            updates.append(f"{key} = ?")
-            params.append(fields[key])
-    if not updates:
-        return get_tenant(conn, tenant_id)
-    params.append(tenant_id)
-    conn.execute(f"UPDATE tenants SET {', '.join(updates)} WHERE id = ?", params)
-    conn.commit()
-    return get_tenant(conn, tenant_id)
-
-
-def delete_tenant(conn, tenant_id: str) -> None:
-    if tenant_id == _DEFAULT_TENANT:
-        raise ValueError("Cannot delete the default tenant.")
-    get_tenant(conn, tenant_id)
-    # Guard against orphaning critical assets
-    for table in ('devices', 'sites', 'vrfs', 'vlans'):
-        try:
-            row = conn.execute(
-                f"SELECT COUNT(*) AS cnt FROM {table} WHERE tenant_id = ?", (tenant_id,)
-            ).fetchone()
-        except Exception:
-            continue
-        cnt = row['cnt'] if hasattr(row, 'keys') and 'cnt' in row.keys() else row[0]
-        if cnt and cnt > 0:
-            raise ValueError(
-                f"Cannot delete tenant: {cnt} record(s) in '{table}' still reference it."
-            )
-    conn.execute("DELETE FROM tenants WHERE id = ?", (tenant_id,))
-    conn.commit()
-    logger.info(f"[CmdbService] Deleted tenant {tenant_id}")
+    """Return the sole organization record for legacy lookup consumers."""
+    row = conn.execute("SELECT * FROM tenants WHERE id = ?", (_DEFAULT_TENANT,)).fetchone()
+    return [_row_to_dict(row)] if row else []
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

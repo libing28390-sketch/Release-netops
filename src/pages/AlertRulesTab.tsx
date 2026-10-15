@@ -1776,7 +1776,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                         </div>
                       </label>
                       <p className="text-[10px] leading-4 text-slate-500">
-                        {language === 'zh' ? '回车后查询当前租户 CMDB；在结果窗口勾选并确认后，设备才会加入规则。' : 'Searches this tenant’s CMDB. Devices are added to the rule after you select and confirm them in the results window.'}
+                        {language === 'zh' ? '回车后查询 CMDB；在结果窗口勾选并确认后，设备才会加入规则。' : 'Searches the CMDB. Devices are added to the rule after you select and confirm them in the results window.'}
                       </p>
 
                       {selectedScopeDevices.length > 0 && (
@@ -1800,7 +1800,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
 
                       {missingScopeDeviceIds.length > 0 && (
                         <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] text-amber-800">
-                          <span>{language === 'zh' ? `${missingScopeDeviceIds.length} 台已选设备已不在当前租户 CMDB 中。` : `${missingScopeDeviceIds.length} selected device(s) are no longer in this tenant’s CMDB.`}</span>
+                          <span>{language === 'zh' ? `${missingScopeDeviceIds.length} 台已选设备已不在 CMDB 中。` : `${missingScopeDeviceIds.length} selected device(s) are no longer in the CMDB.`}</span>
                           <button type="button" onClick={removeMissingScopeDevices} className="font-semibold underline">
                             {language === 'zh' ? '移除失效设备' : 'Remove unavailable devices'}
                           </button>
@@ -1815,7 +1815,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                       )}
                       {scopeDeviceSearchStatus === 'forbidden' && (
                         <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] text-rose-700">
-                          {language === 'zh' ? '当前账号无权读取此租户的 CMDB 设备。' : 'You cannot read CMDB devices for this tenant.'}
+                          {language === 'zh' ? '当前账号无权读取这些 CMDB 设备。' : 'You cannot read these CMDB devices.'}
                         </p>
                       )}
                       {scopeDeviceSearchStatus === 'error' && (
@@ -1941,12 +1941,12 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                     <p className="mt-2 text-[11px] leading-5 text-slate-600">
                       {draftIsHostMetric
                         ? (language === 'zh' ? '宿主机指标由平台资源监控，范围固定为全局。' : 'Host metrics use platform resource monitoring and always match globally.')
-                        : (language === 'zh' ? '匹配当前租户中所有支持该指标的设备。' : 'Matches all devices in this tenant that support the metric.')}
+                        : (language === 'zh' ? '匹配所有支持该指标的设备。' : 'Matches all devices that support the metric.')}
                     </p>
                   ) : (
                     <p className="mt-2 text-[11px] leading-5 text-slate-600">{scopeTargetDescription(ruleDraft.scope_type, language)}</p>
                   )}
-                  {!draftIsHostMetric && scopeCatalogLoading && <p className="mt-1 text-[10px] text-slate-400">{language === 'zh' ? '正在读取当前租户资产选项…' : 'Loading this tenant’s asset options…'}</p>}
+                  {!draftIsHostMetric && scopeCatalogLoading && <p className="mt-1 text-[10px] text-slate-400">{language === 'zh' ? '正在读取资产选项…' : 'Loading asset options…'}</p>}
                   {!draftIsHostMetric && scopeCatalogError && (
                     <p className="mt-1 text-[10px] text-amber-700">
                       {scopeCatalogError === 'forbidden'
@@ -2039,7 +2039,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                     <div className="flex items-center justify-between gap-3">
                       <div>
                         <p className="text-xs font-semibold text-slate-800">{language === 'zh' ? '通知组' : 'Notification groups'}</p>
-                        <p className="mt-1 text-[10px] leading-4 text-slate-500">{language === 'zh' ? '仅显示当前租户中有活动成员的组；组选择会随规则保存。' : 'Only groups with active members in this tenant are shown; selections are saved with the rule.'}</p>
+                        <p className="mt-1 text-[10px] leading-4 text-slate-500">{language === 'zh' ? '仅显示有活动成员的组；组选择会随规则保存。' : 'Only groups with active members are shown; selections are saved with the rule.'}</p>
                       </div>
                       {notificationGroupsLoading && <RefreshCw size={14} className="animate-spin text-cyan-600" />}
                     </div>
@@ -2111,7 +2111,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                               <option value="">{language === 'zh' ? '选择审批人...' : 'Select approver...'}</option>
                               {approvers.map((u) => (
                                 <option key={u.id} value={u.username}>
-                                  {u.username} ({u.role} · {u.tenant_id || (language === 'zh' ? '未分配租户' : 'Unassigned tenant')})
+                                  {u.username}
                                 </option>
                               ))}
                             </select>
@@ -2445,7 +2445,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                         >
                           <option value="">{language === 'zh' ? '选择审批人...' : 'Select approver...'}</option>
                           {approvers.map(u => (
-                            <option key={u.id} value={u.username}>{u.username} ({u.role} · {u.tenant_id || (language === 'zh' ? '未分配租户' : 'Unassigned tenant')})</option>
+                            <option key={u.id} value={u.username}>{u.username}</option>
                           ))}
                         </select>
                         <button

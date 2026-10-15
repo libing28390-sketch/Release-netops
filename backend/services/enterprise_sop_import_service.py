@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from core.rbac import authorize_resource
+from core.tenant_policy import tenant_id_for_write
 from services.audit_service import log_audit_event
 from services.ingestion_pipeline_service import (
     IngestionPipelineError,
@@ -60,7 +61,7 @@ def _actor(user: dict[str, Any]) -> str:
 
 
 def _tenant(user: dict[str, Any]) -> str:
-    return _text(user.get("tenant_id") or "tenant-default", field="tenant_id", maximum=128, required=True)
+    return _text(tenant_id_for_write(user=user), field="tenant_id", maximum=128, required=True)
 
 
 def _audit(event_type: str, *, user: dict[str, Any], source: dict[str, Any], details: dict[str, Any], request_id: str = "") -> None:

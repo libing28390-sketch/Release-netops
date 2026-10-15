@@ -61,12 +61,12 @@ def _connection():
     return connection
 
 
-def test_semantic_filters_are_server_side_and_tenant_scoped(monkeypatch):
+def test_semantic_filters_are_server_side_and_include_historical_tenants(monkeypatch):
     connection = _connection()
     monkeypatch.setattr(knowledge_service_module, "get_db_connection", lambda: connection)
 
     result = knowledge_service_module.KnowledgeService().list_documents(
-        tenant_id="tenant-a",
+        tenant_id=None,
         vendor="Huawei",
         product_family="CloudEngine",
         product_model="CE6885",
@@ -76,9 +76,24 @@ def test_semantic_filters_are_server_side_and_tenant_scoped(monkeypatch):
         document_category="01_product",
     )
 
-    assert result["total"] == 1
-    assert result["items"][0]["id"] == "doc-huawei"
+    assert result["total"] == 2
+    assert {item["id"] for item in result["items"]} == {"doc-huawei", "doc-other-tenant"}
     assert "kb_import" not in json.dumps(result, ensure_ascii=False)
+
+
+def test_tenant_none_keeps_global_document_pagination_and_sort_order(monkeypatch):
+    connection = _connection()
+    monkeypatch.setattr(knowledge_service_module, "get_db_connection", lambda: connection)
+    service = knowledge_service_module.KnowledgeService()
+
+    pages = [
+        service.list_documents(tenant_id=None, page=page, page_size=1, sort_by="created_at", sort_order="desc")
+        for page in (1, 2, 3)
+    ]
+
+    assert [page["items"][0]["id"] for page in pages] == ["doc-huawei", "doc-cisco", "doc-other-tenant"]
+    assert [page["total"] for page in pages] == [3, 3, 3]
+    assert [page["total_pages"] for page in pages] == [3, 3, 3]
 
 
 def test_directory_category_alias_is_normalized_to_semantic_category(monkeypatch):
@@ -86,11 +101,11 @@ def test_directory_category_alias_is_normalized_to_semantic_category(monkeypatch
     monkeypatch.setattr(knowledge_service_module, "get_db_connection", lambda: connection)
 
     result = knowledge_service_module.KnowledgeService().list_documents(
-        tenant_id="tenant-a",
+        tenant_id=None,
         document_category="01_product",
     )
 
-    assert result["total"] == 1
+    assert result["total"] == 2
     assert result["items"][0]["document_category"] == "01_product"
 
 
@@ -134,40 +149,40 @@ def test_directory_filter_uses_semantic_projection_for_legacy_rows(monkeypatch):
     monkeypatch.setattr(knowledge_service_module, "get_db_connection", lambda: connection)
 
     result = knowledge_service_module.KnowledgeService().list_documents(
-        tenant_id="tenant-a",
+        tenant_id=None,
         directory_path="01_product/h3c",
     )
 
     assert {item["id"] for item in result["items"]} == {"doc-h3c-legacy"}
     facets = knowledge_service_module.KnowledgeService().list_document_facets(
-        tenant_id="tenant-a",
+        tenant_id=None,
         directory_path="01_product/h3c",
     )
     assert facets["vendors"] == [{"value": "H3C", "count": 1}]
 
 
-def test_product_hierarchy_facets_are_bounded_and_tenant_scoped(monkeypatch):
+def test_product_hierarchy_facets_are_bounded_and_include_historical_tenants(monkeypatch):
     connection = _connection()
     monkeypatch.setattr(knowledge_service_module, "get_db_connection", lambda: connection)
 
     facets = knowledge_service_module.KnowledgeService().list_document_facets(
-        tenant_id="tenant-a",
+        tenant_id=None,
         directory_path="01_product/huawei",
     )
 
-    assert facets["vendors"] == [{"value": "Huawei", "count": 1}]
-    assert facets["families"] == [{"value": "CloudEngine", "count": 1}]
-    assert facets["series"] == [{"value": "CE6800", "count": 1}]
+    assert facets["vendors"] == [{"value": "Huawei", "count": 2}]
+    assert facets["families"] == [{"value": "CloudEngine", "count": 2}]
+    assert facets["series"] == [{"value": "CE6800", "count": 2}]
     assert facets["unknown_count"] == 0
     assert "kb_import" not in json.dumps(facets, ensure_ascii=False)
 
     vendor_facets = knowledge_service_module.KnowledgeService().list_document_facets(
-        tenant_id="tenant-a",
+        tenant_id=None,
         vendor="Huawei",
     )
-    assert vendor_facets["vendors"] == [{"value": "Huawei", "count": 1}]
-    assert vendor_facets["families"] == [{"value": "CloudEngine", "count": 1}]
-    assert vendor_facets["series"] == [{"value": "CE6800", "count": 1}]
+    assert vendor_facets["vendors"] == [{"value": "Huawei", "count": 2}]
+    assert vendor_facets["families"] == [{"value": "CloudEngine", "count": 2}]
+    assert vendor_facets["series"] == [{"value": "CE6800", "count": 2}]
 
 
 def test_product_hierarchy_facets_group_incomplete_metadata_once(monkeypatch):
@@ -190,7 +205,7 @@ def test_product_hierarchy_facets_group_incomplete_metadata_once(monkeypatch):
     )
     monkeypatch.setattr(knowledge_service_module, "get_db_connection", lambda: connection)
 
-    facets = knowledge_service_module.KnowledgeService().list_document_facets(tenant_id="tenant-a")
+    facets = knowledge_service_module.KnowledgeService().list_document_facets(tenant_id=None)
 
     assert facets["unknown_count"] == 1
     assert all(item["value"].upper() != "UNKNOWN" for key in ("vendors", "families", "series") for item in facets[key])
@@ -201,10 +216,10 @@ def test_official_and_enterprise_scopes_are_server_side(monkeypatch):
     monkeypatch.setattr(knowledge_service_module, "get_db_connection", lambda: connection)
     service = knowledge_service_module.KnowledgeService()
 
-    official = service.list_documents(tenant_id="tenant-a", knowledge_scope="official")
-    enterprise = service.list_documents(tenant_id="tenant-a", knowledge_scope="enterprise")
+    official = service.list_documents(tenant_id=None, knowledge_scope="official")
+    enterprise = service.list_documents(tenant_id=None, knowledge_scope="enterprise")
 
-    assert [item["id"] for item in official["items"]] == ["doc-huawei"]
+    assert [item["id"] for item in official["items"]] == ["doc-huawei", "doc-other-tenant"]
     assert [item["id"] for item in enterprise["items"]] == ["doc-cisco"]
 
 
@@ -227,15 +242,15 @@ def test_official_scope_includes_governed_config_templates(monkeypatch):
         ),
     )
     monkeypatch.setattr(knowledge_service_module, "get_db_connection", lambda: connection)
-    result = knowledge_service_module.KnowledgeService().list_documents(tenant_id="tenant-a", knowledge_scope="official")
-    assert {item["id"] for item in result["items"]} == {"doc-huawei", "doc-template"}
+    result = knowledge_service_module.KnowledgeService().list_documents(tenant_id=None, knowledge_scope="official")
+    assert {item["id"] for item in result["items"]} == {"doc-huawei", "doc-other-tenant", "doc-template"}
 
 
 def test_detail_contract_loads_body_source_and_explicit_version_history(monkeypatch):
     connection = _connection()
     monkeypatch.setattr(knowledge_service_module, "get_db_connection", lambda: connection)
 
-    detail = knowledge_service_module.KnowledgeService().get_document_detail("doc-huawei", tenant_id="tenant-a")
+    detail = knowledge_service_module.KnowledgeService().get_document_detail("doc-huawei", tenant_id=None)
 
     assert detail is not None
     assert detail["raw_source"]["source"] == "upload"

@@ -71,6 +71,55 @@ def test_mac_troubleshooting_is_local_only_and_normalizes_mac(monkeypatch):
     assert result["analysis"]["located_port"] == "Gi1/0/1"
 
 
+def test_sensitive_ip_and_mac_lookup_include_historical_tenant_rows(isolated_db):
+    from database import get_db_connection
+
+    connection = get_db_connection()
+    try:
+        connection.execute(
+            "INSERT INTO devices (id, hostname, ip_address, platform, vendor, status, tenant_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("sensitive-history-device", "history-edge", "203.0.113.22", "huawei_vrp", "Huawei", "online", "tenant-history-a"),
+        )
+        connection.execute(
+            "INSERT INTO arp_table (id, device_id, ip_address, mac_address, interface_name, vlan_id, last_updated) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("sensitive-history-arp", "sensitive-history-device", "203.0.113.22", "00:11:22:33:44:55", "GE1/0/1", 20, "2026-10-15T00:00:00Z"),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    ip_facts = IPTroubleshootingService().trace_ip_facts("203.0.113.22", tenant_id="tenant-history-b")
+    mac_facts = MACTroubleshootingService().trace_mac_facts("00:11:22:33:44:55", tenant_id="tenant-history-b")
+
+    assert ip_facts["device"]["id"] == "sensitive-history-device"
+    assert ip_facts["arp_record"]["device_id"] == "sensitive-history-device"
+    assert mac_facts["mac_entry"]["device_id"] == "sensitive-history-device"
+
+
+def test_read_only_ai_device_tool_ignores_historical_tenant_label(isolated_db):
+    from database import get_db_connection
+    from ai.tools.read_only_tools import tool_get_device_status, tool_search_ip
+
+    connection = get_db_connection()
+    try:
+        connection.execute(
+            "INSERT INTO devices (id, hostname, ip_address, platform, vendor, status, tenant_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("readonly-history-device", "history-core", "203.0.113.33", "huawei_vrp", "Huawei", "online", "tenant-history-a"),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    ip_result = tool_search_ip("203.0.113.33", tenant_id="tenant-history-b")
+    status_result = tool_get_device_status("readonly-history-device", tenant_id="tenant-history-b")
+
+    assert ip_result["device"]["hostname"] == "history-core"
+    assert status_result["device"]["id"] == "readonly-history-device"
+
+
 def test_sync_ip_location_short_circuits_provider_for_confidential_identifier(monkeypatch):
     async def fake_parse_intent(message, user_id=None):
         return {

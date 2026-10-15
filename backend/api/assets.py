@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field, field_validator
 from database import get_db_connection
 from core.crypto import encrypt_credential, decrypt_credential
 from core.rbac import enforce_resource_scope, require_role
+from core.tenant_policy import TENANT_ISOLATION_ENABLED, tenant_id_for_write
 from core.context import request_id_var
 from drivers.ssh_compat import (
     build_paramiko_compatibility_kwargs,
@@ -294,26 +295,8 @@ def _utc_now() -> str:
 
 
 def _tenant_id_from_authenticated_user(user: dict) -> str:
-    """Return the non-empty tenant that owns a linked device row."""
-    # Direct service-level callers do not pass through FastAPI dependency
-    # resolution. Keep those legacy calls on the built-in tenant; HTTP routes
-    # always receive a session dictionary from require_role below.
-    if not isinstance(user, dict):
-        return 'tenant-default'
-    tenant_id = str(user.get('tenant_id') or '').strip()
-    if not tenant_id:
-        # A few legacy service-level callers invoke the endpoint function
-        # directly, so FastAPI's Depends placeholder (or a role-only test
-        # stub) has no session identity.  Preserve the built-in tenant for
-        # that compatibility path; a real authenticated session always has a
-        # user id and is rejected closed when tenant assignment is missing.
-        if not str(user.get('user_id') or user.get('id') or '').strip():
-            return 'tenant-default'
-        raise HTTPException(
-            status_code=403,
-            detail='Authenticated user is not assigned to a tenant',
-        )
-    return tenant_id
+    """Return the persisted organization label for a newly linked device."""
+    return tenant_id_for_write(user=user)
 
 
 def _management_port_for_storage(body) -> int:
@@ -409,22 +392,28 @@ def _asset_placement_map(
 
     if isinstance(user, dict):
         asset_scope = rack_scope_service.allowed_resource_scope(conn, user, 'asset', 'view')
-        if asset_scope.site_ids is not None:
-            if not asset_scope.site_ids:
-                return {}
+        asset_predicates: list[str] = []
+        asset_scope_params: list[str] = []
+        if asset_scope.site_ids is not None and asset_scope.site_ids:
             site_placeholders = ','.join('?' for _ in asset_scope.site_ids)
-            clauses.append(f'pa.site_id IN ({site_placeholders})')
-            params.extend(asset_scope.site_ids)
-            if asset_scope.tenant_id:
-                clauses.append(
-                    '''EXISTS (
-                           SELECT 1 FROM sites placement_asset_scope_site
-                            WHERE placement_asset_scope_site.id = pa.site_id
-                              AND placement_asset_scope_site.tenant_id = ?
-                       )'''
-                )
-                params.append(asset_scope.tenant_id)
-        elif asset_scope.tenant_id:
+            asset_predicates.append(f'pa.site_id IN ({site_placeholders})')
+            asset_scope_params.extend(asset_scope.site_ids)
+        if asset_scope.device_group_ids is not None and asset_scope.device_group_ids:
+            group_placeholders = ','.join('?' for _ in asset_scope.device_group_ids)
+            asset_predicates.append(
+                f'''EXISTS (
+                       SELECT 1 FROM devices placement_asset_scope_device
+                        WHERE placement_asset_scope_device.asset_id = pa.id
+                          AND placement_asset_scope_device.device_group_id IN ({group_placeholders})
+                   )'''
+            )
+            asset_scope_params.extend(asset_scope.device_group_ids)
+        if asset_scope.site_ids is not None or asset_scope.device_group_ids is not None:
+            if not asset_predicates:
+                return {}
+            clauses.append('(' + ' OR '.join(asset_predicates) + ')')
+            params.extend(asset_scope_params)
+        if asset_scope.tenant_id:
             clauses.append(
                 '''EXISTS (
                        SELECT 1 FROM sites placement_asset_scope_site
@@ -435,22 +424,30 @@ def _asset_placement_map(
             params.append(asset_scope.tenant_id)
 
         rack_scope = rack_scope_service.allowed_rack_scope(conn, user, 'view')
-        if rack_scope.site_ids is not None:
-            if not rack_scope.site_ids:
-                return {}
+        rack_predicates: list[str] = []
+        rack_scope_params: list[str] = []
+        if rack_scope.site_ids is not None and rack_scope.site_ids:
             site_placeholders = ','.join('?' for _ in rack_scope.site_ids)
-            clauses.append(f'r.site_id IN ({site_placeholders})')
-            params.extend(rack_scope.site_ids)
-            if rack_scope.tenant_id:
-                clauses.append(
-                    '''EXISTS (
-                           SELECT 1 FROM sites placement_rack_scope_site
-                            WHERE placement_rack_scope_site.id = r.site_id
-                              AND placement_rack_scope_site.tenant_id = ?
-                       )'''
-                )
-                params.append(rack_scope.tenant_id)
-        elif rack_scope.tenant_id:
+            rack_predicates.append(f'r.site_id IN ({site_placeholders})')
+            rack_scope_params.extend(rack_scope.site_ids)
+        if rack_scope.device_group_ids is not None and rack_scope.device_group_ids:
+            group_placeholders = ','.join('?' for _ in rack_scope.device_group_ids)
+            rack_predicates.append(
+                f'''EXISTS (
+                       SELECT 1 FROM rack_devices placement_rack_scope_placement
+                       JOIN devices placement_rack_scope_device
+                         ON placement_rack_scope_device.asset_id = placement_rack_scope_placement.asset_id
+                        WHERE placement_rack_scope_placement.rack_id = r.id
+                          AND placement_rack_scope_device.device_group_id IN ({group_placeholders})
+                   )'''
+            )
+            rack_scope_params.extend(rack_scope.device_group_ids)
+        if rack_scope.site_ids is not None or rack_scope.device_group_ids is not None:
+            if not rack_predicates:
+                return {}
+            clauses.append('(' + ' OR '.join(rack_predicates) + ')')
+            params.extend(rack_scope_params)
+        if rack_scope.tenant_id:
             clauses.append(
                 '''EXISTS (
                        SELECT 1 FROM sites placement_rack_scope_site
@@ -594,10 +591,10 @@ def _asset_scope_clauses(
 ) -> tuple[list[str], list[str]]:
     """Build one SQL visibility filter for physical assets.
 
-    ``physical_assets`` is site-owned in the current schema, so tenant scope
-    is resolved through ``sites.tenant_id``.  A site-scoped grant is always
-    additionally constrained to the session tenant when the session has one;
-    this prevents a malformed cross-tenant scope row from widening access.
+    Physical asset site grants match the asset's site; device-group grants
+    match through the associated ``devices`` row. A caller with both grants
+    sees the union of those objects. Tenant scope is resolved through the
+    linked site only while tenant isolation is enabled.
     Direct service-level tests intentionally omit the FastAPI dependency and
     therefore keep the legacy unfiltered behavior when ``user`` is not a
     resolved session dictionary.
@@ -609,22 +606,28 @@ def _asset_scope_clauses(
     scope = rack_scope_service.allowed_resource_scope(conn, user, 'asset', action)
     clauses: list[str] = []
     params: list[str] = []
-    if scope.site_ids is not None:
-        if not scope.site_ids:
-            return ['1 = 0'], []
+    object_predicates: list[str] = []
+    object_params: list[str] = []
+    if scope.site_ids is not None and scope.site_ids:
         placeholders = ','.join('?' for _ in scope.site_ids)
-        clauses.append(f'{alias}.site_id IN ({placeholders})')
-        params.extend(scope.site_ids)
-        if scope.tenant_id:
-            clauses.append(
-                f'''EXISTS (
-                       SELECT 1 FROM sites asset_scope_site
-                        WHERE asset_scope_site.id = {alias}.site_id
-                          AND asset_scope_site.tenant_id = ?
-                   )'''
-            )
-            params.append(scope.tenant_id)
-    elif scope.tenant_id:
+        object_predicates.append(f'{alias}.site_id IN ({placeholders})')
+        object_params.extend(scope.site_ids)
+    if scope.device_group_ids is not None and scope.device_group_ids:
+        placeholders = ','.join('?' for _ in scope.device_group_ids)
+        object_predicates.append(
+            f'''EXISTS (
+                   SELECT 1 FROM devices asset_scope_device
+                    WHERE asset_scope_device.asset_id = {alias}.id
+                      AND asset_scope_device.device_group_id IN ({placeholders})
+               )'''
+        )
+        object_params.extend(scope.device_group_ids)
+    if scope.site_ids is not None or scope.device_group_ids is not None:
+        if not object_predicates:
+            return ['1 = 0'], []
+        clauses.append('(' + ' OR '.join(object_predicates) + ')')
+        params.extend(object_params)
+    if scope.tenant_id:
         clauses.append(
             f'''EXISTS (
                    SELECT 1 FROM sites asset_scope_site
@@ -662,7 +665,7 @@ def _enforce_asset_site_scope(conn, user, site_id: str, action: str = 'create') 
     # while preventing a real session from creating an orphaned cross-scope
     # record that it could not subsequently read or manage.
     enforce_resource_scope(user, 'asset', action)
-    if user.get('role') != 'Administrator' and str(user.get('tenant_id') or '').strip():
+    if TENANT_ISOLATION_ENABLED and user.get('role') != 'Administrator' and str(user.get('tenant_id') or '').strip():
         raise HTTPException(
             status_code=422,
             detail={

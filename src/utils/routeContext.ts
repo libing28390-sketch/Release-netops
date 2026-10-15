@@ -237,8 +237,6 @@ export function getRouteContext(pathname: string): RouteContext {
       cmdbPage = 'vlans';
     } else if (second === 'vlan-business') {
       cmdbPage = 'vlan-business';
-    } else if (second === 'tenants') {
-      cmdbPage = 'tenants';
     } else {
       cmdbPage = 'credentials';
     }

@@ -114,7 +114,6 @@ export const usePageTitle = ({
         sites: language === 'zh' ? '站点管理' : 'Sites',
         vrfs: language === 'zh' ? 'VRF管理' : 'VRFs',
         vlans: language === 'zh' ? 'VLAN管理' : 'VLANs',
-        tenants: language === 'zh' ? '租户管理' : 'Tenants',
         resources: language === 'zh' ? '资源检索' : 'Resource Search',
       };
       return map[cmdbPage || ''] || (language === 'zh' ? 'CMDB 基础数据' : 'CMDB Core Data');

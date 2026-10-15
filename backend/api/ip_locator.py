@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
 from schemas.schemas import IPLocateRequest, IPLocatorRunRequest, ConnectivityProbeRequest, PathDiagnoseRequest
 from core.config import settings
 from core.rbac import authorize_resource, require_role
+from core.tenant_policy import TENANT_ISOLATION_ENABLED, tenant_id_for_write, tenant_scope_for_user
 from database import get_db_connection
 from services.ip_locator_service import (
     get_arp_table_async,
@@ -51,12 +52,12 @@ async def api_trace_ip(body: IPLocatorRunRequest, user=require_role("Viewer")):
             site_id=body.site_id,
         )
         if not authorized_device_ids:
-            raise HTTPException(status_code=404, detail='当前租户/站点范围内没有可访问的在线网络设备')
+            raise HTTPException(status_code=404, detail='当前授权/站点范围内没有可访问的在线网络设备')
         if body.start_device_id and body.start_device_id not in set(authorized_device_ids):
             raise HTTPException(status_code=404, detail='指定起始设备不存在或超出当前授权范围')
         result = await trace_ip_async(
             body.ip,
-            tenant_id=str(user.get('tenant_id') or 'tenant-default'),
+            tenant_id=tenant_id_for_write(user=user),
             start_device_id=body.start_device_id,
             site_id=body.site_id,
             network_domain_id=body.network_domain_id,
@@ -132,19 +133,21 @@ def _authorized_locator_device_ids(
     site_id: str = "",
     online_only: bool = True,
 ) -> list[str]:
-    """Resolve tenant and explicit asset/site scopes to visible devices."""
-    tenant_id = str(user.get('tenant_id') or '').strip()
-    if not tenant_id:
+    """Resolve explicit asset/site scopes to visible devices."""
+    tenant_id = tenant_scope_for_user(user)
+    if TENANT_ISOLATION_ENABLED and not tenant_id:
         return []
     conn = get_db_connection()
     try:
         status_clause = " AND status = 'online'" if online_only else ""
+        tenant_clause = " AND tenant_id = ?" if TENANT_ISOLATION_ENABLED else ""
+        params = (tenant_id,) if TENANT_ISOLATION_ENABLED else ()
         rows = conn.execute(
             """SELECT id, tenant_id, site_id, site, device_group_id
                  FROM devices
-                WHERE tenant_id = ?""" + status_clause + """
+                WHERE 1 = 1""" + tenant_clause + status_clause + """
                 ORDER BY id""",
-            (tenant_id,),
+            params,
         ).fetchall()
     finally:
         conn.close()
@@ -181,7 +184,7 @@ def _locator_scope_hash(body: IPLocatorRunRequest, user: dict, authorized_device
         from services.ip_locator_cache_service import IPLocatorCacheService
 
         return IPLocatorCacheService.scope_hash({
-            'tenant_id': str(user.get('tenant_id') or 'tenant-default'),
+            'tenant_id': tenant_id_for_write(user=user),
             'site_id': body.site_id,
             'network_domain_id': body.network_domain_id,
             'vrf': body.vrf or 'default',
@@ -205,9 +208,9 @@ async def _locator_run_is_currently_authorized(run: dict, user: dict) -> bool:
         return False
 
     run_tenant_id = str(run.get('tenant_id') or '').strip()
-    user_tenant_id = str(user.get('tenant_id') or '').strip()
+    user_tenant_id = str(tenant_scope_for_user(user) or '').strip()
     site_id = run.get('site_id')
-    if not run_tenant_id or run_tenant_id != user_tenant_id or not isinstance(site_id, str):
+    if (TENANT_ISOLATION_ENABLED and (not run_tenant_id or run_tenant_id != user_tenant_id)) or not isinstance(site_id, str):
         return False
 
     stats = run.get('stats')
@@ -264,14 +267,14 @@ async def api_create_locator_run(body: IPLocatorRunRequest, background_tasks: Ba
             site_id=body.site_id,
         )
         if not authorized_device_ids:
-            raise HTTPException(status_code=404, detail='当前租户/站点范围内没有可访问的在线网络设备')
+            raise HTTPException(status_code=404, detail='当前授权/站点范围内没有可访问的在线网络设备')
         if body.start_device_id and body.start_device_id not in set(authorized_device_ids):
             raise HTTPException(status_code=404, detail='指定起始设备不存在或超出当前授权范围')
         scope_hash = _locator_scope_hash(body, user, authorized_device_ids)
         run = create_locator_run(
             owner_id=owner_id,
             target_ip=body.ip,
-            tenant_id=str(user.get('tenant_id') or 'tenant-default'),
+            tenant_id=tenant_id_for_write(user=user),
             scope_hash=scope_hash,
             network_domain_id=body.network_domain_id,
             site_id=body.site_id,
@@ -337,7 +340,7 @@ async def api_locate_ip(body: IPLocateRequest, user=require_role("Viewer")):
         )
         trace_result = await trace_ip_async(
             body.ip,
-            tenant_id=str(user.get('tenant_id') or 'tenant-default'),
+            tenant_id=tenant_id_for_write(user=user),
             force_refresh=body.force_refresh,
             route_fresh_seconds=int(getattr(settings, 'IP_LOCATOR_ROUTE_FRESH_SECONDS', 300)),
             authorized_device_ids=authorized_device_ids,

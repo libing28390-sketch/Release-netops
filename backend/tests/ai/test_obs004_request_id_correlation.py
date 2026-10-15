@@ -49,7 +49,7 @@ def test_retrieval_trace_preserves_request_id_without_raw_query():
         trace={"source": "local_rag", "status": "no_match", "request_id": "corr_rag_004"},
         observation={"raw_query": "show secret password"},
     )
-    row = get_retrieval_trace(tenant_id="tenant-obs004", trace_id=trace_id)
+    row = get_retrieval_trace(tenant_id=None, trace_id=trace_id)
     assert row is not None
     assert row["request_id"] == "corr_rag_004"
     assert "show secret password" not in str(row)

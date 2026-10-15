@@ -238,24 +238,25 @@ def _snapshot_scope_filter(conn, user) -> tuple[str, list[str]]:
         return '', []
 
     scope = allowed_resource_scope(conn, user, 'asset', 'view')
-    # Legacy users with no tenant assignment can otherwise receive an
-    # unbounded RackScope(None, None). Snapshot contents are sensitive, so
-    # non-admin access without an explicit tenant must fail closed.
-    if not scope.tenant_id:
-        return '1 = 0', []
-    if scope.site_ids is not None and not scope.site_ids:
-        return '1 = 0', []
+    from services.rack_scope_service import device_scope_predicate
 
     clauses: list[str] = []
-    params: list[str] = [scope.tenant_id]
-    clauses.append('snapshot_scope_device.tenant_id = ?')
-    if scope.site_ids is not None:
-        placeholders = ','.join('?' for _ in scope.site_ids)
-        clauses.append(f'snapshot_scope_site.id IN ({placeholders})')
-        params.extend(scope.site_ids)
-    clauses.append('snapshot_scope_site.tenant_id = ?')
-    params.append(scope.tenant_id)
+    params: list[str] = []
+    device_predicate, device_params = device_scope_predicate(
+        scope,
+        device_alias='snapshot_scope_device',
+    )
+    if device_predicate:
+        clauses.append(device_predicate)
+        params.extend(str(value) for value in device_params)
+    if scope.tenant_id:
+        clauses.append('snapshot_scope_device.tenant_id = ?')
+        params.append(scope.tenant_id)
+    if scope.tenant_id:
+        clauses.append('snapshot_scope_site.tenant_id = ?')
+        params.append(scope.tenant_id)
 
+    access_predicate = ' AND '.join(clauses) if clauses else '1 = 1'
     return (
         '''EXISTS (
                SELECT 1
@@ -286,7 +287,7 @@ def _snapshot_scope_filter(conn, user) -> tuple[str, list[str]]:
                        )
                    )
                 WHERE snapshot_scope_device.id = cs.device_id
-                  AND ''' + ' AND '.join(clauses) + ')',
+                  AND ''' + access_predicate + ')',
         params,
     )
 

@@ -85,9 +85,27 @@ def test_playbook_version_rejects_self_approval_and_cross_tenant_access(isolated
     with pytest.raises(PlaybookVersionError) as self_approval:
         approve_version(version["id"], author)
     assert self_approval.value.code == "SELF_APPROVAL_FORBIDDEN"
-    with pytest.raises(PlaybookVersionError) as scope_error:
-        get_version(version["id"], other_tenant)
-    assert scope_error.value.code == "PLAYBOOK_SCOPE_DENIED"
+    assert get_version(version["id"], other_tenant)["id"] == version["id"]
+    assert version["tenant_id"] == "tenant-default"
+
+
+def test_historical_playbook_version_is_read_across_tenants_and_write_label_is_default(isolated_db):
+    author = {"id": "historical-author", "username": "historical-author", "role": "Operator", "tenant_id": "tenant-old-a"}
+    reader = {"id": "historical-reader", "username": "historical-reader", "role": "Operator", "tenant_id": "tenant-old-b"}
+    version = create_version("historical-playbook", {"definition": _definition()}, author)
+
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        conn.execute(
+            "UPDATE playbook_versions SET tenant_id = 'tenant-old-a' WHERE id = ?",
+            (version["id"],),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert get_version(version["id"], reader)["tenant_id"] == "tenant-old-a"
+    assert [row["id"] for row in list_versions("historical-playbook", reader)] == [version["id"]]
 
 
 def test_playbook_version_updates_draft_and_invalidates_validation(isolated_db, monkeypatch):
@@ -249,9 +267,20 @@ def test_playbook_execution_approval_gate_is_scoped_and_starts_after_all_decisio
 
     assert len(approvals) == 2
     assert [item["status"] for item in list_execution_approvals(execution_id, requester)] == ["PENDING", "PENDING"]
-    with pytest.raises(PlaybookApprovalError) as scope_error:
-        list_execution_approvals(execution_id, {**requester, "tenant_id": "tenant-2"})
-    assert scope_error.value.code == "RESOURCE_SCOPE_DENIED"
+    cross_history = list_execution_approvals(execution_id, {**requester, "tenant_id": "tenant-2"})
+    assert [item["status"] for item in cross_history] == ["PENDING", "PENDING"]
+    assert {item["tenant_id"] for item in approvals} == {"tenant-default"}
+
+    restricted_admin = {
+        "id": "restricted-admin",
+        "username": "restricted-admin",
+        "role": "Administrator",
+        "role_profile": "Platform Viewer",
+        "tenant_id": "tenant-2",
+    }
+    with pytest.raises(PlaybookApprovalError) as action_error:
+        decide_execution_approval(execution_id, approvals[0]["id"], "APPROVED", restricted_admin)
+    assert action_error.value.code == "RESOURCE_SCOPE_DENIED"
 
     first = decide_execution_approval(execution_id, approvals[0]["id"], "APPROVED", approver)
     assert first["should_start"] is False
@@ -496,7 +525,7 @@ def test_playbook_execution_limits_reject_unsafe_request_shapes():
     assert concurrency.value.detail["code"] == "CONCURRENCY_LIMIT_EXCEEDED"
 
 
-def test_playbook_execution_scope_rejects_cross_tenant_reads(isolated_db):
+def test_playbook_execution_scope_allows_cross_tenant_reads_in_single_org(isolated_db):
     conn = isolated_db["module"].get_db_connection()
     try:
         conn.execute(
@@ -508,9 +537,7 @@ def test_playbook_execution_scope_rejects_cross_tenant_reads(isolated_db):
         assert _assert_execution_scope(conn, "execution-1", owner)["tenant_id"] == "tenant-1"
 
         other_tenant = {"id": "other-1", "username": "other", "role": "Operator", "tenant_id": "tenant-2"}
-        with pytest.raises(HTTPException) as error:
-            _assert_execution_scope(conn, "execution-1", other_tenant)
-        assert error.value.status_code == 403
+        assert _assert_execution_scope(conn, "execution-1", other_tenant)["tenant_id"] == "tenant-1"
     finally:
         conn.close()
 
@@ -623,9 +650,10 @@ def test_playbook_device_scope_checks_tenant_site_and_device_group(isolated_db, 
             "device_group_id": "group-a",
         } for item in calls)
 
-        with pytest.raises(HTTPException) as error:
-            _assert_playbook_device_scope(conn, ["device-scope-1"], {**user, "tenant_id": "tenant-2"})
-        assert error.value.status_code == 403
+        cross_history = _assert_playbook_device_scope(
+            conn, ["device-scope-1"], {**user, "tenant_id": "tenant-2"},
+        )
+        assert cross_history[0]["id"] == "device-scope-1"
     finally:
         conn.close()
 
