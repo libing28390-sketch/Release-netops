@@ -1,0 +1,12 @@
+Value INTERFACE (\S+)
+Value VENDOR_NAME (\S+)
+Value WAVELENGTH (\d+)
+Value TEMPERATURE (-?\d+(?:\.\d+)?)
+Value VOLTAGE (-?\d+(?:\.\d+)?)
+Value TX_POWER (-?\d+(?:\.\d+)?)
+Value RX_POWER (-?\d+(?:\.\d+)?)
+
+Start
+  ^\s*Name\s+VendorName\s+LaserWaveLen
+  ^-+
+  ^\s*${INTERFACE}\s+${VENDOR_NAME}\s+${WAVELENGTH}\s+${TEMPERATURE}\s+${VOLTAGE}\s+${TX_POWER}\s+${RX_POWER}\s*$$ -> Record

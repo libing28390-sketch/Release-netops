@@ -1,0 +1,6 @@
+Value SWITCH_TEMP (\d+)
+Value MAINBOARD_TEMP (\d+)
+
+Start
+  ^\s*System switch temperature is\s+${SWITCH_TEMP}\s+C
+  ^\s*System mainboard temperature is\s+${MAINBOARD_TEMP}\s+C -> Record

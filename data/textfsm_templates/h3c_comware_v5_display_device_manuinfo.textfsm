@@ -1,0 +1,20 @@
+Value SLOT (\d+)
+Value DEVICE_NAME (\S+)
+Value DEVICE_SERIAL_NUMBER (\S+)
+Value MAC_ADDRESS (\S+)
+Value MANUFACTURING_DATE (\d{4}-\d{2}-\d{2})
+Value VENDOR_NAME (\S+)
+Value SUBSLOT (\d+)
+Value MESSAGE (.+)
+
+Start
+  ^\s*Slot\s+${SLOT}\s*:?[ \t]*$$
+  ^\s*DEVICE_NAME\s*:\s*${DEVICE_NAME}\s*$$
+  ^\s*DEVICE_SERIAL_NUMBER\s*:\s*${DEVICE_SERIAL_NUMBER}\s*$$
+  ^\s*MAC_ADDRESS\s*:\s*${MAC_ADDRESS}\s*$$
+  ^\s*MANUFACTURING_DATE\s*:\s*${MANUFACTURING_DATE}\s*$$
+  ^\s*VENDOR_NAME\s*:\s*${VENDOR_NAME}\s*$$ -> Record
+  ^\s*Subslot\s+${SUBSLOT}\s*:?[ \t]*$$
+  ^\s*${MESSAGE}\s*$$ -> Record
+  ^\s*$$
+  ^.*$$

@@ -1,0 +1,19 @@
+# nexora-action-code: get_interface_brief
+Value Required INTERFACE (\S+\s+[0-9\/\.\:\-_]+|\S+)
+Value STATUS (administratively down|admin down|up|down|Down|Up|\S+)
+Value PROTOCOL (up|down|Down|Up|\S+)
+Value DESCRIPTION (.*)
+
+Start
+  ^.*#\s*show\s+ -> Next
+  ^Interface\s+Status\s+Protocol\s+Description -> Table
+  ^Interface\s+Status\s+Protocol -> Table
+  ^\s*$$
+  ^. -> Next
+
+Table
+  ^-+ -> Next
+  ^\s*${INTERFACE}\s+${STATUS}\s+${PROTOCOL}\s+${DESCRIPTION}\s*$$ -> Record
+  ^\s*${INTERFACE}\s+${STATUS}\s+${PROTOCOL}\s*$$ -> Record
+  ^\s*$$
+  ^. -> Next

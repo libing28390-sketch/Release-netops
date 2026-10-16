@@ -1,0 +1,17 @@
+# nexora-action-code: get_interface_brief
+Value Required INTERFACE ((?:[0-9]+)?[A-Za-z][A-Za-z0-9-]*\s*\d[\w/.-]*)
+Value PHY ([*^]?down|up(?:\([a-z]+\))?)
+Value PROTOCOL ([*^]?down|up(?:\([a-z]+\))?)
+Value INUTI (\d+(?:\.\d+)?%|--)
+Value OUTUTI (\d+(?:\.\d+)?%|--)
+Value INERRORS (\d+)
+Value OUTERRORS (\d+)
+
+Start
+  ^\s*${INTERFACE}\s+${PHY}\s+${PROTOCOL}\s+${INUTI}\s+${OUTUTI}\s+${INERRORS}\s+${OUTERRORS}\s*$$ -> Record
+  ^\s*(?:PHY:|\*down:|\^down:|\([a-z]+\):|InUti/OutUti:).*$$
+  ^\s*Interface\s+PHY\s+Protocol\s+InUti\s+OutUti\s+inErrors\s+outErrors\s*$$
+  ^\s*[-=]+\s*$$
+  ^\s*<[^>]+>.*$$
+  ^\s*$$
+  ^. -> Error

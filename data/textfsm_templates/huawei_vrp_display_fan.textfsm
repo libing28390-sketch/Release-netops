@@ -1,0 +1,18 @@
+Value SLOT (\d+)
+Value FAN_ID (\d+)
+Value STATUS (\S+)
+Value SPEED (\S+)
+Value RATE (\S+)
+Value MODE (\S+)
+Value DIRECTION (\S+)
+
+Start
+  ^\s*Slot\s+${SLOT}:\s+Fan\s+${FAN_ID}\s+is\s+${STATUS}\.\s*$$ -> Record
+  ^\s*${SLOT}\s+${FAN_ID}\s+${STATUS}\s+${SPEED}\s+${RATE}\s+${MODE}\s+${DIRECTION} -> Record
+  # Skip headers and separator lines
+  ^Slot\s+#\s+FAN\s+#\s+Status
+  ^\s*Slot\s+FanID\s+Status\s+Speed.*$$
+  ^-+
+  ^\s*<[A-Za-z0-9_\-\.]+>.*$$
+  ^\s*$$
+  ^. -> Error

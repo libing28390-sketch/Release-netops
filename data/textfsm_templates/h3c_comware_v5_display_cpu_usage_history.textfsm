@@ -1,0 +1,9 @@
+# Comware V5 renders CPU history as an ASCII graph. Return one compact record
+# per graph target and ignore the individual chart rows.
+Value Required HISTORY_MINUTES (\d+)
+Value Required HISTORY_TARGET ([^)\s]+)
+
+Start
+  ^\s*cpu-usage\s+last\s+${HISTORY_MINUTES}\s+minutes\s*\(\s*${HISTORY_TARGET}\s*\)\s*$$ -> Record
+  ^.*$$
+
