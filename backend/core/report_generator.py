@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import xlsxwriter
 from xhtml2pdf import pisa
 from reportlab.pdfbase import ttfonts
@@ -173,6 +174,29 @@ _LINUX_METRIC_MAP = {
 def _parse_linux_health_check(raw_text: str) -> str:
     """智能解析 Linux 通用健康检查脚本回显，呈现优美的专家级指标卡片。"""
     try:
+        current_summary = parse_linux_inspection_output(raw_text)
+        if current_summary is not None:
+            status_labels = {
+                'healthy': '正常',
+                'warning': '告警',
+                'critical': '异常',
+                'partial': '部分采集',
+            }
+            out_lines = [
+                'Linux 综合巡检结果',
+                f"总体状态：{status_labels.get(current_summary['health_status'], '未知')}",
+                f"严重异常：{current_summary['errors']} 项；告警：{current_summary['warnings']} 项；未采集：{current_summary['unchecked_count']} 项",
+            ]
+            for finding in current_summary['findings']:
+                item = f"{finding['item']}：" if finding.get('item') else ''
+                out_lines.append(f"异常项：{item}{finding['message']}")
+            if current_summary['unchecked_items']:
+                out_lines.append('未采集项：')
+                for item in current_summary['unchecked_items']:
+                    detail = f"：{item['detail']}" if item.get('detail') else ''
+                    out_lines.append(f"- {item['item']}{detail}")
+            return '\n'.join(out_lines)
+
         lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
         host_info = "未知主机"
         time_info = ""
@@ -218,99 +242,465 @@ def _parse_linux_health_check(raw_text: str) -> str:
         return raw_text
 
 
+def _report_status_label(status: Any) -> str:
+    value = str(status or '').strip().lower()
+    labels = {
+        'healthy': '正常', 'success': '正常', 'completed': '正常', 'ok': '正常', 'normal': '正常',
+        'warning': '告警', 'warn': '告警',
+        'critical': '异常', 'error': '异常', 'failed': '异常', 'failure': '异常', 'abnormal': '异常',
+        'partial': '部分采集', 'partial_failure': '部分异常', 'partial_success': '部分成功',
+        'running': '执行中', 'pending': '待执行', 'queued': '排队中', 'skipped': '已跳过',
+        'unknown': '未知', 'unchecked': '未采集', 'not_collected': '未采集', 'unavailable': '不可用',
+        'denied': '权限拒绝', 'approval_rejected': '审批拒绝', 'awaiting_approval': '待审批',
+    }
+    return labels.get(value, str(status or '未知'))
+
+
+def _report_health_status(result: Dict[str, Any]) -> str:
+    health_status = str(result.get('health_status') or '').strip().lower()
+    if health_status in {'healthy', 'warning', 'critical', 'partial'}:
+        return health_status
+    status = str(result.get('status') or '').strip().lower()
+    if status in {'failed', 'error'} or 'fail' in status:
+        return 'critical'
+    if status in {'completed', 'success', 'ok'}:
+        return 'healthy'
+    return 'unknown'
+
+
+def _report_duration_ms(result: Dict[str, Any]) -> int | None:
+    """Use a recorded duration, or derive it from the device timestamps."""
+    raw_duration = result.get('duration_ms')
+    try:
+        duration_ms = int(raw_duration) if raw_duration is not None else None
+    except (TypeError, ValueError, OverflowError):
+        duration_ms = None
+    if duration_ms is not None and duration_ms > 0:
+        return duration_ms
+
+    started_at = result.get('started_at')
+    completed_at = result.get('completed_at')
+    if started_at and completed_at:
+        try:
+            started = datetime.fromisoformat(str(started_at).replace('Z', '+00:00'))
+            completed = datetime.fromisoformat(str(completed_at).replace('Z', '+00:00'))
+            if (started.tzinfo is None) != (completed.tzinfo is None):
+                return None
+            elapsed_ms = int((completed - started).total_seconds() * 1000)
+            return elapsed_ms if elapsed_ms >= 0 else None
+        except (TypeError, ValueError, OverflowError):
+            pass
+
+    # A database default of zero means "not recorded" for old scheduled runs.
+    return None if duration_ms in (None, 0) else duration_ms
+
+
+def _severity_label(severity: Any) -> str:
+    return {'critical': '严重', 'warning': '关注', 'info': '信息'}.get(
+        str(severity or '').strip().lower(), '未知'
+    )
+
+
+def _metric_export_label(key: str) -> str:
+    normalized = str(key or '').strip()
+    status_suffix = normalized.endswith('_status')
+    base_key = normalized[:-7] if status_suffix else normalized
+    label = _LINUX_METRIC_LABELS.get(base_key)
+    if not label:
+        label = f'其他巡检指标（{base_key}）' if base_key else '未知指标'
+    return f'{label} 状态' if status_suffix else label
+
+
+def _trigger_type_label(value: Any) -> str:
+    return {
+        'manual': '手动执行', 'plan': '执行计划', 'job': '定时作业',
+    }.get(str(value or '').strip().lower(), '未知')
+
+
+def _report_phase_label(value: Any) -> str:
+    normalized = str(value or '').strip().lower()
+    labels = {
+        'setup': '准备阶段', 'prepare': '准备阶段', 'preflight': '前置检查',
+        'execute': '执行阶段', 'execution': '执行阶段', 'verify': '验证阶段',
+        'verification': '验证阶段', 'cleanup': '清理阶段', 'rollback': '回滚阶段',
+        'default phase': '默认阶段',
+    }
+    return labels.get(normalized, str(value or '默认阶段'))
+
+
+_LINUX_METRIC_LABELS = {
+    'cpu_usage': 'CPU 使用率',
+    'cpu_load': 'CPU 负载',
+    'cpu_util': 'CPU 使用率',
+    'memory_usage': '内存使用率',
+    'mem_avail': '可用内存',
+    'swap_util': '交换空间使用率',
+    'temperature': '设备温度',
+    'fan_status': '风扇状态',
+    'psu_status': '电源状态',
+    'interface_total': '接口总数',
+    'interface_up': '运行接口数',
+    'interface_down': '中断接口数',
+    'interface_flapping': '震荡接口数',
+    'interface_high_util': '高利用率接口数',
+    'interface_errors': '接口错误数',
+    'open_alerts': '活动告警数',
+    'critical_alerts': '严重告警数',
+    'io_wait': 'CPU I/O 等待',
+    'io_latency': '磁盘 I/O 延迟',
+    'disk_io_await': '磁盘 I/O 等待',
+    'disk_util': '磁盘使用率',
+    'inode_util': 'Inode 使用率',
+    'tcp_conns': 'TCP 活动连接数',
+    'tcp_time_wait': 'TCP TIME_WAIT 连接数',
+    'tcp_close_wait': 'TCP CLOSE_WAIT 连接数',
+    'tcp_retrans_pct': 'TCP 重传率',
+    # tcp_retrans is a legacy alias for tcp_retrans_pct, not a packet count.
+    'tcp_retrans': 'TCP 重传率',
+    'tcp_estab': 'TCP 已建立连接数',
+    'tcp_syn_recv': 'TCP SYN_RECV 数',
+    'tcp_listen': 'TCP 监听端口数',
+    'dns_latency': 'DNS 解析',
+    'ntp_desync': 'NTP 同步状态',
+    'ntp_offset_ms': 'NTP 时间偏差',
+    'gateway_reachable': '默认网关可达性',
+    'fd_util': '系统文件句柄使用率',
+    'fd_process_max_pct': '进程级文件句柄使用率',
+    'fd_used': '系统已用文件句柄',
+    'fd_limit': '系统文件句柄上限',
+    'service_sshd': 'SSH 服务状态',
+    'service_crond': 'Cron 服务状态',
+    'service_docker': 'Docker 服务状态',
+}
+
+
+def _iter_output_strings(value: Any, depth: int = 0):
+    """从数据库保存的 JSON 字符串、阶段对象和原始输出中递归提取文本。"""
+    if depth > 8 or value is None:
+        return
+    if isinstance(value, str):
+        candidate = value.strip()
+        if candidate.startswith(('{', '[')):
+            try:
+                parsed = json.loads(candidate)
+            except (TypeError, ValueError):
+                parsed = None
+            if isinstance(parsed, (dict, list)):
+                yield from _iter_output_strings(parsed, depth + 1)
+                return
+        yield value
+        return
+    if isinstance(value, dict):
+        for child in value.values():
+            yield from _iter_output_strings(child, depth + 1)
+        return
+    if isinstance(value, (list, tuple)):
+        for child in value:
+            yield from _iter_output_strings(child, depth + 1)
+
+
+def _collect_result_output_text(result: Dict[str, Any]) -> str:
+    chunks = []
+    seen = set()
+    for key in ('raw_outputs_json', 'phases_json', 'output', 'error_message'):
+        for chunk in _iter_output_strings(result.get(key)):
+            normalized = chunk.strip()
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                chunks.append(chunk)
+    return '\n'.join(chunks)
+
+
+def _linux_unchecked_label(section: str, metric_key: str = '') -> str:
+    key = metric_key.lower()
+    if key in _LINUX_METRIC_LABELS:
+        return _LINUX_METRIC_LABELS[key]
+    section_lower = section.lower()
+    if 'dns' in section_lower:
+        return 'DNS 解析'
+    if 'ntp' in section_lower:
+        return 'NTP 时间偏差'
+    if '文件句柄' in section or 'file descriptor' in section_lower:
+        return '进程级文件句柄使用率'
+    return re.sub(r'^\s*\d+\.\s*', '', section).strip() or '未命名检查项'
+
+
+def _linux_unchecked_detail_label(section: str, detail: str) -> str:
+    """Prefer the actual uncollected metric named by the reason text."""
+    normalized_detail = str(detail or '').lower()
+    if 'tcp' in normalized_detail and (
+        '发送计数器' in normalized_detail or '重传率' in normalized_detail
+    ):
+        return 'TCP 重传率'
+    if 'ss' in normalized_detail and '/proc/net/tcp' in normalized_detail:
+        return 'TCP 连接状态监控'
+    return _linux_unchecked_label(section)
+
+
+def parse_linux_inspection_output(raw_output: str) -> Dict[str, Any] | None:
+    """解析 Linux 综合巡检的脚本汇总、异常明细和未采集指标。"""
+    if not raw_output or not any(marker in raw_output for marker in (
+        '巡检汇总 (Summary)', '--- METRICS ---',
+    )):
+        return None
+
+    section = ''
+    section_lines: Dict[str, List[str]] = {}
+    error_sections = []
+    warning_sections = []
+    error_findings = []
+    warning_findings = []
+    unchecked_by_label: Dict[str, str] = {}
+    metric_statuses = {}
+    summary_counts = {'errors': None, 'warnings': None, 'unchecked': None}
+
+    count_patterns = {
+        'errors': re.compile(r'发现严重错误\s*\(ERROR\)\s*[:：]\s*(\d+)', re.IGNORECASE),
+        'warnings': re.compile(r'发现警告信息\s*\(WARNING\)\s*[:：]\s*(\d+)', re.IGNORECASE),
+        'unchecked': re.compile(r'未采集检查项\s*[:：]\s*(\d+)', re.IGNORECASE),
+    }
+    section_pattern = re.compile(r'^\[(SUCCESS|WARNING|ERROR|UNCHECKED)\]\s+\d+\.\s*(.+)$', re.IGNORECASE)
+
+    for raw_line in raw_output.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        for count_key, pattern in count_patterns.items():
+            count_match = pattern.search(line)
+            if count_match:
+                summary_counts[count_key] = int(count_match.group(1))
+
+        section_match = section_pattern.match(line)
+        if section_match:
+            section_status = section_match.group(1).upper()
+            section = section_match.group(2).strip()
+            section = re.sub(r'^\s*\d+\.\s*', '', section)
+            section = re.sub(r'\s*\([^)]*\)\s*$', '', section).strip()
+            section_lines.setdefault(section, [])
+            if section_status == 'ERROR':
+                error_sections.append(section)
+            elif section_status == 'WARNING':
+                warning_sections.append(section)
+            elif section_status == 'UNCHECKED':
+                unchecked_by_label.setdefault(_linux_unchecked_label(section), '')
+            continue
+
+        if section and not line.startswith((
+            '发现严重错误', '发现警告信息', '未采集检查项', '==========', '---',
+        )):
+            section_lines.setdefault(section, []).append(line)
+
+        detail_match = re.match(r'^\[(ERROR|WARNING)\]\s*(.+)$', line, re.IGNORECASE)
+        if detail_match:
+            severity = detail_match.group(1).lower()
+            message = detail_match.group(2).strip()
+            # Numbered [ERROR]/[WARNING] lines are section headings, not findings.
+            if re.match(r'^\d+\.\s*', message):
+                continue
+            finding = {
+                'severity': 'critical' if severity == 'error' else 'warning',
+                'type': 'system_error' if severity == 'error' else 'system_warning',
+                'item': section,
+                'message': message,
+                'description': message,
+            }
+            target = error_findings if severity == 'error' else warning_findings
+            if not any(item['message'] == message for item in target):
+                target.append(finding)
+            continue
+
+        unchecked_match = re.match(r'^\[未采集\]\s*(.+)$', line)
+        if unchecked_match:
+            detail = unchecked_match.group(1).strip()
+            label = _linux_unchecked_detail_label(section, detail)
+            previous = unchecked_by_label.get(label, '')
+            unchecked_by_label[label] = f'{previous}；{detail}'.strip('；') if previous else detail
+            continue
+
+        if line == '--- METRICS ---':
+            continue
+        metric_match = re.match(r'^([a-z][a-z0-9_]*)_status\s*:\s*([a-z_]+)$', line, re.IGNORECASE)
+        if metric_match:
+            metric_statuses[metric_match.group(1).lower()] = metric_match.group(2).upper()
+
+    # Keep the measurement and source addresses next to SSH audit findings.
+    # The script emits these as supporting lines around the [ERROR] sentence.
+    for finding in error_findings:
+        if '安全防线' not in str(finding.get('item') or ''):
+            continue
+        context_lines = section_lines.get(str(finding.get('item') or ''), [])
+        failure_line = next((
+            line for line in context_lines
+            if 'SSH' in line.upper() and '认证失败次数' in line and not line.startswith('[ERROR]')
+        ), '')
+        if not failure_line:
+            continue
+        failure_match = re.search(r'认证失败次数\s*[:：]\s*(\d+)', failure_line)
+        threshold_match = re.search(r'关注\s*(\d+).*?严重\s*(\d+)', failure_line)
+        evidence = []
+        if failure_match:
+            threshold_text = ''
+            if threshold_match:
+                threshold_text = f'（关注阈值 {threshold_match.group(1)}，严重阈值 {threshold_match.group(2)}）'
+            evidence.append(f'近 24 小时 SSH 认证失败 {failure_match.group(1)} 次{threshold_text}')
+        source_counts = []
+        for line in context_lines:
+            source_match = re.match(r'^\s*(\d+)\s+((?:\d{1,3}\.){3}\d{1,3})\s*$', line)
+            if source_match:
+                source_counts.append(f'{source_match.group(2)}（{source_match.group(1)} 次）')
+        if source_counts:
+            evidence.append(f'主要来源：{"、".join(source_counts[:5])}')
+        if evidence:
+            finding['message'] = f"{finding['message']}；{'；'.join(evidence)}"
+            finding['description'] = finding['message']
+
+    for metric_key, metric_status in metric_statuses.items():
+        if metric_status in {'UNCHECKED', 'NOT_COLLECTED', 'UNAVAILABLE'}:
+            default_details = {
+                'ntp_offset_ms': '未采集到 NTP 时间偏差数值。',
+            }
+            unchecked_by_label.setdefault(
+                _linux_unchecked_label(section, metric_key),
+                default_details.get(metric_key, '脚本未返回该指标的有效数据。'),
+            )
+
+    errors = max(summary_counts['errors'] or 0, len(error_findings))
+    warnings = max(summary_counts['warnings'] or 0, len(warning_findings))
+    unchecked_count = max(summary_counts['unchecked'] or 0, len(unchecked_by_label))
+
+    if errors > len(error_findings):
+        for error_section in error_sections:
+            if len(error_findings) >= errors:
+                break
+            error_findings.append({
+                'severity': 'critical', 'type': 'system_error', 'item': error_section,
+                'message': '脚本将此检查项判定为严重异常，但未输出具体原因。',
+                'description': '脚本将此检查项判定为严重异常，但未输出具体原因。',
+            })
+    if warnings > len(warning_findings):
+        for warning_section in warning_sections:
+            if len(warning_findings) >= warnings:
+                break
+            warning_findings.append({
+                'severity': 'warning', 'type': 'system_warning', 'item': warning_section,
+                'message': '脚本将此检查项判定为关注项，但未输出具体原因。',
+                'description': '脚本将此检查项判定为关注项，但未输出具体原因。',
+            })
+
+    if errors:
+        health_status = 'critical'
+    elif warnings:
+        health_status = 'warning'
+    elif unchecked_count:
+        health_status = 'partial'
+    else:
+        health_status = 'healthy'
+
+    return {
+        'errors': errors,
+        'warnings': warnings,
+        'unchecked_count': unchecked_count,
+        'unchecked_items': [
+            {'item': label, 'detail': detail}
+            for label, detail in unchecked_by_label.items()
+        ],
+        'findings': error_findings + warning_findings,
+        'health_status': health_status,
+        'count_mismatch': (
+            (summary_counts['errors'] is not None and summary_counts['errors'] != len(error_findings))
+            or (summary_counts['warnings'] is not None and summary_counts['warnings'] != len(warning_findings))
+            or (summary_counts['unchecked'] is not None and summary_counts['unchecked'] != len(unchecked_by_label))
+        ),
+    }
+
+
 def _preprocess_and_enrich_results(results: List[Dict[str, Any]]) -> None:
-    """对所有设备或服务器巡检数据进行预处理和自动富化映射。"""
+    """以执行状态和 Linux 脚本结果为准整理报告数据，不计算健康评分。"""
     for res in results:
         status_str = str(res.get('status') or '').strip().lower()
         is_failed = (status_str in ('failed', 'error')) or ('fail' in status_str)
+        raw_text = _collect_result_output_text(res)
+        linux_summary = parse_linux_inspection_output(raw_text)
+
+        if linux_summary is not None:
+            if is_failed and linux_summary['health_status'] != 'critical':
+                failure_finding = {
+                    'severity': 'critical',
+                    'type': 'connection_error',
+                    'item': '作业执行状态',
+                    'message': f"作业执行失败 ({res.get('error_message') or '远程设备连接或执行异常'})",
+                    'description': f"异常原因: {res.get('error_message') or '远程设备连接或执行异常'}",
+                }
+                linux_summary['health_status'] = 'critical'
+                linux_summary['findings'].append(failure_finding)
+            res['linux_inspection_summary'] = linux_summary
+            res['health_status'] = linux_summary['health_status']
+            res['compliance_status'] = 'compliant' if linux_summary['health_status'] == 'healthy' else 'non_compliant'
+            res['findings_json'] = json.dumps(linux_summary['findings'], ensure_ascii=False)
+            res.pop('health_score', None)
+            continue
+
         if is_failed:
-            res['health_score'] = 0
             res['health_status'] = 'critical'
             res['compliance_status'] = 'non_compliant'
             err_msg = res.get('error_message') or '远程设备连接超时或拒绝访问，执行异常。'
-            try: findings = json.loads(res.get('findings_json') or '[]')
-            except: findings = []
-            if not any(f.get('severity') == 'critical' for f in findings):
+            try:
+                findings = json.loads(res.get('findings_json') or '[]')
+            except (TypeError, ValueError):
+                findings = []
+            if not any(f.get('severity') == 'critical' for f in findings if isinstance(f, dict)):
                 findings.append({
-                    "severity": "critical",
-                    "type": "connection_error",
-                    "item": "设备连通性与巡检状态",
-                    "message": f"设备作业异常/失败 ({err_msg})",
-                    "description": f"异常诊断: {err_msg}"
+                    'severity': 'critical',
+                    'type': 'connection_error',
+                    'item': '设备连通性与巡检状态',
+                    'message': f'设备作业异常/失败 ({err_msg})',
+                    'description': f'异常诊断: {err_msg}',
                 })
                 res['findings_json'] = json.dumps(findings, ensure_ascii=False)
 
-        raw_text = ""
-        try:
-            raw_text += str(res.get('raw_outputs_json') or '')
-            raw_text += str(res.get('phases_json') or '')
-            raw_text += str(res.get('output') or '')
-        except Exception:
-            pass
-            
-        if "========== HEALTH CHECK ==========" in raw_text:
-            lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
-            overall = "OK"
-            summary_txt = ""
-            metrics = []
-            
-            for line in lines:
-                if line.startswith("OVERALL:"):
-                    overall = line.replace("OVERALL:", "").strip()
-                elif line.startswith("SUMMARY:"):
-                    summary_txt = line.replace("SUMMARY:", "").strip()
-                elif any(k in line for k in ("Usage(%)", "Load/Core", "Memory(%)", "IOWait(%)", "TCP ", "Process Count", "FD Usage")):
-                    parts = line.split()
-                    if len(parts) >= 3 and parts[-1] in ("OK", "ERROR", "CRITICAL"):
-                        metrics.append((" ".join(parts[:-2]), parts[-2], parts[-1]))
-                        
-            crit_count = sum(1 for m in metrics if m[2] == "CRITICAL")
-            err_count = sum(1 for m in metrics if m[2] == "ERROR")
-            
-            if overall == "CRITICAL" or crit_count > 0:
-                res['health_status'] = 'critical'
-            elif overall == "ERROR" or err_count > 0:
-                res['health_status'] = 'warning'
-            else:
-                res['health_status'] = 'healthy'
-                
-            new_score = max(0, 100 - err_count*10 - crit_count*25)
-            res['health_score'] = new_score
-            res['compliance_status'] = 'compliant' if res['health_status'] == 'healthy' else 'non_compliant'
-            
-            if res['health_status'] != 'healthy':
-                try: findings = json.loads(res.get('findings_json') or '[]')
-                except: findings = []
-                bad_metrics = [m[0] for m in metrics if m[2] in ("ERROR", "CRITICAL")]
+        if '========== HEALTH CHECK ==========' not in raw_text:
+            res.pop('health_score', None)
+            continue
+
+        # 兼容历史 Linux 输出格式：ERROR/CRITICAL 代表异常，WARNING 代表告警。
+        lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
+        overall = ''
+        summary_txt = ''
+        metrics = []
+        for line in lines:
+            if line.startswith('OVERALL:'):
+                overall = line.partition(':')[2].strip().upper()
+            elif line.startswith('SUMMARY:'):
+                summary_txt = line.partition(':')[2].strip()
+            elif any(key in line for key in ('Usage(%)', 'Load/Core', 'Memory(%)', 'IOWait(%)', 'TCP ', 'Process Count', 'FD Usage')):
+                parts = line.split()
+                if len(parts) >= 3 and parts[-1].upper() in ('OK', 'SUCCESS', 'ERROR', 'CRITICAL', 'WARNING'):
+                    metrics.append((' '.join(parts[:-2]), parts[-2], parts[-1].upper()))
+
+        critical_count = sum(1 for item in metrics if item[2] in ('ERROR', 'CRITICAL'))
+        warning_count = sum(1 for item in metrics if item[2] == 'WARNING')
+        if overall in ('CRITICAL', 'ERROR') or critical_count:
+            res['health_status'] = 'critical'
+        elif overall == 'WARNING' or warning_count:
+            res['health_status'] = 'warning'
+        else:
+            res['health_status'] = 'healthy'
+        res['compliance_status'] = 'compliant' if res['health_status'] == 'healthy' else 'non_compliant'
+        res.pop('health_score', None)
+
+        if res['health_status'] != 'healthy':
+            try:
+                findings = json.loads(res.get('findings_json') or '[]')
+            except (TypeError, ValueError):
+                findings = []
+            bad_metrics = [item[0] for item in metrics if item[2] in ('ERROR', 'CRITICAL', 'WARNING')]
+            if not findings:
                 findings.append({
-                    "severity": "critical" if res['health_status'] == 'critical' else "warning",
-                    "type": "system_error",
-                    "message": f"服务器健康状态异常: {overall} ({summary_txt}). 告警项: {', '.join(bad_metrics)}"
+                    'severity': 'critical' if res['health_status'] == 'critical' else 'warning',
+                    'type': 'system_error',
+                    'message': f'服务器巡检状态异常：{overall or "未通过"}（{summary_txt}）；异常项：{", ".join(bad_metrics)}',
                 })
                 res['findings_json'] = json.dumps(findings, ensure_ascii=False)
-                
-            try: analysis = json.loads(res.get('analysis_json') or '[]')
-            except: analysis = []
-            for m, val, st in metrics:
-                if st in ("ERROR", "CRITICAL"):
-                    m_cn, sugg = _LINUX_METRIC_MAP.get(m, (m, "请排查相关系统负荷与配置"))
-                    val_str = f"{val}%" if any(k in m for k in ("Usage(%)", "Memory(%)", "IOWait")) else str(val)
-                    analysis.append({
-                        "metric": m_cn,
-                        "value": val_str,
-                        "status": "critical" if st == "CRITICAL" else "warning",
-                        "conclusion": f"{m_cn} 当前检测值为 {val_str}，超出设定阈值 ({st})",
-                        "suggestion": sugg
-                    })
-            res['analysis_json'] = json.dumps(analysis, ensure_ascii=False)
-            
-            try: metric_data = json.loads(res.get('metrics_json') or '{}')
-            except: metric_data = {}
-            for m, val, st in metrics:
-                m_cn, _ = _LINUX_METRIC_MAP.get(m, (m, ""))
-                try: metric_data[m_cn] = float(val) if '.' in val else int(val)
-                except: metric_data[m_cn] = val
-            res['metrics_json'] = json.dumps(metric_data, ensure_ascii=False)
 
 
 def _enrich_with_textfsm_summary(platform: str, cmd_name: str, raw_content: str) -> str:
@@ -653,65 +1043,86 @@ def _generate_playbook_excel_body(workbook: Any, run_info: Dict[str, Any], resul
     sys_name = _get_system_name()
     ws1.write('A1', f'{sys_name} NetOps 自动化执行报告', title_fmt)
     ws1.write('A3', '作业流名称', label_fmt)
-    ws1.write('B3', run_info.get('name') or 'Playbook 自动化执行', border_fmt)
+    ws1.write('B3', run_info.get('name') or '自动化作业', border_fmt)
     ws1.write('C3', '执行开始时间', label_fmt)
     ws1.write('D3', str(run_info.get('started_at') or '')[:19], border_fmt)
 
     ws1.write('A4', '执行设备总数', label_fmt)
     ws1.write('B4', len(results), border_fmt)
-    healthy_cnt = sum(1 for r in results if r.get('health_status') == 'healthy')
-    abnormal_cnt = len(results) - healthy_cnt
-    ws1.write('C4', '执行成功数', label_fmt)
-    ws1.write('D4', f"{healthy_cnt} 台 (异常 {abnormal_cnt} 台)", border_fmt)
+    healthy_cnt = sum(1 for r in results if _report_health_status(r) == 'healthy')
+    warning_cnt = sum(1 for r in results if _report_health_status(r) == 'warning')
+    abnormal_cnt = sum(1 for r in results if _report_health_status(r) == 'critical')
+    partial_cnt = sum(1 for r in results if _report_health_status(r) == 'partial')
+    unchecked_cnt = sum(
+        int((r.get('linux_inspection_summary') or {}).get('unchecked_count') or 0)
+        for r in results if isinstance(r.get('linux_inspection_summary'), dict)
+    )
+    ws1.write('C4', '状态统计', label_fmt)
+    ws1.write('D4', f'正常 {healthy_cnt} 台，告警 {warning_cnt} 台，异常 {abnormal_cnt} 台，部分采集 {partial_cnt} 台', border_fmt)
+    ws1.write('A5', '未采集检查项', label_fmt)
+    ws1.write('B5', unchecked_cnt, border_fmt)
 
     # 异常概览列表
     ws1.write('A6', '作业执行异常概览', workbook.add_format({'bold': True, 'font_color': '#c62828', 'font_size': 12}))
-    headers1 = ['设备名称', '管理 IP 地址', '最终状态', '异常原因 / 阶段错误概览']
+    headers1 = ['设备名称', '管理 IP 地址', '状态', '异常检查项 / 说明']
     for col, h in enumerate(headers1):
         ws1.write(6, col, h, header_fmt)
 
     row = 7
-    abnormal_devs = [r for r in results if r.get('health_status') in ('warning', 'critical')]
+    abnormal_devs = [r for r in results if _report_health_status(r) in ('warning', 'critical')]
     if abnormal_devs:
         for r in abnormal_devs:
-            ws1.write(row, 0, r.get('hostname') or r.get('ip_address') or 'Unknown', border_fmt)
+            ws1.write(row, 0, r.get('hostname') or r.get('ip_address') or '未知设备', border_fmt)
             ws1.write(row, 1, r.get('ip_address', ''), border_fmt)
-            ws1.write(row, 2, str(r.get('status') or 'failed').upper(), critical_fmt)
+            ws1.write(row, 2, _report_status_label(_report_health_status(r)), critical_fmt)
             findings = []
             try: findings = json.loads(r.get('findings_json') or '[]')
-            except: pass
-            err_msg = (findings[0].get('message') or findings[0].get('description')) if findings else (r.get('error_message') or '执行过程出现丢包或返回异常')
+            except (TypeError, ValueError): pass
+            finding = next((item for item in findings if isinstance(item, dict)), {})
+            finding_item = str(finding.get('item') or '').strip()
+            err_msg = str(finding.get('message') or finding.get('description') or r.get('error_message') or '执行过程出现异常')
+            if finding_item and finding_item not in err_msg:
+                err_msg = f'{finding_item}：{err_msg}'
             ws1.write(row, 3, err_msg, border_fmt)
             row += 1
     else:
-        ws1.merge_range(7, 0, 7, 3, '🎉 所有设备均已成功完成自动化执行计划，未捕获异常。', workbook.add_format({'align': 'center', 'bg_color': '#f0fdf4', 'font_color': '#166534', 'border': 1}))
+        ws1.merge_range(7, 0, 7, 3, '所有设备状态正常，未发现异常。', workbook.add_format({'align': 'center', 'bg_color': '#f0fdf4', 'font_color': '#166534', 'border': 1}))
 
     # Sheet 2: 设备执行详情总表
     ws2 = workbook.add_worksheet('设备执行详情总表')
-    headers2 = ['设备名称', '管理 IP 地址', '硬件平台 (Platform)', '设备角色 (Role)', '执行状态 (Status)', '健康得分 (Score)', '健康评估等级 (Health Level)']
+    headers2 = ['设备名称', '管理 IP 地址', '硬件平台', '设备角色', '状态', '异常说明']
     ws2.set_column('A:D', 20)
-    ws2.set_column('E:G', 16)
+    ws2.set_column('E:E', 14)
+    ws2.set_column('F:F', 72)
     for col, h in enumerate(headers2):
         ws2.write(0, col, h, header_fmt)
 
     row = 1
     for r in results:
-        hostname = r.get('hostname') or r.get('ip_address') or 'Unknown'
-        status = r.get('status', 'completed')
-        st_fmt = critical_fmt if r.get('health_status') == 'critical' else (warning_fmt if r.get('health_status') == 'warning' else completed_fmt)
+        hostname = r.get('hostname') or r.get('ip_address') or '未知设备'
+        health_status = _report_health_status(r)
+        status = _report_status_label(health_status)
+        st_fmt = critical_fmt if health_status == 'critical' else (warning_fmt if health_status == 'warning' else completed_fmt)
         ws2.write(row, 0, hostname, border_fmt)
         ws2.write(row, 1, r.get('ip_address', ''), border_fmt)
         ws2.write(row, 2, r.get('platform') or '通用网络设备', border_fmt)
         ws2.write(row, 3, r.get('role') or '接入设备', border_fmt)
-        ws2.write(row, 4, status.upper(), st_fmt)
-        ws2.write(row, 5, r.get('health_score', 100), border_fmt)
-        health_lvl = '健康 (Healthy)' if r.get('health_status') == 'healthy' else ('警告 (Warning)' if r.get('health_status') == 'warning' else '危险 (Critical)')
-        ws2.write(row, 6, health_lvl, st_fmt)
+        ws2.write(row, 4, status, st_fmt)
+        try:
+            findings = json.loads(r.get('findings_json') or '[]')
+        except (TypeError, ValueError):
+            findings = []
+        finding = next((item for item in findings if isinstance(item, dict)), {})
+        finding_item = str(finding.get('item') or '').strip()
+        finding_message = str(finding.get('message') or finding.get('description') or '—')
+        if finding_item and finding_item not in finding_message:
+            finding_message = f'{finding_item}：{finding_message}'
+        ws2.write(row, 5, finding_message if health_status in ('critical', 'warning') else '—', border_fmt)
         row += 1
 
     # Sheet 3: 阶段命令输出明细表 (支持筛选与命令块拆解)
     ws3 = workbook.add_worksheet('阶段命令输出明细表')
-    headers3 = ['设备名称', '管理 IP', '执行阶段 (Phase)', '阶段状态', '命令 / 任务块名称 (Command/Block)', '输出详情 (Output Detail)']
+    headers3 = ['设备名称', '管理 IP', '执行阶段', '阶段状态', '命令 / 任务块名称', '输出详情']
     ws3.set_column('A:B', 20)
     ws3.set_column('C:C', 22)
     ws3.set_column('D:D', 14)
@@ -723,7 +1134,7 @@ def _generate_playbook_excel_body(workbook: Any, run_info: Dict[str, Any], resul
 
     row = 1
     for r in results:
-        hostname = r.get('hostname') or r.get('ip_address') or 'Unknown'
+        hostname = r.get('hostname') or r.get('ip_address') or '未知设备'
         ip = r.get('ip_address', '')
         phases = {}
         try: phases = json.loads(r.get('phases_json') or '{}')
@@ -743,19 +1154,44 @@ def _generate_playbook_excel_body(workbook: Any, run_info: Dict[str, Any], resul
                     enriched_content = _enrich_with_textfsm_summary(r.get('platform') or 'cisco_ios', blk_title, blk_content)
                     ws3.write(row, 0, hostname, border_fmt)
                     ws3.write(row, 1, ip, border_fmt)
-                    ws3.write(row, 2, p_name, border_fmt)
-                    ws3.write(row, 3, str(p_status).upper(), p_st_fmt)
+                    ws3.write(row, 2, _report_phase_label(p_name), border_fmt)
+                    ws3.write(row, 3, _report_status_label(p_status), p_st_fmt)
                     ws3.write(row, 4, blk_title, border_fmt)
                     ws3.write(row, 5, enriched_content[:32000], wrap_border_fmt)
                     row += 1
         else:
             ws3.write(row, 0, hostname, border_fmt)
             ws3.write(row, 1, ip, border_fmt)
-            ws3.write(row, 2, 'Default Phase', border_fmt)
-            ws3.write(row, 3, 'COMPLETED', completed_fmt)
+            ws3.write(row, 2, '默认阶段', border_fmt)
+            ws3.write(row, 3, '正常', completed_fmt)
             ws3.write(row, 4, '默认执行任务', border_fmt)
             ws3.write(row, 5, '执行完成，无额外阶段输出。', border_fmt)
             row += 1
+
+    unchecked_rows = []
+    for result in results:
+        summary = result.get('linux_inspection_summary')
+        if not isinstance(summary, dict):
+            continue
+        for item in summary.get('unchecked_items') or []:
+            if isinstance(item, dict):
+                unchecked_rows.append((
+                    result.get('hostname') or result.get('ip_address') or '未知设备',
+                    result.get('ip_address') or '',
+                    item.get('item') or '未命名检查项',
+                    item.get('detail') or '未取得有效数据',
+                ))
+    if unchecked_rows:
+        unchecked_ws = workbook.add_worksheet('未采集明细')
+        unchecked_ws.set_column('A:A', 24)
+        unchecked_ws.set_column('B:B', 20)
+        unchecked_ws.set_column('C:C', 30)
+        unchecked_ws.set_column('D:D', 80)
+        for col, header in enumerate(['设备名称', '管理 IP', '检查项', '未采集说明']):
+            unchecked_ws.write(0, col, header, header_fmt)
+        for row_index, unchecked_row in enumerate(unchecked_rows, start=1):
+            for col, value in enumerate(unchecked_row):
+                unchecked_ws.write(row_index, col, value, wrap_border_fmt)
 
 
 def _generate_inspection_excel_body(
@@ -800,8 +1236,13 @@ def _generate_inspection_excel_body(
     
     summary_ws.write('A4', '设备总数', label_fmt)
     summary_ws.write('B4', run_info.get('total_devices', 0))
-    summary_ws.write('C4', '健康度', label_fmt)
-    summary_ws.write('D4', f"{run_info.get('avg_health_score', 100):.1f}%")
+    summary_ws.write('C4', '状态统计', label_fmt)
+    summary_ws.write('D4', f"正常 {sum(1 for r in results if _report_health_status(r) == 'healthy')} 台，告警 {sum(1 for r in results if _report_health_status(r) == 'warning')} 台，异常 {sum(1 for r in results if _report_health_status(r) == 'critical')} 台")
+    summary_ws.write('A5', '未采集检查项', label_fmt)
+    summary_ws.write('B5', sum(
+        int((r.get('linux_inspection_summary') or {}).get('unchecked_count') or 0)
+        for r in results if isinstance(r.get('linux_inspection_summary'), dict)
+    ))
     
     # 汇总结论
     analysis_sum = json.loads(run_info.get('analysis_summary_json') or '{}')
@@ -892,7 +1333,7 @@ def _generate_inspection_excel_body(
             findings_ws.write(row, 2, res.get('platform', ''), border_fmt)
             findings_ws.write(row, 3, res.get('site', ''), border_fmt)
             findings_ws.write(row, 4, type_label, border_fmt)
-            findings_ws.write(row, 5, severity.upper(), sev_fmt)
+            findings_ws.write(row, 5, _severity_label(severity), sev_fmt)
             findings_ws.write(row, 6, finding.get('message', ''), border_fmt)
             findings_ws.write(row, 7, '✓' if res.get('ping_ok') else '✗', healthy_fmt if res.get('ping_ok') else critical_fmt)
             findings_ws.write(row, 8, '✓' if res.get('ssh_ok') else '✗', healthy_fmt if res.get('ssh_ok') else critical_fmt)
@@ -920,35 +1361,32 @@ def _generate_inspection_excel_body(
                 detail_ws.write(row, 1, res.get('ip_address'), border_fmt)
                 detail_ws.write(row, 2, item['metric'], border_fmt)
                 detail_ws.write(row, 3, item['value'], status_fmt)
-                detail_ws.write(row, 4, item['status'].upper(), status_fmt)
+                detail_ws.write(row, 4, _report_status_label(item['status']), status_fmt)
                 detail_ws.write(row, 5, item['conclusion'], border_fmt)
                 detail_ws.write(row, 6, item['suggestion'], border_fmt)
                 row += 1
 
     # ══════════════════ SHEET 4: 设备资产汇总 (R6.1, R8.6) ══════════════════
     asset_ws = workbook.add_worksheet('设备资产汇总')
-    asset_headers = ['设备名称', '管理 IP', '平台', '站点', '角色', '健康评分', '健康状态', '合规状态', '巡检时间']
+    asset_headers = ['设备名称', '管理 IP', '平台', '站点', '角色', '状态', '合规状态', '巡检时间']
     asset_ws.set_column('A:B', 18)
     asset_ws.set_column('C:E', 12)
-    asset_ws.set_column('F:F', 10)
-    asset_ws.set_column('G:I', 12)
+    asset_ws.set_column('F:H', 16)
     for col, h in enumerate(asset_headers):
         asset_ws.write(0, col, h, header_fmt)
     row = 1
     for res in results:
         try:
-            score = res.get('health_score')
-            status = res.get('health_status', 'unknown')
+            status = _report_health_status(res)
             status_f = critical_fmt if status == 'critical' else (warning_fmt if status == 'warning' else healthy_fmt)
             asset_ws.write(row, 0, res.get('hostname', ''), border_fmt)
             asset_ws.write(row, 1, res.get('ip_address', ''), border_fmt)
             asset_ws.write(row, 2, res.get('platform', ''), border_fmt)
             asset_ws.write(row, 3, res.get('site', ''), border_fmt)
             asset_ws.write(row, 4, res.get('role', ''), border_fmt)
-            asset_ws.write(row, 5, score if score is not None else '', status_f)
-            asset_ws.write(row, 6, status, status_f)
-            asset_ws.write(row, 7, res.get('compliance_status', 'unknown'), border_fmt)
-            asset_ws.write(row, 8, res.get('checked_at', ''), border_fmt)
+            asset_ws.write(row, 5, _report_status_label(status), status_f)
+            asset_ws.write(row, 6, _report_compliance_label(res.get('compliance_status')), border_fmt)
+            asset_ws.write(row, 7, res.get('checked_at', ''), border_fmt)
             row += 1
         except Exception as e:
             logger.error(f"[Report] Error writing asset row for {res.get('hostname')}: {e}")
@@ -970,7 +1408,7 @@ def _generate_inspection_excel_body(
     metrics_ws.write(0, 0, '设备名称', header_fmt)
     metrics_ws.write(0, 1, '管理 IP', header_fmt)
     for col, mk in enumerate(metric_keys_sorted, start=2):
-        metrics_ws.write(0, col, mk, header_fmt)
+        metrics_ws.write(0, col, _metric_export_label(mk), header_fmt)
     metrics_ws.set_column(0, 1, 18)
     # Data rows
     row = 1
@@ -984,9 +1422,9 @@ def _generate_inspection_excel_body(
         for col, mk in enumerate(metric_keys_sorted, start=2):
             val = m.get(mk)
             if isinstance(val, dict):
-                metrics_ws.write(row, col, f"ERR: {val.get('error', '')}"[:50], critical_fmt)
+                metrics_ws.write(row, col, f"异常：{val.get('error', '')}"[:50], critical_fmt)
             elif val is not None:
-                metrics_ws.write(row, col, val, border_fmt)
+                metrics_ws.write(row, col, _report_status_label(val) if mk.endswith('_status') else val, border_fmt)
             else:
                 metrics_ws.write(row, col, '', border_fmt)
         row += 1
@@ -1013,7 +1451,7 @@ def _generate_inspection_excel_body(
             suggest_ws.write(row, 1, res.get('ip_address', ''), border_fmt)
             suggest_ws.write(row, 2, f"【组合风险】{risk.get('rule_name', '')}", critical_fmt)
             suggest_ws.write(row, 3, str(risk.get('triggered_metrics', '')), border_fmt)
-            suggest_ws.write(row, 4, risk.get('severity', 'warning').upper(), critical_fmt)
+            suggest_ws.write(row, 4, _severity_label(risk.get('severity', 'warning')), critical_fmt)
             suggest_ws.write(row, 5, risk.get('description', ''), border_fmt)
             suggest_ws.write(row, 6, risk.get('suggestion', ''), border_fmt)
             suggest_ws.write(row, 7, '紧急' if risk.get('severity') == 'critical' else '重要', border_fmt)
@@ -1028,7 +1466,7 @@ def _generate_inspection_excel_body(
                 suggest_ws.write(row, 1, res.get('ip_address', ''), border_fmt)
                 suggest_ws.write(row, 2, item.get('metric', ''), border_fmt)
                 suggest_ws.write(row, 3, str(item.get('value', '')), status_f)
-                suggest_ws.write(row, 4, item['status'].upper(), status_f)
+                suggest_ws.write(row, 4, _report_status_label(item['status']), status_f)
                 suggest_ws.write(row, 5, item.get('conclusion', ''), border_fmt)
                 suggest_ws.write(row, 6, item.get('suggestion', ''), border_fmt)
                 suggest_ws.write(row, 7, '紧急' if item['status'] == 'critical' else '重要', border_fmt)
@@ -1041,13 +1479,13 @@ def _generate_inspection_excel_body(
         out_ws.set_column('A:B', 20)
         out_ws.set_column('C:C', 25)
         out_ws.set_column('D:D', 100)
-        out_headers = ['设备名称', '管理 IP 地址', '巡检命令', '原始输出 (RAW)']
+        out_headers = ['设备名称', '管理 IP 地址', '巡检命令', '原始输出']
         for col, h in enumerate(out_headers):
             out_ws.write(0, col, h, header_fmt)
         out_ws.autofilter(0, 0, max(1, len(results)*5), 3)
         row = 1
         for res in results:
-            hostname = res.get('hostname') or res.get('ip_address') or 'Unknown'
+            hostname = res.get('hostname') or res.get('ip_address') or '未知设备'
             ip = res.get('ip_address', '')
             try:
                 raw_outputs = json.loads(res.get('raw_outputs_json') or '{}')
@@ -1062,7 +1500,7 @@ def _generate_inspection_excel_body(
                 pass
     else:
         for res in results:
-            hostname = res.get('hostname') or res.get('ip_address') or 'Unknown'
+            hostname = res.get('hostname') or res.get('ip_address') or '未知设备'
             safe_sheet_name = "".join([c for c in hostname if c.isalnum() or c in (' ', '-', '_')])[:31]
             
             dev_ws = workbook.add_worksheet(safe_sheet_name)
@@ -1073,13 +1511,13 @@ def _generate_inspection_excel_body(
             dev_ws.write('B1', res.get('hostname'), border_fmt)
             dev_ws.write('A2', '管理 IP', label_fmt)
             dev_ws.write('B2', res.get('ip_address'), border_fmt)
-            dev_ws.write('A3', '健康得分', label_fmt)
-            dev_ws.write('B3', res.get('health_score'), border_fmt)
+            dev_ws.write('A3', '巡检状态', label_fmt)
+            dev_ws.write('B3', _report_status_label(_report_health_status(res)), border_fmt)
+
+            dev_ws.write(3, 0, '巡检命令', header_fmt)
+            dev_ws.write(3, 1, '原始输出', header_fmt)
             
-            dev_ws.write(4, 0, '巡检命令', header_fmt)
-            dev_ws.write(4, 1, '原始输出 (RAW)', header_fmt)
-            
-            row = 5
+            row = 4
             try:
                 raw_outputs = json.loads(res.get('raw_outputs_json') or '{}')
                 for cmd, output in raw_outputs.items():
@@ -1089,7 +1527,7 @@ def _generate_inspection_excel_body(
                     row += 1
             except Exception as e:
                 logger.error(f"[Report] Error writing raw outputs for {hostname}: {e}")
-                dev_ws.write(row, 0, "ERROR", critical_fmt)
+                dev_ws.write(row, 0, '导出异常', critical_fmt)
                 dev_ws.write(row, 1, str(e), border_fmt)
 
     # End of body — workbook.close() is called by caller
@@ -1144,15 +1582,100 @@ def generate_inspection_json(
     output_path: str
 ) -> str:
     """
-    生成标准化的 JSON 报表。
+    生成字段为中文、且不包含健康评分的 JSON 报表。
     """
     _preprocess_and_enrich_results(results)
     try:
+        total_devices = len(results)
+        healthy_count = sum(1 for result in results if _report_health_status(result) == 'healthy')
+        warning_count = sum(1 for result in results if _report_health_status(result) == 'warning')
+        critical_count = sum(1 for result in results if _report_health_status(result) == 'critical')
+        unchecked_count = sum(
+            int((result.get('linux_inspection_summary') or {}).get('unchecked_count') or 0)
+            for result in results if isinstance(result.get('linux_inspection_summary'), dict)
+        )
+        partial_count = sum(1 for result in results if _report_health_status(result) == 'partial')
+
+        device_results = []
+        for result in results:
+            health_status = _report_health_status(result)
+            findings = _load_json_value(result.get('findings_json'), [])
+            if not isinstance(findings, list):
+                findings = []
+            metrics = _load_json_value(result.get('metrics_json'), {})
+            if not isinstance(metrics, dict):
+                metrics = {}
+            translated_metrics = {
+                _metric_export_label(key): _report_status_label(value) if key.endswith('_status') else value
+                for key, value in metrics.items()
+            }
+
+            phases = _load_json_value(result.get('phases_json'), {})
+            if not isinstance(phases, dict):
+                phases = {}
+            phase_results = []
+            for phase_name, phase in phases.items():
+                if not isinstance(phase, dict):
+                    continue
+                phase_results.append({
+                    '阶段名称': _report_phase_label(phase_name),
+                    '阶段状态': _report_status_label(phase.get('status')),
+                    '输出内容': phase.get('output') or '',
+                })
+
+            raw_outputs = _load_json_value(result.get('raw_outputs_json'), {})
+            if not isinstance(raw_outputs, dict):
+                raw_outputs = {}
+            localized_outputs = {
+                'Linux 综合巡检' if key == 'insp_linux_full' else str(key): value
+                for key, value in raw_outputs.items()
+            }
+
+            linux_summary = result.get('linux_inspection_summary')
+            unchecked_items = linux_summary.get('unchecked_items', []) if isinstance(linux_summary, dict) else []
+            translated_findings = [
+                {
+                    '检查项': item.get('item') or '未分类检查项',
+                    '级别': _severity_label(item.get('severity')),
+                    '说明': item.get('message') or item.get('description') or '',
+                }
+                for item in findings if isinstance(item, dict)
+            ]
+            device_results.append({
+                '设备名称': result.get('hostname') or result.get('ip_address') or '未知设备',
+                '管理 IP': result.get('ip_address') or '',
+                '平台': result.get('platform') or '',
+                '状态': _report_status_label(health_status),
+                '异常项': translated_findings,
+                '未采集项': [
+                    {'检查项': item.get('item') or '未命名检查项', '说明': item.get('detail') or ''}
+                    for item in unchecked_items if isinstance(item, dict)
+                ],
+                '巡检指标': translated_metrics,
+                '执行阶段': phase_results,
+                '原始输出': localized_outputs,
+                '耗时（毫秒）': _report_duration_ms(result),
+            })
+
         report_data = {
-            "report_type": "inspection",
-            "generated_at": datetime.now().isoformat(),
-            "run_info": run_info,
-            "results": results
+            '报告类型': '自动化作业' if run_info.get('report_type') == 'playbook' else '网络巡检',
+            '生成时间': datetime.now().isoformat(),
+            '任务信息': {
+                '任务名称': run_info.get('name') or run_info.get('scenario_name') or '巡检任务',
+                '开始时间': run_info.get('started_at') or run_info.get('created_at') or '',
+                '结束时间': run_info.get('completed_at') or run_info.get('ended_at') or '',
+                '触发方式': _trigger_type_label(run_info.get('trigger_type')),
+                '目标设备数': total_devices,
+            },
+            '执行统计': {
+                '设备总数': total_devices,
+                '正常设备': healthy_count,
+                '告警设备': warning_count,
+                '异常设备': critical_count,
+                '部分采集设备': partial_count,
+                '未采集检查项': unchecked_count,
+            },
+            '设备结果': device_results,
         }
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(report_data, f, ensure_ascii=False, indent=2)
@@ -1162,6 +1685,17 @@ def generate_inspection_json(
             os.remove(output_path)
         logger.error(f"[Report] JSON generation failed: {e}")
         raise
+
+
+def _load_json_value(value: Any, fallback: Any) -> Any:
+    if isinstance(value, (dict, list)):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return fallback
+    try:
+        return json.loads(value)
+    except (TypeError, ValueError):
+        return fallback
 
 
 def generate_inspection_pdf(
@@ -1236,39 +1770,56 @@ def _prepare_report_context(run_info, results, customer_name, engineer_name):
     """提取通用的报表上下文准备逻辑。"""
     _preprocess_and_enrich_results(results)
     total_devices = len(results)
-    healthy_count = sum(1 for r in results if r.get('health_status') == 'healthy')
-    warning_count = sum(1 for r in results if r.get('health_status') == 'warning')
-    critical_count = sum(1 for r in results if r.get('health_status') == 'critical')
-    scores = [r.get('health_score', 0) for r in results if r.get('health_score') is not None]
-    avg_score = round(sum(scores) / len(scores), 1) if scores else 0
+    healthy_count = sum(1 for r in results if _report_health_status(r) == 'healthy')
+    warning_count = sum(1 for r in results if _report_health_status(r) == 'warning')
+    critical_count = sum(1 for r in results if _report_health_status(r) == 'critical')
+    partial_count = sum(1 for r in results if _report_health_status(r) == 'partial')
 
     abnormal_devices = []
+    unchecked_items = []
+    unchecked_count = 0
     for r in results:
-        if r.get('health_status') in ('warning', 'critical'):
+        health_status = _report_health_status(r)
+        linux_summary = r.get('linux_inspection_summary') or parse_linux_inspection_output(_collect_result_output_text(r))
+        if isinstance(linux_summary, dict):
+            unchecked_count += int(linux_summary.get('unchecked_count') or 0)
+            if linux_summary.get('unchecked_items'):
+                unchecked_items.append({
+                    'hostname': r.get('hostname') or r.get('ip_address') or '未知设备',
+                    'ip_address': r.get('ip_address', ''),
+                    'items': linux_summary['unchecked_items'],
+                })
+        if health_status in ('warning', 'critical'):
             findings = []
             try:
                 findings = json.loads(r.get('findings_json') or '[]')
-            except Exception:
+            except (TypeError, ValueError):
                 pass
-            top_finding = (findings[0].get('message') or findings[0].get('description') or findings[0].get('item', '发现风险')) if findings else ''
+            first_finding = next((item for item in findings if isinstance(item, dict)), {})
+            finding_item = str(first_finding.get('item') or '').strip()
+            finding_message = str(first_finding.get('message') or first_finding.get('description') or '发现风险').strip()
+            top_finding = finding_message
             abnormal_devices.append({
                 'hostname': r.get('hostname') or r.get('ip_address') or '未知设备',
                 'ip_address': r.get('ip_address', ''),
-                'health_score': r.get('health_score', 0),
-                'health_status': r.get('health_status', 'unknown'),
+                'health_status': health_status,
+                'status_label': _report_status_label(health_status),
+                'finding_item': finding_item or '巡检异常',
                 'top_finding': top_finding,
             })
 
-    all_devices = [{
-        'hostname': r.get('hostname') or r.get('ip_address') or '未知设备',
-        'ip_address': r.get('ip_address', ''),
-        'platform': r.get('platform', ''),
-        'health_score': r.get('health_score', 0),
-        'health_status': r.get('health_status', 'unknown'),
-        'compliance_status': r.get('compliance_status', 'unknown'),
-        'status': r.get('status', 'completed'),
-        'duration_ms': r.get('duration_ms', 0),
-    } for r in results]
+    all_devices = []
+    for r in results:
+        health_status = _report_health_status(r)
+        all_devices.append({
+            'hostname': r.get('hostname') or r.get('ip_address') or '未知设备',
+            'ip_address': r.get('ip_address', ''),
+            'platform': r.get('platform', ''),
+            'health_status': health_status,
+            'status_label': _report_status_label(health_status),
+            'compliance_status': _report_compliance_label(r.get('compliance_status')),
+            'duration_ms': _report_duration_ms(r),
+        })
 
     all_risks = []
     for r in results:
@@ -1276,6 +1827,7 @@ def _prepare_report_context(run_info, results, customer_name, engineer_name):
             risks = json.loads(r.get('correlated_risks_json') or '[]')
             for risk in risks:
                 risk['device'] = r.get('hostname') or r.get('ip_address') or '未知设备'
+                risk['severity_label'] = _severity_label(risk.get('severity'))
                 all_risks.append(risk)
         except Exception:
             pass
@@ -1290,6 +1842,7 @@ def _prepare_report_context(run_info, results, customer_name, engineer_name):
                         'hostname': r.get('hostname') or r.get('ip_address') or '未知设备',
                         'metric': item.get('metric', ''),
                         'status': item.get('status', ''),
+                        'status_label': _report_status_label(item.get('status')),
                         'conclusion': item.get('conclusion', ''),
                         'suggestion': item.get('suggestion', ''),
                     })
@@ -1306,7 +1859,9 @@ def _prepare_report_context(run_info, results, customer_name, engineer_name):
         'healthy_count': healthy_count,
         'warning_count': warning_count,
         'critical_count': critical_count,
-        'avg_score': avg_score,
+        'partial_count': partial_count,
+        'unchecked_count': unchecked_count,
+        'unchecked_items': unchecked_items,
         'abnormal_devices': abnormal_devices,
         'all_devices': all_devices,
         'all_risks': all_risks,
@@ -1315,3 +1870,9 @@ def _prepare_report_context(run_info, results, customer_name, engineer_name):
         'font_face_src': _build_font_face_src(),
         'system_name': _get_system_name(),
     }
+
+
+def _report_compliance_label(status: Any) -> str:
+    return {
+        'compliant': '合规', 'non_compliant': '不合规', 'unknown': '未知',
+    }.get(str(status or '').strip().lower(), '未知')

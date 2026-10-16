@@ -11,6 +11,7 @@ import {
   NETWORK_VENDOR_GROUPS,
   VENDOR_PLATFORMS,
   getPlatformsForVendor,
+  isCiscoNetworkPlatform,
   isNetworkVendor,
   isValidVendorPlatform,
   normalizeImportedPlatform,
@@ -59,6 +60,13 @@ describe('asset vendor catalog', () => {
     expect(isValidVendorPlatform('network_device', 'Cisco', 'cisco_ios')).toBe(true);
     expect(isValidVendorPlatform('network_device', 'Cisco', 'linux')).toBe(false);
     expect(isValidVendorPlatform('server', 'HP', 'linux')).toBe(true);
+  });
+
+  it('enables Cisco-only authentication only for Cisco network platforms', () => {
+    expect(isCiscoNetworkPlatform('network_device', 'cisco_iosxe')).toBe(true);
+    expect(isCiscoNetworkPlatform('network_device', 'CISCO_IOSXE')).toBe(true);
+    expect(isCiscoNetworkPlatform('network_device', 'H3C_Comware')).toBe(false);
+    expect(isCiscoNetworkPlatform('server', 'cisco_ios')).toBe(false);
   });
 
   it('normalizes Huawei YunShan OS aliases to its independent platform key', () => {

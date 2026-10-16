@@ -492,6 +492,9 @@ export const isNetworkVendor = (vendor: string): boolean => {
     .some(name => name.toLowerCase() === normalized);
 };
 
+export const isCiscoNetworkPlatform = (assetType: string, platform: string): boolean =>
+  assetType === 'network_device' && String(platform || '').trim().toLowerCase().startsWith('cisco');
+
 export const getValidPlatformsForAsset = (assetType: string, vendor?: string) => {
   if (assetType === 'server') return SERVER_PLATFORMS;
   return getPlatformsForVendor(vendor);

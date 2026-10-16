@@ -1,9 +1,9 @@
 import { DataTable } from '../components/DataTable';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Activity, AlertTriangle, ArrowRight, CheckCircle2, ChevronRight, ClipboardCheck, Clock, Cpu, Download, Eye, FileText, Loader2, Play, RefreshCw, Search, Server, Shield, Wifi, WifiOff, X, XCircle, Zap, BarChart3, CalendarClock, ExternalLink, HardDrive, Layers } from 'lucide-react';
-import { Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Bar, CartesianGrid, ComposedChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { Device, DeviceHealthHistoryResponse, DeviceHealthOverview } from '../types';
-import { authHeaders as apiAuthHeaders } from '../api/http';
+import { apiRequest, authHeaders as apiAuthHeaders } from '../api/http';
 import { useChartTheme } from '../hooks/useChartTheme';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
 import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
@@ -37,7 +37,6 @@ interface InspectionRun {
   healthy_count: number;
   warning_count: number;
   critical_count: number;
-  avg_health_score: number;
   created_by: string;
 }
 
@@ -53,7 +52,6 @@ interface InspectionResult {
   ping_latency_ms: number | null;
   ssh_ok: number | null;
   ssh_error: string;
-  health_score: number | null;
   health_status: string;
   cpu_usage: number | null;
   memory_usage: number | null;
@@ -80,6 +78,16 @@ interface InspectionRunDetail extends InspectionRun {
   results: InspectionResult[];
 }
 
+interface RecentExecutionSummary {
+  pending: number;
+  running: number;
+  success: number;
+  abnormal: number;
+  total: number;
+  window_started_at?: string;
+  generated_at?: string;
+}
+
 /* ────────────────────────────────────────── */
 /* Props                                      */
 /* ────────────────────────────────────────── */
@@ -98,25 +106,6 @@ const statusToneMap: Record<string, string> = {
   warning: 'bg-amber-50 text-amber-700 ring-1 ring-amber-200/60',
   critical: 'bg-red-50 text-red-700 ring-1 ring-red-200/60',
   unknown: 'bg-slate-50 text-slate-600 ring-1 ring-slate-200/60',
-};
-
-/* ── Circular score gauge ── */
-const ScoreGauge: React.FC<{ score: number | null; size?: number }> = ({ score, size = 80 }) => {
-  const value = score ?? 0;
-  const r = (size - 8) / 2;
-  const circumference = 2 * Math.PI * r;
-  const pct = Math.min(100, Math.max(0, value));
-  const offset = circumference - (pct / 100) * circumference;
-  const color = pct >= 80 ? '#10b981' : pct >= 60 ? '#f59e0b' : '#ef4444';
-  return (
-    <div className="relative inline-flex items-center justify-center" style={{ width: size, height: size }}>
-      <svg width={size} height={size} className="-rotate-90">
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="currentColor" className="text-black/[0.04]" strokeWidth={5} />
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={5} strokeLinecap="round" strokeDasharray={circumference} strokeDashoffset={offset} style={{ transition: 'stroke-dashoffset 0.8s ease' }} />
-      </svg>
-      <span className="absolute text-base font-bold tabular-nums" style={{ color }}>{score ?? '—'}</span>
-    </div>
-  );
 };
 
 /* ── Th helper ── */
@@ -147,6 +136,11 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
   const [history, setHistory] = useState<DeviceHealthHistoryResponse | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [recentRuns, setRecentRuns] = useState<InspectionRun[]>([]);
+  const [executionSummary, setExecutionSummary] = useState<RecentExecutionSummary>({
+    pending: 0, running: 0, success: 0, abnormal: 0, total: 0,
+  });
+  const [executionSummaryLoading, setExecutionSummaryLoading] = useState(false);
+  const [executionSummaryError, setExecutionSummaryError] = useState('');
 
   // ── records state ──
   const [runs, setRuns] = useState<InspectionRun[]>([]);
@@ -192,6 +186,31 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
     } catch { /* ignore */ }
   }, [authHeaders]);
 
+  const fetchExecutionSummary = useCallback(async () => {
+    setExecutionSummaryLoading(true);
+    setExecutionSummaryError('');
+    try {
+      const payload = await apiRequest<{ data?: Partial<RecentExecutionSummary> }>(
+        '/api/inspections/execution-summary',
+        { headers: authHeaders },
+      );
+      const data = payload?.data || {};
+      setExecutionSummary({
+        pending: Number(data.pending || 0),
+        running: Number(data.running || 0),
+        success: Number(data.success || 0),
+        abnormal: Number(data.abnormal || 0),
+        total: Number(data.total || 0),
+        window_started_at: data.window_started_at,
+        generated_at: data.generated_at,
+      });
+    } catch (cause) {
+      setExecutionSummaryError(cause instanceof Error ? cause.message : (isZh ? '加载作业概况失败' : 'Failed to load execution summary'));
+    } finally {
+      setExecutionSummaryLoading(false);
+    }
+  }, [authHeaders, isZh]);
+
   const fetchRuns = useCallback(async () => {
     setRunsLoading(true);
     try {
@@ -226,6 +245,9 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
 
   useEffect(() => { fetchHistory(); }, [fetchHistory]);
   useEffect(() => { fetchRecentRuns(); }, [fetchRecentRuns]);
+  useEffect(() => {
+    if (subTab === 'overview') fetchExecutionSummary();
+  }, [subTab, fetchExecutionSummary]);
   useEffect(() => {
     if (subTab === 'records') fetchRuns();
   }, [subTab, fetchRuns]);
@@ -278,13 +300,14 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
   );
 
   const riskyDevices = useMemo(() => {
+    const priority = (device: Device) => device.health_status === 'critical' ? 0 : 1;
     return [...devices]
       .filter((d) => d.health_status === 'critical' || d.health_status === 'warning')
-      .sort((a, b) => (a.health_score ?? 100) - (b.health_score ?? 100))
+      .sort((a, b) => priority(a) - priority(b)
+        || (b.critical_open_alerts ?? b.open_alert_count ?? 0) - (a.critical_open_alerts ?? a.open_alert_count ?? 0)
+        || (b.interface_down_count ?? 0) - (a.interface_down_count ?? 0))
       .slice(0, 8);
   }, [devices]);
-
-  const avgScore = overview?.average_score ?? null;
 
   /* ─────────────────────────────────────── */
   /* Render                                   */
@@ -302,7 +325,7 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
         }
         subtitle={
           subTab === 'overview'
-            ? (isZh ? '全网设备健康评分、异常隐患雷达与运行健康走势分析' : 'Fleet health score, risk radar, and health score trends over time')
+            ? (isZh ? '查看设备健康状态、风险设备和近 24 小时作业执行情况' : 'Review device health, at-risk devices, and executions from the last 24 hours')
             : (isZh ? '审计历史巡检执行批次、单设备检查明细及一键下载巡检报告' : 'Audit historical inspection runs, per-device check details, and export reports')
         }
         actions={
@@ -315,10 +338,10 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
               {isZh ? '配置定时巡检' : 'Scheduled Jobs'}
             </a>
             <button
-              onClick={() => { fetchHistory(); fetchRecentRuns(); if (subTab === 'records') fetchRuns(); }}
+              onClick={() => { fetchHistory(); fetchRecentRuns(); fetchExecutionSummary(); if (subTab === 'records') fetchRuns(); }}
               className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium border border-black/10 dark:border-white/10 hover:bg-black/5 dark:hover:bg-white/5 transition-all text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-900"
             >
-              <RefreshCw size={13} className={historyLoading || runsLoading ? 'animate-spin' : ''} />
+              <RefreshCw size={13} className={historyLoading || runsLoading || executionSummaryLoading ? 'animate-spin' : ''} />
               {isZh ? '刷新' : 'Refresh'}
             </button>
           </div>
@@ -327,13 +350,15 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
 
       <div className="flex-1 flex flex-col overflow-hidden px-6 py-5 space-y-4 min-h-0">
         
-        {/* ═══════ Hero gauge strip (ONLY on Overview mode) ═══════ */}
+        {/* ═══════ Overview summary strip (ONLY on Overview mode) ═══════ */}
         {subTab === 'overview' && (
           <div className="relative rounded-2xl overflow-hidden bg-gradient-to-r from-[#0c1e35] via-[#0e2942] to-[#0a3455] p-5 shadow-lg shrink-0">
             <div className="absolute inset-0 opacity-[0.04]" style={{ backgroundImage: 'radial-gradient(circle, white 1px, transparent 1px)', backgroundSize: '18px 18px' }} />
             <div className="relative flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-              <div className="flex items-center gap-5">
-                <ScoreGauge score={typeof avgScore === 'number' ? Math.round(avgScore) : null} size={76} />
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 rounded-2xl bg-cyan-400/15 border border-cyan-300/20 flex items-center justify-center text-cyan-300">
+                  <Activity size={22} />
+                </div>
                 <div>
                   <h2 className="text-white/90 text-lg font-bold tracking-tight">{isZh ? '网络运行健康总览' : 'Network Health Overview'}</h2>
                   <div className="flex items-center gap-3 mt-2">
@@ -392,6 +417,54 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
           {/* ═══════ SUB-TAB: Overview ═══════ */}
           {subTab === 'overview' && (
             <div className="flex-1 overflow-y-auto p-5 space-y-5">
+              <section className="rounded-2xl border border-black/5 dark:border-white/5 bg-white dark:bg-[#111827] p-5 shadow-sm space-y-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-[#0b2340] dark:text-white flex items-center gap-2">
+                      <Clock className="w-4 h-4 text-cyan-500" />
+                      {isZh ? '最近 24 小时作业概况' : 'Execution Summary · Last 24 Hours'}
+                    </h3>
+                    <p className="text-[11px] text-slate-400 mt-1">
+                      {isZh ? '按最近 24 小时内产生的实际执行记录统计；尚未产生运行记录的计划触发不计入。' : 'Counts actual execution records started in the last 24 hours; future schedule projections are excluded.'}
+                    </p>
+                  </div>
+                  <span className="text-[11px] text-slate-400 tabular-nums">
+                    {isZh ? `共 ${executionSummary.total} 项` : `${executionSummary.total} executions`}
+                  </span>
+                </div>
+
+                {executionSummaryError ? (
+                  <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                    <span>{isZh ? `作业概况加载失败：${executionSummaryError}` : `Unable to load execution summary: ${executionSummaryError}`}</span>
+                    <button type="button" onClick={fetchExecutionSummary} className="font-bold underline underline-offset-2">
+                      {isZh ? '重试' : 'Retry'}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+                    {([
+                      { key: 'pending', label: isZh ? '待处理' : 'Pending', icon: Clock, tone: 'border-slate-200 bg-slate-50 text-slate-700', iconTone: 'text-slate-500' },
+                      { key: 'running', label: isZh ? '执行中' : 'Running', icon: Loader2, tone: 'border-cyan-200 bg-cyan-50 text-cyan-800', iconTone: 'text-cyan-600' },
+                      { key: 'success', label: isZh ? '执行成功' : 'Succeeded', icon: CheckCircle2, tone: 'border-emerald-200 bg-emerald-50 text-emerald-800', iconTone: 'text-emerald-600' },
+                      { key: 'abnormal', label: isZh ? '执行异常' : 'Abnormal', icon: XCircle, tone: 'border-rose-200 bg-rose-50 text-rose-800', iconTone: 'text-rose-600' },
+                    ] as const).map((item) => {
+                      const Icon = item.icon;
+                      return (
+                        <div key={item.key} className={`rounded-xl border px-4 py-3 ${item.tone}`}>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-semibold">{item.label}</span>
+                            <Icon className={`h-4 w-4 ${item.iconTone} ${item.key === 'running' && executionSummary.running > 0 ? 'animate-spin' : ''}`} />
+                          </div>
+                          <div className="mt-1 text-2xl font-bold tabular-nums">
+                            {executionSummaryLoading ? <span className="text-base text-slate-400">—</span> : executionSummary[item.key]}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+
               {/* Chart + Risky Devices grid */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
                 {/* Health history chart (2 cols) */}
@@ -400,9 +473,9 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
                     <div>
                       <h3 className="text-sm font-bold text-[#0b2340] dark:text-white flex items-center gap-2">
                         <Activity className="w-4 h-4 text-cyan-500" />
-                        {isZh ? '健康度趋势走势' : 'Health Score Trend'}
+                        {isZh ? '正常设备数量趋势' : 'Healthy Device Trend'}
                       </h3>
-                      <p className="text-[11px] text-slate-400 mt-0.5">{isZh ? '统计时间窗口内的全网健康评分与正常设备数量变化' : 'Average score and healthy device counts over time'}</p>
+                      <p className="text-[11px] text-slate-400 mt-0.5">{isZh ? '统计时间窗口内巡检发现的正常设备数量变化' : 'Healthy device counts reported during the selected period'}</p>
                     </div>
                     <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
                       {[
@@ -441,18 +514,13 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
                         <ComposedChart data={historySeries} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke={ct.grid} vertical={false} />
                           <XAxis dataKey="timestamp" stroke={ct.axis} tick={{ fill: ct.textMuted, fontSize: 10 }} tickFormatter={(ts) => ts.slice(11, 16)} />
-                          <YAxis yAxisId="score" domain={[0, 100]} stroke={ct.axis} tick={{ fill: ct.textMuted, fontSize: 10 }} />
-                          <YAxis yAxisId="count" orientation="right" stroke={ct.axis} tick={{ fill: ct.textMuted, fontSize: 10 }} />
+                          <YAxis stroke={ct.axis} tick={{ fill: ct.textMuted, fontSize: 10 }} allowDecimals={false} />
                           <Tooltip
                             contentStyle={{ background: ct.tooltipBg, border: `1px solid ${ct.tooltipBorder}`, borderRadius: '12px', fontSize: '11px' }}
-                            formatter={(value: any, name: string) => [
-                              value,
-                              name === 'average_score' ? (isZh ? '平均得分' : 'Avg Score') : (isZh ? '健康设备数' : 'Healthy Devices'),
-                            ]}
+                            formatter={(value: any) => [value, isZh ? '正常设备数' : 'Healthy Devices']}
                             labelFormatter={(label) => `${isZh ? '时间' : 'Time'}: ${label}`}
                           />
-                          <Bar yAxisId="count" dataKey="healthy_count" fill="#10b981" opacity={0.3} radius={[4, 4, 0, 0]} maxBarSize={20} />
-                          <Line yAxisId="score" type="monotone" dataKey="average_score" stroke="#06b6d4" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} />
+                          <Bar dataKey="healthy_count" name={isZh ? '正常设备数' : 'Healthy Devices'} fill="#10b981" opacity={0.55} radius={[4, 4, 0, 0]} maxBarSize={20} />
                         </ComposedChart>
                       </ResponsiveContainer>
                     )}
@@ -498,9 +566,6 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
                               <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${tone}`}>
                                 {dev.health_status}
                               </span>
-                              <span className="text-xs font-bold font-mono text-slate-700 dark:text-slate-300">
-                                {dev.health_score ?? '—'}
-                              </span>
                             </div>
                           </div>
                         );
@@ -541,7 +606,6 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
                         <Th>{isZh ? '正常设备' : 'Healthy'}</Th>
                         <Th>{isZh ? '告警设备' : 'Warning'}</Th>
                         <Th>{isZh ? '严重设备' : 'Critical'}</Th>
-                        <Th>{isZh ? '平均得分' : 'Avg Score'}</Th>
                         <Th>{isZh ? '执行时间' : 'Time'}</Th>
                         <TableActionHeader>{isZh ? '操作' : 'Actions'}</TableActionHeader>
                       </tr>
@@ -549,7 +613,7 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
                     <tbody className="divide-y divide-black/[0.03] dark:divide-white/[0.03] text-xs">
                       {recentRuns.length === 0 ? (
                         <tr>
-                          <td colSpan={11} className="py-8 text-center text-slate-400 text-xs">
+                          <td colSpan={10} className="py-8 text-center text-slate-400 text-xs">
                             {isZh ? '暂无巡检记录' : 'No inspection runs found'}
                           </td>
                         </tr>
@@ -572,9 +636,6 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
                             <td className="px-4 py-3 font-mono text-[11px] text-emerald-600 font-semibold">{run.healthy_count}</td>
                             <td className="px-4 py-3 font-mono text-[11px] text-amber-600 font-semibold">{run.warning_count}</td>
                             <td className="px-4 py-3 font-mono text-[11px] text-red-600 font-semibold">{run.critical_count}</td>
-                            <td className="px-4 py-3 font-mono font-bold text-slate-800 dark:text-slate-200">
-                              {run.avg_health_score ?? '—'}
-                            </td>
                             <td className="px-4 py-3 text-slate-400 text-[11px] whitespace-nowrap">
                               {run.started_at?.replace('T', ' ').slice(0, 19) || '-'}
                             </td>
@@ -636,7 +697,6 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
                       <Th>{isZh ? '正常设备' : 'Healthy'}</Th>
                       <Th>{isZh ? '告警设备' : 'Warning'}</Th>
                       <Th>{isZh ? '严重设备' : 'Critical'}</Th>
-                      <Th>{isZh ? '平均得分' : 'Avg Score'}</Th>
                       <Th>{isZh ? '开始时间' : 'Started At'}</Th>
                       <TableActionHeader>{isZh ? '操作与报告导出' : 'Actions & Export'}</TableActionHeader>
                     </tr>
@@ -644,14 +704,14 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
                   <tbody className="divide-y divide-black/[0.03] dark:divide-white/[0.03] text-xs">
                     {runsLoading ? (
                       <tr>
-                        <td colSpan={12} className="py-16 text-center text-slate-400">
+                        <td colSpan={11} className="py-16 text-center text-slate-400">
                           <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-cyan-500" />
                           {isZh ? '加载巡检记录中...' : 'Loading inspection runs...'}
                         </td>
                       </tr>
                     ) : filteredRuns.length === 0 ? (
                       <tr>
-                        <td colSpan={12} className="py-16 text-center text-slate-400">
+                        <td colSpan={11} className="py-16 text-center text-slate-400">
                           {isZh ? '未找到符合条件的巡检记录' : 'No inspection records found'}
                         </td>
                       </tr>
@@ -677,9 +737,6 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
                           <td className="px-4 py-3 font-mono text-[11px] text-emerald-600 font-semibold">{run.healthy_count}</td>
                           <td className="px-4 py-3 font-mono text-[11px] text-amber-600 font-semibold">{run.warning_count}</td>
                           <td className="px-4 py-3 font-mono text-[11px] text-red-600 font-semibold">{run.critical_count}</td>
-                          <td className="px-4 py-3 font-mono font-bold text-slate-800 dark:text-slate-200">
-                            {run.avg_health_score ?? '—'}
-                          </td>
                           <td className="px-4 py-3 text-slate-400 text-[11px] whitespace-nowrap">
                             {run.started_at?.replace('T', ' ').slice(0, 19) || '-'}
                           </td>
@@ -800,7 +857,6 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
                       <Th>{isZh ? 'IP 地址' : 'IP Address'}</Th>
                       <Th>{isZh ? '厂商平台' : 'Platform'}</Th>
                       <Th>{isZh ? '健康状态' : 'Status'}</Th>
-                      <Th>{isZh ? '得分' : 'Score'}</Th>
                       <Th>CPU</Th>
                       <Th>{isZh ? '内存' : 'Memory'}</Th>
                       <Th>{isZh ? '温度' : 'Temperature'}</Th>
@@ -815,14 +871,14 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
                   <tbody className="divide-y divide-black/[0.03] dark:divide-white/[0.03] text-xs">
                     {detailLoading ? (
                       <tr>
-                        <td colSpan={14} className="py-12 text-center text-slate-400">
+                        <td colSpan={13} className="py-12 text-center text-slate-400">
                           <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2 text-cyan-500" />
                           {isZh ? '加载明细数据中...' : 'Loading results...'}
                         </td>
                       </tr>
                     ) : (selectedRunDetail.results || []).length === 0 ? (
                       <tr>
-                        <td colSpan={14} className="py-12 text-center text-slate-400">
+                        <td colSpan={13} className="py-12 text-center text-slate-400">
                           {isZh ? '无单设备执行结果' : 'No result rows'}
                         </td>
                       </tr>
@@ -841,9 +897,6 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
                               <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${tone}`}>
                                 {res.health_status || '—'}
                               </span>
-                            </td>
-                            <td className="px-4 py-3 font-mono font-bold text-slate-800 dark:text-slate-200">
-                              {res.health_score ?? '—'}
                             </td>
                             <td className="px-4 py-3 font-mono text-[11px] text-slate-700 dark:text-slate-300">{res.cpu_usage != null ? `${res.cpu_usage}%` : '—'}</td>
                             <td className="px-4 py-3 font-mono text-[11px] text-slate-700 dark:text-slate-300">{res.memory_usage != null ? `${res.memory_usage}%` : '—'}</td>

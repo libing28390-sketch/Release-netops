@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import TagConditionPicker, { hasTagFilterConditions, type TagFilterConfig } from '../../../components/TagConditionPicker';
 import { ActionIconButton } from '../../../components/ui/ActionIconButton';
+import { useEscapeClose } from '../../../hooks/useEscapeClose';
 import CountdownText from './CountdownText';
 import { ScheduledJob, EligibleApprover, FormState, ValidatedDevice, type ApprovalVerificationMethod, type CollectionPlanFilters } from '../types';
 import {
@@ -138,6 +139,7 @@ export const JobModal: React.FC<JobModalProps> = ({
   refreshDevices,
 }) => {
   const zh = language === 'zh';
+  useEscapeClose(isOpen && approvalStatus !== 'sending' && approvalStatus !== 'verifying', onClose);
   const selectedApprover = approvers.find(item => item.username === approverUsername);
   const availableApprovalMethods = selectedApprover?.verification_methods || [];
 
@@ -402,7 +404,7 @@ export const JobModal: React.FC<JobModalProps> = ({
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/45 p-2 backdrop-blur-sm sm:p-4"
+        className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/45 p-2 sm:p-4"
         role="dialog"
         aria-modal="true"
         aria-labelledby="scheduled-job-form-title"
@@ -432,6 +434,7 @@ export const JobModal: React.FC<JobModalProps> = ({
           <button
             type="button"
             onClick={onClose}
+            aria-label={zh ? '关闭作业配置' : 'Close job setup'}
             disabled={approvalStatus === 'sending' || approvalStatus === 'verifying'}
             className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 disabled:opacity-40"
           >
@@ -477,26 +480,28 @@ export const JobModal: React.FC<JobModalProps> = ({
               })}
             </div>
           </div>
-          <div className="grid min-h-0 flex-1 grid-cols-1 content-start gap-3 overflow-y-auto bg-slate-50/40 p-3 sm:gap-4 sm:p-4 lg:grid-cols-12">
+          <div className="grid min-h-0 flex-1 grid-cols-1 content-start gap-3 overflow-y-auto overscroll-contain bg-slate-50/40 p-3 sm:gap-4 sm:p-4 lg:grid-cols-12">
             
             {/* ═══════════════════════════════════════════════════════════════════
-                LEFT COLUMN (56% / 7 cols): 执行策略配置与目标资产范围
+                Task setup and targets share a row on desktop.
                ═══════════════════════════════════════════════════════════════════ */}
             {flowStep === 0 ? (
-            <div className="lg:col-span-12 space-y-4">
+            <div className="grid min-w-0 items-start gap-3 md:grid-cols-2 lg:col-span-12 sm:gap-4">
+              <div className="min-w-0 space-y-4 rounded-2xl border border-slate-200/90 bg-white p-4 shadow-2xs">
               
               {/* Block 1: 基本属性 */}
-              <div className="p-4 lg:p-5 rounded-2xl bg-white border border-slate-200/90 shadow-2xs space-y-4">
+              <div className="space-y-3">
                 <div className="flex items-center gap-2">
                   <div className="w-2 h-2 rounded-full bg-cyan-500" />
                   <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">{zh ? '基本信息' : 'Basic Info'}</h3>
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-slate-600 block">
+                  <label htmlFor="scheduled-job-name" className="text-xs font-semibold text-slate-600 block">
                     {zh ? '作业名称' : 'Job Name'} <span className="text-rose-500">*</span>
                   </label>
                   <input
+                    id="scheduled-job-name"
                     type="text"
                     value={form.name}
                     onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
@@ -507,14 +512,14 @@ export const JobModal: React.FC<JobModalProps> = ({
               </div>
 
               {/* Block 2: 执行动作与驱动协议 */}
-              <div className="p-4 lg:p-5 rounded-2xl bg-white border border-slate-200/90 shadow-2xs space-y-4">
+              <div className="space-y-3 border-t border-slate-100 pt-3">
                 <div className="flex items-center gap-2">
                   <div className="w-2 h-2 rounded-full bg-blue-500" />
                   <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">{zh ? '执行动作与驱动策略' : 'Action & Driver Strategy'}</h3>
                 </div>
 
                 {/* Action Types */}
-                <div className="p-1 bg-slate-100 rounded-xl grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-1">
+                <div className="grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1 sm:grid-cols-3 xl:grid-cols-5 [&>button]:whitespace-nowrap [&>button]:text-[11px] [&>button>svg]:shrink-0">
                   <button
                     type="button"
                     onClick={() => {
@@ -593,14 +598,16 @@ export const JobModal: React.FC<JobModalProps> = ({
                     {zh ? '脚本执行' : 'Script Run'}
                   </button>
                 </div>
-                <div className="flex items-start gap-2 rounded-xl border border-amber-100 bg-amber-50/70 px-3 py-2 text-[11px] leading-relaxed text-amber-800">
+                {(form.action_type === 'command' || form.action_type === 'script_run') && (
+                <div className="flex items-start gap-2 text-[11px] leading-relaxed text-amber-700">
                   <ShieldCheck size={14} className="mt-0.5 shrink-0 text-amber-600" />
                   <span>
                     {zh
-                      ? '命令和脚本会按周期重复执行，创建前必须由其他审批人验证；运行内容与脚本发布版本绑定，修改后需重新审批。'
-                      : 'Commands and scripts run repeatedly on schedule and require approval by another user. The approved content and released script version are pinned; changes require re-approval.'}
+                      ? '按周期重复执行，需由其他审批人验证；内容与脚本发布版本绑定，修改后须重新审批。'
+                      : 'Runs on schedule with approval from another user. Content and released script versions are pinned; changes require re-approval.'}
                   </span>
                 </div>
+                )}
 
                 {/* Sub-Action: Inspection */}
                 {form.action_type === 'inspection' && (
@@ -743,15 +750,15 @@ export const JobModal: React.FC<JobModalProps> = ({
 
                 {/* Sub-Action: Backup & NSOT Notices */}
                 {form.action_type === 'backup' && (
-                  <div className="p-3 rounded-xl bg-cyan-50/50 border border-cyan-100 text-xs text-cyan-800 flex items-center gap-2">
+                  <div className="flex items-start gap-2 text-[11px] leading-relaxed text-slate-500">
                     <Database size={15} className="text-cyan-600 shrink-0" />
-                    <span>{zh ? '配置备份：自动通过 SSH 获取目标设备当前运行配置并归档版本库。' : 'Runs configuration backup via SSH and archives to version repository.'}</span>
+                    <span>{zh ? '通过 SSH 采集运行配置，自动归档至版本库。' : 'Collects running configurations via SSH and archives each version.'}</span>
                   </div>
                 )}
                 {form.action_type === 'nsot' && (
-                  <div className="p-3 rounded-xl bg-cyan-50/50 border border-cyan-100 text-xs text-cyan-800 flex items-center gap-2">
+                  <div className="flex items-start gap-2 text-[11px] leading-relaxed text-slate-500">
                     <RefreshCw size={15} className="text-cyan-600 shrink-0" />
-                    <span>{zh ? 'NSOT 事实库：只采集上方范围内的在线设备，并遵循各设备的采集模板；只读采集，不执行用户命令或配置变更。' : 'Collects online devices in the selected scope using each device template; read-only, with no user commands or configuration changes.'}</span>
+                    <span>{zh ? '按设备模板只读采集所选范围内的在线设备，写入 NSOT 事实库。' : 'Collects online targets using their read-only templates and updates NSOT facts.'}</span>
                   </div>
                 )}
 
@@ -948,8 +955,10 @@ export const JobModal: React.FC<JobModalProps> = ({
                 )}
               </div>
 
+              </div>
+
               {/* Block 3: 目标资产范围设定 */}
-              <div className="p-4 lg:p-5 rounded-2xl bg-white border border-slate-200/90 shadow-2xs space-y-4">
+              <div className="min-w-0 space-y-3 rounded-2xl border border-slate-200/90 bg-white p-4 shadow-2xs">
                 <div className="flex items-center gap-2">
                   <div className="w-2 h-2 rounded-full bg-indigo-500" />
                   <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">{zh ? '目标资产范围' : 'Target Fleet Scope'}</h3>
@@ -966,10 +975,11 @@ export const JobModal: React.FC<JobModalProps> = ({
 
                 <div className="space-y-3">
                   <div>
-                    <label className="text-xs font-semibold text-slate-600 block mb-1">
+                    <label htmlFor="scheduled-job-scope" className="text-xs font-semibold text-slate-600 block mb-1">
                       {zh ? '范围过滤模式' : 'Scope Filter Mode'} <span className="text-rose-500">*</span>
                     </label>
                     <select
+                      id="scheduled-job-scope"
                       value={form.device_scope}
                       onChange={e => {
                         setForm(f => ({ ...f, device_scope: e.target.value, device_filter: '' }));
@@ -1067,53 +1077,76 @@ export const JobModal: React.FC<JobModalProps> = ({
                     </div>
                   )}
 
-                  {/* Sub-view: Compact IP Input */}
+                  {/* Sub-view: IP lookup and selected targets */}
                   {form.device_scope === 'ip' && (
-                    <div className="space-y-2">
-                      <div className="relative">
+                    <div className="space-y-3">
+                      <div className="space-y-1.5">
+                        <label htmlFor="scheduled-job-ip-search" className="block text-xs font-semibold text-slate-600">
+                          {zh ? '查找目标设备' : 'Find target devices'}
+                        </label>
+                      <div className="flex gap-2">
                         <input
+                          id="scheduled-job-ip-search"
                           type="text"
                           value={ipInput}
                           onChange={e => { setIpInput(e.target.value); setIpError(''); }}
                           onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); validateAndAddIps(ipInput); } }}
                           disabled={ipValidating}
-                          className="w-full pl-3.5 pr-12 py-2.5 rounded-xl border border-slate-200 text-xs bg-white font-mono focus:ring-2 focus:ring-cyan-500/20"
-                          placeholder={zh ? '输入 IP 回车查询，再勾选目标' : 'Search IPs, then select targets'}
+                          aria-describedby="scheduled-job-ip-hint"
+                          className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2.5 font-mono text-xs text-slate-800 outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20 disabled:bg-slate-50"
+                          placeholder={zh ? 'IP / 设备名，支持批量输入' : 'IP / hostname, multiple allowed'}
                         />
                         <button
                           type="button"
                           onClick={() => validateAndAddIps(ipInput)}
                           disabled={!ipInput.trim() || ipValidating}
-                          className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-cyan-600 hover:bg-cyan-50"
+                          className="flex shrink-0 items-center justify-center gap-1.5 rounded-xl bg-cyan-700 px-3 text-xs font-semibold text-white transition-colors hover:bg-cyan-800 disabled:cursor-not-allowed disabled:opacity-40"
                         >
                           {ipValidating ? <RotateCcw size={13} className="animate-spin" /> : <Search size={13} />}
+                          {ipValidating ? (zh ? '查询中' : 'Searching') : (zh ? '查找' : 'Find')}
                         </button>
+                      </div>
+                        <p id="scheduled-job-ip-hint" className="text-[11px] leading-relaxed text-slate-400">
+                          {zh ? '多个目标用逗号或空格分隔，查询后勾选添加。' : 'Separate targets with commas or spaces, then select matches to add.'}
+                        </p>
                       </div>
 
                       {ipError && (
-                        <p className={`text-[10px] ${ipError.includes('已添加') ? 'text-amber-500' : 'text-rose-500'}`}>{ipError}</p>
+                        <p role="alert" className={`text-[11px] ${ipError.includes('已添加') ? 'text-amber-600' : 'text-rose-600'}`}>{ipError}</p>
                       )}
 
-                      {ipDevices.length > 0 && (
-                        <div className="flex flex-wrap items-center gap-1.5 max-h-28 overflow-y-auto p-2 rounded-xl bg-slate-50 border border-slate-200">
+                      <div className="overflow-hidden rounded-xl border border-slate-200">
+                        <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-3 py-2 text-[11px]">
+                          <span className="font-semibold text-slate-600">{zh ? '已选目标' : 'Selected targets'}</span>
+                          <span className="font-semibold tabular-nums text-cyan-700" aria-live="polite">{zh ? `${ipDevices.length} 台` : `${ipDevices.length} devices`}</span>
+                        </div>
+                        {ipDevices.length > 0 ? (
+                        <div className="max-h-52 divide-y divide-slate-100 overflow-y-auto overscroll-contain">
                           {ipDevices.map(dev => (
-                            <span
+                            <div
                               key={dev.ip}
-                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-xs font-mono text-slate-700 shadow-2xs"
+                              className="flex min-w-0 items-center gap-2 px-3 py-2 text-xs"
                             >
-                              <span className="font-bold">{dev.ip}</span>
-                              {dev.hostname && <span className="text-slate-400">({dev.hostname})</span>}
+                              <span className="min-w-0 flex-1 break-all font-mono font-semibold text-slate-700">{dev.ip}</span>
+                              {dev.hostname && <span className="min-w-0 flex-1 truncate text-slate-500" title={dev.hostname}>{dev.hostname}</span>}
                               <button
                                 type="button"
                                 onClick={() => removeIpDevice(dev.ip)}
-                                className="text-slate-400 hover:text-rose-500 ml-0.5"
+                                aria-label={zh ? `移除 ${dev.ip}` : `Remove ${dev.ip}`}
+                                className="shrink-0 rounded-md p-1 text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600"
                               >
                                 <X size={12} />
                               </button>
-                            </span>
+                            </div>
                           ))}
                         </div>
-                      )}
+                        ) : (
+                          <div className="flex items-center justify-center gap-2 px-3 py-5 text-[11px] text-slate-400">
+                            <Target size={15} />
+                            {zh ? '查找并添加本次作业的目标设备' : 'Find and add devices for this job'}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
 

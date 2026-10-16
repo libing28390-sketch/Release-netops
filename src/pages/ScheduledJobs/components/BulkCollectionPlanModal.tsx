@@ -324,7 +324,7 @@ export const BulkCollectionPlanModal: React.FC<BulkCollectionPlanModalProps> = (
   return (
     <AnimatePresence>
       <motion.div
-        className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/45 p-3 backdrop-blur-sm sm:p-6"
+        className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/45 p-3 sm:p-6"
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
         onMouseDown={(event) => { if (event.target === event.currentTarget && canClose) onClose(); }}
       >

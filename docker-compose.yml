@@ -138,9 +138,7 @@ services:
       - S3_FORCE_PATH_STYLE=${S3_FORCE_PATH_STYLE:-true}
       - S3_VERIFY_TLS=${S3_VERIFY_TLS:-true}
       - S3_CONNECT_TIMEOUT_SECONDS=${S3_CONNECT_TIMEOUT_SECONDS:-5}
-      # Optional Guacamole integration. These remain harmless when the
-      # remote-desktop profile is disabled.
-      - NETOPS_REMOTE_DESKTOP_ENABLED=${NETOPS_REMOTE_DESKTOP_ENABLED:-0}
+      # Guacamole is part of the standard Docker deployment.
       - GUACAMOLE_BASE_URL=${GUACAMOLE_BASE_URL:-http://guacamole:8080/guacamole}
       - GUACAMOLE_JSON_SECRET_KEY=${GUACAMOLE_JSON_SECRET_KEY:-}
       - GUACAMOLE_RECORDING_DIR=/app/data/remote_desktop_recordings
@@ -773,12 +771,11 @@ services:
       retries: 5
     logging: *container-logging
 
-  # Optional graphical remote access. Neither service publishes a host port;
+  # Graphical remote access. Neither service publishes a host port;
   # only Nexora can reach the web application and only Guacamole can reach
   # guacd. The guacd-only egress network routes connections to managed hosts.
   guacamole:
     image: guacamole/guacamole:1.6.0
-    profiles: ["remote-desktop"]
     container_name: nexora-guacamole
     mem_limit: ${GUACAMOLE_MEM_LIMIT:-768m}
     cpus: "${GUACAMOLE_CPUS:-1.0}"
@@ -802,7 +799,6 @@ services:
 
   guacd:
     image: guacamole/guacd:1.6.0
-    profiles: ["remote-desktop"]
     container_name: nexora-guacd
     # Apache's 1.6.0 image runs guacd as UID/GID 1000, matching Nexora.
     user: "1000:1000"

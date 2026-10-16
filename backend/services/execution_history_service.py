@@ -3,9 +3,120 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from database import get_db_connection
+
+
+def _history_timestamp(value: Any) -> datetime | None:
+    text = str(value or '').strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace('Z', '+00:00'))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        # Older Playbook rows were written with datetime.now().isoformat(), so
+        # they have no offset and represent the backend's configured local TZ.
+        # Respect that TZ when comparing records with the UTC 24-hour window.
+        return parsed.astimezone().astimezone(timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _execution_duration_ms(started_at: Any, ended_at: Any, status: Any) -> int | None:
+    started = _history_timestamp(started_at)
+    if started is None:
+        return None
+    ended = _history_timestamp(ended_at)
+    if ended is None:
+        if str(status or '').strip().lower() != 'running':
+            return None
+        ended = datetime.now(timezone.utc)
+    return max(0, int((ended - started).total_seconds() * 1000))
+
+
+def get_recent_execution_status_summary(
+    *,
+    user: dict[str, Any],
+    include_playbooks: bool,
+    include_backup_runs: bool,
+    window_hours: int = 24,
+) -> dict[str, Any]:
+    """Aggregate visible execution records by actual run status and start time."""
+    now = datetime.now(timezone.utc)
+    window_start = now - timedelta(hours=window_hours)
+    # Stored timestamps include several historical timezone formats. Query a
+    # safely wider lexical range, then apply the exact UTC window in Python.
+    query_start = (window_start - timedelta(hours=14)).replace(tzinfo=None).isoformat(timespec='seconds')
+    rows: list[dict[str, Any]] = []
+
+    conn = get_db_connection()
+    try:
+        inspection_rows = conn.execute(
+            'SELECT started_at, status FROM inspection_runs WHERE started_at >= ?',
+            (query_start,),
+        ).fetchall()
+        rows.extend(dict(row) for row in inspection_rows)
+
+        if include_playbooks:
+            playbook_conditions = [
+                "NOT (COALESCE(pb.scenario_id, '') = 'instant' "
+                "AND COALESCE(pb.scenario_name, '') LIKE 'Config Backup · %')",
+                'pb.created_at >= ?',
+            ]
+            playbook_params: list[Any] = [query_start]
+            if user.get('role') != 'Administrator':
+                playbook_conditions.append('pb.tenant_id = ?')
+                playbook_params.append(str(user.get('tenant_id') or ''))
+            playbook_rows = conn.execute(
+                'SELECT pb.created_at AS started_at, pb.status AS status '
+                'FROM playbook_executions pb WHERE ' + ' AND '.join(playbook_conditions),
+                playbook_params,
+            ).fetchall()
+            rows.extend(dict(row) for row in playbook_rows)
+
+        if include_backup_runs:
+            backup_rows = conn.execute(
+                '''SELECT r.started_at AS started_at,
+                          CASE
+                            WHEN LOWER(COALESCE(r.status, '')) = 'running' THEN 'running'
+                            WHEN COALESCE(r.failed_count, 0) > 0 AND COALESCE(r.success_count, 0) = 0 THEN 'failed'
+                            WHEN COALESCE(r.failed_count, 0) > 0 THEN 'partial_failure'
+                            WHEN COALESCE(r.success_count, 0) = 0 AND COALESCE(r.skipped_count, 0) > 0 THEN 'skipped'
+                            ELSE 'success'
+                          END AS status
+                   FROM config_backup_runs r
+                   WHERE r.started_at >= ?''',
+                (query_start,),
+            ).fetchall()
+            rows.extend(dict(row) for row in backup_rows)
+    finally:
+        conn.close()
+
+    summary = {'pending': 0, 'running': 0, 'success': 0, 'abnormal': 0}
+    for row in rows:
+        started_at = _history_timestamp(row.get('started_at'))
+        if started_at is None or started_at < window_start:
+            continue
+        status = str(row.get('status') or '').strip().lower()
+        if status in {'pending', 'queued', 'awaiting_approval', 'awaiting approval', 'approval_pending', 'scheduled'}:
+            summary['pending'] += 1
+        elif status in {'running', 'in_progress', 'in progress', 'processing', 'executing'}:
+            summary['running'] += 1
+        elif status in {'success', 'succeeded', 'completed', 'complete'}:
+            summary['success'] += 1
+        else:
+            summary['abnormal'] += 1
+
+    return {
+        **summary,
+        'total': sum(summary.values()),
+        'window_hours': window_hours,
+        'window_started_at': window_start.isoformat(timespec='seconds'),
+        'generated_at': now.isoformat(timespec='seconds'),
+    }
 
 
 def get_execution_history(
@@ -24,6 +135,7 @@ def get_execution_history(
             ir.id AS id,
             'inspection' AS source,
             ir.started_at AS started_at,
+            ir.completed_at AS ended_at,
             CASE WHEN ir.trigger_type = 'manual' THEN 'manual' ELSE 'plan' END AS trigger_type,
             ir.status AS status,
             COALESCE(ir.total_devices, 0) AS total_devices,
@@ -32,8 +144,7 @@ def get_execution_history(
             COALESCE(ir.failed_count, 0) AS failed_count,
             0 AS partial_count,
             0 AS skipped_count,
-            ir.avg_health_score AS avg_health_score,
-            COALESCE(ir.created_by, 'system') AS created_by,
+            COALESCE(NULLIF(TRIM(job.created_by), ''), NULLIF(TRIM(ir.created_by), ''), 'system') AS created_by,
             COALESCE(NULLIF(TRIM(ins.name), ''), NULLIF(TRIM(job.name), '')) AS name,
             COALESCE(
                 NULLIF(TRIM(ins.name), ''),
@@ -66,6 +177,10 @@ def get_execution_history(
                 'playbook' AS source,
                 pb.created_at AS started_at,
                 CASE
+                    WHEN LOWER(COALESCE(pb.status, '')) IN ('running', 'pending', 'awaiting_approval') THEN NULL
+                    ELSE pb.updated_at
+                END AS ended_at,
+                CASE
                     WHEN pb.author IN ('scheduler', 'system')
                          OR COALESCE(pb.scenario_id, '') LIKE 'scheduled:%'
                     THEN 'job'
@@ -78,11 +193,13 @@ def get_execution_history(
                 COALESCE(pb.failed_count, 0) AS failed_count,
                 COALESCE(pb.partial_count, 0) AS partial_count,
                 0 AS skipped_count,
-                NULL AS avg_health_score,
-                COALESCE(pb.author, 'admin') AS created_by,
+                COALESCE(NULLIF(TRIM(scheduled_job.created_by), ''), NULLIF(TRIM(pb.author), ''), 'admin') AS created_by,
                 NULLIF(TRIM(pb.scenario_name), '') AS name,
                 COALESCE(NULLIF(TRIM(pb.scenario_name), ''), 'Quick Playbook 快捷命令执行') AS search_name
             FROM playbook_executions pb
+            LEFT JOIN scheduled_jobs scheduled_job
+                ON COALESCE(pb.scenario_id, '') LIKE 'scheduled:%'
+               AND scheduled_job.id = SUBSTR(pb.scenario_id, 11)
             {playbook_where}
         ''')
 
@@ -92,6 +209,7 @@ def get_execution_history(
                 r.id AS id,
                 'config_backup' AS source,
                 r.started_at AS started_at,
+                r.finished_at AS ended_at,
                 CASE
                     WHEN LOWER(COALESCE(r.trigger, '')) = 'manual' THEN 'manual'
                     ELSE 'job'
@@ -109,7 +227,6 @@ def get_execution_history(
                 COALESCE(r.failed_count, 0) AS failed_count,
                 0 AS partial_count,
                 COALESCE(r.skipped_count, 0) AS skipped_count,
-                NULL AS avg_health_score,
                 COALESCE(r.author, 'system') AS created_by,
                 'Config Backup · ' || COALESCE(
                     NULLIF(TRIM(backup_policy.name), ''),
@@ -151,9 +268,9 @@ def get_execution_history(
         total = int(total_row[0] if total_row else 0)
         rows = conn.execute(
             f'''WITH history AS ({history_sql})
-                SELECT id, source, started_at, trigger_type, status,
+                SELECT id, source, started_at, ended_at, trigger_type, status,
                        total_devices, device_ids, success_count, failed_count, partial_count, skipped_count,
-                       avg_health_score, created_by, name
+                       created_by, name
                 FROM history
                 {where_sql}
                 ORDER BY CAST(NULLIF(started_at, '') AS TIMESTAMPTZ) DESC NULLS LAST,
@@ -170,6 +287,9 @@ def get_execution_history(
                     item['total_devices'] = len(json.loads(device_ids or '[]'))
                 except (TypeError, ValueError):
                     item['total_devices'] = 0
+            item['duration_ms'] = _execution_duration_ms(
+                item.get('started_at'), item.get('ended_at'), item.get('status')
+            )
             items.append(item)
         return {
             'items': items,

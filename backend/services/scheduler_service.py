@@ -9,6 +9,7 @@ from database import get_db_connection
 from services.automation_service import AutomationService
 from core.crypto import decrypt_credential
 from services.vault_service import resolve_device_credentials
+from services.playbook_output_service import cleanup_expired_playbook_outputs, protect_output
 from services.network_access_limiter import limited_connect_handler
 from services.collection_plan_service import (
     explicit_collector_override,
@@ -440,6 +441,40 @@ async def run_scheduled_automation_job(job_id: str):
             owner = _authorize_scheduled_job_run(conn, job)
         except PermissionError as exc:
             now = datetime.now().isoformat()
+            created_by = str(job.get('created_by') or 'system').strip() or 'system'
+            created_by_id = str(job.get('created_by_id') or '').strip()
+            owner_row = None
+            if created_by_id:
+                owner_row = conn.execute(
+                    "SELECT tenant_id FROM users WHERE id = ?",
+                    (created_by_id,),
+                ).fetchone()
+            if not owner_row and created_by:
+                owner_row = conn.execute(
+                    "SELECT tenant_id FROM users WHERE username = ?",
+                    (created_by,),
+                ).fetchone()
+            tenant_value = owner_row['tenant_id'] if owner_row is not None else job.get('tenant_id')
+            tenant_id = str(tenant_value or '').strip()
+            execution_id = str(uuid.uuid4())
+            phases_json = json.dumps({
+                'authorization': {
+                    'status': 'denied',
+                    'reason': str(exc),
+                },
+            }, ensure_ascii=False)
+            conn.execute(
+                '''INSERT INTO playbook_executions
+                   (id, scenario_id, scenario_name, platform, device_ids, variables,
+                    status, dry_run, author, concurrency, phases_json, results_json,
+                    created_at, updated_at, tenant_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                (
+                    execution_id, f"scheduled:{job_id}", str(job.get('name') or job_id),
+                    'mixed', '[]', '{}', 'denied', 0, created_by, 1,
+                    phases_json, '{}', now, now, tenant_id,
+                ),
+            )
             conn.execute(
                 "UPDATE scheduled_jobs SET last_run_at = ?, last_run_status = ?, run_count = run_count + 1 WHERE id = ?",
                 (now, 'denied', job_id),
@@ -729,11 +764,12 @@ async def run_scheduled_automation_job(job_id: str):
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
             (execution_id, f"scheduled:{job_id}", job['name'], 'mixed', 
              json.dumps(device_ids), '{}', 'running', 0,
-             # Use 'scheduler' as author so the frontend can reliably identify
-             # these records as scheduled-job executions (not manual runs).
-             'scheduler',
+             # scenario_id identifies scheduled runs; author remains the
+             # scheduled job creator for history attribution and retention.
+             str(job.get('created_by') or 'system'),
              5, now_iso, now_iso)
         )
+        cleanup_expired_playbook_outputs(conn)
         conn.commit()
 
         # 4. 执行（并行，最多 10 并发）
@@ -787,6 +823,7 @@ async def run_scheduled_automation_job(job_id: str):
 
             # 记录设备开始执行（使用独立连接，避免并发冲突）
             dev_started_at = datetime.now().isoformat()
+            dev_started_monotonic = time.monotonic()
             dev_result_id = str(uuid.uuid4())
             dev_conn = get_db_connection()
             try:
@@ -816,10 +853,15 @@ async def run_scheduled_automation_job(job_id: str):
                         lambda: service.orchestrator.execute_single(d, 'script', commands_str)
                     )
                     logger.info(f"[Scheduler] Linux execution raw result for {d.get('hostname')}: success={exec_results_raw.get('success')}, err={exec_results_raw.get('stderr') or exec_results_raw.get('error')}")
+                    stdout = str(exec_results_raw.get('stdout') or exec_results_raw.get('output') or '')
+                    stderr = str(exec_results_raw.get('stderr') or exec_results_raw.get('error') or '')
+                    output = stdout.strip()
+                    if stderr.strip():
+                        output = f"{output}\n[stderr]\n{stderr.strip()}".strip()
                     exec_results = [{
                         'success': exec_results_raw.get('success', False),
-                        'output': exec_results_raw.get('stdout', '') or exec_results_raw.get('output', ''),
-                        'error': exec_results_raw.get('stderr', '') or exec_results_raw.get('error', ''),
+                        'output': output,
+                        'error': stderr,
                     }]
 
                 elif is_shell_script and not is_server:
@@ -863,6 +905,8 @@ async def run_scheduled_automation_job(job_id: str):
                     err_val = r.get('error') or r.get('stderr') or ''
                     if not out_val and err_val:
                         return f"ERROR: {err_val}"
+                    if out_val and err_val:
+                        return f"{out_val}\n[stderr]\n{err_val}"
                     return out_val
 
                 success = all(r.get('success', False) for r in exec_results)
@@ -933,15 +977,19 @@ async def run_scheduled_automation_job(job_id: str):
                 }
 
                 dev_completed_at = datetime.now().isoformat()
+                duration_ms = max(0, int((time.monotonic() - dev_started_monotonic) * 1000))
+                phases_encrypted, phases_json, raw_output_expires_at, _output_encrypted = protect_output(phase_data)
                 upd_conn = get_db_connection()
                 try:
                     upd_conn.execute(
                         '''UPDATE execution_device_results 
-                           SET status = ?, error_message = ?, phases_json = ?, completed_at = ?
+                           SET status = ?, error_message = ?, phases_json = ?, phases_encrypted = ?,
+                               raw_output_expires_at = ?, completed_at = ?, duration_ms = ?
                            WHERE id = ?''',
                         (phase_status,
                          anomaly_msg if business_anomaly else ("" if success else "Command failure"),
-                         json.dumps(phase_data), dev_completed_at, dev_result_id)
+                         phases_json, phases_encrypted, raw_output_expires_at, dev_completed_at,
+                         duration_ms, dev_result_id)
                     )
                     upd_conn.commit()
                 finally:
@@ -953,13 +1001,18 @@ async def run_scheduled_automation_job(job_id: str):
                     failure_details.append(f"设备 {d['hostname'] or d['ip_address']} 异常: {str(e)}")
 
                 dev_completed_at = datetime.now().isoformat()
+                duration_ms = max(0, int((time.monotonic() - dev_started_monotonic) * 1000))
+                error_phase = {"execute": {"status": "failed", "commands": [], "output": str(e)}}
+                phases_encrypted, phases_json, raw_output_expires_at, _output_encrypted = protect_output(error_phase)
                 err_conn = get_db_connection()
                 try:
                     err_conn.execute(
                         '''UPDATE execution_device_results 
-                           SET status = ?, error_message = ?, completed_at = ?
+                           SET status = ?, error_message = ?, phases_json = ?, phases_encrypted = ?,
+                               raw_output_expires_at = ?, completed_at = ?, duration_ms = ?
                            WHERE id = ?''',
-                        ("failed", str(e), dev_completed_at, dev_result_id)
+                        ("failed", str(e), phases_json, phases_encrypted, raw_output_expires_at,
+                         dev_completed_at, duration_ms, dev_result_id)
                     )
                     err_conn.commit()
                 finally:

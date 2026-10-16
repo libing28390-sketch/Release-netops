@@ -1,6 +1,6 @@
 """API routes for device inspection (巡检管理)."""
 
-from fastapi import APIRouter, HTTPException, Query, Body
+from fastapi import APIRouter, HTTPException, Query, Body, Request
 from fastapi.responses import FileResponse
 import os
 import tempfile
@@ -14,6 +14,7 @@ from core.report_generator import (
     generate_inspection_html,
     generate_inspection_json,
     generate_inspection_pdf,
+    parse_linux_inspection_output,
 )
 from schemas.schemas import InspectionRunRequest, InspectionScheduleCreate, InspectionScheduleUpdate, InspectionItemCreate
 from services.inspection_service import (
@@ -31,7 +32,7 @@ from services.inspection_service import (
     update_inspection_item,
     delete_inspection_item,
 )
-from services.execution_history_service import get_execution_history
+from services.execution_history_service import get_execution_history, get_recent_execution_status_summary
 from database import get_db_connection
 import json
 import uuid
@@ -147,6 +148,18 @@ def list_execution_history(
         user=user,
         include_playbooks=include_playbooks,
         include_backup_runs=user.get('role') == 'Administrator',
+    )
+    return {'success': True, 'data': data, 'message': ''}
+
+
+@router.get('/inspections/execution-summary')
+def get_recent_execution_summary(user=require_role('Viewer')):
+    """Return a compact, permission-aware summary of the last 24 hours."""
+    data = get_recent_execution_status_summary(
+        user=user,
+        include_playbooks=authorize_resource(user, 'playbook', 'view'),
+        include_backup_runs=user.get('role') == 'Administrator',
+        window_hours=24,
     )
     return {'success': True, 'data': data, 'message': ''}
 
@@ -410,11 +423,12 @@ def _get_system_name() -> str:
 @router.get('/inspections/{run_id}/export')
 def export_inspection_report(
     run_id: str,
+    request: Request,
     format: str = Query('xlsx', pattern='^(xlsx|html|json|pdf)$', description='导出格式: xlsx, html, json 或 pdf'),
     source: str = Query('inspection', description='数据源: inspection 或 playbook'),
     customer_name: str = Query('', description='客户名称（HTML/PDF 报表）'),
     engineer_name: str = Query('', description='工程师名称（HTML/PDF 报表）'),
-    _user=require_role('Viewer'),
+    user=require_role('Viewer'),
 ):
     """
     R7.1: 支持 format 参数 (xlsx, html, json, pdf)
@@ -424,6 +438,15 @@ def export_inspection_report(
     try:
         if source == 'playbook':
             # --- PLAYBOOK TO INSPECTION MAPPING ---
+            # New Playbook output is encrypted at rest; scope-check and audit
+            # the read before decrypting it for the requested report.
+            from api.playbooks.routes import (
+                _assert_execution_scope,
+                _audit_playbook_output_read,
+                _load_output_or_http,
+            )
+
+            _assert_execution_scope(conn, run_id, user, action='view')
             row = conn.execute('SELECT * FROM playbook_executions WHERE id = ?', (run_id,)).fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail='Playbook 记录不存在')
@@ -436,7 +459,6 @@ def export_inspection_report(
             # Intelligent Parsing (replicates frontend logic in backend for PDF/HTML support)
             from core.textfsm import parse_with_textfsm
             
-            total_score = 0
             for dr in dev_rows:
                 dr_dict = dict(dr)
                 
@@ -453,13 +475,19 @@ def export_inspection_report(
                     dr_dict['platform'] = dev_row['platform'] or dr_dict.get('platform', '')
                     dr_dict['role'] = dev_row['role'] or dr_dict.get('role', '')
 
-                phases = {}
-                try: phases = json.loads(dr_dict.get('phases_json') or '{}')
-                except: pass
+                phases = _load_output_or_http(
+                    dr_dict.get('phases_encrypted'), dr_dict.get('phases_json')
+                )
+                if not isinstance(phases, dict):
+                    phases = {}
+                # The report enrichment path consumes the normalized JSON
+                # field; keep the decrypted payload in memory only.
+                dr_dict['phases_json'] = json.dumps(phases, ensure_ascii=False)
                 
                 metrics = {}
                 findings = []
-                score = 100
+                phase_outputs = []
+                is_linux_inspection = False
 
                 status_str = str(dr_dict.get('status') or '').strip().lower()
                 is_failed = (status_str in ('failed', 'error')) or ('fail' in status_str)
@@ -474,38 +502,60 @@ def export_inspection_report(
                                 err_msg = str(p_data.get('output')).strip()
                         output = p_data.get('output', '')
                         if not isinstance(output, str): output = str(output)
+                        phase_outputs.append(output)
+                        if '巡检汇总 (Summary)' in output or '========== HEALTH CHECK ==========' in output:
+                            is_linux_inspection = True
                         
                         if 'show version' in output.lower() or 'display version' in output.lower():
                             recs = parse_with_textfsm(dr_dict.get('platform', 'cisco_ios'), 'show version', output)
                             if recs: metrics['version'] = recs[0]
                         
-                        if 'error' in output.lower() or 'drop' in output.lower():
+                        if not is_linux_inspection and ('error' in output.lower() or 'drop' in output.lower()):
                             findings.append({'severity': 'warning', 'item': '接口异常检查', 'message': '接口出现 error/drop 丢包', 'description': '命令输出中含有 error/drop 关键字，可能存在潜在风险。'})
-                            score -= 5
 
-                if is_failed:
-                    score = 0
+                linux_summary = parse_linux_inspection_output('\n'.join(phase_outputs))
+                if linux_summary is not None:
+                    findings = linux_summary['findings']
+                    dr_dict['linux_inspection_summary'] = linux_summary
+                    health_status = linux_summary['health_status']
+                    if is_failed and health_status == 'healthy':
+                        health_status = 'critical'
+                        findings.append({
+                            'severity': 'critical',
+                            'item': '作业执行状态',
+                            'message': f"作业执行失败 ({err_msg or '设备连接超时或被拒绝'})",
+                            'description': f"异常原因: {err_msg or '无法连接设备或执行超时。'}",
+                            'type': 'connection_error',
+                        })
+                elif is_failed:
+                    health_status = 'critical'
                     findings.append({
                         'severity': 'critical',
                         'item': '设备连接与作业状态',
                         'message': f"作业执行失败 ({err_msg or '设备连接超时或被拒绝'})",
-                        'description': f"异常原因: {err_msg or '无法连接到远程设备端口，网络不在线或连接超时。'}"
+                        'description': f"异常原因: {err_msg or '无法连接到远程设备端口，网络不在线或连接超时。'}",
+                        'type': 'connection_error',
                     })
+                elif any(finding.get('severity') == 'warning' for finding in findings):
+                    health_status = 'warning'
+                else:
+                    health_status = 'healthy'
 
-                final_score = max(0, score)
                 dr_dict['metrics_json'] = json.dumps(metrics)
                 dr_dict['findings_json'] = json.dumps(findings, ensure_ascii=False)
-                dr_dict['health_score'] = final_score
-                dr_dict['health_status'] = 'healthy' if final_score >= 90 else ('warning' if final_score >= 70 else 'critical')
-                total_score += final_score
+                dr_dict.pop('health_score', None)
+                dr_dict['health_status'] = health_status
                 results.append(dr_dict)
+
+            _audit_playbook_output_read(
+                request, user, execution_id=run_id, source='inspection_report'
+            )
             
             detail['results'] = results
-            detail['avg_health_score'] = round(total_score / len(results), 1) if results else 100
             detail['total_devices'] = len(results)
             detail['started_at'] = detail.get('started_at') or detail.get('created_at')
             detail['report_type'] = 'playbook'
-            detail['name'] = detail.get('scenario_name') or detail.get('playbook_name') or detail.get('name') or 'Playbook 自动化执行'
+            detail['name'] = detail.get('scenario_name') or detail.get('playbook_name') or detail.get('name') or '自动化作业'
         else:
             detail = get_inspection_run_detail(run_id)
             if not detail:

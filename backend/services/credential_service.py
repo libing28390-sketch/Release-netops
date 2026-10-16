@@ -167,7 +167,7 @@ def _list_devices_using_rows_for_credentials(conn, credential_ids: list[str]) ->
 
     try:
         rows = conn.execute(
-            """SELECT id, hostname, ip_address, username, normal_username, admin_username, auth_model, credential_id, admin_credential_id
+            """SELECT id, hostname, ip_address, platform, username, normal_username, admin_username, auth_model, credential_id, admin_credential_id
                FROM devices
                WHERE credential_id = ANY(?) OR admin_credential_id = ANY(?)
                ORDER BY hostname""",
@@ -206,6 +206,10 @@ def list_credentials(conn) -> list[dict]:
         view["device_count"] = len(device_rows)
         view["devices"] = _public_device_refs(device_rows[:5], view["id"])
         view["devices_truncated"] = len(device_rows) > 5
+        view["enable_password_supported"] = bool(device_rows) and all(
+            str(device.get('platform') or '').strip().lower().startswith('cisco')
+            for device in device_rows
+        )
         _with_account_role(view, device_rows)
         res.append(view)
     return res
@@ -219,6 +223,10 @@ def get_credential(conn, cred_id: str) -> dict:
     device_rows = _list_devices_using_rows(conn, cred_id)
     view["device_count"] = len(device_rows)
     view["devices"] = _public_device_refs(device_rows, cred_id)
+    view["enable_password_supported"] = bool(device_rows) and all(
+        str(device.get('platform') or '').strip().lower().startswith('cisco')
+        for device in device_rows
+    )
     return _with_account_role(view, device_rows)
 
 
@@ -420,7 +428,7 @@ def _list_devices_using_rows(conn, cred_id: str) -> list[dict]:
     """Return device info needed for safe credential metadata inference."""
     try:
         rows = conn.execute(
-            """SELECT id, hostname, ip_address, username, normal_username, admin_username, auth_model, credential_id, admin_credential_id
+            """SELECT id, hostname, ip_address, platform, username, normal_username, admin_username, auth_model, credential_id, admin_credential_id
                FROM devices
                WHERE credential_id = ? OR admin_credential_id = ?
                ORDER BY hostname""",

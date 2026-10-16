@@ -856,9 +856,15 @@ def _build_approval_manifest(approval_type: str, payload: dict, user: dict) -> d
                     authorize_job_resource(user, current, action)
                 except PermissionError as exc:
                     raise HTTPException(status_code=403, detail=str(exc)) from exc
-            script_sha, _ = script_snapshot(
-                conn, str(source.get('script_id') or ''), require_released=operation != 'DELETE',
-            )
+            try:
+                script_sha, _ = script_snapshot(
+                    conn, str(source.get('script_id') or ''), require_released=operation != 'DELETE',
+                )
+            except ValueError as exc:
+                # A stale or invalid published script is an expected approval
+                # conflict. Return it to the caller instead of logging it as an
+                # unhandled server exception.
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
             try:
                 manifest = normalize_job_manifest(
                     source, operation=operation, requester_id=requester_id,

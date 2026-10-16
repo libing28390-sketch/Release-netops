@@ -13,8 +13,31 @@ export const fmtDateTime = (iso: string | undefined, zh: boolean): string => {
   });
 };
 
+export const formatScheduleTimestamp = (iso: string | undefined): string => {
+  if (!iso) return '—';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '—';
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+};
+
+export const formatFuturePlanName = (iso: string | undefined, zh: boolean): string => {
+  if (!iso) return zh ? '定时作业_时间未知' : 'Scheduled Job_Unknown Time';
+  const formatted = formatScheduleTimestamp(iso);
+  return `${zh ? '定时作业' : 'Scheduled Job'}_${formatted.replace(' ', '_')}`;
+};
+
 export const getScheduleStatus = (sch: ScheduledJob, zh: boolean) => {
   if (!sch.enabled) return { label: zh ? '已停用' : 'Disabled', cls: 'bg-slate-100 text-slate-500', icon: 'disabled' as const };
+  // Future-run rows are projections. A job-level last_run_at only proves that
+  // some occurrence ran previously; it cannot mark this occurrence executed.
+  if (sch.run_at) {
+    const runAt = new Date(sch.run_at);
+    if (!Number.isNaN(runAt.getTime()) && runAt.getTime() > Date.now()) {
+      return { label: zh ? '待执行' : 'Pending', cls: 'bg-cyan-50 text-cyan-700', icon: 'pending' as const };
+    }
+    return { label: zh ? '无对应执行记录' : 'No matching run', cls: 'bg-amber-50 text-amber-700', icon: 'ready' as const };
+  }
   if (sch.last_run_at) return { label: zh ? '已执行' : 'Executed', cls: 'bg-emerald-50 text-emerald-600', icon: 'done' as const };
   const now = new Date();
   if (sch.scheduled_at && new Date(sch.scheduled_at) > now) return { label: zh ? '等待中' : 'Pending', cls: 'bg-cyan-50 text-cyan-600', icon: 'pending' as const };

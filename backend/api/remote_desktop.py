@@ -62,15 +62,6 @@ REMOTE_DESKTOP_STATUS_POLL_SECONDS = 2
 MAX_WS_FRAME_BYTES = 16 * 1024 * 1024
 
 
-def _feature_enabled() -> bool:
-    return str(os.getenv("NETOPS_REMOTE_DESKTOP_ENABLED", "0") or "0").strip() == "1"
-
-
-def _require_feature_enabled() -> None:
-    if not _feature_enabled():
-        raise HTTPException(status_code=503, detail="Remote desktop access is disabled")
-
-
 def _now() -> datetime:
     return datetime.now(timezone.utc).replace(microsecond=0)
 
@@ -109,7 +100,6 @@ def get_remote_desktop_profiles(
     asset_id: str,
     user=require_permission("asset", "view"),
 ):
-    _require_feature_enabled()
     conn = get_db_connection()
     try:
         asset = load_asset(conn, asset_id)
@@ -126,7 +116,6 @@ def put_remote_desktop_profile(
     payload: RemoteDesktopProfileInput,
     user=require_permission("asset", "update"),
 ):
-    _require_feature_enabled()
     conn = get_db_connection()
     try:
         asset = load_asset(conn, asset_id)
@@ -170,7 +159,6 @@ def get_batch_remote_desktop_profiles(
     asset_ids: str = Query(default="", max_length=12000),
     user=require_permission("asset", "view"),
 ):
-    _require_feature_enabled()
     requested = list(dict.fromkeys(item.strip() for item in asset_ids.split(",") if item.strip()))
     if len(requested) > 200:
         raise HTTPException(status_code=422, detail="At most 200 assets may be requested")
@@ -244,7 +232,6 @@ def _new_remote_recording_location(session_id: str) -> tuple[str, str]:
 
 
 def create_remote_desktop_session(payload: RemoteDesktopSessionInput, user: dict) -> dict:
-    _require_feature_enabled()
     username = str(user.get("username") or "").strip()
     requester_id = _session_user_id(user)
     if not username or not requester_id:
@@ -1044,9 +1031,6 @@ def _audit_remote_desktop_closed(session_id: str, reason: str, error: Exception 
 
 @ws_router.websocket("/pam/remote-desktop-ws/{ticket}")
 async def remote_desktop_websocket(websocket: WebSocket, ticket: str):
-    if not _feature_enabled():
-        await websocket.close(code=1013, reason="Remote desktop access is disabled")
-        return
     if not _same_origin(websocket) or not valid_ticket_format(ticket):
         await websocket.close(code=1008, reason="Invalid remote desktop session")
         return

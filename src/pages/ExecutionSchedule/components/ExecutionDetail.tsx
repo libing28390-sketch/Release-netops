@@ -3,7 +3,7 @@ import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   X, Activity, RotateCcw, AlertTriangle, Search, FileText,
-  FileSpreadsheet, FileJson, ChevronRight, Loader2, Table2, Copy, Check, Download,
+  FileJson, ChevronRight, Loader2, Table2, Copy, Check, Download,
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, ResponsiveContainer } from 'recharts';
 import OutputActions from '../../../components/OutputActions';
@@ -17,13 +17,18 @@ import { buildExecutionSnapshotExportData, getExecutionSnapshotCells } from '../
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 import { TableActionCell, TableActionHeader } from '../../../components/ui/TableActionColumn';
+
+const stripLinuxHealthRating = (output: string) => output
+  .split(/\r?\n/)
+  .filter((line) => !/^\s*(?:综合健康评级|overall health rating)\s*[:：]/i.test(line))
+  .join('\n');
+
 interface ExecutionDetailProps {
   zh: boolean;
   open: boolean;
   selectedLog: UnifiedExecutionLog | null;
   logDetailLoading: boolean;
   onClose: () => void;
-  onExport: (logId: string, format: string, source: string) => void;
   // Inspection
   inspectionDetail: any;
   selectedInspDeviceId: string | null;
@@ -108,7 +113,7 @@ const ParsedInspectionOutputTable: React.FC<ParsedInspectionOutputTableProps> = 
 };
 
 const ExecutionDetail: React.FC<ExecutionDetailProps> = ({
-  zh, open, selectedLog, logDetailLoading, onClose, onExport,
+  zh, open, selectedLog, logDetailLoading, onClose,
   inspectionDetail, selectedInspDeviceId, setSelectedInspDeviceId,
   collapsedCmds, toggleCmdCollapse, expandAllCmds, collapseAllCmds,
   inspParseResults, inspCopiedKey, inspDetailTab, setInspDetailTab,
@@ -123,6 +128,24 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = ({
 }) => {
   useEscapeClose(open, onClose);
   if (!selectedLog) return null;
+
+  const selectedOutputDevice = devices.find((device) => device.id === String(selectedPbDevice || ''));
+  const outputDeviceType = `${selectedOutputDevice?.asset_type || ''} ${selectedOutputDevice?.platform || ''}`.toLowerCase();
+  const isLinuxOutput = selectedLog.source === 'playbook' && (
+    /linux|ubuntu|debian|centos|redhat|rhel|rocky|alma|suse|server/.test(outputDeviceType)
+    || selectedLog.name.toLowerCase().includes('linux')
+  );
+  let authorizationFailureReason = '';
+  if (selectedLog.source === 'playbook' && selectedLog.status === 'denied') {
+    try {
+      const phases = typeof pbDetail?.phases_json === 'string'
+        ? JSON.parse(pbDetail.phases_json)
+        : pbDetail?.phases_json;
+      authorizationFailureReason = String(phases?.authorization?.reason || '');
+    } catch {
+      authorizationFailureReason = '';
+    }
+  }
 
   return (
     <AnimatePresence>
@@ -151,25 +174,10 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = ({
                   <h3 className="text-base font-bold text-[#164e63]">
                     {selectedLog.name}
                   </h3>
-                  <p className="text-[10px] text-black/30 font-mono mt-0.5">ID: {selectedLog.id}</p>
+                  <p className="text-[10px] text-black/30 font-mono mt-0.5">{zh ? '编号：' : 'ID: '}{selectedLog.id}</p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                {/* Export buttons */}
-                <div className="flex items-center gap-1 bg-black/5 p-1 rounded-xl mr-2">
-                  <button onClick={() => onExport(selectedLog.id, 'html', selectedLog.source)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-indigo-700 hover:bg-white transition-all shadow-sm">
-                    <FileText size={14} /> HTML
-                  </button>
-                  <button onClick={() => onExport(selectedLog.id, 'pdf', selectedLog.source)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-rose-700 hover:bg-white transition-all shadow-sm">
-                    <FileText size={14} /> PDF
-                  </button>
-                  <button onClick={() => onExport(selectedLog.id, 'xlsx', selectedLog.source)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-emerald-700 hover:bg-white transition-all shadow-sm">
-                    <FileSpreadsheet size={14} /> Excel
-                  </button>
-                  <button onClick={() => onExport(selectedLog.id, 'json', selectedLog.source)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-slate-700 hover:bg-white transition-all shadow-sm">
-                    <FileJson size={14} /> JSON
-                  </button>
-                </div>
                 <button onClick={onClose} className="p-2 rounded-xl text-black/20 hover:bg-black/5 hover:text-black/40 transition-all">
                   <X size={20} />
                 </button>
@@ -248,9 +256,22 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = ({
                   onStatusFilterChange={onBackupDeviceStatusFilterChange}
                   onRetry={onRetryBackupRunDetails}
                 />
+              ) : selectedLog.status === 'denied' ? (
+                <div className="flex h-full items-center justify-center bg-slate-50 px-6">
+                  <div className="max-w-2xl rounded-2xl border border-rose-200 bg-white p-6 shadow-sm" role="status">
+                    <div className="flex items-center gap-2 text-sm font-bold text-rose-700">
+                      <AlertTriangle size={18} />
+                      {zh ? '作业未执行：权限校验拒绝' : 'Job not run: authorization denied'}
+                    </div>
+                    <p className="mt-3 break-words text-xs leading-6 text-slate-600">
+                      {authorizationFailureReason || (zh ? '执行时未通过作业授权校验。' : 'The scheduled job did not pass its authorization check.')}
+                    </p>
+                  </div>
+                </div>
               ) : (
                 <PlaybookView
                   zh={zh}
+                  isLinuxOutput={isLinuxOutput}
                   pbDevices={pbDevices}
                   selectedPbDevice={selectedPbDevice}
                   pbDeviceDetail={pbDeviceDetail}
@@ -338,7 +359,6 @@ const InspectionView: React.FC<InspectionViewProps> = ({
                   <p className={`text-xs font-bold truncate ${isSelected ? 'text-white' : 'text-[#164e63]'}`}>{res.hostname}</p>
                   <div className="flex items-center gap-2 mt-0.5">
                     <p className={`text-[9px] font-mono ${isSelected ? 'text-white/60' : 'text-black/30'}`}>{res.ip_address}</p>
-                    <span className={`text-[9px] font-bold ${isSelected ? 'text-cyan-300' : 'text-cyan-600'}`}>Score: {res.health_score ?? '—'}</span>
                   </div>
                 </div>
                 <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
@@ -390,10 +410,6 @@ const InspectionView: React.FC<InspectionViewProps> = ({
                     <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded bg-white/5 ${res.ssh_ok ? 'text-emerald-400' : 'text-red-400'}`}>SSH: {res.ssh_ok ? 'OK' : 'FAIL'}</span>
                     {res.ssh_error && <span className="text-[10px] text-red-400/70 truncate max-w-[200px]" title={res.ssh_error}>{res.ssh_error}</span>}
                   </div>
-                </div>
-                <div className="flex flex-col items-end gap-1">
-                  <div className="text-[10px] text-white/30 font-mono uppercase tracking-widest">{zh ? '健康得分' : 'Health Score'}</div>
-                  <div className={`text-xl font-black ${(res.health_score || 0) >= 90 ? 'text-emerald-400' : (res.health_score || 0) >= 60 ? 'text-amber-400' : 'text-red-400'}`}>{res.health_score ?? '—'}</div>
                 </div>
               </div>
 
@@ -930,11 +946,11 @@ const ConfigBackupRunView: React.FC<{
 /* ═══════════════════════════════════════════════════════ */
 
 const PlaybookView: React.FC<{
-  zh: boolean; pbDevices: any[]; selectedPbDevice: any; pbDeviceDetail: any;
+  zh: boolean; isLinuxOutput: boolean; pbDevices: any[]; selectedPbDevice: any; pbDeviceDetail: any;
   onSelectPbDevice: (deviceId: string) => void; devices: Device[];
   collapsedCmds: Record<string, boolean>; toggleCmdCollapse: (cmd: string) => void;
   setCollapsedCmds: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
-}> = ({ zh, pbDevices, selectedPbDevice, pbDeviceDetail, onSelectPbDevice, devices, collapsedCmds, toggleCmdCollapse, setCollapsedCmds }) => (
+}> = ({ zh, isLinuxOutput, pbDevices, selectedPbDevice, pbDeviceDetail, onSelectPbDevice, devices, collapsedCmds, toggleCmdCollapse, setCollapsedCmds }) => (
   <div className="flex flex-col md:flex-row h-full">
     {/* Device List (Left) */}
     <div className="w-full md:w-4/12 border-r border-black/5 flex flex-col h-full bg-slate-50/50">
@@ -944,12 +960,12 @@ const PlaybookView: React.FC<{
       <div className="flex-1 overflow-auto p-2 space-y-1">
         {pbDevices.map((dev) => {
           const stMap: Record<string, { cls: string; label: string }> = {
-            success: { cls: 'bg-emerald-500', label: zh ? '成功' : 'Pass' },
-            completed: { cls: 'bg-emerald-500', label: zh ? '成功' : 'Pass' },
-            failed: { cls: 'bg-red-500', label: zh ? '失败' : 'Fail' },
-            error: { cls: 'bg-red-500', label: zh ? '失败' : 'Fail' },
-            partial: { cls: 'bg-amber-500', label: zh ? '部分成功' : 'Partial' },
-            partial_failure: { cls: 'bg-amber-500', label: zh ? '部分成功' : 'Partial' },
+            success: { cls: 'bg-emerald-500', label: zh ? '正常' : 'Pass' },
+            completed: { cls: 'bg-emerald-500', label: zh ? '正常' : 'Pass' },
+            failed: { cls: 'bg-red-500', label: zh ? '异常' : 'Fail' },
+            error: { cls: 'bg-red-500', label: zh ? '异常' : 'Fail' },
+            partial: { cls: 'bg-amber-500', label: zh ? '部分异常' : 'Partial' },
+            partial_failure: { cls: 'bg-amber-500', label: zh ? '部分异常' : 'Partial' },
             running: { cls: 'bg-cyan-500 animate-pulse', label: zh ? '运行中' : 'Live' },
           };
           const dst = stMap[dev.status || ''] || { cls: 'bg-slate-400', label: dev.status || (zh ? '未知' : 'Unknown') };
@@ -975,10 +991,10 @@ const PlaybookView: React.FC<{
     </div>
 
     {/* Command Output (Right) */}
-    <div className="flex-1 flex flex-col bg-[#1E1E1E] overflow-hidden">
-      <div className="p-4 border-b border-white/10 bg-black/20 flex items-center justify-between">
+    <div className={`flex-1 flex flex-col overflow-hidden ${isLinuxOutput ? 'bg-white' : 'bg-[#1E1E1E]'}`}>
+      <div className={`p-4 border-b flex items-center justify-between ${isLinuxOutput ? 'border-black/10 bg-slate-50' : 'border-white/10 bg-black/20'}`}>
         <div>
-          <span className="text-xs text-white/80 font-bold block">
+          <span className={`text-xs font-bold block ${isLinuxOutput ? 'text-black' : 'text-white/80'}`}>
             {selectedPbDevice 
               ? (pbDevices.find((d: any) => d.device_id === selectedPbDevice)?.hostname || '') 
               : (zh ? '请选择设备查看命令输出' : 'Select a device to view command outputs')}
@@ -988,10 +1004,10 @@ const PlaybookView: React.FC<{
             if (!dev) return null;
             return (
               <div className="flex items-center gap-3 mt-1.5">
-                <span className="text-[10px] text-white/40 font-mono bg-white/5 px-1.5 py-0.5 rounded uppercase tracking-tighter">PLAT: {dev.platform || '-'}</span>
-                <span className="text-[10px] text-white/40 font-mono bg-white/5 px-1.5 py-0.5 rounded uppercase tracking-tighter">ROLE: {dev.role || '-'}</span>
-                <span className="text-[10px] text-white/40 font-mono bg-white/5 px-1.5 py-0.5 rounded uppercase tracking-tighter">SITE: {dev.site || '-'}</span>
-                <span className="text-[10px] text-white/40 font-mono bg-white/5 px-1.5 py-0.5 rounded uppercase tracking-tighter">MOD: {dev.model || '-'}</span>
+                <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded uppercase tracking-tighter ${isLinuxOutput ? 'text-black/55 bg-black/5' : 'text-white/40 bg-white/5'}`}>PLAT: {dev.platform || '-'}</span>
+                <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded uppercase tracking-tighter ${isLinuxOutput ? 'text-black/55 bg-black/5' : 'text-white/40 bg-white/5'}`}>ROLE: {dev.role || '-'}</span>
+                <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded uppercase tracking-tighter ${isLinuxOutput ? 'text-black/55 bg-black/5' : 'text-white/40 bg-white/5'}`}>SITE: {dev.site || '-'}</span>
+                <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded uppercase tracking-tighter ${isLinuxOutput ? 'text-black/55 bg-black/5' : 'text-white/40 bg-white/5'}`}>MOD: {dev.model || '-'}</span>
               </div>
             );
           })()}
@@ -1009,11 +1025,11 @@ const PlaybookView: React.FC<{
                 });
                 setCollapsedCmds(next);
               }}
-              className="text-[10px] font-bold text-cyan-400/60 hover:text-cyan-400 transition-colors cursor-pointer"
+              className={`text-[10px] font-bold transition-colors cursor-pointer ${isLinuxOutput ? 'text-black/55 hover:text-black' : 'text-cyan-400/60 hover:text-cyan-400'}`}
             >
               {zh ? '全部展开' : 'Expand All'}
             </button>
-            <div className="w-px h-2.5 bg-white/10" />
+            <div className={`w-px h-2.5 ${isLinuxOutput ? 'bg-black/10' : 'bg-white/10'}`} />
             <button 
               onClick={() => {
                 const next = { ...collapsedCmds };
@@ -1025,14 +1041,14 @@ const PlaybookView: React.FC<{
                 });
                 setCollapsedCmds(next);
               }}
-              className="text-[10px] font-bold text-white/30 hover:text-white/60 transition-colors cursor-pointer"
+              className={`text-[10px] font-bold transition-colors cursor-pointer ${isLinuxOutput ? 'text-black/45 hover:text-black' : 'text-white/30 hover:text-white/60'}`}
             >
               {zh ? '全部折叠' : 'Collapse All'}
             </button>
           </div>
         )}
       </div>
-      <div className="flex-1 p-6 font-mono text-xs text-[#d4d4d4] overflow-auto whitespace-pre-wrap select-text relative">
+      <div className={`flex-1 p-6 font-mono text-xs overflow-auto whitespace-pre-wrap select-text relative ${isLinuxOutput ? 'bg-white text-black' : 'bg-[#1E1E1E] text-[#d4d4d4]'}`}>
         {pbDeviceDetail?.phases ? (
           Object.entries(pbDeviceDetail.phases).map(([phase, pdata]: any) => {
             const pd = pdata || {};
@@ -1044,46 +1060,47 @@ const PlaybookView: React.FC<{
             return (
               <div key={phase} className="mb-6 group/phase">
                 <div className="flex items-center gap-2 mb-3">
-                  <div className="h-px flex-1 bg-white/5" />
-                  <span className="text-[#a170e8] text-[10px] font-black uppercase tracking-[0.2em]"># PHASE: {phase.toUpperCase()}</span>
-                  <div className="h-px flex-1 bg-white/5" />
+                  <div className={`h-px flex-1 ${isLinuxOutput ? 'bg-black/10' : 'bg-white/5'}`} />
+                  <span className={`text-[10px] font-black uppercase tracking-[0.2em] ${isLinuxOutput ? 'text-black/50' : 'text-[#a170e8]'}`}># PHASE: {phase.toUpperCase()}</span>
+                  <div className={`h-px flex-1 ${isLinuxOutput ? 'bg-black/10' : 'bg-white/5'}`} />
                 </div>
                 
                 <div className="space-y-3">
                   {blocks.map((blk, bi) => {
-                    const bOutput = blk.output || '';
-                    const bIsError = bOutput.includes('__ERROR__') || bOutput.includes('% Invalid input') || bOutput.includes('error');
+                    const rawOutput = blk.output || '';
+                    const bOutput = isLinuxOutput ? stripLinuxHealthRating(rawOutput) : rawOutput;
+                    const bIsError = !isLinuxOutput && (bOutput.includes('__ERROR__') || bOutput.includes('% Invalid input') || bOutput.includes('error'));
                     const bKey = `pb_${selectedPbDevice}_${phase}_${bi}`;
                     const isCollapsed = collapsedCmds[bKey] ?? false;
                     
                     return (
-                      <div key={bi} className={`rounded-lg overflow-hidden border transition-all ${bIsError ? 'border-red-500/30 bg-red-500/5' : 'border-white/5 bg-black/20'}`}>
+                      <div key={bi} className={`rounded-lg overflow-hidden border transition-all ${isLinuxOutput ? 'border-black/10 bg-white' : bIsError ? 'border-red-500/30 bg-red-500/5' : 'border-white/5 bg-black/20'}`}>
                         <div 
                           onClick={() => toggleCmdCollapse(bKey)}
-                          className="px-4 py-2 bg-white/5 flex items-center justify-between cursor-pointer hover:bg-white/[0.08] select-none"
+                          className={`px-4 py-2 flex items-center justify-between cursor-pointer select-none ${isLinuxOutput ? 'bg-slate-50 hover:bg-slate-100' : 'bg-white/5 hover:bg-white/[0.08]'}`}
                         >
                           <div className="flex items-center gap-2 min-w-0">
-                            <ChevronRight size={14} className={`text-white/20 shrink-0 transition-transform duration-200 ${isCollapsed ? '' : 'rotate-90'}`} />
-                            <span className={`text-[11px] font-mono font-bold truncate ${bIsError ? 'text-red-400' : 'text-cyan-400/80'}`}>&gt; {blk.command || 'system'}</span>
+                            <ChevronRight size={14} className={`shrink-0 transition-transform duration-200 ${isLinuxOutput ? 'text-black/35' : 'text-white/20'} ${isCollapsed ? '' : 'rotate-90'}`} />
+                            <span className={`text-[11px] font-mono font-bold truncate ${isLinuxOutput ? 'text-black/75' : bIsError ? 'text-red-400' : 'text-cyan-400/80'}`}>&gt; {blk.command || 'system'}</span>
                           </div>
                           <div className="flex items-center gap-2 shrink-0 ml-3" onClick={e => e.stopPropagation()}>
                             {isCollapsed && (
-                              <span className="text-[10px] text-white/30 font-mono italic truncate max-w-[250px] hidden sm:inline">
+                              <span className={`text-[10px] font-mono italic truncate max-w-[250px] hidden sm:inline ${isLinuxOutput ? 'text-black/45' : 'text-white/30'}`}>
                                 {bOutput.substring(0, 60).replace(/\n/g, ' ')}...
                               </span>
                             )}
                             <OutputActions
-                              text={blk.output}
+                              text={bOutput}
                               filename={`${dev?.hostname || 'device'}_${phase}_cmd${bi}`}
-                              theme="dark"
+                              theme={isLinuxOutput ? 'light' : 'dark'}
                               zh={zh}
                               iconOnly={true}
                             />
                           </div>
                         </div>
                         {!isCollapsed && (
-                          <div className={`p-4 font-mono text-[11px] whitespace-pre-wrap leading-relaxed ${bIsError ? 'text-red-300/80' : 'text-[#d4d4d4]'}`}>
-                            {blk.output || (pd.status === 'success' ? (zh ? '命令执行成功，但无回显' : 'Success, no output') : '—')}
+                          <div className={`p-4 font-mono text-xs whitespace-pre-wrap leading-relaxed ${isLinuxOutput ? 'text-black' : bIsError ? 'text-red-300/80' : 'text-[#d4d4d4]'}`}>
+                            {bOutput || (pd.status === 'success' ? (zh ? '命令执行成功，但无回显' : 'Success, no output') : '—')}
                           </div>
                         )}
                       </div>
@@ -1094,7 +1111,7 @@ const PlaybookView: React.FC<{
             );
           })
         ) : (
-          <div className="text-white/20 text-center py-24 select-none">{zh ? '无命令输出' : 'No command output'}</div>
+          <div className={`text-center py-24 select-none ${isLinuxOutput ? 'text-black/35' : 'text-white/20'}`}>{zh ? '无命令输出' : 'No command output'}</div>
         )}
       </div>
     </div>

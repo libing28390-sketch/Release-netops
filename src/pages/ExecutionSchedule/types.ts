@@ -46,7 +46,6 @@ export interface InspectionRun {
   healthy_count: number;
   warning_count: number;
   critical_count: number;
-  avg_health_score: number;
   created_by: string;
 }
 
@@ -94,6 +93,8 @@ export interface UnifiedExecutionLog {
   /** Backup run ID; kept separate from the list identity for source-safe joins. */
   backup_run_id?: string;
   started_at: string;
+  ended_at?: string | null;
+  duration_ms?: number | null;
   trigger_type: 'manual' | 'plan' | 'job';
   status: string;
   total_devices: number;
@@ -101,7 +102,6 @@ export interface UnifiedExecutionLog {
   failed_count: number;
   partial_count?: number;
   skipped_count?: number;
-  avg_health_score?: number;
   created_by: string;
   name: string;
 }

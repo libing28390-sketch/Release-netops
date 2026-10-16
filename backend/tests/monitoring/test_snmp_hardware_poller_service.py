@@ -17,6 +17,133 @@ def test_older_hardware_discovery_version_is_refreshed(monkeypatch) -> None:
     assert poller._discovery_due("device-old-hardware-plan", now) is True
 
 
+def test_wireless_discovery_due_refreshes_known_ap_inventory_every_three_minutes(monkeypatch) -> None:
+    now = datetime(2026, 10, 16, 0, 0, tzinfo=timezone.utc)
+    latest = {
+        "last_status": "success",
+        "last_attempt_at": now - timedelta(minutes=2, seconds=59),
+        "discovery_version": poller.DISCOVERY_VERSION,
+    }
+    monkeypatch.setattr(poller, "_latest_wireless_discovery", lambda _device_id: latest)
+
+    assert poller._wireless_discovery_due("wireless-controller", now) is False
+
+    latest["last_attempt_at"] = now - timedelta(minutes=3)
+    assert poller._wireless_discovery_due("wireless-controller", now) is True
+
+
+def test_wireless_not_found_inventory_uses_failed_retry_backoff(monkeypatch) -> None:
+    now = datetime(2026, 10, 16, 0, 0, tzinfo=timezone.utc)
+    latest = {
+        "last_status": "not_found",
+        "last_attempt_at": now - timedelta(minutes=14),
+        "discovery_version": poller.DISCOVERY_VERSION,
+    }
+    monkeypatch.setattr(poller, "_latest_wireless_discovery", lambda _device_id: latest)
+
+    assert poller._wireless_discovery_due("non-wireless-device", now) is False
+
+    latest["last_attempt_at"] = now - timedelta(minutes=15)
+    assert poller._wireless_discovery_due("non-wireless-device", now) is True
+
+
+def test_full_discovery_clock_ignores_frequent_ap_snapshot_updates(monkeypatch) -> None:
+    class Cursor:
+        def fetchone(self):
+            return {
+                "last_status": "success",
+                "last_attempt_at": datetime(2026, 10, 15, 12, 0, tzinfo=timezone.utc),
+                "discovery_version": poller.DISCOVERY_VERSION,
+            }
+
+    class Connection:
+        query = ""
+        def execute(self, query, params):
+            self.query = query
+            assert params == ("wireless-controller",)
+            return Cursor()
+        def close(self):
+            pass
+
+    conn = Connection()
+    monkeypatch.setattr(poller, "get_db_connection", lambda: conn)
+
+    latest = poller._latest_discovery("wireless-controller")
+
+    assert latest["last_attempt_at"] == datetime(2026, 10, 15, 12, 0, tzinfo=timezone.utc)
+    assert "component_class <> 'wireless_access_point'" in conn.query
+
+
+def test_due_wireless_snapshot_uses_targeted_discovery_path(monkeypatch) -> None:
+    from services import vault_service
+
+    calls: list[dict] = []
+    monkeypatch.setattr(vault_service, "resolve_collector_credentials", lambda _device: {
+        "snmp": {"server": "192.0.2.15", "community": "test-community", "port": 161, "version": "2c"},
+    })
+    monkeypatch.setattr(poller, "_discovery_due", lambda *_args: False)
+    monkeypatch.setattr(poller, "_wireless_discovery_due", lambda *_args: True)
+
+    async def discover(**kwargs):
+        calls.append(kwargs)
+        return {"status": "success", "sensor_count": 2}
+
+    monkeypatch.setattr(poller, "_discover_device", discover)
+
+    result = asyncio.run(poller.collect_device_hardware(
+        {"id": "device-ap", "ip_address": "192.0.2.15", "platform": "h3c_comware"},
+        discovery_only=True,
+    ))
+
+    assert result["status"] == "discovered"
+    assert calls[0]["wireless_only"] is True
+    assert calls[0]["device"]["id"] == "device-ap"
+
+
+def test_wireless_only_discovery_persists_ap_inventory_without_other_wireless_classes(monkeypatch) -> None:
+    from services import librenms_rule_service, librenms_source_policy, librenms_wireless_rule_service, snmp_service
+
+    persisted: list[dict] = []
+    monkeypatch.setattr(librenms_rule_service, "ensure_rules_available", lambda: None)
+
+    async def get_system_identity(*_args):
+        return "test-system"
+
+    monkeypatch.setattr(snmp_service, "_snmp_get_versioned", get_system_identity)
+    monkeypatch.setattr(poller, "_resolve_identity_and_rule", lambda **_kwargs: (
+        {"status": "identified", "os_key": "comware"},
+        {"id": "h3c-comware", "os_key": "comware", "vendor": "H3C", "platform": "h3c_comware"},
+    ))
+
+    async def probe_wireless(*_args, **_kwargs):
+        return {
+            "sensors": [
+                {"component_class": "wireless_access_point", "source_id": "ap-1"},
+                {"component_class": "wireless_radio", "source_id": "radio-1"},
+            ],
+            "category_results": [
+                {"component_class": "wireless_access_point", "status": "success", "coverage_complete": True},
+                {"component_class": "wireless_radio", "status": "success", "coverage_complete": True},
+            ],
+        }
+
+    monkeypatch.setattr(librenms_wireless_rule_service, "probe_librenms_wireless_hardware", probe_wireless)
+    monkeypatch.setattr(librenms_source_policy, "is_trusted_hardware_sensor", lambda _sensor: True)
+    monkeypatch.setattr(poller, "_persist_discovery", lambda **kwargs: persisted.append(kwargs) or {"results": kwargs["category_results"]})
+
+    result = asyncio.run(poller._discover_wireless_device(
+        device={"id": "device-ap"},
+        ip="192.0.2.16",
+        community="test-community",
+        port=161,
+        version="2c",
+    ))
+
+    assert result["status"] == "success"
+    assert [sensor["source_id"] for sensor in persisted[0]["sensors"]] == ["ap-1"]
+    assert [item["component_class"] for item in persisted[0]["category_results"]] == ["wireless_access_point"]
+
+
 def test_active_sensor_loading_reuses_trust_checks_by_provenance(monkeypatch) -> None:
     from services import librenms_source_policy
 

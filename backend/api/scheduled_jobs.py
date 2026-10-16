@@ -54,6 +54,8 @@ from core.scheduler_manager import refresh_dynamic_scheduler
 
 def _format_job_row(row) -> dict:
     d = dict(row)
+    d["updated_by"] = str(d.get("updated_by") or d.get("created_by") or "system")
+    d["updated_at"] = str(d.get("updated_at") or d.get("created_at") or "")
     if d.get('action_type') == 'inspection' and d.get('commands'):
         import re
         d['check_items'] = [c.strip() for c in re.split(r'[,\n]', d['commands']) if c.strip()]
@@ -571,16 +573,16 @@ def create_scheduled_job(
                (id, name, job_type, action_type, cron_expr, scheduled_at,
                 device_scope, device_filter, commands, script_id,
                 is_config, config_reason, use_admin_creds, enabled, status,
-                approved_by, approved_at, created_by, created_at, updated_at,
+                approved_by, approved_at, created_by, updated_by, created_at, updated_at,
                 created_by_id, tenant_id, script_sha256,
                 authorization_manifest_hash, authorization_mode)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1,'approved',?,?,?,?,?,?,?,?,?,'snapshot')""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1,'approved',?,?,?,?,?,?,?,?,?,?,'snapshot')""",
             (
                 job_id, name, job_type, action_type, cron_expr, scheduled_at,
                 device_scope, device_filter, commands, script_id,
                 is_config, config_reason, use_admin_creds,
                 approval_record.get("approver_username") or approval_record.get("approver", ""),
-                now, actor, now, now,
+                now, actor, actor, now, now,
                 _actor_id(user), _actor_tenant(user), manifest.get("script_sha256", ""),
                 execution_manifest_hash,
             ),
@@ -659,13 +661,14 @@ def toggle_scheduled_job(
         snapshot_hash = manifest_hash(execution_snapshot(conn, new_row))
         conn.execute(
             """UPDATE scheduled_jobs
-                  SET enabled = ?, status = ?, updated_at = ?,
+                  SET enabled = ?, status = ?, updated_at = ?, updated_by = ?,
                       authorization_manifest_hash = ?,
                       authorization_mode = 'snapshot',
                       approved_by = ?, approved_at = ?
                 WHERE id = ?""",
             (
                 1 if enabled else 0, "approved" if enabled else "disabled", now,
+                str(user.get("username") or "unknown"),
                 snapshot_hash,
                 (approval_record or {}).get("approver_username", ""), now, job_id,
             ),
@@ -903,6 +906,7 @@ def update_scheduled_job(
             "approved_at": now,
             "script_sha256": manifest["script_sha256"],
             "authorization_mode": "snapshot",
+            "updated_by": str(user.get("username") or "unknown"),
             "updated_at": now,
         }
         new_row = {**current, **updates}

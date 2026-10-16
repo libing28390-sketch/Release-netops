@@ -7,6 +7,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import TerminalWindow from '../components/access/TerminalWindow';
 import { DataTable } from '../components/DataTable';
+import { TableActionHeader } from '../components/ui/TableActionColumn';
 import { PasswordInputField } from '../components/ui/PasswordInputField';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
@@ -290,7 +291,8 @@ export default function AccessCenterTab({
       // Web SSH renders the same SSH transport in a browser terminal. It is
       // independent of device HTTP(S) management pages, so an SSH-only asset
       // must expose both the native-terminal and browser-terminal actions.
-      methods.push('ssh-terminal', 'ssh-web');
+      // Prefer the browser terminal as the default entry in the ALL view.
+      methods.push('ssh-web', 'ssh-terminal');
     }
     if (getRemoteDesktopProfile(dev, 'rdp')) methods.push('rdp');
     if (getRemoteDesktopProfile(dev, 'vnc')) methods.push('vnc');
@@ -935,15 +937,15 @@ export default function AccessCenterTab({
         onClick={() => handleAccessRequest(dev, 'xshell', 'normal')}
         className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-[10px] font-black text-slate-600 transition-all hover:border-emerald-500 hover:bg-emerald-50 hover:text-emerald-600"
       >
-        <Terminal className="h-3.5 w-3.5" />
-        {dev.normal_username || (isZh ? '普通' : 'user')}
+        <Terminal className="h-3.5 w-3.5 shrink-0" />
+        <span className="min-w-0 truncate">{dev.normal_username || (isZh ? '普通' : 'user')}</span>
       </button>
       <button
         onClick={() => handleAccessRequest(dev, 'xshell', 'privileged')}
         className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-[10px] font-black text-slate-600 transition-all hover:border-orange-500 hover:bg-orange-50 hover:text-orange-600"
       >
-        <Lock className="h-3.5 w-3.5" />
-        {dev.admin_username || (isZh ? '特权' : 'admin')}
+        <Lock className="h-3.5 w-3.5 shrink-0" />
+        <span className="min-w-0 truncate">{dev.admin_username || (isZh ? '特权' : 'admin')}</span>
       </button>
     </div>
   );
@@ -962,7 +964,7 @@ export default function AccessCenterTab({
           className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[10px] font-black text-slate-600 transition-all hover:border-emerald-500 hover:bg-emerald-50 hover:text-emerald-700"
           title={isZh ? `普通凭据 · ${profile.profile_name}` : `Normal credentials · ${profile.profile_name}`}
         >
-          <Monitor className="h-3.5 w-3.5" />{isZh ? '普通' : 'Normal'}
+          <Monitor className="h-3.5 w-3.5 shrink-0" /><span className="min-w-0 truncate">{isZh ? '普通' : 'Normal'}</span>
         </button>
         <button
           type="button"
@@ -970,7 +972,7 @@ export default function AccessCenterTab({
           className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[10px] font-black text-slate-600 transition-all hover:border-orange-500 hover:bg-orange-50 hover:text-orange-700"
           title={isZh ? `管理员凭据 · ${profile.profile_name}` : `Administrator credentials · ${profile.profile_name}`}
         >
-          <Lock className="h-3.5 w-3.5" />{isZh ? '管理员' : 'Admin'}
+          <Lock className="h-3.5 w-3.5 shrink-0" /><span className="min-w-0 truncate">{isZh ? '管理员' : 'Admin'}</span>
         </button>
       </div>
     );
@@ -1000,15 +1002,15 @@ export default function AccessCenterTab({
           onClick={() => handleAccessRequest(dev, 'web', 'normal', scheme)}
           className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-[10px] font-black text-slate-600 transition-all hover:border-[#00bceb] hover:bg-cyan-50 hover:text-[#00bceb]"
         >
-          <Globe className="h-3.5 w-3.5" />
-          {dev.normal_username || (isZh ? '普通' : 'user')}
+        <Globe className="h-3.5 w-3.5 shrink-0" />
+        <span className="min-w-0 truncate">{dev.normal_username || (isZh ? '普通' : 'user')}</span>
         </button>
         <button
           onClick={() => handleAccessRequest(dev, 'web', 'privileged', scheme)}
           className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-[10px] font-black text-slate-600 transition-all hover:border-orange-500 hover:bg-orange-50 hover:text-orange-600"
         >
-          <Lock className="h-3.5 w-3.5" />
-          {dev.admin_username || (isZh ? '特权' : 'admin')}
+        <Lock className="h-3.5 w-3.5 shrink-0" />
+        <span className="min-w-0 truncate">{dev.admin_username || (isZh ? '特权' : 'admin')}</span>
         </button>
       </div>
     );
@@ -1024,104 +1026,79 @@ export default function AccessCenterTab({
         className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-[10px] font-black text-slate-600 transition-all hover:border-[#00bceb] hover:bg-cyan-50 hover:text-[#00bceb]"
         title={isZh ? '在网页终端中通过 SSH 登录' : 'Open a browser terminal over SSH'}
       >
-        <Globe className="h-3.5 w-3.5" />
-        {dev.normal_username || (isZh ? '普通' : 'user')}
+          <Globe className="h-3.5 w-3.5 shrink-0" />
+          <span className="min-w-0 truncate">{dev.normal_username || (isZh ? '普通' : 'user')}</span>
       </button>
       <button
         onClick={() => { void requestSession(dev, 'admin'); }}
         className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-[10px] font-black text-slate-600 transition-all hover:border-orange-500 hover:bg-orange-50 hover:text-orange-600"
         title={isZh ? '在网页终端中通过 SSH 发起特权登录' : 'Open a privileged browser terminal over SSH'}
       >
-        <Lock className="h-3.5 w-3.5" />
-        {dev.admin_username || (isZh ? '特权' : 'admin')}
+          <Lock className="h-3.5 w-3.5 shrink-0" />
+          <span className="min-w-0 truncate">{dev.admin_username || (isZh ? '特权' : 'admin')}</span>
       </button>
     </div>
   );
 
-  // ALL is an aggregate view, so the selected access method is kept per row.
-  // This prevents an HTTP/HTTPS-capable SSH asset from losing either its Web
-  // SSH or management-page entry just because the user is viewing ALL. When
-  // there is only one supported method, render its label directly instead of
-  // making the operator open a one-item dropdown.
-  const renderAllAccessActions = (dev: Device) => {
+  // Keep the chosen method per row in the aggregate view. The selector and
+  // connection buttons occupy separate columns so the heading aligns with
+  // the control and the right-side actions can stay visible while scrolling.
+  const selectedAllAccessMethod = (dev: Device) => {
     const methods = getAllAccessMethods(dev);
-    const selectedMethod = methods.includes(allAccessMethods[dev.id])
-      ? allAccessMethods[dev.id]
-      : methods[0];
+    return methods.includes(allAccessMethods[dev.id]) ? allAccessMethods[dev.id] : methods[0];
+  };
 
-    if (!selectedMethod) return null;
+  const renderAllAccessMethod = (dev: Device) => {
+    const methods = getAllAccessMethods(dev);
+    const selectedMethod = selectedAllAccessMethod(dev);
+    if (!selectedMethod) return <span className="text-slate-300">—</span>;
 
-    const renderSelectedActions = () => {
-      switch (selectedMethod) {
-        case 'ssh-terminal':
-          return renderTerminalActions(dev);
-        case 'ssh-web':
-          return renderSshWebActions(dev);
-        case 'rdp':
-          return renderRemoteDesktopActions(dev, 'rdp');
-        case 'vnc':
-          return renderRemoteDesktopActions(dev, 'vnc');
-        case 'http':
-          return renderHttpWebActions(dev, 'http');
-        case 'https':
-          return renderHttpWebActions(dev, 'https');
-        default:
-          return null;
-      }
-    };
-
-    // Keep a dedicated, non-growing slot for the access-method indicator.
-    // A native select has browser-owned internal sizing, so fixing only its
-    // width is not enough to keep the neighbouring actions aligned with the
-    // single-method rows. The outer slot gives both variants the same flex
-    // basis while the static variant remains visibly non-interactive.
-    const methodSlotStyle: React.CSSProperties = {
-      flex: '0 0 92px',
-      width: '92px',
-      minWidth: '92px',
-      maxWidth: '92px',
-    };
-    const methodControl = (
-      <div className="box-border h-[30px] shrink-0" style={methodSlotStyle}>
-        {methods.length > 1 ? (
-          <select
-            aria-label={isZh ? `${dev.hostname} 登录方式` : `${dev.hostname} access method`}
-            value={selectedMethod}
-            onChange={(event) => {
-              const nextMethod = event.target.value as AllAccessMethod;
-              setAllAccessMethods((current) => ({ ...current, [dev.id]: nextMethod }));
-            }}
-            className="box-border h-full w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-bold text-slate-600 outline-none transition-colors focus:border-[#00bceb] focus:ring-2 focus:ring-[#00bceb]/10"
-          >
-            {methods.map((method) => (
-              <option key={method} value={method}>{getAllAccessMethodLabel(method)}</option>
-            ))}
-          </select>
-        ) : (
-          <span
-            aria-label={isZh ? `${dev.hostname} 登录方式：${getAllAccessMethodLabel(selectedMethod)}` : `${dev.hostname} access method: ${getAllAccessMethodLabel(selectedMethod)}`}
-            className="box-border inline-flex h-full w-full items-center justify-start gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-bold text-slate-600"
-          >
-            {selectedMethod === 'rdp' ? <Monitor className="h-3.5 w-3.5 shrink-0" /> : selectedMethod === 'http' || selectedMethod === 'https' || selectedMethod === 'ssh-web' ? <Globe className="h-3.5 w-3.5 shrink-0" /> : <Terminal className="h-3.5 w-3.5 shrink-0" />}
-            <span className="truncate">{getAllAccessMethodLabel(selectedMethod)}</span>
-          </span>
-        )}
-      </div>
-    );
-
-    return (
-      <div
-        className="flex min-w-[420px] flex-nowrap items-center justify-center gap-2 whitespace-nowrap"
-        style={{ flex: '0 0 420px', width: '420px' }}
+    return methods.length > 1 ? (
+      <select
+        aria-label={isZh ? `${dev.hostname} 登录方式` : `${dev.hostname} access method`}
+        value={selectedMethod}
+        onChange={(event) => {
+          const nextMethod = event.target.value as AllAccessMethod;
+          setAllAccessMethods((current) => ({ ...current, [dev.id]: nextMethod }));
+        }}
+        className="box-border h-[30px] w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[10px] font-bold text-slate-600 outline-none transition-colors focus:border-[#00bceb] focus:ring-2 focus:ring-[#00bceb]/10"
       >
-        {methodControl}
-        {renderSelectedActions()}
-      </div>
+        {methods.map((method) => (
+          <option key={method} value={method}>{getAllAccessMethodLabel(method)}</option>
+        ))}
+      </select>
+    ) : (
+      <span
+        aria-label={isZh ? `${dev.hostname} 登录方式：${getAllAccessMethodLabel(selectedMethod)}` : `${dev.hostname} access method: ${getAllAccessMethodLabel(selectedMethod)}`}
+        className="box-border inline-flex h-[30px] w-full min-w-0 items-center gap-1.5 overflow-hidden rounded-lg border border-slate-200 bg-white px-2 py-1 text-[10px] font-bold text-slate-600"
+      >
+        {selectedMethod === 'rdp' ? <Monitor className="h-3.5 w-3.5 shrink-0" /> : selectedMethod === 'http' || selectedMethod === 'https' || selectedMethod === 'ssh-web' ? <Globe className="h-3.5 w-3.5 shrink-0" /> : <Terminal className="h-3.5 w-3.5 shrink-0" />}
+        <span className="truncate">{getAllAccessMethodLabel(selectedMethod)}</span>
+      </span>
     );
   };
 
-  // The app-shell table selector outranks Tailwind min-width utilities, so use
-  // inline widths to keep narrow viewports scrolling instead of squeezing cells.
+  const renderAllAccessActions = (dev: Device) => {
+    switch (selectedAllAccessMethod(dev)) {
+      case 'ssh-terminal':
+        return renderTerminalActions(dev);
+      case 'ssh-web':
+        return renderSshWebActions(dev);
+      case 'rdp':
+        return renderRemoteDesktopActions(dev, 'rdp');
+      case 'vnc':
+        return renderRemoteDesktopActions(dev, 'vnc');
+      case 'http':
+        return renderHttpWebActions(dev, 'http');
+      case 'https':
+        return renderHttpWebActions(dev, 'https');
+      default:
+        return null;
+    }
+  };
+
+  // Specialized protocol views retain their legacy minimum widths; the ALL
+  // view has its own compact layout and sticky access controls.
   const renderAccessTable = () => {
     const emptyRow = (colSpan: number) => (
       <tr>
@@ -1262,7 +1239,23 @@ export default function AccessCenterTab({
     }
 
     return (
-      <DataTable className="min-w-[1720px] text-left" style={{ minWidth: '1720px' }} exportConfig={{ filename: 'access-center-all', language: isZh ? 'zh' : 'en', disabled: filteredDevices.length === 0, exportData: accessExportData }}>
+      <DataTable className="access-center-all-table text-left" style={{ minWidth: '1280px', tableLayout: 'fixed' }} exportConfig={{ filename: 'access-center-all', language: isZh ? 'zh' : 'en', disabled: filteredDevices.length === 0, exportData: accessExportData }}>
+        <colgroup>
+          <col style={{ width: '160px' }} />
+          <col style={{ width: '82px' }} />
+          <col style={{ width: '68px' }} />
+          <col style={{ width: '72px' }} />
+          <col style={{ width: '130px' }} />
+          <col style={{ width: '54px' }} />
+          <col style={{ width: '82px' }} />
+          <col style={{ width: '64px' }} />
+          <col style={{ width: '64px' }} />
+          <col style={{ width: '64px' }} />
+          <col style={{ width: '64px' }} />
+          <col style={{ width: '64px' }} />
+          <col style={{ width: '124px' }} />
+          <col style={{ width: '188px' }} />
+        </colgroup>
         <thead>
           <tr className="border-b border-slate-200 bg-slate-50/70">
             {tableHeader(isZh ? '设备名称' : 'Device')}
@@ -1277,7 +1270,10 @@ export default function AccessCenterTab({
             {tableHeader('VNC', 'center')}
             {tableHeader('HTTP', 'center')}
             {tableHeader('HTTPS', 'center')}
-            {tableHeader(isZh ? '登录方式' : 'Access method', 'center', true)}
+            {tableHeader(isZh ? '登录方式' : 'Access method', 'left', true)}
+            <TableActionHeader data-export="ignore" className="access-center-all-actions-header px-2 py-5 text-center" style={{ textAlign: 'center' }}>
+              {isZh ? '登录操作' : 'Connect'}
+            </TableActionHeader>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
@@ -1289,11 +1285,14 @@ export default function AccessCenterTab({
               {renderFlagCell(Boolean(getRemoteDesktopProfile(dev, 'vnc')))}
               {renderFlagCell(Boolean(dev.web_http_enabled))}
               {renderFlagCell(Boolean(dev.web_https_enabled))}
-              <td className="px-8 py-5 text-center" style={{ textAlign: 'center' }}>
+              <td className="access-center-all-method-cell px-2 py-3">
+                {renderAllAccessMethod(dev)}
+              </td>
+              <td className="access-center-all-actions-cell px-2 py-3">
                 {renderAllAccessActions(dev)}
               </td>
             </tr>
-          ), 4)}
+          ), 14)}
         </tbody>
       </DataTable>
     );

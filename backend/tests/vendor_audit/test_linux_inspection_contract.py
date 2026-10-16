@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import subprocess
+from pathlib import Path
+
 from services import inspection_service
 from database.seed import get_default_items, std_scripts
 
@@ -101,3 +104,42 @@ def test_linux_tcp_retransmission_output_is_compatible_and_windowed() -> None:
 
     assert 'echo "tcp_retrans_pct: ${tcp_retrans_pct:-0}"' in comprehensive
     assert 'echo "tcp_retrans: ${tcp_retrans_pct:-0}"' in comprehensive
+
+
+def test_linux_inspection_skips_inode_usage_when_filesystem_reports_dash() -> None:
+    scripts = {item[0]: item[2] for item in std_scripts}
+    comprehensive = scripts["insp_linux_full"]
+    start = comprehensive.index("df_i_out=$(df -iP")
+    end_marker = 'done <<< "$df_i_out"'
+    end = comprehensive.index(end_marker, start) + len(end_marker)
+    inode_loop = comprehensive[start:end]
+    simulated_script = """#!/bin/bash
+INODE_CRIT_PCT=90
+INODE_WARN_PCT=80
+disk_status=SUCCESS
+inode_level=OK
+inode_messages=
+df() {
+    printf '%s\\n' \\
+        'Filesystem Inodes IUsed IFree IUse% Mounted on' \\
+        'overlay - - - - /' \\
+        'ext4 1000 950 50 95% /data' \\
+        'tmpfs 1000 1 999 1% /run'
+}
+""" + inode_loop + """
+printf 'disk_status=%s\\n' "$disk_status"
+"""
+
+    git_bash = Path(r"C:\Program Files\Git\bin\bash.exe")
+    bash = str(git_bash) if git_bash.is_file() else "bash"
+    result = subprocess.run(
+        [bash, "-c", simulated_script],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "integer expression expected" not in result.stderr
+    assert "disk_status=ERROR" in result.stdout

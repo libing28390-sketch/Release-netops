@@ -26,7 +26,7 @@ PostgreSQL 18 官方容器将数据目录设为 `/var/lib/postgresql/18/docker`�
 
 ## 容器资源上限与 Nginx worker
 
-所有服务均设置 CPU、内存和进程数上限。告警 Broker、Relay 与 Worker 另设 `cpu_shares=64`，在 CPU 争用时降低其相对调度权重；每个告警容器同时有独立 CPU/内存硬上限。通知容器的 CPU 上限合计 0.85 核 / 1600 MiB，但这不限制 API 和 PostgreSQL 为告警评估、状态写入及投递状态更新消耗的资源。CPU 配额不预留或独占对应核心。原基础服务内存上限合计 6272 MiB，启用 SeaweedFS 后合计 6784 MiB；加上告警服务后分别为 7872 / 8384 MiB。容器限额不是资源预留，启用全部服务时不能按这些上限推断系统一定有可用余量；应按实际主机容量降低相应 `.env` 上限，保留足够系统与 Docker 余量，并通过同机压测确认主 API、数据库和通知延迟。
+所有服务均设置 CPU、内存和进程数上限。告警 Broker、Relay 与 Worker 另设 `cpu_shares=64`，在 CPU 争用时降低其相对调度权重；每个告警容器同时有独立 CPU/内存硬上限。通知容器的 CPU 上限合计 0.85 核 / 1600 MiB，但这不限制 API 和 PostgreSQL 为告警评估、状态写入及投递状态更新消耗的资源。CPU 配额不预留或独占对应核心。原基础服务内存上限合计 6272 MiB；默认启动的 Guacamole Web 与 `guacd` 额外设置 1792 MiB / 3 核上限，因此默认合计 8064 MiB。启用 SeaweedFS 后为 8576 MiB；再加上告警服务后分别为 9664 / 10176 MiB。容器限额不是资源预留，启用全部服务时不能按这些上限推断系统一定有可用余量；应按实际主机容量降低相应 `.env` 上限，保留足够系统与 Docker 余量，并通过同机压测确认主 API、数据库和通知延迟。
 
 | 服务 | CPU 上限 | 内存上限 | 内存配置项 |
 |---|---:|---:|---|
@@ -45,6 +45,8 @@ PostgreSQL 18 官方容器将数据目录设为 `/var/lib/postgresql/18/docker`�
 | snmp-exporter | 1 | 128 MiB | `SNMP_EXPORTER_MEM_LIMIT` |
 | cadvisor | 0.5 | 128 MiB | `CADVISOR_MEM_LIMIT` |
 | docker-socket-proxy | 0.25 | 64 MiB | `DOCKER_SOCKET_PROXY_MEM_LIMIT` |
+| guacamole | 1 | 768 MiB | `GUACAMOLE_MEM_LIMIT` |
+| guacd | 2 | 1024 MiB | `GUACD_MEM_LIMIT` |
 
 CPU 配置项使用同一前缀和 `_CPUS`，例如 `NETOPS_CPUS=2.0`。Redis 内部数据上限仍为 512 MB，容器默认 1 GiB 给 AOF/缓冲留空间；这不是峰值内存不会超过上限的保证，数据增长时结合缓存和持久化峰值调整。磁盘容量不由内存 limit 限制，指标保留与 vmagent 重试队列沿用现有设置。
 
@@ -154,37 +156,30 @@ S3 可用空间取决于 Docker 数据目录所在文件系统的剩余空间。
 当前应用没有前端容量设置；需要限制总容量时，应在宿主机文件系统配置磁盘配额，
 或使用带 bucket quota 的外部 S3 服务。不要把单卷大小误认为 S3 总容量。
 
-## 可选 Guacamole RDP/VNC 网关
+## Guacamole RDP/VNC 网关
 
-图形远程访问由 Apache Guacamole Web 与 `guacd` 两个官方容器提供，不新增 Guacamole 数据库或 Redis。默认关闭，不启用时 Nexora 仍按原有服务列表运行；开启后增加两个容器。被访问的 Windows/VNC 资产不需要安装 Nexora Agent，但需在目标端启用 RDP 或运行兼容 VNC Server。
+图形远程访问由 Apache Guacamole Web 与 `guacd` 两个官方容器提供，不新增 Guacamole 数据库或 Redis。两个服务随标准 Docker 安装、更新和离线启动一并启动。被访问的 Windows/VNC 资产不需要安装 Nexora Agent，但需在目标端启用 RDP 或运行兼容 VNC Server。
 
-在部署机 `.env` 中设置：
-
-```dotenv
-NETOPS_REMOTE_DESKTOP_ENABLED=1
-GUACAMOLE_JSON_SECRET_KEY=
-```
-
-部署脚本会在首次安装/更新时生成独立的 128 位十六进制 JSON 密钥，并通过 `remote-desktop` profile 启动 `guacamole/guacamole:1.6.0` 和 `guacamole/guacd:1.6.0`。升级现有部署时先备份 `.env`，再执行：
+部署脚本会在首次安装或更新时检查独立的 128 位十六进制 JSON 密钥：已有 32 位十六进制值会保留，缺失或格式无效时会生成新值。升级现有部署时先备份 `.env`，再执行：
 
 ```bash
 bash scripts/deploy-docker.sh update --force
 ```
 
-直接使用 Compose 的部署需自行生成随机密钥并设置开关，再启用 profile：
+直接使用 Compose 部署时，先将一次性生成的密钥保存到 `.env` 的 `GUACAMOLE_JSON_SECRET_KEY`，再启动服务：
 
 ```bash
 openssl rand -hex 16
-docker compose --profile remote-desktop up -d netops nginx guacamole guacd
+docker compose up -d netops nginx guacamole guacd
 ```
 
 Web 应用只能由 Nexora 后端经内部网络访问；`guacd:4822` 仅供 Guacamole Web 使用，不映射到宿主机。Nginx 只为现有后端图形 WebSocket 提供同源代理。只有 `guacd` 接入用于连接受管资产的出向网络；应在主机/目标防火墙中只放行来自 Nexora Docker 主机的必要目标网段与端口。Apache Guacamole 1.6.0 的 `guacd` 使用 UID/GID 1000，与 Nexora 镜像一致。Compose 会先启动 Nexora，由其预建并初始化共享录像卷的 UID 1000 目录，再启动 `guacd` 写入录像。
 
 RDP 通常使用 TCP/3389；目标 Windows 需启用远程桌面、授予登录权限并按组织要求启用 NLA。VNC 常用 TCP/5900，显示编号可能对应更高端口；目标需运行 VNC Server。资产配置分别保存 RDP/VNC 端口和现有凭据引用，管理员访问仍需完成 Nexora MFA。浏览器不接收目标密码。
 
-会话录像暂存在 `nexora-remote-desktop-recordings` volume，经 Nexora 后端归档到当前 PAM 存储。需为录像磁盘预留容量并纳入部署机备份策略；停用 profile 前确认待归档录像已处理。Guacamole 图形审计提供会话录像，不具备 SSH 终端的逐命令危险操作过滤能力。标准 VNC 是否加密取决于所选 VNC Server 认证/传输模式，HTTPS 仅保护浏览器到平台这一段。
+会话录像暂存在 `nexora-remote-desktop-recordings` volume，经 Nexora 后端归档到当前 PAM 存储。需为录像磁盘预留容量并纳入部署机备份策略；临时停用网关前确认待归档录像已处理。Guacamole 图形审计提供会话录像，不具备 SSH 终端的逐命令危险操作过滤能力。标准 VNC 是否加密取决于所选 VNC Server 认证/传输模式，HTTPS 仅保护浏览器到平台这一段。
 
-滚回时将 `NETOPS_REMOTE_DESKTOP_ENABLED` 设回 `0` 并按需重建/更新原有服务；新增 profile 和 PAM 审计记录保留，不需要删除数据库卷。不要执行 `docker compose down -v`。
+如需临时停用网关，可执行 `docker compose stop guacamole guacd`；后续标准更新会再次启动它们。无需删除数据库卷；不要执行 `docker compose down -v`。
 
 Docker Compose 默认启用 Prometheus-compatible 的 VictoriaMetrics 查询路径，
 并把 `netops` 编译发布的采集目标、SNMP 认证和 vmagent 配置通过
@@ -419,6 +414,7 @@ docker compose up -d --no-build --pull never --remove-orphans
 | `db` | 本地 `docker/postgres/Dockerfile` 构建的 `nexora-postgres:latest`（pgvector + pg_trgm） | 内部 5432 |
 | `netops` | 本地 `Dockerfile` 构建 | 内部 8003 |
 | `nginx` | `nginx:1.27-alpine` | 对外 80 / 443 |
+| `guacamole` / `guacd` | `guacamole/guacamole:1.6.0` / `guacamole/guacd:1.6.0` | 内部 8080 / 4822 |
 | `redis`（可选） | `redis:7.4.2-alpine`，定义在 `docker-compose.yml` | 内部 6379 |
 
 > 生产环境的 HTTPS、密钥加固等见根目录 [DEPLOY.md](../../DEPLOY.md)。

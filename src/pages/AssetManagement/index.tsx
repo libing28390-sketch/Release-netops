@@ -42,6 +42,7 @@ import {
   TOPOLOGY_ZONE_OPTIONS,
   SSH_ALGORITHM_PROFILE_VALUES,
   isNetworkVendor,
+  isCiscoNetworkPlatform,
   isValidVendorPlatform,
   normalizeImportedVendor,
   normalizeImportedPlatform,
@@ -110,12 +111,52 @@ const getAssetLoadIssue = (error: unknown, language: string, resource: string): 
   return { status, message, permissionDenied };
 };
 
+const isGenericAssetValidationSummary = (value: unknown): boolean => typeof value === 'string'
+  && /^(?:保存校验失败，请检查填写内容。?|validation failed\. check the form and retry\.?)$/i.test(value.trim());
+
+const formatAssetValidationDetail = (value: unknown): string => {
+  if (typeof value === 'string') {
+    const message = value.trim();
+    return message && !isGenericAssetValidationSummary(message) ? message : '';
+  }
+  if (Array.isArray(value)) {
+    const messages = value.map(item => {
+      if (typeof item === 'string') return formatAssetValidationDetail(item);
+      if (!item || typeof item !== 'object') return '';
+      const validation = item as { loc?: unknown; msg?: unknown; message?: unknown; detail?: unknown };
+      const field = Array.isArray(validation.loc)
+        ? validation.loc.map(String).filter(part => part && part !== 'body').join('.')
+        : '';
+      const reason = formatAssetValidationDetail(validation.msg ?? validation.message ?? validation.detail);
+      return reason ? (field ? `${field}：${reason}` : reason) : '';
+    }).filter(Boolean);
+    return messages.join('；');
+  }
+  if (value && typeof value === 'object') {
+    const detail = value as { detail?: unknown; message?: unknown; details?: unknown; errors?: unknown };
+    const nested = detail.details && typeof detail.details === 'object'
+      ? (detail.details as { errors?: unknown }).errors
+      : detail.errors;
+    const fieldErrors = formatAssetValidationDetail(nested);
+    if (fieldErrors) return fieldErrors;
+    const nestedDetail = formatAssetValidationDetail(detail.detail);
+    if (nestedDetail) return nestedDetail;
+    return formatAssetValidationDetail(detail.message);
+  }
+  return '';
+};
+
 const getAssetSaveErrorMessage = (error: unknown, language: string, secretValues: string[]) => {
   const zh = language === 'zh';
   if (error instanceof ApiError && error.status === 401) return zh ? '登录状态已失效，请重新登录后再保存。' : 'Your session has expired. Sign in again before saving.';
   if (error instanceof ApiError && error.status === 403) return zh ? '你没有权限保存资产。' : 'You do not have permission to save assets.';
   if (error instanceof ApiError && (error.status === 400 || error.status === 422)) {
-    let detail = typeof error.detail === 'string' ? error.detail : (zh ? '保存校验失败，请检查填写内容。' : 'Validation failed. Check the form and retry.');
+    let detail = formatAssetValidationDetail(error.detail)
+      || formatAssetValidationDetail(error.message)
+      || (zh ? `服务端未返回具体校验原因（HTTP ${error.status}）` : `The server returned no validation detail (HTTP ${error.status})`);
+    if (error.requestId && !detail.includes(error.requestId)) {
+      detail = `${detail} (${zh ? '请求编号' : 'Request ID'}: ${error.requestId})`;
+    }
     for (const secret of secretValues.filter(Boolean)) detail = detail.split(secret).join('[已隐藏]');
     return detail;
   }
@@ -771,7 +812,9 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         planned_start_u,
         power_watts: parseInt(String(form.power_watts), 10) || 0,
         winrm_port: parseInt(String(form.winrm_port), 10) || 5986,
-        enable_password: (form.enable_password || '').trim(),
+        enable_password: isCiscoNetworkPlatform(form.asset_type, normalizedPlatform)
+          ? (form.enable_password || '').trim()
+          : '',
         web_profiles: (form.web_profiles || []).map((profile: any) => ({
           ...(profile.id ? { id: profile.id } : {}),
           profile_name: String(profile.profile_name || '').trim() || (form.asset_type === 'server' ? 'BMC' : 'Web管理'),
@@ -884,6 +927,12 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     }
     const oldLifecycle = editingAsset ? (editingAsset.lifecycle_status || 'staging') : 'staging';
     if (editingAsset && form.lifecycle_status === 'production' && oldLifecycle !== 'production') {
+      const onboardingStatus = String(editingAsset.onboarding_status || 'pending_credentials').trim().toLowerCase();
+      if (!['verified', 'active'].includes(onboardingStatus)) {
+        setModalError(null);
+        setShowProductionConfirm(true);
+        return;
+      }
       setShowProductionConfirm(true);
       return;
     }
@@ -905,7 +954,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       department: a.department, notes: a.notes,
       platform: a.platform || (a.asset_type === 'server' ? 'linux' : 'cisco_ios'),
       connection_method: a.connection_method || 'ssh',
-      ssh_algorithm_profile: a.ssh_algorithm_profile || 'auto',
+      ssh_algorithm_profile: 'auto',
       username: a.username || '',
       password: '',
       normal_username: (a as any).normal_username || '',

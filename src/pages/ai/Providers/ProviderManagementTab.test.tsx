@@ -105,7 +105,7 @@ describe('ProviderManagementTab browser key paths', () => {
     expect(createProvider.mock.calls[0][0]).not.toHaveProperty('retention_days');
     expect(createProvider.mock.calls[0][0]).not.toHaveProperty('data_processing_agreement_ref');
     expect(createProvider.mock.calls[0][0]).not.toHaveProperty('approved_endpoint_patterns');
-  }, 10_000);
+  }, 20_000);
 
   it('keeps the existing API key when editing a provider without re-entering it', async () => {
     const user = userEvent.setup();

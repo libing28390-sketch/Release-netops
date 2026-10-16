@@ -1,7 +1,7 @@
 import React from 'react';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import ScheduledJobsTab from './index';
 
@@ -39,6 +39,62 @@ const jsonResponse = (payload: unknown) => ({
   status: 200,
   json: async () => payload,
 });
+
+const scriptedJob = (enabled = 1) => ({
+  id: 'job-1',
+  name: 'linux',
+  job_type: 'cron',
+  action_type: 'script_run',
+  cron_expr: '0 * * * *',
+  scheduled_at: '',
+  device_scope: 'ip',
+  device_filter: '192.0.2.10',
+  commands: '',
+  script_id: 'script-1',
+  is_config: 0,
+  config_reason: '',
+  enabled,
+  status: 'approved',
+  approved_by: 'lisan',
+  approved_at: '2026-10-16T00:00:00Z',
+  last_run_at: '',
+  last_run_status: '',
+  run_count: 0,
+  authorization_mode: 'manual',
+  created_by: 'admin',
+  created_at: '2026-10-15T00:00:00Z',
+  updated_by: 'admin',
+  updated_at: '2026-10-16T00:00:00Z',
+});
+
+const scriptedJobFetch = (job: ReturnType<typeof scriptedJob>) => vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+  const url = new URL(String(input), 'http://localhost');
+  if (url.pathname === '/api/scheduled-jobs/system') return jsonResponse([]);
+  if (url.pathname === '/api/scheduled-jobs') {
+    return jsonResponse({ success: true, data: { items: [job], total: 1 } });
+  }
+  if (url.pathname === `/api/scheduled-jobs/${job.id}`) {
+    return jsonResponse({ success: true, data: job });
+  }
+  if (url.pathname === '/api/scripts') {
+    return jsonResponse({
+      success: true,
+      data: { items: [{ id: 'script-1', name: 'Linux 综合巡检', content: 'SCRIPT_BODY_MUST_NOT_APPEAR', status: 'released', category: 'inspection' }] },
+    });
+  }
+  if (url.pathname === '/api/config-approval/approvers') {
+    return jsonResponse([{ id: 'user-lisan', username: 'lisan', role: 'admin', tenant_id: 't1', verification_methods: ['mfa'] }]);
+  }
+  if (url.pathname === '/api/devices') {
+    return jsonResponse({ success: true, data: { items: [], total: 0 } });
+  }
+  return jsonResponse({ success: true, data: [] });
+});
+
+const RouterLocation = () => {
+  const location = useLocation();
+  return <output data-testid="router-location">{location.pathname}{location.search}</output>;
+};
 
 describe('ScheduledJobs system schedule exports', () => {
   afterEach(() => {
@@ -97,5 +153,76 @@ describe('ScheduledJobs system schedule exports', () => {
     expect(JSON.stringify(sheetRows)).not.toContain('凭据轮换扫描');
     expect(JSON.stringify(sheetRows)).not.toContain('internal-system-job');
     expect(JSON.stringify(sheetRows)).not.toContain('/config/schedule');
+  });
+});
+
+describe('ScheduledJobs user row actions', () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  const renderJob = (job = scriptedJob()) => {
+    const fetchMock = scriptedJobFetch(job);
+    vi.stubGlobal('fetch', fetchMock);
+    render(
+      <MemoryRouter initialEntries={['/automation/scheduled-jobs']}>
+        <ScheduledJobsTab t={(key) => key} language="zh" showToast={vi.fn()} />
+        <RouterLocation />
+      </MemoryRouter>,
+    );
+    return fetchMock;
+  };
+
+  it('keeps script source out of the job preview and jumps to the matching script by clicking its name', async () => {
+    const user = userEvent.setup();
+    renderJob();
+    await user.click(await screen.findByRole('button', { name: '查看详情' }));
+
+    expect(await screen.findByText('执行方式')).toBeTruthy();
+    expect(await screen.findByRole('button', { name: '打开脚本：Linux 综合巡检' })).toBeTruthy();
+    expect(screen.queryByText('SCRIPT_BODY_MUST_NOT_APPEAR')).toBeNull();
+    expect(screen.queryByRole('button', { name: '查看脚本详情' })).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: '打开脚本：Linux 综合巡检' }));
+    expect(screen.getByTestId('router-location').textContent).toBe('/automation/scripts?q=script-1');
+  });
+
+  it('opens each available row action without submitting a change', async () => {
+    const user = userEvent.setup();
+    const fetchMock = renderJob();
+
+    await user.click(await screen.findByRole('button', { name: '查看详情' }));
+    expect(await screen.findByRole('heading', { name: 'linux' })).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: '关闭' }));
+
+    await user.click(screen.getByRole('button', { name: '编辑作业' }));
+    expect(await screen.findByRole('heading', { name: '编辑周期性定时作业' })).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: '取消' }));
+
+    await user.click(screen.getByRole('button', { name: '停用作业' }));
+    expect(await screen.findByRole('heading', { name: '停用作业审批' })).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: '取消' }));
+
+    await user.click(screen.getByRole('button', { name: '删除作业' }));
+    await user.click(await screen.findByRole('button', { name: '确认删除' }));
+    expect(await screen.findByRole('heading', { name: '删除安全校验与工单授权' })).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: '取消' }));
+
+    const writeRequests = fetchMock.mock.calls.filter(([, init]) => ['POST', 'PUT', 'DELETE'].includes(String((init as RequestInit | undefined)?.method || 'GET').toUpperCase()));
+    expect(writeRequests).toHaveLength(0);
+  }, 20_000);
+
+  it('opens the enable approval flow for a disabled job without enabling it', async () => {
+    const user = userEvent.setup();
+    const fetchMock = renderJob(scriptedJob(0));
+    await user.click(await screen.findByRole('button', { name: '启用作业' }));
+
+    expect(await screen.findByRole('heading', { name: '启用作业审批' })).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: '取消' }));
+
+    const writeRequests = fetchMock.mock.calls.filter(([, init]) => ['POST', 'PUT', 'DELETE'].includes(String((init as RequestInit | undefined)?.method || 'GET').toUpperCase()));
+    expect(writeRequests).toHaveLength(0);
   });
 });

@@ -1,6 +1,7 @@
 import { DataTable } from '../components/DataTable';
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
+import { useLocation } from 'react-router-dom';
 import {
   Plus, X, Trash2, Pencil, Shield, Search, User, FileCode, Terminal, Layout, Maximize2, XCircle, Wand2, ChevronDown, ChevronUp, CheckCircle2, MessageSquare, AlertCircle, SearchCode, Copy, Filter, RotateCcw
 } from 'lucide-react';
@@ -43,11 +44,12 @@ interface UserInfo {
 }
 
 const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string, type: 'success' | 'error' | 'info') => void; view?: 'scripts' | 'nsot' }> = ({ language, showToast, view = 'scripts' }) => {
+  const location = useLocation();
   const [scripts, setScripts] = useState<Script[]>([]);
   const [users, setUsers] = useState<UserInfo[]>([]);
   const [currentUser, setCurrentUser] = useState<string>('');
   const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(() => new URLSearchParams(location.search).get('q') || '');
   const [platformFilter, setPlatformFilter] = useState('All');
   const [nsotVendorFilter, setNsotVendorFilter] = useState('All');
   const [categoryFilter, setCategoryFilter] = useState<'all' | 'inspection' | 'change' | 'system'>('all');
@@ -75,6 +77,11 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
 
   const zh = language === 'zh';
   const BRAND_COLOR = "#00a9ce";
+
+  useEffect(() => {
+    setSearchQuery(new URLSearchParams(location.search).get('q') || '');
+    setCurrentPage(1);
+  }, [location.search]);
 
   // Status Localization Map
   const STATUS_MAP: Record<string, { zh: string, en: string, color: string, bg: string, border: string }> = {

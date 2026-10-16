@@ -11,6 +11,7 @@ import { PasswordInputField } from '../components/ui/PasswordInputField';
 import { formatMacAddress } from '../utils/resourceFormatters';
 import { fetchAllPaginatedItems } from '../utils/pagination';
 import { buildCmdbExportData, buildCmdbVlanExportData } from './cmdbExport';
+import { isCliCredentialType, shouldShowEnablePasswordField } from './credentialFormPolicy';
 
 /* ────────────────────────────────────────────────────────────
  * CMDB Management — unified CRUD for the foundational CMDB tables:
@@ -153,6 +154,8 @@ interface FieldDef {
   hideInForm?: boolean;
   /** Hidden when creating a record but shown while editing */
   hideInCreate?: boolean;
+  /** Only relevant to credentials bound exclusively to Cisco devices */
+  ciscoOnly?: boolean;
   /** Shown as a masked presence flag in table (e.g. has_password) */
   secretFlag?: string;
 }
@@ -391,6 +394,7 @@ const CRED_ROLE_OPTS = [
   { value: 'shared', label: '通用账号', labelEn: 'Shared account' },
   { value: 'unbound', label: '未指定', labelEn: 'Unassigned' },
 ];
+
 
 const VLAN_STATUS_OPTS = [
   { value: 'active', label: 'active' },
@@ -1659,6 +1663,8 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
   const [replacementCredentialId, setReplacementCredentialId] = useState('');
   const [bindingSaving, setBindingSaving] = useState(false);
   const [form, setForm] = useState<Record<string, any>>({});
+  const showCiscoEnablePasswordField = tab === 'credentials'
+    && shouldShowEnablePasswordField(form.credential_type, form.enable_password_enabled === true, editing);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [confirmDelete, setConfirmDelete] = useState<any | null>(null);
   const [siteReplacementId, setSiteReplacementId] = useState('');
@@ -1991,9 +1997,9 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
       { key: 'username', label: '用户名', labelEn: 'Username' },
       { key: 'account_role', label: '账号角色', labelEn: 'Account Role', type: 'select', options: CRED_ROLE_OPTS },
       { key: 'old_password', label: '旧密码', labelEn: 'Current Password', type: 'password', hideInTable: true, hideInCreate: true, hint: '修改密码时必须输入当前密码' },
-      { key: 'old_enable_password', label: '旧 Enable 密码', labelEn: 'Current Enable Password', type: 'password', hideInTable: true, hideInCreate: true, hint: '修改 Enable 密码时必须输入当前密码' },
+      { key: 'old_enable_password', label: '旧 Enable 密码', labelEn: 'Current Enable Password', type: 'password', hideInTable: true, hideInCreate: true, ciscoOnly: true, hint: '修改 Enable 密码时必须输入当前密码' },
       { key: 'password', label: '密码', labelEn: 'Password', type: 'password', hideInTable: true, secretFlag: 'has_password' },
-      { key: 'enable_password', label: 'Enable 密码', labelEn: 'Enable Password', type: 'password', hideInTable: true, secretFlag: 'has_enable_password' },
+      { key: 'enable_password', label: 'Enable 密码', labelEn: 'Enable Password', type: 'password', hideInTable: true, ciscoOnly: true, secretFlag: 'has_enable_password', hint: '仅适用于 Cisco 设备' },
       { key: 'snmp_community', label: 'SNMP Community', labelEn: 'SNMP Community', type: 'password', hideInTable: true, secretFlag: 'has_snmp_community', hint: 'SNMPv2c 团体字；采集使用 UDP 161' },
       { key: 'snmp_server', label: 'SNMP Server 地址', labelEn: 'SNMP Server Address', hideInTable: true, hint: '可选；不填写时使用设备管理 IP' },
       { key: 'devices', label: '关联设备', labelEn: 'Associated Devices', hideInForm: true },
@@ -2677,7 +2683,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
       else if (f.key === 'timezone') defaults[f.key] = 'Asia/Shanghai';
       else defaults[f.key] = '';
     });
-    setForm(defaults);
+    setForm(tab === 'credentials' ? { ...defaults, enable_password_enabled: false } : defaults);
     setEditing(null);
     setError('');
     setNotice('');
@@ -2695,6 +2701,9 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
       else if (tab === 'sites' && fd.key === 'country' && CHINA_LEGACY_COUNTRY_VALUES.has(String(row[fd.key] ?? '').trim())) f[fd.key] = '中国';
       else f[fd.key] = row[fd.key] ?? '';
     });
+    if (tab === 'credentials') {
+      f.enable_password_enabled = Boolean(row.enable_password_supported || row.has_enable_password);
+    }
     setForm(f);
     setEditing(row);
     setError('');
@@ -2712,6 +2721,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     setNotice('');
     setFieldErrors({});
     const defs = fieldDefs[tab].filter(fd => !fd.hideInForm && (!fd.hideInCreate || Boolean(editing))
+      && !(tab === 'credentials' && fd.ciscoOnly && !showCiscoEnablePasswordField)
       && !(tab === 'credentials' && form.credential_type === 'snmpv2'
         && ['username', 'account_role', 'old_password', 'old_enable_password', 'password', 'enable_password'].includes(fd.key))
       && !(tab === 'credentials' && !String(form.credential_type || '').startsWith('snmp')
@@ -4356,7 +4366,25 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
               <button onClick={() => setModalOpen(false)} className="rounded-xl border border-black/10 p-1.5 text-black/55 hover:bg-black/[0.03] transition-colors"><X size={16} /></button>
             </div>
             <div className={`${tab === 'credentials' ? 'grid grid-cols-2 items-start gap-x-3 gap-y-4' : 'space-y-4'} min-h-0 flex-1 overflow-y-auto pr-1`}>
+              {tab === 'credentials' && !editing && isCliCredentialType(form.credential_type) && (
+                <div className="col-span-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                  <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={form.enable_password_enabled === true}
+                      onChange={event => setForm(current => ({
+                        ...current,
+                        enable_password_enabled: event.target.checked,
+                        enable_password: event.target.checked ? current.enable_password || '' : '',
+                      }))}
+                      className="h-4 w-4 accent-cyan-600"
+                    />
+                    {zh ? '包含 Cisco Enable 密码' : 'Cisco Enable password'}
+                  </label>
+                </div>
+              )}
               {fieldDefs[tab].filter(fd => !fd.hideInForm && (!fd.hideInCreate || Boolean(editing))
+                && !(tab === 'credentials' && fd.ciscoOnly && !showCiscoEnablePasswordField)
                 && !(tab === 'credentials' && form.credential_type === 'snmpv2'
                   && ['username', 'account_role', 'old_password', 'old_enable_password', 'password', 'enable_password'].includes(fd.key))
                 && !(tab === 'credentials' && !String(form.credential_type || '').startsWith('snmp')
@@ -4450,7 +4478,14 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                             const stillValid = vlanCatalog.some(vlan => String(vlan.site_id || '') === nextValue && String(vlan.vlan_id) === currentVlan);
                             setForm({ ...form, site_id: nextValue, vlan_id: stillValid ? currentVlan : '' });
                           } else {
-                            setForm({ ...form, [fd.key]: nextValue });
+                            const resetCiscoEnable = tab === 'credentials'
+                              && fd.key === 'credential_type'
+                              && !isCliCredentialType(nextValue);
+                            setForm({
+                              ...form,
+                              [fd.key]: nextValue,
+                              ...(resetCiscoEnable ? { enable_password_enabled: false, enable_password: '' } : {}),
+                            });
                           }
                         }}
                         className="w-full px-3 py-2 rounded-xl text-sm border border-black/10 bg-white text-[#164e63] outline-none focus:border-[#06b6d4]/45 focus:ring-2 focus:ring-[#06b6d4]/10 transition-all"

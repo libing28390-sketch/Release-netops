@@ -1,13 +1,13 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   CalendarClock, Plus, X, Trash2, RotateCcw, Zap, Pencil,
   ChevronDown, Info, Shield, CheckCircle2, AlertTriangle,
   Database, Activity, Power, PowerOff, RefreshCw,
-  Search, FileCode, Eye, Target, FileText, Lock, ChevronUp, Filter, ShieldAlert, User, Layers, Settings2, Terminal
+  Search, Eye, Target, FileText, Lock, ChevronUp, Filter, ShieldAlert, User, Layers, Settings2, Terminal
 } from 'lucide-react';
-import { ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
+import { ActionIconButton } from '../../components/ui/ActionIconButton';
 import { TableActionCell, TableActionHeader } from '../../components/ui/TableActionColumn';
 import { useEscapeClose } from '../../hooks/useEscapeClose';
 
@@ -47,9 +47,18 @@ interface ScheduledJobOperationManifest {
   config_reason: string;
 }
 
+const formatJobDateTime = (value?: string | null): string => {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  const pad = (part: number) => String(part).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+};
+
 const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast }) => {
   const zh = language === 'zh';
   const navigate = useNavigate();
+  const location = useLocation();
 
   /* === STATE === */
   const [jobs, setJobs] = useState<ScheduledJob[]>([]);
@@ -64,7 +73,6 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   const [bulkCollectionPlanOpen, setBulkCollectionPlanOpen] = useState(false);
   const [detailJob, setDetailJob] = useState<ScheduledJob | null>(null);
   const [editingJob, setEditingJob] = useState<ScheduledJob | null>(null);
-  const [viewingScript, setViewingScript] = useState<any>(null);
   const [presetOpen, setPresetOpen] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   useEscapeClose(Boolean(deleteConfirmId), () => setDeleteConfirmId(null));
@@ -116,6 +124,10 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   const [deleteApprovalManifest, setDeleteApprovalManifest] = useState<ScheduledJobOperationManifest | null>(null);
   const approvalVerifyInFlightRef = useRef(false);
   const deleteVerifyInFlightRef = useRef(false);
+  const routedEditJobIdRef = useRef('');
+  const openEditModalRef = useRef<(job: ScheduledJob) => void>(() => {});
+  const showToastRef = useRef(showToast);
+  const zhRef = useRef(zh);
 
   const expireApprovalCountdown = useCallback(() => {
     setApprovalCountdown(0);
@@ -351,16 +363,6 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
     if ((showAddJob || detailJob?.id) && needsScripts) fetchScripts();
   }, [showAddJob, editingJob?.id, editingJob?.action_type, detailJob?.id, detailJob?.action_type, fetchScripts]);
 
-  // Auto-load script content when detail modal opens for a script_run or inspection job
-  useEffect(() => {
-    if (detailJob && (detailJob.action_type === 'script_run' || detailJob.action_type === 'inspection') && detailJob.script_id) {
-      void fetchAndShowScriptDetail(detailJob.script_id);
-    } else if (!detailJob) {
-      setViewingScript(null);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detailJob?.id, detailJob?.script_id]);
-
   /* === MODAL HELPERS === */
   const resetApprovalFlow = () => {
     setApprovalToken('');
@@ -506,25 +508,43 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
     setShowAddJob(true);
   };
 
-  const fetchAndShowScriptDetail = async (scriptId: string) => {
-    if (!scriptId) return;
-    try {
-      const r = await fetch('/api/scripts', { headers: authHeaders });
-      if (r.ok) {
-        const j = await r.json();
-        const data = j.data?.items || j.data || j;
-        const list = Array.isArray(data) ? data : [];
-        const script = list.find((s: any) => s.id === scriptId);
-        if (script) {
-          setViewingScript(script);
-        } else {
-          showToast(zh ? '找不到脚本详情' : 'Script detail not found', 'error');
+  useEffect(() => {
+    openEditModalRef.current = openEditModal;
+    showToastRef.current = showToast;
+    zhRef.current = zh;
+  });
+
+  useEffect(() => {
+    const jobId = new URLSearchParams(location.search).get('edit_id') || '';
+    if (!jobId || routedEditJobIdRef.current === jobId) return;
+    routedEditJobIdRef.current = jobId;
+    let active = true;
+
+    const openRoutedEdit = async () => {
+      try {
+        const response = await fetch(`/api/scheduled-jobs/${encodeURIComponent(jobId)}`, { headers: authHeaders });
+        const payload = await response.json().catch(() => null) as { data?: ScheduledJob; detail?: string; message?: string } | null;
+        if (!response.ok || !payload?.data) {
+          throw new Error(payload?.detail || payload?.message || (zhRef.current ? '无法读取该定时作业。' : 'Unable to load this scheduled job.'));
         }
+        if (active) openEditModalRef.current(payload.data);
+      } catch (cause) {
+        if (active) {
+          showToastRef.current(cause instanceof Error ? cause.message : (zhRef.current ? '打开编辑窗口失败' : 'Unable to open the editor'), 'error');
+        }
+      } finally {
+        if (active) {
+          const params = new URLSearchParams(location.search);
+          params.delete('edit_id');
+          navigate({ pathname: location.pathname, search: params.toString() ? `?${params.toString()}` : '' }, { replace: true });
+        }
+        routedEditJobIdRef.current = '';
       }
-    } catch {
-      showToast(zh ? '获取脚本失败' : 'Failed to fetch script', 'error');
-    }
-  };
+    };
+
+    void openRoutedEdit();
+    return () => { active = false; };
+  }, [authHeaders, location.pathname, location.search, navigate]);
 
   const closeModal = () => {
     setShowAddJob(false);
@@ -1230,7 +1250,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
               key="list-view"
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              className={`space-y-4 transition-[filter,opacity] duration-150 ${showAddJob ? 'pointer-events-none opacity-45 blur-[1px]' : ''}`}
+              className={`space-y-4 transition-opacity duration-150 ${showAddJob ? 'pointer-events-none' : ''}`}
               aria-hidden={showAddJob}
               inert={showAddJob}
             >
@@ -1500,189 +1520,124 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                   <span className="text-xs">{zh ? '数据加载中...' : 'Loading jobs...'}</span>
                 </div>
               ) : filteredJobs.length > 0 ? (
-                <div className="flex-1 overflow-y-auto max-h-[calc(100vh-320px)] custom-scrollbar">
-                  <div className="space-y-2.5">
-                    {filteredJobs.map(job => {
-                      const atInfo = ACTION_TYPES.find(a => a.value === job.action_type);
-                      const AtIcon = atInfo?.icon || Database;
-                      const isEnabled = !!job.enabled;
-                      let scopeDesc = describeScope(job.device_scope, job.device_filter, zh);
-                      if (job.device_scope === 'composite') {
-                        try {
-                          const scopeFilters: unknown = JSON.parse(job.device_filter || '{}');
-                          if (scopeFilters && typeof scopeFilters === 'object' && !Array.isArray(scopeFilters)) {
-                            const platform = (scopeFilters as CollectionPlanFilters).platform;
-                            if (platform) scopeDesc = `${scopeDesc} · ${platform}`;
-                          }
-                        } catch { /* Preserve the existing scope label for legacy or malformed filters. */ }
-                      }
-                      const isInsp = job.action_type === 'inspection';
-                      const isBackup = job.action_type === 'backup';
-                      const isNsot = job.action_type === 'nsot';
-                      const isScript = job.action_type === 'script_run';
-                      const isSystemManaged = job.authorization_mode === 'system';
-                      return (
-                        <motion.div
-                          key={job.id}
-                          layout
-                          initial={{ opacity: 0, y: 8 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          onClick={() => setDetailJob(job)}
-                          className={`rounded-2xl border transition-all hover:shadow-md cursor-pointer group overflow-hidden ${
-                            isEnabled ? 'bg-white border-slate-200/90 shadow-sm' : 'bg-slate-50 border-slate-200/50 opacity-60'
-                          }`}
-                        >
-                          <div className="flex items-center gap-4 px-5 py-4">
-                            <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 border ${
-                              isEnabled
-                                ? isNsot ? 'bg-cyan-50 text-cyan-600 border-cyan-100'
-                                  : isInsp ? 'bg-emerald-50 text-emerald-600 border-emerald-100'
-                                  : isBackup ? 'bg-indigo-50 text-indigo-600 border-indigo-100'
-                                  : isScript ? 'bg-amber-50 text-amber-600 border-amber-100'
-                                  : 'bg-cyan-50 text-cyan-600 border-cyan-100'
-                                : 'bg-slate-100 text-slate-400 border-slate-200'
-                            }`}>
-                              <AtIcon size={20} />
-                            </div>
-
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2.5">
-                                <p className="text-sm font-bold text-[#0f172a] truncate group-hover:text-cyan-700 transition-colors">
-                                  {job.name}
-                                </p>
-                                <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
-                                  isEnabled ? 'bg-emerald-100/80 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-500 border border-slate-200'
-                                }`}>
-                                  {isEnabled ? (zh ? '运行中' : 'Active') : (zh ? '已停用' : 'Disabled')}
-                                </span>
-                                {job.last_run_status && (
-                                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
-                                    job.last_run_status === 'success'
-                                      ? 'bg-emerald-50 text-emerald-600 border border-emerald-100'
-                                      : 'bg-rose-50 text-rose-600 border border-rose-100'
-                                  }`}>
-                                    <div className={`w-1.5 h-1.5 rounded-full ${job.last_run_status === 'success' ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-                                    {job.last_run_status === 'success' ? (zh ? '执行成功' : 'Success') : (zh ? '执行失败' : 'Failed')}
-                                  </span>
-                                )}
-                                {isSystemManaged && (
-                                  <span className="inline-flex items-center gap-1 rounded border border-slate-200 bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
-                                    <Lock size={11} />
-                                    {zh ? '平台托管' : 'Platform managed'}
-                                  </span>
-                                )}
-                                {job.use_admin_creds ? (
-                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200 shadow-sm">
-                                    <ShieldAlert size={12} className="text-amber-600" />
-                                    {zh ? '特权执行 (Admin)' : 'Privileged'}
-                                  </span>
-                                ) : (
-                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-slate-100 text-slate-600 border border-slate-200 shadow-sm">
-                                    {isNsot ? <RefreshCw size={12} className="text-cyan-600" /> : <User size={12} className="text-slate-500" />}
-                                    {isNsot ? (zh ? '平台采集' : 'Platform collection') : (zh ? '普通执行 (User)' : 'Normal')}
-                                  </span>
-                                )}
-                              </div>
-
-                              <div className="flex items-center gap-3 mt-1.5 text-xs text-slate-500 flex-wrap">
-                                <span className="flex items-center gap-1 font-mono font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
-                                  <CalendarClock size={12} className="text-cyan-600" />
-                                  {describeCron(job.cron_expr, zh)}
-                                </span>
-                                <span className="text-slate-300">·</span>
-                                <span className={`font-semibold ${isNsot ? 'text-cyan-700' : isInsp ? 'text-emerald-700' : isBackup ? 'select-none text-indigo-700' : isScript ? 'text-amber-700' : 'text-slate-700'}`}>
-                                  {zh ? (atInfo?.labelZh || job.action_type) : (atInfo?.labelEn || job.action_type)}
-                                </span>
-                                <span className="text-slate-300">·</span>
-                                <span className="flex items-center gap-1 text-slate-600 font-medium">
-                                  <Target size={12} className="text-slate-400" />
-                                  {scopeDesc}
-                                </span>
-
-                                {(job.action_type === 'script_run' || job.action_type === 'inspection') && job.script_id && (
-                                  <>
-                                    <span className="text-slate-300">·</span>
-                                    <span className="flex items-center gap-1 text-[#00a9ce] font-bold bg-cyan-50 px-2 py-0.5 rounded border border-cyan-100">
-                                      <FileCode size={12} />
-                                      {(availableScripts || []).find(s => s.id === job.script_id)?.name || job.script_id}
-                                    </span>
-                                  </>
-                                )}
-                                {job.run_count > 0 && (
-                                  <>
-                                    <span className="text-slate-300">·</span>
-                                    <span className="font-mono text-slate-600">{zh ? `累计触发 ${job.run_count} 次` : `${job.run_count} runs`}</span>
-                                  </>
-                                )}
-                                {job.last_run_at && (
-                                  <>
-                                    <span className="text-slate-300">·</span>
-                                    <span>{zh ? '最近运行' : 'Last run'}: <span className="font-mono">{new Date(job.last_run_at).toLocaleString(zh ? 'zh-CN' : 'en-US', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span></span>
-                                  </>
-                                )}
-                              </div>
-                            </div>
-
-                            <ActionIconGroup label={zh ? '计划任务操作' : 'Scheduled job actions'} className="shrink-0" onClick={e => e.stopPropagation()}>
+                <div className="flex-1 overflow-auto max-h-[calc(100vh-320px)] rounded-2xl border border-slate-200 bg-white shadow-sm custom-scrollbar">
+                  <table className="w-full min-w-[1060px] text-left">
+                    <thead className="sticky top-0 z-10 bg-slate-50 text-[11px] font-bold text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.08)]">
+                      <tr>
+                        <th className="px-4 py-3">{zh ? '作业名称' : 'Job Name'}</th>
+                        <th className="px-4 py-3">{zh ? '任务对象' : 'Target'}</th>
+                        <th className="px-4 py-3">{zh ? '执行周期（Crontab）' : 'Schedule (Crontab)'}</th>
+                        <th className="px-4 py-3">{zh ? '状态' : 'Status'}</th>
+                        <th className="px-4 py-3">{zh ? '修改人' : 'Modified By'}</th>
+                        <th className="px-4 py-3">{zh ? '修改时间' : 'Modified At'}</th>
+                        <TableActionHeader className="whitespace-nowrap px-4 py-3">{zh ? '操作' : 'Actions'}</TableActionHeader>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 text-xs">
+                      {filteredJobs.map(job => {
+                        const isEnabled = !!job.enabled;
+                        const isSystemManaged = job.authorization_mode === 'system';
+                        let scopeDesc = describeScope(job.device_scope, job.device_filter, zh);
+                        if (job.device_scope === 'composite') {
+                          try {
+                            const scopeFilters: unknown = JSON.parse(job.device_filter || '{}');
+                            if (scopeFilters && typeof scopeFilters === 'object' && !Array.isArray(scopeFilters)) {
+                              const platform = (scopeFilters as CollectionPlanFilters).platform;
+                              if (platform) scopeDesc = `${scopeDesc} · ${platform}`;
+                            }
+                          } catch { /* Keep the legacy scope label for malformed filters. */ }
+                        }
+                        return (
+                          <tr
+                            key={job.id}
+                            onClick={() => setDetailJob(job)}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault();
+                                setDetailJob(job);
+                              }
+                            }}
+                            tabIndex={0}
+                            className="cursor-pointer transition-colors hover:bg-cyan-50/40 focus:outline-none focus-visible:bg-cyan-50/50"
+                          >
+                            <td className="max-w-[220px] px-4 py-3.5 font-semibold text-slate-800">
+                              <span className="block truncate" title={job.name}>{job.name || '—'}</span>
+                            </td>
+                            <td className="max-w-[230px] px-4 py-3.5 text-slate-600">
+                              <span className="block truncate" title={scopeDesc}>{scopeDesc}</span>
+                            </td>
+                            <td className="px-4 py-3.5">
+                              <code className="whitespace-nowrap rounded-md border border-cyan-100 bg-cyan-50 px-2 py-1 font-mono text-[11px] font-semibold text-cyan-800" title={describeCron(job.cron_expr, zh)}>
+                                {job.cron_expr || '—'}
+                              </code>
+                            </td>
+                            <td className="px-4 py-3.5">
+                              <span className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-[10px] font-bold ${
+                                isEnabled ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'
+                              }`}>
+                                {isEnabled ? (zh ? '已启用' : 'Enabled') : (zh ? '已停用' : 'Disabled')}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3.5 font-medium text-slate-600">
+                              {job.updated_by || job.created_by || '—'}
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3.5 font-mono text-[11px] text-slate-600">
+                              {formatJobDateTime(job.updated_at || job.created_at)}
+                            </td>
+                            <TableActionCell
+                              className="whitespace-nowrap px-4 py-3.5"
+                              label={zh ? `定时作业操作：${job.name}` : `Scheduled job actions: ${job.name}`}
+                              onClick={(event) => event.stopPropagation()}
+                            >
                               <ActionIconButton
                                 icon={Eye}
-                                label={zh ? '查看运行详情' : 'View Detail'}
+                                label={zh ? '查看详情' : 'View details'}
                                 onClick={() => setDetailJob(job)}
                               />
                               {!isSystemManaged && (
                                 <>
                                   <ActionIconButton
                                     icon={Pencil}
-                                    label={zh ? '编辑配置' : 'Edit'}
+                                    label={zh ? '编辑作业' : 'Edit job'}
                                     onClick={() => openEditModal(job)}
                                   />
                                   <ActionIconButton
                                     icon={isEnabled ? PowerOff : Power}
-                                    label={isEnabled ? (zh ? '暂停执行' : 'Disable') : (zh ? '恢复启动' : 'Enable')}
+                                    label={isEnabled ? (zh ? '停用作业' : 'Disable job') : (zh ? '启用作业' : 'Enable job')}
                                     variant={isEnabled ? 'default' : 'success'}
                                     onClick={() => toggleJobEnabled(job)}
                                   />
                                   {deleteConfirmId === job.id ? (
                                     <div className="flex items-center gap-1.5 ml-1">
                                       <button
-                                        onClick={() => {
-                                          void openDeleteApproval(job);
-                                        }}
+                                        onClick={() => { void openDeleteApproval(job); }}
                                         className="px-2.5 py-1.5 rounded-xl bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 transition-all shadow-sm"
                                       >
-                                        {zh ? '确认删除' : 'Yes'}
+                                        {zh ? '确认删除' : 'Confirm'}
                                       </button>
                                       <button
                                         onClick={() => setDeleteConfirmId(null)}
                                         className="px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-100 transition-all"
                                       >
-                                        {zh ? '取消' : 'No'}
+                                        {zh ? '取消' : 'Cancel'}
                                       </button>
                                     </div>
                                   ) : (
                                     <ActionIconButton
                                       icon={Trash2}
-                                      label={zh ? '删除作业' : 'Delete'}
+                                      label={zh ? '删除作业' : 'Delete job'}
                                       variant="danger"
                                       onClick={() => setDeleteConfirmId(job.id)}
                                     />
                                   )}
                                 </>
                               )}
-                            </ActionIconGroup>
-                          </div>
-
-                          <div className="px-5 py-2.5 bg-slate-50/80 border-t border-slate-100 flex items-center gap-4 text-[11px] text-slate-500">
-                            <span className="font-mono text-slate-600 font-semibold">{job.cron_expr}</span>
-                            <span className="text-slate-300">|</span>
-                            <span>{zh ? '审批授权人' : 'Approver'}: <span className="font-bold text-slate-700">{job.approved_by || '\u2014'}</span></span>
-                            <span className="text-slate-300">|</span>
-                            <span>{zh ? '创建者' : 'Creator'}: <span className="font-medium text-slate-700">{job.created_by}</span> · <span className="font-mono">{new Date(job.created_at).toLocaleDateString(zh ? 'zh-CN' : 'en-US')}</span></span>
-                          </div>
-                        </motion.div>
-                      );
-                    })}
-                  </div>
+                            </TableActionCell>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               ) : (
                 <div className="rounded-3xl border-2 border-dashed border-slate-200/80 p-16 text-center bg-white/50">
@@ -1771,8 +1726,10 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
         isOpen={!!detailJob}
         onClose={() => setDetailJob(null)}
         detailJob={detailJob}
-        viewingScript={viewingScript}
-        fetchAndShowScriptDetail={fetchAndShowScriptDetail}
+        openScriptManagement={(scriptId) => {
+          setDetailJob(null);
+          navigate({ pathname: '/automation/scripts', search: `?q=${encodeURIComponent(scriptId)}` });
+        }}
         availableScripts={availableScripts}
         openEditModal={openEditModal}
         fetchNsotCollectionPreview={fetchNsotCollectionPreview}
@@ -1784,7 +1741,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
           <button
             type="button"
             aria-label={zh ? '关闭作业审批' : 'Close job approval'}
-            className="absolute inset-0 bg-slate-950/50 backdrop-blur-sm"
+            className="absolute inset-0 bg-slate-950/50"
             disabled={approvalStatus === 'sending' || approvalStatus === 'verifying' || disableSubmitting}
             onClick={() => {
               setDisableTarget(null);
@@ -1981,62 +1938,6 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
         />
       )}
 
-      {/* --- Script Preview Modal --- */}
-      <AnimatePresence>
-        {viewingScript && (
-          <motion.div
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
-          >
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9, y: 30 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 30 }}
-              className="relative w-full max-w-4xl max-h-[85vh] bg-[#0f172a] rounded-3xl shadow-2xl flex flex-col overflow-hidden border border-white/10"
-            >
-              <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-cyan-500/20 flex items-center justify-center">
-                    <FileCode className="w-4 h-4 text-cyan-400" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-white/90">{viewingScript.name}</h3>
-                    <p className="text-[10px] text-white/40">{viewingScript.id} · {viewingScript.category === 'inspection' ? (zh ? '巡检脚本' : 'Inspection') : (zh ? '变更脚本' : 'Change')}</p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setViewingScript(null)}
-                  className="p-2 rounded-lg text-white/20 hover:bg-white/5 hover:text-white/40 transition-all"
-                >
-                  <X size={18} />
-                </button>
-              </div>
-              <div className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar">
-                {viewingScript.description && (
-                  <div className="p-4 rounded-xl bg-white/5 border border-white/5">
-                    <p className="text-[11px] text-white/60 leading-relaxed italic">
-                      {viewingScript.description}
-                    </p>
-                  </div>
-                )}
-                <div className="relative group">
-                  <pre className="p-5 rounded-2xl bg-black/50 border border-white/10 font-mono text-[11px] leading-relaxed text-cyan-50/80 overflow-x-auto">
-                    {viewingScript.content}
-                  </pre>
-                </div>
-              </div>
-              <div className="px-6 py-4 bg-white/[0.02] border-t border-white/5 flex items-center justify-end">
-                <button
-                  onClick={() => setViewingScript(null)}
-                  className="px-6 py-2 rounded-xl bg-white/5 text-white/60 text-xs font-bold hover:bg-white/10 transition-all"
-                >
-                  {zh ? '返回详情' : 'Back'}
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </div>
   );
 };

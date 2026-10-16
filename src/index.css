@@ -696,6 +696,76 @@ input[type="search"]:hover::-webkit-search-cancel-button {
 	vertical-align: middle;
 }
 
+/* Keep the access controls reachable in the aggregate workspace table while
+ * the device detail columns remain horizontally scrollable on narrow screens. */
+.access-center-all-table {
+	min-width: 1280px !important;
+	table-layout: fixed;
+}
+
+.access-center-all-table :is(th, td) {
+	padding-inline: 8px !important;
+}
+
+.access-center-all-table :is(thead th, tbody td):nth-last-child(2) {
+	position: sticky;
+	right: 188px;
+	z-index: 2;
+	background: var(--ops-surface);
+}
+
+.access-center-all-table :is(thead th, tbody td):last-child {
+	position: sticky;
+	right: 0;
+	z-index: 2;
+	background: var(--ops-surface);
+	box-shadow: -8px 0 14px -12px rgba(15, 35, 60, 0.5);
+}
+
+.access-center-all-table thead th:nth-last-child(-n + 2) {
+	z-index: 4;
+	background: color-mix(in srgb, var(--ops-surface) 86%, var(--ops-bg));
+}
+
+.access-center-all-table tbody tr:hover td:nth-last-child(-n + 2) {
+	background: color-mix(in srgb, var(--ops-surface) 88%, var(--ops-bg));
+}
+
+.access-center-all-table .access-center-all-method-cell {
+	text-align: left;
+}
+
+.access-center-all-table .access-center-all-actions-header > div {
+	justify-content: center;
+}
+
+.access-center-all-table .access-center-all-actions-cell > div {
+	width: 100%;
+	min-width: 0;
+	justify-content: center;
+	gap: 6px;
+}
+
+.access-center-all-table .access-center-all-actions-cell button {
+	flex: 1 1 0;
+	min-width: 0;
+	max-width: none;
+	gap: 5px;
+	padding: 6px 7px !important;
+	overflow: hidden;
+}
+
+.access-center-all-table .access-center-all-actions-cell button > svg {
+	flex: 0 0 auto;
+}
+
+.access-center-all-table .access-center-all-actions-cell button > span {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
 /* Dark monitoring pages keep the same geometry and type scale while using a
  * dark surface palette for their table chrome. */
 .nx-dark-page :where(table:not(.nx-terminal-table)) {

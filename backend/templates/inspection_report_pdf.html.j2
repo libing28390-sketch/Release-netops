@@ -64,8 +64,7 @@
         .status-critical { color: #d32f2f; font-weight: bold; }
         .status-warning { color: #f57c00; font-weight: bold; }
         .status-healthy { color: #388e3c; font-weight: bold; }
-        .status-completed { color: #0288d1; font-weight: bold; }
-        .status-failed { color: #c62828; font-weight: bold; }
+        .status-partial { color: #2563eb; font-weight: bold; }
         
         .footer {
             margin-top: 40pt;
@@ -104,15 +103,16 @@
         <div style="margin-top: 12pt; line-height: 1.8; font-size: 10.5pt; border-top: 1px dashed #bfe8ff; padding-top: 10pt;">
             {% if report_type == 'playbook' %}
                 <strong>执行概览:</strong> 本次自动化作业共覆盖设备 <strong>{{ total_devices }}</strong> 台。
-                执行状态统计：<span class="status-healthy">成功 {{ healthy_count }} 台</span>，
-                <span class="status-warning">异常/失败 {{ warning_count + critical_count }} 台</span>。
-                平均执行得分：<strong>{{ avg_score }}</strong> 分。
+                执行状态统计：<span class="status-healthy">正常 {{ healthy_count }} 台</span>，
+                <span class="status-warning">告警 {{ warning_count }} 台</span>，
+                <span class="status-critical">异常 {{ critical_count }} 台</span>；
+                部分采集 {{ partial_count }} 台，未采集检查项 <strong>{{ unchecked_count }}</strong> 项。
             {% else %}
                 <strong>巡检概览:</strong> 本次巡检共覆盖设备 <strong>{{ total_devices }}</strong> 台。
-                健康状态统计：<span class="status-healthy">健康 {{ healthy_count }}</span>，
+                巡检状态统计：<span class="status-healthy">正常 {{ healthy_count }}</span>，
                 <span class="status-warning">告警 {{ warning_count }}</span>，
-                <span class="status-critical">严重 {{ critical_count }}</span>。
-                平均网络健康度：<strong>{{ avg_score }}</strong> 分。
+                <span class="status-critical">异常 {{ critical_count }}</span>；
+                部分采集 {{ partial_count }} 台，未采集检查项 <strong>{{ unchecked_count }}</strong> 项。
             {% endif %}
         </div>
     </div>
@@ -123,10 +123,11 @@
         <table>
             <thead>
                 <tr>
-                    <th width="25%">设备名称</th>
-                    <th width="25%">IP 地址</th>
-                    <th width="15%">状态</th>
-                    <th width="35%">核心输出/异常原因</th>
+                    <th width="20%">设备名称</th>
+                    <th width="18%">管理 IP</th>
+                    <th width="12%">状态</th>
+                    <th width="22%">异常检查项</th>
+                    <th width="28%">异常说明</th>
                 </tr>
             </thead>
             <tbody>
@@ -134,8 +135,9 @@
                 <tr>
                     <td>{{ dev.hostname }}</td>
                     <td>{{ dev.ip_address }}</td>
-                    <td class="status-{{ dev.health_status }}">{{ dev.health_status.upper() }}</td>
-                    <td>{{ dev.top_finding or '执行过程发现丢包或输出异常' }}</td>
+                    <td class="status-{{ dev.health_status }}">{{ dev.status_label }}</td>
+                    <td>{{ dev.finding_item }}</td>
+                    <td>{{ dev.top_finding or '执行过程发现异常' }}</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -144,14 +146,28 @@
         <p style="color:#666; margin-bottom: 20pt;">所有设备均成功完成既定阶段作业任务，未捕获运行异常。</p>
         {% endif %}
 
-        <h2>二、 执行结果详情表</h2>
+        {% if unchecked_items %}
+        <h2>二、 未采集项</h2>
+        <table>
+            <thead><tr><th width="25%">设备名称</th><th width="22%">管理 IP</th><th width="23%">检查项</th><th width="30%">未采集说明</th></tr></thead>
+            <tbody>
+                {% for device in unchecked_items %}
+                    {% for item in device['items'] %}
+                    <tr><td>{{ device.hostname }}</td><td>{{ device.ip_address }}</td><td>{{ item.item }}</td><td>{{ item.detail or '未取得有效数据' }}</td></tr>
+                    {% endfor %}
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+
+        <h2>三、 执行结果详情表</h2>
         <table>
             <thead>
                 <tr>
                     <th width="30%">设备名称</th>
                     <th width="30%">管理 IP 地址</th>
-                    <th width="20%">执行状态</th>
-                    <th width="20%">健康评分</th>
+                    <th width="20%">状态</th>
+                    <th width="20%">耗时</th>
                 </tr>
             </thead>
             <tbody>
@@ -159,8 +175,8 @@
                 <tr>
                     <td>{{ dev.hostname }}</td>
                     <td>{{ dev.ip_address }}</td>
-                    <td class="status-{{ dev.health_status }}">{{ (dev.status or 'completed').upper() }}</td>
-                    <td>{{ dev.health_score }} 分</td>
+                    <td class="status-{{ dev.health_status }}">{{ dev.status_label }}</td>
+                    <td>{% if dev.duration_ms is not none %}{{ dev.duration_ms }} 毫秒{% else %}—{% endif %}</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -183,7 +199,7 @@
                 <tr>
                     <td>{{ dev.hostname }}</td>
                     <td>{{ dev.ip_address }}</td>
-                    <td class="status-{{ dev.health_status }}">{{ dev.health_status.upper() }}</td>
+                    <td class="status-{{ dev.health_status }}">{{ dev.status_label }}</td>
                     <td>{{ dev.top_finding }}</td>
                 </tr>
                 {% endfor %}
@@ -209,7 +225,7 @@
                 <tr>
                     <td>{{ risk.device }}</td>
                     <td>{{ risk.rule_name }}</td>
-                    <td class="status-{{ risk.severity }}">{{ risk.severity.upper() }}</td>
+                    <td class="status-{{ risk.severity }}">{{ risk.severity_label }}</td>
                     <td>{{ risk.description }}</td>
                 </tr>
                 {% endfor %}
@@ -252,8 +268,8 @@
                     <th width="25%">设备名称</th>
                     <th width="25%">管理 IP 地址</th>
                     <th width="20%">硬件平台</th>
-                    <th width="15%">健康分</th>
-                    <th width="15%">合规性</th>
+                    <th width="15%">状态</th>
+                    <th width="15%">合规状态</th>
                 </tr>
             </thead>
             <tbody>
@@ -262,7 +278,7 @@
                     <td>{{ dev.hostname }}</td>
                     <td>{{ dev.ip_address }}</td>
                     <td>{{ dev.platform or '-' }}</td>
-                    <td>{{ dev.health_score }}</td>
+                    <td class="status-{{ dev.health_status }}">{{ dev.status_label }}</td>
                     <td>{{ dev.compliance_status }}</td>
                 </tr>
                 {% endfor %}
@@ -271,7 +287,7 @@
     {% endif %}
 
     <div class="footer">
-        {{ system_name }} NetOps Automation System. 智能网络运维系统自动生成报告。
+        {{ system_name }} NetOps 自动化系统。智能网络运维系统自动生成报告。
     </div>
 </body>
 </html>

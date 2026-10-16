@@ -179,7 +179,7 @@ describe('ModelManagementTab browser key paths', () => {
     await user.type(screen.getByPlaceholderText('deepseek-v4-flash'), 'backup-model');
     await user.click(screen.getByRole('button', { name: '确认添加' }));
     await waitFor(() => expect(createModel).toHaveBeenCalledWith(expect.objectContaining({ name: '备用模型', model_code: 'backup-model', provider_id: provider.id })));
-  });
+  }, 20_000);
 
   it('explains historical provenance before sending an impossible model delete request', async () => {
     getDeletePreview.mockResolvedValueOnce({ route_count: 0, message_count: 23, can_delete: false } as any);

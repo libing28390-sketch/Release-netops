@@ -56,7 +56,7 @@ from services.playbook_execution_approval_service import (
     decide_execution_approval,
     list_execution_approvals,
 )
-from services.playbook_output_service import PlaybookOutputError, load_output
+from services.playbook_output_service import PlaybookOutputError, load_output, reencrypt_legacy_output
 
 router = APIRouter()
 logger = logging.getLogger("api.playbooks.routes")
@@ -540,6 +540,19 @@ def _audit_playbook_output_read(
 def _load_output_or_http(ciphertext: str | None, legacy_json: str | None) -> object:
     try:
         return load_output(ciphertext, legacy_json)
+    except PlaybookOutputError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                'code': 'PLAYBOOK_OUTPUT_UNAVAILABLE',
+                'message': str(exc),
+            },
+        ) from exc
+
+
+def _reencrypt_legacy_output_or_http(legacy_json: str) -> tuple[str, str, str]:
+    try:
+        return reencrypt_legacy_output(legacy_json)
     except PlaybookOutputError as exc:
         raise HTTPException(
             status_code=503,
@@ -1119,6 +1132,26 @@ async def get_execution_device_detail(execution_id: str, device_id: str, request
         if row:
             res = dict(row)
             if 'phases_encrypted' in res:
+                legacy_phases = str(res.get('phases_json') or '').strip()
+                if not res.get('phases_encrypted') and legacy_phases and legacy_phases != '{}':
+                    # Authorized history reads may encounter output written by
+                    # the pre-encryption scheduler. Encrypt it at rest before
+                    # returning it, then clear the legacy plaintext column.
+                    ciphertext, placeholder, expires_at = _reencrypt_legacy_output_or_http(legacy_phases)
+                    conn.execute(
+                        '''UPDATE execution_device_results
+                           SET phases_encrypted = ?, phases_json = ?, raw_output_expires_at = ?
+                           WHERE id = ? AND (phases_encrypted IS NULL OR phases_encrypted = '')
+                             AND phases_json = ?''',
+                        (ciphertext, placeholder, expires_at, res.get('id'), res.get('phases_json')),
+                    )
+                    conn.commit()
+                    refreshed = conn.execute(
+                        "SELECT * FROM execution_device_results WHERE id = ?",
+                        (res.get('id'),),
+                    ).fetchone()
+                    if refreshed:
+                        res = dict(refreshed)
                 res['phases'] = _load_output_or_http(res.get('phases_encrypted'), res.get('phases_json'))
                 res.pop('phases_encrypted', None)
             elif res.get('phases_json'):

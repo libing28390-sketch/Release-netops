@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Info, X, CalendarClock, Target, FileText, FileCode, Lock } from 'lucide-react';
+import { Info, X, CalendarClock, Target, FileText, ExternalLink, Lock } from 'lucide-react';
 import { NsotCollectionPreview, ScheduledJob } from '../types';
 import { describeCron } from '../helpers';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
@@ -9,8 +9,7 @@ interface JobDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
   detailJob: ScheduledJob | null;
-  viewingScript: any;
-  fetchAndShowScriptDetail: (scriptId: string) => Promise<void>;
+  openScriptManagement: (scriptId: string) => void;
   availableScripts: Array<{ id: string; name: string; status: string; category: string; platform?: string }>;
   openEditModal: (job: ScheduledJob) => void;
   fetchNsotCollectionPreview: (jobId: string, signal: AbortSignal) => Promise<NsotCollectionPreview>;
@@ -69,8 +68,7 @@ export const JobDetailModal: React.FC<JobDetailModalProps> = ({
   isOpen,
   onClose,
   detailJob,
-  viewingScript,
-  fetchAndShowScriptDetail,
+  openScriptManagement,
   availableScripts,
   openEditModal,
   fetchNsotCollectionPreview,
@@ -120,7 +118,7 @@ export const JobDetailModal: React.FC<JobDetailModalProps> = ({
         exit={{ opacity: 0 }}
         className="fixed inset-0 z-[60] flex items-center justify-center p-4"
       >
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-md" onClick={onClose} />
+        <div className="fixed inset-0 bg-black/40" onClick={onClose} />
         <motion.div
           initial={{ opacity: 0, scale: 0.95, y: 20 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -205,54 +203,48 @@ export const JobDetailModal: React.FC<JobDetailModalProps> = ({
               </div>
             )}
 
-            {/* 3. Execution Content (Script/Commands) */}
+            {/* 3. Execution summary */}
             <div>
-              <h4 className="text-[11px] font-bold text-black/50 uppercase tracking-wider mb-2">{zh ? '执行脚本/内容' : 'Execution Content'}</h4>
-              <div className="rounded-2xl border border-black/[0.06] overflow-hidden bg-[#1e293b]">
-                <div className="px-4 py-2 bg-white/5 border-b border-white/[0.05] flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <FileText size={12} className="text-cyan-400" />
-                    <span className="text-[11px] font-bold text-white/70">
-                      {detailJob.action_type === 'backup' ? (zh ? '采集与巡检：核心配置备份' : 'Collection & Inspection: Config Backup') :
-                       detailJob.action_type === 'nsot' ? (zh ? '网络事实库：完整 NSOT 采集' : 'Network Facts: Full NSOT Collection') :
-                       detailJob.action_type === 'inspection' && !detailJob.script_id ? (zh ? '智能巡检（全部内置指标）' : 'Smart Inspection (All Built-in)') :
-                       (availableScripts.find(s => s.id === detailJob.script_id)?.name || detailJob.script_id || (zh ? '操作内容' : 'Operation Content'))}
-                    </span>
-                    {detailJob.script_id && (
-                      <button 
-                        onClick={() => fetchAndShowScriptDetail(detailJob.script_id!)}
-                        className="text-[9px] bg-cyan-500/10 text-cyan-400 px-1.5 py-0.5 rounded border border-cyan-500/20 hover:bg-cyan-500/20 transition-all ml-1"
-                      >
-                        {zh ? '查看脚本详情' : 'View Script'}
-                      </button>
-                    )}
+              <h4 className="text-[11px] font-bold text-black/50 uppercase tracking-wider mb-2">{zh ? '执行方式' : 'Execution Method'}</h4>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <FileText size={15} className="shrink-0 text-cyan-700" />
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-slate-800">
+                        {detailJob.action_type === 'backup' ? (zh ? '配置备份' : 'Configuration backup') :
+                         detailJob.action_type === 'nsot' ? (zh ? 'NSOT 网络事实库采集' : 'NSOT facts collection') :
+                         detailJob.action_type === 'inspection' ? (zh ? '智能巡检' : 'Smart inspection') :
+                         detailJob.action_type === 'command' ? (zh ? '命令执行' : 'Command execution') :
+                         (zh ? '自动化脚本' : 'Automation script')}
+                      </p>
+                      <div className="mt-0.5 truncate text-[11px] text-slate-500">
+                        {detailJob.script_id ? (
+                          <span className="inline-flex max-w-full items-center gap-1">
+                            <span>{zh ? '绑定脚本：' : 'Bound script: '}</span>
+                            <button
+                              type="button"
+                              onClick={() => openScriptManagement(detailJob.script_id!)}
+                              aria-label={zh ? `打开脚本：${availableScripts.find(s => s.id === detailJob.script_id)?.name || detailJob.script_id}` : `Open script: ${availableScripts.find(s => s.id === detailJob.script_id)?.name || detailJob.script_id}`}
+                              title={zh ? '点击跳转到脚本管理' : 'Open in script management'}
+                              className="inline-flex max-w-full items-center gap-1 truncate font-semibold text-blue-700 hover:text-blue-600 hover:underline"
+                            >
+                              <span className="truncate">{availableScripts.find(s => s.id === detailJob.script_id)?.name || detailJob.script_id}</span>
+                              <ExternalLink size={11} className="shrink-0" />
+                            </button>
+                          </span>
+                        ) : detailJob.action_type === 'command'
+                            ? (zh ? '命令已配置，按审批后的内容执行。' : 'Commands are configured and run from the approved content.')
+                            : detailJob.action_type === 'inspection'
+                              ? (zh ? '使用平台内置巡检项。' : 'Uses built-in inspection checks.')
+                              : detailJob.action_type === 'backup'
+                                ? (zh ? '采集设备配置并进行版本比对。' : 'Collects device configuration and tracks versions.')
+                                : detailJob.action_type === 'nsot'
+                                  ? (zh ? '按目标范围采集网络事实。' : 'Collects network facts for the selected scope.')
+                                : (zh ? '未关联脚本。' : 'No script is linked.')}
+                      </div>
+                    </div>
                   </div>
-                  <div className="text-[9px] font-bold text-cyan-400/60 uppercase tracking-widest">
-                    {(detailJob.action_type === 'backup' || detailJob.action_type === 'nsot' || detailJob.action_type === 'inspection') ? (zh ? '采集' : 'COLLECTION') :
-                     (detailJob.action_type === 'script_run' && availableScripts.find(s => s.id === detailJob.script_id)?.category === 'inspection') ? (zh ? '采集' : 'COLLECTION') :
-                     (zh ? '变更' : 'CHANGE')}
-                  </div>
-                </div>
-                <div className="p-4 overflow-x-auto">
-                  <pre className="font-mono text-[11px] leading-relaxed text-cyan-50/90 whitespace-pre-wrap">
-                    {detailJob.action_type === 'backup'
-                      ? (zh ? '# 该作业为内置配置备份任务\n# 将自动采集设备 running-config 并进行版本比对' : '# This is a built-in config backup job.\n# It will collect running-config and track drifts.')
-                      : detailJob.action_type === 'nsot'
-                        ? (zh ? '# 该作业为 NSOT 网络事实库采集\n# 按当前设备范围筛选在线目标，并遵循各设备的 NSOT 采集模板\n# 不执行用户命令或配置变更' : '# NSOT facts collection job.\n# Runs for online devices in the saved scope and follows each device collection template.\n# No user commands or configuration changes are executed.')
-                      : detailJob.action_type === 'inspection'
-                        ? (detailJob.script_id && viewingScript?.id === detailJob.script_id && viewingScript?.content
-                           ? viewingScript.content
-                           : detailJob.script_id
-                             ? (zh ? `# 该作业为智能巡检（绑定脚本: ${availableScripts.find(s => s.id === detailJob.script_id)?.name || detailJob.script_id}）\n# 点击上方"查看脚本详情"查看完整内容` : `# Smart Inspection job bound to script: ${availableScripts.find(s => s.id === detailJob.script_id)?.name || detailJob.script_id}\n# Click "View Script" above to see full content`)
-                             : (zh ? '# 该作业为内置综合巡检\n# 将采集 interfaces / neighbors / arp / mac_table / routing_table / bgp / ospf' : '# Built-in comprehensive inspection job.\n# Collects interfaces / neighbors / arp / mac_table / routing_table / bgp / ospf'))
-                        : detailJob.script_id && viewingScript?.id === detailJob.script_id && viewingScript?.content
-                          ? viewingScript.content
-                          : detailJob.commands
-                            ? detailJob.commands
-                            : detailJob.script_id
-                              ? (zh ? `# 此作业绑定脚本: ${availableScripts.find(s => s.id === detailJob.script_id)?.name || detailJob.script_id}\n# 点击上方"查看脚本详情"查看完整内容` : `# Bound script: ${availableScripts.find(s => s.id === detailJob.script_id)?.name || detailJob.script_id}\n# Click "View Script" above to see full content`)
-                              : (zh ? '-- 未设置具体执行内容 --' : '-- No commands defined --')}
-                  </pre>
                 </div>
               </div>
             </div>

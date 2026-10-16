@@ -1,6 +1,6 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Terminal, Shield, Lock, Wifi, Network, Building2, AlertCircle, AlertTriangle, Globe2, Plus, Trash2, X, RefreshCw } from 'lucide-react';
+import { Terminal, Shield, Lock, Wifi, Network, Building2, AlertCircle, AlertTriangle, Globe2, Plus, Trash2, X, RefreshCw, ChevronDown } from 'lucide-react';
 import DateTimePicker from '../../../components/DateTimePicker';
 import { PasswordInputField } from '../../../components/ui/PasswordInputField';
 import { Asset } from '../types';
@@ -12,12 +12,12 @@ import {
   SERVER_PLATFORMS,
   ALL_PLATFORMS,
   getPlatformsForVendor,
+  isCiscoNetworkPlatform,
   STATUSES,
   LIFECYCLE_STATUSES,
   NETWORK_TOPOLOGY_ROLE_OPTIONS,
   TOPOLOGY_FUNCTION_OPTIONS,
   TOPOLOGY_ZONE_OPTIONS,
-  SSH_ALGORITHM_PROFILE_OPTIONS,
   isValidIpAddress,
 } from '../constants';
 import { AssetTagPicker } from './AssetTagPicker';
@@ -68,9 +68,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
   setFeedbackMsg,
   allTags,
 }) => {
-  useEscapeClose(isOpen, onClose);
   const zh = language === 'zh';
-
   const [racks, setRacks] = React.useState<any[]>([]);
   const [sites, setSites] = React.useState<any[]>([]);
   const [lookupsLoading, setLookupsLoading] = React.useState(false);
@@ -81,9 +79,74 @@ export const AssetModal: React.FC<AssetModalProps> = ({
   const [uValidationError, setUValidationError] = React.useState<string | null>(null);
   const [legacyExemptReason, setLegacyExemptReason] = React.useState('');
   const [credentials, setCredentials] = React.useState<any[]>([]);
+  const [showMoreAssetDetails, setShowMoreAssetDetails] = React.useState(false);
+  const [showWebProfilesDialog, setShowWebProfilesDialog] = React.useState(false);
+  const [webProfilesDraft, setWebProfilesDraft] = React.useState<any[]>([]);
+  const webProfilesBeforeDialogRef = React.useRef<any[] | null>(null);
   const saveLockRef = React.useRef(false);
   const [credMode, setCredMode] = React.useState<'manual' | 'existing'>('manual');
-  const [breakGlassAcknowledged, setBreakGlassAcknowledged] = React.useState(false);
+  const webProfiles = Array.isArray(form.web_profiles) ? form.web_profiles : [];
+  const webProfilesEnabled = webProfiles.some((profile: any) => profile.enabled !== false);
+  const ciscoEnablePasswordAvailable = isCiscoNetworkPlatform(form.asset_type, form.platform);
+  const onboardingStatus = isEditMode
+    ? String(editingAsset?.onboarding_status || 'pending_credentials').trim().toLowerCase()
+    : '';
+  const onboardingStatusLabel = onboardingStatus === 'pending_credentials'
+    ? (zh ? '待设置凭据' : 'credentials not set')
+    : onboardingStatus === 'credentials_set'
+      ? (zh ? '待验证连通性' : 'connectivity not verified')
+      : onboardingStatus;
+  const productionOnboardingBlocked = isEditMode
+    && form.lifecycle_status === 'production'
+    && (editingAsset?.lifecycle_status || 'staging') !== 'production'
+    && !['verified', 'active'].includes(onboardingStatus);
+  const createDefaultWebProfile = (assetType: string) => ({
+    profile_name: assetType === 'server' ? 'BMC' : 'Web管理',
+    scheme: 'https',
+    port: '443',
+    path: '/',
+    enabled: true,
+    credential_mode: 'inherit_asset',
+  });
+  const openWebProfilesDialog = () => {
+    const profiles = webProfiles.length ? webProfiles.map((profile: any) => ({ ...profile })) : [createDefaultWebProfile(form.asset_type)];
+    webProfilesBeforeDialogRef.current = webProfiles.map((profile: any) => ({ ...profile }));
+    setWebProfilesDraft(profiles);
+    setShowWebProfilesDialog(true);
+  };
+  const cancelWebProfilesDialog = () => {
+    const previousProfiles = webProfilesBeforeDialogRef.current;
+    if (previousProfiles) {
+      setForm((current: any) => ({ ...current, web_profiles: previousProfiles.map(profile => ({ ...profile })) }));
+    }
+    webProfilesBeforeDialogRef.current = null;
+    setShowWebProfilesDialog(false);
+  };
+  const toggleWebProfiles = (enabled: boolean) => {
+    const profiles = webProfiles.length ? webProfiles : enabled ? [createDefaultWebProfile(form.asset_type)] : [];
+    const nextProfiles = profiles.map((profile: any) => ({ ...profile, enabled }));
+    setForm((current: any) => ({ ...current, web_profiles: nextProfiles }));
+    if (enabled) {
+      webProfilesBeforeDialogRef.current = webProfiles.map((profile: any) => ({ ...profile }));
+      setWebProfilesDraft(nextProfiles.map((profile: any) => ({ ...profile })));
+      setShowWebProfilesDialog(true);
+    }
+  };
+  const updateWebProfileDraft = (index: number, updates: Record<string, unknown>) => {
+    setWebProfilesDraft(current => current.map((profile, itemIndex) => itemIndex === index ? { ...profile, ...updates } : profile));
+  };
+  useEscapeClose(isOpen && !showWebProfilesDialog, onClose);
+  useEscapeClose(isOpen && showWebProfilesDialog, cancelWebProfilesDialog);
+
+  React.useEffect(() => {
+    if (isOpen) setShowMoreAssetDetails(isEditMode);
+  }, [isOpen, isEditMode]);
+
+  React.useEffect(() => {
+    if (!isOpen || ciscoEnablePasswordAvailable) return;
+    setShowEnableSecret(false);
+    setForm(current => current.enable_password ? { ...current, enable_password: '' } : current);
+  }, [ciscoEnablePasswordAvailable, isOpen, setForm, setShowEnableSecret]);
   const mgmtIpError = React.useMemo(() => {
     if (isEditMode) return null;
     const ip = String(form.management_ip || '').trim();
@@ -92,10 +155,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
   }, [form.management_ip, isEditMode, zh]);
 
   React.useEffect(() => {
-    if (isOpen) {
-      setCredMode(form.credential_id ? 'existing' : 'manual');
-      setBreakGlassAcknowledged(false);
-    }
+    if (isOpen) setCredMode(form.credential_id ? 'existing' : 'manual');
   }, [isOpen, form.credential_id]);
 
   React.useEffect(() => {
@@ -163,6 +223,10 @@ export const AssetModal: React.FC<AssetModalProps> = ({
     };
   }, [isOpen, lookupRetry, zh]);
 
+  React.useEffect(() => {
+    if (!isOpen) setShowWebProfilesDialog(false);
+  }, [isOpen]);
+
   const filteredRacks = React.useMemo(() => {
     if (!form.site_id) {
       return Array.from(new Set(racks.map(r => r.name))).filter(Boolean).sort();
@@ -194,8 +258,6 @@ export const AssetModal: React.FC<AssetModalProps> = ({
   const selectedSnmpCredential = snmpCredentials.find(c => c.id === form.snmp_credential_id);
   const snmpCommunityConfigured = Boolean(form.snmp_community_set || selectedSnmpCredential?.has_snmp_community);
   const isWindowsMachine = form.asset_type === 'server' && ['windows', 'windows_server'].includes(String(form.platform || '').toLowerCase());
-  const requiresBreakGlassAck = form.ssh_algorithm_profile === 'legacy_break_glass'
-    && (!isEditMode || editingAsset?.ssh_algorithm_profile !== 'legacy_break_glass');
   const showLookupLoading = isOpen && (lookupsLoading || (!lookupsLoaded && !lookupError));
   const runSaveAction = React.useCallback(async (action: () => void | Promise<void>) => {
     if (saving || saveLockRef.current) return;
@@ -297,19 +359,13 @@ export const AssetModal: React.FC<AssetModalProps> = ({
 
   return (
     <AnimatePresence>
-      <motion.div
-        className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-sm"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/45"
         onClick={onClose}
       >
-        <motion.div
+        <div
           className="bg-white rounded-2xl w-[600px] max-w-[95vw] h-[85vh] shadow-2xl flex flex-col relative overflow-hidden border border-black/5"
           onClick={e => e.stopPropagation()}
-          initial={{ scale: 0.98, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          exit={{ scale: 0.98, opacity: 0 }}
         >
           {/* Header */}
           <div className="shrink-0 px-5 py-4 border-b border-black/5 flex items-center justify-between">
@@ -324,16 +380,16 @@ export const AssetModal: React.FC<AssetModalProps> = ({
           {/* Scrollable body */}
           <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
             <div className="rounded-lg border border-cyan-100 bg-cyan-50/60 px-3 py-2 text-[10px] text-cyan-800">
-              {zh ? '必填规则：主机名、资产编号至少填写一项。存量设备直接投产时，还必须填写普通账号、普通密码和免上收投产原因（至少 5 个字符）。' : 'Required: provide either Hostname or Asset Tag. Legacy devices created as production also require a normal username, normal password, and an exemption reason (minimum 5 characters).'}
+              {zh ? '主机名和资产编号至少填写一项。新设备默认待投产，可先保存再完成凭据验证。' : 'Provide a hostname or asset tag. New devices start in staging so you can save first and verify credentials afterward.'}
             </div>
             {isEditMode && (
               <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] text-slate-600">
-                {zh ? '资产类型、资产编号、序列号、厂商、型号、主机名、管理 IP 和设备高度在首次录入后固定；站点、机柜和安装 U 位仍可随设备迁移调整。' : 'Asset type, asset tag, serial number, vendor, model, hostname, management IP, and device height are fixed after creation. Site, rack, and installed U position remain editable for moves.'}
+                {zh ? '设备标识创建后固定；站点、机柜和安装 U 位可在设备迁移时调整。' : 'Device identifiers are fixed after creation; site, rack, and installed U position can change during a move.'}
               </div>
             )}
             {showLookupLoading && (
               <div role="status" className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] text-slate-600">
-                <RefreshCw size={12} className="animate-spin" />
+                <RefreshCw size={12} />
                 {zh ? '正在加载站点、机柜和凭据选项…' : 'Loading sites, racks, and credential options…'}
               </div>
             )}
@@ -381,7 +437,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                 placeholder={zh ? '仅网络设备批量导入时会通过 SNMP 同步' : 'SNMP sync runs on network device import'}
               />
               <Field label={zh ? '资产编号' : 'Asset Tag'} value={form.asset_tag} onChange={v => setForm(f => ({ ...f, asset_tag: v }))} placeholder="e.g. SRV-BJ-001" disabled={isEditMode} />
-              <Field label={zh ? '序列号 (S/N)' : 'Serial Number'} value={form.serial_number} onChange={v => setForm(f => ({ ...f, serial_number: v }))} disabled={isEditMode} />
+              {showMoreAssetDetails && <Field label={zh ? '序列号 (S/N)' : 'Serial Number'} value={form.serial_number} onChange={v => setForm(f => ({ ...f, serial_number: v }))} disabled={isEditMode} />}
 
               <div>
                 <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '厂商' : 'Vendor'}</label>
@@ -447,7 +503,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                 )}
               </div>
               <Field label={zh ? '型号' : 'Model'} value={form.model} onChange={v => setForm(f => ({ ...f, model: v }))} placeholder="e.g. PowerEdge R750" disabled={isEditMode} />
-              <div>
+              {showMoreAssetDetails && <div>
                 <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '状态' : 'Status'}</label>
                 <select
                   value={form.status}
@@ -461,8 +517,8 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                     </option>
                   ))}
                 </select>
-              </div>
-              <div>
+              </div>}
+              {showMoreAssetDetails && <div>
                 <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '投产状态' : 'Lifecycle'}</label>
                 <select
                   value={form.lifecycle_status}
@@ -477,9 +533,16 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                     </option>
                   ))}
                 </select>
+                {productionOnboardingBlocked && (
+                  <p className="mt-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5 text-[9px] leading-4 text-amber-800">
+                    {zh
+                      ? `当前口令上手状态：${onboardingStatusLabel}。请先在设备详情完成凭据设置与连通性验证，再投产；此时保存会被系统拒绝。`
+                      : `Device onboarding is ${onboardingStatusLabel}. Complete credential setup and connectivity verification in device details before production.`}
+                  </p>
+                )}
                 {!isEditMode && form.asset_origin !== 'legacy' && <p className="mt-1 text-[9px] text-black/30">{zh ? '新设备统一以待投产状态入库' : 'New devices are always created in staging'}</p>}
-              </div>
-              <div>
+              </div>}
+              {showMoreAssetDetails && <div>
                 <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '录入来源' : 'Asset Origin'}</label>
                 <select
                   value={form.asset_origin || 'new'}
@@ -498,8 +561,8 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                 <p className="mt-1 text-[9px] text-black/30">
                   {zh ? '记录首次录入方式，投产后不会改变' : 'Records how the asset was first entered and does not change after production'}
                 </p>
-              </div>
-              {!isEditMode && form.asset_origin === 'legacy' && form.lifecycle_status === 'production' && (
+              </div>}
+              {showMoreAssetDetails && !isEditMode && form.asset_origin === 'legacy' && form.lifecycle_status === 'production' && (
                 <div className="col-span-2">
                   <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '免上收投产原因' : 'Takeover Exemption Reason'}</label>
                   <textarea
@@ -514,131 +577,59 @@ export const AssetModal: React.FC<AssetModalProps> = ({
               <Field label={zh ? '管理IP' : 'Mgmt IP'} value={form.management_ip} onChange={v => setForm(f => ({ ...f, management_ip: v }))} placeholder="e.g. 10.0.1.10" error={mgmtIpError} disabled={isEditMode} />
               <Field label={zh ? '主通道端口' : 'Primary channel port'} value={form.management_port} onChange={v => setForm(f => ({ ...f, management_port: v }))} placeholder={form.connection_method === 'web' || form.connection_method === 'none' ? '-' : '22'} />
 
-              <div className="col-span-2 rounded-xl border border-cyan-100 bg-cyan-50/30 p-3">
-                <div className="mb-2 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2">
-                    <Globe2 size={14} className="text-cyan-600" />
-                    <div>
-                      <p className="text-[11px] font-bold text-slate-700">{zh ? 'Web 管理入口' : 'Web management entries'}</p>
-                      <p className="text-[9px] text-slate-400">{zh ? '适用于网络设备以及 iDRAC、iLO、iBMC 等服务器带外管理。' : 'For network appliances and server BMC interfaces such as iDRAC, iLO and iBMC.'}</p>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setForm(f => ({
-                      ...f,
-                      web_profiles: [
-                        ...(Array.isArray(f.web_profiles) ? f.web_profiles : []),
-                        { profile_name: f.asset_type === 'server' ? 'BMC' : 'Web管理', scheme: 'https', port: '443', path: '/', enabled: true, credential_mode: 'inherit_asset' },
-                      ],
-                    }))}
-                    className="inline-flex items-center gap-1 rounded-lg border border-cyan-200 bg-white px-2 py-1 text-[9px] font-bold text-cyan-700 hover:bg-cyan-50"
-                  >
-                    <Plus size={10} />{zh ? '添加入口' : 'Add entry'}
-                  </button>
-                </div>
-
-                <div className="mb-2 rounded-lg border border-cyan-100 bg-white/70 px-2.5 py-2 text-[10px] leading-4 text-slate-500">
-                  {zh ? (
-                    <>
-                      管理 IP 请填写在上方的“管理IP”字段；这里的“路径”只是登录页面的 URL 后缀，通常填写 <code className="rounded bg-cyan-50 px-1 text-cyan-700">/</code>。
-                      例如管理 IP 为 <code className="rounded bg-cyan-50 px-1 text-cyan-700">192.168.56.11</code>、HTTPS/443、路径 <code className="rounded bg-cyan-50 px-1 text-cyan-700">/login</code>，最终地址就是 <code className="rounded bg-cyan-50 px-1 text-cyan-700">https://192.168.56.11:443/login</code>。
-                    </>
-                  ) : (
-                    <>Enter the device address in the “Mgmt IP” field above. “Path” is only the Web login URL suffix; normally use <code className="rounded bg-cyan-50 px-1 text-cyan-700">/</code>, or a vendor path such as <code className="rounded bg-cyan-50 px-1 text-cyan-700">/login</code>.</>
-                  )}
-                </div>
-                <p className="mb-2 text-[10px] text-cyan-700/80">
-                  {zh ? '这里只配置 Web 入口；实际登录请到“操作工作台 → WEB”，再选择 HTTP 或 HTTPS 发起 PAM 会话。' : 'This section only configures the Web entry. Start the PAM session from Operation Workspace → WEB, then choose HTTP or HTTPS.'}
-                </p>
-
-                {(form.web_profiles || []).length === 0 ? (
-                  <div className="rounded-lg border border-dashed border-cyan-200 px-3 py-3 text-center text-[10px] text-slate-400">
-                    {zh ? '尚未配置 Web 入口；保存后请到操作工作台 → WEB，选择 HTTP 或 HTTPS 发起 PAM 会话。' : 'No Web entry configured. After saving, start Web PAM from Operation Workspace → WEB, then choose HTTP or HTTPS.'}
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {(form.web_profiles || []).map((profile: any, index: number) => (
-                      <div key={profile.id || index} className="grid grid-cols-[1.2fr_86px_72px_1fr_30px] items-end gap-1.5 rounded-lg border border-cyan-100 bg-white p-2">
-                        <Field label={zh ? '入口名称' : 'Name'} value={profile.profile_name || ''} onChange={value => setForm(f => ({ ...f, web_profiles: (f.web_profiles || []).map((item: any, itemIndex: number) => itemIndex === index ? { ...item, profile_name: value } : item) }))} placeholder={form.asset_type === 'server' ? 'iDRAC / iLO' : 'Web管理'} />
-                        <div>
-                          <label className="mb-0.5 block text-[9px] text-black/30">{zh ? '协议' : 'Protocol'}</label>
-                          <select
-                            value={profile.scheme || 'https'}
-                            onChange={event => {
-                              const scheme = event.target.value as 'http' | 'https';
-                              setForm(f => ({
-                                ...f,
-                                web_profiles: (f.web_profiles || []).map((item: any, itemIndex: number) => itemIndex === index
-                                  ? { ...item, scheme, port: String(item.port) === (scheme === 'https' ? '80' : '443') ? (scheme === 'https' ? '443' : '80') : item.port }
-                                  : item),
-                              }));
-                            }}
-                            className="w-full rounded-lg border border-black/8 bg-white px-2 py-1.5 text-xs text-black/65 outline-none focus:border-cyan-300"
-                          >
-                            <option value="https">HTTPS</option>
-                            <option value="http">HTTP</option>
-                          </select>
-                        </div>
-                        <Field label={zh ? '端口' : 'Port'} value={String(profile.port || '')} onChange={value => setForm(f => ({ ...f, web_profiles: (f.web_profiles || []).map((item: any, itemIndex: number) => itemIndex === index ? { ...item, port: value } : item) }))} placeholder={profile.scheme === 'http' ? '80' : '443'} />
-                        <Field label={zh ? '登录路径（可选）' : 'Login path (optional)'} value={profile.path || '/'} onChange={value => setForm(f => ({ ...f, web_profiles: (f.web_profiles || []).map((item: any, itemIndex: number) => itemIndex === index ? { ...item, path: value } : item) }))} placeholder="/" />
-                        <ActionIconButton
-                          icon={Trash2}
-                          label={zh ? '删除入口' : 'Remove entry'}
-                          size="xs"
-                          variant="danger"
-                          className="mb-0.5"
-                          onClick={() => setForm(f => ({ ...f, web_profiles: (f.web_profiles || []).filter((_: any, itemIndex: number) => itemIndex !== index) }))}
-                        />
-                        <div className="col-span-5 truncate px-0.5 text-[9px] text-cyan-700/70">
-                          {zh ? '最终地址：' : 'Final URL: '}
-                          {`${profile.scheme || 'https'}://${form.management_ip || (zh ? '管理IP' : '<mgmt-ip>')}:${profile.port || (profile.scheme === 'http' ? '80' : '443')}${String(profile.path || '/').startsWith('/') ? (profile.path || '/') : `/${profile.path || ''}`}`}
-                        </div>
-                        <div className="col-span-5 grid grid-cols-2 gap-2 rounded-lg bg-slate-50/70 p-2">
-                          <div className="col-span-2">
-                            <label className="mb-0.5 block text-[9px] text-black/30">{zh ? 'Web 凭据模式' : 'Web credential mode'}</label>
-                            <select
-                              value={profile.credential_mode || 'inherit_asset'}
-                              onChange={event => setForm(f => ({ ...f, web_profiles: (f.web_profiles || []).map((item: any, itemIndex: number) => itemIndex === index ? { ...item, credential_mode: event.target.value } : item) }))}
-                              className="w-full rounded-lg border border-black/8 bg-white px-2 py-1.5 text-xs text-black/65 outline-none"
-                            >
-                              <option value="inherit_asset">{zh ? '继承资产凭据' : 'Inherit asset credentials'}</option>
-                              <option value="independent">{zh ? '独立 Web 凭据' : 'Independent Web credentials'}</option>
-                            </select>
-                          </div>
-                          {(profile.credential_mode || 'inherit_asset') === 'independent' && (
-                            <>
-                              <Field label={zh ? '普通用户' : 'Normal user'} value={profile.normal_username || ''} onChange={value => setForm(f => ({ ...f, web_profiles: (f.web_profiles || []).map((item: any, itemIndex: number) => itemIndex === index ? { ...item, normal_username: value } : item) }))} />
-                              <PasswordField label={zh ? '普通密码' : 'Normal password'} language={zh ? 'zh' : 'en'} value={profile.normal_password || ''} onChange={value => setForm(f => ({ ...f, web_profiles: (f.web_profiles || []).map((item: any, itemIndex: number) => itemIndex === index ? { ...item, normal_password: value } : item) }))} placeholder={profile.normal_password_set ? (zh ? '已配置，留空不变' : 'Configured; leave blank to keep') : ''} />
-                              <Field label={zh ? '特权用户' : 'Admin user'} value={profile.admin_username || ''} onChange={value => setForm(f => ({ ...f, web_profiles: (f.web_profiles || []).map((item: any, itemIndex: number) => itemIndex === index ? { ...item, admin_username: value } : item) }))} />
-                              <PasswordField label={zh ? '特权密码' : 'Admin password'} language={zh ? 'zh' : 'en'} value={profile.admin_password || ''} onChange={value => setForm(f => ({ ...f, web_profiles: (f.web_profiles || []).map((item: any, itemIndex: number) => itemIndex === index ? { ...item, admin_password: value } : item) }))} placeholder={profile.admin_password_set ? (zh ? '已配置，留空不变' : 'Configured; leave blank to keep') : ''} />
-                              <div>
-                                <label className="mb-0.5 block text-[9px] text-black/30">{zh ? '绑定普通凭据' : 'Normal credential'}</label>
-                                <select value={profile.credential_id || ''} onChange={event => setForm(f => ({ ...f, web_profiles: (f.web_profiles || []).map((item: any, itemIndex: number) => itemIndex === index ? { ...item, credential_id: event.target.value } : item) }))} className="w-full rounded-lg border border-black/8 bg-white px-2 py-1.5 text-xs text-black/65 outline-none">
-                                  <option value="">{zh ? '不绑定' : 'Not bound'}</option>
-                                  {credentials.filter(c => !String(c.credential_type || '').toLowerCase().startsWith('snmp')).map(c => <option key={c.id} value={c.id}>{c.credential_name} ({c.username || '-'})</option>)}
-                                </select>
-                              </div>
-                              <div>
-                                <label className="mb-0.5 block text-[9px] text-black/30">{zh ? '绑定特权凭据' : 'Admin credential'}</label>
-                                <select value={profile.admin_credential_id || ''} onChange={event => setForm(f => ({ ...f, web_profiles: (f.web_profiles || []).map((item: any, itemIndex: number) => itemIndex === index ? { ...item, admin_credential_id: event.target.value } : item) }))} className="w-full rounded-lg border border-black/8 bg-white px-2 py-1.5 text-xs text-black/65 outline-none">
-                                  <option value="">{zh ? '不绑定' : 'Not bound'}</option>
-                                  {credentials.filter(c => !String(c.credential_type || '').toLowerCase().startsWith('snmp')).map(c => <option key={c.id} value={c.id}>{c.credential_name} ({c.username || '-'})</option>)}
-                                </select>
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {(form.web_profiles || []).some((profile: any) => profile.scheme === 'http') && (
-                  <p className="mt-2 text-[9px] text-amber-600">{zh ? 'HTTP 会明文传输页面内容和用户输入，请仅用于不支持 HTTPS 的旧设备。' : 'HTTP transmits page content and user input in clear text; use it only for legacy devices.'}</p>
-                )}
+              <div className="col-span-2">
+                <button
+                  type="button"
+                  aria-expanded={showMoreAssetDetails}
+                  onClick={() => setShowMoreAssetDetails(value => {
+                    if (value && form.asset_origin === 'legacy' && form.lifecycle_status === 'production') return value;
+                    return !value;
+                  })}
+                  className="flex w-full items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-left hover:bg-slate-100"
+                >
+                  <span className="flex items-center gap-2 text-[10px] font-semibold text-slate-700">
+                    <ChevronDown size={13} className={`transition-transform ${showMoreAssetDetails ? 'rotate-180' : ''}`} />
+                    {zh ? (showMoreAssetDetails ? '收起更多信息' : '更多信息（选填）') : (showMoreAssetDetails ? 'Hide additional details' : 'More details (optional)')}
+                  </span>
+                  <span className="text-right text-[9px] text-slate-400">{zh ? '序列号、状态、分类、网络、位置和保修' : 'Serial, status, category, network, location and warranty'}</span>
+                </button>
               </div>
 
-              {isWindowsMachine && (isEditMode && editingAsset?.id ? (
+              <div className="col-span-2 flex items-center justify-between gap-3 rounded-xl border border-cyan-100 bg-cyan-50/30 px-3 py-2.5">
+                <div className="flex min-w-0 items-center gap-2.5">
+                  <Globe2 size={15} className="shrink-0 text-cyan-600" />
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-bold text-slate-700">{zh ? 'Web 管理入口' : 'Web management entry'}</p>
+                    <p className="truncate text-[9px] text-slate-400">{webProfilesEnabled
+                      ? `${webProfiles.filter((profile: any) => profile.enabled !== false).length} ${zh ? '个入口已启用' : 'enabled'}`
+                      : webProfiles.length
+                        ? (zh ? `已停用，保留 ${webProfiles.length} 个入口配置` : `${webProfiles.length} saved entry configuration(s), disabled`)
+                        : (zh ? '未启用；适用于网络设备 Web 管理及服务器带外管理' : 'Optional for network Web management and server BMC access')}</p>
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-3">
+                  <label className="inline-flex cursor-pointer items-center gap-2 text-[10px] font-semibold text-slate-600">
+                    <input
+                      type="checkbox"
+                      checked={webProfilesEnabled}
+                      onChange={event => toggleWebProfiles(event.target.checked)}
+                      className="h-3.5 w-3.5 accent-cyan-600"
+                    />
+                    {zh ? '启用' : 'Enabled'}
+                  </label>
+                  {webProfiles.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={openWebProfilesDialog}
+                      className="rounded-lg border border-cyan-200 bg-white px-2.5 py-1.5 text-[9px] font-bold text-cyan-700 hover:bg-cyan-50"
+                    >
+                      {zh ? '配置' : 'Configure'}
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {showMoreAssetDetails && isWindowsMachine && (isEditMode && editingAsset?.id ? (
                 <RemoteDesktopProfileEditor
                   assetId={editingAsset.id}
                   credentials={credentials}
@@ -651,7 +642,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                 </div>
               ))}
 
-              <div>
+              {showMoreAssetDetails && <div>
                 <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '设备子类' : 'Device Sub-category'}</label>
                 <select
                   value={form.device_category}
@@ -682,26 +673,26 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                     </>
                   )}
                 </select>
-              </div>
-              <SelectField
+              </div>}
+              {showMoreAssetDetails && <SelectField
                 label={zh ? '功能' : 'Function'}
                 value={form.function || ''}
                 onChange={v => setForm(f => ({ ...f, function: v }))}
                 options={TOPOLOGY_FUNCTION_OPTIONS}
                 language={language}
-              />
-              <SelectField
+              />}
+              {showMoreAssetDetails && <SelectField
                 label={zh ? '区域' : 'Zone'}
                 value={form.zone || ''}
                 onChange={v => setForm(f => ({ ...f, zone: v }))}
                 options={TOPOLOGY_ZONE_OPTIONS}
                 language={language}
-              />
-              <Field label={zh ? '额定功率 (W)' : 'Power (W)'} value={form.power_watts} onChange={v => setForm(f => ({ ...f, power_watts: v }))} placeholder="e.g. 350" />
+              />}
+              {showMoreAssetDetails && <Field label={zh ? '额定功率 (W)' : 'Power (W)'} value={form.power_watts} onChange={v => setForm(f => ({ ...f, power_watts: v }))} placeholder="e.g. 350" />}
             </div>
 
             {/* ─── 连接配置 & PAM ─── */}
-            {form.asset_type === 'network_device' && <div className="rounded-xl border border-cyan-100 bg-cyan-50/40 px-3 py-2.5">
+            {showMoreAssetDetails && form.asset_type === 'network_device' && <div className="rounded-xl border border-cyan-100 bg-cyan-50/40 px-3 py-2.5">
               <label className="block text-[10px] font-semibold text-cyan-900/70">{zh ? '拓扑角色' : 'Topology Role'}</label>
               <select
                 value={form.device_role || ''}
@@ -746,6 +737,11 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                       className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 focus:outline-none focus:border-[#00bceb]/25"
                       title="Platform"
                     >
+                      {form.asset_type === 'network_device' && !form.vendor && !form.platform && (
+                        <option value="" disabled>
+                          {zh ? '请选择厂商或平台…' : 'Choose a vendor or platform…'}
+                        </option>
+                      )}
                       {form.asset_type === 'server' ? (
                         SERVER_PLATFORMS.map(p => (
                           <option key={p.value} value={p.value}>{p.label}</option>
@@ -776,43 +772,32 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                   </div>
                 </div>
 
-                {(form.connection_method === 'ssh' || form.connection_method === 'netconf') && (
-                  <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
-                    <label className="block text-[10px] font-semibold text-slate-700 mb-1">
-                      {zh ? 'SSH 算法策略' : 'SSH algorithm profile'}
+                {ciscoEnablePasswordAvailable && (
+                  <div className="rounded-xl border border-amber-100 bg-amber-50/40 px-3 py-2">
+                    <label className="flex cursor-pointer items-center gap-2 text-[10px] font-semibold text-amber-800">
+                      <input
+                        type="checkbox"
+                        checked={showEnableSecret}
+                        aria-label={zh ? 'Cisco Enable 密码' : 'Cisco Enable Secret'}
+                        onChange={event => {
+                          const enabled = event.target.checked;
+                          setShowEnableSecret(enabled);
+                          if (!enabled) setForm(current => ({ ...current, enable_password: '' }));
+                        }}
+                        className="h-3.5 w-3.5 accent-amber-500"
+                      />
+                      {zh ? 'Cisco Enable 密码（可选）' : 'Cisco Enable Secret (optional)'}
                     </label>
-                    <select
-                      value={form.ssh_algorithm_profile || 'auto'}
-                      onChange={event => {
-                        const value = event.target.value;
-                        setBreakGlassAcknowledged(false);
-                        setForm(f => ({ ...f, ssh_algorithm_profile: value }));
-                      }}
-                      className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 focus:outline-none focus:border-[#00bceb]/25"
-                      title={zh ? 'SSH算法策略' : 'SSH algorithm profile'}
-                    >
-                      {SSH_ALGORITHM_PROFILE_OPTIONS.map(option => (
-                        <option key={option.value} value={option.value}>{option.label[zh ? 'zh' : 'en']}</option>
-                      ))}
-                    </select>
-                    <p className="mt-1 text-[9px] leading-4 text-slate-500">
-                      {zh ? '策略与厂商无关；auto 默认现代算法优先，必要时兼容安全旧算法。' : 'Vendor-neutral policy; auto prefers modern algorithms and allows safe legacy fallback when needed.'}
-                    </p>
-                    {form.ssh_algorithm_profile === 'legacy_break_glass' && (
-                      <label className="mt-2 flex cursor-pointer items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-2 text-[10px] leading-4 text-rose-800">
-                        <input
-                          type="checkbox"
-                          checked={breakGlassAcknowledged}
-                          onChange={event => setBreakGlassAcknowledged(event.target.checked)}
-                          className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-rose-600"
+                    {showEnableSecret && (
+                      <div className="mt-2">
+                        <PasswordField
+                          label={zh ? 'Enable 密码' : 'Enable Secret'}
+                          language={zh ? 'zh' : 'en'}
+                          value={form.enable_password}
+                          onChange={v => setForm(f => ({ ...f, enable_password: v }))}
+                          placeholder={editingAsset ? (zh ? '留空不变' : 'Leave empty to keep') : (zh ? '输入 Enable 密码' : 'Enter enable secret')}
                         />
-                        <span>
-                          <span className="font-bold">{zh ? '高风险兼容确认' : 'Acknowledge high-risk compatibility'}</span>
-                          <span className="block mt-0.5 text-rose-700/80">
-                            {zh ? '此模式可能启用 group1、ssh-dss、MD5、RC4 等已淘汰算法，仅用于确认没有更安全共同算法的极旧设备，并应纳入审计。' : 'This mode may enable deprecated algorithms such as group1, ssh-dss, MD5 and RC4. Use only for confirmed very old devices with no safer common algorithms and audit the exception.'}
-                          </span>
-                        </span>
-                      </label>
+                      </div>
                     )}
                   </div>
                 )}
@@ -857,7 +842,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                   </div>
                 )}
 
-                <AssetTagPicker tags={allTags} selectedIds={form.tag_ids || []} onChange={ids => setForm(f => ({ ...f, tag_ids: ids }))} onSave={handleSaveOnce} language={language} assetType={form.asset_type} />
+                {showMoreAssetDetails && <AssetTagPicker tags={allTags} selectedIds={form.tag_ids || []} onChange={ids => setForm(f => ({ ...f, tag_ids: ids }))} onSave={handleSaveOnce} language={language} assetType={form.asset_type} />}
 
                 {/* PAM Toggle */}
                 <div className="flex items-center justify-between p-2.5 rounded-xl bg-cyan-50 border border-cyan-200/60 mt-1">
@@ -1041,47 +1026,6 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                   </div>
                 )}
 
-                {/* Enable Secret */}
-                {form.asset_type === 'network_device' && form.platform.startsWith('cisco') && (
-                  <div className="rounded-xl border border-amber-100 bg-amber-50/40 overflow-hidden">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowEnableSecret(prev => {
-                          const next = !prev;
-                          if (!next) setForm(f => ({ ...f, enable_password: '' }));
-                          return next;
-                        });
-                      }}
-                      className="w-full flex items-center justify-between px-3 py-2 hover:bg-amber-50 transition-colors"
-                    >
-                      <div className="flex items-center gap-2">
-                        <Lock size={11} className="text-amber-500" />
-                        <span className="text-[9px] font-black uppercase tracking-widest text-amber-600">
-                          Enable Secret
-                        </span>
-                        <span className="text-[8px] text-amber-400/80">
-                          {zh ? '（可选，无特权密码时请关闭或留空）' : '(optional — leave blank when the device has no enable secret)'}
-                        </span>
-                      </div>
-                      <div className={`relative inline-flex h-3.5 w-7 items-center rounded-full transition-colors ${showEnableSecret ? 'bg-amber-400' : 'bg-slate-200'}`}>
-                        <span className={`inline-block h-2.5 w-2.5 transform rounded-full bg-white transition-transform shadow-sm ${showEnableSecret ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
-                      </div>
-                    </button>
-                    {showEnableSecret && (
-                      <div className="px-3 pb-2.5">
-                        <PasswordField
-                          label={zh ? '密码' : 'Password'}
-                          language={zh ? 'zh' : 'en'}
-                          value={form.enable_password}
-                          onChange={v => setForm(f => ({ ...f, enable_password: v }))}
-                          placeholder={editingAsset ? (zh ? '留空不变' : 'Leave empty to keep') : (zh ? '输入 enable secret' : 'Enter enable secret')}
-                        />
-                      </div>
-                    )}
-                  </div>
-                )}
-
                 {form.asset_type === 'network_device' && (
                   <>
                     <div className="flex items-center gap-1.5 mt-2 mb-1">
@@ -1118,6 +1062,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
               </div>
             )}
 
+            {showMoreAssetDetails && <div className="col-span-2 space-y-4 border-t border-black/5 pt-3">
             {/* ─── 服务器: 网络接入 ─── */}
             {form.asset_type === 'server' && (
               <>
@@ -1154,7 +1099,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                   <option value="">{zh ? '未分配站点' : 'Unassigned site'}</option>
                   {businessSites.map(site => (
                     <option key={site.id} value={site.id}>
-                      {site.site_name} ({site.site_code})
+                      {site.site_name}
                     </option>
                   ))}
                 </select>
@@ -1196,6 +1141,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                 />
               </div>
             </div>
+            </div>}
           </div>
 
           {/* Sticky footer */}
@@ -1211,7 +1157,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
               <button onClick={onClose} className="px-3 py-1.5 rounded-lg bg-black/[0.01] border border-black/5 text-black/40 text-xs hover:bg-black/[0.02]">{zh ? '取消' : 'Cancel'}</button>
               <button
                 onClick={handleSaveOnce}
-                disabled={saving || (!isEditMode && !form.hostname.trim() && !form.asset_tag.trim()) || !!uValidationError || (!isEditMode && form.asset_origin === 'legacy' && form.lifecycle_status === 'production' && String(form.takeover_exempt_reason || '').trim().length < 5) || (requiresBreakGlassAck && !breakGlassAcknowledged)}
+                disabled={saving || (!isEditMode && !form.hostname.trim() && !form.asset_tag.trim()) || !!uValidationError || (!isEditMode && form.asset_origin === 'legacy' && form.lifecycle_status === 'production' && String(form.takeover_exempt_reason || '').trim().length < 5)}
                 className="px-4 py-1.5 rounded-lg bg-[#00bceb] text-white text-xs font-bold hover:bg-[#00a5d0] disabled:opacity-50 shadow-sm shadow-[#00bceb]/20"
               >
                 {saving ? (zh ? '保存中...' : 'Saving...') : (zh ? '保存' : 'Save')}
@@ -1224,60 +1170,244 @@ export const AssetModal: React.FC<AssetModalProps> = ({
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-black/40"
+              className="absolute inset-0 z-10 flex items-center justify-center overflow-y-auto rounded-2xl bg-black/40 p-3"
             >
-              <div className="mx-6 max-w-sm rounded-xl bg-white p-5 shadow-xl">
-                <div className="flex items-center gap-2 mb-2">
-                  <div className="h-7 w-7 rounded-full bg-amber-50 flex items-center justify-center">
-                    <AlertTriangle size={14} className="text-amber-500" />
-                  </div>
-                  <h4 className="text-sm font-bold text-black/80">{zh ? '投产确认' : 'Production Confirmation'}</h4>
-                </div>
-                <p className="text-xs leading-relaxed text-black/50 mb-4">
-                  {zh
-                    ? '系统将先执行口令上收与回连验证，全部成功后才会把设备标记为已投产。上收期间设备保持待投产状态。'
-                    : 'Credentials will be rotated and verified first. The device will be marked as production only after takeover succeeds.'}
-                </p>
-                <textarea
-                  value={legacyExemptReason}
-                  onChange={event => setLegacyExemptReason(event.target.value)}
-                  rows={2}
-                  placeholder={zh ? '选择免上收投产时，请填写存量设备豁免原因（至少 5 个字符）' : 'Reason required for legacy exemption (minimum 5 characters)'}
-                  className="mb-3 w-full resize-none rounded-lg border border-black/10 px-3 py-2 text-xs text-black/70 outline-none focus:border-amber-400"
-                />
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setShowProductionConfirm(false)}
-                    className="flex-1 px-3 py-1.5 rounded-lg bg-black/[0.01] border border-black/5 text-black/40 text-xs hover:bg-black/[0.02]"
-                  >
-                    {zh ? '取消' : 'Cancel'}
-                  </button>
-                  <button
-                    onClick={() => { setShowProductionConfirm(false); doSaveOnce({ production_mode: 'takeover' }); }}
-                    disabled={saving}
-                    className="flex-1 px-3 py-1.5 rounded-lg bg-[#00bceb] text-white text-xs font-bold hover:bg-[#00a5d0] disabled:opacity-50"
-                  >
-                    {saving ? (zh ? '处理中...' : 'Processing...') : (zh ? '确认投产' : 'Confirm')}
-                  </button>
-                </div>
-                <button
-                  onClick={() => {
-                    setShowProductionConfirm(false);
-                    doSaveOnce({ production_mode: 'legacy_exempt', takeover_exempt_reason: legacyExemptReason.trim() });
-                  }}
-                  disabled={saving || editingAsset?.asset_origin !== 'legacy' || legacyExemptReason.trim().length < 5}
-                  className="mt-2 w-full rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  {zh ? '存量设备免上收投产' : 'Legacy production without takeover'}
-                </button>
-                {editingAsset?.asset_origin !== 'legacy' && (
-                  <p className="mt-1 text-center text-[9px] text-black/35">{zh ? '仅录入时标记为“存量设备”的资产可使用免上收投产' : 'Only assets marked as legacy during creation can use this option'}</p>
+              <div className={`mx-2 max-h-full w-full overflow-y-auto rounded-xl bg-white p-5 shadow-xl ${productionOnboardingBlocked ? 'max-w-2xl' : 'max-w-lg'}`}>
+                {productionOnboardingBlocked ? (
+                  <>
+                    <div className="mb-2 flex items-center gap-2">
+                      <div className="flex h-7 w-7 items-center justify-center rounded-full bg-amber-50">
+                        <AlertTriangle size={14} className="text-amber-500" />
+                      </div>
+                      <h4 className="text-sm font-bold text-black/80">{zh ? '设备尚未完成口令上手' : 'Device onboarding is incomplete'}</h4>
+                    </div>
+                    <p className="mb-3 text-xs leading-relaxed text-black/60">
+                      {zh
+                        ? `当前状态：${onboardingStatusLabel}。口令上收和免上收投产都要求先保存凭据并验证连通性。直接投产会被拒绝，表单不会保存。`
+                        : `Current status: ${onboardingStatusLabel}. Both production paths require saved credentials and a verified connection. A direct production save will be rejected.`}
+                    </p>
+                    <div className="mb-3 grid gap-2 sm:grid-cols-2">
+                      <div className="rounded-lg border border-cyan-100 bg-cyan-50/60 p-3">
+                        <p className="text-xs font-bold text-cyan-900">{zh ? '口令上收并投产' : 'Take over credentials and enter production'}</p>
+                        <p className="mt-1 text-[10px] leading-4 text-cyan-900/75">
+                          {zh
+                            ? '验证现有账号后更换普通和特权账号密码，并把新凭据保存到 Nexora。'
+                            : 'Verifies the current accounts, changes normal and privileged passwords, and stores the new credentials in Nexora.'}
+                        </p>
+                        <button type="button" disabled className="mt-2 w-full cursor-not-allowed rounded-lg bg-cyan-200 px-3 py-2 text-[10px] font-bold text-cyan-900/70">
+                          {zh ? '完成凭据保存和连通性验证后可用' : 'Available after saving credentials and verifying connectivity'}
+                        </button>
+                      </div>
+                      <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+                        <p className="text-xs font-bold text-amber-900">{zh ? '免上收投产，保留现有口令' : 'Enter production without takeover'}</p>
+                        <p className="mt-1 text-[10px] leading-4 text-amber-900/75">
+                          {zh
+                            ? '不更改设备密码，但仍要先验证普通账号连通性；投产后记录豁免原因，设备不纳入 Nexora 托管。'
+                            : 'Leaves device passwords unchanged, but still requires normal-account connectivity verification; the exemption is recorded and the device is not enrolled for Nexora management.'}
+                        </p>
+                        <button type="button" disabled className="mt-2 w-full cursor-not-allowed rounded-lg border border-amber-300 bg-white px-3 py-2 text-[10px] font-bold text-amber-800/60">
+                          {zh ? '免上收投产（验证通过后启用）' : 'Skip takeover (available after verification)'}
+                        </button>
+                        <p className="mt-1 text-[10px] leading-4 text-amber-800">
+                          {editingAsset?.asset_origin === 'legacy'
+                            ? (zh ? '当前设备尚未完成连通性验证，因此暂不可执行。' : 'Connectivity is not verified yet, so this action is unavailable.')
+                            : (zh ? '此方式仅适用于录入来源为“存量设备”的资产。' : 'This option is only available for assets entered as legacy devices.')}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="mb-4 rounded-lg border border-cyan-100 bg-cyan-50/70 px-3 py-2 text-[11px] leading-5 text-cyan-900">
+                      {zh
+                        ? '下一步：先保存表单并保持“待投产”，再到设备详情完成连通性验证。验证通过后重新选择投产，即可使用上面符合条件的方式。'
+                        : 'Next: save the form while keeping the asset in staging, then verify connectivity from device details. After verification, reopen production to use an eligible option above.'}
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <button
+                        onClick={() => setShowProductionConfirm(false)}
+                        className="rounded-lg border border-black/10 px-3 py-2 text-xs text-black/55 hover:bg-black/[0.02]"
+                      >
+                        {zh ? '返回编辑' : 'Back to editing'}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowProductionConfirm(false);
+                          doSaveOnce({ lifecycle_status: editingAsset?.lifecycle_status || 'staging' });
+                        }}
+                        disabled={saving}
+                        className="rounded-lg bg-[#00bceb] px-3 py-2 text-xs font-bold text-white hover:bg-[#00a5d0] disabled:opacity-50"
+                      >
+                        {saving ? (zh ? '保存中...' : 'Saving...') : (zh ? '保存表单并保持待投产' : 'Save and keep in staging')}
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="mb-2 flex items-center gap-2">
+                      <div className="flex h-7 w-7 items-center justify-center rounded-full bg-amber-50">
+                        <AlertTriangle size={14} className="text-amber-500" />
+                      </div>
+                      <h4 className="text-sm font-bold text-black/80">{zh ? '选择投产方式' : 'Choose a production path'}</h4>
+                    </div>
+                    <p className="mb-3 text-xs leading-relaxed text-black/55">
+                      {zh
+                        ? '两种方式都要求凭据已保存且连通性验证通过。请选择你确实要执行的设备生命周期操作。'
+                        : 'Both options require saved credentials and a verified connection. Choose the lifecycle action you intend to perform.'}
+                    </p>
+                    <div className="mb-3 rounded-lg border border-cyan-100 bg-cyan-50/60 p-3">
+                      <p className="text-xs font-bold text-cyan-900">{zh ? '口令上收并投产' : 'Take over credentials and enter production'}</p>
+                      <p className="mt-1 text-[10px] leading-4 text-cyan-900/75">
+                        {zh
+                          ? '会验证现有账号，然后更换普通和特权账号的设备密码，并将新凭据安全保存到 Nexora。'
+                          : 'Verifies the current accounts, changes the device passwords for normal and privileged accounts, and stores the new credentials in Nexora.'}
+                      </p>
+                      <button
+                        onClick={() => { setShowProductionConfirm(false); doSaveOnce({ production_mode: 'takeover' }); }}
+                        disabled={saving}
+                        className="mt-2 w-full rounded-lg bg-[#00bceb] px-3 py-2 text-xs font-bold text-white hover:bg-[#00a5d0] disabled:opacity-50"
+                      >
+                        {saving ? (zh ? '处理中...' : 'Processing...') : (zh ? '执行口令上收并投产（会更改设备密码）' : 'Take over and produce (changes device passwords)')}
+                      </button>
+                    </div>
+                    <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+                      <p className="text-xs font-bold text-amber-900">{zh ? '免上收投产，保留现有口令' : 'Enter production without takeover'}</p>
+                      <p className="mt-1 text-[10px] leading-4 text-amber-900/75">
+                        {zh
+                          ? '仅适用于录入时标记为存量的设备：不会更改设备密码，但会记录豁免原因，且设备不会纳入 Nexora 托管。'
+                          : 'For legacy assets only. Device passwords stay unchanged; the exemption is recorded and the asset is not enrolled for Nexora management.'}
+                      </p>
+                      {editingAsset?.asset_origin === 'legacy' ? (
+                        <>
+                          <textarea
+                            value={legacyExemptReason}
+                            onChange={event => setLegacyExemptReason(event.target.value)}
+                            rows={2}
+                            aria-label={zh ? '免上收原因' : 'Exemption reason'}
+                            placeholder={zh ? '填写免上收原因（至少 5 个字符）' : 'Reason for skipping takeover (minimum 5 characters)'}
+                            className="mt-2 w-full resize-none rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs text-black/70 outline-none focus:border-amber-400"
+                          />
+                          <button
+                            onClick={() => {
+                              setShowProductionConfirm(false);
+                              doSaveOnce({ production_mode: 'legacy_exempt', takeover_exempt_reason: legacyExemptReason.trim() });
+                            }}
+                            disabled={saving || legacyExemptReason.trim().length < 5}
+                            className="mt-2 w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-bold text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            {zh ? '记录免上收并投产（不更改设备密码）' : 'Record exemption and produce (no password change)'}
+                          </button>
+                        </>
+                      ) : (
+                        <p className="mt-2 text-[10px] text-amber-800">{zh ? '仅录入时标记为“存量设备”的资产可使用免上收投产。' : 'Only assets marked as legacy during creation can use this option.'}</p>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => setShowProductionConfirm(false)}
+                      className="mt-3 w-full rounded-lg border border-black/10 px-3 py-2 text-xs text-black/55 hover:bg-black/[0.02]"
+                    >
+                      {zh ? '取消，返回资产表单' : 'Cancel and return to the asset form'}
+                    </button>
+                  </>
                 )}
               </div>
             </motion.div>
           )}
+        </div>
+      </div>
+      {showWebProfilesDialog && (
+        <motion.div
+          className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/55 p-3 backdrop-blur-sm sm:p-5"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={event => { event.stopPropagation(); cancelWebProfilesDialog(); }}
+        >
+          <motion.div
+            className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-cyan-100 bg-white shadow-2xl"
+            initial={{ opacity: 0, scale: 0.97, y: 8 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.98, y: 4 }}
+            onClick={event => event.stopPropagation()}
+          >
+            <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-100 px-4 py-3 sm:px-5">
+              <div className="flex min-w-0 items-center gap-2.5">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-cyan-50 text-cyan-600"><Globe2 size={16} /></span>
+                <div className="min-w-0">
+                  <h3 className="text-sm font-bold text-slate-800">{zh ? '配置 Web 管理入口' : 'Configure Web management entries'}</h3>
+                  <p className="truncate text-[10px] text-slate-400">{zh ? '管理 IP 使用资产表单中的管理 IP；在这里设置协议、端口、路径和登录凭据。' : 'The management IP comes from the asset form. Set protocol, port, path and login credentials here.'}</p>
+                </div>
+              </div>
+              <button type="button" onClick={cancelWebProfilesDialog} aria-label={zh ? '关闭' : 'Close'} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><X size={16} /></button>
+            </div>
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3 sm:px-5">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-[10px] leading-4 text-slate-500">{zh ? '这里只保存入口信息；实际登录请到“操作工作台 → WEB”发起 PAM 会话。' : 'This saves entry details only. Start the PAM session from Operation Workspace → WEB.'}</p>
+                <button type="button" onClick={() => setWebProfilesDraft(current => [...current, createDefaultWebProfile(form.asset_type)])} className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-cyan-200 bg-white px-2.5 py-1.5 text-[10px] font-bold text-cyan-700 hover:bg-cyan-50"><Plus size={12} />{zh ? '添加入口' : 'Add entry'}</button>
+              </div>
+              {webProfilesDraft.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-cyan-200 px-4 py-8 text-center text-xs text-slate-400">{zh ? '还没有入口。添加一个 Web 管理入口，或关闭弹窗保持未配置。' : 'No entry configured. Add a Web entry or close this dialog to leave it unconfigured.'}</div>
+              ) : webProfilesDraft.map((profile: any, index: number) => (
+                <section key={profile.id || `web-profile-${index}`} className="rounded-xl border border-slate-200 bg-slate-50/60 p-3 sm:p-4">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{zh ? `入口 ${index + 1}` : `Entry ${index + 1}`}</span>
+                    <ActionIconButton icon={Trash2} label={zh ? '删除入口' : 'Remove entry'} size="xs" variant="danger" onClick={() => setWebProfilesDraft(current => current.filter((_: any, itemIndex: number) => itemIndex !== index))} />
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-12">
+                    <div className="sm:col-span-4"><Field label={zh ? '入口名称' : 'Name'} value={profile.profile_name || ''} onChange={value => updateWebProfileDraft(index, { profile_name: value })} placeholder={form.asset_type === 'server' ? 'iDRAC / iLO' : 'Web管理'} /></div>
+                    <div className="sm:col-span-2">
+                      <label className="mb-0.5 block text-[10px] text-black/40">{zh ? '协议' : 'Protocol'}</label>
+                      <select value={profile.scheme || 'https'} onChange={event => {
+                        const scheme = event.target.value as 'http' | 'https';
+                        const oldDefault = scheme === 'https' ? '80' : '443';
+                        updateWebProfileDraft(index, { scheme, port: String(profile.port) === oldDefault ? (scheme === 'https' ? '443' : '80') : profile.port });
+                      }} className="w-full rounded-lg border border-black/10 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-cyan-400">
+                        <option value="https">HTTPS</option><option value="http">HTTP</option>
+                      </select>
+                    </div>
+                    <div className="sm:col-span-2"><Field label={zh ? '端口' : 'Port'} value={String(profile.port || '')} onChange={value => updateWebProfileDraft(index, { port: value })} placeholder={profile.scheme === 'http' ? '80' : '443'} /></div>
+                    <div className="sm:col-span-4"><Field label={zh ? '登录路径' : 'Login path'} value={profile.path || '/'} onChange={value => updateWebProfileDraft(index, { path: value })} placeholder="/ or /login" /></div>
+                    <div className="sm:col-span-12 truncate rounded-lg bg-cyan-50 px-2.5 py-2 text-[10px] text-cyan-800">
+                      {zh ? '最终地址：' : 'Final URL: '}{`${profile.scheme || 'https'}://${form.management_ip || (zh ? '管理IP' : '<mgmt-ip>')}:${profile.port || (profile.scheme === 'http' ? '80' : '443')}${String(profile.path || '/').startsWith('/') ? (profile.path || '/') : `/${profile.path || ''}`}`}
+                    </div>
+                    <div className="sm:col-span-12 rounded-xl border border-slate-200 bg-white p-3">
+                      <label className="mb-1 block text-[10px] font-semibold text-slate-500">{zh ? 'Web 凭据模式' : 'Web credential mode'}</label>
+                      <select value={profile.credential_mode || 'inherit_asset'} onChange={event => updateWebProfileDraft(index, { credential_mode: event.target.value })} className="w-full rounded-lg border border-black/10 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-cyan-400">
+                        <option value="inherit_asset">{zh ? '继承资产凭据' : 'Inherit asset credentials'}</option>
+                        <option value="independent">{zh ? '独立 Web 凭据' : 'Independent Web credentials'}</option>
+                      </select>
+                      {(profile.credential_mode || 'inherit_asset') === 'independent' && (
+                        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                          <Field label={zh ? '普通用户' : 'Normal user'} value={profile.normal_username || ''} onChange={value => updateWebProfileDraft(index, { normal_username: value })} />
+                          <PasswordField label={zh ? '普通密码' : 'Normal password'} language={zh ? 'zh' : 'en'} value={profile.normal_password || ''} onChange={value => updateWebProfileDraft(index, { normal_password: value })} placeholder={profile.normal_password_set ? (zh ? '已配置，留空不变' : 'Configured; leave blank to keep') : ''} />
+                          <Field label={zh ? '特权用户' : 'Admin user'} value={profile.admin_username || ''} onChange={value => updateWebProfileDraft(index, { admin_username: value })} />
+                          <PasswordField label={zh ? '特权密码' : 'Admin password'} language={zh ? 'zh' : 'en'} value={profile.admin_password || ''} onChange={value => updateWebProfileDraft(index, { admin_password: value })} placeholder={profile.admin_password_set ? (zh ? '已配置，留空不变' : 'Configured; leave blank to keep') : ''} />
+                          <div>
+                            <label className="mb-1 block text-[10px] font-semibold text-slate-500">{zh ? '绑定普通凭据' : 'Normal credential'}</label>
+                            <select value={profile.credential_id || ''} onChange={event => updateWebProfileDraft(index, { credential_id: event.target.value })} className="w-full rounded-lg border border-black/10 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-cyan-400">
+                              <option value="">{zh ? '不绑定' : 'Not bound'}</option>
+                              {credentials.filter(c => !String(c.credential_type || '').toLowerCase().startsWith('snmp')).map(c => <option key={c.id} value={c.id}>{c.credential_name} ({c.username || '-'})</option>)}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-[10px] font-semibold text-slate-500">{zh ? '绑定特权凭据' : 'Admin credential'}</label>
+                            <select value={profile.admin_credential_id || ''} onChange={event => updateWebProfileDraft(index, { admin_credential_id: event.target.value })} className="w-full rounded-lg border border-black/10 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-cyan-400">
+                              <option value="">{zh ? '不绑定' : 'Not bound'}</option>
+                              {credentials.filter(c => !String(c.credential_type || '').toLowerCase().startsWith('snmp')).map(c => <option key={c.id} value={c.id}>{c.credential_name} ({c.username || '-'})</option>)}
+                            </select>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </section>
+              ))}
+              {webProfilesDraft.some((profile: any) => profile.scheme === 'http') && <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] leading-4 text-amber-800">{zh ? 'HTTP 会明文传输页面内容和用户输入，请仅用于不支持 HTTPS 的旧设备。' : 'HTTP transmits page content and user input in clear text; use it only for legacy devices.'}</p>}
+            </div>
+            <div className="flex shrink-0 justify-end gap-2 border-t border-slate-100 bg-white px-4 py-3 sm:px-5">
+              <button type="button" onClick={cancelWebProfilesDialog} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-50">{zh ? '取消' : 'Cancel'}</button>
+              <button type="button" onClick={() => { setForm((current: any) => ({ ...current, web_profiles: webProfilesDraft.map(profile => ({ ...profile })) })); webProfilesBeforeDialogRef.current = null; setShowWebProfilesDialog(false); }} className="rounded-lg bg-cyan-600 px-4 py-2 text-xs font-bold text-white hover:bg-cyan-700">{zh ? '完成' : 'Done'}</button>
+            </div>
+          </motion.div>
         </motion.div>
-      </motion.div>
+      )}
     </AnimatePresence>
   );
 };

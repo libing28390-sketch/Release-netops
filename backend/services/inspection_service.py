@@ -1645,25 +1645,84 @@ def _inspect_server_device(device: dict[str, Any], alert_stats: dict[str, int], 
                             except ValueError:
                                 parsed_metrics[m_key] = m_val_str
 
-                # Map parsed_metrics to metrics_results.
-                # 1) 先把综合脚本解析出的所有指标全部纳入结果（即使没有对应的
-                #    inspection_item 定义），保证 Dashboard / 报表能拿到数据。
+                # Map values and explicit per-metric collection/severity states.
+                # A non-numeric sentinel must remain unknown, never silently pass
+                # as SUCCESS or participate in numeric threshold comparisons.
+                not_collected_states = {'UNCHECKED', 'NOT_COLLECTED', 'UNAVAILABLE'}
+                explicit_metric_statuses = {
+                    key[:-7]: str(value or '').strip().upper()
+                    for key, value in parsed_metrics.items()
+                    if key.endswith('_status')
+                }
                 for m_key, m_val in parsed_metrics.items():
-                    metrics_results[m_key] = m_val
-                    metrics_results[f"{m_key}_status"] = "SUCCESS"
-                # 2) 对于显式定义但综合脚本未采集到的指标，标注缺失原因。
+                    if m_key.endswith('_status'):
+                        metrics_results[m_key] = str(m_val)
+                        continue
+                    explicit_status = explicit_metric_statuses.get(m_key, '')
+                    is_sentinel = isinstance(m_val, str) and m_val.strip().upper() in {
+                        'NA', 'N/A', 'NULL', 'NONE',
+                    }
+                    if explicit_status in not_collected_states:
+                        metrics_results[m_key] = {'value': None, 'error': '指标未采集'}
+                        metrics_results[f"{m_key}_status"] = 'NOT_COLLECTED'
+                    elif is_sentinel and explicit_status in {'ERROR', 'WARNING'}:
+                        metrics_results[m_key] = {'value': None, 'error': '脚本已判定异常，但未提供数值'}
+                        metrics_results[f"{m_key}_status"] = explicit_status
+                    elif is_sentinel:
+                        metrics_results[m_key] = {'value': None, 'error': '指标未采集'}
+                        metrics_results[f"{m_key}_status"] = 'NOT_COLLECTED'
+                    else:
+                        metrics_results[m_key] = m_val
+                        metrics_results[f"{m_key}_status"] = explicit_status or 'SUCCESS'
+
+                metric_threshold_findings = []
                 for item in shell_items:
                     ck = item['check_key']
+                    explicit_status = explicit_metric_statuses.get(ck, '')
+                    value = parsed_metrics.get(ck)
+                    is_sentinel = isinstance(value, str) and value.strip().upper() in {
+                        'NA', 'N/A', 'NULL', 'NONE',
+                    }
                     if ck not in parsed_metrics:
-                        metrics_results[ck] = {'value': None, 'error': '未在综合巡检中采集到此指标'}
-                        metrics_results[f"{ck}_status"] = "ERROR"
-                    else:
-                        val = parsed_metrics[ck]
-                        if isinstance(val, (int, float)):
-                            w = item.get('warning_threshold')
-                            c = item.get('critical_threshold')
-                            if (c is not None and val >= c) or (w is not None and val >= w):
-                                metrics_results[f"{ck}_status"] = "ERROR"
+                        if explicit_status in not_collected_states:
+                            metrics_results[ck] = {'value': None, 'error': '指标未采集'}
+                            metrics_results[f"{ck}_status"] = 'NOT_COLLECTED'
+                        elif explicit_status in {'ERROR', 'WARNING'}:
+                            metrics_results[ck] = {'value': None, 'error': '脚本已判定异常，但未提供数值'}
+                            metrics_results[f"{ck}_status"] = explicit_status
+                        else:
+                            metrics_results[ck] = {'value': None, 'error': '未在综合巡检中采集到此指标'}
+                            metrics_results[f"{ck}_status"] = 'ERROR'
+                    elif explicit_status in not_collected_states:
+                        metrics_results[ck] = {'value': None, 'error': '指标未采集'}
+                        metrics_results[f"{ck}_status"] = 'NOT_COLLECTED'
+                    elif is_sentinel and explicit_status in {'ERROR', 'WARNING'}:
+                        metrics_results[ck] = {'value': None, 'error': '脚本已判定异常，但未提供数值'}
+                        metrics_results[f"{ck}_status"] = explicit_status
+                    elif is_sentinel:
+                        metrics_results[ck] = {'value': None, 'error': '指标未采集'}
+                        metrics_results[f"{ck}_status"] = 'NOT_COLLECTED'
+                    elif isinstance(value, (int, float)):
+                        # Script checks carry richer platform-specific status. The configured
+                        # item threshold still applies; keep whichever result is more severe.
+                        current_status = explicit_status or 'SUCCESS'
+                        severity_rank = {'SUCCESS': 0, 'NOT_APPLICABLE': 0, 'UNCHECKED': 0, 'NOT_COLLECTED': 0,
+                                         'WARNING': 1, 'ERROR': 2, 'CRITICAL': 2}
+                        threshold_status = ''
+                        w = item.get('warning_threshold')
+                        c = item.get('critical_threshold')
+                        if c is not None and value >= c:
+                            threshold_status = 'ERROR'
+                        elif w is not None and value >= w:
+                            threshold_status = 'WARNING'
+                        if threshold_status and severity_rank.get(threshold_status, 0) > severity_rank.get(current_status, 0):
+                            metrics_results[f"{ck}_status"] = threshold_status
+                            threshold_text = (
+                                f"{ck}={value} 超过严重阈值 {c}"
+                                if threshold_status == 'ERROR'
+                                else f"{ck}={value} 超过关注阈值 {w}"
+                            )
+                            metric_threshold_findings.append((threshold_status, threshold_text))
 
                 # Parse finding lines starting with [WARNING] or [ERROR]
                 total_errors = 0
@@ -1713,6 +1772,18 @@ def _inspect_server_device(device: dict[str, Any], alert_stats: dict[str, int], 
                             msg,
                             severity='critical',
                         ))
+
+                for threshold_status, threshold_text in metric_threshold_findings:
+                    is_critical = threshold_status == 'ERROR'
+                    findings.append(make_finding(
+                        'data_error',
+                        f"巡检项阈值判定: {threshold_text}",
+                        severity='critical' if is_critical else 'warning',
+                    ))
+                    if is_critical:
+                        total_errors += 1
+                    else:
+                        total_warnings += 1
 
                 # Update health score and status
                 if total_errors > 0 or overall_status == 'ERROR':

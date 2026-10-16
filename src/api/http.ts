@@ -28,6 +28,9 @@ export function createClientRequestId(prefix = 'web'): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 14)}`;
 }
 
+const isGenericValidationSummary = (value: unknown): boolean => typeof value === 'string'
+  && /^(?:保存校验失败，请检查填写内容。?|validation failed\. check the form and retry\.?)$/i.test(value.trim());
+
 export async function apiRequest<T>(url: string, init: RequestInit = {}): Promise<T> {
   const bodyIsFormData = typeof FormData !== 'undefined' && init.body instanceof FormData;
   const headers = new Headers(authHeaders(Boolean(init.body) && !bodyIsFormData));
@@ -45,9 +48,19 @@ export async function apiRequest<T>(url: string, init: RequestInit = {}): Promis
       window.dispatchEvent(new Event('netops:auth-expired'));
     }
     const errorContract = payload?.error && typeof payload.error === 'object' ? payload.error : undefined;
-    const rawDetail = errorContract ?? payload?.detail ?? payload?.message ?? `HTTP ${response.status}`;
+    const responseDetail = payload?.detail;
+    const contractMessage = errorContract?.message;
+    const rawDetail = errorContract ?? responseDetail ?? payload?.message ?? `HTTP ${response.status}`;
     const code = typeof errorContract?.code === 'string' ? errorContract.code : undefined;
-    let message = typeof rawDetail === 'string' ? rawDetail : rawDetail?.message || JSON.stringify(rawDetail);
+    const responseDetailMessage = typeof responseDetail === 'string' && responseDetail.trim() && !isGenericValidationSummary(responseDetail)
+      ? responseDetail
+      : undefined;
+    const contractDetailMessage = typeof contractMessage === 'string' && !isGenericValidationSummary(contractMessage)
+      ? contractMessage
+      : undefined;
+    let message = responseDetailMessage
+      || contractDetailMessage
+      || (typeof rawDetail === 'string' ? rawDetail : rawDetail?.message || JSON.stringify(rawDetail));
     if (requestId) {
       message = `${message} (Request ID: ${requestId})`;
     }

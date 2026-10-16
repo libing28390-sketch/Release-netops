@@ -29,8 +29,18 @@ vi.mock('./components/AssetModal', () => ({
         props.form.snmp_community,
         ...(props.form.web_profiles || []).flatMap((profile: any) => [profile.normal_password, profile.admin_password]),
       ])}</output>
+      <output data-testid="ssh-profile">{props.form.ssh_algorithm_profile}</output>
       {props.modalError && <p role="alert">{props.modalError}</p>}
       <button type="button" onClick={() => { void props.doSave(); void props.doSave(); }}>Double save</button>
+      <button type="button" onClick={() => props.setForm((current: any) => ({ ...current, normal_password: 'synthetic-test-password' }))}>Set synthetic secret</button>
+      <button type="button" onClick={() => props.setForm((current: any) => ({
+        ...current,
+        asset_type: 'network_device',
+        vendor: 'H3C',
+        platform: 'h3c_comware',
+        management_ip: '192.0.2.44',
+        enable_password: 'synthetic-enable-secret',
+      }))}>Set H3C network fields</button>
       <button type="button" onClick={() => { void props.handleSave(); }}>Save</button>
     </section>
   ) : null,
@@ -210,6 +220,63 @@ describe('AssetManagementTab request states', () => {
     expect(fetch).toHaveBeenCalledWith('/api/assets', expect.objectContaining({ method: 'POST' }));
   });
 
+  it('does not send an Enable password when creating an H3C asset', async () => {
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.startsWith('/api/assets?')) return response({ items: [], total: 0 });
+      if (url === '/api/assets/summary') return assetSummary(0, 0);
+      if (url === '/api/cmdb/sites') return response({ data: [] });
+      if (url === '/api/racks') return response({ success: true, data: [] });
+      if (url === '/api/tags/definitions') return response({ data: [] });
+      if (url === '/api/assets' && init?.method === 'POST') return response({ ok: true });
+      return response({});
+    });
+
+    renderAssetPage();
+    await screen.findByText('No asset records');
+    fireEvent.click(screen.getByRole('button', { name: 'Add Asset' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Hostname' }), { target: { value: 'h3c-device' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Set H3C network fields' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => {
+      const saveCall = vi.mocked(fetch).mock.calls.find(([input, init]) => String(input) === '/api/assets' && init?.method === 'POST');
+      expect(saveCall).toBeDefined();
+      expect(JSON.parse(String(saveCall?.[1]?.body)).enable_password).toBe('');
+    });
+  });
+
+  it('uses the safe automatic SSH profile when copying a legacy-profile asset', async () => {
+    const sourceAsset = {
+      id: 'asset-copy-legacy-profile',
+      asset_type: 'network_device',
+      asset_tag: 'SW-COPY-01',
+      hostname: 'legacy-profile-switch',
+      management_ip: '192.0.2.81',
+      status: 'active',
+      lifecycle_status: 'staging',
+      vendor: 'Cisco',
+      platform: 'cisco_ios',
+      ssh_algorithm_profile: 'legacy_break_glass',
+      tags: [],
+    };
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input);
+      if (url.startsWith('/api/assets?')) return response({ items: [sourceAsset], total: 1 });
+      if (url === '/api/assets/summary') return assetSummary(1, 0);
+      if (url === '/api/cmdb/sites') return response({ data: [] });
+      if (url === '/api/racks') return response({ success: true, data: [] });
+      if (url === '/api/tags/definitions') return response({ data: [] });
+      return response({});
+    });
+
+    renderAssetPage();
+    await screen.findByText('legacy-profile-switch');
+    fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+
+    expect((await screen.findByTestId('ssh-profile')).textContent).toBe('auto');
+  });
+
   it('refreshes the visible list while a detailed import request is still running', async () => {
     const importedAsset = {
       id: 'asset-progressive-import',
@@ -381,6 +448,68 @@ describe('AssetManagementTab request states', () => {
     await screen.findByText('Invalid management address');
     expect(screen.getByText('Invalid management address').closest('[role="alert"]')).toBeTruthy();
     expect(screen.getByRole('textbox', { name: 'Hostname' })).toHaveProperty('value', 'edge-01');
+  });
+
+  it('shows structured asset validation details and redacts entered credentials', async () => {
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input);
+      if (url.startsWith('/api/assets?')) return response({ items: [], total: 0 });
+      if (url === '/api/assets/summary') return assetSummary(0, 0);
+      if (url === '/api/cmdb/sites') return response({ data: [] });
+      if (url === '/api/racks') return response({ success: true, data: [] });
+      if (url === '/api/tags/definitions') return response({ data: [] });
+      if (url === '/api/assets') {
+        return response({
+          success: false,
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'normal_password: synthetic-test-password does not match policy',
+            details: { errors: [] },
+          },
+        }, 422);
+      }
+      return response({});
+    });
+
+    renderAssetPage();
+    await screen.findByText('No asset records');
+    fireEvent.click(screen.getByRole('button', { name: 'Add Asset' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Hostname' }), { target: { value: 'validation-test-asset' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Set synthetic secret' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('normal_password: [已隐藏] does not match policy');
+    expect(alert.textContent).not.toContain('synthetic-test-password');
+  });
+
+  it('shows the specific backend detail instead of its generic validation summary', async () => {
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input);
+      if (url.startsWith('/api/assets?')) return response({ items: [], total: 0 });
+      if (url === '/api/assets/summary') return assetSummary(0, 0);
+      if (url === '/api/cmdb/sites') return response({ data: [] });
+      if (url === '/api/racks') return response({ success: true, data: [] });
+      if (url === '/api/tags/definitions') return response({ data: [] });
+      if (url === '/api/assets') {
+        return response({
+          success: false,
+          error: { code: 'VALIDATION_ERROR', message: '保存校验失败，请检查填写内容。' },
+          detail: '设备口令上手状态为“待设置凭据”，请先保存凭据并验证连通性。',
+        }, 422);
+      }
+      return response({});
+    });
+
+    renderAssetPage();
+    await screen.findByText('No asset records');
+    fireEvent.click(screen.getByRole('button', { name: 'Add Asset' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Hostname' }), { target: { value: 'validation-detail-asset' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('设备口令上手状态为“待设置凭据”');
+    expect(alert.textContent).not.toContain('保存校验失败，请检查填写内容。');
   });
 
   it('does not prefill credential or community secrets when opening an existing asset', async () => {

@@ -88,6 +88,7 @@ export interface Asset {
   status: string;
   online_status?: 'online' | 'offline' | 'pending' | string;
   lifecycle_status: string;
+  onboarding_status?: string;
   asset_origin?: 'new' | 'legacy';
   purchase_date: string;
   warranty_expiry: string;

@@ -27,6 +27,26 @@ describe('stable API error contract', () => {
     });
   });
 
+  it('uses a specific detail when the error envelope only has a generic validation summary', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 422,
+      headers: { get: (name: string) => name.toLowerCase() === 'x-request-id' ? 'req-asset-422' : null },
+      json: async () => ({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: '保存校验失败，请检查填写内容。' },
+        detail: '设备口令上手状态为“待设置凭据”，请先保存凭据并验证连通性。',
+      }),
+    }));
+
+    await expect(apiRequest('/api/assets/asset-1')).rejects.toMatchObject({
+      status: 422,
+      code: 'VALIDATION_ERROR',
+      message: '设备口令上手状态为“待设置凭据”，请先保存凭据并验证连通性。 (Request ID: req-asset-422)',
+      detail: { code: 'VALIDATION_ERROR', message: '保存校验失败，请检查填写内容。' },
+    });
+  });
+
   it('adds a safe request id to every API request while preserving caller ids', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

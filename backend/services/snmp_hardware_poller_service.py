@@ -22,6 +22,7 @@ from services.snmp_hardware_inventory_service import (
 logger = logging.getLogger(__name__)
 
 DISCOVERY_INTERVAL_SECONDS = 24 * 60 * 60
+WIRELESS_DISCOVERY_INTERVAL_SECONDS = 3 * 60
 PARTIAL_DISCOVERY_RETRY_SECONDS = 60 * 60
 FAILED_DISCOVERY_RETRY_SECONDS = 15 * 60
 SAMPLE_INTERVAL_SECONDS = 60
@@ -118,6 +119,7 @@ def _latest_discovery(device_id: str) -> dict[str, Any] | None:
             SELECT last_status, last_attempt_at, discovery_version
               FROM snmp_hardware_capabilities
              WHERE device_id = ? AND source_type <> 'librenms_native'
+               AND component_class <> 'wireless_access_point'
              ORDER BY last_attempt_at DESC,
                       CASE last_status
                           WHEN 'failed' THEN 0
@@ -130,6 +132,26 @@ def _latest_discovery(device_id: str) -> dict[str, Any] | None:
             """,
             (device_id,),
         ).fetchone()
+        if row is None:
+            # A wireless-only device has no independent hardware capability
+            # cadence. Fall back to its AP snapshot to avoid a full scan per tick.
+            row = conn.execute(
+                """
+                SELECT last_status, last_attempt_at, discovery_version
+                  FROM snmp_hardware_capabilities
+                 WHERE device_id = ? AND source_type <> 'librenms_native'
+                 ORDER BY last_attempt_at DESC,
+                          CASE last_status
+                              WHEN 'failed' THEN 0
+                              WHEN 'partial' THEN 1
+                              WHEN 'unsupported' THEN 2
+                              ELSE 3
+                          END,
+                          component_class
+                 LIMIT 1
+                """,
+                (device_id,),
+            ).fetchone()
         return _as_dict(row) if row else None
     finally:
         conn.close()
@@ -148,6 +170,49 @@ def _discovery_due(device_id: str, now: datetime) -> bool:
         interval = PARTIAL_DISCOVERY_RETRY_SECONDS
     else:
         interval = DISCOVERY_INTERVAL_SECONDS
+    age = _seconds_since(latest.get("last_attempt_at"), now)
+    return age is None or age >= interval
+
+
+def _latest_wireless_discovery(device_id: str) -> dict[str, Any] | None:
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            """
+            SELECT last_status, last_attempt_at, discovery_version
+              FROM snmp_hardware_capabilities
+             WHERE device_id = ? AND component_class = 'wireless_access_point'
+               AND source_type <> 'librenms_native'
+             ORDER BY last_attempt_at DESC,
+                      CASE last_status
+                          WHEN 'failed' THEN 0
+                          WHEN 'partial' THEN 1
+                          WHEN 'unsupported' THEN 2
+                          ELSE 3
+                      END
+             LIMIT 1
+            """,
+            (device_id,),
+        ).fetchone()
+        return _as_dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def _wireless_discovery_due(device_id: str, now: datetime) -> bool:
+    """Refresh known AP inventories often without repeating full hardware walks."""
+    latest = _latest_wireless_discovery(device_id)
+    if not latest:
+        return False
+    if latest.get("discovery_version") != DISCOVERY_VERSION:
+        return True
+    status = str(latest.get("last_status") or "").casefold()
+    if status in {"failed", "unsupported", "not_found"}:
+        interval = FAILED_DISCOVERY_RETRY_SECONDS
+    elif status == "partial":
+        interval = min(PARTIAL_DISCOVERY_RETRY_SECONDS, WIRELESS_DISCOVERY_INTERVAL_SECONDS)
+    else:
+        interval = WIRELESS_DISCOVERY_INTERVAL_SECONDS
     age = _seconds_since(latest.get("last_attempt_at"), now)
     return age is None or age >= interval
 
@@ -349,7 +414,18 @@ async def _discover_device(
     port: int,
     version: str,
     persist: bool = True,
+    wireless_only: bool = False,
 ) -> dict[str, Any]:
+    if wireless_only:
+        return await _discover_wireless_device(
+            device=device,
+            ip=ip,
+            community=community,
+            port=port,
+            version=version,
+            persist=persist,
+        )
+
     from services.librenms_rule_service import ensure_rules_available
     from services.snmp_hardware_probe_service import (
         probe_librenms_hardware,
@@ -522,6 +598,134 @@ async def _discover_device(
     }
 
 
+async def _discover_wireless_device(
+    *,
+    device: Mapping[str, Any],
+    ip: str,
+    community: str | Mapping[str, Any],
+    port: int,
+    version: str,
+    persist: bool = True,
+) -> dict[str, Any]:
+    """Refresh only a known controller's complete AP snapshot."""
+    from services.librenms_rule_service import ensure_rules_available
+    from services.librenms_wireless_rule_service import (
+        WIRELESS_RULE_OS_KEYS,
+        probe_librenms_wireless_hardware,
+    )
+    from services.snmp_service import SYS_DESCR, SYS_NAME, SYS_OBJECT_ID, _snmp_get_versioned
+
+    await asyncio.to_thread(ensure_rules_available)
+    sys_name, sys_descr, sys_object_id = await asyncio.gather(
+        _snmp_get_versioned(ip, community, SYS_NAME, port, version),
+        _snmp_get_versioned(ip, community, SYS_DESCR, port, version),
+        _snmp_get_versioned(ip, community, SYS_OBJECT_ID, port, version),
+    )
+    observed_at = datetime.now(timezone.utc)
+    identity, rule = await asyncio.to_thread(
+        _resolve_identity_and_rule,
+        device=device,
+        sys_object_id=str(sys_object_id or ""),
+        sys_descr=str(sys_descr or ""),
+        sys_name=str(sys_name or ""),
+    )
+
+    sensors: list[dict[str, Any]] = []
+    category_results: list[dict[str, Any]] = []
+    probe_errors: list[str] = []
+    os_key = str((rule or {}).get("os_key") or "").strip().casefold()
+    if rule and str(identity.get("status") or "").casefold() != "conflict" and os_key in WIRELESS_RULE_OS_KEYS:
+        try:
+            wireless = await probe_librenms_wireless_hardware(
+                ip,
+                community,
+                port,
+                rule=rule,
+                identity=identity,
+                version=version,
+            )
+            sensors = [
+                sensor for sensor in wireless.get("sensors") or []
+                if sensor.get("component_class") == "wireless_access_point"
+            ]
+            category_results = [
+                result for result in wireless.get("category_results") or []
+                if result.get("component_class") == "wireless_access_point"
+            ]
+        except Exception as exc:
+            logger.warning("LibreNMS wireless AP refresh failed for device %s (%s)", device.get("id"), type(exc).__name__)
+            probe_errors.append(type(exc).__name__)
+            category_results.append({
+                "source_type": "librenms_mib_rule",
+                "component_class": "wireless_access_point",
+                "status": "failed",
+                "coverage_complete": False,
+                "reason_code": "librenms_mib_wireless_probe_error",
+                "reason": f"LibreNMS wireless AP refresh failed: {type(exc).__name__}",
+            })
+    else:
+        category_results.append({
+            "source_type": "librenms_mib_rule",
+            "component_class": "wireless_access_point",
+            "status": "unsupported",
+            "coverage_complete": False,
+            "reason_code": "wireless_rule_unavailable",
+            "reason": "The current pinned rule does not expose a wireless AP inventory.",
+        })
+
+    from services.librenms_source_policy import is_trusted_hardware_sensor
+    sensors = [sensor for sensor in sensors if is_trusted_hardware_sensor(sensor)]
+    if not category_results:
+        category_results.append({
+            "source_type": "librenms_mib_rule",
+            "component_class": "wireless_access_point",
+            "status": "unsupported",
+            "coverage_complete": False,
+            "reason_code": "wireless_ap_scope_missing",
+            "reason": "The wireless probe returned no AP inventory coverage result.",
+        })
+
+    if persist:
+        outcome = await asyncio.to_thread(
+            _persist_discovery,
+            device_id=str(device.get("id") or ""),
+            rule=rule,
+            sensors=sensors,
+            category_results=category_results,
+            observed_at=observed_at,
+        )
+        persisted_results = outcome.get("results") or []
+    else:
+        persisted_results = category_results
+
+    ap_result = next((item for item in persisted_results if item.get("component_class") == "wireless_access_point"), {})
+    status = str(ap_result.get("status") or "failed")
+    if probe_errors and sensors:
+        status = "partial"
+    elif probe_errors:
+        status = "failed"
+    return {
+        "status": status,
+        "sensor_count": len(sensors),
+        "category_results": persisted_results,
+        "identity": {
+            **identity,
+            "sys_name": str(sys_name or ""),
+            "sys_descr": str(sys_descr or ""),
+            "sys_object_id": str(sys_object_id or ""),
+        },
+        "rule": ({
+            "id": str(rule.get("id") or ""),
+            "os_key": str(rule.get("os_key") or ""),
+            "vendor": str(rule.get("vendor") or ""),
+            "platform": str(rule.get("platform") or ""),
+            "source_path": str(rule.get("discovery_source_path") or rule.get("source_path") or ""),
+            "source_commit": str(rule.get("source_commit") or ""),
+        } if rule else None),
+        "sensors": sensors if not persist else [],
+    }
+
+
 async def inspect_librenms_hardware_rules(device_row: Any) -> dict[str, Any]:
     """Run the same pinned LibreNMS discovery path once without persisting it."""
     device = _as_dict(device_row)
@@ -646,14 +850,22 @@ async def collect_device_hardware(
 
     now = datetime.now(timezone.utc)
     discovery: dict[str, Any] | None = None
+    wireless_only = False
     try:
-        if not poll_only and await asyncio.to_thread(_discovery_due, device_id, now):
+        full_discovery_due = not poll_only and await asyncio.to_thread(_discovery_due, device_id, now)
+        wireless_only = (
+            not poll_only
+            and not full_discovery_due
+            and await asyncio.to_thread(_wireless_discovery_due, device_id, now)
+        )
+        if full_discovery_due or wireless_only:
             discovery = await _discover_device(
                 device=device,
                 ip=ip,
                 community=community_or_profile,
                 port=port,
                 version=version,
+                wireless_only=wireless_only,
             )
     except Exception as exc:
         logger.warning("SNMP hardware discovery failed for device %s (%s)", device_id, type(exc).__name__)
@@ -661,12 +873,12 @@ async def collect_device_hardware(
             "status": "failed",
             "sensor_count": 0,
             "category_results": [{
-                "source_type": "nexora_snmp",
-                "component_class": "hardware_inventory",
+                "source_type": "librenms_mib_rule" if wireless_only else "nexora_snmp",
+                "component_class": "wireless_access_point" if wireless_only else "hardware_inventory",
                 "status": "failed",
                 "coverage_complete": False,
-                "reason_code": "snmp_discovery_error",
-                "reason": f"SNMP discovery failed: {type(exc).__name__}",
+                "reason_code": "wireless_ap_refresh_error" if wireless_only else "snmp_discovery_error",
+                "reason": f"SNMP {'wireless AP refresh' if wireless_only else 'discovery'} failed: {type(exc).__name__}",
             }],
         }
         try:

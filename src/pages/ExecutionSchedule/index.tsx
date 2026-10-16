@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { CalendarClock, Plus, X, RotateCcw } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import PageHero from '../../components/PageHero';
@@ -55,11 +56,15 @@ const normalizeExecutionHistoryItem = (item: any, zh: boolean): UnifiedExecution
     ? item.trigger_type
     : 'manual';
   const id = String(item?.id || item?.backup_run_id || '');
+  const endedAt = item?.ended_at || item?.completed_at || null;
+  const durationMs = item?.duration_ms == null || item.duration_ms === '' ? null : Number(item.duration_ms);
   return {
     id,
     source,
     ...(source === 'config_backup' ? { backup_run_id: String(item?.backup_run_id || id) } : {}),
     started_at: String(item?.started_at || item?.created_at || ''),
+    ended_at: endedAt == null ? null : String(endedAt),
+    duration_ms: durationMs != null && Number.isFinite(durationMs) ? durationMs : null,
     trigger_type: triggerType,
     status: String(item?.status || 'unknown'),
     total_devices: Number(item?.total_devices || 0),
@@ -67,8 +72,7 @@ const normalizeExecutionHistoryItem = (item: any, zh: boolean): UnifiedExecution
     failed_count: Number(item?.failed_count || 0),
     partial_count: Number(item?.partial_count || 0),
     skipped_count: Number(item?.skipped_count || 0),
-    avg_health_score: item?.avg_health_score == null ? undefined : Number(item.avg_health_score),
-    created_by: String(item?.created_by || item?.author || (source === 'inspection' ? 'system' : 'admin')),
+    created_by: String(item?.created_by || (source === 'inspection' ? 'system' : 'admin')),
     name: String(item?.name || item?.scenario_name || item?.schedule_name || (source === 'config_backup'
       ? (zh ? '配置备份批次' : 'Configuration backup batch')
       : source === 'playbook'
@@ -93,6 +97,56 @@ const downloadBlob = (blob: Blob, filename: string) => {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
 
+const sanitizeFilenameSegment = (value: unknown, fallback: string, maxLength = 72) => {
+  const sanitized = String(value ?? '')
+    .normalize('NFKC')
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
+    .replace(/\s+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^[._]+|[._]+$/g, '')
+    .slice(0, maxLength);
+  return sanitized || fallback;
+};
+
+const formatFilenameTimestamp = (value?: string | null) => {
+  const parsed = value ? new Date(value) : new Date();
+  const date = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+  const twoDigits = (part: number) => String(part).padStart(2, '0');
+  return `${date.getFullYear()}${twoDigits(date.getMonth() + 1)}${twoDigits(date.getDate())}_${twoDigits(date.getHours())}${twoDigits(date.getMinutes())}${twoDigits(date.getSeconds())}`;
+};
+
+const buildExecutionReportFilename = ({
+  systemName,
+  source,
+  taskName,
+  startedAt,
+  runId,
+  extension,
+  zh,
+}: {
+  systemName?: string;
+  source: string;
+  taskName?: string;
+  startedAt?: string | null;
+  runId: string;
+  extension: string;
+  zh: boolean;
+}) => {
+  const reportType = source === 'config_backup'
+    ? (zh ? '配置备份' : 'ConfigBackup')
+    : source === 'playbook'
+      ? (zh ? '自动化作业' : 'AutomationJob')
+      : (zh ? '网络巡检' : 'NetworkInspection');
+  const shortId = sanitizeFilenameSegment(String(runId || '').replace(/-/g, '').slice(0, 8), 'record', 8);
+  return [
+    sanitizeFilenameSegment(systemName, 'Nexora', 40),
+    reportType,
+    sanitizeFilenameSegment(taskName, zh ? '未命名作业' : 'UntitledJob'),
+    formatFilenameTimestamp(startedAt),
+    shortId,
+  ].join('_') + `.${sanitizeFilenameSegment(extension, 'xlsx', 8).toLowerCase()}`;
+};
+
 const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
   language,
   showToast,
@@ -101,11 +155,13 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
   onRerun,
 }) => {
   const { systemInfo } = useSystem();
+  const navigate = useNavigate();
   const zh = language === 'zh';
 
   /* ═══ STATE ═══ */
   const [inspSchedules, setInspSchedules] = useState<ScheduledJob[]>([]);
   const [inspSchedulesLoading, setInspSchedulesLoading] = useState(false);
+  const [inspSchedulesError, setInspSchedulesError] = useState('');
   const [inspSchedulePage, setInspSchedulePage] = useState(1);
   const [inspSchedulePageSize, setInspSchedulePageSize] = useState(10);
   const [inspScheduleTotal, setInspScheduleTotal] = useState(0);
@@ -226,6 +282,7 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
     const controller = new AbortController();
     futureSchedulesControllerRef.current = controller;
     setInspSchedulesLoading(true);
+    setInspSchedulesError('');
     try {
       const params = new URLSearchParams();
       params.append('time_range', timeRange);
@@ -246,23 +303,35 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
         headers: authHeaders,
         signal: controller.signal,
       });
-      if (r.ok) {
-        const j = await r.json();
-        const data = j.data || {};
-        const items = Array.isArray(data.items) ? data.items : [];
-        const total = Number(data.total || 0);
-        if (!controller.signal.aborted) {
-          setInspSchedules(items);
-          setInspScheduleTotal(total);
-          const lastPage = Math.max(1, Math.ceil(total / inspSchedulePageSize));
-          if (inspSchedulePage > lastPage) setInspSchedulePage(lastPage);
-        }
+      if (r.status === 401) {
+        window.dispatchEvent(new Event('netops:auth-expired'));
+        throw new Error(zh ? '登录状态已过期，请重新登录' : 'Your session has expired. Sign in again.');
       }
-    } catch { /* ignore */ }
+      if (r.status === 403) throw new Error(zh ? '没有查看执行计划的权限' : 'You do not have permission to view schedules.');
+      if (!r.ok) throw new Error(zh ? `执行计划请求失败 (${r.status})` : `Schedule request failed (${r.status})`);
+      const j = await r.json();
+      const data = j.data || {};
+      const items = Array.isArray(data.items) ? data.items : [];
+      const total = Number(data.total || 0);
+      if (!controller.signal.aborted) {
+        setInspSchedules(items);
+        setInspScheduleTotal(total);
+        const lastPage = Math.max(1, Math.ceil(total / inspSchedulePageSize));
+        if (inspSchedulePage > lastPage) setInspSchedulePage(lastPage);
+      }
+    } catch (cause) {
+      if (!controller.signal.aborted) {
+        setInspSchedules([]);
+        setInspScheduleTotal(0);
+        setInspSchedulesError(cause instanceof Error
+          ? cause.message
+          : (zh ? '加载执行计划失败，请重试' : 'Failed to load schedules. Try again.'));
+      }
+    }
     finally {
       if (!controller.signal.aborted) setInspSchedulesLoading(false);
     }
-  }, [authHeaders, timeRange, searchName, customStart, customEnd, inspSchedulePage, inspSchedulePageSize]);
+  }, [authHeaders, zh, timeRange, searchName, customStart, customEnd, inspSchedulePage, inspSchedulePageSize]);
 
   const fetchScripts = useCallback(async () => {
     if (!authHeaders) return;
@@ -1180,10 +1249,16 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
         ? ['设备名称', '设备 ID', 'IP 地址', '状态', '原因', '详细说明', '耗时(ms)']
         : ['Device', 'Device ID', 'IP Address', 'Status', 'Reason', 'Detail', 'Duration (ms)'];
       const reportHtml = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(backupLog.name)}</title><style>body{font:13px Arial,sans-serif;color:#172033;margin:28px}h1{font-size:20px}h2{font-size:15px;margin-top:28px}table{width:100%;border-collapse:collapse;margin-top:10px}th,td{border:1px solid #d8dee9;padding:7px;text-align:left;vertical-align:top;word-break:break-word}th{background:#f1f5f9} @media print{body{margin:12mm}tr{break-inside:avoid}}</style></head><body><h1>${escapeHtml(backupLog.name)}</h1><h2>${zh ? '批次汇总' : 'Batch summary'}</h2><table><thead><tr>${Object.keys(summary).map((key) => `<th>${escapeHtml(key)}</th>`).join('')}</tr></thead><tbody><tr>${Object.values(summary).map((value) => `<td>${escapeHtml(value)}</td>`).join('')}</tr></tbody></table><h2>${zh ? '设备结果' : 'Device results'} (${deviceRows.length})</h2><table><thead><tr>${deviceHeaders.map((key) => `<th>${escapeHtml(key)}</th>`).join('')}</tr></thead><tbody>${deviceRows.map((row) => `<tr>${Object.values(row).map((value) => `<td>${escapeHtml(value)}</td>`).join('')}</tr>`).join('')}</tbody></table></body></html>`;
-      const safeRunId = runId.replace(/[^a-z0-9_-]/gi, '_').slice(0, 64) || 'batch';
-      const safeSystemName = String(systemInfo?.system_name || 'Nexora').replace(/[^a-z0-9_-]/gi, '_').slice(0, 40);
-      const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-      const prefix = `${safeSystemName}_ConfigBackup_Report_${safeRunId}_${today}`;
+      const reportFilename = buildExecutionReportFilename({
+        systemName: systemInfo?.system_name,
+        source: 'config_backup',
+        taskName: backupLog.name,
+        startedAt: backupLog.started_at,
+        runId,
+        extension: format,
+        zh,
+      });
+      const prefix = reportFilename.slice(0, reportFilename.lastIndexOf('.'));
 
       if (format === 'xlsx') {
         const workbook = XLSX.utils.book_new();
@@ -1207,7 +1282,13 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
     }
   };
 
-  const handleExportReport = async (logId: string, format: string, source: string = 'inspection') => {
+  const handleExportReport = async (
+    logId: string,
+    format: string,
+    source: string = 'inspection',
+    taskName = '',
+    startedAt?: string,
+  ) => {
     if (source === 'config_backup') {
       await handleExportBackupRunReport(logId, format);
       return;
@@ -1220,10 +1301,16 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-        const prefix = source === 'playbook' ? 'Playbook' : 'Inspection';
         const ext = format === 'xlsx' ? 'xlsx' : format === 'html' ? 'html' : format === 'pdf' ? 'pdf' : 'json';
-        a.download = `${systemInfo?.system_name || 'Nexora'}_${prefix}_Report_${logId}_${today}.${ext}`;
+        a.download = buildExecutionReportFilename({
+          systemName: systemInfo?.system_name,
+          source,
+          taskName,
+          startedAt,
+          runId: logId,
+          extension: ext,
+          zh,
+        });
         a.click();
         URL.revokeObjectURL(url);
       } else {
@@ -1441,6 +1528,7 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
                   total={inspScheduleTotal}
                   page={inspSchedulePage}
                   pageSize={inspSchedulePageSize}
+                  error={inspSchedulesError}
                   onPageChange={setInspSchedulePage}
                   onPageSizeChange={(size) => {
                     setInspSchedulePageSize(size);
@@ -1462,8 +1550,9 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
                     }
                   }}
                   onToggleEnabled={toggleInspScheduleEnabled}
+                  onEdit={(sch) => navigate(`/automation/scheduled-jobs?edit_id=${encodeURIComponent(sch.job_id || sch.id)}`)}
                   onDelete={deleteInspSchedule}
-                  availableScripts={availableScripts}
+                  onRetry={fetchInspSchedules}
                 />
               </>
             )}
@@ -1661,7 +1750,6 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
         selectedLog={selectedLog}
         logDetailLoading={logDetailLoading}
         onClose={closeExecutionDetail}
-        onExport={handleExportReport}
         inspectionDetail={inspectionDetail}
         selectedInspDeviceId={selectedInspDeviceId}
         setSelectedInspDeviceId={setSelectedInspDeviceId}

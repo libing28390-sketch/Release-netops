@@ -89,6 +89,24 @@ def load_output(ciphertext: str | None, legacy_json: str | None) -> Any:
         raise PlaybookOutputError("Playbook output is not valid JSON") from exc
 
 
+def reencrypt_legacy_output(legacy_json: str) -> tuple[str, str, str]:
+    """Encrypt one authorized legacy output before it is returned to a caller.
+
+    This supports lazy, safe backfill for historical result rows. Callers must
+    complete the normal resource authorization before invoking this helper.
+    The legacy plaintext is never returned or persisted again.
+    """
+    try:
+        value = json.loads(str(legacy_json or ""))
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise PlaybookOutputError("Historical Playbook output is not valid JSON") from exc
+
+    ciphertext, placeholder, expires_at, encrypted = protect_output(value)
+    if not encrypted or not ciphertext or not expires_at:
+        raise PlaybookOutputError("Encrypted Playbook output is unavailable")
+    return ciphertext, placeholder, expires_at
+
+
 def cleanup_expired_playbook_outputs(conn=None) -> int:
     """Delete ciphertext and legacy raw output after its retention deadline."""
     own_conn = conn is None

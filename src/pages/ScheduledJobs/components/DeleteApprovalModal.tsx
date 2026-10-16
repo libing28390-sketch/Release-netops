@@ -77,7 +77,7 @@ export const DeleteApprovalModal: React.FC<DeleteApprovalModalProps> = ({
           exit={{ opacity: 0 }}
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
         >
-          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm" onClick={() => { if (deleteStatus !== 'sending' && deleteStatus !== 'verifying') onClose(); }} />
+          <div className="fixed inset-0 bg-black/40" onClick={() => { if (deleteStatus !== 'sending' && deleteStatus !== 'verifying') onClose(); }} />
           <motion.div
             initial={{ opacity: 0, scale: 0.95, y: 10 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}

@@ -3,6 +3,7 @@ import uuid
 import json
 import logging
 import re
+import hashlib
 import bcrypt
 from datetime import datetime, timezone
 
@@ -34,6 +35,31 @@ def _require_supported_postgres_version(cursor) -> None:
             f"The connected server is PostgreSQL {major_version}; upgrade the database cluster "
             "with pg_upgrade or pg_dump/pg_restore before starting this application."
         )
+
+
+def _refresh_standard_script_digests(conn) -> int:
+    """Keep digests aligned after the baseline upserts standard script content."""
+    refreshed = 0
+    for script in std_scripts:
+        script_id = str(script[0])
+        row = conn.execute(
+            "SELECT content, content_sha256 FROM scripts "
+            "WHERE id = ? AND LOWER(COALESCE(submitter_name, author, '')) = 'system' "
+            "AND LOWER(COALESCE(status, '')) = 'released'",
+            (script_id,),
+        ).fetchone()
+        if not row:
+            continue
+        content = str(row[0] or '')
+        digest = hashlib.sha256(content.encode('utf-8')).hexdigest()
+        if str(row[1] or '') == digest:
+            continue
+        conn.execute(
+            "UPDATE scripts SET content_sha256 = ? WHERE id = ?",
+            (digest, script_id),
+        )
+        refreshed += 1
+    return refreshed
 
 def _ensure_initial_administrator(cursor, now: str) -> None:
     """Ensure the default administrator exists without overwriting valid passwords."""
@@ -161,6 +187,10 @@ def init_db():
                     "Database migrations are incomplete; pending versions: "
                     f"{migration_plan.pending_versions}"
                 )
+            refreshed_script_digests = _refresh_standard_script_digests(conn)
+            if refreshed_script_digests:
+                conn.commit()
+                logger.info("Refreshed %d standard script content digest(s).", refreshed_script_digests)
         except Exception as mig_exc:
             logger.error("Schema migration runner error: %s", mig_exc, exc_info=True)
             raise

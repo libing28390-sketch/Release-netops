@@ -10,7 +10,6 @@ export interface InspectionRunExportRecord {
   healthy_count?: number | null;
   warning_count?: number | null;
   critical_count?: number | null;
-  avg_health_score?: number | null;
   started_at?: string | null;
 }
 
@@ -21,7 +20,6 @@ export interface InspectionResultExportRecord {
   ip_address?: string | null;
   platform?: string | null;
   health_status?: string | null;
-  health_score?: number | null;
   cpu_usage?: number | null;
   memory_usage?: number | null;
   temperature?: number | null;
@@ -57,8 +55,8 @@ export function buildInspectionRunExportData(
   const filtered = filterInspectionRuns(runs, search);
   return {
     headers: zh
-      ? ['触发方式', '范围类型', '范围', '创建人', '设备总数', '正常设备', '告警设备', '严重设备', '平均得分', '开始时间']
-      : ['Trigger', 'Scope Type', 'Scope', 'Created By', 'Total Devices', 'Healthy Devices', 'Warning Devices', 'Critical Devices', 'Average Score', 'Started At'],
+      ? ['触发方式', '范围类型', '范围', '创建人', '设备总数', '正常设备', '告警设备', '严重设备', '开始时间']
+      : ['Trigger', 'Scope Type', 'Scope', 'Created By', 'Total Devices', 'Healthy Devices', 'Warning Devices', 'Critical Devices', 'Started At'],
     rows: filtered.map((run) => [
       display(run.trigger_type),
       display(run.scope_type),
@@ -68,7 +66,6 @@ export function buildInspectionRunExportData(
       display(run.healthy_count),
       display(run.warning_count),
       display(run.critical_count),
-      display(run.avg_health_score),
       readableDate(run.started_at),
     ]),
   };
@@ -82,8 +79,8 @@ export function buildRecentInspectionRunExportData(
   const zh = language === 'zh';
   return {
     headers: zh
-      ? ['触发类型', '范围类型', '范围', '设备总数', '正常设备', '告警设备', '严重设备', '平均得分', '执行时间']
-      : ['Trigger', 'Scope Type', 'Scope', 'Devices', 'Healthy', 'Warning', 'Critical', 'Avg Score', 'Time'],
+      ? ['触发类型', '范围类型', '范围', '设备总数', '正常设备', '告警设备', '严重设备', '执行时间']
+      : ['Trigger', 'Scope Type', 'Scope', 'Devices', 'Healthy', 'Warning', 'Critical', 'Time'],
     rows: runs.map((run) => [
       display(run.trigger_type),
       display(run.scope_type),
@@ -92,7 +89,6 @@ export function buildRecentInspectionRunExportData(
       display(run.healthy_count),
       display(run.warning_count),
       display(run.critical_count),
-      display(run.avg_health_score),
       run.started_at ? run.started_at.replace('T', ' ').slice(0, 19) : '-',
     ]),
   };
@@ -105,14 +101,13 @@ export function buildInspectionResultExportData(
   const zh = language === 'zh';
   return {
     headers: zh
-      ? ['主机名', 'IP 地址', '厂商平台', '健康状态', '得分', 'CPU', '内存', '温度', '风扇状态', '电源状态', '接口总数', '接口 Down 数', 'Ping', 'SSH']
-      : ['Hostname', 'IP Address', 'Platform', 'Health Status', 'Score', 'CPU', 'Memory', 'Temperature', 'Fan Status', 'PSU Status', 'Total Interfaces', 'Down Interfaces', 'Ping', 'SSH'],
+      ? ['主机名', 'IP 地址', '厂商平台', '健康状态', 'CPU', '内存', '温度', '风扇状态', '电源状态', '接口总数', '接口 Down 数', 'Ping', 'SSH']
+      : ['Hostname', 'IP Address', 'Platform', 'Health Status', 'CPU', 'Memory', 'Temperature', 'Fan Status', 'PSU Status', 'Total Interfaces', 'Down Interfaces', 'Ping', 'SSH'],
     rows: results.map((result) => [
       display(result.hostname),
       display(result.ip_address),
       display(result.platform),
       display(result.health_status),
-      display(result.health_score),
       result.cpu_usage == null ? '—' : `${result.cpu_usage}%`,
       result.memory_usage == null ? '—' : `${result.memory_usage}%`,
       result.temperature == null ? '—' : `${result.temperature}°C`,
