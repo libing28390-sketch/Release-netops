@@ -29,6 +29,7 @@ import {
 import { ApiError } from '../api/http';
 import { primaryActionBtnClass, secondaryActionBtnClass } from '../components/shared';
 import { ActionIconButton } from '../components/ui/ActionIconButton';
+import { FormActionBar, FormDialogShell, FormSection } from '../components/ui/FormLayout';
 import { PasswordInputField } from '../components/ui/PasswordInputField';
 import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
 import { useEscapeClose } from '../hooks/useEscapeClose';
@@ -368,50 +369,49 @@ const StorageManagementPage: React.FC<StorageManagementPageProps> = ({ language,
       </div>
 
       {modalOpen && <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-[2px] sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) closeModal(); }}>
-        <div role="dialog" aria-modal="true" aria-labelledby="storage-dialog-title" className="relative z-10 flex max-h-[calc(100vh-2rem)] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-[var(--ui-border)] bg-[var(--ui-surface)] shadow-2xl sm:max-h-[calc(100vh-3rem)]">
-          <div className="flex shrink-0 items-start justify-between gap-4 border-b border-[var(--ui-border)] px-5 py-4 sm:px-7">
-            <div><h2 id="storage-dialog-title" className="text-lg font-semibold text-[var(--heading-text)]">{mode === 'create' ? (zh ? '创建存储设置' : 'Create storage settings') : (zh ? '编辑存储设置' : 'Edit storage settings')}</h2></div>
-            <button type="button" className="rounded-lg p-2 text-[var(--muted-text)] transition hover:bg-[var(--ui-surface-muted)] hover:text-[var(--ui-fg)]" onClick={closeModal} disabled={saving} aria-label={zh ? '关闭' : 'Close'}><X size={18} /></button>
-          </div>
-
-          <form onSubmit={handleSave} className="flex min-h-0 flex-1 flex-col">
-            <div className="min-h-0 flex-1 space-y-7 overflow-y-auto px-5 py-5 sm:px-7 sm:py-6">
-              <section>
-                <div className="mb-4 border-b border-[var(--ui-border)] pb-2"><h3 className="text-sm font-semibold text-[var(--heading-text)]">{zh ? '基本设置' : 'Basic settings'}</h3></div>
+        <FormDialogShell
+          title={mode === 'create' ? (zh ? '创建存储设置' : 'Create storage settings') : (zh ? '编辑存储设置' : 'Edit storage settings')}
+          onClose={closeModal}
+          closeDisabled={saving}
+          language={zh ? 'zh' : 'en'}
+          widthClassName="max-w-4xl"
+          className="relative z-10 w-full rounded-xl !border-[var(--ui-border)] !bg-[var(--ui-surface)] sm:max-h-[calc(100vh-3rem)]"
+          bodyClassName="space-y-4"
+          actions={(
+            <FormActionBar className="!justify-between !border-0 !bg-transparent !px-5 !py-3.5">
+              <button type="button" className={secondaryActionBtnClass} onClick={() => void handleTestForm()} disabled={testingId === 'form' || saving}><TestTube2 size={15} />{testingId === 'form' ? (zh ? '测试中…' : 'Testing…') : (zh ? '测试连接' : 'Test connection')}</button>
+              <div className="flex gap-2"><button type="button" className={secondaryActionBtnClass} onClick={closeModal} disabled={saving}>{zh ? '取消' : 'Cancel'}</button><button type="submit" form="storage-settings-form" className={primaryActionBtnClass} disabled={saving}><Save size={15} />{saving ? (zh ? '保存中…' : 'Saving…') : (zh ? '保存' : 'Save')}</button></div>
+            </FormActionBar>
+          )}
+        >
+          <form id="storage-settings-form" onSubmit={handleSave} className="space-y-4">
+              <FormSection title={zh ? '基本设置' : 'Basic settings'} className="overflow-hidden rounded-lg !border-[var(--ui-border)] !bg-[var(--ui-surface)]">
                 <div className="space-y-3">
                   <div className={formRowClass}><label className={formRowLabelClass} htmlFor="storage-name">{zh ? '名称' : 'Name'} <span className="text-rose-600">*</span></label><input id="storage-name" className={inputClass} value={form.name} onChange={(event) => setField('name', event.target.value)} autoFocus placeholder={zh ? '名称' : 'Name'} /></div>
                   <div className={formRowClass}><span className={formRowLabelClass}>{zh ? '类型' : 'Type'}</span><span className="flex h-[38px] items-center rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface-muted)] px-3 text-sm text-[var(--ui-fg)]">S3</span></div>
                 </div>
-              </section>
+              </FormSection>
 
-              <section>
-                <div className="mb-4 border-b border-[var(--ui-border)] pb-2"><h3 className="text-sm font-semibold text-[var(--heading-text)]">S3</h3></div>
+              <FormSection title="S3" className="overflow-hidden rounded-lg !border-[var(--ui-border)] !bg-[var(--ui-surface)]">
                 <div className="space-y-3">
                   <div className={formRowClass}><label className={formRowLabelClass} htmlFor="storage-bucket">{zh ? '桶名称' : 'Bucket name'} <span className="text-rose-600">*</span></label><input id="storage-bucket" className={inputClass} value={form.bucket} onChange={(event) => setField('bucket', event.target.value)} placeholder={zh ? '桶名称' : 'Bucket name'} /></div>
                   <div className={formRowClass}><label className={formRowLabelClass} htmlFor="storage-access-key">Access key ID {mode === 'create' && <span className="text-rose-600">*</span>}</label><div><input id="storage-access-key" className={inputClass} value={form.access_key_id} onChange={(event) => setField('access_key_id', event.target.value)} placeholder={mode === 'edit' ? (zh ? '留空保留当前值' : 'Leave blank to keep current') : 'Access key ID'} autoComplete="off" />{mode === 'edit' && <p className="mt-1 text-[11px] text-[var(--muted-text)]">{zh ? '当前值：' : 'Current: '}{items.find((item) => item.id === editingId)?.access_key_id_masked || (zh ? '已隐藏' : 'Hidden')}</p>}</div></div>
                   <div className={formRowClass}><label className={formRowLabelClass} htmlFor="storage-secret">Access key secret {mode === 'create' && <span className="text-rose-600">*</span>}</label><div><PasswordInputField id="storage-secret" className={inputClass} value={form.secret_access_key} onChange={(event) => setField('secret_access_key', event.target.value)} placeholder={mode === 'edit' ? (zh ? '留空保留当前值' : 'Leave blank to keep current') : 'Access key secret'} autoComplete="new-password" showPasswordLabel={zh ? '显示 Secret' : 'Show secret'} hidePasswordLabel={zh ? '隐藏 Secret' : 'Hide secret'} />{mode === 'edit' && <p className="mt-1 text-[11px] text-[var(--muted-text)]">{items.find((item) => item.id === editingId)?.has_secret_key ? (zh ? '当前 Secret 已加密保存' : 'Current secret is stored securely') : (zh ? '当前未配置 Secret' : 'No current secret')}</p>}</div></div>
                   <div className={formRowClass}><label className={formRowLabelClass} htmlFor="storage-endpoint">{zh ? '端点' : 'Endpoint'} <span className="text-rose-600">*</span></label><div><input id="storage-endpoint" className={inputClass} value={form.endpoint_url} onChange={(event) => setField('endpoint_url', event.target.value)} placeholder={zh ? '端点' : 'Endpoint'} /><p className="mt-1 text-[11px] text-[var(--muted-text)]">{zh ? '填写 S3 API 地址（如 http://seaweedfs:8333）；Bucket 名和 config/、pam/ 目录不要填在 Endpoint 里，除非服务商明确要求路径前缀。' : 'Enter the S3 API URL (for example, http://seaweedfs:8333). Do not append the bucket name or config/ and pam/ folders unless your provider explicitly requires a path prefix.'}</p></div></div>
                 </div>
-              </section>
+              </FormSection>
 
-              <section>
-                <div className="mb-4 border-b border-[var(--ui-border)] pb-2"><h3 className="text-sm font-semibold text-[var(--heading-text)]">{zh ? '其他设置' : 'Other settings'}</h3></div>
+              <FormSection title={zh ? '其他设置' : 'Other settings'} className="overflow-hidden rounded-lg !border-[var(--ui-border)] !bg-[var(--ui-surface)]">
                 <div className="space-y-4">
                   <div className={formRowClass}><label className={formRowLabelClass}>{zh ? '默认' : 'Default'}</label><label className="flex cursor-pointer items-center gap-2 pt-2 text-sm text-[var(--ui-fg)]"><input type="checkbox" className="accent-[var(--ui-accent)]" checked={form.is_default} onChange={(event) => setField('is_default', event.target.checked)} />{zh ? '设为全局默认' : 'Set as global default'}</label></div>
                   <div className={formRowClass}><label className={formRowLabelClass} htmlFor="storage-notes">{zh ? '备注' : 'Notes'}</label><textarea id="storage-notes" className={`${inputClass} min-h-20 resize-y`} value={form.notes} onChange={(event) => setField('notes', event.target.value)} placeholder={zh ? '选填' : 'Optional'} /></div>
                 </div>
-              </section>
+              </FormSection>
 
               {formTest && <div className={`flex items-start gap-2 rounded-md px-3 py-2.5 text-sm ${formTest.kind === 'success' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>{formTest.kind === 'success' ? <CheckCircle2 size={15} className="mt-0.5 shrink-0" /> : <XCircle size={15} className="mt-0.5 shrink-0" />}<span>{formTest.message}</span></div>}
               {formError && <div className="flex items-start gap-2 rounded-md bg-rose-50 px-3 py-2.5 text-sm text-rose-700"><XCircle size={15} className="mt-0.5 shrink-0" /><span>{formError}</span></div>}
-            </div>
-
-            <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-[var(--ui-border)] bg-[var(--ui-surface)] px-5 py-3.5 sm:px-7">
-              <button type="button" className={secondaryActionBtnClass} onClick={() => void handleTestForm()} disabled={testingId === 'form' || saving}><TestTube2 size={15} />{testingId === 'form' ? (zh ? '测试中…' : 'Testing…') : (zh ? '测试连接' : 'Test connection')}</button>
-              <div className="flex gap-2"><button type="button" className={secondaryActionBtnClass} onClick={closeModal} disabled={saving}>{zh ? '取消' : 'Cancel'}</button><button type="submit" className={primaryActionBtnClass} disabled={saving}><Save size={15} />{saving ? (zh ? '保存中…' : 'Saving…') : (zh ? '保存' : 'Save')}</button></div>
-            </div>
           </form>
-        </div>
+        </FormDialogShell>
       </div>}
     </div>
   );

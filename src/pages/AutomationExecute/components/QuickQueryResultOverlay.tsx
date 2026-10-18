@@ -142,7 +142,7 @@ export const QuickQueryResultOverlay: React.FC<QuickQueryResultOverlayProps> = (
               <span className="w-[10px] h-[10px] rounded-full bg-[#28c840]/80" />
             </div>
             {quickQueryRunning ? (
-              <RotateCcw size={13} className="animate-spin text-[#00bceb] shrink-0" />
+              <RotateCcw size={13} className="animate-spin text-[#2563eb] shrink-0" />
             ) : (
               <Monitor size={13} className="text-emerald-400 shrink-0" />
             )}
@@ -258,7 +258,7 @@ export const QuickQueryResultOverlay: React.FC<QuickQueryResultOverlayProps> = (
         <div className="min-h-0 flex-1 overflow-auto terminal-scroll">
           {quickQueryRunning ? (
             <div className="flex flex-col items-center justify-center py-16 gap-4">
-              <div className="w-10 h-10 rounded-full border-2 border-[#00bceb]/20 border-t-[#00bceb] animate-spin" />
+              <div className="w-10 h-10 rounded-full border-2 border-[#2563eb]/20 border-t-[#2563eb] animate-spin" />
               <span className="text-xs text-white/25 font-mono">{isZh ? '正在查询...' : 'Querying...'}</span>
             </div>
           ) : quickQueryStructured && quickQueryView === 'table' ? (

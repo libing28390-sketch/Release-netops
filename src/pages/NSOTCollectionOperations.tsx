@@ -287,6 +287,8 @@ interface NSOTCollectionOperationsProps {
   language: string;
   searchText: string;
   platformFilter?: string;
+  createRequestId?: number;
+  refreshRequestId?: number;
 }
 
 interface CollectionTemplateForm {
@@ -297,7 +299,7 @@ interface CollectionTemplateForm {
   collector_keys: string[];
 }
 
-const NSOTCollectionOperations: React.FC<NSOTCollectionOperationsProps> = ({ language, searchText, platformFilter = 'All' }) => {
+const NSOTCollectionOperations: React.FC<NSOTCollectionOperationsProps> = ({ language, searchText, platformFilter = 'All', createRequestId = 0, refreshRequestId = 0 }) => {
   const zh = language === 'zh';
   const [catalog, setCatalog] = useState<OperationCatalog | null>(null);
   const [selectedProfileId, setSelectedProfileId] = useState('');
@@ -323,6 +325,8 @@ const NSOTCollectionOperations: React.FC<NSOTCollectionOperationsProps> = ({ lan
   const [templateEditorError, setTemplateEditorError] = useState('');
   const controllerRef = useRef<AbortController | null>(null);
   const requestSequenceRef = useRef(0);
+  const lastCreateRequestRef = useRef(createRequestId);
+  const lastRefreshRequestRef = useRef(refreshRequestId);
 
   useEffect(() => {
     if (!detailTemplateId) return undefined;
@@ -429,7 +433,7 @@ const NSOTCollectionOperations: React.FC<NSOTCollectionOperationsProps> = ({ lan
       }));
   }, [catalog, zh]);
 
-  const openTemplateEditor = (mode: 'create' | 'edit', target?: CollectionTemplate, clone = false) => {
+  const openTemplateEditor = useCallback((mode: 'create' | 'edit', target?: CollectionTemplate, clone = false) => {
     setTemplateActionError('');
     setTemplateEditorMode(mode);
     setTemplateEditorId(target?.id || '');
@@ -445,7 +449,7 @@ const NSOTCollectionOperations: React.FC<NSOTCollectionOperationsProps> = ({ lan
     });
     setTemplateEditorError('');
     setTemplateEditorOpen(true);
-  };
+  }, [zh]);
 
   const saveTemplate = async () => {
     if (!templateForm.name_zh.trim() || !templateForm.name_en.trim()) {
@@ -599,12 +603,23 @@ const NSOTCollectionOperations: React.FC<NSOTCollectionOperationsProps> = ({ lan
     if (profileId !== selectedProfileId) chooseProfile(profileId);
   };
 
-  const retry = () => void loadCatalog(selectedProfileId || undefined);
+  const retry = useCallback(() => void loadCatalog(selectedProfileId || undefined), [loadCatalog, selectedProfileId]);
+
+  useEffect(() => {
+    if (createRequestId !== lastCreateRequestRef.current) {
+      lastCreateRequestRef.current = createRequestId;
+      openTemplateEditor('create');
+    }
+    if (refreshRequestId !== lastRefreshRequestRef.current) {
+      lastRefreshRequestRef.current = refreshRequestId;
+      retry();
+    }
+  }, [createRequestId, refreshRequestId, openTemplateEditor, retry]);
 
   return (
     <>
       <section className="min-w-0 space-y-3" aria-label={zh ? 'NSOT 采集命令' : 'NSOT collection commands'}>
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-slate-100 pb-2 dark:border-white/5">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-slate-100 pb-2 dark:border-white/5">
         <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
           <h2 className="truncate text-sm font-semibold text-slate-800 dark:text-slate-100">{zh ? 'NSOT 采集命令' : 'NSOT collection commands'}</h2>
           {catalog && (
@@ -614,20 +629,6 @@ const NSOTCollectionOperations: React.FC<NSOTCollectionOperationsProps> = ({ lan
                 : `${catalog.templates.length} templates · ${profileVendorCount} vendors · ${profileOptions.length} platform versions`}
             </span>
           )}
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <button type="button" onClick={retry} disabled={loading} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-600 transition hover:border-[#00a9ce]/40 hover:text-[#00a9ce] disabled:cursor-wait disabled:opacity-50 dark:border-white/10 dark:bg-slate-900/40 dark:text-slate-300">
-            {loading ? <LoaderCircle size={14} className="animate-spin" /> : <RotateCcw size={14} />}
-            {zh ? '刷新目录' : 'Refresh catalog'}
-          </button>
-          <button
-            type="button"
-            onClick={() => openTemplateEditor('create')}
-            className="inline-flex items-center gap-2 rounded-xl px-6 py-2.5 text-[13px] font-bold text-white shadow-lg shadow-[#00a9ce]/15 transition-all active:scale-[0.98]"
-            style={{ backgroundColor: '#00a9ce' }}
-          >
-            <Plus size={16} />{zh ? '新建' : 'New'}
-          </button>
         </div>
       </div>
 
@@ -682,7 +683,7 @@ const NSOTCollectionOperations: React.FC<NSOTCollectionOperationsProps> = ({ lan
                     <th className="sticky top-0 z-10 min-w-64 bg-slate-50/95 px-5 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:bg-slate-950/95 dark:text-slate-500">{zh ? '描述' : 'Description'}</th>
                     <th className="sticky top-0 z-10 min-w-48 bg-slate-50/95 px-5 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:bg-slate-950/95 dark:text-slate-500">{zh ? '条件' : 'Condition'}</th>
                     <th className="sticky top-0 z-10 min-w-48 bg-slate-50/95 px-5 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:bg-slate-950/95 dark:text-slate-500">{zh ? '备注' : 'Note'}</th>
-                    <th data-export="ignore" className="sticky top-0 z-10 w-36 bg-slate-50/95 px-5 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:bg-slate-950/95 dark:text-slate-500"><span className="flex items-center gap-1.5"><Terminal size={12} />{zh ? 'CLI 命令' : 'CLI commands'}</span></th>
+                    <th data-export="ignore" className="sticky top-0 z-10 w-44 min-w-[176px] bg-slate-50/95 px-5 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:bg-slate-950/95 dark:text-slate-500"><span className="flex items-center gap-1.5"><Terminal size={12} />{zh ? 'CLI 命令' : 'CLI commands'}</span></th>
                     <TableActionHeader className="sticky top-0 z-10 w-36 bg-slate-50/95 px-5 py-3 text-right text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:bg-slate-950/95 dark:text-slate-500">{zh ? '操作' : 'Actions'}</TableActionHeader>
                   </tr>
                 </thead>
@@ -716,14 +717,14 @@ const NSOTCollectionOperations: React.FC<NSOTCollectionOperationsProps> = ({ lan
                           <td className="px-5 py-3 text-[11px] leading-relaxed text-slate-600 dark:text-slate-300">{description || '—'}</td>
                           <td className="px-5 py-3 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">{template.condition || '—'}</td>
                           <td className="px-5 py-3 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">{template.note || '—'}</td>
-                          <td data-export-ignore className="px-5 py-3">
+                          <td data-export-ignore className="min-w-[176px] whitespace-nowrap px-5 py-3">
                             {profile ? (
                               <button
                                 type="button"
                                 onClick={() => openTemplateCommands(template.id, profile.id)}
                                 disabled={loading}
                                 aria-label={zh ? `查看${templateLabel(template, true)}在${details?.vendor} ${details?.platform}上的命令` : `View ${templateLabel(template, false)} commands for ${details?.vendor} ${details?.platform}`}
-                                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 transition hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-700 disabled:cursor-wait disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-cyan-500/10 dark:hover:text-cyan-300"
+                                className="inline-flex min-w-[128px] items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 transition hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-700 disabled:cursor-wait disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-cyan-500/10 dark:hover:text-cyan-300"
                               >
                                 <Terminal size={13} />{zh ? '查看命令' : 'View commands'}
                               </button>

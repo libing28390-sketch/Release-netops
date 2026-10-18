@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { Search, MapPin, ArrowRight, Loader2, Server, Monitor, Network, AlertCircle, ChevronDown, ChevronUp, Cable } from 'lucide-react';
+import { MapPin, ArrowRight, Loader2, Server, Monitor, Network, AlertCircle, ChevronDown, ChevronUp, Cable } from 'lucide-react';
 import { formatMacAddress } from '../utils/resourceFormatters';
 import {
   formatMacLookupMessage,
@@ -118,14 +118,6 @@ const IPLocatorPanel: React.FC<IPLocatorProps> = ({ language }) => {
             className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-black/10 text-sm bg-white focus:ring-2 focus:ring-[#06b6d4]/30 focus:border-[#06b6d4] outline-none transition-all placeholder:text-black/30"
           />
         </div>
-        <button
-          onClick={doLocate}
-          disabled={loading || !ip.trim()}
-          className="px-5 py-2.5 rounded-xl bg-[#0891b2] text-white text-sm font-semibold hover:bg-[#0e7490] disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-2 shadow-sm"
-        >
-          {loading ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
-          {zh ? '定位' : 'Locate'}
-        </button>
       </div>
 
       {/* ── Loading ── */}

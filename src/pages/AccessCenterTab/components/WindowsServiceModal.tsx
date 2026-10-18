@@ -63,7 +63,6 @@ export default function WindowsServiceModal({
     title: isZh ? 'Windows 服务管理' : 'Windows service management',
     close: isZh ? '关闭' : 'Close',
     search: isZh ? '搜索服务名称或显示名' : 'Search service name or display name',
-    submit: isZh ? '搜索' : 'Search',
     all: isZh ? '全部状态' : 'All statuses',
     running: isZh ? '运行中' : 'Running',
     stopped: isZh ? '已停止' : 'Stopped',
@@ -219,9 +218,13 @@ export default function WindowsServiceModal({
           <form onSubmit={submitSearch} className="flex min-w-[260px] flex-1 items-center gap-2">
             <div className="relative flex-1">
               <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
-              <input type="search" value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder={text.search} className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-xs outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100" />
+              <input type="search" value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  event.currentTarget.form?.requestSubmit();
+                }
+              }} placeholder={text.search} className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-xs outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100" />
             </div>
-            <button type="submit" className="rounded-xl bg-cyan-600 px-3.5 py-2 text-xs font-semibold text-white transition hover:bg-cyan-700">{text.submit}</button>
           </form>
           <select value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 outline-none focus:border-cyan-400" aria-label={text.status}>
             <option value="all">{text.all}</option>

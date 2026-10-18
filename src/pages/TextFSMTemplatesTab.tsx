@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
+import { ListToolbar } from '../components/ui/TableListControls';
 import PageHero from '../components/PageHero';
 import Pagination from '../components/Pagination';
 import { alertPanelClass } from '../components/shared';
@@ -399,21 +400,6 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
         icon={FileCode}
         title={isZh ? 'TextFSM 解析模板' : 'TextFSM Parse Templates'}
         subtitle={isZh ? '管理设备 CLI 输出解析模板；内置模板可保存为自定义覆盖' : 'Manage CLI output parsing templates; built-ins can be saved as custom overrides'}
-        actions={
-          <>
-            <ActionIconButton
-              icon={RefreshCw}
-              label={isZh ? '刷新' : 'Refresh'}
-              iconClassName={loading ? 'animate-spin' : undefined}
-              size="md"
-              variant="accent"
-              onClick={fetchTemplates}
-            />
-            <ActionButton icon={Plus} variant="primary" size="sm" onClick={openNewEditor}>
-              {isZh ? '新建模板' : 'New Template'}
-            </ActionButton>
-          </>
-        }
       />
 
       <div className="flex-1 flex flex-col overflow-hidden px-6 py-5 space-y-3 min-h-0">
@@ -433,14 +419,21 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
       </AnimatePresence>
 
       {/* Filters */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 max-w-md">
+      <ListToolbar
+        className="py-1"
+        leadingAction={(
+          <ActionButton icon={Plus} variant="primary" size="md" onClick={openNewEditor}>
+            {isZh ? '新建' : 'New'}
+          </ActionButton>
+        )}
+      >
+        <div className="relative min-w-[220px] max-w-md flex-1">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-black/30" />
           <input type="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={isZh ? '搜索模板名称或命令...' : 'Search filename or command...'}
-            className="w-full pl-9 pr-3 py-2 rounded-lg bg-white border border-black/10 text-xs focus:outline-none focus:border-[#00bceb]"
+            className="w-full pl-9 pr-3 py-2 rounded-lg bg-white border border-black/10 text-xs focus:outline-none focus:border-[#2563eb]"
           />
         </div>
         <select
@@ -451,7 +444,7 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
             setVersionFilter('');
           }}
           aria-label={isZh ? '厂商' : 'Vendor'}
-          className="px-3 py-2 rounded-lg bg-white border border-black/10 text-xs focus:outline-none focus:border-[#00bceb]"
+          className="px-3 py-2 rounded-lg bg-white border border-black/10 text-xs focus:outline-none focus:border-[#2563eb]"
         >
           <option value="">{isZh ? '全部厂商' : 'All Vendors'}</option>
           {VENDOR_OPTIONS.map((vendor) => (
@@ -465,7 +458,7 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
             setVersionFilter('');
           }}
           aria-label={isZh ? '平台' : 'Platform'}
-          className="px-3 py-2 rounded-lg bg-white border border-black/10 text-xs focus:outline-none focus:border-[#00bceb]"
+          className="px-3 py-2 rounded-lg bg-white border border-black/10 text-xs focus:outline-none focus:border-[#2563eb]"
         >
           <option value="">{isZh ? '全部平台' : 'All Platforms'}</option>
           {availablePlatformFamilies.map((platform) => (
@@ -478,7 +471,7 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
           value={versionFilter}
           onChange={(e) => setVersionFilter(e.target.value)}
           aria-label={isZh ? '版本' : 'Version'}
-          className="px-3 py-2 rounded-lg bg-white border border-black/10 text-xs focus:outline-none focus:border-[#00bceb]"
+          className="px-3 py-2 rounded-lg bg-white border border-black/10 text-xs focus:outline-none focus:border-[#2563eb]"
         >
           <option value="">{isZh ? '全部版本' : 'All Versions'}</option>
           {availableVersions.map((version) => (
@@ -490,13 +483,21 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
         <select
           value={sourceFilter}
           onChange={(e) => setSourceFilter(e.target.value as any)}
-          className="px-3 py-2 rounded-lg bg-white border border-black/10 text-xs focus:outline-none focus:border-[#00bceb]"
+          className="px-3 py-2 rounded-lg bg-white border border-black/10 text-xs focus:outline-none focus:border-[#2563eb]"
         >
           <option value="">{isZh ? '全部来源' : 'All Sources'}</option>
           <option value="builtin">{isZh ? '内置' : 'Built-in'}</option>
           <option value="custom">{isZh ? '自定义' : 'Custom'}</option>
         </select>
-      </div>
+        <ActionIconButton
+          icon={RefreshCw}
+          label={isZh ? '刷新' : 'Refresh'}
+          iconClassName={loading ? 'animate-spin' : undefined}
+          size="md"
+          variant="accent"
+          onClick={fetchTemplates}
+        />
+      </ListToolbar>
 
       <div className={`${alertPanelClass} flex-1 min-h-0 flex flex-col overflow-hidden`}>
         {/* Templates Table */}
@@ -636,7 +637,7 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
                             setEditorPlatformFamily('');
                             setEditorVersion('');
                           }}
-                          className="mt-1 h-9 w-full rounded-lg border border-black/10 bg-white px-2.5 text-xs outline-none focus:border-[#00bceb]"
+                          className="mt-1 h-9 w-full rounded-lg border border-black/10 bg-white px-2.5 text-xs outline-none focus:border-[#2563eb]"
                         >
                           {VENDOR_OPTIONS.map((vendor) => (
                             <option key={vendor.value} value={vendor.value}>{isZh ? vendor.label : vendor.labelEn}</option>
@@ -652,7 +653,7 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
                             setEditorPlatformFamily(e.target.value);
                             setEditorVersion(nextFamily?.versions[0] || '');
                           }}
-                          className="mt-1 h-9 w-full rounded-lg border border-black/10 bg-white px-2.5 text-xs outline-none focus:border-[#00bceb]"
+                          className="mt-1 h-9 w-full rounded-lg border border-black/10 bg-white px-2.5 text-xs outline-none focus:border-[#2563eb]"
                         >
                           <option value="" disabled>{isZh ? '请选择平台' : 'Select platform'}</option>
                           {editorPlatformFamilies.map((platform) => (
@@ -666,7 +667,7 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
                           <select
                             value={editorVersion}
                             onChange={(e) => setEditorVersion(e.target.value)}
-                            className="mt-1 h-9 w-full rounded-lg border border-black/10 bg-white px-2.5 text-xs outline-none focus:border-[#00bceb]"
+                            className="mt-1 h-9 w-full rounded-lg border border-black/10 bg-white px-2.5 text-xs outline-none focus:border-[#2563eb]"
                           >
                             {editorVersionOptions.map((version) => (
                               <option key={version} value={version}>
@@ -682,7 +683,7 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
                           value={editorCommand}
                           onChange={(e) => setEditorCommand(e.target.value)}
                           placeholder="show processes cpu"
-                          className="mt-1 h-9 w-full rounded-lg border border-black/10 bg-white px-2.5 text-xs outline-none focus:border-[#00bceb]"
+                          className="mt-1 h-9 w-full rounded-lg border border-black/10 bg-white px-2.5 text-xs outline-none focus:border-[#2563eb]"
                         />
                       </div>
                     </div>
@@ -705,7 +706,7 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
                         setEditorActionCode(nextActionCode);
                         if (!editingTemplate && selectedAction?.command) setEditorCommand(selectedAction.command);
                       }}
-                      className="mt-1.5 h-9 w-full rounded-lg border border-black/10 bg-white px-2.5 text-xs outline-none focus:border-[#00bceb] disabled:bg-slate-50"
+                      className="mt-1.5 h-9 w-full rounded-lg border border-black/10 bg-white px-2.5 text-xs outline-none focus:border-[#2563eb] disabled:bg-slate-50"
                     >
                       <option value="">{actionOptionsLoading ? (isZh ? '加载动作中…' : 'Loading actions…') : (isZh ? '不关联 Action' : 'No action')}</option>
                       {editorActionCode && !actionOptions.some((option) => option.action_code === editorActionCode) && (
@@ -756,7 +757,7 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
                     <textarea
                       value={editorContent}
                       onChange={(e) => setEditorContent(e.target.value)}
-                      className="flex-1 min-h-[280px] font-mono text-[12px] leading-5 p-3 rounded-lg border border-black/10 bg-white focus:outline-none focus:border-[#00bceb]"
+                      className="flex-1 min-h-[280px] font-mono text-[12px] leading-5 p-3 rounded-lg border border-black/10 bg-white focus:outline-none focus:border-[#2563eb]"
                       spellCheck={false}
                     />
                   </div>
@@ -791,7 +792,7 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
                       value={sampleOutput}
                       onChange={(e) => setSampleOutput(e.target.value)}
                       placeholder={isZh ? '粘贴设备真实 CLI 输出...' : 'Paste real CLI output from device...'}
-                      className="flex-1 min-h-[140px] font-mono text-[11px] leading-5 p-3 rounded-lg border border-black/10 bg-white focus:outline-none focus:border-[#00bceb]"
+                      className="flex-1 min-h-[140px] font-mono text-[11px] leading-5 p-3 rounded-lg border border-black/10 bg-white focus:outline-none focus:border-[#2563eb]"
                       spellCheck={false}
                     />
                   </div>
@@ -846,7 +847,7 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
                 <button
                   onClick={handleSave}
                   disabled={saving}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#00bceb] text-white text-xs font-semibold hover:bg-[#00a5d0] disabled:opacity-50"
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#2563eb] text-white text-xs font-semibold hover:bg-[#1d4ed8] disabled:opacity-50"
                 >
                   {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
                   {isZh ? '保存模板' : 'Save Template'}

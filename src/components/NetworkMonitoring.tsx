@@ -738,6 +738,13 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({
     setDevicePage(1);
     setSearchQuery(searchInput.trim());
   };
+  const handleDeviceSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      setDevicePage(1);
+      setSearchQuery(searchInput.trim());
+    }
+  };
   const totalDevicePages = Math.max(1, Math.ceil(deviceTotal / devicePageSize));
   const pageStart = deviceTotal === 0 ? 0 : (devicePage - 1) * devicePageSize + 1;
   const pageEnd = Math.min(deviceTotal, devicePage * devicePageSize);
@@ -831,17 +838,10 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({
                 type="search"
                 value={searchInput}
                 onChange={(e) => setSearchInput(e.target.value)}
+                onKeyDown={handleDeviceSearchKeyDown}
                 placeholder={zh ? '输入设备名 / IP...' : 'Search switch / IP...'}
-                className="w-full pl-8 pr-8 py-1.5 bg-white dark:bg-zinc-800 border border-gray-200/80 dark:border-zinc-700 rounded-xl text-xs outline-none focus:border-blue-500 text-gray-800 dark:text-zinc-100 placeholder-gray-400 shadow-2xs"
+                className="w-full pl-8 pr-3 py-1.5 bg-white dark:bg-zinc-800 border border-gray-200/80 dark:border-zinc-700 rounded-xl text-xs outline-none focus:border-blue-500 text-gray-800 dark:text-zinc-100 placeholder-gray-400 shadow-2xs"
               />
-              <button
-                type="submit"
-                aria-label={zh ? '搜索设备' : 'Search devices'}
-                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-gray-400 transition hover:bg-gray-100 dark:hover:bg-zinc-700 hover:text-gray-700 disabled:opacity-50 cursor-pointer"
-                disabled={deviceListLoading}
-              >
-                <Search size={12} />
-              </button>
             </form>
 
             <select

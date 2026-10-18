@@ -593,15 +593,6 @@ const ConfigSearchTab: React.FC<ConfigSearchTabProps> = ({ t, language = 'zh' })
                 <span className="rounded-full bg-cyan-600 px-1.5 py-0.5 text-[9px] text-white">{activeFilterCount}</span>
               )}
             </button>
-            <button
-              type="button"
-              onClick={() => void runSearch(1)}
-              disabled={loading || !query.trim()}
-              className="inline-flex h-11 min-w-[112px] items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 px-5 text-xs font-black text-white shadow-lg shadow-cyan-200 transition hover:-translate-y-0.5 disabled:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {loading ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
-              {zh ? '开始搜索' : 'Search'}
-            </button>
           </div>
 
           <div className="mt-3 flex flex-wrap items-center gap-2">

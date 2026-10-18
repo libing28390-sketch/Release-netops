@@ -204,6 +204,8 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
             return (
               <React.Fragment key={device.id}>
                 <tr
+                  data-selected={selected || expanded || undefined}
+                  aria-selected={selected || expanded}
                   onClick={() => onShowDetails(device)}
                   className={`border-b border-black/[.04] dark:border-white/[.04] transition-colors cursor-pointer
                   hover:bg-black/[.02] dark:hover:bg-white/[.025] group

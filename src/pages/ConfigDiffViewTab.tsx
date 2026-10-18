@@ -758,9 +758,6 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
                         </button>
                       )}
                     </div>
-                    <button onClick={submitDeviceSearch} className="inline-flex items-center gap-1 rounded-lg bg-[#123b50] px-2.5 py-1 text-xs font-bold text-white hover:bg-[#0b2d3e] transition-colors">
-                      <Search size={11} />{zh ? '搜索' : 'Search'}
-                    </button>
                     <div className="h-4 w-px bg-slate-200" />
                     <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-[9px]">
                       {(['normalized', 'raw'] as const).map((mode) => (

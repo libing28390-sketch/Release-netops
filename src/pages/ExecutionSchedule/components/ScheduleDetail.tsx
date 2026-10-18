@@ -44,7 +44,7 @@ const ScheduleDetail: React.FC<ScheduleDetailProps> = ({
                   <CalendarClock size={24} />
                 </div>
                 <div>
-                  <h3 className="text-xl font-bold text-[#164e63]">{schedule.name}</h3>
+                  <h3 className="text-xl font-bold text-blue-900">{schedule.name}</h3>
                   <p className="text-xs text-black/30 font-medium tracking-tight mt-0.5">ID: {schedule.id}</p>
                 </div>
               </div>
@@ -66,18 +66,18 @@ const ScheduleDetail: React.FC<ScheduleDetailProps> = ({
                     <div className="space-y-5">
                       <div>
                         <p className="text-[11px] font-bold text-black/30 mb-1">{zh ? '描述' : 'Description'}</p>
-                        <p className="text-sm text-[#164e63] font-medium leading-relaxed">
+                        <p className="text-sm text-blue-900 font-medium leading-relaxed">
                           {schedule.description || (zh ? '未填写描述' : 'No description provided')}
                         </p>
                       </div>
                       <div className="grid grid-cols-2 gap-4">
                         <div>
                           <p className="text-[11px] font-bold text-black/30 mb-1">{zh ? '创建者' : 'Author'}</p>
-                          <p className="text-sm text-[#164e63] font-black">{schedule.created_by || '—'}</p>
+                          <p className="text-sm text-blue-900 font-black">{schedule.created_by || '—'}</p>
                         </div>
                         <div>
                           <p className="text-[11px] font-bold text-black/30 mb-1">{zh ? '创建时间' : 'Created At'}</p>
-                          <p className="text-sm text-[#164e63] font-black font-mono">{new Date(schedule.created_at).toLocaleDateString()}</p>
+                          <p className="text-sm text-blue-900 font-black font-mono">{new Date(schedule.created_at).toLocaleDateString()}</p>
                         </div>
                       </div>
                     </div>
@@ -88,12 +88,12 @@ const ScheduleDetail: React.FC<ScheduleDetailProps> = ({
                     <div className="rounded-3xl bg-slate-50 border border-black/5 p-6 space-y-5 shadow-inner">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-bold text-black/40">{zh ? '范围类型' : 'Scope Type'}</span>
-                        <span className="text-xs font-black text-[#164e63] uppercase tracking-wide bg-white px-3 py-1 rounded-full shadow-sm">{schedule.device_scope}</span>
+                        <span className="text-xs font-black text-blue-900 uppercase tracking-wide bg-white px-3 py-1 rounded-full shadow-sm">{schedule.device_scope}</span>
                       </div>
                       {schedule.device_filter && (
                         <div className="flex items-center justify-between">
                           <span className="text-xs font-bold text-black/40">{zh ? '过滤条件' : 'Filter'}</span>
-                          <span className="text-xs font-black text-[#164e63] max-w-[150px] truncate">{schedule.device_filter}</span>
+                          <span className="text-xs font-black text-blue-900 max-w-[150px] truncate">{schedule.device_filter}</span>
                         </div>
                       )}
                       <div className="pt-2 border-t border-black/5">
@@ -154,7 +154,7 @@ const ScheduleDetail: React.FC<ScheduleDetailProps> = ({
                           <RotateCcw size={14} className="text-black/20" />
                           <span className="text-[11px] font-bold text-black/30 uppercase tracking-widest">{zh ? '最近一次执行' : 'Last Execution'}</span>
                         </div>
-                        <p className="text-sm font-black text-[#164e63] font-mono">
+                        <p className="text-sm font-black text-blue-900 font-mono">
                           {schedule.last_run_at ? fmtDateTime(schedule.last_run_at, zh) : (zh ? '暂无执行记录' : 'Never executed')}
                         </p>
                       </div>
@@ -180,7 +180,7 @@ const ScheduleDetail: React.FC<ScheduleDetailProps> = ({
               </ActionButton>
               <button
                 onClick={onClose}
-                className="px-8 py-2.5 rounded-2xl bg-[#164e63] text-white text-xs font-black hover:bg-[#155e75] transition-all shadow-lg shadow-cyan-900/20 active:scale-95"
+                className="px-8 py-2.5 rounded-2xl bg-blue-600 text-white text-xs font-black hover:bg-blue-700 transition-all shadow-lg shadow-blue-900/20 active:scale-95"
               >
                 {zh ? '完成并关闭' : 'Done & Close'}
               </button>

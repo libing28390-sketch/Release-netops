@@ -1342,7 +1342,7 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
                   </div>
                   <div className="mt-3 flex items-center justify-between gap-2">
                     <span className="text-[10px] text-black/35">{zh ? '留空一侧可查询单边日期' : 'Leave one side empty for an open range'}</span>
-                    <button type="button" onClick={() => { setRunsPage(1); setDateRangeOpen(false); }} className="rounded-xl bg-[#0e7490] px-3 py-2 text-[11px] font-semibold text-white hover:bg-[#155e75]">{zh ? '查询' : 'Apply'}</button>
+                    <button type="button" onClick={() => { setRunsPage(1); setDateRangeOpen(false); }} className="rounded-xl bg-[#0e7490] px-3 py-2 text-[11px] font-semibold text-white hover:bg-[#155e75]">{zh ? '完成' : 'Done'}</button>
                   </div>
                 </div>
               )}
@@ -1552,7 +1552,6 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
                           className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-black/30"
                         />
                       </div>
-                      <button type="button" onClick={() => applyDetailFilter({ search: detailSearch, page: 1 }, { expand: true })} className="rounded-xl bg-[#0e7490] px-3 py-2 text-xs font-semibold text-white hover:bg-[#155e75]">{zh ? '定位' : 'Find'}</button>
                       <button type="button" onClick={() => applyDetailFilter({ site: 'all', status: 'all', search: '', page: 1 }, { expand: false })} className="rounded-xl border border-black/10 bg-white px-3 py-2 text-xs font-semibold text-black/50 hover:bg-cyan-50">{zh ? '重置' : 'Reset'}</button>
                     </div>
                   </div>

@@ -150,6 +150,9 @@ def preview_scheduled_job_cron(payload: CronPreviewRequest, user=require_role("V
 def list_scheduled_jobs(
     job_type: Optional[str] = None,
     status: Optional[str] = None,
+    action_type: Optional[str] = Query(default=None, min_length=1, max_length=64),
+    keyword: str = Query(default="", max_length=200),
+    enabled: Optional[int] = Query(default=None, ge=0, le=1),
     page: int = 1,
     page_size: int = 20,
     user=require_role("Viewer"),
@@ -172,6 +175,28 @@ def list_scheduled_jobs(
         if status:
             where.append("status = ?")
             params.append(status)
+        if enabled is not None:
+            where.append("enabled = ?")
+            params.append(enabled)
+        keyword_value = (keyword or "").strip().lower()
+        if keyword_value:
+            pattern = f"%{keyword_value}%"
+            where.append("""(
+                LOWER(COALESCE(name, '')) LIKE ? OR
+                LOWER(COALESCE(script_id, '')) LIKE ? OR
+                LOWER(COALESCE(commands, '')) LIKE ? OR
+                LOWER(COALESCE(device_filter, '')) LIKE ?
+            )""")
+            params.extend([pattern, pattern, pattern, pattern])
+        counts_where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+        action_count_rows = conn.execute(
+            f"SELECT action_type, COUNT(*) AS c FROM scheduled_jobs {counts_where_sql} GROUP BY action_type",
+            tuple(params),
+        ).fetchall()
+        action_counts = {str(row["action_type"] or ""): int(row["c"] or 0) for row in action_count_rows}
+        if action_type:
+            where.append("action_type = ?")
+            params.append(action_type)
         where_sql = f"WHERE {' AND '.join(where)}" if where else ""
 
         total = conn.execute(
@@ -191,6 +216,7 @@ def list_scheduled_jobs(
                 "total": total,
                 "page": page,
                 "page_size": page_size,
+                "action_counts": action_counts,
             },
         }
     finally:

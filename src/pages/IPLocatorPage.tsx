@@ -1575,14 +1575,6 @@ ${rep.repair_commands}
               autoFocus
             />
           </div>
-          <button
-            onClick={() => doLocate()}
-            disabled={loading || !ip.trim()}
-            className="px-6 py-3 rounded-xl bg-[#0891b2] text-white text-sm font-semibold hover:bg-[#0e7490] disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-2 shadow-sm"
-          >
-            {loading ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
-            {zh ? '定位' : 'Locate'}
-          </button>
           {result?.mac && result.mac !== 'N/A' && (
             <button
               onClick={() => doLocate(undefined, true)}
@@ -4782,16 +4774,8 @@ ${rep.repair_commands}
                     aria-describedby="nsot-plan-ip-help"
                     className="w-full px-3 py-2 rounded-lg text-sm font-mono bg-white dark:bg-slate-900 border border-black/10 dark:border-white/10 focus:outline-none focus:ring-2 focus:ring-cyan-500/25"
                   />
-                  <button
-                    type="submit"
-                    disabled={nsotPlansLoading || nsotPlanSaving || !nsotPlanSearchIp.trim()}
-                    className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-white bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {nsotPlansLoading ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
-                    {nsotPlansLoading ? (zh ? '正在查找…' : 'Looking up…') : (zh ? '查找设备' : 'Find device')}
-                  </button>
                   <p id="nsot-plan-ip-help" className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
-                    {zh ? '支持 IPv4 和 IPv6；按 Enter 或点击查找。每次只加载一台设备。' : 'Supports IPv4 and IPv6. Press Enter or click Find; only one device is loaded.'}
+                    {zh ? '支持 IPv4 和 IPv6；按 Enter 查找。每次只加载一台设备。' : 'Supports IPv4 and IPv6. Press Enter to find one device.'}
                   </p>
                 </form>
 

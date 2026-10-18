@@ -8,6 +8,7 @@ import { useConfigContext } from '../contexts/ConfigContext';
 import { useManagementContext } from '../contexts/ManagementContext';
 import { useTopologyContext } from '../contexts/TopologyContext';
 import { useAccessFavorites } from '../hooks/useAccessFavorites';
+import { getPlatformLabel as getAssetPlatformLabel, PLATFORM_LABELS } from '../types';
 import { sectionHeaderRowClass } from './shared';
 
 const MonitoringCenter = lazy(() => import('./MonitoringCenter.tsx'));
@@ -91,6 +92,8 @@ const AppMainContent: React.FC = () => {
   const assetsTotal = useInventoryStore(state => state.assetsTotal);
   const assetsOnlineTotal = useInventoryStore(state => state.assetsOnlineTotal);
   const assetsTotalError = useInventoryStore(state => state.assetsTotalError);
+  const assetsPlatformCounts = useInventoryStore(state => state.assetsPlatformCounts);
+  const assetsPlatformError = useInventoryStore(state => state.assetsPlatformError);
   const fetchAssetsTotal = useInventoryStore(state => state.fetchAssetsTotal);
   const resetAssetsTotal = useInventoryStore(state => state.resetAssetsTotal);
   const { monitorOverview, setMonitorSelectedDevice } = useMonitoringStore();
@@ -114,6 +117,62 @@ const AppMainContent: React.FC = () => {
     devices,
   } = coreApp;
   const shouldLoadAssetSummary = activeTab === 'overview' || activeTab === 'access';
+
+  const managedAssetPlatformData = useMemo(() => {
+    if (!assetsPlatformCounts || assetsTotal === null || assetsTotal <= 0) return [];
+
+    const platformColors: Record<string, string> = {
+      cisco_ios: '#0ea5e9',
+      cisco_xe: '#0284c7',
+      cisco_nxos: '#0369a1',
+      cisco_iosxr: '#7c3aed',
+      huawei_vrp: '#f59e0b',
+      huawei_vrpv8: '#d97706',
+      huawei_yunshan: '#fbbf24',
+      h3c_comware: '#f97316',
+      h3c_comware_v3: '#ea580c',
+      arista_eos: '#6366f1',
+      juniper_junos: '#10b981',
+      ruijie_rgos: '#ec4899',
+      ruijie_os: '#db2777',
+      zte_zxros: '#14b8a6',
+      raisecom_ros: '#84cc16',
+      maipu: '#a855f7',
+    };
+    const fallbackColors = ['#64748b', '#8b5cf6', '#06b6d4', '#84cc16', '#f43f5e', '#a3a3a3'];
+    const usedColors = new Set(Object.values(platformColors));
+
+    return Object.entries(assetsPlatformCounts)
+      .filter(([, count]) => count > 0)
+      .sort(([platformA, countA], [platformB, countB]) => countB - countA || platformA.localeCompare(platformB))
+      .map(([platform, count]) => {
+        const fallbackColorHash = Array.from(platform).reduce(
+          (hash, character) => (hash * 31 + character.charCodeAt(0)) >>> 0,
+          7,
+        );
+        let color = platformColors[platform];
+        if (!color) {
+          let fallbackColorIndex = fallbackColorHash % fallbackColors.length;
+          for (let attempt = 0; attempt < fallbackColors.length; attempt += 1) {
+            const candidate = fallbackColors[fallbackColorIndex];
+            if (candidate && !usedColors.has(candidate)) {
+              color = candidate;
+              usedColors.add(candidate);
+              break;
+            }
+            fallbackColorIndex = (fallbackColorIndex + 1) % fallbackColors.length;
+          }
+        }
+        return {
+          platform,
+          name: getAssetPlatformLabel(platform),
+          count,
+          percentage: Math.round((count / assetsTotal) * 1000) / 10,
+          color: color || '#64748b',
+          canOpenDeviceInventory: Object.prototype.hasOwnProperty.call(PLATFORM_LABELS, platform),
+        };
+      });
+  }, [assetsPlatformCounts, assetsTotal]);
 
   React.useEffect(() => {
     if (!isAuthenticated || !shouldLoadAssetSummary) {
@@ -485,7 +544,7 @@ const AppMainContent: React.FC = () => {
   const mainClassName = `relative flex-1 min-w-0 flex flex-col min-h-0 ${isStandaloneScrollTab || isAiTab ? 'overflow-hidden' : 'overflow-y-auto'}`;
 
   return (
-    <main className={mainClassName}>
+    <main className={mainClassName} data-automation-blue={activeTab === 'automation' ? 'true' : undefined}>
       {activeTab === 'dashboard' && (
         <Suspense fallback={lazyPanelFallback}>
           <HomePage
@@ -511,7 +570,7 @@ const AppMainContent: React.FC = () => {
             trendDays={trendDays}
             setTrendDays={setTrendDays}
             complianceTrend={complianceTrend}
-            platformData={platformData}
+            managedAssetPlatformData={managedAssetPlatformData}
             dashBannerCollapsed={dashBannerCollapsed}
             setDashBannerCollapsed={setDashBannerCollapsed}
             dashLastRefresh={dashLastRefresh}
@@ -532,6 +591,7 @@ const AppMainContent: React.FC = () => {
             assetsTotal={assetsTotal}
             assetsOnlineTotal={assetsOnlineTotal}
             assetsTotalError={assetsTotalError}
+            assetsPlatformError={assetsPlatformError}
           />
         </Suspense>
       )}

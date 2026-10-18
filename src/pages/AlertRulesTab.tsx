@@ -1764,15 +1764,6 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                             placeholder={language === 'zh' ? '设备名称、管理 IP、序列号或资产标签，按回车查询' : 'Name, management IP, serial number, or asset tag; press Enter'}
                             aria-label={language === 'zh' ? '搜索 CMDB 设备' : 'Search CMDB devices'}
                           />
-                          <button
-                            type="button"
-                            onClick={() => void searchScopeDevices()}
-                            disabled={!scopeDeviceSearchQuery.trim() || scopeDeviceSearchStatus === 'loading'}
-                            className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-cyan-700 px-3 py-2 text-xs font-semibold text-white transition hover:bg-cyan-800 disabled:cursor-not-allowed disabled:opacity-45"
-                          >
-                            {scopeDeviceSearchStatus === 'loading' ? <RefreshCw size={13} className="animate-spin" /> : <Search size={13} />}
-                            {language === 'zh' ? '查找' : 'Search'}
-                          </button>
                         </div>
                       </label>
                       <p className="text-[10px] leading-4 text-slate-500">

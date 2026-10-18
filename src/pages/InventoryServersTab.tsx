@@ -1,14 +1,15 @@
 import { DataTable } from '../components/DataTable';
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  Search, Plus, Upload, Trash2, Pencil,
-  Server, ChevronDown, ChevronUp, ChevronRight, SlidersHorizontal,
+  Plus, Upload, Trash2, Pencil,
+  Server, ChevronDown, ChevronUp, ChevronRight,
   CheckCircle2, XCircle, AlertTriangle, Wrench, X, Activity, RefreshCw, Settings2,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
 import { ActionIconButton } from '../components/ui/ActionIconButton';
+import { ColumnSettingsButton, ListSearchInput, ListToolbar } from '../components/ui/TableListControls';
 import { authHeaders } from '../api/http';
 import { fetchAllPaginatedItems } from '../utils/pagination';
 import { buildInventoryServersExportData, filterInventoryServers } from './inventoryServersExport';
@@ -147,68 +148,6 @@ const SortHeader: React.FC<{
   );
 };
 
-const ServerColumnToggle: React.FC<{
-  columns: ServerColumnVisibility;
-  onChange: (key: ServerColumnKey, visible: boolean) => void;
-  onReset: () => void;
-  language: string;
-}> = ({ columns, onChange, onReset, language }) => {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const zh = language === 'zh';
-
-  useEffect(() => {
-    if (!open) return;
-    const handler = (event: MouseEvent) => {
-      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [open]);
-
-  const visibleCount = SERVER_COLUMN_DEFS.filter(({ key }) => columns[key]).length;
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        type="button"
-        aria-expanded={open}
-        aria-controls="server-column-options"
-        onClick={() => setOpen(value => !value)}
-        title={zh ? '列显示设置' : 'Column visibility'}
-        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] border border-black/6 dark:border-white/8 rounded-lg text-black/55 dark:text-white/55 hover:bg-black/[.02] dark:hover:bg-white/[.03]"
-      >
-        <SlidersHorizontal size={12} />
-        {zh ? '列设置' : 'Columns'}
-      </button>
-      {open && (
-        <div className="absolute right-0 top-full mt-1.5 z-50 w-56 max-h-[70vh] overflow-y-auto rounded-xl border border-black/8 dark:border-white/10 bg-white dark:bg-[#0d1526] shadow-xl py-2">
-          <div id="server-column-options" className="px-3 pb-1.5 mb-1 border-b border-black/6 dark:border-white/8 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/35">
-            {zh ? '自定义展示列' : 'Visible columns'}
-          </div>
-          <div className="px-2 pb-1">
-            {SERVER_COLUMN_DEFS.map(column => (
-              <label key={column.key} className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-black/70 dark:text-white/70 hover:bg-black/[.03] dark:hover:bg-white/[.04] cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={columns[column.key]}
-                  disabled={columns[column.key] && visibleCount <= 1}
-                  onChange={event => onChange(column.key, event.target.checked)}
-                  className="rounded border-black/20 dark:border-white/20 text-[#00bceb] focus:ring-[#00bceb]"
-                />
-                <span>{zh ? column.zh : column.en}</span>
-              </label>
-            ))}
-          </div>
-          <button type="button" onClick={onReset} className="w-full border-t border-black/6 dark:border-white/8 px-3 pt-2 text-left text-xs font-semibold text-[#0096bd] dark:text-[#5dd8f0] hover:bg-[#00bceb]/5">
-            {zh ? '恢复默认列' : 'Restore default columns'}
-          </button>
-        </div>
-      )}
-    </div>
-  );
-};
-
 /* ═══════════════════════════════════════════════════════
    QuickTag
    ═══════════════════════════════════════════════════════ */
@@ -340,6 +279,7 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
   const [verifyingIds, setVerifyingIds] = useState<Set<string>>(new Set());
   const [verifyResults, setVerifyResults] = useState<Record<string, any>>({});
   const visibleServerColumns = SERVER_COLUMN_DEFS.filter(column => columns[column.key]);
+  const visibleServerKeys = visibleServerColumns.map(({ key }) => key);
 
   useEffect(() => {
     try {
@@ -511,19 +451,16 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
       <div className="flex-1 overflow-auto px-6 py-5 space-y-4">
 
       {/* ════ Toolbar: Search + Filters ════ */}
-      <div className="flex flex-col gap-3 p-3 rounded-xl border border-black/5 dark:border-white/8 bg-[var(--card-bg)] 2xl:flex-row 2xl:items-center">
-        <div className="relative w-full 2xl:flex-1 2xl:min-w-[220px] 2xl:max-w-[320px]">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/25 pointer-events-none" size={14} />
-          <input
-            type="search"
+      <ListToolbar className="flex-col gap-3 p-3 rounded-xl border border-black/5 dark:border-white/8 bg-[var(--card-bg)] 2xl:flex-row 2xl:items-center">
+        <ListSearchInput
+            language={language}
+            className="w-full 2xl:min-w-[220px] 2xl:max-w-[320px]"
+            aria-label={zh ? '搜索 IP、主机名或序列号' : 'Search IP, hostname, or serial number'}
             placeholder={zh ? '搜索 IP / 主机名 / SN …' : 'Search IP / hostname / SN …'}
             value={search}
             onChange={e => { setSearch(e.target.value); setPage(1); }}
-            className="w-full pl-8 pr-3 py-1.5 text-xs bg-transparent border border-black/6 dark:border-white/8
-              rounded-lg outline-none focus:border-[#00bceb]/40 dark:focus:border-[#00bceb]/40
-              text-black/80 dark:text-white/80 placeholder:text-black/25 dark:placeholder:text-white/20"
+            onClear={() => { setSearch(''); setPage(1); }}
           />
-        </div>
         <div className="flex flex-wrap items-center gap-2 2xl:flex-nowrap">
           <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setPage(1); }}
             title={zh ? '按状态筛选' : 'Filter by status'}
@@ -570,11 +507,22 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
               tone="bg-emerald-500/10 border-emerald-500/25 text-emerald-600 dark:text-emerald-400 dark:border-emerald-500/20"
               onClick={() => setQuickFilter(quickFilter === 'healthy' ? 'all' : 'healthy')} />
           </div>
-          <ServerColumnToggle
-            columns={columns}
-            onChange={(key, visible) => setColumns(current => ({ ...current, [key]: visible }))}
-            onReset={() => setColumns({ ...DEFAULT_SERVER_COLUMNS })}
+          <ColumnSettingsButton
+            columns={[
+              ...SERVER_COLUMN_DEFS.map(column => ({
+                key: column.key,
+                label: zh ? column.zh : column.en,
+                required: visibleServerKeys.length === 1 && visibleServerKeys[0] === column.key,
+              })),
+              { key: 'actions', label: zh ? '操作' : 'Actions', required: true, isAction: true },
+            ]}
+            visibleKeys={[...visibleServerKeys, 'actions']}
+            defaultVisibleKeys={[...SERVER_COLUMN_DEFS.filter(({ key }) => DEFAULT_SERVER_COLUMNS[key]).map(({ key }) => key), 'actions']}
+            onApply={visibleKeys => setColumns(Object.fromEntries(
+              SERVER_COLUMN_DEFS.map(({ key }) => [key, visibleKeys.includes(key)]),
+            ) as ServerColumnVisibility)}
             language={language}
+            label={zh ? '列设置' : 'Columns'}
           />
           <button
             type="button"
@@ -587,7 +535,7 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
             <RefreshCw size={13} className={loading ? 'animate-spin' : undefined} />
           </button>
         </div>
-      </div>
+      </ListToolbar>
 
       {/* ════ Batch selection status ════ */}
       {selectedIds.size > 0 && (
@@ -635,6 +583,7 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
             <tbody>
               {displayRows.map(server => {
                 const selected = selectedIds.has(server.id);
+                const activeRow = selected || detailServer?.id === server.id;
                 const st = statusMeta(server.status);
                 const verifyResult = verifyResults[server.id];
                 const verificationSucceeded = Boolean(verifyResult?.ping && verifyResult?.ssh);
@@ -642,6 +591,8 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
                 return (
                   <tr
                     key={server.id}
+                    data-selected={activeRow || undefined}
+                    aria-selected={activeRow}
                     onClick={() => setDetailServer(server)}
                     className={`border-b border-black/[.04] dark:border-white/[.04] transition-colors cursor-pointer
                       hover:bg-black/[.02] dark:hover:bg-white/[.025] group

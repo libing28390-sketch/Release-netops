@@ -82,7 +82,7 @@ export interface ActionIconGroupProps extends React.HTMLAttributes<HTMLDivElemen
   label?: string;
 }
 
-/** Right-aligned, consistently spaced action group for table rows. */
+/** Right-aligned, consistently spaced action group for table rows. Row actions remain visible without hover. */
 export const ActionIconGroup: React.FC<ActionIconGroupProps> = ({
   children,
   className,
@@ -93,7 +93,7 @@ export const ActionIconGroup: React.FC<ActionIconGroupProps> = ({
     {...props}
     role={label ? 'group' : undefined}
     aria-label={label}
-    className={cn('nx-action-group', className)}
+    className={cn('nx-action-group', className, '!opacity-100')}
   >
     {children}
   </div>

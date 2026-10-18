@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect, useCallback } from 'react';
+import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   AlertCircle,
@@ -33,6 +33,8 @@ import { TableExportMenu } from '../../components/ui/TableExportMenu';
 import OutputActions from '../../components/OutputActions';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
 import { TableActionCell, TableActionHeader } from '../../components/ui/TableActionColumn';
+import { ColumnSettingsButton, ListSearchInput, ListToolbar } from '../../components/ui/TableListControls';
+import { loadVisibleColumnKeys, saveVisibleColumnKeys, type ColumnPreferenceDefinition } from '../../components/ui/columnPreferences';
 import type { AutomationHistoryTabProps, ExecutionDevice, PlaybookExecution } from './types';
 import { useEscapeClose } from '../../hooks/useEscapeClose';
 import { fetchAllPaginatedItems } from '../../utils/pagination';
@@ -45,6 +47,23 @@ import {
 import { buildAutomationHistoryExportData, getAutomationHistoryStatusLabel, getAutomationHistoryTypeLabel } from './automationHistoryExport';
 
 type ParsedOutputData = { fields: string[]; records: Record<string, string>[]; count: number };
+
+type AutomationHistoryColumnKey =
+  | 'scenario' | 'type' | 'triggeredAt' | 'status' | 'totalDevices'
+  | 'successfulDevices' | 'failedDevices' | 'operator' | 'actions';
+
+const AUTOMATION_HISTORY_COLUMN_STORAGE_KEY = 'netops:automation-history:columns:v1';
+const AUTOMATION_HISTORY_COLUMN_DEFS: readonly ColumnPreferenceDefinition<AutomationHistoryColumnKey>[] = [
+  { key: 'scenario', defaultVisible: true },
+  { key: 'type', defaultVisible: true },
+  { key: 'triggeredAt', defaultVisible: true },
+  { key: 'status', defaultVisible: true },
+  { key: 'totalDevices', defaultVisible: true },
+  { key: 'successfulDevices', defaultVisible: true },
+  { key: 'failedDevices', defaultVisible: true },
+  { key: 'operator', defaultVisible: true },
+  { key: 'actions', defaultVisible: true, required: true, isAction: true },
+];
 
 const ParsedOutputTable: React.FC<{
   data: ParsedOutputData;
@@ -141,6 +160,21 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
   onRerun,
 }) => {
   const isZh = language === 'zh';
+  const [visibleHistoryColumnKeys, setVisibleHistoryColumnKeys] = useState<AutomationHistoryColumnKey[]>(() =>
+    loadVisibleColumnKeys(AUTOMATION_HISTORY_COLUMN_STORAGE_KEY, AUTOMATION_HISTORY_COLUMN_DEFS),
+  );
+  const visibleHistoryColumnSet = useMemo(() => new Set(visibleHistoryColumnKeys), [visibleHistoryColumnKeys]);
+  const historyColumnOptions = useMemo(() => [
+    { key: 'scenario', label: isZh ? '任务名称' : 'Scenario Name' },
+    { key: 'type', label: isZh ? '执行方式' : 'Execution Type' },
+    { key: 'triggeredAt', label: isZh ? '触发时间' : 'Triggered At' },
+    { key: 'status', label: isZh ? '状态' : 'Status' },
+    { key: 'totalDevices', label: isZh ? '设备数' : 'Total Devices' },
+    { key: 'successfulDevices', label: isZh ? '成功设备数' : 'Successful Devices' },
+    { key: 'failedDevices', label: isZh ? '失败设备数' : 'Failed Devices' },
+    { key: 'operator', label: isZh ? '执行人' : 'Operator' },
+    { key: 'actions', label: isZh ? '操作' : 'Actions', required: true, isAction: true },
+  ], [isZh]);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   useEscapeClose(isDetailModalOpen, () => setIsDetailModalOpen(false));
   const isLive = !!(activeExecutionId && executionStatus === 'running');
@@ -173,6 +207,10 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
       setIsDetailModalOpen(true);
     }
   }, [isLive]);
+
+  useEffect(() => {
+    saveVisibleColumnKeys(AUTOMATION_HISTORY_COLUMN_STORAGE_KEY, AUTOMATION_HISTORY_COLUMN_DEFS, visibleHistoryColumnKeys);
+  }, [visibleHistoryColumnKeys]);
 
   const authHeaders = (() => {
     const token = localStorage.getItem('netops_token');
@@ -789,47 +827,34 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
       <div className="flex-1 flex flex-col px-6 py-5 overflow-hidden">
       <div className="flex-1 bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden flex flex-col min-h-[500px]">
         {/* Toolbar */}
-        <div className="px-6 py-4 border-b border-black/5 bg-black/[0.01] flex items-center justify-between flex-wrap gap-4 flex-shrink-0">
+        <ListToolbar className="shrink-0 justify-between gap-4 border-b border-black/5 bg-black/[0.01] px-6 py-4">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center">
               <History size={16} className="text-indigo-600" />
             </div>
-            <h3 className="text-sm font-bold text-[#164e63]">
+            <h3 className="text-sm font-bold text-blue-700">
               {playbookHistoryTotal > 0 ? `${playbookHistoryTotal} ${isZh ? '条记录' : 'Records'}` : `${playbookExecutions.length} ${isZh ? '条记录' : 'Records'}`}
             </h3>
           </div>
-          
-          <div className="flex items-center gap-3 flex-wrap">
-            {/* Search Input */}
-            <div className="relative w-64">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-black/25" />
-              <input
-                type="text"
-                value={playbookHistoryScenarioSearch}
-                onChange={(event) => {
-                  onScenarioSearchChange(event.target.value);
-                  onHistoryPageChange(1);
-                  void onRefreshHistory(1, playbookHistoryStatusFilter, event.target.value);
-                }}
-                placeholder={isZh ? '搜索任务名称...' : 'Search scenario...'}
-                className="w-full text-xs pl-9 pr-8 py-2 rounded-xl bg-black/[0.03] border border-transparent focus:outline-none focus:border-black/10 focus:bg-white transition-all shadow-inner"
-              />
-              {playbookHistoryScenarioSearch && (
-                <button
-                  onClick={() => {
-                    onScenarioSearchChange('');
-                    onHistoryPageChange(1);
-                    void onRefreshHistory(1, playbookHistoryStatusFilter, '');
-                  }}
-                  aria-label={isZh ? '清空搜索' : 'Clear search'}
-                  className="search-clear-button absolute right-3 top-1/2 -translate-y-1/2"
-                >
-                  <X size={12} />
-                </button>
-              )}
-            </div>
 
-            {/* Filter Buttons */}
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+            <ListSearchInput
+              language={language}
+              value={playbookHistoryScenarioSearch}
+              onChange={(event) => {
+                onScenarioSearchChange(event.target.value);
+                onHistoryPageChange(1);
+                void onRefreshHistory(1, playbookHistoryStatusFilter, event.target.value);
+              }}
+              onClear={() => {
+                onScenarioSearchChange('');
+                onHistoryPageChange(1);
+                void onRefreshHistory(1, playbookHistoryStatusFilter, '');
+              }}
+              placeholder={isZh ? '搜索任务名称...' : 'Search scenario...'}
+              className="w-56 lg:w-64"
+            />
+
             <div className="flex items-center gap-1.5 p-1 rounded-xl bg-black/[0.03] border border-black/5">
               {[
                 { key: 'all', label: isZh ? '全部' : 'All', cls: 'bg-white shadow-sm text-black' },
@@ -856,8 +881,15 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                 );
               })}
             </div>
+            <ColumnSettingsButton
+              columns={historyColumnOptions}
+              visibleKeys={visibleHistoryColumnKeys}
+              defaultVisibleKeys={AUTOMATION_HISTORY_COLUMN_DEFS.filter((column) => column.defaultVisible || column.required).map((column) => column.key)}
+              onApply={(keys) => setVisibleHistoryColumnKeys(keys as AutomationHistoryColumnKey[])}
+              language={language}
+            />
           </div>
-        </div>
+        </ListToolbar>
 
         {/* Table Content */}
         <div className="flex-1 overflow-auto">
@@ -870,14 +902,14 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
             <DataTable className="min-w-[1000px] text-left" exportConfig={{ filename: 'automation-execution-history', language: isZh ? 'zh' : 'en', disabled: playbookExecutions.length === 0, exportData: exportPlaybookHistory }}>
               <thead className="sticky top-0 bg-slate-50 border-b border-black/5 z-10">
                 <tr className="bg-black/[0.01]">
-                  <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{isZh ? '任务名称' : 'Scenario Name'}</th>
-                  <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{isZh ? '执行方式' : 'Execution Type'}</th>
-                  <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{isZh ? '触发时间' : 'Triggered At'}</th>
-                  <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{isZh ? '状态' : 'Status'}</th>
-                  <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{isZh ? '设备数' : 'Total Devices'}</th>
-                  <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{isZh ? '成功设备数' : 'Successful Devices'}</th>
-                  <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{isZh ? '失败设备数' : 'Failed Devices'}</th>
-                  <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{isZh ? '执行人' : 'Operator'}</th>
+                  <th hidden={!visibleHistoryColumnSet.has('scenario')} className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{isZh ? '任务名称' : 'Scenario Name'}</th>
+                  <th hidden={!visibleHistoryColumnSet.has('type')} className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{isZh ? '执行方式' : 'Execution Type'}</th>
+                  <th hidden={!visibleHistoryColumnSet.has('triggeredAt')} className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{isZh ? '触发时间' : 'Triggered At'}</th>
+                  <th hidden={!visibleHistoryColumnSet.has('status')} className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{isZh ? '状态' : 'Status'}</th>
+                  <th hidden={!visibleHistoryColumnSet.has('totalDevices')} className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{isZh ? '设备数' : 'Total Devices'}</th>
+                  <th hidden={!visibleHistoryColumnSet.has('successfulDevices')} className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{isZh ? '成功设备数' : 'Successful Devices'}</th>
+                  <th hidden={!visibleHistoryColumnSet.has('failedDevices')} className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{isZh ? '失败设备数' : 'Failed Devices'}</th>
+                  <th hidden={!visibleHistoryColumnSet.has('operator')} className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{isZh ? '执行人' : 'Operator'}</th>
                   <TableActionHeader className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{isZh ? '操作' : 'Actions'}</TableActionHeader>
                 </tr>
               </thead>
@@ -891,27 +923,27 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
 
                   return (
                     <tr key={execution.id} className="group hover:bg-indigo-50/20 transition-colors">
-                      <td className="px-6 py-4">
-                        <span className="text-sm font-bold text-[#164e63] group-hover:text-cyan-700 transition-colors">
+                      <td hidden={!visibleHistoryColumnSet.has('scenario')} className="px-6 py-4">
+                        <span className="text-sm font-bold text-blue-700 group-hover:text-blue-700 transition-colors">
                           {execution.scenario_name || execution.task_name || (isZh ? '快捷命令' : 'Direct Command')}
                         </span>
                       </td>
-                      <td className="px-6 py-4">
+                      <td hidden={!visibleHistoryColumnSet.has('type')} className="px-6 py-4">
                         <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-cyan-50 text-cyan-600">{getAutomationHistoryTypeLabel(execution, isZh ? 'zh' : 'en')}</span>
                       </td>
-                      <td className="px-6 py-4 text-xs font-mono text-black/60 whitespace-nowrap">
+                      <td hidden={!visibleHistoryColumnSet.has('triggeredAt')} className="px-6 py-4 text-xs font-mono text-black/60 whitespace-nowrap">
                         {new Date(execution.created_at).toLocaleString(isZh ? 'zh-CN' : 'en-US')}
                       </td>
-                      <td className="px-6 py-4">
+                      <td hidden={!visibleHistoryColumnSet.has('status')} className="px-6 py-4">
                         <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold ${st.cls}`}>
                           <div className={`w-1.5 h-1.5 rounded-full ${st.dot}`} />
                           {st.label}
                         </span>
                       </td>
-                      <td className="px-6 py-4 text-xs font-bold text-black/60">{deviceCount}</td>
-                      <td className="px-6 py-4 text-xs font-bold text-emerald-600">{execution.success_count || 0}</td>
-                      <td className="px-6 py-4 text-xs font-bold text-rose-600">{execution.failed_count || 0}</td>
-                      <td className="px-6 py-4 text-xs text-black/60 font-medium">
+                      <td hidden={!visibleHistoryColumnSet.has('totalDevices')} className="px-6 py-4 text-xs font-bold text-black/60">{deviceCount}</td>
+                      <td hidden={!visibleHistoryColumnSet.has('successfulDevices')} className="px-6 py-4 text-xs font-bold text-emerald-600">{execution.success_count || 0}</td>
+                      <td hidden={!visibleHistoryColumnSet.has('failedDevices')} className="px-6 py-4 text-xs font-bold text-rose-600">{execution.failed_count || 0}</td>
+                      <td hidden={!visibleHistoryColumnSet.has('operator')} className="px-6 py-4 text-xs text-black/60 font-medium">
                         {execution.author || 'admin'}
                       </td>
                       <TableActionCell className="px-6 py-4 whitespace-nowrap">
@@ -989,7 +1021,7 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                     <History size={18} />
                   </div>
                   <div>
-                    <h3 className="text-base font-bold text-[#164e63]">
+                    <h3 className="text-base font-bold text-blue-700">
                       {isLive ? (isZh ? '正在执行详情' : 'Live Execution Log') : (isZh ? '执行历史详情' : 'Execution Log Details')}
                     </h3>
                     <p className="text-[10px] text-black/30 font-mono mt-0.5">ID: {activeExecutionId || selectedExecutionDetail?.id}</p>
@@ -1173,7 +1205,7 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                                       key={filterItem.key}
                                       onClick={() => void onExecDevicesStatusFilterChange(filterItem.key)}
                                       className={`text-[9px] font-bold px-2.5 py-1 rounded-md transition-all ${
-                                        isActive ? 'bg-white shadow-sm text-[#164e63]' : 'text-black/40 hover:text-black/60'
+                                        isActive ? 'bg-white shadow-sm text-blue-700' : 'text-black/40 hover:text-black/60'
                                       }`}
                                     >
                                       {filterItem.label}
@@ -1206,7 +1238,7 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                                     className="flex items-center justify-between p-3 rounded-xl bg-white border border-black/5 hover:border-black/10 hover:shadow-sm cursor-pointer transition-all"
                                   >
                                     <div className="min-w-0">
-                                      <p className="text-xs font-bold text-[#164e63] truncate">{dev.hostname}</p>
+                                      <p className="text-xs font-bold text-blue-700 truncate">{dev.hostname}</p>
                                       <p className="text-[10px] text-black/30 font-mono mt-0.5">{dev.ip_address || '0.0.0.0'}</p>
                                     </div>
                                     <div className="flex items-center gap-2 shrink-0">
@@ -1244,7 +1276,7 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                               <div className="p-4 border-b border-black/5 bg-black/[0.01] flex-shrink-0">
                                 <div className="flex items-center justify-between mb-3">
                                   <div>
-                                    <p className="text-xs font-bold text-[#164e63]">{selectedDeviceDetail.hostname}</p>
+                                    <p className="text-xs font-bold text-blue-700">{selectedDeviceDetail.hostname}</p>
                                     <p className="text-[10px] font-mono text-black/40 mt-0.5">{selectedDeviceDetail.ip_address}</p>
                                   </div>
                                   <div className="flex items-center gap-2">
@@ -1361,7 +1393,7 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                                                   cmdBlocks.forEach((b, bi) => next[`${phase}::${b.command || bi}`] = false);
                                                   setCollapsedBlocks(next);
                                                 }}
-                                                className="text-[10px] font-bold text-[#0891b2] hover:text-[#0e7490] transition-colors cursor-pointer"
+                                                className="text-[10px] font-bold text-blue-600 hover:text-blue-700 transition-colors cursor-pointer"
                                               >
                                                 {isZh ? '全部展开' : 'Expand All'}
                                               </button>

@@ -171,7 +171,7 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = ({
                   <Activity size={18} />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-[#164e63]">
+                  <h3 className="text-base font-bold text-blue-900">
                     {selectedLog.name}
                   </h3>
                   <p className="text-[10px] text-black/30 font-mono mt-0.5">{zh ? '编号：' : 'ID: '}{selectedLog.id}</p>
@@ -351,12 +351,12 @@ const InspectionView: React.FC<InspectionViewProps> = ({
                 }}
                 className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all ${
                   isSelected 
-                    ? 'bg-[#164e63] text-white border-transparent shadow-md' 
+                    ? 'bg-blue-700 text-white border-transparent shadow-md'
                     : 'bg-white border-black/5 hover:border-black/10 hover:shadow-sm'
                 }`}
               >
                 <div className="min-w-0">
-                  <p className={`text-xs font-bold truncate ${isSelected ? 'text-white' : 'text-[#164e63]'}`}>{res.hostname}</p>
+                  <p className={`text-xs font-bold truncate ${isSelected ? 'text-white' : 'text-blue-900'}`}>{res.hostname}</p>
                   <div className="flex items-center gap-2 mt-0.5">
                     <p className={`text-[9px] font-mono ${isSelected ? 'text-white/60' : 'text-black/30'}`}>{res.ip_address}</p>
                   </div>
@@ -519,7 +519,7 @@ const AnalysisTab: React.FC<{
               <XAxis dataKey="ts" stroke="#64748b" fontSize={10} tickFormatter={(v) => String(v).slice(5, 16)} />
               <YAxis stroke="#64748b" fontSize={10} />
               <RTooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', fontSize: 11 }} />
-              <Line type="monotone" dataKey="value" stroke="#00bceb" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="value" stroke="#2563eb" strokeWidth={2} dot={false} />
             </LineChart>
           </ResponsiveContainer>
         ) : (
@@ -918,7 +918,7 @@ const ConfigBackupRunView: React.FC<{
               <tbody className="divide-y divide-black/[0.04]">
                 {detail.devices.map((device, index) => (
                   <tr key={device.device_id || device.ip_address || `${device.hostname || 'device'}-${index}`} className="align-top hover:bg-slate-50/60">
-                    <td className="max-w-[220px] px-3 py-3 text-xs font-semibold text-[#164e63]">{device.hostname || device.device_id || '--'}</td>
+                    <td className="max-w-[220px] px-3 py-3 text-xs font-semibold text-blue-900">{device.hostname || device.device_id || '--'}</td>
                     <td className="whitespace-nowrap px-3 py-3 font-mono text-[11px] text-black/55">{device.ip_address || '--'}</td>
                     <td className="whitespace-nowrap px-3 py-3"><span className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold ${statusTone(device.status)}`}>{statusLabel(device.status)}</span></td>
                     <td className="max-w-[240px] break-words px-3 py-3 text-[11px] text-black/65">{needsReason(device.status) ? (device.reason || '--') : '—'}</td>
@@ -976,11 +976,11 @@ const PlaybookView: React.FC<{
               key={dev.device_id}
               onClick={() => onSelectPbDevice(dev.device_id)}
               className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all ${
-                isSelected ? 'bg-[#164e63] text-white border-transparent shadow-md' : 'bg-white border-black/5 hover:border-black/10 hover:shadow-sm'
+                isSelected ? 'bg-blue-700 text-white border-transparent shadow-md' : 'bg-white border-black/5 hover:border-black/10 hover:shadow-sm'
               }`}
             >
               <div className="min-w-0">
-                <p className={`text-xs font-bold truncate ${isSelected ? 'text-white' : 'text-[#164e63]'}`}>{dev.hostname}</p>
+                <p className={`text-xs font-bold truncate ${isSelected ? 'text-white' : 'text-blue-900'}`}>{dev.hostname}</p>
                 <p className={`text-[10px] font-mono mt-0.5 ${isSelected ? 'text-white/60' : 'text-black/30'}`}>{dev.ip_address}</p>
               </div>
               <span className={`text-[9px] font-bold text-white px-2 py-0.5 rounded-md ${dst.cls}`}>{dst.label}</span>

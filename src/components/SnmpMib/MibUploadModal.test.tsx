@@ -134,8 +134,7 @@ describe('MibUploadModal node search and template mapping', () => {
     await waitFor(() => expect(screen.getByText('zxAnEnvMonCapabilities')).toBeTruthy());
 
     const searchInput = screen.getByPlaceholderText('搜索节点名称 / OID…');
-    await user.type(searchInput, 'zxAnEnvMon');
-    await user.click(screen.getByRole('button', { name: '搜索' }));
+    await user.type(searchInput, 'zxAnEnvMon{Enter}');
 
     await waitFor(() => expect(
       mockedApiRequest.mock.calls.some(([url]) => {

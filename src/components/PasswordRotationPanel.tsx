@@ -1142,6 +1142,12 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
                 <input type="search"
                   value={deviceSearchDraft}
                   onChange={event => setDeviceSearchDraft(event.target.value)}
+                  onKeyDown={event => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      event.currentTarget.form?.requestSubmit();
+                    }
+                  }}
                   placeholder={zh ? '搜索设备名称或管理 IP' : 'Search device name or management IP'}
                   className="h-10 w-full rounded-xl border border-slate-200 bg-white pl-9 pr-3 text-sm text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100"
                 />
@@ -1156,9 +1162,6 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
                 {devicePlatformOptions.map(platform => <option key={platform} value={platform}>{platform}</option>)}
               </select>
               <div className="flex items-center gap-2">
-                <button type="submit" className="h-10 rounded-xl bg-cyan-600 px-4 text-sm font-semibold text-white hover:bg-cyan-700">
-                  {zh ? '搜索' : 'Search'}
-                </button>
                 <button
                   type="button"
                   onClick={() => { setDeviceSearchDraft(''); setDeviceSearch(''); setDevicePlatform(''); setDevicePage(1); }}

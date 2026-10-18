@@ -2,18 +2,20 @@ import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { useInventoryStore } from '../store/inventoryStore';
 import { useInventoryTableActions } from '../hooks/useInventoryTableActions';
 import {
-  Search, Activity,
+  Activity,
   AlertTriangle, CheckCircle2, XCircle, Server, Router,
-  Shield, Trash2, SlidersHorizontal, Tag, RefreshCw, X, WifiOff, Settings2,
+  Shield, Trash2, Tag, RefreshCw, X, WifiOff, Settings2,
 } from 'lucide-react';
 import type { Device, DeviceConnectionCheckSummary, TagDefinition } from '../types';
 import Pagination from '../components/Pagination';
 import DeviceTable, { DEFAULT_COLUMNS, type ColumnVisibility, type ColumnKey } from '../components/DeviceList/DeviceTable';
 import {
+  COLUMN_KEYS,
   loadColumnVisibility,
   saveColumnVisibility,
   setColumnVisibility,
 } from '../components/DeviceList/deviceColumns';
+import { ColumnSettingsButton, ListSearchInput, ListToolbar } from '../components/ui/TableListControls';
 import { apiRequest } from '../api/http';
 import { buildNetworkDeviceExportData, fetchAllNetworkDevicePages, filterNetworkDevicesForExport } from '../components/DeviceList/deviceExport';
 import type { TableExportData } from '../components/ui/TableExportMenu';
@@ -43,77 +45,6 @@ const COLUMN_LABELS: Record<ColumnKey, { zh: string; en: string }> = {
   checkStatus: { zh: '连通性检查', en: 'Connectivity check' },
   checkTime: { zh: '检查时间', en: 'Check time' },
   actions: { zh: '操作', en: 'Actions' },
-};
-
-const ColumnToggle: React.FC<{
-  columns: ColumnVisibility;
-  onChange: (key: ColumnKey, val: boolean) => void;
-  onReset: () => void;
-  language: string;
-}> = ({ columns, onChange, onReset, language }) => {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const zh = language === 'zh';
-
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [open]);
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        type="button"
-        aria-expanded={open}
-        aria-controls="network-device-column-options"
-        onClick={() => setOpen(!open)}
-        title={zh ? '列显示设置' : 'Column visibility'}
-        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-gray-200/80 dark:border-zinc-700/80
-          bg-white dark:bg-zinc-800 text-xs font-semibold text-gray-700 dark:text-zinc-300
-          hover:bg-gray-50 dark:hover:bg-zinc-700/60 transition-all cursor-pointer shadow-2xs"
-      >
-        <SlidersHorizontal size={13} className="text-gray-500" />
-        <span>{zh ? '列设置' : 'Columns'}</span>
-      </button>
-      {open && (
-        <div className="absolute right-0 top-full mt-1.5 z-50 w-56 max-h-[70vh] overflow-y-auto rounded-2xl border border-gray-100 dark:border-zinc-800
-          bg-white dark:bg-zinc-900 shadow-xl shadow-black/10 dark:shadow-black/40 py-2">
-          <div id="network-device-column-options" className="px-3 pb-1.5 mb-1 border-b border-gray-100 dark:border-zinc-800 text-[10px] font-bold uppercase tracking-wider text-gray-400">
-            {zh ? '自定义展示列' : 'Visible Columns'}
-          </div>
-          <div className="border-b border-gray-100 dark:border-zinc-800 pb-1">
-          {(Object.keys(COLUMN_LABELS) as ColumnKey[]).map(key => {
-            const visibleDataColumns = Object.entries(columns).filter(([column, visible]) => column !== 'actions' && visible).length;
-            const required = key === 'actions';
-            return (
-            <label key={key} className="flex items-center gap-2.5 px-3 py-1.5 text-xs text-gray-700 dark:text-zinc-300
-              hover:bg-gray-50 dark:hover:bg-zinc-800 cursor-pointer transition-colors">
-              <input
-                type="checkbox"
-                checked={columns[key]}
-                disabled={required || (columns[key] && visibleDataColumns <= 1)}
-                aria-label={zh ? COLUMN_LABELS[key].zh : COLUMN_LABELS[key].en}
-                onChange={e => onChange(key, e.target.checked)}
-                className="h-3.5 w-3.5 rounded border-gray-300 accent-blue-600 cursor-pointer"
-              />
-              <span className="font-medium">{zh ? COLUMN_LABELS[key].zh : COLUMN_LABELS[key].en}</span>
-            </label>
-            );
-          })}
-          </div>
-          <button
-            type="button"
-            onClick={onReset}
-            className="w-full px-3 py-2 mt-1 text-left text-xs font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/30 cursor-pointer"
-          >
-            {zh ? '恢复默认列' : 'Restore default columns'}
-          </button>
-        </div>
-      )}
-    </div>
-  );
 };
 
 /* ════════════════════════════════════════════════════════
@@ -165,6 +96,8 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
 
   const [quickFilter, setQuickFilter] = useState<'all' | 'offline' | 'warning' | 'staging_maintenance' | 'healthy'>('all');
   const [columns, setColumns] = useState<ColumnVisibility>(() => loadColumnVisibility());
+  const visibleDeviceDataKeys = COLUMN_KEYS.filter(key => key !== 'actions' && columns[key]);
+  const lastVisibleDeviceDataKey = visibleDeviceDataKeys.length === 1 ? visibleDeviceDataKeys[0] : undefined;
   const [allTags, setAllTags] = useState<TagDefinition[]>([]);
   const [tagFilterIds, setTagFilterIds] = useState<string[]>([]);
   const [batchTagOpen, setBatchTagOpen] = useState(false);
@@ -219,11 +152,19 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
     return () => document.removeEventListener('mousedown', handler);
   }, [batchTagOpen]);
 
-  const handleColumnToggle = (key: ColumnKey, val: boolean) => {
-    setColumns(prev => setColumnVisibility(prev, key, val));
+  const handleColumnApply = (visibleKeys: string[]) => {
+    const visibleSet = new Set(visibleKeys);
+    setColumns(current => {
+      const withVisibleColumns = COLUMN_KEYS.reduce(
+        (next, key) => visibleSet.has(key) ? setColumnVisibility(next, key, true) : next,
+        current,
+      );
+      return COLUMN_KEYS.reduce(
+        (next, key) => visibleSet.has(key) ? next : setColumnVisibility(next, key, false),
+        withVisibleColumns,
+      );
+    });
   };
-
-  const handleColumnReset = () => setColumns({ ...DEFAULT_COLUMNS });
 
   // Status & Health Counts
   const totalDevices = inventoryTotal || 0;
@@ -473,30 +414,17 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
 
         {/* ════ Toolbar: Bento 搜索与高级过滤 ════ */}
         <div className="rounded-2xl border border-gray-100 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/90 shadow-2xs p-3.5">
-          <div className="flex flex-wrap 2xl:flex-nowrap items-center gap-2">
+          <ListToolbar className="2xl:flex-nowrap">
             {/* Search Input */}
-            <div className="relative flex-1 min-w-[220px] 2xl:max-w-[320px]">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={14} />
-              <input
-                type="text"
+            <ListSearchInput
+                language={language}
+                className="min-w-[220px] 2xl:max-w-[320px]"
+                aria-label={zh ? '搜索 IP、主机名、序列号或站点' : 'Search IP, hostname, serial number, or site'}
                 placeholder={zh ? '搜索 IP / 主机名 / 序列号 / 站点…' : 'Search IP / hostname / SN / site…'}
                 value={inventorySearch}
                 onChange={e => setInventorySearch(e.target.value)}
-                className="w-full pl-9 pr-8 py-1.5 text-xs bg-gray-50 dark:bg-zinc-800 border border-gray-200/80 dark:border-zinc-700
-                  rounded-xl outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-zinc-900 transition-all
-                  text-gray-800 dark:text-zinc-200 placeholder:text-gray-400"
+                onClear={() => setInventorySearch('')}
               />
-              {inventorySearch && (
-                <button
-                  type="button"
-                  onClick={() => setInventorySearch('')}
-                  aria-label={zh ? '清空搜索' : 'Clear search'}
-                  className="search-clear-button absolute right-2.5 top-1/2 -translate-y-1/2"
-                >
-                  <X size={12} />
-                </button>
-              )}
-            </div>
 
             {/* Platform Select */}
             <select
@@ -590,7 +518,19 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
               language={language}
             />
 
-            <ColumnToggle columns={columns} onChange={handleColumnToggle} onReset={handleColumnReset} language={language} />
+            <ColumnSettingsButton
+              columns={(Object.keys(COLUMN_LABELS) as ColumnKey[]).map(key => ({
+                key,
+                label: COLUMN_LABELS[key][zh ? 'zh' : 'en'],
+                required: key === 'actions' || (key === lastVisibleDeviceDataKey && DEFAULT_COLUMNS[key]),
+                isAction: key === 'actions',
+              }))}
+              visibleKeys={COLUMN_KEYS.filter(key => columns[key])}
+              defaultVisibleKeys={COLUMN_KEYS.filter(key => DEFAULT_COLUMNS[key])}
+              onApply={handleColumnApply}
+              language={language}
+              label={zh ? '列设置' : 'Columns'}
+            />
             <button
               type="button"
               onClick={onRefresh}
@@ -618,7 +558,7 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
                 ? `本页显示 ${displayRows.length} 台 / 列表共 ${inventoryTotal} 台`
                 : `Showing ${displayRows.length} on this page / ${inventoryTotal} devices`}
             </span>
-          </div>
+          </ListToolbar>
         </div>
 
         {/* ════ Batch Action Floating Capsule ════ */}

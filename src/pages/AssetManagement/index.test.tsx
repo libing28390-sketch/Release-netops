@@ -141,6 +141,7 @@ describe('AssetManagementTab request states', () => {
     expect(screen.queryByRole('checkbox', { name: 'SSH algorithm' })).toBeNull();
 
     fireEvent.click(screen.getByRole('checkbox', { name: 'Rack' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
 
     expect(await screen.findByRole('columnheader', { name: 'Rack' })).toBeTruthy();
   });
@@ -212,7 +213,7 @@ describe('AssetManagementTab request states', () => {
     renderAssetPage();
     await screen.findByText('No asset records');
     await waitFor(() => expect(useInventoryStore.getState().assetsTotal).toBe(0));
-    fireEvent.click(screen.getByRole('button', { name: 'Add Asset' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'New' })[0]);
     fireEvent.change(screen.getByRole('textbox', { name: 'Hostname' }), { target: { value: 'new-device' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
@@ -234,7 +235,7 @@ describe('AssetManagementTab request states', () => {
 
     renderAssetPage();
     await screen.findByText('No asset records');
-    fireEvent.click(screen.getByRole('button', { name: 'Add Asset' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'New' })[0]);
     fireEvent.change(screen.getByRole('textbox', { name: 'Hostname' }), { target: { value: 'h3c-device' } });
     fireEvent.click(screen.getByRole('button', { name: 'Set H3C network fields' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
@@ -436,7 +437,7 @@ describe('AssetManagementTab request states', () => {
 
     renderAssetPage();
     await screen.findByText('No asset records');
-    fireEvent.click(screen.getByRole('button', { name: 'Add Asset' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'New' })[0]);
     const hostname = screen.getByRole('textbox', { name: 'Hostname' }) as HTMLInputElement;
     fireEvent.change(hostname, { target: { value: 'edge-01' } });
 
@@ -473,7 +474,7 @@ describe('AssetManagementTab request states', () => {
 
     renderAssetPage();
     await screen.findByText('No asset records');
-    fireEvent.click(screen.getByRole('button', { name: 'Add Asset' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'New' })[0]);
     fireEvent.change(screen.getByRole('textbox', { name: 'Hostname' }), { target: { value: 'validation-test-asset' } });
     fireEvent.click(screen.getByRole('button', { name: 'Set synthetic secret' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
@@ -503,7 +504,7 @@ describe('AssetManagementTab request states', () => {
 
     renderAssetPage();
     await screen.findByText('No asset records');
-    fireEvent.click(screen.getByRole('button', { name: 'Add Asset' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'New' })[0]);
     fireEvent.change(screen.getByRole('textbox', { name: 'Hostname' }), { target: { value: 'validation-detail-asset' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 

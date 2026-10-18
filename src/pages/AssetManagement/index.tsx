@@ -18,6 +18,7 @@ import Pagination from '../../components/Pagination';
 import { DataTable, DataTableFrame } from '../../components/DataTable';
 import PageHero from '../../components/PageHero';
 import TagFilterDropdown from '../../components/TagFilterDropdown';
+import { ColumnSettingsButton, ListSearchInput, ListToolbar } from '../../components/ui/TableListControls';
 import { ApiError, apiRequest, authHeaders } from '../../api/http';
 import { useSystem } from '../../hooks/useSystem';
 import { formatTerminalAgentError, getLocalTerminalConfig, TERMINAL_APP_LABELS } from '../../utils/localTerminal';
@@ -251,68 +252,6 @@ const loadAssetColumnVisibility = (): AssetColumnVisibility => {
   } catch {
     return { ...DEFAULT_ASSET_COLUMNS };
   }
-};
-
-const AssetColumnToggle: React.FC<{
-  columns: AssetColumnVisibility;
-  onChange: (key: AssetColumnKey, visible: boolean) => void;
-  onReset: () => void;
-  language: string;
-}> = ({ columns, onChange, onReset, language }) => {
-  const [open, setOpen] = useState(false);
-  const ref = React.useRef<HTMLDivElement>(null);
-  const zh = language === 'zh';
-
-  useEffect(() => {
-    if (!open) return;
-    const handler = (event: MouseEvent) => {
-      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [open]);
-
-  const visibleCount = ASSET_COLUMN_DEFS.filter(({ key }) => columns[key]).length;
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        type="button"
-        aria-expanded={open}
-        aria-controls="asset-column-options"
-        onClick={() => setOpen(value => !value)}
-        title={zh ? '列显示设置' : 'Column visibility'}
-        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-gray-200/80 dark:border-zinc-700/80 bg-white dark:bg-zinc-800 text-xs font-semibold text-gray-700 dark:text-zinc-300 hover:bg-gray-50 dark:hover:bg-zinc-700/60 transition-all cursor-pointer"
-      >
-        <SlidersHorizontal size={13} className="text-gray-500" />
-        <span>{zh ? '列设置' : 'Columns'}</span>
-      </button>
-      {open && (
-        <div className="absolute right-0 top-full mt-1.5 z-50 w-60 max-h-[70vh] overflow-y-auto rounded-2xl border border-gray-100 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-xl py-2">
-          <div id="asset-column-options" className="px-3 pb-1.5 mb-1 border-b border-gray-100 dark:border-zinc-800 text-[10px] font-bold uppercase tracking-wider text-gray-400">
-            {zh ? '自定义展示列' : 'Visible columns'}
-          </div>
-          <div className="px-2 pb-1">
-            {ASSET_COLUMN_DEFS.map(column => (
-              <label key={column.key} className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-gray-700 dark:text-zinc-300 hover:bg-gray-50 dark:hover:bg-white/5 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={columns[column.key]}
-                  disabled={columns[column.key] && visibleCount <= 1}
-                  onChange={event => onChange(column.key, event.target.checked)}
-                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                />
-                <span>{zh ? column.zh : column.en}</span>
-              </label>
-            ))}
-          </div>
-          <button type="button" onClick={onReset} className="w-full border-t border-gray-100 dark:border-zinc-800 px-3 pt-2 text-left text-xs font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/30">
-            {zh ? '恢复默认列' : 'Restore default columns'}
-          </button>
-        </div>
-      )}
-    </div>
-  );
 };
 
 const NETWORK_TEMPLATE_ROLES = new Set<string>(NETWORK_TOPOLOGY_ROLE_OPTIONS.map(option => option.value));
@@ -2298,21 +2237,29 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
           )}
           {/* Search, filters, and actions */}
           <div className="border-b border-gray-100 dark:border-zinc-800 px-4 py-2.5">
-            <div className="flex flex-wrap 2xl:flex-nowrap items-center gap-2">
-              <div className="relative flex-1 min-w-[220px] max-w-[320px]">
-                <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                <input type="text"
+            <ListToolbar
+              className="2xl:flex-nowrap"
+              leadingAction={(
+                <button
+                  type="button"
+                  onClick={openAdd}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 shadow-2xs transition-all cursor-pointer whitespace-nowrap"
+                  title={zh ? '新建' : 'New'}
+                >
+                  <Plus size={13} />
+                  <span>{zh ? '新建' : 'New'}</span>
+                </button>
+              )}
+            >
+              <ListSearchInput
+                  language={language}
+                  className="min-w-[220px] max-w-[320px]"
+                  aria-label={zh ? '搜索 IP、主机名、资产编号或序列号' : 'Search IP, hostname, asset tag, or serial'}
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                   placeholder={zh ? '搜索 IP / 主机名 / 资产编号 / 序列号...' : 'Search IP / hostname / tag / serial...'}
-                  className="w-full pl-8 pr-7 py-1.5 rounded-xl bg-gray-50 dark:bg-zinc-800 border border-gray-200/80 dark:border-zinc-700 text-xs text-gray-800 dark:text-zinc-100 placeholder:text-gray-400 focus:outline-none focus:border-blue-500 focus:bg-white transition-all"
+                  onClear={() => setSearch('')}
                 />
-                {search && (
-                  <button onClick={() => setSearch('')} title={zh ? '清空搜索' : 'Clear search'} aria-label={zh ? '清空搜索' : 'Clear search'} className="search-clear-button absolute right-2 top-1/2 -translate-y-1/2">
-                    <X size={13} />
-                  </button>
-                )}
-              </div>
 
               {([
                 { val: typeFilter,   set: setTypeFilter,   label: zh ? '类型' : 'Type',   opts: TYPES.map(t => ({ v: t.value, l: t.label[zh ? 'zh' : 'en'] })) },
@@ -2375,11 +2322,13 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                 </button>
               )}
 
-              <AssetColumnToggle
-                columns={assetColumns}
-                onChange={(key, visible) => setAssetColumns(current => ({ ...current, [key]: visible }))}
-                onReset={() => setAssetColumns({ ...DEFAULT_ASSET_COLUMNS })}
+              <ColumnSettingsButton
+                columns={[...ASSET_COLUMN_DEFS.map(column => ({ key: column.key, label: zh ? column.zh : column.en })), { key: 'actions', label: zh ? '操作' : 'Actions', required: true, isAction: true }]}
+                visibleKeys={[...ASSET_COLUMN_DEFS.filter(column => assetColumns[column.key]).map(column => column.key), 'actions']}
+                defaultVisibleKeys={[...ASSET_COLUMN_DEFS.filter(column => DEFAULT_ASSET_COLUMNS[column.key]).map(column => column.key), 'actions']}
+                onApply={(keys) => setAssetColumns(Object.fromEntries(ASSET_COLUMN_DEFS.map(({ key }) => [key, keys.includes(key)])) as AssetColumnVisibility)}
                 language={language}
+                label={zh ? '列设置' : 'Columns'}
               />
               <AnimatePresence>
                 {selectedIds.size > 0 && (
@@ -2417,16 +2366,6 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
               </AnimatePresence>
 
               <div className="flex shrink-0 items-center gap-2">
-                <button
-                  type="button"
-                  onClick={openAdd}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 shadow-2xs transition-all cursor-pointer whitespace-nowrap"
-                  title={zh ? '新增资产' : 'Add Asset'}
-                >
-                  <Plus size={13} />
-                  <span>{zh ? '新增' : 'Add'}</span>
-                </button>
-
                 <div className="flex items-center gap-1 border-l border-gray-200 dark:border-zinc-700 pl-2">
                   <button
                     type="button"
@@ -2458,10 +2397,10 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                 </div>
               </div>
 
-              <span className="ml-auto shrink-0 text-xs font-mono text-gray-400 tabular-nums whitespace-nowrap">
+              <span className="shrink-0 text-xs font-mono text-gray-400 tabular-nums whitespace-nowrap">
                 {zh ? `共 ${total} 条资产` : `${total} assets`}
               </span>
-            </div>
+            </ListToolbar>
 
             <AnimatePresence>
               {showAdvancedFilter && (
@@ -2550,7 +2489,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                             </button>
                           ) : (
                             <>
-                              <button onClick={openAdd} className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 shadow-2xs cursor-pointer"><Plus size={13} />{zh ? '添加资产' : 'Add Asset'}</button>
+                              <button onClick={openAdd} className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 shadow-2xs cursor-pointer"><Plus size={13} />{zh ? '新建' : 'New'}</button>
                               <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-gray-200 dark:border-zinc-700 text-gray-600 dark:text-zinc-300 text-xs font-semibold hover:bg-gray-50 cursor-pointer"><Upload size={12} />{zh ? '导入 Excel' : 'Import Excel'}</button>
                             </>
                           )}
@@ -2564,6 +2503,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                     return (
                       <tr
                         key={a.id}
+                        data-selected={sel || isDrawerTarget || undefined}
+                        aria-selected={sel || isDrawerTarget}
                         onClick={() => setDrawerAsset(a)}
                         className={`border-b border-gray-100 dark:border-zinc-800 cursor-pointer transition-colors ${sel ? 'bg-blue-50/50 dark:bg-blue-950/20' : isDrawerTarget ? 'bg-gray-50 dark:bg-zinc-800/40' : 'hover:bg-gray-50/70 dark:hover:bg-zinc-800/30'}`}
                       >

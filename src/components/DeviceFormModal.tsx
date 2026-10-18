@@ -9,6 +9,7 @@ import { inferPlatformVendor, platformVendorLabel } from '../utils/platformVendo
 import { normalizeImportedPlatform, SSH_ALGORITHM_PROFILE_OPTIONS, SSH_ALGORITHM_PROFILE_VALUES } from '../pages/AssetManagement/constants';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import { PasswordInputField } from './ui/PasswordInputField';
+import { FormActionBar, FormSection } from './ui/FormLayout';
 
 interface DeviceFormModalProps {
   language: string;
@@ -207,13 +208,14 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
   const submitLabel = language === 'zh' ? '保存修改' : 'Save Changes';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 p-3">
       <motion.div
-        initial={{ scale: 0.95, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.12 }}
+        className="nx-form-dialog-surface flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border"
       >
-        <div className="flex items-center justify-between border-b border-black/5 bg-black/[0.02] p-6">
+        <div className="nx-dialog-header flex items-center justify-between border-b p-4 sm:p-6">
           <div className="flex items-center gap-3">
             <div className="rounded-lg bg-blue-100 p-2 text-blue-600">
               <Pencil size={20} />
@@ -229,7 +231,12 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+          <FormSection
+            title={language === 'zh' ? '设备信息与凭据' : 'Device details and credentials'}
+            className="nx-dialog-card overflow-hidden rounded-xl !border-[var(--ui-border)] !bg-[var(--ui-surface)]"
+            contentClassName="!p-4 sm:!p-5"
+          >
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
             <div>
               <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">Hostname</label>
@@ -460,7 +467,7 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
               </button>
               {/* Tag dropdown */}
               {tagDropdownOpen && (
-                <div className="mt-1 rounded-xl border border-black/8 bg-white shadow-lg shadow-black/5 max-h-52 overflow-hidden flex flex-col">
+                <div className="nx-dialog-card mt-1 flex max-h-52 flex-col overflow-hidden rounded-lg border">
                   <div className="relative px-2 pt-2 pb-1 border-b border-black/5">
                     <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-black/25 pointer-events-none" size={12} />
                     <input
@@ -546,7 +553,7 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
                 className="w-full rounded-xl border border-black/5 bg-black/[0.02] px-4 py-2.5 text-sm outline-none transition-colors focus:border-black/20 focus:bg-white"
               />
             </div>
-            <div className="col-span-1 rounded-xl border border-cyan-100 bg-cyan-50/50 p-3 sm:col-span-2">
+            <div className="nx-dialog-info col-span-1 rounded-lg border p-3 sm:col-span-2">
               <p className="text-[10px] font-bold uppercase tracking-wider text-cyan-800">
                 {language === 'zh' ? 'SNMP OID 统一由指标模板管理' : 'SNMP OIDs are managed by metric templates'}
               </p>
@@ -607,7 +614,7 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
           {showAdvancedCred && (
             <div className="col-span-1 sm:col-span-2 space-y-6 pt-2">
               {/* PAM Toggle */}
-              <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-black/5">
+              <div className="nx-dialog-card flex items-center justify-between rounded-lg border p-3">
                 <div>
                    <p className="text-xs font-bold text-slate-700">{language === 'zh' ? '多角色认证 (PAM)' : 'Multi-Role Auth (PAM)'}</p>
                    <p className="text-[10px] text-slate-400">{language === 'zh' ? '同时管理普通账户和管理员账户凭据' : 'Manage both normal and admin account credentials'}</p>
@@ -628,8 +635,8 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
               {pamMode ? (
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   {/* Normal Account */}
-                  <div className="p-3 rounded-xl border border-black/5 bg-blue-50/20">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-blue-600 mb-3">{language === 'zh' ? '普通账户 (Normal)' : 'Normal Account'}</p>
+                  <div className="nx-dialog-card rounded-lg border p-3">
+                    <p className="text-xs font-semibold text-slate-700 mb-3">{language === 'zh' ? '普通账户 (Normal)' : 'Normal Account'}</p>
                     <div className="space-y-3">
                       <div>
                         <label className="mb-1 block text-[10px] font-medium text-black/40">Username</label>
@@ -659,8 +666,8 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
                   </div>
 
                   {/* Admin Account */}
-                  <div className="p-3 rounded-xl border border-black/5 bg-orange-50/20">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-orange-600 mb-3">{language === 'zh' ? '特权账户 (Admin)' : 'Admin Account'}</p>
+                  <div className="nx-dialog-card rounded-lg border p-3">
+                    <p className="text-xs font-semibold text-slate-700 mb-3">{language === 'zh' ? '特权账户 (Admin)' : 'Admin Account'}</p>
                     <div className="space-y-3">
                       <div>
                         <label className="mb-1 block text-[10px] font-medium text-black/40">Username</label>
@@ -758,23 +765,24 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
               </div>
             </div>
           )}
+          </FormSection>
         </div>
 
-        <div className="flex justify-end gap-3 border-t border-black/5 bg-black/[0.02] p-6">
+        <FormActionBar className="nx-dialog-footer shrink-0 !p-4 sm:!p-6">
           <button
             onClick={onClose}
-            className="px-6 py-2 text-sm font-medium text-black/60 hover:text-black"
+            className="nx-dialog-action-secondary rounded-lg border px-4 py-2 text-sm font-medium"
           >
             {language === 'zh' ? '取消' : 'Cancel'}
           </button>
           <button
             onClick={onSubmit}
             disabled={sshAlgorithmProfile === 'legacy_break_glass' && !breakGlassAcknowledged}
-            className="rounded-xl bg-black px-8 py-2 text-sm font-medium text-white shadow-lg shadow-black/10 transition-all hover:bg-black/80 disabled:cursor-not-allowed disabled:opacity-40"
+            className="nx-dialog-action-primary rounded-lg border px-6 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
           >
             {submitLabel}
           </button>
-        </div>
+        </FormActionBar>
       </motion.div>
     </div>
   );

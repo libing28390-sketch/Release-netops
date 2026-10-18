@@ -829,14 +829,6 @@ const MibUploadModal: React.FC<MibUploadModalProps> = ({
                         ))}
                       </select>
                     )}
-                    <button
-                      type="submit"
-                      disabled={nodeSearchLoading || !selectedMibId}
-                      className="inline-flex items-center gap-1 rounded-lg bg-[#00a9ce] px-2.5 py-1.5 text-[10px] font-medium text-white hover:bg-[#008fb1] disabled:opacity-50"
-                    >
-                      <Search size={11} />
-                      {nodeSearchLoading ? (zh ? '搜索中…' : 'Searching…') : (zh ? '搜索' : 'Search')}
-                    </button>
                     {nodeSearch.trim() && (
                       <button
                         type="button"

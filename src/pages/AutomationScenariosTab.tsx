@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import PageHero from '../components/PageHero';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
+import { ListToolbar } from '../components/ui/TableListControls';
 
 /* ─── Types ─── */
 interface PlatformMeta { icon?: string; vendor?: string }
@@ -67,7 +68,7 @@ const HighlightText: React.FC<{ text: string; keyword: string }> = ({ text, keyw
     <>
       {parts.map((part, i) =>
         part.toLowerCase() === keyword.toLowerCase()
-          ? <mark key={i} className="bg-[#00bceb]/20 text-inherit rounded-sm px-0.5">{part}</mark>
+          ? <mark key={i} className="bg-[#2563eb]/20 text-inherit rounded-sm px-0.5">{part}</mark>
           : part
       )}
     </>
@@ -84,7 +85,7 @@ const FilterChip: React.FC<{
       inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium transition-all
       border cursor-pointer select-none whitespace-nowrap
       ${active
-        ? 'bg-[#00bceb]/10 border-[#00bceb]/30 text-[#00899e] dark:text-[#5dd8f0] dark:bg-[#00bceb]/15 dark:border-[#00bceb]/25'
+        ? 'bg-[#2563eb]/10 border-[#2563eb]/30 text-[#1d4ed8] dark:text-[#93c5fd] dark:bg-[#2563eb]/15 dark:border-[#2563eb]/25'
         : 'bg-transparent border-black/8 text-black/50 hover:border-black/15 hover:text-black/70 dark:border-white/10 dark:text-white/40 dark:hover:border-white/20 dark:hover:text-white/60'
       }
     `}
@@ -183,8 +184,22 @@ const AutomationScenariosTab: React.FC<AutomationScenariosTabProps> = ({
         icon={FolderOpen}
         title={t('scenarioLibrary')}
         subtitle={t('scenarioLibraryDesc')}
-        actions={
-          <>
+      />
+
+      <div className="flex-1 overflow-auto px-6 py-5 scenario-library-scroll">
+        <ListToolbar
+          className="mb-4"
+          leadingAction={(
+            <button
+              type="button"
+              onClick={onOpenManualScenarioDraft}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-blue-700"
+            >
+              <Plus size={13} />
+              {language === 'zh' ? '新建' : 'New'}
+            </button>
+          )}
+        >
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/30 pointer-events-none" size={13} />
               <input type="search"
@@ -192,33 +207,23 @@ const AutomationScenariosTab: React.FC<AutomationScenariosTabProps> = ({
                 onChange={e => onScenarioSearchChange(e.target.value)}
                 placeholder={language === 'zh' ? '搜索场景关键词…' : 'Search scenarios…'}
                 className="pl-8 pr-3 py-1.5 text-xs border border-black/10 dark:border-white/10 rounded-lg
-                  bg-transparent outline-none focus:border-[#00bceb]/40 dark:focus:border-[#00bceb]/40
+                  bg-transparent outline-none focus:border-[#2563eb]/40 dark:focus:border-[#2563eb]/40
                   text-black/80 dark:text-white/80 placeholder:text-black/30 dark:placeholder:text-white/25 w-56"
               />
             </div>
             <button
+              type="button"
               onClick={() => setShowFilters(!showFilters)}
               className={`p-1.5 rounded-lg border transition-all ${
                 showFilters || hasActiveFilter
-                  ? 'border-[#00bceb]/30 text-[#00bceb] bg-[#00bceb]/5'
+                  ? 'border-[#2563eb]/30 text-[#2563eb] bg-[#2563eb]/5'
                   : 'border-black/10 dark:border-white/10 text-black/40 dark:text-white/40 hover:text-black/60 dark:hover:text-white/60'
               }`}
               title={language === 'zh' ? '筛选' : 'Filters'}
             >
               <SlidersHorizontal size={14} />
             </button>
-            <button
-              onClick={onOpenManualScenarioDraft}
-              className="inline-flex items-center gap-1 px-3 py-1.5 bg-[#00bceb] text-white rounded-lg text-xs
-                font-medium hover:bg-[#0096bd] transition-all shadow-sm shadow-[#00bceb]/20"
-            >
-              <Plus size={12} /> {language === 'zh' ? '自定义场景' : 'Custom'}
-            </button>
-          </>
-        }
-      />
-
-      <div className="flex-1 overflow-auto px-6 py-5 scenario-library-scroll">
+        </ListToolbar>
 
       {/* ── Filter Bar ── */}
       {showFilters && (
@@ -274,7 +279,7 @@ const AutomationScenariosTab: React.FC<AutomationScenariosTabProps> = ({
           {hasActiveFilter && (
             <button
               onClick={() => { setRiskFilter('all'); setVendorFilter('all'); setCategoryFilter('all'); }}
-              className="text-[10px] text-[#00bceb] hover:underline inline-flex items-center gap-0.5"
+              className="text-[10px] text-[#2563eb] hover:underline inline-flex items-center gap-0.5"
             >
               <X size={10} /> {language === 'zh' ? '清除筛选' : 'Clear filters'}
             </button>
@@ -286,7 +291,7 @@ const AutomationScenariosTab: React.FC<AutomationScenariosTabProps> = ({
       <div className="flex items-center justify-between mb-3">
         <span className="text-[11px] text-black/35 dark:text-white/30">
           {processed.length} {language === 'zh' ? '个场景' : 'scenarios'}
-          {hasActiveFilter && <span className="ml-1 text-[#00bceb]">({language === 'zh' ? '已筛选' : 'filtered'})</span>}
+          {hasActiveFilter && <span className="ml-1 text-[#2563eb]">({language === 'zh' ? '已筛选' : 'filtered'})</span>}
         </span>
       </div>
 
@@ -333,7 +338,7 @@ const AutomationScenariosTab: React.FC<AutomationScenariosTabProps> = ({
                       {scenario.category}
                     </span>
                     {scenario.is_custom && (
-                      <span className="text-[9px] font-semibold uppercase px-1.5 py-0.5 rounded bg-[#00bceb]/10 text-[#008bb0] dark:text-[#5dd8f0]">
+                      <span className="text-[9px] font-semibold uppercase px-1.5 py-0.5 rounded bg-[#2563eb]/10 text-[#1d4ed8] dark:text-[#93c5fd]">
                         Custom
                       </span>
                     )}
@@ -435,7 +440,7 @@ const AutomationScenariosTab: React.FC<AutomationScenariosTabProps> = ({
           {hasActiveFilter && (
             <button
               onClick={() => { setRiskFilter('all'); setVendorFilter('all'); setCategoryFilter('all'); }}
-              className="mt-2 text-xs text-[#00bceb] hover:underline"
+              className="mt-2 text-xs text-[#2563eb] hover:underline"
             >
               {language === 'zh' ? '清除筛选条件' : 'Clear all filters'}
             </button>

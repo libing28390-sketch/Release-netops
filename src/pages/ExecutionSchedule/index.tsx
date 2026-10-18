@@ -1,9 +1,11 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CalendarClock, Plus, X, RotateCcw } from 'lucide-react';
+import { CalendarClock, Plus, RotateCcw } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import PageHero from '../../components/PageHero';
 import { ActionButton } from '../../components/ui/ActionIconButton';
+import { ColumnSettingsButton, ListSearchInput, ListToolbar } from '../../components/ui/TableListControls';
+import { loadVisibleColumnKeys, saveVisibleColumnKeys, type ColumnPreferenceDefinition } from '../../components/ui/columnPreferences';
 import { useSystem } from '../../hooks/useSystem';
 import type { ExecutionScheduleTabProps, ScheduledJob, FormState, ValidatedDevice, EligibleApprover, UnifiedExecutionLog, InspSubTab, InspDetailTab, PlaybookExecutionApproval, ConfigBackupRunDetail, ConfigBackupRunDevice, BackupDetailStatus } from './types';
 import { INITIAL_FORM } from './constants';
@@ -19,6 +21,31 @@ import ExecutionDetail from './components/ExecutionDetail';
 import CandidateModal from './components/CandidateModal';
 
 type ExecutionScheduleOperation = 'CREATE' | 'ENABLE' | 'DISABLE' | 'DELETE';
+type ExecutionScheduleColumnKey = 'name' | 'target' | 'execution' | 'status' | 'scheduledAt' | 'creator' | 'actions';
+
+const EXECUTION_SCHEDULE_COLUMN_STORAGE_KEY = 'netops:execution-schedule:columns:v1';
+const EXECUTION_SCHEDULE_COLUMN_DEFS: readonly ColumnPreferenceDefinition<ExecutionScheduleColumnKey>[] = [
+  { key: 'name', defaultVisible: true },
+  { key: 'target', defaultVisible: true },
+  { key: 'execution', defaultVisible: true },
+  { key: 'status', defaultVisible: true },
+  { key: 'scheduledAt', defaultVisible: true },
+  { key: 'creator', defaultVisible: true },
+  { key: 'actions', defaultVisible: true, required: true, isAction: true },
+];
+
+const getExecutionScheduleColumnLabel = (key: ExecutionScheduleColumnKey, zh: boolean): string => {
+  switch (key) {
+    case 'name': return zh ? '计划名称' : 'Plan name';
+    case 'target': return zh ? '对象' : 'Target';
+    case 'execution': return zh ? '执行方式' : 'Execution';
+    case 'status': return zh ? '状态' : 'Status';
+    case 'scheduledAt': return zh ? '计划执行时间' : 'Scheduled at';
+    case 'creator': return zh ? '创建人' : 'Creator';
+    case 'actions': return zh ? '操作' : 'Actions';
+  }
+  return zh ? '操作' : 'Actions';
+};
 
 interface ExecutionScheduleOperationManifest {
   operation: ExecutionScheduleOperation;
@@ -166,6 +193,10 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
   const [inspSchedulePageSize, setInspSchedulePageSize] = useState(10);
   const [inspScheduleTotal, setInspScheduleTotal] = useState(0);
   const [showAddInspSchedule, setShowAddInspSchedule] = useState(false);
+  const [visibleScheduleColumnKeys, setVisibleScheduleColumnKeys] = useState(() =>
+    loadVisibleColumnKeys(EXECUTION_SCHEDULE_COLUMN_STORAGE_KEY, EXECUTION_SCHEDULE_COLUMN_DEFS),
+  );
+  const visibleScheduleColumnSet = useMemo(() => new Set<string>(visibleScheduleColumnKeys), [visibleScheduleColumnKeys]);
   const [form, setForm] = useState<FormState>({ ...INITIAL_FORM });
 
   // IP validation state
@@ -260,6 +291,10 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
     const token = localStorage.getItem('netops_token');
     return token ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
   }, []);
+
+  useEffect(() => {
+    saveVisibleColumnKeys(EXECUTION_SCHEDULE_COLUMN_STORAGE_KEY, EXECUTION_SCHEDULE_COLUMN_DEFS, visibleScheduleColumnKeys);
+  }, [visibleScheduleColumnKeys]);
 
   /* ═══ FETCHERS ═══ */
   const fetchInspectionItems = useCallback(async () => {
@@ -1347,30 +1382,18 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
           ? (zh ? '查看和追溯自动化执行历史' : 'View and trace automation execution history')
           : (zh ? '创建指定时间范围内执行的一次性巡检计划' : 'Create one-time inspection plans within a specified time window')}
         actions={
-          <>
-            {inspSubTab === 'schedules' && (
-              <ActionButton
-                onClick={() => setShowAddInspSchedule(!showAddInspSchedule)}
-                icon={showAddInspSchedule ? X : Plus}
-                variant={showAddInspSchedule ? 'default' : 'primary'}
-                size="md"
-              >
-                {showAddInspSchedule ? (zh ? '取消新建' : 'Cancel') : (zh ? '新建计划' : 'Add Schedule')}
-              </ActionButton>
-            )}
-            {inspSubTab === 'history' && (
-              <ActionButton
-                onClick={fetchInspRuns}
-                disabled={inspRunsLoading}
-                icon={RotateCcw}
-                iconClassName={inspRunsLoading ? 'animate-spin' : undefined}
-                variant="accent"
-                size="md"
-              >
-                {zh ? '刷新记录' : 'Refresh'}
-              </ActionButton>
-            )}
-          </>
+          inspSubTab === 'history' ? (
+            <ActionButton
+              onClick={fetchInspRuns}
+              disabled={inspRunsLoading}
+              icon={RotateCcw}
+              iconClassName={inspRunsLoading ? 'animate-spin' : undefined}
+              variant="accent"
+              size="md"
+            >
+              {zh ? '刷新记录' : 'Refresh'}
+            </ActionButton>
+          ) : undefined
         }
       />
 
@@ -1418,112 +1441,128 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
               />
             ) : (
               <>
-                {/* Future Run projections filter bar */}
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-4 rounded-2xl border border-black/5 bg-white shadow-sm">
-                  <div className="flex flex-wrap items-center gap-3">
-                    {/* Name search */}
-                    <div className="relative">
-                      <input
-                        type="search"
-                        placeholder={zh ? '搜索计划名称...' : 'Search by name...'}
-                        value={nameFilterInput}
-                        onChange={(e) => setNameFilterInput(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            setInspSchedulePage(1);
-                            setSearchName(nameFilterInput);
-                          }
-                        }}
-                        className="px-3 py-1.5 w-44 text-xs rounded-xl border border-slate-200 focus:outline-none focus:border-cyan-500 transition-all font-medium placeholder-slate-400 text-[#1e293b]"
-                      />
-                    </div>
+                <ListToolbar
+                  className="flex-col items-stretch border border-black/5 bg-white p-3 shadow-sm sm:flex-row sm:items-center"
+                  leadingAction={(
+                    <button
+                      type="button"
+                      onClick={() => setShowAddInspSchedule(true)}
+                      className="inline-flex min-h-9 items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-blue-700 active:scale-[0.98]"
+                    >
+                      <Plus size={15} />
+                      {zh ? '新建' : 'New'}
+                    </button>
+                  )}
+                >
+                  <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2 2xl:flex-nowrap">
+                    <ListSearchInput
+                      language={language}
+                      aria-label={zh ? '搜索计划名称' : 'Search plan name'}
+                      className="max-w-[280px]"
+                      placeholder={zh ? '搜索计划名称...' : 'Search by name...'}
+                      value={nameFilterInput}
+                      onChange={(event) => setNameFilterInput(event.target.value)}
+                      onClear={() => setNameFilterInput('')}
+                      onSearch={() => {
+                        setInspSchedulePage(1);
+                        setSearchName(nameFilterInput);
+                      }}
+                    />
 
-                    {/* Time range buttons */}
-                    <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
-                      {(['1h', '4h', '12h', '1d', '3d', 'custom'] as const).map((r) => (
+                    <div className="flex shrink-0 items-center gap-1 rounded-lg bg-slate-100 p-1">
+                      {(['1h', '4h', '12h', '1d', '3d', 'custom'] as const).map((range) => (
                         <button
-                          key={r}
+                          key={range}
                           type="button"
+                          aria-pressed={timeRange === range}
                           onClick={() => {
                             setInspSchedulePage(1);
-                            setTimeRange(r);
-                            if (r !== 'custom') {
+                            setTimeRange(range);
+                            if (range !== 'custom') {
                               setCustomStart('');
                               setCustomEnd('');
                             }
                           }}
-                          className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
-                            timeRange === r
-                              ? 'bg-white text-cyan-600 shadow-sm'
-                              : 'text-slate-500 hover:text-slate-700'
+                          className={`whitespace-nowrap rounded-md px-2.5 py-1.5 text-xs font-semibold transition-colors ${
+                            timeRange === range
+                              ? 'bg-white text-blue-700 shadow-sm'
+                              : 'text-slate-600 hover:bg-white/70 hover:text-blue-700'
                           }`}
                         >
-                          {r === '1h' ? (zh ? '1小时' : '1 Hour') :
-                           r === '4h' ? (zh ? '4小时' : '4 Hours') :
-                           r === '12h' ? (zh ? '12小时' : '12 Hours') :
-                           r === '1d' ? (zh ? '1天' : '1 Day') :
-                           r === '3d' ? (zh ? '3天' : '3 Days') :
+                          {range === '1h' ? (zh ? '1小时' : '1 Hour') :
+                           range === '4h' ? (zh ? '4小时' : '4 Hours') :
+                           range === '12h' ? (zh ? '12小时' : '12 Hours') :
+                           range === '1d' ? (zh ? '1天' : '1 Day') :
+                           range === '3d' ? (zh ? '3天' : '3 Days') :
                            (zh ? '自定义' : 'Custom')}
                         </button>
                       ))}
                     </div>
 
-                    {/* Custom time picker */}
                     {timeRange === 'custom' && (
-                      <div className="flex items-center gap-2 animate-fadeIn">
+                      <div className="flex min-w-0 items-center gap-1.5">
                         <input
                           type="datetime-local"
+                          aria-label={zh ? '开始时间' : 'Start time'}
                           value={customStart}
-                          onChange={(e) => {
+                          onChange={(event) => {
                             setInspSchedulePage(1);
-                            setCustomStart(e.target.value);
+                            setCustomStart(event.target.value);
                           }}
-                          className="px-2 py-1 text-xs rounded-xl border border-slate-200 focus:outline-none focus:border-cyan-500 font-mono text-[#1e293b]"
+                          className="w-[190px] rounded-md border border-slate-200 px-2 py-1.5 text-xs font-mono text-slate-700 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                         />
-                        <span className="text-slate-400 text-xs">—</span>
+                        <span className="shrink-0 text-slate-400 text-xs">—</span>
                         <input
                           type="datetime-local"
+                          aria-label={zh ? '结束时间' : 'End time'}
                           value={customEnd}
-                          onChange={(e) => {
+                          onChange={(event) => {
                             setInspSchedulePage(1);
-                            setCustomEnd(e.target.value);
+                            setCustomEnd(event.target.value);
                           }}
-                          className="px-2 py-1 text-xs rounded-xl border border-slate-200 focus:outline-none focus:border-cyan-500 font-mono text-[#1e293b]"
+                          className="w-[190px] rounded-md border border-slate-200 px-2 py-1.5 text-xs font-mono text-slate-700 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                         />
                       </div>
                     )}
-                  </div>
 
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => {
-                        setInspSchedulePage(1);
-                        setSearchName(nameFilterInput);
-                      }}
-                      className="px-4 py-1.5 rounded-xl text-xs font-bold text-white bg-cyan-600 hover:bg-cyan-500 transition-all active:scale-[0.97]"
-                    >
-                      {zh ? '查询' : 'Query'}
-                    </button>
-                    <button
-                      onClick={() => {
-                        setInspSchedulePage(1);
-                        setNameFilterInput('');
-                        setSearchName('');
-                        setTimeRange('1d');
-                        setCustomStart('');
-                        setCustomEnd('');
-                      }}
-                      className="px-3 py-1.5 rounded-xl text-xs font-bold border border-slate-200 text-slate-500 hover:bg-slate-50 transition-all active:scale-[0.97]"
-                    >
-                      {zh ? '重置' : 'Reset'}
-                    </button>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setInspSchedulePage(1);
+                          setNameFilterInput('');
+                          setSearchName('');
+                          setTimeRange('1d');
+                          setCustomStart('');
+                          setCustomEnd('');
+                        }}
+                        className="rounded-md border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-50"
+                      >
+                        {zh ? '重置' : 'Reset'}
+                      </button>
+                    </div>
+
+                    <ColumnSettingsButton
+                      columns={EXECUTION_SCHEDULE_COLUMN_DEFS.map((column) => ({
+                        key: column.key,
+                        label: getExecutionScheduleColumnLabel(column.key, zh),
+                        required: column.required,
+                        isAction: column.isAction,
+                      }))}
+                      visibleKeys={visibleScheduleColumnKeys}
+                      defaultVisibleKeys={EXECUTION_SCHEDULE_COLUMN_DEFS.filter((column) => column.defaultVisible).map((column) => column.key)}
+                      onApply={(keys) => setVisibleScheduleColumnKeys(keys as ExecutionScheduleColumnKey[])}
+                      language={language}
+                      label={zh ? '列设置' : 'Columns'}
+                    />
                   </div>
-                </div>
+                </ListToolbar>
 
                 <ScheduleList
                   zh={zh}
                   language={language}
                   schedules={inspSchedules}
+                  visibleColumnKeys={visibleScheduleColumnSet}
                   loading={inspSchedulesLoading}
                   total={inspScheduleTotal}
                   page={inspSchedulePage}

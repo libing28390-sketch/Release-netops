@@ -325,23 +325,23 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/60 p-3 sm:p-4 backdrop-blur-md">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/40 p-3 sm:p-4">
       <motion.div
-        initial={{ opacity: 0, y: 16, scale: 0.98 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: 16, scale: 0.98 }}
-        transition={{ duration: 0.2, ease: 'easeOut' }}
-        className={`w-full max-w-5xl overflow-hidden rounded-2xl sm:rounded-3xl border shadow-[0_24px_80px_rgba(0,0,0,0.35)] flex flex-col max-h-[92vh] sm:h-[680px] ${
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.12 }}
+        className={`nx-form-dialog-surface nx-personal-settings-dialog flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border sm:h-[680px] ${
           isDark ? 'bg-[#0f172a] border-white/10 text-white' : 'bg-white border-slate-200 text-slate-900'
         }`}
       >
         {/* Top Header */}
-        <div className={`flex items-center justify-between px-6 py-4 border-b shrink-0 ${
+        <div className={`nx-dialog-header flex shrink-0 items-center justify-between border-b px-5 py-3.5 ${
           isDark ? 'border-white/10 bg-[#141e33]' : 'border-slate-100 bg-slate-50/80'
         }`}>
           <div className="flex items-center gap-3">
-            <div className={`flex h-10 w-10 items-center justify-center rounded-xl shadow-sm ${
-              isDark ? 'bg-cyan-500/15 text-cyan-300 ring-1 ring-cyan-400/20' : 'bg-cyan-50 text-cyan-700 ring-1 ring-cyan-200'
+            <div className={`flex h-9 w-9 items-center justify-center rounded-lg ${
+              isDark ? 'bg-blue-500/10 text-blue-300' : 'bg-blue-50 text-blue-700'
             }`}>
               <Shield size={20} />
             </div>
@@ -360,16 +360,16 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
         {/* Master-Detail Dual Column Body */}
         <div className="flex-1 grid grid-cols-1 md:grid-cols-12 min-h-0 overflow-hidden">
           {/* Left Sidebar: User Card + Navigation Tabs */}
-          <div className={`md:col-span-4 border-r flex flex-col p-4 sm:p-5 overflow-y-auto ${
+          <div className={`nx-personal-settings-sidebar md:col-span-4 flex flex-col overflow-y-auto border-r p-4 sm:p-5 ${
             isDark ? 'border-white/10 bg-[#121c2d]/70' : 'border-slate-100 bg-slate-50/50'
           }`}>
             {/* Identity Card */}
-            <div className={`p-4 rounded-2xl border mb-4 shadow-sm relative overflow-hidden ${
+            <div className={`nx-profile-card relative mb-4 overflow-hidden rounded-xl border p-4 ${
               isDark ? 'bg-gradient-to-br from-white/[0.06] to-white/[0.02] border-white/10' : 'bg-white border-slate-200/80'
             }`}>
               <div className="flex items-center gap-3.5">
                 <div className="relative">
-                  <div className={`w-13 h-13 rounded-2xl border overflow-hidden flex items-center justify-center shadow-inner shrink-0 ${
+                  <div className={`w-13 h-13 rounded-lg border overflow-hidden flex items-center justify-center shrink-0 ${
                     isDark ? 'bg-slate-800 border-white/15' : 'bg-slate-100 border-slate-200'
                   }`}>
                     {renderAvatarContent(profileAvatarPreview, 28)}
@@ -430,8 +430,8 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                     className={`w-full flex items-center gap-3 px-3.5 py-3 rounded-xl text-left transition-all duration-150 relative ${
                       active
                         ? (isDark
-                            ? 'bg-cyan-500/15 text-cyan-200 font-bold shadow-sm ring-1 ring-cyan-400/30'
-                            : 'bg-cyan-50/80 text-cyan-900 font-bold shadow-sm ring-1 ring-cyan-200')
+                            ? 'bg-blue-500/10 text-blue-200 font-semibold border border-blue-400/20'
+                            : 'bg-blue-50 text-blue-800 font-semibold border border-blue-100')
                         : (isDark
                             ? 'text-white/60 hover:text-white hover:bg-white/[0.04]'
                             : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/70')
@@ -439,7 +439,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                   >
                     <span className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
                       active
-                        ? (isDark ? 'bg-cyan-400 text-slate-950 shadow' : 'bg-cyan-600 text-white shadow')
+                        ? (isDark ? 'bg-blue-500 text-white' : 'bg-blue-600 text-white')
                         : (isDark ? 'bg-white/5 text-white/50' : 'bg-slate-100 text-slate-400')
                     }`}>
                       <Icon size={16} />
@@ -460,7 +460,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
           </div>
 
           {/* Right Main Content Area */}
-          <div className={`md:col-span-8 overflow-y-auto p-5 sm:p-7 ${
+          <div className={`nx-personal-settings-main md:col-span-8 overflow-y-auto p-5 sm:p-7 ${
             isDark ? 'bg-[#0f172a]' : 'bg-slate-50/40'
           }`}>
             <AnimatePresence mode="wait">
@@ -482,7 +482,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                   </div>
 
                   {/* Avatar Picker Card */}
-                  <div className={`p-4 sm:p-5 rounded-2xl border ${
+                  <div className={`nx-profile-card rounded-xl border p-4 sm:p-5 ${
                     isDark ? 'bg-white/[0.03] border-white/10' : 'bg-white border-slate-200/80 shadow-sm'
                   }`}>
                     <label className={`block text-[11px] font-bold uppercase tracking-wider mb-3 ${
@@ -492,14 +492,14 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                     </label>
 
                     <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 mb-4">
-                      <div className={`w-16 h-16 rounded-2xl border overflow-hidden flex items-center justify-center shrink-0 shadow-sm ${
+                      <div className={`w-16 h-16 rounded-xl border overflow-hidden flex items-center justify-center shrink-0 ${
                         isDark ? 'bg-slate-800 border-white/15' : 'bg-slate-100 border-slate-200'
                       }`}>
                         {renderAvatarContent(profileAvatarPreview, 32)}
                       </div>
                       <div className="space-y-2">
                         <div className="flex items-center gap-2">
-                          <label className={`px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer transition-all shadow-sm flex items-center gap-1.5 ${
+                          <label className={`px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-colors flex items-center gap-1.5 ${
                             isDark ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400/30 hover:bg-cyan-500/30' : 'bg-cyan-50 text-cyan-800 border border-cyan-200 hover:bg-cyan-100'
                           }`}>
                             <Sparkles size={13} />
@@ -539,8 +539,8 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                               onClick={() => onSelectAvatarPreset(preset.id)}
                               className={`h-11 rounded-xl border flex items-center justify-center transition-all relative overflow-hidden group ${
                                 active
-                                  ? 'ring-2 ring-cyan-400 border-transparent scale-105 shadow-md shadow-cyan-500/20'
-                                  : (isDark ? 'border-white/10 hover:border-white/30 hover:scale-105' : 'border-slate-200 hover:border-slate-400 hover:scale-105')
+                                  ? 'ring-2 ring-blue-500 border-transparent'
+                                  : (isDark ? 'border-white/10 hover:border-white/30' : 'border-slate-200 hover:border-slate-400')
                               }`}
                               title={preset.label}
                             >
@@ -558,7 +558,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                   </div>
 
                   {/* Account & Contact Details Card */}
-                  <div className={`p-4 sm:p-5 rounded-2xl border space-y-4 ${
+                  <div className={`nx-profile-card rounded-xl border p-4 sm:p-5 space-y-4 ${
                     isDark ? 'bg-white/[0.03] border-white/10' : 'bg-white border-slate-200/80 shadow-sm'
                   }`}>
                     <label className={`block text-[11px] font-bold uppercase tracking-wider ${
@@ -645,7 +645,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                   </div>
 
                   {/* Password Change Card */}
-                  <div className={`p-4 sm:p-5 rounded-2xl border space-y-3.5 ${
+                  <div className={`nx-profile-card rounded-lg border p-4 sm:p-5 space-y-3.5 ${
                     isDark ? 'bg-white/[0.03] border-white/10' : 'bg-white border-slate-200/80 shadow-sm'
                   }`}>
                     <div className="flex items-center justify-between">
@@ -733,12 +733,12 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
 
                   {/* Fixed PIN (Administrator Only) */}
                   {(currentRole === 'Administrator' || currentRole === 'admin') && (
-                    <div className={`p-4 sm:p-5 rounded-2xl border ${
+                    <div className={`nx-dialog-warning rounded-lg border p-4 sm:p-5 ${
                       isDark ? 'bg-amber-500/[0.04] border-amber-500/20' : 'bg-amber-50/60 border-amber-200'
                     }`}>
                       <div className="flex items-center gap-2 mb-2">
                         <Shield size={16} className={isDark ? 'text-amber-400' : 'text-amber-600'} />
-                        <span className={`text-xs font-bold ${isDark ? 'text-amber-300' : 'text-amber-800'}`}>
+                        <span className="nx-dialog-warning-title text-xs font-semibold">
                           {isZh ? '特权审批固定安全码 (Fixed PIN)' : 'Fixed PIN for Admin Approvals'}
                         </span>
                       </div>
@@ -760,14 +760,14 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                         onChange={(e) => onProfileFormChange((prev) => ({ ...prev, fixedPin: e.target.value.replace(/\D/g, '') }))}
                         aria-label={isZh ? '特权审批固定安全码' : 'Fixed PIN for admin approvals'}
                         placeholder={isZh ? '6 位纯数字安全码' : '6-digit PIN'}
-                        className={`font-mono text-sm font-bold tracking-widest ${isDark ? 'bg-black/30 border-amber-500/30 text-amber-200 placeholder-white/20 focus:border-amber-400' : 'bg-white border-amber-300 text-amber-900 placeholder-slate-300 focus:border-amber-500'}`}
+                        className="font-mono text-sm font-semibold tracking-wider"
                         wrapperClassName="max-w-xs"
                       />
                     </div>
                   )}
 
                   {/* MFA Multi-Factor Authentication Card */}
-                  <div className={`p-4 sm:p-5 rounded-2xl border ${
+                  <div className={`nx-profile-card rounded-lg border p-4 sm:p-5 ${
                     isDark ? 'bg-cyan-500/[0.04] border-cyan-500/20' : 'bg-cyan-50/50 border-cyan-200'
                   }`}>
                     <div className="flex items-center justify-between mb-2">
@@ -809,7 +809,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                           </p>
 
                           <div className="flex flex-col sm:flex-row items-center gap-4">
-                            <div className="p-3 bg-white rounded-2xl shadow-inner flex items-center justify-center border border-slate-200 shrink-0">
+                            <div className="flex shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white p-3">
                               <QRCode value={mfaQrUri} size={120} />
                             </div>
                             <div className="flex-1 space-y-2 text-center sm:text-left min-w-0">
@@ -944,7 +944,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                       return (
                         <div
                           key={key}
-                          className={`rounded-2xl border transition-all duration-200 p-4 ${
+                          className={`nx-profile-card rounded-lg border p-4 transition-colors ${
                             isEnabled
                               ? (isDark ? 'border-cyan-500/30 bg-cyan-500/[0.04] shadow-sm' : 'border-cyan-300 bg-cyan-50/40 shadow-sm')
                               : (isDark ? 'border-white/10 bg-white/[0.02]' : 'border-slate-200/80 bg-white')
@@ -952,7 +952,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                         >
                           <div className="flex items-center justify-between gap-3 mb-3">
                             <div className="flex items-center gap-3">
-                              <span className={`w-8 h-8 rounded-xl ${iconBg} flex items-center justify-center text-[10px] font-black text-white shrink-0 shadow-sm`}>
+                              <span className={`w-8 h-8 rounded-lg ${iconBg} flex items-center justify-center text-[10px] font-semibold text-white shrink-0`}>
                                 {icon}
                               </span>
                               <div>
@@ -1036,7 +1036,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                                 className={`px-4 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
                                   !channel.webhook_url.trim() || notifyTestLoading === key || !isCreator
                                     ? (isDark ? 'bg-white/5 text-white/20 cursor-not-allowed' : 'bg-slate-100 text-slate-300 cursor-not-allowed')
-                                    : (isDark ? 'bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500/30 border border-cyan-400/30 shadow-sm' : 'bg-cyan-50 text-cyan-800 hover:bg-cyan-100 border border-cyan-200 shadow-sm')
+                                    : (isDark ? 'bg-blue-500/10 text-blue-300 hover:bg-blue-500/15 border border-blue-400/20' : 'bg-blue-50 text-blue-800 hover:bg-blue-100 border border-blue-200')
                                 }`}
                               >
                                 {notifyTestLoading === key ? (
@@ -1052,14 +1052,14 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                     })}
                   </div>
 
-                  <div className={`rounded-2xl border p-4 transition-all duration-200 ${
+                  <div className={`nx-profile-card rounded-lg border p-4 transition-colors ${
                     notificationChannels.email.enabled
                       ? (isDark ? 'border-cyan-500/30 bg-cyan-500/[0.04] shadow-sm' : 'border-cyan-300 bg-cyan-50/40 shadow-sm')
                       : (isDark ? 'border-white/10 bg-white/[0.02]' : 'border-slate-200/80 bg-white')
                   }`}>
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex items-center gap-3">
-                        <span className={`flex h-8 w-8 items-center justify-center rounded-xl text-white shadow-sm ${notificationChannels.email.enabled ? 'bg-emerald-600' : 'bg-slate-400'}`}>
+                    <span className={`flex h-8 w-8 items-center justify-center rounded-lg text-white ${notificationChannels.email.enabled ? 'bg-emerald-600' : 'bg-slate-400'}`}>
                           <Mail size={15} />
                         </span>
                         <div>
@@ -1116,11 +1116,11 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                   </div>
 
                   {/* Detected System Badge */}
-                  <div className={`p-4 rounded-2xl border flex items-center justify-between gap-3 ${
+                  <div className={`nx-profile-card flex items-center justify-between gap-3 rounded-lg border p-4 ${
                     isDark ? 'bg-cyan-500/[0.04] border-cyan-500/20' : 'bg-cyan-50/60 border-cyan-200'
                   }`}>
                     <div className="flex items-center gap-3">
-                      <div className={`p-2 rounded-xl ${isDark ? 'bg-cyan-400/15 text-cyan-300' : 'bg-white text-cyan-700 shadow-sm'}`}>
+                      <div className={`rounded-md p-2 ${isDark ? 'bg-blue-500/10 text-blue-300' : 'bg-blue-50 text-blue-700'}`}>
                         <MonitorSpeaker size={18} />
                       </div>
                       <div>
@@ -1139,7 +1139,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
 
                   {/* Windows Client Path Config */}
                   {terminalPlatform === 'windows' ? (
-                    <div className={`p-4 sm:p-5 rounded-2xl border space-y-3.5 ${
+                    <div className={`nx-profile-card space-y-3.5 rounded-lg border p-4 sm:p-5 ${
                       isDark ? 'bg-white/[0.03] border-white/10' : 'bg-white border-slate-200/80 shadow-sm'
                     }`}>
                       <div className="flex flex-col sm:flex-row gap-4">
@@ -1199,7 +1199,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                               </button>
 
                               {showPathSuggestions && (
-                                <div className={`absolute right-0 top-full mt-1.5 z-50 w-80 rounded-2xl border shadow-2xl overflow-hidden p-1.5 ${
+                                <div className={`absolute right-0 top-full mt-1.5 z-50 w-80 rounded-lg border shadow-md overflow-hidden p-1.5 ${
                                   isDark ? 'bg-[#0f172a] border-white/15' : 'bg-white border-slate-200'
                                 }`}>
                                   <div className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-white/40' : 'text-slate-400'}`}>
@@ -1229,7 +1229,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                       </div>
                     </div>
                   ) : (
-                    <div className={`p-4 rounded-2xl border ${isDark ? 'border-white/10 bg-white/[0.02]' : 'border-slate-200 bg-white'}`}>
+                    <div className={`nx-profile-card rounded-lg border p-4 ${isDark ? 'border-white/10 bg-white/[0.02]' : 'border-slate-200 bg-white'}`}>
                       <p className={`text-xs leading-relaxed ${isDark ? 'text-white/60' : 'text-slate-600'}`}>
                         {isZh ? '当前为 Linux/Ubuntu 系统，无需指定 Windows 客户端路径，只需启动匹配的 Terminal Agent 即可。' : 'No client path needed on Linux. Run the local agent script.'}
                       </p>
@@ -1237,7 +1237,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                   )}
 
                   {/* Agent Download Card */}
-                  <div className={`p-4 sm:p-5 rounded-2xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 ${
+                  <div className={`nx-profile-card rounded-lg border p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 ${
                     isDark ? 'bg-gradient-to-r from-cyan-500/10 to-blue-500/10 border-cyan-500/25' : 'bg-gradient-to-r from-cyan-50/80 to-blue-50/80 border-cyan-200'
                   }`}>
                     <div>
@@ -1269,7 +1269,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
         </div>
 
         {/* Footer Actions */}
-        <div className={`flex items-center justify-end gap-3 px-6 py-4 border-t shrink-0 ${
+        <div className={`nx-dialog-footer flex shrink-0 items-center justify-end gap-3 border-t px-5 py-3 ${
           isDark ? 'border-white/10 bg-[#141e33]' : 'border-slate-100 bg-slate-50/80'
         }`}>
           <ActionButton size="md" onClick={onClose}>

@@ -9,7 +9,7 @@ export const RetrievalTestTab: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const run = async (event: React.FormEvent) => {
+  const run = async (event: React.FormEvent | React.KeyboardEvent<HTMLInputElement>) => {
     event.preventDefault();
     setError('');
     let filters: Record<string, unknown> = {};
@@ -45,10 +45,9 @@ export const RetrievalTestTab: React.FC = () => {
         </div>
       </section>
 
-      <form onSubmit={run} className="grid gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:grid-cols-[1.4fr_1fr_auto]">
-        <label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-600">查询</span><div className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2"><Search className="h-4 w-4 text-slate-400" /><input value={query} onChange={(event) => setQuery(event.target.value)} className="w-full bg-transparent text-sm outline-none" placeholder="例如：Huawei CE6885 show ospf peer" /></div></label>
+      <form onSubmit={run} className="grid gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:grid-cols-[1.4fr_1fr]">
+        <label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-600">查询</span><div className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2"><Search className="h-4 w-4 text-slate-400" /><input value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void run(event); } }} className="w-full bg-transparent text-sm outline-none" placeholder="例如：Huawei CE6885 show ospf peer" /></div></label>
         <label className="block"><span className="mb-1.5 flex items-center gap-1 text-xs font-bold text-slate-600"><SlidersHorizontal className="h-3.5 w-3.5" />过滤条件 JSON</span><textarea value={filtersText} onChange={(event) => setFiltersText(event.target.value)} className="h-20 w-full resize-y rounded-xl border border-slate-200 px-3 py-2 font-mono text-xs outline-none focus:border-indigo-400" /></label>
-        <button type="submit" disabled={loading || !query.trim()} className="self-end rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">{loading ? '检索中…' : '执行检索'}</button>
       </form>
 
       {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>}

@@ -1219,52 +1219,46 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
         icon={Columns3}
         title={zh ? '机柜管理' : 'Rack Management'}
         subtitle={zh ? '拖拽设备调整U位 · 可视化机柜布局' : 'Drag devices to reposition · Visual rack layout'}
-        actions={
-          <>
-            {stats && (
-              <div className="hidden lg:flex items-center gap-2 mr-2">
-                {[
-                  { label: zh ? '机柜' : 'Racks', value: stats.total_racks, color: '#06b6d4', icon: <LayoutGrid size={14} /> },
-                  { label: zh ? '设备' : 'Devices', value: stats.total_devices, color: '#6366f1', icon: <Server size={14} /> },
-                  { label: zh ? 'U位' : 'U', value: `${stats.used_u}/${stats.total_u}`, color: '#10b981', icon: <Layers size={14} /> },
-                  { label: zh ? '利用率' : 'Util', value: `${stats.utilization}%`, color: stats.utilization > 80 ? '#ef4444' : stats.utilization > 60 ? '#f59e0b' : '#10b981', icon: <Eye size={14} /> },
-                  ...(stats.total_power_used_watts != null ? [{
-                    label: zh ? '总功率' : 'Power',
-                    value: stats.total_power_capacity_watts
-                      ? `${stats.total_power_used_watts}/${stats.total_power_capacity_watts}W`
-                      : `${stats.total_power_used_watts}W (${zh ? '未设上限' : 'No cap'})`,
-                    color: stats.total_power_capacity_watts && (stats.power_utilization_pct ?? 0) > 80 ? '#ef4444' : stats.total_power_capacity_watts && (stats.power_utilization_pct ?? 0) > 60 ? '#f59e0b' : '#10b981',
-                    icon: <Zap size={14} />,
-                  }] : []),
-                ].map((s, i) => (
-                  <div key={i} className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
-                    <span style={{ color: s.color }}>{s.icon}</span>
-                    <span className="text-[11px] font-bold" style={{ color: s.color }}>{s.value}</span>
-                    <span className="text-[10px]" style={{ color: 'var(--muted-text)' }}>{s.label}</span>
-                  </div>
-                ))}
+        actions={stats && (
+          <div className="hidden items-center gap-2 lg:flex">
+            {[
+              { label: zh ? '机柜' : 'Racks', value: stats.total_racks, color: '#06b6d4', icon: <LayoutGrid size={14} /> },
+              { label: zh ? '设备' : 'Devices', value: stats.total_devices, color: '#6366f1', icon: <Server size={14} /> },
+              { label: zh ? 'U位' : 'U', value: `${stats.used_u}/${stats.total_u}`, color: '#10b981', icon: <Layers size={14} /> },
+              { label: zh ? '利用率' : 'Util', value: `${stats.utilization}%`, color: stats.utilization > 80 ? '#ef4444' : stats.utilization > 60 ? '#f59e0b' : '#10b981', icon: <Eye size={14} /> },
+              ...(stats.total_power_used_watts != null ? [{
+                label: zh ? '总功率' : 'Power',
+                value: stats.total_power_capacity_watts
+                  ? `${stats.total_power_used_watts}/${stats.total_power_capacity_watts}W`
+                  : `${stats.total_power_used_watts}W (${zh ? '未设上限' : 'No cap'})`,
+                color: stats.total_power_capacity_watts && (stats.power_utilization_pct ?? 0) > 80 ? '#ef4444' : stats.total_power_capacity_watts && (stats.power_utilization_pct ?? 0) > 60 ? '#f59e0b' : '#10b981',
+                icon: <Zap size={14} />,
+              }] : []),
+            ].map((s, i) => (
+              <div key={i} className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
+                <span style={{ color: s.color }}>{s.icon}</span>
+                <span className="text-[11px] font-bold" style={{ color: s.color }}>{s.value}</span>
+                <span className="text-[10px]" style={{ color: 'var(--muted-text)' }}>{s.label}</span>
               </div>
-            )}
-            {viewMode === '2d' && (
-              <>
-                <button onClick={openNewDeviceType} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', color: 'var(--body-text)' }}>
-                  <Package size={14} /> {zh ? '设备型号' : 'Device Types'}
-                </button>
-                <button onClick={openNewRack} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-cyan-600 hover:bg-cyan-700 transition-colors">
-                  <Plus size={14} /> {zh ? '新建机柜' : 'New Rack'}
-                </button>
-              </>
-            )}
-            <ActionIconGroup label={zh ? '机柜工具' : 'Rack tools'}>
-              {viewMode === '2d' && (
-                <>
-                  <ActionIconButton icon={FileText} label={zh ? '下载导入模板' : 'Download import template'} variant="accent" onClick={handleDownloadTemplate} />
-                  <ActionIconButton icon={Upload} label={zh ? '导入机柜' : 'Import racks'} variant="accent" onClick={() => fileInputRef.current?.click()} />
-                </>
-              )}
-            </ActionIconGroup>
-          </>
-        }
+            ))}
+          </div>
+        )}
+        extras={viewMode === '2d' && (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <button onClick={openNewRack} className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md bg-blue-600 px-4 text-sm font-medium text-white transition-colors hover:bg-blue-700">
+              <Plus size={14} /> {zh ? '新建' : 'New'}
+            </button>
+            <div className="ml-auto flex items-center gap-2">
+              <button onClick={openNewDeviceType} className="flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm font-medium transition-colors" style={{ background: 'var(--card-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>
+                <Package size={14} /> {zh ? '设备型号' : 'Device Types'}
+              </button>
+              <ActionIconGroup label={zh ? '机柜工具' : 'Rack tools'}>
+                <ActionIconButton icon={FileText} label={zh ? '下载导入模板' : 'Download import template'} variant="accent" onClick={handleDownloadTemplate} />
+                <ActionIconButton icon={Upload} label={zh ? '导入机柜' : 'Import racks'} variant="accent" onClick={() => fileInputRef.current?.click()} />
+              </ActionIconGroup>
+            </div>
+          </div>
+        )}
       />
 
       <div className="flex-1 flex flex-col gap-3 overflow-hidden px-6 py-5">
@@ -1335,17 +1329,6 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                   <X size={12} style={{ color: 'var(--muted-text)' }} />
                 </button>
               )}
-              <button
-                type="button"
-                onClick={() => {
-                  setRackPage(1);
-                  setSubmittedSearch(searchQuery.trim());
-                }}
-                title={zh ? '搜索' : 'Search'}
-                className="rounded p-0.5 hover:bg-cyan-500/10"
-              >
-                <Search size={12} className="text-cyan-500" />
-              </button>
             </div>
             {siteOptions.length > 1 && (
               <select value={dcFilter} onChange={e => { setDcFilter(e.target.value); setRackPage(1); }} className="w-full text-[11px] rounded-lg px-2 py-1.5 outline-none" style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }}>
@@ -2163,8 +2146,8 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
       {/* ========== MODAL: Create/Edit Rack ========== */}
       <AnimatePresence>
         {showRackModal && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowRackModal(false)}>
-            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} transition={{ duration: 0.15 }} className="w-full max-w-md rounded-2xl shadow-2xl p-6" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }} onClick={e => e.stopPropagation()}>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-4" onClick={() => setShowRackModal(false)}>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="nx-form-dialog-surface max-h-[90vh] w-full max-w-md overflow-y-auto rounded-lg border p-5 shadow-lg" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }} onClick={e => e.stopPropagation()}>
               <h3 className="text-base font-bold mb-4" style={{ color: 'var(--heading-text)' }}>
                 {editingRack ? (zh ? '编辑机柜' : 'Edit Rack') : (zh ? '新建机柜' : 'New Rack')}
               </h3>
@@ -2275,7 +2258,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
               {formError && <p className="text-xs text-red-500 mt-2">{formError}</p>}
               <div className="flex justify-end gap-2 mt-5">
                 <button onClick={() => setShowRackModal(false)} className="px-4 py-1.5 rounded-lg text-xs font-medium" style={{ color: 'var(--muted-text)' }}>{zh ? '取消' : 'Cancel'}</button>
-                <button onClick={saveRack} className="px-4 py-1.5 rounded-lg text-xs font-semibold text-white bg-cyan-600 hover:bg-cyan-700">{zh ? '保存' : 'Save'}</button>
+                <button onClick={saveRack} className="nx-dialog-action-primary rounded-md border px-4 py-2 text-sm font-medium transition-colors">{zh ? '保存' : 'Save'}</button>
               </div>
             </motion.div>
           </motion.div>
@@ -2285,8 +2268,8 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
       {/* ========== MODAL: Install Device ========== */}
       <AnimatePresence>
         {showDeviceModal && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={closeInstallModal}>
-            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} transition={{ duration: 0.15 }} className="w-full max-w-xl rounded-2xl shadow-2xl p-6" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }} onClick={e => e.stopPropagation()}>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-4" onClick={closeInstallModal}>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="nx-form-dialog-surface max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-lg border p-5 shadow-lg" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }} onClick={e => e.stopPropagation()}>
               <h3 className="text-base font-bold mb-4" style={{ color: 'var(--heading-text)' }}>
                 {zh ? '安装设备到机柜' : 'Install Device to Rack'}
               </h3>
@@ -2573,9 +2556,9 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                 <button
                   onClick={saveDevice}
                   disabled={!selectedAsset}
-                  className="px-4 py-1.5 rounded-lg text-xs font-semibold text-white"
+                  className="nx-dialog-action-primary rounded-md border px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50"
                   style={{
-                    background: selectedAsset ? 'rgb(6, 182, 212)' : 'rgb(156, 163, 175)',
+                    background: selectedAsset ? 'rgb(37, 99, 235)' : 'rgb(156, 163, 175)',
                     cursor: selectedAsset ? 'pointer' : 'not-allowed',
                   }}
                 >
@@ -2590,8 +2573,8 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
       {/* ========== MODAL: Device Types ========== */}
       <AnimatePresence>
         {showDeviceTypeModal && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowDeviceTypeModal(false)}>
-            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} transition={{ duration: 0.15 }} className="w-full max-w-lg rounded-2xl shadow-2xl p-6" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }} onClick={e => e.stopPropagation()}>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-4" onClick={() => setShowDeviceTypeModal(false)}>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="nx-form-dialog-surface max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-lg border p-5 shadow-lg" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }} onClick={e => e.stopPropagation()}>
               <div className="mb-4 flex items-center justify-between gap-3">
                 <h3 className="text-base font-bold" style={{ color: 'var(--heading-text)' }}>
                   {zh ? '设备型号管理' : 'Device Type Management'}
@@ -2664,7 +2647,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
               {formError && <p className="text-xs text-red-500 mt-2">{formError}</p>}
               <div className="flex justify-end gap-2 mt-4">
                 <button onClick={() => setShowDeviceTypeModal(false)} className="px-4 py-1.5 rounded-lg text-xs font-medium" style={{ color: 'var(--muted-text)' }}>{zh ? '关闭' : 'Close'}</button>
-                <button onClick={saveDeviceType} className="px-4 py-1.5 rounded-lg text-xs font-semibold text-white bg-cyan-600 hover:bg-cyan-700">{zh ? '添加' : 'Add'}</button>
+                <button onClick={saveDeviceType} className="nx-dialog-action-primary rounded-md border px-4 py-2 text-sm font-medium transition-colors">{zh ? '新建' : 'New'}</button>
               </div>
             </motion.div>
           </motion.div>

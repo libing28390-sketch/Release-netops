@@ -337,16 +337,6 @@ const ResourceSearchTab: React.FC<Props> = ({ language = 'zh' }) => {
           <div className="flex items-center gap-2 text-[11px] text-slate-400"><Filter size={13} />{activeFilterCount ? `${activeFilterCount} ${zh ? '项条件已启用' : 'active filters'}` : (zh ? '未设置筛选条件' : 'No filters')}</div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="relative min-w-[260px] flex-1">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              value={queryDraft}
-              onChange={event => setQueryDraft(event.target.value)}
-              onKeyDown={event => { if (event.key === 'Enter') submitSearch(); }}
-              placeholder={zh ? '输入设备名、资产编号、SN、IP、厂商或型号…' : 'Hostname, asset tag, SN, IP, vendor or model…'}
-              className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-9 pr-3 text-xs outline-none focus:border-cyan-400 focus:bg-white"
-            />
-          </div>
           <select value={filters.search_field} onChange={event => updateFilter('search_field', event.target.value)} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs text-slate-600">
             {FIELD_OPTIONS.map(([value, zhLabel, enLabel]) => <option key={value} value={value}>{zh ? zhLabel : enLabel}</option>)}
           </select>
@@ -357,8 +347,24 @@ const ResourceSearchTab: React.FC<Props> = ({ language = 'zh' }) => {
               </button>
             ))}
           </div>
-          <button onClick={submitSearch} className="inline-flex items-center gap-1.5 rounded-xl bg-cyan-600 px-4 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-cyan-700"><Search size={14} />{zh ? '搜索' : 'Search'}</button>
-          <button onClick={resetSearch} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-semibold text-slate-500 hover:border-cyan-300 hover:text-cyan-700">{zh ? '重置' : 'Reset'}</button>
+          <div className="ml-auto flex w-full min-w-[260px] items-center gap-2 sm:w-[calc(50%+3.75rem)]">
+            <div className="relative min-w-0 flex-1">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                value={queryDraft}
+                onChange={event => setQueryDraft(event.target.value)}
+                onKeyDown={event => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    submitSearch();
+                  }
+                }}
+                placeholder={zh ? '输入设备名、资产编号、SN、IP、厂商或型号…' : 'Hostname, asset tag, SN, IP, vendor or model…'}
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-9 pr-3 text-xs outline-none focus:border-cyan-400 focus:bg-white"
+              />
+            </div>
+            <button onClick={resetSearch} className="shrink-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-semibold text-slate-500 hover:border-cyan-300 hover:text-cyan-700">{zh ? '重置' : 'Reset'}</button>
+          </div>
         </div>
         {advancedOpen && <>
         <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">

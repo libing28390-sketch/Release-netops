@@ -2,7 +2,11 @@ import { create } from 'zustand';
 import type { Device } from '../types';
 import { displaySiteLabel } from '../utils/deviceUtils';
 import { authHeaders } from '../api/http';
-import { getManagedAssetDeviceOnlineTotal, getManagedAssetDeviceTotal } from '../utils/assetSummary';
+import {
+  getManagedAssetDeviceOnlineTotal,
+  getManagedAssetDeviceTotal,
+  getManagedAssetPlatformCounts,
+} from '../utils/assetSummary';
 
 // ─── Inline normalizer (mirrors useInventory.normalizeDeviceRecord) ───────────
 // Keeping this in the store means fetchInventory() needs no external argument,
@@ -137,6 +141,8 @@ interface InventoryState {
   assetsTotal: number | null;
   assetsOnlineTotal: number | null;
   assetsTotalError: string | null;
+  assetsPlatformCounts: Record<string, number> | null;
+  assetsPlatformError: string | null;
 
   // Delete modal state
   deviceToDelete: string | null;
@@ -188,6 +194,8 @@ export const useInventoryStore = create<InventoryState>((set, get) => ({
   assetsTotal: null,
   assetsOnlineTotal: null,
   assetsTotalError: null,
+  assetsPlatformCounts: null,
+  assetsPlatformError: null,
   deviceToDelete: null,
   isDeletingSelected: false,
   showDeleteModal: false,
@@ -216,11 +224,23 @@ export const useInventoryStore = create<InventoryState>((set, get) => ({
     })),
   setAssetsTotal: (total) => {
     latestAssetSummaryRequestId += 1;
-    set({ assetsTotal: total, assetsOnlineTotal: null, assetsTotalError: null });
+    set({
+      assetsTotal: total,
+      assetsOnlineTotal: null,
+      assetsTotalError: null,
+      assetsPlatformCounts: null,
+      assetsPlatformError: null,
+    });
   },
   resetAssetsTotal: () => {
     latestAssetSummaryRequestId += 1;
-    set({ assetsTotal: null, assetsOnlineTotal: null, assetsTotalError: null });
+    set({
+      assetsTotal: null,
+      assetsOnlineTotal: null,
+      assetsTotalError: null,
+      assetsPlatformCounts: null,
+      assetsPlatformError: null,
+    });
   },
   setDeviceToDelete: (id) => set({ deviceToDelete: id }),
   setIsDeletingSelected: (v) => set({ isDeletingSelected: v }),
@@ -317,9 +337,18 @@ export const useInventoryStore = create<InventoryState>((set, get) => ({
       const assetsTotal = getManagedAssetDeviceTotal(summary);
       if (assetsTotal === null) throw new Error('Invalid asset summary response');
       const assetsOnlineTotal = getManagedAssetDeviceOnlineTotal(summary);
+      const assetsPlatformCounts = getManagedAssetPlatformCounts(summary, assetsTotal);
 
       if (requestId === latestAssetSummaryRequestId) {
-        set({ assetsTotal, assetsOnlineTotal, assetsTotalError: null });
+        set({
+          assetsTotal,
+          assetsOnlineTotal,
+          assetsTotalError: null,
+          assetsPlatformCounts,
+          assetsPlatformError: assetsPlatformCounts === null
+            ? 'Invalid asset platform summary response'
+            : null,
+        });
       }
     } catch {
       if (requestId === latestAssetSummaryRequestId && !signal?.aborted) {

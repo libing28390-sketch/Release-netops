@@ -15,6 +15,8 @@ import Pagination from '../../components/Pagination';
 import { DataTable } from '../../components/DataTable';
 import PageHero from '../../components/PageHero';
 import { hasTagFilterConditions, parseTagFilter, type TagFilterConfig, EMPTY_TAG_FILTER, serializeTagFilter } from '../../components/TagConditionPicker';
+import { ColumnSettingsButton, ListSearchInput, ListToolbar, TableHeaderMultiSelectFilter } from '../../components/ui/TableListControls';
+import { loadVisibleColumnKeys, saveVisibleColumnKeys, type ColumnPreferenceDefinition } from '../../components/ui/columnPreferences';
 
 import { ScheduledJob, EligibleApprover, SystemScheduledJob, FormState, ValidatedDevice, ScheduledJobsTabProps, type ApprovalVerificationMethod, type CollectionPlanFilters, type NsotCollectionPreview } from './types';
 import { INITIAL_FORM, ACTION_TYPES, MAJOR_CATEGORIES } from './constants';
@@ -47,6 +49,17 @@ interface ScheduledJobOperationManifest {
   config_reason: string;
 }
 
+const SCHEDULED_JOB_COLUMN_STORAGE_KEY = 'netops:scheduled-jobs:columns:v1';
+const SCHEDULED_JOB_COLUMN_DEFS: readonly ColumnPreferenceDefinition<'name' | 'target' | 'schedule' | 'status' | 'updatedBy' | 'updatedAt' | 'actions'>[] = [
+  { key: 'name', defaultVisible: true },
+  { key: 'target', defaultVisible: true },
+  { key: 'schedule', defaultVisible: true },
+  { key: 'status', defaultVisible: true },
+  { key: 'updatedBy', defaultVisible: false },
+  { key: 'updatedAt', defaultVisible: true },
+  { key: 'actions', defaultVisible: true, required: true, isAction: true },
+];
+
 const formatJobDateTime = (value?: string | null): string => {
   if (!value) return '—';
   const date = new Date(value);
@@ -62,11 +75,16 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
 
   /* === STATE === */
   const [jobs, setJobs] = useState<ScheduledJob[]>([]);
+  const jobsRequestSequence = useRef(0);
   const [systemJobs, setSystemJobs] = useState<SystemScheduledJob[]>([]);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [total, setTotal] = useState(0);
+  const [jobActionCounts, setJobActionCounts] = useState<Record<string, number>>({});
+  const [visibleJobColumnKeys, setVisibleJobColumnKeys] = useState(() => loadVisibleColumnKeys(SCHEDULED_JOB_COLUMN_STORAGE_KEY, SCHEDULED_JOB_COLUMN_DEFS));
+  const [jobStatusFilters, setJobStatusFilters] = useState<string[]>([]);
+  const visibleJobColumnSet = useMemo(() => new Set<string>(visibleJobColumnKeys), [visibleJobColumnKeys]);
 
   // Modal
   const [showAddJob, setShowAddJob] = useState(false);
@@ -151,20 +169,12 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   // Category & Filter state
   const [activeCategory, setActiveCategory] = useState<'all' | 'system' | 'backup' | 'nsot' | 'inspection' | 'command' | 'script_run'>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [appliedSearch, setAppliedSearch] = useState('');
   // Keep platform schedules out of the way of user-created jobs by default.
   // Selecting the dedicated system category expands the small curated list.
   const [systemCollapsed, setSystemCollapsed] = useState(true);
 
-  const filteredJobs = useMemo(() => {
-    return jobs.filter(j => {
-      const q = searchQuery.trim().toLowerCase();
-      const matchQ = !q || j.name.toLowerCase().includes(q) || (j.commands || '').toLowerCase().includes(q) || (j.device_filter || '').toLowerCase().includes(q);
-      if (!matchQ) return false;
-      if (activeCategory === 'all') return true;
-      if (activeCategory === 'system') return false;
-      return j.action_type === activeCategory;
-    });
-  }, [jobs, searchQuery, activeCategory]);
+  const filteredJobs = jobs;
 
   const filteredSystemJobs = useMemo(() => {
     return systemJobs.filter(sj => {
@@ -197,35 +207,47 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   };
 
   const stats = useMemo(() => {
-    const backupCnt = jobs.filter(j => j.action_type === 'backup').length;
-    const nsotCnt = jobs.filter(j => j.action_type === 'nsot').length;
-    const inspCnt = jobs.filter(j => j.action_type === 'inspection').length;
-    const commandCnt = jobs.filter(j => j.action_type === 'command').length;
-    const scriptCnt = jobs.filter(j => j.action_type === 'script_run').length;
+    const countFor = (actionType: string) => jobActionCounts[actionType] ?? jobs.filter(j => j.action_type === actionType).length;
+    const backupCnt = countFor('backup');
+    const nsotCnt = countFor('nsot');
+    const inspCnt = countFor('inspection');
+    const commandCnt = countFor('command');
+    const scriptCnt = countFor('script_run');
     const activeCnt = jobs.filter(j => j.enabled === 1).length;
     return { backupCnt, nsotCnt, inspCnt, commandCnt, scriptCnt, activeCnt };
-  }, [jobs]);
+  }, [jobs, jobActionCounts]);
 
   const authHeaders = useMemo(() => {
     const token = localStorage.getItem('netops_token');
     return token ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
   }, []);
 
+  useEffect(() => {
+    saveVisibleColumnKeys(SCHEDULED_JOB_COLUMN_STORAGE_KEY, SCHEDULED_JOB_COLUMN_DEFS, visibleJobColumnKeys);
+  }, [visibleJobColumnKeys]);
+
   /* === FETCHERS === */
   const fetchJobs = useCallback(async () => {
+    const requestSequence = ++jobsRequestSequence.current;
     setLoading(true);
     try {
-      const r = await fetch(`/api/scheduled-jobs?job_type=cron&page=${page}&page_size=${pageSize}`, { headers: authHeaders });
-      if (r.ok) {
+      const params = new URLSearchParams({ job_type: 'cron', page: String(page), page_size: String(pageSize) });
+      const keyword = appliedSearch.trim();
+      if (keyword) params.set('keyword', keyword);
+      if (activeCategory !== 'all' && activeCategory !== 'system') params.set('action_type', activeCategory);
+      if (jobStatusFilters.length === 1) params.set('enabled', jobStatusFilters[0] === 'enabled' ? '1' : '0');
+      const r = await fetch(`/api/scheduled-jobs?${params.toString()}`, { headers: authHeaders });
+      if (r.ok && requestSequence === jobsRequestSequence.current) {
         const j = await r.json();
         const d = j.data || {};
         setJobs(d.items || []);
         setTotal(d.total || 0);
+        setJobActionCounts(d.action_counts && typeof d.action_counts === 'object' ? d.action_counts : {});
       }
     } finally {
-      setLoading(false);
+      if (requestSequence === jobsRequestSequence.current) setLoading(false);
     }
-  }, [authHeaders, page, pageSize]);
+  }, [authHeaders, page, pageSize, appliedSearch, activeCategory, jobStatusFilters]);
 
   const fetchNsotCollectionPreview = useCallback(async (jobId: string, signal: AbortSignal): Promise<NsotCollectionPreview> => {
     const response = await fetch(`/api/scheduled-jobs/${encodeURIComponent(jobId)}/nsot-preview`, {
@@ -348,6 +370,13 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   }, [authHeaders]);
 
   useEffect(() => { fetchJobs(); }, [fetchJobs]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setPage(1);
+      setAppliedSearch(searchQuery.trim());
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [searchQuery]);
   useEffect(() => { fetchSystemJobs(); }, [fetchSystemJobs]);
   useEffect(() => {
     if (showAddJob || editingJob) fetchDevices();
@@ -1213,7 +1242,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
             <button
               onClick={() => { fetchJobs(); fetchSystemJobs(); }}
               disabled={loading}
-              className="inline-flex h-8 items-center gap-1 rounded-xl border border-black/8 bg-white px-3 text-[11px] font-medium text-[#0e7490] transition-all hover:bg-cyan-50 hover:border-cyan-400/30"
+              className="inline-flex h-8 items-center gap-1 rounded-xl border border-black/8 bg-white px-3 text-[11px] font-medium text-blue-700 transition-all hover:bg-blue-50 hover:border-blue-200"
             >
               <RotateCcw size={12} className={loading ? 'animate-spin' : ''} />
               {zh ? '刷新' : 'Refresh'}
@@ -1222,25 +1251,12 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
               <button
                 type="button"
                 onClick={() => setBulkCollectionPlanOpen(true)}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-cyan-200 bg-white px-3.5 py-2.5 text-xs font-bold text-cyan-800 shadow-sm transition hover:border-cyan-300 hover:bg-cyan-50"
+                className="inline-flex items-center gap-1.5 rounded-xl border border-blue-200 bg-white px-3.5 py-2.5 text-xs font-bold text-blue-700 shadow-sm transition hover:border-blue-300 hover:bg-blue-50"
               >
                 <Layers size={15} />
                 {zh ? '批量采集模板' : 'Bulk Collection Templates'}
               </button>
             )}
-            <button
-              type="button"
-              onClick={toggleAddJob}
-              disabled={showAddJob && (approvalStatus === 'sending' || approvalStatus === 'verifying')}
-              className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-bold shadow-sm transition-all active:scale-[0.97] ${
-                showAddJob
-                  ? 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  : 'bg-gradient-to-r from-cyan-500 to-cyan-600 text-white hover:from-cyan-400 hover:to-cyan-500'
-              } disabled:cursor-not-allowed disabled:opacity-50`}
-            >
-              {showAddJob ? <X size={16} /> : <Plus size={16} />}
-              {showAddJob ? (zh ? '取消新建' : 'Cancel') : (zh ? '新建定时作业' : 'New Scheduled Job')}
-            </button>
           </>
         }
       />
@@ -1255,35 +1271,48 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
               inert={showAddJob}
             >
               {/* ═══ 顶层多维分类导航与搜索栏 ═══ */}
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-slate-100/90 p-1.5 rounded-2xl border border-slate-200/80 shadow-inner">
+              <ListToolbar
+                className="flex-col md:flex-row md:items-center justify-between bg-slate-100/90 p-1.5 rounded-2xl border border-slate-200/80 shadow-inner"
+                leadingAction={!showAddJob ? (
+                  <button
+                    type="button"
+                    onClick={toggleAddJob}
+                    className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-blue-700 active:scale-[0.98]"
+                  >
+                    <Plus size={15} />
+                    {zh ? '新建' : 'New'}
+                  </button>
+                ) : undefined}
+              >
                 <div className="flex items-center gap-1 overflow-x-auto custom-scrollbar py-0.5">
                   <button
-                    onClick={() => setActiveCategory('all')}
+                    onClick={() => { setPage(1); setActiveCategory('all'); }}
                     className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 ${
                       activeCategory === 'all'
-                        ? 'bg-white text-cyan-700 shadow-sm border border-cyan-100'
+                        ? 'bg-white text-blue-700 shadow-sm border border-blue-100'
                         : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
                     }`}
                   >
                     <span>{zh ? '用户作业' : 'User Jobs'}</span>
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeCategory === 'all' ? 'bg-cyan-100 text-cyan-800 font-mono' : 'bg-slate-200/80 text-slate-600'}`}>
-                      {jobs.length}
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeCategory === 'all' ? 'bg-blue-100 text-blue-800 font-mono' : 'bg-slate-200/80 text-slate-600'}`}>
+                      {total}
                     </span>
                   </button>
 
                   <button
                     onClick={() => {
+                      setPage(1);
                       setActiveCategory('system');
                       setSystemCollapsed(false);
                     }}
                     className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 ${
                       activeCategory === 'system'
-                        ? 'bg-white text-cyan-700 shadow-sm border border-cyan-100'
+                        ? 'bg-white text-blue-700 shadow-sm border border-blue-100'
                         : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
                     }`}
                   >
                     <span>{zh ? '系统计划' : 'System Schedules'}</span>
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeCategory === 'system' ? 'bg-cyan-100 text-cyan-800 font-mono' : 'bg-slate-200/80 text-slate-600'}`}>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeCategory === 'system' ? 'bg-blue-100 text-blue-800 font-mono' : 'bg-slate-200/80 text-slate-600'}`}>
                       {systemJobs.length}
                     </span>
                   </button>
@@ -1291,91 +1320,96 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                   <div className="w-px h-5 bg-slate-300/60 mx-1" />
 
                   <button
-                    onClick={() => setActiveCategory('backup')}
+                    onClick={() => { setPage(1); setActiveCategory('backup'); }}
                     className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 ${
                       activeCategory === 'backup'
-                        ? 'bg-white text-indigo-700 border border-indigo-100 shadow-sm'
+                        ? 'bg-white text-blue-700 border border-blue-100 shadow-sm'
                         : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
                     }`}
                   >
-                    <Database size={13} className={activeCategory === 'backup' ? 'text-indigo-600' : 'text-slate-400'} />
+                    <Database size={13} className={activeCategory === 'backup' ? 'text-blue-600' : 'text-slate-400'} />
                     <span>{zh ? '配置采集' : 'Backup'}</span>
                     <span className="text-[10px] opacity-60 font-mono">{stats.backupCnt}</span>
                   </button>
 
                   <button
-                    onClick={() => setActiveCategory('nsot')}
+                    onClick={() => { setPage(1); setActiveCategory('nsot'); }}
                     className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 ${
                       activeCategory === 'nsot'
-                        ? 'bg-white text-cyan-700 border border-cyan-100 shadow-sm'
+                        ? 'bg-white text-blue-700 border border-blue-100 shadow-sm'
                         : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
                     }`}
                   >
-                    <RefreshCw size={13} className={activeCategory === 'nsot' ? 'text-cyan-600' : 'text-slate-400'} />
+                    <RefreshCw size={13} className={activeCategory === 'nsot' ? 'text-blue-600' : 'text-slate-400'} />
                     <span>NSOT</span>
                     <span className="text-[10px] opacity-60 font-mono">{stats.nsotCnt}</span>
                   </button>
 
                   <button
-                    onClick={() => setActiveCategory('inspection')}
+                    onClick={() => { setPage(1); setActiveCategory('inspection'); }}
                     className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 ${
                       activeCategory === 'inspection'
-                        ? 'bg-white text-emerald-700 border border-emerald-100 shadow-sm'
+                        ? 'bg-white text-blue-700 border border-blue-100 shadow-sm'
                         : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
                     }`}
                   >
-                    <Activity size={13} className={activeCategory === 'inspection' ? 'text-emerald-600' : 'text-slate-400'} />
+                    <Activity size={13} className={activeCategory === 'inspection' ? 'text-blue-600' : 'text-slate-400'} />
                     <span>{zh ? '智能巡检' : 'Inspection'}</span>
                     <span className="text-[10px] opacity-60 font-mono">{stats.inspCnt}</span>
                   </button>
 
                   <button
-                    onClick={() => setActiveCategory('command')}
+                    onClick={() => { setPage(1); setActiveCategory('command'); }}
                     className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 ${
                       activeCategory === 'command'
-                        ? 'bg-white text-cyan-700 border border-cyan-100 shadow-sm'
+                        ? 'bg-white text-blue-700 border border-blue-100 shadow-sm'
                         : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
                     }`}
                   >
-                    <Terminal size={13} className={activeCategory === 'command' ? 'text-cyan-600' : 'text-slate-400'} />
+                    <Terminal size={13} className={activeCategory === 'command' ? 'text-blue-600' : 'text-slate-400'} />
                     <span>{zh ? '命令执行' : 'Commands'}</span>
                     <span className="text-[10px] opacity-60 font-mono">{stats.commandCnt}</span>
                   </button>
 
                   <button
-                    onClick={() => setActiveCategory('script_run')}
+                    onClick={() => { setPage(1); setActiveCategory('script_run'); }}
                     className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 ${
                       activeCategory === 'script_run'
-                        ? 'bg-white text-amber-700 border border-amber-100 shadow-sm'
+                        ? 'bg-white text-blue-700 border border-blue-100 shadow-sm'
                         : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
                     }`}
                   >
-                    <Zap size={13} className={activeCategory === 'script_run' ? 'text-amber-600' : 'text-slate-400'} />
+                    <Zap size={13} className={activeCategory === 'script_run' ? 'text-blue-600' : 'text-slate-400'} />
                     <span>{zh ? '自动化脚本' : 'Scripts'}</span>
                     <span className="text-[10px] opacity-60 font-mono">{stats.scriptCnt}</span>
                   </button>
                 </div>
 
-                <div className="relative flex-1 md:max-w-xs">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
-                  <input
-                    type="text"
+                <ListSearchInput
+                    language={language}
+                    className="md:max-w-xs"
                     value={searchQuery}
                     onChange={e => setSearchQuery(e.target.value)}
                     placeholder={zh ? '按名称、脚本ID或命令搜索...' : 'Search by name, command...'}
-                    className="w-full pl-9 pr-4 py-2 rounded-xl border border-slate-200 bg-white text-xs outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-400 transition-all placeholder:text-slate-400"
+                    onClear={() => setSearchQuery('')}
                   />
-                  {searchQuery && (
-                    <button
-                      onClick={() => setSearchQuery('')}
-                      aria-label={zh ? '清空搜索' : 'Clear search'}
-                      className="search-clear-button absolute right-3 top-1/2 -translate-y-1/2"
-                    >
-                      <X size={12} />
-                    </button>
-                  )}
-                </div>
-              </div>
+                <ColumnSettingsButton
+                  columns={[
+                    { key: 'name', label: zh ? '作业名称' : 'Job name' },
+                    { key: 'target', label: zh ? '任务对象' : 'Target' },
+                    { key: 'schedule', label: zh ? '执行周期' : 'Schedule' },
+                    { key: 'status', label: zh ? '状态' : 'Status' },
+                    { key: 'updatedBy', label: zh ? '修改人' : 'Modified by' },
+                    { key: 'updatedAt', label: zh ? '修改时间' : 'Modified at' },
+                    { key: 'actions', label: zh ? '操作' : 'Actions', required: true, isAction: true },
+                  ]}
+                  visibleKeys={visibleJobColumnKeys}
+                  defaultVisibleKeys={SCHEDULED_JOB_COLUMN_DEFS.filter(column => column.defaultVisible).map(column => column.key)}
+                  onApply={keys => setVisibleJobColumnKeys(keys as typeof visibleJobColumnKeys)}
+                  language={language}
+                  label={zh ? '列设置' : 'Columns'}
+                />
+              </ListToolbar>
 
               {/* ═══ 内置系统作业分栏呈现 ═══ */}
               {activeCategory === 'system' && (
@@ -1521,15 +1555,18 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                 </div>
               ) : filteredJobs.length > 0 ? (
                 <div className="flex-1 overflow-auto max-h-[calc(100vh-320px)] rounded-2xl border border-slate-200 bg-white shadow-sm custom-scrollbar">
-                  <table className="w-full min-w-[1060px] text-left">
+                  <DataTable
+                    className="w-full min-w-[1060px] text-left"
+                    exportConfig={{ filename: 'scheduled-jobs', language: zh ? 'zh' : 'en', disabled: filteredJobs.length === 0 }}
+                  >
                     <thead className="sticky top-0 z-10 bg-slate-50 text-[11px] font-bold text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.08)]">
                       <tr>
-                        <th className="px-4 py-3">{zh ? '作业名称' : 'Job Name'}</th>
-                        <th className="px-4 py-3">{zh ? '任务对象' : 'Target'}</th>
-                        <th className="px-4 py-3">{zh ? '执行周期（Crontab）' : 'Schedule (Crontab)'}</th>
-                        <th className="px-4 py-3">{zh ? '状态' : 'Status'}</th>
-                        <th className="px-4 py-3">{zh ? '修改人' : 'Modified By'}</th>
-                        <th className="px-4 py-3">{zh ? '修改时间' : 'Modified At'}</th>
+                        {visibleJobColumnSet.has('name') && <th className="px-4 py-3">{zh ? '作业名称' : 'Job Name'}</th>}
+                        {visibleJobColumnSet.has('target') && <th className="px-4 py-3">{zh ? '任务对象' : 'Target'}</th>}
+                        {visibleJobColumnSet.has('schedule') && <th className="px-4 py-3">{zh ? '执行周期（Crontab）' : 'Schedule (Crontab)'}</th>}
+                        {visibleJobColumnSet.has('status') && <th className="px-4 py-3"><span className="inline-flex items-center">{zh ? '状态' : 'Status'}<TableHeaderMultiSelectFilter label={zh ? '状态' : 'Status'} language={language} options={[{ value: 'enabled', label: zh ? '已启用' : 'Enabled' }, { value: 'disabled', label: zh ? '已停用' : 'Disabled' }]} selectedValues={jobStatusFilters} onApply={(values) => { setPage(1); setJobStatusFilters(values); }} /></span></th>}
+                        {visibleJobColumnSet.has('updatedBy') && <th className="px-4 py-3">{zh ? '修改人' : 'Modified By'}</th>}
+                        {visibleJobColumnSet.has('updatedAt') && <th className="px-4 py-3">{zh ? '修改时间' : 'Modified At'}</th>}
                         <TableActionHeader className="whitespace-nowrap px-4 py-3">{zh ? '操作' : 'Actions'}</TableActionHeader>
                       </tr>
                     </thead>
@@ -1558,32 +1595,34 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                               }
                             }}
                             tabIndex={0}
-                            className="cursor-pointer transition-colors hover:bg-cyan-50/40 focus:outline-none focus-visible:bg-cyan-50/50"
+                            data-selected={detailJob?.id === job.id || undefined}
+                            aria-selected={detailJob?.id === job.id}
+                            className="cursor-pointer transition-colors hover:bg-blue-50/40 focus:outline-none focus-visible:bg-blue-50/50"
                           >
-                            <td className="max-w-[220px] px-4 py-3.5 font-semibold text-slate-800">
+                            {visibleJobColumnSet.has('name') && <td className="max-w-[220px] px-4 py-3.5 font-semibold text-slate-800">
                               <span className="block truncate" title={job.name}>{job.name || '—'}</span>
-                            </td>
-                            <td className="max-w-[230px] px-4 py-3.5 text-slate-600">
+                            </td>}
+                            {visibleJobColumnSet.has('target') && <td className="max-w-[230px] px-4 py-3.5 text-slate-600">
                               <span className="block truncate" title={scopeDesc}>{scopeDesc}</span>
-                            </td>
-                            <td className="px-4 py-3.5">
+                            </td>}
+                            {visibleJobColumnSet.has('schedule') && <td className="px-4 py-3.5">
                               <code className="whitespace-nowrap rounded-md border border-cyan-100 bg-cyan-50 px-2 py-1 font-mono text-[11px] font-semibold text-cyan-800" title={describeCron(job.cron_expr, zh)}>
                                 {job.cron_expr || '—'}
                               </code>
-                            </td>
-                            <td className="px-4 py-3.5">
+                            </td>}
+                            {visibleJobColumnSet.has('status') && <td className="px-4 py-3.5">
                               <span className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-[10px] font-bold ${
                                 isEnabled ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'
                               }`}>
                                 {isEnabled ? (zh ? '已启用' : 'Enabled') : (zh ? '已停用' : 'Disabled')}
                               </span>
-                            </td>
-                            <td className="px-4 py-3.5 font-medium text-slate-600">
+                            </td>}
+                            {visibleJobColumnSet.has('updatedBy') && <td className="px-4 py-3.5 font-medium text-slate-600">
                               {job.updated_by || job.created_by || '—'}
-                            </td>
-                            <td className="whitespace-nowrap px-4 py-3.5 font-mono text-[11px] text-slate-600">
+                            </td>}
+                            {visibleJobColumnSet.has('updatedAt') && <td className="whitespace-nowrap px-4 py-3.5 font-mono text-[11px] text-slate-600">
                               {formatJobDateTime(job.updated_at || job.created_at)}
-                            </td>
+                            </td>}
                             <TableActionCell
                               className="whitespace-nowrap px-4 py-3.5"
                               label={zh ? `定时作业操作：${job.name}` : `Scheduled job actions: ${job.name}`}
@@ -1637,7 +1676,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                         );
                       })}
                     </tbody>
-                  </table>
+                  </DataTable>
                 </div>
               ) : (
                 <div className="rounded-3xl border-2 border-dashed border-slate-200/80 p-16 text-center bg-white/50">
@@ -1652,10 +1691,10 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                   </p>
                   <button
                     onClick={toggleAddJob}
-                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-cyan-600 text-white text-xs font-bold hover:from-cyan-400 hover:to-cyan-500 transition-all shadow shadow-cyan-500/20 active:scale-[0.98]"
+                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 transition-all shadow shadow-blue-600/20 active:scale-[0.98]"
                   >
                     <Plus size={16} />
-                    {zh ? '新建定时作业' : 'New Scheduled Job'}
+                    {zh ? '新建' : 'New'}
                   </button>
                 </div>
               )}

@@ -219,7 +219,7 @@ def _validate_remote_write_endpoint(value: str) -> str:
     return endpoint
 
 
-def _safe_collector_view(row: Any) -> dict[str, Any]:
+def _safe_collector_view(row: Any, local_runtime: dict[str, Any] | None = None) -> dict[str, Any]:
     item = _dict(row)
     endpoint = str(item.get("remote_write_endpoint") or "")
     try:
@@ -228,7 +228,55 @@ def _safe_collector_view(row: Any) -> dict[str, Any]:
             item["remote_write_endpoint"] = "[REDACTED]"
     except ValueError:
         item["remote_write_endpoint"] = "[REDACTED]"
+
+    if not _collector_is_enabled(item.get("enabled")):
+        item["status"] = "DISABLED"
+        item["runtime_status"] = "DISABLED"
+        item["runtime_probe"] = "NOT_RUN"
+        return item
+
+    if str(item.get("collector_type") or "LOCAL").strip().upper() == "LOCAL":
+        runtime = local_runtime or _probe_local_collector_runtime()
+        item.update(runtime)
+        item["status"] = runtime["runtime_status"]
+    else:
+        # The stored status was previously set to ONLINE by config publishing.
+        # No remote/edge heartbeat receiver exists yet, so that value is not a
+        # trustworthy runtime signal.
+        item["status"] = "UNKNOWN"
+        item["runtime_status"] = "UNKNOWN"
+        item["runtime_probe"] = "HEARTBEAT_NOT_CONFIGURED"
+        item["runtime_checked_at"] = None
     return item
+
+
+def _collector_is_enabled(value: Any) -> bool:
+    return value is True or str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _probe_local_collector_runtime() -> dict[str, Any]:
+    """Check the real local collection services instead of inferring liveness from publish state."""
+    endpoints = {
+        "vmagent": "http://vmagent:8429/health",
+        "snmp_exporter": "http://snmp-exporter:9116/metrics",
+    }
+    opener = build_opener(ProxyHandler({}))
+    component_status: dict[str, str] = {}
+    for component, endpoint in endpoints.items():
+        try:
+            with opener.open(UrlRequest(endpoint, method="GET"), timeout=2.0) as response:
+                component_status[component] = "ONLINE" if 200 <= int(response.status) < 300 else "OFFLINE"
+        except Exception as exc:
+            logger.warning("Local collector health probe failed for %s (%s)", component, type(exc).__name__)
+            component_status[component] = "OFFLINE"
+
+    runtime_status = "ONLINE" if all(value == "ONLINE" for value in component_status.values()) else "OFFLINE"
+    return {
+        "runtime_status": runtime_status,
+        "runtime_probe": "LOCAL_COMPONENT_HEALTH",
+        "runtime_checked_at": _now(),
+        "runtime_components": component_status,
+    }
 
 
 def _safe_variant_view(row: Any) -> dict[str, Any]:
@@ -639,7 +687,14 @@ def list_collectors(_user=require_role("Viewer")):
     conn = get_db_connection()
     try:
         rows = conn.execute("SELECT * FROM monitoring_collectors ORDER BY code").fetchall()
-        return {"items": [_safe_collector_view(row) for row in rows]}
+        records = [_dict(row) for row in rows]
+        has_enabled_local_collector = any(
+            _collector_is_enabled(item.get("enabled"))
+            and str(item.get("collector_type") or "LOCAL").strip().upper() == "LOCAL"
+            for item in records
+        )
+        local_runtime = _probe_local_collector_runtime() if has_enabled_local_collector else None
+        return {"items": [_safe_collector_view(item, local_runtime=local_runtime) for item in records]}
     finally:
         conn.close()
 
@@ -739,11 +794,39 @@ def create_collector(body: CollectorRequest, _user=require_role("Operator")):
 def test_collector(collector_id: str, _user=require_role("Operator")):
     conn = get_db_connection()
     try:
-        row = conn.execute("SELECT id, code, enabled, status, last_heartbeat_at FROM monitoring_collectors WHERE id = ?", (collector_id,)).fetchone()
+        row = conn.execute("SELECT id, code, enabled, collector_type, last_heartbeat_at FROM monitoring_collectors WHERE id = ?", (collector_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Collector not found")
         item = _dict(row)
-        return {"collector_id": collector_id, "status": "PASS" if item.get("enabled") else "DISABLED", "last_heartbeat_at": item.get("last_heartbeat_at")}
+        if not _collector_is_enabled(item.get("enabled")):
+            return {
+                "collector_id": collector_id,
+                "status": "DISABLED",
+                "runtime_status": "DISABLED",
+                "runtime_probe": "NOT_RUN",
+                "runtime_checked_at": None,
+                "runtime_components": {},
+                "last_heartbeat_at": item.get("last_heartbeat_at"),
+            }
+
+        if str(item.get("collector_type") or "LOCAL").strip().upper() == "LOCAL":
+            runtime = _probe_local_collector_runtime()
+            return {
+                "collector_id": collector_id,
+                "status": "PASS" if runtime["runtime_status"] == "ONLINE" else "FAILED",
+                **runtime,
+                "last_heartbeat_at": item.get("last_heartbeat_at"),
+            }
+
+        return {
+            "collector_id": collector_id,
+            "status": "UNKNOWN",
+            "runtime_status": "UNKNOWN",
+            "runtime_probe": "HEARTBEAT_NOT_CONFIGURED",
+            "runtime_checked_at": None,
+            "runtime_components": {},
+            "last_heartbeat_at": item.get("last_heartbeat_at"),
+        }
     finally:
         conn.close()
 
@@ -1579,7 +1662,7 @@ def publish_collector(collector_id: str, _user=require_role("Operator")):
         now = _now()
         conn.execute("UPDATE monitoring_config_versions SET status = 'APPLIED', applied_at = ? WHERE collector_id = ? AND config_version = ?", (now, collector_id, version))
         conn.execute("UPDATE monitoring_target_snapshots SET is_last_known_good = CASE WHEN config_version = ? THEN 1 ELSE 0 END WHERE collector_id = ?", (version, collector_id))
-        conn.execute("UPDATE monitoring_collectors SET status = 'ONLINE', last_config_status = 'APPLIED', last_config_version = ?, last_config_applied_at = ?, updated_at = ? WHERE id = ?", (version, now, now, collector_id))
+        conn.execute("UPDATE monitoring_collectors SET last_config_status = 'APPLIED', last_config_version = ?, last_config_applied_at = ?, updated_at = ? WHERE id = ?", (version, now, now, collector_id))
         conn.commit()
         _audit(_user, "MONITORING_CONFIG_PUBLISHED", f"Published monitoring config {collector_id} v{version}", target_type="monitoring_config", target_id=f"{collector_id}:{version}", details={"collector_id": collector_id, "config_version": version, "status": "APPLIED"})
         return {"status": "APPLIED", "collector_id": collector_id, "config_version": version, "snmp_exporter_reload": exporter_reload}

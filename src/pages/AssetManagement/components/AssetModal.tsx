@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { Terminal, Shield, Lock, Wifi, Network, Building2, AlertCircle, AlertTriangle, Globe2, Plus, Trash2, X, RefreshCw, ChevronDown } from 'lucide-react';
 import DateTimePicker from '../../../components/DateTimePicker';
 import { PasswordInputField } from '../../../components/ui/PasswordInputField';
+import { FormActionBar, FormSection } from '../../../components/ui/FormLayout';
 import { Asset } from '../types';
 import type { TagDefinition } from '../../../types';
 import {
@@ -360,15 +361,15 @@ export const AssetModal: React.FC<AssetModalProps> = ({
   return (
     <AnimatePresence>
       <div
-        className="fixed inset-0 z-50 flex items-center justify-center bg-black/45"
+        className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 p-3"
         onClick={onClose}
       >
         <div
-          className="bg-white rounded-2xl w-[600px] max-w-[95vw] h-[85vh] shadow-2xl flex flex-col relative overflow-hidden border border-black/5"
+          className="nx-form-dialog-surface relative flex h-[85vh] w-[600px] max-w-[95vw] flex-col overflow-hidden rounded-xl border"
           onClick={e => e.stopPropagation()}
         >
           {/* Header */}
-          <div className="shrink-0 px-5 py-4 border-b border-black/5 flex items-center justify-between">
+          <div className="nx-dialog-header flex shrink-0 items-center justify-between border-b px-5 py-4">
             <h3 className="text-sm font-bold text-black/85">
               {isEditMode ? (zh ? '编辑资产' : 'Edit Asset') : (zh ? '新增资产' : 'Add Asset')}
             </h3>
@@ -378,8 +379,8 @@ export const AssetModal: React.FC<AssetModalProps> = ({
           </div>
 
           {/* Scrollable body */}
-          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-            <div className="rounded-lg border border-cyan-100 bg-cyan-50/60 px-3 py-2 text-[10px] text-cyan-800">
+          <div className="nx-dialog-body flex-1 space-y-4 overflow-y-auto px-5 py-4">
+            <div className="nx-dialog-info rounded-lg border px-3 py-2 text-[11px] leading-relaxed">
               {zh ? '主机名和资产编号至少填写一项。新设备默认待投产，可先保存再完成凭据验证。' : 'Provide a hostname or asset tag. New devices start in staging so you can save first and verify credentials afterward.'}
             </div>
             {isEditMode && (
@@ -405,6 +406,11 @@ export const AssetModal: React.FC<AssetModalProps> = ({
               </div>
             )}
             {/* ─── 基本属性 ─── */}
+            <FormSection
+              title={zh ? '资产信息' : 'Asset details'}
+              className="nx-dialog-card overflow-hidden rounded-xl !border-[var(--ui-border)] !bg-[var(--ui-surface)]"
+              contentClassName="!p-3 sm:!p-4"
+            >
             <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">
               <div>
                 <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '资产类型' : 'Asset Type'}</label>
@@ -845,7 +851,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                 {showMoreAssetDetails && <AssetTagPicker tags={allTags} selectedIds={form.tag_ids || []} onChange={ids => setForm(f => ({ ...f, tag_ids: ids }))} onSave={handleSaveOnce} language={language} assetType={form.asset_type} />}
 
                 {/* PAM Toggle */}
-                <div className="flex items-center justify-between p-2.5 rounded-xl bg-cyan-50 border border-cyan-200/60 mt-1">
+                <div className="nx-dialog-card mt-1 flex items-center justify-between rounded-lg border p-2.5">
                   <div className="flex items-center gap-2">
                     <Shield size={14} className="text-cyan-500" />
                     <div>
@@ -1142,10 +1148,11 @@ export const AssetModal: React.FC<AssetModalProps> = ({
               </div>
             </div>
             </div>}
+            </FormSection>
           </div>
 
           {/* Sticky footer */}
-          <div className="shrink-0 border-t border-black/5 bg-white rounded-b-2xl px-5 py-3">
+          <FormActionBar className="nx-dialog-footer shrink-0 !flex-col !items-stretch !gap-0 !rounded-b-2xl !px-5 !py-3">
             {(modalError || uValidationError) && (
               <div className="flex items-center gap-2 mb-3 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-red-700">
                 <AlertCircle size={13} className="shrink-0 text-red-500" />
@@ -1154,25 +1161,25 @@ export const AssetModal: React.FC<AssetModalProps> = ({
               </div>
             )}
             <div className="flex justify-end gap-2">
-              <button onClick={onClose} className="px-3 py-1.5 rounded-lg bg-black/[0.01] border border-black/5 text-black/40 text-xs hover:bg-black/[0.02]">{zh ? '取消' : 'Cancel'}</button>
+              <button onClick={onClose} className="nx-dialog-action-secondary rounded-lg border px-3 py-1.5 text-xs">{zh ? '取消' : 'Cancel'}</button>
               <button
                 onClick={handleSaveOnce}
                 disabled={saving || (!isEditMode && !form.hostname.trim() && !form.asset_tag.trim()) || !!uValidationError || (!isEditMode && form.asset_origin === 'legacy' && form.lifecycle_status === 'production' && String(form.takeover_exempt_reason || '').trim().length < 5)}
-                className="px-4 py-1.5 rounded-lg bg-[#00bceb] text-white text-xs font-bold hover:bg-[#00a5d0] disabled:opacity-50 shadow-sm shadow-[#00bceb]/20"
+                className="nx-dialog-action-primary rounded-lg border px-4 py-1.5 text-xs font-semibold disabled:opacity-50"
               >
                 {saving ? (zh ? '保存中...' : 'Saving...') : (zh ? '保存' : 'Save')}
               </button>
             </div>
-          </div>
+          </FormActionBar>
 
           {/* Production confirmation overlay */}
           {showProductionConfirm && (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              className="absolute inset-0 z-10 flex items-center justify-center overflow-y-auto rounded-2xl bg-black/40 p-3"
+              className="absolute inset-0 z-10 flex items-center justify-center overflow-y-auto rounded-xl bg-slate-950/35 p-3"
             >
-              <div className={`mx-2 max-h-full w-full overflow-y-auto rounded-xl bg-white p-5 shadow-xl ${productionOnboardingBlocked ? 'max-w-2xl' : 'max-w-lg'}`}>
+              <div className={`nx-dialog-card mx-2 max-h-full w-full overflow-y-auto rounded-lg border p-5 ${productionOnboardingBlocked ? 'max-w-2xl' : 'max-w-lg'}`}>
                 {productionOnboardingBlocked ? (
                   <>
                     <div className="mb-2 flex items-center gap-2">
@@ -1233,7 +1240,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                           doSaveOnce({ lifecycle_status: editingAsset?.lifecycle_status || 'staging' });
                         }}
                         disabled={saving}
-                        className="rounded-lg bg-[#00bceb] px-3 py-2 text-xs font-bold text-white hover:bg-[#00a5d0] disabled:opacity-50"
+                        className="nx-dialog-action-primary rounded-lg border px-3 py-2 text-xs font-semibold disabled:opacity-50"
                       >
                         {saving ? (zh ? '保存中...' : 'Saving...') : (zh ? '保存表单并保持待投产' : 'Save and keep in staging')}
                       </button>
@@ -1262,7 +1269,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                       <button
                         onClick={() => { setShowProductionConfirm(false); doSaveOnce({ production_mode: 'takeover' }); }}
                         disabled={saving}
-                        className="mt-2 w-full rounded-lg bg-[#00bceb] px-3 py-2 text-xs font-bold text-white hover:bg-[#00a5d0] disabled:opacity-50"
+                        className="nx-dialog-action-primary mt-2 w-full rounded-lg border px-3 py-2 text-xs font-semibold disabled:opacity-50"
                       >
                         {saving ? (zh ? '处理中...' : 'Processing...') : (zh ? '执行口令上收并投产（会更改设备密码）' : 'Take over and produce (changes device passwords)')}
                       </button>
@@ -1314,20 +1321,20 @@ export const AssetModal: React.FC<AssetModalProps> = ({
       </div>
       {showWebProfilesDialog && (
         <motion.div
-          className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/55 p-3 backdrop-blur-sm sm:p-5"
+          className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/35 p-3 sm:p-5"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           onClick={event => { event.stopPropagation(); cancelWebProfilesDialog(); }}
         >
           <motion.div
-            className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-cyan-100 bg-white shadow-2xl"
-            initial={{ opacity: 0, scale: 0.97, y: 8 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.98, y: 4 }}
+            className="nx-form-dialog-surface flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
             onClick={event => event.stopPropagation()}
           >
-            <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-100 px-4 py-3 sm:px-5">
+            <div className="nx-dialog-header flex shrink-0 items-center justify-between gap-3 border-b px-4 py-3 sm:px-5">
               <div className="flex min-w-0 items-center gap-2.5">
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-cyan-50 text-cyan-600"><Globe2 size={16} /></span>
                 <div className="min-w-0">
@@ -1402,8 +1409,8 @@ export const AssetModal: React.FC<AssetModalProps> = ({
               {webProfilesDraft.some((profile: any) => profile.scheme === 'http') && <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] leading-4 text-amber-800">{zh ? 'HTTP 会明文传输页面内容和用户输入，请仅用于不支持 HTTPS 的旧设备。' : 'HTTP transmits page content and user input in clear text; use it only for legacy devices.'}</p>}
             </div>
             <div className="flex shrink-0 justify-end gap-2 border-t border-slate-100 bg-white px-4 py-3 sm:px-5">
-              <button type="button" onClick={cancelWebProfilesDialog} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-50">{zh ? '取消' : 'Cancel'}</button>
-              <button type="button" onClick={() => { setForm((current: any) => ({ ...current, web_profiles: webProfilesDraft.map(profile => ({ ...profile })) })); webProfilesBeforeDialogRef.current = null; setShowWebProfilesDialog(false); }} className="rounded-lg bg-cyan-600 px-4 py-2 text-xs font-bold text-white hover:bg-cyan-700">{zh ? '完成' : 'Done'}</button>
+              <button type="button" onClick={cancelWebProfilesDialog} className="nx-dialog-action-secondary rounded-lg border px-3 py-2 text-xs font-medium">{zh ? '取消' : 'Cancel'}</button>
+              <button type="button" onClick={() => { setForm((current: any) => ({ ...current, web_profiles: webProfilesDraft.map(profile => ({ ...profile })) })); webProfilesBeforeDialogRef.current = null; setShowWebProfilesDialog(false); }} className="nx-dialog-action-primary rounded-lg border px-4 py-2 text-xs font-semibold">{zh ? '完成' : 'Done'}</button>
             </div>
           </motion.div>
         </motion.div>

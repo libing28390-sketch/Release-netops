@@ -7,7 +7,8 @@ import {
 } from 'lucide-react';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
-import { ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
+import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
+import { ListToolbar } from '../components/ui/TableListControls';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import NSOTCollectionOperations from './NSOTCollectionOperations';
 import { fetchAllPaginatedItems } from '../utils/pagination';
@@ -56,6 +57,8 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
   const [typeFilter, setTypeFilter] = useState('All');
   const [statusFilter, setStatusFilter] = useState('All');
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [nsotCreateRequest, setNsotCreateRequest] = useState(0);
+  const [nsotRefreshRequest, setNsotRefreshRequest] = useState(0);
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<'create' | 'edit'>('create');
@@ -76,7 +79,7 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
   const [totalScripts, setTotalScripts] = useState(0);
 
   const zh = language === 'zh';
-  const BRAND_COLOR = "#00a9ce";
+  const BRAND_COLOR = "#2563eb";
 
   useEffect(() => {
     setSearchQuery(new URLSearchParams(location.search).get('q') || '');
@@ -285,7 +288,7 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
   const isReviewMode = editForm.status === 'pending_audit' && editForm.approver_username === currentUser;
   const isReadOnly = isReviewMode || editForm.status === 'released' || (editForm.status === 'pending_audit' && editForm.submitter_name === currentUser) || isSystemScript;
 
-  const inputClass = `w-full bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-[13px] outline-none transition-all ${isReadOnly ? 'text-slate-400 cursor-not-allowed opacity-70' : 'text-slate-700 dark:text-slate-100 focus:ring-2 focus:ring-[#00a9ce]/20'}`;
+  const inputClass = `w-full bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-[13px] outline-none transition-all ${isReadOnly ? 'text-slate-400 cursor-not-allowed opacity-70' : 'text-slate-700 dark:text-slate-100 focus:ring-2 focus:ring-[#2563eb]/20'}`;
   const labelClass = "text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-1.5 flex items-center gap-1.5";
 
   return (
@@ -296,60 +299,75 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
         subtitle={zh ? '自动化脚本、系统操作与 NSOT 采集命令' : 'Automation scripts, system operations, and NSOT collection commands'}
         accent={BRAND_COLOR}
         compact={view === 'nsot'}
-        actions={(
-          <>
-            <div className="relative">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 dark:text-slate-600" size={14} />
-              <input
-                type="search"
-                placeholder={zh ? "搜索操作名称、命令或描述..." : "Search operation name, command, or description..."}
-                value={searchQuery}
-                onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
-                className="pl-11 pr-4 py-2 bg-slate-100/50 dark:bg-slate-800/40 border border-transparent dark:border-white/5 rounded-xl text-[12px] w-72 focus:w-96 transition-all outline-none text-slate-700 dark:text-white"
-              />
-            </div>
-            {(view === 'scripts' || view === 'nsot') && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => setShowAdvancedFilters((current) => !current)}
-                  className={`px-4 py-2.5 rounded-xl text-[12px] font-bold transition-all flex items-center gap-2 border ${showAdvancedFilters ? 'border-[#00a9ce]/30 bg-[#00a9ce]/10 text-[#008eac]' : 'border-slate-200 dark:border-white/10 text-slate-500 hover:border-[#00a9ce]/40 hover:text-[#00a9ce]'}`}
-                >
-                  <Filter size={15} />
-                  {zh ? '高级搜索' : 'Advanced search'}
-                  {showAdvancedFilters ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                </button>
-              </>
-            )}
-            {view === 'scripts' && (
-              <>
-                <button
-                  onClick={() => { setModalMode('create'); setEditForm({ platform: 'Linux', script_type: 'shell', version: 'v1.0.0', status: 'draft' }); setIsModalOpen(true); }}
-                  className="px-6 py-2.5 text-white rounded-xl text-[13px] font-bold shadow-lg shadow-[#00a9ce]/15 active:scale-[0.98] transition-all flex items-center gap-2"
-                  style={{ backgroundColor: BRAND_COLOR }}
-                >
-                  <Plus size={16} />
-                  {zh ? '新增脚本' : 'Create'}
-                </button>
-              </>
-            )}
-          </>
-        )}
       />
 
       <div className={`flex-1 overflow-y-auto px-6 no-scrollbar ${view === 'nsot' ? 'py-3 space-y-3' : 'py-5 space-y-6'}`}>
+        <ListToolbar
+          className="py-1"
+          leadingAction={view === 'scripts' ? (
+            <ActionButton
+              icon={Plus}
+              variant="primary"
+              size="md"
+              onClick={() => { setModalMode('create'); setEditForm({ platform: 'Linux', script_type: 'shell', version: 'v1.0.0', status: 'draft' }); setIsModalOpen(true); }}
+            >
+              {zh ? '新建' : 'New'}
+            </ActionButton>
+          ) : view === 'nsot' ? (
+            <ActionButton
+              icon={Plus}
+              variant="primary"
+              size="md"
+              onClick={() => setNsotCreateRequest((current) => current + 1)}
+            >
+              {zh ? '新建' : 'New'}
+            </ActionButton>
+          ) : undefined}
+        >
+          <div className="relative min-w-[220px] max-w-md flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" size={14} />
+            <input
+              type="search"
+              aria-label={zh ? '搜索操作名称、命令或描述' : 'Search operation name, command, or description'}
+              placeholder={zh ? '搜索操作名称、命令或描述...' : 'Search operation name, command, or description...'}
+              value={searchQuery}
+              onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
+              className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-xs text-slate-700 outline-none focus:border-blue-500 dark:border-white/10 dark:bg-slate-900 dark:text-white"
+            />
+          </div>
+          {(view === 'scripts' || view === 'nsot') && (
+            <button
+              type="button"
+              onClick={() => setShowAdvancedFilters((current) => !current)}
+              className={`flex shrink-0 items-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-bold transition-all ${showAdvancedFilters ? 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300' : 'border-slate-200 text-slate-500 hover:border-blue-200 hover:text-blue-700 dark:border-white/10 dark:text-slate-400 dark:hover:border-blue-500/30 dark:hover:text-blue-300'}`}
+            >
+              <Filter size={15} />
+              {zh ? '高级搜索' : 'Advanced search'}
+              {showAdvancedFilters ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            </button>
+          )}
+          {view === 'nsot' && (
+            <ActionIconButton
+              icon={RotateCcw}
+              label={zh ? '刷新目录' : 'Refresh catalog'}
+              variant="accent"
+              onClick={() => setNsotRefreshRequest((current) => current + 1)}
+            />
+          )}
+        </ListToolbar>
+
         {view === 'scripts' && showAdvancedFilters && (
           <div className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 dark:border-white/10 dark:bg-slate-900/20">
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
               <label className="flex flex-col gap-1.5 text-[11px] font-bold text-slate-500 dark:text-slate-400">
                 <span>{zh ? '平台' : 'Platform'}</span>
-                <select value={platformFilter} onChange={(e) => { setPlatformFilter(e.target.value); setCurrentPage(1); }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-[#00a9ce] dark:border-white/10 dark:bg-slate-900 dark:text-slate-200">
+                <select value={platformFilter} onChange={(e) => { setPlatformFilter(e.target.value); setCurrentPage(1); }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-[#2563eb] dark:border-white/10 dark:bg-slate-900 dark:text-slate-200">
                   {PLATFORM_OPTIONS.map((option) => <option key={option.value} value={option.value}>{zh ? option.zh : option.en}</option>)}
                 </select>
               </label>
               <label className="flex flex-col gap-1.5 text-[11px] font-bold text-slate-500 dark:text-slate-400">
                 <span>{zh ? '分类' : 'Category'}</span>
-                <select value={categoryFilter} onChange={(e) => { setCategoryFilter(e.target.value as typeof categoryFilter); setCurrentPage(1); }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-[#00a9ce] dark:border-white/10 dark:bg-slate-900 dark:text-slate-200">
+                <select value={categoryFilter} onChange={(e) => { setCategoryFilter(e.target.value as typeof categoryFilter); setCurrentPage(1); }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-[#2563eb] dark:border-white/10 dark:bg-slate-900 dark:text-slate-200">
                   <option value="all">{zh ? '全部分类' : 'All categories'}</option>
                   <option value="inspection">{zh ? '巡检采集' : 'Inspection / collect'}</option>
                   <option value="change">{zh ? '配置下发' : 'Change / push'}</option>
@@ -358,7 +376,7 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
               </label>
               <label className="flex flex-col gap-1.5 text-[11px] font-bold text-slate-500 dark:text-slate-400">
                 <span>{zh ? '类型' : 'Type'}</span>
-                <select value={typeFilter} onChange={(e) => { setTypeFilter(e.target.value); setCurrentPage(1); }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-[#00a9ce] dark:border-white/10 dark:bg-slate-900 dark:text-slate-200">
+                <select value={typeFilter} onChange={(e) => { setTypeFilter(e.target.value); setCurrentPage(1); }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-[#2563eb] dark:border-white/10 dark:bg-slate-900 dark:text-slate-200">
                   <option value="All">{zh ? '全部类型' : 'All types'}</option>
                   <option value="shell">Shell</option>
                   <option value="python">Python</option>
@@ -367,7 +385,7 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
               </label>
               <label className="flex flex-col gap-1.5 text-[11px] font-bold text-slate-500 dark:text-slate-400">
                 <span>{zh ? '状态' : 'Status'}</span>
-                <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setCurrentPage(1); }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-[#00a9ce] dark:border-white/10 dark:bg-slate-900 dark:text-slate-200">
+                <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setCurrentPage(1); }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-[#2563eb] dark:border-white/10 dark:bg-slate-900 dark:text-slate-200">
                   <option value="All">{zh ? '全部状态' : 'All statuses'}</option>
                   <option value="draft">{zh ? '草稿' : 'Draft'}</option>
                   <option value="pending_audit">{zh ? '待审核' : 'Pending audit'}</option>
@@ -378,7 +396,7 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
             </div>
             <div className="flex items-center justify-between gap-3 border-t border-slate-200/70 pt-3 text-xs dark:border-white/10">
               <span className="text-slate-400">{zh ? '平台名称与版本沿用 TextFSM 平台目录；脚本审核状态仅对脚本来源生效。' : 'Platform names and versions follow the TextFSM catalog; script review status applies only to script sources.'}</span>
-              <button type="button" onClick={resetFilters} className="inline-flex shrink-0 items-center gap-1.5 font-semibold text-slate-500 hover:text-[#00a9ce]"><RotateCcw size={13} />{zh ? '重置筛选' : 'Reset'}</button>
+              <button type="button" onClick={resetFilters} className="inline-flex shrink-0 items-center gap-1.5 font-semibold text-slate-500 hover:text-[#2563eb]"><RotateCcw size={13} />{zh ? '重置筛选' : 'Reset'}</button>
             </div>
           </div>
         )}
@@ -387,14 +405,14 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
           <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 dark:border-white/10 dark:bg-slate-900/20 sm:flex-row sm:items-end sm:justify-between">
             <label className="flex w-full flex-col gap-1.5 text-[11px] font-bold text-slate-500 dark:text-slate-400 sm:max-w-xs">
               <span>{zh ? '厂商' : 'Vendor'}</span>
-              <select value={nsotVendorFilter} onChange={(e) => setNsotVendorFilter(e.target.value)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-[#00a9ce] dark:border-white/10 dark:bg-slate-900 dark:text-slate-200">
+              <select value={nsotVendorFilter} onChange={(e) => setNsotVendorFilter(e.target.value)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-[#2563eb] dark:border-white/10 dark:bg-slate-900 dark:text-slate-200">
                 <option value="All">{zh ? '全部厂商' : 'All vendors'}</option>
                 {TEXTFSM_VENDOR_OPTIONS.map((vendor) => <option key={vendor.value} value={vendor.value}>{zh ? vendor.label : vendor.labelEn}</option>)}
               </select>
             </label>
             <div className="flex items-center justify-between gap-3 border-t border-slate-200/70 pt-3 text-xs dark:border-white/10 sm:flex-1 sm:justify-end sm:border-t-0 sm:pt-0">
               <span className="text-slate-400">{zh ? '厂商筛选会同步限定可选 TextFSM 平台 / 版本。' : 'The vendor filter also limits available TextFSM platforms and versions.'}</span>
-              <button type="button" onClick={() => setNsotVendorFilter('All')} className="inline-flex shrink-0 items-center gap-1.5 font-semibold text-slate-500 hover:text-[#00a9ce]"><RotateCcw size={13} />{zh ? '重置' : 'Reset'}</button>
+              <button type="button" onClick={() => setNsotVendorFilter('All')} className="inline-flex shrink-0 items-center gap-1.5 font-semibold text-slate-500 hover:text-[#2563eb]"><RotateCcw size={13} />{zh ? '重置' : 'Reset'}</button>
             </div>
           </div>
         )}
@@ -436,7 +454,7 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
                             {getPlatformLabel(script.platform)}
                           </td>
                           <td className="px-6 py-3.5">
-                            <span className={`px-2 py-0.5 rounded text-[11px] font-medium ${script.category === 'change' ? 'bg-amber-500/10 text-amber-500' : 'bg-cyan-500/10 text-[#00a9ce]'}`}>
+                            <span className={`px-2 py-0.5 rounded text-[11px] font-medium ${script.category === 'change' ? 'bg-amber-500/10 text-amber-500' : 'bg-cyan-500/10 text-[#2563eb]'}`}>
                               {script.category === 'change' ? (zh ? '配置下发' : 'Change') : (script.category === 'standard' ? (zh ? '性能指标' : 'Metric') : (zh ? '周期巡检' : 'Inspection'))}
                             </span>
                           </td>
@@ -504,7 +522,13 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
 
         {view === 'nsot' && (
           <div aria-label={zh ? 'NSOT 采集操作' : 'NSOT collection operations'}>
-            <NSOTCollectionOperations language={language} searchText={searchQuery} platformFilter={nsotVendorFilter} />
+            <NSOTCollectionOperations
+              language={language}
+              searchText={searchQuery}
+              platformFilter={nsotVendorFilter}
+              createRequestId={nsotCreateRequest}
+              refreshRequestId={nsotRefreshRequest}
+            />
           </div>
         )}
       </div>
@@ -607,11 +631,11 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
                 <div className="flex-1 flex flex-col bg-slate-50/30 dark:bg-black/10">
                    <div className="h-10 bg-slate-100/50 dark:bg-black/20 border-b border-slate-200/50 dark:border-white/5 flex items-center justify-between px-6 shrink-0">
                       <div className="flex items-center gap-2 text-[10px] font-bold text-slate-500 uppercase tracking-widest">
-                         <Terminal size={14} className="text-[#00a9ce]" />
+                         <Terminal size={14} className="text-[#2563eb]" />
                          {zh ? '编辑器' : 'EDITOR'} / {editForm.script_type}
                       </div>
                       {!isReadOnly && (
-                        <button onClick={handleFormat} className="px-3 py-1 bg-[#00a9ce]/10 text-[#00a9ce] rounded-lg text-[10px] font-bold border border-[#00a9ce]/20 flex items-center gap-1.5 hover:bg-[#00a9ce]/20 transition-all">
+                        <button onClick={handleFormat} className="px-3 py-1 bg-[#2563eb]/10 text-[#2563eb] rounded-lg text-[10px] font-bold border border-[#2563eb]/20 flex items-center gap-1.5 hover:bg-[#2563eb]/20 transition-all">
                           <Wand2 size={12} /> {zh ? '格式化' : 'FORMAT'}
                         </button>
                       )}
@@ -629,7 +653,7 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
                       ) : (
                         <>
                           <button onClick={() => handleAction('draft')} className="px-10 py-2.5 bg-slate-100 dark:bg-white/5 text-slate-500 dark:text-slate-400 rounded-xl text-[12px] font-bold transition-all uppercase tracking-widest">{zh ? '保存草稿' : 'DRAFT'}</button>
-                          <button onClick={() => setShowConfirmModal(true)} className="px-14 py-2.5 bg-[#00a9ce] text-white rounded-xl text-[12px] font-bold shadow-xl shadow-[#00a9ce]/20 active:scale-[0.98] transition-all uppercase tracking-widest">{zh ? '提交审核' : 'SUBMIT'}</button>
+                          <button onClick={() => setShowConfirmModal(true)} className="px-14 py-2.5 bg-[#2563eb] text-white rounded-xl text-[12px] font-bold shadow-xl shadow-[#2563eb]/20 active:scale-[0.98] transition-all uppercase tracking-widest">{zh ? '提交审核' : 'SUBMIT'}</button>
                         </>
                       )}
                    </div>
@@ -646,7 +670,7 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
           <div className="fixed inset-0 z-[120] flex items-center justify-center p-6">
              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowConfirmModal(false)} className="absolute inset-0 bg-black/60 backdrop-blur-md" />
              <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="relative w-full max-w-sm bg-white dark:bg-slate-900 rounded-[32px] p-10 shadow-2xl border border-white/10">
-                <Shield size={32} className="text-[#00a9ce] mb-6" />
+                <Shield size={32} className="text-[#2563eb] mb-6" />
                 <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-2">{zh ? '指派审核人' : 'Assign Reviewer'}</h3>
                 
                 <div className="mt-6 mb-8 relative">
@@ -659,7 +683,7 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
                         value={auditorSearch}
                         onFocus={() => setShowAuditorDropdown(true)}
                         onChange={(e) => setAuditorSearch(e.target.value)}
-                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl pl-11 pr-4 py-3 text-[13px] text-slate-700 dark:text-white outline-none focus:ring-2 focus:ring-[#00a9ce]/20"
+                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl pl-11 pr-4 py-3 text-[13px] text-slate-700 dark:text-white outline-none focus:ring-2 focus:ring-[#2563eb]/20"
                       />
                    </div>
 
@@ -676,7 +700,7 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
                                <div 
                                  key={u.username} 
                                  onClick={() => { setEditForm({...editForm, approver_username: u.username}); setAuditorSearch(u.username); setShowAuditorDropdown(false); }}
-                                 className={`px-5 py-3 text-[13px] cursor-pointer hover:bg-[#00a9ce]/10 transition-all flex items-center justify-between ${editForm.approver_username === u.username ? 'bg-[#00a9ce]/10 text-[#00a9ce]' : 'text-slate-600 dark:text-slate-300'}`}
+                                 className={`px-5 py-3 text-[13px] cursor-pointer hover:bg-[#2563eb]/10 transition-all flex items-center justify-between ${editForm.approver_username === u.username ? 'bg-[#2563eb]/10 text-[#2563eb]' : 'text-slate-600 dark:text-slate-300'}`}
                                >
                                   {u.username}
                                   {editForm.approver_username === u.username && <CheckCircle2 size={14} />}
@@ -694,7 +718,7 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
                   <button 
                     disabled={!editForm.approver_username} 
                     onClick={() => handleAction('pending_audit')} 
-                    className="w-full py-4 bg-[#00a9ce] text-white rounded-2xl text-[13px] font-bold shadow-xl shadow-[#00a9ce]/20 disabled:opacity-30 active:scale-[0.98] transition-all"
+                    className="w-full py-4 bg-[#2563eb] text-white rounded-2xl text-[13px] font-bold shadow-xl shadow-[#2563eb]/20 disabled:opacity-30 active:scale-[0.98] transition-all"
                   >
                     {zh ? '发送审核申请' : 'SUBMIT FOR REVIEW'}
                   </button>

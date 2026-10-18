@@ -119,7 +119,7 @@ const CandidateModal: React.FC<CandidateModalProps> = ({
                 type="button"
                 onClick={onConfirm}
                 disabled={candidates.filter(c => c.selected).length === 0}
-                className="px-5 py-2 rounded-xl bg-[#164e63] text-white font-bold text-xs hover:bg-[#0891b2] transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-md shadow-cyan-950/10"
+                className="px-5 py-2 rounded-xl bg-blue-600 text-white font-bold text-xs hover:bg-blue-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-md shadow-blue-950/10"
               >
                 {zh ? `确认添加 (${candidates.filter(c => c.selected).length}台)` : `Add Selected (${candidates.filter(c => c.selected).length})`}
               </button>

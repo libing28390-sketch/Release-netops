@@ -3525,22 +3525,23 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
         subtitle={tab === 'credentials'
           ? (zh ? '维护设备登录与采集凭据，查看账号角色和设备绑定。' : 'Manage device login and collection credentials, roles, and device bindings.')
           : (zh ? '管理设备、接口、凭据、站点、VRF 与 VLAN 等核心配置数据。' : 'Manage devices, interfaces, credentials, sites, VRFs, and VLANs.')}
-        actions={
-          <>
-            {!isReadOnlyTab && (
+        extras={
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            {!isReadOnlyTab ? (
               <button
                 onClick={openCreate}
-                className="inline-flex h-10 items-center justify-center gap-1.5 rounded-full bg-[#00bceb] px-4 text-xs font-semibold text-white shadow-[0_8px_18px_rgba(0,188,235,0.24)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#00a5d0]"
+                className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-md bg-blue-600 px-4 text-sm font-medium text-white transition-colors hover:bg-blue-700"
               >
                 <Plus size={14} />
-                {zh ? '新建记录' : 'New Record'}
+                {zh ? '新建' : 'New'}
               </button>
-            )}
+            ) : <span />}
+            <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
             {tab === 'interfaces' && (
               <button
                 onClick={triggerInterfaceSync}
                 disabled={interfaceSyncing}
-                className="inline-flex h-10 items-center justify-center gap-1.5 rounded-full border border-[#9eeaf7] bg-[#f1fcff] px-4 text-xs font-semibold text-[#007d9d] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#e5faff] disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-blue-200 bg-white px-3 text-sm font-medium text-blue-700 transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <RefreshCw size={14} className={interfaceSyncing ? 'animate-spin' : ''} />
                 {zh ? '立即采集接口' : 'Collect Interfaces'}
@@ -3584,7 +3585,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                     onChange={event => setSearch(event.target.value)}
                     placeholder={zh ? '搜索凭据名称、用户名或角色…' : 'Search credential name, username or role…'}
                     aria-label={zh ? '搜索凭据名称、用户名或角色' : 'Search credential name, username or role'}
-                    className="h-9 w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-8 text-xs text-slate-700 outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                    className="h-9 w-full rounded-md border border-slate-200 bg-white pl-9 pr-8 text-xs text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
                   />
                   {search && (
                     <button
@@ -3599,15 +3600,13 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                 </div>
               </>
             )}
-          </>
-        }
-        extras={tab === 'interfaces' || tab === 'credentials' ? undefined : (
-          <div className="flex items-center justify-end gap-4 mt-3 flex-wrap">
+            {tab !== 'interfaces' && tab !== 'credentials' && (
+              <>
             {tab === 'vlans' && (
               <select
                 value={vlanStatusFilter}
                 onChange={e => { setVlanStatusFilter(e.target.value); setPage(1); }}
-                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 outline-none focus:ring-2 focus:ring-cyan-500"
+                className="h-9 rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-600 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
               >
                 <option value="all">{zh ? '所有状态' : 'All Status'}</option>
                 <option value="active">{zh ? '使用中' : 'Active'}</option>
@@ -3624,7 +3623,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                   : (zh ? '搜索当前列表...' : 'Search current list...')}
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                className="pl-10 pr-9 py-2 bg-slate-100 border-none rounded-lg text-sm focus:ring-2 focus:ring-cyan-500 w-64 transition-all outline-none"
+                className="h-9 w-64 rounded-md border border-slate-200 bg-white py-2 pl-10 pr-9 text-sm outline-none transition-colors focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
               />
               {search && (
                 <button
@@ -3637,8 +3636,11 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                 </button>
               )}
             </div>
+              </>
+            )}
+            </div>
           </div>
-        )}
+        }
       />
 
       <div className="min-h-0 min-w-0 flex-1 overflow-auto px-6 py-5" style={{ background: 'rgba(248, 250, 252, 0.5)' }}>
@@ -3848,14 +3850,6 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                     </button>
                   )}
                 </div>
-                <button
-                  type="button"
-                  onClick={applyInterfaceSearch}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-500/30"
-                >
-                  <Search size={13} />
-                  {zh ? '搜索' : 'Search'}
-                </button>
               </div>
             </div>
           </div>
@@ -4356,14 +4350,14 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
 
       {/* Create/Edit Modal */}
       {modalOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/45 backdrop-blur-sm" onClick={() => setModalOpen(false)} />
-          <div className="relative flex max-h-[88vh] w-full max-w-md flex-col rounded-3xl border border-black/8 bg-white p-6 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between mb-4 border-b border-black/5 pb-3">
-              <h2 className="text-lg font-semibold text-[#164e63]">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/30 p-4">
+          <button type="button" aria-label={zh ? '关闭新建窗口' : 'Close dialog'} className="absolute inset-0 cursor-default" onClick={() => setModalOpen(false)} />
+          <div role="dialog" aria-modal="true" className="nx-form-dialog-surface relative flex max-h-[90vh] w-full max-w-xl flex-col overflow-hidden rounded-lg border p-5 shadow-lg">
+            <div className="mb-4 flex items-center justify-between border-b border-slate-200 pb-3">
+              <h2 className="text-base font-semibold text-slate-900">
                 {editing ? (zh ? '编辑记录' : 'Edit Record') : (zh ? '新建记录' : 'New Record')} · {zh ? tabs.find(t => t.key === tab)?.label : tabs.find(t => t.key === tab)?.labelEn}
               </h2>
-              <button onClick={() => setModalOpen(false)} className="rounded-xl border border-black/10 p-1.5 text-black/55 hover:bg-black/[0.03] transition-colors"><X size={16} /></button>
+              <button type="button" onClick={() => setModalOpen(false)} aria-label={zh ? '关闭' : 'Close'} className="rounded-md border border-slate-200 p-1.5 text-slate-500 transition-colors hover:bg-slate-50"><X size={16} /></button>
             </div>
             <div className={`${tab === 'credentials' ? 'grid grid-cols-2 items-start gap-x-3 gap-y-4' : 'space-y-4'} min-h-0 flex-1 overflow-y-auto pr-1`}>
               {tab === 'credentials' && !editing && isCliCredentialType(form.credential_type) && (
@@ -4428,7 +4422,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                   && ['old_password', 'old_enable_password', 'password', 'enable_password', 'snmp_community'].includes(fd.key);
                 return (
                   <div key={fd.key} className={tab === 'credentials' && !isCredentialSecret ? 'col-span-2' : ''}>
-                    <label htmlFor={fd.type === 'password' ? `cmdb-secret-${fd.key}` : undefined} className="block text-xs font-semibold mb-1 text-black/50">
+                    <label htmlFor={fd.type === 'password' ? `cmdb-secret-${fd.key}` : undefined} className="mb-1 block text-xs font-medium text-slate-600">
                       {zh ? fd.label : fd.labelEn}{fd.required && <span className="text-rose-500"> *</span>}
                       {fd.secretFlag && editing && (
                         <span className="ml-1 text-[10px] text-black/30 font-normal">
@@ -4576,13 +4570,13 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
             <div className="mt-6 flex shrink-0 justify-end gap-2 border-t border-black/5 pt-3">
               <button
                 onClick={() => setModalOpen(false)}
-                className="h-10 px-4 rounded-xl border border-black/10 bg-white text-sm font-semibold text-black/60 hover:bg-black/[0.02] transition-colors"
+                className="nx-dialog-action-secondary inline-flex h-9 items-center rounded-md border px-4 text-sm font-medium transition-colors"
               >
                 {zh ? '取消' : 'Cancel'}
               </button>
               <button
                 onClick={submit}
-                className="inline-flex h-10 px-5 items-center justify-center gap-1.5 rounded-xl bg-[#06b6d4] text-sm font-semibold text-white shadow-md hover:bg-[#0891b2] transition-all"
+                className="nx-dialog-action-primary inline-flex h-9 items-center justify-center gap-1.5 rounded-md border px-4 text-sm font-medium transition-colors"
               >
                 <Check size={14} />
                 {zh ? '保存' : 'Save'}

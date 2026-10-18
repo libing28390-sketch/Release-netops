@@ -129,7 +129,7 @@ const AutomationPlaybooksTab: React.FC<AutomationPlaybooksTabProps> = ({
                 value={scenarioSearch}
                 onChange={(event) => onScenarioSearchChange(event.target.value)}
                 placeholder="Search keyword"
-                className="w-full pl-8 pr-2 py-1.5 text-xs border border-black/10 rounded-lg outline-none focus:border-[#00bceb]/40"
+                className="w-full pl-8 pr-2 py-1.5 text-xs border border-black/10 rounded-lg outline-none focus:border-[#2563eb]/40"
               />
             </div>
           </div>
@@ -178,12 +178,12 @@ const AutomationPlaybooksTab: React.FC<AutomationPlaybooksTabProps> = ({
                         <button
                           key={platformKey}
                           onClick={() => onPlatformChange(platformKey)}
-                          className={`flex items-center gap-2 p-2 rounded-lg text-left text-xs transition-all ${playbookPlatform === platformKey ? 'bg-[#00bceb]/10 border border-[#00bceb]/30 text-[#00bceb] font-semibold' : 'border border-black/5 hover:border-black/20'}`}
+                          className={`flex items-center gap-2 p-2 rounded-lg text-left text-xs transition-all ${playbookPlatform === platformKey ? 'bg-[#2563eb]/10 border border-[#2563eb]/30 text-[#2563eb] font-semibold' : 'border border-black/5 hover:border-black/20'}`}
                         >
                           <span>{platform.icon}</span>
                           <div className="min-w-0">
                             <p className="font-semibold truncate">{platform.vendor} {platform.name}</p>
-                            <p className={`text-[9px] truncate ${playbookPlatform === platformKey ? 'text-[#00bceb]/60' : 'text-black/30'}`}>{platform.description}</p>
+                            <p className={`text-[9px] truncate ${playbookPlatform === platformKey ? 'text-[#2563eb]/60' : 'text-black/30'}`}>{platform.description}</p>
                           </div>
                         </button>
                       );
@@ -206,7 +206,7 @@ const AutomationPlaybooksTab: React.FC<AutomationPlaybooksTabProps> = ({
                             onChange={(event) => onVariableChange(variable.key, event.target.value)}
                             placeholder={variable.platform_hints?.[playbookPlatform] || variable.placeholder}
                             rows={3}
-                            className="w-full mt-1 px-3 py-2 border border-black/10 rounded-xl text-xs font-mono outline-none focus:border-[#00bceb]/50"
+                            className="w-full mt-1 px-3 py-2 border border-black/10 rounded-xl text-xs font-mono outline-none focus:border-[#2563eb]/50"
                           />
                         ) : variable.type === 'select' ? (
                           <select
@@ -223,7 +223,7 @@ const AutomationPlaybooksTab: React.FC<AutomationPlaybooksTabProps> = ({
                             value={playbookVars[variable.key] || ''}
                             onChange={(event) => onVariableChange(variable.key, event.target.value)}
                             placeholder={variable.platform_hints?.[playbookPlatform] || variable.placeholder}
-                            className="w-full mt-1 px-3 py-2 border border-black/10 rounded-xl text-xs font-mono outline-none focus:border-[#00bceb]/50"
+                            className="w-full mt-1 px-3 py-2 border border-black/10 rounded-xl text-xs font-mono outline-none focus:border-[#2563eb]/50"
                           />
                         )}
                       </div>
@@ -238,14 +238,14 @@ const AutomationPlaybooksTab: React.FC<AutomationPlaybooksTabProps> = ({
                       <button
                         key={device.id}
                         onClick={() => onToggleDevice(device.id)}
-                        className={`flex items-center gap-2 p-2 rounded-lg text-xs transition-all ${playbookDeviceIds.includes(device.id) ? 'bg-[#00bceb]/10 border border-[#00bceb]/30 text-[#00bceb] font-semibold' : 'border border-black/5 hover:border-black/20'}`}
+                        className={`flex items-center gap-2 p-2 rounded-lg text-xs transition-all ${playbookDeviceIds.includes(device.id) ? 'bg-[#2563eb]/10 border border-[#2563eb]/30 text-[#2563eb] font-semibold' : 'border border-black/5 hover:border-black/20'}`}
                       >
                         <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                         {device.hostname}
                       </button>
                     ))}
                   </div>
-                  {playbookDeviceIds.length > 0 && <p className="text-[10px] mt-1.5 text-[#00bceb] font-semibold">{playbookDeviceIds.length} {t('devicesSelected')}</p>}
+                  {playbookDeviceIds.length > 0 && <p className="text-[10px] mt-1.5 text-[#2563eb] font-semibold">{playbookDeviceIds.length} {t('devicesSelected')}</p>}
                 </div>
 
                 <div className="flex items-center gap-4 pt-3 border-t border-black/5">
@@ -275,7 +275,7 @@ const AutomationPlaybooksTab: React.FC<AutomationPlaybooksTabProps> = ({
                     <button
                       onClick={() => void onExecuteApply()}
                       disabled={playbookDeviceIds.length === 0 || executionStatus === 'starting'}
-                      className={`px-3 py-2.5 rounded-xl text-xs font-bold text-white transition-all ${playbookDeviceIds.length === 0 || executionStatus === 'starting' ? 'bg-black/15 text-black/30 cursor-not-allowed' : 'bg-[#00bceb] hover:bg-[#0096bd] shadow-lg shadow-[#00bceb]/20'}`}
+                      className={`px-3 py-2.5 rounded-xl text-xs font-bold text-white transition-all ${playbookDeviceIds.length === 0 || executionStatus === 'starting' ? 'bg-black/15 text-black/30 cursor-not-allowed' : 'bg-[#2563eb] hover:bg-[#1d4ed8] shadow-lg shadow-[#2563eb]/20'}`}
                     >
                       {executionStatus === 'starting' && !playbookDryRun ? (language === 'zh' ? '下发中...' : 'Applying...') : (language === 'zh' ? '应用变更' : 'Apply Changes')}
                     </button>

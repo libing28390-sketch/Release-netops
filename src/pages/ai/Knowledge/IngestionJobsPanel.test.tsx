@@ -72,8 +72,7 @@ describe('IngestionJobsPanel', () => {
     await screen.findByText('ing_failed_001');
 
     await user.selectOptions(screen.getByRole('combobox', { name: '导入任务状态' }), 'failed');
-    await user.type(screen.getByPlaceholderText('搜索任务 ID、类型、阶段或错误码'), 'timeout');
-    await user.click(screen.getByRole('button', { name: '搜索' }));
+    await user.type(screen.getByPlaceholderText('搜索任务 ID、类型、阶段或错误码'), 'timeout{Enter}');
 
     expect(listJobs).toHaveBeenLastCalledWith(expect.objectContaining({ executionState: 'failed', search: 'timeout', page: 1, pageSize: 10 }));
   });

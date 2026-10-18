@@ -623,6 +623,12 @@ const OutboundHealthPage: React.FC = () => {
                 type="datetime-local"
                 value={customRange.start}
                 onChange={(e) => setCustomRange({ ...customRange, start: e.target.value })}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    handleCustomQuery();
+                  }
+                }}
                 className="rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] px-2.5 py-1 text-xs text-[var(--app-text)] font-semibold"
               />
             </div>
@@ -632,16 +638,15 @@ const OutboundHealthPage: React.FC = () => {
                 type="datetime-local"
                 value={customRange.end}
                 onChange={(e) => setCustomRange({ ...customRange, end: e.target.value })}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    handleCustomQuery();
+                  }
+                }}
                 className="rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] px-2.5 py-1 text-xs text-[var(--app-text)] font-semibold"
               />
             </div>
-            <button
-              type="button"
-              onClick={handleCustomQuery}
-              className="rounded-lg bg-violet-600 px-3 py-1.5 text-[10px] font-bold text-white shadow-sm hover:bg-violet-700 transition-colors"
-            >
-              {zh ? '查询' : 'Query'}
-            </button>
             <span className="text-[9px] text-[var(--muted-text)]">
               💡 {zh ? '注意：起止跨度不能超过7天' : 'Note: Span cannot exceed 7 days'}
             </span>

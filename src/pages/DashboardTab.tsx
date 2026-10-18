@@ -13,7 +13,14 @@ interface DashboardTabProps {
   trendDays: 7 | 30;
   setTrendDays: (d: 7 | 30) => void;
   complianceTrend: { name: string; rate: number }[];
-  platformData: { name: string; value: number; color: string }[];
+  managedAssetPlatformData: {
+    platform: string;
+    name: string;
+    count: number;
+    percentage: number;
+    color: string;
+    canOpenDeviceInventory: boolean;
+  }[];
   dashBannerCollapsed: boolean;
   setDashBannerCollapsed: (v: boolean) => void;
   dashLastRefresh: Date;
@@ -34,14 +41,15 @@ interface DashboardTabProps {
   assetsTotal: number | null;
   assetsOnlineTotal: number | null;
   assetsTotalError: string | null;
+  assetsPlatformError: string | null;
 }
 
 const DashboardTab: React.FC<DashboardTabProps> = ({
   devices, jobs, scheduledTasks, trendDays, setTrendDays,
-  complianceTrend, platformData, dashBannerCollapsed, setDashBannerCollapsed,
+  complianceTrend, managedAssetPlatformData, dashBannerCollapsed, setDashBannerCollapsed,
   dashLastRefresh, autoRefreshEnabled, setAutoRefreshEnabled, fetchSharedData, fetchDevicesData, fetchAssetsTotal, selectedJob, setSelectedJob,
   hostResources, unreadNotificationCount, notifications, language, t, setActiveTab, navigate,
-  assetsTotal, assetsOnlineTotal, assetsTotalError,
+  assetsTotal, assetsOnlineTotal, assetsTotalError, assetsPlatformError,
 }) => {
   const { systemInfo } = useSystem();
   const [isManualRefreshing, setIsManualRefreshing] = React.useState(false);
@@ -493,7 +501,11 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
                 <span>{t('platformDistribution')}</span>
               </h3>
               <span className="text-[11px] font-semibold text-gray-400 font-mono">
-                {devices.length} 台在网
+                {assetsTotal === null
+                  ? '—'
+                  : language === 'zh'
+                    ? `${assetsTotal} 台纳管`
+                    : `${assetsTotal} managed assets`}
               </span>
             </div>
 
@@ -501,45 +513,61 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie 
-                    data={platformData} 
+                    data={managedAssetPlatformData}
                     innerRadius={54} 
                     outerRadius={72} 
-                    paddingAngle={platformData.length > 1 ? 4 : 0} 
+                    paddingAngle={managedAssetPlatformData.length > 1 ? 4 : 0}
                     cornerRadius={3} 
-                    dataKey="value" 
+                    dataKey="count"
                     stroke="none"
                   >
-                    {platformData.map((entry, index) => (
+                    {managedAssetPlatformData.map((entry, index) => (
                       <Cell key={`cell-${index}`} fill={entry.color} />
                     ))}
                   </Pie>
-                  <Tooltip contentStyle={{ background: ct.tooltipBg, color: ct.tooltipText, borderColor: ct.tooltipBorder, borderRadius: 12, boxShadow: ct.tooltipShadow }} formatter={(value: number, name: string) => [`${value}%`, name]} />
+                  <Tooltip contentStyle={{ background: ct.tooltipBg, color: ct.tooltipText, borderColor: ct.tooltipBorder, borderRadius: 12, boxShadow: ct.tooltipShadow }} formatter={(value: number, name: string) => [`${value} ${language === 'zh' ? '台' : 'assets'}`, name]} />
                 </PieChart>
               </ResponsiveContainer>
               <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                <span className="text-2xl font-extrabold text-gray-900 dark:text-white">{devices.length}</span>
-                <span className="text-[10px] text-gray-400 font-semibold uppercase">总纳管</span>
+                <span className="text-2xl font-extrabold text-gray-900 dark:text-white">{assetsTotal ?? '—'}</span>
+                <span className="text-[10px] text-gray-400 font-semibold uppercase">
+                  {language === 'zh' ? '总纳管' : 'Managed'}
+                </span>
               </div>
             </div>
 
             {/* Platform breakdown list */}
             <div className="mt-3 space-y-2">
-              {platformData.map((item, i) => (
+              {managedAssetPlatformData.map((item) => (
                 <div 
-                  key={i} 
-                  onClick={() => {
-                    const pKey = (item as any).platform;
-                    navigate(pKey ? `/inventory/devices?platform=${pKey}` : '/inventory/devices');
-                  }}
-                  className="flex items-center justify-between px-3 py-2 rounded-xl bg-gray-50 dark:bg-zinc-800/60 hover:bg-blue-50/60 dark:hover:bg-zinc-700/60 cursor-pointer transition-all group"
+                  key={item.platform}
+                  onClick={item.canOpenDeviceInventory
+                    ? () => navigate(`/inventory/devices?platform=${encodeURIComponent(item.platform)}`)
+                    : undefined}
+                  className={`flex items-center justify-between px-3 py-2 rounded-xl bg-gray-50 dark:bg-zinc-800/60 transition-all group ${item.canOpenDeviceInventory ? 'hover:bg-blue-50/60 dark:hover:bg-zinc-700/60 cursor-pointer' : ''}`}
                 >
                   <div className="flex items-center gap-2.5">
                     <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }} />
-                    <span className="text-xs font-semibold text-gray-700 dark:text-zinc-300 group-hover:text-blue-600 transition-colors">{item.name}</span>
+                    <span className={`text-xs font-semibold text-gray-700 dark:text-zinc-300 transition-colors ${item.canOpenDeviceInventory ? 'group-hover:text-blue-600' : ''}`}>{item.name}</span>
                   </div>
-                  <span className="text-xs font-bold text-gray-900 dark:text-white font-mono">{item.value}%</span>
+                  <span className="text-xs font-bold text-gray-900 dark:text-white font-mono">
+                    {language === 'zh'
+                      ? `${item.count} 台 · ${item.percentage.toFixed(1)}%`
+                      : `${item.count} · ${item.percentage.toFixed(1)}%`}
+                  </span>
                 </div>
               ))}
+              {managedAssetPlatformData.length === 0 && (
+                <div className="py-3 text-center text-[11px] text-gray-400">
+                  {assetsTotalError || assetsPlatformError
+                    ? (language === 'zh' ? '平台分布暂不可用' : 'Platform distribution is unavailable')
+                    : assetsTotal === null
+                      ? (language === 'zh' ? '正在加载平台分布…' : 'Loading platform distribution…')
+                      : assetsTotal === 0
+                        ? (language === 'zh' ? '暂无纳管资产' : 'No managed assets')
+                        : (language === 'zh' ? '暂无平台分布数据' : 'No platform data available')}
+                </div>
+              )}
             </div>
           </div>
         </div>

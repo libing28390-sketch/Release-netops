@@ -10,6 +10,7 @@ import Pagination from '../components/Pagination';
 import { DataTable } from '../components/DataTable';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
 import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
+import { TableExportMenu } from '../components/ui/TableExportMenu';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 
 /* ─── Props ─── */
@@ -148,7 +149,7 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
       zh ? '代码' : 'Code',
       zh ? '分类' : 'Category',
       zh ? '来源' : 'Source',
-      zh ? '分配数' : 'Assignments',
+      zh ? '关联设备数' : 'Assigned devices',
       zh ? '状态' : 'Status',
     ],
     rows: filtered.map((tag) => [
@@ -289,24 +290,6 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
         eyebrow={zh ? '资产与配置 / 标签管理' : 'Assets & Config / Tag Management'}
         title={zh ? '标签管理' : 'Tag Management'}
         subtitle={zh ? '管理设备分类标签，支持按类型、厂商、系统、角色、环境、功能等维度进行标签化分组。' : 'Manage device classification tags across type, vendor, OS, role, environment, and function dimensions.'}
-        actions={
-          <>
-            {canManageTags && <button
-              onClick={openCreateModal}
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl bg-[#06b6d4] px-4 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(6,182,212,0.22)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#0891b2]"
-            >
-              <Plus size={14} />
-              {zh ? '新建标签' : 'New Tag'}
-            </button>}
-            <button
-              onClick={() => { void fetchTags(); void fetchStats(); }}
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl border border-black/10 bg-white px-4 text-sm font-medium text-[#164e63] transition-all hover:border-[#06b6d4]/30 hover:bg-[#ecfeff]"
-            >
-              <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-              {zh ? '刷新' : 'Refresh'}
-            </button>
-          </>
-        }
       />
 
       <div className="flex-1 overflow-auto px-6 py-5 space-y-4">
@@ -376,6 +359,14 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
 
           <section className="min-w-0 overflow-hidden rounded-2xl border border-black/5 bg-white shadow-sm">
             <div className="flex flex-col gap-3 border-b border-black/5 p-4 xl:flex-row xl:items-center">
+              {canManageTags && <button
+                type="button"
+                onClick={openCreateModal}
+                className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+              >
+                <Plus size={14} />
+                {zh ? '新建' : 'New'}
+              </button>}
               <label className="relative min-w-[240px] flex-1">
                 <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-black/30" />
                 <input type="text"
@@ -415,13 +406,28 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
                   {zh ? '清空筛选' : 'Clear filters'}
                 </button>
               )}
-              <span className="whitespace-nowrap rounded-xl bg-[#f0f9ff] px-3 py-2.5 text-xs font-semibold text-[#164e63]">
+              <span className="whitespace-nowrap rounded-md bg-blue-50 px-3 py-2.5 text-xs font-semibold text-blue-700">
                 {zh ? `${filtered.length} 个标签` : `${filtered.length} tags`}
               </span>
+              <ActionIconGroup label={zh ? '标签列表工具' : 'Tag list tools'} className="ml-auto shrink-0">
+                <ActionIconButton
+                  icon={RefreshCw}
+                  label={zh ? '刷新标签' : 'Refresh tags'}
+                  iconClassName={loading ? 'animate-spin' : undefined}
+                  disabled={loading}
+                  onClick={() => { void fetchTags(); void fetchStats(); }}
+                />
+                <TableExportMenu
+                  filename="tags"
+                  language={zh ? 'zh' : 'en'}
+                  exportData={tagExportData}
+                  disabled={loading || filtered.length === 0}
+                />
+              </ActionIconGroup>
             </div>
 
             <div className="overflow-x-auto">
-              <DataTable className="min-w-[980px] text-left" exportConfig={{ filename: 'tags', language: zh ? 'zh' : 'en', disabled: loading || filtered.length === 0, exportData: tagExportData }}>
+              <DataTable className="min-w-[980px] text-left">
                 <thead className="bg-slate-50/80 text-[11px] font-bold uppercase tracking-wider text-black/40">
                   <tr>
                     <th className="px-4 py-3">{zh ? '标签' : 'Tag'}</th>
@@ -429,7 +435,14 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
                     <th className="px-4 py-3">{zh ? '代码' : 'Code'}</th>
                     <th className="px-4 py-3">{zh ? '分类' : 'Category'}</th>
                     <th className="px-4 py-3">{zh ? '来源' : 'Source'}</th>
-                    <th className="px-4 py-3 text-right">{zh ? '分配数' : 'Assignments'}</th>
+                    <th
+                      className="px-4 py-3 !text-right"
+                      title={zh
+                        ? '仅统计仍存在于设备台账中的设备；非设备资源和已删除设备的遗留关联不计入。'
+                        : 'Counts only devices still present in the device inventory; non-device resources and orphaned assignments are excluded.'}
+                    >
+                      {zh ? '关联设备数' : 'Assigned devices'}
+                    </th>
                     <th className="px-4 py-3">{zh ? '状态' : 'Status'}</th>
                     <TableActionHeader className="px-4 py-3">{zh ? '操作' : 'Actions'}</TableActionHeader>
                   </tr>
@@ -475,13 +488,14 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
 
       {/* ── Create / Edit Modal ── */}
       {showModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setShowModal(false)}>
-          <div className="w-full max-w-lg rounded-3xl border border-black/8 bg-white p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
-            <div className="mb-5 flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-[#164e63]">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/30 p-4">
+          <button type="button" aria-label={zh ? '关闭标签窗口' : 'Close tag dialog'} className="absolute inset-0 cursor-default" onClick={() => setShowModal(false)} />
+          <div role="dialog" aria-modal="true" aria-labelledby="tag-dialog-title" className="nx-form-dialog-surface relative max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-lg border p-5 shadow-lg">
+            <div className="mb-4 flex items-center justify-between border-b border-slate-200 pb-3">
+              <h3 id="tag-dialog-title" className="text-base font-semibold text-slate-900">
                 {editingTag ? (zh ? '编辑标签' : 'Edit Tag') : (zh ? '新建标签' : 'New Tag')}
               </h3>
-              <button onClick={() => setShowModal(false)} className="rounded-lg p-1.5 text-black/40 transition-colors hover:bg-black/5 hover:text-black/60">
+              <button type="button" onClick={() => setShowModal(false)} aria-label={zh ? '关闭' : 'Close'} className="rounded-md border border-slate-200 p-1.5 text-slate-500 transition-colors hover:bg-slate-50">
                 <X size={18} />
               </button>
             </div>
@@ -607,21 +621,22 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
             </div>
 
             {/* Actions */}
-            <div className="mt-6 flex justify-end gap-2">
+            <div className="mt-5 flex justify-end gap-2 border-t border-slate-200 pt-4">
               <button
+                type="button"
                 onClick={() => setShowModal(false)}
-                className="h-10 rounded-xl border border-black/10 bg-white px-5 text-sm font-medium text-black/60 transition-all hover:bg-black/[0.02]"
+                className="nx-dialog-action-secondary inline-flex h-9 items-center rounded-md border px-4 text-sm font-medium transition-colors"
               >
                 {zh ? '取消' : 'Cancel'}
               </button>
               <ActionButton
                 icon={saving ? RefreshCw : Check}
                 iconClassName={saving ? 'animate-spin' : undefined}
-                variant="primary"
                 onClick={() => void handleSave()}
                 disabled={saving}
+                className="nx-dialog-action-primary inline-flex h-9 items-center justify-center gap-1.5 rounded-md border px-4 text-sm font-medium transition-colors"
               >
-                {editingTag ? (zh ? '保存' : 'Save') : (zh ? '创建' : 'Create')}
+                {editingTag ? (zh ? '保存' : 'Save') : (zh ? '新建' : 'Create')}
               </ActionButton>
             </div>
           </div>
@@ -630,31 +645,33 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
 
       {/* ── Delete Confirm Modal ── */}
       {deleteTarget && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setDeleteTarget(null)}>
-          <div className="w-full max-w-sm rounded-3xl border border-black/8 bg-white p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/30 p-4">
+          <button type="button" aria-label={zh ? '关闭删除确认窗口' : 'Close delete confirmation'} className="absolute inset-0 cursor-default" onClick={() => setDeleteTarget(null)} />
+          <div role="dialog" aria-modal="true" aria-labelledby="tag-delete-title" className="nx-form-dialog-surface relative w-full max-w-sm rounded-lg border p-5 shadow-lg">
             <div className="flex flex-col items-center gap-3 text-center">
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-red-50">
-                <Trash2 size={20} className="text-red-500" />
+              <div className="flex h-9 w-9 items-center justify-center rounded-md border border-rose-200 bg-rose-50">
+                <Trash2 size={16} className="text-rose-600" />
               </div>
-              <h3 className="text-lg font-semibold text-[#164e63]">
+              <h3 id="tag-delete-title" className="text-base font-semibold text-slate-900">
                 {zh ? '删除标签' : 'Delete Tag'}
               </h3>
-              <p className="text-sm text-black/50">
+              <p className="text-sm text-slate-600">
                 {zh
                   ? `确认删除标签「${deleteTarget.label_zh || deleteTarget.label}」？此操作不可撤销。`
                   : `Confirm deleting tag "${deleteTarget.label}"? This cannot be undone.`}
               </p>
               {deleteTarget.built_in === 1 && (
-                <div className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                <div className="nx-dialog-warning flex items-center gap-2 rounded-md border px-3 py-2 text-xs">
                   <AlertCircle size={14} />
                   {zh ? '内置标签不允许删除' : 'Built-in tags cannot be deleted'}
                 </div>
               )}
             </div>
-            <div className="mt-5 flex justify-center gap-2">
+            <div className="mt-5 flex justify-end gap-2 border-t border-slate-200 pt-4">
               <button
+                type="button"
                 onClick={() => setDeleteTarget(null)}
-                className="h-10 rounded-xl border border-black/10 bg-white px-6 text-sm font-medium text-black/60 transition-all hover:bg-black/[0.02]"
+                className="nx-dialog-action-secondary inline-flex h-9 items-center rounded-md border px-4 text-sm font-medium transition-colors"
               >
                 {zh ? '取消' : 'Cancel'}
               </button>

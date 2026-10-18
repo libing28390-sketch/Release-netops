@@ -87,6 +87,7 @@ function appendExportToLastHeaderCell(children: React.ReactNode, exportMenu: Rea
   return hasExported ? result : children;
 }
 
+/** Shared table cells stay on one line by default; add `nx-data-table-cell--wrap` only where wrapping is intentional. */
 export const DataTable: React.FC<DataTableProps> = ({ children, className = '', density, exportConfig, unstyled = false, ...props }) => {
   const tableRef = useRef<HTMLTableElement>(null);
   const table = (

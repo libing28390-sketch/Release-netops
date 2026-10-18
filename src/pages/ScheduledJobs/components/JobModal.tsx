@@ -2,12 +2,13 @@ import React, { useState, useMemo } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   CalendarClock, X, Zap, ChevronDown, Search, FileCode, CheckCircle2,
-  Trash2, RotateCcw, Shield, Database, Activity, RefreshCw,
-  Target, Globe, Server, Check, Terminal, Radio, ChevronRight, Clock,
+  Trash2, RotateCcw, Database, Activity, RefreshCw,
+  Target, Globe, Server, Check, Terminal, Radio, ChevronRight,
   Sparkles, Layers, Sliders, ShieldCheck, CheckCheck
 } from 'lucide-react';
 import TagConditionPicker, { hasTagFilterConditions, type TagFilterConfig } from '../../../components/TagConditionPicker';
 import { ActionIconButton } from '../../../components/ui/ActionIconButton';
+import { FormActionBar, FormSection } from '../../../components/ui/FormLayout';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
 import CountdownText from './CountdownText';
 import { ScheduledJob, EligibleApprover, FormState, ValidatedDevice, type ApprovalVerificationMethod, type CollectionPlanFilters } from '../types';
@@ -958,11 +959,11 @@ export const JobModal: React.FC<JobModalProps> = ({
               </div>
 
               {/* Block 3: 目标资产范围设定 */}
-              <div className="min-w-0 space-y-3 rounded-2xl border border-slate-200/90 bg-white p-4 shadow-2xs">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-indigo-500" />
-                  <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">{zh ? '目标资产范围' : 'Target Fleet Scope'}</h3>
-                </div>
+              <FormSection
+                title={zh ? '目标资产范围' : 'Target Fleet Scope'}
+                className="min-w-0 !mt-0 !rounded-2xl !border-slate-200/90 !bg-white shadow-2xs"
+                contentClassName="!space-y-3 !p-4"
+              >
 
                 {deviceLoadStatus === 'loading' || deviceLoadStatus === 'idle' ? (
                   <p className="rounded-xl bg-slate-50 px-3 py-2 text-[11px] text-slate-500">{zh ? '正在加载设备清单，加载完成后可继续。' : 'Loading the device inventory. Continue when it finishes.'}</p>
@@ -1157,7 +1158,7 @@ export const JobModal: React.FC<JobModalProps> = ({
                     </div>
                   )}
                 </div>
-              </div>
+              </FormSection>
             </div>
             ) : (
               <div className="lg:col-span-12 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-2xs">
@@ -1193,18 +1194,18 @@ export const JobModal: React.FC<JobModalProps> = ({
             {/* Keep the schedule primary and group target preview and approval in a compact side rail. */}
             {flowStep === 1 && (
             <div className="lg:col-span-12 grid grid-cols-1 items-start gap-4 xl:grid-cols-2 2xl:grid-cols-12">
-              <div className="order-2 p-4 rounded-2xl bg-white border border-slate-200/90 shadow-2xs space-y-2.5 xl:col-start-2 xl:row-start-1 2xl:col-span-3 2xl:col-start-7 2xl:row-start-1">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2">
-                    <Target size={15} className="text-cyan-600" />
-                    <h3 className="text-xs font-bold text-slate-800">{zh ? '目标设备预览' : 'Target preview'}</h3>
-                  </div>
-                  <span className="text-[11px] font-semibold text-cyan-700">
+              <FormSection
+                title={zh ? '目标设备预览' : 'Target preview'}
+                description={(
+                  <span className="font-semibold text-cyan-700">
                     {deviceLoadStatus === 'loaded'
                       ? `${matchedDevices.length} ${zh ? '台设备' : 'devices'} · ${onlineCount} ${zh ? '在线' : 'online'}`
                       : deviceLoadStatus === 'error' ? (zh ? '加载失败' : 'Load failed') : (zh ? '加载中…' : 'Loading…')}
                   </span>
-                </div>
+                )}
+                className="order-2 !mt-0 !rounded-2xl !border-slate-200/90 !bg-white shadow-2xs xl:col-start-2 xl:row-start-1 2xl:col-span-3 2xl:col-start-7 2xl:row-start-1"
+                contentClassName="!space-y-2.5 !p-4"
+              >
                 {deviceLoadStatus === 'error' ? (
                   <div className="flex items-center justify-between gap-2 rounded-lg bg-rose-50 px-3 py-2 text-[11px] text-rose-700">
                     <span>{zh ? '设备清单加载失败，无法计算目标数量。' : 'The inventory could not be loaded.'}</span>
@@ -1230,18 +1231,16 @@ export const JobModal: React.FC<JobModalProps> = ({
                 {scriptIncompatibleCount > 0 && (
                   <p className="text-[11px] text-amber-700">{zh ? `${scriptIncompatibleCount} 台设备与脚本平台不兼容，将被跳过。` : `${scriptIncompatibleCount} devices do not match the script platform and will be skipped.`}</p>
                 )}
-              </div>
+              </FormSection>
 
               {/* Cron schedule and approval share the same final setup step. */}
-              <div className="order-1 p-4 rounded-2xl bg-white border border-slate-200/90 shadow-2xs space-y-3.5 xl:col-start-1 xl:row-start-1 2xl:col-span-6 2xl:col-start-1 2xl:row-start-1">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                  <div className="flex items-center gap-2">
-                    <Clock size={16} className="text-cyan-600" />
-                    <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">{zh ? 'Cron 调度周期' : 'Cron Schedule'}</h3>
-                  </div>
-
-                  {/* Preset Dropdown Trigger */}
-                  <div className="relative">
+              <FormSection
+                title={zh ? 'Cron 调度周期' : 'Cron Schedule'}
+                className="order-1 !mt-0 !rounded-2xl !border-slate-200/90 !bg-white shadow-2xs xl:col-start-1 xl:row-start-1 2xl:col-span-6 2xl:col-start-1 2xl:row-start-1"
+                contentClassName="!space-y-3.5 !p-4"
+              >
+                {/* Preset Dropdown Trigger */}
+                <div className="relative flex justify-end">
                     <button
                       type="button"
                       onClick={() => setPresetOpen(!presetOpen)}
@@ -1277,7 +1276,6 @@ export const JobModal: React.FC<JobModalProps> = ({
                         </motion.div>
                       )}
                     </AnimatePresence>
-                  </div>
                 </div>
 
                 {/* 5-Field Editor */}
@@ -1327,26 +1325,24 @@ export const JobModal: React.FC<JobModalProps> = ({
                     <p className="text-[11px] text-slate-400">{cronPreviewStatus === 'loading' ? (zh ? '计算中…' : 'Calculating…') : (zh ? '等待预览…' : 'Waiting for preview…')}</p>
                   ) : null}
                 </div>
-              </div>
+              </FormSection>
 
-              <div className="order-3 p-4 rounded-2xl bg-white border border-slate-200/90 shadow-2xs space-y-3.5 xl:col-span-2 xl:col-start-1 xl:row-start-2 2xl:col-span-3 2xl:col-start-10 2xl:row-start-1">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                  <div className="flex items-center gap-2">
-                    <Shield size={16} className="text-cyan-600" />
-                    <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">{zh ? '安全审批授权' : 'Approval Gate'}</h3>
-                  </div>
-                  {approvalStatus === 'verified' ? (
-                    <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
-                      <Check size={12} />
-                      {zh ? '已授权通过' : 'Verified'}
-                    </span>
-                  ) : approvalStatus === 'verifying' ? (
-                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-cyan-700">
-                      <RotateCcw size={12} className="animate-spin" />
-                      {zh ? '正在验证' : 'Verifying'}
-                    </span>
-                  ) : null}
-                </div>
+              <FormSection
+                title={zh ? '安全审批授权' : 'Approval Gate'}
+                description={approvalStatus === 'verified' ? (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-emerald-100 bg-emerald-50 px-2 py-0.5 text-xs font-bold text-emerald-600">
+                    <Check size={12} />
+                    {zh ? '已授权通过' : 'Verified'}
+                  </span>
+                ) : approvalStatus === 'verifying' ? (
+                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-cyan-700">
+                    <RotateCcw size={12} className="animate-spin" />
+                    {zh ? '正在验证' : 'Verifying'}
+                  </span>
+                ) : undefined}
+                className="order-3 !mt-0 !rounded-2xl !border-slate-200/90 !bg-white shadow-2xs xl:col-span-2 xl:col-start-1 xl:row-start-2 2xl:col-span-3 2xl:col-start-10 2xl:row-start-1"
+                contentClassName="!p-4"
+              >
 
                 <div className="space-y-2">
                   <select
@@ -1441,7 +1437,7 @@ export const JobModal: React.FC<JobModalProps> = ({
                     <p className="text-[10px] text-rose-500 leading-tight">{approvalError}</p>
                   )}
                 </div>
-              </div>
+              </FormSection>
             </div>
             )}
           </div>
@@ -1449,7 +1445,7 @@ export const JobModal: React.FC<JobModalProps> = ({
           {/* ═══════════════════════════════════════════════════════════════════
               FOOTER: 全局就绪状态栏与提交按钮
              ═══════════════════════════════════════════════════════════════════ */}
-          <div className="flex shrink-0 flex-col items-center justify-between gap-2 border-t border-slate-200 bg-white px-3 py-3 sm:flex-row sm:px-4">
+          <FormActionBar className="shrink-0 !flex-col !items-center !justify-between !gap-2 !border-slate-200 !bg-white !px-3 !py-3 sm:!flex-row sm:!px-4">
             <div className="flex items-center gap-2 text-xs text-slate-500">
               <Sparkles size={14} className="text-cyan-600" />
               <span>
@@ -1509,7 +1505,7 @@ export const JobModal: React.FC<JobModalProps> = ({
                 </button>
               )}
             </div>
-          </div>
+          </FormActionBar>
         </form>
         </motion.div>
       </motion.div>

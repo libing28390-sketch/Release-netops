@@ -6,20 +6,18 @@ import React, {
   useState,
 } from "react";
 import {
-  Check,
   ChevronRight,
   Filter,
   FolderTree,
   Package,
   RefreshCw,
-  Search,
   Server,
-  Settings2,
   Tag,
   X,
 } from "lucide-react";
 import TagFilterDropdown from "../components/TagFilterDropdown";
 import Pagination from "../components/Pagination";
+import { ColumnSettingsButton, ListSearchInput, ListToolbar } from "../components/ui/TableListControls";
 import { TableExportMenu } from "../components/ui/TableExportMenu";
 import { fetchAllPaginatedItems } from "../utils/pagination";
 import { buildCmdbExportData } from "./cmdbExport";
@@ -285,8 +283,6 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
   const [treeLoading, setTreeLoading] = useState(true);
   const [error, setError] = useState("");
   const [tagModalOpen, setTagModalOpen] = useState(false);
-  const [columnsOpen, setColumnsOpen] = useState(false);
-  const columnsMenuRef = useRef<HTMLDivElement>(null);
   const assetTableRef = useRef<HTMLTableElement>(null);
   const [visibleColumns, setVisibleColumns] = useState<ColumnVisibility>(() => {
     try {
@@ -305,25 +301,9 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
   useEffect(() => {
     localStorage.setItem(COLUMN_STORAGE_KEY, JSON.stringify(visibleColumns));
   }, [visibleColumns]);
-  useEffect(() => {
-    if (!columnsOpen) return;
-    const handleOutsideClick = (event: MouseEvent) => {
-      if (
-        columnsMenuRef.current &&
-        !columnsMenuRef.current.contains(event.target as Node)
-      ) {
-        setColumnsOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handleOutsideClick);
-    return () => document.removeEventListener("mousedown", handleOutsideClick);
-  }, [columnsOpen]);
   const activeColumns = useMemo(
     () => COLUMN_DEFS.filter((column) => visibleColumns[column.key]),
     [visibleColumns],
-  );
-  const allColumnsSelected = COLUMN_DEFS.every(
-    (column) => visibleColumns[column.key],
   );
 
   const loadTree = useCallback(async () => {
@@ -642,26 +622,18 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
           )}
         </aside>
         <section className="flex min-h-[calc(100vh-250px)] min-w-0 flex-col rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="relative flex flex-wrap items-center gap-2 border-b border-slate-100 p-4">
-            <div className="relative min-w-[220px] flex-1">
-              <Search
-                size={14}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
-              />
-              <input type="search"
+          <ListToolbar className="relative border-b border-slate-100 p-4">
+            <ListSearchInput
+                language={language}
+                className="min-w-[220px]"
                 value={query}
                 onChange={(event) => {
                   setQuery(event.target.value);
                   setPage(1);
                 }}
-                placeholder={
-                  zh
-                    ? "搜索设备名、资产编号、IP、厂商…"
-                    : "Search hostname, tag, IP or vendor…"
-                }
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-xs outline-none focus:border-cyan-400 focus:bg-white"
+                placeholder={zh ? "搜索设备名、资产编号、IP、厂商…" : "Search hostname, tag, IP or vendor…"}
+                onClear={() => { setQuery(""); setPage(1); }}
               />
-            </div>
             <select
               value={status}
               onChange={(event) => {
@@ -686,66 +658,20 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
               }}
               language={language}
             />
-            <div ref={columnsMenuRef} className="relative">
-              <button
-                onClick={() => setColumnsOpen((open) => !open)}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:border-cyan-300 hover:text-cyan-700"
-              >
-                <Settings2 size={13} />
-                {zh ? "列配置" : "Columns"}
-              </button>
-              {columnsOpen && (
-                <div className="absolute right-0 top-full z-40 mt-2 w-64 rounded-xl border border-slate-200 bg-white p-3 shadow-xl">
-                  <div className="mb-2 text-xs font-bold text-slate-700">
-                    {zh ? "选择展示字段" : "Visible columns"}
-                  </div>
-                  <button
-                    onClick={() =>
-                      setVisibleColumns(
-                        Object.fromEntries(
-                          COLUMN_DEFS.map((column) => [column.key, true]),
-                        ) as ColumnVisibility,
-                      )
-                    }
-                    disabled={allColumnsSelected}
-                    className="mb-2 w-full rounded-lg bg-cyan-50 px-2 py-1.5 text-left text-[11px] font-semibold text-cyan-700 disabled:cursor-default disabled:opacity-50"
-                  >
-                    {zh ? "一键全选" : "Select all"}
-                  </button>
-                  {COLUMN_DEFS.map((column) => (
-                    <label
-                      key={column.key}
-                      className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={visibleColumns[column.key]}
-                        disabled={DEFAULT_COLUMNS[column.key]}
-                        onChange={() => {
-                          if (DEFAULT_COLUMNS[column.key]) return;
-                          setVisibleColumns((current) => ({
-                            ...current,
-                            [column.key]: !current[column.key],
-                          }));
-                        }}
-                      />
-                      <span className="flex-1">
-                        {zh ? column.zh : column.en}
-                      </span>
-                      {visibleColumns[column.key] && (
-                        <Check size={13} className="text-cyan-600" />
-                      )}
-                    </label>
-                  ))}
-                  <button
-                    onClick={() => setVisibleColumns(DEFAULT_COLUMNS)}
-                    className="mt-2 w-full border-t border-slate-100 pt-2 text-left text-[11px] text-cyan-600"
-                  >
-                    {zh ? "恢复默认列" : "Reset columns"}
-                  </button>
-                </div>
-              )}
-            </div>
+            <ColumnSettingsButton
+              columns={COLUMN_DEFS.map((column) => ({
+                key: column.key,
+                label: zh ? column.zh : column.en,
+                required: DEFAULT_COLUMNS[column.key],
+              }))}
+              visibleKeys={COLUMN_DEFS.filter((column) => visibleColumns[column.key]).map((column) => column.key)}
+              defaultVisibleKeys={COLUMN_DEFS.filter((column) => DEFAULT_COLUMNS[column.key]).map((column) => column.key)}
+              onApply={(keys) => setVisibleColumns(Object.fromEntries(
+                COLUMN_DEFS.map((column) => [column.key, keys.includes(column.key)]),
+              ) as ColumnVisibility)}
+              language={language}
+              label={zh ? '列设置' : 'Columns'}
+            />
             <TableExportMenu
               tableRef={assetTableRef}
               filename="cmdb-asset-catalog"
@@ -775,7 +701,7 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
                 {selectedIds.length ? ` (${selectedIds.length})` : ""}
               </button>
             )}
-          </div>
+          </ListToolbar>
           <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-4 py-2 text-[11px] text-slate-500">
             <Filter size={13} className="text-cyan-600" />
             <span>{zh ? "当前分支" : "Current branch"}:</span>
@@ -840,6 +766,8 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
                   assets.map((asset) => (
                     <tr
                       key={asset.id}
+                      data-selected={selectedIds.includes(asset.id) || undefined}
+                      aria-selected={selectedIds.includes(asset.id)}
                       className={`hover:bg-cyan-50/40 ${selectedIds.includes(asset.id) ? "bg-cyan-50/60" : ""}`}
                     >
                       <td className="px-4 py-3">

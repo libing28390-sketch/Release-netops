@@ -28,20 +28,20 @@ export const formatFuturePlanName = (iso: string | undefined, zh: boolean): stri
 };
 
 export const getScheduleStatus = (sch: ScheduledJob, zh: boolean) => {
-  if (!sch.enabled) return { label: zh ? '已停用' : 'Disabled', cls: 'bg-slate-100 text-slate-500', icon: 'disabled' as const };
+  if (!sch.enabled) return { label: zh ? '已停用' : 'Disabled', cls: 'bg-blue-50 text-blue-700', icon: 'disabled' as const };
   // Future-run rows are projections. A job-level last_run_at only proves that
   // some occurrence ran previously; it cannot mark this occurrence executed.
   if (sch.run_at) {
     const runAt = new Date(sch.run_at);
     if (!Number.isNaN(runAt.getTime()) && runAt.getTime() > Date.now()) {
-      return { label: zh ? '待执行' : 'Pending', cls: 'bg-cyan-50 text-cyan-700', icon: 'pending' as const };
+      return { label: zh ? '待执行' : 'Pending', cls: 'bg-blue-50 text-blue-700', icon: 'pending' as const };
     }
-    return { label: zh ? '无对应执行记录' : 'No matching run', cls: 'bg-amber-50 text-amber-700', icon: 'ready' as const };
+    return { label: zh ? '无对应执行记录' : 'No matching run', cls: 'bg-blue-50 text-blue-700', icon: 'ready' as const };
   }
   if (sch.last_run_at) return { label: zh ? '已执行' : 'Executed', cls: 'bg-emerald-50 text-emerald-600', icon: 'done' as const };
   const now = new Date();
-  if (sch.scheduled_at && new Date(sch.scheduled_at) > now) return { label: zh ? '等待中' : 'Pending', cls: 'bg-cyan-50 text-cyan-600', icon: 'pending' as const };
-  return { label: zh ? '就绪' : 'Ready', cls: 'bg-amber-50 text-amber-600', icon: 'ready' as const };
+  if (sch.scheduled_at && new Date(sch.scheduled_at) > now) return { label: zh ? '等待中' : 'Pending', cls: 'bg-blue-50 text-blue-700', icon: 'pending' as const };
+  return { label: zh ? '就绪' : 'Ready', cls: 'bg-blue-50 text-blue-700', icon: 'ready' as const };
 };
 
 export const describeScope = (scope: string, filter: string, zh: boolean): string => {

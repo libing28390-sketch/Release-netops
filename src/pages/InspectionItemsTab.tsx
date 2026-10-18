@@ -3,7 +3,7 @@ import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   Activity, Plus, X, Trash2, Pencil, Save, RotateCcw,
-  Shield, CheckCircle2, Search, Filter, Info, ListFilter, Copy, Check, Download, Database, FileCode,
+  Shield, CheckCircle2, Filter, Info, ListFilter, Copy, Check, Download, Database, FileCode,
   Terminal, Cpu
 } from 'lucide-react';
 import Pagination from '../components/Pagination';
@@ -17,6 +17,8 @@ import {
 } from './alertManagementShared';
 
 import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
+import { ColumnSettingsButton, ListSearchInput, ListToolbar } from '../components/ui/TableListControls';
+import { loadVisibleColumnKeys, saveVisibleColumnKeys, type ColumnPreferenceDefinition } from '../components/ui/columnPreferences';
 import { buildInspectionItemsExportData, filterInspectionItems, getFriendlyInspectionVendor } from './inspectionItemsExport';
 interface InspectionItem {
   id: string;
@@ -84,6 +86,12 @@ const CATEGORIES = [
 
 const getFriendlyVendor = getFriendlyInspectionVendor;
 
+type InspectionItemColumnKey =
+  | 'nameZh' | 'name' | 'category' | 'vendor' | 'checkKey' | 'method'
+  | 'script' | 'oid' | 'warningThreshold' | 'criticalThreshold' | 'description' | 'actions';
+
+const INSPECTION_ITEM_COLUMN_STORAGE_KEY = 'netops:inspection-items:columns:v1';
+
 interface InspectionItemsTabProps {
   t: (key: string) => string;
   language: string;
@@ -93,6 +101,35 @@ interface InspectionItemsTabProps {
 const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showToast }) => {
   const zh = language === 'zh';
 
+  const itemColumnDefinitions = useMemo<readonly ColumnPreferenceDefinition<InspectionItemColumnKey>[]>(() => [
+    { key: 'nameZh', defaultVisible: true },
+    { key: 'name', defaultVisible: true },
+    { key: 'category', defaultVisible: true },
+    { key: 'vendor', defaultVisible: true },
+    { key: 'checkKey', defaultVisible: true },
+    { key: 'method', defaultVisible: true },
+    { key: 'script', defaultVisible: true },
+    { key: 'oid', defaultVisible: true },
+    { key: 'warningThreshold', defaultVisible: true },
+    { key: 'criticalThreshold', defaultVisible: true },
+    { key: 'description', defaultVisible: true },
+    { key: 'actions', defaultVisible: true, required: true, isAction: true },
+  ], []);
+  const itemColumnOptions = useMemo(() => [
+    { key: 'nameZh', label: zh ? '中文名称' : 'Chinese Name' },
+    { key: 'name', label: zh ? '英文名称' : 'English Name' },
+    { key: 'category', label: zh ? '分类' : 'Category' },
+    { key: 'vendor', label: zh ? '厂商' : 'Vendor' },
+    { key: 'checkKey', label: zh ? '检查 Key' : 'Check Key' },
+    { key: 'method', label: zh ? '采集方式' : 'Method' },
+    { key: 'script', label: zh ? '绑定脚本' : 'Bound Script' },
+    { key: 'oid', label: 'OID' },
+    { key: 'warningThreshold', label: zh ? '警告阈值' : 'Warning Threshold' },
+    { key: 'criticalThreshold', label: zh ? '严重阈值' : 'Critical Threshold' },
+    { key: 'description', label: zh ? '描述' : 'Description' },
+    { key: 'actions', label: zh ? '操作' : 'Actions', required: true, isAction: true },
+  ], [zh]);
+
   const [items, setItems] = useState<InspectionItem[]>([]);
   const [facets, setFacets] = useState<InspectionItemFacets>({
     all: 0,
@@ -101,6 +138,7 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
   });
   const [loading, setLoading] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
+  const [loadError, setLoadError] = useState<'auth' | 'permission' | 'request' | ''>('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   
@@ -119,6 +157,10 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
   const [vendorFilter, setVendorFilter] = useState<string>('All');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [scripts, setScripts] = useState<any[]>([]);
+  const [visibleItemColumnKeys, setVisibleItemColumnKeys] = useState<InspectionItemColumnKey[]>(() =>
+    loadVisibleColumnKeys(INSPECTION_ITEM_COLUMN_STORAGE_KEY, itemColumnDefinitions),
+  );
+  const visibleItemColumnSet = useMemo(() => new Set(visibleItemColumnKeys), [visibleItemColumnKeys]);
 
   const copyToClipboard = (text: string, id: string) => {
     try {
@@ -156,6 +198,7 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
 
   const fetchItems = useCallback(async () => {
     setLoading(true);
+    setLoadError('');
     try {
       const params = new URLSearchParams({
         q: searchQuery.trim(),
@@ -194,7 +237,17 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
             methods: nextFacets.methods || {},
           });
         }
+      } else {
+        setItems([]);
+        setTotalItems(0);
+        setFacets({ all: 0, categories: {}, methods: {} });
+        setLoadError(r.status === 401 ? 'auth' : r.status === 403 ? 'permission' : 'request');
       }
+    } catch {
+      setItems([]);
+      setTotalItems(0);
+      setFacets({ all: 0, categories: {}, methods: {} });
+      setLoadError('request');
     } finally {
       setLoading(false);
     }
@@ -216,6 +269,10 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
     fetchScripts();
   }, [fetchItems, fetchScripts]);
 
+  useEffect(() => {
+    saveVisibleColumnKeys(INSPECTION_ITEM_COLUMN_STORAGE_KEY, itemColumnDefinitions, visibleItemColumnKeys);
+  }, [itemColumnDefinitions, visibleItemColumnKeys]);
+
   const handleAdd = async () => {
     if (!form.name || !form.name_zh || !form.check_key) {
       showToast(zh ? '请填写完整信息' : 'Please fill all fields', 'error');
@@ -236,6 +293,12 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
           script_id: '', warning_threshold: undefined, critical_threshold: undefined
         });
         fetchItems();
+      } else {
+        showToast(r.status === 401
+          ? (zh ? '登录状态已失效，请重新登录。' : 'Your session has expired. Please sign in again.')
+          : r.status === 403
+            ? (zh ? '你没有创建巡检指标的权限。' : 'You do not have permission to create inspection items.')
+            : (zh ? '创建失败' : 'Failed to create'), 'error');
       }
     } catch {
       showToast(zh ? '创建失败' : 'Failed to create', 'error');
@@ -253,6 +316,12 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
         showToast(zh ? '更新成功' : 'Updated', 'success');
         setEditingId(null);
         fetchItems();
+      } else {
+        showToast(r.status === 401
+          ? (zh ? '登录状态已失效，请重新登录。' : 'Your session has expired. Please sign in again.')
+          : r.status === 403
+            ? (zh ? '你没有编辑巡检指标的权限。' : 'You do not have permission to edit inspection items.')
+            : (zh ? '更新失败' : 'Failed to update'), 'error');
       }
     } catch {
       showToast(zh ? '更新失败' : 'Failed to update', 'error');
@@ -269,6 +338,12 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
       if (r.ok) {
         showToast(zh ? '指标已删除' : 'Deleted', 'success');
         fetchItems();
+      } else {
+        showToast(r.status === 401
+          ? (zh ? '登录状态已失效，请重新登录。' : 'Your session has expired. Please sign in again.')
+          : r.status === 403
+            ? (zh ? '你没有删除巡检指标的权限。' : 'You do not have permission to delete inspection items.')
+            : (zh ? '删除失败' : 'Failed to delete'), 'error');
       }
     } catch {
       showToast(zh ? '删除失败' : 'Failed to delete', 'error');
@@ -341,83 +416,45 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
         icon={ListFilter}
         title={zh ? '巡检指标项管理' : 'Inspection Items Management'}
         subtitle={zh ? '定义与维护自动化巡检的核心监控指标' : 'Define and manage core metrics for automated inspection'}
-        actions={
-          <>
-            <div className="relative group">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-black/20 group-focus-within:text-cyan-500 transition-colors" />
-              <input
-                type="search"
-                placeholder={zh ? '搜索指标...' : 'Search items...'}
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                className="pl-9 pr-4 py-2 rounded-xl border border-black/[0.08] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-400 transition-all w-48 lg:w-64 shadow-sm"
-              />
-            </div>
-            <button
-              onClick={() => setShowAdd(!showAdd)}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#164e63] text-white text-sm font-bold shadow-sm hover:bg-[#0e3f52] transition-all active:scale-[0.97]"
-            >
-              <Plus className="w-4 h-4" />
-              {zh ? '新增指标' : 'Add Item'}
-            </button>
-          </>
-        }
       />
 
       <div className="flex-1 flex flex-col overflow-hidden px-6 py-5 space-y-4 min-h-0">
-        {/* Stats Dashboard Grid */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 flex-shrink-0">
-          <div className="rounded-2xl border border-black/5 bg-white p-4 shadow-sm flex items-center gap-4">
-            <div className="p-3 rounded-xl bg-blue-50 text-blue-600 border border-blue-100/50">
-              <Activity size={20} />
-            </div>
-            <div>
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{zh ? '总指标数量' : 'TOTAL METRICS'}</p>
-              <p className="text-xl font-black text-slate-800 mt-0.5">{items.length}</p>
-            </div>
+        {/* Compact summary strip */}
+        <div className="grid flex-shrink-0 grid-cols-2 gap-x-6 gap-y-3 border-b border-slate-200/70 px-1 pb-3 lg:grid-cols-4">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <Activity size={16} className="shrink-0 text-blue-600" />
+            <p className="truncate text-xs text-slate-500">{zh ? '总指标数量' : 'Total metrics'}</p>
+            <span className="ml-auto text-base font-semibold tabular-nums text-slate-800">{items.length}</span>
           </div>
-          <div className="rounded-2xl border border-black/5 bg-white p-4 shadow-sm flex items-center gap-4">
-            <div className="p-3 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-100/50">
-              <Database size={20} />
-            </div>
-            <div>
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{zh ? 'SNMP 指标' : 'SNMP METRICS'}</p>
-              <p className="text-xl font-black text-slate-800 mt-0.5">{items.filter(i => i.method?.toUpperCase() === 'SNMP').length}</p>
-            </div>
+          <div className="flex min-w-0 items-center gap-2.5">
+            <Database size={16} className="shrink-0 text-blue-600" />
+            <p className="truncate text-xs text-slate-500">{zh ? 'SNMP 指标' : 'SNMP metrics'}</p>
+            <span className="ml-auto text-base font-semibold tabular-nums text-slate-800">{items.filter(i => i.method?.toUpperCase() === 'SNMP').length}</span>
           </div>
-          <div className="rounded-2xl border border-black/5 bg-white p-4 shadow-sm flex items-center gap-4">
-            <div className="p-3 rounded-xl bg-cyan-50 text-cyan-600 border border-cyan-100/50">
-              <Terminal size={20} />
-            </div>
-            <div>
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{zh ? 'CLI / SSH 指标' : 'CLI/SSH METRICS'}</p>
-              <p className="text-xl font-black text-slate-800 mt-0.5">{items.filter(i => ['CLI', 'SSH'].includes(i.method?.toUpperCase())).length}</p>
-            </div>
+          <div className="flex min-w-0 items-center gap-2.5">
+            <Terminal size={16} className="shrink-0 text-blue-600" />
+            <p className="truncate text-xs text-slate-500">{zh ? 'CLI / SSH 指标' : 'CLI / SSH metrics'}</p>
+            <span className="ml-auto text-base font-semibold tabular-nums text-slate-800">{items.filter(i => ['CLI', 'SSH'].includes(i.method?.toUpperCase())).length}</span>
           </div>
-          <div className="rounded-2xl border border-black/5 bg-white p-4 shadow-sm flex items-center gap-4">
-            <div className="p-3 rounded-xl bg-violet-50 text-violet-600 border border-violet-100/50">
-              <FileCode size={20} />
-            </div>
-            <div>
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{zh ? '高级脚本指标' : 'SCRIPT METRICS'}</p>
-              <p className="text-xl font-black text-slate-800 mt-0.5">{items.filter(i => !!i.script_id || i.method?.toUpperCase() === 'SHELL').length}</p>
-            </div>
+          <div className="flex min-w-0 items-center gap-2.5">
+            <FileCode size={16} className="shrink-0 text-blue-600" />
+            <p className="truncate text-xs text-slate-500">{zh ? '高级脚本指标' : 'Script metrics'}</p>
+            <span className="ml-auto text-base font-semibold tabular-nums text-slate-800">{items.filter(i => !!i.script_id || i.method?.toUpperCase() === 'SHELL').length}</span>
           </div>
         </div>
       <div className={`${alertPanelClass} flex-1 min-h-0 flex flex-col overflow-hidden`}>
         {/* Category filter tabs */}
-        <div className="px-5 py-4 border-b border-black/5 bg-[linear-gradient(to_right,#f4fbfc_0%,#ffffff_100%)] rounded-t-[28px]">
-          <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
+        <div className="border-b border-slate-200/70 bg-white px-5 pt-2">
+          <div className="flex items-center gap-1 overflow-x-auto no-scrollbar" role="tablist" aria-label={zh ? '指标分类' : 'Metric category'}>
             <button
+              type="button"
+              role="tab"
+              aria-selected={categoryFilter === 'All'}
               onClick={() => setCategoryFilter('All')}
-              className={`px-4 py-2 rounded-2xl text-[11px] font-black tracking-widest uppercase transition-all whitespace-nowrap shadow-sm border ${
-                categoryFilter === 'All'
-                ? 'bg-gradient-to-br from-[#164e63] to-[#0e3f52] text-white border-[#164e63] shadow-lg shadow-cyan-900/20 scale-[1.02]'
-                : 'bg-white text-slate-400 border-slate-100 hover:border-slate-200 hover:text-slate-600'
-              }`}
+              className={`whitespace-nowrap border-b-2 px-3 py-2 text-xs transition-colors ${categoryFilter === 'All' ? 'border-blue-600 font-semibold text-blue-700' : 'border-transparent font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-800'}`}
             >
               {zh ? '全部指标' : 'All Metrics'}
-              <span className={`ml-2 px-1.5 py-0.5 rounded-lg text-[9px] ${categoryFilter === 'All' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-400'}`}>
+              <span className={`ml-1.5 text-[10px] font-normal tabular-nums ${categoryFilter === 'All' ? 'text-blue-600' : 'text-slate-400'}`}>
                 {categoryCounts['All']}
               </span>
             </button>
@@ -426,15 +463,14 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
               return (
                 <button
                   key={cat.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={isActive}
                   onClick={() => setCategoryFilter(cat.id)}
-                  className={`px-4 py-2 rounded-2xl text-[11px] font-black tracking-widest uppercase transition-all whitespace-nowrap shadow-sm border ${
-                    isActive
-                    ? 'bg-gradient-to-br from-cyan-600 to-cyan-700 text-white border-cyan-500 shadow-lg shadow-cyan-600/20 scale-[1.02]'
-                    : 'bg-white text-slate-400 border-slate-100 hover:border-slate-200 hover:text-slate-600'
-                  }`}
+                  className={`whitespace-nowrap border-b-2 px-3 py-2 text-xs transition-colors ${isActive ? 'border-blue-600 font-semibold text-blue-700' : 'border-transparent font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-800'}`}
                 >
                   {zh ? cat.zh : cat.en}
-                  <span className={`ml-2 px-1.5 py-0.5 rounded-lg text-[9px] ${isActive ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                  <span className={`ml-1.5 text-[10px] font-normal tabular-nums ${isActive ? 'text-blue-600' : 'text-slate-400'}`}>
                     {categoryCounts[cat.id] || 0}
                   </span>
                 </button>
@@ -444,53 +480,40 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
         </div>
 
         {/* Secondary filter row: Method chips + Vendor dropdown + active filter summary */}
-        <div className="px-5 py-3 border-b border-black/5 bg-white">
-          <div className="flex items-center flex-wrap gap-3">
-            <div className="flex items-center gap-1.5">
-              <Filter className="w-3.5 h-3.5 text-black/30" />
-              <span className="text-[10px] font-bold uppercase tracking-widest text-black/40">{zh ? '采集方式' : 'Method'}</span>
+        <div className="border-b border-slate-200/70 bg-white px-5 py-2">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <div className="mr-1 flex items-center gap-1.5">
+              <Filter className="h-3.5 w-3.5 text-slate-400" />
+              <span className="text-xs font-medium text-slate-500">{zh ? '采集方式' : 'Method'}</span>
             </div>
             <button
+              type="button"
               onClick={() => setMethodFilter('All')}
-              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold tracking-wider uppercase transition-all border ${
-                methodFilter === 'All'
-                  ? 'bg-[#0b2340] text-white border-[#0b2340]'
-                  : 'bg-white text-black/50 border-black/10 hover:border-black/20'
-              }`}
+              className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors ${methodFilter === 'All' ? 'bg-blue-50 text-blue-700' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'}`}
             >
               {zh ? '全部' : 'All'}
             </button>
             {availableMethods.map(m => {
-              const cfg = m === 'SNMP' ? 'bg-blue-500 text-white border-blue-500'
-                        : m === 'CLI' ? 'bg-cyan-600 text-white border-cyan-600'
-                        : m === 'SSH' ? 'bg-emerald-500 text-white border-emerald-500'
-                        : m === 'SHELL' ? 'bg-violet-500 text-white border-violet-500'
-                        : m === 'ICMP' ? 'bg-amber-500 text-white border-amber-500'
-                        : m === 'TCP' ? 'bg-orange-500 text-white border-orange-500'
-                        : 'bg-slate-500 text-white border-slate-500';
               return (
                 <button
                   key={m}
+                  type="button"
                   onClick={() => setMethodFilter(methodFilter === m ? 'All' : m)}
-                  className={`px-2.5 py-1 rounded-lg text-[10px] font-bold tracking-wider uppercase transition-all border ${
-                    methodFilter === m
-                      ? cfg
-                      : 'bg-white text-black/50 border-black/10 hover:border-black/20'
-                  }`}
+                  className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors ${methodFilter === m ? 'bg-blue-50 text-blue-700' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'}`}
                 >
                   {m}
-                  <span className={`ml-1.5 px-1 py-0 rounded text-[8px] ${methodFilter === m ? 'bg-white/25' : 'bg-black/[0.05]'}`}>{methodCounts[m] || 0}</span>
+                  <span className={`ml-1 text-[10px] font-normal tabular-nums ${methodFilter === m ? 'text-blue-600' : 'text-slate-400'}`}>{methodCounts[m] || 0}</span>
                 </button>
               );
             })}
 
             <div className="ml-2 flex items-center gap-1.5">
-              <span className="text-[10px] font-bold uppercase tracking-widest text-black/40">{zh ? '适用平台' : 'Platform'}</span>
+              <span className="text-xs font-medium text-slate-500">{zh ? '适用平台' : 'Platform'}</span>
             </div>
             <select
               value={vendorFilter}
               onChange={e => setVendorFilter(e.target.value)}
-              className="px-3 py-1 rounded-lg border border-black/10 bg-white text-[11px] font-medium text-black/70 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 shadow-sm"
+              className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-700 outline-none transition-colors focus:border-blue-500"
             >
               <option value="All">{zh ? '全部平台' : 'All Platforms'}</option>
               {availableVendors.map(v => <option key={v} value={v}>{v}</option>)}
@@ -499,12 +522,12 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
             {(searchQuery || categoryFilter !== 'All' || methodFilter !== 'All' || vendorFilter !== 'All') && (
               <button
                 onClick={() => { setSearchQuery(''); setCategoryFilter('All'); setMethodFilter('All'); setVendorFilter('All'); }}
-                className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider text-black/40 hover:text-red-500 hover:bg-red-50 transition-all"
+                className="ml-auto inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-slate-500 transition-colors hover:bg-slate-50 hover:text-blue-700"
                 title={zh ? '清除全部筛选' : 'Clear all filters'}
               >
                 <X className="w-3 h-3" />
                 {zh ? '清除筛选' : 'Clear'}
-                <span className="ml-1 px-1 py-0 rounded bg-black/[0.04] text-[9px] tabular-nums">
+                <span className="ml-1 text-[10px] tabular-nums text-slate-400">
                   {filteredItems.length}/{items.length}
                 </span>
               </button>
@@ -512,13 +535,45 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
           </div>
         </div>
 
+        <ListToolbar
+          className="shrink-0 border-b border-black/5 bg-white px-4 py-3"
+          leadingAction={(
+            <button
+              type="button"
+              onClick={() => setShowAdd(!showAdd)}
+              className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-blue-700 active:scale-[0.98]"
+            >
+              <Plus className="h-4 w-4" />
+              {zh ? '新建' : 'New'}
+            </button>
+          )}
+        >
+          <div className="flex w-full flex-wrap items-center justify-end gap-2">
+            <ListSearchInput
+              language={language}
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              onClear={() => setSearchQuery('')}
+              placeholder={zh ? '搜索指标...' : 'Search items...'}
+              className="w-48 lg:w-64"
+            />
+            <ColumnSettingsButton
+              columns={itemColumnOptions}
+              visibleKeys={visibleItemColumnKeys}
+              defaultVisibleKeys={itemColumnDefinitions.filter((column) => column.defaultVisible || column.required).map((column) => column.key)}
+              onApply={(keys) => setVisibleItemColumnKeys(keys as InspectionItemColumnKey[])}
+              language={language}
+            />
+          </div>
+        </ListToolbar>
+
         <AnimatePresence>
           {showAdd && (
             <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden bg-black/5 border-b border-black/5">
               <div className="p-6 space-y-4">
                 <div className="flex items-center justify-between">
-                  <h4 className="text-sm font-bold text-[#164e63] flex items-center gap-2">
-                    <Plus className="w-4 h-4 text-cyan-500" />
+                  <h4 className="text-sm font-bold text-blue-700 flex items-center gap-2">
+                    <Plus className="w-4 h-4 text-blue-600" />
                     {zh ? '配置新指标' : 'Configure New Item'}
                   </h4>
                   <button onClick={() => setShowAdd(false)} className="p-1 rounded-lg text-black/30 hover:bg-black/10 transition-all">
@@ -631,7 +686,7 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                 </div>
                 <div className="flex justify-end gap-2 pt-2">
                   <button onClick={() => setShowAdd(false)} className="px-4 py-2 text-xs font-semibold text-black/40 hover:text-black transition-colors">{zh ? '取消' : 'Cancel'}</button>
-                  <button onClick={handleAdd} className="px-6 py-2 rounded-xl bg-cyan-600 text-white text-xs font-bold shadow-lg shadow-cyan-600/20 hover:bg-cyan-700 transition-all">{zh ? '保存' : 'Save'}</button>
+                  <button onClick={handleAdd} className="px-6 py-2 rounded-xl bg-blue-600 text-white text-xs font-bold shadow-lg shadow-blue-600/20 hover:bg-blue-700 transition-all">{zh ? '保存' : 'Save'}</button>
                 </div>
               </div>
             </motion.div>
@@ -647,6 +702,17 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                 <span>{zh ? '获取中...' : 'Loading...'}</span>
               </div>
             </div>
+          ) : loadError ? (
+            <div role="alert" className="flex h-64 flex-col items-center justify-center gap-3 p-12 text-center text-sm text-rose-700">
+              <span>{loadError === 'auth'
+                ? (zh ? '登录状态已失效，请重新登录。' : 'Your session has expired. Please sign in again.')
+                : loadError === 'permission'
+                  ? (zh ? '你没有查看巡检指标的权限。' : 'You do not have permission to view inspection items.')
+                  : (zh ? '巡检指标加载失败，请重试。' : 'Failed to load inspection items. Please try again.')}</span>
+              <button type="button" onClick={() => void fetchItems()} className="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50">
+                {zh ? '重试' : 'Retry'}
+              </button>
+            </div>
           ) : filteredItems.length === 0 ? (
             <div className="flex-1 flex flex-col items-center justify-center p-12 text-black/20 italic h-64">
               {zh ? '暂无匹配的指标项' : 'No items found'}
@@ -655,17 +721,17 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
             <DataTable unstyled exportConfig={{ filename: 'inspection-items', disabled: Boolean(editingId), exportData }} className="nx-data-table text-left">
               <thead className="sticky top-0 z-10">
                 <tr className="border-y border-black/5 bg-[#f8fafc] text-[10px] font-bold uppercase tracking-widest text-black/40">
-                  <th className="px-6 py-4">{zh ? '中文名称' : 'Chinese Name'}</th>
-                  <th className="px-6 py-4">{zh ? '英文名称' : 'English Name'}</th>
-                  <th className="px-6 py-4">{zh ? '分类' : 'Category'}</th>
-                  <th className="px-6 py-4">{zh ? '厂商' : 'Vendor'}</th>
-                  <th className="px-6 py-4">{zh ? '检查 Key' : 'Check Key'}</th>
-                  <th className="px-6 py-4">{zh ? '采集方式' : 'Method'}</th>
-                  <th className="px-6 py-4">{zh ? '绑定脚本' : 'Bound Script'}</th>
-                  <th className="px-6 py-4">OID</th>
-                  <th className="px-6 py-4">{zh ? '警告阈值' : 'Warning Threshold'}</th>
-                  <th className="px-6 py-4">{zh ? '严重阈值' : 'Critical Threshold'}</th>
-                  <th className="px-6 py-4">{zh ? '描述' : 'Description'}</th>
+                  <th hidden={!visibleItemColumnSet.has('nameZh')} className="px-6 py-4">{zh ? '中文名称' : 'Chinese Name'}</th>
+                  <th hidden={!visibleItemColumnSet.has('name')} className="px-6 py-4">{zh ? '英文名称' : 'English Name'}</th>
+                  <th hidden={!visibleItemColumnSet.has('category')} className="px-6 py-4">{zh ? '分类' : 'Category'}</th>
+                  <th hidden={!visibleItemColumnSet.has('vendor')} className="px-6 py-4">{zh ? '厂商' : 'Vendor'}</th>
+                  <th hidden={!visibleItemColumnSet.has('checkKey')} className="px-6 py-4">{zh ? '检查 Key' : 'Check Key'}</th>
+                  <th hidden={!visibleItemColumnSet.has('method')} className="px-6 py-4">{zh ? '采集方式' : 'Method'}</th>
+                  <th hidden={!visibleItemColumnSet.has('script')} className="px-6 py-4">{zh ? '绑定脚本' : 'Bound Script'}</th>
+                  <th hidden={!visibleItemColumnSet.has('oid')} className="px-6 py-4">OID</th>
+                  <th hidden={!visibleItemColumnSet.has('warningThreshold')} className="px-6 py-4">{zh ? '警告阈值' : 'Warning Threshold'}</th>
+                  <th hidden={!visibleItemColumnSet.has('criticalThreshold')} className="px-6 py-4">{zh ? '严重阈值' : 'Critical Threshold'}</th>
+                  <th hidden={!visibleItemColumnSet.has('description')} className="px-6 py-4">{zh ? '描述' : 'Description'}</th>
                   <TableActionHeader className="px-6 py-4 text-right">{zh ? '操作' : 'Actions'}</TableActionHeader>
                 </tr>
               </thead>
@@ -679,41 +745,41 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                   return (
                     <React.Fragment key={item.id}>
                       <tr
-                        className={`hover:bg-black/[0.01] transition-colors group cursor-pointer ${isExpanded ? 'bg-cyan-50/30' : ''}`}
+                        className={`hover:bg-black/[0.01] transition-colors group cursor-pointer ${isExpanded ? 'bg-blue-50/30' : ''}`}
                         onClick={() => !isEditing && setExpandedId(isExpanded ? null : item.id)}
                       >
-                        <td className="px-6 py-4">
+                        <td hidden={!visibleItemColumnSet.has('nameZh')} className="px-6 py-4">
                           {isEditing ? (
                             <input
                               type="text"
                               value={form.name_zh || ''}
                               onChange={e => setForm({ ...form, name_zh: e.target.value })}
-                              className="w-full px-2 py-1 rounded border border-cyan-200 text-xs focus:outline-none"
+                              className="w-full px-2 py-1 rounded border border-blue-200 text-xs focus:outline-none"
                               placeholder="Name (ZH)"
                               onClick={e => e.stopPropagation()}
                             />
-                          ) : <span className="font-bold text-[#164e63]">{item.name_zh || '—'}</span>}
+                          ) : <span className="font-bold text-blue-700">{item.name_zh || '—'}</span>}
                         </td>
-                        <td className="px-6 py-4">
+                        <td hidden={!visibleItemColumnSet.has('name')} className="px-6 py-4">
                           {isEditing ? (
                             <div onClick={e => e.stopPropagation()}>
                               <input
                                 type="text"
                                 value={form.name || ''}
                                 onChange={e => setForm({ ...form, name: e.target.value })}
-                                className="w-full px-2 py-1 rounded border border-cyan-100 text-[10px] text-black/40 focus:outline-none"
+                                className="w-full px-2 py-1 rounded border border-blue-100 text-[10px] text-black/40 focus:outline-none"
                                 placeholder="Name (EN)"
                               />
                             </div>
                           ) : <span className="text-[10px] text-black/45 font-mono">{item.name || '—'}</span>}
                         </td>
-                        <td className="px-6 py-4">
+                        <td hidden={!visibleItemColumnSet.has('category')} className="px-6 py-4">
                           {isEditing ? (
                             <div onClick={e => e.stopPropagation()}>
                               <select
                                 value={form.category || ''}
                                 onChange={e => setForm({ ...form, category: e.target.value })}
-                                className="w-full px-2 py-1 rounded border border-cyan-200 text-xs focus:outline-none bg-white"
+                                className="w-full px-2 py-1 rounded border border-blue-200 text-xs focus:outline-none bg-white"
                               >
                                 <option value="Network">Network</option>
                                 <option value="Server">Server</option>
@@ -724,69 +790,69 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                               </select>
                             </div>
                           ) : (
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-cyan-50 text-cyan-600 w-fit">
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-blue-50 text-blue-600 w-fit">
                               {zh ? (CATEGORIES.find(c => c.id === item.category)?.zh || item.category) : item.category || '—'}
                             </span>
                           )}
                         </td>
-                        <td className="px-6 py-4">
+                        <td hidden={!visibleItemColumnSet.has('vendor')} className="px-6 py-4">
                           {isEditing ? (
-                            <select value={form.vendor || ''} onChange={e => setForm({ ...form, vendor: e.target.value })} onClick={e => e.stopPropagation()} className="w-full px-2 py-1 rounded border border-cyan-100 text-[10px] focus:outline-none bg-white">
+                            <select value={form.vendor || ''} onChange={e => setForm({ ...form, vendor: e.target.value })} onClick={e => e.stopPropagation()} className="w-full px-2 py-1 rounded border border-blue-100 text-[10px] focus:outline-none bg-white">
                               <option value="">{zh ? '选择厂商' : 'Vendor'}</option>
                               {VENDORS.map(v => <option key={v} value={v}>{v}</option>)}
                             </select>
                           ) : <span className="text-[10px] text-black/45 font-bold">{item.vendor || '—'}</span>}
                         </td>
-                        <td className="px-6 py-4 font-mono text-[11px] text-black/50 tracking-tight">
+                        <td hidden={!visibleItemColumnSet.has('checkKey')} className="px-6 py-4 font-mono text-[11px] text-black/50 tracking-tight">
                           {isEditing ? (
                             <input
                               type="text"
                               value={form.check_key || ''}
                               onChange={e => setForm({ ...form, check_key: e.target.value })}
-                              className="w-full px-2 py-1 rounded border border-cyan-200 text-xs focus:outline-none"
+                              className="w-full px-2 py-1 rounded border border-blue-200 text-xs focus:outline-none"
                               onClick={e => e.stopPropagation()}
                             />
                           ) : item.check_key || '—'}
                         </td>
-                        <td className="px-6 py-4">
+                        <td hidden={!visibleItemColumnSet.has('method')} className="px-6 py-4">
                           {isEditing ? (
-                            <select value={form.method || ''} onChange={e => setForm({ ...form, method: e.target.value })} onClick={e => e.stopPropagation()} className="w-full px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none bg-white">
+                            <select value={form.method || ''} onChange={e => setForm({ ...form, method: e.target.value })} onClick={e => e.stopPropagation()} className="w-full px-2 py-1 rounded border border-blue-200 text-[10px] focus:outline-none bg-white">
                               <option value="SNMP">SNMP</option><option value="SSH">SSH</option><option value="Shell">Shell</option><option value="ICMP">ICMP</option><option value="TCP">TCP</option><option value="Agent">Agent</option>
                             </select>
                           ) : <span className="text-[10px] font-bold uppercase">{item.method?.toUpperCase() || '—'}</span>}
                         </td>
-                        <td className="px-6 py-4 text-[10px] text-black/45">{boundScriptName || '—'}</td>
-                        <td className="px-6 py-4 font-mono text-[10px]">
+                        <td hidden={!visibleItemColumnSet.has('script')} className="px-6 py-4 text-[10px] text-black/45">{boundScriptName || '—'}</td>
+                        <td hidden={!visibleItemColumnSet.has('oid')} className="px-6 py-4 font-mono text-[10px]">
                           {isEditing && form.method === 'SNMP' && getRoutingProtocolFromCheckKey(form.check_key) ? (
-                            <span className="text-[10px] font-medium text-cyan-700">{zh ? '标准邻居 MIB' : 'Standard neighbor MIB'}</span>
+                            <span className="text-[10px] font-medium text-blue-700">{zh ? '标准邻居 MIB' : 'Standard neighbor MIB'}</span>
                           ) : isEditing && form.method === 'SNMP' ? (
-                            <input type="text" value={form.oid || ''} onChange={e => setForm({ ...form, oid: e.target.value })} onClick={e => e.stopPropagation()} className="w-full px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none" placeholder="OID" />
+                            <input type="text" value={form.oid || ''} onChange={e => setForm({ ...form, oid: e.target.value })} onClick={e => e.stopPropagation()} className="w-full px-2 py-1 rounded border border-blue-200 text-[10px] focus:outline-none" placeholder="OID" />
                           ) : item.oid || '—'}
                         </td>
-                        <td className="px-6 py-4 font-mono text-[10px]">
+                        <td hidden={!visibleItemColumnSet.has('warningThreshold')} className="px-6 py-4 font-mono text-[10px]">
                           {isEditing ? (
-                            <input type="number" value={form.warning_threshold ?? ''} onChange={e => setForm({ ...form, warning_threshold: e.target.value ? parseFloat(e.target.value) : undefined })} onClick={e => e.stopPropagation()} className="w-full px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none" placeholder="%" />
+                            <input type="number" value={form.warning_threshold ?? ''} onChange={e => setForm({ ...form, warning_threshold: e.target.value ? parseFloat(e.target.value) : undefined })} onClick={e => e.stopPropagation()} className="w-full px-2 py-1 rounded border border-blue-200 text-[10px] focus:outline-none" placeholder="%" />
                           ) : item.warning_threshold == null ? '—' : `${item.warning_threshold}%`}
                         </td>
-                        <td className="px-6 py-4 font-mono text-[10px]">
+                        <td hidden={!visibleItemColumnSet.has('criticalThreshold')} className="px-6 py-4 font-mono text-[10px]">
                           {isEditing ? (
-                            <input type="number" value={form.critical_threshold ?? ''} onChange={e => setForm({ ...form, critical_threshold: e.target.value ? parseFloat(e.target.value) : undefined })} onClick={e => e.stopPropagation()} className="w-full px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none" placeholder="%" />
+                            <input type="number" value={form.critical_threshold ?? ''} onChange={e => setForm({ ...form, critical_threshold: e.target.value ? parseFloat(e.target.value) : undefined })} onClick={e => e.stopPropagation()} className="w-full px-2 py-1 rounded border border-blue-200 text-[10px] focus:outline-none" placeholder="%" />
                           ) : item.critical_threshold == null ? '—' : `${item.critical_threshold}%`}
                         </td>
-                        <td className="px-6 py-4 text-xs text-black/60 italic">
+                        <td hidden={!visibleItemColumnSet.has('description')} className="px-6 py-4 text-xs text-black/60 italic">
                           {isEditing ? (
                             <div className="space-y-2" onClick={e => e.stopPropagation()}>
                               <textarea
                                 value={form.description || ''}
                                 onChange={e => setForm({ ...form, description: e.target.value })}
-                                className="w-full px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none"
+                                className="w-full px-2 py-1 rounded border border-blue-200 text-[10px] focus:outline-none"
                                 rows={1}
                                 placeholder={zh ? "指标描述" : "Description"}
                               />
                               <textarea
                                 value={form.command || ''}
                                 onChange={e => setForm({ ...form, command: e.target.value })}
-                                className="w-full px-2 py-1 rounded border border-cyan-200 text-[10px] focus:outline-none font-mono"
+                                className="w-full px-2 py-1 rounded border border-blue-200 text-[10px] focus:outline-none font-mono"
                                 rows={2}
                                 placeholder={zh ? "采集指令" : "Command"}
                               />
@@ -834,7 +900,7 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                       <AnimatePresence>
                         {isExpanded && !isEditing && (
                           <tr>
-                            <td colSpan={12} className="px-6 py-0 border-none">
+                            <td colSpan={visibleItemColumnKeys.length} className="px-6 py-0 border-none">
                               <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
                                 <div className="py-4 px-8 bg-black/[0.01] rounded-xl mb-4 mt-1 border border-black/[0.03] grid grid-cols-1 md:grid-cols-2 gap-8 relative">
                                   <div className="absolute top-4 left-4 w-1 h-12 bg-cyan-500/20 rounded-full" />

@@ -436,7 +436,6 @@ export const ProductCatalogManagementTab: React.FC = () => {
         </div>
         <form onSubmit={applySearch} className="mb-3 flex flex-wrap gap-2">
           <div className="relative min-w-[260px] flex-1"><Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-gray-400" /><input type="search" value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder={panel === 'models' ? tx('ai.catalog.filter.searchModels') : tx('ai.catalog.filter.searchAliases')} className="w-full rounded-xl border border-gray-200 bg-white py-2 pl-9 pr-3 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100" /></div>
-          <button type="submit" className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700">{tx('ai.catalog.filter.search')}</button>
         </form>
         {panel === 'models' ? <div className="grid gap-2 md:grid-cols-4">
           <label className="text-[11px] font-semibold text-gray-500">{tx('ai.catalog.filter.vendor')}<select value={vendorFilter} onChange={(event) => { setVendorFilter(event.target.value); setPage(1); }} className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"><option value="">{tx('ai.catalog.filter.allVendor')}</option>{vendors.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>

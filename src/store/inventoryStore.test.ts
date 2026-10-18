@@ -103,6 +103,7 @@ describe('network device inventory pagination', () => {
         total: 19,
         by_type: { network_device: 7, server: 5, other: 7 },
         by_online_status: { online: 3, offline: 9 },
+        by_platform: { cisco_ios: 7, linux: 5 },
       }),
     }));
 
@@ -110,7 +111,24 @@ describe('network device inventory pagination', () => {
 
     expect(useInventoryStore.getState().assetsTotal).toBe(12);
     expect(useInventoryStore.getState().assetsOnlineTotal).toBe(3);
+    expect(useInventoryStore.getState().assetsPlatformCounts).toEqual({ cisco_ios: 7, linux: 5 });
+    expect(useInventoryStore.getState().assetsPlatformError).toBeNull();
     expect(useInventoryStore.getState().assetsTotalError).toBeNull();
+  });
+
+  it('clears platform summary values when the shared asset summary is reset', () => {
+    useInventoryStore.setState({
+      assetsTotal: 12,
+      assetsOnlineTotal: 3,
+      assetsPlatformCounts: { cisco_ios: 7, linux: 5 },
+      assetsPlatformError: null,
+    });
+
+    useInventoryStore.getState().resetAssetsTotal();
+
+    expect(useInventoryStore.getState().assetsTotal).toBeNull();
+    expect(useInventoryStore.getState().assetsPlatformCounts).toBeNull();
+    expect(useInventoryStore.getState().assetsPlatformError).toBeNull();
   });
 
   it('retains the last successful total and reports a retryable summary error', async () => {

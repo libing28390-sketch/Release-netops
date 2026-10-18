@@ -59,6 +59,11 @@ interface CollectorRow {
   code: string;
   site_id?: string;
   status?: string;
+  runtime_status?: string;
+  runtime_probe?: string;
+  runtime_checked_at?: string | null;
+  runtime_components?: Record<string, string>;
+  last_heartbeat_at?: string | null;
   collector_type?: string;
   enabled?: boolean | number;
   last_config_version?: number | null;
@@ -349,6 +354,16 @@ const MonitoringManagementPage: React.FC<MonitoringManagementPageProps> = ({ lan
     }
   }, [load, request, showToast, zh]);
 
+  const runCollectorRequest = useCallback(async (path: string, method = 'POST', body?: unknown): Promise<CollectorRequestResult> => {
+    try {
+      const payload = await request(path, { method, body: body === undefined ? undefined : JSON.stringify(body) });
+      await load();
+      return { ok: true, payload: payload && typeof payload === 'object' ? payload as Record<string, unknown> : {} };
+    } catch (reason) {
+      return { ok: false, error: reason instanceof Error ? reason.message : String(reason) };
+    }
+  }, [load, request]);
+
   const createModule = async (event: React.FormEvent) => {
     event.preventDefault();
     if (await runAction('/api/monitoring/modules', 'POST', moduleForm)) setModuleForm({ module_key: '', display_name: '', vendor: 'generic', cli_platform: 'generic', metric_group: 'interface', walk_fingerprint: '' });
@@ -563,7 +578,7 @@ const MonitoringManagementPage: React.FC<MonitoringManagementPageProps> = ({ lan
         {error && <div className="mb-4 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700"><CircleAlert size={16} className="mt-0.5 shrink-0" /><span>{error}</span></div>}
         {mode === 'plans' && <PlanSection zh={zh} plans={plans} loading={loading} planTestResults={planTestResults} editPlan={editPlan} viewPlan={viewPlan} planPreview={planPreview} closePlanPreview={() => setPlanPreview(null)} deletePlan={deletePlan} compileTestPlan={compileTestPlan} applyPlan={applyPlan} savePlan={savePlan} editingPlanId={editingPlanId} planEditorOpen={planEditorOpen} resetPlanForm={resetPlanForm} planForm={planForm} setPlanForm={setPlanForm} targetScope={targetScope} setTargetScope={setTargetScope} scopeOptions={scopeOptions} planModuleEntries={planModuleEntries} addPlanModule={addPlanModule} updatePlanModule={updatePlanModule} removePlanModule={removePlanModule} planFormError={planFormError} serializeTargetScope={serializeTargetScope} modules={modules} planVariantOptions={planVariantOptions} />}
         {mode === 'modules' && <ModuleCatalogSection zh={zh} modules={modules} variants={variants} loading={loading} runAction={runAction} showToast={showToast} />}
-        {mode === 'collectors' && <CollectorManagementSection zh={zh} collectors={collectors} loading={loading} runAction={runAction} />}
+        {mode === 'collectors' && <CollectorManagementSection zh={zh} collectors={collectors} loading={loading} runCollectorRequest={runCollectorRequest} />}
         {mode === 'health' && <CollectionHealthSection zh={zh} health={health} loading={loading} />}
       </div>
     </div>
@@ -768,6 +783,16 @@ const PlanReadOnlyFields: React.FC<{ plan: PlanRow; zh: boolean }> = ({ plan, zh
 </div>;
 
 type MonitoringAction = (path: string, method?: string, body?: unknown) => Promise<boolean>;
+
+type CollectorRequestResult =
+  | { ok: true; payload: Record<string, unknown> }
+  | { ok: false; error: string };
+
+type CollectorRequest = (path: string, method?: string, body?: unknown) => Promise<CollectorRequestResult>;
+
+type CollectorOperationKind = 'check' | 'validate' | 'compile' | 'publish';
+
+type CollectorNotice = { tone: 'loading' | 'success' | 'warning' | 'error'; message: string };
 
 const MODULE_FORM_DEFAULT = { module_key: '', display_name: '', vendor: 'generic', cli_platform: 'generic', feature_domain: '', metric_group: 'interface', walk_fingerprint: '', description: '', enabled: true };
 const VARIANT_FORM_DEFAULT = { variant_key: '', display_name: '', max_repetitions: '25', retries: '2', request_timeout_ms: '3000', scrape_timeout_ms: '20000', supported_platforms: '', supported_models: '', supported_version_scope: '', status: 'DRAFT', enabled: true, oid_config: '{\n  "walk": [],\n  "get": [],\n  "metrics": []\n}' };
@@ -1017,19 +1042,38 @@ const VariantManagerModal: React.FC<VariantManagerModalProps> = ({
 
 const COLLECTOR_FORM_DEFAULT = { name: '', code: '', site_id: '', collector_type: 'LOCAL', management_address: '', remote_write_endpoint: '', max_concurrency: '8', queue_disk_limit_mb: '2048', enabled: true };
 
-interface CollectorManagementSectionProps { zh: boolean; collectors: CollectorRow[]; loading: boolean; runAction: MonitoringAction; }
+const CollectorNoticeView: React.FC<{ notice: CollectorNotice; zh: boolean; onDismiss?: () => void }> = ({ notice, zh, onDismiss }) => {
+  const toneClass = {
+    loading: 'border-blue-200 bg-blue-50 text-blue-800',
+    success: 'border-blue-200 bg-blue-50 text-blue-800',
+    warning: 'border-amber-200 bg-amber-50 text-amber-800',
+    error: 'border-rose-200 bg-rose-50 text-rose-800',
+  }[notice.tone];
+  return <div role={notice.tone === 'error' ? 'alert' : 'status'} className={`flex items-start justify-between gap-3 rounded-lg border px-3 py-2.5 text-xs leading-5 ${toneClass}`}>
+    <div className="flex min-w-0 items-start gap-2">{notice.tone === 'loading' ? <RefreshCw size={14} className="mt-0.5 shrink-0 animate-spin" /> : notice.tone === 'error' ? <CircleAlert size={14} className="mt-0.5 shrink-0" /> : <CheckCircle2 size={14} className="mt-0.5 shrink-0" />}<span>{notice.message}</span></div>
+    {onDismiss && <button type="button" onClick={onDismiss} aria-label={zh ? '关闭提示' : 'Dismiss'} className="shrink-0 rounded p-0.5 opacity-70 hover:bg-white/70 hover:opacity-100"><X size={14} /></button>}
+  </div>;
+};
 
-const CollectorManagementSection: React.FC<CollectorManagementSectionProps> = ({ zh, collectors, loading, runAction }) => {
+interface CollectorManagementSectionProps { zh: boolean; collectors: CollectorRow[]; loading: boolean; runCollectorRequest: CollectorRequest; }
+
+const CollectorManagementSection: React.FC<CollectorManagementSectionProps> = ({ zh, collectors, loading, runCollectorRequest }) => {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'enabled' | 'disabled'>('all');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [editorOpen, setEditorOpen] = useState(false);
   const [detail, setDetail] = useState<CollectorRow | null>(null);
+  const [operationsCollector, setOperationsCollector] = useState<CollectorRow | null>(null);
+  const [pageNotice, setPageNotice] = useState<CollectorNotice | null>(null);
+  const [editorNotice, setEditorNotice] = useState<CollectorNotice | null>(null);
+  const [operationNotice, setOperationNotice] = useState<CollectorNotice | null>(null);
+  const [pendingOperation, setPendingOperation] = useState<CollectorOperationKind | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({ ...COLLECTOR_FORM_DEFAULT });
   useEscapeClose(editorOpen, () => setEditorOpen(false));
   useEscapeClose(Boolean(detail), () => setDetail(null));
+  useEscapeClose(Boolean(operationsCollector) && !pendingOperation, () => setOperationsCollector(null));
   const query = search.trim().toLowerCase();
   const visibleCollectors = collectors.filter(collector => { const matchesSearch = !query || [collector.name, collector.code, collector.site_id, collector.collector_type, collector.status].some(value => String(value || '').toLowerCase().includes(query)); const matchesStatus = statusFilter === 'all' || (statusFilter === 'enabled' ? enabled(collector.enabled) : !enabled(collector.enabled)); return matchesSearch && matchesStatus; });
   const onlineCount = collectors.filter(item => ['ONLINE', 'OK', 'PASS'].includes(String(item.status || '').toUpperCase())).length;
@@ -1039,17 +1083,133 @@ const CollectorManagementSection: React.FC<CollectorManagementSectionProps> = ({
   const collectorExportData = buildMonitoringCollectorExportData(visibleCollectors, zh, displayCollectorType, displayStatus);
   useEffect(() => { setPage(1); }, [pageSize, search, statusFilter]);
   useEffect(() => { setPage(current => Math.min(current, totalPages)); }, [totalPages]);
-  const openCreate = () => { setEditingId(null); setForm({ ...COLLECTOR_FORM_DEFAULT }); setEditorOpen(true); };
-  const openEdit = (collector: CollectorRow) => { setEditingId(collector.id); setForm({ ...COLLECTOR_FORM_DEFAULT, ...collector, name: collector.name || '', code: collector.code || '', max_concurrency: String(collector.max_concurrency ?? 8), queue_disk_limit_mb: String(collector.queue_disk_limit_mb ?? 2048), enabled: enabled(collector.enabled) }); setEditorOpen(true); };
-  const saveCollector = async (event: React.FormEvent) => { event.preventDefault(); const path = editingId ? `/api/monitoring/collectors/${editingId}` : '/api/monitoring/collectors'; const body = { ...form, max_concurrency: Number(form.max_concurrency) || 8, queue_disk_limit_mb: Number(form.queue_disk_limit_mb) || 2048 }; if (editingId) delete (body as Partial<typeof body>).code; if (await runAction(path, editingId ? 'PATCH' : 'POST', body)) setEditorOpen(false); };
-  const deleteCollector = async (collector: CollectorRow) => { if (!window.confirm(zh ? `确定删除采集器“${collector.name}”吗？` : `Delete collector “${collector.name}”?`)) return; if (await runAction(`/api/monitoring/collectors/${collector.id}`, 'DELETE')) setDetail(null); };
+  useEffect(() => {
+    if (!operationsCollector) return;
+    const latest = collectors.find(collector => collector.id === operationsCollector.id);
+    if (latest) setOperationsCollector(latest);
+  }, [collectors, operationsCollector?.id]);
+  const openCreate = () => { setEditingId(null); setEditorNotice(null); setForm({ ...COLLECTOR_FORM_DEFAULT }); setEditorOpen(true); };
+  const openEdit = (collector: CollectorRow) => { setEditingId(collector.id); setEditorNotice(null); setForm({ ...COLLECTOR_FORM_DEFAULT, ...collector, name: collector.name || '', code: collector.code || '', max_concurrency: String(collector.max_concurrency ?? 8), queue_disk_limit_mb: String(collector.queue_disk_limit_mb ?? 2048), enabled: enabled(collector.enabled) }); setEditorOpen(true); };
+  const openOperations = (collector: CollectorRow) => { setOperationNotice(null); setOperationsCollector(collector); };
+  const saveCollector = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const path = editingId ? `/api/monitoring/collectors/${editingId}` : '/api/monitoring/collectors';
+    const body = { ...form, max_concurrency: Number(form.max_concurrency) || 8, queue_disk_limit_mb: Number(form.queue_disk_limit_mb) || 2048 };
+    if (editingId) delete (body as Partial<typeof body>).code;
+    const result = await runCollectorRequest(path, editingId ? 'PATCH' : 'POST', body);
+    if ('payload' in result) {
+      setEditorOpen(false);
+      setEditorNotice(null);
+      setPageNotice({ tone: 'success', message: editingId ? (zh ? '采集器信息已保存。' : 'Collector details saved.') : (zh ? '采集器记录已创建。' : 'Collector record created.') });
+    } else {
+      setEditorNotice({ tone: 'error', message: zh ? `保存失败：${result.error}` : `Save failed: ${result.error}` });
+    }
+  };
+  const deleteCollector = async (collector: CollectorRow) => {
+    if (!window.confirm(zh ? `确定删除采集器“${collector.name}”吗？` : `Delete collector “${collector.name}”?`)) return;
+    const result = await runCollectorRequest(`/api/monitoring/collectors/${collector.id}`, 'DELETE');
+    if ('payload' in result) {
+      setDetail(null);
+      setOperationsCollector(null);
+      setPageNotice({ tone: 'success', message: zh ? '采集器记录已删除。' : 'Collector record deleted.' });
+    } else {
+      setPageNotice({ tone: 'error', message: zh ? `删除失败：${result.error}` : `Delete failed: ${result.error}` });
+    }
+  };
+  const runCollectorOperation = async (kind: CollectorOperationKind) => {
+    if (!operationsCollector || pendingOperation) return;
+    const prompts: Record<'compile' | 'publish', string> = {
+      compile: zh ? '编译会生成新的配置版本并更新采集分配记录。继续吗？' : 'Compile creates a new config version and updates collection assignments. Continue?',
+      publish: zh ? '发布会切换当前监控运行配置。确认继续发布？' : 'Publishing switches the active monitoring runtime configuration. Continue?',
+    };
+    if ((kind === 'compile' || kind === 'publish') && !window.confirm(prompts[kind])) return;
+    const actionLabels: Record<CollectorOperationKind, string> = {
+      check: zh ? '状态检查' : 'Status check',
+      validate: zh ? '配置校验' : 'Config validation',
+      compile: zh ? '配置编译' : 'Config compile',
+      publish: zh ? '配置发布' : 'Config publish',
+    };
+    const endpoints: Record<CollectorOperationKind, string> = {
+      check: 'test', validate: 'validate', compile: 'compile', publish: 'publish',
+    };
+    setPendingOperation(kind);
+    setOperationNotice({ tone: 'loading', message: zh ? `${actionLabels[kind]}中…` : `${actionLabels[kind]} in progress…` });
+    const result = await runCollectorRequest(`/api/monitoring/collectors/${operationsCollector.id}/${endpoints[kind]}`);
+    if ('error' in result) {
+      const message = zh ? `${actionLabels[kind]}失败：${result.error}` : `${actionLabels[kind]} failed: ${result.error}`;
+      setOperationNotice({ tone: 'error', message });
+      setPageNotice({ tone: 'error', message });
+      setPendingOperation(null);
+      return;
+    }
+    const payload = result.payload;
+    const status = String(payload.status || '').toUpperCase();
+    const version = payload.config_version ? `v${String(payload.config_version)}` : '';
+    const count = typeof payload.assignment_count === 'number' ? payload.assignment_count : null;
+    let tone: CollectorNotice['tone'] = 'success';
+    let message = '';
+    if (kind === 'check') {
+      const runtimeStatus = String(payload.runtime_status || 'UNKNOWN').toUpperCase();
+      const checkedAt = payload.runtime_checked_at ? formatPlanDate(String(payload.runtime_checked_at), zh) : '';
+      if (payload.runtime_probe === 'LOCAL_COMPONENT_HEALTH') {
+        const components = payload.runtime_components && typeof payload.runtime_components === 'object'
+          ? payload.runtime_components as Record<string, unknown>
+          : {};
+        const failedComponents = Object.entries(components)
+          .filter(([, componentStatus]) => String(componentStatus).toUpperCase() !== 'ONLINE')
+          .map(([component]) => component === 'snmp_exporter' ? 'SNMP Exporter' : component);
+        if (runtimeStatus === 'ONLINE') {
+          message = zh
+            ? `本地运行组件健康：vmagent 与 SNMP Exporter 均已响应${checkedAt ? `（检查时间：${checkedAt}）` : ''}。这只验证服务健康，不代表设备指标已成功采集。`
+            : `Local runtime components are healthy: vmagent and SNMP Exporter responded${checkedAt ? ` (checked ${checkedAt})` : ''}. This verifies service health only, not successful device metric collection.`;
+        } else {
+          tone = 'error';
+          const failedLabel = failedComponents.length ? failedComponents.join('、') : (zh ? '本地采集组件' : 'local collection components');
+          message = zh
+            ? `${failedLabel}健康检查失败，当前状态为离线。请检查容器健康状态和内部网络。`
+            : `${failedLabel} health check failed; runtime status is offline. Check container health and the internal network.`;
+        }
+      } else if (status === 'DISABLED') {
+        tone = 'warning';
+        message = zh ? '采集器已停用，未执行运行检查。' : 'The collector is disabled; no runtime check was performed.';
+      } else {
+        tone = 'warning';
+        const heartbeat = payload.last_heartbeat_at ? formatPlanDate(String(payload.last_heartbeat_at), zh) : (zh ? '未上报' : 'not reported');
+        message = zh
+          ? `当前无法确认远程/边缘采集器是否在线：尚无可用的心跳上报${payload.last_heartbeat_at ? `（最近记录：${heartbeat}）` : ''}。`
+          : `Remote/edge collector availability is unknown because no usable heartbeat is available${payload.last_heartbeat_at ? ` (last recorded ${heartbeat})` : ''}.`;
+      }
+    } else if (kind === 'validate') {
+      const errors = Array.isArray(payload.errors) ? payload.errors.map(String) : [];
+      const valid = payload.valid === true;
+      message = valid
+        ? (zh ? `配置校验通过${version ? `（${version}）` : ''}。` : `Config validation passed${version ? ` (${version})` : ''}.`)
+        : (zh ? `配置校验未通过${version ? `（${version}）` : ''}${errors.length ? `：${errors.join('；')}` : '。'}` : `Config validation failed${version ? ` (${version})` : ''}${errors.length ? `: ${errors.join('; ')}` : '.'}`);
+      if (!valid) tone = 'error';
+    } else if (kind === 'compile') {
+      message = status === 'UNCHANGED'
+        ? (zh ? `配置未变化，继续使用 ${version || '现有版本'}，${count ?? 0} 个采集分配。` : `Config unchanged; keeping ${version || 'the current version'} with ${count ?? 0} assignments.`)
+        : (zh ? `配置已编译：${version || '版本号未知'}，${count ?? 0} 个采集分配。` : `Config compiled: ${version || 'version unknown'}, ${count ?? 0} assignments.`);
+    } else {
+      const reload = payload.snmp_exporter_reload;
+      if (reload === false) {
+        tone = 'warning';
+        message = zh ? `配置 ${version || ''} 已返回“已应用”，但 SNMP Exporter 重载失败；请检查运行配置。` : `Config ${version || ''} was marked applied, but the SNMP Exporter reload failed. Check the runtime config.`;
+      } else {
+        message = zh ? `配置发布完成：${version || '版本号未知'}，状态 ${status || '未知'}。` : `Config publish completed: ${version || 'version unknown'}, status ${status || 'unknown'}.`;
+      }
+    }
+    setOperationNotice({ tone, message });
+    setPageNotice({ tone, message });
+    setPendingOperation(null);
+  };
 
   return <section className="space-y-4"><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><PlanStat label={zh ? '全部采集器' : 'All collectors'} value={collectors.length} tone="slate" /><PlanStat label={zh ? '已启用' : 'Enabled'} value={enabledCount} tone="emerald" /><PlanStat label={zh ? '在线' : 'Online'} value={onlineCount} tone="rose" /><PlanStat label={zh ? '待处理' : 'Needs attention'} value={Math.max(collectors.length - onlineCount, 0)} tone="amber" /></div><div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm md:flex-row md:items-center md:justify-between"><div className="relative min-w-0 flex-1 md:max-w-md"><Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" /><input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder={zh ? '搜索名称、编码、站点或状态' : 'Search name, code, site, or status'} className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-xs outline-none focus:border-cyan-400 focus:bg-white" /></div><div className="flex flex-wrap items-center gap-2"><SlidersHorizontal size={14} className="text-slate-400" /><select value={statusFilter} onChange={event => setStatusFilter(event.target.value as typeof statusFilter)} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs"><option value="all">{zh ? '全部状态' : 'All status'}</option><option value="enabled">{zh ? '已启用' : 'Enabled'}</option><option value="disabled">{zh ? '已停用' : 'Disabled'}</option></select>{(search || statusFilter !== 'all') && <button type="button" onClick={() => { setSearch(''); setStatusFilter('all'); }} className="rounded-xl px-2.5 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-100">{zh ? '重置' : 'Reset'}</button>}<button type="button" onClick={openCreate} className="inline-flex items-center gap-1.5 rounded-xl bg-cyan-600 px-3 py-2 text-xs font-bold text-white hover:bg-cyan-700"><Plus size={14} />{zh ? '新建采集器' : 'New collector'}</button><TableExportMenu
       filename="monitoring-collectors"
       language={zh ? 'zh' : 'en'}
       disabled={loading || visibleCollectors.length === 0}
       exportData={collectorExportData}
-    /></div></div><div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+    /></div></div>{pageNotice && <CollectorNoticeView notice={pageNotice} zh={zh} onDismiss={() => setPageNotice(null)} />}<div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
       <div className="grid min-w-[1180px] grid-cols-[200px_180px_140px_150px_100px_160px] gap-3 border-b border-slate-100 bg-slate-50 px-5 py-3 text-[10px] font-bold uppercase tracking-wide text-slate-500">
         {collectorExportData.headers.map(header => <span key={header}>{header}</span>)}<span className="text-right">{zh ? '操作' : 'Actions'}</span>
       </div>
@@ -1060,13 +1220,14 @@ const CollectorManagementSection: React.FC<CollectorManagementSectionProps> = ({
         const row = buildMonitoringCollectorExportData([collector], zh, displayCollectorType, displayStatus).rows[0];
         return <div key={collector.id} className="grid min-w-[1180px] grid-cols-[200px_180px_140px_150px_100px_160px] items-center gap-3 border-b border-slate-100 px-5 py-4 last:border-0 hover:bg-cyan-50/30">
           {row.map((value, index) => <div key={index} className="truncate text-xs text-slate-600" title={String(value)}>{index === 3 ? <span className={`inline-flex rounded-full border px-2 py-1 text-[10px] font-bold ${statusTone(collector.status)}`}>{String(value)}</span> : String(value)}</div>)}
-          <div className="flex flex-nowrap items-center justify-end gap-1"><button type="button" aria-label={zh ? '查看采集器' : 'View collector'} title={zh ? '查看采集器' : 'View collector'} onClick={() => setDetail(collector)} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:border-cyan-300 hover:text-cyan-700"><Eye size={15} /></button><button type="button" aria-label={zh ? '编辑采集器' : 'Edit collector'} title={zh ? '编辑采集器' : 'Edit collector'} onClick={() => openEdit(collector)} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:border-cyan-300 hover:text-cyan-700"><Pencil size={15} /></button><button type="button" aria-label={zh ? '测试采集器' : 'Test collector'} title={zh ? '测试采集器' : 'Test collector'} onClick={() => void runAction(`/api/monitoring/collectors/${collector.id}/test`)} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-cyan-200 bg-cyan-50 text-cyan-700 hover:border-cyan-300"><ShieldCheck size={15} /></button><button type="button" aria-label={zh ? '删除采集器' : 'Delete collector'} title={zh ? '删除采集器' : 'Delete collector'} onClick={() => void deleteCollector(collector)} className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-rose-600 hover:bg-rose-50"><Trash2 size={15} /></button></div>
+          <div className="flex flex-nowrap items-center justify-end gap-1"><button type="button" aria-label={zh ? '查看采集器详情' : 'View collector details'} title={zh ? '查看采集器详情' : 'View collector details'} onClick={() => setDetail(collector)} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:border-blue-300 hover:text-blue-700"><Eye size={15} /></button><button type="button" aria-label={zh ? '编辑采集器' : 'Edit collector'} title={zh ? '编辑采集器' : 'Edit collector'} onClick={() => openEdit(collector)} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:border-blue-300 hover:text-blue-700"><Pencil size={15} /></button><button type="button" aria-label={zh ? '采集器运维操作' : 'Collector operations'} title={zh ? '采集器运维操作' : 'Collector operations'} onClick={() => openOperations(collector)} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:border-blue-300 hover:text-blue-700"><Activity size={15} /></button><button type="button" aria-label={zh ? '删除采集器' : 'Delete collector'} title={zh ? '删除采集器' : 'Delete collector'} onClick={() => void deleteCollector(collector)} className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-rose-600 hover:bg-rose-50"><Trash2 size={15} /></button></div>
         </div>;
       })}
       <Pagination currentPage={page} totalItems={visibleCollectors.length} itemsPerPage={pageSize} onPageChange={setPage} onItemsPerPageChange={size => { setPageSize(size); setPage(1); }} language={zh ? 'zh' : 'en'} itemLabel={zh ? '个采集器' : 'collectors'} />
     </div>
-    {editorOpen && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 p-4"><button type="button" aria-label={zh ? '关闭采集器编辑器' : 'Close collector editor'} onClick={() => setEditorOpen(false)} className="absolute inset-0 cursor-default" /><form onSubmit={saveCollector} className="relative z-10 flex max-h-[min(860px,calc(100vh-2rem))] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"><div className="flex items-center justify-between border-b border-slate-200 px-6 py-4"><div><h2 className="text-base font-bold text-slate-900">{editingId ? (zh ? '编辑采集器' : 'Edit collector') : (zh ? '新建采集器' : 'New collector')}</h2><p className="mt-1 text-xs text-slate-500">{zh ? '配置采集器连接信息和运行参数。' : 'Configure collector connection and runtime settings.'}</p></div><button type="button" onClick={() => setEditorOpen(false)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100"><X size={18} /></button></div><div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-6"><section><h3 className="mb-3 text-sm font-bold text-slate-900">{zh ? '基本信息' : 'Basic information'}</h3><div className="grid gap-3 sm:grid-cols-2"><Input label={zh ? '名称' : 'Name'} value={form.name} onChange={value => setForm({ ...form, name: value })} required /><Input label={zh ? '编码' : 'Code'} value={form.code} onChange={value => setForm({ ...form, code: value })} required /><Input label={zh ? '站点 ID' : 'Site ID'} value={form.site_id} onChange={value => setForm({ ...form, site_id: value })} /><Input label={zh ? '采集器类型' : 'Collector type'} value={form.collector_type} onChange={value => setForm({ ...form, collector_type: value })} /><Input label={zh ? '管理地址' : 'Management address'} value={form.management_address} onChange={value => setForm({ ...form, management_address: value })} /><Input label={zh ? '远程写入地址' : 'Remote write endpoint'} value={form.remote_write_endpoint} onChange={value => setForm({ ...form, remote_write_endpoint: value })} /></div><label className="mt-3 flex items-center gap-2 text-xs font-semibold text-slate-600"><input type="checkbox" checked={form.enabled} onChange={event => setForm({ ...form, enabled: event.target.checked })} className="h-4 w-4 accent-cyan-600" />{zh ? '启用采集器' : 'Enabled'}</label></section><section className="border-t border-slate-100 pt-5"><h3 className="mb-3 text-sm font-bold text-slate-900">{zh ? '运行参数' : 'Runtime settings'}</h3><div className="grid gap-3 sm:grid-cols-2"><Input label={zh ? '最大并发数' : 'Max concurrency'} value={form.max_concurrency} onChange={value => setForm({ ...form, max_concurrency: value })} /><Input label={zh ? '队列磁盘上限（MB）' : 'Queue disk limit (MB)'} value={form.queue_disk_limit_mb} onChange={value => setForm({ ...form, queue_disk_limit_mb: value })} /></div></section></div><div className="flex justify-end gap-2 border-t border-slate-200 px-6 py-4"><button type="button" onClick={() => setEditorOpen(false)} className="rounded-xl border border-slate-200 px-4 py-2.5 text-xs font-bold text-slate-600">{zh ? '取消' : 'Cancel'}</button><button type="submit" className="inline-flex items-center gap-2 rounded-xl bg-cyan-600 px-4 py-2.5 text-xs font-bold text-white"><Save size={14} />{editingId ? (zh ? '保存采集器' : 'Save collector') : (zh ? '创建采集器' : 'Create collector')}</button></div></form></div>}
-    {detail && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 p-4"><button type="button" aria-label={zh ? '关闭采集器详情' : 'Close collector details'} onClick={() => setDetail(null)} className="absolute inset-0 cursor-default" /><div role="dialog" aria-modal="true" className="relative z-10 flex max-h-[min(860px,calc(100vh-2rem))] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"><div className="flex items-start justify-between border-b border-slate-200 px-6 py-4"><div><p className="text-xs font-semibold text-cyan-700">{zh ? '采集器详情' : 'Collector details'}</p><h2 className="mt-1 text-lg font-bold text-slate-900">{detail.name}</h2><p className="mt-1 font-mono text-xs text-slate-500">{detail.code}</p></div><button type="button" onClick={() => setDetail(null)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100"><X size={18} /></button></div><div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-6"><div className="grid gap-3 sm:grid-cols-2"><DetailItem label={zh ? '状态' : 'Status'} value={displayStatus(detail.status, zh)} /><DetailItem label={zh ? '站点' : 'Site'} value={detail.site_id || '—'} /><DetailItem label={zh ? '类型' : 'Type'} value={displayCollectorType(detail.collector_type, zh)} /><DetailItem label={zh ? '配置版本' : 'Config version'} value={detail.last_config_version ? `v${detail.last_config_version}` : '—'} /><DetailItem label={zh ? '配置发布状态' : 'Config publish status'} value={detail.last_config_status ? displayStatus(detail.last_config_status, zh) : (zh ? '未发布' : 'Not published')} /><DetailItem label={zh ? '最近生效时间' : 'Last applied'} value={formatPlanDate(detail.last_config_applied_at || undefined, zh)} /></div><div className="rounded-xl border border-cyan-200 bg-cyan-50 p-4 text-xs leading-5 text-slate-700">{zh ? '容器启动时会自动编译并发布配置；CMDB 设备状态变化后也会自动同步，后台每 5 分钟复查。正常情况下无需手动点击“编译/发布”，下方按钮用于排障或立即重试。' : 'Configuration is compiled and published on startup, after CMDB device status changes, and during a 5-minute background sweep. Manual compile/publish is normally unnecessary; use those buttons for troubleshooting or an immediate retry.'}</div><div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">{zh ? '远程写入地址等敏感连接信息不会在详情中回显。' : 'Sensitive connection details are not shown here.'}</div></div><div className="flex flex-wrap justify-end gap-2 border-t border-slate-200 px-6 py-4"><ActionButton icon={<TestTube2 size={13} />} label={zh ? '测试' : 'Test'} onClick={() => void runAction(`/api/monitoring/collectors/${detail.id}/test`)} /><ActionButton icon={<ShieldCheck size={13} />} label={zh ? '校验' : 'Validate'} onClick={() => void runAction(`/api/monitoring/collectors/${detail.id}/validate`)} /><ActionButton icon={<CloudCog size={13} />} label={zh ? '手动编译' : 'Manual compile'} onClick={() => void runAction(`/api/monitoring/collectors/${detail.id}/compile`)} /><ActionButton icon={<CheckCircle2 size={13} />} label={zh ? '手动发布' : 'Manual publish'} onClick={() => void runAction(`/api/monitoring/collectors/${detail.id}/publish`)} /><ActionButton icon={<Pencil size={13} />} label={zh ? '编辑' : 'Edit'} onClick={() => { setDetail(null); openEdit(detail); }} /></div></div></div>}
+    {editorOpen && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 p-4"><button type="button" aria-label={zh ? '关闭采集器编辑器' : 'Close collector editor'} onClick={() => setEditorOpen(false)} className="absolute inset-0 cursor-default" /><form onSubmit={saveCollector} className="relative z-10 flex max-h-[min(860px,calc(100vh-2rem))] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"><div className="flex items-center justify-between border-b border-slate-200 px-6 py-4"><div><h2 className="text-base font-bold text-slate-900">{editingId ? (zh ? '编辑采集器' : 'Edit collector') : (zh ? '新建采集器' : 'New collector')}</h2><p className="mt-1 text-xs text-slate-500">{zh ? '配置采集器连接信息和运行参数。' : 'Configure collector connection and runtime settings.'}</p></div><button type="button" onClick={() => setEditorOpen(false)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100"><X size={18} /></button></div><div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-6">{editorNotice && <CollectorNoticeView notice={editorNotice} zh={zh} />} {!editingId && <div role="note" className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-5 text-amber-800"><CircleAlert size={14} className="mt-0.5 shrink-0" />{form.collector_type.toUpperCase() === 'LOCAL' ? (zh ? '本地状态检查实际探测 vmagent 和 SNMP Exporter；这只证明服务可响应，不代表设备数据已采到。' : 'Local status checks probe vmagent and SNMP Exporter; this proves the services respond, not that device data has been collected.') : (zh ? '新建只登记平台侧记录，不会在远程主机安装或启动采集器；没有心跳上报时状态显示为未知。' : 'Creating a record does not install or start a remote collector; without heartbeat reporting, its status remains unknown.') }</div>}<section><h3 className="mb-3 text-sm font-bold text-slate-900">{zh ? '基本信息' : 'Basic information'}</h3><div className="grid gap-3 sm:grid-cols-2"><Input label={zh ? '名称' : 'Name'} value={form.name} onChange={value => setForm({ ...form, name: value })} required /><Input label={zh ? '编码' : 'Code'} value={form.code} onChange={value => setForm({ ...form, code: value })} required /><Input label={zh ? '站点 ID' : 'Site ID'} value={form.site_id} onChange={value => setForm({ ...form, site_id: value })} /><Input label={zh ? '采集器类型' : 'Collector type'} value={form.collector_type} onChange={value => setForm({ ...form, collector_type: value })} /><Input label={zh ? '管理地址' : 'Management address'} value={form.management_address} onChange={value => setForm({ ...form, management_address: value })} /><Input label={zh ? '远程写入地址' : 'Remote write endpoint'} value={form.remote_write_endpoint} onChange={value => setForm({ ...form, remote_write_endpoint: value })} /></div><label className="mt-3 flex items-center gap-2 text-xs font-semibold text-slate-600"><input type="checkbox" checked={form.enabled} onChange={event => setForm({ ...form, enabled: event.target.checked })} className="h-4 w-4 accent-cyan-600" />{zh ? '启用采集器' : 'Enabled'}</label></section><section className="border-t border-slate-100 pt-5"><h3 className="mb-3 text-sm font-bold text-slate-900">{zh ? '运行参数' : 'Runtime settings'}</h3><div className="grid gap-3 sm:grid-cols-2"><Input label={zh ? '最大并发数' : 'Max concurrency'} value={form.max_concurrency} onChange={value => setForm({ ...form, max_concurrency: value })} /><Input label={zh ? '队列磁盘上限（MB）' : 'Queue disk limit (MB)'} value={form.queue_disk_limit_mb} onChange={value => setForm({ ...form, queue_disk_limit_mb: value })} /></div></section></div><div className="flex justify-end gap-2 border-t border-slate-200 px-6 py-4"><button type="button" onClick={() => setEditorOpen(false)} className="rounded-xl border border-slate-200 px-4 py-2.5 text-xs font-bold text-slate-600">{zh ? '取消' : 'Cancel'}</button><button type="submit" className="inline-flex items-center gap-2 rounded-xl bg-cyan-600 px-4 py-2.5 text-xs font-bold text-white"><Save size={14} />{editingId ? (zh ? '保存采集器' : 'Save collector') : (zh ? '创建采集器' : 'Create collector')}</button></div></form></div>}
+    {detail && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 p-4"><button type="button" aria-label={zh ? '关闭采集器详情' : 'Close collector details'} onClick={() => setDetail(null)} className="absolute inset-0 cursor-default" /><div role="dialog" aria-modal="true" aria-labelledby="collector-detail-title" className="relative z-10 flex max-h-[min(860px,calc(100vh-2rem))] w-full max-w-3xl flex-col overflow-hidden rounded-xl bg-white shadow-xl"><div className="flex items-start justify-between border-b border-slate-200 px-6 py-4"><div><h2 id="collector-detail-title" className="text-base font-semibold text-slate-900">{zh ? '采集器详情' : 'Collector details'}</h2><p className="mt-1 text-xs text-slate-500">{detail.name} · <span className="font-mono">{detail.code}</span></p></div><button type="button" onClick={() => setDetail(null)} aria-label={zh ? '关闭' : 'Close'} className="rounded-md p-2 text-slate-400 hover:bg-slate-100"><X size={18} /></button></div><div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-6"><div className="grid gap-3 sm:grid-cols-2"><DetailItem label={zh ? '状态' : 'Status'} value={displayStatus(detail.status, zh)} /><DetailItem label={zh ? '站点' : 'Site'} value={detail.site_id || '—'} /><DetailItem label={zh ? '类型' : 'Type'} value={displayCollectorType(detail.collector_type, zh)} /><DetailItem label={zh ? '配置版本' : 'Config version'} value={detail.last_config_version ? `v${detail.last_config_version}` : '—'} /><DetailItem label={zh ? '配置发布状态' : 'Config publish status'} value={detail.last_config_status ? displayStatus(detail.last_config_status, zh) : (zh ? '未发布' : 'Not published')} /><DetailItem label={zh ? '最近生效时间' : 'Last applied'} value={formatPlanDate(detail.last_config_applied_at || undefined, zh)} /><DetailItem label={detail.collector_type?.toUpperCase() === 'LOCAL' ? (zh ? '最近运行检查' : 'Last runtime check') : (zh ? '最近心跳' : 'Last heartbeat')} value={detail.collector_type?.toUpperCase() === 'LOCAL' ? (detail.runtime_checked_at ? formatPlanDate(detail.runtime_checked_at, zh) : '—') : (detail.last_heartbeat_at ? formatPlanDate(detail.last_heartbeat_at, zh) : (zh ? '未上报' : 'Not reported'))} /></div><p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs leading-5 text-slate-600">{zh ? '此窗口只展示采集器信息。测试、校验、编译和发布操作在列表的运维操作中单独执行。远程写入地址等敏感连接信息不会回显。' : 'This view is read-only. Run tests, validation, compilation, and publishing from Collector operations. Sensitive connection details are not shown.'}</p></div><div className="flex justify-end border-t border-slate-200 px-6 py-4"><button type="button" onClick={() => setDetail(null)} className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">{zh ? '关闭' : 'Close'}</button></div></div></div>}
+    {operationsCollector && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 p-4"><button type="button" aria-label={zh ? '关闭运维操作' : 'Close collector operations'} onClick={() => { if (!pendingOperation) setOperationsCollector(null); }} className="absolute inset-0 cursor-default" /><div role="dialog" aria-modal="true" aria-labelledby="collector-operations-title" className="relative z-10 flex max-h-[min(860px,calc(100vh-2rem))] w-full max-w-2xl flex-col overflow-hidden rounded-xl bg-white shadow-xl"><div className="flex items-start justify-between border-b border-slate-200 px-6 py-4"><div><h2 id="collector-operations-title" className="text-base font-semibold text-slate-900">{zh ? '采集器运维操作' : 'Collector operations'}</h2><p className="mt-1 text-xs text-slate-500">{operationsCollector.name} · <span className="font-mono">{operationsCollector.code}</span></p></div><button type="button" disabled={Boolean(pendingOperation)} onClick={() => setOperationsCollector(null)} aria-label={zh ? '关闭' : 'Close'} className="rounded-md p-2 text-slate-400 hover:bg-slate-100 disabled:opacity-40"><X size={18} /></button></div><div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-6"><p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs leading-5 text-slate-600">{operationsCollector.collector_type?.toUpperCase() === 'LOCAL' ? (zh ? '本地状态依据 vmagent 和 SNMP Exporter 的健康接口判断；服务健康不代表设备指标已成功采集。' : 'Local status checks the vmagent and SNMP Exporter health endpoints; healthy services do not prove device metrics were collected.') : (zh ? '远程/边缘采集器需要接入心跳上报后才能确认在线；没有可用心跳时状态显示为未知。' : 'Remote/edge collectors require heartbeat reporting to confirm availability; without a heartbeat, status remains unknown.')}</p>{operationNotice && <CollectorNoticeView notice={operationNotice} zh={zh} />}<div className="grid gap-2 sm:grid-cols-2"><button type="button" disabled={Boolean(pendingOperation)} onClick={() => void runCollectorOperation('check')} className="flex items-center gap-3 rounded-lg border border-slate-200 p-3 text-left hover:border-blue-300 hover:bg-blue-50/40 disabled:cursor-wait disabled:opacity-60"><ShieldCheck size={17} className="shrink-0 text-blue-600" /><span><strong className="block text-xs font-semibold text-slate-800">{zh ? '状态检查' : 'Status check'}</strong><small className="mt-1 block text-[11px] text-slate-500">{operationsCollector.collector_type?.toUpperCase() === 'LOCAL' ? (zh ? '检查本地采集服务健康' : 'Check local collection service health') : (zh ? '读取远程心跳状态' : 'Read remote heartbeat state')}</small></span></button><button type="button" disabled={Boolean(pendingOperation)} onClick={() => void runCollectorOperation('validate')} className="flex items-center gap-3 rounded-lg border border-slate-200 p-3 text-left hover:border-blue-300 hover:bg-blue-50/40 disabled:cursor-wait disabled:opacity-60"><ShieldCheck size={17} className="shrink-0 text-blue-600" /><span><strong className="block text-xs font-semibold text-slate-800">{zh ? '配置校验' : 'Config validation'}</strong><small className="mt-1 block text-[11px] text-slate-500">{zh ? '检查最近保存的配置文件' : 'Validate the latest saved config artifact'}</small></span></button><button type="button" disabled={Boolean(pendingOperation)} onClick={() => void runCollectorOperation('compile')} className="flex items-center gap-3 rounded-lg border border-slate-200 p-3 text-left hover:border-blue-300 hover:bg-blue-50/40 disabled:cursor-wait disabled:opacity-60"><CloudCog size={17} className="shrink-0 text-blue-600" /><span><strong className="block text-xs font-semibold text-slate-800">{zh ? '编译配置' : 'Compile config'}</strong><small className="mt-1 block text-[11px] text-slate-500">{zh ? '生成新版本并更新采集分配' : 'Create a version and update assignments'}</small></span></button><button type="button" disabled={Boolean(pendingOperation)} onClick={() => void runCollectorOperation('publish')} className="flex items-center gap-3 rounded-lg border border-slate-200 p-3 text-left hover:border-blue-300 hover:bg-blue-50/40 disabled:cursor-wait disabled:opacity-60"><CheckCircle2 size={17} className="shrink-0 text-blue-600" /><span><strong className="block text-xs font-semibold text-slate-800">{zh ? '发布配置' : 'Publish config'}</strong><small className="mt-1 block text-[11px] text-slate-500">{zh ? '切换当前运行配置，执行前会再次确认' : 'Switch runtime config after confirmation'}</small></span></button></div></div><div className="flex justify-end border-t border-slate-200 px-6 py-4"><button type="button" disabled={Boolean(pendingOperation)} onClick={() => setOperationsCollector(null)} className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40">{zh ? '关闭' : 'Close'}</button></div></div></div>}
   </section>;
 };
 

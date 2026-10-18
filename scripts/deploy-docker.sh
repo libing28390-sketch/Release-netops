@@ -32,9 +32,9 @@ Usage:
 
 Commands:
   install    Clone/sync the public release, initialize .env, build, and start.
-  update     Preserve .env, Docker volumes, and nginx/ssl; sync the public
-             release history, show source changes, and rebuild only when the
-             release content changed. Use --force to rebuild unconditionally.
+  update     Preserve .env, Docker volumes, and nginx/ssl; report environment
+             parameter changes, sync the public release, and rebuild only when
+             the release content changed. Use --force to rebuild unconditionally.
   save-images Save the Compose images (including monitoring services,
              Guacamole, and Redis when enabled) to a
              gzip-compressed archive and write a SHA-256 checksum alongside
@@ -77,6 +77,10 @@ EOF
 }
 
 RELEASE_CHANGED=0
+ENV_BACKUP_PATH=""
+RELEASE_BACKUP_PATH=""
+declare -A ENV_INITIALIZED_KEYS=()
+declare -A ENV_REMOVED_KEYS=()
 
 require_command() {
     command -v "$1" >/dev/null 2>&1 || die "Required command not found: $1"
@@ -149,12 +153,22 @@ stop_disabled_redis() {
 }
 
 set_env_value() {
-    local key="$1" value="$2"
+    local key="$1" value="$2" existing_line existing_value normalized_value changed=1
+    normalized_value="$(normalize_env_value "$value")"
     if grep -qE "^${key}=" .env; then
+        changed=0
+        while IFS= read -r existing_line; do
+            existing_value="$(normalize_env_value "${existing_line#*=}")"
+            if [[ "$existing_value" != "$normalized_value" ]]; then
+                changed=1
+                break
+            fi
+        done < <(grep -E "^${key}=" .env)
         sed -i "s|^${key}=.*|${key}=${value}|" .env
     else
         printf '%s=%s\n' "$key" "$value" >> .env
     fi
+    if (( changed )); then ENV_INITIALIZED_KEYS["$key"]=1; fi
 }
 
 normalize_env_value() {
@@ -180,6 +194,18 @@ env_value() {
     normalize_env_value "$value"
 }
 
+load_env_snapshot() {
+    local snapshot_path="$1" destination_name="$2" line key value
+    local -n destination="$destination_name"
+    [[ -f "$snapshot_path" ]] || return 0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ "$line" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]] || continue
+        key="${BASH_REMATCH[1]}"
+        value="$(normalize_env_value "${BASH_REMATCH[2]}")"
+        destination["$key"]="$value"
+    done < "$snapshot_path"
+}
+
 storage_backend_is_s3() {
     local backend
     backend="$(env_value STORAGE_BACKEND)"
@@ -203,7 +229,10 @@ initialize_env() {
     # Remove the retired opt-in switch from preserved deployments. Docker
     # Compose loads all of .env into netops through env_file, so keeping this
     # stale key would continue exposing a configuration that no longer exists.
-    sed -i '/^NETOPS_REMOTE_DESKTOP_ENABLED=/d' .env
+    if grep -q '^NETOPS_REMOTE_DESKTOP_ENABLED=' .env; then
+        sed -i '/^NETOPS_REMOTE_DESKTOP_ENABLED=/d' .env
+        ENV_REMOVED_KEYS[NETOPS_REMOTE_DESKTOP_ENABLED]=1
+    fi
 
     require_command openssl
     local db_user db_name db_password server_name redis_password redis_url grafana_password grafana_root_url guacamole_key
@@ -352,9 +381,11 @@ prepare_source() {
 }
 
 backup_env() {
+    ENV_BACKUP_PATH=""
     if [[ -f .env ]]; then
         local backup=".env.backup.$(date +%Y%m%d%H%M%S)"
         cp -a .env "$backup"
+        ENV_BACKUP_PATH="$backup"
         log "Saved environment backup to $backup"
     fi
 }
@@ -371,6 +402,8 @@ backup_release_state() {
     local config_partial="${config_path}.partial"
     local snapshot_path="${backup_dir}/config-snapshots.tar.gz"
     local snapshot_partial="${snapshot_path}.partial"
+
+    RELEASE_BACKUP_PATH="$backup_dir"
 
     [[ -f .env ]] || die "Cannot create release backup: .env is missing"
     # Read only the database identifiers needed by pg_dump.  Do not source the
@@ -436,6 +469,119 @@ backup_release_state() {
     chmod 600 "$dump_path" "$manifest_path"
     log "Release backup complete: $backup_dir"
     log "  PostgreSQL dump, Source Manifest, deployment config, and config snapshots are present"
+}
+
+report_env_parameter_changes() {
+    local report_path="${RELEASE_BACKUP_PATH}/env-change-report.txt"
+    local old_template_path="${RELEASE_BACKUP_PATH}/env-template-before-update.tmp"
+    local old_template_available=0 new_template_available=0 comparison_unavailable=0
+    local previous_env_path="${ENV_BACKUP_PATH:-}"
+    local key
+    local -A previous_template_values=() next_template_values=() previous_env_values=()
+    local -a added_keys=() changed_default_keys=() removed_keys=() initialized_keys=() auto_removed_keys=()
+
+    if [[ -z "$RELEASE_BACKUP_PATH" || ! -f "${RELEASE_BACKUP_PATH}/deployment-config.tar.gz" ]]; then
+        die "Cannot compare environment parameters: release configuration backup is missing"
+    fi
+
+    if tar -tzf "${RELEASE_BACKUP_PATH}/deployment-config.tar.gz" 2>/dev/null | grep -Fx '.env.example' >/dev/null; then
+        tar -xOzf "${RELEASE_BACKUP_PATH}/deployment-config.tar.gz" .env.example > "$old_template_path"
+        old_template_available=1
+        load_env_snapshot "$old_template_path" previous_template_values
+    fi
+    if [[ -f .env.example ]]; then
+        new_template_available=1
+        load_env_snapshot .env.example next_template_values
+    fi
+    if (( ! old_template_available || ! new_template_available )); then comparison_unavailable=1; fi
+    if [[ -n "$previous_env_path" && -f "$previous_env_path" ]]; then
+        load_env_snapshot "$previous_env_path" previous_env_values
+    fi
+
+    if (( old_template_available && new_template_available )); then
+        for key in "${!next_template_values[@]}"; do
+            if [[ ! ${previous_template_values[$key]+present} ]]; then
+                added_keys+=("$key")
+            elif [[ "${previous_template_values[$key]}" != "${next_template_values[$key]}" ]]; then
+                changed_default_keys+=("$key")
+            fi
+        done
+        for key in "${!previous_template_values[@]}"; do
+            if [[ ! ${next_template_values[$key]+present} ]]; then
+                removed_keys+=("$key")
+            fi
+        done
+    fi
+
+    for key in "${!ENV_INITIALIZED_KEYS[@]}"; do initialized_keys+=("$key"); done
+    for key in "${!ENV_REMOVED_KEYS[@]}"; do auto_removed_keys+=("$key"); done
+    : > "$report_path"
+    {
+        printf 'Environment parameter change report\n'
+        printf 'Generated: %s\n' "$(date '+%Y-%m-%d %H:%M:%S %z')"
+        printf 'This report contains parameter names and change types only; it never contains parameter values or secrets.\n\n'
+
+        if (( ! old_template_available )); then
+            printf 'Previous .env.example was not available in the pre-update backup.\n'
+        elif (( ! new_template_available )); then
+            printf 'The updated release does not contain .env.example; template comparison was skipped.\n'
+        elif (( ${#added_keys[@]} + ${#changed_default_keys[@]} + ${#removed_keys[@]} == 0 )); then
+            printf 'No parameter changes were found between the previous and updated .env.example.\n'
+        else
+            printf 'Template parameter changes:\n'
+            if (( ${#added_keys[@]} > 0 )); then
+                printf 'Added in the updated template:\n'
+                while IFS= read -r key; do
+                    if [[ -n "$previous_env_path" && -f "$previous_env_path" && ${previous_env_values[$key]+present} ]]; then
+                        printf '  + %s (already present in the saved .env)\n' "$key"
+                    elif [[ -n "$previous_env_path" && -f "$previous_env_path" ]]; then
+                        printf '  + %s (not present in the saved .env; review whether it is required)\n' "$key"
+                    else
+                        printf '  + %s (no pre-update .env snapshot was available)\n' "$key"
+                    fi
+                done < <(printf '%s\n' "${added_keys[@]}" | LC_ALL=C sort)
+            fi
+            if (( ${#changed_default_keys[@]} > 0 )); then
+                printf 'Template defaults changed; existing .env values were preserved:\n'
+                while IFS= read -r key; do printf '  ~ %s\n' "$key"; done < <(printf '%s\n' "${changed_default_keys[@]}" | LC_ALL=C sort)
+            fi
+            if (( ${#removed_keys[@]} > 0 )); then
+                printf 'Removed from the updated template; existing .env values were not deleted:\n'
+                while IFS= read -r key; do printf '  - %s\n' "$key"; done < <(printf '%s\n' "${removed_keys[@]}" | LC_ALL=C sort)
+            fi
+        fi
+
+        if (( ${#initialized_keys[@]} > 0 )); then
+            printf '\nParameters generated or adjusted by update initialization:\n'
+            while IFS= read -r key; do printf '  * %s\n' "$key"; done < <(printf '%s\n' "${initialized_keys[@]}" | LC_ALL=C sort)
+        fi
+        if (( ${#auto_removed_keys[@]} > 0 )); then
+            printf '\nRetired parameters removed by update initialization:\n'
+            while IFS= read -r key; do printf '  * %s\n' "$key"; done < <(printf '%s\n' "${auto_removed_keys[@]}" | LC_ALL=C sort)
+        fi
+    } > "$report_path"
+    chmod 600 "$report_path"
+    rm -f "$old_template_path"
+
+    local template_change_count=$(( ${#added_keys[@]} + ${#changed_default_keys[@]} + ${#removed_keys[@]} ))
+    local initialized_change_count=$(( ${#initialized_keys[@]} + ${#auto_removed_keys[@]} ))
+    if (( template_change_count + initialized_change_count > 0 )); then
+        printf '\n'
+        printf '========== ENVIRONMENT PARAMETERS NEED REVIEW ==========\n'
+        log "Detected ${#added_keys[@]} added, ${#changed_default_keys[@]} changed-default, and ${#removed_keys[@]} removed template parameter(s)."
+        log "Update initialization changed ${initialized_change_count} parameter(s); affected names are listed in the report."
+        log "Review the parameter names and change types: $report_path"
+        log "No parameter values or secrets are printed in this summary."
+        printf '=========================================================\n\n'
+    elif (( comparison_unavailable )); then
+        printf '\n'
+        printf '========== ENVIRONMENT PARAMETERS NOT COMPARED ==========\n'
+        log "The previous or updated .env.example was unavailable; review the report: $report_path"
+        log "No parameter values or secrets are printed in this summary."
+        printf '=========================================================\n\n'
+    else
+        log "Environment parameters unchanged; report: $report_path"
+    fi
 }
 
 validate_compose() {
@@ -827,6 +973,7 @@ case "$COMMAND" in
         backup_release_state
         sync_release
         initialize_env
+        report_env_parameter_changes
         if [[ "${FORCE_UPDATE:-}" != "--force" && "$RELEASE_CHANGED" != "1" ]]; then
             configure_compose_files
             service_args=()

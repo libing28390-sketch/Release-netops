@@ -7,6 +7,7 @@ import { DataTable } from '../components/DataTable';
 import PageHero from '../components/PageHero';
 import { ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
 import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
+import { ListSearchInput, ListToolbar } from '../components/ui/TableListControls';
 import type { TableExportData } from '../components/ui/TableExportMenu';
 import { alertWorkflowBadgeClass, severityBadgeClass } from '../components/shared';
 import { authHeaders } from '../api/http';
@@ -17,13 +18,11 @@ import { useAlertSiteLabels } from './useAlertSiteLabels';
 import AlertDeskColumnToggle from './AlertDeskColumnToggle';
 import {
   ALERT_DESK_COLUMN_DEFS,
-  defaultAlertDeskColumnVisibility,
   loadAlertDeskColumnVisibility,
   saveAlertDeskColumnVisibility,
   setAlertDeskColumnVisibility,
 } from './alertDeskColumns';
 import {
-  alertInputClass,
   alertPanelClass,
   alertSecondaryButtonClass,
   alertTableActionButtonClass,
@@ -428,11 +427,11 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
 
       <div className="flex-1 flex flex-col overflow-hidden px-6 py-5 min-h-0">
       <div className={`${alertPanelClass} flex-1 min-h-0 flex flex-col overflow-hidden`}>
-        <div className="flex min-w-0 items-center gap-2 border-b border-black/5 px-5 py-3">
+        <ListToolbar className="min-w-0 gap-2 border-b border-black/5 px-5 py-3">
           <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto no-scrollbar">
-          <label className="alert-management-search relative">
-            <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/40" />
-            <input type="search"
+          <ListSearchInput
+              language={language}
+              className="alert-management-search"
               aria-label={language === 'zh' ? '搜索告警标题、设备、接口或 IP' : 'Search alert title, device, interface, or IP'}
               value={search}
               onChange={(e) => {
@@ -440,9 +439,8 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                 setSearch(e.target.value);
               }}
               placeholder={language === 'zh' ? '搜索标题、设备、接口、IP' : 'Search title, device, interface, IP'}
-              className={`${alertInputClass} rounded-xl py-3 pl-9 pr-3`}
+              onClear={() => { setPage(1); setSearch(''); }}
             />
-          </label>
 
           <select
             title={language === 'zh' ? '按级别筛选告警' : 'Filter alerts by severity'}
@@ -494,10 +492,9 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
           <AlertDeskColumnToggle
             columns={alertColumns}
             onChange={(key, visible) => setAlertColumns((current) => setAlertDeskColumnVisibility(current, key, visible))}
-            onReset={() => setAlertColumns(defaultAlertDeskColumnVisibility())}
             language={language}
           />
-        </div>
+        </ListToolbar>
 
         {selectedIds.size > 0 && (
           <div className="flex items-center gap-3 border-b border-blue-100 bg-blue-50/60 px-5 py-3">
@@ -544,6 +541,8 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                 rows.map((row) => (
                   <tr
                     key={row.id}
+                    data-selected={selectedIds.has(row.id) || selectedAlertId === row.id || undefined}
+                    aria-selected={selectedIds.has(row.id) || selectedAlertId === row.id}
                     className={`border-b border-black/5 hover:bg-black/[0.02] ${
                       selectedIds.has(row.id) ? 'bg-blue-50/40' : ''
                     } ${(row.duration_seconds ?? 0) > 86400 && !row.resolved_at ? 'border-l-2 border-l-amber-400' : ''}`}

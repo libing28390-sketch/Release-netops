@@ -200,14 +200,6 @@ const OidPickerModal: React.FC<OidPickerModalProps> = ({
             </select>
           </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="inline-flex items-center gap-1 rounded-lg bg-[#00a9ce] px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-[#008fb1] disabled:opacity-50"
-          >
-            <Search size={12} />
-            {zh ? '搜索' : 'Search'}
-          </button>
         </form>
 
         {/* Content: List & Details */}

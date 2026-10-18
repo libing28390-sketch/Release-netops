@@ -25,9 +25,7 @@ from typing import Optional
 from database import get_db_connection
 from core.rbac import require_role
 from core.read_cache import (
-    REFERENCE_CACHE_TTL_SECONDS,
     invalidate_read_cache,
-    read_cache,
 )
 from services.audit_service import log_audit_event
 from services import tag_service
@@ -58,16 +56,10 @@ def list_definitions(
     category: Optional[str] = Query(default=None, description="Filter by category"),
     current_user=require_role("Viewer"),
 ):
-    cache_key = f'definitions:{category or ""}'
-    cache_hit, cached = read_cache.get('references', cache_key)
-    if cache_hit:
-        return cached
     conn = get_db_connection()
     try:
         rows = tag_service.list_tag_definitions(conn, category, include_inactive=True)
-        response = {"success": True, "data": rows}
-        read_cache.set('references', cache_key, response, REFERENCE_CACHE_TTL_SECONDS)
-        return response
+        return {"success": True, "data": rows}
     finally:
         conn.close()
 

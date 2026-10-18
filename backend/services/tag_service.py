@@ -243,9 +243,10 @@ def list_tag_definitions(conn, category: str | None = None, include_inactive: bo
     rows = conn.execute(
         f'''SELECT td.*, tc.label AS category_label, tc.label_zh AS category_label_zh,
                    COALESCE((
-                       SELECT COUNT(*)
+                       SELECT COUNT(DISTINCT d.id)
                        FROM tag_assignments ta
-                       WHERE ta.tag_id = td.id
+                       JOIN devices d ON d.id = ta.resource_id
+                       WHERE ta.tag_id = td.id AND ta.resource_type = 'device'
                    ), 0) AS assignment_count
             FROM tag_definitions td LEFT JOIN tag_categories tc ON tc.code=td.category
             {where} ORDER BY td.category, td.sort_order, td.code''',
@@ -622,17 +623,20 @@ def get_tag_statistics(conn) -> dict:
     definition_counts = conn.execute(
         '''SELECT COUNT(*) AS total_definitions,
                   COALESCE(SUM(CASE WHEN EXISTS (
-                      SELECT 1 FROM tag_assignments ta WHERE ta.tag_id = td.id
+                      SELECT 1 FROM tag_assignments ta
+                      JOIN devices d ON d.id = ta.resource_id
+                      WHERE ta.tag_id = td.id AND ta.resource_type = 'device'
                   ) THEN 1 ELSE 0 END), 0) AS used_definitions
            FROM tag_definitions td
            WHERE td.is_active=1'''
     ).fetchone()
     usage_counts = conn.execute(
-        '''SELECT td.id, td.category, td.code, td.label, td.label_zh, COUNT(ta.resource_id) AS device_count
+        '''SELECT td.id, td.category, td.code, td.label, td.label_zh, COUNT(DISTINCT d.id) AS device_count
            FROM tag_definitions td JOIN tag_assignments ta ON ta.tag_id=td.id
+           JOIN devices d ON d.id=ta.resource_id
            WHERE td.is_active=1 AND ta.resource_type='device'
            GROUP BY td.id, td.category, td.code, td.label, td.label_zh
-           ORDER BY COUNT(ta.resource_id) DESC LIMIT 20'''
+           ORDER BY COUNT(DISTINCT d.id) DESC LIMIT 20'''
     ).fetchall()
     return {
         "total_definitions": conn.execute("SELECT COUNT(*) FROM tag_definitions WHERE is_active=1").fetchone()[0],
@@ -643,7 +647,10 @@ def get_tag_statistics(conn) -> dict:
             else 0
         ),
         "total_assignments": conn.execute("SELECT COUNT(*) FROM tag_assignments").fetchone()[0],
-        "tagged_devices": conn.execute("SELECT COUNT(DISTINCT resource_id) FROM tag_assignments WHERE resource_type='device'").fetchone()[0],
+        "tagged_devices": conn.execute(
+            "SELECT COUNT(DISTINCT d.id) FROM tag_assignments ta "
+            "JOIN devices d ON d.id=ta.resource_id WHERE ta.resource_type='device'"
+        ).fetchone()[0],
         "categories": {row["category"]: row["count"] for row in category_counts},
         "top_used": [dict(row) for row in usage_counts],
     }

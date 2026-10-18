@@ -36,6 +36,7 @@ export const TableActionCell: React.FC<TableActionCellProps> = ({
     && onlyChild.type === ActionIconGroup
     ? onlyChild
     : null;
+  const actionChildren = existingGroup ? existingGroup.props.children : children;
 
   return (
     <td {...props} className={cn('nx-action-column-cell', className)}>
@@ -43,7 +44,7 @@ export const TableActionCell: React.FC<TableActionCellProps> = ({
         label={label ?? existingGroup?.props.label}
         className={existingGroup?.props.className}
       >
-        {existingGroup ? existingGroup.props.children : children}
+        {actionChildren}
       </ActionIconGroup>
     </td>
   );
