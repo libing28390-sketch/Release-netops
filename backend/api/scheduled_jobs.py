@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Body, Request, Depends, Query
-from typing import Optional
+from typing import Annotated, Optional
 from datetime import datetime, timedelta
 import uuid
 import logging
@@ -150,9 +150,9 @@ def preview_scheduled_job_cron(payload: CronPreviewRequest, user=require_role("V
 def list_scheduled_jobs(
     job_type: Optional[str] = None,
     status: Optional[str] = None,
-    action_type: Optional[str] = Query(default=None, min_length=1, max_length=64),
-    keyword: str = Query(default="", max_length=200),
-    enabled: Optional[int] = Query(default=None, ge=0, le=1),
+    action_type: Annotated[Optional[str], Query(min_length=1, max_length=64)] = None,
+    keyword: Annotated[str, Query(max_length=200)] = "",
+    enabled: Annotated[Optional[int], Query(ge=0, le=1)] = None,
     page: int = 1,
     page_size: int = 20,
     user=require_role("Viewer"),
