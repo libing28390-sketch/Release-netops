@@ -260,6 +260,12 @@ initialize_env() {
         grafana_password="$(openssl rand -hex 24)"
         set_env_value GRAFANA_ADMIN_PASSWORD "$grafana_password"
     fi
+    if is_placeholder "$(env_value ALERT_NOTIFICATION_BROKER_PASSWORD)"; then
+        # Keep the shared alert Redis broker password unique per deployment.
+        # The prefix makes its purpose recognizable without exposing the value
+        # in logs or committing a common credential to the example template.
+        set_env_value ALERT_NOTIFICATION_BROKER_PASSWORD "nexora$(openssl rand -hex 24)"
+    fi
 
     # Guacamole's JSON authentication key is independent from Nexora's
     # credential encryption key. Preserve a valid key; repair missing or
