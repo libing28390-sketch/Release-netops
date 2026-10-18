@@ -23,12 +23,19 @@
 - `bash -n scripts/deploy-docker.sh`：通过。
 - `python -c "import yaml; yaml.safe_load(open('docker-compose.yml', encoding='utf-8'))"`：通过。
 - `git diff --check`：通过。
-- GitHub Actions 与目标机更新：待提交后执行。
+- GitHub Actions #742（`3c4b75df`）：成功；Ubuntu/Linux job 通过，Windows Agent 按流程跳过。
+- 目标机发布树：`HEAD` 与 `origin/main` 均为 `b3f55fc`。
+- `bash scripts/deploy-docker.sh update --force`：完成，输出 Docker update complete；部署脚本中的 `docker compose config --quiet` 未报错。
+- 18 个容器均为 running；11 个 healthcheck 容器均为 healthy。
+- `curl -kfsS --max-time 10 https://127.0.0.1/api/health/live` 返回 `{"status":"alive"}`。
+- 容器内 `_probe_local_collector_runtime()` 返回 `ONLINE`，vmagent 和 snmp_exporter 均 `ONLINE`。
+- 浏览器采集器页加载为 v1.0.10，显示本地采集器在线；状态检查提示两个运行组件均有响应。
+- 本次 `.env` 中 broker 口令非空，初始化脚本保留现值，未读取或打印其值。部署备份位于 `.env.backup.20261019072239` 和 `../netops-release-backups/release-20261019-072239/`。
 
 ## 未执行验证
 
-- 尚未运行真实目标机上的 Docker Compose 检查和容器更新；先等 GitHub Actions。
+- 没有读取 broker 口令本身；验证只确认 Compose 校验通过、值存在且告警 Redis 健康。
 
 ## 剩余风险与建议
 
-部署脚本改动尚未应用到目标机；需在发布仓库更新后运行 `update` 并检查告警 Redis 与应用健康状态。
+新建或空值 `.env` 会由部署脚本生成每部署唯一的 `nexora` 前缀随机口令；直接运行 Compose 的操作者仍需自行设置唯一值。目标机已保留原有非空值，并通过完整更新验收。
