@@ -17,6 +17,7 @@ import {
   ChevronUp,
 } from 'lucide-react';
 import { useEscapeClose } from '../hooks/useEscapeClose';
+import { monitoringReportExportEndpoints } from '../api/monitoringReports';
 
 interface ExportTableModalProps {
   isOpen: boolean;
@@ -62,7 +63,7 @@ const REPORT_PRESETS: ReportPreset[] = [
       'Sheet 3: High Utilization Alert Ports (Threshold check, alert levels, action advice)',
       'Sheet 4: Interface Errors & Discards (CRC errors and packet discards ranking)',
     ],
-    endpoint: '/api/monitoring/v1/export/interfaces',
+    endpoint: monitoringReportExportEndpoints.interfaces,
     recommendedFormat: 'xlsx',
   },
   {
@@ -82,7 +83,7 @@ const REPORT_PRESETS: ReportPreset[] = [
       'Sheet 1: Device Resource Inventory (Hostname, IP, Vendor, Platform, CPU, Memory, Temp)',
       'Sheet 2: High-Load Warning Devices (CPU > 70% or Mem > 75% risk checklist)',
     ],
-    endpoint: '/api/monitoring/v1/export/devices',
+    endpoint: monitoringReportExportEndpoints.devices,
     recommendedFormat: 'xlsx',
   },
   {
@@ -100,7 +101,7 @@ const REPORT_PRESETS: ReportPreset[] = [
     sheetsEn: [
       'Sheet 1: Outbound Links & Probes (Probe name, ISP, Target, Latency, Loss, Health)',
     ],
-    endpoint: '/api/monitoring/v1/export/outbound',
+    endpoint: monitoringReportExportEndpoints.outbound,
     recommendedFormat: 'xlsx',
   },
 ];

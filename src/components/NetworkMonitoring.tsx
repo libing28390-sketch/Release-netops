@@ -13,6 +13,7 @@ import { useMonitoringStore } from '../store/monitoringStore';
 import { VirtualizedDeviceList } from './VirtualizedDeviceList';
 import type { TableExportData } from './ui/TableExportMenu';
 import { formatUptimeSeconds } from '../utils/formatUptimeSeconds';
+import { monitoringReportExportEndpoints } from '../api/monitoringReports';
 
 interface NetworkMonitoringProps {
   language: 'zh' | 'en';
@@ -189,7 +190,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({
       const headers: Record<string, string> = {};
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
-      const res = await fetch('/api/monitoring/v1/export/interfaces?format=xlsx', { headers, credentials: 'same-origin' });
+      const res = await fetch(`${monitoringReportExportEndpoints.interfaces}?format=xlsx`, { headers, credentials: 'same-origin' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const blob = await res.blob();
       const disposition = res.headers.get('Content-Disposition') || '';
