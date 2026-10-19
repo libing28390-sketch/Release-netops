@@ -45,6 +45,7 @@ import {
   findFirstFreeStartU
 } from './helpers';
 import { normalizeRackToVM, HealthMap, HealthInfo } from './adapters/rackViewModel';
+import { getRackSiteLabel } from './siteLabel';
 const Rack3DContainer = React.lazy(() => import('./Rack3D').then(m => ({ default: m.Rack3DContainer })));
 const RackFleetOverview = React.lazy(() => import('./Rack3D/RackFleetOverview').then(m => ({ default: m.RackFleetOverview })));
 import { DevicePortMatrix } from './components/DevicePortMatrix';
@@ -221,9 +222,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
 
   const siteById = useMemo(() => new Map(sites.map(site => [site.id, site])), [sites]);
   const siteLabel = useCallback((rack?: Pick<Rack, 'site_id' | 'site_code' | 'site_name' | 'datacenter'>) => {
-    if (!rack) return '';
-    const site = rack.site_id ? siteById.get(rack.site_id) : undefined;
-    return site?.site_code || rack.site_code || site?.site_name || rack.site_name || rack.datacenter || rack.site_id || '';
+    return getRackSiteLabel(rack, siteById);
   }, [siteById]);
   const siteOptions = useMemo(
     () => sites.slice().sort((a, b) => (a.site_code || a.site_name).localeCompare(b.site_code || b.site_name)),
