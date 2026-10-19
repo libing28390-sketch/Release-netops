@@ -11,6 +11,7 @@ import json
 import hashlib
 import logging
 import os
+import re
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -65,6 +66,9 @@ logger = logging.getLogger(__name__)
 CANONICAL_PLAN_ID = "plan-generic-ifmib"
 CANONICAL_PLAN_NAME = "SNMP 基线采集计划"
 CANONICAL_PLAN_NAME_ALIASES = {CANONICAL_PLAN_NAME, "Generic IF-MIB baseline"}
+DEFAULT_SCRAPE_INTERVAL_SECONDS = 60
+SCRAPE_STALE_INTERVAL_MULTIPLIER = 3
+_SCRAPE_INTERVAL_PART_RE = re.compile(r"(\d+(?:\.\d+)?)(ns|us|µs|ms|s|m|h)")
 
 
 def _now() -> str:
@@ -219,7 +223,11 @@ def _validate_remote_write_endpoint(value: str) -> str:
     return endpoint
 
 
-def _safe_collector_view(row: Any, local_runtime: dict[str, Any] | None = None) -> dict[str, Any]:
+def _safe_collector_view(
+    row: Any,
+    local_runtime: dict[str, Any] | None = None,
+    collection_probe: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     item = _dict(row)
     endpoint = str(item.get("remote_write_endpoint") or "")
     try:
@@ -233,6 +241,8 @@ def _safe_collector_view(row: Any, local_runtime: dict[str, Any] | None = None) 
         item["status"] = "DISABLED"
         item["runtime_status"] = "DISABLED"
         item["runtime_probe"] = "NOT_RUN"
+        if collection_probe is not None:
+            item["collection_probe"] = collection_probe
         return item
 
     if str(item.get("collector_type") or "LOCAL").strip().upper() == "LOCAL":
@@ -247,6 +257,8 @@ def _safe_collector_view(row: Any, local_runtime: dict[str, Any] | None = None) 
         item["runtime_status"] = "UNKNOWN"
         item["runtime_probe"] = "HEARTBEAT_NOT_CONFIGURED"
         item["runtime_checked_at"] = None
+    if collection_probe is not None:
+        item["collection_probe"] = collection_probe
     return item
 
 
@@ -254,29 +266,310 @@ def _collector_is_enabled(value: Any) -> bool:
     return value is True or str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _probe_local_collector_runtime() -> dict[str, Any]:
-    """Check the real local collection services instead of inferring liveness from publish state."""
+def _normalize_collector_enabled(value: Any) -> int:
+    """Store collector enablement as the integer used by the PostgreSQL schema."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int) and value in {0, 1}:
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return 1
+        if normalized in {"0", "false", "no", "off"}:
+            return 0
+    raise HTTPException(status_code=422, detail="enabled must be a boolean value")
+
+
+def _scrape_interval_seconds(value: Any) -> int:
+    """Parse simple or Go-style compound durations returned by vmagent."""
+    try:
+        return duration_seconds(value, field="scrapeInterval")
+    except (CompileError, TypeError, ValueError):
+        pass
+
+    text = str(value or "").strip().lower()
+    parts = list(_SCRAPE_INTERVAL_PART_RE.finditer(text))
+    if not parts or "".join(part.group(0) for part in parts) != text:
+        return DEFAULT_SCRAPE_INTERVAL_SECONDS
+
+    factors = {"ns": 1e-9, "us": 1e-6, "µs": 1e-6, "ms": 1e-3, "s": 1, "m": 60, "h": 3600}
+    total = sum(float(part.group(1)) * factors[part.group(2)] for part in parts)
+    return max(1, int(total)) if total > 0 else DEFAULT_SCRAPE_INTERVAL_SECONDS
+
+
+def _target_scrape_interval_seconds(target: Mapping[str, Any]) -> int:
+    """Resolve the effective interval from vmagent target metadata or file-SD labels."""
+    discovered_labels = target.get("discoveredLabels")
+    if isinstance(discovered_labels, Mapping):
+        # vmagent omits scrapeInterval from activeTargets in some versions. The
+        # compiler writes the per-target interval into this file-SD label; it
+        # must take precedence over the job's default __scrape_interval__.
+        interval = (
+            discovered_labels.get("nexora_scrape_interval")
+            or target.get("scrapeInterval")
+            or discovered_labels.get("__scrape_interval__")
+        )
+    else:
+        interval = target.get("scrapeInterval")
+    return _scrape_interval_seconds(interval)
+
+
+def _probe_local_collector_runtime(*, include_collection_probe_data: bool = False) -> dict[str, Any]:
+    """Check local service health; optionally fetch vmagent targets once for the list view."""
     endpoints = {
-        "vmagent": "http://vmagent:8429/health",
+        "vmagent_health": "http://vmagent:8429/health",
+        "vmagent_targets": "http://vmagent:8429/api/v1/targets",
         "snmp_exporter": "http://snmp-exporter:9116/metrics",
     }
     opener = build_opener(ProxyHandler({}))
     component_status: dict[str, str] = {}
-    for component, endpoint in endpoints.items():
-        try:
-            with opener.open(UrlRequest(endpoint, method="GET"), timeout=2.0) as response:
-                component_status[component] = "ONLINE" if 200 <= int(response.status) < 300 else "OFFLINE"
-        except Exception as exc:
-            logger.warning("Local collector health probe failed for %s (%s)", component, type(exc).__name__)
-            component_status[component] = "OFFLINE"
 
+    target_probe: dict[str, Any] = {
+        "api_ok": False,
+        "api_error_code": "VMAGENT_API_UNAVAILABLE",
+        "target_count": 0,
+        "healthy_count": 0,
+        "failed_count": 0,
+        "waiting_count": 0,
+        "stale_count": 0,
+        "last_scrape_at": None,
+        "vmagent_online": False,
+        "snmp_exporter_online": False,
+    }
+
+    try:
+        with opener.open(UrlRequest(endpoints["vmagent_health"], method="GET"), timeout=2.0) as response:
+            component_status["vmagent"] = "ONLINE" if 200 <= int(response.status) < 300 else "OFFLINE"
+    except Exception as exc:
+        logger.warning("Local collector health probe failed for vmagent (%s)", type(exc).__name__)
+        component_status["vmagent"] = "OFFLINE"
+    target_probe["vmagent_online"] = component_status.get("vmagent") == "ONLINE"
+
+    if include_collection_probe_data:
+        try:
+            with opener.open(UrlRequest(endpoints["vmagent_targets"], method="GET"), timeout=2.0) as response:
+                if not 200 <= int(response.status) < 300:
+                    raise RuntimeError("vmagent targets API unavailable")
+                payload = json.loads(response.read().decode("utf-8"))
+
+            data = payload.get("data") if isinstance(payload, dict) and payload.get("status") == "success" else None
+            active_targets = data.get("activeTargets") if isinstance(data, dict) else None
+            if not isinstance(active_targets, list):
+                raise ValueError("invalid vmagent targets response")
+
+            asset_targets = []
+            for target in active_targets:
+                if not isinstance(target, dict):
+                    continue
+                labels = target.get("labels")
+                asset_id = labels.get("asset_id") if isinstance(labels, dict) else None
+                if str(asset_id or "").strip():
+                    asset_targets.append(target)
+
+            parsed_scrapes: list[datetime] = []
+            checked_at = datetime.now(timezone.utc)
+            for target in asset_targets:
+                last_scrape = target.get("lastScrape")
+                scrape_time = None
+                if isinstance(last_scrape, str) and last_scrape.strip():
+                    try:
+                        scrape_time = datetime.fromisoformat(
+                            last_scrape.strip().replace("Z", "+00:00")
+                        )
+                        if scrape_time.tzinfo is None:
+                            scrape_time = scrape_time.replace(tzinfo=timezone.utc)
+                        scrape_time = scrape_time.astimezone(timezone.utc)
+                        parsed_scrapes.append(scrape_time)
+                    except ValueError:
+                        pass
+
+                health = str(target.get("health") or "").strip().lower()
+                if health == "down":
+                    target_probe["failed_count"] += 1
+                elif health == "up" and scrape_time is not None:
+                    scrape_interval_seconds = _target_scrape_interval_seconds(target)
+                    stale_after_seconds = scrape_interval_seconds * SCRAPE_STALE_INTERVAL_MULTIPLIER
+                    if (checked_at - scrape_time).total_seconds() > stale_after_seconds:
+                        target_probe["failed_count"] += 1
+                        target_probe["stale_count"] += 1
+                    else:
+                        target_probe["healthy_count"] += 1
+                else:
+                    target_probe["waiting_count"] += 1
+
+            target_probe.update(
+                {
+                    "api_ok": True,
+                    "api_error_code": None,
+                    "target_count": len(asset_targets),
+                    "last_scrape_at": (
+                        max(parsed_scrapes).isoformat().replace("+00:00", "Z")
+                        if parsed_scrapes
+                        else None
+                    ),
+                }
+            )
+        except Exception as exc:
+            logger.warning("Local vmagent targets probe failed (%s)", type(exc).__name__)
+            if isinstance(exc, (ValueError, json.JSONDecodeError, UnicodeDecodeError)):
+                target_probe["api_error_code"] = "VMAGENT_API_INVALID_RESPONSE"
+
+    try:
+        with opener.open(UrlRequest(endpoints["snmp_exporter"], method="GET"), timeout=2.0) as response:
+            component_status["snmp_exporter"] = "ONLINE" if 200 <= int(response.status) < 300 else "OFFLINE"
+    except Exception as exc:
+        logger.warning("Local collector health probe failed for snmp_exporter (%s)", type(exc).__name__)
+        component_status["snmp_exporter"] = "OFFLINE"
+
+    target_probe["snmp_exporter_online"] = component_status.get("snmp_exporter") == "ONLINE"
     runtime_status = "ONLINE" if all(value == "ONLINE" for value in component_status.values()) else "OFFLINE"
-    return {
+    result = {
         "runtime_status": runtime_status,
         "runtime_probe": "LOCAL_COMPONENT_HEALTH",
         "runtime_checked_at": _now(),
         "runtime_components": component_status,
     }
+    if include_collection_probe_data:
+        result["_collection_probe_data"] = target_probe
+    return result
+
+
+def _latest_applied_collector_configs(conn) -> dict[str, dict[str, Any]]:
+    """Read expected target counts only from the latest applied config manifests."""
+    rows = conn.execute(
+        """
+        SELECT config.collector_id, config.config_version, config.manifest_json
+          FROM monitoring_config_versions AS config
+          JOIN (
+                SELECT collector_id, MAX(config_version) AS config_version
+                  FROM monitoring_config_versions
+                 WHERE status = 'APPLIED'
+                 GROUP BY collector_id
+          ) AS latest
+            ON latest.collector_id = config.collector_id
+           AND latest.config_version = config.config_version
+         WHERE config.status = 'APPLIED'
+        """
+    ).fetchall()
+    applied_configs: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        item = _dict(row)
+        manifest = _parse_json(item.get("manifest_json"), {})
+        expected_target_count = None
+        if isinstance(manifest, Mapping):
+            try:
+                assignment_count = int(manifest.get("assignment_count"))
+                server_target_count = int(manifest.get("server_target_count"))
+                if assignment_count >= 0 and server_target_count >= 0:
+                    expected_target_count = assignment_count + server_target_count
+            except (TypeError, ValueError):
+                pass
+        applied_configs[str(item.get("collector_id") or "")] = {
+            "expected_target_count": expected_target_count,
+        }
+    return applied_configs
+
+
+def _collection_probe_for_collector(
+    collector: Mapping[str, Any],
+    target_probe: Mapping[str, Any] | None,
+    applied_config: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Build a secret-free collection state from persisted config and active targets."""
+    probe: dict[str, Any] = {
+        "state": "UNKNOWN",
+        "checked_at": _now(),
+        "target_count": 0,
+        "healthy_count": 0,
+        "failed_count": 0,
+        "waiting_count": 0,
+        "last_scrape_at": None,
+        "error_code": None,
+    }
+
+    if not _collector_is_enabled(collector.get("enabled")):
+        probe["state"] = "DISABLED"
+        return probe
+
+    collector_type = str(collector.get("collector_type") or "LOCAL").strip().upper()
+    if collector_type != "LOCAL":
+        probe["error_code"] = (
+            "HEARTBEAT_NOT_RECEIVED"
+            if not str(collector.get("last_heartbeat_at") or "").strip()
+            else "REMOTE_STATUS_UNAVAILABLE"
+        )
+        return probe
+
+    config_version = collector.get("last_config_version")
+    config_status = str(collector.get("last_config_status") or "").strip().upper()
+    has_config_history = (
+        config_version not in (None, "", 0, "0")
+        or bool(config_status)
+        or bool(collector.get("last_config_applied_at"))
+    )
+    has_applied_config = isinstance(applied_config, Mapping)
+    if not has_applied_config:
+        probe["state"] = "CONFIG_PENDING" if has_config_history else "NOT_INITIALIZED"
+        return probe
+
+    if not isinstance(target_probe, Mapping):
+        probe["error_code"] = "VMAGENT_API_UNAVAILABLE"
+        return probe
+
+    if not target_probe.get("vmagent_online") or not target_probe.get("snmp_exporter_online"):
+        probe["state"] = "SERVICE_OFFLINE"
+        probe["error_code"] = (
+            "VMAGENT_UNAVAILABLE"
+            if not target_probe.get("vmagent_online")
+            else "SNMP_EXPORTER_UNAVAILABLE"
+        )
+        return probe
+
+    if not target_probe.get("api_ok"):
+        probe["error_code"] = str(
+            target_probe.get("api_error_code") or "VMAGENT_API_UNAVAILABLE"
+        )
+        return probe
+
+    for field in ("target_count", "healthy_count", "failed_count", "waiting_count"):
+        try:
+            probe[field] = max(0, int(target_probe.get(field) or 0))
+        except (TypeError, ValueError):
+            probe[field] = 0
+    probe["last_scrape_at"] = target_probe.get("last_scrape_at")
+
+    if probe["target_count"] == 0:
+        expected_target_count = applied_config.get("expected_target_count")
+        if expected_target_count is None:
+            probe["error_code"] = "APPLIED_CONFIG_TARGET_COUNT_UNAVAILABLE"
+        elif expected_target_count > 0:
+            probe["state"] = "WAITING_FOR_TARGETS"
+            probe["error_code"] = "TARGETS_NOT_LOADED"
+        else:
+            probe["state"] = "NO_TARGETS"
+        return probe
+    healthy_count = probe["healthy_count"]
+    failed_count = probe["failed_count"]
+    waiting_count = probe["waiting_count"]
+    stale_count = max(0, int(target_probe.get("stale_count") or 0))
+    if healthy_count == probe["target_count"]:
+        probe["state"] = "HEALTHY"
+    elif failed_count == probe["target_count"]:
+        probe["state"] = "FAILED"
+        probe["error_code"] = "SCRAPE_STALE" if stale_count else "TARGET_SCRAPE_FAILED"
+    elif healthy_count == 0 and failed_count == 0:
+        probe["state"] = "WAITING_FIRST_SCRAPE"
+        probe["error_code"] = "FIRST_SCRAPE_PENDING"
+    else:
+        probe["state"] = "DEGRADED"
+        if stale_count:
+            probe["error_code"] = "SCRAPE_STALE"
+        elif failed_count:
+            probe["error_code"] = "TARGET_SCRAPE_FAILED"
+        elif waiting_count:
+            probe["error_code"] = "TARGET_STATUS_PENDING"
+    return probe
 
 
 def _safe_variant_view(row: Any) -> dict[str, Any]:
@@ -688,13 +981,32 @@ def list_collectors(_user=require_role("Viewer")):
     try:
         rows = conn.execute("SELECT * FROM monitoring_collectors ORDER BY code").fetchall()
         records = [_dict(row) for row in rows]
+        applied_configs = _latest_applied_collector_configs(conn)
         has_enabled_local_collector = any(
             _collector_is_enabled(item.get("enabled"))
             and str(item.get("collector_type") or "LOCAL").strip().upper() == "LOCAL"
             for item in records
         )
-        local_runtime = _probe_local_collector_runtime() if has_enabled_local_collector else None
-        return {"items": [_safe_collector_view(item, local_runtime=local_runtime) for item in records]}
+        local_runtime = (
+            _probe_local_collector_runtime(include_collection_probe_data=True)
+            if has_enabled_local_collector
+            else None
+        )
+        collection_data = (local_runtime or {}).pop("_collection_probe_data", None)
+        return {
+            "items": [
+                _safe_collector_view(
+                    item,
+                    local_runtime=local_runtime,
+                    collection_probe=_collection_probe_for_collector(
+                        item,
+                        collection_data,
+                        applied_configs.get(str(item.get("id") or "")),
+                    ),
+                )
+                for item in records
+            ]
+        }
     finally:
         conn.close()
 
@@ -717,6 +1029,8 @@ def update_collector(collector_id: str, body: dict[str, Any], _user=require_role
     updates = {key: value for key, value in body.items() if key in allowed}
     if not updates:
         raise HTTPException(status_code=422, detail="No collector fields to update")
+    if "enabled" in updates:
+        updates["enabled"] = _normalize_collector_enabled(updates["enabled"])
     if "collector_type" in updates:
         updates["collector_type"] = str(updates["collector_type"]).upper()
     if str(updates.get("remote_write_endpoint") or "") == "[REDACTED]":
@@ -725,14 +1039,27 @@ def update_collector(collector_id: str, body: dict[str, Any], _user=require_role
         updates["remote_write_endpoint"] = _validate_remote_write_endpoint(str(updates["remote_write_endpoint"]))
     updates["updated_at"] = _now()
     conn = get_db_connection()
+    enabled_changed = False
     try:
+        current = conn.execute("SELECT enabled FROM monitoring_collectors WHERE id = ?", (collector_id,)).fetchone()
+        if current is None:
+            raise HTTPException(status_code=404, detail="Collector not found")
+        if "enabled" in updates:
+            enabled_changed = _collector_is_enabled(_dict(current).get("enabled")) != bool(updates["enabled"])
         assignments = ", ".join(f"{key} = ?" for key in updates)
         conn.execute(f"UPDATE monitoring_collectors SET {assignments} WHERE id = ?", tuple(updates.values()) + (collector_id,))
-        if conn.execute("SELECT 1 FROM monitoring_collectors WHERE id = ?", (collector_id,)).fetchone() is None:
-            raise HTTPException(status_code=404, detail="Collector not found")
         conn.commit()
         result = get_collector(collector_id, _user=_user)
         _audit(_user, "MONITORING_COLLECTOR_UPDATED", f"Updated monitoring collector {collector_id}", target_type="monitoring_collector", target_id=collector_id, details={"fields": sorted(updates)})
+        if enabled_changed:
+            try:
+                from services.collector_sync_service import trigger_async_monitoring_sync
+
+                trigger_async_monitoring_sync()
+                result["configuration_sync"] = "SCHEDULED"
+            except Exception:
+                logger.exception("Failed to schedule collector configuration sync after enablement change")
+                result["configuration_sync"] = "SCHEDULE_FAILED"
         return result
     finally:
         conn.close()
@@ -1479,8 +1806,18 @@ def compile_collector(collector_id: str, body: CompileRequest | None = None, _us
         collector = conn.execute("SELECT * FROM monitoring_collectors WHERE id = ?", (collector_id,)).fetchone()
         if not collector:
             raise HTTPException(status_code=404, detail="Collector not found")
+        collector_item = _dict(collector)
+        collector_enabled = _collector_is_enabled(collector_item.get("enabled"))
+        collector_type = str(collector_item.get("collector_type") or "LOCAL").strip().upper()
         inputs = _load_compile_inputs(conn, collector_id, _user)
-        assignments = build_assignments(*inputs[:5], credential_aliases=inputs[6])
+        if collector_enabled:
+            assignments = build_assignments(*inputs[:5], credential_aliases=inputs[6])
+        elif collector_type == "LOCAL":
+            # A disabled local collector compiles to an empty target set. Publishing
+            # this artifact removes the old scrape targets from the shared runtime.
+            assignments = []
+        else:
+            raise HTTPException(status_code=409, detail="Disabled remote collectors cannot be compiled")
         assignment_count = len(assignments)
         validation_errors = validate_assignments(assignments)
         if validation_errors:
@@ -1498,7 +1835,7 @@ def compile_collector(collector_id: str, body: CompileRequest | None = None, _us
             credentials=artifact_credentials,
             modules=inputs[2],
             variants=inputs[3],
-            servers=inputs[7],
+            servers=inputs[7] if collector_enabled else [],
             interface_profiles=inputs[8],
             output_root=None,
         )
@@ -1531,7 +1868,7 @@ def compile_collector(collector_id: str, body: CompileRequest | None = None, _us
             credentials=artifact_credentials,
             modules=inputs[2],
             variants=inputs[3],
-            servers=inputs[7],
+            servers=inputs[7] if collector_enabled else [],
             interface_profiles=inputs[8],
             output_root=artifact_root,
         )
@@ -1644,6 +1981,24 @@ def collector_target_snapshot(collector_id: str, _user=require_role("Viewer")):
 
 @router.post("/collectors/{collector_id}/publish")
 def publish_collector(collector_id: str, _user=require_role("Operator")):
+    check_conn = get_db_connection()
+    try:
+        collector = check_conn.execute(
+            "SELECT enabled, collector_type FROM monitoring_collectors WHERE id = ?",
+            (collector_id,),
+        ).fetchone()
+        if not collector:
+            raise HTTPException(status_code=404, detail="Collector not found")
+        collector_item = _dict(collector)
+    finally:
+        check_conn.close()
+    if not _collector_is_enabled(collector_item.get("enabled")):
+        if str(collector_item.get("collector_type") or "LOCAL").strip().upper() != "LOCAL":
+            raise HTTPException(status_code=409, detail="Disabled remote collectors cannot be published")
+        # Ensure a stale, previously active artifact cannot be republished after
+        # the collector has been disabled.
+        compile_collector(collector_id, _user=_user)
+
     conn = get_db_connection()
     try:
         latest = conn.execute("SELECT config_version, artifact_path FROM monitoring_config_versions WHERE collector_id = ? ORDER BY config_version DESC LIMIT 1", (collector_id,)).fetchone()

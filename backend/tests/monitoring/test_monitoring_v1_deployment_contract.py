@@ -63,6 +63,21 @@ def test_vmagent_and_cadvisor_bypass_proxy_for_internal_targets():
             hosts = set(entry.split("=", 1)[1].split(","))
             assert expected_hosts <= hosts
 
+
+def test_cadvisor_waits_for_docker_socket_api_health():
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    services = compose["services"]
+
+    proxy_healthcheck = services["docker-socket-proxy"]["healthcheck"]
+    assert proxy_healthcheck["test"] == [
+        "CMD", "wget", "-Y", "off", "-q", "-O", "/dev/null", "http://127.0.0.1:2375/info"
+    ]
+    assert proxy_healthcheck["interval"] == "5s"
+    assert proxy_healthcheck["timeout"] == "3s"
+    assert proxy_healthcheck["retries"] == 12
+
+    assert services["cadvisor"]["depends_on"]["docker-socket-proxy"]["condition"] == "service_healthy"
+
     cadvisor_command = " ".join(str(item) for item in services["cadvisor"]["command"])
     assert "accelerator" not in cadvisor_command
     assert "referenced_memory" in cadvisor_command

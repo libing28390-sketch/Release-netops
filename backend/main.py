@@ -45,6 +45,7 @@ from services.device_health_service import record_device_health_snapshot
 from api.notifications import router as notifications_router
 from api.monitoring import router as monitoring_router
 from api.monitoring_v1 import router as monitoring_v1_router
+from api.monitoring_storage import router as monitoring_storage_router
 from api.device_health import router as device_health_router
 from api.alerts import router as alerts_router
 from api.audit import router as audit_router
@@ -807,6 +808,7 @@ app.include_router(config_search_router,  prefix="/api")
 app.include_router(config_diff_analysis_router, prefix="/api")
 app.include_router(monitoring_router,     prefix="/api")
 app.include_router(monitoring_v1_router,  prefix="/api")
+app.include_router(monitoring_storage_router, prefix="/api")
 app.include_router(alerts_router,         prefix="/api")
 app.include_router(topology_router,       prefix="/api")
 app.include_router(ipam_router,           prefix="/api")

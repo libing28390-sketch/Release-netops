@@ -62,6 +62,16 @@ services:
       timeout: 5s
       retries: 5
 
+  vm-runtime-volume-init:
+    image: nexora-netops
+    container_name: nexora-vm-runtime-volume-init
+    user: "0:0"
+    command: ["python", "-c", "import os; os.chown('/runtime', 1000, 1000); os.chmod('/runtime', 0o2770)"]
+    volumes:
+      - nexora-vm-runtime:/runtime
+    restart: "no"
+    logging: *container-logging
+
   netops:
     image: nexora-netops
     build:
@@ -95,6 +105,8 @@ services:
       - MONITORING_METRIC_BACKEND=${MONITORING_METRIC_BACKEND:-victoriametrics}
       - VICTORIAMETRICS_URL=${VICTORIAMETRICS_URL:-http://victoriametrics:8428}
       - VICTORIAMETRICS_ALLOWED_HOSTS=${VICTORIAMETRICS_ALLOWED_HOSTS:-victoriametrics}
+      - MONITORING_VM_RUNTIME_DIR=/app/data/vm-runtime
+      - VM_MIN_FREE_DISK_SPACE_BYTES=${VM_MIN_FREE_DISK_SPACE_BYTES:-10737418240}
       # Keep Docker-internal object storage calls off any inherited HTTP proxy.
       # External S3-compatible endpoints can still use the configured proxy.
       - "NO_PROXY=${NO_PROXY:-localhost,127.0.0.1},seaweedfs,nexora-seaweedfs"
@@ -175,6 +187,7 @@ services:
       - LIBRENMS_REDIS_PASSWORD=
     volumes:
       - nexora-data:/app/data
+      - nexora-vm-runtime:/app/data/vm-runtime
       - nexora-remote-desktop-recordings:/app/data/remote_desktop_recordings
       - nexora-backup:/app/backup
       - nexora-dist:/app/dist
@@ -182,6 +195,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      vm-runtime-volume-init:
+        condition: service_completed_successfully
     networks:
       - default
       - librenms_control
@@ -407,22 +422,29 @@ services:
     pids_limit: 256
     environment:
       - TZ=${TZ:-Asia/Shanghai}
+      - VM_MIN_FREE_DISK_SPACE_BYTES=${VM_MIN_FREE_DISK_SPACE_BYTES:-10737418240}
+      - MONITORING_VM_RUNTIME_DIR=/var/lib/nexora-vm-runtime
+    entrypoint: ["/bin/sh", "/opt/nexora/victoriametrics/supervisor.sh"]
     command:
       - "-storageDataPath=/storage"
       - "-retentionPeriod=${VM_RETENTION_PERIOD:-30d}"
       # LibreNMS native Influx output probes/creates its database through the
       # Influx v1 API. VictoriaMetrics uses this list for SHOW DATABASES.
       - "-influx.databaseNames=librenms"
-      # Stop accepting samples before this filesystem falls below 10 GiB free.
-      - "-storage.minFreeDiskSpaceBytes=${VM_MIN_FREE_DISK_SPACE_BYTES:-10737418240}"
       - "-httpListenAddr=:8428"
     volumes:
       - nexora-vmdata:/storage
+      - nexora-vm-runtime:/var/lib/nexora-vm-runtime
+      - ./monitoring/victoriametrics:/opt/nexora/victoriametrics:ro
     expose:
       - "8428"
     networks:
       - default
       - librenms_metrics
+    depends_on:
+      vm-runtime-volume-init:
+        condition: service_completed_successfully
+    stop_grace_period: 90s
     restart: unless-stopped
     logging: *container-logging
     healthcheck:
@@ -560,6 +582,12 @@ services:
     networks:
       - monitoring_internal
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-Y", "off", "-q", "-O", "/dev/null", "http://127.0.0.1:2375/info"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
     logging: *container-logging
 
   cadvisor:
@@ -606,7 +634,7 @@ services:
     read_only: true
     depends_on:
       docker-socket-proxy:
-        condition: service_started
+        condition: service_healthy
     restart: unless-stopped
     logging: *container-logging
 
@@ -1007,6 +1035,8 @@ volumes:
     name: nexora-alert-redis-data
   nexora-vmdata:
     name: nexora-vmdata
+  nexora-vm-runtime:
+    name: nexora-vm-runtime
   nexora-vmagent-queue:
     name: nexora-vmagent-queue
   nexora-monitoring-artifacts:

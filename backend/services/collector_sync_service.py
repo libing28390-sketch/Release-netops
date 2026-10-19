@@ -37,7 +37,8 @@ def sync_all_monitoring_collectors(user: Any = None) -> dict[str, Any]:
         conn = get_db_connection()
         try:
             collector_rows = conn.execute(
-                "SELECT id FROM monitoring_collectors WHERE enabled = 1"
+                """SELECT id FROM monitoring_collectors
+                   WHERE enabled = 1 OR (enabled = 0 AND UPPER(collector_type) = 'LOCAL')"""
             ).fetchall()
             collector_ids = [
                 str(item["id"] if hasattr(item, "keys") else item[0])

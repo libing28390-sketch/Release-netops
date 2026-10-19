@@ -621,6 +621,28 @@ wait_for_netops_health() {
     return 1
 }
 
+install_vm_storage_env_sync() {
+    local deployment_dir="${DEPLOYMENT_DIR:-$PWD}"
+    local installer="$deployment_dir/scripts/monitoring/install_vm_storage_env_sync.sh"
+    [[ -f "$deployment_dir/.env" && -f "$installer" ]] || return 0
+    if [[ ! -d /run/systemd/system ]]; then
+        log "Host .env threshold sync is available on Linux/systemd only; skipping this host"
+        return 0
+    fi
+
+    if (( EUID == 0 )); then
+        if ! bash "$installer" "$deployment_dir"; then
+            log "WARNING: host .env threshold sync could not be installed; the storage setting will remain unavailable in the UI"
+        fi
+    elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+        if ! sudo -n bash "$installer" "$deployment_dir"; then
+            log "WARNING: host .env threshold sync could not be installed; the storage setting will remain unavailable in the UI"
+        fi
+    else
+        log "WARNING: host .env threshold sync requires root; run the installer with sudo before changing the storage setting"
+    fi
+}
+
 start_compose_services() {
     local start_mode="${1:-build}" startup_status=0 retry_status=0
     shift || true
@@ -632,7 +654,10 @@ start_compose_services() {
     fi
 
     compose up -d "${initial_args[@]}" "${service_args[@]}" || startup_status=$?
-    (( startup_status == 0 )) && return 0
+    if (( startup_status == 0 )); then
+        install_vm_storage_env_sync
+        return 0
+    fi
     log "Initial Compose startup failed with exit status ${startup_status}; preserving the error while waiting for netops health"
     if ! wait_for_netops_health; then
         log "Compose startup recovery did not reach a healthy netops container; returning initial exit status ${startup_status}"
@@ -645,6 +670,7 @@ start_compose_services() {
         log "Compose startup recovery failed with exit status ${retry_status}; initial startup exit status was ${startup_status}"
         return "$retry_status"
     fi
+    install_vm_storage_env_sync
     return 0
 }
 
@@ -982,6 +1008,7 @@ case "$COMMAND" in
         report_env_parameter_changes
         if [[ "${FORCE_UPDATE:-}" != "--force" && "$RELEASE_CHANGED" != "1" ]]; then
             configure_compose_files
+            install_vm_storage_env_sync
             service_args=()
             mapfile -t service_args < <(compose_service_args)
             stop_disabled_redis
