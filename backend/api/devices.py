@@ -213,6 +213,19 @@ def _platform_mib_vendor_map(platform_vendors: list[str]) -> dict[str, str]:
     return allowed
 
 
+def _librenms_mib_sync_vendors(platform_vendors: list[str]) -> list[str]:
+    """Allow the asset security-vendor catalog to index its bundled MIB scope."""
+    merged: list[str] = []
+    seen: set[str] = set()
+    for vendor in [*platform_vendors, *ASSET_SECURITY_VENDORS]:
+        value = str(vendor or "").strip()
+        token = _mib_vendor_token(value)
+        if value and token not in seen:
+            merged.append(value)
+            seen.add(token)
+    return merged
+
+
 def _resolve_platform_binding(
     conn,
     platform_profile_id: object,
@@ -1733,7 +1746,7 @@ async def trigger_sync_librenms_mibs(
             "state": _librenms_sync_state,
         }
 
-    platform_vendors = list_platform_vendor_names()
+    platform_vendors = _librenms_mib_sync_vendors(list_platform_vendor_names())
     if not platform_vendors:
         raise HTTPException(status_code=409, detail="No platform vendors are registered for LibreNMS MIB synchronization")
 

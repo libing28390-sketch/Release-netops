@@ -4,14 +4,15 @@ This directory contains the local LibreNMS rule and MIB snapshot used by Nexora.
 
 - Upstream repository: https://github.com/librenms/librenms
 - Pinned revision: `6c26b4fe4a40f7b392c19c36a44257212736e38c` (2026-09-29)
-- OS profiles: 136 across 25 upstream-profile vendors
-- OS identity YAML: 136/136 profiles
-- Hardware discovery YAML: 122/136 profiles; 14 profiles have no upstream hardware discovery YAML
-- Hardware YAML parsed by the current Python rule parser: 912 sensor definitions, 54 processor definitions, and 46 memory-pool definitions
-- Profiles with at least one parsed hardware definition: 91/136
-- Profiles with a hardware discovery YAML but no recognized processor, memory-pool, or sensor definition: 31/122
-- MIB manifest mappings: 2,360; unique upstream MIB paths: 2,359
-- Rule YAML files: 258; pinned adapter source files: 29
+- Bundled OS profiles: 156 (136 network profiles plus 20 selected security profiles)
+- Network profiles: 136 across 25 of 26 asset network vendors; security profiles: 20 across 9 of 15 asset security vendors
+- OS identity YAML: 156/156 bundled profiles
+- Hardware discovery YAML: 142/156 bundled profiles; 14 network profiles have no upstream hardware discovery YAML
+- Hardware YAML parsed by the current Python rule parser: 1,101 sensor definitions, 69 processor definitions, and 62 memory-pool definitions
+- Profiles with at least one parsed hardware definition: 111/156
+- Bundled network profiles with a hardware discovery YAML but no recognized processor, memory-pool, or sensor definition: 31/122
+- MIB manifest mappings: 2,403; unique upstream MIB paths: 2,402
+- Rule YAML files: 298; pinned adapter source files: 29
 - Manifest location: [`source-manifest.json`](source-manifest.json)
 
 The repository also retains 12 historical Cisco test placeholders (`TEST-MIB-0` through `TEST-MIB-11`). They are empty fixtures, are not upstream LibreNMS inputs, and are intentionally excluded from the manifest and collection.
@@ -42,20 +43,28 @@ AP/radio detail is a narrower capability than AP/client metrics. The pinned sour
 
 The Python wireless adapters also cover upstream radio-only rules from the existing Cisco, Ubiquiti, and Nokia MIB buckets: Cisco SAT errors/RSSI/SNR, Ubiquiti AirFiber/AirFiber LTU/AirFiber 60 frequency, distance, power, quality, rate and signal readings, and Nokia TiMOS cellular channel/RSSI/RSRP/RSRQ/SNR. These are radio/cellular measurements, not Wi-Fi AP inventory. Nokia Wavence's RF power sensors come from its pinned OS discovery YAML and use the regular Python YAML poller. Yunshan's pinned YAML defines Huawei WLAN redundancy states but not AP/client counts.
 
-This wireless inventory is limited to vendor MIB inputs already present in this bundle; each adapter's MIB paths are validated against `source-manifest.json`. No additional vendor MIB directories or outside-vendor rules are introduced. `LibreNMS/Modules/Wireless.php` remains the generic dispatcher, while each OS class supplies its own rule. Comware has no upstream wireless discovery interface, so H3C AP/radio continues through the separately labeled Nexora Python MIB adapter based on the bundled H3C MIB definitions.
+This wireless inventory remains limited to its existing source-verified adapters and MIB paths in `source-manifest.json`; this security hardware update adds no wireless adapter or wireless collection rules. `LibreNMS/Modules/Wireless.php` remains the generic dispatcher, while each OS class supplies its own rule. Comware has no upstream wireless discovery interface, so H3C AP/radio continues through the separately labeled Nexora Python MIB adapter based on the bundled H3C MIB definitions.
 
 The Python adapters reproduce the supported discovery/polling OIDs, indexes, units, value conversions, aggregation and state mappings. They do not run LibreNMS's alert engine; some upstream `WirelessSensor` warning/limit thresholds are therefore not evaluated as NetOps wireless alerts.
 
 ## Hardware definition gaps
 
-The 14 profiles without a hardware discovery YAML are: `acsw`, `allied`, `ciscome1200`, `ciscospa`, `cyan`, `dell-sonic`, `dlinkap`, `edgecos`, `equallogic`, `juniperex2500os`, `pixos`, `ruckuswireless-sz`, `sanos`, and `smartax-mdu`.
+### Security vendor coverage
 
-The 31 profiles with a discovery YAML but no processor, memory-pool, or sensor definition recognized by the current parser are: `acano`, `acs`, `allied-tq`, `apic`, `arista-mos`, `arista_eos`, `asyncos`, `cat1900`, `catos`, `cips`, `ciscoepc`, `ciscosce`, `ciscosrp`, `ciscowap`, `clearpass`, `dell-laser`, `dell-powervault`, `dell-rcs`, `edgeos`, `extremeware`, `fxos`, `huaweiups`, `ise`, `jwos`, `nxos`, `powervault`, `primeinfrastructure`, `stellar`, `tplink`, `unifi-usp`, and `zxdsl`. These 45 cases are not claimed as hardware-collection coverage. The `airos` profile also has a partial YAML condition requiring a reviewed identity adapter.
+The asset catalog lists 15 security vendors. This bundle includes only upstream OS profiles with structured hardware definitions that the current Nexora Python parser accepts: A10 ACOS; Barracuda Email Security Gateway (one generic count sensor); F5 BIG-IP/F5OS; Fortinet FortiGate and supported Forti* profiles; Check Point Gaia/SecurePlatform; Palo Alto PAN-OS; Sophos XG; SonicWall; and Hillstone StoneOS. Their pinned YAML and 43 MIB/dependency files are recorded in `source-manifest.json`.
+
+Sangfor, Venustech, NSFOCUS, Topsec, and Qi An Xin have no OS detection profiles in the pinned LibreNMS revision and were not assigned guessed OIDs. WatchGuard Fireware has identity YAML but no structured hardware definitions. Barracuda NG Firewall, Load Balancer, and WAF, plus Sophos UTM, likewise have no structured processor/memory/sensor rules recognized for this bundle and remain out of hardware coverage. The FortiGate rule's `InetAddress_FORTINET-FORTIGATE-MIB` token is only in an optional description template and has no corresponding upstream MIB file; the collector leaves that label unresolved rather than fabricating a source.
+
+PAN-OS retains two upstream conditions that depend on discovered model/version identity; those entries remain `partial` in the rule diagnostics and are not presented as fully verified.
+
+The 14 bundled network profiles without a hardware discovery YAML are: `acsw`, `allied`, `ciscome1200`, `ciscospa`, `cyan`, `dell-sonic`, `dlinkap`, `edgecos`, `equallogic`, `juniperex2500os`, `pixos`, `ruckuswireless-sz`, `sanos`, and `smartax-mdu`.
+
+The 31 bundled network profiles with a discovery YAML but no processor, memory-pool, or sensor definition recognized by the current parser are: `acano`, `acs`, `allied-tq`, `apic`, `arista-mos`, `arista_eos`, `asyncos`, `cat1900`, `catos`, `cips`, `ciscoepc`, `ciscosce`, `ciscosrp`, `ciscowap`, `clearpass`, `dell-laser`, `dell-powervault`, `dell-rcs`, `edgeos`, `extremeware`, `fxos`, `huaweiups`, `ise`, `jwos`, `nxos`, `powervault`, `primeinfrastructure`, `stellar`, `tplink`, `unifi-usp`, and `zxdsl`. These upstream network rules are not claimed as hardware-collection coverage. The `airos` profile also has a partial YAML condition requiring a reviewed identity adapter.
 
 ## Bundle and scope notes
 
-The manifest records exact upstream paths, local bundle paths, SHA-256 hashes, source files, and MIB module references. The pinned MIB snapshot maps 2,360 bundle entries to 2,359 unique upstream paths; shared upstream files can be packaged under distinct Nexora vendor scopes. It contains files from 36 upstream `mibs/` vendor directories, grouped into 23 Nexora vendor-scope directories, plus standard/root dependencies. These directory counts are archive layout, not a claim that every MIB in a directory is used by a poller.
+The manifest records exact upstream paths, local bundle paths, SHA-256 hashes, source files, and MIB module references. The pinned MIB snapshot maps 2,403 bundle entries to 2,402 unique upstream paths; shared upstream files can be packaged under distinct Nexora vendor scopes. It contains files from 44 upstream `mibs/` vendor directories, grouped into 31 Nexora vendor-scope directories, plus the `standard` scope. These directory counts are archive layout, not a claim that every MIB in a directory is polled.
 
-Shared directory mappings include HP ProCurve under Aruba, Fiberstore under Ruijie, and the existing Nokia, Nortel, Radlan, and root UPS mappings. `platform_vendor_scope` is an offline-index grouping and does not identify the upstream MIB owner or decide which rules execute. This bundle is not the full LibreNMS runtime and makes no hardware-rule coverage claim for asset vendors without a pinned upstream OS profile, including DPtech.
+Shared directory mappings include HP ProCurve under Aruba, Fiberstore under Ruijie, A10 under A10 Networks, Check Point under its canonical asset name, PaloAltoNetworks under Palo Alto, and the existing Nokia, Nortel, Radlan, and root UPS mappings. `platform_vendor_scope` is an offline-index grouping and does not identify the upstream MIB owner or decide which rules execute. This bundle is not the full LibreNMS runtime and makes no hardware-rule coverage claim for asset vendors without a pinned upstream OS profile, including DPtech and the five listed security vendors without upstream definitions.
 
 All manifest-listed YAML, MIB, and adapter files are hash-checked by the source policy. `.gitattributes` marks the pinned paths `-text` so upstream bytes and recorded hashes remain stable across Windows and Linux. PHP files in this bundle are read-only, pinned source references; all executable polling and supported adaptations are Python.

@@ -3,8 +3,8 @@
   "upstream_revision": "master",
   "upstream_commit": "6c26b4fe4a40f7b392c19c36a44257212736e38c",
   "upstream_commit_date": "2026-09-29T08:08:05+01:00",
-  "generated_at_utc": "2026-10-08T14:07:38+00:00",
-  "scope": "Network-asset OS identity, hardware sensor sources, and audited wireless AP polling sources; interface monitoring provenance is outside this manifest.",
+  "generated_at_utc": "2026-10-19T13:51:11+00:00",
+  "scope": "Network and security asset OS identity, hardware sensor sources, and audited wireless AP polling sources; interface monitoring provenance is outside this manifest.",
   "asset_network_vendors": [
     "Cisco",
     "Huawei",
@@ -69,6 +69,10 @@
       "vendor": "Cisco"
     },
     {
+      "os_key": "acos",
+      "vendor": "A10 Networks"
+    },
+    {
       "os_key": "acs",
       "vendor": "Cisco"
     },
@@ -77,7 +81,7 @@
       "vendor": "Cisco"
     },
     {
-      "os_key": "airos-af-ltu",
+      "os_key": "airos",
       "vendor": "Ubiquiti"
     },
     {
@@ -85,19 +89,19 @@
       "vendor": "Ubiquiti"
     },
     {
+      "os_key": "airos-af-ltu",
+      "vendor": "Ubiquiti"
+    },
+    {
       "os_key": "airos-af60",
       "vendor": "Ubiquiti"
     },
     {
-      "os_key": "airos",
-      "vendor": "Ubiquiti"
-    },
-    {
-      "os_key": "allied-tq",
+      "os_key": "allied",
       "vendor": "Allied Telesis"
     },
     {
-      "os_key": "allied",
+      "os_key": "allied-tq",
       "vendor": "Allied Telesis"
     },
     {
@@ -129,11 +133,11 @@
       "vendor": "Aruba"
     },
     {
-      "os_key": "arubaos-cx",
+      "os_key": "arubaos",
       "vendor": "Aruba"
     },
     {
-      "os_key": "arubaos",
+      "os_key": "arubaos-cx",
       "vendor": "Aruba"
     },
     {
@@ -147,6 +151,10 @@
     {
       "os_key": "awplus",
       "vendor": "Allied Telesis"
+    },
+    {
+      "os_key": "barracudaspamfirewall",
+      "vendor": "Barracuda"
     },
     {
       "os_key": "boss",
@@ -277,11 +285,11 @@
       "vendor": "Dell"
     },
     {
-      "os_key": "dlink-dgs1250",
+      "os_key": "dlink",
       "vendor": "D-Link"
     },
     {
-      "os_key": "dlink",
+      "os_key": "dlink-dgs1250",
       "vendor": "D-Link"
     },
     {
@@ -301,11 +309,11 @@
       "vendor": "Edgecore"
     },
     {
-      "os_key": "edgeos-ep",
+      "os_key": "edgeos",
       "vendor": "Ubiquiti"
     },
     {
-      "os_key": "edgeos",
+      "os_key": "edgeos-ep",
       "vendor": "Ubiquiti"
     },
     {
@@ -337,20 +345,68 @@
       "vendor": "Extreme Networks"
     },
     {
-      "os_key": "fabos",
-      "vendor": "Brocade"
+      "os_key": "f5",
+      "vendor": "F5"
     },
     {
-      "os_key": "fiberhome-switch",
-      "vendor": "FiberHome"
+      "os_key": "f5os",
+      "vendor": "F5"
+    },
+    {
+      "os_key": "fabos",
+      "vendor": "Brocade"
     },
     {
       "os_key": "fiberhome",
       "vendor": "FiberHome"
     },
     {
+      "os_key": "fiberhome-switch",
+      "vendor": "FiberHome"
+    },
+    {
       "os_key": "fluidfs",
       "vendor": "Dell"
+    },
+    {
+      "os_key": "fortiadc",
+      "vendor": "Fortinet"
+    },
+    {
+      "os_key": "fortiap",
+      "vendor": "Fortinet"
+    },
+    {
+      "os_key": "fortiauthenticator",
+      "vendor": "Fortinet"
+    },
+    {
+      "os_key": "fortigate",
+      "vendor": "Fortinet"
+    },
+    {
+      "os_key": "fortimail",
+      "vendor": "Fortinet"
+    },
+    {
+      "os_key": "fortios",
+      "vendor": "Fortinet"
+    },
+    {
+      "os_key": "fortisandbox",
+      "vendor": "Fortinet"
+    },
+    {
+      "os_key": "fortiswitch",
+      "vendor": "Fortinet"
+    },
+    {
+      "os_key": "fortiweb",
+      "vendor": "Fortinet"
+    },
+    {
+      "os_key": "fortiwlc",
+      "vendor": "Fortinet"
     },
     {
       "os_key": "fs-ruijie",
@@ -363,6 +419,10 @@
     {
       "os_key": "fxos",
       "vendor": "Cisco"
+    },
+    {
+      "os_key": "gaia",
+      "vendor": "Check Point"
     },
     {
       "os_key": "huawei-optixrtn",
@@ -457,6 +517,10 @@
       "vendor": "Cisco"
     },
     {
+      "os_key": "panos",
+      "vendor": "Palo Alto"
+    },
+    {
       "os_key": "pixos",
       "vendor": "Cisco"
     },
@@ -481,16 +545,20 @@
       "vendor": "Allied Telesis"
     },
     {
-      "os_key": "raisecom-ros",
+      "os_key": "raisecom",
       "vendor": "Raisecom"
     },
     {
-      "os_key": "raisecom",
+      "os_key": "raisecom-ros",
       "vendor": "Raisecom"
     },
     {
       "os_key": "routeros",
       "vendor": "MikroTik"
+    },
+    {
+      "os_key": "ruckuswireless",
+      "vendor": "Ruckus"
     },
     {
       "os_key": "ruckuswireless-hotzone",
@@ -502,10 +570,6 @@
     },
     {
       "os_key": "ruckuswireless-unleashed",
-      "vendor": "Ruckus"
-    },
-    {
-      "os_key": "ruckuswireless",
       "vendor": "Ruckus"
     },
     {
@@ -521,6 +585,10 @@
       "vendor": "Juniper"
     },
     {
+      "os_key": "secureplatform",
+      "vendor": "Check Point"
+    },
+    {
       "os_key": "serveriron",
       "vendor": "Brocade"
     },
@@ -529,12 +597,20 @@
       "vendor": "Extreme Networks"
     },
     {
+      "os_key": "smartax",
+      "vendor": "Huawei"
+    },
+    {
       "os_key": "smartax-mdu",
       "vendor": "Huawei"
     },
     {
-      "os_key": "smartax",
-      "vendor": "Huawei"
+      "os_key": "sonicwall",
+      "vendor": "SonicWall"
+    },
+    {
+      "os_key": "sophos-xg",
+      "vendor": "Sophos"
     },
     {
       "os_key": "srlinux",
@@ -543,6 +619,10 @@
     {
       "os_key": "stellar",
       "vendor": "Alcatel-Lucent Enterprise"
+    },
+    {
+      "os_key": "stoneos",
+      "vendor": "Hillstone"
     },
     {
       "os_key": "swos",
@@ -561,11 +641,11 @@
       "vendor": "Cisco"
     },
     {
-      "os_key": "unifi-usp",
+      "os_key": "unifi",
       "vendor": "Ubiquiti"
     },
     {
-      "os_key": "unifi",
+      "os_key": "unifi-usp",
       "vendor": "Ubiquiti"
     },
     {
@@ -616,19 +696,14 @@
       "sha256": "7931e8a0678e8b4e07005a42a54414fb1fe7774392f5056fb37185ae3bb372fe"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/acano.yaml",
-      "upstream_path": "resources/definitions/os_discovery/acano.yaml",
-      "sha256": "f859e75a8045f4c54477415ed1044e6eedc803e4e3755c1fd68684344598a09f"
+      "bundle_path": "resources/definitions/os_detection/acos.yaml",
+      "upstream_path": "resources/definitions/os_detection/acos.yaml",
+      "sha256": "f18fc39c442ded925d98a150f02418e81e4147d8e52be6069c810400bb548844"
     },
     {
       "bundle_path": "resources/definitions/os_detection/acs.yaml",
       "upstream_path": "resources/definitions/os_detection/acs.yaml",
       "sha256": "3df1be072b337f64150230f85e4cda7781051923608ae818df280800a1cfc45b"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/acs.yaml",
-      "upstream_path": "resources/definitions/os_discovery/acs.yaml",
-      "sha256": "1c9a3dd2583d5aa4b39f2e66b7e707d2a6bcd99e044df58bdcd9be0cd49edbb2"
     },
     {
       "bundle_path": "resources/definitions/os_detection/acsw.yaml",
@@ -641,19 +716,9 @@
       "sha256": "61c1e9e0de4e27b325129dfcbe4ba61e9be91ed58366f79a4a5ab158f3cb8643"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/airos-af-ltu.yaml",
-      "upstream_path": "resources/definitions/os_discovery/airos-af-ltu.yaml",
-      "sha256": "fa8b9bc8934274e6322ad7c7f84f2529b5062ece9e05849ae349be70c6aaa36a"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/airos-af.yaml",
       "upstream_path": "resources/definitions/os_detection/airos-af.yaml",
       "sha256": "2e15611108b13851e9419ce2dc4865e904b3a26e880b747848d1792cce0d634b"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/airos-af.yaml",
-      "upstream_path": "resources/definitions/os_discovery/airos-af.yaml",
-      "sha256": "bb2ea5e3212ca21468e3eb0e52c31f30e5f833a296f534e7bfbc7d10605c7780"
     },
     {
       "bundle_path": "resources/definitions/os_detection/airos-af60.yaml",
@@ -661,29 +726,14 @@
       "sha256": "8c9c4d5dfcd06b7f0debe36f67f02d42b270b40d5c8e71dfe7b328aafea3f965"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/airos-af60.yaml",
-      "upstream_path": "resources/definitions/os_discovery/airos-af60.yaml",
-      "sha256": "d7a5b7df76e2c0d7898bb88825a61f1248a2aaa544e5b70e2ea1481a0848e134"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/airos.yaml",
       "upstream_path": "resources/definitions/os_detection/airos.yaml",
       "sha256": "87debb6b10ed691d05abc0d51cb7a5fe0893a34f0a142d9cd8ab73aca127ebf7"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/airos.yaml",
-      "upstream_path": "resources/definitions/os_discovery/airos.yaml",
-      "sha256": "d2b02d8161dda51c79677ff4d7a1bb9fd25689e8142f9009351c75c1c251837e"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/allied-tq.yaml",
       "upstream_path": "resources/definitions/os_detection/allied-tq.yaml",
       "sha256": "6895763e4b4996e5074ae10eab8ecb8114fa7b3334267843604138b989dc2535"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/allied-tq.yaml",
-      "upstream_path": "resources/definitions/os_discovery/allied-tq.yaml",
-      "sha256": "d2b57e7051aa0facbee557bb6d8fb1f90b9db20bf6fcc5d0554b0c54e7f6fb48"
     },
     {
       "bundle_path": "resources/definitions/os_detection/allied.yaml",
@@ -696,19 +746,9 @@
       "sha256": "2dd33ee8edc129b607956fb0a311eefc8d4f750e15941ad66419134179e9d244"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/aos.yaml",
-      "upstream_path": "resources/definitions/os_discovery/aos.yaml",
-      "sha256": "6fcf4b60004cc8cb27856a1acd72a9f0a54842cc1d029953878c2ee7aaf89412"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/aos6.yaml",
       "upstream_path": "resources/definitions/os_detection/aos6.yaml",
       "sha256": "736b6d433699825ae3f263fa1b0902c75ddbfff9a6098c930633abbec7e84e14"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/aos6.yaml",
-      "upstream_path": "resources/definitions/os_discovery/aos6.yaml",
-      "sha256": "24265766c42e7222be0cd85b82a3e63f50bf4d82a0f0c510bf423ac8b2deac0b"
     },
     {
       "bundle_path": "resources/definitions/os_detection/aos7.yaml",
@@ -716,19 +756,9 @@
       "sha256": "c36627a20bc0ec2054e01701c7b3220d8d048bb2a1af075c0181734657a341a6"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/aos7.yaml",
-      "upstream_path": "resources/definitions/os_discovery/aos7.yaml",
-      "sha256": "d8332d8e128db5027a683d22d46f62b2babea673dd013da2170e039022436d0a"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/apic.yaml",
       "upstream_path": "resources/definitions/os_detection/apic.yaml",
       "sha256": "8af56068d16aba0b789addd971f717442f8afc9753108b83cb4825caca662011"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/apic.yaml",
-      "upstream_path": "resources/definitions/os_discovery/apic.yaml",
-      "sha256": "7f6a39b6e082d10384910025bbe67ebd0ad1b77eef1b266229705409de7acb0f"
     },
     {
       "bundle_path": "resources/definitions/os_detection/arista-mos.yaml",
@@ -736,19 +766,9 @@
       "sha256": "c18f79edebc5f8cd6b44e9e7745620b8236d5c7c31a296924b85d383502d85a3"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/arista-mos.yaml",
-      "upstream_path": "resources/definitions/os_discovery/arista-mos.yaml",
-      "sha256": "968dadd689981eed6941c219f54f106c9230d9b6b6e38690e150413501dac690"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/arista_eos.yaml",
       "upstream_path": "resources/definitions/os_detection/arista_eos.yaml",
       "sha256": "b23f86c03731a1ddc0c0ee82df96cb757f07eb1f6a1fcbd631b08cff978dd13b"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/arista_eos.yaml",
-      "upstream_path": "resources/definitions/os_discovery/arista_eos.yaml",
-      "sha256": "7f1101be2da4231dc864adcd179c809a7a682a10c2cecee2ad4a81eff7f61faf"
     },
     {
       "bundle_path": "resources/definitions/os_detection/aruba-instant.yaml",
@@ -756,19 +776,9 @@
       "sha256": "b74ff56df876b3e3064d1d7be6ffd796cb2e3139b4363b6325d1f3064ec9c602"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/aruba-instant.yaml",
-      "upstream_path": "resources/definitions/os_discovery/aruba-instant.yaml",
-      "sha256": "b1cb7a147017983964cec244128f14f1fb64b97c66a33b7fb42c48bbd3e85dde"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/arubaos-cx.yaml",
       "upstream_path": "resources/definitions/os_detection/arubaos-cx.yaml",
       "sha256": "8f76b688223c73b6ada9036ae582d6328ac99b21ce56fb9771e126057f206057"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/arubaos-cx.yaml",
-      "upstream_path": "resources/definitions/os_discovery/arubaos-cx.yaml",
-      "sha256": "3233d866453c8edc150f89d2c42c42987b4ca300a3fb79c2ae3167e731322505"
     },
     {
       "bundle_path": "resources/definitions/os_detection/arubaos.yaml",
@@ -776,19 +786,9 @@
       "sha256": "94e48a305484a6b395d80c1a041b86d38818ed740666f5afbd0855eb4311556c"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/arubaos.yaml",
-      "upstream_path": "resources/definitions/os_discovery/arubaos.yaml",
-      "sha256": "cc5e02d9c79677680de54a9cc1fd8db47be4a684868362be771111b1e4bf69b4"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/asa.yaml",
       "upstream_path": "resources/definitions/os_detection/asa.yaml",
       "sha256": "b4be054e2a915ae7714a4def21d85af8bf9b2c7a931c1d1fe922175d304f46c9"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/asa.yaml",
-      "upstream_path": "resources/definitions/os_discovery/asa.yaml",
-      "sha256": "6241a7d8517124c6f47536b422ef32247d4ce4c678a6b3a516c9254dfe11b594"
     },
     {
       "bundle_path": "resources/definitions/os_detection/asyncos.yaml",
@@ -796,19 +796,14 @@
       "sha256": "cb62e3c374193f045d5e7cbcab142ba51567a3ea0bdcd15aa5649c5999d208a1"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/asyncos.yaml",
-      "upstream_path": "resources/definitions/os_discovery/asyncos.yaml",
-      "sha256": "2a914fe3c09bdf851b7e113580bb00069dc7b5398f344263fe9ee2a8604c715c"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/awplus.yaml",
       "upstream_path": "resources/definitions/os_detection/awplus.yaml",
       "sha256": "bb22d9ee578cd57d005bf4aad83293206c40cf194ed8eae4d0a255b8a72d8bb8"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/awplus.yaml",
-      "upstream_path": "resources/definitions/os_discovery/awplus.yaml",
-      "sha256": "33eab37f7183816b026dd214f19c5fc0380bbe8663f87e1a9d4e1d005810efaf"
+      "bundle_path": "resources/definitions/os_detection/barracudaspamfirewall.yaml",
+      "upstream_path": "resources/definitions/os_detection/barracudaspamfirewall.yaml",
+      "sha256": "4d0af2234fc44c7c6a0a165b533aa7784c9ad2f72f250024aca6843839e2409a"
     },
     {
       "bundle_path": "resources/definitions/os_detection/boss.yaml",
@@ -816,19 +811,9 @@
       "sha256": "d6d5a19fc878f79bba1a7cd1e0a29935de9a4e1077de4ba0ca04a3423f4690f9"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/boss.yaml",
-      "upstream_path": "resources/definitions/os_discovery/boss.yaml",
-      "sha256": "975fa8b88c215fcc36141a04fbb9d97e5ec8c451d0515760299427875d79597a"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/broadworks.yaml",
       "upstream_path": "resources/definitions/os_detection/broadworks.yaml",
       "sha256": "2785107a8a81025f5fdf984e6c8454842cf430e131d92704eff4157073b1473d"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/broadworks.yaml",
-      "upstream_path": "resources/definitions/os_discovery/broadworks.yaml",
-      "sha256": "d8c3fee942e3152f6889977ca6667a53020a06bd3411025929bec81a8ac73677"
     },
     {
       "bundle_path": "resources/definitions/os_detection/cat1900.yaml",
@@ -836,19 +821,9 @@
       "sha256": "21504abeb09381e04c0d5092a16010d8aaef7ecb5dcd4c5ea6f759ff26378f81"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/cat1900.yaml",
-      "upstream_path": "resources/definitions/os_discovery/cat1900.yaml",
-      "sha256": "f2ae6012c38fbecf3f3c491ac7628cbc65d482b22192d5e3df889380b05fb370"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/catos.yaml",
       "upstream_path": "resources/definitions/os_detection/catos.yaml",
       "sha256": "44dc7d20195befae7f9921dca772096ec23a40508993de6ad15bde8942bc478f"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/catos.yaml",
-      "upstream_path": "resources/definitions/os_discovery/catos.yaml",
-      "sha256": "9ec82caed5ff07bd1178944fade7d3d00b9f143a9b18f56c9a54e2a91587278a"
     },
     {
       "bundle_path": "resources/definitions/os_detection/ciena-rls.yaml",
@@ -856,19 +831,9 @@
       "sha256": "3a34dc173ac4350de41cee1853dd3ac479566fdd341e662e6ed25c08a16a56f6"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/ciena-rls.yaml",
-      "upstream_path": "resources/definitions/os_discovery/ciena-rls.yaml",
-      "sha256": "4bd272ebcf0bd79b0e15729448318cb63f273747b32f97a6316e579a5a316877"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/ciena-saos.yaml",
       "upstream_path": "resources/definitions/os_detection/ciena-saos.yaml",
       "sha256": "5b4aa3fd90297a2fc4b5ed8a3b4a94cc5129d95ea868f8a00a36e5279275ec78"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/ciena-saos.yaml",
-      "upstream_path": "resources/definitions/os_discovery/ciena-saos.yaml",
-      "sha256": "c158b841c695af5dfe1b7146a709e3be35162782a14ea8d3498d09f4e5ab6221"
     },
     {
       "bundle_path": "resources/definitions/os_detection/ciena-sds.yaml",
@@ -876,19 +841,9 @@
       "sha256": "fb1b28d12196dfd9f3204bd82330a8ac1b2e385196df9faab0a4d415c97a568c"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/ciena-sds.yaml",
-      "upstream_path": "resources/definitions/os_discovery/ciena-sds.yaml",
-      "sha256": "3e1e932521e75d68ebece260c7e85acfbd31973eadf1d9bbfbc014cbc83f96b6"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/ciena-waveserver.yaml",
       "upstream_path": "resources/definitions/os_detection/ciena-waveserver.yaml",
       "sha256": "a969cdb48eee2b8da1b19a6776c389b3d5d5bb177c95dd23ec56824071bb8f6e"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/ciena-waveserver.yaml",
-      "upstream_path": "resources/definitions/os_discovery/ciena-waveserver.yaml",
-      "sha256": "eb54fa518ea4e274729855eec370b437ccc0fd52fefeaa7c14296c0e67c7e1e4"
     },
     {
       "bundle_path": "resources/definitions/os_detection/cimc.yaml",
@@ -896,29 +851,14 @@
       "sha256": "b41634bd0cbf632f1a9ae05f41804ee8f8f0994a2e579c650ece09b1624cff7a"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/cimc.yaml",
-      "upstream_path": "resources/definitions/os_discovery/cimc.yaml",
-      "sha256": "d567c017cca78c92d777b91c0b610b235eb24918fbc08bea7307a125df973490"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/cips.yaml",
       "upstream_path": "resources/definitions/os_detection/cips.yaml",
       "sha256": "e65b31f30d01a6c5c156eb9a2a430f2a1f0a26308d1b1b4588be1a47faa71055"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/cips.yaml",
-      "upstream_path": "resources/definitions/os_discovery/cips.yaml",
-      "sha256": "4d0a124d465a7b81ff4b45d12166d5374d897fb837ff0dd973e5ab7b8c22ced8"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/ciscoepc.yaml",
       "upstream_path": "resources/definitions/os_detection/ciscoepc.yaml",
       "sha256": "c0150aa847e38d94cb8b67fd5f06762ec15dd80a16eb16feba69bec76c37a923"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/ciscoepc.yaml",
-      "upstream_path": "resources/definitions/os_discovery/ciscoepc.yaml",
-      "sha256": "dfc3a0e6445a35afda34ff31fa4f00000d657a66c351b63a32dda1f7e9dffeb8"
     },
     {
       "bundle_path": "resources/definitions/os_detection/ciscome1200.yaml",
@@ -931,29 +871,14 @@
       "sha256": "8c17ed38d48a9d04270de87177fa801d63b3339dba406117c62ff72fdb541d2c"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/ciscosat.yaml",
-      "upstream_path": "resources/definitions/os_discovery/ciscosat.yaml",
-      "sha256": "a1299951fad47710b2723095cd93cbbd969928a45c7a5ef5b7c51418bb31bfc7"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/ciscosb.yaml",
       "upstream_path": "resources/definitions/os_detection/ciscosb.yaml",
       "sha256": "02a5a80c22582a7b19d7c00120d8b66350d39c50b69596c23c0ef1d000def74f"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/ciscosb.yaml",
-      "upstream_path": "resources/definitions/os_discovery/ciscosb.yaml",
-      "sha256": "448c73a9f33ca1cb13442dc3af2be887c77b83a9f5f7819fcd1496a539ef4c9f"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/ciscosce.yaml",
       "upstream_path": "resources/definitions/os_detection/ciscosce.yaml",
       "sha256": "a46776f0f493ed214af16017628c0576fb6a33f81303b6c38439d8084a837f08"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/ciscosce.yaml",
-      "upstream_path": "resources/definitions/os_discovery/ciscosce.yaml",
-      "sha256": "1d26cddd17e0552261451c99642e432b021fc58d50cf845f1b3339c080af287f"
     },
     {
       "bundle_path": "resources/definitions/os_detection/ciscospa.yaml",
@@ -966,19 +891,9 @@
       "sha256": "06d5875643e620e30674b9562be5b0220bf50c68737168b60e016cca86390475"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/ciscosrp.yaml",
-      "upstream_path": "resources/definitions/os_discovery/ciscosrp.yaml",
-      "sha256": "156bb85839063feb131e610809fdeba3f91e050609b8ae6f37bd8a7e2b7fc4f0"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/ciscowap.yaml",
       "upstream_path": "resources/definitions/os_detection/ciscowap.yaml",
       "sha256": "3dd8f8af6d3f4ef1aa01ea48bd7475f6f32d410844f374dee4394b380ed8c623"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/ciscowap.yaml",
-      "upstream_path": "resources/definitions/os_discovery/ciscowap.yaml",
-      "sha256": "24b88d2d04f9f08aeabd5d4b47317c6bbb8fde208e70668144cfda650f400af7"
     },
     {
       "bundle_path": "resources/definitions/os_detection/ciscowlc.yaml",
@@ -986,29 +901,14 @@
       "sha256": "9d647ae075bb1f018c4aadd9bcb9d51a2e931996ff474eef8f42b3264533c3f7"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/ciscowlc.yaml",
-      "upstream_path": "resources/definitions/os_discovery/ciscowlc.yaml",
-      "sha256": "9e0667a9c5396ebb8f2360382d1e56f6748951580f33555cda03e7ab85855514"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/clearpass.yaml",
       "upstream_path": "resources/definitions/os_detection/clearpass.yaml",
       "sha256": "4a39954c41e1bf19192cb87509dfbfb1b61893a521ff23a32f33cbb1caad5c39"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/clearpass.yaml",
-      "upstream_path": "resources/definitions/os_discovery/clearpass.yaml",
-      "sha256": "1f395a54a64b57299294b083de85d48c068f52cd32fa9f0b51fc970aaf1a48c3"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/comware.yaml",
       "upstream_path": "resources/definitions/os_detection/comware.yaml",
       "sha256": "f0c74268a08703985dda4d1a35ba8ebcaa7ee9f30dd5d4a296a8d34e3e922d73"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/comware.yaml",
-      "upstream_path": "resources/definitions/os_discovery/comware.yaml",
-      "sha256": "6bcac3c830deeb0521267d18511b199994b272a25714817d27a6ac4751c17be8"
     },
     {
       "bundle_path": "resources/definitions/os_detection/cyan.yaml",
@@ -1021,19 +921,9 @@
       "sha256": "4ce72259be5203baadb97213068af5ec39fd49fdf6fbdc8998efea13408695c4"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/dcn-software.yaml",
-      "upstream_path": "resources/definitions/os_discovery/dcn-software.yaml",
-      "sha256": "39279ba36edba4eb99632c5de7a522ad1f526ce89df663ef28851d685232e2a9"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/dell-compellent.yaml",
       "upstream_path": "resources/definitions/os_detection/dell-compellent.yaml",
       "sha256": "bf6388567cc57136cf4fc071b32c78fffa8725e0011cbb88d28fa40e7a536558"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/dell-compellent.yaml",
-      "upstream_path": "resources/definitions/os_discovery/dell-compellent.yaml",
-      "sha256": "5e495cfb1ef6437ad23c48ff4b6d7bfb72d6bf2ef5ae82975ffe7859456677eb"
     },
     {
       "bundle_path": "resources/definitions/os_detection/dell-laser.yaml",
@@ -1041,19 +931,9 @@
       "sha256": "6ec8fd5d9a723eaeac00cc914810b0ecb000d200d724561441c057662fb7b794"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/dell-laser.yaml",
-      "upstream_path": "resources/definitions/os_discovery/dell-laser.yaml",
-      "sha256": "f548b6011976c062cdcccbcb15a9e91575c133d986161e04a624a25c16c71953"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/dell-ome-m.yaml",
       "upstream_path": "resources/definitions/os_detection/dell-ome-m.yaml",
       "sha256": "54b9174635551621de4bbc709f257215a135ae00e4d713e7ac81cddd6b60f3a6"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/dell-ome-m.yaml",
-      "upstream_path": "resources/definitions/os_discovery/dell-ome-m.yaml",
-      "sha256": "d535ac9caeb818baf37d8b64aecceaa2942e80979324e4ba9d89881698b0e7b6"
     },
     {
       "bundle_path": "resources/definitions/os_detection/dell-os10.yaml",
@@ -1061,19 +941,9 @@
       "sha256": "e36a63297a92de7432f7243c4191b24152078717283f00220d4f0cff3c5fd31f"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/dell-os10.yaml",
-      "upstream_path": "resources/definitions/os_discovery/dell-os10.yaml",
-      "sha256": "5a15eba855be73eeaf79acb90f3806cc13c3f12cf80c7c3a67033273246143c1"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/dell-powervault.yaml",
       "upstream_path": "resources/definitions/os_detection/dell-powervault.yaml",
       "sha256": "e5768bb329f2ac08ee7cd73dba673eeeb7fd270114657802dff888e20e495380"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/dell-powervault.yaml",
-      "upstream_path": "resources/definitions/os_discovery/dell-powervault.yaml",
-      "sha256": "2ed8cedd1b72babe10853e41c1a13b87537611ec0e37a4411ce2bf167320b4ab"
     },
     {
       "bundle_path": "resources/definitions/os_detection/dell-rcs.yaml",
@@ -1081,19 +951,9 @@
       "sha256": "eb160acb8f5cfe44175e04902338608ad58d27bfe691ede597e5d7865ce4af7a"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/dell-rcs.yaml",
-      "upstream_path": "resources/definitions/os_discovery/dell-rcs.yaml",
-      "sha256": "0c25ff304a9a77b116cd9ce2ab114992f031eec1968b0329cb82ac952b9759dd"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/dell-rpdu.yaml",
       "upstream_path": "resources/definitions/os_detection/dell-rpdu.yaml",
       "sha256": "71508a64e303079d3f15f8e68fa3460dd00d36aac2a99e3793b33cbf9424683f"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/dell-rpdu.yaml",
-      "upstream_path": "resources/definitions/os_discovery/dell-rpdu.yaml",
-      "sha256": "f77f20f4789a30d2f428e76cde32769419fcfdeaa2b18e23d3f4977dd0fcf419"
     },
     {
       "bundle_path": "resources/definitions/os_detection/dell-sonic.yaml",
@@ -1106,29 +966,14 @@
       "sha256": "004e8e457b5c9fa6943527ed3cd8bde0934dbe8c445273c5b9d5414df28b2e10"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/dell-ups.yaml",
-      "upstream_path": "resources/definitions/os_discovery/dell-ups.yaml",
-      "sha256": "f287c4d6e721c29290450aee0732468794dd09798fe0de4a2a553e45e1393a43"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/dlink-dgs1250.yaml",
       "upstream_path": "resources/definitions/os_detection/dlink-dgs1250.yaml",
       "sha256": "d026a81df53fb4d3ca1f69a8813dcf6f994328f8041ccb86c1916a6af59332de"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/dlink-dgs1250.yaml",
-      "upstream_path": "resources/definitions/os_discovery/dlink-dgs1250.yaml",
-      "sha256": "e84f060c41fa2238e6cd0a80b9c82af9d8ba7a5f2488ee409988713cc22bcf63"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/dlink.yaml",
       "upstream_path": "resources/definitions/os_detection/dlink.yaml",
       "sha256": "06f838b40e8208032099459dbf372833708d3de6b3fc80a0514f210f6dec0b58"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/dlink.yaml",
-      "upstream_path": "resources/definitions/os_discovery/dlink.yaml",
-      "sha256": "fe1d891dd2294ff893d78a5dea595227c1eb8f2ced8463fb3dc52bdd0c72020e"
     },
     {
       "bundle_path": "resources/definitions/os_detection/dlinkap.yaml",
@@ -1141,19 +986,9 @@
       "sha256": "52df79374b55178f11f77fcefc854968f9d300008fd578dc98c85e51a51b9491"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/dnos.yaml",
-      "upstream_path": "resources/definitions/os_discovery/dnos.yaml",
-      "sha256": "0364428e93cebb4ba06f06b12e1ab53901d3d35decc619ca2310ea417dc61f90"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/drac.yaml",
       "upstream_path": "resources/definitions/os_detection/drac.yaml",
       "sha256": "50b772abc6e58d8c1efdff108adb91dca39211b6a806d10b112ef6a2eb7ecd61"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/drac.yaml",
-      "upstream_path": "resources/definitions/os_discovery/drac.yaml",
-      "sha256": "b5cc3fa8f11c1664b5a90a86a5cb10b41d2fff48448625c71ce43486edbda8a5"
     },
     {
       "bundle_path": "resources/definitions/os_detection/edgecos.yaml",
@@ -1166,19 +1001,9 @@
       "sha256": "a1cbe46b068880aa73352587b5374bc87809bdd5f85d4c241f7d7d1d30ae1334"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/edgeos-ep.yaml",
-      "upstream_path": "resources/definitions/os_discovery/edgeos-ep.yaml",
-      "sha256": "bf4459a546b3aa61a0715a65c361a9851b00b1569835cea3efc9f68d5bd1ba17"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/edgeos.yaml",
       "upstream_path": "resources/definitions/os_detection/edgeos.yaml",
       "sha256": "880c67724c321954a36a1c24f1fc96ec70dd7e9ee367234f5318c1b55ce6dd2a"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/edgeos.yaml",
-      "upstream_path": "resources/definitions/os_discovery/edgeos.yaml",
-      "sha256": "c9fd2b844c9c7e49fc1a0f0faaea07649a2b66b5b2e40850da9128f8a3f6a07a"
     },
     {
       "bundle_path": "resources/definitions/os_detection/edgeosolt.yaml",
@@ -1186,19 +1011,9 @@
       "sha256": "2fd4e4ec527c487a660b52aba1d1c38728defa3ac0347eca1e98767fd2d4bf2f"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/edgeosolt.yaml",
-      "upstream_path": "resources/definitions/os_discovery/edgeosolt.yaml",
-      "sha256": "d0623b9be836f65e2bba79ba5648967f9a7a7e1609987198c48e2253c4fd2a3a"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/edgeswitch.yaml",
       "upstream_path": "resources/definitions/os_detection/edgeswitch.yaml",
       "sha256": "d850bd7bc99f5fc6b4f012d9ba2c1ca34c6bd95e67b612f46c7663a88eca44fd"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/edgeswitch.yaml",
-      "upstream_path": "resources/definitions/os_discovery/edgeswitch.yaml",
-      "sha256": "f4869f1ef5265db68afd7784ae894ad468feb4bc8c26ccfefbce2b151bdd9573"
     },
     {
       "bundle_path": "resources/definitions/os_detection/equallogic.yaml",
@@ -1211,19 +1026,9 @@
       "sha256": "fa3d64bba5ff76cbc6225050be19929c4f1281cfa4bf3757df3b921472ab7f46"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/ewc.yaml",
-      "upstream_path": "resources/definitions/os_discovery/ewc.yaml",
-      "sha256": "1df85700616d02c2779750a10ad8ce796caf865e4ac271a664aa1382ff72a37a"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/exalink-fusion.yaml",
       "upstream_path": "resources/definitions/os_detection/exalink-fusion.yaml",
       "sha256": "0ee23dec6cc2b5326c0eb118661939182911aaed9cf94e7049c22fa3b99059c5"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/exalink-fusion.yaml",
-      "upstream_path": "resources/definitions/os_discovery/exalink-fusion.yaml",
-      "sha256": "9df4f84b388ab24a3d0b380fc3fdf2855937fbe5e4b079c4906e34867cc7deac"
     },
     {
       "bundle_path": "resources/definitions/os_detection/exos.yaml",
@@ -1231,19 +1036,19 @@
       "sha256": "b37866ae2a6ae88e47a8216b20b985bb4da4472c088239b7db717520b77572f8"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/exos.yaml",
-      "upstream_path": "resources/definitions/os_discovery/exos.yaml",
-      "sha256": "0ceac7eef4a403f177bfc32ab8aad3e230edc00aeee106f0032ebfd05274cee3"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/extremeware.yaml",
       "upstream_path": "resources/definitions/os_detection/extremeware.yaml",
       "sha256": "f3d603823619a7ac35eb72c9bd67e4322aaceb9a8963b5d01621e9cfacb11530"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/extremeware.yaml",
-      "upstream_path": "resources/definitions/os_discovery/extremeware.yaml",
-      "sha256": "eb8d6f9210183243bc79ecc1f5649d722ea090dbdc0057ad97a0e2d6bea420c7"
+      "bundle_path": "resources/definitions/os_detection/f5.yaml",
+      "upstream_path": "resources/definitions/os_detection/f5.yaml",
+      "sha256": "d5a002bd95afd988fb2c6e9ca5be5b3545c5a1285fa8942e8438611af07b77ec"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/f5os.yaml",
+      "upstream_path": "resources/definitions/os_detection/f5os.yaml",
+      "sha256": "2a777791ba32aa5bc6425d1dcff672ad96be4ddf2d9576cc2d4427160f2a81cc"
     },
     {
       "bundle_path": "resources/definitions/os_detection/fabos.yaml",
@@ -1251,19 +1056,9 @@
       "sha256": "c4774b6bf7f89c66835ca4102e09c73091e07a0c26d77bf1be29c213c2f3abe5"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/fabos.yaml",
-      "upstream_path": "resources/definitions/os_discovery/fabos.yaml",
-      "sha256": "a71ed877d3f4c2c42123abad2786d8473a567dec9c042059c85266b77e6bdf3f"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/fiberhome-switch.yaml",
       "upstream_path": "resources/definitions/os_detection/fiberhome-switch.yaml",
       "sha256": "74218180b4dd6da7cfb62503dc7b611b34a67104b01067b852334f8cd543b74a"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/fiberhome-switch.yaml",
-      "upstream_path": "resources/definitions/os_discovery/fiberhome-switch.yaml",
-      "sha256": "f415a59dec485f4683bbbd57baf06e0162b795f147781e02df13f5559f137342"
     },
     {
       "bundle_path": "resources/definitions/os_detection/fiberhome.yaml",
@@ -1271,19 +1066,59 @@
       "sha256": "44b3872ab7e11847f82939ca138eebbf23cacf5fe70423e2ff0edc696c56a011"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/fiberhome.yaml",
-      "upstream_path": "resources/definitions/os_discovery/fiberhome.yaml",
-      "sha256": "fe097e4297c6c3622df2b5574933207f721b68f5ec16262e987f103392171538"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/fluidfs.yaml",
       "upstream_path": "resources/definitions/os_detection/fluidfs.yaml",
       "sha256": "64bd6c969e81dee45b0eaf6808d43af49fbf592a3c356f9ada3ca0c4ceb984be"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/fluidfs.yaml",
-      "upstream_path": "resources/definitions/os_discovery/fluidfs.yaml",
-      "sha256": "f54e9f24aebec0e8f6f8618d0e723f1602b70b9c801c77f3a8365b3b0e9b1b17"
+      "bundle_path": "resources/definitions/os_detection/fortiadc.yaml",
+      "upstream_path": "resources/definitions/os_detection/fortiadc.yaml",
+      "sha256": "af2d48f1ea8a64117243385ae30a9c6e9d4eec84444233d5e32dcb42d69fa169"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/fortiap.yaml",
+      "upstream_path": "resources/definitions/os_detection/fortiap.yaml",
+      "sha256": "32292c7ff43f83532a4c3adac00b293dcc7f205ed8545310186559bb516344cd"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/fortiauthenticator.yaml",
+      "upstream_path": "resources/definitions/os_detection/fortiauthenticator.yaml",
+      "sha256": "18eac3523b49dcac80af786fea1e9ffd7b0f66c16d6ef838757979bc805a6a0e"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/fortigate.yaml",
+      "upstream_path": "resources/definitions/os_detection/fortigate.yaml",
+      "sha256": "2febc96de4fd1618ac84750769d8eacad8397d2c46d09eb438c1456d00bd8570"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/fortimail.yaml",
+      "upstream_path": "resources/definitions/os_detection/fortimail.yaml",
+      "sha256": "d344b046e6a2821a706a3ae5e2d7905e7656db915764638c562bb01834e81449"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/fortios.yaml",
+      "upstream_path": "resources/definitions/os_detection/fortios.yaml",
+      "sha256": "9e4440bc474cdceee93e184d7b5f513a8062ca09cb15584e8171ddb9d6ff7b48"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/fortisandbox.yaml",
+      "upstream_path": "resources/definitions/os_detection/fortisandbox.yaml",
+      "sha256": "f6b74753dc52615301e8e73c89fd1b3a336fc086fd5b65ba6bd4f7a452636b23"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/fortiswitch.yaml",
+      "upstream_path": "resources/definitions/os_detection/fortiswitch.yaml",
+      "sha256": "43ad0d037d801721ca6a6c1523c8006cd966c3ef63884212b81414a6fcf4048a"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/fortiweb.yaml",
+      "upstream_path": "resources/definitions/os_detection/fortiweb.yaml",
+      "sha256": "7b457b65d7857d2449fe3a3d0a536ed19458eea9ed6d0016d2da194ef2dfd066"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/fortiwlc.yaml",
+      "upstream_path": "resources/definitions/os_detection/fortiwlc.yaml",
+      "sha256": "c78bc1ad8c42a87babad7b5aebf5b23897c62a1ff84c8b5c48dc2cd21eb327f0"
     },
     {
       "bundle_path": "resources/definitions/os_detection/fs-ruijie.yaml",
@@ -1291,19 +1126,9 @@
       "sha256": "00624f6f16de45d75e39ec04d7e29c60f7c15552920d5daa2d4ad905a1f24f3b"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/fs-ruijie.yaml",
-      "upstream_path": "resources/definitions/os_discovery/fs-ruijie.yaml",
-      "sha256": "b7a080605e1b725a724fdef6542f0054d1842c6d70b8bafdb1767c5ee538a464"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/ftd.yaml",
       "upstream_path": "resources/definitions/os_detection/ftd.yaml",
       "sha256": "4c2db5cef8e266544dbc851042be0afc419ccf828f0158ba4d79720fa460caeb"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/ftd.yaml",
-      "upstream_path": "resources/definitions/os_discovery/ftd.yaml",
-      "sha256": "1ee45b2b6313f4abac8708e79400a089c7ec35f7ee7af7352612bf1fc5d5ddae"
     },
     {
       "bundle_path": "resources/definitions/os_detection/fxos.yaml",
@@ -1311,9 +1136,9 @@
       "sha256": "f4cd91cc84289e36940698dcd2c3dff9d6c244410a7f44faf93ba09ea7fc17df"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/fxos.yaml",
-      "upstream_path": "resources/definitions/os_discovery/fxos.yaml",
-      "sha256": "4ad883d89f5e146293748bb57c9644af6916a931fd9b86b254b628ae9e98ef02"
+      "bundle_path": "resources/definitions/os_detection/gaia.yaml",
+      "upstream_path": "resources/definitions/os_detection/gaia.yaml",
+      "sha256": "ac7156ed3d664e1dd724176e9c1f250fb32971a6c60ff299dff2b57a6a8b45aa"
     },
     {
       "bundle_path": "resources/definitions/os_detection/huawei-optixrtn.yaml",
@@ -1321,19 +1146,9 @@
       "sha256": "fc25c54d25318f71af3cfae82b4baa62248fda7973aef395e73bc51ee5d786fa"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/huawei-optixrtn.yaml",
-      "upstream_path": "resources/definitions/os_discovery/huawei-optixrtn.yaml",
-      "sha256": "c8feffb5a52f0bb938703c34ead74bfcbe185cf7a6601c23accab3aedec74fb6"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/huawei-smu.yaml",
       "upstream_path": "resources/definitions/os_detection/huawei-smu.yaml",
       "sha256": "00f69a56c1901eceef39e00ba53689e4a3741741de54d3a3608fb2fe03fa9fa7"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/huawei-smu.yaml",
-      "upstream_path": "resources/definitions/os_discovery/huawei-smu.yaml",
-      "sha256": "06c0a1bec12bef3fe3cda40a44df26a26737840b2e7e40c6f11c5685d6104577"
     },
     {
       "bundle_path": "resources/definitions/os_detection/huaweiups.yaml",
@@ -1341,19 +1156,9 @@
       "sha256": "994f99486b4e7277325cd58bade7bd80ad59d4aaecccb68bf05ae5debba7b8bd"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/huaweiups.yaml",
-      "upstream_path": "resources/definitions/os_discovery/huaweiups.yaml",
-      "sha256": "9652fb6ac8e6e597306862d532ef7021351abdf3bc179cdb56d27f14ce75357e"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/ibmc.yaml",
       "upstream_path": "resources/definitions/os_detection/ibmc.yaml",
       "sha256": "e593c18f838f47c9c9678ea1bd580695e7f73407019c2028c755d1d8e052584c"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/ibmc.yaml",
-      "upstream_path": "resources/definitions/os_discovery/ibmc.yaml",
-      "sha256": "8e9cea2e2e759a47316f02b7e99d0de659483b20474b531ee38aff24a30528f4"
     },
     {
       "bundle_path": "resources/definitions/os_detection/ios.yaml",
@@ -1361,19 +1166,9 @@
       "sha256": "339a6473ff5a1cfd82631bee72cf664ad837f2aab3cf3d80090e06bd50188dbd"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/ios.yaml",
-      "upstream_path": "resources/definitions/os_discovery/ios.yaml",
-      "sha256": "d11f840f1abf87583f16fde11fe6cb1618b873f13553fc78a62c5005d5696a46"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/iosxe.yaml",
       "upstream_path": "resources/definitions/os_detection/iosxe.yaml",
       "sha256": "5b8173df37e9ddf634619030c1f3127bc028e25155f84405f6cb8896b656b425"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/iosxe.yaml",
-      "upstream_path": "resources/definitions/os_discovery/iosxe.yaml",
-      "sha256": "a7d63e97d055865fe869c3fee5448a96fdd929ad154590a08749eb26a80e89dc"
     },
     {
       "bundle_path": "resources/definitions/os_detection/iosxr.yaml",
@@ -1381,19 +1176,9 @@
       "sha256": "36b8379e74d6d23d80d10bd8c5bd4d9f1859551ec6ce4a05f759d2ae4fa08b54"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/iosxr.yaml",
-      "upstream_path": "resources/definitions/os_discovery/iosxr.yaml",
-      "sha256": "0d60af57d7d098bbb0bfa7a878c66465aea328b8554088c2927ecacdf5fe17e8"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/ironware.yaml",
       "upstream_path": "resources/definitions/os_detection/ironware.yaml",
       "sha256": "49ffd935ba040fa7500112518f0c2c2ba20bc0a3f95b7fb87b0f6461243c82fd"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/ironware.yaml",
-      "upstream_path": "resources/definitions/os_discovery/ironware.yaml",
-      "sha256": "64719c0a5721192d12b91c9e4040dfc5fc0d9ea6bf38a79ccc7eaed0a09f86d3"
     },
     {
       "bundle_path": "resources/definitions/os_detection/ise.yaml",
@@ -1401,29 +1186,14 @@
       "sha256": "5a457a3fcf49df46b5c36cf7077c17523b8d0b882be81b54ee149046baeb770e"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/ise.yaml",
-      "upstream_path": "resources/definitions/os_discovery/ise.yaml",
-      "sha256": "62898a97ca4a8b46a58aff076aab3c5722aecbcc67eb50f315c9ca003e37b764"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/jetstream.yaml",
       "upstream_path": "resources/definitions/os_detection/jetstream.yaml",
       "sha256": "87b0233d8cc1832164b2055ccef148cc8fd4068a67717e85eaa0005a1f313b7d"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/jetstream.yaml",
-      "upstream_path": "resources/definitions/os_discovery/jetstream.yaml",
-      "sha256": "1256943a6b0f681ffd434ca350e58dd83afce8b4a10069bb8fb9ba3334b365dc"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/juniper-mss.yaml",
       "upstream_path": "resources/definitions/os_detection/juniper-mss.yaml",
       "sha256": "ba4bd2ef15cc69ff4212f2204b17ec5bbe1798582821d4d75f6e59a76955826a"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/juniper-mss.yaml",
-      "upstream_path": "resources/definitions/os_discovery/juniper-mss.yaml",
-      "sha256": "eced6d1ee0d2c3de5d7bf814637bed264f8da785044181db798804ef8f63b4cc"
     },
     {
       "bundle_path": "resources/definitions/os_detection/juniperex2500os.yaml",
@@ -1436,19 +1206,9 @@
       "sha256": "0dd6dcd57d4928a8dcca6502eb50f970f4980d97e6b14cb2bc0ca44d8f8376bd"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/junos.yaml",
-      "upstream_path": "resources/definitions/os_discovery/junos.yaml",
-      "sha256": "6241d8345e8e720cb4c5e5b2426dd2052c2f7f45ac65d74fda47fd38c6fbda5c"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/junose.yaml",
       "upstream_path": "resources/definitions/os_detection/junose.yaml",
       "sha256": "6777f2514ee064f2d09b74021e7261150ae43b96fdf70ca7b8832e5d105fdac0"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/junose.yaml",
-      "upstream_path": "resources/definitions/os_discovery/junose.yaml",
-      "sha256": "0bda030ac065c9f82702f429543181709c49eb53335fd342f08a35a5c4abe7ea"
     },
     {
       "bundle_path": "resources/definitions/os_detection/jwos.yaml",
@@ -1456,19 +1216,9 @@
       "sha256": "c5559c753d8de1334ec85acd4f080e5f4e5acb3e5172b576fa51a4a3f688ed3e"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/jwos.yaml",
-      "upstream_path": "resources/definitions/os_discovery/jwos.yaml",
-      "sha256": "13434eef8cd4cec5c08306d1e53f82e6b39b9baaa3a96ab0946f25f7a2bb1822"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/mypoweros.yaml",
       "upstream_path": "resources/definitions/os_detection/mypoweros.yaml",
       "sha256": "839d0f26925564bba555412650de020677240d6a3d178bd9ddf57592d6acb929"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/mypoweros.yaml",
-      "upstream_path": "resources/definitions/os_discovery/mypoweros.yaml",
-      "sha256": "798141b618593ca0bdc5d20eb07678323705624af483f0628e38c35b0cd44405"
     },
     {
       "bundle_path": "resources/definitions/os_detection/nokia-1830.yaml",
@@ -1476,19 +1226,9 @@
       "sha256": "6ddbff8c527d151409441aea8a2e7b848f2342bcb888e32763a126ef2a29b7d7"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/nokia-1830.yaml",
-      "upstream_path": "resources/definitions/os_discovery/nokia-1830.yaml",
-      "sha256": "266e230f6a012fb90bad624399a246e14e5df84299039f3e144933af1ccdfbef"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/nokia-isam.yaml",
       "upstream_path": "resources/definitions/os_detection/nokia-isam.yaml",
       "sha256": "627bc696660fda24a3ceab9001ac7794437b0be9eee2c645ef68fd4dd349c94a"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/nokia-isam.yaml",
-      "upstream_path": "resources/definitions/os_discovery/nokia-isam.yaml",
-      "sha256": "e0750457411c3629b5fdc36613c2fb4ba8269b66b158fed83c784dd5edc87fec"
     },
     {
       "bundle_path": "resources/definitions/os_detection/nos.yaml",
@@ -1496,19 +1236,9 @@
       "sha256": "1d35a1b01dc18fcaec2c28fe0ceae3a1eb14edacf771a6827c34789ce0d07982"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/nos.yaml",
-      "upstream_path": "resources/definitions/os_discovery/nos.yaml",
-      "sha256": "cf62bccd5b481f3b30def770a739923926a95e492b7c3cfeb203ab492d89c3ab"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/nxos.yaml",
       "upstream_path": "resources/definitions/os_detection/nxos.yaml",
       "sha256": "06055d35413fbb9cf3add3d2263bede052dc7cab1063967a6fc01d1fc9489d4a"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/nxos.yaml",
-      "upstream_path": "resources/definitions/os_discovery/nxos.yaml",
-      "sha256": "34001cdbe07683d36161931271367ec3ba6a7eb98f42152f62e907669ddee682"
     },
     {
       "bundle_path": "resources/definitions/os_detection/oceanstor.yaml",
@@ -1516,19 +1246,9 @@
       "sha256": "f29b23b4e784bd918cd91f922c62d6047641f117aa8ad020899fa56b4a28af3a"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/oceanstor.yaml",
-      "upstream_path": "resources/definitions/os_discovery/oceanstor.yaml",
-      "sha256": "b2986e0eebc0a5f91324df9f088b80c23e2958e234c420008ff0c93883d0c6a3"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/omnipcx.yaml",
       "upstream_path": "resources/definitions/os_detection/omnipcx.yaml",
       "sha256": "f00eccf2d4b3b5fcbf1ca941434785836452fb13bf614c7414e4c93ee9e6a9c0"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/omnipcx.yaml",
-      "upstream_path": "resources/definitions/os_discovery/omnipcx.yaml",
-      "sha256": "5158f3c32bc9469795fc23eeb5b004e3bdaec30fe3ffe8b87adba6652fc9465c"
     },
     {
       "bundle_path": "resources/definitions/os_detection/ons.yaml",
@@ -1536,9 +1256,9 @@
       "sha256": "56298aa6cb30c45c306492f57510fafdddf5efc2335c158f35b27db90fcb1eee"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/ons.yaml",
-      "upstream_path": "resources/definitions/os_discovery/ons.yaml",
-      "sha256": "c26951aa9ca306eed72f9aeb706815964dd3bf5875e99ba767bb4684f44d0120"
+      "bundle_path": "resources/definitions/os_detection/panos.yaml",
+      "upstream_path": "resources/definitions/os_detection/panos.yaml",
+      "sha256": "326f5d9d2a066b72806f4eb8bba70a2bea38ea9fc59dd88b62fcbe6250100b38"
     },
     {
       "bundle_path": "resources/definitions/os_detection/pixos.yaml",
@@ -1551,19 +1271,9 @@
       "sha256": "937bedfd7213874dbe647dd6e71b499c0d3929807f9872b24eee88be0f7c2d96"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/powerconnect.yaml",
-      "upstream_path": "resources/definitions/os_discovery/powerconnect.yaml",
-      "sha256": "a7051ed1e51657f731afd42020b8cecf9bc319e36f687a8ade717bd0304a22ec"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/powervault.yaml",
       "upstream_path": "resources/definitions/os_detection/powervault.yaml",
       "sha256": "3e9acf018018885af043edc18c92e973deda3f5cf3ba28453006b801575bd117"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/powervault.yaml",
-      "upstream_path": "resources/definitions/os_discovery/powervault.yaml",
-      "sha256": "3a0691d39d5db85e82afec8546d1f5546d900a8127b67ae06dfa612a42638eee"
     },
     {
       "bundle_path": "resources/definitions/os_detection/primeinfrastructure.yaml",
@@ -1571,19 +1281,9 @@
       "sha256": "00eb8e9cd5d9b09a0544d932029acf15ccdffd6009830135b9a5da25203a2d3b"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/primeinfrastructure.yaml",
-      "upstream_path": "resources/definitions/os_discovery/primeinfrastructure.yaml",
-      "sha256": "9fe8b9c57605a19ed9aa9a72b1ae21e8ed6a0cd0cff89f467a4fa19c1a98e0ae"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/procurve.yaml",
       "upstream_path": "resources/definitions/os_detection/procurve.yaml",
       "sha256": "5288e728775e7d5b3142ba6d05e2bf0b384f9765993265084fab59fc79384b00"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/procurve.yaml",
-      "upstream_path": "resources/definitions/os_discovery/procurve.yaml",
-      "sha256": "d031142b7667c40aaf805be04d5b4438cd2f9662d7f2e11c46509dced7c606de"
     },
     {
       "bundle_path": "resources/definitions/os_detection/radlan.yaml",
@@ -1591,19 +1291,9 @@
       "sha256": "1624b6ca82d6c7680389ee55691620fef8cff2a412b83fa12c578f6d16d1f0b2"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/radlan.yaml",
-      "upstream_path": "resources/definitions/os_discovery/radlan.yaml",
-      "sha256": "93a38026913bf8d98d1b291a196ea2167350db4a0c5dd5b9e9ff710d3ce39aa3"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/raisecom-ros.yaml",
       "upstream_path": "resources/definitions/os_detection/raisecom-ros.yaml",
       "sha256": "4804b76fb049391122026ac4e6cf1576bdfd93c4165fce1ed21f816430a32a7a"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/raisecom-ros.yaml",
-      "upstream_path": "resources/definitions/os_discovery/raisecom-ros.yaml",
-      "sha256": "d5f1a97dcf466f2b168c5e5fec9fec84edb678b2502fcddb476ec5b33b31afd4"
     },
     {
       "bundle_path": "resources/definitions/os_detection/raisecom.yaml",
@@ -1611,29 +1301,14 @@
       "sha256": "a147543a25af05a725e84510598eff1de15fa4f009dcc42cf8b39dfc06221046"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/raisecom.yaml",
-      "upstream_path": "resources/definitions/os_discovery/raisecom.yaml",
-      "sha256": "d01cc893933ee44736afb600024c5712adb4d4c279fdc8cdfc8cc94152e58a76"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/routeros.yaml",
       "upstream_path": "resources/definitions/os_detection/routeros.yaml",
       "sha256": "3671fe5c83eea1de3f69046ad5d0045f274d27fda960f1741fc6f00c5c2d9173"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/routeros.yaml",
-      "upstream_path": "resources/definitions/os_discovery/routeros.yaml",
-      "sha256": "462a1697a82ac58d26d5f6065e74b3d1ac57ca5ce184e94d18e775244eef64bd"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/ruckuswireless-hotzone.yaml",
       "upstream_path": "resources/definitions/os_detection/ruckuswireless-hotzone.yaml",
       "sha256": "afcb077657e38cfecf5bd9bbaba2eaa4b1c5ea08132f8e2aa168061b325cd993"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/ruckuswireless-hotzone.yaml",
-      "upstream_path": "resources/definitions/os_discovery/ruckuswireless-hotzone.yaml",
-      "sha256": "783f1252ca37d00243ee0673077b2d3ce80d27ebe9f52986efab823e365198f3"
     },
     {
       "bundle_path": "resources/definitions/os_detection/ruckuswireless-sz.yaml",
@@ -1646,29 +1321,14 @@
       "sha256": "6e82e6e370d972926a7f5b9d005fc56b4f8cd58b471c0362370daed1ece7e724"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/ruckuswireless-unleashed.yaml",
-      "upstream_path": "resources/definitions/os_discovery/ruckuswireless-unleashed.yaml",
-      "sha256": "934b81116a47d276575d17b12cb158b93cbdcbab133b6f9971483980773033ec"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/ruckuswireless.yaml",
       "upstream_path": "resources/definitions/os_detection/ruckuswireless.yaml",
       "sha256": "3c245b53b88b45971f6b1ea87121f5cd752231ffdab85a7c95dfe2decfe8c3ee"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/ruckuswireless.yaml",
-      "upstream_path": "resources/definitions/os_discovery/ruckuswireless.yaml",
-      "sha256": "0d3584961ce11238b0c43a4bb06236254a4e7f7d400761bcd132b295454c5d35"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/ruijie.yaml",
       "upstream_path": "resources/definitions/os_detection/ruijie.yaml",
       "sha256": "9faef02d0387c9d7c61456559cf8fe59ff94dd3d7d74e25ad36dfaef25b46a2c"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/ruijie.yaml",
-      "upstream_path": "resources/definitions/os_discovery/ruijie.yaml",
-      "sha256": "609a55699b706391f7d3745acc8157b08a4c11f1fe7dd3c7356b64a6caa7d46f"
     },
     {
       "bundle_path": "resources/definitions/os_detection/sanos.yaml",
@@ -1681,9 +1341,9 @@
       "sha256": "284d6f700d3ec67141570696e4753d23a979563fce48bfda9e767d6819bfb9f6"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/screenos.yaml",
-      "upstream_path": "resources/definitions/os_discovery/screenos.yaml",
-      "sha256": "35548e3ecc1afffcb61406e758ec9003c25a1e69f012cfe3fab068a55c47e8a0"
+      "bundle_path": "resources/definitions/os_detection/secureplatform.yaml",
+      "upstream_path": "resources/definitions/os_detection/secureplatform.yaml",
+      "sha256": "a90aa2772918fa57c09d43221c4f4093bba13c70ffd99b32e4c3927f4d672324"
     },
     {
       "bundle_path": "resources/definitions/os_detection/serveriron.yaml",
@@ -1691,19 +1351,9 @@
       "sha256": "21fec00826c08046d05e77ed2575bba5f51466e032f0cbd38da2e059b34455d9"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/serveriron.yaml",
-      "upstream_path": "resources/definitions/os_discovery/serveriron.yaml",
-      "sha256": "359093bf40e641ecd9c562e777f1826059f415571c21f1392999d324a0e16268"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/slxos.yaml",
       "upstream_path": "resources/definitions/os_detection/slxos.yaml",
       "sha256": "b72d528287c9e6c7f22d978d4834740135f6f4db37b85880ca31494adc50e2da"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/slxos.yaml",
-      "upstream_path": "resources/definitions/os_discovery/slxos.yaml",
-      "sha256": "c08a719131a8957c0ad2c662ba315e32ab5fdd46c8ad677c9d26e184b9862b29"
     },
     {
       "bundle_path": "resources/definitions/os_detection/smartax-mdu.yaml",
@@ -1716,9 +1366,14 @@
       "sha256": "8fc00c590143fa274318fc119972e320c66f16472716c5cc1c35f7241b8cd9a0"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/smartax.yaml",
-      "upstream_path": "resources/definitions/os_discovery/smartax.yaml",
-      "sha256": "d137d1cfaa8a4a18bcb612dca4507b52f02f1a00e8a33e1178c0c4186f72f248"
+      "bundle_path": "resources/definitions/os_detection/sonicwall.yaml",
+      "upstream_path": "resources/definitions/os_detection/sonicwall.yaml",
+      "sha256": "09b66f7a75f883572e92d0c595a61228e7c99c81d5052b89f4f9c5d0e943591d"
+    },
+    {
+      "bundle_path": "resources/definitions/os_detection/sophos-xg.yaml",
+      "upstream_path": "resources/definitions/os_detection/sophos-xg.yaml",
+      "sha256": "496cb8fb688d1349f31275fb4b4f9a22a54de00e303562c3ceab5884973bdeb8"
     },
     {
       "bundle_path": "resources/definitions/os_detection/srlinux.yaml",
@@ -1726,19 +1381,14 @@
       "sha256": "633c2bece5fb3d6996e4b71eba813cdcd52827da5d67a101987a8899afa16d11"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/srlinux.yaml",
-      "upstream_path": "resources/definitions/os_discovery/srlinux.yaml",
-      "sha256": "7ceab43315eec8390d7d2de24b6986c63456d454d5ebfc2149b51139242f6ff4"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/stellar.yaml",
       "upstream_path": "resources/definitions/os_detection/stellar.yaml",
       "sha256": "d9503e035fab23ba1335634d9394ce6cbb2535d8574afd31d836da9cece9aabe"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/stellar.yaml",
-      "upstream_path": "resources/definitions/os_discovery/stellar.yaml",
-      "sha256": "f3a9beab097c77ae6689a7c0d9c5d35d170eebe6bb4123409ae4c8b0157d639a"
+      "bundle_path": "resources/definitions/os_detection/stoneos.yaml",
+      "upstream_path": "resources/definitions/os_detection/stoneos.yaml",
+      "sha256": "e4f7d5260b4b484d44be7ea6c481fdf85c9a35dfc7ed7eab5a036566ea8ae3de"
     },
     {
       "bundle_path": "resources/definitions/os_detection/swos.yaml",
@@ -1746,19 +1396,9 @@
       "sha256": "880742b75df50e2181720d9a55147f4fbde787eb87253c5522358ceee20c6b2b"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/swos.yaml",
-      "upstream_path": "resources/definitions/os_discovery/swos.yaml",
-      "sha256": "3668819a6c88176b062aca24156f38130a72ff47453f4665fb91fcba83129933"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/timos.yaml",
       "upstream_path": "resources/definitions/os_detection/timos.yaml",
       "sha256": "bb79ea987a53dccd99aef653516d4d0b2b55a1363287366b18174aef24551cea"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/timos.yaml",
-      "upstream_path": "resources/definitions/os_discovery/timos.yaml",
-      "sha256": "546817dd00caf8959a4a5d3695047ca494679a77f7378604d096b6ea44f6dbf3"
     },
     {
       "bundle_path": "resources/definitions/os_detection/tplink.yaml",
@@ -1766,19 +1406,9 @@
       "sha256": "172219d5c81cffbefc2382ae13a9d199b7f5f1e892acd113cd51bb13a8772b00"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/tplink.yaml",
-      "upstream_path": "resources/definitions/os_discovery/tplink.yaml",
-      "sha256": "73a915ce4fb5683225d156a483e529b994b9cab0fa06f826cb1f71b06c56d0e8"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/ucos.yaml",
       "upstream_path": "resources/definitions/os_detection/ucos.yaml",
       "sha256": "3a2ef5be9adb07b4947d2185fdef92d042a90d9ab28a1525d1900c03998a6b65"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/ucos.yaml",
-      "upstream_path": "resources/definitions/os_discovery/ucos.yaml",
-      "sha256": "2d0732a4df158c580ae11ea051bc42a9a8d15e5584d7a8a146576267a0dc11df"
     },
     {
       "bundle_path": "resources/definitions/os_detection/unifi-usp.yaml",
@@ -1786,19 +1416,9 @@
       "sha256": "4c93ef53006338dd8c65eeb886e014d1f5eea6ba4c8934e38e59a33497d8bdb3"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/unifi-usp.yaml",
-      "upstream_path": "resources/definitions/os_discovery/unifi-usp.yaml",
-      "sha256": "67e3d849a22e7333051cf6d2a917db9376c1123a67c7933278d9b2abc0c9d4e9"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/unifi.yaml",
       "upstream_path": "resources/definitions/os_detection/unifi.yaml",
       "sha256": "5da291dded22460c1e65f602867b8ad756c144cca37297fe5fb68fdbf1d99e43"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/unifi.yaml",
-      "upstream_path": "resources/definitions/os_discovery/unifi.yaml",
-      "sha256": "b480a1026b67899d36b1e6d3ea3a2dae851e4b39c5837f25758d2b6757cf9444"
     },
     {
       "bundle_path": "resources/definitions/os_detection/viptela.yaml",
@@ -1806,19 +1426,9 @@
       "sha256": "457a1c146d050fcde74a14eec35a7e825532c2a4d94fdba37b5c0a47081cf3ba"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/viptela.yaml",
-      "upstream_path": "resources/definitions/os_discovery/viptela.yaml",
-      "sha256": "9119a971a23d37bd5bd3b9117e957d6dd236e75924d741fd2233e2b79e8db976"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/voss.yaml",
       "upstream_path": "resources/definitions/os_detection/voss.yaml",
       "sha256": "d958009b80e59782809b1183dd8a569206d90200c849408f18b4a729108417ba"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/voss.yaml",
-      "upstream_path": "resources/definitions/os_discovery/voss.yaml",
-      "sha256": "958f6c5a3a9d3eb9fa3175e6690097dddf435eb20f86b64a676f77b75cee5971"
     },
     {
       "bundle_path": "resources/definitions/os_detection/vrp.yaml",
@@ -1826,19 +1436,9 @@
       "sha256": "1def2c90f4edeeea851f8bd60a2ec235407ea78e760a1c9dd0ce0b1ef1dba7be"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/vrp.yaml",
-      "upstream_path": "resources/definitions/os_discovery/vrp.yaml",
-      "sha256": "c818f6968e659f57c06f58c822e84ac4bfd1bb294d815c0b1f2c0e3784b83df9"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/waas.yaml",
       "upstream_path": "resources/definitions/os_detection/waas.yaml",
       "sha256": "4b9c55ee40a885cecf609139ec4f1d4169d2e28f189eae8332e904ee3bdb7c45"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/waas.yaml",
-      "upstream_path": "resources/definitions/os_discovery/waas.yaml",
-      "sha256": "4ccb8524cbf4b66f8429d7b1ab18679dfe3839013fb166a5e527fa4fc10bcfe3"
     },
     {
       "bundle_path": "resources/definitions/os_detection/wavence.yaml",
@@ -1846,19 +1446,9 @@
       "sha256": "a5e40bd2fae8b93f7fa17b5191843798d961ec54fcc80d0fb1d1ea2d916dc2bb"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/wavence.yaml",
-      "upstream_path": "resources/definitions/os_discovery/wavence.yaml",
-      "sha256": "35fb50587d64f067de7f8c3839a05aa8d7ba4c797e0d5449ea968b8f2c1d76d1"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/xos.yaml",
       "upstream_path": "resources/definitions/os_detection/xos.yaml",
       "sha256": "b098d862cc9244c25b90e73c3d8a60fa3ffc8f0aa58eaf635b214cb252855e2a"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/xos.yaml",
-      "upstream_path": "resources/definitions/os_discovery/xos.yaml",
-      "sha256": "b9c795fc6ca02c40d88ceebf454c3e4d91e78c079a0e279b9924886ce99de98e"
     },
     {
       "bundle_path": "resources/definitions/os_detection/yunshan.yaml",
@@ -1866,19 +1456,9 @@
       "sha256": "2d6abfb71f29401a1f5d4292def7eec0e606c291e3a60dad989b5a307f1a2c30"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/yunshan.yaml",
-      "upstream_path": "resources/definitions/os_discovery/yunshan.yaml",
-      "sha256": "643f2d96ec77fb2b3b68684e50068d699724fcc3b5523fe543d89f7fab4ac581"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/zxa10.yaml",
       "upstream_path": "resources/definitions/os_detection/zxa10.yaml",
       "sha256": "4cbe137c23b5c5f04c79a89468dd0777e895bc34bd14ad2bec30e800467beb4c"
-    },
-    {
-      "bundle_path": "resources/definitions/os_discovery/zxa10.yaml",
-      "upstream_path": "resources/definitions/os_discovery/zxa10.yaml",
-      "sha256": "3cefa8fd72109b84c9d85a68e62902892e9b55a45ad84aa9660e62c630e95dcf"
     },
     {
       "bundle_path": "resources/definitions/os_detection/zxdsl.yaml",
@@ -1886,14 +1466,714 @@
       "sha256": "d2e41468ac3dc0fa4e6e96838aca2e316a6ec9255986f09ee8fbb75a46b8701f"
     },
     {
-      "bundle_path": "resources/definitions/os_discovery/zxdsl.yaml",
-      "upstream_path": "resources/definitions/os_discovery/zxdsl.yaml",
-      "sha256": "5503c8945b39032a55c77e56d4624a2df3cbeb09a560529f847e4b003b1b0b26"
-    },
-    {
       "bundle_path": "resources/definitions/os_detection/zxr10.yaml",
       "upstream_path": "resources/definitions/os_detection/zxr10.yaml",
       "sha256": "20f64e71b15748331685f36938db4f9898ef0f68e935ddfe22c66326b3a352b2"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/acano.yaml",
+      "upstream_path": "resources/definitions/os_discovery/acano.yaml",
+      "sha256": "f859e75a8045f4c54477415ed1044e6eedc803e4e3755c1fd68684344598a09f"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/acos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/acos.yaml",
+      "sha256": "7d974eea1a889dad477f31042dfcfb24b3f0cfa20cc1ac99ad783f32b2cf024f"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/acs.yaml",
+      "upstream_path": "resources/definitions/os_discovery/acs.yaml",
+      "sha256": "1c9a3dd2583d5aa4b39f2e66b7e707d2a6bcd99e044df58bdcd9be0cd49edbb2"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/airos-af-ltu.yaml",
+      "upstream_path": "resources/definitions/os_discovery/airos-af-ltu.yaml",
+      "sha256": "fa8b9bc8934274e6322ad7c7f84f2529b5062ece9e05849ae349be70c6aaa36a"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/airos-af.yaml",
+      "upstream_path": "resources/definitions/os_discovery/airos-af.yaml",
+      "sha256": "bb2ea5e3212ca21468e3eb0e52c31f30e5f833a296f534e7bfbc7d10605c7780"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/airos-af60.yaml",
+      "upstream_path": "resources/definitions/os_discovery/airos-af60.yaml",
+      "sha256": "d7a5b7df76e2c0d7898bb88825a61f1248a2aaa544e5b70e2ea1481a0848e134"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/airos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/airos.yaml",
+      "sha256": "d2b02d8161dda51c79677ff4d7a1bb9fd25689e8142f9009351c75c1c251837e"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/allied-tq.yaml",
+      "upstream_path": "resources/definitions/os_discovery/allied-tq.yaml",
+      "sha256": "d2b57e7051aa0facbee557bb6d8fb1f90b9db20bf6fcc5d0554b0c54e7f6fb48"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/aos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/aos.yaml",
+      "sha256": "6fcf4b60004cc8cb27856a1acd72a9f0a54842cc1d029953878c2ee7aaf89412"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/aos6.yaml",
+      "upstream_path": "resources/definitions/os_discovery/aos6.yaml",
+      "sha256": "24265766c42e7222be0cd85b82a3e63f50bf4d82a0f0c510bf423ac8b2deac0b"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/aos7.yaml",
+      "upstream_path": "resources/definitions/os_discovery/aos7.yaml",
+      "sha256": "d8332d8e128db5027a683d22d46f62b2babea673dd013da2170e039022436d0a"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/apic.yaml",
+      "upstream_path": "resources/definitions/os_discovery/apic.yaml",
+      "sha256": "7f6a39b6e082d10384910025bbe67ebd0ad1b77eef1b266229705409de7acb0f"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/arista-mos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/arista-mos.yaml",
+      "sha256": "968dadd689981eed6941c219f54f106c9230d9b6b6e38690e150413501dac690"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/arista_eos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/arista_eos.yaml",
+      "sha256": "7f1101be2da4231dc864adcd179c809a7a682a10c2cecee2ad4a81eff7f61faf"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/aruba-instant.yaml",
+      "upstream_path": "resources/definitions/os_discovery/aruba-instant.yaml",
+      "sha256": "b1cb7a147017983964cec244128f14f1fb64b97c66a33b7fb42c48bbd3e85dde"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/arubaos-cx.yaml",
+      "upstream_path": "resources/definitions/os_discovery/arubaos-cx.yaml",
+      "sha256": "3233d866453c8edc150f89d2c42c42987b4ca300a3fb79c2ae3167e731322505"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/arubaos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/arubaos.yaml",
+      "sha256": "cc5e02d9c79677680de54a9cc1fd8db47be4a684868362be771111b1e4bf69b4"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/asa.yaml",
+      "upstream_path": "resources/definitions/os_discovery/asa.yaml",
+      "sha256": "6241a7d8517124c6f47536b422ef32247d4ce4c678a6b3a516c9254dfe11b594"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/asyncos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/asyncos.yaml",
+      "sha256": "2a914fe3c09bdf851b7e113580bb00069dc7b5398f344263fe9ee2a8604c715c"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/awplus.yaml",
+      "upstream_path": "resources/definitions/os_discovery/awplus.yaml",
+      "sha256": "33eab37f7183816b026dd214f19c5fc0380bbe8663f87e1a9d4e1d005810efaf"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/barracudaspamfirewall.yaml",
+      "upstream_path": "resources/definitions/os_discovery/barracudaspamfirewall.yaml",
+      "sha256": "d5c33610e041d1c4dfc2b65bc42281fde3bf6f250becebfb2dd4ac9f46fd13f0"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/boss.yaml",
+      "upstream_path": "resources/definitions/os_discovery/boss.yaml",
+      "sha256": "975fa8b88c215fcc36141a04fbb9d97e5ec8c451d0515760299427875d79597a"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/broadworks.yaml",
+      "upstream_path": "resources/definitions/os_discovery/broadworks.yaml",
+      "sha256": "d8c3fee942e3152f6889977ca6667a53020a06bd3411025929bec81a8ac73677"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/cat1900.yaml",
+      "upstream_path": "resources/definitions/os_discovery/cat1900.yaml",
+      "sha256": "f2ae6012c38fbecf3f3c491ac7628cbc65d482b22192d5e3df889380b05fb370"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/catos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/catos.yaml",
+      "sha256": "9ec82caed5ff07bd1178944fade7d3d00b9f143a9b18f56c9a54e2a91587278a"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ciena-rls.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ciena-rls.yaml",
+      "sha256": "4bd272ebcf0bd79b0e15729448318cb63f273747b32f97a6316e579a5a316877"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ciena-saos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ciena-saos.yaml",
+      "sha256": "c158b841c695af5dfe1b7146a709e3be35162782a14ea8d3498d09f4e5ab6221"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ciena-sds.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ciena-sds.yaml",
+      "sha256": "3e1e932521e75d68ebece260c7e85acfbd31973eadf1d9bbfbc014cbc83f96b6"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ciena-waveserver.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ciena-waveserver.yaml",
+      "sha256": "eb54fa518ea4e274729855eec370b437ccc0fd52fefeaa7c14296c0e67c7e1e4"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/cimc.yaml",
+      "upstream_path": "resources/definitions/os_discovery/cimc.yaml",
+      "sha256": "d567c017cca78c92d777b91c0b610b235eb24918fbc08bea7307a125df973490"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/cips.yaml",
+      "upstream_path": "resources/definitions/os_discovery/cips.yaml",
+      "sha256": "4d0a124d465a7b81ff4b45d12166d5374d897fb837ff0dd973e5ab7b8c22ced8"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ciscoepc.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ciscoepc.yaml",
+      "sha256": "dfc3a0e6445a35afda34ff31fa4f00000d657a66c351b63a32dda1f7e9dffeb8"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ciscosat.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ciscosat.yaml",
+      "sha256": "a1299951fad47710b2723095cd93cbbd969928a45c7a5ef5b7c51418bb31bfc7"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ciscosb.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ciscosb.yaml",
+      "sha256": "448c73a9f33ca1cb13442dc3af2be887c77b83a9f5f7819fcd1496a539ef4c9f"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ciscosce.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ciscosce.yaml",
+      "sha256": "1d26cddd17e0552261451c99642e432b021fc58d50cf845f1b3339c080af287f"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ciscosrp.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ciscosrp.yaml",
+      "sha256": "156bb85839063feb131e610809fdeba3f91e050609b8ae6f37bd8a7e2b7fc4f0"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ciscowap.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ciscowap.yaml",
+      "sha256": "24b88d2d04f9f08aeabd5d4b47317c6bbb8fde208e70668144cfda650f400af7"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ciscowlc.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ciscowlc.yaml",
+      "sha256": "9e0667a9c5396ebb8f2360382d1e56f6748951580f33555cda03e7ab85855514"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/clearpass.yaml",
+      "upstream_path": "resources/definitions/os_discovery/clearpass.yaml",
+      "sha256": "1f395a54a64b57299294b083de85d48c068f52cd32fa9f0b51fc970aaf1a48c3"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/comware.yaml",
+      "upstream_path": "resources/definitions/os_discovery/comware.yaml",
+      "sha256": "6bcac3c830deeb0521267d18511b199994b272a25714817d27a6ac4751c17be8"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/dcn-software.yaml",
+      "upstream_path": "resources/definitions/os_discovery/dcn-software.yaml",
+      "sha256": "39279ba36edba4eb99632c5de7a522ad1f526ce89df663ef28851d685232e2a9"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/dell-compellent.yaml",
+      "upstream_path": "resources/definitions/os_discovery/dell-compellent.yaml",
+      "sha256": "5e495cfb1ef6437ad23c48ff4b6d7bfb72d6bf2ef5ae82975ffe7859456677eb"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/dell-laser.yaml",
+      "upstream_path": "resources/definitions/os_discovery/dell-laser.yaml",
+      "sha256": "f548b6011976c062cdcccbcb15a9e91575c133d986161e04a624a25c16c71953"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/dell-ome-m.yaml",
+      "upstream_path": "resources/definitions/os_discovery/dell-ome-m.yaml",
+      "sha256": "d535ac9caeb818baf37d8b64aecceaa2942e80979324e4ba9d89881698b0e7b6"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/dell-os10.yaml",
+      "upstream_path": "resources/definitions/os_discovery/dell-os10.yaml",
+      "sha256": "5a15eba855be73eeaf79acb90f3806cc13c3f12cf80c7c3a67033273246143c1"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/dell-powervault.yaml",
+      "upstream_path": "resources/definitions/os_discovery/dell-powervault.yaml",
+      "sha256": "2ed8cedd1b72babe10853e41c1a13b87537611ec0e37a4411ce2bf167320b4ab"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/dell-rcs.yaml",
+      "upstream_path": "resources/definitions/os_discovery/dell-rcs.yaml",
+      "sha256": "0c25ff304a9a77b116cd9ce2ab114992f031eec1968b0329cb82ac952b9759dd"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/dell-rpdu.yaml",
+      "upstream_path": "resources/definitions/os_discovery/dell-rpdu.yaml",
+      "sha256": "f77f20f4789a30d2f428e76cde32769419fcfdeaa2b18e23d3f4977dd0fcf419"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/dell-ups.yaml",
+      "upstream_path": "resources/definitions/os_discovery/dell-ups.yaml",
+      "sha256": "f287c4d6e721c29290450aee0732468794dd09798fe0de4a2a553e45e1393a43"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/dlink-dgs1250.yaml",
+      "upstream_path": "resources/definitions/os_discovery/dlink-dgs1250.yaml",
+      "sha256": "e84f060c41fa2238e6cd0a80b9c82af9d8ba7a5f2488ee409988713cc22bcf63"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/dlink.yaml",
+      "upstream_path": "resources/definitions/os_discovery/dlink.yaml",
+      "sha256": "fe1d891dd2294ff893d78a5dea595227c1eb8f2ced8463fb3dc52bdd0c72020e"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/dnos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/dnos.yaml",
+      "sha256": "0364428e93cebb4ba06f06b12e1ab53901d3d35decc619ca2310ea417dc61f90"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/drac.yaml",
+      "upstream_path": "resources/definitions/os_discovery/drac.yaml",
+      "sha256": "b5cc3fa8f11c1664b5a90a86a5cb10b41d2fff48448625c71ce43486edbda8a5"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/edgeos-ep.yaml",
+      "upstream_path": "resources/definitions/os_discovery/edgeos-ep.yaml",
+      "sha256": "bf4459a546b3aa61a0715a65c361a9851b00b1569835cea3efc9f68d5bd1ba17"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/edgeos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/edgeos.yaml",
+      "sha256": "c9fd2b844c9c7e49fc1a0f0faaea07649a2b66b5b2e40850da9128f8a3f6a07a"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/edgeosolt.yaml",
+      "upstream_path": "resources/definitions/os_discovery/edgeosolt.yaml",
+      "sha256": "d0623b9be836f65e2bba79ba5648967f9a7a7e1609987198c48e2253c4fd2a3a"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/edgeswitch.yaml",
+      "upstream_path": "resources/definitions/os_discovery/edgeswitch.yaml",
+      "sha256": "f4869f1ef5265db68afd7784ae894ad468feb4bc8c26ccfefbce2b151bdd9573"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ewc.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ewc.yaml",
+      "sha256": "1df85700616d02c2779750a10ad8ce796caf865e4ac271a664aa1382ff72a37a"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/exalink-fusion.yaml",
+      "upstream_path": "resources/definitions/os_discovery/exalink-fusion.yaml",
+      "sha256": "9df4f84b388ab24a3d0b380fc3fdf2855937fbe5e4b079c4906e34867cc7deac"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/exos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/exos.yaml",
+      "sha256": "0ceac7eef4a403f177bfc32ab8aad3e230edc00aeee106f0032ebfd05274cee3"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/extremeware.yaml",
+      "upstream_path": "resources/definitions/os_discovery/extremeware.yaml",
+      "sha256": "eb8d6f9210183243bc79ecc1f5649d722ea090dbdc0057ad97a0e2d6bea420c7"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/f5.yaml",
+      "upstream_path": "resources/definitions/os_discovery/f5.yaml",
+      "sha256": "003615fd005603eb21226f1be394a164f22ff43ab1f862f2f235cf90bf6b0bd2"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/f5os.yaml",
+      "upstream_path": "resources/definitions/os_discovery/f5os.yaml",
+      "sha256": "714216425d0849f611d7b7ad060866db5ef222c28118590393e121ecb03995ef"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/fabos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/fabos.yaml",
+      "sha256": "a71ed877d3f4c2c42123abad2786d8473a567dec9c042059c85266b77e6bdf3f"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/fiberhome-switch.yaml",
+      "upstream_path": "resources/definitions/os_discovery/fiberhome-switch.yaml",
+      "sha256": "f415a59dec485f4683bbbd57baf06e0162b795f147781e02df13f5559f137342"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/fiberhome.yaml",
+      "upstream_path": "resources/definitions/os_discovery/fiberhome.yaml",
+      "sha256": "fe097e4297c6c3622df2b5574933207f721b68f5ec16262e987f103392171538"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/fluidfs.yaml",
+      "upstream_path": "resources/definitions/os_discovery/fluidfs.yaml",
+      "sha256": "f54e9f24aebec0e8f6f8618d0e723f1602b70b9c801c77f3a8365b3b0e9b1b17"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/fortiadc.yaml",
+      "upstream_path": "resources/definitions/os_discovery/fortiadc.yaml",
+      "sha256": "27e5f41e1731003d7ec6e6e8be433f8672e6b863d3bb04e670838f7b3ed2b549"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/fortiap.yaml",
+      "upstream_path": "resources/definitions/os_discovery/fortiap.yaml",
+      "sha256": "c347b585feba5a513f44983f12f7ab9882ba348ac075fddffc86ed5be6f6b864"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/fortiauthenticator.yaml",
+      "upstream_path": "resources/definitions/os_discovery/fortiauthenticator.yaml",
+      "sha256": "df5dbd0686886d8abf8251a38bc7d9fb5e256c9113e842881c3118d06d09d618"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/fortigate.yaml",
+      "upstream_path": "resources/definitions/os_discovery/fortigate.yaml",
+      "sha256": "39fd472b1757efe17cdc6e43261cd2a10a92e7491172a90c589016fe69e25f1a"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/fortimail.yaml",
+      "upstream_path": "resources/definitions/os_discovery/fortimail.yaml",
+      "sha256": "2fde64fd4dc9af158b032c803914a703968125f6df7cd239d99ef5f5e9960f8a"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/fortios.yaml",
+      "upstream_path": "resources/definitions/os_discovery/fortios.yaml",
+      "sha256": "e284f28a3a62041b7645cfdb742f5c378becee3267786632d59633c15412932f"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/fortisandbox.yaml",
+      "upstream_path": "resources/definitions/os_discovery/fortisandbox.yaml",
+      "sha256": "5ae3273809f7a9346bdc134ed5897cd4716f354eccde9e4c5bdca01a1c5608e9"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/fortiswitch.yaml",
+      "upstream_path": "resources/definitions/os_discovery/fortiswitch.yaml",
+      "sha256": "8bb0d66500ed0ccccb638a5e3b04de1311282605fa6b07ef27928da96a061b05"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/fortiweb.yaml",
+      "upstream_path": "resources/definitions/os_discovery/fortiweb.yaml",
+      "sha256": "5fcd17ff6612a437849fa40ed011f4a5da60b969d1e683e670d29183078f2364"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/fortiwlc.yaml",
+      "upstream_path": "resources/definitions/os_discovery/fortiwlc.yaml",
+      "sha256": "ccf350dcff3539edc4fddf51db84eedbb2be366c15ef2d04c3fb962f6d6646da"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/fs-ruijie.yaml",
+      "upstream_path": "resources/definitions/os_discovery/fs-ruijie.yaml",
+      "sha256": "b7a080605e1b725a724fdef6542f0054d1842c6d70b8bafdb1767c5ee538a464"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ftd.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ftd.yaml",
+      "sha256": "1ee45b2b6313f4abac8708e79400a089c7ec35f7ee7af7352612bf1fc5d5ddae"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/fxos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/fxos.yaml",
+      "sha256": "4ad883d89f5e146293748bb57c9644af6916a931fd9b86b254b628ae9e98ef02"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/gaia.yaml",
+      "upstream_path": "resources/definitions/os_discovery/gaia.yaml",
+      "sha256": "011fa6e4e767d1fb6c39a44949893e2d516728b0894c5231121ad633d97fd3a8"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/huawei-optixrtn.yaml",
+      "upstream_path": "resources/definitions/os_discovery/huawei-optixrtn.yaml",
+      "sha256": "c8feffb5a52f0bb938703c34ead74bfcbe185cf7a6601c23accab3aedec74fb6"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/huawei-smu.yaml",
+      "upstream_path": "resources/definitions/os_discovery/huawei-smu.yaml",
+      "sha256": "06c0a1bec12bef3fe3cda40a44df26a26737840b2e7e40c6f11c5685d6104577"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/huaweiups.yaml",
+      "upstream_path": "resources/definitions/os_discovery/huaweiups.yaml",
+      "sha256": "9652fb6ac8e6e597306862d532ef7021351abdf3bc179cdb56d27f14ce75357e"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ibmc.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ibmc.yaml",
+      "sha256": "8e9cea2e2e759a47316f02b7e99d0de659483b20474b531ee38aff24a30528f4"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ios.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ios.yaml",
+      "sha256": "d11f840f1abf87583f16fde11fe6cb1618b873f13553fc78a62c5005d5696a46"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/iosxe.yaml",
+      "upstream_path": "resources/definitions/os_discovery/iosxe.yaml",
+      "sha256": "a7d63e97d055865fe869c3fee5448a96fdd929ad154590a08749eb26a80e89dc"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/iosxr.yaml",
+      "upstream_path": "resources/definitions/os_discovery/iosxr.yaml",
+      "sha256": "0d60af57d7d098bbb0bfa7a878c66465aea328b8554088c2927ecacdf5fe17e8"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ironware.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ironware.yaml",
+      "sha256": "64719c0a5721192d12b91c9e4040dfc5fc0d9ea6bf38a79ccc7eaed0a09f86d3"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ise.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ise.yaml",
+      "sha256": "62898a97ca4a8b46a58aff076aab3c5722aecbcc67eb50f315c9ca003e37b764"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/jetstream.yaml",
+      "upstream_path": "resources/definitions/os_discovery/jetstream.yaml",
+      "sha256": "1256943a6b0f681ffd434ca350e58dd83afce8b4a10069bb8fb9ba3334b365dc"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/juniper-mss.yaml",
+      "upstream_path": "resources/definitions/os_discovery/juniper-mss.yaml",
+      "sha256": "eced6d1ee0d2c3de5d7bf814637bed264f8da785044181db798804ef8f63b4cc"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/junos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/junos.yaml",
+      "sha256": "6241d8345e8e720cb4c5e5b2426dd2052c2f7f45ac65d74fda47fd38c6fbda5c"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/junose.yaml",
+      "upstream_path": "resources/definitions/os_discovery/junose.yaml",
+      "sha256": "0bda030ac065c9f82702f429543181709c49eb53335fd342f08a35a5c4abe7ea"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/jwos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/jwos.yaml",
+      "sha256": "13434eef8cd4cec5c08306d1e53f82e6b39b9baaa3a96ab0946f25f7a2bb1822"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/mypoweros.yaml",
+      "upstream_path": "resources/definitions/os_discovery/mypoweros.yaml",
+      "sha256": "798141b618593ca0bdc5d20eb07678323705624af483f0628e38c35b0cd44405"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/nokia-1830.yaml",
+      "upstream_path": "resources/definitions/os_discovery/nokia-1830.yaml",
+      "sha256": "266e230f6a012fb90bad624399a246e14e5df84299039f3e144933af1ccdfbef"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/nokia-isam.yaml",
+      "upstream_path": "resources/definitions/os_discovery/nokia-isam.yaml",
+      "sha256": "e0750457411c3629b5fdc36613c2fb4ba8269b66b158fed83c784dd5edc87fec"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/nos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/nos.yaml",
+      "sha256": "cf62bccd5b481f3b30def770a739923926a95e492b7c3cfeb203ab492d89c3ab"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/nxos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/nxos.yaml",
+      "sha256": "34001cdbe07683d36161931271367ec3ba6a7eb98f42152f62e907669ddee682"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/oceanstor.yaml",
+      "upstream_path": "resources/definitions/os_discovery/oceanstor.yaml",
+      "sha256": "b2986e0eebc0a5f91324df9f088b80c23e2958e234c420008ff0c93883d0c6a3"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/omnipcx.yaml",
+      "upstream_path": "resources/definitions/os_discovery/omnipcx.yaml",
+      "sha256": "5158f3c32bc9469795fc23eeb5b004e3bdaec30fe3ffe8b87adba6652fc9465c"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ons.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ons.yaml",
+      "sha256": "c26951aa9ca306eed72f9aeb706815964dd3bf5875e99ba767bb4684f44d0120"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/panos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/panos.yaml",
+      "sha256": "3773b80d52dc8fe025660a323dea1e38b6f6f07d770f00c0f39accf7e622195d"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/powerconnect.yaml",
+      "upstream_path": "resources/definitions/os_discovery/powerconnect.yaml",
+      "sha256": "a7051ed1e51657f731afd42020b8cecf9bc319e36f687a8ade717bd0304a22ec"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/powervault.yaml",
+      "upstream_path": "resources/definitions/os_discovery/powervault.yaml",
+      "sha256": "3a0691d39d5db85e82afec8546d1f5546d900a8127b67ae06dfa612a42638eee"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/primeinfrastructure.yaml",
+      "upstream_path": "resources/definitions/os_discovery/primeinfrastructure.yaml",
+      "sha256": "9fe8b9c57605a19ed9aa9a72b1ae21e8ed6a0cd0cff89f467a4fa19c1a98e0ae"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/procurve.yaml",
+      "upstream_path": "resources/definitions/os_discovery/procurve.yaml",
+      "sha256": "d031142b7667c40aaf805be04d5b4438cd2f9662d7f2e11c46509dced7c606de"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/radlan.yaml",
+      "upstream_path": "resources/definitions/os_discovery/radlan.yaml",
+      "sha256": "93a38026913bf8d98d1b291a196ea2167350db4a0c5dd5b9e9ff710d3ce39aa3"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/raisecom-ros.yaml",
+      "upstream_path": "resources/definitions/os_discovery/raisecom-ros.yaml",
+      "sha256": "d5f1a97dcf466f2b168c5e5fec9fec84edb678b2502fcddb476ec5b33b31afd4"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/raisecom.yaml",
+      "upstream_path": "resources/definitions/os_discovery/raisecom.yaml",
+      "sha256": "d01cc893933ee44736afb600024c5712adb4d4c279fdc8cdfc8cc94152e58a76"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/routeros.yaml",
+      "upstream_path": "resources/definitions/os_discovery/routeros.yaml",
+      "sha256": "462a1697a82ac58d26d5f6065e74b3d1ac57ca5ce184e94d18e775244eef64bd"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ruckuswireless-hotzone.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ruckuswireless-hotzone.yaml",
+      "sha256": "783f1252ca37d00243ee0673077b2d3ce80d27ebe9f52986efab823e365198f3"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ruckuswireless-unleashed.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ruckuswireless-unleashed.yaml",
+      "sha256": "934b81116a47d276575d17b12cb158b93cbdcbab133b6f9971483980773033ec"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ruckuswireless.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ruckuswireless.yaml",
+      "sha256": "0d3584961ce11238b0c43a4bb06236254a4e7f7d400761bcd132b295454c5d35"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ruijie.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ruijie.yaml",
+      "sha256": "609a55699b706391f7d3745acc8157b08a4c11f1fe7dd3c7356b64a6caa7d46f"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/screenos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/screenos.yaml",
+      "sha256": "35548e3ecc1afffcb61406e758ec9003c25a1e69f012cfe3fab068a55c47e8a0"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/secureplatform.yaml",
+      "upstream_path": "resources/definitions/os_discovery/secureplatform.yaml",
+      "sha256": "aa0ba86cc9e21432dbdfe338bdcbc2d0e0171efa64e6a4ee8602d97034223d28"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/serveriron.yaml",
+      "upstream_path": "resources/definitions/os_discovery/serveriron.yaml",
+      "sha256": "359093bf40e641ecd9c562e777f1826059f415571c21f1392999d324a0e16268"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/slxos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/slxos.yaml",
+      "sha256": "c08a719131a8957c0ad2c662ba315e32ab5fdd46c8ad677c9d26e184b9862b29"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/smartax.yaml",
+      "upstream_path": "resources/definitions/os_discovery/smartax.yaml",
+      "sha256": "d137d1cfaa8a4a18bcb612dca4507b52f02f1a00e8a33e1178c0c4186f72f248"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/sonicwall.yaml",
+      "upstream_path": "resources/definitions/os_discovery/sonicwall.yaml",
+      "sha256": "fd8746d2251afd2b8e48f97d5b689b35e42e166ae754b135146a76b57276867d"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/sophos-xg.yaml",
+      "upstream_path": "resources/definitions/os_discovery/sophos-xg.yaml",
+      "sha256": "e657b47a7635dee5b1d6b4ae46cf824f2faa82cf5376fd7a19ccc06a09faecb0"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/srlinux.yaml",
+      "upstream_path": "resources/definitions/os_discovery/srlinux.yaml",
+      "sha256": "7ceab43315eec8390d7d2de24b6986c63456d454d5ebfc2149b51139242f6ff4"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/stellar.yaml",
+      "upstream_path": "resources/definitions/os_discovery/stellar.yaml",
+      "sha256": "f3a9beab097c77ae6689a7c0d9c5d35d170eebe6bb4123409ae4c8b0157d639a"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/stoneos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/stoneos.yaml",
+      "sha256": "58e47225740cd99227d9aca957e80e00204bd8960f46319411aa890de9468062"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/swos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/swos.yaml",
+      "sha256": "3668819a6c88176b062aca24156f38130a72ff47453f4665fb91fcba83129933"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/timos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/timos.yaml",
+      "sha256": "546817dd00caf8959a4a5d3695047ca494679a77f7378604d096b6ea44f6dbf3"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/tplink.yaml",
+      "upstream_path": "resources/definitions/os_discovery/tplink.yaml",
+      "sha256": "73a915ce4fb5683225d156a483e529b994b9cab0fa06f826cb1f71b06c56d0e8"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/ucos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/ucos.yaml",
+      "sha256": "2d0732a4df158c580ae11ea051bc42a9a8d15e5584d7a8a146576267a0dc11df"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/unifi-usp.yaml",
+      "upstream_path": "resources/definitions/os_discovery/unifi-usp.yaml",
+      "sha256": "67e3d849a22e7333051cf6d2a917db9376c1123a67c7933278d9b2abc0c9d4e9"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/unifi.yaml",
+      "upstream_path": "resources/definitions/os_discovery/unifi.yaml",
+      "sha256": "b480a1026b67899d36b1e6d3ea3a2dae851e4b39c5837f25758d2b6757cf9444"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/viptela.yaml",
+      "upstream_path": "resources/definitions/os_discovery/viptela.yaml",
+      "sha256": "9119a971a23d37bd5bd3b9117e957d6dd236e75924d741fd2233e2b79e8db976"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/voss.yaml",
+      "upstream_path": "resources/definitions/os_discovery/voss.yaml",
+      "sha256": "958f6c5a3a9d3eb9fa3175e6690097dddf435eb20f86b64a676f77b75cee5971"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/vrp.yaml",
+      "upstream_path": "resources/definitions/os_discovery/vrp.yaml",
+      "sha256": "c818f6968e659f57c06f58c822e84ac4bfd1bb294d815c0b1f2c0e3784b83df9"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/waas.yaml",
+      "upstream_path": "resources/definitions/os_discovery/waas.yaml",
+      "sha256": "4ccb8524cbf4b66f8429d7b1ab18679dfe3839013fb166a5e527fa4fc10bcfe3"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/wavence.yaml",
+      "upstream_path": "resources/definitions/os_discovery/wavence.yaml",
+      "sha256": "35fb50587d64f067de7f8c3839a05aa8d7ba4c797e0d5449ea968b8f2c1d76d1"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/xos.yaml",
+      "upstream_path": "resources/definitions/os_discovery/xos.yaml",
+      "sha256": "b9c795fc6ca02c40d88ceebf454c3e4d91e78c079a0e279b9924886ce99de98e"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/yunshan.yaml",
+      "upstream_path": "resources/definitions/os_discovery/yunshan.yaml",
+      "sha256": "643f2d96ec77fb2b3b68684e50068d699724fcc3b5523fe543d89f7fab4ac581"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/zxa10.yaml",
+      "upstream_path": "resources/definitions/os_discovery/zxa10.yaml",
+      "sha256": "3cefa8fd72109b84c9d85a68e62902892e9b55a45ad84aa9660e62c630e95dcf"
+    },
+    {
+      "bundle_path": "resources/definitions/os_discovery/zxdsl.yaml",
+      "upstream_path": "resources/definitions/os_discovery/zxdsl.yaml",
+      "sha256": "5503c8945b39032a55c77e56d4624a2df3cbeb09a560529f847e4b003b1b0b26"
     },
     {
       "bundle_path": "resources/definitions/os_discovery/zxr10.yaml",
@@ -1903,6 +2183,22 @@
   ],
   "mib_module_references_missing_from_upstream_tree": [],
   "mibs": [
+    {
+      "module": "A10-AX-MIB",
+      "platform_vendor_scope": "A10 Networks",
+      "bundle_path": "mibs/a10-networks/_upstream/a10/A10-AX-MIB",
+      "upstream_path": "mibs/a10/A10-AX-MIB",
+      "sha256": "148f86f913770f72a2c46fa1e00ff378d6cbeb21ed73747b278114e2deee0185",
+      "size_bytes": 386742
+    },
+    {
+      "module": "A10-COMMON-MIB",
+      "platform_vendor_scope": "A10 Networks",
+      "bundle_path": "mibs/a10-networks/_upstream/a10/A10-COMMON-MIB",
+      "upstream_path": "mibs/a10/A10-COMMON-MIB",
+      "sha256": "963bab21ae5422a7724c5a5430ec59341e4a818cf08b8c9014f191f4ae1120fc",
+      "size_bytes": 9313
+    },
     {
       "module": "A4400-CPU-MIB",
       "platform_vendor_scope": "Alcatel-Lucent Enterprise",
@@ -4742,6 +5038,14 @@
       "upstream_path": "mibs/cisco/CERENT-TC",
       "sha256": "f2ee1344711a71ab78b83e9e3c7b8479a5532b45099c7162a9f28a432c95a7b9",
       "size_bytes": 34178
+    },
+    {
+      "module": "CHECKPOINT-MIB",
+      "platform_vendor_scope": "Check Point",
+      "bundle_path": "mibs/check-point/_upstream/checkpoint/CHECKPOINT-MIB",
+      "upstream_path": "mibs/checkpoint/CHECKPOINT-MIB",
+      "sha256": "271e62b9f4ff0027fb90d98d2de3728625f8a31572681c073cad2d2cb3f495f9",
+      "size_bytes": 670917
     },
     {
       "module": "CIENA-6500R-INVENTORY-AMPS-MIB",
@@ -9712,6 +10016,38 @@
       "size_bytes": 36777
     },
     {
+      "module": "F5-BIGIP-COMMON-MIB",
+      "platform_vendor_scope": "F5",
+      "bundle_path": "mibs/f5/_upstream/f5/F5-BIGIP-COMMON-MIB",
+      "upstream_path": "mibs/f5/F5-BIGIP-COMMON-MIB",
+      "sha256": "0f23c55b3c5104ed5ad84aad7d0cdc60ee19f83b617613498f565a2fa0ece1d5",
+      "size_bytes": 60184
+    },
+    {
+      "module": "F5-BIGIP-SYSTEM-MIB",
+      "platform_vendor_scope": "F5",
+      "bundle_path": "mibs/f5/_upstream/f5/F5-BIGIP-SYSTEM-MIB",
+      "upstream_path": "mibs/f5/F5-BIGIP-SYSTEM-MIB",
+      "sha256": "273ba6987cf7f9b552e81e094e1172c251796dbd8e72fc59b6f98555cb68dd52",
+      "size_bytes": 743336
+    },
+    {
+      "module": "F5-COMMON-SMI-MIB",
+      "platform_vendor_scope": "F5",
+      "bundle_path": "mibs/f5/_upstream/f5/F5-COMMON-SMI-MIB",
+      "upstream_path": "mibs/f5/F5-COMMON-SMI-MIB",
+      "sha256": "322a592a07305a75589ae10ed5b491cbb37132d2f5898b5348183e8b0c5487d1",
+      "size_bytes": 282
+    },
+    {
+      "module": "F5-PLATFORM-STATS-MIB",
+      "platform_vendor_scope": "F5",
+      "bundle_path": "mibs/f5/_upstream/f5/F5-PLATFORM-STATS-MIB",
+      "upstream_path": "mibs/f5/F5-PLATFORM-STATS-MIB",
+      "sha256": "acfa94fbf0ca85cad46fae49c00d223bec2116580a771607764512f86a121b76",
+      "size_bytes": 26930
+    },
+    {
       "module": "FA-EXT-MIB",
       "platform_vendor_scope": "Brocade",
       "bundle_path": "mibs/brocade/_upstream/brocade/FA-EXT-MIB",
@@ -9830,6 +10166,86 @@
       "upstream_path": "mibs/dell/FORCE10-TRAP-EVENT-MIB",
       "sha256": "6012702ae3c3a11c28a694c222262179a6e17558e7f8717ade3e51afec5e88d0",
       "size_bytes": 11413
+    },
+    {
+      "module": "FORTINET-CORE-MIB",
+      "platform_vendor_scope": "Fortinet",
+      "bundle_path": "mibs/fortinet/_upstream/fortinet/FORTINET-CORE-MIB",
+      "upstream_path": "mibs/fortinet/FORTINET-CORE-MIB",
+      "sha256": "a53bf4a2ae8e237e010d307ade11f69b4cf055f42f4e10f9b2fda1985db341e1",
+      "size_bytes": 16076
+    },
+    {
+      "module": "FORTINET-FORTIADC-MIB",
+      "platform_vendor_scope": "Fortinet",
+      "bundle_path": "mibs/fortinet/_upstream/fortinet/FORTINET-FORTIADC-MIB",
+      "upstream_path": "mibs/fortinet/FORTINET-FORTIADC-MIB",
+      "sha256": "ecfcb62533c9d72e531575200eb6462079c222824c40d625a41e345f5715d1a2",
+      "size_bytes": 113818
+    },
+    {
+      "module": "FORTINET-FORTIAP-MIB",
+      "platform_vendor_scope": "Fortinet",
+      "bundle_path": "mibs/fortinet/_upstream/fortinet/FORTINET-FORTIAP-MIB",
+      "upstream_path": "mibs/fortinet/FORTINET-FORTIAP-MIB",
+      "sha256": "60c7afe166bbb1dfdb4e17b2d416db86f7ca8a5a5ee5029de4a28d372d1bde0e",
+      "size_bytes": 65396
+    },
+    {
+      "module": "FORTINET-FORTIAUTHENTICATOR-MIB",
+      "platform_vendor_scope": "Fortinet",
+      "bundle_path": "mibs/fortinet/_upstream/fortinet/FORTINET-FORTIAUTHENTICATOR-MIB",
+      "upstream_path": "mibs/fortinet/FORTINET-FORTIAUTHENTICATOR-MIB",
+      "sha256": "10816f5bc580c9b2c4e1fedaaf1df30fb0379fd353d09a6a708123a791da8778",
+      "size_bytes": 14305
+    },
+    {
+      "module": "FORTINET-FORTIGATE-MIB",
+      "platform_vendor_scope": "Fortinet",
+      "bundle_path": "mibs/fortinet/_upstream/fortinet/FORTINET-FORTIGATE-MIB",
+      "upstream_path": "mibs/fortinet/FORTINET-FORTIGATE-MIB",
+      "sha256": "9ff90fc12e91ed1b752dd0505a3718a4ac41d08a02585686231312d59f3b07c7",
+      "size_bytes": 484367
+    },
+    {
+      "module": "FORTINET-FORTIMAIL-MIB",
+      "platform_vendor_scope": "Fortinet",
+      "bundle_path": "mibs/fortinet/_upstream/fortinet/FORTINET-FORTIMAIL-MIB",
+      "upstream_path": "mibs/fortinet/FORTINET-FORTIMAIL-MIB",
+      "sha256": "910ecd415352528e175d9dd27eaf2fcc47cb44e7e1fbe575fe250e87acf19591",
+      "size_bytes": 20595
+    },
+    {
+      "module": "FORTINET-FORTIMANAGER-FORTIANALYZER-MIB",
+      "platform_vendor_scope": "Fortinet",
+      "bundle_path": "mibs/fortinet/_upstream/fortinet/FORTINET-FORTIMANAGER-FORTIANALYZER-MIB",
+      "upstream_path": "mibs/fortinet/FORTINET-FORTIMANAGER-FORTIANALYZER-MIB",
+      "sha256": "ffa60e7689663bb7d672f390a3b2e5478f0ff20fba0dd309b884298758e28abc",
+      "size_bytes": 84844
+    },
+    {
+      "module": "FORTINET-FORTISANDBOX-MIB",
+      "platform_vendor_scope": "Fortinet",
+      "bundle_path": "mibs/fortinet/_upstream/fortinet/FORTINET-FORTISANDBOX-MIB",
+      "upstream_path": "mibs/fortinet/FORTINET-FORTISANDBOX-MIB",
+      "sha256": "7903d268a20de098249d9aade876f138a1199d106425247c9e7a31473bceb3e8",
+      "size_bytes": 17228
+    },
+    {
+      "module": "FORTINET-FORTISWITCH-MIB",
+      "platform_vendor_scope": "Fortinet",
+      "bundle_path": "mibs/fortinet/_upstream/fortinet/FORTINET-FORTISWITCH-MIB",
+      "upstream_path": "mibs/fortinet/FORTINET-FORTISWITCH-MIB",
+      "sha256": "178fe07a2d277a4d7aeea971613401ccf98ae1528ef16126f13fd229b1d883a0",
+      "size_bytes": 17529
+    },
+    {
+      "module": "FORTINET-FORTIWEB-MIB",
+      "platform_vendor_scope": "Fortinet",
+      "bundle_path": "mibs/fortinet/_upstream/fortinet/FORTINET-FORTIWEB-MIB",
+      "upstream_path": "mibs/fortinet/FORTINET-FORTIWEB-MIB",
+      "sha256": "fc663fa73d516c863051365561049c87fd1e80329cdf898bff7515e295b8705d",
+      "size_bytes": 23567
     },
     {
       "module": "FOUNDRY-BFD-STD-MIB",
@@ -10454,6 +10870,14 @@
       "upstream_path": "mibs/extreme/HA-MIB",
       "sha256": "b1e62587e4561bc6ebcf642cd419cdc8fc043f82506b3b2f22faff0786b6e503",
       "size_bytes": 10591
+    },
+    {
+      "module": "HCNUM-TC",
+      "platform_vendor_scope": "Standard",
+      "bundle_path": "mibs/standard/_upstream/HCNUM-TC",
+      "upstream_path": "mibs/HCNUM-TC",
+      "sha256": "c8d21522e37294169277cab9a9e6e0dae85ce2a106af3e64429ece8f35b6835c",
+      "size_bytes": 4660
     },
     {
       "module": "HH3C-3GMODEM-MIB",
@@ -12622,6 +13046,62 @@
       "upstream_path": "mibs/comware/HH3C-WLANMT-MIB",
       "sha256": "6a4e95b150ca8947d5ce51b6fd4ba5b94d234116be0b7f3fb7285daaa0c0b469",
       "size_bytes": 4133
+    },
+    {
+      "module": "HILLSTONE-POWER-MIB",
+      "platform_vendor_scope": "Hillstone",
+      "bundle_path": "mibs/hillstone/_upstream/hillstone/HILLSTONE-POWER-MIB",
+      "upstream_path": "mibs/hillstone/HILLSTONE-POWER-MIB",
+      "sha256": "314b78a29ac4df063d62f673afe2a1f4869a30dde00b9a2f2c419ece6ee72e57",
+      "size_bytes": 2321
+    },
+    {
+      "module": "HILLSTONE-SMI",
+      "platform_vendor_scope": "Hillstone",
+      "bundle_path": "mibs/hillstone/_upstream/hillstone/HILLSTONE-SMI",
+      "upstream_path": "mibs/hillstone/HILLSTONE-SMI",
+      "sha256": "d5167ba7d51e703aecca8362ce4a0752bc83def8a998c53467efaa862cc851d4",
+      "size_bytes": 8171
+    },
+    {
+      "module": "HILLSTONE-SYSTEM-MIB",
+      "platform_vendor_scope": "Hillstone",
+      "bundle_path": "mibs/hillstone/_upstream/hillstone/HILLSTONE-SYSTEM-MIB",
+      "upstream_path": "mibs/hillstone/HILLSTONE-SYSTEM-MIB",
+      "sha256": "3d3429a2ba8cf23c5523ca7c236338aa2d831a9eb304908e2fb37cdd3b366a69",
+      "size_bytes": 3908
+    },
+    {
+      "module": "HILLSTONE-TEMPERATURE-MIB",
+      "platform_vendor_scope": "Hillstone",
+      "bundle_path": "mibs/hillstone/_upstream/hillstone/HILLSTONE-TEMPERATURE-MIB",
+      "upstream_path": "mibs/hillstone/HILLSTONE-TEMPERATURE-MIB",
+      "sha256": "f34909184eb2ac6c631f46f157ae5758ef378c07a4e9f1839f98ab2dd8f5650e",
+      "size_bytes": 2407
+    },
+    {
+      "module": "HIPATH-WIRELESS-DOT11-EXTNS-MIB",
+      "platform_vendor_scope": "Extreme Networks",
+      "bundle_path": "mibs/extreme-networks/_upstream/ewc/HIPATH-WIRELESS-DOT11-EXTNS-MIB",
+      "upstream_path": "mibs/ewc/HIPATH-WIRELESS-DOT11-EXTNS-MIB",
+      "sha256": "73a68c03ced22757f8927b7aa27704a6f97902ebb927771a13956546dd4c68ba",
+      "size_bytes": 68705
+    },
+    {
+      "module": "HIPATH-WIRELESS-HWC-MIB",
+      "platform_vendor_scope": "Extreme Networks",
+      "bundle_path": "mibs/extreme-networks/_upstream/ewc/HIPATH-WIRELESS-HWC-MIB",
+      "upstream_path": "mibs/ewc/HIPATH-WIRELESS-HWC-MIB",
+      "sha256": "77c2ca19f778630528c583725639708ffe50b3b5f6436d3075f3abe38d6c0fb4",
+      "size_bytes": 578059
+    },
+    {
+      "module": "HIPATH-WIRELESS-SMI",
+      "platform_vendor_scope": "Extreme Networks",
+      "bundle_path": "mibs/extreme-networks/_upstream/ewc/HIPATH-WIRELESS-SMI",
+      "upstream_path": "mibs/ewc/HIPATH-WIRELESS-SMI",
+      "sha256": "86f67952b5f594036da596a15071439019cc02967a5f73d5bdb6e7370cb77324",
+      "size_bytes": 2100
     },
     {
       "module": "HOST-RESOURCES-MIB",
@@ -15112,6 +15592,14 @@
       "size_bytes": 73505
     },
     {
+      "module": "INET-ADDRESS-MIB",
+      "platform_vendor_scope": "Standard",
+      "bundle_path": "mibs/standard/_upstream/INET-ADDRESS-MIB",
+      "upstream_path": "mibs/INET-ADDRESS-MIB",
+      "sha256": "2cec7722aa39eb8facf105b26e93d0bce4ca9f097638c094b0a4f247c86843dc",
+      "size_bytes": 16782
+    },
+    {
       "module": "IP-FORWARD-MIB",
       "platform_vendor_scope": "Standard",
       "bundle_path": "mibs/standard/_upstream/IP-FORWARD-MIB",
@@ -15126,6 +15614,14 @@
       "upstream_path": "mibs/IPV6-MIB",
       "sha256": "4387d54f518e85fa37c770c6998568000d049b68c90c1cd02a0ffde3fcde0f63",
       "size_bytes": 58124
+    },
+    {
+      "module": "IPV6-TC",
+      "platform_vendor_scope": "Standard",
+      "bundle_path": "mibs/standard/_upstream/IPV6-TC",
+      "upstream_path": "mibs/IPV6-TC",
+      "sha256": "4ce05d7b8acbe4d593b61fbe67690acd234065b09e95d659704de95a4e8c5621",
+      "size_bytes": 3154
     },
     {
       "module": "IPX",
@@ -17600,6 +18096,30 @@
       "size_bytes": 3693
     },
     {
+      "module": "MERU-GLOBAL-STATISTICS-MIB",
+      "platform_vendor_scope": "Fortinet",
+      "bundle_path": "mibs/fortinet/_upstream/fortinet/MERU-GLOBAL-STATISTICS-MIB",
+      "upstream_path": "mibs/fortinet/MERU-GLOBAL-STATISTICS-MIB",
+      "sha256": "9bc584cbe47e639421a2f9715bf6ef8f176d3b406b3a1491df0a1c74c74b7da6",
+      "size_bytes": 132101
+    },
+    {
+      "module": "MERU-SMI",
+      "platform_vendor_scope": "Fortinet",
+      "bundle_path": "mibs/fortinet/_upstream/fortinet/MERU-SMI",
+      "upstream_path": "mibs/fortinet/MERU-SMI",
+      "sha256": "f56a07d91302c76bbab90faff95f0af3180a1f767133b5b788ee1fae65312fcb",
+      "size_bytes": 2557
+    },
+    {
+      "module": "MERU-TC",
+      "platform_vendor_scope": "Fortinet",
+      "bundle_path": "mibs/fortinet/_upstream/fortinet/MERU-TC",
+      "upstream_path": "mibs/fortinet/MERU-TC",
+      "sha256": "d07affd6e61ce0b0545314922c6f60d0ed39465f9b8b5dd414dc7be3d1e806dc",
+      "size_bytes": 110637
+    },
+    {
       "module": "MIB-Dell-10892",
       "platform_vendor_scope": "Dell",
       "bundle_path": "mibs/dell/_upstream/dell/MIB-Dell-10892",
@@ -18552,6 +19072,30 @@
       "size_bytes": 135785
     },
     {
+      "module": "PAN-COMMON-MIB",
+      "platform_vendor_scope": "Palo Alto",
+      "bundle_path": "mibs/palo-alto/_upstream/paloaltonetworks/PAN-COMMON-MIB",
+      "upstream_path": "mibs/paloaltonetworks/PAN-COMMON-MIB",
+      "sha256": "249adfb8c6bf6fef3eb8426e7a902f7bf609e62db9b2a27c73694c628ce8ed50",
+      "size_bytes": 87955
+    },
+    {
+      "module": "PAN-GLOBAL-REG",
+      "platform_vendor_scope": "Palo Alto",
+      "bundle_path": "mibs/palo-alto/_upstream/paloaltonetworks/PAN-GLOBAL-REG",
+      "upstream_path": "mibs/paloaltonetworks/PAN-GLOBAL-REG",
+      "sha256": "524f7088cb3546ba51678dfe75d948e0a0a931cdba3944e71991e3ab607a7517",
+      "size_bytes": 2125
+    },
+    {
+      "module": "PAN-GLOBAL-TC",
+      "platform_vendor_scope": "Palo Alto",
+      "bundle_path": "mibs/palo-alto/_upstream/paloaltonetworks/PAN-GLOBAL-TC",
+      "upstream_path": "mibs/paloaltonetworks/PAN-GLOBAL-TC",
+      "sha256": "dd4e3ba40bbecc1c41602a6a53505be5f2e302695b27f1125a35db3a92c42e26",
+      "size_bytes": 1693
+    },
+    {
       "module": "PIM-BSR-MIB",
       "platform_vendor_scope": "Ruijie",
       "bundle_path": "mibs/ruijie/_upstream/fs/PIM-BSR-MIB",
@@ -19064,6 +19608,30 @@
       "size_bytes": 28862
     },
     {
+      "module": "RFC-1212",
+      "platform_vendor_scope": "Standard",
+      "bundle_path": "mibs/standard/_upstream/RFC-1212",
+      "upstream_path": "mibs/RFC-1212",
+      "sha256": "e66fa442d3e030d3539696b2d0625a64ac07cc8a7b8a50648a6af24df2cfb19c",
+      "size_bytes": 2866
+    },
+    {
+      "module": "RFC-1215",
+      "platform_vendor_scope": "Standard",
+      "bundle_path": "mibs/standard/_upstream/RFC-1215",
+      "upstream_path": "mibs/RFC-1215",
+      "sha256": "dbd38e3a42cb0b391e9dafa606a5ee11ff2dcdd4c6781cb42ae1cd6185bcc4e2",
+      "size_bytes": 1174
+    },
+    {
+      "module": "RFC1155-SMI",
+      "platform_vendor_scope": "Standard",
+      "bundle_path": "mibs/standard/_upstream/RFC1155-SMI",
+      "upstream_path": "mibs/RFC1155-SMI",
+      "sha256": "070e8c1cbcb015132d900cfd4f4c946bc14a873c9433483caf2f4ecfa007f72d",
+      "size_bytes": 3067
+    },
+    {
       "module": "RIPSAP",
       "platform_vendor_scope": "Nokia",
       "bundle_path": "mibs/nokia/_upstream/nokia/RIPSAP",
@@ -19464,6 +20032,14 @@
       "size_bytes": 33156
     },
     {
+      "module": "SFOS-FIREWALL-MIB",
+      "platform_vendor_scope": "Sophos",
+      "bundle_path": "mibs/sophos/_upstream/sophos/SFOS-FIREWALL-MIB",
+      "upstream_path": "mibs/sophos/SFOS-FIREWALL-MIB",
+      "sha256": "f2cb9d185a0577a65636ff8de54a5095d604c3b028ea76cccb16a531f6ae8e75",
+      "size_bytes": 42864
+    },
+    {
       "module": "SFP-MIB",
       "platform_vendor_scope": "Nokia",
       "bundle_path": "mibs/nokia/_upstream/nokia/SFP-MIB",
@@ -19478,6 +20054,70 @@
       "upstream_path": "mibs/dlink/SINGLE-IP-MIB",
       "sha256": "b20c30c28ead2a1e36f60da06e3d8d865a26f9b4d839d6344c0b41996a241e94",
       "size_bytes": 27278
+    },
+    {
+      "module": "SNMPv2-CONF",
+      "platform_vendor_scope": "Standard",
+      "bundle_path": "mibs/standard/_upstream/SNMPv2-CONF",
+      "upstream_path": "mibs/SNMPv2-CONF",
+      "sha256": "b3e90ba682e10c76f6de90e65a0013143f0ec531b0ed546b2b8aa5ad5c0001eb",
+      "size_bytes": 8263
+    },
+    {
+      "module": "SNMPv2-MIB",
+      "platform_vendor_scope": "Standard",
+      "bundle_path": "mibs/standard/_upstream/SNMPv2-MIB",
+      "upstream_path": "mibs/SNMPv2-MIB",
+      "sha256": "b4f8ef130f580b86d2b6bc890564e46100785f589431df76954e878a7b166e11",
+      "size_bytes": 29305
+    },
+    {
+      "module": "SNMPv2-SMI",
+      "platform_vendor_scope": "Standard",
+      "bundle_path": "mibs/standard/_upstream/SNMPv2-SMI",
+      "upstream_path": "mibs/SNMPv2-SMI",
+      "sha256": "ece2355fc8b6140af702f86d77bd3f7398d80375fc6278c3e30ff3a31b53e0b7",
+      "size_bytes": 8924
+    },
+    {
+      "module": "SNMPv2-TC",
+      "platform_vendor_scope": "Standard",
+      "bundle_path": "mibs/standard/_upstream/SNMPv2-TC",
+      "upstream_path": "mibs/SNMPv2-TC",
+      "sha256": "c1379575e6a0ad25b2d7da68294153c1fd79750827376f2aa6323d072d73f0b8",
+      "size_bytes": 38034
+    },
+    {
+      "module": "SNWL-COMMON-MIB",
+      "platform_vendor_scope": "SonicWall",
+      "bundle_path": "mibs/sonicwall/_upstream/sonicwall/SNWL-COMMON-MIB",
+      "upstream_path": "mibs/sonicwall/SNWL-COMMON-MIB",
+      "sha256": "07b3cb7137ff239dbe4066a5dda04101fe93d71cce33acc310f1349322640597",
+      "size_bytes": 2429
+    },
+    {
+      "module": "SNWL-SSLVPN-MIB",
+      "platform_vendor_scope": "SonicWall",
+      "bundle_path": "mibs/sonicwall/_upstream/sonicwall/SNWL-SSLVPN-MIB",
+      "upstream_path": "mibs/sonicwall/SNWL-SSLVPN-MIB",
+      "sha256": "9375c8c94d30b617b8df21470a2eba20a1be3cfad8bd4c84ce5a0c7b1137561b",
+      "size_bytes": 4540
+    },
+    {
+      "module": "SONICWALL-FIREWALL-IP-STATISTICS-MIB",
+      "platform_vendor_scope": "SonicWall",
+      "bundle_path": "mibs/sonicwall/_upstream/sonicwall/SONICWALL-FIREWALL-IP-STATISTICS-MIB",
+      "upstream_path": "mibs/sonicwall/SONICWALL-FIREWALL-IP-STATISTICS-MIB",
+      "sha256": "ba0d4d296815647db69116dafd79030010ad129606be3e316e2043db83fdf124",
+      "size_bytes": 58944
+    },
+    {
+      "module": "SONICWALL-SMI",
+      "platform_vendor_scope": "SonicWall",
+      "bundle_path": "mibs/sonicwall/_upstream/sonicwall/SONICWALL-SMI",
+      "upstream_path": "mibs/sonicwall/SONICWALL-SMI",
+      "sha256": "019ba24062385bd61bd29bccca697ef36b9a574faf54322d228a7ae757cd8e74",
+      "size_bytes": 2077
     },
     {
       "module": "STATISTICS-MIB",
@@ -20288,6 +20928,14 @@
       "size_bytes": 14126
     },
     {
+      "module": "UCD-SNMP-MIB",
+      "platform_vendor_scope": "Standard",
+      "bundle_path": "mibs/standard/_upstream/UCD-SNMP-MIB",
+      "upstream_path": "mibs/UCD-SNMP-MIB",
+      "sha256": "c3e0598e715b0cbd9aefbca86730dcdc670c6d7786d0dbd3f0ab772e3956b288",
+      "size_bytes": 53338
+    },
+    {
       "module": "UI-AF60-MIB",
       "platform_vendor_scope": "Ubiquiti",
       "bundle_path": "mibs/ubiquiti/_upstream/ubnt/UI-AF60-MIB",
@@ -20758,30 +21406,6 @@
       "upstream_path": "mibs/zte/ZXR10-MIB",
       "sha256": "6da118c571ae05918cac6f5d1993d53863d9d602b703c6165c2ff5e94c14fcf0",
       "size_bytes": 121378
-    },
-    {
-      "module": "HIPATH-WIRELESS-DOT11-EXTNS-MIB",
-      "platform_vendor_scope": "Extreme Networks",
-      "bundle_path": "mibs/extreme-networks/_upstream/ewc/HIPATH-WIRELESS-DOT11-EXTNS-MIB",
-      "upstream_path": "mibs/ewc/HIPATH-WIRELESS-DOT11-EXTNS-MIB",
-      "sha256": "73a68c03ced22757f8927b7aa27704a6f97902ebb927771a13956546dd4c68ba",
-      "size_bytes": 68705
-    },
-    {
-      "module": "HIPATH-WIRELESS-HWC-MIB",
-      "platform_vendor_scope": "Extreme Networks",
-      "bundle_path": "mibs/extreme-networks/_upstream/ewc/HIPATH-WIRELESS-HWC-MIB",
-      "upstream_path": "mibs/ewc/HIPATH-WIRELESS-HWC-MIB",
-      "sha256": "77c2ca19f778630528c583725639708ffe50b3b5f6436d3075f3abe38d6c0fb4",
-      "size_bytes": 578059
-    },
-    {
-      "module": "HIPATH-WIRELESS-SMI",
-      "platform_vendor_scope": "Extreme Networks",
-      "bundle_path": "mibs/extreme-networks/_upstream/ewc/HIPATH-WIRELESS-SMI",
-      "upstream_path": "mibs/ewc/HIPATH-WIRELESS-SMI",
-      "sha256": "86f67952b5f594036da596a15071439019cc02967a5f73d5bdb6e7370cb77324",
-      "size_bytes": 2100
     }
   ],
   "adapter_files": [
@@ -21001,7 +21625,7 @@
     "size_bytes": 35337
   },
   "notes": [
-    "This bundle includes every MIB file from 36 distinct upstream mibs/ vendor directories grouped into 23 Nexora vendor-scope directories, plus the standard directory and 16 upstream root MIB dependencies. These upstream directory names are source paths, not Nexora-supported-vendor counts; the manifest separately lists 26 asset vendors and 25 vendors with upstream OS profiles. Arista and Edgecore have OS profiles but no vendor-specific MIB directory in this bundle; DPtech remains in the asset-vendor list but has neither an upstream OS profile nor a vendor-specific MIB directory, so this bundle makes no claim of LibreNMS hardware-rule coverage for DPtech. Other LibreNMS runtime and repository content is not included.",
+    "This bundle includes every MIB file from 44 distinct upstream mibs/ vendor directories grouped into 31 Nexora vendor-scope directories, plus the standard scope and root dependencies. These upstream directory names are source paths, not Nexora-supported-vendor counts; the manifest separately lists 26 asset network vendors, 15 asset security vendors, 25 network vendors with upstream OS profiles, and 10 security vendors with upstream OS profiles. Sangfor, Venustech, NSFOCUS, Topsec, and Qi An Xin have no pinned OS profile; DPtech also has no pinned OS profile. This subset is not the full LibreNMS runtime.",
     "The upstream commit and path identify each source; sha256 and size_bytes describe the bundled file bytes. Windows checkout settings may materialize CRLF line endings; content is verified against pinned Git blobs after line-ending normalization.",
     "MIBs are grouped under platform_vendor_scope for offline indexing; this is a Nexora asset-vendor bucket, not the upstream MIB owner. Root standard MIB definitions are grouped under mibs/standard/.",
     "Hardware collection reads the pinned LibreNMS OS detection and discovery YAML. Nexora parses those definitions and executes SNMP requests in Python; it does not run LibreNMS PHP modules. This subset is not the full LibreNMS runtime and does not establish PHP-rule parity. Fourteen pinned OS profiles have no hardware discovery YAML and do not fall back to Nexora vendor OIDs.",
@@ -21009,7 +21633,11 @@
     "The complete Huawei MIB directory is included under mibs/huawei/_upstream/huawei and is shared by Huawei and Yunshan.",
     "Shared tree mapping follows current profiles: Nokia aos6/aos7/stellar files are scoped to Alcatel-Lucent Enterprise and other Nokia files to Nokia; NORTEL-OPTICAL files are scoped to Ciena and other Nortel files to Extreme Networks; Radlan files use the Alcatel-Lucent Enterprise scope, with RADLAN-rndMng additionally mapped to Allied Telesis. Root UPS-MIB remains scoped to Huawei.",
     "The HP ProCurve and Fiberstore/Ruijie cross-scope trees and their associated OS profiles are recorded in mib_scope_mappings. Other shared-directory mappings are documented in these notes; upstream_path remains the authoritative source location.",
-    "The pinned EWC wireless OS adapter adds the exact upstream mibs/ewc/HIPATH-WIRELESS-HWC-MIB, mibs/ewc/HIPATH-WIRELESS-DOT11-EXTNS-MIB, and mibs/ewc/HIPATH-WIRELESS-SMI under the Extreme Networks bundle scope; IEEE802dot11-MIB is pinned at its upstream root path."
+    "The pinned EWC wireless OS adapter adds the exact upstream mibs/ewc/HIPATH-WIRELESS-HWC-MIB, mibs/ewc/HIPATH-WIRELESS-DOT11-EXTNS-MIB, and mibs/ewc/HIPATH-WIRELESS-SMI under the Extreme Networks bundle scope; IEEE802dot11-MIB is pinned at its upstream root path.",
+    "Security-vendor scope is derived from the Asset Management security-vendor catalog; it is recorded separately from asset_network_vendors and the existing network profile coverage counts.",
+    "The bundle adds 20 security OS profiles with structured processor, memory-pool, or sensor definitions accepted by the current Python parser, using only files from the pinned upstream commit.",
+    "The pinned upstream has no OS detection profile for Sangfor, Venustech, NSFOCUS, Topsec, or Qi An Xin. WatchGuard has an OS profile but no structured hardware definitions; unsupported product profiles are listed separately and are not promoted as hardware coverage.",
+    "The FortiGate source references InetAddress_FORTINET-FORTIGATE-MIB only inside an optional description template; no matching upstream MIB file exists in the pinned tree. The collector leaves that label token unresolved and does not invent an OID or MIB."
   ],
   "mib_manifest_schema_version": 2,
   "mib_scope_contract": {
@@ -21020,15 +21648,27 @@
   },
   "mib_scope_mappings": [
     {
-      "platform_vendor_scope": "Aruba",
-      "upstream_tree": "mibs/hp",
-      "bundle_tree": "mibs/aruba/_upstream/hp",
-      "mib_count": 98,
+      "platform_vendor_scope": "A10 Networks",
+      "upstream_tree": "mibs/a10",
+      "bundle_tree": "mibs/a10-networks/_upstream/a10",
+      "mib_count": 2,
       "os_profiles": [
-        "procurve"
+        "acos"
       ],
-      "profile_label": "HP ProCurve",
-      "reason": "Nexora groups this legacy Profile under Aruba for its asset-vendor index. The upstream source remains mibs/hp; the full upstream tree is retained, not pruned to direct YAML references."
+      "profile_label": "A10 Networks ACOS",
+      "reason": "A10 is a listed security asset vendor; preserve the pinned upstream MIB tree under its canonical asset-vendor scope."
+    },
+    {
+      "platform_vendor_scope": "Check Point",
+      "upstream_tree": "mibs/checkpoint",
+      "bundle_tree": "mibs/check-point/_upstream/checkpoint",
+      "mib_count": 1,
+      "os_profiles": [
+        "gaia",
+        "secureplatform"
+      ],
+      "profile_label": "Check Point Gaia and SecurePlatform",
+      "reason": "Map LibreNMS checkpoint MIBs to the canonical Check Point asset-vendor scope without changing upstream paths."
     },
     {
       "platform_vendor_scope": "Extreme Networks",
@@ -21051,6 +21691,28 @@
       ],
       "profile_label": "Fiberstore (Ruijie)",
       "reason": "Nexora groups this FS/Fiberstore Profile under Ruijie for its asset-vendor index. The upstream source remains mibs/fs; the full upstream tree is retained."
+    },
+    {
+      "platform_vendor_scope": "Aruba",
+      "upstream_tree": "mibs/hp",
+      "bundle_tree": "mibs/aruba/_upstream/hp",
+      "mib_count": 98,
+      "os_profiles": [
+        "procurve"
+      ],
+      "profile_label": "HP ProCurve",
+      "reason": "Nexora groups this legacy Profile under Aruba for its asset-vendor index. The upstream source remains mibs/hp; the full upstream tree is retained, not pruned to direct YAML references."
+    },
+    {
+      "platform_vendor_scope": "Palo Alto",
+      "upstream_tree": "mibs/paloaltonetworks",
+      "bundle_tree": "mibs/palo-alto/_upstream/paloaltonetworks",
+      "mib_count": 3,
+      "os_profiles": [
+        "panos"
+      ],
+      "profile_label": "Palo Alto PAN-OS",
+      "reason": "Map the upstream paloaltonetworks directory to the canonical Palo Alto asset-vendor scope."
     }
   ],
   "wireless_discovery": {
@@ -21078,5 +21740,141 @@
       "wireless_ubiquiti_unifi"
     ],
     "notes": "This generic module dispatches discovery to OS classes only when they implement the matching wireless sensor interface. The Python wireless rule set references only MIB inputs already recorded in this bundle. IOS-XE extends Ciscowlc and inherits its AP/client methods; its cellular metrics are adapted from the pinned CiscoCellular trait. Stellar discovery creates client sensors with empty OIDs, while its pinned polling interface reads apClientWlanService and groups by the MIB value; Python reproduces that behavior from the Alcatel-Lucent Enterprise vendor bucket. The Comware OS class has no wireless discovery interface; Comware wireless MIB polling is a separately identified Nexora Python adapter."
-  }
+  },
+  "asset_security_vendors": [
+    "Fortinet",
+    "Palo Alto",
+    "Hillstone",
+    "Sangfor",
+    "Check Point",
+    "Sophos",
+    "SonicWall",
+    "WatchGuard",
+    "F5",
+    "A10 Networks",
+    "Barracuda",
+    "Venustech",
+    "NSFOCUS",
+    "Topsec",
+    "Qi An Xin"
+  ],
+  "security_vendors_with_upstream_os_profiles": [
+    "Fortinet",
+    "Palo Alto",
+    "Hillstone",
+    "Check Point",
+    "Sophos",
+    "SonicWall",
+    "WatchGuard",
+    "F5",
+    "A10 Networks",
+    "Barracuda"
+  ],
+  "security_vendors_without_upstream_os_profiles": [
+    "Sangfor",
+    "Venustech",
+    "NSFOCUS",
+    "Topsec",
+    "Qi An Xin"
+  ],
+  "security_vendors_with_bundled_hardware_rules": [
+    "Fortinet",
+    "Palo Alto",
+    "Hillstone",
+    "Check Point",
+    "Sophos",
+    "SonicWall",
+    "F5",
+    "A10 Networks",
+    "Barracuda"
+  ],
+  "security_os_profiles": [
+    {
+      "os_key": "acos",
+      "vendor": "A10 Networks"
+    },
+    {
+      "os_key": "barracudaspamfirewall",
+      "vendor": "Barracuda"
+    },
+    {
+      "os_key": "f5",
+      "vendor": "F5"
+    },
+    {
+      "os_key": "f5os",
+      "vendor": "F5"
+    },
+    {
+      "os_key": "fortiadc",
+      "vendor": "Fortinet"
+    },
+    {
+      "os_key": "fortiap",
+      "vendor": "Fortinet"
+    },
+    {
+      "os_key": "fortiauthenticator",
+      "vendor": "Fortinet"
+    },
+    {
+      "os_key": "fortigate",
+      "vendor": "Fortinet"
+    },
+    {
+      "os_key": "fortimail",
+      "vendor": "Fortinet"
+    },
+    {
+      "os_key": "fortios",
+      "vendor": "Fortinet"
+    },
+    {
+      "os_key": "fortisandbox",
+      "vendor": "Fortinet"
+    },
+    {
+      "os_key": "fortiswitch",
+      "vendor": "Fortinet"
+    },
+    {
+      "os_key": "fortiweb",
+      "vendor": "Fortinet"
+    },
+    {
+      "os_key": "fortiwlc",
+      "vendor": "Fortinet"
+    },
+    {
+      "os_key": "gaia",
+      "vendor": "Check Point"
+    },
+    {
+      "os_key": "panos",
+      "vendor": "Palo Alto"
+    },
+    {
+      "os_key": "secureplatform",
+      "vendor": "Check Point"
+    },
+    {
+      "os_key": "sonicwall",
+      "vendor": "SonicWall"
+    },
+    {
+      "os_key": "sophos-xg",
+      "vendor": "Sophos"
+    },
+    {
+      "os_key": "stoneos",
+      "vendor": "Hillstone"
+    }
+  ],
+  "security_profiles_without_structured_hardware": [
+    "barracudangfirewall",
+    "barracudaloadbalancer",
+    "barracudawafirewall",
+    "fireware",
+    "sophos"
+  ]
 }

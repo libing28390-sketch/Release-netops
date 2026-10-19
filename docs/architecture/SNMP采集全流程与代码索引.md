@@ -54,18 +54,22 @@ flowchart TD
 
 | 清单维度 | 当前数量 | 含义 |
 | --- | ---: | --- |
-| Nexora 资产厂商 | 26 | 平台资产厂商枚举，包括 DPtech |
-| 有 LibreNMS OS profile 的厂商 | 25 | 资产厂商中除 DPtech 外的厂商 |
-| OS profile | 136 | 逐 OS 的身份检测条目；不是厂商数 |
-| 有 hardware discovery YAML 的 OS profile | 122 | 14 个 profile 在所固定的 LibreNMS commit 中没有 discovery YAML |
-| 有 YAML 但当前解析器未识别硬件定义 | 31 | 这 31 份 YAML 未解析出 processors、mempools 或 sensors；不是厂商数 |
-| 当前解析器至少识别一个硬件定义 | 91 | 仅说明解析器识别到结构化定义，不保证真实设备支持或采样成功 |
-| 本地 MIB 顶层目录 | 24 | 23 个 Nexora 厂商分组目录，加 `standard` |
-| MIB 上游来源目录 | 35 | LibreNMS `mibs/` 下的上游路径名称；多个目录会归入同一 Nexora 厂商分组 |
+| Nexora 网络资产厂商 | 26 | 网络设备厂商枚举，包括 DPtech |
+| Nexora 网络安全资产厂商 | 15 | 资产管理页面的安全厂商枚举 |
+| 有 LibreNMS OS profile 的网络厂商 | 25 | 网络资产厂商中除 DPtech 外的厂商 |
+| 固定上游有 OS profile 的安全厂商 | 10 | 包括 WatchGuard；其中仅选择有结构化硬件定义的 profile 入 bundle |
+| OS profile | 156 | 136 个网络 profile 加 20 个安全硬件 profile；不是厂商数 |
+| 有 hardware discovery YAML 的 bundled profile | 142 | 14 个网络 profile 在固定 LibreNMS commit 中没有 discovery YAML |
+| 网络 YAML 未解析出硬件定义 | 31 | 未解析出 processors、mempools 或 sensors 的网络 YAML；安全无硬件产品 profile 不进入 bundle |
+| 当前解析器至少识别一个硬件定义 | 111 | 仅说明解析器识别到结构化定义，不保证真实设备支持或采样成功 |
+| 本地 MIB 顶层目录 | 32 | 31 个厂商分组目录，加 `standard` |
+| MIB 上游来源目录 | 44 | LibreNMS `mibs/` 下的上游路径名称；多个目录会归入同一 Nexora 厂商分组 |
 
-例如 `mibs/hp` 中的 ProCurve 文件放在本地 `mibs/aruba/_upstream/hp`，`mibs/fs` 中的 Fiberstore 文件放在 `mibs/ruijie/_upstream/fs`。因此资源管理器里看到的是 24 个本地顶层分类，而 manifest 记录的 35 是上游来源目录数，并不表示 Nexora 多支持了 12 个厂商。Arista、Edgecore 有 OS profile，但当前 bundle 没有它们各自的 MIB 顶层目录；DPtech 没有 OS profile，也没有厂商专属 MIB 顶层目录。没有专属 MIB 目录本身不等于 discovery YAML 一定不能通过标准 MIB/OID 工作。
+例如 `mibs/hp` 中的 ProCurve 文件放在本地 `mibs/aruba/_upstream/hp`，`mibs/fs` 中的 Fiberstore 文件放在 `mibs/ruijie/_upstream/fs`，`mibs/paloaltonetworks` 映射到 `mibs/palo-alto/_upstream/paloaltonetworks`。因此 32 个本地顶层目录和 44 个上游来源目录不是厂商支持数量。没有专属 MIB 目录本身不等于 discovery YAML 一定不能通过标准 MIB/OID 工作。
 
-可直接核实的文件是 `backend/vendor/librenms/source-manifest.json` 的 `asset_network_vendors`、`vendors_with_upstream_os_profiles`、`profiles`、`mibs`、`mib_scope_mappings` 与 `notes` 字段；每条 MIB 的 `upstream_path` 是上游原路径，`bundle_path` 是本地包路径，`platform_vendor_scope` 只是 Nexora 离线索引分组。
+安全设备硬件规则目前覆盖 20 个 upstream OS profile、9 个资产安全厂商。Sangfor、Venustech、NSFOCUS、Topsec、Qi An Xin 在固定上游中没有 OS detection profile；WatchGuard 有识别 YAML，但没有可解析硬件定义。Barracuda Email Security Gateway 只有一个通用 count sensor，其他 Barracuda 产品 profile 与 Sophos UTM 没有可解析的硬件定义。PAN-OS 保留两个依赖设备型号/版本的条件，因此规则诊断级别是 partial。
+
+可直接核实的文件是 `backend/vendor/librenms/source-manifest.json` 的 `asset_network_vendors`、`asset_security_vendors`、网络/安全 profile 清单、`mibs`、`mib_scope_mappings` 与 `notes` 字段；每条 MIB 的 `upstream_path` 是上游原路径，`bundle_path` 是本地包路径，`platform_vendor_scope` 只是 Nexora 离线索引分组。
 
 ## 3. 后台发现与采样周期
 
