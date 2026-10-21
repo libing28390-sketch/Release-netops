@@ -1,11 +1,12 @@
 import { DataTable } from '../../../components/DataTable';
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Search, CheckCircle2, LayoutGrid, List, Server, Terminal, Cpu, X, ChevronDown, ChevronRight, Filter, LoaderCircle, RefreshCw } from 'lucide-react';
 import type { Device } from '../../../types';
 import Pagination from '../../../components/Pagination';
 import { DEVICE_PAGE_SIZE } from '../constants';
 import { getDeviceCategory, getVendor } from '../helpers';
+import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 interface DeviceSelectionStepProps {
   isZh: boolean;
@@ -94,6 +95,16 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
 }) => {
   const [filterCollapsed, setFilterCollapsed] = useState(false);
   const [expandedSites, setExpandedSites] = useState<Set<string>>(new Set());
+  const selectedDevicesTriggerRef = useRef<HTMLButtonElement>(null);
+  const closeSelectedDrawer = () => {
+    setShowSelectedDrawer(false);
+    selectedDevicesTriggerRef.current?.focus();
+  };
+  useEscapeClose(showSelectedDrawer && targetCount > 0, closeSelectedDrawer);
+  useEffect(() => {
+    if (targetCount === 0 && showSelectedDrawer) setShowSelectedDrawer(false);
+  }, [setShowSelectedDrawer, showSelectedDrawer, targetCount]);
+
   const toggleDeviceSelection = (device: Device) => {
     const isAlreadySelected = batchDeviceIds.includes(device.id);
     if (!isAlreadySelected) onRememberDevice(device);
@@ -130,37 +141,40 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
                   setTreeFilterSite(null);
                   setTreeFilterRole(null);
                 }}
-                className="text-[10px] text-cyan-600 hover:text-cyan-700 font-semibold"
+                className="min-h-9 rounded-lg px-2 text-xs font-semibold text-cyan-600 hover:bg-cyan-50 hover:text-cyan-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
               >
                 {isZh ? '清除' : 'Clear'}
               </button>
             )}
           </div>}
-          {!filterCollapsed && <div className="flex-1 min-h-0 overflow-auto p-2.5 space-y-3">
+          {!filterCollapsed && <div className="flex-1 min-h-0 overflow-auto p-3 space-y-4">
             {/* Search */}
             <div>
-              <label className="text-[10px] font-semibold text-gray-400 block mb-1.5">{isZh ? '搜索设备' : 'Search'}</label>
+              <label className="text-xs font-semibold text-gray-500 block mb-1.5">{isZh ? '搜索设备' : 'Search'}</label>
               <div className="relative">
                 <Search className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-300" size={12} />
                 <input
                   type="text"
+                  aria-label={isZh ? '搜索设备 IP 或主机名' : 'Search devices by IP or hostname'}
                   placeholder={isZh ? 'IP / 主机名...' : 'IP / Hostname...'}
                   value={automationSearch}
                   onChange={(e) => onAutomationSearchChange(e.target.value)}
-                  className="w-full pl-7 pr-2.5 py-1.5 bg-gray-50 border border-gray-100 rounded-lg text-[11px] focus:border-cyan-300 focus:bg-white outline-none transition-all"
+                  className="min-h-10 w-full rounded-lg border border-gray-200 bg-gray-50 py-2 pl-8 pr-3 text-sm outline-none transition-all placeholder:text-gray-400 focus:border-cyan-400 focus:bg-white focus-visible:ring-2 focus-visible:ring-cyan-500/30"
                 />
               </div>
             </div>
             {/* Site chips */}
             <div>
-              <label className="text-[10px] font-semibold text-gray-400 block mb-1.5">{isZh ? '站点' : 'Site'}</label>
-              <div className="flex flex-wrap gap-1">
+              <label className="text-xs font-semibold text-gray-500 block mb-1.5">{isZh ? '站点' : 'Site'}</label>
+              <div role="group" aria-label={isZh ? '站点筛选' : 'Site filters'} className="flex flex-wrap gap-1">
                 {deviceTree.map((node) => (
                   <div key={node.site} className="w-full">
                     <div className="flex items-center gap-1">
                       <button
+                        type="button"
                         onClick={() => handleTreeFilter(node.site, null)}
-                        className={`flex-1 px-2 py-1 rounded-md text-left text-[10px] font-medium transition-all ${
+                        aria-pressed={treeFilterSite === node.site && !treeFilterRole}
+                        className={`min-h-9 flex-1 rounded-md px-2.5 py-1.5 text-left text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 ${
                           treeFilterSite === node.site && !treeFilterRole
                             ? 'bg-cyan-50 text-cyan-700 ring-1 ring-cyan-200'
                             : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
@@ -176,13 +190,14 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
                           type="button"
                           title={isZh ? '按角色筛选' : 'Filter by role'}
                           aria-label={`${isZh ? '展开' : 'Expand'} ${node.site} ${isZh ? '角色' : 'roles'}`}
+                          aria-expanded={expandedSites.has(node.site)}
                           onClick={() => setExpandedSites((current) => {
                             const next = new Set(current);
                             if (next.has(node.site)) next.delete(node.site);
                             else next.add(node.site);
                             return next;
                           })}
-                          className="rounded p-1 text-gray-400 hover:bg-cyan-50 hover:text-cyan-600"
+                          className="min-h-9 min-w-9 rounded-md p-1 text-gray-500 hover:bg-cyan-50 hover:text-cyan-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
                         >
                           <ChevronRight size={12} className={`transition-transform ${expandedSites.has(node.site) ? 'rotate-90' : ''}`} />
                         </button>
@@ -192,9 +207,11 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
                       <div className="ml-2 mt-1 flex flex-wrap gap-1 border-l border-gray-100 pl-2">
                         {node.roles.map((role) => (
                           <button
+                            type="button"
                             key={`${node.site}-${role.role}`}
                             onClick={() => handleTreeFilter(node.site, role.role)}
-                            className={`px-2 py-1 rounded-md text-[9px] font-medium transition-all ${
+                            aria-pressed={treeFilterSite === node.site && treeFilterRole === role.role}
+                            className={`min-h-8 rounded-md px-2.5 py-1 text-[11px] font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 ${
                               treeFilterSite === node.site && treeFilterRole === role.role
                                 ? 'bg-cyan-50 text-cyan-700 ring-1 ring-cyan-200'
                                 : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
@@ -211,13 +228,15 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
             </div>
             {/* Device Type chips */}
             <div>
-              <label className="text-[10px] font-semibold text-gray-400 block mb-1.5">{isZh ? '设备类型' : 'Device Type'}</label>
-              <div className="flex flex-wrap gap-1">
+              <label className="text-xs font-semibold text-gray-500 block mb-1.5">{isZh ? '设备类型' : 'Device Type'}</label>
+              <div role="group" aria-label={isZh ? '设备类型筛选' : 'Device type filters'} className="flex flex-wrap gap-1">
                 {(['all', 'network', 'server'] as const).map((t) => (
                   <button
+                    type="button"
                     key={t}
                     onClick={() => setDeviceTypeFilter(t)}
-                    className={`px-2 py-1 rounded-md text-[10px] font-medium transition-all ${
+                    aria-pressed={deviceTypeFilter === t}
+                    className={`min-h-9 rounded-md px-2.5 py-1.5 text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 ${
                       deviceTypeFilter === t
                         ? 'bg-cyan-50 text-cyan-700 ring-1 ring-cyan-200'
                         : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
@@ -230,13 +249,15 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
             </div>
             {/* Status chips */}
             <div>
-              <label className="text-[10px] font-semibold text-gray-400 block mb-1.5">{isZh ? '状态' : 'Status'}</label>
-              <div className="flex flex-wrap gap-1">
+              <label className="text-xs font-semibold text-gray-500 block mb-1.5">{isZh ? '状态' : 'Status'}</label>
+              <div role="group" aria-label={isZh ? '设备状态筛选' : 'Device status filters'} className="flex flex-wrap gap-1">
                 {(['all', 'online', 'offline'] as const).map((s) => (
                   <button
+                    type="button"
                     key={s}
                     onClick={() => setStatusFilter(s)}
-                    className={`px-2 py-1 rounded-md text-[10px] font-medium transition-all ${
+                    aria-pressed={statusFilter === s}
+                    className={`min-h-9 rounded-md px-2.5 py-1.5 text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 ${
                       statusFilter === s
                         ? 'bg-cyan-50 text-cyan-700 ring-1 ring-cyan-200'
                         : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
@@ -248,7 +269,7 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
               </div>
             </div>
             {/* Summary */}
-            <div className="pt-2 border-t border-gray-100 text-[10px] text-gray-400">
+            <div className="pt-2 border-t border-gray-100 text-xs text-gray-500">
               {isZh ? '匹配' : 'Found'} <span className="font-semibold text-gray-600">{totalDevices}</span> {isZh ? '台设备' : 'devices'}
             </div>
           </div>}
@@ -257,12 +278,13 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
         {/* Right Area: Table/Grid list */}
         <div className="flex-1 min-w-0 flex flex-col gap-2">
           {/* Filter bar */}
-          <div className="flex-shrink-0 flex items-center gap-2 bg-white rounded-xl border border-gray-100 px-3 py-2">
+          <div className="flex-shrink-0 flex flex-wrap items-center gap-2 bg-white rounded-xl border border-gray-100 px-3 py-2">
             {vendors.length > 1 && (
               <select
                 value={vendorFilter}
                 onChange={(e) => setVendorFilter(e.target.value)}
-                className="px-2.5 py-1.5 border border-gray-100 rounded-lg text-xs bg-gray-50 outline-none focus:border-cyan-300"
+                aria-label={isZh ? '按厂商筛选设备' : 'Filter devices by vendor'}
+                className="min-h-9 max-w-full rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-sm outline-none focus:border-cyan-400 focus-visible:ring-2 focus-visible:ring-cyan-500/30"
               >
                 <option value="all">{isZh ? '全部厂商' : 'All Vendors'}</option>
                 {vendors.map((v) => (
@@ -273,19 +295,24 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
               </select>
             )}
             <div className="flex-1" />
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button
+                type="button"
                 onClick={handleSelectAllOnline}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-100 hover:bg-emerald-100 transition-all"
+                disabled={devicePageLoading || !deviceItems.some((device) => device.status === 'online')}
+                className="inline-flex min-h-9 items-center gap-1 rounded-lg border border-emerald-100 bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 transition-all hover:bg-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <CheckCircle2 size={11} />
                 {isZh ? '选择本页在线设备' : 'Select online on this page'}
               </button>
               <div className="w-px h-5 bg-gray-200" />
-              <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
+              <div role="group" aria-label={isZh ? '设备列表视图' : 'Device list view'} className="flex items-center bg-gray-100 rounded-lg p-0.5">
                 <button
+                  type="button"
                   onClick={() => setDeviceViewMode('grid')}
                   title={isZh ? '卡片视图' : 'Grid view'}
+                  aria-label={isZh ? '卡片视图' : 'Grid view'}
+                  aria-pressed={deviceViewMode === 'grid'}
                   className={`p-1.5 rounded-md transition-all ${
                     deviceViewMode === 'grid' ? 'bg-white text-gray-700 shadow-sm' : 'text-gray-400 hover:text-gray-500'
                   }`}
@@ -293,8 +320,11 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
                   <LayoutGrid size={13} />
                 </button>
                 <button
+                  type="button"
                   onClick={() => setDeviceViewMode('list')}
                   title={isZh ? '列表视图' : 'List view'}
+                  aria-label={isZh ? '列表视图' : 'List view'}
+                  aria-pressed={deviceViewMode === 'list'}
                   className={`p-1.5 rounded-md transition-all ${
                     deviceViewMode === 'list' ? 'bg-white text-gray-700 shadow-sm' : 'text-gray-400 hover:text-gray-500'
                   }`}
@@ -336,6 +366,10 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
                       initial={{ opacity: 0, scale: 0.95 }}
                       animate={{ opacity: 1, scale: 1 }}
                       disabled={isOffline}
+                      aria-pressed={isSelected}
+                      aria-label={isZh
+                        ? `${isSelected ? '取消选择' : '选择'} ${device.hostname}，${device.ip_address}${isOffline ? '，离线设备不可选' : ''}`
+                        : `${isSelected ? 'Deselect' : 'Select'} ${device.hostname}, ${device.ip_address}${isOffline ? ', offline device unavailable' : ''}`}
                       onClick={() => {
                         if (isOffline) return;
                         toggleDeviceSelection(device);
@@ -387,6 +421,7 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
                       <th className="w-10 px-3 py-2">
                         <input
                           type="checkbox"
+                          aria-label={isZh ? '选择本页所有在线设备' : 'Select all online devices on this page'}
                           checked={
                             deviceItems.filter((d) => d.status === 'online').length > 0 &&
                             deviceItems.filter((d) => d.status === 'online').every((d) => batchDeviceIds.includes(d.id))
@@ -410,13 +445,13 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
                           className="w-3.5 h-3.5 rounded accent-cyan-500"
                         />
                       </th>
-                      <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">{isZh ? '状态' : 'Status'}</th>
-                      <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">{isZh ? '主机名' : 'Hostname'}</th>
-                      <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">IP</th>
-                      <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">{isZh ? '厂商' : 'Vendor'}</th>
-                      <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">{isZh ? '类型' : 'Type'}</th>
-                      <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">{isZh ? '角色' : 'Role'}</th>
-                      <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">{isZh ? '站点' : 'Site'}</th>
+                      <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">{isZh ? '状态' : 'Status'}</th>
+                      <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">{isZh ? '主机名' : 'Hostname'}</th>
+                      <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">IP</th>
+                      <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">{isZh ? '厂商' : 'Vendor'}</th>
+                      <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">{isZh ? '类型' : 'Type'}</th>
+                      <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">{isZh ? '角色' : 'Role'}</th>
+                      <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">{isZh ? '站点' : 'Site'}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -438,6 +473,7 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
                           <td className="px-3 py-1.5">
                             <input
                               title="Select device"
+                              aria-label={isZh ? `选择 ${device.hostname}` : `Select ${device.hostname}`}
                               type="checkbox"
                               disabled={isOffline}
                               checked={isSelected}
@@ -451,36 +487,31 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
                             />
                           </td>
                           <td className="px-3 py-1.5">
-                            <span
-                              className={`inline-flex items-center gap-1.5 text-[10px] font-semibold ${
-                                device.status === 'online' ? 'text-emerald-600' : 'text-gray-400'
-                              }`}
-                            />
-                            <span className="flex items-center gap-1">
+                            <span className={`flex items-center gap-1 text-xs font-medium ${device.status === 'online' ? 'text-emerald-700' : 'text-gray-500'}`}>
                               <span className={`w-1.5 h-1.5 rounded-full ${device.status === 'online' ? 'bg-emerald-500' : 'bg-gray-300'}`} />
                               {device.status === 'online' ? (isZh ? '在线' : 'Online') : (isZh ? '离线' : 'Offline')}
                             </span>
                           </td>
-                          <td className="px-3 py-1.5 text-xs font-bold text-gray-800">{device.hostname}</td>
-                          <td className="px-3 py-1.5 text-[11px] font-mono text-gray-500">{device.ip_address}</td>
+                          <td className="px-3 py-1.5 text-[13px] font-semibold text-gray-800">{device.hostname}</td>
+                          <td className="px-3 py-1.5 text-xs font-mono text-gray-500">{device.ip_address}</td>
                           <td className="px-3 py-1.5">
-                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">{vendor}</span>
+                            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">{vendor}</span>
                           </td>
                           <td className="px-3 py-1.5">
-                            <div className="flex items-center gap-1.5 text-[10px] text-gray-400">
+                            <div className="flex items-center gap-1.5 text-[11px] text-gray-500">
                               {getDeviceCategory(device) === 'server' ? (
                                 <>
-                                  <Terminal size={10} /> {isZh ? '服务器' : 'Server'}
+                                  <Terminal size={12} /> {isZh ? '服务器' : 'Server'}
                                 </>
                               ) : (
                                 <>
-                                  <Cpu size={10} /> {isZh ? '网络设备' : 'Network'}
+                                  <Cpu size={12} /> {isZh ? '网络设备' : 'Network'}
                                 </>
                               )}
                             </div>
                           </td>
-                          <td className="px-3 py-1.5 text-[11px] text-gray-500">{device.role || '—'}</td>
-                          <td className="px-3 py-1.5 text-[11px] text-cyan-500">{device.site || '—'}</td>
+                          <td className="px-3 py-1.5 text-xs text-gray-600">{device.role || '—'}</td>
+                          <td className="px-3 py-1.5 text-xs font-medium text-cyan-700">{device.site || '—'}</td>
                         </tr>
                       );
                     })}
@@ -519,14 +550,18 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
           {targetCount > 0 && (
             <>
               <button
-                onClick={() => setShowSelectedDrawer(!showSelectedDrawer)}
+                ref={selectedDevicesTriggerRef}
+                type="button"
+                onClick={() => showSelectedDrawer ? closeSelectedDrawer() : setShowSelectedDrawer(true)}
+                aria-expanded={showSelectedDrawer}
+                aria-controls="automation-selected-devices"
                 className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-cyan-50 text-cyan-700 text-xs font-bold border border-cyan-100 shadow-sm hover:bg-cyan-100 transition-all cursor-pointer"
               >
                 <CheckCircle2 size={12} />
                 {isZh ? `已选 ${targetCount} 台` : `${targetCount} selected`}
                 <ChevronDown size={10} className={`transition-transform ${showSelectedDrawer ? 'rotate-180' : ''}`} />
               </button>
-              <button onClick={handleClearSelection} className="text-[11px] text-gray-400 hover:text-red-500 transition-colors font-semibold">
+              <button type="button" onClick={handleClearSelection} className="text-[11px] text-gray-400 hover:text-red-500 transition-colors font-semibold">
                 {isZh ? '清空已选' : 'Clear All'}
               </button>
             </>
@@ -545,10 +580,13 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 10 }}
             className="absolute bottom-16 left-4 right-4 z-40 bg-white rounded-xl border border-gray-200 shadow-xl max-h-[240px] overflow-hidden"
+            id="automation-selected-devices"
+            role="region"
+            aria-labelledby="automation-selected-devices-title"
           >
             <div className="px-4 py-2.5 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
-              <span className="text-xs font-bold text-gray-600">{isZh ? `已选设备 (${targetCount})` : `Selected Devices (${targetCount})`}</span>
-              <button title="Close" onClick={() => setShowSelectedDrawer(false)} className="p-1 rounded-lg hover:bg-gray-100 text-gray-400">
+              <span id="automation-selected-devices-title" className="text-xs font-bold text-gray-600">{isZh ? `已选设备 (${targetCount})` : `Selected Devices (${targetCount})`}</span>
+              <button type="button" title={isZh ? '关闭已选设备' : 'Close selected devices'} aria-label={isZh ? '关闭已选设备' : 'Close selected devices'} onClick={closeSelectedDrawer} className="p-1 rounded-lg hover:bg-gray-100 text-gray-400">
                 <X size={12} />
               </button>
             </div>
@@ -562,7 +600,7 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
                       <span className={`w-1.5 h-1.5 rounded-full ${dev.status === 'online' ? 'bg-emerald-500' : 'bg-gray-300'}`} />
                       <span className="font-semibold text-gray-700">{dev.hostname}</span>
                       <span className="text-gray-400 font-mono text-[10px]">{dev.ip_address}</span>
-                      <button title="Remove" onClick={() => onToggleBatchDevice(deviceId)} className="text-gray-300 hover:text-red-500 transition-colors ml-0.5">
+                      <button type="button" title={isZh ? '移除设备' : 'Remove device'} aria-label={isZh ? `移除 ${dev.hostname}` : `Remove ${dev.hostname}`} onClick={() => onToggleBatchDevice(deviceId)} className="text-gray-300 hover:text-red-500 transition-colors ml-0.5">
                         <X size={10} />
                       </button>
                     </span>

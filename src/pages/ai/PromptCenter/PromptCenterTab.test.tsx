@@ -111,6 +111,35 @@ describe('PromptCenterTab browser key paths', () => {
     expect((screen.getByRole('button', { name: '确认添加' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it('contains focus in the nested prompt editor and restores focus through both dialogs after Escape', async () => {
+    const user = userEvent.setup();
+    render(<PromptCenterTab />);
+    await screen.findByText('网络变更实施计划');
+
+    const detailsOpener = screen.getByRole('button', { name: '查看' });
+    await user.click(detailsOpener);
+    await screen.findByRole('dialog', { name: '网络变更实施计划' });
+
+    const editorOpener = screen.getByRole('button', { name: '编辑 Prompt' });
+    await user.click(editorOpener);
+    const dialog = screen.getByRole('dialog', { name: '编辑 Prompt 提示词模板' });
+    const nameField = document.getElementById('prompt-name');
+    expect(document.activeElement).toBe(nameField);
+
+    await user.tab({ shift: true });
+    await user.tab({ shift: true });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '编辑 Prompt 提示词模板' })).toBeNull());
+    expect(screen.getByRole('dialog', { name: '网络变更实施计划' })).toBeTruthy();
+    await waitFor(() => expect(document.activeElement).toBe(editorOpener));
+
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(detailsOpener));
+  });
+
   it('toggles availability without exposing raw business requests', async () => {
     const user = userEvent.setup();
     updatePrompt.mockResolvedValueOnce({ ...prompt, enabled: false } as any);

@@ -65,6 +65,7 @@ interface CapacityPlanningTabProps {
 /* ───────── Helpers ───────── */
 
 type SortKey = 'daysLeft' | 'usage' | 'severity';
+type CapacityLoadIssue = 'permission' | 'unavailable';
 
 const severityOrder = { critical: 0, warning: 1, normal: 2 };
 
@@ -106,6 +107,7 @@ const CapacityPlanningTab: React.FC<CapacityPlanningTabProps> = ({ language, t }
   const [overview, setOverview] = useState<CapacityOverview | null>(null);
   const [apiWarnings, setApiWarnings] = useState<ForecastWarning[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadIssue, setLoadIssue] = useState<CapacityLoadIssue | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>('daysLeft');
   const [filterSeverity, setFilterSeverity] = useState<string>('all');
   const [selectedRisk, setSelectedRisk] = useState<RiskItem | null>(null);
@@ -114,22 +116,62 @@ const CapacityPlanningTab: React.FC<CapacityPlanningTabProps> = ({ language, t }
   const [deviceTrendData, setDeviceTrendData] = useState<any>(null);
   const [selectedInterfaceIndex, setSelectedInterfaceIndex] = useState<number>(0);
   const [trendLoading, setTrendLoading] = useState<boolean>(false);
+  const [trendIssue, setTrendIssue] = useState<CapacityLoadIssue | null>(null);
+  const [trendRetryToken, setTrendRetryToken] = useState(0);
   const [searchTerm, setSearchTerm] = useState('');
 
   const loadData = useCallback(async () => {
     setLoading(true);
+    setLoadIssue(null);
+    let nextIssue: CapacityLoadIssue | null = null;
+    const recordFailure = (status?: number) => {
+      if (status === 401 || status === 403) {
+        nextIssue = 'permission';
+      } else if (nextIssue === null) {
+        nextIssue = 'unavailable';
+      }
+    };
+
     try {
-      const [ovRes, fcRes] = await Promise.all([
+      const [overviewResult, forecastResult] = await Promise.allSettled([
         fetch('/api/capacity/overview', { headers: authHeaders() }),
         fetch('/api/capacity/forecast', { headers: authHeaders() }),
       ]);
-      if (ovRes.ok) setOverview(await ovRes.json());
-      if (fcRes.ok) {
-        const fc = await fcRes.json();
-        setApiWarnings(fc.items || []);
+
+      if (overviewResult.status === 'fulfilled') {
+        if (overviewResult.value.ok) {
+          try {
+            setOverview(await overviewResult.value.json());
+          } catch {
+            recordFailure();
+          }
+        } else {
+          recordFailure(overviewResult.value.status);
+        }
+      } else {
+        recordFailure();
       }
-    } catch { /* ignore */ }
-    setLoading(false);
+
+      if (forecastResult.status === 'fulfilled') {
+        if (forecastResult.value.ok) {
+          try {
+            const forecast = await forecastResult.value.json();
+            setApiWarnings(Array.isArray(forecast.items) ? forecast.items : []);
+          } catch {
+            recordFailure();
+          }
+        } else {
+          recordFailure(forecastResult.value.status);
+        }
+      } else {
+        recordFailure();
+      }
+    } catch {
+      recordFailure();
+    } finally {
+      setLoadIssue(nextIssue);
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
@@ -138,14 +180,27 @@ const CapacityPlanningTab: React.FC<CapacityPlanningTabProps> = ({ language, t }
   useEffect(() => {
     if (!selectedRisk) {
       setDeviceTrendData(null);
+      setTrendIssue(null);
+      setTrendLoading(false);
       return;
     }
+
+    const controller = new AbortController();
+    let current = true;
+    setTrendLoading(true);
+    setTrendIssue(null);
+    setDeviceTrendData(null);
+
     const fetchTrend = async () => {
-      setTrendLoading(true);
       try {
-        const res = await fetch(`/api/capacity/device/${selectedRisk.id}/trend`, { headers: authHeaders() });
+        const res = await fetch(`/api/capacity/device/${selectedRisk.id}/trend`, {
+          headers: authHeaders(),
+          signal: controller.signal,
+        });
+        if (!current) return;
         if (res.ok) {
           const data = await res.json();
+          if (!current) return;
           if (data && data.interfaces && data.interfaces.length > 0) {
             setDeviceTrendData(data);
             setSelectedInterfaceIndex(0); // Default to the busiest interface
@@ -154,15 +209,25 @@ const CapacityPlanningTab: React.FC<CapacityPlanningTabProps> = ({ language, t }
           }
         } else {
           setDeviceTrendData(null);
+          setTrendIssue(res.status === 401 || res.status === 403 ? 'permission' : 'unavailable');
         }
       } catch (err) {
-        console.error(err);
-        setDeviceTrendData(null);
+        if (current && !controller.signal.aborted) {
+          console.error(err);
+          setDeviceTrendData(null);
+          setTrendIssue('unavailable');
+        }
+      } finally {
+        if (current) setTrendLoading(false);
       }
-      setTrendLoading(false);
     };
-    fetchTrend();
-  }, [selectedRisk]);
+    void fetchTrend();
+
+    return () => {
+      current = false;
+      controller.abort();
+    };
+  }, [selectedRisk, trendRetryToken]);
 
   // Merge API warnings and other online devices into risk items
   const riskItems = useMemo(() => {
@@ -209,15 +274,6 @@ const CapacityPlanningTab: React.FC<CapacityPlanningTabProps> = ({ language, t }
     return merged;
   }, [apiWarnings, overview]);
 
-  // Default to selecting the first risk item if none selected
-  useEffect(() => {
-    if (riskItems.length > 0 && !selectedRisk) {
-      setSelectedRisk(riskItems[0]);
-    } else if (riskItems.length === 0 && selectedRisk) {
-      setSelectedRisk(null);
-    }
-  }, [riskItems, selectedRisk]);
-
   const filteredRisks = useMemo(() => {
     let items = riskItems;
     if (filterSeverity !== 'all') items = items.filter(r => r.severity === filterSeverity);
@@ -233,6 +289,15 @@ const CapacityPlanningTab: React.FC<CapacityPlanningTabProps> = ({ language, t }
     return sortRisks(items, sortKey);
   }, [riskItems, sortKey, filterSeverity, searchTerm]);
 
+  // Keep the detail panel aligned with the visible risk list after filters change.
+  useEffect(() => {
+    if (filteredRisks.length > 0 && !filteredRisks.some((risk) => risk.id === selectedRisk?.id)) {
+      setSelectedRisk(filteredRisks[0]);
+    } else if (filteredRisks.length === 0 && selectedRisk) {
+      setSelectedRisk(null);
+    }
+  }, [filteredRisks, selectedRisk]);
+
   // Extract selected interface metrics
   const activeIntf = useMemo(() => {
     if (deviceTrendData && deviceTrendData.interfaces && deviceTrendData.interfaces.length > 0) {
@@ -243,29 +308,12 @@ const CapacityPlanningTab: React.FC<CapacityPlanningTabProps> = ({ language, t }
 
   // Merge historical trends & future forecasts for active interface
   const chartData = useMemo(() => {
-    // If there is no interface telemetry data
-    if (!activeIntf) {
-      if (selectedRisk) {
-        // Real device but no telemetry data yet: Draw a flat 0% baseline
-        const today = new Date();
-        const emptyData = [];
-        for (let i = 29; i >= 0; i--) {
-          const d = new Date(today);
-          d.setDate(d.getDate() - i);
-          emptyData.push({
-            date: `${d.getMonth() + 1}/${d.getDate()}`,
-            actual: 0.0,
-            smoothed: 0.0,
-            predicted: null
-          });
-        }
-        return emptyData;
-      }
-      return [];
-    }
+    if (!activeIntf) return [];
     const data: any[] = [];
+    const trends = Array.isArray(activeIntf.trends) ? activeIntf.trends : [];
+    const forecasts = Array.isArray(activeIntf.forecast_30d) ? activeIntf.forecast_30d : [];
     // 1. Fill 30 days of actual historical metrics
-    activeIntf.trends.forEach((t: any) => {
+    trends.forEach((t: any) => {
       data.push({
         date: t.date,
         actual: t.avg_in_util,       // Raw telemetry
@@ -284,7 +332,7 @@ const CapacityPlanningTab: React.FC<CapacityPlanningTabProps> = ({ language, t }
       });
     }
     // 3. Fill 30 days of future predictions
-    activeIntf.forecast_30d.forEach((f: any) => {
+    forecasts.forEach((f: any) => {
       data.push({
         date: f.date,
         actual: null,
@@ -346,20 +394,20 @@ const CapacityPlanningTab: React.FC<CapacityPlanningTabProps> = ({ language, t }
         subtitle={zh ? '基于历史趋势的资源耗尽预测，提前规划扩容' : 'Resource exhaustion prediction based on historical trends'}
         actions={
           <>
-            <ActionButton icon={Download} variant="accent" size="md" onClick={handleExport} title={zh ? '导出' : 'Export'}>
+            <ActionButton icon={Download} variant="accent" size="md" onClick={handleExport} title={zh ? '导出当前筛选结果' : 'Export current filtered results'}>
               {zh ? '导出' : 'Export'}
             </ActionButton>
             <ActionButton icon={RefreshCw} variant="primary" size="md" onClick={loadData} disabled={loading} iconClassName={loading ? 'animate-spin' : undefined}>
-              {zh ? '刷新' : 'Refresh'}
+              {loading ? (zh ? '刷新中…' : 'Refreshing…') : (zh ? '刷新' : 'Refresh')}
             </ActionButton>
           </>
         }
       />
 
-      <div className="flex flex-1 gap-4 overflow-hidden min-h-0 px-6 py-5">
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4 xl:flex-row xl:overflow-hidden xl:px-6 xl:py-5">
 
         {/* ══════ LEFT: Risk Queue ══════ */}
-        <div className="w-[340px] flex-shrink-0 flex flex-col rounded-2xl border overflow-hidden"
+        <div className="flex w-full max-h-[48vh] flex-shrink-0 flex-col overflow-hidden rounded-2xl border xl:max-h-none xl:w-[340px]"
           style={{ background: 'var(--card-bg)', borderColor: 'var(--card-border)' }}>
 
           {/* Queue header */}
@@ -375,26 +423,31 @@ const CapacityPlanningTab: React.FC<CapacityPlanningTabProps> = ({ language, t }
                 {stats.total}
               </span>
             </div>
-            <button onClick={() => setSortKey(k => k === 'daysLeft' ? 'usage' : k === 'usage' ? 'severity' : 'daysLeft')}
-              className="flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-lg transition-colors"
+            <button type="button" onClick={() => setSortKey(k => k === 'daysLeft' ? 'usage' : k === 'usage' ? 'severity' : 'daysLeft')}
+              className="flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)]"
               style={{ color: 'var(--muted-text)' }}
               onMouseEnter={e => { e.currentTarget.style.background = 'var(--app-hover-bg)'; }}
               onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-              title={zh ? '切换排序' : 'Toggle sort'}>
+              title={zh ? '切换排序' : 'Change sort order'}
+              aria-label={zh
+                ? `当前按${sortKey === 'daysLeft' ? '倒计时' : sortKey === 'usage' ? '使用率' : '等级'}排序，按下切换`
+                : `Currently sorted by ${sortKey === 'daysLeft' ? 'days left' : sortKey === 'usage' ? 'usage' : 'severity'}; activate to change`}>
               <ArrowUpDown size={12} />
               {sortKey === 'daysLeft' ? (zh ? '倒计时' : 'Days') : sortKey === 'usage' ? (zh ? '使用率' : 'Usage') : (zh ? '等级' : 'Level')}
             </button>
           </div>
 
           {/* Search bar */}
-          <div className="px-4 py-2 border-b flex-shrink-0" style={{ borderColor: 'var(--card-border)' }}>
+          <div className="flex-shrink-0 border-b px-4 py-2" style={{ borderColor: 'var(--card-border)' }}>
             <div className="relative flex items-center">
               <input
                 type="text"
                 value={searchTerm}
                 onChange={e => setSearchTerm(e.target.value)}
                 placeholder={zh ? '搜索设备或指标...' : 'Search device/metric...'}
-                className="w-full pl-8 pr-8 py-1.5 rounded-lg text-xs transition-all border outline-none"
+                aria-label={zh ? '搜索设备或指标' : 'Search device or metric'}
+                autoComplete="off"
+                className="min-h-10 w-full rounded-lg border py-2 pl-8 pr-9 text-sm transition-all outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)]"
                 style={{
                   background: 'var(--app-hover-bg)',
                   borderColor: 'var(--card-border)',
@@ -406,9 +459,10 @@ const CapacityPlanningTab: React.FC<CapacityPlanningTabProps> = ({ language, t }
               </span>
               {searchTerm && (
                 <button
+                  type="button"
                   onClick={() => setSearchTerm('')}
                   aria-label={zh ? '清空搜索' : 'Clear search'}
-                  className="search-clear-button absolute right-2.5 top-1/2 -translate-y-1/2"
+                  className="search-clear-button absolute right-2.5 top-1/2 -translate-y-1/2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)]"
                 >
                   <X size={12} />
                 </button>
@@ -417,15 +471,16 @@ const CapacityPlanningTab: React.FC<CapacityPlanningTabProps> = ({ language, t }
           </div>
 
           {/* Severity filter pills */}
-          <div className="flex gap-1.5 px-4 py-2.5 border-b flex-shrink-0" style={{ borderColor: 'var(--card-border)' }}>
+          <div className="flex flex-wrap gap-1.5 border-b px-4 py-2.5 flex-shrink-0" style={{ borderColor: 'var(--card-border)' }}>
             {(['all', 'critical', 'warning', 'normal'] as const).map(s => {
               const active = filterSeverity === s;
               const cfg = s === 'all' ? null : severityConfig[s];
               const label = s === 'all' ? (zh ? '全部' : 'All') : (zh ? cfg!.label : cfg!.labelEn);
               const count = s === 'all' ? stats.total : stats[s];
               return (
-                <button key={s} onClick={() => setFilterSeverity(s)}
-                  className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium transition-all"
+            <button type="button" key={s} onClick={() => setFilterSeverity(s)}
+              className="flex min-h-9 items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)]"
+                  aria-pressed={active}
                   style={{
                     background: active ? (cfg?.bg || 'rgba(6,182,212,0.1)') : 'transparent',
                     color: active ? (cfg?.text || '#06b6d4') : 'var(--muted-text)',
@@ -440,10 +495,59 @@ const CapacityPlanningTab: React.FC<CapacityPlanningTabProps> = ({ language, t }
 
           {/* Risk list */}
           <div className="flex-1 overflow-y-auto" style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(0,0,0,0.1) transparent' }}>
-            {filteredRisks.length === 0 && (
-              <div className="flex flex-col items-center justify-center py-16" style={{ color: 'var(--dim-text)' }}>
+            {loadIssue && (
+              <div
+                role={riskItems.length === 0 ? 'alert' : 'status'}
+                aria-live={riskItems.length === 0 ? 'assertive' : 'polite'}
+                className="mx-3 mt-3 rounded-lg border px-3 py-2 text-xs"
+                style={{
+                  color: loadIssue === 'permission' ? 'var(--ui-danger)' : 'var(--muted-text)',
+                  borderColor: 'var(--card-border)',
+                  background: 'var(--app-hover-bg)',
+                }}
+              >
+                <p>
+                  {riskItems.length > 0
+                    ? loadIssue === 'permission'
+                      ? (zh ? '部分容量数据因权限不足无法加载，仍显示可用数据。' : 'Some capacity data could not be loaded due to permissions. Showing available results.')
+                      : (zh ? '部分容量数据暂不可用，仍显示可用数据。' : 'Some capacity data is unavailable. Showing available results.')
+                    : loadIssue === 'permission'
+                      ? (zh ? '当前账号无权查看容量分析数据。' : 'You do not have permission to view capacity analysis data.')
+                      : (zh ? '容量数据暂不可用，请重试。' : 'Capacity data is unavailable. Retry to check again.')}
+                </p>
+                {riskItems.length === 0 && (
+                  <button
+                    type="button"
+                    className="mt-2 font-semibold underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+                    onClick={() => { void loadData(); }}
+                    disabled={loading}
+                  >
+                    {zh ? '重试' : 'Retry'}
+                  </button>
+                )}
+              </div>
+            )}
+            {loading && riskItems.length > 0 && (
+              <div role="status" aria-live="polite" className="px-4 py-2 text-xs" style={{ color: 'var(--muted-text)' }}>
+                {zh ? '正在更新容量数据…' : 'Refreshing capacity data…'}
+              </div>
+            )}
+            {loading && riskItems.length === 0 && (
+              <div role="status" aria-live="polite" className="flex flex-col items-center justify-center py-16" style={{ color: 'var(--dim-text)' }}>
+                <RefreshCw size={20} className="mb-2 animate-spin" aria-hidden="true" />
+                <p>{zh ? '正在加载容量分析…' : 'Loading capacity analysis…'}</p>
+              </div>
+            )}
+            {!loading && !loadIssue && filteredRisks.length === 0 && riskItems.length === 0 && (
+              <div role="status" className="flex flex-col items-center justify-center py-16" style={{ color: 'var(--dim-text)' }}>
                 <Shield size={32} className="mb-2 opacity-30" />
                 <p className="text-sm">{zh ? '暂无风险项' : 'No risks found'}</p>
+              </div>
+            )}
+            {!loading && riskItems.length > 0 && filteredRisks.length === 0 && (
+              <div role="status" className="flex flex-col items-center justify-center py-16" style={{ color: 'var(--dim-text)' }}>
+                <Search size={24} className="mb-2 opacity-30" aria-hidden="true" />
+                <p className="text-sm">{zh ? '没有符合当前筛选条件的设备' : 'No devices match the current filters'}</p>
               </div>
             )}
             {filteredRisks.map(risk => {
@@ -451,8 +555,9 @@ const CapacityPlanningTab: React.FC<CapacityPlanningTabProps> = ({ language, t }
               const isSelected = selectedRisk?.id === risk.id;
               const daysLabel = risk.daysLeft === null ? '60+' : `${risk.daysLeft}`;
               return (
-                <button key={risk.id} onClick={() => setSelectedRisk(risk)}
-                  className="w-full text-left px-4 py-3 border-b transition-all"
+                <button type="button" key={risk.id} onClick={() => setSelectedRisk(risk)}
+                  className="w-full text-left px-4 py-3 border-b transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ui-accent)]"
+                  aria-pressed={isSelected}
                   style={{
                     borderColor: 'var(--card-border)',
                     background: isSelected ? (ct.isDark ? 'rgba(6,182,212,0.08)' : 'rgba(6,182,212,0.04)') : 'transparent',
@@ -517,19 +622,19 @@ const CapacityPlanningTab: React.FC<CapacityPlanningTabProps> = ({ language, t }
           <div className="grid grid-cols-4 gap-3 flex-shrink-0">
             {[
               {
-                label: zh ? '风险设备' : 'At Risk', value: stats.total,
+                label: zh ? '风险设备' : 'At Risk', value: loading && riskItems.length === 0 ? '—' : stats.total,
                 icon: Server, color: '#06b6d4', bg: 'rgba(6,182,212,0.08)',
               },
               {
-                label: zh ? '高危' : 'Critical', value: stats.critical,
+                label: zh ? '高危' : 'Critical', value: loading && riskItems.length === 0 ? '—' : stats.critical,
                 icon: Flame, color: '#dc2626', bg: 'rgba(239,68,68,0.08)',
               },
               {
-                label: zh ? '警告' : 'Warning', value: stats.warning,
+                label: zh ? '警告' : 'Warning', value: loading && riskItems.length === 0 ? '—' : stats.warning,
                 icon: AlertTriangle, color: '#d97706', bg: 'rgba(245,158,11,0.08)',
               },
               {
-                label: zh ? '正常' : 'Normal', value: stats.normal,
+                label: zh ? '正常' : 'Normal', value: loading && riskItems.length === 0 ? '—' : stats.normal,
                 icon: Activity, color: '#059669', bg: 'rgba(16,185,129,0.08)',
               },
             ].map((card, i) => (
@@ -551,11 +656,11 @@ const CapacityPlanningTab: React.FC<CapacityPlanningTabProps> = ({ language, t }
           </div>
 
           {/* Chart area */}
-          <div className="flex-1 flex flex-col rounded-2xl border overflow-hidden min-h-0"
+          <div className="flex min-h-[420px] min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border xl:min-h-0"
             style={{ background: 'var(--card-bg)', borderColor: 'var(--card-border)' }}>
-            <div className="flex items-center justify-between px-5 py-3 border-b flex-shrink-0"
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b px-4 py-3 sm:px-5 flex-shrink-0"
               style={{ borderColor: 'var(--card-border)', background: ct.isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.015)' }}>
-              <div className="flex items-center gap-2">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <TrendingUp size={15} style={{ color: '#06b6d4' }} />
                 <span className="text-sm font-semibold truncate max-w-[240px]" style={{ color: 'var(--heading-text)' }}>
                   {selectedRisk
@@ -568,7 +673,8 @@ const CapacityPlanningTab: React.FC<CapacityPlanningTabProps> = ({ language, t }
                   <select
                     value={selectedInterfaceIndex}
                     onChange={(e) => setSelectedInterfaceIndex(Number(e.target.value))}
-                    className="ml-3 px-2.5 py-1 text-xs rounded-lg border transition-all"
+                    aria-label={zh ? '容量接口' : 'Capacity interface'}
+                  className="min-h-9 min-w-0 max-w-full rounded-lg border px-2.5 py-1.5 text-xs transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] sm:ml-3"
                     style={{
                       background: 'var(--card-bg)',
                       borderColor: 'var(--card-border)',
@@ -585,7 +691,7 @@ const CapacityPlanningTab: React.FC<CapacityPlanningTabProps> = ({ language, t }
                   </select>
                 )}
               </div>
-              <div className="flex items-center gap-4 text-[11px]" style={{ color: 'var(--muted-text)' }}>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs" style={{ color: 'var(--muted-text)' }}>
                 <span className="flex items-center gap-1.5">
                   <span className="w-4 h-[2px] rounded" style={{ background: '#06b6d4' }} />
                   {zh ? '实际 P95' : 'Actual P95'}
@@ -606,6 +712,35 @@ const CapacityPlanningTab: React.FC<CapacityPlanningTabProps> = ({ language, t }
             </div>
 
             <div className="flex-1 px-4 py-4 min-h-0">
+              {trendLoading || (loading && !selectedRisk && riskItems.length === 0) ? (
+                <div role="status" aria-live="polite" className="h-full flex flex-col items-center justify-center text-sm" style={{ color: 'var(--muted-text)' }}>
+                  <RefreshCw size={20} className="mb-2 animate-spin" aria-hidden="true" />
+                  {zh ? '正在加载趋势数据…' : 'Loading trend data…'}
+                </div>
+              ) : trendIssue ? (
+                <div role="alert" aria-live="assertive" className="h-full flex flex-col items-center justify-center gap-2 text-sm" style={{ color: 'var(--muted-text)' }}>
+                  <p>
+                    {trendIssue === 'permission'
+                      ? (zh ? '当前账号无权查看该设备的趋势数据。' : 'You do not have permission to view this device trend.')
+                      : (zh ? '该设备的趋势数据暂不可用。' : 'This device trend is unavailable.')}
+                  </p>
+                  <button
+                    type="button"
+                    className="font-semibold text-cyan-600 hover:text-cyan-700 underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+                    onClick={() => setTrendRetryToken(token => token + 1)}
+                  >
+                    {zh ? '重试' : 'Retry'}
+                  </button>
+                </div>
+              ) : selectedRisk && !deviceTrendData ? (
+                <div role="status" className="h-full flex flex-col items-center justify-center text-sm" style={{ color: 'var(--muted-text)' }}>
+                  {zh ? '暂无该设备的接口趋势数据' : 'No interface trend data is available for this device'}
+                </div>
+              ) : chartData.length === 0 ? (
+                <div role="status" className="h-full flex flex-col items-center justify-center text-sm" style={{ color: 'var(--muted-text)' }}>
+                  {zh ? '暂无容量趋势数据' : 'No capacity trend data is available'}
+                </div>
+              ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={chartData} margin={{ top: 8, right: 12, bottom: 4, left: 0 }}>
                   <defs>
@@ -671,6 +806,7 @@ const CapacityPlanningTab: React.FC<CapacityPlanningTabProps> = ({ language, t }
                   />
                 </LineChart>
               </ResponsiveContainer>
+              )}
             </div>
           </div>
 

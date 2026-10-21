@@ -348,12 +348,12 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
                     <td className="px-5 py-4 align-top text-sm text-black/60">{row.interface_name || '--'}</td>
                     <td className="px-5 py-4 align-top text-sm text-black/60">{alertSiteLabel(row, siteLabels, zh ? '未分配站点' : 'Unassigned site')}</td>
                     <td className="px-5 py-4 align-top">
-                      <span className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${severityBadgeClass(row.severity)}`}>
+                      <span className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-bold uppercase ${severityBadgeClass(row.severity)}`}>
                         {severityLabel(row.severity, language)}
                       </span>
                     </td>
                     <td className="px-5 py-4 align-top">
-                      <span className={`inline-flex rounded-full px-2 py-1 text-[10px] font-bold ${row.notification_status === 'succeeded' ? 'bg-emerald-50 text-emerald-700' : row.notification_status === 'failed' ? 'bg-rose-50 text-rose-700' : row.notification_status === 'retrying' ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>
+                      <span className={`inline-flex rounded-full px-2 py-1 text-[11px] font-bold ${row.notification_status === 'succeeded' ? 'bg-emerald-50 text-emerald-700' : row.notification_status === 'failed' ? 'bg-rose-50 text-rose-700' : row.notification_status === 'retrying' ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>
                         {row.notification_status === 'succeeded' ? (zh ? '已发送' : 'Sent') : row.notification_status === 'failed' ? (zh ? '失败' : 'Failed') : row.notification_status === 'retrying' ? (zh ? '重试中' : 'Retrying') : row.notification_status === 'none' ? (zh ? '无' : 'None') : row.notification_status || '--'}
                       </span>
                     </td>
@@ -504,7 +504,7 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
                           <div key={channel} className="rounded-2xl border border-black/8 bg-white p-3">
                             <div className="flex items-center gap-2">
                               <span className="text-sm font-semibold text-[#164e63]">{channel}</span>
-                              <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${summary.status === 'succeeded' ? 'bg-emerald-50 text-emerald-700' : summary.status === 'failed' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700'}`}>{summary.status}</span>
+                              <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${summary.status === 'succeeded' ? 'bg-emerald-50 text-emerald-700' : summary.status === 'failed' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700'}`}>{summary.status}</span>
                             </div>
                             <p className="mt-1 text-xs text-black/45">{zh ? `尝试 ${summary.attempt_no || 0} 次` : `${summary.attempt_no || 0} attempt(s)`}{summary.error_code ? ` · ${summary.error_code}` : ''}</p>
                           </div>
@@ -540,11 +540,11 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-2">
                                 <span className="truncate text-sm font-medium text-[#164e63]">{tl.title}</span>
-                                <span className={`inline-flex rounded-full px-2 py-0.5 text-[9px] font-bold uppercase ${severityBadgeClass(tl.severity)}`}>
+                                <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold uppercase ${severityBadgeClass(tl.severity)}`}>
                                   {severityLabel(tl.severity, language)}
                                 </span>
                                 {tl.id === selectedItem.id && (
-                                  <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[9px] font-bold text-blue-600">
+                                  <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[11px] font-bold text-blue-600">
                                     {zh ? '当前' : 'Current'}
                                   </span>
                                 )}

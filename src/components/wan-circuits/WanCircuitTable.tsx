@@ -58,16 +58,16 @@ export const WanCircuitTable: React.FC<Props> = ({ items, selectedId, language, 
                   <td>
                     <button type="button" className="group text-left" onClick={() => onSelect(item)}>
                       <span className="block max-w-[220px] truncate font-semibold text-[var(--heading-text)] group-hover:text-[var(--ui-accent)]">{item.link_name || item.id}</span>
-                      <span className="mt-0.5 block text-[10px] text-[var(--muted-text)]">{item.circuit_number || item.interface_name || '--'}</span>
+                      <span className="mt-0.5 block text-xs text-[var(--ui-fg-muted)]">{item.circuit_number || item.interface_name || '--'}</span>
                     </button>
                   </td>
                   <td>
                     <span className="block max-w-[190px] truncate text-[var(--ui-fg)]">{item.site_name || item.site_id || '--'}</span>
-                    <span className="mt-0.5 block max-w-[190px] truncate text-[10px] text-[var(--muted-text)]">{item.provider || '--'}</span>
+                    <span className="mt-0.5 block max-w-[190px] truncate text-xs text-[var(--ui-fg-muted)]">{item.provider || '--'}</span>
                   </td>
-                  <td><span className="block">{item.endpoints?.length ?? '--'}</span>{hasSharedInterface && <span className={`mt-1 inline-flex rounded-full px-2 py-1 text-[10px] font-semibold ${auditStatusBadgeClass('warning')}`}>{zh ? '共享接口' : 'Shared interface'}</span>}</td>
-                  <td><span className={`inline-flex rounded-full px-2 py-1 text-[10px] font-semibold ${statusBadgeClass(status)}`}>{statusLabel(status, zh)}</span></td>
-                  <td><span className="block">↓ {formatMbps(item.contracted_download_bps)}</span><span className="mt-0.5 block text-[10px] text-[var(--muted-text)]">↑ {formatMbps(item.contracted_upload_bps)}</span></td>
+                  <td><span className="block tabular-nums">{item.endpoints?.length ?? '--'}</span>{hasSharedInterface && <span className={`mt-1 inline-flex rounded-full px-2 py-1 text-[11px] font-semibold ${auditStatusBadgeClass('warning')}`}>{zh ? '共享接口' : 'Shared interface'}</span>}</td>
+                  <td><span className={`inline-flex rounded-full px-2 py-1 text-[11px] font-semibold ${statusBadgeClass(status)}`}>{statusLabel(status, zh)}</span></td>
+                  <td><span className="block tabular-nums">↓ {formatMbps(item.contracted_download_bps)}</span><span className="mt-0.5 block text-xs tabular-nums text-[var(--ui-fg-muted)]">↑ {formatMbps(item.contracted_upload_bps)}</span></td>
                   <TableActionCell label={`${item.link_name} ${zh ? '操作' : 'actions'}`}>
                     <ActionIconButton icon={Eye} label={zh ? '查看详情' : 'View details'} variant="accent" onClick={() => onSelect(item)} />
                     <ActionIconButton icon={Pencil} label={zh ? '编辑线路' : 'Edit circuit'} onClick={() => onEdit(item)} />

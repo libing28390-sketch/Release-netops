@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ClipboardList, CheckCircle2, AlertTriangle, X, Zap, XCircle, Trash2 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
@@ -12,6 +12,7 @@ import { ChangeOrderDetail } from './components/ChangeOrderDetail';
 import { ChangeOrderEditor } from './components/ChangeOrderEditor';
 import { TerminalExecution } from './components/TerminalExecution';
 import { useEscapeClose } from '../../hooks/useEscapeClose';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { PasswordInputField } from '../../components/ui/PasswordInputField';
 
 // Constants & Helpers
@@ -34,6 +35,7 @@ import {
 } from './helpers';
 
 const FEATURE_CONTROL_SHEET = import.meta.env.VITE_FEATURE_CONTROL_SHEET === '0' ? false : true;
+type ChangeOrderRequestError = 'permission' | 'load';
 
 interface Props {
   language: string;
@@ -76,6 +78,9 @@ const ChangeOrderComponent: React.FC<Props> = ({
   const [total, setTotal] = useState(0);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loading, setLoading] = useState(false);
+  const [listError, setListError] = useState<ChangeOrderRequestError | null>(null);
+  const orderListRequestSequence = useRef(0);
+  const orderListRequestController = useRef<AbortController | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
 
@@ -99,22 +104,25 @@ const ChangeOrderComponent: React.FC<Props> = ({
   );
   const [myTodoSubTab, setMyTodoSubTab] = useState<'review' | 'implement' | 'modify'>('review');
 
-  // Sync viewTab when sidebar navigation changes
-  useEffect(() => {
-    if (initialView && initialView !== 'create') {
-      setViewTab(initialView);
-      setSelectedOrder(null);
-      setTimeline([]);
-    }
-  }, [initialView]);
-
   // ── Bookmarks ──
   const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(new Set());
   // ── Detail panel ──
   const [selectedOrder, setSelectedOrder] = useState<IChangeOrder | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<ChangeOrderRequestError | null>(null);
+  const detailRequestSequence = useRef(0);
   const [timeline, setTimeline] = useState<any[]>([]);
   const [timelineLoading, setTimelineLoading] = useState(false);
+  const timelineRequestSequence = useRef(0);
+  const closeDetail = useCallback(() => {
+    detailRequestSequence.current += 1;
+    timelineRequestSequence.current += 1;
+    setDetailLoading(false);
+    setDetailError(null);
+    setTimelineLoading(false);
+    setSelectedOrder(null);
+    setTimeline([]);
+  }, []);
   const [actionPrompt, setActionPrompt] = useState<{
     title: string;
     placeholder: string;
@@ -123,6 +131,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
     sensitive?: boolean;
     onConfirm: (val: string) => void;
   } | null>(null);
+  const actionPromptDialogRef = useRef<HTMLDivElement>(null);
 
   // ── Execute-commands modal state ──
   const [executeModal, setExecuteModal] = useState<{
@@ -136,12 +145,14 @@ const ChangeOrderComponent: React.FC<Props> = ({
   const [finalApproverPrompt, setFinalApproverPrompt] = useState<{
     onConfirm: (id: string) => void;
   } | null>(null);
+  const finalApproverDialogRef = useRef<HTMLDivElement>(null);
   const [finalApproverSearch, setFinalApproverSearch] = useState('');
   const [tempSelectedFinalApprover, setTempSelectedFinalApprover] = useState<string>('');
 
   const [initialApproverPrompt, setInitialApproverPrompt] = useState<{
     onConfirm: (id: string) => void;
   } | null>(null);
+  const initialApproverDialogRef = useRef<HTMLDivElement>(null);
   const [initialApproverSearch, setInitialApproverSearch] = useState('');
   const [tempSelectedInitialApprover, setTempSelectedInitialApprover] = useState<string>('');
   const [selectedGroupForInitial, setSelectedGroupForInitial] = useState<string>('');
@@ -150,20 +161,21 @@ const ChangeOrderComponent: React.FC<Props> = ({
   const [showCreateModal, setShowCreateModal] = useState(initialView === 'create');
   const [editingOrder, setEditingOrder] = useState<IChangeOrder | null>(null);
 
-  useEffect(() => {
-    if (initialView !== 'create') {
-      setShowCreateModal(false);
-      if (initialView) {
-        setSelectedOrder(null);
-        setTimeline([]);
-      }
-    }
-  }, [initialView]);
-
   const isPrivilegedDefault = currentUser.role === 'Administrator';
   const [form, setForm] = useState(() => ({ ...EMPTY_FORM, authorization_exempt: isPrivilegedDefault }));
   const [saving, setSaving] = useState(false);
   const [selectedGroupForFinal, setSelectedGroupForFinal] = useState<string>('');
+
+  // Sync the selected queue when sidebar navigation changes.
+  useEffect(() => {
+    if (initialView && initialView !== 'create') {
+      setViewTab(initialView);
+    }
+    if (initialView !== 'create') {
+      setShowCreateModal(false);
+      if (initialView) closeDetail();
+    }
+  }, [closeDetail, initialView]);
 
   // Template Mode States
   const [commandMode, setCommandMode] = useState<'manual' | 'template'>('manual');
@@ -258,9 +270,28 @@ const ChangeOrderComponent: React.FC<Props> = ({
       navigate('/change-orders/all');
     }
   }, [isCreateView, isDirty, navigate, resetEditorState, zh]);
+  const closeFinalApproverPrompt = useCallback(() => {
+    setFinalApproverPrompt(null);
+    setFinalApproverSearch('');
+    setTempSelectedFinalApprover('');
+    setSelectedGroupForFinal('');
+  }, []);
+  const closeInitialApproverPrompt = useCallback(() => {
+    setInitialApproverPrompt(null);
+    setInitialApproverSearch('');
+    setTempSelectedInitialApprover('');
+    setSelectedGroupForInitial('');
+  }, []);
+  useEscapeClose(
+    editorVisible && !saving && !actionPrompt && !finalApproverPrompt && !initialApproverPrompt && !executeModal,
+    () => closeEditor(),
+  );
   useEscapeClose(Boolean(actionPrompt), () => setActionPrompt(null));
-  useEscapeClose(Boolean(finalApproverPrompt), () => setFinalApproverPrompt(null));
-  useEscapeClose(Boolean(initialApproverPrompt), () => setInitialApproverPrompt(null));
+  useEscapeClose(Boolean(finalApproverPrompt), closeFinalApproverPrompt);
+  useEscapeClose(Boolean(initialApproverPrompt), closeInitialApproverPrompt);
+  useFocusTrap(actionPromptDialogRef, Boolean(actionPrompt), actionPrompt?.sensitive ? '#change-order-sensitive-response' : 'textarea');
+  useFocusTrap(finalApproverDialogRef, Boolean(finalApproverPrompt), '#change-order-final-approver-search');
+  useFocusTrap(initialApproverDialogRef, Boolean(initialApproverPrompt), '#change-order-initial-reviewer-search');
 
   // Handle scenarioId from location state
   useEffect(() => {
@@ -651,7 +682,13 @@ const ChangeOrderComponent: React.FC<Props> = ({
 
   // ── Fetch functions ──
   const fetchOrders = useCallback(async () => {
+    orderListRequestController.current?.abort();
+    const controller = new AbortController();
+    orderListRequestController.current = controller;
+    const requestSequence = ++orderListRequestSequence.current;
+    let requestError: ChangeOrderRequestError = 'load';
     setLoading(true);
+    setListError(null);
     try {
       const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
       if (search) params.set('search', search);
@@ -679,16 +716,33 @@ const ChangeOrderComponent: React.FC<Props> = ({
       } else if (viewTab === 'my_drafts' && currentUser.username) {
         params.set('my_drafts', currentUser.username);
       }
-      const resp = await fetch(`/api/change-orders?${params}`, { headers: authHeaders() });
+      const resp = await fetch(`/api/change-orders?${params}`, { headers: authHeaders(), signal: controller.signal });
+      if (!resp.ok) {
+        if (resp.status === 401 || resp.status === 403) requestError = 'permission';
+        throw new Error('Failed to load change orders');
+      }
       const data = await resp.json();
       if (data.success) {
+        if (requestSequence !== orderListRequestSequence.current) return;
         setOrders(data.data);
         setTotal(data.total);
+      } else if (requestSequence === orderListRequestSequence.current) {
+        setListError(requestError);
       }
     } catch {
+      if (controller.signal.aborted || requestSequence !== orderListRequestSequence.current) return;
+      setListError(requestError);
+      if (requestError === 'permission') {
+        setOrders([]);
+        setTotal(0);
+        setBookmarkedIds(new Set());
+      }
       showToast(zh ? '加载失败' : 'Load failed', 'error');
     } finally {
-      setLoading(false);
+      if (requestSequence === orderListRequestSequence.current) {
+        orderListRequestController.current = null;
+        setLoading(false);
+      }
     }
   }, [page, pageSize, search, statusFilter, priorityFilter, requesterFilter, assigneeFilter, bookmarkFilter, orderTypeFilter, createdFrom, createdTo, completedFrom, completedTo, scheduledFrom, scheduledTo, viewTab, currentUser.id, currentUser.username, currentUser.change_groups, zh, showToast, authHeaders]);
 
@@ -709,20 +763,34 @@ const ChangeOrderComponent: React.FC<Props> = ({
   }, [authHeaders]);
 
   const fetchTimeline = useCallback(async (orderId: string) => {
+    const requestSequence = ++timelineRequestSequence.current;
     setTimelineLoading(true);
     try {
       const resp = await fetch(`/api/change-orders/${orderId}/timeline`, { headers: authHeaders() });
+      if (!resp.ok) throw new Error('Failed to load change order timeline');
       const data = await resp.json();
+      if (requestSequence !== timelineRequestSequence.current) return;
       if (data.success) setTimeline(Array.isArray(data.data) ? data.data : []);
       else setTimeline([]);
     } catch {
-      setTimeline([]);
+      if (requestSequence === timelineRequestSequence.current) setTimeline([]);
     } finally {
-      setTimelineLoading(false);
+      if (requestSequence === timelineRequestSequence.current) setTimelineLoading(false);
     }
   }, [authHeaders]);
 
-  useEffect(() => { fetchOrders(); }, [fetchOrders]);
+  useEffect(() => () => {
+    detailRequestSequence.current += 1;
+    timelineRequestSequence.current += 1;
+  }, []);
+
+  useEffect(() => {
+    void fetchOrders();
+    return () => {
+      orderListRequestSequence.current += 1;
+      orderListRequestController.current?.abort();
+    };
+  }, [fetchOrders]);
   useEffect(() => { fetchSummary(); }, [fetchSummary]);
   useEffect(() => { fetchBookmarks(); }, [fetchBookmarks]);
 
@@ -1063,8 +1131,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
       if (data.success) {
         showToast(data.message || (zh ? '已删除' : 'Deleted'));
         if (selectedOrder?.id === orderId) {
-          setSelectedOrder(null);
-          setTimeline([]);
+          closeDetail();
         }
         fetchOrders();
         fetchSummary();
@@ -1093,7 +1160,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
   // ── Copy Order → Open composer ──
   const handleCopyOrder = (order: IChangeOrder) => {
     setEditingOrder(null);
-    setSelectedOrder(null);
+    closeDetail();
     const existingCs = order.control_sheet || {};
     setForm({
       title: `${order.title} (${zh ? '副本' : 'Copy'})`,
@@ -1230,17 +1297,36 @@ const ChangeOrderComponent: React.FC<Props> = ({
 
   // ── Open Detail panel ──
   const openDetail = async (order: IChangeOrder) => {
+    const requestSequence = ++detailRequestSequence.current;
+    timelineRequestSequence.current += 1;
     setDetailLoading(true);
+    setDetailError(null);
+    setTimelineLoading(false);
     setSelectedOrder(order);
     setTimeline([]);
+    let requestError: ChangeOrderRequestError = 'load';
+    let detailLoaded = false;
     try {
       const resp = await fetch(`/api/change-orders/${order.id}`, { headers: authHeaders() });
+      if (!resp.ok) {
+        if (resp.status === 401 || resp.status === 403) requestError = 'permission';
+        throw new Error('Failed to load change order details');
+      }
       const data = await resp.json();
-      if (data.success) setSelectedOrder(data.data);
-    } catch { /* ignore */ }
-    finally {
-      setDetailLoading(false);
-      fetchTimeline(order.id);
+      if (requestSequence !== detailRequestSequence.current) return;
+      if (data.success) {
+        setSelectedOrder(data.data);
+        detailLoaded = true;
+      } else {
+        setDetailError(requestError);
+      }
+    } catch {
+      if (requestSequence === detailRequestSequence.current) setDetailError(requestError);
+    } finally {
+      if (requestSequence === detailRequestSequence.current) {
+        setDetailLoading(false);
+        if (detailLoaded) void fetchTimeline(order.id);
+      }
     }
   };
 
@@ -1266,7 +1352,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
   // ── Open Edit modal ──
   const openEdit = (order: IChangeOrder) => {
     const templateSnapshot = isCommandTemplateSnapshot(order.command_template) ? order.command_template : null;
-    setSelectedOrder(null);
+    closeDetail();
     setEditingOrder(order);
     const existingCs = order.control_sheet || {};
     const populatedControlSheet = {
@@ -1398,7 +1484,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
         subtitle={heroSubtitle}
       />
       
-      <div className="flex flex-col gap-6 flex-1 min-h-0 overflow-y-auto custom-scrollbar px-6 py-5">
+      <div className="flex flex-col gap-6 flex-1 min-h-0 overflow-y-auto custom-scrollbar px-4 py-4 sm:px-6 sm:py-5">
         {/* ── Toast ── */}
         <AnimatePresence>
           {toast && (
@@ -1481,7 +1567,10 @@ const ChangeOrderComponent: React.FC<Props> = ({
           <ChangeOrderDetail
             language={language}
             selectedOrder={selectedOrder}
-            setSelectedOrder={setSelectedOrder}
+            onCloseDetail={closeDetail}
+            detailLoading={detailLoading}
+            detailError={detailError}
+            retryDetail={() => { if (selectedOrder) void openDetail(selectedOrder); }}
             currentUser={currentUser}
             timeline={timeline}
             timelineLoading={timelineLoading}
@@ -1568,6 +1657,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
             total={total}
             summary={summary}
             loading={loading}
+            loadError={listError}
             page={page}
             pageSize={pageSize}
             setPage={setPage}
@@ -1642,14 +1732,19 @@ const ChangeOrderComponent: React.FC<Props> = ({
             onMouseDown={(e) => e.target === e.currentTarget && setActionPrompt(null)}
           >
             <motion.div
+              ref={actionPromptDialogRef}
               className="w-full max-w-sm rounded-3xl bg-white shadow-2xl overflow-hidden"
               initial={{ scale: 0.95, opacity: 0, y: 10 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.95, opacity: 0, y: 10 }}
               transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="change-order-action-prompt-title"
+              tabIndex={-1}
             >
               <div className="px-6 py-5 border-b border-black/5 bg-[linear-gradient(to_right,#f4fbfc_0%,#ffffff_100%)]">
-                <h3 className="text-lg font-bold text-[#164e63]">{actionPrompt.title}</h3>
+                <h3 id="change-order-action-prompt-title" className="text-lg font-bold text-[#164e63]">{actionPrompt.title}</h3>
               </div>
               <div className="p-6">
                 {!actionPrompt.sensitive && <div className="flex flex-wrap gap-1.5 mb-3">
@@ -1683,6 +1778,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
                   <textarea
                     autoFocus
                     rows={3}
+                    aria-label={actionPrompt.title}
                     value={actionPrompt.value}
                     onChange={(e) => setActionPrompt({ ...actionPrompt, value: e.target.value })}
                     placeholder={actionPrompt.placeholder}
@@ -1722,22 +1818,28 @@ const ChangeOrderComponent: React.FC<Props> = ({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.15 }}
-            onMouseDown={(e) => e.target === e.currentTarget && setFinalApproverPrompt(null)}
+            onMouseDown={(e) => e.target === e.currentTarget && closeFinalApproverPrompt()}
           >
             <motion.div
+              ref={finalApproverDialogRef}
               className="w-full max-w-md rounded-3xl bg-white shadow-2xl overflow-hidden"
               initial={{ scale: 0.95, opacity: 0, y: 10 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.95, opacity: 0, y: 10 }}
               transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="change-order-final-approver-title"
+              tabIndex={-1}
             >
               <div className="px-6 py-5 border-b border-black/5 bg-[linear-gradient(to_right,#f4fbfc_0%,#ffffff_100%)]">
-                <h3 className="text-lg font-bold text-[#164e63]">{zh ? '请指定终审人' : 'Select Final Approver'}</h3>
+                <h3 id="change-order-final-approver-title" className="text-lg font-bold text-[#164e63]">{zh ? '请指定终审人' : 'Select Final Approver'}</h3>
               </div>
               <div className="p-6 space-y-4">
                 <div>
-                  <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '搜索候选人 (拼音/中文)' : 'Search Candidates (Pinyin/Chinese)'}</label>
+                  <label htmlFor="change-order-final-approver-search" className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '搜索候选人 (拼音/中文)' : 'Search Candidates (Pinyin/Chinese)'}</label>
                   <input
+                    id="change-order-final-approver-search"
                     type="search"
                     placeholder={zh ? '输入用户名或拼音筛选...' : 'Type username...'}
                     value={finalApproverSearch}
@@ -1795,11 +1897,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
               </div>
               <div className="flex items-center justify-end gap-3 px-6 py-4 bg-[#f8fafc] border-t border-black/5">
                 <button
-                  onClick={() => {
-                    setFinalApproverPrompt(null);
-                    setFinalApproverSearch('');
-                    setTempSelectedFinalApprover('');
-                  }}
+                  onClick={closeFinalApproverPrompt}
                   className="px-4 py-2 rounded-xl border border-black/10 text-sm font-semibold text-black/50 hover:bg-black/5 transition-all"
                 >
                   {zh ? '取消' : 'Cancel'}
@@ -1811,10 +1909,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
                       return;
                     }
                     finalApproverPrompt.onConfirm(tempSelectedFinalApprover);
-                    setFinalApproverPrompt(null);
-                    setFinalApproverSearch('');
-                    setTempSelectedFinalApprover('');
-                    setSelectedGroupForFinal(''); 
+                    closeFinalApproverPrompt();
                   }}
                   className="px-4 py-2 rounded-xl bg-[#00bceb] text-white text-sm font-semibold hover:bg-[#0096bd] shadow-lg shadow-[#00bceb]/16 transition-all"
                 >
@@ -1835,22 +1930,28 @@ const ChangeOrderComponent: React.FC<Props> = ({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.15 }}
-            onMouseDown={(e) => e.target === e.currentTarget && setInitialApproverPrompt(null)}
+            onMouseDown={(e) => e.target === e.currentTarget && closeInitialApproverPrompt()}
           >
             <motion.div
+              ref={initialApproverDialogRef}
               className="w-full max-w-md rounded-3xl bg-white shadow-2xl overflow-hidden"
               initial={{ scale: 0.95, opacity: 0, y: 10 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.95, opacity: 0, y: 10 }}
               transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="change-order-initial-approver-title"
+              tabIndex={-1}
             >
               <div className="px-6 py-5 border-b border-black/5 bg-[linear-gradient(to_right,#f4fbfc_0%,#ffffff_100%)]">
-                <h3 className="text-lg font-bold text-[#164e63]">{zh ? '请指定初审人' : 'Select Initial Reviewer'}</h3>
+                <h3 id="change-order-initial-approver-title" className="text-lg font-bold text-[#164e63]">{zh ? '请指定初审人' : 'Select Initial Reviewer'}</h3>
               </div>
               <div className="p-6 space-y-4">
                 <div>
-                  <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '搜索候选人 (拼音/中文)' : 'Search Candidates (Pinyin/Chinese)'}</label>
+                  <label htmlFor="change-order-initial-reviewer-search" className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '搜索候选人 (拼音/中文)' : 'Search Candidates (Pinyin/Chinese)'}</label>
                   <input
+                    id="change-order-initial-reviewer-search"
                     type="search"
                     placeholder={zh ? '输入用户名或拼音筛选...' : 'Type username...'}
                     value={initialApproverSearch}
@@ -1908,11 +2009,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
               </div>
               <div className="flex items-center justify-end gap-3 px-6 py-4 bg-[#f8fafc] border-t border-black/5">
                 <button
-                  onClick={() => {
-                    setInitialApproverPrompt(null);
-                    setInitialApproverSearch('');
-                    setTempSelectedInitialApprover('');
-                  }}
+                  onClick={closeInitialApproverPrompt}
                   className="px-4 py-2 rounded-xl border border-black/10 text-sm font-semibold text-black/50 hover:bg-black/5 transition-all"
                 >
                   {zh ? '取消' : 'Cancel'}
@@ -1924,10 +2021,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
                       return;
                     }
                     initialApproverPrompt.onConfirm(tempSelectedInitialApprover);
-                    setInitialApproverPrompt(null);
-                    setInitialApproverSearch('');
-                    setTempSelectedInitialApprover('');
-                    setSelectedGroupForInitial(''); 
+                    closeInitialApproverPrompt();
                   }}
                   className="px-4 py-2 rounded-xl bg-[#00bceb] text-white text-sm font-semibold hover:bg-[#0096bd] shadow-lg shadow-[#00bceb]/16 transition-all"
                 >

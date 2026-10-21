@@ -82,6 +82,9 @@ describe('NSOTCollectionOperations', () => {
     render(<NSOTCollectionOperations language="zh" searchText="" />);
 
     const row = await screen.findByRole('row', { name: /基础监控.*迪普.*未知系统/ });
+    expect(screen.getByRole('table', { name: 'NSOT 采集模板与平台版本目录' })).toBeTruthy();
+    expect(within(row).getByText('系统模板').className).toContain('bg-blue-50');
+    expect(within(row).getByText('系统模板').className).toContain('text-blue-700');
     expect(within(row).getByRole('button', { name: '编辑基础监控' }).hasAttribute('disabled')).toBe(false);
     expect(within(row).getByRole('button', { name: '删除基础监控' }).hasAttribute('disabled')).toBe(false);
     expect(screen.getByText('共 2 行')).toBeTruthy();

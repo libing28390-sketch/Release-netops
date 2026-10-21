@@ -64,6 +64,11 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const quickMenuTriggerRef = useRef<HTMLButtonElement>(null);
+  const modelPopoverTriggerRef = useRef<HTMLButtonElement>(null);
+  const modelSectionTriggerRef = useRef<HTMLButtonElement>(null);
+  const reasoningSectionTriggerRef = useRef<HTMLButtonElement>(null);
+  const speedSectionTriggerRef = useRef<HTMLButtonElement>(null);
 
   // Auto resize textarea
   useEffect(() => {
@@ -92,6 +97,24 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (showModelPopover) {
+        event.preventDefault();
+        setShowModelPopover(false);
+        setActiveSubPanel('main');
+        window.requestAnimationFrame(() => modelPopoverTriggerRef.current?.focus());
+      } else if (showQuickMenu) {
+        event.preventDefault();
+        setShowQuickMenu(false);
+        window.requestAnimationFrame(() => quickMenuTriggerRef.current?.focus());
+      }
+    };
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [showModelPopover, showQuickMenu]);
 
   const handleSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -168,7 +191,7 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
         {attachmentNotice && <span className="rounded-full bg-amber-50 dark:bg-amber-950/30 px-2 py-1 text-amber-700 dark:text-amber-300">{attachmentNotice}</span>}
       </div>
       {showContext && (
-        <div className="mb-2 grid grid-cols-2 gap-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white/90 dark:bg-gray-900/90 p-2 text-xs">
+        <div className="mb-2 grid grid-cols-1 gap-2 rounded-xl border border-gray-200 bg-white/90 p-2 text-xs dark:border-gray-700 dark:bg-gray-900/90 sm:grid-cols-2">
           {([
             ['device_id', '设备 ID'], ['interface', '接口'], ['site_id', 'Site'], ['time_range', '时间范围'], ['vendor', '厂商'], ['platform', '平台'],
           ] as Array<[string, string]>).map(([key, label]) => (
@@ -177,7 +200,7 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
               <input value={String(context[key] || '')} onChange={(event) => updateContext(key, event.target.value)} className="min-w-0 flex-1 rounded border border-gray-200 dark:border-gray-700 bg-transparent px-2 py-1 text-gray-800 dark:text-gray-200" aria-label={label} />
             </label>
           ))}
-          <label className="col-span-2 flex items-center gap-2 text-gray-500 dark:text-gray-400">
+          <label className="flex items-center gap-2 text-gray-500 dark:text-gray-400 sm:col-span-2">
             <span>附件预检</span>
             <input type="file" accept=".txt,.md,.log,.html" onChange={(event) => {
               const file = event.target.files?.[0];
@@ -191,16 +214,18 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
       )}
       {/* Quick Menu Popover */}
       {showQuickMenu && (
-        <div className="absolute bottom-full mb-2 left-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl p-2 shadow-xl z-20 w-64 space-y-1 text-xs">
+        <div className="absolute bottom-full left-2 z-20 mb-2 w-64 max-w-[calc(100vw-1rem)] space-y-1 rounded-2xl border border-gray-200 bg-white p-2 text-xs shadow-xl dark:border-gray-700 dark:bg-gray-800 sm:left-4">
           <div className="px-2 py-1 text-[10px] font-semibold text-gray-400 uppercase">快捷指令</div>
           {quickCommands.map((cmd, idx) => (
             <button
               key={idx}
+              type="button"
               onClick={() => {
                 setInput(cmd.prompt);
                 setShowQuickMenu(false);
+                textareaRef.current?.focus();
               }}
-              className="w-full px-2.5 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl flex items-center gap-2 text-gray-700 dark:text-gray-200 text-left transition"
+              className="flex min-h-10 w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs text-gray-700 transition hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:text-gray-200 dark:hover:bg-gray-700"
             >
               {cmd.icon}
               <span className="truncate">{cmd.label}</span>
@@ -211,7 +236,7 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
 
       {/* Model & Inference Setting Popover (Matching Image 1 Exact Style) */}
       {showModelPopover && (
-        <div ref={popoverRef} className="absolute bottom-full mb-3 right-14 z-30 flex items-end gap-2 animate-fadeIn">
+        <div ref={popoverRef} className="absolute bottom-full right-2 z-30 mb-3 flex max-w-[calc(100vw-1rem)] flex-col-reverse items-end gap-2 animate-fadeIn sm:right-14 sm:flex-row">
           {/* Sub-Panel 2: Model Picker Panel */}
           {activeSubPanel === 'models' && (
             <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl p-2 shadow-2xl w-64 space-y-1 text-xs select-none">
@@ -234,11 +259,14 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
                           onClick={() => {
                             if (onSelectModel) onSelectModel(m.id);
                             setActiveSubPanel('main');
+                            window.requestAnimationFrame(() => modelSectionTriggerRef.current?.focus());
                           }}
-                          className={`w-full px-3 py-2 rounded-xl text-left flex items-center justify-between transition cursor-pointer ${
+                          type="button"
+                          aria-pressed={isSelected}
+                          className={`flex min-h-10 w-full items-center justify-between rounded-xl border px-3 py-2 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
                             isSelected
-                              ? 'bg-indigo-50 dark:bg-indigo-950/60 font-semibold text-indigo-700 dark:text-indigo-300'
-                              : 'text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700/60'
+                              ? 'border-indigo-200 bg-indigo-50 font-semibold text-indigo-700 dark:border-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300'
+                              : 'border-transparent text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700/60'
                           }`}
                         >
                           <span className="min-w-0 truncate"><span>{m.name}</span><span className="ml-1 text-[10px] text-gray-400">{m.model_type || 'chat'} · {m.context_length ? `${Math.round(m.context_length / 1000)}k` : 'ctx'} · {getModelHealthLabel(m.health_status)}</span></span>
@@ -259,18 +287,22 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
                 推理强度
               </div>
               <button
-                onClick={() => { setReasoningLevel('high'); setActiveSubPanel('main'); }}
-                className={`w-full px-3 py-2 rounded-xl text-left flex items-center justify-between transition ${
-                  reasoningLevel === 'high' ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-semibold' : 'text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700'
+                onClick={() => { setReasoningLevel('high'); setActiveSubPanel('main'); window.requestAnimationFrame(() => reasoningSectionTriggerRef.current?.focus()); }}
+                type="button"
+                aria-pressed={reasoningLevel === 'high'}
+                className={`flex min-h-10 w-full items-center justify-between rounded-xl border px-3 py-2 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
+                  reasoningLevel === 'high' ? 'border-indigo-200 bg-indigo-50 font-semibold text-indigo-700 dark:border-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300' : 'border-transparent text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700'
                 }`}
               >
                 <span>最高 (深度思考 R1)</span>
                 {reasoningLevel === 'high' && <Check className="w-3.5 h-3.5" />}
               </button>
               <button
-                onClick={() => { setReasoningLevel('normal'); setActiveSubPanel('main'); }}
-                className={`w-full px-3 py-2 rounded-xl text-left flex items-center justify-between transition ${
-                  reasoningLevel === 'normal' ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-semibold' : 'text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700'
+                onClick={() => { setReasoningLevel('normal'); setActiveSubPanel('main'); window.requestAnimationFrame(() => reasoningSectionTriggerRef.current?.focus()); }}
+                type="button"
+                aria-pressed={reasoningLevel === 'normal'}
+                className={`flex min-h-10 w-full items-center justify-between rounded-xl border px-3 py-2 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
+                  reasoningLevel === 'normal' ? 'border-indigo-200 bg-indigo-50 font-semibold text-indigo-700 dark:border-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300' : 'border-transparent text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700'
                 }`}
               >
                 <span>常规</span>
@@ -286,18 +318,22 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
                 响应速度 / 风格
               </div>
               <button
-                onClick={() => { setSpeedLevel('fast'); setActiveSubPanel('main'); }}
-                className={`w-full px-3 py-2 rounded-xl text-left flex items-center justify-between transition ${
-                  speedLevel === 'fast' ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-semibold' : 'text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700'
+                onClick={() => { setSpeedLevel('fast'); setActiveSubPanel('main'); window.requestAnimationFrame(() => speedSectionTriggerRef.current?.focus()); }}
+                type="button"
+                aria-pressed={speedLevel === 'fast'}
+                className={`flex min-h-10 w-full items-center justify-between rounded-xl border px-3 py-2 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
+                  speedLevel === 'fast' ? 'border-indigo-200 bg-indigo-50 font-semibold text-indigo-700 dark:border-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300' : 'border-transparent text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700'
                 }`}
               >
                 <span>快速 (平衡 0.7)</span>
                 {speedLevel === 'fast' && <Check className="w-3.5 h-3.5" />}
               </button>
               <button
-                onClick={() => { setSpeedLevel('precise'); setActiveSubPanel('main'); }}
-                className={`w-full px-3 py-2 rounded-xl text-left flex items-center justify-between transition ${
-                  speedLevel === 'precise' ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-semibold' : 'text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700'
+                onClick={() => { setSpeedLevel('precise'); setActiveSubPanel('main'); window.requestAnimationFrame(() => speedSectionTriggerRef.current?.focus()); }}
+                type="button"
+                aria-pressed={speedLevel === 'precise'}
+                className={`flex min-h-10 w-full items-center justify-between rounded-xl border px-3 py-2 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
+                  speedLevel === 'precise' ? 'border-indigo-200 bg-indigo-50 font-semibold text-indigo-700 dark:border-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300' : 'border-transparent text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700'
                 }`}
               >
                 <span>精确 (严谨 0.2)</span>
@@ -310,8 +346,11 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
           <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl p-2 shadow-2xl w-56 space-y-1 text-xs select-none">
             {/* Item 1: Model Selector Entry */}
             <button
+              ref={modelSectionTriggerRef}
               onClick={() => setActiveSubPanel(activeSubPanel === 'models' ? 'main' : 'models')}
-              className={`w-full px-3 py-2.5 rounded-xl flex items-center justify-between transition cursor-pointer ${
+              type="button"
+              aria-expanded={activeSubPanel === 'models'}
+              className={`flex min-h-10 w-full items-center justify-between rounded-xl px-3 py-2.5 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
                 activeSubPanel === 'models'
                   ? 'bg-gray-100 dark:bg-gray-700 font-semibold text-gray-900 dark:text-white'
                   : 'text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700/70'
@@ -326,8 +365,11 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
 
             {/* Item 2: Reasoning Effort Entry */}
             <button
+              ref={reasoningSectionTriggerRef}
               onClick={() => setActiveSubPanel(activeSubPanel === 'reasoning' ? 'main' : 'reasoning')}
-              className={`w-full px-3 py-2.5 rounded-xl flex items-center justify-between transition cursor-pointer ${
+              type="button"
+              aria-expanded={activeSubPanel === 'reasoning'}
+              className={`flex min-h-10 w-full items-center justify-between rounded-xl px-3 py-2.5 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
                 activeSubPanel === 'reasoning'
                   ? 'bg-gray-100 dark:bg-gray-700 font-semibold text-gray-900 dark:text-white'
                   : 'text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700/70'
@@ -342,8 +384,11 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
 
             {/* Item 3: Speed Entry */}
             <button
+              ref={speedSectionTriggerRef}
               onClick={() => setActiveSubPanel(activeSubPanel === 'speed' ? 'main' : 'speed')}
-              className={`w-full px-3 py-2.5 rounded-xl flex items-center justify-between transition cursor-pointer ${
+              type="button"
+              aria-expanded={activeSubPanel === 'speed'}
+              className={`flex min-h-10 w-full items-center justify-between rounded-xl px-3 py-2.5 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
                 activeSubPanel === 'speed'
                   ? 'bg-gray-100 dark:bg-gray-700 font-semibold text-gray-900 dark:text-white'
                   : 'text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700/70'
@@ -361,7 +406,8 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
             {/* Item 4: Reset Defaults */}
             <button
               onClick={resetDefaults}
-              className="w-full px-3 py-2 rounded-xl text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-between transition cursor-pointer"
+              type="button"
+              className="flex min-h-10 w-full items-center justify-between rounded-xl px-3 py-2 text-gray-500 transition hover:bg-gray-100 hover:text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200"
             >
               <span>重置为默认设置</span>
               <RotateCcw className="w-3.5 h-3.5" />
@@ -382,13 +428,15 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
       {/* Input Box Container (ChatGPT Style 24px Pill/Rounded Container) */}
       <form
         onSubmit={handleSubmit}
-        className="bg-[#f4f4f5] dark:bg-gray-800/90 border border-gray-300/60 dark:border-gray-700 rounded-[24px] px-3.5 py-2.5 shadow-xs focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500/20 transition flex items-end gap-2"
+        className="flex flex-wrap items-end gap-2 rounded-2xl border border-gray-300/60 bg-[#f4f4f5] px-3.5 py-2.5 shadow-xs transition focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500/20 dark:border-gray-700 dark:bg-gray-800/90 sm:flex-nowrap sm:rounded-[24px]"
       >
         {/* Quick Menu Toggle Button */}
         <button
+          ref={quickMenuTriggerRef}
           type="button"
           onClick={() => setShowQuickMenu(!showQuickMenu)}
-          className="p-2 rounded-full text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white hover:bg-gray-200/60 dark:hover:bg-gray-700 transition flex-shrink-0 mb-0.5"
+          aria-expanded={showQuickMenu}
+          className="order-2 mb-0.5 inline-flex min-h-10 min-w-10 flex-shrink-0 items-center justify-center rounded-full p-2 text-gray-500 transition hover:bg-gray-200/60 hover:text-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-white sm:order-none"
           title="打开快捷指令"
         >
           <Plus className="w-4 h-4" />
@@ -402,18 +450,20 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="询问 Nexora AI，或输入 / 使用快捷指令..."
-          className="flex-1 bg-transparent border-none focus:outline-none text-gray-900 dark:text-gray-100 text-sm placeholder-gray-400 resize-none py-1.5 min-h-[28px] max-h-[180px] leading-relaxed font-sans"
+          className="order-1 min-h-10 min-w-0 basis-full resize-none border-none bg-transparent py-1.5 font-sans text-sm leading-relaxed text-gray-900 placeholder-gray-400 focus:outline-none dark:text-gray-100 sm:order-none sm:min-h-[28px] sm:basis-auto sm:flex-1"
         />
 
         {/* Model & Inference Selector Pill (Matching Image 1 Trigger Style) */}
-        <div className="mb-0.5 min-w-0 flex-shrink">
+        <div className="order-3 mb-0.5 min-w-0 flex-shrink sm:order-none">
           <button
+            ref={modelPopoverTriggerRef}
             type="button"
             onClick={() => {
               setShowModelPopover(!showModelPopover);
               setActiveSubPanel('main');
             }}
-            className="inline-flex items-center gap-1.5 px-3 py-1 bg-white/90 dark:bg-gray-700/90 hover:bg-white dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 text-[11px] font-semibold rounded-full border border-gray-300/80 dark:border-gray-600 transition shadow-2xs cursor-pointer select-none"
+            aria-expanded={showModelPopover}
+            className="inline-flex min-h-10 max-w-full items-center gap-1.5 rounded-xl border border-gray-300/80 bg-white/90 px-3 text-xs font-semibold text-gray-700 shadow-2xs transition hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:border-gray-600 dark:bg-gray-700/90 dark:text-gray-200 dark:hover:bg-gray-700"
             title="点击展开模型与推理控制面板"
           >
             <Zap className="w-3 h-3 text-amber-500 fill-amber-500" />
@@ -427,7 +477,7 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
           type={isStreaming ? 'button' : 'submit'}
           onClick={isStreaming ? onStop : undefined}
           disabled={isStreaming ? !onStop : disabled || !input.trim()}
-          className="w-8 h-8 rounded-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 dark:disabled:bg-gray-700 text-white flex items-center justify-center transition flex-shrink-0 mb-0.5 shadow-xs cursor-pointer"
+          className="order-4 mb-0.5 inline-flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-indigo-600 text-white shadow-xs transition hover:bg-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-gray-300 dark:disabled:bg-gray-700 sm:order-none"
           title={isStreaming ? '停止生成' : '发送'}
           aria-label={isStreaming ? '停止生成' : '发送'}
         >

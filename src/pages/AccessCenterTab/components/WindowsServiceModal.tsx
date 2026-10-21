@@ -9,6 +9,7 @@ import {
   type WindowsServiceAction,
 } from '../../../api/windowsManagement';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
+import { useFocusTrap } from '../../../hooks/useFocusTrap';
 import { ActionIconButton } from '../../../components/ui/ActionIconButton';
 
 import { TableActionCell, TableActionHeader } from '../../../components/ui/TableActionColumn';
@@ -42,7 +43,9 @@ export default function WindowsServiceModal({
   showToast,
   onClose,
 }: WindowsServiceModalProps) {
+  const dialogRef = useRef<HTMLDivElement>(null);
   useEscapeClose(isOpen, onClose);
+  useFocusTrap(dialogRef, isOpen && Boolean(assetId), '[data-windows-service-search]');
   const isZh = language === 'zh';
   const [services, setServices] = useState<WindowsService[]>([]);
   const [total, setTotal] = useState(0);
@@ -202,7 +205,7 @@ export default function WindowsServiceModal({
   if (!isOpen || !assetId) return null;
 
   return (
-    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="windows-service-modal-title">
+    <div ref={dialogRef} className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="windows-service-modal-title" tabIndex={-1}>
       <div className="flex max-h-[min(760px,90vh)] w-full max-w-5xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
           <div>
@@ -218,7 +221,7 @@ export default function WindowsServiceModal({
           <form onSubmit={submitSearch} className="flex min-w-[260px] flex-1 items-center gap-2">
             <div className="relative flex-1">
               <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
-              <input type="search" value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} onKeyDown={(event) => {
+              <input type="search" data-windows-service-search aria-label={text.search} value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} onKeyDown={(event) => {
                 if (event.key === 'Enter') {
                   event.preventDefault();
                   event.currentTarget.form?.requestSubmit();

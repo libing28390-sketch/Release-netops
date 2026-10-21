@@ -32,6 +32,10 @@
 	--ui-text-caption: 11px;
 	--ui-text-title: 20px;
 	--ui-text-kpi: 24px;
+	--ui-control-height: 40px;
+	--ui-control-target-xs: 28px;
+	--ui-control-target-sm: 36px;
+	--ui-control-target-md: 40px;
 	--ui-leading-body: 1.5;
 	--ui-leading-tight: 1.25;
 
@@ -303,7 +307,7 @@ input[type="search"]:hover::-webkit-search-cancel-button {
  * while retaining the shared GitHub-style button geometry. */
 .nx-action-group--table {
 	width: max-content;
-	min-height: 36px;
+	min-height: var(--ui-control-target-sm);
 	gap: 2px;
 	padding: 2px;
 	border: 1px solid var(--ui-border);
@@ -425,18 +429,18 @@ input[type="search"]:hover::-webkit-search-cancel-button {
 }
 
 .nx-action-icon--sm {
-	width: 32px;
-	height: 32px;
+	width: var(--ui-control-target-sm);
+	height: var(--ui-control-target-sm);
 }
 
 .nx-action-icon--xs {
-	width: 24px;
-	height: 24px;
+	width: var(--ui-control-target-xs);
+	height: var(--ui-control-target-xs);
 }
 
 .nx-action-icon--md {
-	width: 36px;
-	height: 36px;
+	width: var(--ui-control-target-md);
+	height: var(--ui-control-target-md);
 }
 
 .nx-action-icon:hover:not(:disabled) {
@@ -483,7 +487,7 @@ input[type="search"]:hover::-webkit-search-cancel-button {
 .nx-password-input {
 	display: block;
 	width: 100%;
-	min-height: 40px;
+	min-height: var(--ui-control-height);
 	padding: 9px 42px 9px 12px;
 	border: 1px solid var(--ui-border);
 	border-radius: 10px;
@@ -538,13 +542,13 @@ input[type="search"]:hover::-webkit-search-cancel-button {
 }
 
 .nx-action-button--sm {
-	min-height: 32px;
+	min-height: var(--ui-control-target-sm);
 	padding: 6px 10px;
 	font-size: 12px;
 }
 
 .nx-action-button--md {
-	min-height: 36px;
+	min-height: var(--ui-control-target-md);
 	padding: 8px 12px;
 	font-size: 13px;
 }
@@ -919,51 +923,40 @@ input[type="search"]:hover::-webkit-search-cancel-button {
 	min-width: min(100%, 260px);
 	flex: 1 1 360px;
 	align-items: center;
-	border: 1px solid #dbe2ea;
-	background: #fff;
+	border: 1px solid var(--ui-border);
+	background: var(--ui-surface);
 }
 
 .nx-list-search:focus-within {
-	border-color: #2563eb;
-	box-shadow: 0 0 0 1px #2563eb;
-}
-
-.dark .nx-list-search {
-	border-color: #334155;
-	background: #0f172a;
+	border-color: var(--ui-accent);
+	box-shadow: 0 0 0 1px var(--ui-accent);
 }
 
 .nx-table-tool-button {
 	display: inline-flex;
-	height: 32px;
-	width: 32px;
+	min-height: 36px;
+	min-width: 36px;
 	flex: 0 0 auto;
 	align-items: center;
 	justify-content: center;
-	border: 1px solid #dbe2ea;
-	background: #fff;
-	color: #475569;
+	border: 1px solid var(--ui-border);
+	border-radius: 8px;
+	background: var(--ui-surface);
+	color: var(--ui-fg-muted);
 	transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease;
 }
 
 .nx-table-tool-button:hover,
 .nx-table-tool-button[aria-expanded="true"] {
-	border-color: #93c5fd;
-	background: #eff6ff;
-	color: #1d4ed8;
+	border-color: color-mix(in srgb, var(--ui-accent) 32%, var(--ui-border));
+	background: var(--ui-accent-subtle);
+	color: var(--ui-accent);
 }
 
-.dark .nx-table-tool-button {
-	border-color: #334155;
-	background: #0f172a;
-	color: #cbd5e1;
-}
-
-.dark .nx-table-tool-button:hover,
-.dark .nx-table-tool-button[aria-expanded="true"] {
-	border-color: #1d4ed8;
-	background: #172554;
-	color: #bfdbfe;
+.nx-table-tool-button:focus-visible,
+.nx-table-header-filter:focus-visible {
+	outline: none;
+	box-shadow: 0 0 0 2px var(--ui-focus-offset), 0 0 0 4px var(--ui-accent);
 }
 
 .nx-column-settings-search:focus {
@@ -972,30 +965,33 @@ input[type="search"]:hover::-webkit-search-cancel-button {
 
 .nx-table-header-filter {
 	display: inline-flex;
+	min-height: 28px;
+	min-width: 28px;
 	align-items: center;
+	justify-content: center;
 	gap: 3px;
 	margin-left: 3px;
-	border-radius: 2px;
-	padding: 3px;
-	color: #64748b;
+	border-radius: 6px;
+	padding: 4px;
+	color: var(--ui-fg-muted);
 	vertical-align: middle;
 }
 
 .nx-table-header-filter:hover,
 .nx-table-header-filter.is-active,
 .nx-table-header-filter[aria-expanded="true"] {
-	background: #eff6ff;
-	color: #1d4ed8;
+	background: var(--ui-accent-subtle);
+	color: var(--ui-accent);
 }
 
 .nx-table-filter-count {
-	min-width: 15px;
+	min-width: 18px;
 	border-radius: 999px;
-	background: #2563eb;
+	background: var(--ui-accent);
 	padding: 0 4px;
 	color: #fff;
-	font-size: 9px;
-	line-height: 15px;
+	font-size: 10px;
+	line-height: 18px;
 	text-align: center;
 }
 
@@ -1004,11 +1000,13 @@ input[type="search"]:hover::-webkit-search-cancel-button {
 	left: 0;
 	top: calc(100% + 5px);
 	z-index: 60;
-	width: 156px;
-	border: 1px solid #dbe2ea;
-	background: #fff;
+	width: 200px;
+	max-width: min(260px, calc(100vw - 24px));
+	border: 1px solid var(--ui-border);
+	border-radius: 10px;
+	background: var(--ui-surface);
 	box-shadow: 0 12px 28px rgb(15 23 42 / 12%);
-	color: #0f172a;
+	color: var(--ui-fg);
 	font-weight: 400;
 	text-transform: none;
 	white-space: normal;
@@ -1016,29 +1014,50 @@ input[type="search"]:hover::-webkit-search-cancel-button {
 
 .nx-table-filter-option {
 	display: flex;
-	min-height: 32px;
+	min-height: 38px;
 	cursor: pointer;
 	align-items: center;
 	gap: 8px;
-	padding: 6px 10px;
-	font-size: 11px;
+	padding: 7px 10px;
+	font-size: var(--ui-text-label);
 	font-weight: 400;
 	letter-spacing: normal;
 	text-transform: none;
 }
 
 .nx-table-filter-option:hover {
-	background: #f8fafc;
+	background: var(--ui-surface-muted);
 }
 
-.dark .nx-table-filter-popover {
-	border-color: #334155;
-	background: #0f172a;
-	color: #e2e8f0;
+.nx-table-filter-popover button {
+	min-height: 32px;
+	border: 1px solid var(--ui-border);
+	border-radius: 6px;
+	background: var(--ui-surface);
+	color: var(--ui-fg-muted);
+	font-size: var(--ui-text-caption);
+	font-weight: 600;
 }
 
-.dark .nx-table-filter-option:hover {
-	background: #1e293b;
+.nx-table-filter-popover button:first-child {
+	border-color: var(--ui-accent);
+	background: var(--ui-accent);
+	color: #fff;
+}
+
+.nx-table-filter-popover button:first-child:hover:not(:disabled) {
+	border-color: var(--ui-accent-hover);
+	background: var(--ui-accent-hover);
+}
+
+.nx-table-filter-popover button:last-child:hover:not(:disabled) {
+	background: var(--ui-surface-muted);
+	color: var(--ui-fg);
+}
+
+.nx-table-filter-popover button:focus-visible {
+	outline: none;
+	box-shadow: 0 0 0 2px var(--ui-focus-offset), 0 0 0 4px var(--ui-accent);
 }
 
 .nx-form-section {
@@ -1099,6 +1118,7 @@ input[type="search"]:hover::-webkit-search-cancel-button {
 	border: 1px solid var(--ops-line);
 	background: var(--ops-surface);
 	box-shadow: var(--ops-shadow);
+	border-radius: 12px;
 }
 
 .nx-form-dialog-header {
@@ -1128,10 +1148,16 @@ input[type="search"]:hover::-webkit-search-cancel-button {
 
 .nx-form-dialog-close {
 	display: inline-flex;
+	flex: 0 0 auto;
+	width: var(--ui-control-target-md);
+	min-width: var(--ui-control-target-md);
+	height: var(--ui-control-target-md);
+	min-height: var(--ui-control-target-md);
 	align-items: center;
 	justify-content: center;
-	border-radius: 4px;
-	padding: 5px;
+	border: 1px solid transparent;
+	border-radius: 8px;
+	padding: 0;
 	color: var(--ops-muted);
 }
 
@@ -1140,11 +1166,35 @@ input[type="search"]:hover::-webkit-search-cancel-button {
 	color: var(--ops-ink);
 }
 
+.nx-form-dialog-close:focus-visible,
+.nx-dialog-header > button:focus-visible,
+[role="dialog"][aria-modal="true"] button:is([aria-label="关闭"], [aria-label="Close"]):focus-visible {
+	outline: none;
+	box-shadow: 0 0 0 2px var(--ui-focus-offset), 0 0 0 4px var(--ui-accent);
+}
+
+:is(.nx-dialog-header > button, [role="dialog"][aria-modal="true"] button:is([aria-label="关闭"], [aria-label="Close"])) {
+	display: inline-flex;
+	flex: 0 0 auto;
+	width: var(--ui-control-target-md);
+	min-width: var(--ui-control-target-md);
+	height: var(--ui-control-target-md);
+	min-height: var(--ui-control-target-md);
+	align-items: center;
+	justify-content: center;
+	padding: 0;
+	border-radius: 8px;
+}
+
 .nx-form-dialog-body {
 	min-height: 0;
 	flex: 1 1 auto;
 	overflow: auto;
 	padding: 20px 22px;
+}
+
+.nx-form-dialog-footer :is(button, a) {
+	min-height: var(--ui-control-target-md);
 }
 
 .nx-form-dialog-footer {
@@ -1155,7 +1205,10 @@ input[type="search"]:hover::-webkit-search-cancel-button {
 
 /* Shared dialog tone for both FormDialogShell and legacy dialogs that opt in. */
 :is(.nx-form-dialog-shell, .nx-form-dialog-surface) {
+	border-width: 1px;
+	border-style: solid;
 	border-color: var(--ui-border);
+	border-radius: 12px;
 	background: var(--ui-surface);
 	color: var(--ui-fg);
 	box-shadow: 0 10px 28px rgb(15 23 42 / 12%);
@@ -1163,6 +1216,14 @@ input[type="search"]:hover::-webkit-search-cancel-button {
 
 :is(.nx-form-dialog-shell, .nx-form-dialog-surface) :is(h1, h2, h3, h4) {
 	color: var(--ui-fg);
+}
+
+:is(.nx-form-dialog-shell, .nx-form-dialog-surface) :is(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, textarea) {
+	box-sizing: border-box;
+	min-height: var(--ui-control-height);
+	border-radius: 8px;
+	font-size: var(--ui-text-body);
+	line-height: 1.4;
 }
 
 :is(.nx-dialog-header, .nx-dialog-footer) {
@@ -1216,6 +1277,11 @@ input[type="search"]:hover::-webkit-search-cancel-button {
 	[class~="text-black/60"]
 ) {
 	color: var(--ui-fg-muted);
+}
+
+:is(.nx-form-dialog-shell, .nx-form-dialog-surface) :is([class~="text-[9px]"], [class~="text-[10px]"]) {
+	font-size: var(--ui-text-caption);
+	line-height: 1.35;
 }
 
 :is(.nx-form-dialog-shell, .nx-form-dialog-surface) :is(
@@ -1274,7 +1340,7 @@ input[type="search"]:hover::-webkit-search-cancel-button {
 	border-color: var(--ui-border);
 	background-color: var(--ui-surface);
 	color: var(--ui-fg);
-	border-radius: 6px;
+	border-radius: 8px;
 }
 
 :is(.nx-form-dialog-shell, .nx-form-dialog-surface) :is(
@@ -1301,6 +1367,23 @@ input[type="search"]:hover::-webkit-search-cancel-button {
 	accent-color: var(--ui-accent);
 }
 
+.nx-column-settings-dialog {
+	border: 1px solid var(--ui-border);
+	border-radius: 12px;
+	background: var(--ui-surface);
+	color: var(--ui-fg);
+}
+
+.nx-column-settings-dialog > :is(header, footer) {
+	border-color: var(--ui-border);
+	background: var(--ui-surface);
+}
+
+.nx-column-settings-dialog :is(input[type="search"], button):focus-visible {
+	outline: none;
+	box-shadow: 0 0 0 2px var(--ui-focus-offset), 0 0 0 4px var(--ui-accent);
+}
+
 .nx-dialog-action-primary {
 	border-color: var(--ui-accent);
 	background: var(--ui-accent);
@@ -1317,9 +1400,38 @@ input[type="search"]:hover::-webkit-search-cancel-button {
 	color: var(--ui-fg-muted);
 }
 
+:is(.nx-dialog-action-primary, .nx-dialog-action-secondary, .nx-dialog-action-danger) {
+	min-height: var(--ui-control-target-md);
+	min-width: 84px;
+	border-radius: 8px;
+	font-size: var(--ui-text-body);
+	font-weight: 600;
+}
+
+.nx-dialog-action-primary,
+.nx-dialog-action-danger {
+	min-width: 96px;
+}
+
+:is(.nx-dialog-action-primary, .nx-dialog-action-secondary, .nx-dialog-action-danger):focus-visible {
+	outline: none;
+	box-shadow: 0 0 0 2px var(--ui-focus-offset), 0 0 0 4px var(--ui-accent);
+}
+
 .nx-dialog-action-secondary:hover:not(:disabled) {
 	background: var(--ui-surface-muted);
 	color: var(--ui-fg);
+}
+
+.nx-dialog-action-danger {
+	border-color: var(--ui-danger);
+	background: var(--ui-danger);
+	color: #fff;
+}
+
+.nx-dialog-action-danger:hover:not(:disabled) {
+	border-color: color-mix(in srgb, var(--ui-danger) 84%, #000);
+	background: color-mix(in srgb, var(--ui-danger) 84%, #000);
 }
 
 .nx-form-page-shell {
@@ -1356,6 +1468,50 @@ input[type="search"]:hover::-webkit-search-cancel-button {
 	line-height: var(--ui-leading-body);
 	vertical-align: middle;
 	white-space: nowrap;
+}
+
+/* Match asset catalog chips across all normal data tables. Their semantic
+ * foreground and background colors remain page-defined. */
+.app-shell table:not(.nx-terminal-table) tbody td [class~="rounded-full"],
+.nx-data-table tbody td [class~="rounded-full"] {
+	font-size: 10px;
+	font-weight: 600;
+}
+
+/* Keep low-opacity neutral copy in table rows readable in both themes. Status
+ * colors are intentionally excluded so semantic state remains recognizable. */
+:is(.app-shell :where(table:not(.nx-terminal-table)) tbody, .nx-data-table tbody) {
+	--nx-table-muted-copy: var(--ui-fg-muted);
+}
+
+/* Monitoring tables may use a permanently dark surface while the app theme is
+ * light, so keep their neutral row copy on a light foreground palette. */
+.nx-dark-page :where(table:not(.nx-terminal-table)) tbody {
+	--nx-table-muted-copy: rgba(226, 232, 240, 0.76);
+}
+
+:is(
+	.app-shell :where(table:not(.nx-terminal-table)) tbody,
+	.nx-data-table tbody
+) :is(
+	[class~="text-black/10"],
+	[class~="text-black/12"],
+	[class~="text-black/15"],
+	[class~="text-black/20"],
+	[class~="text-black/25"],
+	[class~="text-black/30"],
+	[class~="text-black/35"],
+	[class~="text-black/38"],
+	[class~="text-black/40"],
+	[class~="text-black/45"],
+	[class~="text-black/50"],
+	[class~="text-black/55"],
+	[class~="text-gray-300"],
+	[class~="text-gray-400"],
+	[class~="text-slate-300"],
+	[class~="text-slate-400"]
+) {
+	color: var(--nx-table-muted-copy) !important;
 }
 
 .nx-data-table tbody td.nx-data-table-cell--wrap,

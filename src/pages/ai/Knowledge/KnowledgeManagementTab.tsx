@@ -51,6 +51,7 @@ import { ActionButton, ActionIconButton, ActionIconGroup } from '../../../compon
 import { useCoreApp } from '../../../contexts/AppDomainContext';
 import { aiAdminText, type AIAdminLanguage } from '../../../i18n/aiAdmin';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
+import { useFocusTrap } from '../../../hooks/useFocusTrap';
 
 import { TableActionCell, TableActionHeader } from '../../../components/ui/TableActionColumn';
 /* ── Types ── */
@@ -545,6 +546,9 @@ export const KnowledgeManagementTab: React.FC = () => {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const quickUploadInputRef = useRef<HTMLInputElement>(null);
+  const documentViewerDialogRef = useRef<HTMLDivElement>(null);
+  const documentActionDialogRef = useRef<HTMLDivElement>(null);
+  const uploadDialogRef = useRef<HTMLDivElement>(null);
   const directUploadTargetRef = useRef<KnowledgeDirectoryNode | null>(null);
   const documentsRequestIdRef = useRef(0);
   const documentDetailRequestIdRef = useRef(0);
@@ -1708,6 +1712,9 @@ export const KnowledgeManagementTab: React.FC = () => {
   useEscapeClose(showModal, closeModal);
   useEscapeClose(Boolean(selectedDocument), closeDocument);
   useEscapeClose(Boolean(pendingDocumentAction) && !documentActionBusy, () => setPendingDocumentAction(null));
+  useFocusTrap(documentViewerDialogRef, Boolean(selectedDocument), '[data-knowledge-document-close]');
+  useFocusTrap(documentActionDialogRef, Boolean(pendingDocumentAction), '[data-knowledge-action-cancel]');
+  useFocusTrap(uploadDialogRef, showModal, '[data-knowledge-upload-close]');
 
   const refreshSelectedDocument = async () => {
     if (!selectedDocument) return;
@@ -2515,10 +2522,12 @@ export const KnowledgeManagementTab: React.FC = () => {
       {/* Document Content Viewer */}
       {selectedDocument && (
         <div
+          ref={documentViewerDialogRef}
           className="fixed inset-0 z-50 bg-slate-950/45 backdrop-blur-[2px]"
           role="dialog"
           aria-modal="true"
           aria-labelledby="knowledge-document-title"
+          tabIndex={-1}
           onClick={closeDocument}
         >
           <aside
@@ -2534,7 +2543,7 @@ export const KnowledgeManagementTab: React.FC = () => {
                 <h2 id="knowledge-document-title" className="truncate text-xl font-bold tracking-tight text-slate-950 dark:text-white">{selectedDocument.name}</h2>
                 <p className="mt-1 truncate font-mono text-[11px] text-slate-400" title={selectedDocument.id}>{selectedDocument.id}</p>
               </div>
-              <button type="button" onClick={closeDocument} aria-label={tx('ai.knowledge.action.closeViewer')} title={tx('ai.knowledge.action.closeViewer')} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200">
+              <button type="button" data-knowledge-document-close aria-label={tx('ai.knowledge.action.closeViewer')} title={tx('ai.knowledge.action.closeViewer')} onClick={closeDocument} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200">
                 <X className="h-5 w-5" />
               </button>
             </div>
@@ -2666,7 +2675,7 @@ export const KnowledgeManagementTab: React.FC = () => {
       )}
 
       {pendingDocumentAction && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-[2px]" role="dialog" aria-modal="true" aria-labelledby="knowledge-action-impact-title">
+        <div ref={documentActionDialogRef} className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-[2px]" role="dialog" aria-modal="true" aria-labelledby="knowledge-action-impact-title" tabIndex={-1}>
           <div className="w-full max-w-xl rounded-2xl border border-rose-200 bg-white p-5 shadow-2xl dark:border-rose-900/60 dark:bg-slate-900">
             <div className="flex items-start gap-3">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300"><AlertTriangle className="h-5 w-5" /></div>
@@ -2700,7 +2709,7 @@ export const KnowledgeManagementTab: React.FC = () => {
               {pendingDocumentAction.action === 'delete' ? tx('ai.knowledge.danger.deleteWarning') : tx('ai.knowledge.danger.taskWarning')}
             </div>
             <div className="mt-5 flex justify-end gap-2">
-              <button type="button" onClick={() => setPendingDocumentAction(null)} disabled={Boolean(documentActionBusy)} className="rounded-xl px-4 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-100 disabled:opacity-40 dark:text-slate-300 dark:hover:bg-slate-800">{tx('ai.knowledge.danger.cancel')}</button>
+              <button type="button" data-knowledge-action-cancel onClick={() => setPendingDocumentAction(null)} disabled={Boolean(documentActionBusy)} className="rounded-xl px-4 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-100 disabled:opacity-40 dark:text-slate-300 dark:hover:bg-slate-800">{tx('ai.knowledge.danger.cancel')}</button>
               <button type="button" onClick={() => void confirmDocumentAction()} disabled={Boolean(documentActionBusy)} className="rounded-xl bg-rose-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-rose-700 disabled:cursor-wait disabled:opacity-50">{tx('ai.knowledge.danger.confirm', { action: documentActionLabels[pendingDocumentAction.action] })}</button>
             </div>
           </div>
@@ -2709,10 +2718,10 @@ export const KnowledgeManagementTab: React.FC = () => {
 
       {/* Upload File & Create Document Modal */}
       {showModal && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+        <div ref={uploadDialogRef} className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="knowledge-upload-title" tabIndex={-1}>
           <div className="bg-white dark:bg-gray-800 rounded-2xl max-w-2xl w-full p-6 space-y-4 shadow-xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-700 pb-3">
-              <h3 className="text-base font-bold text-gray-900 dark:text-white flex items-center gap-2">
+              <h3 id="knowledge-upload-title" className="text-base font-bold text-gray-900 dark:text-white flex items-center gap-2">
                 <UploadCloud className="w-5 h-5 text-indigo-500" />
                 {tx('ai.knowledge.upload.title')}
               </h3>
@@ -2721,6 +2730,7 @@ export const KnowledgeManagementTab: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setInputMode('upload')}
+                    aria-pressed={inputMode === 'upload'}
                     className={`px-3 py-1 rounded-lg transition cursor-pointer ${
                       inputMode === 'upload' ? 'bg-white dark:bg-gray-800 text-indigo-600 dark:text-indigo-400 shadow-2xs' : 'text-gray-500'
                     }`}
@@ -2730,6 +2740,7 @@ export const KnowledgeManagementTab: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setInputMode('paste')}
+                    aria-pressed={inputMode === 'paste'}
                     className={`px-3 py-1 rounded-lg transition cursor-pointer ${
                       inputMode === 'paste' ? 'bg-white dark:bg-gray-800 text-indigo-600 dark:text-indigo-400 shadow-2xs' : 'text-gray-500'
                     }`}
@@ -2741,6 +2752,7 @@ export const KnowledgeManagementTab: React.FC = () => {
                   type="button"
                   onClick={closeModal}
                   disabled={batchSubmitting || submitting}
+                  data-knowledge-upload-close
                   aria-label={tx('ai.knowledge.upload.close')}
                   title={tx('ai.knowledge.upload.close')}
                   className="p-1.5 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40"

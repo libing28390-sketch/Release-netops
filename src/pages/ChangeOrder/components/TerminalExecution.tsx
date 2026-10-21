@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { Zap, CheckCircle2, XCircle, RefreshCw } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
+import { useFocusTrap } from '../../../hooks/useFocusTrap';
 
 interface Props {
   language: string;
@@ -24,7 +25,9 @@ export const TerminalExecution: React.FC<Props> = ({
   runOrderCommands,
   handleTransition,
 }) => {
-  useEscapeClose(Boolean(executeModal), () => setExecuteModal(null));
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useEscapeClose(Boolean(executeModal && executeModal.phase !== 'running'), () => setExecuteModal(null));
+  useFocusTrap(dialogRef, Boolean(executeModal));
   const zh = language === 'zh';
 
   if (!executeModal) return null;
@@ -45,15 +48,20 @@ export const TerminalExecution: React.FC<Props> = ({
         }}
       >
         <motion.div
+          ref={dialogRef}
           initial={{ scale: 0.96, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           exit={{ scale: 0.96, opacity: 0 }}
           className="bg-white rounded-2xl shadow-xl w-full max-w-3xl flex flex-col overflow-hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="change-order-execution-title"
+          tabIndex={-1}
         >
           <div className="px-6 py-5 border-b border-black/5 bg-[linear-gradient(to_right,#f4fbfc_0%,#ffffff_100%)] flex items-center gap-3">
             <Zap size={18} className="text-[#00bceb]" />
             <div className="flex-1 min-w-0">
-              <h3 className="text-lg font-bold text-[#164e63]">
+              <h3 id="change-order-execution-title" className="text-lg font-bold text-[#164e63]">
                 {zh ? '下发命令到目标设备' : 'Push commands to target devices'}
               </h3>
               <p className="text-xs text-black/45 mt-0.5 font-medium">
@@ -102,7 +110,7 @@ export const TerminalExecution: React.FC<Props> = ({
                 <p className="text-xs font-semibold text-black/50 mb-2 flex items-center gap-2">
                   {zh ? '执行结果' : 'Execution Output'}
                   {executeModal.phase === 'running' && (
-                    <RefreshCw size={12} className="animate-spin text-[#00bceb]" />
+                    <RefreshCw size={12} className="animate-spin text-[#00bceb]" aria-label={zh ? '执行中' : 'Running'} />
                   )}
                   {executeModal.phase === 'done' && (
                     executeModal.success
@@ -111,7 +119,7 @@ export const TerminalExecution: React.FC<Props> = ({
                   )}
                 </p>
                 {executeModal.error && (
-                  <div className="rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-700 ring-1 ring-rose-200 mb-2 whitespace-pre-line font-medium">
+                  <div role="alert" className="rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-700 ring-1 ring-rose-200 mb-2 whitespace-pre-line font-medium">
                     {executeModal.error}
                   </div>
                 )}

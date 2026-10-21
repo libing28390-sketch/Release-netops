@@ -164,6 +164,21 @@ describe('ProviderManagementTab browser key paths', () => {
     expect(screen.getByRole('button', { name: '重试' })).toBeTruthy();
   });
 
+  it('traps focus in the provider editor and restores the opener after Escape', async () => {
+    const user = userEvent.setup();
+    render(<ProviderManagementTab />);
+    await screen.findAllByText('DeepSeek 主供应商');
+
+    const openEditor = screen.getByRole('button', { name: '添加 Provider' });
+    await user.click(openEditor);
+    const nameInput = screen.getByLabelText('Provider 名称');
+    await waitFor(() => expect(document.activeElement).toBe(nameInput));
+
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(openEditor));
+  });
+
   it('explains a Provider classification boundary error', async () => {
     testProvider.mockResolvedValueOnce({
       success: false,

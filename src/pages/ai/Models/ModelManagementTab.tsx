@@ -7,6 +7,7 @@ import { ActionIconButton, ActionIconGroup } from '../../../components/ui/Action
 import { useCoreApp } from '../../../contexts/AppDomainContext';
 import { aiAdminText } from '../../../i18n/aiAdmin';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
+import { useFocusTrap } from '../../../hooks/useFocusTrap';
 
 import { TableActionCell, TableActionHeader } from '../../../components/ui/TableActionColumn';
 import type { TableExportData } from '../../../components/ui/TableExportMenu';
@@ -58,7 +59,9 @@ export const ModelManagementTab: React.FC = () => {
 
   // Modal
   const [showModal, setShowModal] = useState(false);
+  const dialogRef = React.useRef<HTMLDivElement>(null);
   useEscapeClose(showModal, () => setShowModal(false));
+  useFocusTrap(dialogRef, showModal, '#ai-model-name');
   const [name, setName] = useState('');
   const [providerId, setProviderId] = useState('');
   const [modelCode, setModelCode] = useState('');
@@ -621,10 +624,10 @@ export const ModelManagementTab: React.FC = () => {
                   {routeHealthWarning && !routeTargetBlocked && <p className="mt-2 text-[10px] leading-4 text-amber-700 dark:text-amber-300">{tx('ai.model.route.healthWarning')}</p>}
                 </div>
                 <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                  <label className="text-[10px] font-semibold text-gray-500 dark:text-gray-400">{tx('ai.model.route.primary')}<select aria-label={tx('ai.model.route.primaryAria', { name: tx(scene.shortKey) })} value={configuredRoute?.model_id || ''} onChange={(event) => handleRouteChange(scene.code, event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs font-medium text-gray-800 dark:border-gray-600 dark:bg-gray-900 dark:text-white"><option value="">{tx('ai.model.route.defaultOption')}</option>{models.filter((model) => model.enabled || model.id === configuredRoute?.model_id).map((model) => <option key={model.id} value={model.id}>{model.name} ({model.model_code})</option>)}</select></label>
-                  <label className="text-[10px] font-semibold text-gray-500 dark:text-gray-400">{tx('ai.model.route.fallback')}<select aria-label={tx('ai.model.route.fallbackAria', { name: tx(scene.shortKey) })} value={configuredRoute?.fallback_model_id || ''} onChange={(event) => void handleRoutePolicyChange(scene.code, event.target.value, configuredRoute?.data_classification || 'PUBLIC')} className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs font-medium text-gray-800 dark:border-gray-600 dark:bg-gray-900 dark:text-white"><option value="">{tx('ai.model.route.noFallbackOption')}</option>{models.filter((model) => model.enabled && model.id !== configuredRoute?.model_id).map((model) => <option key={model.id} value={model.id}>{model.name} ({model.model_code})</option>)}</select></label>
+                  <label className="text-xs font-semibold text-gray-600 dark:text-gray-300">{tx('ai.model.route.primary')}<select aria-label={tx('ai.model.route.primaryAria', { name: tx(scene.shortKey) })} value={configuredRoute?.model_id || ''} onChange={(event) => handleRouteChange(scene.code, event.target.value)} className="mt-1 min-h-10 w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm font-medium text-gray-800 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/10 dark:border-gray-600 dark:bg-gray-900 dark:text-white"><option value="">{tx('ai.model.route.defaultOption')}</option>{models.filter((model) => model.enabled || model.id === configuredRoute?.model_id).map((model) => <option key={model.id} value={model.id}>{model.name} ({model.model_code})</option>)}</select></label>
+                  <label className="text-xs font-semibold text-gray-600 dark:text-gray-300">{tx('ai.model.route.fallback')}<select aria-label={tx('ai.model.route.fallbackAria', { name: tx(scene.shortKey) })} value={configuredRoute?.fallback_model_id || ''} onChange={(event) => void handleRoutePolicyChange(scene.code, event.target.value, configuredRoute?.data_classification || 'PUBLIC')} className="mt-1 min-h-10 w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm font-medium text-gray-800 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/10 dark:border-gray-600 dark:bg-gray-900 dark:text-white"><option value="">{tx('ai.model.route.noFallbackOption')}</option>{models.filter((model) => model.enabled && model.id !== configuredRoute?.model_id).map((model) => <option key={model.id} value={model.id}>{model.name} ({model.model_code})</option>)}</select></label>
                 </div>
-                <div className="mt-2 flex items-center justify-between gap-2"><label className="text-[10px] font-semibold text-gray-500 dark:text-gray-400">{tx('ai.model.route.classification')}<select aria-label={tx('ai.model.route.classificationAria', { name: tx(scene.shortKey) })} value={configuredRoute?.data_classification || 'PUBLIC'} onChange={(event) => void handleRoutePolicyChange(scene.code, configuredRoute?.fallback_model_id || '', event.target.value)} className="ml-2 rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-[10px] dark:border-gray-600 dark:bg-gray-900 dark:text-white"><option value="PUBLIC">PUBLIC</option><option value="INTERNAL">INTERNAL</option><option value="CONFIDENTIAL">CONFIDENTIAL</option></select></label><span className="text-[10px] text-gray-400">{tx('ai.model.route.priority', { priority: configuredRoute?.priority || 10, fallback: fallbackModel ? tx('ai.model.route.hasFallback') : tx('ai.model.route.noFallback') })}</span></div>
+                <div className="mt-2 flex flex-col items-start justify-between gap-2 sm:flex-row sm:items-center"><label className="flex w-full flex-col gap-1 text-xs font-semibold text-gray-600 dark:text-gray-300 sm:w-auto sm:flex-row sm:items-center">{tx('ai.model.route.classification')}<select aria-label={tx('ai.model.route.classificationAria', { name: tx(scene.shortKey) })} value={configuredRoute?.data_classification || 'PUBLIC'} onChange={(event) => void handleRoutePolicyChange(scene.code, configuredRoute?.fallback_model_id || '', event.target.value)} className="min-h-9 w-full rounded-lg border border-gray-300 bg-white px-2.5 text-xs outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/10 dark:border-gray-600 dark:bg-gray-900 dark:text-white sm:w-auto"><option value="PUBLIC">PUBLIC</option><option value="INTERNAL">INTERNAL</option><option value="CONFIDENTIAL">CONFIDENTIAL</option></select></label><span className="text-xs text-gray-500 dark:text-gray-400">{tx('ai.model.route.priority', { priority: configuredRoute?.priority || 10, fallback: fallbackModel ? tx('ai.model.route.hasFallback') : tx('ai.model.route.noFallback') })}</span></div>
               </article>
             );
           })}
@@ -634,12 +637,13 @@ export const ModelManagementTab: React.FC = () => {
       {/* Create Modal */}
       {showModal && (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-gray-800 rounded-xl max-w-md w-full p-6 space-y-4 shadow-xl">
-            <h3 className="text-lg font-bold text-gray-900 dark:text-white">{tx('ai.model.modal.title')}</h3>
+          <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="ai-model-create-title" tabIndex={-1} className="bg-white dark:bg-gray-800 rounded-xl max-w-md w-full p-6 space-y-4 shadow-xl">
+            <h3 id="ai-model-create-title" className="text-lg font-bold text-gray-900 dark:text-white">{tx('ai.model.modal.title')}</h3>
             <form onSubmit={handleCreate} className="space-y-4">
               <div>
-                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.model.modal.name')}</label>
+                <label htmlFor="ai-model-name" className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.model.modal.name')}</label>
                 <input
+                  id="ai-model-name"
                   type="text"
                   required
                   placeholder={tx('ai.model.modal.namePlaceholder')}
@@ -650,8 +654,9 @@ export const ModelManagementTab: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.model.modal.code')}</label>
+                <label htmlFor="ai-model-code" className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.model.modal.code')}</label>
                 <input
+                  id="ai-model-code"
                   type="text"
                   required
                   placeholder="deepseek-v4-flash"
@@ -662,8 +667,8 @@ export const ModelManagementTab: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.model.modal.type')}</label>
-                <select value={modelType} onChange={(e) => setModelType(e.target.value)} className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-900 dark:text-white">
+                <label htmlFor="ai-model-type" className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.model.modal.type')}</label>
+                <select id="ai-model-type" value={modelType} onChange={(e) => setModelType(e.target.value)} className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-900 dark:text-white">
                   <option value="chat">{tx('ai.model.modal.chat')}</option>
                   <option value="reasoning">{tx('ai.model.modal.reasoning')}</option>
                   <option value="embedding">{tx('ai.model.modal.embedding')}</option>
@@ -672,8 +677,9 @@ export const ModelManagementTab: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.model.modal.provider')}</label>
+                <label htmlFor="ai-model-provider" className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.model.modal.provider')}</label>
                 <select
+                  id="ai-model-provider"
                   value={providerId}
                   onChange={(e) => setProviderId(e.target.value)}
                   className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-900 dark:text-white"

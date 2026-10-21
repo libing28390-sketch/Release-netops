@@ -1611,7 +1611,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                               </code>
                             </td>}
                             {visibleJobColumnSet.has('status') && <td className="px-4 py-3.5">
-                              <span className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-[10px] font-bold ${
+                              <span className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] font-bold ${
                                 isEnabled ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'
                               }`}>
                                 {isEnabled ? (zh ? '已启用' : 'Enabled') : (zh ? '已停用' : 'Disabled')}

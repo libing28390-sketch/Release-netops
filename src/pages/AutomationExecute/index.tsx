@@ -16,6 +16,7 @@ import { getDeviceCategory, getVendor, classifyVarGroup, isAutomationPlatformSup
 import { DEVICE_PAGE_SIZE, VAR_GROUP_ORDER } from './constants';
 import { ApiError, apiRequest } from '../../api/http';
 import { fetchAllPaginatedItems } from '../../utils/pagination';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 
 interface DeviceSelectionSiteFacet {
   site: string;
@@ -138,6 +139,7 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
 
   const [confirmModalOpen, setConfirmModalOpen] = useState(false);
   const [confirmAction, setConfirmAction] = useState<'validate' | 'apply'>('validate');
+  const confirmDialogRef = useRef<HTMLDivElement>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
 
   const [expandedTreeNodes, setExpandedTreeNodes] = useState<Set<string>>(new Set());
@@ -875,6 +877,11 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
     else onRunApply(changeTicket.trim());
   };
 
+  const openConfirmationModal = (open: boolean) => {
+    setConfirmModalOpen(open);
+  };
+  useFocusTrap(confirmDialogRef, confirmModalOpen, '[data-confirm-cancel]');
+
   const handleSelectAllOnline = () => {
     if (!batchMode) onToggleBatchMode();
     devicePageItems
@@ -915,12 +922,12 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
           onResetQuickQuery();
           return;
         }
-        if (hasTargets) {
-          handleClearSelection();
-          return;
-        }
         if (showSelectedDrawer) {
           setShowSelectedDrawer(false);
+          return;
+        }
+        if (hasTargets) {
+          handleClearSelection();
           return;
         }
         if (currentStep > 1) {
@@ -1032,7 +1039,7 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
                 onOpenCommandPreview={onOpenCommandPreview}
                 canExecute={canExecute}
                 setConfirmAction={setConfirmAction}
-                setConfirmModalOpen={setConfirmModalOpen}
+                setConfirmModalOpen={openConfirmationModal}
                 onRunValidation={onRunValidation}
                 setCurrentStep={setCurrentStep}
                 targetCount={targetCount}
@@ -1108,10 +1115,16 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
                 onClick={() => setConfirmModalOpen(false)}
               />
               <motion.div
+                ref={confirmDialogRef}
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.95 }}
                 className="fixed left-1/2 top-1/2 z-[80] -translate-x-1/2 -translate-y-1/2 w-[440px] bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="automation-confirm-title"
+                aria-describedby="automation-confirm-description"
+                tabIndex={-1}
               >
                 <div
                   className={`px-6 py-4 ${confirmAction === 'apply'
@@ -1132,7 +1145,7 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
                       </div>
                     )}
                     <div>
-                      <p className="text-base font-bold text-gray-800">
+                      <p id="automation-confirm-title" className="text-base font-bold text-gray-800">
                         {confirmAction === 'validate'
                           ? isZh
                             ? '确认运行校验'
@@ -1141,7 +1154,7 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
                             ? '确认应用变更'
                             : 'Confirm Apply'}
                       </p>
-                      <p className="text-xs text-gray-500">
+                      <p id="automation-confirm-description" className="text-xs text-gray-500">
                         {isZh
                           ? `将对 ${targetCount} 台设备执行${confirmAction === 'validate' ? '校验' : '配置变更'}`
                           : `Will ${confirmAction === 'validate' ? 'validate' : 'apply changes to'} ${targetCount} device(s)`}
@@ -1191,12 +1204,15 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
                 </div>
                 <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-2">
                   <button
+                    type="button"
+                    data-confirm-cancel
                     onClick={() => setConfirmModalOpen(false)}
                     className="px-4 py-2 rounded-xl text-xs font-bold text-gray-500 border border-gray-200 hover:bg-gray-50 transition-all"
                   >
                     {isZh ? '取消' : 'Cancel'}
                   </button>
                   <button
+                    type="button"
                     onClick={handleConfirmExecute}
                     className={`px-5 py-2 rounded-xl text-xs font-bold text-white transition-all ${confirmAction === 'apply' && quickPlaybookScenario?.risk === 'high'
                         ? 'bg-red-500 hover:bg-red-600 shadow-lg shadow-red-500/25'

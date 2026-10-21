@@ -8,6 +8,8 @@ import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/u
 import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
 import { TableExportMenu } from '../components/ui/TableExportMenu';
 import { PasswordInputField } from '../components/ui/PasswordInputField';
+import { useEscapeClose } from '../hooks/useEscapeClose';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 import { formatMacAddress } from '../utils/resourceFormatters';
 import { fetchAllPaginatedItems } from '../utils/pagination';
 import { buildCmdbExportData, buildCmdbVlanExportData } from './cmdbExport';
@@ -1650,6 +1652,11 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
   const [credentialJobStatus, setCredentialJobStatus] = useState<any | null>(null);
   const [credentialJobDetailsOpen, setCredentialJobDetailsOpen] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
+  const recordDialogRef = useRef<HTMLDivElement | null>(null);
+  const interfaceProfileDialogRef = useRef<HTMLDivElement | null>(null);
+  const vlanDetailDialogRef = useRef<HTMLDivElement | null>(null);
+  const bindingDialogRef = useRef<HTMLDivElement | null>(null);
+  const deleteDialogRef = useRef<HTMLDivElement | null>(null);
   const [editing, setEditing] = useState<any | null>(null);
   const [visiblePasswordFields, setVisiblePasswordFields] = useState<Record<string, boolean>>({});
   const [credentialDeviceDetails, setCredentialDeviceDetails] = useState<Record<string, any[]>>({});
@@ -1757,12 +1764,41 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
   const [siteImportErrors, setSiteImportErrors] = useState<SiteImportError[]>([]);
   const [siteImporting, setSiteImporting] = useState(false);
   const siteImportInputRef = useRef<HTMLInputElement | null>(null);
+  const siteImportTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const siteImportDialogRef = useRef<HTMLDivElement | null>(null);
   const [credentialImportOpen, setCredentialImportOpen] = useState(false);
   const [credentialImportFileName, setCredentialImportFileName] = useState('');
   const [credentialImportRows, setCredentialImportRows] = useState<CredentialImportRow[]>([]);
   const [credentialImportErrors, setCredentialImportErrors] = useState<CredentialImportError[]>([]);
   const [credentialImporting, setCredentialImporting] = useState(false);
   const credentialImportInputRef = useRef<HTMLInputElement | null>(null);
+  const credentialImportTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const credentialImportDialogRef = useRef<HTMLDivElement | null>(null);
+  const restoreSiteImportFocus = useCallback(() => {
+    window.requestAnimationFrame(() => siteImportTriggerRef.current?.focus());
+  }, []);
+  const restoreCredentialImportFocus = useCallback(() => {
+    window.requestAnimationFrame(() => credentialImportTriggerRef.current?.focus());
+  }, []);
+  const closeSiteImport = useCallback(() => {
+    if (siteImporting) return;
+    setSiteImportOpen(false);
+    restoreSiteImportFocus();
+  }, [restoreSiteImportFocus, siteImporting]);
+  const closeCredentialImport = useCallback(() => {
+    if (credentialImporting) return;
+    setCredentialImportOpen(false);
+    restoreCredentialImportFocus();
+  }, [credentialImporting, restoreCredentialImportFocus]);
+  useEscapeClose(siteImportOpen && !siteImporting, closeSiteImport);
+  useEscapeClose(credentialImportOpen && !credentialImporting, closeCredentialImport);
+  useFocusTrap(siteImportDialogRef, siteImportOpen, undefined, siteImportTriggerRef);
+  useFocusTrap(credentialImportDialogRef, credentialImportOpen, undefined, credentialImportTriggerRef);
+  useFocusTrap(recordDialogRef, modalOpen);
+  useFocusTrap(interfaceProfileDialogRef, Boolean(interfaceProfileModal));
+  useFocusTrap(vlanDetailDialogRef, Boolean(vlanDetailRow));
+  useFocusTrap(bindingDialogRef, Boolean(bindingModal));
+  useFocusTrap(deleteDialogRef, Boolean(confirmDelete));
 
   useEffect(() => {
     const jobId = credentialJobStatus?.job_id;
@@ -2373,6 +2409,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
         return;
       }
       setSiteImportOpen(false);
+      restoreSiteImportFocus();
       setSiteImportRows([]);
       setNotice(zh ? `已成功导入 ${result.imported || siteImportRows.length} 个站点` : `Imported ${result.imported || siteImportRows.length} site(s)`);
       await load();
@@ -2381,7 +2418,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     } finally {
       setSiteImporting(false);
     }
-  }, [load, siteImportErrors.length, siteImportRows, siteImporting, zh]);
+  }, [load, restoreSiteImportFocus, siteImportErrors.length, siteImportRows, siteImporting, zh]);
 
   const downloadCredentialImportTemplate = useCallback(async () => {
     if (credentialTemplateDownloading) return;
@@ -2570,6 +2607,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
         return;
       }
       setCredentialImportOpen(false);
+      restoreCredentialImportFocus();
       setCredentialImportRows([]);
       setNotice(zh ? `已成功导入 ${imported} 条凭据` : `Imported ${imported} credential(s)`);
     } catch (e: any) {
@@ -2577,7 +2615,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     } finally {
       setCredentialImporting(false);
     }
-  }, [credentialImportErrors.length, credentialImportRows, credentialImporting, load, zh]);
+  }, [credentialImportErrors.length, credentialImportRows, credentialImporting, load, restoreCredentialImportFocus, zh]);
 
   const triggerInterfaceSync = useCallback(async () => {
     if (tab !== 'interfaces') return;
@@ -3558,7 +3596,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                 />
                 <ActionIconGroup label={zh ? '站点导入导出' : 'Site import and export'}>
                   <ActionIconButton icon={FileSpreadsheet} label={zh ? '下载导入模板' : 'Download template'} variant="accent" onClick={downloadSiteImportTemplate} />
-                  <ActionIconButton icon={Upload} label={zh ? '导入站点' : 'Import sites'} variant="accent" onClick={() => siteImportInputRef.current?.click()} />
+                  <ActionIconButton ref={siteImportTriggerRef} icon={Upload} label={zh ? '导入站点' : 'Import sites'} variant="accent" onClick={() => siteImportInputRef.current?.click()} />
                 </ActionIconGroup>
               </>
             )}
@@ -3573,7 +3611,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                 />
                 <ActionIconGroup label={zh ? '凭据导入导出' : 'Credential import and export'}>
                   <ActionIconButton icon={FileSpreadsheet} label={zh ? '下载凭据导入模板' : 'Download credential import template'} variant="accent" disabled={credentialTemplateDownloading} iconClassName={credentialTemplateDownloading ? 'animate-pulse' : undefined} onClick={downloadCredentialImportTemplate} />
-                  <ActionIconButton icon={Upload} label={zh ? '上传凭据' : 'Upload credentials'} variant="accent" onClick={() => credentialImportInputRef.current?.click()} />
+                  <ActionIconButton ref={credentialImportTriggerRef} icon={Upload} label={zh ? '上传凭据' : 'Upload credentials'} variant="accent" onClick={() => credentialImportInputRef.current?.click()} />
                   <ActionIconButton icon={Download} label={zh ? '导出凭据（密码为空）' : 'Export credentials (passwords blank)'} variant="accent" disabled={credentialExporting} iconClassName={credentialExporting ? 'animate-pulse' : undefined} onClick={exportCredentialInventory} />
                 </ActionIconGroup>
                 <span className="mx-1 h-6 w-px bg-slate-200" aria-hidden="true" />
@@ -4201,14 +4239,14 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
 
       {credentialImportOpen && (
         <div className="fixed inset-0 z-[115] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/45 backdrop-blur-sm" onClick={() => !credentialImporting && setCredentialImportOpen(false)} />
-          <div className="relative flex max-h-[88vh] w-full max-w-5xl flex-col rounded-3xl border border-black/8 bg-white p-6 shadow-2xl overflow-hidden">
+          <div className="absolute inset-0 bg-black/45 backdrop-blur-sm" onClick={closeCredentialImport} />
+          <div ref={credentialImportDialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="credential-import-title" className="nx-form-dialog-surface relative flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden p-4 sm:p-6">
             <div className="flex items-center justify-between border-b border-black/5 pb-4">
               <div>
-                <h2 className="text-lg font-semibold text-[#164e63]">{zh ? '上传凭据' : 'Upload Credentials'}</h2>
+                <h2 id="credential-import-title" className="text-lg font-semibold text-[#164e63]">{zh ? '上传凭据' : 'Upload Credentials'}</h2>
                 <p className="mt-1 text-xs text-slate-500">{credentialImportFileName || (zh ? '请选择 Excel 或 CSV 文件' : 'Choose an Excel or CSV file')} · {zh ? 'SSH 与 SNMP 按不同字段分别导入' : 'SSH and SNMP use separate field sets'}</p>
               </div>
-              <button disabled={credentialImporting} onClick={() => setCredentialImportOpen(false)} className="rounded-xl border border-black/10 p-1.5 text-black/55 hover:bg-black/[0.03] disabled:opacity-40"><X size={16} /></button>
+              <ActionIconButton icon={X} label={zh ? '关闭凭据导入' : 'Close credential import'} disabled={credentialImporting} onClick={closeCredentialImport} />
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto py-4">
               <div className={`mb-4 rounded-2xl border px-4 py-3 text-sm ${credentialImportErrors.length ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
@@ -4279,13 +4317,12 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
               </div>
             </div>
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-black/5 pt-4">
-              <button disabled={credentialTemplateDownloading} onClick={downloadCredentialImportTemplate} className="inline-flex items-center gap-2 rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2 text-sm font-semibold text-cyan-700 hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"><FileSpreadsheet size={14} className={credentialTemplateDownloading ? 'animate-pulse' : ''} />{zh ? '下载双 Sheet 模板' : 'Download two-sheet template'}</button>
+              <ActionButton icon={FileSpreadsheet} disabled={credentialTemplateDownloading} onClick={downloadCredentialImportTemplate} iconClassName={credentialTemplateDownloading ? 'animate-pulse' : undefined}>{zh ? '下载双 Sheet 模板' : 'Download two-sheet template'}</ActionButton>
               <div className="flex items-center gap-2">
-                <button disabled={credentialImporting} onClick={() => setCredentialImportOpen(false)} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40">{zh ? '取消' : 'Cancel'}</button>
-                <button disabled={credentialImporting || !credentialImportRows.length || credentialImportErrors.length > 0} onClick={() => void importCredentialRows()} className="inline-flex items-center gap-2 rounded-xl bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-40">
-                  {credentialImporting && <RefreshCw size={14} className="animate-spin" />}
+                <ActionButton disabled={credentialImporting} onClick={closeCredentialImport}>{zh ? '取消' : 'Cancel'}</ActionButton>
+                <ActionButton icon={credentialImporting ? RefreshCw : Upload} iconClassName={credentialImporting ? 'animate-spin' : undefined} variant="primary" disabled={credentialImporting || !credentialImportRows.length || credentialImportErrors.length > 0} onClick={() => void importCredentialRows()}>
                   {credentialImporting ? (zh ? '导入中...' : 'Importing...') : (zh ? '确认导入' : 'Confirm import')}
-                </button>
+                </ActionButton>
               </div>
             </div>
           </div>
@@ -4294,14 +4331,14 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
 
       {siteImportOpen && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/45 backdrop-blur-sm" onClick={() => !siteImporting && setSiteImportOpen(false)} />
-          <div className="relative flex max-h-[88vh] w-full max-w-4xl flex-col rounded-3xl border border-black/8 bg-white p-6 shadow-2xl overflow-hidden">
+          <div className="absolute inset-0 bg-black/45 backdrop-blur-sm" onClick={closeSiteImport} />
+          <div ref={siteImportDialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="site-import-title" className="nx-form-dialog-surface relative flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden p-4 sm:p-6">
             <div className="flex items-center justify-between border-b border-black/5 pb-4">
               <div>
-                <h2 className="text-lg font-semibold text-[#164e63]">导入站点</h2>
-                <p className="mt-1 text-xs text-slate-500">{siteImportFileName || '请选择 Excel 或 CSV 文件'} · 支持中文、英文和字段代码表头</p>
+                <h2 id="site-import-title" className="text-lg font-semibold text-[#164e63]">{zh ? '导入站点' : 'Import sites'}</h2>
+                <p className="mt-1 text-xs text-slate-500">{siteImportFileName || (zh ? '请选择 Excel 或 CSV 文件' : 'Choose an Excel or CSV file')} · {zh ? '支持中文、英文和字段代码表头' : 'Chinese, English and code-based headers are supported'}</p>
               </div>
-              <button disabled={siteImporting} onClick={() => setSiteImportOpen(false)} className="rounded-xl border border-black/10 p-1.5 text-black/55 hover:bg-black/[0.03] disabled:opacity-40"><X size={16} /></button>
+              <ActionIconButton icon={X} label={zh ? '关闭站点导入' : 'Close site import'} disabled={siteImporting} onClick={closeSiteImport} />
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto py-4">
               <div className={`mb-4 rounded-2xl border px-4 py-3 text-sm ${siteImportErrors.length ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
@@ -4335,13 +4372,12 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
               )}
             </div>
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-black/5 pt-4">
-              <button onClick={downloadSiteImportTemplate} className="inline-flex items-center gap-2 rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2 text-sm font-semibold text-cyan-700 hover:bg-cyan-100"><FileSpreadsheet size={14} />下载模板</button>
+              <ActionButton icon={FileSpreadsheet} onClick={downloadSiteImportTemplate}>{zh ? '下载模板' : 'Download template'}</ActionButton>
               <div className="flex items-center gap-2">
-                <button disabled={siteImporting} onClick={() => setSiteImportOpen(false)} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40">取消</button>
-                <button disabled={siteImporting || !siteImportRows.length || siteImportErrors.length > 0} onClick={() => void importSiteRows()} className="inline-flex items-center gap-2 rounded-xl bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-40">
-                  {siteImporting && <RefreshCw size={14} className="animate-spin" />}
-                  {siteImporting ? '导入中...' : '确认导入'}
-                </button>
+                <ActionButton disabled={siteImporting} onClick={closeSiteImport}>{zh ? '取消' : 'Cancel'}</ActionButton>
+                <ActionButton icon={siteImporting ? RefreshCw : Upload} iconClassName={siteImporting ? 'animate-spin' : undefined} variant="primary" disabled={siteImporting || !siteImportRows.length || siteImportErrors.length > 0} onClick={() => void importSiteRows()}>
+                  {siteImporting ? (zh ? '导入中...' : 'Importing...') : (zh ? '确认导入' : 'Confirm import')}
+                </ActionButton>
               </div>
             </div>
           </div>
@@ -4352,16 +4388,16 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
       {modalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/30 p-4">
           <button type="button" aria-label={zh ? '关闭新建窗口' : 'Close dialog'} className="absolute inset-0 cursor-default" onClick={() => setModalOpen(false)} />
-          <div role="dialog" aria-modal="true" className="nx-form-dialog-surface relative flex max-h-[90vh] w-full max-w-xl flex-col overflow-hidden rounded-lg border p-5 shadow-lg">
-            <div className="mb-4 flex items-center justify-between border-b border-slate-200 pb-3">
-              <h2 className="text-base font-semibold text-slate-900">
+          <div ref={recordDialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="cmdb-record-dialog-title" className="nx-form-dialog-surface relative flex max-h-[90vh] w-full max-w-xl flex-col overflow-hidden p-4 shadow-lg sm:p-5">
+            <div className="mb-4 flex items-center justify-between gap-3 border-b border-[var(--ui-border)] pb-3">
+              <h2 id="cmdb-record-dialog-title" className="text-base font-semibold text-[var(--ui-fg)]">
                 {editing ? (zh ? '编辑记录' : 'Edit Record') : (zh ? '新建记录' : 'New Record')} · {zh ? tabs.find(t => t.key === tab)?.label : tabs.find(t => t.key === tab)?.labelEn}
               </h2>
               <button type="button" onClick={() => setModalOpen(false)} aria-label={zh ? '关闭' : 'Close'} className="rounded-md border border-slate-200 p-1.5 text-slate-500 transition-colors hover:bg-slate-50"><X size={16} /></button>
             </div>
-            <div className={`${tab === 'credentials' ? 'grid grid-cols-2 items-start gap-x-3 gap-y-4' : 'space-y-4'} min-h-0 flex-1 overflow-y-auto pr-1`}>
+            <div className={`${tab === 'credentials' ? 'grid grid-cols-1 items-start gap-x-4 gap-y-4 sm:grid-cols-2' : 'space-y-4'} min-h-0 flex-1 overflow-y-auto pr-1`}>
               {tab === 'credentials' && !editing && isCliCredentialType(form.credential_type) && (
-                <div className="col-span-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                <div className="sm:col-span-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
                   <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-slate-700">
                     <input
                       type="checkbox"
@@ -4421,7 +4457,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                 const isCredentialSecret = tab === 'credentials'
                   && ['old_password', 'old_enable_password', 'password', 'enable_password', 'snmp_community'].includes(fd.key);
                 return (
-                  <div key={fd.key} className={tab === 'credentials' && !isCredentialSecret ? 'col-span-2' : ''}>
+                  <div key={fd.key} className={tab === 'credentials' && !isCredentialSecret ? 'sm:col-span-2' : ''}>
                     <label htmlFor={fd.type === 'password' ? `cmdb-secret-${fd.key}` : undefined} className="mb-1 block text-xs font-medium text-slate-600">
                       {zh ? fd.label : fd.labelEn}{fd.required && <span className="text-rose-500"> *</span>}
                       {fd.secretFlag && editing && (
@@ -4592,10 +4628,10 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
             className="absolute inset-0 bg-black/45 backdrop-blur-sm"
             onClick={() => { if (!interfaceProfileSaving) setInterfaceProfileModal(null); }}
           />
-          <div className="relative w-full max-w-lg rounded-3xl border border-black/8 bg-white p-6 shadow-2xl dark:bg-slate-900">
+          <div ref={interfaceProfileDialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="interface-profile-dialog-title" className="nx-form-dialog-surface relative w-full max-w-lg p-4 shadow-2xl sm:p-6">
             <div className="flex items-start justify-between gap-4 border-b border-black/5 pb-4 dark:border-white/10">
               <div className="min-w-0">
-                <h3 className="text-lg font-semibold text-[#164e63] dark:text-cyan-300">
+                <h3 id="interface-profile-dialog-title" className="text-lg font-semibold text-[#164e63] dark:text-cyan-300">
                   {zh ? '编辑接口监控配置' : 'Edit interface monitoring profile'}
                 </h3>
                 <p className="mt-1 truncate text-xs text-black/50 dark:text-white/50" title={`${interfaceProfileModal.row.device_hostname || interfaceProfileModal.row.device_ip || '—'} · ${interfaceProfileModal.row.interface_name || '—'}`}>
@@ -4706,10 +4742,10 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
       {vlanDetailRow && (
         <div className="fixed inset-0 z-[105] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/45 backdrop-blur-sm" onClick={() => setVlanDetailRow(null)} />
-          <div className="relative flex max-h-[88vh] w-full max-w-7xl flex-col overflow-hidden rounded-3xl border border-black/8 bg-white shadow-2xl">
+          <div ref={vlanDetailDialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="vlan-detail-dialog-title" className="nx-form-dialog-surface relative flex max-h-[88vh] w-full max-w-7xl flex-col overflow-hidden shadow-2xl">
             <div className="flex items-start justify-between gap-4 border-b border-black/5 px-6 py-5">
               <div>
-                <h3 className="text-lg font-semibold text-[#164e63]">VLAN {vlanDetailRow.vlan_id} · {vlanDetailRow.name || (zh ? '完整明细' : 'Details')}</h3>
+                <h3 id="vlan-detail-dialog-title" className="text-lg font-semibold text-[#164e63]">VLAN {vlanDetailRow.vlan_id} · {vlanDetailRow.name || (zh ? '完整明细' : 'Details')}</h3>
                 <p className="mt-1 text-xs text-slate-500">
                   {[vlanDetailRow.device_hostname, vlanDetailRow.device_ip, vlanDetailRow.site_name].filter(Boolean).join(' · ') || (zh ? '未关联设备或站点' : 'No associated device or site')}
                 </p>
@@ -4825,10 +4861,10 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
             className="absolute inset-0 bg-black/45 backdrop-blur-sm"
             onClick={() => { if (!bindingSaving) setBindingModal(null); }}
           />
-          <div className="relative w-full max-w-lg rounded-3xl border border-black/8 bg-white p-6 shadow-2xl dark:bg-slate-900">
+          <div ref={bindingDialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="credential-binding-dialog-title" className="nx-form-dialog-surface relative w-full max-w-lg p-4 shadow-2xl sm:p-6">
             <div className="flex items-start justify-between gap-4 border-b border-black/5 pb-4">
               <div>
-                <h3 className="text-lg font-semibold text-[#164e63] dark:text-cyan-300">
+                <h3 id="credential-binding-dialog-title" className="text-lg font-semibold text-[#164e63] dark:text-cyan-300">
                   {zh ? '管理设备凭据绑定' : 'Manage device credential binding'}
                 </h3>
                 <p className="mt-1 text-xs text-black/50 dark:text-white/50">
@@ -4909,15 +4945,15 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
       {confirmDelete && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/45 backdrop-blur-sm" onClick={() => setConfirmDelete(null)} />
-          <div className="relative w-full max-w-sm rounded-3xl border border-black/8 bg-white p-6 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+          <div ref={deleteDialogRef} tabIndex={-1} role="alertdialog" aria-modal="true" aria-labelledby="cmdb-delete-dialog-title" aria-describedby="cmdb-delete-dialog-description" className="nx-form-dialog-surface relative w-full max-w-sm overflow-hidden p-4 shadow-2xl animate-in fade-in zoom-in-95 duration-150 sm:p-6">
             <div className="flex flex-col items-center gap-3 text-center">
               <div className="flex h-12 w-12 items-center justify-center rounded-full bg-red-50">
                 <Trash2 size={20} className="text-red-500" />
               </div>
-              <h3 className="text-lg font-semibold text-[#164e63]">
+              <h3 id="cmdb-delete-dialog-title" className="text-lg font-semibold text-[#164e63]">
                 {zh ? '确认删除' : 'Confirm Delete'}
               </h3>
-              <p className="text-sm text-black/50">
+              <p id="cmdb-delete-dialog-description" className="text-sm text-black/50">
                 {zh ? '此操作不可撤销，确定要删除该记录吗？' : 'This action cannot be undone. Are you sure you want to delete this record?'}
               </p>
             </div>

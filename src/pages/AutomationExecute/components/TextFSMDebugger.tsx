@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
+import { useFocusTrap } from '../../../hooks/useFocusTrap';
 import { TableExportMenu } from '../../../components/ui/TableExportMenu';
 
 interface TextFSMDebuggerProps {
@@ -19,7 +20,9 @@ export const TextFSMDebugger: React.FC<TextFSMDebuggerProps> = ({
   sampleOutput,
   onSaveSuccess,
 }) => {
+  const dialogRef = useRef<HTMLDivElement>(null);
   useEscapeClose(isOpen, onClose);
+  useFocusTrap(dialogRef, isOpen);
   const [templateContent, setTemplateContent] = useState('');
   const [sampleText, setSampleText] = useState(sampleOutput || '');
   const [records, setRecords] = useState<any[]>([]);
@@ -169,18 +172,20 @@ export const TextFSMDebugger: React.FC<TextFSMDebuggerProps> = ({
 
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-end bg-black/60 backdrop-blur-sm transition-all duration-300">
-      <div className="flex h-full w-[1000px] flex-col border-l border-white/10 bg-[#071324] text-white shadow-2xl">
+      <div ref={dialogRef} className="flex h-full w-[1000px] flex-col border-l border-white/10 bg-[#071324] text-white shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="textfsm-debugger-title" tabIndex={-1}>
         {/* Header */}
         <div className="flex items-center justify-between border-b border-white/10 px-6 py-4">
           <div>
-            <h3 className="text-lg font-bold text-indigo-400">🧩 自定义命令 TextFSM 解析调试器</h3>
+            <h3 id="textfsm-debugger-title" className="text-lg font-bold text-indigo-400">🧩 自定义命令 TextFSM 解析调试器</h3>
             <p className="text-xs text-white/50 mt-0.5">
               平台: <code className="bg-white/5 px-1.5 py-0.5 rounded text-white/80">{platform}</code> | 
               命令: <code className="bg-white/5 px-1.5 py-0.5 rounded text-white/80 ml-2">{command}</code>
             </p>
           </div>
           <button
+            type="button"
             onClick={onClose}
+            aria-label="关闭 TextFSM 解析调试器"
             className="rounded-lg p-2 text-white/60 hover:bg-white/5 hover:text-white"
           >
             ✕
@@ -235,6 +240,8 @@ export const TextFSMDebugger: React.FC<TextFSMDebuggerProps> = ({
             {/* Status alerts */}
             {statusMsg.text && (
               <div
+                role={statusMsg.type === 'success' ? 'status' : 'alert'}
+                aria-live={statusMsg.type === 'success' ? 'polite' : 'assertive'}
                 className={`mb-4 rounded-xl border p-3.5 text-xs ${
                   statusMsg.type === 'success'
                     ? 'border-emerald-500/20 bg-emerald-500/5 text-emerald-400'
@@ -310,12 +317,14 @@ export const TextFSMDebugger: React.FC<TextFSMDebuggerProps> = ({
         {/* Footer Actions */}
         <div className="flex items-center justify-end space-x-3 border-t border-white/10 px-6 py-4 bg-black/20">
           <button
+            type="button"
             onClick={onClose}
             className="rounded-xl border border-white/15 px-5 py-2 text-xs font-semibold hover:bg-white/5"
           >
             取消
           </button>
           <button
+            type="button"
             onClick={handleSaveTemplate}
             disabled={saving || !templateContent}
             className="rounded-xl bg-indigo-600 px-6 py-2 text-xs font-bold hover:bg-indigo-500 disabled:opacity-50"

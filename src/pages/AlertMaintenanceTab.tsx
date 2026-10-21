@@ -669,7 +669,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
                     <td className="px-5 py-4 align-top text-sm text-black/60">{formatTs(window.starts_at)}</td>
                     <td className="px-5 py-4 align-top text-sm text-black/60">{formatTs(window.ends_at)}</td>
                     <td className="px-5 py-4 align-top">
-                      <span className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${maintenanceBadgeClass(window.runtime_status)}`}>
+                      <span className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-bold uppercase ${maintenanceBadgeClass(window.runtime_status)}`}>
                         {maintenanceStatusLabel(window.runtime_status, language)}
                       </span>
                     </td>
@@ -1124,7 +1124,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
                   <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-black/35">{language === 'zh' ? '维护期详情' : 'Maintenance Detail'}</p>
                   <h3 className="mt-2 text-xl font-semibold text-[#164e63]">{selectedWindow.name}</h3>
                   <div className="mt-3">
-                    <span className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${maintenanceBadgeClass(selectedWindow.runtime_status)}`}>
+                    <span className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-bold uppercase ${maintenanceBadgeClass(selectedWindow.runtime_status)}`}>
                       {maintenanceStatusLabel(selectedWindow.runtime_status, language)}
                     </span>
                   </div>

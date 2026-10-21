@@ -5,6 +5,7 @@ import { TableExportMenu } from '../../../components/ui/TableExportMenu';
 import type { Device } from '../../../types';
 import type { QuickQueryDeviceProvenance, QuickQueryTable } from '../types';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
+import { useFocusTrap } from '../../../hooks/useFocusTrap';
 
 interface QuickQueryResultOverlayProps {
   isZh: boolean;
@@ -117,7 +118,10 @@ export const QuickQueryResultOverlay: React.FC<QuickQueryResultOverlayProps> = (
   onQuickQueryViewChange,
 }) => {
   const quickQueryTableRef = React.useRef<HTMLTableElement>(null);
-  useEscapeClose(quickQueryRunning || Boolean(quickQueryOutput), onResetQuickQuery);
+  const dialogRef = React.useRef<HTMLDivElement>(null);
+  const isOpen = quickQueryRunning || Boolean(quickQueryOutput);
+  useEscapeClose(isOpen, onResetQuickQuery);
+  useFocusTrap(dialogRef, isOpen);
   if (!quickQueryRunning && !quickQueryOutput) return null;
 
   return (
@@ -129,9 +133,17 @@ export const QuickQueryResultOverlay: React.FC<QuickQueryResultOverlayProps> = (
         }}
       />
       <div
+        ref={dialogRef}
         className={quickQueryMaximized
           ? 'fixed left-1/2 top-1/2 z-[80] flex h-[min(900px,calc(100vh-2rem))] w-[min(1360px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-white/10 bg-[linear-gradient(180deg,#0d1117_0%,#151b23_100%)] shadow-[0_32px_120px_rgba(0,0,0,0.6)] sm:rounded-3xl'
           : 'fixed left-1/2 top-1/2 z-[80] flex h-[min(680px,calc(100vh-2rem))] w-[min(900px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-white/10 bg-[linear-gradient(180deg,#0d1117_0%,#151b23_100%)] shadow-[0_32px_120px_rgba(0,0,0,0.6)] sm:rounded-3xl'}
+        role="dialog"
+        aria-modal="true"
+        aria-label={isZh
+          ? `快捷查询结果：${quickQueryLabel}，${targetDevices.length === 1 ? targetDevices[0].hostname : `批量目标 ${targetDevices.length} 台`}`
+          : `Quick query result: ${quickQueryLabel}, ${targetDevices.length === 1 ? targetDevices[0].hostname : `${targetDevices.length} targets`}`}
+        aria-busy={quickQueryRunning}
+        tabIndex={-1}
       >
         {/* Terminal title bar */}
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-white/[0.06] bg-[linear-gradient(90deg,#1c2030_0%,#161b22_100%)] px-4 py-3 sm:px-5">
@@ -166,6 +178,7 @@ export const QuickQueryResultOverlay: React.FC<QuickQueryResultOverlayProps> = (
                 <button
                   type="button"
                   onClick={() => onQuickQueryViewChange?.('table')}
+                  aria-pressed={quickQueryView === 'table'}
                   className={`rounded-lg px-2.5 py-1.5 text-[11px] font-bold transition-all ${
                     quickQueryView === 'table'
                       ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-600/10'
@@ -177,6 +190,7 @@ export const QuickQueryResultOverlay: React.FC<QuickQueryResultOverlayProps> = (
                 <button
                   type="button"
                   onClick={() => onQuickQueryViewChange?.('terminal')}
+                  aria-pressed={quickQueryView === 'terminal'}
                   className={`rounded-lg px-2.5 py-1.5 text-[11px] font-bold transition-all ${
                     quickQueryView === 'terminal'
                       ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-600/10'

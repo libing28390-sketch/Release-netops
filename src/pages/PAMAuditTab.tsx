@@ -484,7 +484,7 @@ const PAMAuditTab: React.FC<PAMAuditTabProps> = ({
                               <span className="text-sm font-semibold text-slate-900">{s.asset_hostname || '—'}</span>
                               {s.archived ? (
                                 <span
-                                  className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wider bg-slate-100 text-slate-500 border border-slate-200"
+                                  className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[11px] font-bold uppercase tracking-wider bg-slate-100 text-slate-500 border border-slate-200"
                                   title={isZh ? '关联资产已删除，会话记录已归档保留' : 'Underlying asset removed; session archived for audit'}
                                 >
                                   {isZh ? '已归档' : 'Archived'}
@@ -527,13 +527,13 @@ const PAMAuditTab: React.FC<PAMAuditTabProps> = ({
 
                       <td className="px-6 py-4 text-xs text-slate-600">
                         {isRemoteDesktopSession(s)
-                          ? <span className="inline-flex items-center gap-1.5"><span className="rounded bg-violet-50 px-1.5 py-0.5 text-[9px] font-black text-violet-700">{remoteDesktopProtocol(s).toUpperCase()}</span>{isZh ? '图形会话' : 'Graphical session'}</span>
+                          ? <span className="inline-flex items-center gap-1.5"><span className="rounded bg-violet-50 px-1.5 py-0.5 text-[11px] font-bold text-violet-700">{remoteDesktopProtocol(s).toUpperCase()}</span>{isZh ? '图形会话' : 'Graphical session'}</span>
                           : s.connect_method === 'local' ? (isZh ? '本地' : 'Local') : (isZh ? '浏览器终端' : 'Browser terminal')}
                       </td>
 
                       {/* Access level */}
                       <td className="px-6 py-4">
-                        <span className={`px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider ${
+                        <span className={`px-2 py-1 rounded-md text-[11px] font-bold uppercase tracking-wider ${
                           s.access_level === 'admin'
                             ? 'bg-rose-50 text-rose-600'
                             : 'bg-blue-50 text-blue-600'
@@ -591,7 +591,7 @@ const PAMAuditTab: React.FC<PAMAuditTabProps> = ({
                               <RefreshCw size={11} className="animate-spin" />{isZh ? '录像归档 / 存储重试中' : 'Recording archive / storage retry in progress'}
                             </span>
                           ) : recordingState(s) === 'error' ? (
-                            <span className="inline-flex items-center gap-1.5 rounded-lg bg-rose-50 px-2 py-1 text-[10px] font-semibold text-rose-600" title={isZh ? '录像暂不可用，请检查存储状态' : 'Recording unavailable; check storage status'}>
+                            <span className="inline-flex items-center gap-1.5 rounded-lg bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-600" title={isZh ? '录像暂不可用，请检查存储状态' : 'Recording unavailable; check storage status'}>
                               <AlertCircle size={11} />{isZh ? '录像不可用' : 'Recording unavailable'}
                             </span>
                           ) : (

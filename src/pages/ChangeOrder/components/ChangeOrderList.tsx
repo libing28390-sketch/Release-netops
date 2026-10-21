@@ -21,6 +21,7 @@ interface Props {
   orders: ChangeOrder[];
   total: number;
   loading: boolean;
+  loadError: 'permission' | 'load' | null;
   page: number;
   pageSize: number;
   setPage: (p: number) => void;
@@ -76,6 +77,7 @@ export const ChangeOrderList: React.FC<Props> = ({
   orders,
   total,
   loading,
+  loadError,
   page,
   pageSize,
   setPage,
@@ -125,6 +127,12 @@ export const ChangeOrderList: React.FC<Props> = ({
   FEATURE_TODO_SUBTABS,
 }) => {
   const zh = language === 'zh';
+  const loadErrorMessage = loadError === 'permission'
+    ? (zh ? '无权查看工单，或登录状态已失效。' : 'You are not authorized to view change orders, or your session has expired.')
+    : (zh ? '工单列表加载失败。' : 'Could not load change orders.');
+  const staleLoadErrorMessage = loadError === 'permission'
+    ? (zh ? '无权刷新工单，或登录状态已失效；当前列表可能已过期。' : 'You are not authorized to refresh change orders, or your session has expired. The displayed results may be stale.')
+    : (zh ? '工单列表刷新失败，当前显示的内容可能已过期。' : 'Could not refresh change orders. The displayed results may be stale.');
   const exportAllOrders = useCallback(async (): Promise<TableExportData> => {
     const params = new URLSearchParams();
     if (search) params.set('search', search);
@@ -209,6 +217,7 @@ export const ChangeOrderList: React.FC<Props> = ({
           <div className="relative flex-1 min-w-[200px]">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-black/30" />
             <input type="text"
+              aria-label={zh ? '搜索工单号或标题' : 'Search order number or title'}
               value={search}
               onChange={e => { setSearch(e.target.value); setPage(1); }}
               placeholder={zh ? '搜索工单号 / 标题...' : 'Search order # / title...'}
@@ -224,6 +233,7 @@ export const ChangeOrderList: React.FC<Props> = ({
             <Filter size={13} />
           </div>
           <select
+            aria-label={zh ? '按状态筛选工单' : 'Filter change orders by status'}
             title={zh ? '按状态筛选' : 'Filter by status'}
             value={statusFilter}
             onChange={e => { setStatusFilter(e.target.value); setPage(1); }}
@@ -235,6 +245,7 @@ export const ChangeOrderList: React.FC<Props> = ({
             ))}
           </select>
           <select
+            aria-label={zh ? '按优先级筛选工单' : 'Filter change orders by priority'}
             title={zh ? '按优先级筛选' : 'Filter by priority'}
             value={priorityFilter}
             onChange={e => { setPriorityFilter(e.target.value); setPage(1); }}
@@ -246,6 +257,8 @@ export const ChangeOrderList: React.FC<Props> = ({
             ))}
           </select>
           <button
+            type="button"
+            aria-expanded={showAdvancedSearch}
             onClick={() => setShowAdvancedSearch(v => !v)}
             className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium border transition-all ${
               showAdvancedSearch || advancedFilterCount > 0
@@ -262,7 +275,10 @@ export const ChangeOrderList: React.FC<Props> = ({
           </button>
           {/* Bookmark quick-filter */}
           <button
+            type="button"
             onClick={() => { setBookmarkFilter(!bookmarkFilter); setPage(1); }}
+            aria-label={zh ? (bookmarkFilter ? '显示全部工单' : '只看收藏工单') : (bookmarkFilter ? 'Show all change orders' : 'Show bookmarked change orders')}
+            aria-pressed={bookmarkFilter}
             title={zh ? '只看收藏' : 'Show bookmarked'}
             className={`p-2 rounded-xl border transition-all ${
               bookmarkFilter
@@ -274,7 +290,10 @@ export const ChangeOrderList: React.FC<Props> = ({
           </button>
           {/* Refresh */}
           <button
-            onClick={() => { fetchOrders(); fetchSummary(); fetchBookmarks(); }}
+            type="button"
+            onClick={() => { void fetchOrders(); fetchSummary(); fetchBookmarks(); }}
+            aria-label={zh ? '刷新工单列表' : 'Refresh change order list'}
+            disabled={loading}
             className="p-2 rounded-xl border border-black/10 bg-white text-black/40 hover:text-[#00bceb] hover:border-[#00bceb]/30 transition-all"
             title={zh ? '刷新' : 'Refresh'}
           >
@@ -469,6 +488,8 @@ export const ChangeOrderList: React.FC<Props> = ({
               ] as const).map(tab => (
                 <button
                   key={tab.key}
+                  type="button"
+                  aria-pressed={myTodoSubTab === tab.key}
                   onClick={() => { setMyTodoSubTab(tab.key); setPage(1); }}
                   className={`px-4 py-2 text-sm font-medium rounded-t-xl border-b-2 transition-all -mb-px ${
                     myTodoSubTab === tab.key
@@ -481,9 +502,24 @@ export const ChangeOrderList: React.FC<Props> = ({
               ))}
             </div>
           )}
+          {loadError && orders.length > 0 && (
+            <div role="alert" className="flex flex-wrap items-center gap-3 border-b border-rose-200 bg-rose-50/80 px-5 py-3 text-sm text-rose-800">
+              <span className="min-w-0 flex-1">{staleLoadErrorMessage}</span>
+              <button type="button" onClick={() => void fetchOrders()} disabled={loading} className="shrink-0 rounded-lg border border-rose-300 px-3 py-1.5 text-xs font-semibold hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50">
+                {zh ? '重试' : 'Retry'}
+              </button>
+            </div>
+          )}
           {loading && orders.length === 0 ? (
-            <div className="flex items-center justify-center py-24 text-black/30">
+            <div role="status" aria-live="polite" className="flex items-center justify-center py-24 text-black/30">
               <RefreshCw size={18} className="animate-spin mr-2" /> {zh ? '加载中...' : 'Loading...'}
+            </div>
+          ) : loadError && orders.length === 0 ? (
+            <div role="alert" className="flex flex-col items-center justify-center gap-3 py-24 text-center">
+              <p className="text-sm text-rose-700">{loadErrorMessage}</p>
+              <button type="button" onClick={() => void fetchOrders()} disabled={loading} className="rounded-lg border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-800 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50">
+                {zh ? '重试' : 'Retry'}
+              </button>
             </div>
           ) : orders.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-24 text-black/30">
@@ -550,20 +586,20 @@ export const ChangeOrderList: React.FC<Props> = ({
                           <ActionIconGroup label={zh ? '工单操作' : 'Change order actions'}>
                             <ActionIconButton
                               icon={Eye}
-                              label={zh ? '查看' : 'View'}
+                              label={zh ? `查看工单 ${order.order_number}` : `View change order ${order.order_number}`}
                               onClick={(e) => { e.stopPropagation(); openDetail(order); }}
                             />
                             {['draft', 'rejected'].includes(order.status) && order.requester_username === currentUser.username && (
                               <ActionIconButton
                                 icon={Pencil}
-                                label={zh ? '编辑' : 'Edit'}
+                                label={zh ? `编辑工单 ${order.order_number}` : `Edit change order ${order.order_number}`}
                                 onClick={(e) => { e.stopPropagation(); openEdit(order); }}
                               />
                             )}
                             {['draft', 'cancelled'].includes(order.status) && order.requester_username === currentUser.username && (
                               <ActionIconButton
                                 icon={Trash2}
-                                label={zh ? '删除' : 'Delete'}
+                                label={zh ? `删除工单 ${order.order_number}` : `Delete change order ${order.order_number}`}
                                 variant="danger"
                                 onClick={(e) => { e.stopPropagation(); handleDelete(order.id); }}
                               />

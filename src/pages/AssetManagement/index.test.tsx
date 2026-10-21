@@ -89,6 +89,44 @@ describe('AssetManagementTab request states', () => {
     vi.unstubAllGlobals();
   });
 
+  it('keeps the batch takeover confirmation keyboard-contained and returns focus when cancelled', async () => {
+    const asset = {
+      id: 'asset-takeover-focus-1',
+      asset_type: 'server',
+      asset_tag: 'SRV-FOCUS-1',
+      hostname: 'batch-focus-1',
+      management_ip: '192.0.2.31',
+      status: 'active',
+      lifecycle_status: 'production',
+      tags: [],
+    };
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input);
+      if (url.startsWith('/api/assets?')) return response({ items: [asset], total: 1 });
+      if (url === '/api/assets/summary') return assetSummary(0, 1);
+      if (url === '/api/cmdb/sites') return response({ data: [] });
+      if (url === '/api/racks') return response({ success: true, data: [] });
+      if (url === '/api/tags/definitions') return response({ data: [] });
+      return response({});
+    });
+
+    renderAssetPage();
+    await screen.findByText('batch-focus-1');
+    fireEvent.click(screen.getAllByRole('checkbox')[1]);
+    const trigger = screen.getByRole('button', { name: 'Takeover' });
+    trigger.focus();
+    fireEvent.click(trigger);
+
+    const dialog = await screen.findByRole('alertdialog', { name: 'Confirm batch takeover' });
+    const cancel = screen.getByRole('button', { name: 'Cancel' });
+    await waitFor(() => expect(document.activeElement).toBe(cancel));
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('alertdialog', { name: 'Confirm batch takeover' })).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input) === '/api/assets/takeover/batch')).toBe(false);
+    expect(dialog.isConnected).toBe(false);
+  });
+
   it('uses the requested default columns and reveals optional columns on demand', async () => {
     window.localStorage.removeItem('netops:assets:columns:v1');
     const asset = {

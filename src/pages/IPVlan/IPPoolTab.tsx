@@ -349,14 +349,14 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t, prefixId = '', embed
                       <td className="px-4 py-4 text-xs text-gray-600 font-semibold">{node.used_ips}</td>
                       <td className="px-4 py-4 text-xs text-gray-600 font-semibold">{node.total_ips}</td>
                       <td className="px-4 py-4">
-                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-600 border border-emerald-500/10`}>
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-500/10">
                           <span className="w-1 h-1 rounded-full bg-emerald-500" />
                           {node.status.toUpperCase()}
                         </span>
                       </td>
                       <td className="px-4 py-4">
                         <div className="flex flex-col gap-1 w-24">
-                          <span className="text-[10px] font-bold text-gray-500">{node.utilization}%</span>
+                          <span className="text-xs font-semibold tabular-nums text-[var(--ui-fg)]">{node.utilization}%</span>
                           <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
                             <div 
                               className={`h-full rounded-full bg-gradient-to-r ${getUtilColor(node.utilization)}`} 

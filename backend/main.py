@@ -145,8 +145,14 @@ async def _bg_init():
         if os.environ.get("ENVIRONMENT") != "test" and "PYTEST_CURRENT_TEST" not in os.environ and "pytest" not in sys.modules:
             try:
                 from services.collector_sync_service import sync_all_monitoring_collectors
-                await asyncio.to_thread(sync_all_monitoring_collectors)
-                logger.info("[Background] Monitoring targets auto-synchronized from CMDB.")
+                sync_result = await asyncio.to_thread(sync_all_monitoring_collectors)
+                if sync_result.get("status") == "SUCCESS":
+                    logger.info("[Background] Monitoring targets auto-synchronized from CMDB.")
+                else:
+                    logger.warning(
+                        "[Background] Monitoring targets auto-sync status: %s",
+                        sync_result.get("status"),
+                    )
             except Exception as sync_exc:
                 logger.warning(f"[Background] Monitoring targets auto-sync failed: {sync_exc}")
         logger.info("[Background] Core background tasks initialized.")

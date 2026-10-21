@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Activity,
   Bot,
@@ -24,6 +24,7 @@ import { PasswordInputField } from '../../../components/ui/PasswordInputField';
 import { getAIProvidersPage, createAIProvider, updateAIProvider, deleteAIProvider, getAIProviderDeletePreview, testAIProvider, AIProvider, AIProviderDeletePreview } from '../../../api/ai';
 import { useCoreApp } from '../../../contexts/AppDomainContext';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
+import { useFocusTrap } from '../../../hooks/useFocusTrap';
 import { ActionButton, ActionIconButton, ActionIconGroup, ActionLink } from '../../../components/ui/ActionIconButton';
 import Pagination from '../../../components/Pagination';
 import { aiAdminText } from '../../../i18n/aiAdmin';
@@ -277,7 +278,9 @@ export const ProviderManagementTab: React.FC = () => {
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
 
   const [showModal, setShowModal] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
   useEscapeClose(showModal, () => setShowModal(false));
+  useFocusTrap(dialogRef, showModal, '#provider-name');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [providerType, setProviderType] = useState('deepseek');
@@ -542,18 +545,18 @@ export const ProviderManagementTab: React.FC = () => {
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900" aria-label={tx('ai.provider.filter.aria')}>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><div><h3 className="text-sm font-bold text-slate-900 dark:text-white">{tx('ai.provider.filter.title')}</h3><p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">{tx('ai.provider.filter.body')}</p></div><span className="rounded-full bg-indigo-50 px-2.5 py-1 text-[10px] font-semibold text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300">{tx('ai.provider.filter.count', { count: total })}</span></div>
-        <form onSubmit={submitSearch} className="grid gap-2 md:grid-cols-2 xl:grid-cols-6">
-          <div className="relative md:col-span-2 xl:col-span-2"><Eye className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-400" /><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={tx('ai.provider.filter.search')} aria-label={tx('ai.provider.filter.searchLabel')} className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-xs outline-none focus:border-indigo-400 dark:border-slate-700 dark:bg-slate-950 dark:text-white" /></div>
-          <select value={dataRegionFilter} onChange={(event) => { setDataRegionFilter(event.target.value); setPage(1); }} aria-label={tx('ai.provider.filter.regionLabel')} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="">{tx('ai.provider.filter.allRegions')}</option>{Array.from(new Set([...DATA_REGION_OPTIONS.map((item) => item.value), ...providerFacets.data_regions])).map((region) => <option key={region} value={region}>{DATA_REGION_OPTIONS.find((item) => item.value === region) ? tx(DATA_REGION_OPTIONS.find((item) => item.value === region)!.labelKey) : region}</option>)}</select>
-          <select value={healthFilter} onChange={(event) => { setHealthFilter(event.target.value); setPage(1); }} aria-label={tx('ai.provider.filter.allHealth')} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="">{tx('ai.provider.filter.allHealth')}</option>{Array.from(new Set(['healthy', 'unhealthy', 'unknown', 'disabled', ...providerFacets.health_statuses])).map((health) => <option key={health} value={health}>{tx(getHealthStatusKey(health))}</option>)}</select>
-          <select value={enabledFilter} onChange={(event) => { setEnabledFilter(event.target.value); setPage(1); }} aria-label={tx('ai.provider.filter.allEnabled')} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="all">{tx('ai.provider.filter.allEnabled')}</option><option value="enabled">{tx('ai.provider.status.enabled')}</option><option value="disabled">{tx('ai.provider.status.disabled')}</option></select>
-          <select value={providerTypeFilter} onChange={(event) => { setProviderTypeFilter(event.target.value); setPage(1); }} aria-label={tx('ai.provider.filter.allTypes')} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="">{tx('ai.provider.filter.allTypes')}</option>{providerFacets.provider_types.map((type) => <option key={type} value={type}>{type}</option>)}</select>
-          <select value={tagFilter} onChange={(event) => { setTagFilter(event.target.value); setPage(1); }} aria-label={tx('ai.provider.filter.allTags')} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="">{tx('ai.provider.filter.allTags')}</option>{providerFacets.tags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}</select>
-          <div className="flex gap-2 md:col-span-2 xl:col-span-6"><button type="button" onClick={clearProviderFilters} className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:border-indigo-300 dark:border-slate-700 dark:text-slate-300">{tx('ai.common.clearFilters')}</button></div>
+        <form onSubmit={submitSearch} className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-6">
+          <div className="relative md:col-span-2 xl:col-span-2"><Eye className="pointer-events-none absolute left-3 top-3 h-3.5 w-3.5 text-slate-400" /><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={tx('ai.provider.filter.search')} aria-label={tx('ai.provider.filter.searchLabel')} className="min-h-10 w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white" /></div>
+          <select value={dataRegionFilter} onChange={(event) => { setDataRegionFilter(event.target.value); setPage(1); }} aria-label={tx('ai.provider.filter.regionLabel')} className="min-h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="">{tx('ai.provider.filter.allRegions')}</option>{Array.from(new Set([...DATA_REGION_OPTIONS.map((item) => item.value), ...providerFacets.data_regions])).map((region) => <option key={region} value={region}>{DATA_REGION_OPTIONS.find((item) => item.value === region) ? tx(DATA_REGION_OPTIONS.find((item) => item.value === region)!.labelKey) : region}</option>)}</select>
+          <select value={healthFilter} onChange={(event) => { setHealthFilter(event.target.value); setPage(1); }} aria-label={tx('ai.provider.filter.allHealth')} className="min-h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="">{tx('ai.provider.filter.allHealth')}</option>{Array.from(new Set(['healthy', 'unhealthy', 'unknown', 'disabled', ...providerFacets.health_statuses])).map((health) => <option key={health} value={health}>{tx(getHealthStatusKey(health))}</option>)}</select>
+          <select value={enabledFilter} onChange={(event) => { setEnabledFilter(event.target.value); setPage(1); }} aria-label={tx('ai.provider.filter.allEnabled')} className="min-h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="all">{tx('ai.provider.filter.allEnabled')}</option><option value="enabled">{tx('ai.provider.status.enabled')}</option><option value="disabled">{tx('ai.provider.status.disabled')}</option></select>
+          <select value={providerTypeFilter} onChange={(event) => { setProviderTypeFilter(event.target.value); setPage(1); }} aria-label={tx('ai.provider.filter.allTypes')} className="min-h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="">{tx('ai.provider.filter.allTypes')}</option>{providerFacets.provider_types.map((type) => <option key={type} value={type}>{type}</option>)}</select>
+          <select value={tagFilter} onChange={(event) => { setTagFilter(event.target.value); setPage(1); }} aria-label={tx('ai.provider.filter.allTags')} className="min-h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="">{tx('ai.provider.filter.allTags')}</option>{providerFacets.tags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}</select>
+          <div className="flex gap-2 md:col-span-2 xl:col-span-6"><button type="button" onClick={clearProviderFilters} className="min-h-10 rounded-lg border border-slate-200 px-4 text-sm font-semibold text-slate-600 transition hover:border-indigo-300 hover:bg-indigo-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/30 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-indigo-950/30">{tx('ai.common.clearFilters')}</button></div>
         </form>
       </section>
 
-      <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+      <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard
           icon={Bot}
           label={tx('ai.provider.metric.total')}
@@ -664,9 +667,9 @@ export const ProviderManagementTab: React.FC = () => {
       )}
 
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="add-provider-title">
-          <div className="flex max-h-[calc(100vh-2rem)] w-full max-w-xl flex-col overflow-hidden rounded-3xl border border-white/60 bg-white shadow-2xl shadow-slate-950/20 dark:border-slate-700 dark:bg-slate-900">
-            <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-5 dark:border-slate-800 sm:px-6">
+        <div ref={dialogRef} className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="add-provider-title" tabIndex={-1}>
+          <div className="nx-form-dialog-surface flex max-h-[calc(100vh-2rem)] w-full max-w-xl flex-col overflow-hidden shadow-2xl shadow-slate-950/20">
+            <div className="nx-dialog-header flex items-start justify-between gap-4 border-b px-5 py-5 sm:px-6">
               <div>
                 <div className="mb-2 inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-indigo-500">
                   <Plus className="h-3.5 w-3.5" />
@@ -675,7 +678,7 @@ export const ProviderManagementTab: React.FC = () => {
                 <h3 id="add-provider-title" className="text-xl font-bold tracking-tight text-slate-950 dark:text-white">{tx(editingId ? 'ai.provider.editor.editTitle' : 'ai.provider.editor.newTitle')}</h3>
                 <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{tx('ai.provider.editor.body')}</p>
               </div>
-              <button type="button" onClick={() => { setEditingId(null); setShowApiKey(false); setShowModal(false); }} aria-label={tx('ai.provider.editor.close')} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200">
+              <button type="button" onClick={() => { setEditingId(null); setShowApiKey(false); setShowModal(false); }} aria-label={tx('ai.provider.editor.close')} className="shrink-0 rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200">
                 <X className="h-5 w-5" />
               </button>
             </div>
@@ -692,7 +695,7 @@ export const ProviderManagementTab: React.FC = () => {
                   >
                     {DATA_REGION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.value} · {tx(option.labelKey)}</option>)}
                   </select>
-                  <p className="mt-1.5 text-[10px] text-slate-400">{tx('ai.provider.editor.regionBody')}</p>
+                  <p className="mt-1.5 text-[11px] leading-4 text-slate-500 dark:text-slate-400">{tx('ai.provider.editor.regionBody')}</p>
                 </div>
 
                 <div>
@@ -749,7 +752,7 @@ export const ProviderManagementTab: React.FC = () => {
                   <div>
                     <label htmlFor="provider-model-code" className="mb-1.5 block text-xs font-bold text-slate-700 dark:text-slate-300">{tx('ai.provider.editor.model')} <span className="font-normal text-slate-400">(Model Code)</span></label>
                     <input id="provider-model-code" type="text" placeholder="deepseek-v4-flash" value={defaultModelCode} onChange={(e) => setDefaultModelCode(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 font-mono text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
-                    <p className="mt-1.5 text-[10px] text-slate-400">{tx('ai.provider.editor.modelHelp')}</p>
+                    <p className="mt-1.5 text-[11px] leading-4 text-slate-500 dark:text-slate-400">{tx('ai.provider.editor.modelHelp')}</p>
                   </div>
                   <div>
                     <label htmlFor="provider-timeout" className="mb-1.5 block text-xs font-bold text-slate-700 dark:text-slate-300">{tx('ai.provider.editor.timeout')}</label>
@@ -769,14 +772,14 @@ export const ProviderManagementTab: React.FC = () => {
                     <option value="INTERNAL">INTERNAL · {tx('ai.provider.editor.internal')}</option>
                     <option value="CONFIDENTIAL">CONFIDENTIAL · {tx('ai.provider.editor.confidential')}</option>
                   </select>
-                  <p className="mt-1.5 text-[10px] text-slate-400">{tx('ai.provider.editor.classificationHelp')}</p>
+                  <p className="mt-1.5 text-[11px] leading-4 text-slate-500 dark:text-slate-400">{tx('ai.provider.editor.classificationHelp')}</p>
                 </div>
 
               </div>
 
-              <div className="mt-6 flex flex-col-reverse gap-2 border-t border-slate-100 pt-4 dark:border-slate-800 sm:flex-row sm:justify-end">
-                <button type="button" onClick={() => { setEditingId(null); setShowApiKey(false); setShowModal(false); }} className="rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200">{tx('ai.provider.editor.cancel')}</button>
-                <button type="submit" disabled={submitting} className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-700 disabled:cursor-wait disabled:opacity-60">
+              <div className="nx-dialog-footer mt-6 flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end">
+                <button type="button" onClick={() => { setEditingId(null); setShowApiKey(false); setShowModal(false); }} className="nx-dialog-action-secondary rounded-xl px-4 py-2.5 transition hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200">{tx('ai.provider.editor.cancel')}</button>
+                <button type="submit" disabled={submitting} className="nx-dialog-action-primary inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-700 disabled:cursor-wait disabled:opacity-60">
                   {submitting && <RefreshCw className="h-4 w-4 animate-spin" />}
                   {submitting ? tx('ai.provider.editor.saving') : (editingId ? tx('ai.provider.editor.save') : tx('ai.provider.editor.add'))}
                 </button>

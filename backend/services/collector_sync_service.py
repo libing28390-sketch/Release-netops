@@ -67,8 +67,11 @@ def sync_all_monitoring_collectors(user: Any = None) -> dict[str, Any]:
                     "assignment_count": compiled.get("assignment_count", 0),
                 })
                 logger.info(
-                    f"[CollectorAutoSync] Successfully synced collector {cid} "
-                    f"v{published.get('config_version')} ({compiled.get('assignment_count', 0)} assignments)"
+                    "[CollectorAutoSync] Collector %s v%s %s (%s assignments)",
+                    cid, published.get("config_version"),
+                    "unchanged; runtime verified" if published is compiled and compiled.get("already_applied")
+                    else "published",
+                    compiled.get("assignment_count", 0),
                 )
             except Exception as exc:
                 logger.warning(f"[CollectorAutoSync] Failed to sync collector {cid}: {exc}", exc_info=True)
@@ -77,7 +80,9 @@ def sync_all_monitoring_collectors(user: Any = None) -> dict[str, Any]:
                     "status": "FAILED",
                     "error": str(exc),
                 })
-        return {"status": "SUCCESS", "results": results}
+        failed = sum(item["status"] == "FAILED" for item in results)
+        status = "FAILED" if failed == len(results) else "PARTIAL_FAILURE" if failed else "SUCCESS"
+        return {"status": status, "results": results}
     finally:
         _sync_lock.release()
 

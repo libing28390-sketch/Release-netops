@@ -56,7 +56,9 @@ from services.monitoring_compiler import (
     validate_artifact,
 )
 from services.monitoring_health_service import classify_collection_health, summarize_collection_health
-from services.collector_artifact_service import ArtifactStoreError, CollectorArtifactStore
+from services.collector_artifact_service import (
+    ArtifactStoreError, CollectorArtifactStore, collector_artifact_is_current,
+)
 from services.rack_scope_service import RackScope, allowed_resource_scope, device_scope_predicate
 
 
@@ -1848,10 +1850,33 @@ def compile_collector(collector_id: str, body: CompileRequest | None = None, _us
                 ORDER BY config_version DESC LIMIT 1""",
             (collector_id,),
         ).fetchone()
+        reusable_artifact = False
         if not requested and latest_same and str(latest_same["checksum"] or "") == str(manifest.get("checksum") or ""):
+            # The database can survive a lost/recreated artifact volume. Rebuild
+            # a missing or damaged source rather than reusing its APPLIED row.
+            try:
+                if not latest_same["artifact_path"]:
+                    raise CompileError("ARTIFACT_NOT_FOUND")
+                source_manifest = validate_artifact(str(latest_same["artifact_path"] or ""))["manifest"]
+                reusable_artifact = (
+                    bool(latest_same["artifact_path"])
+                    and source_manifest.get("collector_id") == collector_id
+                    and int(source_manifest.get("config_version") or 0) == int(latest_same["config_version"])
+                    and source_manifest.get("checksum") == manifest.get("checksum")
+                )
+            except (CompileError, OSError, ValueError, TypeError):
+                reusable_artifact = False
+        if reusable_artifact:
             compile_succeeded = True
             existing_manifest = _parse_json(latest_same["manifest_json"], manifest)
-            already_applied = str(latest_same["status"] or "").upper() == "APPLIED"
+            already_applied = (
+                str(latest_same["status"] or "").upper() == "APPLIED"
+                and collector_artifact_is_current(
+                    str(latest_same["artifact_path"]),
+                    config_version=int(latest_same["config_version"]),
+                    checksum=str(latest_same["checksum"]),
+                )
+            )
             return {
                 "status": "UNCHANGED",
                 "collector_id": collector_id,
@@ -2008,12 +2033,18 @@ def publish_collector(collector_id: str, _user=require_role("Operator")):
         artifact_path = str(latest.get("artifact_path") or "") if hasattr(latest, "get") else str(latest[1] or "")
         if artifact_path:
             try:
-                CollectorArtifactStore(str(Path(artifact_path).parent)).publish(artifact_path, config_version=version)
+                store = CollectorArtifactStore(str(Path(artifact_path).parent))
+                store.publish(artifact_path, config_version=version, runtime_status="RELOAD_PENDING")
             except ArtifactStoreError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
             exporter_reload = _reload_snmp_exporter_config()
+            if not exporter_reload:
+                # Keep the runtime marker pending so a prior APPLIED database
+                # row cannot make the next automatic sync skip this retry.
+                raise HTTPException(status_code=503, detail="SNMP_EXPORTER_RELOAD_PENDING")
+            store.mark_runtime_applied(config_version=version)
         else:
-            exporter_reload = None
+            raise HTTPException(status_code=409, detail="COLLECTOR_ARTIFACT_MISSING_RECOMPILE_REQUIRED")
         now = _now()
         conn.execute("UPDATE monitoring_config_versions SET status = 'APPLIED', applied_at = ? WHERE collector_id = ? AND config_version = ?", (now, collector_id, version))
         conn.execute("UPDATE monitoring_target_snapshots SET is_last_known_good = CASE WHEN config_version = ? THEN 1 ELSE 0 END WHERE collector_id = ?", (version, collector_id))

@@ -1,6 +1,6 @@
 import React from 'react';
 
-const controlClass = 'mt-1 w-full rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface)] px-3 py-2 text-xs text-[var(--ui-fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] disabled:cursor-not-allowed disabled:opacity-70';
+const controlClass = 'mt-1 min-h-[var(--ui-control-height)] w-full rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface)] px-3 py-2 text-[var(--ui-text-body)] text-[var(--ui-fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] disabled:cursor-not-allowed disabled:opacity-70';
 
 export interface FormSelectOption {
   value: string;
@@ -42,7 +42,7 @@ export const SelectField: React.FC<SelectFieldProps> = ({
   const id = React.useId();
   const helperId = `${id}-help`;
   return (
-    <div className={`text-xs font-semibold text-[var(--muted-text)] ${className}`}>
+    <div className={`text-[var(--ui-text-label)] font-medium text-[var(--ui-fg-muted)] ${className}`}>
       <label htmlFor={id}>{label}</label>
       <select
         id={id}
@@ -59,7 +59,7 @@ export const SelectField: React.FC<SelectFieldProps> = ({
         <p
           id={helperId}
           role={helperRole}
-          className={`mt-1 text-[10px] font-normal leading-4 ${helperTone === 'warning' ? 'text-amber-700' : 'text-[var(--muted-text)]'}`}
+          className={`mt-1 text-[var(--ui-text-caption)] font-normal leading-4 ${helperTone === 'warning' ? 'text-[var(--ui-warning)]' : 'text-[var(--ui-fg-muted)]'}`}
         >
           {helperText}
         </p>
@@ -103,7 +103,7 @@ export const TextField: React.FC<TextFieldProps> = ({
   const suggestionsId = `${id}-suggestions`;
   const describedBy = helperText ? helperId : undefined;
   return (
-    <div className={`text-xs font-semibold text-[var(--muted-text)] ${className}`}>
+    <div className={`text-[var(--ui-text-label)] font-medium text-[var(--ui-fg-muted)] ${className}`}>
       <label htmlFor={id}>{label}</label>
       {multiline ? (
         <textarea
@@ -137,7 +137,7 @@ export const TextField: React.FC<TextFieldProps> = ({
           {suggestions.map((suggestion) => <option key={suggestion} value={suggestion} />)}
         </datalist>
       )}
-      {helperText && <p id={helperId} className="mt-1 text-[10px] font-normal leading-4 text-[var(--muted-text)]">{helperText}</p>}
+      {helperText && <p id={helperId} className="mt-1 text-[var(--ui-text-caption)] font-normal leading-4 text-[var(--ui-fg-muted)]">{helperText}</p>}
     </div>
   );
 };

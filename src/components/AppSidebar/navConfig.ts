@@ -120,8 +120,8 @@ export const navConfig: NavGroup[] = [
         activeMatch: '/ipam/utilization,/ipam/reconciliation,/ipam/locate',
         icon: 'Activity',
         children: [
-          { id: 'ipam-utilization', label: '利用率', labelEn: 'Utilization', path: '/ipam/utilization', icon: 'BarChart2' },
           { id: 'ipam-locate', label: 'IP 定位', labelEn: 'IP Locator', path: '/ipam/locate', icon: 'Globe' },
+          { id: 'ipam-utilization', label: '利用率', labelEn: 'Utilization', path: '/ipam/utilization', icon: 'BarChart2' },
           { id: 'ipam-reconciliation', label: 'IP 对账', labelEn: 'IP Reconciliation', path: '/ipam/reconciliation', icon: 'ClipboardList' },
         ],
       },

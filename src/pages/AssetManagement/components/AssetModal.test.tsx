@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useState } from 'react';
 import { AssetModal } from './AssetModal';
@@ -40,6 +40,17 @@ const makeProps = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 }) as any;
 
+const AssetModalHarness = ({ initialForm = { ...EMPTY_FORM, hostname: 'asset-01' } }: { initialForm?: any }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [form, setForm] = useState(initialForm);
+  return (
+    <>
+      <button type="button" onClick={() => setIsOpen(true)}>Open asset modal</button>
+      <AssetModal {...makeProps({ isOpen, onClose: () => setIsOpen(false), form, setForm })} />
+    </>
+  );
+};
+
 describe('AssetModal lookup states', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn());
@@ -48,6 +59,53 @@ describe('AssetModal lookup states', () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+  });
+
+  it('traps focus in the asset dialog and restores it to the opener after Escape', async () => {
+    vi.mocked(fetch).mockImplementation(async input => lookupResponse(String(input)));
+    render(<AssetModalHarness />);
+
+    const opener = screen.getByRole('button', { name: 'Open asset modal' });
+    opener.focus();
+    fireEvent.click(opener);
+
+    const dialog = await screen.findByRole('dialog', { name: 'Add Asset' });
+    const hostname = within(dialog).getByRole('textbox', { name: 'Hostname' });
+    await waitFor(() => expect(document.activeElement).toBe(hostname));
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add Asset' })).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(opener));
+  });
+
+  it('gives the Web-profile child dialog semantics and restores focus to its trigger on Escape', async () => {
+    vi.mocked(fetch).mockImplementation(async input => lookupResponse(String(input)));
+    const initialForm = {
+      ...EMPTY_FORM,
+      asset_type: 'server',
+      hostname: 'asset-01',
+      web_profiles: [{ id: 'web-profile-1', profile_name: 'BMC', scheme: 'https', port: '443', path: '/', enabled: true, credential_mode: 'inherit_asset' }],
+    };
+    render(<AssetModalHarness initialForm={initialForm} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open asset modal' }));
+    const parentDialog = await screen.findByRole('dialog', { name: 'Add Asset' });
+    fireEvent.click(within(parentDialog).getByRole('button', { name: /More details \(optional\)/ }));
+
+    const configureButton = await within(parentDialog).findByRole('button', { name: 'Configure' });
+    configureButton.focus();
+    fireEvent.click(configureButton);
+
+    const childDialog = await screen.findByRole('dialog', { name: 'Configure Web management entries' });
+    const profileName = within(childDialog).getByRole('textbox', { name: 'Name' });
+    expect(parentDialog.getAttribute('aria-hidden')).toBe('true');
+    await waitFor(() => expect(document.activeElement).toBe(profileName));
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Configure Web management entries' })).toBeNull());
+    expect(screen.getByRole('dialog', { name: 'Add Asset' })).toBe(parentDialog);
+    expect(parentDialog.hasAttribute('aria-hidden')).toBe(false);
+    await waitFor(() => expect(document.activeElement).toBe(configureButton));
   });
 
   it('shows the form shell and loading state before lookup options finish, then displays loaded location options', async () => {
@@ -114,6 +172,45 @@ describe('AssetModal lookup states', () => {
     fireEvent.click(screen.getByRole('button', { name: /More details \(optional\)/ }));
     expect(screen.getByText('Serial Number')).toBeTruthy();
     expect(screen.getByText('Power (W)')).toBeTruthy();
+  });
+
+  it('keeps hostname import guidance separate from the editable value and exposes the dialog name', async () => {
+    vi.mocked(fetch).mockImplementation(async input => lookupResponse(String(input)));
+    render(<AssetModal {...makeProps()} />);
+
+    expect(screen.getByRole('dialog', { name: 'Add Asset' })).toBeTruthy();
+    const hostname = screen.getByLabelText('Hostname') as HTMLInputElement;
+    expect(hostname.placeholder).toBe('e.g. host-01');
+    expect(hostname.getAttribute('aria-describedby')).toBeTruthy();
+    expect(screen.getByText('Network device imports may sync the hostname through SNMP; you can also enter it here.')).toBeTruthy();
+  });
+
+  it('announces the selected credential mode and switches between existing and manual fields', async () => {
+    vi.mocked(fetch).mockImplementation(async input => lookupResponse(String(input)));
+    const StatefulAssetModal = () => {
+      const [form, setForm] = useState({ ...EMPTY_FORM, credential_id: 'cred-1', auth_model: 'dual' });
+      return <AssetModal {...makeProps({ form, setForm })} />;
+    };
+    render(<StatefulAssetModal />);
+
+    const manualMode = screen.getByRole('button', { name: 'Manual Entry' });
+    const existingMode = screen.getByRole('button', { name: 'Select Existing' });
+    expect(screen.getByRole('group', { name: 'Credential entry mode' })).toBeTruthy();
+    expect(existingMode.getAttribute('aria-pressed')).toBe('true');
+    expect(manualMode.getAttribute('aria-pressed')).toBe('false');
+    expect(await screen.findByText('Select Normal Credential')).toBeTruthy();
+
+    fireEvent.click(manualMode);
+    await waitFor(() => expect(manualMode.getAttribute('aria-pressed')).toBe('true'));
+    expect(existingMode.getAttribute('aria-pressed')).toBe('false');
+    expect(screen.queryByText('Select Normal Credential')).toBeNull();
+    expect(screen.getAllByLabelText('Username')).toHaveLength(2);
+
+    fireEvent.click(existingMode);
+    await waitFor(() => expect(existingMode.getAttribute('aria-pressed')).toBe('true'));
+    expect(manualMode.getAttribute('aria-pressed')).toBe('false');
+    expect(await screen.findByText('Select Normal Credential')).toBeTruthy();
+    expect(screen.queryByLabelText('Username')).toBeNull();
   });
 
   it('shows Enable Secret for Cisco network platforms', async () => {

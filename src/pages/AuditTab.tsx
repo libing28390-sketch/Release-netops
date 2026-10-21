@@ -1,16 +1,18 @@
 import { DataTable } from '../components/DataTable';
 import React from 'react';
-import { ClipboardList, Eye } from 'lucide-react';
+import { ClipboardList, Eye, RotateCcw } from 'lucide-react';
 import type { AuditEvent } from '../types';
 import { severityBadgeClass, auditStatusBadgeClass } from '../components/shared';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
-import { ActionIconButton } from '../components/ui/ActionIconButton';
+import { ActionButton, ActionIconButton } from '../components/ui/ActionIconButton';
+import { SelectField } from '../components/ui/FormField';
 import type { TableExportData } from '../components/ui/TableExportMenu';
 import { fetchAllPaginatedItems } from '../utils/pagination';
 import { buildAuditExportData, getAuditExportHeaders } from './auditTableExport';
 
 import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
+
 interface AuditTabProps {
   auditRows: AuditEvent[];
   auditTotal: number;
@@ -43,6 +45,14 @@ const AuditTab: React.FC<AuditTabProps> = ({
 }) => {
   const zh = language === 'zh';
   const exportHeaders = getAuditExportHeaders(language);
+  const hasActiveFilters = [auditCategoryFilter, auditSeverityFilter, auditStatusFilter, auditTimeFilter].some(value => value !== 'all');
+  const resetFilters = () => {
+    setAuditCategoryFilter('all');
+    setAuditSeverityFilter('all');
+    setAuditStatusFilter('all');
+    setAuditTimeFilter('all');
+    setAuditPage(1);
+  };
 
   const categoryMap: Record<string, string> = {
     auth: '身份认证', identity: '身份认证', inventory: '资产管理',
@@ -140,74 +150,97 @@ const AuditTab: React.FC<AuditTabProps> = ({
       />
 
       <div className="flex-1 overflow-auto px-6 py-5 space-y-6">
-      <div className="bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden">
-        <div className="p-4 bg-black/[0.02] border-b border-black/5 flex gap-4 flex-wrap">
-          <select
-            value={auditCategoryFilter}
-            onChange={(e) => setAuditCategoryFilter(e.target.value)}
-            className="bg-white border border-black/10 rounded-lg px-3 py-1.5 text-xs outline-none"
-          >
-            <option value="all">{zh ? '全部分类' : 'All Categories'}</option>
-            <option value="auth">{zh ? '身份认证' : 'Auth'}</option>
-            <option value="inventory">{zh ? '资产管理' : 'Inventory'}</option>
-            <option value="execution">{zh ? '命令执行' : 'Execution'}</option>
-            <option value="config">{zh ? '配置管理' : 'Config'}</option>
-            <option value="playbook">{zh ? '剧本' : 'Playbook'}</option>
-            <option value="template">{zh ? '模板' : 'Template'}</option>
-            <option value="compliance">{zh ? '合规审计' : 'Compliance'}</option>
-          </select>
-          <select
-            value={auditSeverityFilter}
-            onChange={(e) => setAuditSeverityFilter(e.target.value)}
-            className="bg-white border border-black/10 rounded-lg px-3 py-1.5 text-xs outline-none"
-          >
-            <option value="all">{zh ? '全部级别' : 'All Severity'}</option>
-            <option value="critical">{zh ? '严重' : 'Critical'}</option>
-            <option value="high">{zh ? '高' : 'High'}</option>
-            <option value="medium">{zh ? '中' : 'Medium'}</option>
-            <option value="low">{zh ? '低' : 'Low'}</option>
-          </select>
-          <select
-            value={auditStatusFilter}
-            onChange={(e) => setAuditStatusFilter(e.target.value)}
-            className="bg-white border border-black/10 rounded-lg px-3 py-1.5 text-xs outline-none"
-          >
-            <option value="all">{zh ? '全部状态' : 'All Status'}</option>
-            <option value="success">{zh ? '成功' : 'Success'}</option>
-            <option value="warning">{zh ? '警告' : 'Warning'}</option>
-            <option value="failed">{zh ? '失败' : 'Failed'}</option>
-            <option value="completed">{zh ? '已完成' : 'Completed'}</option>
-          </select>
-          <select
-            value={auditTimeFilter}
-            onChange={(e) => setAuditTimeFilter(e.target.value)}
-            className="bg-white border border-black/10 rounded-lg px-3 py-1.5 text-xs outline-none"
-          >
-            <option value="all">{language === 'zh' ? '全部时间' : 'All Time'}</option>
-            <option value="24h">{language === 'zh' ? '最近 24 小时' : 'Last 24 Hours'}</option>
-            <option value="7d">{language === 'zh' ? '最近 7 天' : 'Last 7 Days'}</option>
-            <option value="30d">{language === 'zh' ? '最近 30 天' : 'Last 30 Days'}</option>
-          </select>
+      <div className="overflow-hidden rounded-xl border border-[var(--ui-border)] bg-[var(--ui-surface)] shadow-sm">
+        <div className="border-b border-[var(--ui-border)] bg-[var(--ui-surface-muted)] p-4">
+          <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-[var(--ui-fg)]">{zh ? '筛选审计记录' : 'Filter audit events'}</h2>
+              <p className="mt-0.5 text-xs text-[var(--ui-fg-muted)]">{zh ? '组合条件查看相关操作；更改后会返回第一页。' : 'Combine criteria to narrow the audit trail; changes return to page one.'}</p>
+            </div>
+            <ActionButton icon={RotateCcw} onClick={resetFilters} disabled={!hasActiveFilters}>
+              {zh ? '重置筛选' : 'Reset filters'}
+            </ActionButton>
+          </div>
+          <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <SelectField
+              label={zh ? '分类' : 'Category'}
+              value={auditCategoryFilter}
+              onChange={setAuditCategoryFilter}
+              language={zh ? 'zh' : 'en'}
+              className="min-w-0"
+              options={[
+                { value: 'all', label: zh ? '全部分类' : 'All categories' },
+                { value: 'auth', label: zh ? '身份认证' : 'Authentication' },
+                { value: 'inventory', label: zh ? '资产管理' : 'Inventory' },
+                { value: 'execution', label: zh ? '命令执行' : 'Execution' },
+                { value: 'config', label: zh ? '配置管理' : 'Configuration' },
+                { value: 'playbook', label: zh ? '剧本' : 'Playbook' },
+                { value: 'template', label: zh ? '模板' : 'Template' },
+                { value: 'compliance', label: zh ? '合规审计' : 'Compliance' },
+              ]}
+            />
+            <SelectField
+              label={zh ? '级别' : 'Severity'}
+              value={auditSeverityFilter}
+              onChange={setAuditSeverityFilter}
+              language={zh ? 'zh' : 'en'}
+              className="min-w-0"
+              options={[
+                { value: 'all', label: zh ? '全部级别' : 'All severities' },
+                { value: 'critical', label: zh ? '严重' : 'Critical' },
+                { value: 'high', label: zh ? '高' : 'High' },
+                { value: 'medium', label: zh ? '中' : 'Medium' },
+                { value: 'low', label: zh ? '低' : 'Low' },
+              ]}
+            />
+            <SelectField
+              label={zh ? '状态' : 'Status'}
+              value={auditStatusFilter}
+              onChange={setAuditStatusFilter}
+              language={zh ? 'zh' : 'en'}
+              className="min-w-0"
+              options={[
+                { value: 'all', label: zh ? '全部状态' : 'All statuses' },
+                { value: 'success', label: zh ? '成功' : 'Success' },
+                { value: 'warning', label: zh ? '警告' : 'Warning' },
+                { value: 'failed', label: zh ? '失败' : 'Failed' },
+                { value: 'completed', label: zh ? '已完成' : 'Completed' },
+              ]}
+            />
+            <SelectField
+              label={zh ? '时间范围' : 'Time range'}
+              value={auditTimeFilter}
+              onChange={setAuditTimeFilter}
+              language={zh ? 'zh' : 'en'}
+              className="min-w-0"
+              options={[
+                { value: 'all', label: zh ? '全部时间' : 'All time' },
+                { value: '24h', label: zh ? '最近 24 小时' : 'Last 24 hours' },
+                { value: '7d', label: zh ? '最近 7 天' : 'Last 7 days' },
+                { value: '30d', label: zh ? '最近 30 天' : 'Last 30 days' },
+              ]}
+            />
+          </div>
         </div>
         <div className="overflow-x-auto">
         <DataTable unstyled exportConfig={{ filename: 'audit-events', language: zh ? 'zh' : 'en', disabled: auditLoading || auditRows.length === 0, exportData: exportAllAuditEvents }} className="nx-data-table text-left">
           <thead>
-            <tr className="bg-black/[0.01] border-b border-black/5">
-              {exportHeaders.map((header) => <th key={header} className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{header}</th>)}
-              <TableActionHeader className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{language === 'zh' ? '操作' : 'Action'}</TableActionHeader>
+            <tr className="border-b border-[var(--ui-border)] bg-[var(--ui-surface-muted)]">
+              {exportHeaders.map((header) => <th key={header} className="px-6 py-4 text-[var(--ui-text-caption)] font-semibold uppercase tracking-wide text-[var(--ui-fg-muted)]">{header}</th>)}
+              <TableActionHeader className="px-6 py-4 text-[var(--ui-text-caption)] font-semibold uppercase tracking-wide text-[var(--ui-fg-muted)]">{language === 'zh' ? '操作' : 'Action'}</TableActionHeader>
             </tr>
           </thead>
           <tbody>
             {auditRows.map((event) => (
-              <tr key={event.id} className="border-b border-black/5 hover:bg-black/[0.01] transition-colors">
-                <td className="px-6 py-4 text-xs font-mono text-black/50">{new Date(event.created_at).toLocaleString()}</td>
+              <tr key={event.id} className="border-b border-[var(--ui-border)] transition-colors hover:bg-[var(--ui-surface-muted)]">
+                <td className="px-6 py-4 text-xs font-mono text-[var(--ui-fg-muted)]">{new Date(event.created_at).toLocaleString()}</td>
                 <td className="px-6 py-4 align-top">
-                  <div data-export-primary className="text-sm font-medium text-[#0b2a3c]">{fmtSummary(event.summary)}</div>
+                  <div data-export-primary className="text-sm font-medium text-[var(--ui-fg)]">{fmtSummary(event.summary)}</div>
                 </td>
-                <td className="px-6 py-4 text-xs text-black/55 font-mono">{fmtEventType(event.event_type)}</td>
-                <td className="px-6 py-4 text-xs text-black/55">{fmtCategory(event.category)}</td>
+                <td className="px-6 py-4 text-xs font-mono text-[var(--ui-fg-muted)]">{fmtEventType(event.event_type)}</td>
+                <td className="px-6 py-4 text-xs text-[var(--ui-fg-muted)]">{fmtCategory(event.category)}</td>
                 <td className="px-6 py-4 text-xs">{event.target_name || (zh ? '未知' : 'Unknown')}</td>
-                <td className="px-6 py-4 text-xs text-black/40">{event.actor_username || 'system'}</td>
+                <td className="px-6 py-4 text-xs text-[var(--ui-fg-muted)]">{event.actor_username || 'system'}</td>
                 <td className="px-6 py-4"><span data-export-primary className={`inline-flex w-fit px-2 py-1 rounded text-[10px] font-bold uppercase ${auditStatusBadgeClass(event.status)}`}>{fmtStatus(event.status)}</span></td>
                 <td className="px-6 py-4"><span className={`inline-flex w-fit px-2 py-1 rounded text-[10px] font-bold uppercase ${severityBadgeClass(event.severity)}`}>{fmtSeverity(event.severity)}</span></td>
                 <TableActionCell className="px-6 py-4">
@@ -222,12 +255,12 @@ const AuditTab: React.FC<AuditTabProps> = ({
             ))}
             {!auditLoading && auditRows.length === 0 && (
               <tr>
-                <td colSpan={exportHeaders.length + 1} className="px-6 py-8 text-center text-sm text-black/40">{zh ? '当前筛选条件下没有审计日志。' : 'No audit logs found for current filters.'}</td>
+                <td colSpan={exportHeaders.length + 1} className="px-6 py-8 text-center text-sm text-[var(--ui-fg-muted)]">{zh ? '当前筛选条件下没有审计日志。' : 'No audit logs found for current filters.'}</td>
               </tr>
             )}
             {auditLoading && auditRows.length === 0 && (
               <tr>
-                <td colSpan={exportHeaders.length + 1} className="px-6 py-8 text-center text-sm text-black/40">{zh ? '正在加载审计日志...' : 'Loading audit logs...'}</td>
+                <td colSpan={exportHeaders.length + 1} className="px-6 py-8 text-center text-sm text-[var(--ui-fg-muted)]">{zh ? '正在加载审计日志...' : 'Loading audit logs...'}</td>
               </tr>
             )}
           </tbody>

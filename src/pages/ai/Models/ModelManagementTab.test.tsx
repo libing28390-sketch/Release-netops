@@ -181,6 +181,21 @@ describe('ModelManagementTab browser key paths', () => {
     await waitFor(() => expect(createModel).toHaveBeenCalledWith(expect.objectContaining({ name: '备用模型', model_code: 'backup-model', provider_id: provider.id })));
   }, 20_000);
 
+  it('traps focus in the create dialog and restores the opener after Escape', async () => {
+    const user = userEvent.setup();
+    render(<ModelManagementTab />);
+    const openEditor = screen.getByRole('button', { name: '添加 Model' });
+    await user.click(openEditor);
+
+    const nameInput = screen.getByPlaceholderText('例如：DeepSeek V4 Flash');
+    expect(screen.getByRole('dialog', { name: '添加 AI Model 模型' })).toBeTruthy();
+    await waitFor(() => expect(document.activeElement).toBe(nameInput));
+    await user.keyboard('{Escape}');
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(openEditor));
+  });
+
   it('explains historical provenance before sending an impossible model delete request', async () => {
     getDeletePreview.mockResolvedValueOnce({ route_count: 0, message_count: 23, can_delete: false } as any);
     const user = userEvent.setup();

@@ -655,7 +655,7 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
                               </div>
                             </div>
                             <div className="flex items-center gap-2 shrink-0">
-                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${tone}`}>
+                              <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${tone}`}>
                                 {dev.health_status}
                               </span>
                             </div>
@@ -1015,7 +1015,7 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
                               {res.platform || '—'}
                             </td>
                             <td className="px-4 py-3">
-                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${tone}`}>
+                              <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${tone}`}>
                                 {res.health_status || '—'}
                               </span>
                             </td>

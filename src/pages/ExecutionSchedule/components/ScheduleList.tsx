@@ -28,7 +28,7 @@ const ScheduleList: React.FC<ScheduleListProps> = ({
   zh, language, schedules, visibleColumnKeys, loading, error, total, page, pageSize,
   onPageChange, onPageSizeChange, onSelect, onToggleEnabled, onEdit, onDelete, onRetry,
 }) => {
-  const actionClass = 'inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40';
+  const actionClass = 'inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40';
   const visibleColumnCount = visibleColumnKeys.size;
 
   return (
@@ -38,7 +38,7 @@ const ScheduleList: React.FC<ScheduleListProps> = ({
           <CalendarClock size={17} className="text-blue-600" />
           <h3 className="text-sm font-bold text-blue-900">{zh ? '执行计划' : 'Execution Plans'}</h3>
         </div>
-        <span className="text-xs font-semibold tabular-nums text-slate-500">
+        <span className="text-[13px] font-semibold tabular-nums text-slate-600">
           {zh ? `共 ${total} 条` : `${total} items`}
         </span>
       </div>
@@ -46,7 +46,7 @@ const ScheduleList: React.FC<ScheduleListProps> = ({
       <div className="flex-1 overflow-auto">
         <table className="w-full min-w-[1120px] border-collapse text-left">
           <thead className="sticky top-0 z-10 bg-white shadow-[0_1px_0_rgba(15,23,42,0.08)]">
-            <tr className="text-[11px] font-bold text-slate-500">
+            <tr className="text-xs font-semibold text-slate-600">
               {visibleColumnKeys.has('name') && <th className="px-4 py-3">{zh ? '计划名称' : 'Plan Name'}</th>}
               {visibleColumnKeys.has('target') && <th className="px-4 py-3">{zh ? '对象' : 'Target'}</th>}
               {visibleColumnKeys.has('execution') && <th className="px-4 py-3">{zh ? '执行方式' : 'Execution'}</th>}
@@ -56,7 +56,7 @@ const ScheduleList: React.FC<ScheduleListProps> = ({
               {visibleColumnKeys.has('actions') && <th className="px-4 py-3 text-right">{zh ? '操作' : 'Actions'}</th>}
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 text-xs">
+          <tbody className="divide-y divide-slate-100 text-[13px]">
             {loading ? (
               <tr>
                 <td colSpan={visibleColumnCount} className="py-20 text-center text-slate-400">
@@ -107,7 +107,7 @@ const ScheduleList: React.FC<ScheduleListProps> = ({
                       <div className="truncate font-semibold text-slate-800" title={formatFuturePlanName(runAt, zh)}>
                         {formatFuturePlanName(runAt, zh)}
                       </div>
-                      <div className="mt-1 truncate text-[10px] text-slate-400" title={sch.name}>
+                      <div className="mt-1 truncate text-[11px] text-slate-500" title={sch.name}>
                         {zh ? '作业：' : 'Job: '}{sch.name || '—'}
                       </div>
                     </td>}
@@ -120,17 +120,17 @@ const ScheduleList: React.FC<ScheduleListProps> = ({
                       <div className="font-semibold text-slate-700">
                         {zh ? (actionInfo?.labelZh || sch.action_type) : (actionInfo?.labelEn || sch.action_type)}
                       </div>
-                      <div className="mt-1 text-[10px] text-slate-400">
+                      <div className="mt-1 text-[11px] text-slate-500">
                         {sch.use_admin_creds ? (zh ? '特权账号' : 'Privileged') : (zh ? '普通账号' : 'Standard')}
                         {sch.action_type === 'script_run' && sch.script_id ? ` · ${sch.script_id}` : ''}
                       </div>
                     </td>}
                     {visibleColumnKeys.has('status') && <td className="px-4 py-3.5">
-                      <span className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-[10px] font-bold ${statusClass}`}>
+                      <span className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] font-bold ${statusClass}`}>
                         {status.label}
                       </span>
                     </td>}
-                    {visibleColumnKeys.has('scheduledAt') && <td className="whitespace-nowrap px-4 py-3.5 font-mono text-[11px] font-medium text-slate-700">
+                    {visibleColumnKeys.has('scheduledAt') && <td className="whitespace-nowrap px-4 py-3.5 font-mono text-xs font-semibold text-slate-700">
                       {formatScheduleTimestamp(runAt)}
                     </td>}
                     {visibleColumnKeys.has('creator') && <td className="px-4 py-3.5 font-medium text-slate-600">{sch.created_by || '—'}</td>}

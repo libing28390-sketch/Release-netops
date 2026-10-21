@@ -934,14 +934,18 @@ export default function AccessCenterTab({
   const renderTerminalActions = (dev: Device) => (
     <div className="flex flex-nowrap items-center justify-center gap-2.5 whitespace-nowrap">
       <button
+        type="button"
         onClick={() => handleAccessRequest(dev, 'xshell', 'normal')}
+        aria-label={isZh ? `使用普通凭据通过本地终端连接 ${dev.hostname}` : `Open a local terminal for ${dev.hostname} with standard credentials`}
         className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-[10px] font-black text-slate-600 transition-all hover:border-emerald-500 hover:bg-emerald-50 hover:text-emerald-600"
       >
         <Terminal className="h-3.5 w-3.5 shrink-0" />
         <span className="min-w-0 truncate">{dev.normal_username || (isZh ? '普通' : 'user')}</span>
       </button>
       <button
+        type="button"
         onClick={() => handleAccessRequest(dev, 'xshell', 'privileged')}
+        aria-label={isZh ? `使用特权凭据通过本地终端连接 ${dev.hostname}` : `Open a local terminal for ${dev.hostname} with privileged credentials`}
         className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-[10px] font-black text-slate-600 transition-all hover:border-orange-500 hover:bg-orange-50 hover:text-orange-600"
       >
         <Lock className="h-3.5 w-3.5 shrink-0" />
@@ -961,6 +965,7 @@ export default function AccessCenterTab({
         <button
           type="button"
           onClick={() => openRemoteDesktop(dev, protocol, 'normal')}
+          aria-label={isZh ? `使用普通凭据通过 ${protocol.toUpperCase()} 连接 ${dev.hostname}` : `Connect to ${dev.hostname} over ${protocol.toUpperCase()} with standard credentials`}
           className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[10px] font-black text-slate-600 transition-all hover:border-emerald-500 hover:bg-emerald-50 hover:text-emerald-700"
           title={isZh ? `普通凭据 · ${profile.profile_name}` : `Normal credentials · ${profile.profile_name}`}
         >
@@ -969,6 +974,7 @@ export default function AccessCenterTab({
         <button
           type="button"
           onClick={() => openRemoteDesktop(dev, protocol, 'admin')}
+          aria-label={isZh ? `使用管理员凭据通过 ${protocol.toUpperCase()} 连接 ${dev.hostname}` : `Connect to ${dev.hostname} over ${protocol.toUpperCase()} with administrator credentials`}
           className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[10px] font-black text-slate-600 transition-all hover:border-orange-500 hover:bg-orange-50 hover:text-orange-700"
           title={isZh ? `管理员凭据 · ${profile.profile_name}` : `Administrator credentials · ${profile.profile_name}`}
         >
@@ -999,14 +1005,18 @@ export default function AccessCenterTab({
     return (
       <div className="flex flex-nowrap items-center justify-center gap-2.5 whitespace-nowrap">
         <button
+          type="button"
           onClick={() => handleAccessRequest(dev, 'web', 'normal', scheme)}
+          aria-label={isZh ? `使用普通凭据打开 ${dev.hostname} 的 Web 管理页面` : `Open ${dev.hostname}'s Web management page with standard credentials`}
           className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-[10px] font-black text-slate-600 transition-all hover:border-[#00bceb] hover:bg-cyan-50 hover:text-[#00bceb]"
         >
         <Globe className="h-3.5 w-3.5 shrink-0" />
         <span className="min-w-0 truncate">{dev.normal_username || (isZh ? '普通' : 'user')}</span>
         </button>
         <button
+          type="button"
           onClick={() => handleAccessRequest(dev, 'web', 'privileged', scheme)}
+          aria-label={isZh ? `使用特权凭据打开 ${dev.hostname} 的 Web 管理页面` : `Open ${dev.hostname}'s Web management page with privileged credentials`}
           className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-[10px] font-black text-slate-600 transition-all hover:border-orange-500 hover:bg-orange-50 hover:text-orange-600"
         >
         <Lock className="h-3.5 w-3.5 shrink-0" />
@@ -1022,7 +1032,9 @@ export default function AccessCenterTab({
   const renderSshWebActions = (dev: Device) => (
     <div className="flex flex-nowrap items-center justify-center gap-2.5 whitespace-nowrap">
       <button
+        type="button"
         onClick={() => { void requestSession(dev, 'normal'); }}
+        aria-label={isZh ? `在网页终端中以普通凭据连接 ${dev.hostname}` : `Open a browser terminal for ${dev.hostname} with standard credentials`}
         className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-[10px] font-black text-slate-600 transition-all hover:border-[#00bceb] hover:bg-cyan-50 hover:text-[#00bceb]"
         title={isZh ? '在网页终端中通过 SSH 登录' : 'Open a browser terminal over SSH'}
       >
@@ -1030,7 +1042,9 @@ export default function AccessCenterTab({
           <span className="min-w-0 truncate">{dev.normal_username || (isZh ? '普通' : 'user')}</span>
       </button>
       <button
+        type="button"
         onClick={() => { void requestSession(dev, 'admin'); }}
+        aria-label={isZh ? `在网页终端中以特权凭据连接 ${dev.hostname}` : `Open a privileged browser terminal for ${dev.hostname}`}
         className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-[10px] font-black text-slate-600 transition-all hover:border-orange-500 hover:bg-orange-50 hover:text-orange-600"
         title={isZh ? '在网页终端中通过 SSH 发起特权登录' : 'Open a privileged browser terminal over SSH'}
       >
@@ -1316,33 +1330,37 @@ export default function AccessCenterTab({
         icon={Database}
         title={isZh ? '操作工作台' : 'Operation Workspace'}
         subtitle={isZh ? '资产统一入口 · 安全受控访问' : 'Unified asset gateway · Controlled secure access'}
-        actions={
-          <div className="relative group">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300 group-focus-within:text-[#00bceb] transition-colors" />
-            <input
-              type="search"
-              placeholder="搜索资产名称或 IP 地址..."
-              className="w-80 pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-[#00bceb] focus:bg-white focus:ring-4 focus:ring-[#00bceb]/5 transition-all text-sm font-medium"
-              value={searchQuery}
-              onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
-            />
-          </div>
-        }
         extras={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="group relative w-full min-w-0 sm:w-72 lg:w-80">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--ui-fg-subtle)] transition-colors group-focus-within:text-[var(--ui-accent)]" aria-hidden="true" />
+              <input
+                type="search"
+                placeholder={isZh ? '搜索资产名称或 IP 地址...' : 'Search asset name or IP address...'}
+                aria-label={isZh ? '搜索资产名称或 IP 地址' : 'Search asset name or IP address'}
+                autoComplete="off"
+                className="h-10 w-full rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface)] pl-9 pr-3 text-sm font-medium text-[var(--ui-fg)] outline-none transition focus:border-[var(--ui-accent)] focus:ring-2 focus:ring-[var(--ui-accent)]/15"
+                value={searchQuery}
+                onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
+              />
+            </div>
+            <div role="group" aria-label={isZh ? '按接入方式筛选' : 'Filter by access method'} className="grid w-full grid-cols-5 gap-1 rounded-xl border border-[var(--ui-border)] bg-[var(--ui-surface-muted)] p-1 sm:w-auto">
             {(['ALL', 'SSH', 'RDP', 'VNC', 'WEB'] as AccessCategory[]).map((category) => (
               <button
+                type="button"
                 key={category}
                 onClick={() => { setActiveCategory(category); setCurrentPage(1); }}
-                className={`px-5 py-2 rounded-xl text-[10px] font-black tracking-widest transition-all uppercase ${
+                aria-pressed={activeCategory === category}
+                className={`min-h-9 min-w-0 rounded-lg border px-2 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] ${
                   activeCategory === category
-                  ? 'bg-[#00bceb] text-white shadow-lg shadow-[#00bceb]/20'
-                  : 'bg-white text-slate-400 border border-slate-200 hover:border-[#00bceb] hover:text-[#00bceb]'
+                  ? 'border-[var(--ui-accent)] bg-[var(--ui-accent)] text-white shadow-sm'
+                  : 'border-transparent bg-transparent text-[var(--ui-fg-muted)] hover:border-[var(--ui-border-strong)] hover:bg-[var(--ui-surface)] hover:text-[var(--ui-fg)]'
                 }`}
               >
                 {category}
               </button>
             ))}
+          </div>
           </div>
         }
       />
@@ -1350,7 +1368,11 @@ export default function AccessCenterTab({
       {/* Table Section */}
       <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
         {(remoteDesktopProfilesLoading || remoteDesktopProfilesError) && (
-          <div className={`mb-4 flex flex-wrap items-center gap-2 rounded-xl border px-3.5 py-2.5 text-xs ${remoteDesktopProfilesError ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-cyan-100 bg-cyan-50/60 text-cyan-800'}`}>
+          <div
+            role={remoteDesktopProfilesError ? 'alert' : 'status'}
+            aria-live={remoteDesktopProfilesError ? 'assertive' : 'polite'}
+            className={`mb-4 flex flex-wrap items-center gap-2 rounded-xl border px-3.5 py-2.5 text-xs ${remoteDesktopProfilesError ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-cyan-100 bg-cyan-50/60 text-cyan-800'}`}
+          >
             {remoteDesktopProfilesError ? <AlertCircle size={14} className="shrink-0" /> : <Loader2 size={14} className="shrink-0 animate-spin" />}
             <span className="flex-1">{remoteDesktopProfilesError?.message || (isZh ? '正在批量加载 RDP / VNC 入口…' : 'Loading RDP / VNC entries in batches…')}</span>
             {remoteDesktopProfilesError && remoteDesktopProfilesError.status !== 401 && remoteDesktopProfilesError.status !== 403 && (

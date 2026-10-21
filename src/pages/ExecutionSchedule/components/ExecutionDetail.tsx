@@ -361,7 +361,7 @@ const InspectionView: React.FC<InspectionViewProps> = ({
                     <p className={`text-[9px] font-mono ${isSelected ? 'text-white/60' : 'text-black/30'}`}>{res.ip_address}</p>
                   </div>
                 </div>
-                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded ${
                   res.health_status === 'healthy' 
                     ? (isSelected ? 'bg-emerald-400/20 text-emerald-300' : 'bg-emerald-50 text-emerald-600')
                     : res.health_status === 'warning'
@@ -497,7 +497,7 @@ const AnalysisTab: React.FC<{
                 <div className="text-[11px] text-white/60 leading-relaxed">{risk.description}</div>
                 {risk.suggestion && <div className="text-[11px] text-cyan-400/70 mt-1.5">💡 {risk.suggestion}</div>}
               </div>
-              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded shrink-0 ${risk.severity === 'critical' ? 'bg-red-500/30 text-red-300' : 'bg-amber-500/30 text-amber-300'}`}>{risk.severity?.toUpperCase()}</span>
+              <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded shrink-0 ${risk.severity === 'critical' ? 'bg-red-500/30 text-red-300' : 'bg-amber-500/30 text-amber-300'}`}>{risk.severity?.toUpperCase()}</span>
             </div>
           </div>
         ))}
@@ -551,7 +551,7 @@ const AnalysisTab: React.FC<{
                 <td className="py-2 px-2 text-white/90 font-bold">{a.metric}</td>
                 <td className="py-2 px-2 text-white/70 font-mono">{String(a.value ?? '—')}</td>
                 <td className="py-2 px-2">
-                  <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                  <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded ${
                     a.status === 'critical' ? 'bg-red-500/30 text-red-300' : a.status === 'warning' ? 'bg-amber-500/30 text-amber-300' : 'bg-emerald-500/30 text-emerald-300'
                   }`}>{a.status?.toUpperCase()}</span>
                 </td>
@@ -920,7 +920,7 @@ const ConfigBackupRunView: React.FC<{
                   <tr key={device.device_id || device.ip_address || `${device.hostname || 'device'}-${index}`} className="align-top hover:bg-slate-50/60">
                     <td className="max-w-[220px] px-3 py-3 text-xs font-semibold text-blue-900">{device.hostname || device.device_id || '--'}</td>
                     <td className="whitespace-nowrap px-3 py-3 font-mono text-[11px] text-black/55">{device.ip_address || '--'}</td>
-                    <td className="whitespace-nowrap px-3 py-3"><span className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold ${statusTone(device.status)}`}>{statusLabel(device.status)}</span></td>
+                    <td className="whitespace-nowrap px-3 py-3"><span className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-bold ${statusTone(device.status)}`}>{statusLabel(device.status)}</span></td>
                     <td className="max-w-[240px] break-words px-3 py-3 text-[11px] text-black/65">{needsReason(device.status) ? (device.reason || '--') : '—'}</td>
                     <td className="max-w-[360px] break-words px-3 py-3 text-[11px] leading-relaxed text-black/50">{['failed', 'error', 'unreachable'].includes(device.status.toLowerCase()) ? (device.detail || '--') : '—'}</td>
                     <td className="whitespace-nowrap px-3 py-3 text-right font-mono text-[10px] text-black/40">{device.duration_ms == null ? '--' : `${device.duration_ms} ms`}</td>

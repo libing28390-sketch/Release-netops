@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import { Calendar, Clock, ChevronLeft, ChevronRight, Check, X } from 'lucide-react';
@@ -33,47 +33,95 @@ function pad(n: number) {
   return n < 10 ? `0${n}` : String(n);
 }
 
-/* ── Scrollable time column (compact) ── */
-const ITEM_H = 24; // px per row
-const COL_H = 120; // 5 visible items
-const TimeColumn: React.FC<{ count: number; value: number; onChange: (v: number) => void }> = ({ count, value, onChange }) => {
-  const listRef = useRef<HTMLDivElement>(null);
-  const didMount = useRef(false);
+/* ── Scrollable time column ── */
+const ITEM_H = 32; // px per row
+const COL_H = 160; // 5 visible items
+const COL_PADDING = (COL_H - ITEM_H) / 2;
 
-  useEffect(() => {
+export function getTimeColumnScrollTop(
+  currentScrollTop: number,
+  containerTop: number,
+  containerHeight: number,
+  selectedTop: number,
+  selectedHeight: number,
+): number {
+  const selectedContentTop = currentScrollTop + selectedTop - containerTop;
+  return Math.max(0, selectedContentTop - (containerHeight - selectedHeight) / 2);
+}
+
+interface TimeColumnProps {
+  count: number;
+  value: number;
+  label: string;
+  onChange: (v: number) => void;
+}
+
+const TimeColumn: React.FC<TimeColumnProps> = ({ count, value, label, onChange }) => {
+  const listRef = useRef<HTMLDivElement>(null);
+  const selectedItemRef = useRef<HTMLButtonElement>(null);
+  const hasPositionedRef = useRef(false);
+
+  useLayoutEffect(() => {
     const el = listRef.current;
-    if (!el) return;
-    const target = value * ITEM_H - (COL_H - ITEM_H) / 2;
-    if (!didMount.current) {
-      el.scrollTop = Math.max(0, target);
-      didMount.current = true;
-    } else {
-      el.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
+    const selectedItem = selectedItemRef.current;
+    if (!el || !selectedItem) return;
+
+    const containerRect = el.getBoundingClientRect();
+    const selectedRect = selectedItem.getBoundingClientRect();
+    const targetScrollTop = getTimeColumnScrollTop(
+      el.scrollTop,
+      containerRect.top,
+      el.clientHeight,
+      selectedRect.top,
+      selectedItem.offsetHeight,
+    );
+
+    if (Math.abs(el.scrollTop - targetScrollTop) < 1) {
+      hasPositionedRef.current = true;
+      return;
     }
-  }, [value]);
+
+    const shouldPositionImmediately = !hasPositionedRef.current
+      || (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false)
+      || typeof el.scrollTo !== 'function';
+    hasPositionedRef.current = true;
+
+    if (shouldPositionImmediately) {
+      el.scrollTop = targetScrollTop;
+      return;
+    }
+
+    el.scrollTo({ top: targetScrollTop, behavior: 'smooth' });
+  }, [count, value]);
 
   return (
     <div
       ref={listRef}
-      className="overflow-y-auto rounded-lg bg-black/[0.02]"
-      style={{ scrollbarWidth: 'none', height: COL_H, width: 42 }}
+      className="overflow-y-auto rounded-lg bg-[var(--ui-surface-muted)]"
+      style={{ scrollbarWidth: 'none', height: COL_H, width: 48 }}
+      role="group"
+      aria-label={label}
+      data-time-column={label}
     >
       <style>{`.time-col::-webkit-scrollbar{display:none}`}</style>
-      <div className="time-col">
+      <div className="time-col" style={{ paddingBlock: COL_PADDING }}>
         {Array.from({ length: count }, (_, i) => {
           const active = i === value;
           return (
             <button
               key={i}
+              ref={active ? selectedItemRef : undefined}
               type="button"
+              aria-pressed={active}
+              data-time-value={i}
               onClick={() => onChange(i)}
               className={`
-                w-full flex items-center justify-center font-mono transition-all duration-150
+                w-full flex items-center justify-center font-mono transition-colors duration-100
                 ${active
-                  ? 'bg-[#00bceb] text-white font-semibold rounded-md shadow-sm'
-                  : 'text-[#00172D]/45 hover:text-[#00172D] hover:bg-black/[0.04] rounded'}
+                  ? 'bg-[var(--ui-accent)] text-white font-semibold rounded-md shadow-sm'
+                  : 'text-[var(--ui-fg-muted)] hover:text-[var(--ui-fg)] hover:bg-[var(--ui-surface-emphasis)] rounded'}
               `}
-              style={{ height: ITEM_H, fontSize: 11, lineHeight: `${ITEM_H}px` }}
+              style={{ height: ITEM_H, fontSize: 13, lineHeight: `${ITEM_H}px` }}
             >
               {pad(i)}
             </button>
@@ -100,7 +148,7 @@ const DateTimePicker: React.FC<DateTimePickerProps> = ({
   const [open, setOpen] = useState(false);
   useEscapeClose(open, () => setOpen(false));
   const [dropUp, setDropUp] = useState(false);
-  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number } | null>(null);
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
 
   // Parse initial value
   const parseValue = useCallback((v: string) => {
@@ -164,13 +212,18 @@ const DateTimePicker: React.FC<DateTimePickerProps> = ({
       const rect = containerRef.current!.getBoundingClientRect();
       const boundaryEl = containerRef.current!.closest('[data-dropdown-boundary="true"]') as HTMLElement | null;
       const boundaryRect = boundaryEl?.getBoundingClientRect();
-      const dropdownW = mode === 'datetime' ? 380 : 280;
-      const dropdownH = 340;
+      const preferredWidth = mode === 'datetime' ? 416 : 304;
+      const preferredHeight = mode === 'datetime' ? 360 : 328;
 
       const boundaryLeft = boundaryRect ? boundaryRect.left + 8 : 8;
       const boundaryRight = boundaryRect ? boundaryRect.right - 8 : window.innerWidth - 8;
       const boundaryTop = boundaryRect ? boundaryRect.top + 8 : 8;
       const boundaryBottom = boundaryRect ? boundaryRect.bottom - 8 : window.innerHeight - 8;
+
+      const availableWidth = Math.max(1, Math.min(window.innerWidth - 16, boundaryRight - boundaryLeft));
+      const availableHeight = Math.max(200, Math.min(window.innerHeight - 16, boundaryBottom - boundaryTop));
+      const dropdownW = Math.min(preferredWidth, availableWidth);
+      const dropdownH = Math.min(preferredHeight, availableHeight);
 
       const spaceBelow = boundaryBottom - rect.bottom;
       const spaceAbove = rect.top - boundaryTop;
@@ -192,6 +245,8 @@ const DateTimePicker: React.FC<DateTimePickerProps> = ({
       setDropdownPos({
         top,
         left,
+        width: dropdownW,
+        height: dropdownH,
       });
     };
     updatePosition();
@@ -272,17 +327,17 @@ const DateTimePicker: React.FC<DateTimePickerProps> = ({
   return (
     <div ref={containerRef} className={`relative ${className}`}>
       {label && (
-        <label className="block text-xs font-semibold text-black/50 mb-1.5">
+        <label className="mb-1.5 block text-[13px] font-semibold text-[var(--ui-fg-muted)]">
           {label} {required && <span className="text-rose-500 ml-0.5">*</span>}
         </label>
       )}
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center gap-2 px-3 py-2.5 text-sm border border-black/10 rounded-xl outline-none hover:border-[#00bceb]/40 focus:border-[#00bceb]/50 bg-white text-left transition-colors"
+        className="flex min-h-10 w-full items-center gap-2 rounded-xl border border-[var(--ui-border)] bg-[var(--ui-surface)] px-3 py-2.5 text-sm text-left text-[var(--ui-fg)] outline-none transition-colors hover:border-[var(--ui-border-strong)] focus-visible:border-[var(--ui-accent)] focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)]/20"
       >
-        <Calendar size={14} className="text-black/30 flex-shrink-0" />
-        <span className={displayValue ? 'text-[#00172D]' : 'text-black/30'}>
+        <Calendar size={16} className="flex-shrink-0 text-[var(--ui-fg-muted)]" />
+        <span className={displayValue ? 'text-[var(--ui-fg)]' : 'text-[var(--ui-fg-subtle)]'}>
           {displayValue || placeholder || (zh ? '选择时间...' : 'Select time...')}
         </span>
       </button>
@@ -290,17 +345,17 @@ const DateTimePicker: React.FC<DateTimePickerProps> = ({
       {open && dropdownPos && createPortal(
         <div
           ref={dropdownRef}
-          className="fixed z-[9999] bg-white rounded-xl border border-black/10 shadow-lg"
-          style={{ top: dropdownPos.top, left: dropdownPos.left, width: mode === 'datetime' ? 380 : 280 }}
+          className="fixed z-[9999] overflow-y-auto rounded-2xl border border-[var(--ui-border)] bg-[var(--ui-surface)] shadow-xl"
+          style={{ top: dropdownPos.top, left: dropdownPos.left, width: dropdownPos.width, maxHeight: dropdownPos.height }}
         >
           {/* Calendar Header */}
-          <div className="flex items-center justify-between px-3 pt-2.5 pb-1">
-            <button type="button" onClick={prevMonth} className="p-1 rounded-lg hover:bg-black/5 text-black/40 hover:text-black/70 transition-colors">
-              <ChevronLeft size={16} />
+          <div className="flex items-center justify-between px-3 pt-3 pb-2">
+            <button type="button" onClick={prevMonth} aria-label={zh ? '上个月' : 'Previous month'} className="flex min-h-9 min-w-9 items-center justify-center rounded-lg text-[var(--ui-fg-muted)] transition-colors hover:bg-[var(--ui-surface-muted)] hover:text-[var(--ui-fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)]">
+              <ChevronLeft size={18} />
             </button>
-            <span className="text-sm font-bold text-[#00172D]">{monthLabel}</span>
-            <button type="button" onClick={nextMonth} className="p-1 rounded-lg hover:bg-black/5 text-black/40 hover:text-black/70 transition-colors">
-              <ChevronRight size={16} />
+            <span className="text-base font-bold text-[var(--ui-fg)]">{monthLabel}</span>
+            <button type="button" onClick={nextMonth} aria-label={zh ? '下个月' : 'Next month'} className="flex min-h-9 min-w-9 items-center justify-center rounded-lg text-[var(--ui-fg-muted)] transition-colors hover:bg-[var(--ui-surface-muted)] hover:text-[var(--ui-fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)]">
+              <ChevronRight size={18} />
             </button>
           </div>
 
@@ -309,14 +364,14 @@ const DateTimePicker: React.FC<DateTimePickerProps> = ({
             {/* Left: Calendar */}
             <div className={mode === 'datetime' ? 'flex-1 min-w-0' : 'w-full'}>
               {/* Weekday Headers */}
-              <div className="grid grid-cols-7 px-2.5">
+              <div className="grid grid-cols-7 px-3">
                 {weekdays.map(w => (
-                  <div key={w} className="text-center text-[10px] font-bold text-black/30 uppercase py-0.5">{w}</div>
+                  <div key={w} className="py-1 text-center text-[11px] font-semibold text-[var(--ui-fg-muted)]">{w}</div>
                 ))}
               </div>
 
               {/* Day Grid */}
-              <div className="grid grid-cols-7 px-2.5 pb-1">
+              <div className="grid grid-cols-7 px-3 pb-2">
                 {cells.map((c, i) => {
                   const selected = c.current && isSelected(c.day);
                   const todayMark = c.current && isToday(c.day);
@@ -326,11 +381,11 @@ const DateTimePicker: React.FC<DateTimePickerProps> = ({
                       type="button"
                       onClick={() => c.current && selectDay(c.day)}
                       className={`
-                        h-[26px] text-[11px] rounded-md transition-all
-                        ${!c.current ? 'text-black/15 cursor-default' : 'hover:bg-[#00bceb]/10 cursor-pointer'}
-                        ${selected ? 'bg-[#00bceb] text-white font-bold hover:bg-[#0891b2]' : ''}
-                        ${todayMark && !selected ? 'font-bold text-[#00bceb] ring-1 ring-[#00bceb]/30' : ''}
-                        ${c.current && !selected && !todayMark ? 'text-[#00172D]' : ''}
+                        h-8 rounded-lg text-xs font-medium transition-colors
+                        ${!c.current ? 'cursor-default text-[var(--ui-fg-subtle)]' : 'cursor-pointer hover:bg-[var(--ui-accent-subtle)]'}
+                        ${selected ? 'bg-[var(--ui-accent)] font-bold text-white hover:bg-[var(--ui-accent-hover)]' : ''}
+                        ${todayMark && !selected ? 'font-bold text-[var(--ui-accent)] ring-1 ring-[var(--ui-accent)]/30' : ''}
+                        ${c.current && !selected && !todayMark ? 'text-[var(--ui-fg)]' : ''}
                       `}
                     >
                       {c.day}
@@ -342,41 +397,41 @@ const DateTimePicker: React.FC<DateTimePickerProps> = ({
 
             {/* Right: Time Selector (only for datetime mode) */}
             {mode === 'datetime' && (
-              <div className="w-[100px] flex flex-col border-l border-black/5 px-2 py-1">
-                <div className="flex items-center justify-between mb-1">
+              <div className="flex w-[116px] shrink-0 flex-col border-l border-[var(--ui-border)] px-2.5 py-2">
+                <div className="mb-2 flex items-center justify-between">
                   <div className="flex items-center gap-1">
-                    <Clock size={10} className="text-black/30" />
-                    <span className="text-[9px] font-bold text-black/35 uppercase tracking-wider">{zh ? '时间' : 'TIME'}</span>
+                    <Clock size={14} className="text-[var(--ui-fg-muted)]" />
+                    <span className="text-xs font-semibold text-[var(--ui-fg-muted)]">{zh ? '时间' : 'Time'}</span>
                   </div>
-                  <button type="button" onClick={setNow} className="text-[9px] font-semibold text-[#00bceb] hover:text-[#0891b2] transition-colors px-1 py-0.5 rounded hover:bg-[#00bceb]/10">
+                  <button type="button" onClick={setNow} className="min-h-8 rounded-md px-1.5 text-[11px] font-semibold text-[var(--ui-accent)] transition-colors hover:bg-[var(--ui-accent-subtle)] hover:text-[var(--ui-accent-hover)]">
                     {zh ? '现在' : 'Now'}
                   </button>
                 </div>
                 <div className="flex items-center justify-center gap-1 flex-1">
-                  <TimeColumn count={24} value={selHour} onChange={setSelHour} />
-                  <span className="text-black/20 font-bold text-sm">:</span>
-                  <TimeColumn count={60} value={selMinute} onChange={setSelMinute} />
+                  <TimeColumn count={24} value={selHour} label={zh ? '小时' : 'Hour'} onChange={setSelHour} />
+                  <span className="text-base font-bold text-[var(--ui-fg-subtle)]">:</span>
+                  <TimeColumn count={60} value={selMinute} label={zh ? '分钟' : 'Minute'} onChange={setSelMinute} />
                 </div>
               </div>
             )}
           </div>
 
           {/* Footer: Clear + Confirm */}
-          <div className="border-t border-black/5 px-3 py-2 flex items-center justify-between">
+          <div className="flex items-center justify-between border-t border-[var(--ui-border)] px-3 py-3">
             <button
               type="button"
               onClick={handleClear}
-              className="inline-flex items-center gap-1 text-xs text-black/40 hover:text-red-500 transition-colors"
+              className="inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2 text-[13px] font-medium text-[var(--ui-fg-muted)] transition-colors hover:bg-[var(--ui-danger-subtle)] hover:text-[var(--ui-danger)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)]"
             >
-              <X size={12} />
+              <X size={14} />
               {zh ? '清除' : 'Clear'}
             </button>
             <button
               type="button"
               onClick={handleConfirm}
-              className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-[#00bceb] text-white text-xs font-semibold hover:bg-[#0891b2] transition-all"
+              className="inline-flex min-h-9 items-center gap-1.5 rounded-lg bg-[var(--ui-accent)] px-4 py-1.5 text-[13px] font-semibold text-white transition-colors hover:bg-[var(--ui-accent-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] focus-visible:ring-offset-2"
             >
-              <Check size={12} />
+              <Check size={14} />
               {zh ? '确认' : 'Confirm'}
             </button>
           </div>

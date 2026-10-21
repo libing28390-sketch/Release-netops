@@ -1026,7 +1026,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({
                       <div key={item.collector} className="rounded-xl border border-gray-100 dark:border-zinc-800 bg-gray-50/70 dark:bg-zinc-800/40 p-2.5 flex flex-col justify-between">
                         <div className="flex items-center justify-between gap-1.5">
                           <span className="truncate text-xs font-bold text-gray-800 dark:text-zinc-200">{collectionLabel(item.collector)}</span>
-                          <span className={`shrink-0 px-1.5 py-0.2 rounded-md text-[9px] font-bold ${collectionTone(item.effective_status)}`}>
+                          <span className={`shrink-0 px-1.5 py-0.2 rounded-md text-[11px] font-bold ${collectionTone(item.effective_status)}`}>
                             {collectionStatusLabel(item.effective_status)}
                           </span>
                         </div>
@@ -1150,7 +1150,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({
                           <tr key={`${it.interface_name}-${idx}`} className="hover:bg-gray-50/70 dark:hover:bg-zinc-800/40">
                             <td className="px-4 py-2 font-mono text-gray-900 dark:text-white font-semibold">{it.interface_name}</td>
                             <td className="px-4 py-2">
-                              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-bold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+                              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
                                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
                                 {zh ? 'UP' : 'UP'}
                               </span>
@@ -1349,12 +1349,12 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({
                           <tr key={a.id} className="hover:bg-gray-50/70 dark:hover:bg-zinc-800/40">
                             <td className="px-4 py-2 text-gray-400 whitespace-nowrap">{fmtFullTime(a.created_at)}</td>
                             <td className="px-4 py-2">
-                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${sev === 'critical' ? 'bg-rose-50 text-rose-700' : sev === 'major' ? 'bg-amber-50 text-amber-700' : 'bg-blue-50 text-blue-700'}`}>
+                              <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${sev === 'critical' ? 'bg-rose-50 text-rose-700' : sev === 'major' ? 'bg-amber-50 text-amber-700' : 'bg-blue-50 text-blue-700'}`}>
                                 {sev === 'critical' ? (zh ? '严重' : 'Critical') : sev === 'major' ? (zh ? '主要' : 'Major') : (zh ? '次要' : 'Minor')}
                               </span>
                             </td>
                             <td className="px-4 py-2">
-                              <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${isRecovered ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
+                              <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${isRecovered ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
                                 {isRecovered ? (zh ? '已恢复' : 'Recovered') : (zh ? '告警中' : 'Active')}
                               </span>
                             </td>

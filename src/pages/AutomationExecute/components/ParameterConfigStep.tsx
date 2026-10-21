@@ -90,11 +90,12 @@ export const ParameterConfigStep: React.FC<ParameterConfigStepProps> = ({
                   const hasHint = v.platform_hints && v.platform_hints[quickPlaybookPlatform];
                   return (
                     <div key={v.key} className="flex flex-col gap-1.5">
-                      <label className="text-xs font-semibold text-gray-700 flex items-center gap-1">
+                      <label htmlFor={`automation-param-${v.key}`} className="text-xs font-semibold text-gray-700 flex items-center gap-1">
                         {isZh ? v.label_zh || v.label || v.key : v.label || v.key}
                         {v.required && <span className="text-red-500 font-bold">*</span>}
                       </label>
                       <input
+                        id={`automation-param-${v.key}`}
                         type={v.type === 'number' ? 'number' : 'text'}
                         value={val}
                         onChange={(e) => onQuickPlaybookVarChange(v.key, e.target.value)}
@@ -127,8 +128,9 @@ export const ParameterConfigStep: React.FC<ParameterConfigStepProps> = ({
           <div className="space-y-3 pt-2 border-t border-gray-100">
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-2">
-                <span className="text-xs text-gray-500">{isZh ? '并发数' : 'Concurrency'}</span>
+                <label htmlFor="automation-concurrency" className="text-xs text-gray-500">{isZh ? '并发数' : 'Concurrency'}</label>
                 <select
+                  id="automation-concurrency"
                   value={quickPlaybookConcurrency}
                   onChange={(e) => onQuickPlaybookConcurrencyChange(Number(e.target.value))}
                   className="px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs bg-white outline-none"
@@ -151,13 +153,14 @@ export const ParameterConfigStep: React.FC<ParameterConfigStepProps> = ({
               <div className="flex flex-col gap-2 rounded-xl border border-amber-100 bg-amber-50/50 p-3.5">
                 <div className="flex items-center gap-2">
                   <Ticket size={14} className="text-amber-600" />
-                  <label className="text-xs font-semibold text-amber-800">
+                  <label htmlFor="automation-change-ticket" className="text-xs font-semibold text-amber-800">
                     {isZh ? '变更工单号' : 'Change Ticket Number'}
                     <span className="text-amber-700/70 ml-1">({isZh ? '可选' : 'Optional'})</span>
                   </label>
                 </div>
                 <div className="flex items-center gap-2">
                   <input
+                    id="automation-change-ticket"
                     type="text"
                     value={changeTicket}
                     onChange={(e) => setChangeTicket(e.target.value)}
@@ -170,7 +173,11 @@ export const ParameterConfigStep: React.FC<ParameterConfigStepProps> = ({
                         : 'border-gray-200 focus:border-cyan-400'
                     }`}
                   />
-                  {ticketValidation.loading && <RotateCcw size={14} className="animate-spin text-black/30 flex-shrink-0" />}
+                  {ticketValidation.loading && (
+                    <span role="status" aria-label={isZh ? '正在校验工单' : 'Validating change ticket'}>
+                      <RotateCcw size={14} className="animate-spin text-black/30 flex-shrink-0" />
+                    </span>
+                  )}
                   {!ticketValidation.loading && ticketValidation.found === true && ticketValidation.valid && (
                     <CheckCircle2 size={14} className="text-emerald-500 flex-shrink-0" />
                   )}
@@ -184,6 +191,16 @@ export const ParameterConfigStep: React.FC<ParameterConfigStepProps> = ({
 
                 {!ticketValidation.loading && changeTicket.trim().length >= 4 && (
                   <div
+                    role={ticketValidation.valid
+                      ? 'status'
+                      : ticketValidation.found === false || ticketValidation.found === true
+                        ? 'alert'
+                        : undefined}
+                    aria-live={ticketValidation.valid
+                      ? 'polite'
+                      : ticketValidation.found === false || ticketValidation.found === true
+                        ? 'assertive'
+                        : undefined}
                     className={`rounded-lg px-3 py-2 text-[11px] ${
                       ticketValidation.found === true && ticketValidation.valid
                         ? 'bg-emerald-50 border border-emerald-200 text-emerald-700'
@@ -246,7 +263,7 @@ export const ParameterConfigStep: React.FC<ParameterConfigStepProps> = ({
 
           {/* Blocking issues */}
           {blockingIssues.length > 0 && (
-            <div className="space-y-2">
+            <div id="automation-blocking-issues" role="alert" className="space-y-2">
               <p className="text-[10px] font-bold uppercase tracking-widest text-red-500 flex items-center gap-1.5">
                 <AlertTriangle size={12} />
                 {isZh ? '阻塞项' : 'Blocking Issues'}
@@ -352,6 +369,7 @@ export const ParameterConfigStep: React.FC<ParameterConfigStepProps> = ({
       {/* Bottom Bar */}
       <div className="flex-shrink-0 flex items-center justify-between bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-3">
         <button
+          type="button"
           onClick={() => setCurrentStep(2)}
           className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 hover:text-gray-700 transition-colors"
         >
@@ -361,6 +379,7 @@ export const ParameterConfigStep: React.FC<ParameterConfigStepProps> = ({
         <div className="flex items-center gap-3">
           <p className="text-[10px] text-gray-400">{isZh ? '推荐：先运行校验确认无误，再应用变更' : 'Recommended: validate first, then apply'}</p>
           <button
+            type="button"
             onClick={() => {
               if (quickPlaybookScenario.risk === 'high') {
                 setConfirmAction('validate');
@@ -379,6 +398,7 @@ export const ParameterConfigStep: React.FC<ParameterConfigStepProps> = ({
             {isZh ? '🔍 运行校验' : '🔍 Validate'}
           </button>
           <button
+            type="button"
             onClick={() => {
               setConfirmAction('apply');
               setConfirmModalOpen(true);

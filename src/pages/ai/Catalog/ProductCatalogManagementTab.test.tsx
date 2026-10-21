@@ -128,6 +128,23 @@ describe('ProductCatalogManagementTab browser key paths', () => {
     })));
   });
 
+  it('contains keyboard focus in the catalog editor and restores it after Escape', async () => {
+    const user = userEvent.setup();
+    render(<ProductCatalogManagementTab />);
+
+    const opener = await screen.findByRole('button', { name: '新增自定义型号' });
+    await user.click(opener);
+    const dialog = screen.getByRole('dialog', { name: '产品型号主数据' });
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: '关闭主数据编辑器' }));
+
+    await user.tab({ shift: true });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '产品型号主数据' })).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(opener));
+  });
+
   it('exports all filtered model pages with one business attribute per column and no internal IDs', async () => {
     const model = {
       product_model_id: 'internal-model-1', tenant_id: 'tenant-1', vendor_id: 'cisco', vendor_name: 'Cisco',

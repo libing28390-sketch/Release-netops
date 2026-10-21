@@ -1357,6 +1357,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
               const pUsed = rack.power_used_watts;
               const pCap = rack.power_capacity_watts || rack.power_capacity_w || 0;
               const pPct = rack.power_utilization_pct ?? 0;
+              const rackSiteName = siteLabel(rack);
               return (
                 <div
                   key={rack.id}
@@ -1372,12 +1373,20 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                     <div className="flex items-center justify-between">
                       <span className="text-[13px] font-semibold truncate">{rack.name}</span>
                     </div>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    {siteLabel(rack) && <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: '#06b6d415', color: '#06b6d4' }}>{siteLabel(rack)}</span>}
-                    {rack.floor && <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: '#8b5cf615', color: '#7c3aed' }}>{rack.floor}</span>}
-                    {rack.rack_type_id && <span className="text-[10px] truncate max-w-[120px]" style={{ color: 'var(--muted-text)' }}>{getRackTypeName(rack.rack_type_id)}</span>}
-                    <span className="text-[10px]" style={{ color: 'var(--muted-text)' }}>{rack.total_u}U</span>
-                    {(rack.width_mm || rack.depth_mm) && <span className="text-[10px]" style={{ color: 'var(--muted-text)' }}>{rack.width_mm || '-'}×{rack.depth_mm || '-'}mm</span>}
+                  <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                    {rackSiteName && (
+                      <span
+                        title={rackSiteName}
+                        className="max-w-[112px] shrink-0 truncate whitespace-nowrap rounded-full px-1.5 py-0.5 text-[10px]"
+                        style={{ background: '#06b6d415', color: '#06b6d4' }}
+                      >
+                        {rackSiteName}
+                      </span>
+                    )}
+                    {rack.floor && <span className="shrink-0 whitespace-nowrap rounded-full px-1.5 py-0.5 text-[10px]" style={{ background: '#8b5cf615', color: '#7c3aed' }}>{rack.floor}</span>}
+                    {rack.rack_type_id && <span className="max-w-[120px] truncate whitespace-nowrap text-[10px]" style={{ color: 'var(--muted-text)' }}>{getRackTypeName(rack.rack_type_id)}</span>}
+                    <span className="shrink-0 whitespace-nowrap text-[10px]" style={{ color: 'var(--muted-text)' }}>{rack.total_u}U</span>
+                    {(rack.width_mm || rack.depth_mm) && <span className="shrink-0 whitespace-nowrap text-[10px]" style={{ color: 'var(--muted-text)' }}>{rack.width_mm || '-'}×{rack.depth_mm || '-'}mm</span>}
                   </div>
                   <div className="mt-1 flex items-center justify-between text-[9px]" style={{ color: 'var(--muted-text)' }}>
                     <span>{rack.device_count} {zh ? '台设备' : 'devices'} · {rack.used_u}/{rack.total_u}U</span>

@@ -1,5 +1,5 @@
 import { DataTable } from '../../../components/DataTable';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ChevronRight,
@@ -35,6 +35,7 @@ import {
 import Pagination from '../../../components/Pagination';
 import { useCoreApp } from '../../../contexts/AppDomainContext';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
+import { useFocusTrap } from '../../../hooks/useFocusTrap';
 import { aiAdminText } from '../../../i18n/aiAdmin';
 import { fetchAllPaginatedItems } from '../../../utils/pagination';
 
@@ -111,7 +112,9 @@ export const ProductCatalogManagementTab: React.FC = () => {
   const [resolving, setResolving] = useState(false);
   const [catalogReadOnly, setCatalogReadOnly] = useState(true);
   const [catalogModalOpen, setCatalogModalOpen] = useState(false);
+  const catalogDialogRef = useRef<HTMLDivElement>(null);
   useEscapeClose(catalogModalOpen, () => setCatalogModalOpen(false));
+  useFocusTrap(catalogDialogRef, catalogModalOpen);
   const [editingModel, setEditingModel] = useState<KnowledgeCatalogModel | null>(null);
   const [catalogSubmitting, setCatalogSubmitting] = useState(false);
   const [catalogForm, setCatalogForm] = useState({
@@ -512,7 +515,7 @@ export const ProductCatalogManagementTab: React.FC = () => {
       </section>
 
       {catalogModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="catalog-model-editor-title">
+        <div ref={catalogDialogRef} className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="catalog-model-editor-title" tabIndex={-1}>
           <div className="flex max-h-[calc(100vh-2rem)] w-full max-w-3xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl dark:bg-slate-900">
             <div className="flex items-start justify-between gap-3 border-b border-gray-100 px-5 py-4 dark:border-gray-800">
               <div>

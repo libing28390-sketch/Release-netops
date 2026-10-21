@@ -53,6 +53,12 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
 }) => {
   const { systemInfo } = useSystem();
   const [isManualRefreshing, setIsManualRefreshing] = React.useState(false);
+  const activateFromKeyboard = (event: React.KeyboardEvent<HTMLDivElement>, activate: () => void) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      activate();
+    }
+  };
   const handleManualRefresh = async () => {
     setIsManualRefreshing(true);
     try {
@@ -151,23 +157,33 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
         actions={
           <div className="flex items-center gap-2.5 flex-wrap">
             {/* Refresh & Polling Micro-Capsule */}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white dark:bg-zinc-800 border border-gray-200/70 dark:border-zinc-700/60 shadow-2xs">
-              <span className="text-[11px] text-gray-500 dark:text-zinc-400 font-mono font-medium">
+            <div role="group" aria-label={language === 'zh' ? '数据刷新控制' : 'Data refresh controls'} className="flex items-center gap-1 rounded-xl border border-[var(--ui-border)] bg-[var(--ui-surface)] px-2 py-1.5">
+              <span className="px-1.5 text-[11px] font-mono font-medium text-[var(--ui-fg-muted)]">
                 {dashAgoSec}s {language === 'zh' ? '前刷新' : 'ago'}
               </span>
-              <span className="text-gray-200 dark:text-zinc-700">|</span>
+              <span className="px-1 text-[var(--ui-border-strong)]" aria-hidden="true">|</span>
               <button 
+                type="button"
                 onClick={handleManualRefresh} 
                 disabled={isManualRefreshing}
-                className="text-gray-500 hover:text-blue-600 dark:text-zinc-400 dark:hover:text-white transition-colors cursor-pointer"
+                className="inline-flex min-h-9 min-w-9 items-center justify-center rounded-lg border border-transparent text-[var(--ui-fg-muted)] transition-colors hover:border-[var(--ui-border)] hover:bg-[var(--ui-surface-muted)] hover:text-[var(--ui-fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] disabled:cursor-wait disabled:opacity-50"
                 title={language === 'zh' ? '手动刷新' : 'Refresh Now'}
+                aria-label={isManualRefreshing
+                  ? (language === 'zh' ? '正在刷新' : 'Refreshing')
+                  : (language === 'zh' ? '手动刷新' : 'Refresh Now')}
+                aria-busy={isManualRefreshing}
               >
                 <RefreshCw size={12} className={isManualRefreshing ? 'animate-spin text-blue-600' : ''} />
               </button>
               <button 
+                type="button"
                 onClick={() => setAutoRefreshEnabled(!autoRefreshEnabled)} 
-                className={`${autoRefreshEnabled ? 'text-emerald-500' : 'text-gray-400 dark:text-zinc-500'} hover:opacity-80 transition-colors cursor-pointer`}
+                className={`inline-flex min-h-9 min-w-9 items-center justify-center rounded-lg border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] ${autoRefreshEnabled ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300' : 'border-transparent text-[var(--ui-fg-muted)] hover:border-[var(--ui-border)] hover:bg-[var(--ui-surface-muted)]'}`}
                 title={autoRefreshEnabled ? (language === 'zh' ? '已开启轮询(15s)' : 'Auto-polling on') : (language === 'zh' ? '轮询已暂停' : 'Paused')}
+                aria-label={autoRefreshEnabled
+                  ? (language === 'zh' ? '自动刷新已开启' : 'Auto-refresh on')
+                  : (language === 'zh' ? '自动刷新已暂停' : 'Auto-refresh paused')}
+                aria-pressed={autoRefreshEnabled}
               >
                 {autoRefreshEnabled ? <Play size={11} fill="currentColor" /> : <Pause size={11} fill="currentColor" />}
               </button>
@@ -181,8 +197,9 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
 
             {/* Secondary Action: Generate Reports */}
             <button 
+              type="button"
               onClick={() => navigate('/monitor/reports')}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200/80 dark:border-emerald-800/60 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 shadow-2xs transition-all cursor-pointer"
+              className="flex min-h-9 items-center gap-1.5 rounded-lg border border-emerald-200/80 bg-emerald-50 px-3.5 text-xs font-semibold text-emerald-700 shadow-2xs transition-all hover:bg-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-900/60"
               title={language === 'zh' ? '生成全网接口流量、网络设备健康与出口链路权威多工作表报表' : 'Generate authoritative multi-sheet Excel / CSV reports'}
             >
               <FileSpreadsheet size={13} className="text-emerald-600 dark:text-emerald-400" />
@@ -191,8 +208,9 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
 
             {/* Secondary Action: Platform Telemetry */}
             <button 
+              type="button"
               onClick={() => navigate('/monitor/telemetry')}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold text-gray-700 dark:text-zinc-200 bg-white dark:bg-zinc-800 border border-gray-200/80 dark:border-zinc-700/70 hover:bg-gray-50 dark:hover:bg-zinc-700/50 shadow-2xs transition-all cursor-pointer"
+              className="flex min-h-9 items-center gap-1.5 rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface)] px-3.5 text-xs font-semibold text-[var(--ui-fg)] shadow-2xs transition-all hover:bg-[var(--ui-surface-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)]"
             >
               <MonitorSmartphone size={13} className="text-gray-500 dark:text-zinc-400" />
               <span>{language === 'zh' ? '宿主机指标' : 'Host Telemetry'}</span>
@@ -201,7 +219,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
             {/* Primary Action: Run Automation */}
             <button 
               onClick={() => navigate('/automation/quick-ops')}
-              className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 shadow-xs hover:shadow-sm transition-all cursor-pointer active:scale-98"
+              className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 shadow-xs hover:shadow-sm transition-all cursor-pointer active:scale-98 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)]"
             >
               <Zap size={13} fill="currentColor" />
               <span>{t('openAutomation')}</span>
@@ -216,7 +234,8 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
           {/* Card 1: Network Assets */}
           <div 
             onClick={() => navigate('/assets/network-devices')} 
-            className="bg-white dark:bg-zinc-900/90 p-4 rounded-2xl border border-gray-200/70 dark:border-zinc-800/80 shadow-2xs hover:shadow-md hover:border-blue-500/30 transition-all duration-200 cursor-pointer group flex flex-col justify-between"
+            onKeyDown={(event) => activateFromKeyboard(event, () => navigate('/assets/network-devices'))}
+            className="bg-white dark:bg-zinc-900/90 p-4 rounded-2xl border border-gray-200/70 dark:border-zinc-800/80 shadow-2xs hover:shadow-md hover:border-blue-500/30 transition-all duration-200 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] group flex flex-col justify-between"
             role="button" 
             tabIndex={0}
           >
@@ -251,7 +270,13 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
               const hasOffline = devices.some(d => d.status === 'offline');
               navigate(hasOffline ? '/inventory/devices?status=offline' : '/inventory/devices');
             }}
-            className="bg-white dark:bg-zinc-900/90 p-4 rounded-2xl border border-gray-200/70 dark:border-zinc-800/80 shadow-2xs hover:shadow-md hover:border-emerald-500/30 transition-all duration-200 cursor-pointer group flex flex-col justify-between"
+            onKeyDown={(event) => activateFromKeyboard(event, () => {
+              const hasOffline = devices.some(d => d.status === 'offline');
+              navigate(hasOffline ? '/inventory/devices?status=offline' : '/inventory/devices');
+            })}
+            className="bg-white dark:bg-zinc-900/90 p-4 rounded-2xl border border-gray-200/70 dark:border-zinc-800/80 shadow-2xs hover:shadow-md hover:border-emerald-500/30 transition-all duration-200 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] group flex flex-col justify-between"
+            role="button"
+            tabIndex={0}
           >
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-gray-500 dark:text-zinc-400">{t('onlineNodes')}</span>
@@ -280,7 +305,10 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
           {/* Card 3: Compliance Baseline */}
           <div 
             onClick={() => navigate('/compliance')} 
-            className="bg-white dark:bg-zinc-900/90 p-4 rounded-2xl border border-gray-200/70 dark:border-zinc-800/80 shadow-2xs hover:shadow-md hover:border-blue-500/30 transition-all duration-200 cursor-pointer group flex flex-col justify-between"
+            onKeyDown={(event) => activateFromKeyboard(event, () => navigate('/compliance'))}
+            className="bg-white dark:bg-zinc-900/90 p-4 rounded-2xl border border-gray-200/70 dark:border-zinc-800/80 shadow-2xs hover:shadow-md hover:border-blue-500/30 transition-all duration-200 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] group flex flex-col justify-between"
+            role="button"
+            tabIndex={0}
           >
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-gray-500 dark:text-zinc-400">{t('complianceRate')}</span>
@@ -303,7 +331,10 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
           {/* Card 4: Automation Executions */}
           <div 
             onClick={() => navigate('/automation/history')} 
-            className="bg-white dark:bg-zinc-900/90 p-4 rounded-2xl border border-gray-200/70 dark:border-zinc-800/80 shadow-2xs hover:shadow-md hover:border-blue-500/30 transition-all duration-200 cursor-pointer group flex flex-col justify-between"
+            onKeyDown={(event) => activateFromKeyboard(event, () => navigate('/automation/history'))}
+            className="bg-white dark:bg-zinc-900/90 p-4 rounded-2xl border border-gray-200/70 dark:border-zinc-800/80 shadow-2xs hover:shadow-md hover:border-blue-500/30 transition-all duration-200 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] group flex flex-col justify-between"
+            role="button"
+            tabIndex={0}
           >
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-gray-500 dark:text-zinc-400">{t('failedTasks')}</span>
@@ -331,7 +362,10 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
           {/* Card 5: Host Telemetry (Sleek Horizontal Meters) */}
           <div 
             onClick={() => navigate('/monitor/telemetry')} 
-            className="col-span-2 md:col-span-1 bg-white dark:bg-zinc-900/90 p-4 rounded-2xl border border-gray-200/70 dark:border-zinc-800/80 shadow-2xs hover:shadow-md hover:border-blue-500/30 transition-all duration-200 cursor-pointer group flex flex-col justify-between"
+            onKeyDown={(event) => activateFromKeyboard(event, () => navigate('/monitor/telemetry'))}
+            className="col-span-2 md:col-span-1 bg-white dark:bg-zinc-900/90 p-4 rounded-2xl border border-gray-200/70 dark:border-zinc-800/80 shadow-2xs hover:shadow-md hover:border-blue-500/30 transition-all duration-200 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] group flex flex-col justify-between"
+            role="button"
+            tabIndex={0}
           >
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-gray-500 dark:text-zinc-400">{language === 'zh' ? '宿主机性能' : 'Host Vitals'}</span>
@@ -366,7 +400,11 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
         {unreadNotificationCount > 0 && (
           <div 
             onClick={() => navigate('/alerts/desk')} 
-            className="bg-white dark:bg-zinc-900/90 rounded-2xl border border-rose-200/70 dark:border-rose-950/50 shadow-2xs p-3.5 sm:px-5 flex items-center justify-between cursor-pointer hover:shadow-md transition-all group duration-200"
+            onKeyDown={(event) => activateFromKeyboard(event, () => navigate('/alerts/desk'))}
+            className="bg-white dark:bg-zinc-900/90 rounded-2xl border border-rose-200/70 dark:border-rose-950/50 shadow-2xs p-3.5 sm:px-5 flex items-center justify-between cursor-pointer hover:shadow-md transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] group duration-200"
+            role="button"
+            tabIndex={0}
+            aria-label={language === 'zh' ? `查看告警，${unreadNotificationCount} 条未读` : `View alerts, ${unreadNotificationCount} unread`}
           >
             <div className="flex items-center gap-3.5 min-w-0 flex-1">
               <div className="h-8 w-8 rounded-xl bg-rose-50 dark:bg-rose-950/40 text-rose-600 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform">
@@ -413,36 +451,46 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
               
               <div className="flex items-center gap-2">
                 {/* Legend Toggles */}
-                <div className="flex items-center gap-3 mr-2">
+                <div role="group" aria-label={language === 'zh' ? '图表数据系列' : 'Chart series'} className="flex flex-wrap items-center gap-1.5">
                   <button 
+                    type="button"
                     onClick={() => setShowComplianceLine(!showComplianceLine)}
-                    className={`flex items-center gap-1.5 text-xs font-medium cursor-pointer transition-opacity ${showComplianceLine ? 'text-gray-700 dark:text-zinc-300' : 'opacity-40'}`}
+                    className={`inline-flex min-h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] ${showComplianceLine ? 'border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-200' : 'border-transparent text-[var(--ui-fg-muted)] opacity-70 hover:border-[var(--ui-border)] hover:bg-[var(--ui-surface-muted)]'}`}
+                    aria-pressed={showComplianceLine}
                   >
-                    <span className="w-2.5 h-2.5 rounded-full bg-blue-600" />
-                    <span>合规率</span>
+                    <span className="h-2.5 w-2.5 rounded-full bg-blue-600" />
+                    <span>{language === 'zh' ? '合规率' : 'Compliance rate'}</span>
                   </button>
                   <button 
+                    type="button"
                     onClick={() => setShowJobSuccessLine(!showJobSuccessLine)}
-                    className={`flex items-center gap-1.5 text-xs font-medium cursor-pointer transition-opacity ${showJobSuccessLine ? 'text-gray-700 dark:text-zinc-300' : 'opacity-40'}`}
+                    className={`inline-flex min-h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] ${showJobSuccessLine ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200' : 'border-transparent text-[var(--ui-fg-muted)] opacity-70 hover:border-[var(--ui-border)] hover:bg-[var(--ui-surface-muted)]'}`}
+                    aria-pressed={showJobSuccessLine}
                   >
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-                    <span>作业成功率</span>
+                    <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                    <span>{language === 'zh' ? '作业成功率' : 'Job success rate'}</span>
                   </button>
                 </div>
 
                 {/* Days Filter Pills */}
-                <div className="flex items-center p-0.5 rounded-xl bg-gray-100 dark:bg-zinc-800">
+                <div role="group" aria-label={language === 'zh' ? '趋势时间范围' : 'Trend time range'} className="flex items-center rounded-xl border border-[var(--ui-border)] bg-[var(--ui-surface-muted)] p-1">
                   <button 
+                    type="button"
                     onClick={() => setTrendDays(7)} 
-                    className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${trendDays === 7 ? 'bg-white dark:bg-zinc-700 text-gray-900 dark:text-white shadow-2xs' : 'text-gray-500 dark:text-zinc-400 hover:text-gray-900'}`}
+                    className={`min-h-8 rounded-lg px-3 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] ${trendDays === 7 ? 'bg-[var(--ui-surface)] text-[var(--ui-fg)] shadow-sm' : 'text-[var(--ui-fg-muted)] hover:text-[var(--ui-fg)]'}`}
+                    aria-pressed={trendDays === 7}
+                    aria-label={language === 'zh' ? '显示最近 7 天' : 'Show last 7 days'}
                   >
-                    7天
+                    {language === 'zh' ? '7天' : '7 days'}
                   </button>
                   <button 
+                    type="button"
                     onClick={() => setTrendDays(30)} 
-                    className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${trendDays === 30 ? 'bg-white dark:bg-zinc-700 text-gray-900 dark:text-white shadow-2xs' : 'text-gray-500 dark:text-zinc-400 hover:text-gray-900'}`}
+                    className={`min-h-8 rounded-lg px-3 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] ${trendDays === 30 ? 'bg-[var(--ui-surface)] text-[var(--ui-fg)] shadow-sm' : 'text-[var(--ui-fg-muted)] hover:text-[var(--ui-fg)]'}`}
+                    aria-pressed={trendDays === 30}
+                    aria-label={language === 'zh' ? '显示最近 30 天' : 'Show last 30 days'}
                   >
-                    30天
+                    {language === 'zh' ? '30天' : '30 days'}
                   </button>
                 </div>
               </div>
@@ -544,7 +592,12 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
                   onClick={item.canOpenDeviceInventory
                     ? () => navigate(`/inventory/devices?platform=${encodeURIComponent(item.platform)}`)
                     : undefined}
-                  className={`flex items-center justify-between px-3 py-2 rounded-xl bg-gray-50 dark:bg-zinc-800/60 transition-all group ${item.canOpenDeviceInventory ? 'hover:bg-blue-50/60 dark:hover:bg-zinc-700/60 cursor-pointer' : ''}`}
+                  onKeyDown={item.canOpenDeviceInventory
+                    ? (event) => activateFromKeyboard(event, () => navigate(`/inventory/devices?platform=${encodeURIComponent(item.platform)}`))
+                    : undefined}
+                  className={`flex items-center justify-between px-3 py-2 rounded-xl bg-gray-50 dark:bg-zinc-800/60 transition-all group ${item.canOpenDeviceInventory ? 'hover:bg-blue-50/60 dark:hover:bg-zinc-700/60 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)]' : ''}`}
+                  role={item.canOpenDeviceInventory ? 'button' : undefined}
+                  tabIndex={item.canOpenDeviceInventory ? 0 : undefined}
                 >
                   <div className="flex items-center gap-2.5">
                     <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }} />
@@ -598,7 +651,11 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
                 <div 
                   key={job.id} 
                   onClick={() => navigate('/automation/history')}
-                  className="flex items-center justify-between p-3 rounded-xl hover:bg-gray-50 dark:hover:bg-zinc-800/60 transition-all border border-transparent hover:border-gray-200/50 cursor-pointer group"
+                  onKeyDown={(event) => activateFromKeyboard(event, () => navigate('/automation/history'))}
+                  className="flex items-center justify-between p-3 rounded-xl hover:bg-gray-50 dark:hover:bg-zinc-800/60 transition-all border border-transparent hover:border-gray-200/50 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] group"
+                  role="button"
+                  tabIndex={0}
+                  aria-label={language === 'zh' ? `查看作业历史：${job.task_name}` : `View job history: ${job.task_name}`}
                 >
                   <div className="flex items-center gap-3">
                     <div className={`h-8 w-8 rounded-xl flex items-center justify-center ${

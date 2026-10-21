@@ -61,8 +61,10 @@ export const ScenarioSelectionStep: React.FC<ScenarioSelectionStepProps> = ({
             const isActive = categoryFilter === cat;
             return (
               <button
+                type="button"
                 key={cat}
                 onClick={() => setCategoryFilter(cat)}
+                aria-pressed={isActive}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${
                   isActive ? 'bg-cyan-50 text-cyan-700 border border-cyan-200 shadow-sm' : 'text-gray-500 hover:bg-gray-50'
                 }`}
@@ -81,6 +83,7 @@ export const ScenarioSelectionStep: React.FC<ScenarioSelectionStepProps> = ({
               type="search"
               value={scenarioSearch}
               onChange={(e) => onScenarioSearchChange(e.target.value)}
+              aria-label={isZh ? '搜索自动化场景' : 'Search automation scenarios'}
               placeholder={isZh ? '搜索场景...' : 'Search...'}
               className="pl-7 pr-3 py-1.5 border border-gray-100 rounded-lg text-xs bg-gray-50 outline-none focus:border-cyan-300 w-40"
             />
@@ -88,6 +91,7 @@ export const ScenarioSelectionStep: React.FC<ScenarioSelectionStepProps> = ({
           <select
             value={riskFilter}
             onChange={(e) => setRiskFilter(e.target.value)}
+            aria-label={isZh ? '按风险等级筛选场景' : 'Filter scenarios by risk'}
             className="px-2.5 py-1.5 border border-gray-100 rounded-lg text-xs bg-gray-50 outline-none focus:border-cyan-300"
           >
             <option value="all">{isZh ? '全部风险' : 'All Risks'}</option>
@@ -105,7 +109,7 @@ export const ScenarioSelectionStep: React.FC<ScenarioSelectionStepProps> = ({
           <Server size={11} />
           {batchMode ? `${targetCount} ${isZh ? '台设备' : 'devices'}` : selectedDevice?.hostname || ''}
         </span>
-        <button onClick={() => setCurrentStep(1)} className="text-[10px] font-semibold text-gray-400 hover:text-cyan-600 transition-colors">
+        <button type="button" onClick={() => setCurrentStep(1)} className="text-[10px] font-semibold text-gray-400 hover:text-cyan-600 transition-colors">
           {isZh ? '修改' : 'Change'}
         </button>
       </div>
@@ -163,7 +167,7 @@ export const ScenarioSelectionStep: React.FC<ScenarioSelectionStepProps> = ({
             );
           })}
           {displayScenarios.length === 0 && (
-            <div className="col-span-full py-16 text-center text-gray-300">
+            <div role="status" className="col-span-full py-16 text-center text-gray-300">
               <Zap size={32} strokeWidth={1} className="mx-auto mb-3 opacity-50" />
               <p className="text-sm">{isZh ? '没有匹配的场景' : 'No matching scenarios'}</p>
             </div>
@@ -174,6 +178,7 @@ export const ScenarioSelectionStep: React.FC<ScenarioSelectionStepProps> = ({
       {/* Bottom bar */}
       <div className="flex-shrink-0 flex items-center justify-between bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-3">
         <button
+          type="button"
           onClick={() => setCurrentStep(1)}
           className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 hover:text-gray-700 transition-colors"
         >

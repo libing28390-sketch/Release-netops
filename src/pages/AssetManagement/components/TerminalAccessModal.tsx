@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { Shield, Terminal, X, User, Lock, Check, Loader2 } from 'lucide-react';
 import { Asset } from '../types';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
+import { useFocusTrap } from '../../../hooks/useFocusTrap';
 
 interface TerminalAccessModalProps {
   isOpen: boolean;
@@ -38,20 +39,32 @@ export const TerminalAccessModal: React.FC<TerminalAccessModalProps> = ({
   language,
 }) => {
   useEscapeClose(isOpen, onClose);
+  const dialogRef = React.useRef<HTMLDivElement>(null);
+  const dialogTitleId = React.useId();
+  const accessLevelLabelId = React.useId();
+  const ticketInputId = React.useId();
+  const reasonInputId = React.useId();
+  const mfaInputId = React.useId();
+  useFocusTrap(dialogRef, isOpen, 'input');
   const zh = language === 'zh';
 
   return (
     <AnimatePresence>
       {isOpen && terminalTarget && (
         <motion.div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md"
+          className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/60 p-3 backdrop-blur-md"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           onClick={() => !terminalRequesting && onClose()}
         >
           <motion.div
-            className="bg-[#0d1117] rounded-3xl w-[440px] border border-white/10 shadow-2xl overflow-hidden"
+            ref={dialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={dialogTitleId}
+            tabIndex={-1}
+            className="max-h-[calc(100dvh-24px)] w-full max-w-[440px] overflow-y-auto rounded-3xl border border-white/10 bg-[#0d1117] shadow-2xl"
             onClick={(e) => e.stopPropagation()}
             initial={{ scale: 0.95, y: 20, opacity: 0 }}
             animate={{ scale: 1, y: 0, opacity: 1 }}
@@ -64,27 +77,31 @@ export const TerminalAccessModal: React.FC<TerminalAccessModalProps> = ({
                     {terminalAccessLevel === 'admin' ? <Shield size={20} /> : <Terminal size={20} />}
                   </div>
                   <div>
-                    <h3 className="text-sm font-bold text-white">{zh ? '终端访问申请' : 'Access Request'}</h3>
+                    <h3 id={dialogTitleId} className="text-sm font-bold text-white">{zh ? '终端访问申请' : 'Access Request'}</h3>
                     <p className="text-[10px] text-white/40 mt-0.5 uppercase tracking-widest">{terminalTarget.hostname || terminalTarget.management_ip}</p>
                   </div>
                 </div>
-                <button onClick={onClose} className="text-white/20 hover:text-white/60 transition-colors"><X size={18} /></button>
+                <button type="button" onClick={onClose} aria-label={zh ? '关闭' : 'Close'} className="min-h-10 min-w-10 rounded-lg text-white/60 transition-colors hover:bg-white/10 hover:text-white"><X size={18} /></button>
               </div>
             </div>
 
             <div className="p-6 space-y-5">
               <div>
-                <label className="block text-[10px] font-bold text-white/30 uppercase tracking-widest mb-2">{zh ? '权限级别' : 'AUTHORIZATION'}</label>
-                <div className="flex bg-white/[0.03] rounded-xl p-1 border border-white/5">
+                <span id={accessLevelLabelId} className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-white/55">{zh ? '权限级别' : 'AUTHORIZATION'}</span>
+                <div role="group" aria-labelledby={accessLevelLabelId} className="flex rounded-xl border border-white/5 bg-white/[0.03] p-1">
                   <button
+                    type="button"
+                    aria-pressed={terminalAccessLevel === 'normal'}
                     onClick={() => setTerminalAccessLevel('normal')}
-                    className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-bold transition-all ${terminalAccessLevel === 'normal' ? 'bg-white/10 text-white shadow-sm' : 'text-white/30 hover:text-white/50'}`}
+                    className={`min-h-10 flex-1 flex items-center justify-center gap-2 rounded-lg py-2 text-xs font-bold transition-all ${terminalAccessLevel === 'normal' ? 'bg-white/10 text-white shadow-sm' : 'text-white/55 hover:text-white/80'}`}
                   >
                     <User size={12} />{zh ? '普通用户' : 'User'}
                   </button>
                   <button
+                    type="button"
+                    aria-pressed={terminalAccessLevel === 'admin'}
                     onClick={() => setTerminalAccessLevel('admin')}
-                    className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-bold transition-all ${terminalAccessLevel === 'admin' ? 'bg-orange-50 text-white shadow-sm' : 'text-white/30 hover:text-white/50'}`}
+                    className={`min-h-10 flex-1 flex items-center justify-center gap-2 rounded-lg py-2 text-xs font-bold transition-all ${terminalAccessLevel === 'admin' ? 'bg-orange-500/20 text-orange-100 shadow-sm' : 'text-white/55 hover:text-white/80'}`}
                   >
                     <Shield size={12} />{zh ? '特权账号' : 'Admin'}
                   </button>
@@ -94,8 +111,9 @@ export const TerminalAccessModal: React.FC<TerminalAccessModalProps> = ({
               {terminalAccessLevel === 'admin' ? (
                 <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
                   <div>
-                    <label className="block text-[10px] font-bold text-white/30 uppercase tracking-widest mb-2">{zh ? '关联变更单 (CR)' : 'CHANGE TICKET'}</label>
+                    <label htmlFor={ticketInputId} className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-white/60">{zh ? '关联变更单 (CR)' : 'CHANGE TICKET'}</label>
                     <input
+                      id={ticketInputId}
                       type="text"
                       placeholder="CR-2026-XXXX"
                       value={approvalData.ticket}
@@ -104,8 +122,9 @@ export const TerminalAccessModal: React.FC<TerminalAccessModalProps> = ({
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-bold text-white/30 uppercase tracking-widest mb-2">{zh ? '申请理由' : 'JUSTIFICATION'}</label>
+                    <label htmlFor={reasonInputId} className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-white/60">{zh ? '申请理由' : 'JUSTIFICATION'}</label>
                     <textarea
+                      id={reasonInputId}
                       rows={2}
                       value={terminalReason}
                       onChange={(e) => setTerminalReason(e.target.value)}
@@ -114,8 +133,9 @@ export const TerminalAccessModal: React.FC<TerminalAccessModalProps> = ({
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-bold text-white/30 uppercase tracking-widest mb-2">{zh ? '动态验证码 (MFA)' : 'MFA CODE'}</label>
+                    <label htmlFor={mfaInputId} className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-white/60">{zh ? '动态验证码 (MFA)' : 'MFA CODE'}</label>
                     <input
+                      id={mfaInputId}
                       type="text"
                       maxLength={6}
                       placeholder="******"
@@ -140,8 +160,9 @@ export const TerminalAccessModal: React.FC<TerminalAccessModalProps> = ({
                 {zh ? `受 ${systemInfo?.system_name || 'Nexora'} PAM 审计保护` : `Audited by ${systemInfo?.system_name || 'Nexora'} PAM`}
               </div>
               <div className="flex gap-2">
-                <button onClick={onClose} className="px-4 py-2 text-xs font-bold text-white/40 hover:text-white/60 transition-colors">{zh ? '取消' : 'Cancel'}</button>
+                <button type="button" onClick={onClose} className="min-h-10 rounded-lg px-4 py-2 text-xs font-bold text-white/70 transition-colors hover:bg-white/5 hover:text-white">{zh ? '取消' : 'Cancel'}</button>
                 <button
+                  type="button"
                   onClick={() => {
                     if (terminalAccessLevel === 'admin') {
                       setIsApproved(true);

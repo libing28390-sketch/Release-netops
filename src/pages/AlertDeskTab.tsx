@@ -11,6 +11,7 @@ import { ListSearchInput, ListToolbar } from '../components/ui/TableListControls
 import type { TableExportData } from '../components/ui/TableExportMenu';
 import { alertWorkflowBadgeClass, severityBadgeClass } from '../components/shared';
 import { authHeaders } from '../api/http';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 import { listSites } from '../api/cmdb';
 import { fetchAllPaginatedItems } from '../utils/pagination';
 import { alertSiteLabel, buildAlertDeskExportData, buildAlertSiteLabels, getAlertDeskExportHeaders } from './alertTableExport';
@@ -52,6 +53,8 @@ interface AlertActivityItem {
   metadata?: Record<string, unknown>;
 }
 
+type AlertRequestError = 'permission' | 'load';
+
 const alertDeskColumnMinWidths = [
   'min-w-[160px]', // Alert title
   'min-w-[250px]', // Alert message
@@ -72,6 +75,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
   const [rows, setRows] = useState<AlertRecord[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [listError, setListError] = useState<AlertRequestError | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [statusFilter, setStatusFilter] = useState('open');
@@ -85,6 +89,9 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
   const [activity, setActivity] = useState<AlertActivityItem[]>([]);
   const [activityLoading, setActivityLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<AlertRequestError | null>(null);
+  const detailRequestSequence = useRef(0);
+  const detailDialogRef = useRef<HTMLDivElement>(null);
   const [detailNote, setDetailNote] = useState('');
   const [assignValue, setAssignValue] = useState('');
   const [actionLoading, setActionLoading] = useState<'ack' | 'assign' | 'note' | null>(null);
@@ -144,6 +151,8 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
     alertsRequestController.current = controller;
     const requestSequence = ++alertsRequestSequence.current;
     setLoading(true);
+    setListError(null);
+    let requestError: AlertRequestError = 'load';
     try {
       if (!localStorage.getItem('netops_token')) {
         if (requestSequence !== alertsRequestSequence.current) return;
@@ -151,6 +160,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
         setTotal(0);
         setStatusCounts({});
         setSelectedIds(new Set());
+        setListError('permission');
         return;
       }
       const params = new URLSearchParams({
@@ -166,7 +176,10 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
         headers: authHeaders(),
         signal: controller.signal,
       });
-      if (!resp.ok) throw new Error('Failed to load alerts');
+      if (!resp.ok) {
+        if (resp.status === 401 || resp.status === 403) requestError = 'permission';
+        throw new Error('Failed to load alerts');
+      }
       const data: AlertListResponse = await resp.json();
       if (requestSequence !== alertsRequestSequence.current) return;
       const items = data.items || [];
@@ -181,6 +194,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
     } catch (error) {
       if (controller.signal.aborted || requestSequence !== alertsRequestSequence.current) return;
       console.error(error);
+      setListError(requestError);
       showToast(language === 'zh' ? '加载告警列表失败' : 'Failed to load alerts', 'error');
     } finally {
       if (requestSequence === alertsRequestSequence.current) {
@@ -191,19 +205,29 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
   };
 
   const loadDetail = async (alertId: string) => {
+    const requestSequence = ++detailRequestSequence.current;
+    let requestError: AlertRequestError = 'load';
+    setSelectedDetail(null);
+    setDetailError(null);
     setDetailLoading(true);
     try {
       const resp = await fetch(`/api/alerts/${alertId}`, { headers: authHeaders() });
-      if (!resp.ok) throw new Error('Failed to load alert detail');
+      if (!resp.ok) {
+        if (resp.status === 401 || resp.status === 403) requestError = 'permission';
+        throw new Error('Failed to load alert detail');
+      }
       const data: AlertDetailResponse = await resp.json();
+      if (requestSequence !== detailRequestSequence.current) return;
       setSelectedDetail(data);
       setDetailNote(data.item.note || '');
       setAssignValue(data.item.assignee || currentUsername || '');
     } catch (error) {
+      if (requestSequence !== detailRequestSequence.current) return;
       console.error(error);
+      setDetailError(requestError);
       showToast(language === 'zh' ? '加载告警详情失败' : 'Failed to load alert detail', 'error');
     } finally {
-      setDetailLoading(false);
+      if (requestSequence === detailRequestSequence.current) setDetailLoading(false);
     }
   };
 
@@ -229,12 +253,16 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
   }, [autoRefresh, page, pageSize, appliedSearch, severityFilter, statusFilter]);
 
   const closeDetail = () => {
+    detailRequestSequence.current += 1;
+    setDetailLoading(false);
+    setDetailError(null);
     setSelectedAlertId(null);
     setSelectedDetail(null);
     setActivity([]);
   };
 
   useAlertOverlayDismiss(Boolean(selectedAlertId), closeDetail);
+  useFocusTrap(detailDialogRef, Boolean(selectedAlertId), '[data-alert-detail-close]');
 
   const refreshAll = async () => {
     await loadAlerts();
@@ -414,8 +442,10 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
         actions={
           <>
             <button
+              type="button"
               onClick={() => setAutoRefresh(!autoRefresh)}
-              className={`${alertSecondaryButtonClass} ${autoRefresh ? '!border-green-400 !bg-green-50 !text-green-700' : ''}`}
+              aria-pressed={autoRefresh}
+              className={`${alertSecondaryButtonClass} min-h-9 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] ${autoRefresh ? '!border-green-400 !bg-green-50 !text-green-700' : ''}`}
               title={language === 'zh' ? (autoRefresh ? '关闭自动刷新' : '开启自动刷新(30秒)') : (autoRefresh ? 'Disable auto-refresh' : 'Enable auto-refresh (30s)')}
             >
               <RefreshCw size={14} className={autoRefresh ? 'animate-spin' : ''} style={autoRefresh ? { animationDuration: '3s' } : undefined} />
@@ -427,11 +457,11 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
 
       <div className="flex-1 flex flex-col overflow-hidden px-6 py-5 min-h-0">
       <div className={`${alertPanelClass} flex-1 min-h-0 flex flex-col overflow-hidden`}>
-        <ListToolbar className="min-w-0 gap-2 border-b border-black/5 px-5 py-3">
-          <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto no-scrollbar">
+        <ListToolbar className="min-w-0 flex-col items-stretch gap-3 border-b border-black/5 px-4 py-3 sm:px-5 lg:flex-row lg:items-center">
+          <div className="grid min-w-0 flex-1 gap-2 lg:grid-cols-[minmax(220px,1fr)_auto]">
           <ListSearchInput
               language={language}
-              className="alert-management-search"
+              className="w-full min-w-0"
               aria-label={language === 'zh' ? '搜索告警标题、设备、接口或 IP' : 'Search alert title, device, interface, or IP'}
               value={search}
               onChange={(e) => {
@@ -442,37 +472,39 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
               onClear={() => { setPage(1); setSearch(''); }}
             />
 
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
           <select
+            aria-label={language === 'zh' ? '按级别筛选告警' : 'Filter alerts by severity'}
             title={language === 'zh' ? '按级别筛选告警' : 'Filter alerts by severity'}
             value={severityFilter}
             onChange={(e) => {
               setPage(1);
               setSeverityFilter(e.target.value);
             }}
-            className="shrink-0 whitespace-nowrap rounded-xl border border-black/10 bg-white px-3 py-3 text-sm text-[#164e63] outline-none"
+            className="min-h-9 min-w-0 flex-1 rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface)] px-3 text-sm text-[var(--ui-fg)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] sm:flex-none"
           >
             <option value="all">{language === 'zh' ? '全部级别' : 'All Severity'}</option>
             <option value="critical">{severityLabel('critical', language)}</option>
             <option value="major">{severityLabel('major', language)}</option>
             <option value="warning">{severityLabel('warning', language)}</option>
           </select>
-          <div className="flex shrink-0 items-center gap-1.5">
+          <div role="group" aria-label={language === 'zh' ? '按处理状态筛选' : 'Filter by workflow status'} className="flex min-w-0 flex-1 flex-wrap items-center gap-1 rounded-xl border border-[var(--ui-border)] bg-[var(--ui-surface-muted)] p-1 sm:flex-none">
             {STATUS_TABS.map(tab => (
               <button
                 key={tab.value}
                 type="button"
                 aria-pressed={statusFilter === tab.value}
                 onClick={() => { setPage(1); setStatusFilter(tab.value); setSelectedIds(new Set()); }}
-                className={`shrink-0 whitespace-nowrap rounded-xl px-3 py-2 text-sm font-medium transition-colors ${
+                className={`min-h-9 flex-1 whitespace-nowrap rounded-lg border px-2.5 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] sm:flex-none ${
                   statusFilter === tab.value
-                    ? 'bg-[#06b6d4] text-white shadow-sm'
-                    : 'text-black/55 hover:bg-black/[0.04] hover:text-black/75'
+                    ? 'border-[var(--ui-accent)] bg-[var(--ui-accent)] text-white shadow-sm'
+                    : 'border-transparent text-[var(--ui-fg-muted)] hover:border-[var(--ui-border)] hover:bg-[var(--ui-surface)] hover:text-[var(--ui-fg)]'
                 }`}
               >
                 {language === 'zh' ? tab.zh : tab.en}
                 {statusCounts[tab.value] != null && (
-                  <span className={`ml-1.5 inline-flex min-w-[18px] items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
-                    statusFilter === tab.value ? 'bg-white/25 text-white' : 'bg-black/[0.06] text-black/45'
+                  <span className={`ml-1 inline-flex min-w-[18px] items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-bold ${
+                    statusFilter === tab.value ? 'bg-white/25 text-white' : 'bg-black/[0.06] text-[var(--ui-fg-muted)]'
                   }`}>
                     {statusCounts[tab.value]}
                   </span>
@@ -489,6 +521,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
             onClick={() => void loadAlerts()}
           />
           </div>
+          </div>
           <AlertDeskColumnToggle
             columns={alertColumns}
             onChange={(key, visible) => setAlertColumns((current) => setAlertDeskColumnVisibility(current, key, visible))}
@@ -497,7 +530,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
         </ListToolbar>
 
         {selectedIds.size > 0 && (
-          <div className="flex items-center gap-3 border-b border-blue-100 bg-blue-50/60 px-5 py-3">
+          <div className="flex flex-wrap items-center gap-2 border-b border-blue-100 bg-blue-50/60 px-4 py-3 sm:gap-3 sm:px-5">
             <span className="text-sm font-medium text-[#164e63]">
               {language === 'zh' ? `已选 ${selectedIds.size} 条` : `${selectedIds.size} selected`}
             </span>
@@ -515,12 +548,32 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
           </div>
         )}
 
+        {listError && rows.length > 0 && (
+          <div role="alert" className="flex items-center gap-3 border-b border-rose-200 bg-rose-50/80 px-5 py-3 text-sm text-rose-800">
+            <span className="min-w-0 flex-1">
+              {listError === 'permission'
+                ? (language === 'zh' ? '无权查看告警，或登录状态已失效。' : 'You are not authorized to view alerts, or your session has expired.')
+                : (language === 'zh' ? '告警列表加载失败，当前显示的内容可能已过期。' : 'Could not refresh alerts. The displayed results may be stale.')}
+            </span>
+            <button type="button" onClick={() => void loadAlerts()} className="shrink-0 rounded-lg border border-rose-300 px-3 py-1.5 text-xs font-semibold hover:bg-rose-100">
+              {language === 'zh' ? '重试' : 'Retry'}
+            </button>
+          </div>
+        )}
+
         <div className="alert-management-table-scroll flex-1 min-h-0 overflow-auto custom-scrollbar border-b border-black/5">
           <DataTable className="alert-management-table text-left" exportConfig={{ filename: 'alert-desk', language: language === 'zh' ? 'zh' : 'en', disabled: loading || rows.length === 0, exportData: exportAllAlerts }}>
             <thead className="sticky top-0 z-10">
               <tr className="border-y border-black/5 bg-[#f8fafc] text-[11px] font-bold uppercase tracking-[0.16em] text-black/40">
                 <th className="w-10 px-3 py-3">
-                  <button onClick={toggleSelectAll} className="text-black/40 hover:text-black/70" title={language === 'zh' ? '全选' : 'Select all'}>
+                  <button
+                    type="button"
+                    onClick={toggleSelectAll}
+                    aria-label={language === 'zh' ? '全选当前页告警' : 'Select all alerts on this page'}
+                    aria-pressed={rows.length > 0 && rows.every(r => selectedIds.has(r.id))}
+                    className="text-black/40 hover:text-black/70"
+                    title={language === 'zh' ? '全选当前页告警' : 'Select all alerts on this page'}
+                  >
                     {rows.length > 0 && rows.every(r => selectedIds.has(r.id)) ? <CheckSquare size={16} /> : <Square size={16} />}
                   </button>
                 </th>
@@ -537,6 +590,21 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                     {language === 'zh' ? '正在加载告警...' : 'Loading alerts...'}
                   </td>
                 </tr>
+              ) : listError && rows.length === 0 ? (
+                <tr>
+                  <td colSpan={visibleExportHeaders.length + 2} className="px-5 py-12 text-center">
+                    <div role="alert" className="mx-auto flex max-w-lg flex-col items-center gap-2 text-sm text-rose-700">
+                      <span className="font-semibold">
+                        {listError === 'permission'
+                          ? (language === 'zh' ? '无权查看告警，或登录状态已失效。' : 'You are not authorized to view alerts, or your session has expired.')
+                          : (language === 'zh' ? '告警列表加载失败。' : 'Could not load alerts.')}
+                      </span>
+                      <button type="button" onClick={() => void loadAlerts()} className="rounded-lg border border-rose-300 px-3 py-1.5 text-xs font-semibold hover:bg-rose-50">
+                        {language === 'zh' ? '重试' : 'Retry'}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
               ) : rows.length > 0 ? (
                 rows.map((row) => (
                   <tr
@@ -548,7 +616,13 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                     } ${(row.duration_seconds ?? 0) > 86400 && !row.resolved_at ? 'border-l-2 border-l-amber-400' : ''}`}
                   >
                     <td className="w-10 px-3 py-4 align-top">
-                      <button onClick={() => toggleSelect(row.id)} className="text-black/40 hover:text-black/70">
+                      <button
+                        type="button"
+                        onClick={() => toggleSelect(row.id)}
+                        aria-label={language === 'zh' ? `选择告警 ${row.title}` : `Select alert ${row.title}`}
+                        aria-pressed={selectedIds.has(row.id)}
+                        className="text-black/40 hover:text-black/70"
+                      >
                         {selectedIds.has(row.id) ? <CheckSquare size={16} /> : <Square size={16} />}
                       </button>
                     </td>
@@ -593,7 +667,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                     <td className={`${alertColumns.interface ? '' : 'hidden'} min-w-[100px] whitespace-nowrap px-5 py-4 align-top text-sm text-black/60`}>{row.interface_name || '--'}</td>
                     <td className={`${alertColumns.site ? '' : 'hidden'} min-w-[120px] whitespace-nowrap px-5 py-4 align-top text-sm text-black/60`}>{alertSiteLabel(row, siteLabels, language === 'zh' ? '未分配站点' : 'Unassigned site')}</td>
                     <td className={`${alertColumns.severity ? '' : 'hidden'} min-w-[100px] whitespace-nowrap px-5 py-4 align-top`}>
-                      <span className={`inline-flex whitespace-nowrap items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[10px] font-extrabold uppercase shadow-sm ${
+                      <span className={`inline-flex whitespace-nowrap items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-extrabold uppercase shadow-sm ${
                         row.severity === 'critical'
                           ? 'bg-rose-50 text-rose-700 border border-rose-200/50 shadow-rose-100'
                           : row.severity === 'major'
@@ -611,7 +685,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                       </span>
                     </td>
                     <td className={`${alertColumns.workflow ? '' : 'hidden'} min-w-[105px] whitespace-nowrap px-5 py-4 align-top`}>
-                      <span data-export-primary className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase ${alertWorkflowBadgeClass(row.workflow_status)}`}>
+                      <span data-export-primary className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-0.5 text-[11px] font-bold uppercase ${alertWorkflowBadgeClass(row.workflow_status)}`}>
                         {workflowLabel(row.workflow_status, language)}
                       </span>
                     </td>
@@ -701,6 +775,11 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
             }}
           >
             <motion.div
+              ref={detailDialogRef}
+              role="dialog"
+              aria-modal="true"
+              aria-label={language === 'zh' ? '告警详情' : 'Alert details'}
+              tabIndex={-1}
               className="relative max-h-[92vh] w-full max-w-2xl overflow-hidden rounded-[24px] bg-white/94 dark:bg-[#1e293b]/94 backdrop-blur-xl border border-white/20 dark:border-white/5 shadow-[0_32px_80px_rgba(11,35,64,0.22)]"
               initial={{ y: 24, opacity: 0, scale: 0.97 }}
               animate={{ y: 0, opacity: 1, scale: 1 }}
@@ -716,11 +795,27 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
               }`} />
 
               <div className="max-h-[calc(92vh-4px)] overflow-y-auto">
-                {detailLoading || !selectedItem ? (
+                {detailError ? (
+                  <div role="alert" className="flex flex-col items-center gap-3 px-6 py-16 text-center">
+                    <span className="text-sm font-semibold text-rose-700">
+                      {detailError === 'permission'
+                        ? (language === 'zh' ? '无权查看此告警，或登录状态已失效。' : 'You are not authorized to view this alert, or your session has expired.')
+                        : (language === 'zh' ? '告警详情加载失败。' : 'Could not load alert details.')}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <button type="button" onClick={() => selectedAlertId && void loadDetail(selectedAlertId)} className="rounded-lg border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-800 hover:bg-rose-50">
+                        {language === 'zh' ? '重试' : 'Retry'}
+                      </button>
+                      <button type="button" onClick={closeDetail} className="rounded-lg border border-black/10 px-3 py-1.5 text-xs font-semibold text-black/60 hover:bg-black/[0.03]">
+                        {language === 'zh' ? '关闭' : 'Close'}
+                      </button>
+                    </div>
+                  </div>
+                ) : detailLoading || !selectedItem ? (
                   <div className="flex items-center justify-center py-24">
                     <div className="flex flex-col items-center gap-3">
                       <div className="h-8 w-8 animate-spin rounded-full border-2 border-cyan-200 border-t-cyan-500" />
-                      <span className="text-sm text-black/40">{language === 'zh' ? '正在加载告警详情...' : 'Loading alert details...'}</span>
+                      <span role="status" className="text-sm text-black/40">{language === 'zh' ? '正在加载告警详情...' : 'Loading alert details...'}</span>
                     </div>
                   </div>
                 ) : (
@@ -733,7 +828,10 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                       'bg-gradient-to-b from-slate-50/60 to-transparent'
                     }`}>
                       <button
+                        type="button"
+                        data-alert-detail-close
                         title={language === 'zh' ? '关闭详情' : 'Close detail'}
+                        aria-label={language === 'zh' ? '关闭告警详情' : 'Close alert details'}
                         onClick={closeDetail}
                         className="absolute right-4 top-4 rounded-lg p-1.5 text-black/30 transition-colors hover:bg-black/5 hover:text-black/60"
                       >
@@ -756,10 +854,10 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
 
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-1.5">
-                            <span className={`inline-flex rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${severityBadgeClass(selectedItem.severity)}`}>
+                            <span className={`inline-flex rounded-md px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider ${severityBadgeClass(selectedItem.severity)}`}>
                               {severityLabel(selectedItem.severity, language)}
                             </span>
-                            <span className={`inline-flex rounded-md px-2 py-0.5 text-[10px] font-bold ${alertWorkflowBadgeClass(selectedItem.workflow_status)}`}>
+                            <span className={`inline-flex rounded-md px-2 py-0.5 text-[11px] font-bold ${alertWorkflowBadgeClass(selectedItem.workflow_status)}`}>
                               {workflowLabel(selectedItem.workflow_status, language)}
                             </span>
                             {selectedItem.metric_type && selectedItem.metric_type !== 'unknown' && (
@@ -862,7 +960,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                               <div key={channel} className="rounded-xl border border-black/[0.06] bg-[#fafbfc] px-3 py-2.5">
                                 <div className="flex items-center gap-2">
                                   <span className="text-xs font-semibold text-[#164e63]">{channel}</span>
-                                  <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${summary.status === 'succeeded' ? 'bg-emerald-50 text-emerald-700' : summary.status === 'failed' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700'}`}>
+                                  <span className={`rounded-full px-1.5 py-0.5 text-[11px] font-bold ${summary.status === 'succeeded' ? 'bg-emerald-50 text-emerald-700' : summary.status === 'failed' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700'}`}>
                                     {summary.status}
                                   </span>
                                 </div>
@@ -878,11 +976,11 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
 
                       {/* Workflow Actions */}
                       {!selectedItem.resolved_at && selectedItem.workflow_status !== 'suppressed' && (
-                        <div className="grid grid-cols-3 gap-2">
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                           <button
                             disabled={actionLoading === 'ack'}
                             onClick={() => void handleAck('acknowledged')}
-                            className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition-all hover:bg-emerald-600 hover:shadow-md active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
+                          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition-all hover:bg-emerald-600 hover:shadow-md active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] disabled:cursor-not-allowed disabled:opacity-40"
                           >
                             <CheckCircle2 size={15} />
                             {language === 'zh' ? '确认告警' : 'Acknowledge'}
@@ -890,14 +988,14 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                           <button
                             disabled={actionLoading === 'ack'}
                             onClick={() => void handleAck('investigating')}
-                            className="inline-flex items-center justify-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm font-semibold text-amber-700 transition-all hover:border-amber-300 hover:bg-amber-100 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
+                          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm font-semibold text-amber-700 transition-all hover:border-amber-300 hover:bg-amber-100 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] disabled:cursor-not-allowed disabled:opacity-40"
                           >
                             <Search size={15} />
                             {language === 'zh' ? '介入调查' : 'Investigate'}
                           </button>
                           <button
                             onClick={() => onOpenMaintenanceForAlert?.(selectedItem)}
-                            className="inline-flex items-center justify-center gap-2 rounded-xl border border-black/8 bg-white px-4 py-2.5 text-sm font-semibold text-[#164e63] transition-all hover:border-black/15 hover:bg-black/[0.03] active:scale-[0.98]"
+                          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-[var(--ui-border)] bg-[var(--ui-surface)] px-4 py-2.5 text-sm font-semibold text-[var(--ui-fg)] transition-all hover:bg-[var(--ui-surface-muted)] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)]"
                           >
                             <Wrench size={15} />
                             {language === 'zh' ? '维护抑制' : 'Suppress'}
@@ -907,13 +1005,15 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
 
                       {/* Assignee */}
                       <div className="rounded-xl border border-black/[0.06] bg-[#fafbfc] p-4">
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-black/30">{language === 'zh' ? '责任人' : 'Assignee'}</p>
-                        <div className="mt-2 flex gap-2">
+                        <label htmlFor="alert-assignee" className="block text-xs font-semibold text-[var(--ui-fg-muted)]">{language === 'zh' ? '责任人' : 'Assignee'}</label>
+                        <div className="mt-2 flex flex-col gap-2 sm:flex-row">
                           <input
+                            id="alert-assignee"
+                            type="text"
                             value={assignValue}
                             onChange={(e) => setAssignValue(e.target.value)}
                             placeholder={language === 'zh' ? '输入用户名' : 'Enter username'}
-                            className="flex-1 rounded-lg border border-black/10 bg-white px-3 py-2.5 text-sm text-[#164e63] outline-none placeholder:text-black/25 focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100 transition-shadow"
+                            className="min-h-10 min-w-0 flex-1 rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface)] px-3 py-2.5 text-sm text-[var(--ui-fg)] outline-none placeholder:text-[var(--ui-fg-subtle)] focus:border-[var(--ui-accent)] focus:ring-2 focus:ring-[var(--ui-accent)]/15 transition-shadow"
                           />
                           <button
                             disabled={actionLoading === 'assign' || !assignValue.trim()}
@@ -928,8 +1028,9 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
 
                       {/* Response note */}
                       <div>
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-black/30">{language === 'zh' ? '处置备注' : 'Response Note'}</p>
+                        <label htmlFor="alert-response-note" className="block text-xs font-semibold text-[var(--ui-fg-muted)]">{language === 'zh' ? '处置备注' : 'Response Note'}</label>
                         <textarea
+                          id="alert-response-note"
                           value={detailNote}
                           onChange={(e) => setDetailNote(e.target.value)}
                           rows={3}
@@ -975,11 +1076,11 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                                   <div className="min-w-0 flex-1">
                                     <div className="flex items-center gap-1.5">
                                       <span className="truncate text-[13px] font-medium text-[#164e63]">{tl.title}</span>
-                                      <span className={`inline-flex flex-shrink-0 rounded-md px-1.5 py-0.5 text-[9px] font-bold uppercase ${severityBadgeClass(tl.severity)}`}>
+                                      <span className={`inline-flex flex-shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-bold uppercase ${severityBadgeClass(tl.severity)}`}>
                                         {severityLabel(tl.severity, language)}
                                       </span>
                                       {isCurrent && (
-                                        <span className="flex-shrink-0 rounded bg-cyan-100 px-1.5 py-0.5 text-[9px] font-bold text-cyan-700">
+                                        <span className="flex-shrink-0 rounded bg-cyan-100 px-1.5 py-0.5 text-[11px] font-bold text-cyan-700">
                                           {language === 'zh' ? '当前' : 'Current'}
                                         </span>
                                       )}

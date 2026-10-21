@@ -6,6 +6,7 @@ import PageHero from '../components/PageHero';
 import { ActionButton } from '../components/ui/ActionIconButton';
 import { IconInputField } from '../components/ui/IconInputField';
 import { useEscapeClose } from '../hooks/useEscapeClose';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 import { formatMacAddress } from '../utils/resourceFormatters';
 import {
   formatMacLookupMessage,
@@ -741,7 +742,8 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language, t, mode }) => {
 
   // ── NSOT Collection Policy Modal state ──
   const [nsotPolicyModalOpen, setNsotPolicyModalOpen] = useState(false);
-  useEscapeClose(nsotPolicyModalOpen, () => setNsotPolicyModalOpen(false));
+  const nsotPolicyModalRef = useRef<HTMLDivElement>(null);
+  const nsotPolicyModalTriggerRef = useRef<HTMLButtonElement>(null);
   const [nsotPlans, setNsotPlans] = useState<NsotPlanRow[]>([]);
   const [nsotSelectedPlanDeviceId, setNsotSelectedPlanDeviceId] = useState('');
   const [nsotPlansLoading, setNsotPlansLoading] = useState(false);
@@ -851,6 +853,9 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language, t, mode }) => {
     setNsotPlansLoading(false);
     setNsotPolicyModalOpen(false);
   };
+
+  useEscapeClose(nsotPolicyModalOpen, closeNsotPlanModal);
+  useFocusTrap(nsotPolicyModalRef, nsotPolicyModalOpen, '#nsot-plan-ip', nsotPolicyModalTriggerRef);
 
   const updateNsotCollectionPlan = useCallback(async (collector: string, enabled: boolean) => {
     const current = nsotPlans.find((row) => String(row.device?.id) === nsotSelectedPlanDeviceId);
@@ -1432,10 +1437,6 @@ ${rep.repair_commands}
     void doLocate(requestedIp);
   }, [doLocate, mode, requestedIp]);
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !loading) doLocate();
-  };
-
   // ── Probe function ──
   const doProbe = useCallback(async () => {
     const trimmed = probeIp.trim();
@@ -1510,44 +1511,54 @@ ${rep.repair_commands}
         subtitle={mode === 'diagnose-only' ? (zh ? '网络协议与路径全链条故障排查与一键式诊断' : 'End-to-end network protocol and path diagnostics') : mode === 'nsot-only' ? (zh ? '全网终端事实库、IP 资产明细与路由缓存离线数据库' : 'IP endpoints, inventory assets, and route cache database') : (zh ? 'IP 地址定位 · 连通性探测 · 全链路诊断' : 'IP Locate · Connectivity Probe · Full-path Diagnostics')}
       />
 
-      <div className={`flex-1 min-h-0 px-6 py-5 space-y-5 ${activeTab === 'arp-table' ? 'flex flex-col overflow-hidden' : 'overflow-auto'}`}>
+      <div className={`flex-1 min-h-0 px-4 py-4 sm:px-6 sm:py-5 space-y-5 ${activeTab === 'arp-table' ? 'flex flex-col overflow-hidden' : 'overflow-auto'}`}>
       {/* ── Tab Bar ── */}
       {mode !== 'diagnose-only' && mode !== 'nsot-only' && (
-        <div className="flex gap-1 bg-black/[0.03] dark:bg-white/[0.04] rounded-xl p-1 w-fit">
+        <div role="group" aria-label={zh ? 'IP 定位工具视图' : 'IP locator views'} className="flex w-fit max-w-full flex-wrap gap-1 bg-black/[0.03] dark:bg-white/[0.04] rounded-xl p-1">
           {mode !== 'toolbox' && (
             <button
+              type="button"
+              aria-pressed={activeTab === 'diagnose'}
               onClick={() => setActiveTab('diagnose')}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'diagnose' ? 'bg-white dark:bg-white/[0.08] text-[#164e63] dark:text-[var(--app-text)] shadow-sm' : 'text-black/40 dark:text-white/40 hover:text-black/60 dark:hover:text-white/60'}`}
+              className={`min-h-10 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all flex items-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] ${activeTab === 'diagnose' ? 'bg-white dark:bg-white/[0.08] text-[#164e63] dark:text-[var(--app-text)] shadow-sm' : 'text-black/40 dark:text-white/40 hover:text-black/60 dark:hover:text-white/60'}`}
             >
               <ShieldAlert size={14} className="text-rose-500" />
               {zh ? 'NPA 智能路径诊断' : 'NPA Path Diagnostics'}
             </button>
           )}
           <button
+            type="button"
+            aria-pressed={activeTab === 'locate'}
             onClick={() => setActiveTab('locate')}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'locate' ? 'bg-white dark:bg-white/[0.08] text-[#164e63] dark:text-[var(--app-text)] shadow-sm' : 'text-black/40 dark:text-white/40 hover:text-black/60 dark:hover:text-white/60'}`}
+            className={`min-h-10 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all flex items-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] ${activeTab === 'locate' ? 'bg-white dark:bg-white/[0.08] text-[#164e63] dark:text-[var(--app-text)] shadow-sm' : 'text-black/40 dark:text-white/40 hover:text-black/60 dark:hover:text-white/60'}`}
           >
             <MapPin size={14} />
             {zh ? 'IP 定位' : 'IP Locate'}
           </button>
           <button
+            type="button"
+            aria-pressed={activeTab === 'probe'}
             onClick={() => setActiveTab('probe')}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'probe' ? 'bg-white dark:bg-white/[0.08] text-[#164e63] dark:text-[var(--app-text)] shadow-sm' : 'text-black/40 dark:text-white/40 hover:text-black/60 dark:hover:text-white/60'}`}
+            className={`min-h-10 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all flex items-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] ${activeTab === 'probe' ? 'bg-white dark:bg-white/[0.08] text-[#164e63] dark:text-[var(--app-text)] shadow-sm' : 'text-black/40 dark:text-white/40 hover:text-black/60 dark:hover:text-white/60'}`}
           >
             <Activity size={14} />
             {zh ? '连通性探测' : 'Connectivity Probe'}
           </button>
           <button
+            type="button"
+            aria-pressed={activeTab === 'arp-table'}
             onClick={() => setActiveTab('arp-table')}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'arp-table' ? 'bg-white dark:bg-white/[0.08] text-[#164e63] dark:text-[var(--app-text)] shadow-sm' : 'text-black/40 dark:text-white/40 hover:text-black/60 dark:hover:text-white/60'}`}
+            className={`min-h-10 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all flex items-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] ${activeTab === 'arp-table' ? 'bg-white dark:bg-white/[0.08] text-[#164e63] dark:text-[var(--app-text)] shadow-sm' : 'text-black/40 dark:text-white/40 hover:text-black/60 dark:hover:text-white/60'}`}
           >
             <Database size={14} />
             {zh ? 'ARP 表' : 'ARP Table'}
             {arpTable && <span className="text-[10px] bg-[#06b6d4]/10 text-[#0891b2] rounded-full px-1.5 py-0.5 font-mono">{arpTable.total}</span>}
           </button>
           <button
+            type="button"
+            aria-pressed={activeTab === 'mac-changes'}
             onClick={() => setActiveTab('mac-changes')}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'mac-changes' ? 'bg-white dark:bg-white/[0.08] text-[#164e63] dark:text-[var(--app-text)] shadow-sm' : 'text-black/40 dark:text-white/40 hover:text-black/60 dark:hover:text-white/60'}`}
+            className={`min-h-10 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all flex items-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] ${activeTab === 'mac-changes' ? 'bg-white dark:bg-white/[0.08] text-[#164e63] dark:text-[var(--app-text)] shadow-sm' : 'text-black/40 dark:text-white/40 hover:text-black/60 dark:hover:text-white/60'}`}
           >
             <RefreshCw size={14} />
             {zh ? 'MAC 变更' : 'MAC Changes'}
@@ -1561,36 +1572,54 @@ ${rep.repair_commands}
       {/* ────────────────────────────────────── */}
       {activeTab === 'locate' && (<>
       {/* ── Search Card ── */}
-      <div className="bg-white rounded-2xl border border-black/5 shadow-sm p-5">
-        <div className="flex items-center gap-3">
-          <div className="relative flex-1 max-w-lg">
+      <div className="bg-white rounded-2xl border border-black/5 shadow-sm p-4 sm:p-5">
+        <form
+          className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center"
+          aria-busy={loading}
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!loading) void doLocate();
+          }}
+        >
+          <div className="relative w-full min-w-0 sm:flex-1 sm:max-w-lg">
             <MapPin size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#0891b2]" />
+            <label htmlFor="ip-locator-search" className="sr-only">{zh ? 'IP 地址' : 'IP address'}</label>
             <input
+              id="ip-locator-search"
               type="text"
               value={ip}
               onChange={e => setIp(e.target.value)}
-              onKeyDown={handleKeyDown}
+              aria-describedby="ip-locator-search-help"
               placeholder={zh ? '输入 IP 地址，如 10.1.1.100 或 192.168.1.1' : 'Enter IP address, e.g. 10.1.1.100'}
               className="w-full pl-10 pr-4 py-3 rounded-xl border border-black/10 text-sm bg-white focus:ring-2 focus:ring-[#06b6d4]/30 focus:border-[#06b6d4] outline-none transition-all placeholder:text-black/30"
               autoFocus
             />
           </div>
+          <button
+            type="submit"
+            disabled={loading || !ip.trim()}
+              className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#0891b2] px-4 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#0e7490] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto"
+          >
+            {loading ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
+            {zh ? '定位' : 'Locate'}
+          </button>
           {result?.mac && result.mac !== 'N/A' && (
             <button
+              type="button"
               onClick={() => doLocate(undefined, true)}
               disabled={loading}
               title={zh ? '跳过缓存，从设备实时采集最新数据' : 'Skip cache and query devices in real-time'}
-              className="px-3 py-3 rounded-xl border border-amber-300 dark:border-amber-500/30 text-amber-600 dark:text-amber-400 text-sm hover:bg-amber-50 dark:hover:bg-amber-500/10 disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-1.5 font-medium"
+              className="inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-xl border border-amber-300 px-3 py-3 text-sm font-medium text-amber-600 transition-all hover:bg-amber-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 disabled:cursor-not-allowed disabled:opacity-40 dark:border-amber-500/30 dark:text-amber-400 dark:hover:bg-amber-500/10 sm:w-auto"
             >
               <RotateCcw size={14} />
               {zh ? '实时刷新' : 'Refresh'}
             </button>
           )}
-        </div>
+        </form>
 
         {/* Inline tips */}
-        <div className="flex items-center gap-4 mt-3 text-[11px] text-black/30">
-          <span>{zh ? '回车键快速查询' : 'Press Enter to search'}</span>
+        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-black/45">
+          <span id="ip-locator-search-help">{zh ? '按回车或点击“定位”开始查询' : 'Press Enter or select Locate to search'}</span>
           <span>·</span>
           <span>{zh ? '流程：ARP 表查 MAC → MAC 表查端口 → LLDP 查上联' : 'Flow: ARP→MAC→Switch Port→LLDP Uplink'}</span>
         </div>
@@ -1598,7 +1627,7 @@ ${rep.repair_commands}
 
       {/* ── Loading ── */}
       {loading && (
-        <div className="bg-[#ecfeff]/60 dark:bg-cyan-500/5 border border-[#06b6d4]/20 rounded-2xl px-6 py-5">
+        <div role="status" aria-live="polite" className="bg-[#ecfeff]/60 dark:bg-cyan-500/5 border border-[#06b6d4]/20 rounded-2xl px-6 py-5">
           <div className="flex items-center gap-3">
             <Loader2 size={20} className="animate-spin text-[#0891b2]" />
             <div>
@@ -1615,7 +1644,7 @@ ${rep.repair_commands}
 
       {/* ── Error ── */}
       {error && !loading && (
-        <div className="bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-2xl px-5 py-4 flex items-start gap-3">
+        <div role="alert" className="bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-2xl px-5 py-4 flex items-start gap-3">
           <AlertCircle size={18} className="text-red-500 mt-0.5 flex-shrink-0" />
           <div>
             <p className="text-sm font-semibold text-red-700 dark:text-red-300">{zh ? '查询失败' : 'Locate Failed'}</p>
@@ -2676,7 +2705,12 @@ ${rep.repair_commands}
           {zh ? '高级搜索' : 'Advanced'}
         </button>
         <button
+          ref={nsotPolicyModalTriggerRef}
+          type="button"
           onClick={openNsotPlanModal}
+          aria-haspopup="dialog"
+          aria-expanded={nsotPolicyModalOpen}
+          aria-controls={nsotPolicyModalOpen ? 'nsot-policy-modal' : undefined}
           className="flex items-center gap-1.5 px-3.5 py-2 bg-white dark:bg-[#1f2937]/30 border border-black/5 dark:border-white/5 text-black/70 dark:text-white/70 hover:bg-black/[0.02] dark:hover:bg-white/[0.02] rounded-xl text-sm font-medium transition-colors"
           title={zh ? '为各设备选择 NSOT 采集模板' : 'Choose an NSOT collection template per device'}
         >
@@ -4728,7 +4762,15 @@ ${rep.repair_commands}
       {/* ── NSOT Collection Policy Modal ── */}
       {nsotPolicyModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="bg-white dark:bg-[#0f172a] rounded-2xl border border-black/10 dark:border-white/10 shadow-2xl w-full max-w-4xl max-h-[88vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+          <div
+            ref={nsotPolicyModalRef}
+            id="nsot-policy-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="nsot-policy-modal-title"
+            tabIndex={-1}
+            className="bg-white dark:bg-[#0f172a] rounded-2xl border border-black/10 dark:border-white/10 shadow-2xl w-full max-w-4xl max-h-[88vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200"
+          >
             {/* Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-black/5 dark:border-white/10 bg-slate-50/50 dark:bg-slate-900/50">
               <div className="flex items-center gap-3">
@@ -4736,7 +4778,7 @@ ${rep.repair_commands}
                   <Sliders size={18} />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                  <h3 id="nsot-policy-modal-title" className="text-base font-bold text-slate-900 dark:text-white">
                     {zh ? 'NSOT 设备采集模板' : 'NSOT Device Collection Templates'}
                   </h3>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
@@ -4745,7 +4787,10 @@ ${rep.repair_commands}
                 </div>
               </div>
               <button
+                type="button"
                 onClick={closeNsotPlanModal}
+                aria-label={zh ? '关闭采集模板' : 'Close collection templates'}
+                title={zh ? '关闭' : 'Close'}
                 className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
               >
                 <X size={18} />
@@ -4998,6 +5043,7 @@ ${rep.repair_commands}
             {/* Footer */}
             <div className="flex items-center justify-end px-6 py-3.5 border-t border-black/5 dark:border-white/10 bg-slate-50/50 dark:bg-slate-900/50">
               <button
+                type="button"
                 onClick={closeNsotPlanModal}
                 className="px-5 py-2 rounded-xl text-xs font-bold bg-[#06b6d4] hover:bg-[#0891b2] text-white shadow-md shadow-cyan-500/20 transition-all active:scale-95"
               >

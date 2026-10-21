@@ -6,6 +6,7 @@ import PageHero from '../components/PageHero';
 import { DataTable } from '../components/DataTable';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
 import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 import { authHeaders } from '../api/http';
 import { fetchAllPaginatedItems } from '../utils/pagination';
 import { buildBackupRunExportData } from './configBackupExport';
@@ -141,7 +142,7 @@ interface DateRangeCalendarProps {
   onChange: (start: string, end: string) => void;
 }
 
-const DateRangeCalendar: React.FC<DateRangeCalendarProps> = ({ start, end, today, zh, onChange }) => {
+export const DateRangeCalendar: React.FC<DateRangeCalendarProps> = ({ start, end, today, zh, onChange }) => {
   const initialMonth = (start || end || today).slice(0, 7);
   const [viewMonth, setViewMonth] = useState(initialMonth);
   const [selectingEnd, setSelectingEnd] = useState(Boolean(start && !end));
@@ -169,11 +170,13 @@ const DateRangeCalendar: React.FC<DateRangeCalendarProps> = ({ start, end, today
     else onChange(start, key);
     setSelectingEnd(false);
   };
-  const quickRange = (days: number) => {
-    const endDate = new Date(`${today}T00:00:00`);
-    const startDate = new Date(endDate);
+  const quickRangeStart = (days: number) => {
+    const startDate = new Date(`${today}T00:00:00`);
     startDate.setDate(startDate.getDate() - days + 1);
-    const startKey = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-${String(startDate.getDate()).padStart(2, '0')}`;
+    return `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-${String(startDate.getDate()).padStart(2, '0')}`;
+  };
+  const quickRange = (days: number) => {
+    const startKey = quickRangeStart(days);
     onChange(startKey, today);
     setViewMonth(startKey.slice(0, 7));
     setSelectingEnd(false);
@@ -182,13 +185,13 @@ const DateRangeCalendar: React.FC<DateRangeCalendarProps> = ({ start, end, today
   const quickRangeLabel = (days: number) => zh ? `\u8fd1${days}\u5929` : `Last ${days}d`;
   const clearLabel = zh ? '\u6e05\u9664' : 'Clear';
   return (
-    <div className="mt-3 rounded-2xl border border-black/5 bg-slate-50/80 p-3">
+    <div role="group" aria-label={zh ? '日期范围选择' : 'Date range selection'} className="mt-3 rounded-2xl border border-[var(--ui-border)] bg-[var(--ui-surface-muted)] p-3 text-[var(--ui-fg)]">
       <div className="flex items-center justify-between">
-        <button type="button" onClick={() => moveMonth(-1)} className="rounded-lg p-1.5 text-black/45 hover:bg-white hover:text-[#0e7490]" aria-label="Previous month"><ChevronLeft size={14} /></button>
-        <span className="text-xs font-bold text-[#164e63]">{monthLabel}</span>
-        <button type="button" disabled={viewMonth >= currentMonth} onClick={() => moveMonth(1)} className="rounded-lg p-1.5 text-black/45 hover:bg-white hover:text-[#0e7490] disabled:cursor-default disabled:opacity-25" aria-label="Next month"><ChevronRight size={14} /></button>
+        <button type="button" onClick={() => moveMonth(-1)} className="min-h-9 min-w-9 rounded-lg p-1.5 text-[var(--ui-fg-muted)] hover:bg-[var(--ui-surface)] hover:text-[var(--ui-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)]" aria-label={zh ? '上个月' : 'Previous month'}><ChevronLeft size={14} /></button>
+        <span aria-live="polite" aria-atomic="true" className="text-xs font-bold text-[var(--ui-fg)]">{monthLabel}</span>
+        <button type="button" disabled={viewMonth >= currentMonth} onClick={() => moveMonth(1)} className="min-h-9 min-w-9 rounded-lg p-1.5 text-[var(--ui-fg-muted)] hover:bg-[var(--ui-surface)] hover:text-[var(--ui-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] disabled:cursor-default disabled:opacity-25" aria-label={zh ? '下个月' : 'Next month'}><ChevronRight size={14} /></button>
       </div>
-      <div className="mt-2 grid grid-cols-7 text-center text-[10px] font-semibold text-black/35">
+      <div className="mt-2 grid grid-cols-7 text-center text-[10px] font-semibold text-[var(--ui-fg-subtle)]">
         {calendarWeekdayLabels.map((label) => <span key={label} className="py-1">{label}</span>)}
       </div>
       <div className="grid grid-cols-7 gap-1 text-center">
@@ -196,12 +199,13 @@ const DateRangeCalendar: React.FC<DateRangeCalendarProps> = ({ start, end, today
           const disabled = !key || key > today;
           const selected = key === start || key === end;
           const inRange = Boolean(key && start && end && key > start && key < end);
-          return <button key={`${key}-${index}`} type="button" disabled={disabled} onClick={() => chooseDay(key)} className={`h-7 rounded-lg text-[11px] transition ${disabled ? 'cursor-default text-black/15' : selected ? 'bg-[#0e7490] font-bold text-white shadow-sm' : inRange ? 'bg-cyan-100 text-[#164e63]' : 'text-black/60 hover:bg-white hover:text-[#0e7490]'}`}>{key ? Number(key.slice(-2)) : ''}</button>;
+          const dateLabel = key ? new Date(`${key}T00:00:00`).toLocaleDateString(zh ? 'zh-CN' : 'en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : undefined;
+          return <button key={`${key}-${index}`} type="button" disabled={disabled} onClick={() => chooseDay(key)} aria-label={dateLabel} aria-current={key === today ? 'date' : undefined} aria-pressed={selected} className={`min-h-9 rounded-lg text-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] ${disabled ? 'cursor-default text-[var(--ui-fg-subtle)] opacity-40' : selected ? 'bg-[var(--ui-accent)] font-bold text-white shadow-sm' : inRange ? 'bg-[var(--ui-accent-subtle)] text-[var(--ui-accent)]' : 'text-[var(--ui-fg)] hover:bg-[var(--ui-surface)] hover:text-[var(--ui-accent)]'}`}>{key ? Number(key.slice(-2)) : ''}</button>;
         })}
       </div>
-      <div className="mt-3 flex flex-wrap gap-1.5 border-t border-black/5 pt-2">
-        {[7, 30, 90].map((days) => <button key={days} type="button" onClick={() => quickRange(days)} className="rounded-lg bg-white px-2 py-1 text-[10px] font-semibold text-[#0e7490] shadow-sm hover:bg-cyan-50">{quickRangeLabel(days)}</button>)}
-        <button type="button" onClick={() => { onChange('', ''); setSelectingEnd(false); }} className="ml-auto rounded-lg px-2 py-1 text-[10px] font-semibold text-black/40 hover:bg-white">{clearLabel}</button>
+      <div className="mt-3 flex flex-wrap gap-1.5 border-t border-[var(--ui-border)] pt-2">
+        {[7, 30, 90].map((days) => <button key={days} type="button" aria-pressed={start === quickRangeStart(days) && end === today} onClick={() => quickRange(days)} className="min-h-9 rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface)] px-2.5 py-1 text-xs font-semibold text-[var(--ui-accent)] shadow-sm hover:bg-[var(--ui-surface-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)]">{quickRangeLabel(days)}</button>)}
+        <button type="button" onClick={() => { onChange('', ''); setSelectingEnd(false); }} className="ml-auto min-h-9 rounded-lg px-2.5 py-1 text-xs font-semibold text-[var(--ui-fg-muted)] hover:bg-[var(--ui-surface)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)]">{clearLabel}</button>
       </div>
     </div>
   );
@@ -235,6 +239,12 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
   const [dateDraftStart, setDateDraftStart] = useState('');
   const [dateDraftEnd, setDateDraftEnd] = useState('');
   const [dateRangeOpen, setDateRangeOpen] = useState(false);
+  const dateRangeTriggerRef = useRef<HTMLButtonElement>(null);
+  const closeDateRange = useCallback(() => {
+    setDateRangeOpen(false);
+    window.requestAnimationFrame(() => dateRangeTriggerRef.current?.focus());
+  }, []);
+  useEscapeClose(dateRangeOpen, closeDateRange);
   const [showHistory, setShowHistory] = useState(true);
   const localToday = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
   const backupDateQuery = backupStartDate && backupEndDate
@@ -1317,18 +1327,29 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
           <div className="flex items-center gap-2">
             <div className="relative">
               <button
+                ref={dateRangeTriggerRef}
                 type="button"
-                onClick={() => { setDateDraftStart(backupStartDate); setDateDraftEnd(backupEndDate); setDateRangeOpen((open) => !open); }}
-                className={`inline-flex h-9 items-center gap-2 rounded-xl border px-3 text-xs font-semibold transition ${backupStartDate || backupEndDate ? 'border-cyan-300 bg-cyan-50 text-[#0e7490]' : 'border-black/10 bg-white text-black/50 hover:bg-cyan-50'}`}
+                onClick={() => {
+                  if (dateRangeOpen) {
+                    closeDateRange();
+                    return;
+                  }
+                  setDateDraftStart(backupStartDate);
+                  setDateDraftEnd(backupEndDate);
+                  setDateRangeOpen(true);
+                }}
+                className={`inline-flex h-9 items-center gap-2 rounded-xl border px-3 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] ${backupStartDate || backupEndDate ? 'border-[var(--ui-accent)] bg-[var(--ui-accent-subtle)] text-[var(--ui-accent)]' : 'border-[var(--ui-border)] bg-[var(--ui-surface)] text-[var(--ui-fg-muted)] hover:bg-[var(--ui-surface-muted)]'}`}
                 aria-expanded={dateRangeOpen}
+                aria-haspopup="dialog"
+                aria-controls={dateRangeOpen ? 'backup-date-range-dialog' : undefined}
               >
                 <CalendarDays size={13} className="text-cyan-600" />
                 <span>{backupStartDate && backupEndDate ? `${backupStartDate} — ${backupEndDate}` : backupStartDate || backupEndDate || (zh ? '选择日期范围' : 'Select date range')}</span>
                 <ChevronDown size={13} className={dateRangeOpen ? 'rotate-180 transition-transform' : 'transition-transform'} />
               </button>
               {dateRangeOpen && (
-                <div className="absolute right-0 z-30 mt-2 w-[310px] rounded-2xl border border-black/10 bg-white p-4 shadow-[0_18px_40px_rgba(11,35,64,0.16)]">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-black/35">{zh ? '备份批次时间范围' : 'BACKUP DATE RANGE'}</p>
+                <div id="backup-date-range-dialog" role="dialog" aria-label={zh ? '备份批次时间范围' : 'Backup batch date range'} className="absolute right-0 z-30 mt-2 max-h-[min(80vh,560px)] w-[min(310px,calc(100vw_-_2rem))] overflow-y-auto rounded-2xl border border-[var(--ui-border)] bg-[var(--ui-surface)] p-4 text-[var(--ui-fg)] shadow-[0_18px_40px_rgba(11,35,64,0.16)]">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--ui-fg-subtle)]">{zh ? '备份批次时间范围' : 'BACKUP DATE RANGE'}</p>
                   <DateRangeCalendar start={dateDraftStart} end={dateDraftEnd} today={localToday} zh={zh} onChange={(nextStart, nextEnd) => { setDateDraftStart(nextStart); setDateDraftEnd(nextEnd); setBackupStartDate(nextStart); setBackupEndDate(nextEnd); setRunsPage(1); }} />
                   <div className="hidden mt-3 grid grid-cols-2 gap-2">
                     <label className="text-[11px] font-semibold text-black/50">
@@ -1342,7 +1363,7 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
                   </div>
                   <div className="mt-3 flex items-center justify-between gap-2">
                     <span className="text-[10px] text-black/35">{zh ? '留空一侧可查询单边日期' : 'Leave one side empty for an open range'}</span>
-                    <button type="button" onClick={() => { setRunsPage(1); setDateRangeOpen(false); }} className="rounded-xl bg-[#0e7490] px-3 py-2 text-[11px] font-semibold text-white hover:bg-[#155e75]">{zh ? '完成' : 'Done'}</button>
+                    <ActionButton type="button" variant="primary" size="sm" onClick={() => { setRunsPage(1); closeDateRange(); }}>{zh ? '完成' : 'Done'}</ActionButton>
                   </div>
                 </div>
               )}

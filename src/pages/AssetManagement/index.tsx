@@ -21,6 +21,8 @@ import TagFilterDropdown from '../../components/TagFilterDropdown';
 import { ColumnSettingsButton, ListSearchInput, ListToolbar } from '../../components/ui/TableListControls';
 import { ApiError, apiRequest, authHeaders } from '../../api/http';
 import { useSystem } from '../../hooks/useSystem';
+import { useEscapeClose } from '../../hooks/useEscapeClose';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { formatTerminalAgentError, getLocalTerminalConfig, TERMINAL_APP_LABELS } from '../../utils/localTerminal';
 import { useInventoryStore } from '../../store/inventoryStore';
 import type { TagDefinition } from '../../types';
@@ -396,6 +398,9 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const [deleteError, setDeleteError]   = useState<string | null>(null);
   const [showProductionConfirm, setShowProductionConfirm] = useState(false);
   const [showBatchTakeoverConfirm, setShowBatchTakeoverConfirm] = useState(false);
+  const batchTakeoverDialogRef = React.useRef<HTMLDivElement>(null);
+  const batchTakeoverDialogTitleId = React.useId();
+  const batchTakeoverDialogDescriptionId = React.useId();
   const [modalError, setModalError] = useState<string | null>(null);
   const [showEnableSecret, setShowEnableSecret] = useState(false);
   const [showAdvancedFilter, setShowAdvancedFilter] = useState(false);
@@ -413,6 +418,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const [pendingImportPayload, setPendingImportPayload] = useState<any[]>([]);
   const [validationModalSaving, setValidationModalSaving] = useState(false);
   const [allTags, setAllTags] = useState<TagDefinition[]>([]);
+  useEscapeClose(showBatchTakeoverConfirm, () => setShowBatchTakeoverConfirm(false));
+  useFocusTrap(batchTakeoverDialogRef, showBatchTakeoverConfirm, '[data-batch-takeover-cancel]');
   const fetchAllRacks = useCallback(async () => {
     try {
       const data = await apiRequest<{ success?: boolean; data?: unknown }>('/api/racks');
@@ -536,13 +543,6 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   useEffect(() => { fetchSites(); }, [fetchSites]);
   useEffect(() => { fetchAssets(); }, [fetchAssets]);
   useEffect(() => { setPage(1); }, [search, typeFilter, statusFilter, vendorFilter, dcFilter, deptFilter, deviceCategoryFilter, lifecycleFilter, tagFilter, pageSize, severityFilter]);
-
-  useEffect(() => {
-    if (!drawerAsset) return;
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') setDrawerAsset(null); };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [drawerAsset]);
 
   useEffect(() => {
     if (!feedbackMsg) return;
@@ -2690,20 +2690,29 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       {showBatchTakeoverConfirm && (
         <div className="fixed inset-0 z-[230] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-slate-950/45 backdrop-blur-sm" onClick={() => setShowBatchTakeoverConfirm(false)} />
-          <motion.div initial={{ opacity: 0, scale: 0.96, y: 8 }} animate={{ opacity: 1, scale: 1, y: 0 }} className="relative w-full max-w-md rounded-2xl border border-black/10 bg-white p-5 shadow-2xl">
+          <motion.div
+            ref={batchTakeoverDialogRef}
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby={batchTakeoverDialogTitleId}
+            aria-describedby={batchTakeoverDialogDescriptionId}
+            initial={{ opacity: 0, scale: 0.96, y: 8 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            className="nx-form-dialog-surface relative w-full max-w-md p-5 shadow-2xl"
+          >
             <div className="flex items-start gap-3">
               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-cyan-50 text-cyan-600"><Shield size={18} /></div>
               <div>
-                <h3 className="text-base font-bold text-slate-800">{zh ? '确认批量口令上收' : 'Confirm batch takeover'}</h3>
-                <p className="mt-1 text-xs leading-5 text-slate-500">{zh ? `将检查并处理已选择的 ${selectedIds.size} 台资产。已绑定凭据的设备会自动跳过，不会修改设备口令。` : `The selected ${selectedIds.size} asset(s) will be checked and processed. Credential-bound devices will be skipped without changing their passwords.`}</p>
+                <h3 id={batchTakeoverDialogTitleId} className="text-base font-bold">{zh ? '确认批量口令上收' : 'Confirm batch takeover'}</h3>
+                <p id={batchTakeoverDialogDescriptionId} className="mt-1 text-xs leading-5 text-[var(--ui-fg-muted)]">{zh ? `将检查并处理已选择的 ${selectedIds.size} 台资产。已绑定凭据的设备会自动跳过，不会修改设备口令。` : `The selected ${selectedIds.size} asset(s) will be checked and processed. Credential-bound devices will be skipped without changing their passwords.`}</p>
               </div>
             </div>
-            <div className="mt-4 rounded-xl border border-cyan-100 bg-cyan-50/70 px-3 py-2 text-[11px] leading-5 text-cyan-800">
+            <div className="mt-4 rounded-xl border border-[var(--ui-border)] bg-[var(--ui-accent-subtle)] px-3 py-2 text-[11px] leading-5 text-[var(--ui-fg)]">
               {zh ? '未绑定凭据的设备才会进入后台上收，并在下方显示逐设备结果。' : 'Only unbound devices enter the background takeover task; per-device results will appear below.'}
             </div>
-            <div className="mt-5 flex justify-end gap-2 border-t border-black/5 pt-4">
-              <button type="button" onClick={() => setShowBatchTakeoverConfirm(false)} className="h-9 rounded-xl border border-black/10 px-4 text-sm font-semibold text-slate-500 hover:bg-slate-50">{zh ? '取消' : 'Cancel'}</button>
-              <button type="button" onClick={() => { setShowBatchTakeoverConfirm(false); void handleBatchTakeover(); }} className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-cyan-500 px-4 text-sm font-semibold text-white shadow-sm hover:bg-cyan-600"><Shield size={14} />{zh ? '确认上收' : 'Start takeover'}</button>
+            <div className="nx-form-dialog-footer -mx-5 -mb-5 mt-5 flex justify-end gap-2 px-5 py-3">
+              <button type="button" data-batch-takeover-cancel onClick={() => setShowBatchTakeoverConfirm(false)} className="nx-dialog-action-secondary rounded-xl border px-4 py-2 text-sm font-semibold">{zh ? '取消' : 'Cancel'}</button>
+              <button type="button" onClick={() => { setShowBatchTakeoverConfirm(false); void handleBatchTakeover(); }} className="nx-dialog-action-primary inline-flex items-center gap-1.5 rounded-xl border px-4 py-2 text-sm font-semibold"><Shield size={14} />{zh ? '确认上收' : 'Start takeover'}</button>
             </div>
           </motion.div>
         </div>

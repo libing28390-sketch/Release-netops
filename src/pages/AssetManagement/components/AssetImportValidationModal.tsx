@@ -3,6 +3,7 @@ import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { AlertTriangle, Shield, Check, ArrowRight, X } from 'lucide-react';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
+import { useFocusTrap } from '../../../hooks/useFocusTrap';
 
 export interface MissingRackInfo {
   datacenter: string;
@@ -36,7 +37,10 @@ export const AssetImportValidationModal: React.FC<AssetImportValidationModalProp
   onConfirm,
   saving,
 }) => {
+  const dialogRef = React.useRef<HTMLDivElement>(null);
+  const dialogTitleId = React.useId();
   useEscapeClose(isOpen, onClose);
+  useFocusTrap(dialogRef, isOpen, 'select');
   const zh = language === 'zh';
   
   // Key format: "datacenter|rack"
@@ -91,21 +95,25 @@ export const AssetImportValidationModal: React.FC<AssetImportValidationModalProp
         onClick={onClose}
       >
         <motion.div
-          className="bg-white rounded-2xl w-[680px] max-w-[95vw] h-[80vh] shadow-2xl flex flex-col relative overflow-hidden border border-black/5"
+          ref={dialogRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={dialogTitleId}
+          className="nx-form-dialog-surface flex h-[80vh] w-[680px] max-w-[95vw] flex-col overflow-hidden rounded-xl border"
           onClick={e => e.stopPropagation()}
           initial={{ scale: 0.98, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           exit={{ scale: 0.98, opacity: 0 }}
         >
           {/* Header */}
-          <div className="shrink-0 px-5 py-4 border-b border-black/5 bg-amber-50 flex items-center justify-between">
+          <div className="nx-dialog-header shrink-0 flex items-center justify-between border-b px-5 py-4">
             <div className="flex items-center gap-2">
-              <AlertTriangle className="text-amber-500" size={18} />
-              <h3 className="text-sm font-bold text-amber-900">
+              <AlertTriangle className="text-[var(--ui-warning)]" size={18} />
+              <h3 id={dialogTitleId} className="text-sm font-bold text-[var(--ui-warning)]">
                 {zh ? '导入数据校验：发现未注册机柜' : 'Import Verification: Missing Racks Found'}
               </h3>
             </div>
-            <button onClick={onClose} className="p-1 rounded-md hover:bg-black/5 text-black/25">
+            <button type="button" onClick={onClose} aria-label={zh ? '关闭' : 'Close'} className="p-1 rounded-md hover:bg-black/5 text-black/25">
               <X size={16} />
             </button>
           </div>
@@ -144,6 +152,7 @@ export const AssetImportValidationModal: React.FC<AssetImportValidationModalProp
                           <select
                             value={current.action}
                             title={zh ? '处理方式' : 'Action'}
+                            aria-label={zh ? `${mr.rack} 的处理方式` : `Resolution for ${mr.rack}`}
                             onChange={e => handleActionChange(key, e.target.value as ResolutionAction)}
                             className="w-full bg-white border border-black/8 rounded-lg px-2 py-1 text-xs text-black/65 outline-none focus:border-[#00bceb]/25"
                           >
@@ -160,6 +169,7 @@ export const AssetImportValidationModal: React.FC<AssetImportValidationModalProp
                             <select
                               value={current.targetRack || ''}
                               title={zh ? '映射的机柜' : 'Target Rack'}
+                              aria-label={zh ? `${mr.rack} 映射到的机柜` : `Target rack for ${mr.rack}`}
                               onChange={e => handleTargetChange(key, e.target.value)}
                               className="w-full bg-white border border-amber-400 rounded-lg px-2 py-1 text-xs text-amber-800 outline-none"
                             >
@@ -179,17 +189,19 @@ export const AssetImportValidationModal: React.FC<AssetImportValidationModalProp
           </div>
 
           {/* Footer */}
-          <div className="shrink-0 border-t border-black/5 bg-white px-5 py-3 flex justify-end gap-2">
+          <div className="nx-form-dialog-footer shrink-0 flex justify-end gap-2 px-5 py-3">
             <button
+              type="button"
               onClick={onClose}
-              className="px-3 py-1.5 rounded-lg bg-black/[0.01] border border-black/5 text-black/40 text-xs hover:bg-black/[0.02]"
+              className="nx-dialog-action-secondary rounded-lg border px-3 py-1.5 text-xs"
             >
               {zh ? '取消' : 'Cancel'}
             </button>
             <button
+              type="button"
               onClick={handleSubmit}
               disabled={saving || Object.values(resolutions).some(r => r.action === 'map' && !r.targetRack)}
-              className="px-4 py-1.5 rounded-lg bg-[#00bceb] text-white text-xs font-bold hover:bg-[#00a5d0] disabled:opacity-50 shadow-sm shadow-[#00bceb]/20 flex items-center gap-1.5"
+              className="nx-dialog-action-primary rounded-lg border px-4 py-1.5 text-xs font-bold disabled:opacity-50"
             >
               {saving ? (zh ? '导入中...' : 'Importing...') : (zh ? '确认并继续导入' : 'Confirm & Proceed')}
               <ArrowRight size={13} />

@@ -20,7 +20,10 @@ import { ActionButton } from '../../../components/ui/ActionIconButton';
 interface Props {
   language: string;
   selectedOrder: ChangeOrder;
-  setSelectedOrder: (o: ChangeOrder | null) => void;
+  onCloseDetail: () => void;
+  detailLoading: boolean;
+  detailError: 'permission' | 'load' | null;
+  retryDetail: () => void;
   currentUser: SessionUser;
   timeline: TimelineEvent[];
   timelineLoading: boolean;
@@ -43,7 +46,10 @@ interface Props {
 export const ChangeOrderDetail: React.FC<Props> = ({
   language,
   selectedOrder,
-  setSelectedOrder,
+  onCloseDetail,
+  detailLoading,
+  detailError,
+  retryDetail,
   currentUser,
   timeline,
   timelineLoading,
@@ -90,10 +96,29 @@ export const ChangeOrderDetail: React.FC<Props> = ({
       animate={{ opacity: 1, y: 0 }}
       transition={{ type: 'spring', stiffness: 360, damping: 32 }}
     >
+      {detailLoading && (
+        <div role="status" aria-live="polite" className="mb-4 flex items-center gap-2 rounded-xl border border-cyan-200 bg-cyan-50/70 px-4 py-3 text-xs text-cyan-800">
+          <RefreshCw size={14} className="animate-spin" />
+          {zh ? '正在加载工单详情…' : 'Loading order details…'}
+        </div>
+      )}
+      {detailError && (
+        <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-rose-200 bg-rose-50/80 px-4 py-3 text-xs text-rose-800">
+          <span className="min-w-0 flex-1">
+            {detailError === 'permission'
+              ? (zh ? '无权读取工单完整详情，或登录状态已失效。当前显示的列表摘要可能不完整。' : 'You are not authorized to load the full order details, or your session has expired. The visible list summary may be incomplete.')
+              : (zh ? '工单详情加载失败，当前显示的是列表摘要。' : 'Could not load order details. The visible content is only the list summary.')}
+          </span>
+          <button type="button" onClick={retryDetail} disabled={detailLoading} className="shrink-0 rounded-lg border border-rose-300 px-3 py-1.5 font-semibold hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50">
+            {zh ? '重试' : 'Retry'}
+          </button>
+        </div>
+      )}
       {/* Back button + quick actions bar */}
       <div className="flex items-center justify-between mb-5">
         <button
-          onClick={() => { setSelectedOrder(null); setTimeline([]); }}
+          type="button"
+          onClick={onCloseDetail}
           className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-black/60 bg-white border border-black/8 hover:border-[#00bceb]/30 hover:text-[#00bceb] transition-all shadow-sm"
         >
           <ChevronRight size={15} className="rotate-180" />

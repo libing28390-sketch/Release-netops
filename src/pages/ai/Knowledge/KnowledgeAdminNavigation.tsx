@@ -70,14 +70,14 @@ export const KnowledgeAdminNavigation: React.FC<KnowledgeAdminNavigationProps> =
   const activeOption = VIEW_OPTIONS.find((item) => item.id === activeView) || VIEW_OPTIONS[0];
 
   return (
-    <section className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200/80 bg-white px-2.5 py-2 shadow-xs dark:border-slate-700/80 dark:bg-slate-800" aria-label="知识库功能导航">
-      <div className="flex min-w-0 items-center gap-2">
+    <section className="flex flex-col gap-2 rounded-xl border border-[var(--ui-border)] bg-[var(--ui-surface)] p-3 shadow-xs sm:flex-row sm:items-center" aria-label="知识库功能导航">
+      <div className="flex min-w-0 items-center gap-2 sm:shrink-0">
         <BookOpen className="h-4 w-4 shrink-0 text-indigo-500" />
-        <span className="text-xs font-bold text-slate-900 dark:text-white">知识库工作台</span>
-        <span className="hidden rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-700 sm:inline-flex dark:bg-indigo-950/40 dark:text-indigo-300">当前：{activeOption.title}</span>
+        <span className="text-sm font-bold text-[var(--ui-fg)]">知识库工作台</span>
+        <span className="ml-auto inline-flex rounded-full bg-indigo-50 px-2 py-1 text-[11px] font-semibold text-indigo-700 sm:ml-0 dark:bg-indigo-950/40 dark:text-indigo-300">当前：{activeOption.title}</span>
       </div>
 
-      <div className="flex min-w-0 flex-1 flex-wrap justify-end gap-1.5" aria-label="知识管理视图切换">
+      <div role="group" aria-label="知识管理视图切换" className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto pb-1 sm:justify-end">
         {VIEW_OPTIONS.map((item) => {
           const Icon = item.icon;
           const active = item.id === activeView;
@@ -88,14 +88,14 @@ export const KnowledgeAdminNavigation: React.FC<KnowledgeAdminNavigationProps> =
               onClick={() => onChange(item.id)}
               aria-pressed={active}
               title={`${item.description} ${item.whenToUse}`}
-              className={`group inline-flex min-w-0 items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-left transition ${active
+              className={`group inline-flex min-h-10 shrink-0 items-center gap-2 rounded-lg border px-3 py-1.5 text-left text-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] ${active
                 ? 'border-indigo-300 bg-indigo-50 font-semibold text-indigo-800 shadow-sm ring-1 ring-indigo-100 dark:border-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-200 dark:ring-indigo-900/50'
                 : 'border-slate-200 bg-slate-50/70 text-slate-700 hover:border-indigo-200 hover:bg-indigo-50/50 dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-200 dark:hover:border-indigo-800 dark:hover:bg-indigo-950/20'
               }`}
             >
               <span className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md ${active ? 'bg-indigo-600 text-white' : 'bg-white text-slate-500 shadow-xs group-hover:text-indigo-600 dark:bg-slate-800 dark:text-slate-400'}`}><Icon className="h-3 w-3" /></span>
-              <span className="truncate text-[11px]">{item.title}</span>
-              <span className={`hidden rounded-full px-1.5 py-0.5 text-[8px] font-semibold md:inline-flex ${item.category === '日常管理' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' : item.category === '发布验收' ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300' : 'bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300'}`}>{item.category}</span>
+              <span className="truncate">{item.title}</span>
+              <span className={`hidden rounded-full px-2 py-0.5 text-[11px] font-semibold md:inline-flex ${item.category === '日常管理' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' : item.category === '发布验收' ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300' : 'bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300'}`}>{item.category}</span>
             </button>
           );
         })}

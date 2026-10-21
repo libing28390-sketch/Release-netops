@@ -1299,9 +1299,9 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
 
       <div className="flex-1 flex flex-col overflow-hidden px-6 py-5 min-h-0">
       <div className={`${alertPanelClass} flex-1 min-h-0 flex flex-col overflow-hidden`}>
-        <div className="flex min-w-0 items-center gap-2 overflow-x-auto border-b border-black/5 px-5 py-3 no-scrollbar">
+        <div className="flex min-w-0 items-center gap-2 overflow-x-auto border-b border-[var(--ui-border)] px-5 py-3 no-scrollbar">
           <label className="alert-management-search relative">
-            <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/40" />
+            <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--ui-fg-muted)]" />
             <input type="search"
               value={search}
               onChange={(e) => {
@@ -1327,11 +1327,11 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                 className={`shrink-0 whitespace-nowrap rounded-xl border px-3 py-2 text-xs font-semibold transition-colors ${
                   categoryFilter === option.value
                     ? 'border-cyan-700 bg-cyan-700 text-white shadow-sm'
-                    : 'border-black/10 bg-white text-black/55 hover:bg-black/[0.03] hover:text-black/75'
+                    : 'border-[var(--ui-border)] bg-[var(--ui-surface)] text-[var(--ui-fg-muted)] hover:bg-[var(--ui-surface-muted)] hover:text-[var(--ui-fg)]'
                 }`}
               >
                 {option.label}
-                <span className={`ml-1.5 rounded-md px-1.5 py-0.5 text-[10px] ${categoryFilter === option.value ? 'bg-white/20' : 'bg-black/[0.06] text-black/45'}`}>
+                <span className={`ml-1.5 rounded-md px-1.5 py-0.5 text-[10px] ${categoryFilter === option.value ? 'bg-white/20' : 'bg-[var(--ui-surface-muted)] text-[var(--ui-fg-muted)]'}`}>
                   {option.count}
                 </span>
               </button>
@@ -1341,7 +1341,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
             title={language === 'zh' ? '按监控类型筛选' : 'Filter by metric type'}
             value={metricFilter}
             onChange={(e) => { setPage(1); setMetricFilter(e.target.value); }}
-            className="shrink-0 rounded-xl border border-black/10 bg-white px-3 py-3 text-sm text-[#164e63] outline-none"
+            className="shrink-0 rounded-xl border border-[var(--ui-border)] bg-[var(--ui-surface)] px-3 py-3 text-sm text-[var(--ui-fg)] outline-none"
           >
             <option value="all">{language === 'zh' ? '全部类型' : 'All Metrics'}</option>
             {(categoryFilter === 'all' || categoryFilter === 'network') && (
@@ -1373,7 +1373,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
               setPage(1);
               setEnabledFilter(e.target.value);
             }}
-            className="shrink-0 rounded-xl border border-black/10 bg-white px-3 py-3 text-sm text-[#164e63] outline-none"
+            className="shrink-0 rounded-xl border border-[var(--ui-border)] bg-[var(--ui-surface)] px-3 py-3 text-sm text-[var(--ui-fg)] outline-none"
           >
             <option value="all">{language === 'zh' ? '全部状态' : 'All Status'}</option>
             <option value="enabled">{language === 'zh' ? '已启用' : 'Enabled'}</option>
@@ -1390,8 +1390,8 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
         </div>
 
         {someSelected && (
-          <div className="flex flex-wrap items-center gap-2 border-b border-black/5 px-5 py-3 bg-[#f7f9fc]">
-            <span className="text-xs font-semibold text-black/50">
+          <div className="flex flex-wrap items-center gap-2 border-b border-[var(--ui-border)] px-5 py-3 bg-[var(--ui-surface-muted)]">
+            <span className="text-xs font-semibold text-[var(--ui-fg-muted)]">
               {language === 'zh' ? `已选 ${selectedIds.size} 条` : `${selectedIds.size} selected`}
             </span>
             <button onClick={() => void handleBatchToggle(true)} className={alertSecondaryButtonClass + ' !h-9 !text-xs'}>
@@ -1405,16 +1405,16 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
             <ActionButton icon={Trash2} variant="danger" size="sm" onClick={() => void handleBatchDelete()}>
               {language === 'zh' ? '批量删除' : 'Delete'}
             </ActionButton>
-            <button onClick={() => setSelectedIds(new Set())} className="ml-auto text-xs text-black/40 hover:text-black/60">
+            <button onClick={() => setSelectedIds(new Set())} className="ml-auto text-xs text-[var(--ui-fg-muted)] hover:text-[var(--ui-fg)]">
               {language === 'zh' ? '取消选择' : 'Clear'}
             </button>
           </div>
         )}
 
-        <div className="alert-management-table-scroll flex-1 min-h-0 overflow-auto custom-scrollbar border-b border-black/5">
+        <div className="alert-management-table-scroll flex-1 min-h-0 overflow-auto custom-scrollbar border-b border-[var(--ui-border)]">
           <DataTable unstyled exportConfig={{ filename: 'alert-rules', language: language === 'zh' ? 'zh' : 'en', disabled: loading || rulesLoadError !== null || alertRules.length === 0, exportData: exportAllAlertRules }} className="nx-data-table alert-management-table text-left">
             <thead className="sticky top-0 z-10">
-              <tr className="border-y border-black/5 bg-[#f8fafc] text-[11px] font-bold uppercase tracking-[0.16em] text-black/40">
+              <tr className="border-y border-[var(--ui-border)] bg-[var(--ui-surface-muted)] text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--ui-fg-muted)]">
                 <th className="w-10 px-3 py-3">
                   <input
                     type="checkbox"
@@ -1436,7 +1436,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={alertRuleHeaders.length + 2} className="px-5 py-12 text-center text-sm text-black/40">
+                  <td colSpan={alertRuleHeaders.length + 2} className="px-5 py-12 text-center text-sm text-[var(--ui-fg-muted)]">
                     {language === 'zh' ? '正在加载规则...' : 'Loading rules...'}
                   </td>
                 </tr>
@@ -1458,7 +1458,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                 </tr>
               ) : alertRules.length > 0 ? (
                 alertRules.map((rule) => (
-                  <tr key={rule.id} className={`border-b border-black/5 hover:bg-black/[0.02] ${rule.id && selectedIds.has(rule.id) ? 'bg-[#f0f6ff]' : ''}`}>
+                  <tr key={rule.id} className={`border-b border-[var(--ui-border)] hover:bg-[var(--ui-surface-muted)] ${rule.id && selectedIds.has(rule.id) ? 'bg-[var(--ui-accent-subtle)]' : ''}`}>
                     <td className="w-10 px-3 py-4 align-top">
                       <input
                         type="checkbox"
@@ -1477,7 +1477,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                     <td className="px-5 py-4 align-top">
                       <div className="group/copy-name relative">
                         <div className="flex items-center gap-1.5">
-                          <p className="text-sm font-semibold text-[#164e63]">{rule.name}</p>
+                          <p className="text-sm font-semibold text-[var(--ui-fg)]">{rule.name}</p>
                           <ActionIconButton
                             icon={copiedId === `${rule.id}-name` ? Check : Copy}
                             label={language === 'zh' ? '复制名称' : 'Copy Name'}
@@ -1488,7 +1488,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                           />
                         </div>
                         <div className="mt-1 flex items-center gap-1.5 group/copy-id">
-                          <p data-export-ignore className="text-[10px] font-mono text-black/30">{rule.id}</p>
+                          <p data-export-ignore className="text-[10px] font-mono text-[var(--ui-fg-muted)]">{rule.id}</p>
                           <ActionIconButton
                             icon={copiedId === `${rule.id}-id` ? Check : Copy}
                             label={language === 'zh' ? '复制 ID' : 'Copy ID'}
@@ -1500,7 +1500,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                         </div>
                       </div>
                     </td>
-                    <td className="px-5 py-4 align-top text-sm text-black/60">{metricTypeLabel(rule.metric_type, language)}</td>
+                    <td className="px-5 py-4 align-top text-sm text-[var(--ui-fg)]">{metricTypeLabel(rule.metric_type, language)}</td>
                     <td className="px-5 py-4 align-top">
                       {rule.collection ? (
                         <div>
@@ -1509,47 +1509,47 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                           </span>
                         </div>
                       ) : (
-                        <span className="text-xs text-black/30">{language === 'zh' ? '未定义' : 'Undefined'}</span>
+                        <span className="text-xs text-[var(--ui-fg-muted)]">{language === 'zh' ? '未定义' : 'Undefined'}</span>
                       )}
                     </td>
-                    <td className="px-5 py-4 align-top text-xs text-black/55" title={rule.collection?.description}>
+                    <td className="px-5 py-4 align-top text-xs text-[var(--ui-fg-muted)]" title={rule.collection?.description}>
                       {rule.collection?.template_section || '—'}
                     </td>
-                    <td className="px-5 py-4 align-top text-sm text-black/60">
+                    <td className="px-5 py-4 align-top text-sm text-[var(--ui-fg)]">
                       {scopeTypeLabel(rule.scope_type, language)}
                     </td>
-                    <td className="px-5 py-4 align-top text-sm text-black/60">
-                      <span className="break-words text-[11px] leading-4 text-slate-500">
+                    <td className="px-5 py-4 align-top text-sm text-[var(--ui-fg)]">
+                      <span className="break-words text-[11px] leading-4 text-[var(--ui-fg-muted)]">
                         {alertRuleScopeSummary(rule.scope_type, rule.scope_value || '', rule.scope_match_mode || 'exact', language)}
                       </span>
                     </td>
                     <td className="px-5 py-4 align-top text-sm">
                       {rule.threshold != null ? (
-                        <span className="font-mono text-black/70">&gt;&nbsp;{rule.threshold}%</span>
+                        <span className="font-mono text-[var(--ui-fg)]">&gt;&nbsp;{rule.threshold}%</span>
                       ) : (
-                        <span className="inline-flex rounded-full bg-black/[0.04] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-black/40">
+                        <span className="inline-flex rounded-full bg-[var(--ui-surface-muted)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--ui-fg-muted)]">
                           {language === 'zh' ? '状态型' : 'State'}
                         </span>
                       )}
                     </td>
-                    <td className="px-5 py-4 align-top text-xs text-black/50">
+                    <td className="px-5 py-4 align-top text-xs text-[var(--ui-fg-muted)]">
                       {rule.for_duration_seconds > 0
                         ? (rule.for_duration_seconds >= 60 ? `${Math.floor(rule.for_duration_seconds / 60)}m` : `${rule.for_duration_seconds}s`)
                         : '—'}
                     </td>
                     <td className="px-5 py-4 align-top">
-                      <span className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${severityBadgeClass(rule.severity)}`}>
+                      <span className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-bold uppercase ${severityBadgeClass(rule.severity)}`}>
                         {severityLabel(rule.severity, language)}
                       </span>
                     </td>
                     <td className="px-5 py-4 align-top">
                       <div className="flex max-w-[180px] flex-wrap gap-1">
                         {isHostMetric(rule.metric_type) ? (
-                          <span className="inline-flex items-center rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-medium text-slate-500">
+                          <span className="inline-flex items-center rounded-md border border-[var(--ui-border)] bg-[var(--ui-surface-muted)] px-2 py-1 text-[10px] font-medium text-[var(--ui-fg-muted)]">
                             {language === 'zh' ? '仅用于健康状态' : 'Health status only'}
                           </span>
                         ) : normalizeAlertRuleNotificationChannels(rule.notification_channels).map((channel) => (
-                          <span key={channel} className={`inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${channel === 'feishu' ? 'border-cyan-100 bg-cyan-50 text-cyan-800' : channel === 'email' ? 'border-slate-200 bg-slate-50 text-slate-700' : 'border-slate-200 bg-white text-slate-600'}`}>
+                          <span key={channel} className={`inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${channel === 'feishu' ? 'border-cyan-100 bg-cyan-50 text-cyan-800' : channel === 'email' ? 'border-[var(--ui-border)] bg-[var(--ui-surface-muted)] text-[var(--ui-fg-muted)]' : 'border-[var(--ui-border)] bg-[var(--ui-surface)] text-[var(--ui-fg-muted)]'}`}>
                             {notificationChannelLabel(channel, language)}
                           </span>
                         ))}
@@ -1583,12 +1583,12 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                     </td>
                     <td className="px-5 py-4 align-top">
                       {(rule.rule_supported === false || isServerMetric(rule.metric_type)) ? (
-                        <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold text-amber-700">{language === 'zh' ? '未接入' : 'Unavailable'}</span>
+                        <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[11px] font-semibold text-amber-700">{language === 'zh' ? '未接入' : 'Unavailable'}</span>
                       ) : (
-                        <span className="text-xs text-black/50">{language === 'zh' ? '已接入' : 'Available'}</span>
+                        <span className="text-xs text-[var(--ui-fg-muted)]">{language === 'zh' ? '已接入' : 'Available'}</span>
                       )}
                     </td>
-                    <td className="px-5 py-4 align-top text-sm text-black/60">{formatTs(rule.updated_at || rule.created_at)}</td>
+                    <td className="px-5 py-4 align-top text-sm text-[var(--ui-fg-muted)]">{formatTs(rule.updated_at || rule.created_at)}</td>
                     <TableActionCell className="px-5 py-4 align-top">
                       <ActionIconGroup label={language === 'zh' ? '告警规则操作' : 'Alert rule actions'}>
                         {!isServerMetric(rule.metric_type) && rule.rule_supported !== false && (
@@ -1604,7 +1604,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                 ))
               ) : (
                 <tr>
-                  <td colSpan={alertRuleHeaders.length + 2} className="px-5 py-12 text-center text-sm text-black/40">
+                  <td colSpan={alertRuleHeaders.length + 2} className="px-5 py-12 text-center text-sm text-[var(--ui-fg-muted)]">
                     {language === 'zh' ? '当前没有规则。' : 'No rules found.'}
                   </td>
                 </tr>
@@ -1659,7 +1659,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                       ? (language === 'zh' ? '编辑规则' : 'Edit Rule')
                       : (language === 'zh' ? '新增规则' : 'New Rule')}
                   </p>
-                  <h3 className="mt-2 text-xl font-semibold text-[#164e63]">
+                  <h3 className="mt-2 text-xl font-semibold text-[var(--ui-fg)]">
                     {ruleDraft.name || (language === 'zh' ? '未命名规则' : 'Untitled Rule')}
                   </h3>
                 </div>
@@ -1680,7 +1680,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                       value={ruleDraft.metric_type}
                       onChange={(e) => updateRuleField('metric_type', e.target.value as AlertRuleSettings['metric_type'])}
                       disabled={Boolean(editingRuleId)}
-                      className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-[#164e63] outline-none disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed transition-all"
+                      className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-[var(--ui-fg)] outline-none disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed transition-all"
                     >
                       <optgroup label={language === 'zh' ? '网络设备' : 'Network Device'}>
                         {METRIC_OPTIONS_LIST.filter(m => m.category === 'network' && metricSupportedForCreate(m.value)).map(m => (
@@ -1712,7 +1712,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                   <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                     <label className="text-sm text-black/65">
                       <span>{language === 'zh' ? '执行机器' : 'Execution machines'}</span>
-                      <select value={ruleDraft.scope_type} onChange={(e) => updateRuleField('scope_type', e.target.value as AlertRuleSettings['scope_type'])} disabled={draftIsHostMetric} className="mt-1.5 w-full rounded-xl border border-black/10 px-3 py-2 text-[#164e63] outline-none disabled:bg-black/[0.03]">
+                      <select value={ruleDraft.scope_type} onChange={(e) => updateRuleField('scope_type', e.target.value as AlertRuleSettings['scope_type'])} disabled={draftIsHostMetric} className="mt-1.5 w-full rounded-xl border border-black/10 px-3 py-2 text-[var(--ui-fg)] outline-none disabled:bg-black/[0.03]">
                         <option value="global">{language === 'zh' ? '全部设备' : 'All devices'}</option>
                         {!draftIsHostMetric && <>
                           <option value="devices">{scopeTypeLabel('devices', language)}</option>
@@ -1732,7 +1732,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                         value={ruleDraft.scope_match_mode}
                         onChange={(e) => updateRuleField('scope_match_mode', e.target.value as AlertRuleSettings['scope_match_mode'])}
                         disabled={draftIsHostMetric || ['global', 'devices', 'ip', 'tag'].includes(ruleDraft.scope_type)}
-                        className="mt-1.5 w-full rounded-xl border border-black/10 px-3 py-2 text-[#164e63] outline-none disabled:bg-black/[0.03]"
+                        className="mt-1.5 w-full rounded-xl border border-black/10 px-3 py-2 text-[var(--ui-fg)] outline-none disabled:bg-black/[0.03]"
                       >
                         <option value="exact">{language === 'zh' ? '精确匹配' : 'Exact match'}</option>
                         <option value="contains">{language === 'zh' ? '模糊匹配（包含）' : 'Fuzzy match (contains)'}</option>
@@ -1951,7 +1951,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   <label className="text-sm text-black/65">
                     <span>{language === 'zh' ? '告警级别' : 'Severity'}</span>
-                    <select value={ruleDraft.severity} onChange={(e) => updateRuleField('severity', e.target.value as AlertRuleSettings['severity'])} className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-[#164e63] outline-none">
+                    <select value={ruleDraft.severity} onChange={(e) => updateRuleField('severity', e.target.value as AlertRuleSettings['severity'])} className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-[var(--ui-fg)] outline-none">
                       {ALERT_SEVERITY_OPTIONS.map((severity) => (
                         <option key={severity} value={severity}>{severityLabel(severity, language)}</option>
                       ))}
@@ -1964,7 +1964,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                 </div>
 
                 <details className="rounded-2xl border border-black/[0.06] bg-white px-4 py-3">
-                  <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-semibold text-[#164e63]">
+                  <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-semibold text-[var(--ui-fg)]">
                     <ChevronRight size={14} />
                     {language === 'zh' ? '高级：触发与重复控制' : 'Advanced: trigger and repeat controls'}
                   </summary>
@@ -2068,7 +2068,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                 {/* ---------- Config Approval Section ---------- */}
                 <div className="rounded-2xl border border-black/5 overflow-hidden">
                   <div className="bg-slate-50 px-4 py-3 border-b border-black/5 flex items-center justify-between">
-                    <span className="text-xs font-bold text-[#164e63] flex items-center gap-1.5">
+                    <span className="text-xs font-bold text-[var(--ui-fg)] flex items-center gap-1.5">
                       <Shield size={14} className="text-cyan-600" />
                       {language === 'zh' ? '变更审批授权' : 'Approval Authorization'}
                     </span>

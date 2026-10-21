@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, ChevronDown, Filter, Search, Settings, X } from 'lucide-react';
+import { ActionButton, ActionIconButton } from './ActionIconButton';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 
 export interface ColumnSettingOption {
   key: string;
@@ -28,6 +30,8 @@ export const ColumnSettingsButton: React.FC<ColumnSettingsButtonProps> = ({
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [draftKeys, setDraftKeys] = useState<string[]>([]);
+  const dialogRef = useRef<HTMLElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const inputId = React.useId();
   const zh = language === 'zh';
   const normalizedVisible = useMemo(() => normalizeKeys(columns, visibleKeys), [columns, visibleKeys]);
@@ -35,6 +39,8 @@ export const ColumnSettingsButton: React.FC<ColumnSettingsButtonProps> = ({
   const draftSet = new Set(draftKeys);
   const selectedColumns = columns.filter((column) => draftSet.has(column.key));
   const filteredColumns = columns.filter((column) => column.label.toLocaleLowerCase(zh ? 'zh-CN' : 'en').includes(search.trim().toLocaleLowerCase(zh ? 'zh-CN' : 'en')));
+
+  useFocusTrap(dialogRef, open, undefined, triggerRef);
 
   useEffect(() => {
     if (!open) return;
@@ -72,6 +78,7 @@ export const ColumnSettingsButton: React.FC<ColumnSettingsButtonProps> = ({
   return (
     <>
       <button
+        ref={triggerRef}
         type="button"
         aria-label={label || (zh ? '自定义列表字段' : 'Customize columns')}
         aria-haspopup="dialog"
@@ -83,52 +90,53 @@ export const ColumnSettingsButton: React.FC<ColumnSettingsButtonProps> = ({
         <Settings size={15} strokeWidth={1.8} />
       </button>
       {open && (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/55 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setOpen(false); }}>
-          <section role="dialog" aria-modal="true" aria-labelledby={`${inputId}-title`} className="nx-column-settings-dialog flex max-h-[min(680px,88vh)] w-[min(820px,calc(100vw-32px))] flex-col overflow-hidden rounded-sm bg-white shadow-2xl dark:bg-slate-900">
-            <header className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-slate-700">
-              <h2 id={`${inputId}-title`} className="text-sm font-semibold text-slate-900 dark:text-slate-100">{zh ? '自定义列表字段' : 'Customize columns'}</h2>
-              <button type="button" onClick={() => setOpen(false)} aria-label={zh ? '关闭' : 'Close'} className="rounded p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-white"><X size={17} /></button>
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/55 p-3 sm:p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setOpen(false); }}>
+          <section ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={`${inputId}-title`} className="nx-column-settings-dialog flex max-h-[min(680px,88vh)] w-[min(820px,calc(100vw-24px))] flex-col overflow-hidden shadow-2xl sm:w-[min(820px,calc(100vw-32px))]">
+            <header className="flex items-center justify-between gap-3 border-b border-[var(--ui-border)] px-4 py-3 sm:px-6 sm:py-4">
+              <h2 id={`${inputId}-title`} className="text-sm font-semibold text-[var(--ui-fg)]">{zh ? '自定义列表字段' : 'Customize columns'}</h2>
+              <ActionIconButton icon={X} label={zh ? '关闭' : 'Close'} onClick={() => setOpen(false)} />
             </header>
-            <div className="grid min-h-0 flex-1 grid-cols-1 gap-5 overflow-y-auto p-6 md:grid-cols-[1fr_40px_1fr]">
+            <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto p-4 sm:gap-5 sm:p-6 md:grid-cols-[1fr_40px_1fr]">
               <div className="flex min-h-[260px] flex-col">
-                <div className="mb-3 text-xs font-semibold text-slate-700 dark:text-slate-200">{zh ? '请选择' : 'Available fields'}</div>
-                <label htmlFor={`${inputId}-search`} className="relative block">
-                  <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input id={`${inputId}-search`} type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={zh ? '请输入关键词进行搜索' : 'Search fields'} className="nx-column-settings-search w-full border border-slate-200 py-2 pl-9 pr-3 text-xs outline-none focus:border-blue-500 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+                <div className="mb-2 text-xs font-semibold text-[var(--ui-fg)]">{zh ? '请选择' : 'Available fields'}</div>
+                <label htmlFor={`${inputId}-search`} className="relative mb-2 block text-xs font-medium text-[var(--ui-fg-muted)]">
+                  <span className="sr-only">{zh ? '搜索字段' : 'Search fields'}</span>
+                  <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--ui-fg-subtle)]" />
+                  <input id={`${inputId}-search`} type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={zh ? '请输入关键词进行搜索' : 'Search fields'} className="nx-column-settings-search min-h-10 w-full rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface)] py-2 pl-9 pr-3 text-[var(--ui-text-body)] text-[var(--ui-fg)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)]" />
                 </label>
-                <div className="mt-0 flex-1 overflow-y-auto border-x border-b border-slate-200 dark:border-slate-700">
-                  <div className="border-b border-slate-200 px-4 py-2.5 text-xs font-semibold text-slate-600 dark:border-slate-700 dark:text-slate-300">{zh ? '字段' : 'Field'}</div>
+                <div className="mt-0 flex-1 overflow-y-auto rounded-lg border border-[var(--ui-border)]">
+                  <div className="border-b border-[var(--ui-border)] bg-[var(--ui-surface-muted)] px-4 py-2.5 text-xs font-semibold text-[var(--ui-fg-muted)]">{zh ? '字段' : 'Field'}</div>
                   {filteredColumns.map((column) => {
                     const checked = draftSet.has(column.key);
                     return (
-                      <label key={column.key} className={`flex min-h-12 cursor-pointer items-center gap-3 border-b border-slate-100 px-3 text-xs text-slate-700 last:border-0 hover:bg-slate-50 dark:border-slate-800 dark:text-slate-200 dark:hover:bg-slate-800/60 ${checked ? 'bg-slate-50/70 dark:bg-slate-800/30' : ''}`}>
-                        <input type="checkbox" checked={checked} disabled={column.required} onChange={(event) => toggleColumn(column.key, event.target.checked)} className="h-4 w-4 accent-blue-600 disabled:opacity-45" />
+                      <label key={column.key} className={`flex min-h-11 cursor-pointer items-center gap-3 border-b border-[var(--ui-border)] px-3 text-xs text-[var(--ui-fg)] last:border-0 hover:bg-[var(--ui-surface-muted)] ${checked ? 'bg-[var(--ui-accent-subtle)]' : ''}`}>
+                        <input type="checkbox" checked={checked} disabled={column.required} onChange={(event) => toggleColumn(column.key, event.target.checked)} className="h-4 w-4 accent-[var(--ui-accent)] disabled:opacity-45" />
                         <span>{column.label}</span>
                       </label>
                     );
                   })}
-                  {filteredColumns.length === 0 && <div className="px-4 py-8 text-center text-xs text-slate-400">{zh ? '没有匹配字段' : 'No fields found'}</div>}
+                  {filteredColumns.length === 0 && <div className="px-4 py-8 text-center text-xs text-[var(--ui-fg-muted)]">{zh ? '没有匹配字段' : 'No fields found'}</div>}
                 </div>
               </div>
-              <div className="hidden items-center justify-center text-lg text-slate-500 md:flex" aria-hidden="true">↔</div>
+              <div className="hidden items-center justify-center text-lg text-[var(--ui-fg-muted)] md:flex" aria-hidden="true">↔</div>
               <div className="flex min-h-[260px] flex-col">
-                <div className="mb-3 text-xs font-semibold text-slate-700 dark:text-slate-200">{zh ? `已选择(${selectedColumns.length})` : `Selected (${selectedColumns.length})`}</div>
-                <div className="flex-1 overflow-y-auto border border-slate-200 dark:border-slate-700">
-                  <div className="border-b border-slate-200 px-3 py-2.5 text-xs font-semibold text-slate-600 dark:border-slate-700 dark:text-slate-300">{zh ? '字段' : 'Field'}</div>
+                <div className="mb-2 text-xs font-semibold text-[var(--ui-fg)]">{zh ? `已选择(${selectedColumns.length})` : `Selected (${selectedColumns.length})`}</div>
+                <div className="flex-1 overflow-y-auto rounded-lg border border-[var(--ui-border)]">
+                  <div className="border-b border-[var(--ui-border)] bg-[var(--ui-surface-muted)] px-3 py-2.5 text-xs font-semibold text-[var(--ui-fg-muted)]">{zh ? '字段' : 'Field'}</div>
                   {selectedColumns.map((column) => (
-                    <div key={column.key} className="flex min-h-12 items-center justify-between gap-3 border-b border-slate-100 px-3 text-xs text-slate-700 last:border-0 dark:border-slate-800 dark:text-slate-200">
+                    <div key={column.key} className="flex min-h-11 items-center justify-between gap-3 border-b border-[var(--ui-border)] px-3 text-xs text-[var(--ui-fg)] last:border-0">
                       <span className="truncate">{column.label}</span>
-                      <button type="button" disabled={column.required} onClick={() => toggleColumn(column.key, false)} aria-label={zh ? `移除${column.label}` : `Remove ${column.label}`} className="shrink-0 rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-slate-800 dark:hover:text-white"><X size={14} /></button>
+                      <ActionIconButton icon={X} label={zh ? `移除${column.label}` : `Remove ${column.label}`} disabled={column.required} onClick={() => toggleColumn(column.key, false)} size="xs" />
                     </div>
                   ))}
-                  {selectedColumns.length === 0 && <div className="px-4 py-8 text-center text-xs text-slate-400">{zh ? '请选择至少一个字段' : 'Select at least one field'}</div>}
+                  {selectedColumns.length === 0 && <div className="px-4 py-8 text-center text-xs text-[var(--ui-fg-muted)]">{zh ? '请选择至少一个字段' : 'Select at least one field'}</div>}
                 </div>
               </div>
             </div>
-            <footer className="flex flex-wrap items-center justify-end gap-2 border-t border-slate-200 px-6 py-4 dark:border-slate-700">
-              <button type="button" onClick={() => setDraftKeys(normalizedDefaults)} className="mr-auto rounded-sm px-3 py-2 text-xs text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800">{zh ? '恢复默认列' : 'Restore default columns'}</button>
-              <button type="button" onClick={() => setOpen(false)} className="rounded-sm border border-slate-200 px-4 py-2 text-xs text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">{zh ? '取消' : 'Cancel'}</button>
-              <button type="button" disabled={selectedColumns.length === 0} onClick={apply} className="inline-flex items-center gap-1.5 rounded-sm bg-blue-600 px-5 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"><Check size={14} />{zh ? '确定' : 'Apply'}</button>
+            <footer className="flex flex-wrap items-center justify-end gap-2 border-t border-[var(--ui-border)] bg-[var(--ui-surface)] px-4 py-3 sm:px-6 sm:py-4">
+              <ActionButton type="button" onClick={() => setDraftKeys(normalizedDefaults)} className="mr-auto">{zh ? '恢复默认列' : 'Restore default columns'}</ActionButton>
+              <ActionButton type="button" onClick={() => setOpen(false)}>{zh ? '取消' : 'Cancel'}</ActionButton>
+              <ActionButton type="button" icon={Check} variant="primary" disabled={selectedColumns.length === 0} onClick={apply}>{zh ? '确定' : 'Apply'}</ActionButton>
             </footer>
           </section>
         </div>

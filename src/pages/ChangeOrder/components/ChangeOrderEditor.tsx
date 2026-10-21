@@ -569,7 +569,7 @@ export const ChangeOrderEditor: React.FC<Props> = ({
         className="bg-white rounded-3xl border border-black/5 shadow-sm overflow-hidden flex flex-col"
       >
         {/* Modal header */}
-        <div className="px-6 py-5 border-b border-black/5 bg-gradient-to-r from-[#00bceb]/[0.04] to-transparent flex items-center justify-between">
+        <div className="px-4 py-4 sm:px-6 sm:py-5 border-b border-black/5 bg-gradient-to-r from-[#00bceb]/[0.04] to-transparent flex items-center justify-between gap-3">
           <h3 className="text-lg font-semibold flex items-center gap-2.5">
             <span className="p-2 rounded-xl bg-[#00bceb]/10 ring-1 ring-[#00bceb]/15">
               <ClipboardList size={16} className="text-[#00bceb]" />
@@ -582,7 +582,7 @@ export const ChangeOrderEditor: React.FC<Props> = ({
         </div>
 
         {/* Modal body */}
-        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+        <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5 space-y-5">
           {/* Title */}
           <div>
             <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '工单标题' : 'Title'} <span className="text-rose-500">*</span></label>
@@ -607,7 +607,7 @@ export const ChangeOrderEditor: React.FC<Props> = ({
           </div>
 
           {/* Type + Priority + Risk — 3 columns */}
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <div>
               <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '变更类型' : 'Type'} <span className="text-rose-500">*</span></label>
               <select
@@ -650,7 +650,7 @@ export const ChangeOrderEditor: React.FC<Props> = ({
           </div>
 
           {/* Schedule */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <DateTimePicker
               label={zh ? '计划开始时间' : 'Scheduled Start'}
               value={form.scheduled_start}
@@ -1063,7 +1063,7 @@ export const ChangeOrderEditor: React.FC<Props> = ({
                 {selectedScenario && (
                   <div className="space-y-4">
                     {selectedScenarioVariables.length > 0 ? (
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                         {selectedScenarioVariables.map((variable) => {
                           const hint = variable.platform_hints?.[selectedScenarioPlatform] || variable.placeholder || '';
                           const commonClass = 'w-full px-3 py-2.5 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 bg-white text-black';
@@ -1248,7 +1248,7 @@ export const ChangeOrderEditor: React.FC<Props> = ({
                   </motion.div>
                 )}
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   {([
                     { key: 'pre_check', title: zh ? '实施前检查' : 'Pre-check', tone: 'text-cyan-300' },
                     { key: 'execute', title: zh ? '执行命令' : 'Execute', tone: 'text-emerald-300' },
@@ -1347,7 +1347,7 @@ export const ChangeOrderEditor: React.FC<Props> = ({
                     <label className="block text-xs font-semibold text-black/50 mb-1.5">
                       {zh ? '变更时间窗口' : 'Change Time Window'}
                     </label>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <div>
                         <label className="block text-[11px] text-black/40 mb-1">{zh ? '开始时间' : 'Start'}</label>
                         <input
@@ -1370,7 +1370,7 @@ export const ChangeOrderEditor: React.FC<Props> = ({
                   </div>
 
                   {/* 2 & 3. implementer + co_reviewer — user pickers */}
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     {/* implementer */}
                     <div>
                       <label className="block text-xs font-semibold text-black/50 mb-1.5">
@@ -1446,7 +1446,7 @@ export const ChangeOrderEditor: React.FC<Props> = ({
                   </div>
 
                   {/* 5–8. Four multi-line text blocks */}
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     {/* pre_check */}
                     <div>
                       <label className="block text-xs font-semibold text-black/50 mb-1.5">
@@ -1521,15 +1521,15 @@ export const ChangeOrderEditor: React.FC<Props> = ({
         </div>
 
         {/* Modal footer */}
-        <div className="px-6 py-4 border-t border-black/5 bg-black/[0.01] flex flex-wrap items-center justify-end gap-3">
-          <button type="button" onClick={() => closeEditor()} className="px-4 py-2.5 rounded-xl text-sm font-medium text-black/50 hover:bg-black/5 transition-all">
+        <div className="sticky bottom-0 z-10 border-t border-black/5 bg-[var(--ui-surface)] px-4 py-4 shadow-[0_-8px_24px_rgba(11,35,64,0.08)] flex flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-3 sm:px-6">
+          <button type="button" onClick={() => closeEditor()} className="min-h-10 w-full sm:w-auto px-4 py-2.5 rounded-xl text-sm font-medium text-black/50 hover:bg-black/5 transition-all">
             {zh ? '取消' : 'Cancel'}
           </button>
           <button
             type="button"
             onClick={handleSaveDraft}
             disabled={saving || !form.title.trim()}
-            className="px-4 py-2.5 rounded-xl bg-white text-black/70 border border-black/10 text-sm font-medium hover:bg-black/5 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+            className="min-h-10 w-full sm:w-auto justify-center px-4 py-2.5 rounded-xl bg-white text-black/70 border border-black/10 text-sm font-medium hover:bg-black/5 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
           >
             <Save size={14} />
             {zh ? '保存草稿' : 'Save Draft'}
@@ -1538,7 +1538,7 @@ export const ChangeOrderEditor: React.FC<Props> = ({
             type="button"
             onClick={handleSave}
             disabled={saving || !form.title.trim() || (commandMode === 'template' && !selectedScenarioId)}
-            className="px-5 py-2.5 bg-[#00bceb] text-white rounded-xl text-sm font-medium flex items-center gap-2 hover:bg-[#0096bd] transition-all shadow-lg shadow-[#00bceb]/20 disabled:opacity-40 disabled:cursor-not-allowed"
+            className="min-h-10 w-full sm:w-auto justify-center px-5 py-2.5 bg-[#00bceb] text-white rounded-xl text-sm font-medium flex items-center gap-2 hover:bg-[#0096bd] transition-all shadow-lg shadow-[#00bceb]/20 disabled:opacity-40 disabled:cursor-not-allowed"
             title={commandMode === 'template' && !selectedScenarioId ? (zh ? '请先选择场景并填写必填变量' : 'Please select a scenario and fill in all required variables') : undefined}
           >
             {saving ? <RefreshCw size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}

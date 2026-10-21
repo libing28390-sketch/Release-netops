@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { X, Cpu, Clock, Database, Layers, ShieldAlert, Code, Copy, Check } from 'lucide-react';
 import type { AssistantRetrievalTrace } from '../../../api/ai';
 import { ActionButton } from '../../../components/ui/ActionIconButton';
+import { useFocusTrap } from '../../../hooks/useFocusTrap';
 
 interface CopilotInspectorDrawerProps {
   isOpen: boolean;
@@ -15,6 +16,9 @@ export const CopilotInspectorDrawer: React.FC<CopilotInspectorDrawerProps> = ({
   activeMessage,
 }) => {
   const [copied, setCopied] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  useFocusTrap(dialogRef, isOpen, '[aria-label="关闭调试 Trace"]');
 
   useEffect(() => {
     if (!isOpen) return undefined;
@@ -58,10 +62,12 @@ export const CopilotInspectorDrawer: React.FC<CopilotInspectorDrawerProps> = ({
       }}
     >
       <div
+        ref={dialogRef}
         className="relative flex h-[min(82vh,760px)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-gray-200/80 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900"
         role="dialog"
         aria-modal="true"
         aria-labelledby="copilot-inspector-title"
+        tabIndex={-1}
       >
         {/* Header */}
         <div className="flex shrink-0 items-center justify-between border-b border-gray-200/80 p-3.5 select-none dark:border-gray-800">

@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { AlertTriangle, Trash2 } from 'lucide-react';
 import { Asset } from '../types';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
+import { useFocusTrap } from '../../../hooks/useFocusTrap';
 
 interface DeleteConfirmModalProps {
   isOpen: boolean;
@@ -21,7 +22,12 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
   error,
   language,
 }) => {
-  useEscapeClose(isOpen, onClose);
+  const dialogRef = React.useRef<HTMLDivElement>(null);
+  const dialogTitleId = React.useId();
+  const dialogDescriptionId = React.useId();
+  const dialogOpen = isOpen && Boolean(deleteTarget);
+  useEscapeClose(dialogOpen, onClose);
+  useFocusTrap(dialogRef, dialogOpen, '[data-delete-cancel]');
   const zh = language === 'zh';
 
   return (
@@ -35,38 +41,46 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
           onClick={onClose}
         >
           <motion.div
-            className="bg-white rounded-xl w-full max-w-sm p-5 shadow-2xl border border-black/5"
+            ref={dialogRef}
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby={dialogTitleId}
+            aria-describedby={dialogDescriptionId}
+            className="nx-form-dialog-surface w-full max-w-sm rounded-xl border p-5 shadow-2xl"
             onClick={e => e.stopPropagation()}
             initial={{ scale: 0.96, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             exit={{ scale: 0.96, opacity: 0 }}
           >
-            <div className="flex items-center gap-3 mb-3">
+            <div className="nx-dialog-header -mx-5 -mt-5 mb-4 flex items-center gap-3 border-b px-5 py-4">
               <div className="h-9 w-9 rounded-full bg-red-50 flex items-center justify-center">
                 <Trash2 size={16} className="text-red-500" />
               </div>
               <div>
-                <h3 className="text-sm font-bold text-black/80">{zh ? '确认删除' : 'Confirm Delete'}</h3>
-                <p className="text-[10px] text-black/25 mt-0.5">{deleteTarget.hostname || deleteTarget.asset_tag}</p>
+                <h3 id={dialogTitleId} className="text-sm font-bold">{zh ? '确认删除' : 'Confirm Delete'}</h3>
+                <p className="mt-0.5 text-xs text-[var(--ui-fg-muted)]">{deleteTarget.hostname || deleteTarget.asset_tag}</p>
               </div>
             </div>
-            <p className="text-[11px] text-black/35 mb-4">{zh ? '删除后不可恢复，是否继续？' : 'This action cannot be undone. Continue?'}</p>
+            <p id={dialogDescriptionId} className="mb-4 text-sm text-[var(--ui-fg-muted)]">{zh ? '删除后不可恢复，是否继续？' : 'This action cannot be undone. Continue?'}</p>
             {error && (
               <div role="alert" className="mb-4 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] leading-4 text-red-700">
                 <AlertTriangle size={14} className="mt-0.5 shrink-0" />
                 <span>{error}</span>
               </div>
             )}
-            <div className="flex justify-end gap-2">
+            <div className="nx-form-dialog-footer -mx-5 -mb-5 flex justify-end gap-2 px-5 py-3">
               <button
+                type="button"
                 onClick={onClose}
-                className="px-3 py-1.5 rounded-lg bg-black/[0.01] border border-black/5 text-black/40 text-xs hover:bg-black/[0.02]"
+                data-delete-cancel
+                className="nx-dialog-action-secondary rounded-lg border px-3 py-1.5 text-xs"
               >
                 {zh ? '取消' : 'Cancel'}
               </button>
               <button
+                type="button"
                 onClick={handleDelete}
-                className="px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-bold hover:bg-red-700"
+                className="nx-dialog-action-danger rounded-lg border px-3 py-1.5 text-xs font-bold"
               >
                 {zh ? '删除' : 'Delete'}
               </button>

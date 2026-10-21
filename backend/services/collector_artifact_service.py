@@ -22,6 +22,60 @@ class ArtifactStoreError(RuntimeError):
     """A collector artifact cannot be safely applied or rolled back."""
 
 
+def collector_artifact_is_current(
+    artifact_path: str | Path,
+    *,
+    config_version: int,
+    checksum: str,
+) -> bool:
+    """Return whether a compiled artifact is intact and already applied.
+
+    This is a read-only predicate: it never creates or repairs collector
+    directories, and treats absent or malformed artifacts as not current.
+    """
+    try:
+        if isinstance(config_version, bool) or not isinstance(config_version, int) or config_version < 1:
+            return False
+        if not isinstance(checksum, str) or not checksum:
+            return False
+
+        raw_artifact_path = os.fspath(artifact_path)
+        if not raw_artifact_path.strip() or Path(raw_artifact_path) == Path("."):
+            return False
+        source = Path(raw_artifact_path)
+        collector_id: str | None = None
+        for directory in (source, source.parent / "current", source.parent / "runtime"):
+            manifest = validate_artifact(directory).get("manifest")
+            if not isinstance(manifest, dict):
+                return False
+            current_collector_id = manifest.get("collector_id")
+            if not isinstance(current_collector_id, str) or not current_collector_id.strip():
+                return False
+            if collector_id is None:
+                collector_id = current_collector_id
+            elif current_collector_id != collector_id:
+                return False
+            if type(manifest.get("config_version")) is not int or manifest["config_version"] != config_version:
+                return False
+            if manifest.get("checksum") != checksum:
+                return False
+
+        runtime_state = json.loads(
+            (source.parent / "runtime" / "current_version.json").read_text(encoding="utf-8")
+        )
+        return (
+            isinstance(runtime_state, dict)
+            and type(runtime_state.get("config_version")) is int
+            and runtime_state.get("config_version") == config_version
+            and runtime_state.get("status") == "APPLIED"
+        )
+    except (CompileError, OSError, ValueError, TypeError):
+        # Missing files, invalid encodings/JSON, and validation failures all
+        # mean that the artifact cannot be proven current. Do not surface any
+        # artifact contents (which can include credentials) to the caller.
+        return False
+
+
 class CollectorArtifactStore:
     def __init__(self, root: str | Path):
         self.root = Path(root).resolve()
@@ -94,7 +148,13 @@ class CollectorArtifactStore:
                 shutil.rmtree(temp, ignore_errors=True)
             raise
 
-    def publish(self, source: str | Path, *, config_version: int) -> dict[str, Any]:
+    def publish(
+        self,
+        source: str | Path,
+        *,
+        config_version: int,
+        runtime_status: str = "APPLIED",
+    ) -> dict[str, Any]:
         source_path = self._inside_root(Path(source))
         try:
             validation = validate_artifact(source_path)
@@ -110,18 +170,79 @@ class CollectorArtifactStore:
                 shutil.rmtree(version_dir)
             self._copy_tree_atomic(source_path, version_dir)
 
+        rotate_previous = False
         if self.current.exists():
+            try:
+                current_manifest = validate_artifact(self.current).get("manifest")
+            except (CompileError, OSError, ValueError, TypeError):
+                # A damaged current artifact cannot replace the last known good
+                # copy, but it must not block publishing a validated source.
+                current_manifest = None
+            current_version = current_manifest.get("config_version") if isinstance(current_manifest, dict) else None
+            if type(current_version) is int and current_version != int(config_version):
+                try:
+                    runtime_state = json.loads(
+                        (self.runtime / "current_version.json").read_text(encoding="utf-8")
+                    )
+                except (OSError, ValueError, TypeError):
+                    runtime_state = None
+                current_is_confirmed = (
+                    isinstance(runtime_state, dict)
+                    and runtime_state.get("status") in {"APPLIED", "ROLLED_BACK"}
+                    and type(runtime_state.get("config_version")) is int
+                    and runtime_state["config_version"] == current_version
+                )
+                rotate_previous = current_is_confirmed
+
+        if rotate_previous:
             if self.previous.exists():
                 shutil.rmtree(self.previous)
             self._copy_tree_atomic(self.current, self.previous)
         self._copy_tree_atomic(version_dir, self.current)
-        self._sync_runtime(config_version=config_version, status="APPLIED")
+        self._sync_runtime(config_version=config_version, status=runtime_status)
         return {
-            "status": "APPLIED",
+            "status": runtime_status,
             "config_version": int(config_version),
             "current_version": self.current_version(),
             "previous_version": self.previous_version(),
         }
+
+    def mark_runtime_applied(self, config_version: int) -> dict[str, Any]:
+        """Atomically mark the already-copied runtime artifact as applied."""
+        expected_version = int(config_version)
+        self._version_name(expected_version)
+        if self._read_version(self.runtime) != expected_version:
+            raise ArtifactStoreError("runtime artifact version does not match applied version")
+
+        state_path = self.runtime / "current_version.json"
+        try:
+            runtime_state = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError) as exc:
+            raise ArtifactStoreError("runtime state is invalid") from exc
+        if (
+            not isinstance(runtime_state, dict)
+            or type(runtime_state.get("config_version")) is not int
+            or runtime_state["config_version"] != expected_version
+        ):
+            raise ArtifactStoreError("runtime state version does not match applied version")
+
+        runtime_state["status"] = "APPLIED"
+        temp_path = state_path.with_name(f".{state_path.name}.tmp-{uuid.uuid4().hex[:10]}")
+        try:
+            with temp_path.open("w", encoding="utf-8") as state_file:
+                json.dump(runtime_state, state_file, indent=2)
+                state_file.write("\n")
+                state_file.flush()
+                os.fsync(state_file.fileno())
+            os.replace(temp_path, state_path)
+        except Exception as exc:
+            if temp_path.exists():
+                try:
+                    temp_path.unlink()
+                except OSError:
+                    pass
+            raise ArtifactStoreError("could not update runtime state") from exc
+        return {"status": "APPLIED", "config_version": expected_version}
 
     def rollback(self) -> dict[str, Any]:
         if not self.previous.exists():

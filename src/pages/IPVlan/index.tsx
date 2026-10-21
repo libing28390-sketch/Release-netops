@@ -1001,15 +1001,15 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                                 <td className="px-2.5 py-1.5">
                                   <div className="flex items-center gap-1.5 min-w-0">
                                     <Network size={10} className="text-[#00bceb] flex-shrink-0" />
-                                    <span className="text-[11px] font-semibold text-[#00172D] truncate">
+                                    <span className="text-xs font-semibold text-[var(--ui-fg)] truncate">
                                       {subnet.name || `${subnet.network}/${subnet.prefix_len}`}
                                     </span>
                                   </div>
                                   <div className="flex items-center gap-2 mt-0.5">
-                                    <span className="text-[10px] font-mono text-black/40">
+                                    <span className="text-xs font-mono text-[var(--ui-fg-muted)]">
                                       {subnet.network}/{subnet.prefix_len}
                                     </span>
-                                    <span className={`text-[10px] font-bold tabular-nums ${utilColor(subnet.utilization)}`}>
+                                    <span className={`text-xs font-bold tabular-nums ${utilColor(subnet.utilization)}`}>
                                       {subnet.utilization}%
                                     </span>
                                   </div>
@@ -1046,7 +1046,7 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                                 <td className="px-3 py-2">
                                   <div className="flex items-center gap-1.5">
                                     <Network size={12} className="text-[#00bceb] flex-shrink-0" />
-                                    <span className="text-xs font-semibold text-[#00172D] truncate max-w-[180px]">
+                                    <span className="text-sm font-semibold text-[var(--ui-fg)] truncate max-w-[180px]">
                                       {subnet.name || '-'}
                                     </span>
                                     <span
@@ -1092,7 +1092,7 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                                 </td>
                                 <td
                                   className={`px-3 py-2 text-[11px] font-semibold tabular-nums text-right hidden md:table-cell ${
-                                    riskScore > 0 ? 'text-red-500' : 'text-black/25'
+                                    riskScore > 0 ? 'text-red-500' : 'text-[var(--ui-fg-muted)]'
                                   }`}
                                 >
                                   {riskScore}
@@ -1490,7 +1490,7 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                                 title={dt.label[language === 'zh' ? 'zh' : 'en']}
                               >
                                 <span
-                                  className={`inline-flex items-center justify-center w-4 h-4 rounded text-[8px] font-bold ${dt.color}`}
+                                  className={`inline-flex items-center justify-center w-4 h-4 rounded text-[10px] font-bold ${dt.color}`}
                                 >
                                   {dt.icon}
                                 </span>
@@ -1601,7 +1601,7 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                                     <td className="px-3 py-2 hidden xl:table-cell">
                                       {addr.device_type ? (
                                         <span
-                                          className={`inline-flex items-center justify-center w-5 h-5 rounded text-[8px] font-bold ${dtMeta.color}`}
+                                          className={`inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold ${dtMeta.color}`}
                                           title={dtMeta.label[language === 'zh' ? 'zh' : 'en']}
                                         >
                                           {dtMeta.icon}
@@ -1613,7 +1613,7 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                                     <td className="px-3 py-2 text-xs text-black/60 hidden 2xl:table-cell">{addr.interface_name || '-'}</td>
                                     <td className="px-3 py-2">
                                       <span
-                                        className={`inline-flex items-center rounded-full border px-1.5 py-0.5 text-[9px] font-semibold ${statusBadge.bg}`}
+                                        className={`inline-flex items-center rounded-full border px-1.5 py-0.5 text-[11px] font-semibold ${statusBadge.bg}`}
                                       >
                                         {statusBadge.label}
                                       </span>
@@ -1683,7 +1683,7 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                                     <p className="text-xs font-mono font-bold text-[#00172D] truncate">{addr.address}</p>
                                     {addr.device_type && (
                                       <span
-                                        className={`inline-flex items-center justify-center w-5 h-5 rounded text-[8px] font-bold flex-shrink-0 ${dtMeta.color}`}
+                                        className={`inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold flex-shrink-0 ${dtMeta.color}`}
                                         title={dtMeta.label[language === 'zh' ? 'zh' : 'en']}
                                       >
                                         {dtMeta.icon}

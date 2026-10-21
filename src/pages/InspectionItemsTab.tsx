@@ -767,11 +767,11 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                                 type="text"
                                 value={form.name || ''}
                                 onChange={e => setForm({ ...form, name: e.target.value })}
-                                className="w-full px-2 py-1 rounded border border-blue-100 text-[10px] text-black/40 focus:outline-none"
+                              className="w-full px-2 py-1 rounded border border-blue-100 text-xs text-[var(--ui-fg)] focus:outline-none"
                                 placeholder="Name (EN)"
                               />
                             </div>
-                          ) : <span className="text-[10px] text-black/45 font-mono">{item.name || '—'}</span>}
+                          ) : <span className="text-xs text-[var(--ui-fg-muted)] font-mono">{item.name || '—'}</span>}
                         </td>
                         <td hidden={!visibleItemColumnSet.has('category')} className="px-6 py-4">
                           {isEditing ? (
@@ -790,18 +790,18 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                               </select>
                             </div>
                           ) : (
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-blue-50 text-blue-600 w-fit">
+                            <span className="px-2 py-0.5 rounded-full text-[11px] font-bold uppercase bg-blue-50 text-blue-700 w-fit">
                               {zh ? (CATEGORIES.find(c => c.id === item.category)?.zh || item.category) : item.category || '—'}
                             </span>
                           )}
                         </td>
                         <td hidden={!visibleItemColumnSet.has('vendor')} className="px-6 py-4">
                           {isEditing ? (
-                            <select value={form.vendor || ''} onChange={e => setForm({ ...form, vendor: e.target.value })} onClick={e => e.stopPropagation()} className="w-full px-2 py-1 rounded border border-blue-100 text-[10px] focus:outline-none bg-white">
+                            <select value={form.vendor || ''} onChange={e => setForm({ ...form, vendor: e.target.value })} onClick={e => e.stopPropagation()} className="w-full px-2 py-1 rounded border border-blue-100 text-xs text-[var(--ui-fg)] focus:outline-none bg-white">
                               <option value="">{zh ? '选择厂商' : 'Vendor'}</option>
                               {VENDORS.map(v => <option key={v} value={v}>{v}</option>)}
                             </select>
-                          ) : <span className="text-[10px] text-black/45 font-bold">{item.vendor || '—'}</span>}
+                          ) : <span className="text-xs text-[var(--ui-fg)] font-semibold">{item.vendor || '—'}</span>}
                         </td>
                         <td hidden={!visibleItemColumnSet.has('checkKey')} className="px-6 py-4 font-mono text-[11px] text-black/50 tracking-tight">
                           {isEditing ? (
@@ -816,27 +816,27 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                         </td>
                         <td hidden={!visibleItemColumnSet.has('method')} className="px-6 py-4">
                           {isEditing ? (
-                            <select value={form.method || ''} onChange={e => setForm({ ...form, method: e.target.value })} onClick={e => e.stopPropagation()} className="w-full px-2 py-1 rounded border border-blue-200 text-[10px] focus:outline-none bg-white">
+                            <select value={form.method || ''} onChange={e => setForm({ ...form, method: e.target.value })} onClick={e => e.stopPropagation()} className="w-full px-2 py-1 rounded border border-blue-200 text-xs text-[var(--ui-fg)] focus:outline-none bg-white">
                               <option value="SNMP">SNMP</option><option value="SSH">SSH</option><option value="Shell">Shell</option><option value="ICMP">ICMP</option><option value="TCP">TCP</option><option value="Agent">Agent</option>
                             </select>
-                          ) : <span className="text-[10px] font-bold uppercase">{item.method?.toUpperCase() || '—'}</span>}
+                          ) : <span className="text-xs font-bold uppercase text-[var(--ui-fg)]">{item.method?.toUpperCase() || '—'}</span>}
                         </td>
-                        <td hidden={!visibleItemColumnSet.has('script')} className="px-6 py-4 text-[10px] text-black/45">{boundScriptName || '—'}</td>
-                        <td hidden={!visibleItemColumnSet.has('oid')} className="px-6 py-4 font-mono text-[10px]">
+                        <td hidden={!visibleItemColumnSet.has('script')} className="px-6 py-4 text-xs text-[var(--ui-fg-muted)]">{boundScriptName || '—'}</td>
+                        <td hidden={!visibleItemColumnSet.has('oid')} className="px-6 py-4 font-mono text-xs text-[var(--ui-fg-muted)]">
                           {isEditing && form.method === 'SNMP' && getRoutingProtocolFromCheckKey(form.check_key) ? (
-                            <span className="text-[10px] font-medium text-blue-700">{zh ? '标准邻居 MIB' : 'Standard neighbor MIB'}</span>
+                            <span className="text-xs font-medium text-blue-700">{zh ? '标准邻居 MIB' : 'Standard neighbor MIB'}</span>
                           ) : isEditing && form.method === 'SNMP' ? (
-                            <input type="text" value={form.oid || ''} onChange={e => setForm({ ...form, oid: e.target.value })} onClick={e => e.stopPropagation()} className="w-full px-2 py-1 rounded border border-blue-200 text-[10px] focus:outline-none" placeholder="OID" />
+                            <input type="text" value={form.oid || ''} onChange={e => setForm({ ...form, oid: e.target.value })} onClick={e => e.stopPropagation()} className="w-full px-2 py-1 rounded border border-blue-200 text-xs text-[var(--ui-fg)] focus:outline-none" placeholder="OID" />
                           ) : item.oid || '—'}
                         </td>
-                        <td hidden={!visibleItemColumnSet.has('warningThreshold')} className="px-6 py-4 font-mono text-[10px]">
+                        <td hidden={!visibleItemColumnSet.has('warningThreshold')} className="px-6 py-4 font-mono text-xs text-[var(--ui-fg)]">
                           {isEditing ? (
-                            <input type="number" value={form.warning_threshold ?? ''} onChange={e => setForm({ ...form, warning_threshold: e.target.value ? parseFloat(e.target.value) : undefined })} onClick={e => e.stopPropagation()} className="w-full px-2 py-1 rounded border border-blue-200 text-[10px] focus:outline-none" placeholder="%" />
+                            <input type="number" value={form.warning_threshold ?? ''} onChange={e => setForm({ ...form, warning_threshold: e.target.value ? parseFloat(e.target.value) : undefined })} onClick={e => e.stopPropagation()} className="w-full px-2 py-1 rounded border border-blue-200 text-xs text-[var(--ui-fg)] focus:outline-none" placeholder="%" />
                           ) : item.warning_threshold == null ? '—' : `${item.warning_threshold}%`}
                         </td>
-                        <td hidden={!visibleItemColumnSet.has('criticalThreshold')} className="px-6 py-4 font-mono text-[10px]">
+                        <td hidden={!visibleItemColumnSet.has('criticalThreshold')} className="px-6 py-4 font-mono text-xs text-[var(--ui-fg)]">
                           {isEditing ? (
-                            <input type="number" value={form.critical_threshold ?? ''} onChange={e => setForm({ ...form, critical_threshold: e.target.value ? parseFloat(e.target.value) : undefined })} onClick={e => e.stopPropagation()} className="w-full px-2 py-1 rounded border border-blue-200 text-[10px] focus:outline-none" placeholder="%" />
+                            <input type="number" value={form.critical_threshold ?? ''} onChange={e => setForm({ ...form, critical_threshold: e.target.value ? parseFloat(e.target.value) : undefined })} onClick={e => e.stopPropagation()} className="w-full px-2 py-1 rounded border border-blue-200 text-xs text-[var(--ui-fg)] focus:outline-none" placeholder="%" />
                           ) : item.critical_threshold == null ? '—' : `${item.critical_threshold}%`}
                         </td>
                         <td hidden={!visibleItemColumnSet.has('description')} className="px-6 py-4 text-xs text-black/60 italic">
@@ -845,20 +845,20 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                               <textarea
                                 value={form.description || ''}
                                 onChange={e => setForm({ ...form, description: e.target.value })}
-                                className="w-full px-2 py-1 rounded border border-blue-200 text-[10px] focus:outline-none"
+                                className="w-full px-2 py-1 rounded border border-blue-200 text-xs text-[var(--ui-fg)] focus:outline-none"
                                 rows={1}
                                 placeholder={zh ? "指标描述" : "Description"}
                               />
                               <textarea
                                 value={form.command || ''}
                                 onChange={e => setForm({ ...form, command: e.target.value })}
-                                className="w-full px-2 py-1 rounded border border-blue-200 text-[10px] focus:outline-none font-mono"
+                                className="w-full px-2 py-1 rounded border border-blue-200 text-xs text-[var(--ui-fg)] focus:outline-none font-mono"
                                 rows={2}
                                 placeholder={zh ? "采集指令" : "Command"}
                               />
                             </div>
                           ) : (
-                            <div className="line-clamp-2 max-w-[320px] break-all text-slate-400 text-[10px] font-medium leading-relaxed" title={item.description}>
+                            <div className="line-clamp-2 max-w-[320px] break-all text-xs text-[var(--ui-fg-muted)] font-medium leading-relaxed" title={item.description}>
                               {item.description || (zh ? "暂无指标业务描述" : "No description")}
                             </div>
                           )}
@@ -906,23 +906,23 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                                   <div className="absolute top-4 left-4 w-1 h-12 bg-cyan-500/20 rounded-full" />
                                   <div className="space-y-4">
                                     <div>
-                                      <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-black/20 mb-2">{zh ? '详细描述' : 'DETAILED DESCRIPTION'}</h4>
-                                      <p className="text-xs text-black/70 leading-relaxed font-medium break-all">{item.description || '-'}</p>
+                                      <h4 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--ui-fg-muted)] mb-2">{zh ? '详细描述' : 'DETAILED DESCRIPTION'}</h4>
+                                      <p className="text-sm text-[var(--ui-fg)] leading-relaxed font-medium break-all">{item.description || '-'}</p>
                                     </div>
                                     <div className="flex gap-8">
                                       <div>
-                                        <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-black/20 mb-1.5">{zh ? '更新时间' : 'UPDATED AT'}</h4>
-                                        <p className="text-[10px] font-mono text-black/40">{item.updated_at}</p>
+                                        <h4 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--ui-fg-muted)] mb-1.5">{zh ? '更新时间' : 'UPDATED AT'}</h4>
+                                        <p className="text-xs font-mono text-[var(--ui-fg-muted)]">{item.updated_at}</p>
                                       </div>
                                       <div>
-                                        <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-black/20 mb-1.5">{zh ? '指标 ID' : 'METRIC ID'}</h4>
-                                        <p className="text-[10px] font-mono text-black/40 uppercase">{item.id}</p>
+                                        <h4 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--ui-fg-muted)] mb-1.5">{zh ? '指标 ID' : 'METRIC ID'}</h4>
+                                        <p className="text-xs font-mono text-[var(--ui-fg-muted)] uppercase">{item.id}</p>
                                       </div>
                                     </div>
                                   </div>
                                   <div className="bg-white/40 backdrop-blur-sm p-5 rounded-2xl border border-black/[0.03] space-y-4 shadow-sm">
                                     <div className="flex items-center justify-between">
-                                      <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-black/30">
+                                      <h4 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--ui-fg-muted)]">
                                         {item.script_id ? (zh ? '自动化采集脚本源代码' : 'AUTOMATED SCRIPT SOURCE') : (zh ? '数据采集与指令' : 'ACQUISITION & COMMAND')}
                                       </h4>
                                       <div className="flex gap-2">
@@ -941,7 +941,7 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                                             )}
                                           </ActionButton>
                                         )}
-                                        <span className="px-2.5 py-1 rounded-lg bg-cyan-500 text-white text-[10px] font-black shadow-lg shadow-cyan-500/20">{item.method}</span>
+                                        <span className="px-2.5 py-1 rounded-lg bg-cyan-600 text-white text-[11px] font-bold shadow-sm">{item.method}</span>
                                       </div>
                                     </div>
                                     <div className="bg-[#00172d] p-4 rounded-xl border border-white/5 relative overflow-hidden shadow-inner">
