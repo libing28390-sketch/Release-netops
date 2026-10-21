@@ -1,0 +1,17 @@
+Value VRP_VERSION (\S+)
+Value PRODUCT_VERSION (.+)
+Value MODEL (.+?)
+Value UPTIME (.+)
+Value PATCH_VERSION (\S+)
+
+Start
+  ^(?:HUAWEI|Huawei)\s+Versatile\s+Routing\s+Platform\s+Software\s*$$
+  ^.*software,\s+Version\s+${VRP_VERSION}\s+\(${PRODUCT_VERSION}\)\s*$$
+  ^Copyright.*(?:Huawei|HUAWEI).*
+  ^(?:HUAWEI|Huawei)\s+${MODEL}\s+Router\s+uptime\s+is\s+${UPTIME}\s*$$ -> Record
+  ^Quidway\s+${MODEL}\s+uptime\s+is\s+${UPTIME}\s*$$ -> Record
+  ^Patch\s+[Vv]ersion\s*:\s*${PATCH_VERSION}\s*$$
+  ^\s*$$
+  ^\s*<[A-Za-z0-9_\-\.]+>.*$$
+  ^.*>\s*$$
+  ^. -> Error

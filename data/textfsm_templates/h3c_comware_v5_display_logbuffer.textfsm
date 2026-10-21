@@ -1,0 +1,11 @@
+Value Required TIMESTAMP (\S+\s+\d+\s+\S+\s+\d+)
+Value HOSTNAME (\S+)
+Value Required MODULE ([^/\s]+)
+Value Required SEVERITY (\d+)
+Value Required MNEMONIC ([^:]+)
+Value MESSAGE (.*)
+
+Start
+  ^%${TIMESTAMP}\s+${HOSTNAME}\s+${MODULE}/${SEVERITY}/${MNEMONIC}:${MESSAGE}\s*$$ -> Record
+  ^\s*$$
+  ^.*

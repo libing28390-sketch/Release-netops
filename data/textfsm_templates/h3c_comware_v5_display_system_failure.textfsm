@@ -1,0 +1,7 @@
+# Comware V5 system-failure handling policy.
+Value Required HANDLING_METHOD (\S+)
+
+Start
+  ^\s*System\s+failure\s+handling\s+method:\s*${HANDLING_METHOD}\s*$$ -> Record
+  ^.*$$
+

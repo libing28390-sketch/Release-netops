@@ -1,0 +1,13 @@
+{
+  "vendor": "Huawei",
+  "platform": "huawei_vrp",
+  "software_family": "VRP5",
+  "model": "S5700/S6700 family example",
+  "command": "display interface brief",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://support.huawei.com/enterprise/en/doc/EDOC1100459417/cdd85713/basic-interface-configuration-commands",
+  "source_title": "Basic Interface Configuration Commands - Huawei",
+  "source_section": "display interface brief",
+  "expected_record_count": 1,
+  "expected_fields": ["INTERFACE", "PHY", "PROTOCOL", "INUTI", "OUTUTI", "INERRORS", "OUTERRORS"]
+}

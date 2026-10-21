@@ -1,0 +1,9 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/en/d_202204/1583056_294551_0.htm",
+  "vendor": "H3C",
+  "platform": "Comware7",
+  "model_family": "H3C switches",
+  "command": "display power",
+  "source_note": "Official power supply output with state, mode, current, voltage, power, and airflow."
+}

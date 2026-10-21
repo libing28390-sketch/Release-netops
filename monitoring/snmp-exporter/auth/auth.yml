@@ -1,0 +1,4 @@
+# Generated credential artifacts are written here by the compiler in a
+# deployment-specific version directory.  This checked-in file intentionally
+# contains no credential material.
+auths: {}

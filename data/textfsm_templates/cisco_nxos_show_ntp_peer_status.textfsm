@@ -1,0 +1,13 @@
+Value Required SYNC_MODE ([*+=-])
+Value Required REMOTE (\S+)
+Value LOCAL (\S+)
+Value STRATUM (\d+)
+Value POLL (\d+)
+Value REACH (\d+)
+Value DELAY ([\d.]+)
+Value VRF (\S+)
+
+Start
+  ^\s*${SYNC_MODE}${REMOTE}\s+${LOCAL}\s+${STRATUM}\s+${POLL}\s+${REACH}\s+${DELAY}(?:\s+${VRF})?\s*$$ -> Record
+  ^\s*$$
+  ^.*

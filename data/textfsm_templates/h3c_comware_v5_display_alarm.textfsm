@@ -1,0 +1,9 @@
+Value Required SLOT (\d+)
+Value Required LEVEL (\S+)
+Value Required INFO (.+)
+
+Start
+  ^\s*Slot\s+Level\s+Info\s*$$
+  ^\s*${SLOT}\s+${LEVEL}\s+${INFO}\s*$$ -> Record
+  ^\s*$$
+  ^.*$$

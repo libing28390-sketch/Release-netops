@@ -1,0 +1,6 @@
+<HUAWEI> display power
+------------------------------------------------------------
+ Slot    PowerID  Online   Mode   State       Power(W)
+------------------------------------------------------------
+ 0       PWR1     Present  AC     Supply      150.00
+ 0       PWR2     Present  AC     NotSupply   150.00
