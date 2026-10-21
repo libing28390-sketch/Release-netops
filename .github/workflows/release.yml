@@ -239,6 +239,8 @@ jobs:
 
       - name: Commit sanitized Ubuntu release tree
         shell: bash
+        env:
+          RELEASE_REPO_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
         run: |
           set -euo pipefail
           git config --global user.name "GitHub Action Bot"
@@ -278,12 +280,22 @@ jobs:
 
           git commit -m "Release build: Production ready stable Ubuntu release"
           git branch -M main
-          git remote add origin https://${{ secrets.RELEASE_REPO_TOKEN }}@github.com/libing28390-sketch/Release-netops.git
-          git push -u origin main --force
+          if [[ -z "${RELEASE_REPO_TOKEN:-}" ]]; then
+            echo "::error::RELEASE_REPO_TOKEN is not configured"
+            exit 1
+          fi
+          auth_header="$(printf 'x-access-token:%s' "$RELEASE_REPO_TOKEN" | base64 | tr -d '\r\n')"
+          if [[ -z "$auth_header" ]]; then
+            echo "::error::Failed to prepare release repository authentication"
+            exit 1
+          fi
+          echo "::add-mask::$auth_header"
+          git remote add origin https://github.com/libing28390-sketch/Release-netops.git
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth_header" push -u origin main --force
 
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             git tag "${{ github.ref_name }}"
-            git push origin "${{ github.ref_name }}" --force
+            git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth_header" push origin "${{ github.ref_name }}" --force
           fi
 
       - name: Package Linux / Ubuntu / Docker Release Archive
