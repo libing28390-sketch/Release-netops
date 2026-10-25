@@ -504,5 +504,3 @@ def resolve_unknown_scheduled_job_run(
     ).fetchone()
     conn.commit()
     return dict(final)
-
-\n

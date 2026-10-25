@@ -549,7 +549,6 @@ def test_change_order_schema_and_atomic_incident_ticket_link(isolated_db, make_u
         conn.close()
 
     monkeypatch.setattr(change_order_api, "is_template_required", lambda: False)
-    monkeypatch.setattr(change_order_api, "is_control_sheet_enabled", lambda: False)
     body = ChangeOrderCreate(
         title="Ticket linked change",
         incident_id=ticket_a["incident_id"],
@@ -632,7 +631,6 @@ def test_linked_change_order_summary_obeys_change_requester_ownership(isolated_d
         conn.close()
 
     monkeypatch.setattr(change_order_api, "is_template_required", lambda: False)
-    monkeypatch.setattr(change_order_api, "is_control_sheet_enabled", lambda: False)
     created = change_order_api.api_create_change_order(
         ChangeOrderCreate(
             title="Private order summary",
@@ -757,5 +755,3 @@ def test_monitoring_incident_detail_omits_unfiltered_change_order_summaries(isol
         assert "work_orders" not in detail
     finally:
         conn.close()
-
-\n
