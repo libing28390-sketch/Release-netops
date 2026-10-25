@@ -26,9 +26,9 @@
 
 - `python -m py_compile backend/services/scheduled_job_run_service.py backend/tests/tickets/test_incident_tickets.py`：通过。
 - `pytest backend/tests/scheduled_jobs/test_m5_authorization_runs.py backend/tests/tickets/test_incident_tickets.py`：20 项通过。
-- Actions #750 的 job log 明确显示上述语法错误导致 30 项收集错误；修复提交的 Actions 需重新运行完整后端、前端与发布 gate。
+- Actions #750 的 job log 明确显示上述语法错误导致 30 项收集错误。修复提交 Actions #751 完成后端 gate，发现 4 项其他失败（3487 passed、1 skipped）；对应根因和后续修复记录见 `fix_20261025_2344_01_Actions完整后端gate失败修复.md`。
 
 ## 未验证项、风险与回滚方式
 
-- 修复提交对应的 GitHub Actions 尚未运行；只有该提交所有必需 job 成功后才关机。
+- 后续修复提交对应的 GitHub Actions 尚未运行；只有完整 gate 全部成功后才关机。
 - 如后续 Actions 失败，按新 job 日志继续修复并追加提交；必要时可用 `git revert <commit>` 回滚，不使用 reset 或 force push。

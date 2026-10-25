@@ -160,16 +160,15 @@ RECOMMENDED_ROLE_PROFILES = {
 
 RESOURCE_ACTIONS = {
     'Administrator': {'*'},
-    # Operator is the author/executor role.  Approval, publication and
-    # rollback stay Administrator-only until a dedicated tenant role/profile
-    # model is introduced; otherwise the old broad set defeats separation of
-    # duties even when individual routes use resource permissions.
+    # Operator is the author/executor role.  The coarse legacy role cannot
+    # approve changes; approval is granted only through an explicit role
+    # profile such as Release Manager, preserving separation of duties.
     'Operator': {
         'read', 'view', 'create', 'update', 'edit_draft', 'submit',
         'bind_device', 'test', 'execute', 'upload', 'delete', 'manage', 'cancel', 'retry',
         'request_approval', 'create_change', 'intervene', 'archive',
         'assign', 'claim', 'start', 'request_confirmation', 'confirm_close', 'merge', 'link_change_order',
-        'approve', 'reject', 'acknowledge', 'wait_external', 'resume', 'deliver', 'confirm_complete', 'return',
+        'reject', 'acknowledge', 'wait_external', 'resume', 'deliver', 'confirm_complete', 'return',
         'reserve', 'allocate', 'release', 'export',
     },
     'Viewer': {'read', 'view'},

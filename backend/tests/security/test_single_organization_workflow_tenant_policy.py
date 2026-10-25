@@ -162,11 +162,59 @@ def test_scheduled_jobs_cross_history_preserves_owner_system_read_only_and_actio
                            1, 'approved', ?, ?, ?, ?, ?, ?)""",
                 (job_id, job_id, owner["username"], owner_id, tenant_id, auth_mode, now, now),
             )
+
+        # New scheduled jobs require a bounded grant tied to a visible,
+        # same-tenant ITSM record. Keep this fixture valid while exercising the
+        # separate single-organization tenant-label behavior below.
+        ticket_device_id = "scheduled-owner-grant-device"
+        ticket_incident_id = "scheduled-owner-grant-incident"
+        conn.execute(
+            "INSERT INTO devices (id, hostname, ip_address, platform, status, site, site_id, tenant_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (ticket_device_id, ticket_device_id, "192.0.2.44", "cisco_ios", "online", "HQ", "HQ", "tenant-default"),
+        )
+        conn.execute(
+            "INSERT INTO alert_events (id, dedupe_key, source, severity, title, message, device_id, created_at, workflow_status) "
+            "VALUES (?, ?, 'network_monitor', 'warning', 'Scheduled grant fixture', 'Test alert', ?, ?, 'open')",
+            ("alert-scheduled-owner-grant", "scheduled-grant:device", ticket_device_id, now),
+        )
+        conn.execute(
+            """INSERT INTO monitoring_incidents (
+                   id, incident_key, title, summary, severity, status, source,
+                   root_cause_alert_id, primary_device_id, site, first_seen_at,
+                   last_seen_at, impact_device_count, impact_alert_count, created_at, updated_at
+               ) VALUES (?, ?, ?, ?, 'warning', 'open', 'alert_events', ?, ?, 'HQ', ?, ?, 1, 1, ?, ?)""",
+            (
+                ticket_incident_id, "scheduled-owner-grant-key", "Scheduled grant fixture",
+                "Test incident", "alert-scheduled-owner-grant", ticket_device_id,
+                now, now, now, now,
+            ),
+        )
+        conn.execute(
+            "INSERT INTO monitoring_incident_alerts (incident_id, alert_id, linked_at, is_root) VALUES (?, ?, ?, 1)",
+            (ticket_incident_id, "alert-scheduled-owner-grant", now),
+        )
+        from services.incident_ticket_service import create_ticket_from_incident
+        from services.scheduled_job_authorization import normalize_authorization_grant
+
+        ticket, _ = create_ticket_from_incident(conn, ticket_incident_id, owner)
+        grant = normalize_authorization_grant({
+            "valid_until": "2099-01-01T00:00:00Z",
+            "max_runs": 5,
+            "max_targets": 10,
+            "scope": {"type": "all", "filter": ""},
+            "ticket_source_type": "incident",
+            "ticket_id": ticket["id"],
+        })
         conn.commit()
 
         manifest = scheduled_jobs._prepare_manifest(
             conn,
-            {"name": "New schedule", "job_type": "cron", "action": "inspection", "cron_expr": "* * * * *", "scope": {"type": "all", "filter": ""}},
+            {
+                "name": "New schedule", "job_type": "cron", "action": "inspection",
+                "cron_expr": "* * * * *", "scope": {"type": "all", "filter": ""},
+                "authorization_grant": grant,
+            },
             owner,
             "CREATE",
         )
