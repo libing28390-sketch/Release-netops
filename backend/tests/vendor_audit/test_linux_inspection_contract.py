@@ -37,6 +37,11 @@ class _FacetConnection:
                 {"facet_value": "Shell", "total": 3},
                 {"facet_value": "SNMP", "total": 1},
             ])
+        if "select coalesce(vendor" in normalized:
+            return _Result([
+                {"facet_value": "cisco_ios", "total": 3},
+                {"facet_value": "huawei_vrp", "total": 2},
+            ])
         if "order by category asc, name asc limit" in normalized:
             return _Result([{"id": "server-1", "category": "Server", "method": "Shell"}])
         raise AssertionError(f"unexpected inspection-items query: {sql}")
@@ -52,6 +57,7 @@ def test_paginated_inspection_items_return_full_catalog_facets(monkeypatch) -> N
     result = inspection_service.list_inspection_items(
         category="Server",
         method="Shell",
+        vendor="cisco_ios",
         page=1,
         page_size=20,
     )
@@ -62,14 +68,19 @@ def test_paginated_inspection_items_return_full_catalog_facets(monkeypatch) -> N
         "all": 10,
         "categories": {"Network": 7, "Server": 3},
         "methods": {"SHELL": 3, "SNMP": 1},
+        "vendors": {"cisco_ios": 3, "huawei_vrp": 2},
     }
 
     category_query = next(query for query in connection.queries if "select coalesce(category" in query.lower())
     method_query = next(query for query in connection.queries if "select coalesce(method" in query.lower())
+    vendor_query = next(query for query in connection.queries if "select coalesce(vendor" in query.lower())
     assert "lower(coalesce(category" not in category_query.lower()
     assert "lower(coalesce(method" in category_query.lower()
     assert "lower(coalesce(category" in method_query.lower()
     assert "lower(coalesce(method" not in method_query.lower()
+    assert "lower(coalesce(category" in vendor_query.lower()
+    assert "lower(coalesce(method" in vendor_query.lower()
+    assert "lower(coalesce(vendor" not in vendor_query.lower()
 
 
 def test_linux_builtin_items_bind_one_script_per_metric() -> None:
@@ -102,8 +113,8 @@ def test_linux_tcp_retransmission_output_is_compatible_and_windowed() -> None:
         assert "sleep 1" in content
         assert "tcp_retrans_pct" in content
 
-    assert 'echo "tcp_retrans_pct: ${tcp_retrans_pct:-0}"' in comprehensive
-    assert 'echo "tcp_retrans: ${tcp_retrans_pct:-0}"' in comprehensive
+    assert 'echo "tcp_retrans_pct: ${tcp_retrans_pct:-NA}"' in comprehensive
+    assert 'echo "tcp_retrans: ${tcp_retrans_pct:-NA}"' in comprehensive
 
 
 def test_linux_inspection_skips_inode_usage_when_filesystem_reports_dash() -> None:

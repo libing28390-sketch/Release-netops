@@ -33,6 +33,11 @@ def main() -> None:
         started = time.monotonic()
         try:
             result = relay_alert_deliveries_once(limit=batch_size)
+            from services.service_request_service import relay_ticket_notifications_once
+
+            ticket_result = relay_ticket_notifications_once(limit=batch_size)
+            if ticket_result.get('evaluated') or ticket_result.get('sent') or ticket_result.get('failed') or ticket_result.get('suppressed'):
+                logger.info('Ticket notification relay cycle: %s', ticket_result)
             if result.get('published') or result.get('failed') or result.get('recovered') or result.get('terminal_failures'):
                 logger.info('Alert relay cycle: %s', result)
         except Exception:

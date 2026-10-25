@@ -198,7 +198,7 @@ describe('ScheduledJobs user row actions', () => {
     await user.click(screen.getByRole('button', { name: '关闭' }));
 
     await user.click(screen.getByRole('button', { name: '编辑作业' }));
-    expect(await screen.findByRole('heading', { name: '编辑周期性定时作业' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: '编辑定时作业' })).toBeTruthy();
     await user.click(screen.getByRole('button', { name: '取消' }));
 
     await user.click(screen.getByRole('button', { name: '停用作业' }));

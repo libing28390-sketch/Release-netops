@@ -188,6 +188,10 @@ def _ips_from_snmp_rows(rows: Any, *, ip_address_if_index: bool) -> list[str]:
 
 
 async def _collect_snmp_ips(device: dict[str, Any], collector_credentials: Any) -> list[str]:
+    from services.snmp_collection_policy_service import is_snmp_collection_enabled
+
+    if not is_snmp_collection_enabled(device):
+        return []
     parameters = _snmp_parameters(device, collector_credentials)
     if parameters is None:
         return []

@@ -1,6 +1,61 @@
 import json
 from .core import _beijing_now_iso
 
+
+BUILTIN_INSPECTION_UNIT_BY_CHECK_KEY = {
+    # Legacy shared network entries.
+    'ping': 'ms', 'ssh': 'ms', 'cpu': '%', 'memory': '%',
+    'bgp_neighbor': '个邻居',
+    # Linux metrics: percentages, duration, counts, and binary states.
+    'cpu_load': '%', 'cpu_util': '%', 'mem_avail': '%', 'swap_util': '%',
+    'io_wait': '%', 'disk_util': '%', 'inode_util': '%', 'tcp_conns': '个连接',
+    'process_health': '个进程', 'oom_events': '次', 'ro_mounts': '个挂载',
+    'kernel_errs': '条', 'zombie_procs': '个进程', 'fd_util': '%',
+    'net_errs': '次/秒', 'ntp_desync': '状态', 'dns_latency': 'ms',
+    'recent_reboot': '状态', 'core_dumps_count': '个文件',
+    'disk_io_await': 'ms', 'tcp_close_wait': '个连接', 'tcp_retrans_pct': '%',
+    # Network processor/memory/temperature and component state metrics.
+    'cisco_ios_cpu': '%', 'cisco_ios_mem': '%', 'cisco_ios_temp': '°C',
+    'cisco_ios_fan': '状态', 'cisco_ios_psu': '状态',
+    'cisco_nxos_cpu': '%', 'cisco_nxos_mem': '%', 'cisco_nxos_temp': '°C',
+    'cisco_nxos_fan': '状态', 'cisco_nxos_psu': '状态',
+    'huawei_vrp_cpu': '%', 'huawei_vrp_mem': '%', 'huawei_vrp_temp': '°C',
+    'huawei_vrp_fan': '状态', 'huawei_vrp_psu': '状态',
+    'huawei_vrpv8_cpu': '%', 'huawei_vrpv8_mem': '%', 'huawei_vrpv8_temp': '°C',
+    'huawei_vrpv8_fan': '状态', 'huawei_vrpv8_psu': '状态',
+    'h3c_comware_cpu': '%', 'h3c_comware_mem': '%', 'h3c_comware_temp': '°C',
+    'h3c_comware_fan': '状态', 'h3c_comware_psu': '状态',
+    'juniper_junos_cpu': '%', 'juniper_junos_mem': '%', 'juniper_junos_temp': '°C',
+    'juniper_junos_fan': '状态', 'juniper_junos_psu': '状态',
+    'arista_eos_cpu': '%', 'arista_eos_mem': '%', 'arista_eos_temp': '°C',
+    'arista_eos_fan': '状态', 'arista_eos_psu': '状态',
+    # Interface and routing counts. Route values are counts; diff thresholds are %.
+    'cisco_ios_intf_down': '个接口', 'cisco_nxos_intf_down': '个接口',
+    'huawei_vrp_intf_down': '个接口', 'huawei_vrpv8_intf_down': '个接口',
+    'h3c_comware_intf_down': '个接口', 'juniper_junos_intf_down': '个接口',
+    'arista_eos_intf_down': '个接口',
+    'cisco_ios_bgp_down': '个邻居', 'cisco_ios_ospf_down': '个邻居',
+    'cisco_nxos_bgp_down': '个邻居', 'cisco_nxos_ospf_down': '个邻居',
+    'huawei_vrp_bgp_down': '个邻居', 'huawei_vrp_ospf_down': '个邻居',
+    'huawei_vrpv8_bgp_down': '个邻居', 'huawei_vrpv8_ospf_down': '个邻居',
+    'h3c_comware_bgp_down': '个邻居', 'h3c_comware_ospf_down': '个邻居',
+    'juniper_junos_bgp_down': '个邻居', 'juniper_junos_ospf_down': '个邻居',
+    'arista_eos_bgp_down': '个邻居', 'arista_eos_ospf_down': '个邻居',
+    'cisco_ios_route_total': '条', 'huawei_vrp_route_total': '条',
+    'huawei_vrpv8_route_total': '条', 'h3c_comware_route_total': '条',
+    'juniper_junos_route_total': '条',
+    # Cisco compliance checks.
+    'cisco_ios_ntp_status': '状态', 'cisco_ios_syslog_count': '个日志主机',
+    'cisco_ios_aaa_status': '状态', 'cisco_ios_telnet_status': '状态',
+    'cisco_ios_ssh_version': '版本', 'cisco_ios_snmp_community': '状态',
+}
+
+
+def _network_metric_unit(check_key: str, parse_type: str) -> str:
+    """Return the audited display unit; an absent entry means the unit is unknown."""
+    return BUILTIN_INSPECTION_UNIT_BY_CHECK_KEY.get(check_key, '')
+
+
 def _build_network_inspection_items(now: str) -> list[tuple]:
     """
     构建网络设备巡检指标（CLI 方式 + TextFSM 解析）。
@@ -9,23 +64,28 @@ def _build_network_inspection_items(now: str) -> list[tuple]:
 
     def _item(id_, name, name_zh, category, check_key, desc, cmd, vendor,
               w, c, parse_type, textfsm_template, parse_field,
-              parse_filter='', fallback_regex='', method='CLI'):
+              parse_filter='', fallback_regex='', method='CLI', expected_value='',
+              threshold_direction='above'):
         items.append((
             id_, name, name_zh, category, check_key, desc,
             method, cmd, '',
             w, c, vendor, '', now, now,
             parse_type, textfsm_template, parse_field,
-            parse_filter, fallback_regex, 1,
+            parse_filter, fallback_regex, 1, expected_value,
+            _network_metric_unit(check_key, parse_type),
+            threshold_direction,
         ))
 
     def _snmp_item(id_, name, name_zh, category, check_key, desc, vendor, oid,
-                   w, c, parse_type='numeric'):
+                   w, c, parse_type='numeric', expected_value=''):
         items.append((
             id_, name, name_zh, category, check_key, desc,
             'SNMP', '', '',
             w, c, vendor, oid, now, now,
             parse_type, '', '',
-            '', '', 1,
+            '', '', 1, expected_value or ('ok' if parse_type == 'status' and check_key.endswith(('_fan', '_psu')) else ''),
+            _network_metric_unit(check_key, parse_type),
+            'above',
         ))
 
     # Cisco IOS / IOS-XE
@@ -197,9 +257,11 @@ def _build_network_inspection_items(now: str) -> list[tuple]:
           None, None, 'status', '', 'CLOCK_STATE',
           fallback_regex=r'Clock is (synchronized|unsynchronized)')
     _item('compliance_cisco_ios_syslog', 'Syslog Config', 'Syslog 服务器配置', 'compliance', 'cisco_ios_syslog_count',
-          '统计 logging host 配置数量，0 则告警', 'show logging', 'cisco_ios',
-          1, None, 'count', 'cisco_ios_show_logging', 'LOGGING_HOST',
-          fallback_regex=r'Logging to (\d+\.\d+\.\d+\.\d+)')
+          '统计 running-config 中 logging host 配置数量；低于 1 个时告警',
+          'show running-config | include ^logging host', 'cisco_ios',
+          1, None, 'count', '', '',
+          fallback_regex=r'^\s*logging\s+host\s+\S+',
+          threshold_direction='below')
     _item('compliance_cisco_ios_aaa', 'AAA Config', 'AAA 认证配置', 'compliance', 'cisco_ios_aaa_status',
           '检查 aaa new-model 是否启用', 'show running-config | include aaa', 'cisco_ios',
           None, None, 'status', '', 'AAA_STATUS',
@@ -213,9 +275,10 @@ def _build_network_inspection_items(now: str) -> list[tuple]:
           None, None, 'status', 'cisco_ios_show_ip_ssh', 'SSH_VERSION',
           fallback_regex=r'SSH\s+.*?version\s+([\d.]+)')
     _item('compliance_cisco_ios_snmp', 'SNMP Community', 'SNMP 社区字符串安全性', 'compliance', 'cisco_ios_snmp_community',
-          '检查是否使用 public/private 等不安全社区字符串', 'show snmp community', 'cisco_ios',
-          None, None, 'status', '', 'COMMUNITY_STRING',
-          fallback_regex=r'Community name:\s*(\S+)')
+          '仅在内存检查 community 是否为仓内策略列出的默认值；结果只记录 safe/unsafe，不保存原字符串',
+          'show snmp community', 'cisco_ios',
+          None, None, 'status', '', 'COMMUNITY_SECURITY_STATE',
+          expected_value='safe')
 
     return items
 
@@ -224,201 +287,330 @@ def _build_network_inspection_items(now: str) -> list[tuple]:
 std_scripts = [
     ('std_linux_mem', 'Linux 内存使用率',
      r"""#!/bin/bash
-# 计算内存使用率: (MemTotal - MemAvailable) / MemTotal * 100
-# MemAvailable 自动剔除可回收 buffer/cache, 是 Linux 推荐口径 (kernel >= 3.14)
-# 旧内核回退: MemAvailable 缺失时使用 MemFree + Buffers + Cached 估算
+# MemAvailable excludes reclaimable cache on supported Linux kernels.
+# Older kernels fall back to MemFree + Buffers + Cached.
 awk '/^MemTotal:/{t=$2}
      /^MemAvailable:/{a=$2; have_a=1}
      /^MemFree:/{f=$2}
      /^Buffers:/{b=$2}
      /^Cached:/{c=$2}
      END {
-         if (!have_a) {
+         if (!have_a && f ~ /^[0-9]+$/ && b ~ /^[0-9]+$/ && c ~ /^[0-9]+$/) {
              a = f + b + c
+             have_a = 1
          }
-         if (t > 0) {
-             printf "%.2f\n", (t - a) / t * 100
+         if (t ~ /^[0-9]+$/ && t > 0 && have_a && a >= 0 && a <= t) {
+             used_pct = (t - a) / t * 100
+             if (used_pct < 0) used_pct = 0
+             if (used_pct > 100) used_pct = 100
+             printf "%.2f\n", used_pct
          } else {
-             print 0
+             print "NA"
          }
      }' /proc/meminfo""",
      '计算系统内存使用百分比 (0-100)', 'Linux', 'standard'),
 
     ('std_linux_cpu', 'Linux CPU 使用率',
      r"""#!/bin/bash
-# 提取 top 输出中的 idle%, 用 100 减去得到整体使用率
-idle_pct=$(top -bn1 | grep "Cpu(s)" | sed 's/.*, *\([0-9.]*\)%* id.*/\1/')
-awk -v idle="$idle_pct" 'BEGIN { printf "%.2f\n", 100 - idle }'""",
+# Use a short /proc/stat delta; top output differs across procps and locales.
+read_cpu_counters() {
+  awk '/^cpu / { total=0; for (i=2; i<=NF; i++) total += $i; print total, $5, $6; exit }' /proc/stat 2>/dev/null
+}
+read -r total_before idle_before wait_before < <(read_cpu_counters)
+sleep 1
+read -r total_after idle_after wait_after < <(read_cpu_counters)
+if [[ "$total_before" =~ ^[0-9]+$ && "$idle_before" =~ ^[0-9]+$ && "$wait_before" =~ ^[0-9]+$ &&
+      "$total_after" =~ ^[0-9]+$ && "$idle_after" =~ ^[0-9]+$ && "$wait_after" =~ ^[0-9]+$ ]]; then
+  total_delta=$((total_after - total_before))
+  idle_delta=$((idle_after - idle_before))
+  wait_delta=$((wait_after - wait_before))
+  if [ "$total_delta" -gt 0 ] && [ "$idle_delta" -ge 0 ] && [ "$wait_delta" -ge 0 ]; then
+    awk -v t="$total_delta" -v i="$idle_delta" -v w="$wait_delta" 'BEGIN { busy=t-i-w; if (busy<0) busy=0; printf "%.2f\n", busy/t*100 }'
+  else
+    echo NA
+  fi
+else
+  echo NA
+fi""",
      '计算系统整体 CPU 使用率 (0-100)', 'Linux', 'standard'),
 
     ('std_linux_disk', 'Linux 全量磁盘空间',
      r"""#!/bin/bash
-# 扫描所有本地挂载点,过滤虚拟分区,按使用率排序
-echo "Detailed Disk Usage (Top 10):"
-df -hP | grep -vE "tmpfs|devtmpfs|cdrom" | tail -n +2 | sort -k5 -rn | head -n 10
-
-# 提取全局最大利用率作为判定值
-max_usage=$(df -hP | grep -vE "tmpfs|devtmpfs|cdrom" | tail -n +2 | awk '{print $5}' | sed 's/%//' | sort -rn | head -1)
-echo "MAX_UTILIZATION: ${max_usage:-0}"
+df_output=$(df -hP -l -x tmpfs -x devtmpfs -x cdrom -x squashfs 2>/dev/null) || { echo NA; exit 0; }
+max_usage=$(printf '%s\n' "$df_output" | awk 'NR>1 && $5 ~ /^[0-9]+%$/ {v=$5; sub(/%$/, "", v); if (!found || v>max) max=v; found=1} END {if (found) print max; else print "NA"}')
+if [ "$max_usage" = "NA" ]; then
+  echo NA
+else
+  echo "Detailed Disk Usage (Top 10):"
+  printf '%s\n' "$df_output" | tail -n +2 | sort -k5 -rn | head -n 10
+  echo "MAX_UTILIZATION: $max_usage"
+fi
 """,
      '扫描所有本地分区，取最大利用率百分比', 'Linux', 'standard'),
 
     ('std_linux_inode', 'Linux 全量磁盘 Inode',
      r"""#!/bin/bash
-# 扫描所有本地挂载点 Inode 使用率
-echo "Detailed Inode Usage (Top 10):"
-df -iP | grep -vE "tmpfs|devtmpfs|cdrom" | tail -n +2 | sort -k5 -rn | head -n 10
-
-max_inode=$(df -iP | grep -vE "tmpfs|devtmpfs|cdrom" | tail -n +2 | awk '{print $5}' | sed 's/%//' | sort -rn | head -1)
-echo "MAX_INODE_UTIL: ${max_inode:-0}"
+df_output=$(df -iP -l -x tmpfs -x devtmpfs -x cdrom -x squashfs 2>/dev/null) || { echo NA; exit 0; }
+max_inode=$(printf '%s\n' "$df_output" | awk 'NR>1 && $5 ~ /^[0-9]+%$/ {v=$5; sub(/%$/, "", v); if (!found || v>max) max=v; found=1} END {if (found) print max; else print "NA"}')
+if [ "$max_inode" = "NA" ]; then
+  echo NA
+else
+  echo "Detailed Inode Usage (Top 10):"
+  printf '%s\n' "$df_output" | tail -n +2 | sort -k5 -rn | head -n 10
+  echo "MAX_INODE_UTIL: $max_inode"
+fi
 """,
      '扫描所有本地分区，取最大 Inode 使用率', 'Linux', 'standard'),
 
     ('std_linux_iowait', 'Linux IO Wait 延迟',
      r"""#!/bin/bash
-# 提取 CPU IO 等待比例 (取第二次采样,首次包含开机以来累计值)
-iostat -c 1 2 | grep -v "avg-cpu" | tail -1 | awk '{print $4}'""",
+# Measure iowait from a one-second /proc/stat delta rather than parsing
+# locale- and sysstat-version-dependent iostat output.
+read_cpu_counters() {
+  awk '/^cpu / { total=0; for (i=2; i<=NF; i++) total += $i; print total, $6; exit }' /proc/stat 2>/dev/null
+}
+read -r total_before wait_before < <(read_cpu_counters)
+sleep 1
+read -r total_after wait_after < <(read_cpu_counters)
+if [[ "$total_before" =~ ^[0-9]+$ && "$wait_before" =~ ^[0-9]+$ && "$total_after" =~ ^[0-9]+$ && "$wait_after" =~ ^[0-9]+$ ]]; then
+  total_delta=$((total_after - total_before))
+  wait_delta=$((wait_after - wait_before))
+  if [ "$total_delta" -gt 0 ] && [ "$wait_delta" -ge 0 ]; then
+    awk -v t="$total_delta" -v w="$wait_delta" 'BEGIN { printf "%.2f\n", w/t*100 }'
+  else
+    echo NA
+  fi
+else
+  echo NA
+fi""",
      'CPU 等待磁盘 IO 时间占比 (0-100)', 'Linux', 'standard'),
 
     ('std_linux_swap', 'Linux Swap 使用率',
      r"""#!/bin/bash
-free | grep Swap | awk '{if ($2>0) print ($3/$2)*100; else print 0}'""",
+awk '/^SwapTotal:/{t=$2; have_t=1} /^SwapFree:/{f=$2; have_f=1} END {if (have_t && have_f && t ~ /^[0-9]+$/ && f ~ /^[0-9]+$/ && t >= f) {if (t == 0) print 0; else printf "%.2f\n", (t-f)/t*100} else print "NA"}' /proc/meminfo""",
      '交换分区使用百分比 (0-100)', 'Linux', 'standard'),
 
     ('std_linux_load', 'Linux CPU 负载比例',
      r"""#!/bin/bash
-# 计算 1min 负载与核心数的比值
-cores=$(grep -c ^processor /proc/cpuinfo)
-load=$(uptime | awk -F'load average:' '{print $2}' | cut -d, -f1 | xargs)
-awk -v l="$load" -v c="$cores" 'BEGIN {
-    if (c > 0) {
-        printf "%.2f\n", (l / c) * 100
-    } else {
-        print 0
-    }
-}'""",
+# Compare /proc/loadavg 1-minute load to online logical CPU count.
+load=$(awk 'NR==1 {print $1}' /proc/loadavg 2>/dev/null)
+cores=$(getconf _NPROCESSORS_ONLN 2>/dev/null)
+if ! [[ "$cores" =~ ^[0-9]+$ ]] || [ "$cores" -le 0 ]; then
+  cores=$(grep -c '^processor[[:space:]]*:' /proc/cpuinfo 2>/dev/null)
+fi
+if [[ "$load" =~ ^[0-9]+([.][0-9]+)?$ && "$cores" =~ ^[0-9]+$ ]] && [ "$cores" -gt 0 ]; then
+  awk -v l="$load" -v c="$cores" 'BEGIN { printf "%.2f\n", (l/c)*100 }'
+else
+  echo NA
+fi""",
      '系统 1min 负载相对于核心数的比例', 'Linux', 'standard'),
 
     ('std_linux_conns', 'Linux TCP 连接数',
      r"""#!/bin/bash
-ss -ant | grep ESTAB | wc -l""",
+if command -v ss >/dev/null 2>&1; then
+  connections=$(ss -H -ant state established 2>/dev/null)
+  status=$?
+  if [ "$status" -eq 0 ]; then printf '%s\n' "$connections" | awk 'NF {n++} END {print n+0}'; else echo NA; fi
+else
+  echo NA
+fi""",
      '统计系统 Established 状态的 TCP 连接总数', 'Linux', 'standard'),
 
     ('std_linux_proc', 'Linux 关键进程巡检',
      r"""#!/bin/bash
-# 检查指定的多个关键进程，返回丢失的数量
-procs=${1:-"sshd crond docker"}
+# Check explicitly required process names. SSH is required for this collector;
+# optional services such as cron and Docker must be configured by the operator.
+if ! command -v pgrep >/dev/null 2>&1; then echo NA; exit 0; fi
+procs=${NEXORA_REQUIRED_PROCESSES:-sshd}
 missing=0
 for p in $procs; do
-    if ! pgrep -f "$p" > /dev/null; then
+    pgrep -x "$p" > /dev/null 2>&1
+    status=$?
+    if [ "$status" -eq 1 ]; then
         echo "[CRITICAL] Process not found: $p"
         missing=$((missing + 1))
+    elif [ "$status" -gt 1 ]; then
+        echo NA
+        exit 0
     fi
 done
 echo "MISSING_COUNT: $missing"
 """,
-     '检查进程存活状态，返回未运行的进程数', 'Linux', 'standard'),
+     '检查 SSH 主进程及 NEXORA_REQUIRED_PROCESSES 指定的进程，返回未运行数量', 'Linux', 'standard'),
 
     ('std_linux_oom_events', 'Linux OOM Killer 事件数',
      r"""#!/bin/bash
-dmesg 2>/dev/null | grep -iE "oom-killer|killed process" | wc -l
+if ! command -v journalctl >/dev/null 2>&1; then
+  echo NA
+  exit 0
+fi
+oom_log=$(journalctl -k --since '24 hours ago' --no-pager -o cat 2>/dev/null)
+if [ $? -ne 0 ]; then
+  echo NA
+else
+  printf '%s\n' "$oom_log" | grep -iE 'oom-killer|out of memory|killed process' | wc -l
+fi
 """,
-     '统计内核日志中 OOM-killer 和 killed process 事件数量', 'Linux', 'standard'),
+     '统计可读取的最近 24 小时内核日志中的 OOM Killer 事件数；日志不可读时不报为零', 'Linux', 'standard'),
 
     ('std_linux_ro_mounts', 'Linux 只读挂载数',
      r"""#!/bin/bash
-mount 2>/dev/null | grep -E '\(ro[,$]|\(,ro,' | wc -l
+awk 'NF >= 4 {n=split($4, opts, ","); for (i=1; i<=n; i++) if (opts[i] == "ro") {count++; break}} END {if (NR > 0) print count+0; else print "NA"}' /proc/mounts 2>/dev/null
 """,
      '统计当前处于只读状态的挂载文件系统数量', 'Linux', 'standard'),
 
     ('std_linux_kernel_errs', 'Linux 内核错误日志数',
      r"""#!/bin/bash
-dmesg 2>/dev/null | tail -n 200 | grep -iE "critical|error|corrupt" | wc -l
+if ! command -v dmesg >/dev/null 2>&1; then
+  echo NA
+  exit 0
+fi
+kernel_log=$(dmesg 2>/dev/null)
+if [ $? -ne 0 ]; then
+  echo NA
+else
+  printf '%s\n' "$kernel_log" | tail -n 200 | grep -iE 'critical|error|corrupt' | wc -l
+fi
 """,
      '统计最近 200 行内核日志中的严重错误数量', 'Linux', 'standard'),
 
     ('std_linux_zombie_procs', 'Linux 僵尸进程数',
      r"""#!/bin/bash
-ps -eo stat= 2>/dev/null | awk '$1 ~ /^Z/ {n++} END {print n+0}'
+if command -v ps >/dev/null 2>&1; then
+  ps -eo stat= 2>/dev/null | awk 'NF {seen=1; if ($1 ~ /^Z/) n++} END {if (seen) print n+0; else print "NA"}'
+else
+  echo NA
+fi
 """,
      '统计当前处于僵尸状态的进程数量', 'Linux', 'standard'),
 
     ('std_linux_fd_util', 'Linux 文件句柄使用率',
      r"""#!/bin/bash
-awk '{if ($3 > 0) printf "%.2f\n", ($1/$3)*100; else print 0}' /proc/sys/fs/file-nr 2>/dev/null
+awk 'NR==1 && NF>=3 && $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ && $3>0 {used=$1-$2; if (used>=0) {printf "%.2f\n", (used/$3)*100; found=1}} END {if (!found) print "NA"}' /proc/sys/fs/file-nr 2>/dev/null
 """,
      '计算已分配文件句柄数占系统上限的比例', 'Linux', 'standard'),
 
     ('std_linux_net_errs', 'Linux 网卡错误与丢包数',
      r"""#!/bin/bash
-awk 'NR>2 {err+=$4+$5+$12+$13} END {print err+0}' /proc/net/dev 2>/dev/null
+read_net_errors() {
+  awk 'NR>2 {seen=1; total+=$4+$5+$12+$13} END {if (seen) printf "%.0f\n", total; else print "NA"}' /proc/net/dev 2>/dev/null
+}
+before=$(read_net_errors)
+sleep 1
+after=$(read_net_errors)
+if [[ "$before" =~ ^[0-9]+$ && "$after" =~ ^[0-9]+$ ]] && [ "$after" -ge "$before" ]; then
+  echo $((after - before))
+else
+  echo NA
+fi
 """,
-     '统计所有网卡接收/发送 errors 和 dropped 的累计数量', 'Linux', 'standard'),
+     '统计所有网卡接收/发送 errors 与 dropped 的 1 秒增量', 'Linux', 'standard'),
 
     ('std_linux_ntp_desync', 'Linux NTP 失步状态',
      r"""#!/bin/bash
-ntp_desync=1
-if chronyc tracking >/dev/null 2>&1; then
-  chronyc tracking | grep -q "Reference ID" && ntp_desync=0
-elif ntpq -p >/dev/null 2>&1; then
-  ntpq -p | grep -q '^\*' && ntp_desync=0
+export LC_ALL=C
+if command -v chronyc >/dev/null 2>&1; then
+  tracking=$(chronyc tracking 2>/dev/null)
+  if [ $? -eq 0 ]; then
+    leap=$(printf '%s\n' "$tracking" | awk -F: '/^Leap status:/ {sub(/^[[:space:]]+/, "", $2); print $2; exit}')
+    case "$leap" in
+      Normal) echo 0 ;;
+      "") echo NA ;;
+      *) echo 1 ;;
+    esac
+    exit 0
+  fi
 fi
-echo "$ntp_desync"
+if command -v ntpq >/dev/null 2>&1; then
+  peers=$(ntpq -pn 2>/dev/null)
+  if [ $? -eq 0 ]; then
+    if printf '%s\n' "$peers" | grep -q '^\*'; then echo 0; else echo 1; fi
+    exit 0
+  fi
+fi
+echo NA
 """,
-     '检查本机 NTP 是否存在已同步的参考时钟（0=同步，1=失步/失败）', 'Linux', 'standard'),
+     'chrony Leap status 为 Normal 或 ntpq 存在选中 peer 才报同步；无可读取来源输出 NA', 'Linux', 'standard'),
 
     ('std_linux_dns_latency', 'Linux DNS 解析延迟',
      r"""#!/bin/bash
-start_t=$(date +%s%3N 2>/dev/null || date +%s)
-if getent hosts www.baidu.com >/dev/null 2>&1; then
-  end_t=$(date +%s%3N 2>/dev/null || date +%s)
-  diff=$((end_t - start_t))
-  [ "$diff" -le 0 ] && diff=5
-  echo "$diff"
+export LC_ALL=C
+probe=${NEXORA_DNS_PROBE_NAME:-}
+if [ -z "$probe" ] || ! command -v getent >/dev/null 2>&1 || ! command -v timeout >/dev/null 2>&1; then
+  echo NA
+elif ! date +%s%N 2>/dev/null | grep -qE '^[0-9]{19}$'; then
+  echo NA
 else
-  echo 9999
+  start_ns=$(date +%s%N 2>/dev/null)
+  if timeout 2 getent hosts "$probe" >/dev/null 2>&1; then
+    end_ns=$(date +%s%N 2>/dev/null)
+    if [[ "$start_ns" =~ ^[0-9]{19}$ && "$end_ns" =~ ^[0-9]{19}$ ]] && [ "$end_ns" -ge "$start_ns" ]; then
+      awk -v ns="$((end_ns - start_ns))" 'BEGIN {printf "%.2f\n", ns/1000000}'
+    else
+      echo NA
+    fi
+  else
+    echo 9999
+  fi
 fi
 """,
-     '测量 DNS 解析延迟（毫秒），解析失败返回 9999', 'Linux', 'standard'),
+     '测量 NEXORA_DNS_PROBE_NAME 的解析耗时（毫秒）；探测失败返回 9999，未配置或工具缺失返回 NA', 'Linux', 'standard'),
 
     ('std_linux_recent_reboot', 'Linux 最近重启状态',
      r"""#!/bin/bash
-awk '{print ($1 < 900) ? 1 : 0}' /proc/uptime 2>/dev/null
+awk 'NR==1 && $1 ~ /^[0-9]+([.][0-9]+)?$/ {print ($1 < 900) ? 1 : 0; found=1} END {if (!found) print "NA"}' /proc/uptime 2>/dev/null
 """,
      '检查系统是否在最近 15 分钟内重启（0=否，1=是）', 'Linux', 'standard'),
 
     ('std_linux_core_dumps_count', 'Linux Core Dump 文件数',
      r"""#!/bin/bash
-crash_count=$(find /var/crash/ -type f 2>/dev/null | wc -l)
-core_count=$(find /tmp/ -name "core.[0-9]*" 2>/dev/null | wc -l)
-echo $((crash_count + core_count))
+if ! command -v find >/dev/null 2>&1; then echo NA; exit 0; fi
+total=0
+checked=0
+for dir in /var/crash /tmp; do
+  [ -d "$dir" ] || continue
+  checked=1
+  if [ "$dir" = "/var/crash" ]; then
+    files=$(find "$dir" -type f -print 2>/dev/null)
+  else
+    files=$(find "$dir" -type f -name 'core.[0-9]*' -print 2>/dev/null)
+  fi
+  if [ $? -ne 0 ]; then echo NA; exit 0; fi
+  count=$(printf '%s\n' "$files" | awk 'NF {n++} END {print n+0}')
+  total=$((total + count))
+done
+if [ "$checked" -eq 1 ]; then echo "$total"; else echo NA; fi
 """,
      '统计 /var/crash 和 /tmp 中的 Core Dump 文件数量', 'Linux', 'standard'),
 
     ('std_linux_disk_io_await', 'Linux 磁盘 I/O Await 延迟',
      r"""#!/bin/bash
+if ! command -v iostat >/dev/null 2>&1; then echo NA; exit 0; fi
 iostat -dx 1 2 2>/dev/null | awk '
   /^Device/ {
-    for (i = 1; i <= NF; i++) {
-      if ($i == "r_await") r = i
-      if ($i == "w_await") w = i
-    }
+    report++
+    await_col = 0
+    for (i = 1; i <= NF; i++) if ($i == "await") await_col = i
     next
   }
-  r && w && $1 !~ /^(Linux|avg-cpu|Device)$/ && $1 ~ /^[[:alnum:]_.:-]+$/ {
-    if ($r ~ /^[0-9.]+$/ && $w ~ /^[0-9.]+$/) {
-      sum += ($r + $w) / 2
-      count++
-    }
+  report >= 2 && await_col > 0 && $1 ~ /^[[:alnum:]_.:-]+$/ && $await_col ~ /^[0-9]+([.][0-9]+)?$/ {
+    sum += $await_col
+    count++
   }
-  END { if (count > 0) printf "%.2f\n", sum / count; else print 0 }
+  END { if (count > 0) printf "%.2f\n", sum/count; else print "NA" }
 '
 """,
      '计算设备平均读写 I/O await 延迟（毫秒）', 'Linux', 'standard'),
 
     ('std_linux_tcp_close_wait', 'Linux TCP CLOSE_WAIT 数',
      r"""#!/bin/bash
-ss -ant 2>/dev/null | awk 'tolower($0) ~ /close-wait/ {n++} END {print n+0}'
+if command -v ss >/dev/null 2>&1; then
+  connections=$(ss -H -ant state close-wait 2>/dev/null)
+  status=$?
+  if [ "$status" -eq 0 ]; then printf '%s\n' "$connections" | awk 'NF {n++} END {print n+0}'; else echo NA; fi
+else
+  echo NA
+fi
 """,
      '统计当前处于 CLOSE_WAIT 状态的 TCP 连接数量', 'Linux', 'standard'),
 
@@ -445,166 +637,160 @@ read_tcp_counters() {
     }
     END {
       if (out ~ /^[0-9]+$/ && retr ~ /^[0-9]+$/) print out, retr
-      else print 0, 0
+      else print "NA"
     }
   ' /proc/net/snmp 2>/dev/null
 }
 
-read -r out_before retr_before < <(read_tcp_counters)
+before=$(read_tcp_counters)
 sleep 1
-read -r out_after retr_after < <(read_tcp_counters)
+after=$(read_tcp_counters)
+if ! [[ "$before" =~ ^[0-9]+[[:space:]]+[0-9]+$ && "$after" =~ ^[0-9]+[[:space:]]+[0-9]+$ ]]; then
+  echo NA
+  exit 0
+fi
+read -r out_before retr_before <<< "$before"
+read -r out_after retr_after <<< "$after"
 
 delta_out=$((out_after - out_before))
 delta_retr=$((retr_after - retr_before))
 if [ "$delta_out" -gt 0 ] && [ "$delta_retr" -ge 0 ]; then
   tcp_retrans_pct=$(awk -v retrans="$delta_retr" -v out="$delta_out" 'BEGIN { printf "%.2f", (retrans / out) * 100 }')
 else
-  tcp_retrans_pct=0
+  echo NA
+  exit 0
 fi
-echo "tcp_retrans_pct:${tcp_retrans_pct:-0}"
+echo "tcp_retrans_pct:$tcp_retrans_pct"
 """,
      '按一秒 TCP 计数器增量计算重传段比例（百分比）', 'Linux', 'standard'),
 
     ('std_linux_integrated', 'Linux 集成巡检脚本',
      r"""#!/bin/bash
 # Linux 集成巡检脚本
-cores=$(grep -c ^processor /proc/cpuinfo)
-load=$(uptime | awk -F'load average:' '{print $2}' | cut -d, -f1 | xargs)
-cpu_load=$(awk -v l="$load" -v c="$cores" 'BEGIN{ if(c>0) printf "%.2f\n", (l/c)*100; else print 0 }')
+export LC_ALL=C
+cores=$(getconf _NPROCESSORS_ONLN 2>/dev/null)
+if ! [[ "$cores" =~ ^[0-9]+$ ]] || [ "$cores" -le 0 ]; then cores=$(grep -c '^processor[[:space:]]*:' /proc/cpuinfo 2>/dev/null); fi
+load=$(awk 'NR==1 {print $1}' /proc/loadavg 2>/dev/null)
+if [[ "$load" =~ ^[0-9]+([.][0-9]+)?$ && "$cores" =~ ^[0-9]+$ ]] && [ "$cores" -gt 0 ]; then
+  cpu_load=$(awk -v l="$load" -v c="$cores" 'BEGIN {printf "%.2f", (l/c)*100}')
+else cpu_load=NA; fi
 echo "cpu_load:$cpu_load"
-cpu_util=$(top -bn1 | grep "Cpu(s)" | sed 's/.*, *\([0-9.]*\)%* id.*/\1/' | awk '{print 100 - $1}')
-echo "cpu_util:$cpu_util"
-mem_avail=$(awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2; have_a=1} /^MemFree:/{f=$2} /^Buffers:/{b=$2} /^Cached:/{c=$2} END{ if(!have_a) a=f+b+c; if(t>0) printf "%.2f\n",(t-a)/t*100; else print 0 }' /proc/meminfo)
-echo "mem_avail:$mem_avail"
-swap_util=$(free | grep Swap | awk '{if ($2>0) print ($3/$2)*100; else print 0}')
-echo "swap_util:$swap_util"
-io_wait=$(iostat -c 1 2 2>/dev/null | grep -v "avg-cpu" | tail -1 | awk '{print $4}')
-if [ -z "$io_wait" ]; then
-  io_wait=$(vmstat 1 2 | tail -1 | awk '{print $16}')
-fi
-echo "io_wait:${io_wait:-0}"
-max_disk=$(df -hP | grep -vE "tmpfs|devtmpfs|cdrom" | tail -n +2 | awk '{print $5}' | sed 's/%//' | sort -rn | head -1)
-echo "disk_util:${max_disk:-0}"
-max_inode=$(df -iP | grep -vE "tmpfs|devtmpfs|cdrom" | tail -n +2 | awk '{print $5}' | sed 's/%//' | sort -rn | head -1)
-echo "inode_util:${max_inode:-0}"
-tcp_conns=$(ss -ant 2>/dev/null | grep ESTAB | wc -l)
-echo "tcp_conns:$tcp_conns"
-procs="sshd crond docker"
-missing=0
-for p in $procs; do
-  if ! pgrep -f "$p" > /dev/null; then
-    missing=$((missing + 1))
-  fi
-done
-echo "process_health:$missing"
-oom_events=$(dmesg 2>/dev/null | grep -iE "oom-killer|killed process" | wc -l)
-echo "oom_events:$oom_events"
-ro_mounts=$(mount 2>/dev/null | grep -E '\(ro[,$]|\(,ro,' | wc -l)
-echo "ro_mounts:$ro_mounts"
-kernel_errs=$(dmesg 2>/dev/null | tail -n 200 | grep -iE "critical|error|corrupt" | wc -l)
-echo "kernel_errs:$kernel_errs"
-zombie_procs=$(ps -ef | grep defunc | grep -v grep | wc -l)
-echo "zombie_procs:$zombie_procs"
-fd_util=$(cat /proc/sys/fs/file-nr 2>/dev/null | awk '{if ($3>0) printf "%.2f", ($1/$3)*100; else print 0}')
-echo "fd_util:${fd_util:-0}"
-net_errs=$(awk 'NR>2 {err+=$4+$5+$12+$13} END {print err}' /proc/net/dev 2>/dev/null)
-echo "net_errs:${net_errs:-0}"
-ntp_desync=1
-if chronyc tracking &>/dev/null; then
-  if chronyc tracking | grep -q "Reference ID"; then
-    ntp_desync=0
-  fi
-elif ntpq -p &>/dev/null; then
-  if ntpq -p | grep -q '^\*'; then
-    ntp_desync=0
-  fi
-fi
-echo "ntp_desync:$ntp_desync"
-dns_latency=$(curl -o /dev/null -s -w '%{time_namelookup}' --connect-timeout 2 http://www.baidu.com 2>/dev/null | awk '{print $1 * 1000}')
-if [ -z "$dns_latency" ] || [ "$dns_latency" = "0" ]; then
-  start_t=$(date +%s%3N 2>/dev/null || date +%s)
-  if getent hosts www.baidu.com &>/dev/null; then
-    end_t=$(date +%s%3N 2>/dev/null || date +%s)
-    diff=$((end_t - start_t))
-    if [ $diff -eq 0 ]; then diff=5; fi
-    dns_latency=$diff
-  else
-    dns_latency=9999
-  fi
-fi
-echo "dns_latency:${dns_latency:-9999}"
-uptime_s=$(cat /proc/uptime 2>/dev/null | awk '{print int($1)}')
-recent_reboot=0
-if [ ! -z "$uptime_s" ] && [ $uptime_s -lt 900 ]; then
-  recent_reboot=1
-fi
-echo "recent_reboot:$recent_reboot"
-core_dumps=$(find /var/crash/ -type f 2>/dev/null | wc -l)
-core_files=$(find /tmp/ -name "core.[0-9]*" 2>/dev/null | wc -l)
-echo "core_dumps_count:$((core_dumps + core_files))"
-disk_io_await=$(iostat -dx 1 2 2>/dev/null | awk '/^[a-zA-Z0-9]/ {if ($10 ~ /^[0-9]/) {sum+=$10; count++}} END {if (count>0) printf "%.2f", sum/count; else print 0}')
-echo "disk_io_await:${disk_io_await:-0}"
-tcp_close_wait=$(ss -ant 2>/dev/null | grep -i "close-wait" | wc -l)
-echo "tcp_close_wait:$tcp_close_wait"
-# Use a short counter delta rather than the boot-time cumulative ratio.
+read_cpu_counters() { awk '/^cpu / {total=0; for(i=2;i<=NF;i++) total+=$i; print total, $5, $6; exit}' /proc/stat 2>/dev/null; }
+read_net_errors() { awk 'NR>2{seen=1;total+=$4+$5+$12+$13}END{if(seen)printf "%.0f",total;else print "NA"}' /proc/net/dev 2>/dev/null; }
 read_tcp_counters() {
-    if command -v nstat >/dev/null 2>&1; then
-        _nstat=$(nstat -az 2>/dev/null | awk '$1 == "TcpOutSegs" {out=$2} $1 == "TcpRetransSegs" {retr=$2} END {if (out ~ /^[0-9]+$/ && retr ~ /^[0-9]+$/) print out, retr}')
-        if [ -n "$_nstat" ]; then
-            echo "$_nstat"
-            return
-        fi
-    fi
-    awk '
-        $1 == "Tcp:" {
-            if (!header_seen) {
-                header_seen = 1
-                for (i = 2; i <= NF; i++) header[$i] = i
-            } else {
-                out = $(header["OutSegs"])
-                retr = $(header["RetransSegs"])
-            }
-        }
-        END {
-            if (out ~ /^[0-9]+$/ && retr ~ /^[0-9]+$/) print out, retr
-            else print 0, 0
-        }
-    ' /proc/net/snmp 2>/dev/null
+  if command -v nstat >/dev/null 2>&1; then
+    _nstat=$(nstat -az 2>/dev/null | awk '$1=="TcpOutSegs"{out=$2} $1=="TcpRetransSegs"{retr=$2} END{if(out~/^[0-9]+$/&&retr~/^[0-9]+$/)print out,retr}')
+    if [ -n "$_nstat" ]; then echo "$_nstat"; return; fi
+  fi
+  awk '$1=="Tcp:" {if(!seen){seen=1;for(i=2;i<=NF;i++)h[$i]=i}else{out=$(h["OutSegs"]);retr=$(h["RetransSegs"])}} END{if(out~/^[0-9]+$/&&retr~/^[0-9]+$/)print out,retr;else print "NA"}' /proc/net/snmp 2>/dev/null
 }
-_tcp_before=$(read_tcp_counters)
+read -r total_before idle_before wait_before < <(read_cpu_counters)
+net_before=$(read_net_errors)
+tcp_before=$(read_tcp_counters)
+mem_avail=$(awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2; have_a=1} /^MemFree:/{f=$2} /^Buffers:/{b=$2} /^Cached:/{c=$2} END{if(!have_a && f ~ /^[0-9]+$/ && b ~ /^[0-9]+$/ && c ~ /^[0-9]+$/){a=f+b+c;have_a=1} if(t ~ /^[0-9]+$/ && t>0 && have_a && a>=0 && a<=t) printf "%.2f", (t-a)/t*100; else print "NA"}' /proc/meminfo 2>/dev/null)
+echo "mem_avail:${mem_avail:-NA}"
+swap_util=$(awk '/^SwapTotal:/{t=$2;ht=1} /^SwapFree:/{f=$2;hf=1} END{if(ht && hf && t>=f){if(t==0)print 0;else printf "%.2f",(t-f)/t*100}else print "NA"}' /proc/meminfo 2>/dev/null)
+echo "swap_util:${swap_util:-NA}"
 sleep 1
-_tcp_after=$(read_tcp_counters)
-set -- $_tcp_before
-_out_before=${1:-0}
-_retr_before=${2:-0}
-set -- $_tcp_after
-_out_after=${1:-0}
-_retr_after=${2:-0}
-_delta_out=$((_out_after - _out_before))
-_delta_retr=$((_retr_after - _retr_before))
-if [ "$_delta_out" -gt 0 ] 2>/dev/null && [ "$_delta_retr" -ge 0 ] 2>/dev/null; then
-    tcp_retrans_pct=$(awk -v r="$_delta_retr" -v o="$_delta_out" 'BEGIN { printf "%.2f", (r/o)*100 }')
+read -r total_after idle_after wait_after < <(read_cpu_counters)
+net_after=$(read_net_errors)
+tcp_after=$(read_tcp_counters)
+if [[ "$total_before" =~ ^[0-9]+$ && "$idle_before" =~ ^[0-9]+$ && "$wait_before" =~ ^[0-9]+$ && "$total_after" =~ ^[0-9]+$ && "$idle_after" =~ ^[0-9]+$ && "$wait_after" =~ ^[0-9]+$ ]]; then
+  total_delta=$((total_after-total_before)); idle_delta=$((idle_after-idle_before)); wait_delta=$((wait_after-wait_before))
+  if [ "$total_delta" -gt 0 ] && [ "$idle_delta" -ge 0 ] && [ "$wait_delta" -ge 0 ]; then
+    cpu_util=$(awk -v t="$total_delta" -v i="$idle_delta" -v w="$wait_delta" 'BEGIN{busy=t-i-w;if(busy<0)busy=0;printf "%.2f",busy/t*100}')
+    io_wait=$(awk -v t="$total_delta" -v w="$wait_delta" 'BEGIN{printf "%.2f",w/t*100}')
+  else cpu_util=NA; io_wait=NA; fi
+else cpu_util=NA; io_wait=NA; fi
+echo "cpu_util:$cpu_util"
+echo "io_wait:$io_wait"
+if [[ "$net_before" =~ ^[0-9]+$ && "$net_after" =~ ^[0-9]+$ ]] && [ "$net_after" -ge "$net_before" ]; then net_errs=$((net_after-net_before)); else net_errs=NA; fi
+echo "net_errs:$net_errs"
+read -r out_before retr_before <<< "$tcp_before"
+read -r out_after retr_after <<< "$tcp_after"
+if [[ "$out_before" =~ ^[0-9]+$ && "$retr_before" =~ ^[0-9]+$ && "$out_after" =~ ^[0-9]+$ && "$retr_after" =~ ^[0-9]+$ ]]; then
+  delta_out=$((out_after-out_before)); delta_retr=$((retr_after-retr_before))
+  if [ "$delta_out" -gt 0 ] && [ "$delta_retr" -ge 0 ]; then tcp_retrans_pct=$(awk -v r="$delta_retr" -v o="$delta_out" 'BEGIN{printf "%.2f",r/o*100}'); else tcp_retrans_pct=NA; fi
+else tcp_retrans_pct=NA; fi
+echo "tcp_retrans_pct:$tcp_retrans_pct"
+max_disk=$(df -P -l -x tmpfs -x devtmpfs -x cdrom -x squashfs 2>/dev/null | awk 'NR>1 && $5 ~ /^[0-9]+%$/ {v=$5;sub(/%/,"",v);if(!found||v>max)max=v;found=1} END{if(found)print max;else print "NA"}')
+echo "disk_util:${max_disk:-NA}"
+max_inode=$(df -iP -l -x tmpfs -x devtmpfs -x cdrom -x squashfs 2>/dev/null | awk 'NR>1 && $5 ~ /^[0-9]+%$/ {v=$5;sub(/%/,"",v);if(!found||v>max)max=v;found=1} END{if(found)print max;else print "NA"}')
+echo "inode_util:${max_inode:-NA}"
+if command -v ss >/dev/null 2>&1; then tcp_out=$(ss -H -ant state established 2>/dev/null); tcp_rc=$?; if [ "$tcp_rc" -eq 0 ]; then tcp_conns=$(printf '%s\n' "$tcp_out" | awk 'NF{n++} END{print n+0}'); else tcp_conns=NA; fi; else tcp_conns=NA; fi
+echo "tcp_conns:$tcp_conns"
+procs=${NEXORA_REQUIRED_PROCESSES:-sshd}
+missing=0
+if ! command -v pgrep >/dev/null 2>&1; then
+  missing=NA
 else
-    tcp_retrans_pct=0
+  for p in $procs; do
+    pgrep -x "$p" >/dev/null 2>&1; pgrep_rc=$?
+    if [ "$pgrep_rc" -eq 1 ]; then missing=$((missing + 1)); elif [ "$pgrep_rc" -gt 1 ]; then missing=NA; break; fi
+  done
 fi
-echo "tcp_retrans_pct:${tcp_retrans_pct:-0}"
+echo "process_health:$missing"
+if command -v journalctl >/dev/null 2>&1; then oom_log=$(journalctl -k --since '24 hours ago' --no-pager -o cat 2>/dev/null); oom_rc=$?; if [ "$oom_rc" -eq 0 ]; then oom_events=$(printf '%s\n' "$oom_log" | grep -iE 'oom-killer|out of memory|killed process' | wc -l); else oom_events=NA; fi; else oom_events=NA; fi
+echo "oom_events:$oom_events"
+ro_mounts=$(awk 'NF>=4 {n=split($4,o,",");for(i=1;i<=n;i++)if(o[i]=="ro"){count++;break}} END{if(NR>0)print count+0;else print "NA"}' /proc/mounts 2>/dev/null)
+echo "ro_mounts:${ro_mounts:-NA}"
+if command -v dmesg >/dev/null 2>&1; then kernel_log=$(dmesg 2>/dev/null); dmesg_rc=$?; if [ "$dmesg_rc" -eq 0 ]; then kernel_errs=$(printf '%s\n' "$kernel_log" | tail -n 200 | grep -iE 'critical|error|corrupt' | wc -l); else kernel_errs=NA; fi; else kernel_errs=NA; fi
+echo "kernel_errs:$kernel_errs"
+if command -v ps >/dev/null 2>&1; then proc_states=$(ps -eo stat= 2>/dev/null); ps_rc=$?; if [ "$ps_rc" -eq 0 ]; then zombie_procs=$(printf '%s\n' "$proc_states" | awk 'NF{seen=1;if($1~/^Z/)n++}END{if(seen)print n+0;else print "NA"}'); else zombie_procs=NA; fi; else zombie_procs=NA; fi
+echo "zombie_procs:$zombie_procs"
+fd_util=$(awk 'NR==1 && NF>=3 && $1~/^[0-9]+$/ && $2~/^[0-9]+$/ && $3~/^[0-9]+$/ && $3>0 {u=$1-$2;if(u>=0){printf "%.2f",u/$3*100;found=1}} END{if(!found)print "NA"}' /proc/sys/fs/file-nr 2>/dev/null)
+echo "fd_util:${fd_util:-NA}"
+ntp_desync=NA
+if command -v chronyc >/dev/null 2>&1; then tracking=$(chronyc tracking 2>/dev/null); chrony_rc=$?; if [ "$chrony_rc" -eq 0 ]; then leap=$(printf '%s\n' "$tracking" | awk -F: '/^Leap status:/{sub(/^[[:space:]]+/,"",$2);print $2;exit}'); case "$leap" in Normal) ntp_desync=0;; "") ntp_desync=NA;; *) ntp_desync=1;; esac; fi; fi
+if [ "$ntp_desync" = NA ] && command -v ntpq >/dev/null 2>&1; then peers=$(ntpq -pn 2>/dev/null); ntpq_rc=$?; if [ "$ntpq_rc" -eq 0 ]; then if printf '%s\n' "$peers" | grep -q '^\*'; then ntp_desync=0; else ntp_desync=1; fi; fi; fi
+echo "ntp_desync:$ntp_desync"
+probe=${NEXORA_DNS_PROBE_NAME:-}
+if [ -n "$probe" ] && command -v getent >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then start_ns=$(date +%s%N 2>/dev/null); if [[ "$start_ns" =~ ^[0-9]{19}$ ]]; then if timeout 2 getent hosts "$probe" >/dev/null 2>&1; then end_ns=$(date +%s%N 2>/dev/null); if [[ "$end_ns" =~ ^[0-9]{19}$ ]] && [ "$end_ns" -ge "$start_ns" ]; then dns_latency=$(awk -v n="$((end_ns-start_ns))" 'BEGIN{printf "%.2f",n/1000000}'); else dns_latency=NA; fi; else dns_latency=9999; fi; else dns_latency=NA; fi; else dns_latency=NA; fi
+echo "dns_latency:$dns_latency"
+uptime_s=$(cat /proc/uptime 2>/dev/null | awk '{print int($1)}')
+if [[ "$uptime_s" =~ ^[0-9]+$ ]]; then if [ "$uptime_s" -lt 900 ]; then recent_reboot=1; else recent_reboot=0; fi; else recent_reboot=NA; fi
+echo "recent_reboot:$recent_reboot"
+core_dumps_count=NA
+if command -v find >/dev/null 2>&1; then total=0; checked=0; for dir in /var/crash /tmp; do [ -d "$dir" ] || continue; checked=1; if [ "$dir" = /var/crash ]; then files=$(find "$dir" -type f -print 2>/dev/null); else files=$(find "$dir" -type f -name 'core.[0-9]*' -print 2>/dev/null); fi; find_rc=$?; if [ "$find_rc" -ne 0 ]; then checked=0; break; fi; n=$(printf '%s\n' "$files" | awk 'NF{n++}END{print n+0}'); total=$((total+n)); done; if [ "$checked" -eq 1 ]; then core_dumps_count=$total; fi; fi
+echo "core_dumps_count:$core_dumps_count"
+if command -v iostat >/dev/null 2>&1; then disk_io_await=$(iostat -dx 1 2 2>/dev/null | awk '/^Device/{report++;await_col=0;for(i=1;i<=NF;i++)if($i=="await")await_col=i;next} report>=2&&await_col>0&&$1~/^[[:alnum:]_.:-]+$/&&$await_col~/^[0-9]+([.][0-9]+)?$/{sum+=$await_col;n++} END{if(n>0)printf "%.2f",sum/n;else print "NA"}'); else disk_io_await=NA; fi
+echo "disk_io_await:${disk_io_await:-NA}"
+if command -v ss >/dev/null 2>&1; then close_out=$(ss -H -ant state close-wait 2>/dev/null); close_rc=$?; if [ "$close_rc" -eq 0 ]; then tcp_close_wait=$(printf '%s\n' "$close_out" | awk 'NF{n++}END{print n+0}'); else tcp_close_wait=NA; fi; else tcp_close_wait=NA; fi
+echo "tcp_close_wait:$tcp_close_wait"
 """,
      '集成巡检脚本，采集 CPU负载、CPU使用率、内存使用率、交换分区、IOWait、磁盘空间、Inode、TCP连接、关键进程、OOM事件、只读文件系统、内核错误日志、僵尸进程、文件句柄、网络报错、NTP同步状态、DNS延迟、最近重启、CoreDump奔溃、磁盘IO await延迟、TCP CLOSE_WAIT泄漏、TCP重传率', 'Linux', 'standard'),
 
-    # Cisco IOS / IOS-XE
-    ('insp_cisco_ios_full', 'Cisco IOS 综合巡检', 'show version\nshow processes cpu sorted\nshow processes memory sorted\nshow environment temperature\nshow environment power all\nshow interfaces status\nshow ip bgp summary\nshow ip ospf neighbor\nshow ip route summary', 'Cisco IOS / IOS-XE 综合巡检脚本，覆盖 CPU/内存/温度/电源/接口/路由协议/路由数量', 'cisco_ios', 'inspection'),
-    # Cisco NX-OS
-    ('insp_cisco_nxos_full', 'Cisco NX-OS 综合巡检', 'show version\nshow processes cpu\nshow system resources\nshow environment\nshow interface brief\nshow ip bgp summary\nshow ip ospf neighbor\nshow ip route summary', 'Cisco NX-OS 综合巡检脚本，覆盖 CPU/内存/环境/接口/路由协议/路由数量', 'cisco_nxos', 'inspection'),
-    # 华为 VRPv5
-    ('insp_huawei_vrp_full', '华为 VRPv5 综合巡检', 'display version\ndisplay cpu-usage\ndisplay memory-usage\ndisplay temperature all\ndisplay fan\ndisplay power\ndisplay interface brief\ndisplay bgp peer\ndisplay ospf peer brief\ndisplay ip routing-table statistics', '华为 VRPv5（S系列/AR/老NE）综合巡检脚本', 'huawei_vrp', 'inspection'),
-    # 华为 VRPv8
-    ('insp_huawei_vrpv8_full', '华为 VRPv8 综合巡检', 'display version\ndisplay cpu-usage\ndisplay memory-usage\ndisplay environment\ndisplay interface brief\ndisplay bgp peer\ndisplay ospf peer brief\ndisplay ip routing-table statistics', '华为 VRPv8（CE系列/新NE）综合巡检脚本', 'huawei_vrpv8', 'inspection'),
-    # H3C Comware
-    ('insp_h3c_comware_full', 'H3C Comware 综合巡检', 'display version\ndisplay cpu-usage\ndisplay memory\ndisplay environment\ndisplay fan\ndisplay power\ndisplay interface brief\ndisplay bgp peer ipv4 unicast\ndisplay ospf peer\ndisplay ip routing-table statistics', 'H3C Comware V7/V9 综合巡检脚本', 'h3c_comware', 'inspection'),
-    # Juniper JunOS
-    ('insp_juniper_junos_full', 'Juniper JunOS 综合巡检', 'show version\nshow chassis routing-engine\nshow chassis environment\nshow interfaces terse\nshow bgp summary\nshow ospf neighbor\nshow route summary', 'Juniper JunOS 综合巡检脚本（MX/EX/QFX/SRX 通用）', 'juniper_junos', 'inspection'),
-    # Arista EOS
-    ('insp_arista_eos_full', 'Arista EOS 综合巡检', 'show version\nshow processes top once\nshow memory\nshow environment temperature\nshow environment power\nshow interfaces status\nshow ip bgp summary\nshow ip ospf neighbor\nshow ip route summary', 'Arista EOS 综合巡检脚本', 'arista_eos', 'inspection'),
+    # Network command bundles are line-by-line CLI query lists.  They do not
+    # produce one normalized numeric result; every command is selected from
+    # this platform's existing read-only command catalog.
+    ('insp_cisco_ios_full', 'Cisco IOS / IOS-XE 查询命令集',
+     'show version\nshow processes cpu\nshow processes memory\nshow environment temperature\nshow environment power\nshow ip interface brief\nshow ip bgp summary\nshow ip ospf neighbor\nshow ip route',
+     '只读命令列表：版本、CPU/内存、环境、接口、BGP/OSPF 与路由表。每行单独执行，不汇总为统一指标；适用范围由设备平台识别结果决定。',
+     'cisco_ios', 'inspection'),
+    ('insp_cisco_nxos_full', 'Cisco NX-OS 查询命令集',
+     'show version\nshow ip interface brief\nshow environment\nshow ip bgp summary\nshow ip ospf neighbors\nshow ip route',
+     '只读命令列表：版本、接口、环境、BGP/OSPF 与路由表；命令取自 NX-OS 查询目录，不承诺统一数值解析。',
+     'cisco_nxos', 'inspection'),
+    ('insp_huawei_vrp_full', '华为 VRP 查询命令集',
+     'display version\ndisplay interface brief\ndisplay environment\ndis fan\ndisplay power\ndisplay bgp peer\ndisplay ospf peer\ndisplay ip routing-table',
+     '只读命令列表，适用 huawei_vrp 目录绑定的平台；具体输出随 VRP 版本和设备型号变化，不承诺统一数值解析。',
+     'huawei_vrp', 'inspection'),
+    ('insp_huawei_vrpv8_full', '华为 VRPv8 查询命令集',
+     'display version\ndisplay interface brief\ndisplay temperature all\ndisplay fan\ndisplay power\ndisplay bgp peer\ndisplay ospf peer brief\ndisplay ip routing-table verbose',
+     '只读命令列表，适用 huawei_vrpv8 目录绑定的平台；不覆盖其他 VRP 代际，输出不承诺统一数值解析。',
+     'huawei_vrpv8', 'inspection'),
+    ('insp_h3c_comware_full', 'H3C Comware 查询命令集',
+     'display version\ndisplay interface brief\ndisplay environment\ndisplay fan\ndisplay power\ndisplay bgp peer ipv4 unicast\ndisplay ospf peer\ndisplay ip routing-table',
+     '只读命令列表：版本、接口、环境、BGP/OSPF 与路由表；适用 h3c_comware 目录绑定的平台，不承诺跨型号数值解析。',
+     'h3c_comware', 'inspection'),
+    ('insp_juniper_junos_full', 'Juniper JunOS 查询命令集',
+     'show version\nshow system uptime\nshow interfaces terse\nshow bgp summary\nshow ospf neighbor\nshow route',
+     '只读命令列表：版本、运行时间、接口、BGP/OSPF 与路由表；适用 juniper_junos 目录绑定的平台，不承诺统一数值解析。',
+     'juniper_junos', 'inspection'),
+    ('insp_arista_eos_full', 'Arista EOS 查询命令集',
+     'show version\nshow ip interface brief\nshow ip bgp summary\nshow ip ospf neighbor\nshow ip route',
+     '只读命令列表：版本、接口、BGP/OSPF 与路由表；命令取自 EOS 查询目录，不承诺跨型号数值解析。',
+     'arista_eos', 'inspection'),
 
     ('insp_linux_full', 'Linux 综合巡检',
      r"""#!/bin/bash
@@ -696,10 +882,13 @@ echo "系统时间: ${system_time}"
 
 # 2. CPU 利用率与系统负载 (CPU & Load)
 cpu_cores=$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || grep -c '^processor' /proc/cpuinfo)
-cpu_cores=${cpu_cores:-1}
+cpu_cores=${cpu_cores:-NA}
 load_avg=$(awk '{print $1", "$2", "$3}' /proc/loadavg 2>/dev/null)
 load_1min=$(awk '{print $1}' /proc/loadavg 2>/dev/null)
-load_pct=$(awk -v l="${load_1min:-0}" -v c="$cpu_cores" 'BEGIN { if (c>0) printf "%.2f", (l/c)*100; else print "NA" }')
+load_pct="NA"
+if [[ "$load_1min" =~ ^[0-9]+([.][0-9]+)?$ && "$cpu_cores" =~ ^[0-9]+$ ]] && [ "$cpu_cores" -gt 0 ]; then
+    load_pct=$(awk -v l="$load_1min" -v c="$cpu_cores" 'BEGIN { printf "%.2f", (l/c)*100 }')
+fi
 
 read_cpu_counters() {
     awk '/^cpu / { total=0; for (i=2; i<=9; i++) total+=$i; idle=$5; iowait=$6; print total, idle, iowait; exit }' /proc/stat 2>/dev/null
@@ -707,23 +896,25 @@ read_cpu_counters() {
 cpu_before=$(read_cpu_counters)
 sleep 2
 cpu_after=$(read_cpu_counters)
-set -- $cpu_before
-cpu_total_before=${1:-0}; cpu_idle_before=${2:-0}; cpu_wait_before=${3:-0}
-set -- $cpu_after
-cpu_total_after=${1:-0}; cpu_idle_after=${2:-0}; cpu_wait_after=${3:-0}
-cpu_total_delta=$((cpu_total_after - cpu_total_before))
-cpu_idle_delta=$((cpu_idle_after - cpu_idle_before))
-cpu_wait_delta=$((cpu_wait_after - cpu_wait_before))
 cpu_util="NA"
 cpu_iowait="NA"
-if [ "$cpu_total_delta" -gt 0 ] 2>/dev/null; then
-    cpu_util=$(awk -v t="$cpu_total_delta" -v i="$cpu_idle_delta" -v w="$cpu_wait_delta" 'BEGIN { printf "%.2f", ((t-i-w)/t)*100 }')
-    cpu_iowait=$(awk -v t="$cpu_total_delta" -v w="$cpu_wait_delta" 'BEGIN { printf "%.2f", (w/t)*100 }')
+if [[ "$cpu_before $cpu_after" =~ ^[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+$ ]]; then
+    read -r cpu_total_before cpu_idle_before cpu_wait_before <<< "$cpu_before"
+    read -r cpu_total_after cpu_idle_after cpu_wait_after <<< "$cpu_after"
+    cpu_total_delta=$((cpu_total_after - cpu_total_before))
+    cpu_idle_delta=$((cpu_idle_after - cpu_idle_before))
+    cpu_wait_delta=$((cpu_wait_after - cpu_wait_before))
+    if [ "$cpu_total_delta" -gt 0 ] && [ "$cpu_idle_delta" -ge 0 ] && [ "$cpu_wait_delta" -ge 0 ]; then
+        cpu_util=$(awk -v t="$cpu_total_delta" -v i="$cpu_idle_delta" -v w="$cpu_wait_delta" 'BEGIN { printf "%.2f", ((t-i-w)/t)*100 }')
+        cpu_iowait=$(awk -v t="$cpu_total_delta" -v w="$cpu_wait_delta" 'BEGIN { printf "%.2f", (w/t)*100 }')
+    fi
 fi
 
 load_status="SUCCESS"
 cpu_status="SUCCESS"
-if float_ge "$load_pct" "$LOAD_CRIT_PCT"; then
+if [ "$load_pct" = "NA" ]; then
+    load_status="UNCHECKED"; TOTAL_UNCHECKED=$((TOTAL_UNCHECKED + 1))
+elif float_ge "$load_pct" "$LOAD_CRIT_PCT"; then
     load_status="ERROR"; TOTAL_ERRORS=$((TOTAL_ERRORS + 1))
 elif float_ge "$load_pct" "$LOAD_WARN_PCT"; then
     load_status="WARNING"; TOTAL_WARNINGS=$((TOTAL_WARNINGS + 1))
@@ -765,19 +956,22 @@ if [ "$cpu_section_status" = "ERROR" ] || [ "$cpu_section_status" = "WARNING" ];
 fi
 
 # 3. 内存与交换空间使用情况 (Memory & Swap)
-mem_total=$(awk '/^MemTotal:/{print $2}' /proc/meminfo)
-mem_avail=$(awk '/^MemAvailable:/{print $2; have_a=1} /^MemFree:/{f=$2} /^Buffers:/{b=$2} /^Cached:/{c=$2} END{if(!have_a) print f+b+c}' /proc/meminfo)
-mem_total=${mem_total:-0}; mem_avail=${mem_avail:-0}
+read -r mem_total mem_avail < <(awk '/^MemTotal:/{t=$2;ht=1} /^MemAvailable:/{a=$2;ha=1} /^MemFree:/{f=$2} /^Buffers:/{b=$2} /^Cached:/{c=$2} END{if(!ha && f~/^[0-9]+$/ && b~/^[0-9]+$/ && c~/^[0-9]+$/){a=f+b+c;ha=1} if(ht && ha && t~/^[0-9]+$/ && a~/^[0-9]+$/) print t,a; else print "NA NA"}' /proc/meminfo 2>/dev/null)
 mem_util="NA"
-if [ "$mem_total" -gt 0 ] 2>/dev/null; then
+if [[ "$mem_total" =~ ^[0-9]+$ && "$mem_avail" =~ ^[0-9]+$ ]] && [ "$mem_total" -gt 0 ] && [ "$mem_avail" -le "$mem_total" ]; then
     mem_util=$(awk -v t="$mem_total" -v a="$mem_avail" 'BEGIN { printf "%.2f", ((t-a)/t)*100 }')
 fi
-swap_total=$(awk '/^SwapTotal:/{print $2}' /proc/meminfo)
-swap_free=$(awk '/^SwapFree:/{print $2}' /proc/meminfo)
-swap_util=0
-swap_total=${swap_total:-0}; swap_free=${swap_free:-0}
-if [ "$swap_total" -gt 0 ] 2>/dev/null; then
-    swap_util=$(awk -v t="$swap_total" -v f="$swap_free" 'BEGIN { printf "%.2f", ((t-f)/t)*100 }')
+read -r swap_total swap_free < <(awk '/^SwapTotal:/{t=$2;ht=1} /^SwapFree:/{f=$2;hf=1} END{if(ht && hf && t~/^[0-9]+$/ && f~/^[0-9]+$/ && t>=f) print t,f; else print "NA NA"}' /proc/meminfo 2>/dev/null)
+swap_util="NA"
+swap_status="UNCHECKED"
+if [[ "$swap_total" =~ ^[0-9]+$ && "$swap_free" =~ ^[0-9]+$ ]]; then
+    if [ "$swap_total" -eq 0 ]; then
+        swap_util=0
+        swap_status="NOT_APPLICABLE"
+    elif [ "$swap_free" -le "$swap_total" ]; then
+        swap_status="SUCCESS"
+        swap_util=$(awk -v t="$swap_total" -v f="$swap_free" 'BEGIN { printf "%.2f", ((t-f)/t)*100 }')
+    fi
 fi
 oom_events=""
 oom_check_status="UNCHECKED"
@@ -792,7 +986,7 @@ fi
 
 mem_status="SUCCESS"
 mem_usage_status="SUCCESS"
-swap_status="NOT_APPLICABLE"
+if [ "$swap_status" = "UNCHECKED" ]; then TOTAL_UNCHECKED=$((TOTAL_UNCHECKED + 1)); fi
 if [ -n "$oom_events" ]; then
     mem_status="ERROR"
     TOTAL_ERRORS=$((TOTAL_ERRORS + 1))
@@ -810,8 +1004,7 @@ elif float_ge "$mem_util" "$MEM_WARN_PCT"; then
     mem_usage_status="WARNING"
     TOTAL_WARNINGS=$((TOTAL_WARNINGS + 1))
 fi
-if [ "$swap_total" -gt 0 ] 2>/dev/null; then
-    swap_status="SUCCESS"
+if [ "$swap_status" = "SUCCESS" ]; then
     if float_ge "$swap_util" "$SWAP_CRIT_PCT"; then
         swap_status="ERROR"
         if [ "$mem_status" != "ERROR" ]; then mem_status="ERROR"; fi
@@ -824,11 +1017,17 @@ if [ "$swap_total" -gt 0 ] 2>/dev/null; then
 fi
 
 print_section_header "${mem_status}" "3. 内存与交换空间使用情况 (Memory & Swap)"
-echo "物理内存: 总量 $(awk -v t="$mem_total" 'BEGIN {printf "%.2f GB", t/1024/1024}'), 可用 $(awk -v a="$mem_avail" 'BEGIN {printf "%.2f GB", a/1024/1024}') (使用率: ${mem_util}%)"
-if [ "$swap_total" -gt 0 ]; then
-    echo "交换空间: 总量 $(awk -v t="$swap_total" 'BEGIN {printf "%.2f GB", t/1024/1024}'), 已用 $(awk -v t="$swap_total" -v f="$swap_free" 'BEGIN {printf "%.2f GB", (t-f)/1024/1024}') (使用率: ${swap_util}%)"
+if [[ "$mem_total" =~ ^[0-9]+$ && "$mem_avail" =~ ^[0-9]+$ ]]; then
+    echo "物理内存: 总量 $(awk -v t="$mem_total" 'BEGIN {printf "%.2f GB", t/1024/1024}'), 可用 $(awk -v a="$mem_avail" 'BEGIN {printf "%.2f GB", a/1024/1024}') (使用率: ${mem_util}%)"
 else
+    echo "物理内存: 未采集（内存总量或可用量不可读；使用率: NA）"
+fi
+if [ "$swap_status" = "SUCCESS" ] || [ "$swap_status" = "WARNING" ] || [ "$swap_status" = "ERROR" ]; then
+    echo "交换空间: 总量 $(awk -v t="$swap_total" 'BEGIN {printf "%.2f GB", t/1024/1024}'), 已用 $(awk -v t="$swap_total" -v f="$swap_free" 'BEGIN {printf "%.2f GB", (t-f)/1024/1024}') (使用率: ${swap_util}%)"
+elif [ "$swap_status" = "NOT_APPLICABLE" ]; then
     echo "交换空间: 未启用 Swap"
+else
+    echo "交换空间: 未采集（/proc/meminfo 无有效 SwapTotal/SwapFree）"
 fi
 echo "判定状态: 内存=${mem_usage_status}; Swap=${swap_status}; OOM 近 24h=${oom_check_status}"
 
@@ -841,9 +1040,9 @@ elif [ "$mem_util" != "NA" ] && float_ge "$mem_util" "$MEM_WARN_PCT"; then
     echo "[WARNING] 物理内存使用率超过 ${MEM_WARN_PCT}%，可用内存较低。"
 fi
 
-if [ "$swap_total" -gt 0 ] 2>/dev/null && float_ge "$swap_util" "$SWAP_CRIT_PCT"; then
+if [ "$swap_status" = "SUCCESS" ] && float_ge "$swap_util" "$SWAP_CRIT_PCT"; then
     echo "[ERROR] 交换分区使用率达到严重阈值 ${SWAP_CRIT_PCT}%。"
-elif [ "$swap_total" -gt 0 ] 2>/dev/null && float_ge "$swap_util" "$SWAP_WARN_PCT"; then
+elif [ "$swap_status" = "SUCCESS" ] && float_ge "$swap_util" "$SWAP_WARN_PCT"; then
     echo "[WARNING] 交换分区使用率超过 ${SWAP_WARN_PCT}%，物理内存可能不足且开始换页！"
 fi
 if [ "$oom_check_status" = "UNCHECKED" ]; then
@@ -1023,23 +1222,21 @@ read_tcp_counters() {
         }
         END {
             if (out ~ /^[0-9]+$/ && retr ~ /^[0-9]+$/) print out, retr
-            else print 0, 0
+            else print "NA"
         }
     ' /proc/net/snmp 2>/dev/null
 }
 _tcp_before=$(read_tcp_counters)
 sleep 1
 _tcp_after=$(read_tcp_counters)
-set -- $_tcp_before
-_out_before=${1:-0}
-_retr_before=${2:-0}
-set -- $_tcp_after
-_out_after=${1:-0}
-_retr_after=${2:-0}
-_delta_out=$((_out_after - _out_before))
-_delta_retr=$((_retr_after - _retr_before))
-if [ "$_delta_out" -gt 0 ] 2>/dev/null && [ "$_delta_retr" -ge 0 ] 2>/dev/null; then
-    tcp_retrans_pct=$(awk -v r="$_delta_retr" -v o="$_delta_out" 'BEGIN { printf "%.2f", (r/o)*100 }')
+if [[ "$_tcp_before" =~ ^[0-9]+[[:space:]]+[0-9]+$ && "$_tcp_after" =~ ^[0-9]+[[:space:]]+[0-9]+$ ]]; then
+    read -r _out_before _retr_before <<< "$_tcp_before"
+    read -r _out_after _retr_after <<< "$_tcp_after"
+    _delta_out=$((_out_after - _out_before))
+    _delta_retr=$((_retr_after - _retr_before))
+    if [ "$_delta_out" -gt 0 ] && [ "$_delta_retr" -ge 0 ]; then
+        tcp_retrans_pct=$(awk -v r="$_delta_retr" -v o="$_delta_out" 'BEGIN { printf "%.2f", (r/o)*100 }')
+    fi
 fi
 
 if [ "$tcp_collection_status" = "SUCCESS" ] && [ "$tcp_close_wait" -ge "$TCP_CLOSE_WAIT_CRIT" ]; then
@@ -1685,10 +1882,10 @@ echo "tcp_time_wait: ${tcp_time_wait}"
 echo "tcp_time_wait_status: ${tcp_time_wait_status}"
 echo "tcp_close_wait: ${tcp_close_wait}"
 echo "tcp_close_wait_status: ${tcp_close_wait_status}"
-echo "tcp_retrans_pct: ${tcp_retrans_pct:-0}"
+echo "tcp_retrans_pct: ${tcp_retrans_pct:-NA}"
 echo "tcp_retrans_pct_status: ${tcp_retrans_status}"
 # Legacy telemetry consumers use tcp_retrans; keep it as an alias.
-echo "tcp_retrans: ${tcp_retrans_pct:-0}"
+echo "tcp_retrans: ${tcp_retrans_pct:-NA}"
 echo "tcp_retrans_status: ${tcp_retrans_status}"
 echo "tcp_estab: ${tcp_estab}"
 echo "tcp_syn_recv: ${tcp_syn_recv}"
@@ -1724,21 +1921,23 @@ echo "======================================================================"
 
 # Default items list
 def get_default_items(now: str) -> list[tuple]:
-    return [
+    items = [
         # --- Network Device ---
         ('net_ping', 'Connectivity (Ping)', '网络连通性 (Ping)', 'Network', 'ping', '检查设备 ICMP 响应时间与丢包率', 'ICMP', 'ping -c 3 {ip}', '', 100, 200, 'Generic', '', now, now),
         ('net_ssh', 'SSH Accessibility', '管理通道 (SSH)', 'Network', 'ssh', '检查 22 端口可用性', 'TCP', 'socket.connect({ip}, 22)', '', 500, 2000, 'Generic', '', now, now),
         ('net_cpu', 'CPU Utilization', 'CPU 利用率 (SNMP)', 'Network', 'cpu', '监控网络设备 CPU 负载', 'SNMP', 'OID: 1.3.6.1.4.1.9.9.109.1.1.1.1.7', '', 85, 95, 'Cisco', '1.3.6.1.4.1.9.9.109.1.1.1.1.7', now, now),
         ('net_mem', 'Memory Utilization', '内存利用率 (SNMP)', 'Network', 'memory', '监控网络设备内存消耗', 'SNMP', 'OID: 1.3.6.1.4.1.9.9.48.1.1.1.5.1', '', 90, 98, 'Cisco', '1.3.6.1.4.1.9.9.48.1.1.1.5.1', now, now),
-        ('net_bgp', 'BGP Peer Status', 'BGP 邻居状态', 'Network', 'bgp_neighbor', '监控 BGP 状态机', 'SSH', 'show ip bgp summary', '', 0, 1, 'Generic', '', now, now),
+        ('net_bgp', 'BGP Neighbor Count (disabled)', 'BGP 邻居数（默认停用）', 'Network', 'bgp_neighbor',
+         '通用 BGP 邻居计数占位，默认停用；平台专用 BGP 指标负责默认巡检，需确认适用平台与邻居数据源后再启用',
+         'SNMP', '', '', 1, None, 'Generic', '', now, now),
 
         ('srv_cpu_load', 'CPU Load Average', 'CPU 系统负载', 'Server', 'cpu_load', '监控 1min 负载相对于核心数的比例', 'Shell', 'std_linux_load', 'std_linux_load', 80, 150, 'Linux', '', now, now),
         ('srv_cpu_util', 'CPU Utilization', 'CPU 使用率', 'Server', 'cpu_util', '监控整体 CPU 使用率 (0-100)', 'Shell', 'std_linux_cpu', 'std_linux_cpu', 90, 95, 'Linux', '', now, now),
-        ('srv_mem_avail', 'Available Memory', '可用内存', 'Server', 'mem_avail', '监控系统内存使用百分比 (0-100)', 'Shell', 'std_linux_mem', 'std_linux_mem', 85, 95, 'Linux', '', now, now),
+        ('srv_mem_avail', 'Memory Utilization', '内存使用率', 'Server', 'mem_avail', '监控系统内存使用百分比 (0-100)', 'Shell', 'std_linux_mem', 'std_linux_mem', 85, 95, 'Linux', '', now, now),
         ('srv_swap', 'Swap Usage', '交换分区使用率', 'Server', 'swap_util', '监控交换分区使用百分比 (0-100)', 'Shell', 'std_linux_swap', 'std_linux_swap', 70, 90, 'Linux', '', now, now),
         ('srv_iowait', 'Disk IO Wait', '磁盘 IO 等待 (IOWait)', 'Server', 'io_wait', '监控 CPU 等待 IO 时间占比 (阈值: >15% 告警)', 'Shell', 'std_linux_iowait', 'std_linux_iowait', 15, 30, 'Linux', '', now, now),
-        ('srv_disk_util', 'Disk Space Usage', '磁盘空间利用率', 'Server', 'disk_util', '监控根分区空间占用 (0-100)', 'Shell', 'std_linux_disk', 'std_linux_disk', 90, 95, 'Linux', '', now, now),
-        ('srv_disk_inode', 'Inode Utilization', 'Inode 使用率', 'Server', 'inode_util', '监控根分区 Inode 占用 (0-100)', 'Shell', 'std_linux_inode', 'std_linux_inode', 90, 95, 'Linux', '', now, now),
+        ('srv_disk_util', 'Disk Space Usage', '磁盘空间利用率', 'Server', 'disk_util', '监控所有本地挂载点中的最大磁盘空间占用率 (0-100)', 'Shell', 'std_linux_disk', 'std_linux_disk', 90, 95, 'Linux', '', now, now),
+        ('srv_disk_inode', 'Inode Utilization', 'Inode 使用率', 'Server', 'inode_util', '监控所有本地挂载点中的最大 Inode 占用率 (0-100)', 'Shell', 'std_linux_inode', 'std_linux_inode', 90, 95, 'Linux', '', now, now),
         ('srv_net_conns', 'Established Connections', '并发连接数', 'Server', 'tcp_conns', '监控 TCP Established 状态连接数', 'Shell', 'std_linux_conns', 'std_linux_conns', 5000, 10000, 'Linux', '', now, now),
         ('srv_process', 'Critical Processes', '核心进程监控', 'Server', 'process_health', '监控指定进程是否存在', 'Shell', 'std_linux_proc', 'std_linux_proc', None, 1, 'Linux', '', now, now),
         ('srv_oom_events', 'OOM Killer Events', 'OOM 杀进程事件数', 'Server', 'oom_events', '监控系统最近是否触发过 OOM-killer 强制杀死过进程', 'Shell', 'std_linux_oom_events', 'std_linux_oom_events', 1, 5, 'Linux', '', now, now),
@@ -1746,14 +1945,26 @@ def get_default_items(now: str) -> list[tuple]:
         ('srv_kernel_errs', 'Kernel Error Log Count', '内核严重报错日志数', 'Server', 'kernel_errs', '监控系统内核报错日志数量 (dmesg)', 'Shell', 'std_linux_kernel_errs', 'std_linux_kernel_errs', 1, 10, 'Linux', '', now, now),
         ('srv_zombie_procs', 'Zombie Processes', '僵尸进程数', 'Server', 'zombie_procs', '监控未能被正常回收的僵尸进程占用量', 'Shell', 'std_linux_zombie_procs', 'std_linux_zombie_procs', 2, 5, 'Linux', '', now, now),
         ('srv_fd_util', 'File Descriptor Utilization %', '文件句柄使用率', 'Server', 'fd_util', '监控系统已开启文件句柄数占上限的比例', 'Shell', 'std_linux_fd_util', 'std_linux_fd_util', 80, 90, 'Linux', '', now, now),
-        ('srv_net_errs', 'Network Interface Errors/Drops', '网卡丢包与报错数', 'Server', 'net_errs', '监测系统所有网卡接口 errors 和 dropped 的总计数', 'Shell', 'std_linux_net_errs', 'std_linux_net_errs', 10, 100, 'Linux', '', now, now),
-        ('srv_ntp_desync', 'NTP Desync Status', 'NTP 时间失步状态', 'Server', 'ntp_desync', '监控 NTP 本地时钟是否同步 (0=同步, 1=失步/失败)', 'Shell', 'std_linux_ntp_desync', 'std_linux_ntp_desync', 1, 1, 'Linux', '', now, now),
+        ('srv_net_errs', 'Network Interface Errors/Drops per second', '网卡每秒丢包与报错数', 'Server', 'net_errs', '监测所有网卡 errors 与 dropped 计数器的一秒增量，单位为次/秒', 'Shell', 'std_linux_net_errs', 'std_linux_net_errs', 10, 100, 'Linux', '', now, now),
+        ('srv_ntp_desync', 'NTP Desync Status', 'NTP 时间同步状态', 'Server', 'ntp_desync', '读取 NTP 状态码 (0=同步，1=未同步；缺少可信来源为未采集)', 'Shell', 'std_linux_ntp_desync', 'std_linux_ntp_desync', None, None, 'Linux', '', now, now),
         ('srv_dns_latency', 'DNS Resolution Latency', 'DNS 解析延迟 (ms)', 'Server', 'dns_latency', '监控域名解析延迟 (单位: 毫秒，超时失败为 9999)', 'Shell', 'std_linux_dns_latency', 'std_linux_dns_latency', 1000, 5000, 'Linux', '', now, now),
-        ('srv_recent_reboot', 'Recent Reboot Alert', '系统最近重启告警', 'Server', 'recent_reboot', '监控系统最近 15 分钟内是否重启过 (0=否, 1=是)', 'Shell', 'std_linux_recent_reboot', 'std_linux_recent_reboot', 1, 1, 'Linux', '', now, now),
+        ('srv_recent_reboot', 'Recent Reboot Alert', '系统最近重启状态', 'Server', 'recent_reboot', '读取最近 15 分钟内是否重启的状态码 (0=否，1=是)', 'Shell', 'std_linux_recent_reboot', 'std_linux_recent_reboot', None, None, 'Linux', '', now, now),
         ('srv_core_dumps_count', 'Core Dump Files', 'CoreDump 崩溃文件数', 'Server', 'core_dumps_count', '监控系统关键目录和临时目录下崩溃文件数', 'Shell', 'std_linux_core_dumps_count', 'std_linux_core_dumps_count', 1, 5, 'Linux', '', now, now),
         ('srv_disk_io_await', 'Disk I/O Await Latency', '磁盘 I/O 等待延迟 (ms)', 'Server', 'disk_io_await', '监控系统磁盘平均读写响应等待耗时 (毫秒)', 'Shell', 'std_linux_disk_io_await', 'std_linux_disk_io_await', 20, 50, 'Linux', '', now, now),
         ('srv_tcp_close_wait', 'TCP CLOSE_WAIT Connections', 'TCP CLOSE_WAIT 异常连接数', 'Server', 'tcp_close_wait', '监控系统处于 CLOSE_WAIT 异常未关闭状态的 TCP 连接数', 'Shell', 'std_linux_tcp_close_wait', 'std_linux_tcp_close_wait', 50, 200, 'Linux', '', now, now),
         ('srv_tcp_retrans_pct', 'TCP Retransmission Ratio %', 'TCP 协议栈重传段比例', 'Server', 'tcp_retrans_pct', '监控 TCP 协议栈中重传的报文比例 (%)', 'Shell', 'std_linux_tcp_retrans_pct', 'std_linux_tcp_retrans_pct', 2, 5, 'Linux', '', now, now),
+    ]
+
+    return [
+        (
+            *item,
+            BUILTIN_INSPECTION_UNIT_BY_CHECK_KEY.get(item[4], ''),
+            'count' if item[4] == 'bgp_neighbor' else 'status' if item[4] in {'ntp_desync', 'recent_reboot'} else 'numeric',
+            '0' if item[4] in {'ntp_desync', 'recent_reboot'} else '',
+            'above',
+            0 if item[4] == 'bgp_neighbor' else 1,
+        )
+        for item in items
     ]
 
 
@@ -1762,5 +1973,5 @@ compliance_expected_values = {
     'compliance_cisco_ios_aaa': 'aaa new-model',
     'compliance_cisco_ios_telnet': 'ssh',
     'compliance_cisco_ios_ssh_ver': '2.0',
-    'compliance_cisco_ios_snmp': '',
+    'compliance_cisco_ios_snmp': 'safe',
 }

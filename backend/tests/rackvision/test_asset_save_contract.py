@@ -38,7 +38,8 @@ def _asset_state(asset_id: str) -> dict:
                       d.id AS device_id, d.hostname AS device_hostname,
                       d.vendor AS device_vendor, d.model AS device_model,
                       d.platform AS device_platform, d.ip_address,
-                      d.site_id AS device_site_id, d.tenant_id AS device_tenant_id
+                      d.site_id AS device_site_id, d.tenant_id AS device_tenant_id,
+                      d.snmp_collection_enabled
                  FROM physical_assets pa
                  LEFT JOIN devices d ON d.asset_id = pa.id
                 WHERE pa.id = ?""",
@@ -122,7 +123,8 @@ def test_asset_http_put_preserves_sync_scope_and_rollback_contracts(
         raise AssertionError("staging asset saves must not start password rotation")
 
     monkeypatch.setattr(password_rotation_service, "rotate_password", unexpected_rotation)
-    monkeypatch.setattr(collector_sync_service, "trigger_async_monitoring_sync", lambda: None)
+    collector_sync_calls: list[None] = []
+    monkeypatch.setattr(collector_sync_service, "trigger_async_monitoring_sync", lambda: collector_sync_calls.append(None))
 
     tenant_a, tenant_b = _id("asset-save-tenant-a"), _id("asset-save-tenant-b")
     site_a, site_b = _id("asset-save-site-a"), _id("asset-save-site-b")
@@ -187,6 +189,7 @@ def test_asset_http_put_preserves_sync_scope_and_rollback_contracts(
 
     primary_id = primary["id"]
     before_update = _asset_state(primary_id)
+    assert before_update["snmp_collection_enabled"] is True
     updated = _request(
         "PUT",
         f"/api/assets/{primary_id}?run_bg_rotate=false",
@@ -208,6 +211,26 @@ def test_asset_http_put_preserves_sync_scope_and_rollback_contracts(
     assert state["asset_site_id"] == state["device_site_id"] == site_a
     assert state["device_tenant_id"] == "tenant-default"
     assert state["department"] == "Network Operations"
+
+    sync_calls_before_switch = len(collector_sync_calls)
+    snmp_disabled = _request(
+        "PUT",
+        f"/api/assets/{primary_id}?run_bg_rotate=false",
+        headers=headers_a,
+        json={"snmp_collection_enabled": False},
+    )
+    assert snmp_disabled.status_code == 200, snmp_disabled.text
+    assert _asset_state(primary_id)["snmp_collection_enabled"] is False
+    assert len(collector_sync_calls) == sync_calls_before_switch + 1
+
+    snmp_reenabled = _request(
+        "PUT",
+        f"/api/assets/{primary_id}?run_bg_rotate=false",
+        headers=headers_a,
+        json={"snmp_collection_enabled": True},
+    )
+    assert snmp_reenabled.status_code == 200, snmp_reenabled.text
+    assert _asset_state(primary_id)["snmp_collection_enabled"] is True
 
     before_conflict = _asset_state(primary_id)
     locked_identity = _request(

@@ -58,8 +58,9 @@ export function filterInspectionItems<T extends InspectionItemExportRecord>(
   filters: InspectionItemFilters,
 ): T[] {
   const query = filters.search.toLocaleLowerCase();
+  const selectedCategory = filters.category.trim().toLocaleLowerCase();
   return items.filter((item) => {
-    if (filters.category !== 'All' && item.category !== filters.category) return false;
+    if (selectedCategory !== 'all' && String(item.category || '').trim().toLocaleLowerCase() !== selectedCategory) return false;
     if (filters.method !== 'All' && (item.method || '').toUpperCase() !== filters.method) return false;
     if (filters.vendor !== 'All' && getFriendlyInspectionVendor(item.vendor) !== filters.vendor) return false;
     if (!query) return true;

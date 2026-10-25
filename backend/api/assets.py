@@ -72,6 +72,7 @@ _ASSET_DEVICE_TYPE_FIELDS = frozenset({'vendor', 'model', 'power_watts', 'device
 _ASSET_DEVICE_SYNC_FIELDS = frozenset({
     'asset_type', 'hostname', 'management_ip', 'serial_number', 'model', 'device_role', 'site_id', 'lifecycle_status',
     'vendor', 'platform', 'connection_method', 'ssh_algorithm_profile', 'snmp_port',
+    'snmp_collection_enabled',
     'snmp_credential_id', 'auth_model', 'device_category', 'function', 'zone',
     'power_watts', 'management_port', 'snmp_community', 'username', 'normal_username',
     'admin_username', 'password', 'normal_password', 'admin_password', 'enable_password',
@@ -80,7 +81,7 @@ _ASSET_DEVICE_SYNC_FIELDS = frozenset({
 _ASSET_MONITORING_SYNC_FIELDS = frozenset({
     'asset_type', 'hostname', 'management_ip', 'status', 'lifecycle_status', 'vendor',
     'platform', 'connection_method', 'management_port', 'snmp_port',
-    'snmp_credential_id', 'snmp_community', 'credential_id', 'admin_credential_id',
+    'snmp_credential_id', 'snmp_community', 'snmp_collection_enabled', 'credential_id', 'admin_credential_id',
 })
 
 # The inventory tables contain operational, credential-governance and
@@ -102,6 +103,7 @@ _PUBLIC_ASSET_FIELDS = frozenset({
     'password', 'normal_password', 'admin_password', 'enable_password',
     'snmp_community',
     'snmp_port', 'management_port', 'device_category', 'function', 'zone',
+    'snmp_collection_enabled',
     'winrm_enabled', 'winrm_port', 'winrm_auth_mode', 'winrm_tls_mode',
     'winrm_cert_fingerprint',
     'power_watts', 'device_id', 'is_managed', 'takeover_error',
@@ -1228,6 +1230,10 @@ def _create_linked_device(conn, asset_id: str, body, user: dict) -> str:
     conn.execute('UPDATE devices SET site_id = ? WHERE id = ?', (body.site_id, device_id))
     conn.execute('UPDATE devices SET snmp_credential_id = ? WHERE id = ?', (getattr(body, 'snmp_credential_id', '') or '', device_id))
     conn.execute(
+        'UPDATE devices SET snmp_collection_enabled = ? WHERE id = ?',
+        (bool(getattr(body, 'snmp_collection_enabled', True)), device_id),
+    )
+    conn.execute(
         '''UPDATE physical_assets
            SET credential_id = ?, admin_credential_id = ?, snmp_credential_id = ?,
                snmp_community = CASE WHEN snmp_community IS NULL OR snmp_community = '' THEN ? ELSE snmp_community END
@@ -1507,6 +1513,11 @@ def _sync_device_from_asset(
             else None
         ),
         'snmp_port': getattr(body, 'snmp_port', None) if changed_fields is None or 'snmp_port' in changed_fields else None,
+        'snmp_collection_enabled': (
+            getattr(body, 'snmp_collection_enabled', None)
+            if changed_fields is None or 'snmp_collection_enabled' in changed_fields
+            else None
+        ),
         'snmp_credential_id': getattr(body, 'snmp_credential_id', None) if changed_fields is None or 'snmp_credential_id' in changed_fields else None,
         'auth_model': getattr(body, 'auth_model', None) if changed_fields is None or 'auth_model' in changed_fields else None,
         'device_category': getattr(body, 'device_category', None) if changed_fields is None or 'device_category' in changed_fields else None,
@@ -1839,6 +1850,7 @@ class AssetCreate(BaseModel):
     # Compatibility alias used by older spreadsheets/API clients.
     community: Optional[str] = None
     snmp_port: int = 161
+    snmp_collection_enabled: bool = True
     management_port: int = 22
     winrm_enabled: bool = False
     winrm_port: int = 5986
@@ -2024,6 +2036,7 @@ class AssetUpdate(BaseModel):
     # Compatibility alias used by older spreadsheets/API clients.
     community: Optional[str] = None
     snmp_port: Optional[int] = None
+    snmp_collection_enabled: Optional[bool] = None
     management_port: Optional[int] = None
     winrm_enabled: Optional[bool] = None
     winrm_port: Optional[int] = None
@@ -2389,6 +2402,7 @@ def list_assets(
         rows = conn.execute(
             f'''SELECT pa.*,
                 d.id AS device_id,
+                COALESCE(d.snmp_collection_enabled, TRUE) AS snmp_collection_enabled,
                 s.site_name,
                 s.site_code,
                 s.tenant_id AS site_tenant_id,
@@ -2705,6 +2719,7 @@ def get_asset(asset_id: str, _user=require_role("Viewer")):
         row = conn.execute(
             '''SELECT pa.*, s.tenant_id AS site_tenant_id,
                d.id AS device_id,
+               COALESCE(d.snmp_collection_enabled, TRUE) AS snmp_collection_enabled,
                d.onboarding_status AS onboarding_status,
                COALESCE(NULLIF(pa.normal_username,''), d.normal_username, '') AS normal_username,
                COALESCE(NULLIF(pa.admin_username,''),  d.admin_username,  '') AS admin_username,
@@ -3009,8 +3024,11 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True, _
     conn = get_db_connection()
     try:
         row = conn.execute(
-            '''SELECT pa.*, s.tenant_id AS site_tenant_id
-               FROM physical_assets pa LEFT JOIN sites s ON s.id = pa.site_id
+            '''SELECT pa.*, s.tenant_id AS site_tenant_id,
+                      COALESCE(d.snmp_collection_enabled, TRUE) AS snmp_collection_enabled
+               FROM physical_assets pa
+               LEFT JOIN devices d ON d.asset_id = pa.id
+               LEFT JOIN sites s ON s.id = pa.site_id
               WHERE pa.id = ?''',
             (asset_id,),
         ).fetchone()
@@ -3240,6 +3258,11 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True, _
                     params.append(_safe_encrypt_snmp_community(val) if field == 'snmp_community' else val)
                     changed_fields.add(field)
 
+        if body.snmp_collection_enabled is not None:
+            current_snmp_enabled = bool(row['snmp_collection_enabled']) if 'snmp_collection_enabled' in row.keys() else True
+            if bool(body.snmp_collection_enabled) != current_snmp_enabled:
+                changed_fields.add('snmp_collection_enabled')
+
         placement_fields = (
             'rack_id', 'rack_position', 'rack_mount_kind', 'rack_height_u',
             'rack_placement_status', 'rack_placement_source', 'rack_dimension_status',
@@ -3284,8 +3307,8 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True, _
                     except ValueError as exc:
                         conn.rollback()
                         raise HTTPException(status_code=400, detail=str(exc))
-                if should_sync_device and row['asset_type'] in ('network_device', 'server'):
-                    _sync_device_from_asset(conn, asset_id, body, changed_fields)
+            if should_sync_device and row['asset_type'] in ('network_device', 'server'):
+                _sync_device_from_asset(conn, asset_id, body, changed_fields)
             conn.execute(
                 "UPDATE physical_assets SET lifecycle_status = 'production', is_managed = 0, "
                 "credential_governance_mode = 'legacy_exempt', takeover_exempt_reason = ?, "
@@ -3316,9 +3339,16 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True, _
                 target_name=updated_row['hostname'] if updated_row else asset_id,
                 before=row,
                 after=updated_row,
-                details={'source': 'api', 'legacy_exempt': True},
+                details={
+                    'source': 'api',
+                    'legacy_exempt': True,
+                    **({'snmp_collection_enabled': bool(body.snmp_collection_enabled)}
+                       if 'snmp_collection_enabled' in changed_fields else {}),
+                },
             )
             conn.commit()
+            if should_sync_monitoring:
+                _trigger_asset_monitoring_sync()
             return {
                 'ok': True,
                 'password_rotated': False,
@@ -3329,7 +3359,7 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True, _
             }
 
         rotation_result = None
-        if updates or transitioning_to_production:
+        if updates or transitioning_to_production or should_sync_device:
             if updates:
                 updates.append('updated_at = ?')
                 params.append(_utc_now())
@@ -3485,7 +3515,12 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True, _
             target_name=updated_row['hostname'] if updated_row else asset_id,
             before=row,
             after=updated_row,
-            details={'source': 'api', 'production_transition': transitioning_to_production},
+            details={
+                'source': 'api',
+                'production_transition': transitioning_to_production,
+                **({'snmp_collection_enabled': bool(body.snmp_collection_enabled)}
+                   if 'snmp_collection_enabled' in changed_fields else {}),
+            },
         )
         # If no earlier branch committed this update, the audit row and all
         # asset mutations are committed together.  A second commit is safe
@@ -4167,6 +4202,35 @@ def import_assets(
             item for item in pending_snmp_identification
             if str(item.get('device_id') or '') in imported_device_ids
         ]
+
+        queued_snmp_device_ids = sorted({
+            str(item.get('device_id') or '')
+            for item in (
+                pending_hostname_sync + pending_librenms_enrollment + pending_snmp_identification
+            )
+            if str(item.get('device_id') or '')
+        })
+        if queued_snmp_device_ids:
+            placeholders = ','.join('?' for _ in queued_snmp_device_ids)
+            disabled_rows = conn.execute(
+                f'''SELECT id FROM devices
+                     WHERE id IN ({placeholders})
+                       AND COALESCE(snmp_collection_enabled, TRUE) = FALSE''',
+                queued_snmp_device_ids,
+            ).fetchall()
+            disabled_device_ids = {str(row['id']) for row in disabled_rows}
+            pending_hostname_sync = [
+                item for item in pending_hostname_sync
+                if str(item.get('device_id') or '') not in disabled_device_ids
+            ]
+            pending_librenms_enrollment = [
+                item for item in pending_librenms_enrollment
+                if str(item.get('device_id') or '') not in disabled_device_ids
+            ]
+            pending_snmp_identification = [
+                item for item in pending_snmp_identification
+                if str(item.get('device_id') or '') not in disabled_device_ids
+            ]
 
         def _finish_import_post_commit() -> dict:
             nonlocal pending_hostname_sync, pending_librenms_enrollment, pending_snmp_identification

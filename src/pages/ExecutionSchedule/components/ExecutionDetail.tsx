@@ -23,6 +23,367 @@ const stripLinuxHealthRating = (output: string) => output
   .filter((line) => !/^\s*(?:综合健康评级|overall health rating)\s*[:：]/i.test(line))
   .join('\n');
 
+type InspectionHealthKind = 'healthy' | 'warning' | 'critical' | 'not_collected' | 'unknown';
+
+const normalizeInspectionHealth = (value: unknown): InspectionHealthKind => {
+  const status = String(value ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (['healthy', 'success', 'ok', 'normal', 'passed', 'pass'].includes(status)) return 'healthy';
+  if (['warning', 'warn', 'degraded'].includes(status)) return 'warning';
+  if (['critical', 'error', 'failed', 'failure', 'unhealthy', 'down', 'offline'].includes(status)) return 'critical';
+  if (['not_collected', 'unavailable', 'unchecked'].includes(status)) return 'not_collected';
+  return 'unknown';
+};
+
+const parseInspectionJson = <T,>(value: unknown, fallback: T): T => {
+  if (typeof value !== 'string') return (value as T) ?? fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+};
+
+const getInspectionIssueLabel = (status: InspectionHealthKind, zh: boolean): string => {
+  if (status === 'healthy') return zh ? '运行正常' : 'Healthy';
+  if (status === 'warning') return zh ? '需要关注' : 'Warning';
+  if (status === 'critical') return zh ? '需要处理' : 'Critical';
+  if (status === 'not_collected') return zh ? '未采集' : 'Not collected';
+  return zh ? '状态未知' : 'Unknown';
+};
+
+const normalizeConnectivity = (value: unknown): InspectionHealthKind => {
+  if (value === null || value === undefined || String(value).trim() === '') return 'not_collected';
+  if (value === true || value === 1 || String(value).trim() === '1') return 'healthy';
+  if (value === false || value === 0 || String(value).trim() === '0') return 'critical';
+  return normalizeInspectionHealth(value);
+};
+
+const getConnectivityLabel = (status: InspectionHealthKind, zh: boolean): string => {
+  if (status === 'healthy') return 'OK';
+  if (status === 'critical') return 'FAIL';
+  if (status === 'warning') return 'WARN';
+  if (status === 'not_collected') return zh ? '未采集' : 'NOT COLLECTED';
+  return zh ? '未知' : 'UNKNOWN';
+};
+
+const getConnectivityTone = (status: InspectionHealthKind): string => {
+  if (status === 'healthy') return 'text-emerald-400';
+  if (status === 'warning') return 'text-amber-400';
+  if (status === 'critical') return 'text-red-400';
+  return 'text-slate-400';
+};
+
+const getMetricValueStatus = (
+  key: string,
+  value: unknown,
+  evaluatedStatus: unknown,
+  expectedValue?: unknown,
+  category?: unknown,
+): InspectionHealthKind => {
+  const componentState = /_(fan|psu)$/i.test(key);
+  const rawValue = value && typeof value === 'object' ? (value as any).value : value;
+  const normalizedValue = String(rawValue ?? '').trim().toLowerCase();
+  const explicitStatus = normalizeInspectionHealth(evaluatedStatus);
+  const hasExplicitUnknownStatus = evaluatedStatus !== null && evaluatedStatus !== undefined
+    && String(evaluatedStatus).trim() !== '' && explicitStatus === 'unknown';
+  const isMissingValue = rawValue === null || rawValue === undefined
+    || ['', 'unknown', 'unavailable', 'not_collected', 'not collected', 'n/a', 'na', 'null', 'none', '--'].includes(normalizedValue);
+  if (componentState && normalizedValue === '3') return 'not_collected';
+  if (explicitStatus === 'not_collected') return 'not_collected';
+  if (isMissingValue) return hasExplicitUnknownStatus || normalizedValue === 'unknown' ? 'unknown' : 'not_collected';
+
+  if (explicitStatus !== 'unknown') return explicitStatus;
+
+  if (componentState && ['0', '1', '2'].includes(normalizedValue)) {
+    if (normalizedValue === '2') return 'critical';
+    if (normalizedValue === '1') return 'warning';
+    const expected = String(expectedValue ?? '').trim().toLowerCase();
+    return expected && !['ok', 'normal', '0'].includes(expected) ? 'warning' : 'healthy';
+  }
+
+  if (componentState && ['ok', 'normal', 'up', 'true', 'running', 'operational', 'ready', 'active'].includes(normalizedValue)) return 'healthy';
+  if (['warning', 'warn', 'degraded'].includes(normalizedValue)) return 'warning';
+  if (['critical', 'error', 'failed', 'fail', 'failure', 'unhealthy', 'down', 'offline', 'alarm', 'false', '0'].includes(normalizedValue)) {
+    return componentState ? 'critical' : 'warning';
+  }
+  const expected = String(expectedValue ?? '').trim().toLowerCase();
+  const isComplianceText = String(category ?? '').toLowerCase() === 'compliance';
+  const matchesExpected = expected && (
+    normalizedValue === expected
+    || (isComplianceText && normalizedValue.includes(expected) && !/^(?:un|not|no|non)/.test(normalizedValue))
+  );
+  if (matchesExpected) return 'healthy';
+  if (['healthy', 'success', 'ok', 'normal', 'up', 'true', '1', 'running', 'operational', 'ready', 'active'].includes(normalizedValue)) {
+    return expected ? 'warning' : 'healthy';
+  }
+  if (expected) return 'warning';
+  return 'warning';
+};
+
+const getMetricValueStatusLabel = (status: InspectionHealthKind, zh: boolean): string => {
+  if (status === 'healthy') return zh ? '正常' : 'Normal';
+  if (status === 'warning') return zh ? '告警' : 'Alert';
+  if (status === 'critical') return zh ? '故障' : 'Failure';
+  if (status === 'not_collected') return zh ? '未采集' : 'Not collected';
+  return zh ? '状态未知' : 'Unknown';
+};
+
+interface InspectionSummaryIssue {
+  severity: 'critical' | 'warning';
+  reason: string;
+  suggestion: string;
+  key: string;
+}
+
+const buildInspectionSummary = (
+  res: any,
+  analysis: any[],
+  findings: any[],
+  correlatedRisks: any[],
+  metrics: Record<string, any>,
+  zh: boolean,
+) => {
+  const candidates: InspectionSummaryIssue[] = [];
+  const issueCounts = new Map<string, 'critical' | 'warning'>();
+  const normalizeAlias = (value: unknown) => String(value ?? '').trim().toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]/g, '');
+  const aliasesMatch = (left: string[], right: string[]) => left.some((leftAlias) => {
+    const normalizedLeft = normalizeAlias(leftAlias);
+    return normalizedLeft.length >= 2 && right.some((rightAlias) => normalizeAlias(rightAlias) === normalizedLeft);
+  });
+  const messageMatchesAliases = (message: string, aliases: string[]) => {
+    const normalizedMessage = normalizeAlias(message);
+    return aliases.some((alias) => {
+      const normalizedAlias = normalizeAlias(alias);
+      return normalizedAlias.length >= 2 && normalizedMessage.includes(normalizedAlias);
+    });
+  };
+  const metricConfigSources = [res?.metric_config, res?.metric_configs, res?.inspection_items];
+  const findMetricConfig = (key: string) => metricConfigSources.map((source: any) => {
+    if (Array.isArray(source)) return source.find((item: any) => String(item?.check_key || item?.key || item?.id || '') === key);
+    if (source && typeof source === 'object') return source[key];
+    return undefined;
+  }).find(Boolean);
+  const getMetricConfigAliases = (config: any) => [
+    config?.check_key, config?.key, config?.id, config?.name, config?.name_zh,
+  ].filter(Boolean).map(String);
+  const getConnectivityFindingKey = (finding: any): string | null => {
+    if (String(finding?.type || '').trim().toLowerCase() !== 'connectivity_error') return null;
+    const details = [finding?.message, finding?.label, finding?.key, finding?.check_key, finding?.raw_error]
+      .filter(Boolean).map(String).join(' ').toLowerCase();
+    if (/icmp|ping/.test(details)) return 'connectivity:icmp';
+    if (/ssh/.test(details)) return 'connectivity:ssh';
+    return null;
+  };
+  const analysisEntries = analysis.map((item, index) => ({
+    item,
+    metricKey: String(item?.key || item?.check_key || item?.metric || item?.conclusion || `metric-${index}`),
+    aliases: [item?.key, item?.check_key, item?.metric, item?.name, item?.name_zh]
+      .filter(Boolean).map(String),
+    severity: normalizeInspectionHealth(item?.status),
+  }));
+  const pushIssue = (issue: InspectionSummaryIssue) => {
+    const previous = issueCounts.get(issue.key);
+    if (!previous || (previous === 'warning' && issue.severity === 'critical')) issueCounts.set(issue.key, issue.severity);
+    candidates.push(issue);
+  };
+
+  const analysisIssues = analysisEntries.flatMap((entry) => {
+    const { item, metricKey, aliases, severity } = entry;
+    if (severity !== 'critical' && severity !== 'warning') return [];
+    return [{
+      severity,
+      reason: String(item?.conclusion || item?.metric || ''),
+      suggestion: String(item?.suggestion || ''),
+      key: `metric:${metricKey}`,
+      aliases,
+    }];
+  });
+  analysisIssues.forEach(({ aliases: _aliases, ...issue }) => pushIssue(issue));
+
+  const metricStatusIssues = Object.entries(metrics || {}).flatMap(([statusField, rawStatus]) => {
+    if (!/_status$/i.test(statusField)) return [];
+    const severity = normalizeInspectionHealth(rawStatus);
+    if (severity !== 'critical' && severity !== 'warning') return [];
+
+    const metricKey = statusField.replace(/_evaluation_status$/i, '').replace(/_status$/i, '');
+    const config = findMetricConfig(metricKey);
+    const configAliases = getMetricConfigAliases(config);
+    const metricAliases = [metricKey, metricKey.replace(/_/g, ' '), ...configAliases];
+    const matchedAnalysis = analysisEntries.find((entry) => aliasesMatch(entry.aliases, metricAliases));
+    const canonicalMetricKey = matchedAnalysis?.metricKey || metricKey;
+    const metricName = String(config?.name_zh || config?.name || matchedAnalysis?.item?.metric || metricKey.replace(/_/g, ' '));
+    return [{
+      severity,
+      reason: `${metricName}：${getInspectionIssueLabel(severity, zh)}`,
+      suggestion: '',
+      key: `metric:${canonicalMetricKey}`,
+      aliases: [...metricAliases, ...(matchedAnalysis?.aliases || [])],
+    }];
+  });
+  metricStatusIssues.forEach(({ aliases: _aliases, ...issue }) => pushIssue(issue));
+
+  findings.forEach((finding, index) => {
+    const severity = normalizeInspectionHealth(finding?.severity);
+    if (severity !== 'critical' && severity !== 'warning') return;
+    const message = String(finding?.message || finding?.label || '');
+    const findingAliases = [finding?.key, finding?.metric_key, finding?.check_key, finding?.metric, finding?.name, finding?.name_zh]
+      .filter(Boolean).map(String);
+    const matchedAnalysis = analysisEntries.find((entry) => (
+      aliasesMatch(entry.aliases, findingAliases) || messageMatchesAliases(message, entry.aliases)
+    ));
+    const matchedMetricStatus = metricStatusIssues.find((item) => (
+      aliasesMatch(item.aliases, findingAliases) || messageMatchesAliases(message, item.aliases)
+    ));
+    const connectivityKey = getConnectivityFindingKey(finding);
+    const key = connectivityKey || (matchedAnalysis
+      ? `metric:${matchedAnalysis.metricKey}`
+      : matchedMetricStatus?.key || `finding:${finding?.type || 'issue'}:${message || index}`);
+    pushIssue({ severity, reason: message, suggestion: String(finding?.suggestion || ''), key });
+  });
+
+  correlatedRisks.forEach((risk, index) => {
+    const severity = normalizeInspectionHealth(risk?.severity);
+    if (severity !== 'critical' && severity !== 'warning') return;
+    const name = String(risk?.rule_name || risk?.description || `risk-${index}`);
+    pushIssue({
+      severity,
+      reason: String(risk?.description || risk?.rule_name || ''),
+      suggestion: String(risk?.suggestion || ''),
+      key: `risk:${name}`,
+    });
+  });
+
+  if (normalizeConnectivity(res?.ping_ok) === 'critical') {
+    pushIssue({ severity: 'critical', reason: 'ICMP 连接失败', suggestion: '检查设备供电、网络路径和管理地址。', key: 'connectivity:icmp' });
+  }
+  if (normalizeConnectivity(res?.ssh_ok) === 'critical') {
+    pushIssue({ severity: 'warning', reason: 'SSH 采集未成功', suggestion: '检查 SSH 服务、账号凭据和访问策略。', key: 'connectivity:ssh' });
+  }
+
+  const notCollectedKeys = new Set<string>();
+  Object.entries(metrics || {}).forEach(([key, value]) => {
+    if (/_status$/i.test(key)) {
+      const status = normalizeInspectionHealth(value);
+      if (status === 'not_collected' || status === 'unknown') notCollectedKeys.add(key.replace(/_status$/i, ''));
+      return;
+    }
+    if (value && typeof value === 'object' && /未采集|not[ _-]?collected|unavailable/i.test(String((value as any).error || ''))) {
+      notCollectedKeys.add(key);
+    }
+  });
+  analysis.forEach((item, index) => {
+    const status = normalizeInspectionHealth(item?.status);
+    if (status === 'not_collected' || status === 'unknown') {
+      notCollectedKeys.add(String(item?.key || item?.metric || `unknown-${index}`));
+    }
+  });
+
+  const prioritizedIssues = [...candidates].sort((left, right) => {
+    const severityOrder = (right.severity === 'critical' ? 2 : 1) - (left.severity === 'critical' ? 2 : 1);
+    return severityOrder || Number(Boolean(right.suggestion)) - Number(Boolean(left.suggestion));
+  });
+  const primaryIssue = prioritizedIssues[0];
+  const healthKinds: InspectionHealthKind[] = [normalizeInspectionHealth(res?.health_status), ...issueCounts.values()];
+  const health = healthKinds.reduce<InspectionHealthKind>((current, next) => {
+    const rank: Record<InspectionHealthKind, number> = { unknown: 0, not_collected: 0, healthy: 0, warning: 1, critical: 2 };
+    if (current === 'unknown' && next !== 'unknown') return next;
+    return rank[next] > rank[current] ? next : current;
+  }, normalizeInspectionHealth(res?.health_status));
+
+  const isCoreMetricKey = (key: string) => (
+    !/_last$|_change_pct$/i.test(key)
+    && /cpu|mem|memory|temp|fan|psu|uptime/i.test(key)
+  );
+  const coreMetricKeys = new Set<string>();
+  const analyzedMetricKeys = new Set<string>();
+  analysis.forEach((item) => {
+    const key = String(item?.key || item?.check_key || '');
+    if (key && isCoreMetricKey(key)) {
+      analyzedMetricKeys.add(key);
+      coreMetricKeys.add(key);
+    }
+  });
+  Object.keys(metrics || {}).forEach((key) => {
+    if (isCoreMetricKey(key) && (!/_status$/i.test(key) || analyzedMetricKeys.has(key) || /^(fan|psu)_status$/i.test(key))) {
+      coreMetricKeys.add(key);
+    }
+  });
+
+  const coreMetrics = [...coreMetricKeys].flatMap((key) => {
+    const analysisItem = analysis.find((item) => String(item?.key || item?.check_key || '') === key);
+    const metricConfig = findMetricConfig(key) || {};
+    const rawEntry = metrics[key];
+    const value = rawEntry === undefined ? analysisItem?.value : rawEntry && typeof rawEntry === 'object' ? (rawEntry as any).value : rawEntry;
+    const unit = String(
+      analysisItem?.unit
+      || metricConfig?.unit
+      || (rawEntry && typeof rawEntry === 'object' ? (rawEntry as any).unit : '')
+      || metrics[`${key}_unit`]
+      || res?.metric_units?.[key]
+      || '',
+    ).trim();
+    const parseType = String(analysisItem?.parse_type || metricConfig?.parse_type || '').toLowerCase();
+    const isStatusMetric = parseType === 'status' || unit.toLowerCase() === 'status' || /_(status|state|fan|psu)$/i.test(key);
+    const label = String(analysisItem?.metric || analysisItem?.name_zh || metricConfig?.name_zh || metricConfig?.name || key.replace(/_/g, ' '));
+
+    if (isStatusMetric) {
+      const evaluatedStatus = metrics[`${key}_status`] ?? metrics[`${key}_evaluation_status`] ?? analysisItem?.status;
+      const expectedValue = analysisItem?.expected_value || metricConfig?.expected_value || metrics[`${key}_expected_value`];
+      const status = getMetricValueStatus(key, value, evaluatedStatus, expectedValue, analysisItem?.category || metricConfig?.category);
+      return [{ key, label, value: getMetricValueStatusLabel(status, zh), status }];
+    }
+
+    if (value === null || value === undefined || typeof value === 'object') return [];
+    const evaluatedStatus = metrics[`${key}_status`] ?? metrics[`${key}_evaluation_status`] ?? analysisItem?.status;
+    const status = normalizeInspectionHealth(evaluatedStatus);
+    const renderedValue = String(value);
+    if (!unit) return [{ key, label, value: renderedValue, status }];
+    if (unit === '%' || /^°[CF]$/i.test(unit)) return [{ key, label, value: `${renderedValue}${unit}`, status }];
+    const displayUnit = unit.toLowerCase() === 'count' ? (zh ? '个' : 'count') : unit;
+    return [{ key, label, value: `${renderedValue} ${displayUnit}`, status }];
+  }).sort((left, right) => {
+    const priority: Record<InspectionHealthKind, number> = {
+      critical: 0,
+      warning: 1,
+      unknown: 2,
+      not_collected: 2,
+      healthy: 3,
+    };
+    return priority[left.status] - priority[right.status];
+  }).slice(0, 4).map(({ status: _status, ...metric }) => metric);
+
+  const countBySeverity = [...issueCounts.values()].reduce((counts, severity) => {
+    counts[severity] += 1;
+    return counts;
+  }, { critical: 0, warning: 0 });
+
+  return {
+    health,
+    issueCount: issueCounts.size,
+    criticalCount: countBySeverity.critical,
+    warningCount: countBySeverity.warning,
+    notCollectedCount: notCollectedKeys.size,
+    primaryIssue,
+    coreMetrics,
+  };
+};
+
+const parseInspectionResult = (res: any, zh: boolean) => {
+  const parsedAnalysis = parseInspectionJson<unknown>(res.analysis_json, []);
+  const parsedFindings = parseInspectionJson<unknown>(res.findings_json, []);
+  const analysis = Array.isArray(parsedAnalysis) ? parsedAnalysis : [];
+  const findings = Array.isArray(parsedFindings) ? parsedFindings : [];
+  const parsedMetrics = parseInspectionJson<unknown>(res.metrics_json, {});
+  const metricsObj = parsedMetrics && typeof parsedMetrics === 'object' && !Array.isArray(parsedMetrics)
+    ? parsedMetrics as Record<string, any>
+    : {};
+  const parsedCorrelatedRisks = parseInspectionJson<unknown>(res.correlated_risks_json, []);
+  const correlatedRisks = Array.isArray(parsedCorrelatedRisks) ? parsedCorrelatedRisks : [];
+  const summary = buildInspectionSummary(res, analysis, findings, correlatedRisks, metricsObj, zh);
+
+  return { analysis, findings, metricsObj, correlatedRisks, summary };
+};
+
 interface ExecutionDetailProps {
   zh: boolean;
   open: boolean;
@@ -146,6 +507,15 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = ({
       authorizationFailureReason = '';
     }
   }
+  const approvalSnapshotMismatch = authorizationFailureReason.trim().toLowerCase() === 'scheduled job content changed after approval';
+  const authorizationFailureReasonText = approvalSnapshotMismatch
+    ? (zh
+      ? '执行时发现作业内容摘要与审批记录不一致，任务已拦截。请检查作业配置，并重新申请审批后再运行。'
+      : 'The execution snapshot does not match its approved record, so this run was blocked. Review the job and request approval again before rerunning it.')
+    : authorizationFailureReason || (zh ? '执行时未通过作业授权校验。' : 'The scheduled job did not pass its authorization check.');
+  const isDeniedRunNotice = selectedLog.status === 'denied'
+    && selectedLog.source !== 'inspection'
+    && selectedLog.source !== 'config_backup';
 
   return (
     <AnimatePresence>
@@ -162,7 +532,7 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = ({
             initial={{ opacity: 0, scale: 0.95, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
-            className="relative bg-white rounded-[2rem] shadow-2xl w-full max-w-6xl h-[90vh] overflow-hidden flex flex-col z-10 border border-black/10"
+            className={`relative bg-white rounded-[2rem] shadow-2xl w-full ${isDeniedRunNotice ? 'max-w-xl h-auto max-h-[calc(100vh-2rem)]' : 'max-w-6xl h-[90vh]'} overflow-hidden flex flex-col z-10 border border-black/10`}
           >
             {/* Header */}
             <div className="px-6 py-4 border-b border-black/5 flex items-center justify-between bg-black/[0.015] flex-shrink-0">
@@ -212,7 +582,7 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = ({
             )}
 
             {/* Content */}
-            <div className="flex-1 overflow-hidden relative">
+            <div className={`${isDeniedRunNotice ? 'flex-none' : 'flex-1'} overflow-hidden relative`}>
               {logDetailLoading ? (
                 <div className="h-full flex flex-col items-center justify-center text-black/20 gap-3">
                   <RotateCcw size={32} className="animate-spin opacity-20" />
@@ -257,16 +627,31 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = ({
                   onRetry={onRetryBackupRunDetails}
                 />
               ) : selectedLog.status === 'denied' ? (
-                <div className="flex h-full items-center justify-center bg-slate-50 px-6">
-                  <div className="max-w-2xl rounded-2xl border border-rose-200 bg-white p-6 shadow-sm" role="status">
-                    <div className="flex items-center gap-2 text-sm font-bold text-rose-700">
-                      <AlertTriangle size={18} />
-                      {zh ? '作业未执行：权限校验拒绝' : 'Job not run: authorization denied'}
+                <div className={`flex items-center justify-center bg-slate-50 px-6 ${isDeniedRunNotice ? 'py-5 sm:py-6' : 'h-full'}`}>
+                  {approvalSnapshotMismatch ? (
+                    <section className="w-full rounded-2xl border border-amber-200 bg-white p-5 shadow-sm sm:p-6" role="status" aria-labelledby="approval-mismatch-title">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-50 text-amber-700">
+                          <AlertTriangle size={19} aria-hidden="true" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <h3 id="approval-mismatch-title" className="text-base font-semibold text-slate-900">
+                            {zh ? '权限校验未通过，作业未执行' : 'Authorization check failed; job not run'}
+                          </h3>
+                        </div>
+                      </div>
+                    </section>
+                  ) : (
+                    <div className="max-w-2xl rounded-2xl border border-rose-200 bg-white p-6 shadow-sm" role="status">
+                      <div className="flex items-center gap-2 text-sm font-bold text-rose-700">
+                        <AlertTriangle size={18} />
+                        {zh ? '作业未执行：权限校验拒绝' : 'Job not run: authorization denied'}
+                      </div>
+                      <p className="mt-3 break-words text-xs leading-6 text-slate-600">
+                        {authorizationFailureReasonText}
+                      </p>
                     </div>
-                    <p className="mt-3 break-words text-xs leading-6 text-slate-600">
-                      {authorizationFailureReason || (zh ? '执行时未通过作业授权校验。' : 'The scheduled job did not pass its authorization check.')}
-                    </p>
-                  </div>
+                  )}
                 </div>
               ) : (
                 <PlaybookView
@@ -319,7 +704,7 @@ interface InspectionViewProps {
   setInspParseResults: React.Dispatch<React.SetStateAction<Record<string, { loading: boolean; data: any; error: string }>>>;
 }
 
-const InspectionView: React.FC<InspectionViewProps> = ({
+export const InspectionView: React.FC<InspectionViewProps> = ({
   zh, inspectionDetail, selectedInspDeviceId, setSelectedInspDeviceId,
   collapsedCmds, toggleCmdCollapse, expandAllCmds, collapseAllCmds,
   inspParseResults, inspCopiedKey, inspDetailTab, setInspDetailTab,
@@ -328,6 +713,14 @@ const InspectionView: React.FC<InspectionViewProps> = ({
   onParseCmd, onCopyText, onFetchTrend,
   setCollapsedCmds, setInspParseResults,
 }) => {
+  const summaryByDevice = React.useMemo(() => {
+    const summaries = new Map<string, ReturnType<typeof buildInspectionSummary>>();
+    (inspectionDetail?.results || []).forEach((result: any) => {
+      summaries.set(String(result.device_id), parseInspectionResult(result, zh).summary);
+    });
+    return summaries;
+  }, [inspectionDetail?.results, zh]);
+
   return (
     <div className="flex flex-col md:flex-row h-full">
       {/* Device List (Left) */}
@@ -341,6 +734,15 @@ const InspectionView: React.FC<InspectionViewProps> = ({
         <div className="flex-1 overflow-auto p-2 space-y-1 custom-scrollbar">
           {(inspectionDetail?.results || []).map((res: any) => {
             const isSelected = selectedInspDeviceId === res.device_id;
+            const healthKind = summaryByDevice.get(String(res.device_id))?.health
+              ?? normalizeInspectionHealth(res.health_status);
+            const healthTone = healthKind === 'healthy'
+              ? (isSelected ? 'bg-emerald-400/20 text-emerald-300' : 'bg-emerald-50 text-emerald-600')
+              : healthKind === 'warning'
+                ? (isSelected ? 'bg-amber-400/20 text-amber-300' : 'bg-amber-50 text-amber-600')
+                : healthKind === 'critical'
+                  ? (isSelected ? 'bg-red-400/20 text-red-300' : 'bg-red-50 text-red-600')
+                  : (isSelected ? 'bg-white/10 text-white/60' : 'bg-slate-100 text-slate-500');
             return (
               <div
                 key={res.id}
@@ -361,14 +763,8 @@ const InspectionView: React.FC<InspectionViewProps> = ({
                     <p className={`text-[9px] font-mono ${isSelected ? 'text-white/60' : 'text-black/30'}`}>{res.ip_address}</p>
                   </div>
                 </div>
-                <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded ${
-                  res.health_status === 'healthy' 
-                    ? (isSelected ? 'bg-emerald-400/20 text-emerald-300' : 'bg-emerald-50 text-emerald-600')
-                    : res.health_status === 'warning'
-                      ? (isSelected ? 'bg-amber-400/20 text-amber-300' : 'bg-amber-50 text-amber-600')
-                      : (isSelected ? 'bg-red-400/20 text-red-300' : 'bg-red-50 text-red-600')
-                }`}>
-                  {res.health_status === 'healthy' ? (zh ? '健康' : 'OK') : res.health_status === 'warning' ? (zh ? '警告' : 'WARN') : (zh ? '故障' : 'CRIT')}
+                <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded ${healthTone}`}>
+                  {getInspectionIssueLabel(healthKind, zh)}
                 </span>
               </div>
             );
@@ -382,22 +778,24 @@ const InspectionView: React.FC<InspectionViewProps> = ({
           const res = inspectionDetail.results.find((r: any) => r.device_id === selectedInspDeviceId);
           if (!res) return null;
           
-          let rawOutputs: Record<string, string> = {};
-          try { rawOutputs = typeof res.raw_outputs_json === 'string' ? JSON.parse(res.raw_outputs_json) : (res.raw_outputs_json || {}); } catch(_e) {}
-          
-          let analysis: any[] = [];
-          try { analysis = typeof res.analysis_json === 'string' ? JSON.parse(res.analysis_json) : (res.analysis_json || []); } catch(_e) {}
-
-          let findings: any[] = [];
-          try { findings = typeof res.findings_json === 'string' ? JSON.parse(res.findings_json) : (res.findings_json || []); } catch(_e) {}
-
-          let metricsObj: Record<string, any> = {};
-          try { metricsObj = typeof res.metrics_json === 'string' ? JSON.parse(res.metrics_json) : (res.metrics_json || {}); } catch(_e) {}
-
-          let correlatedRisks: any[] = [];
-          try { correlatedRisks = typeof res.correlated_risks_json === 'string' ? JSON.parse(res.correlated_risks_json) : (res.correlated_risks_json || []); } catch(_e) {}
+          const resultData = parseInspectionResult(res, zh);
+          const parsedRawOutputs = parseInspectionJson<unknown>(res.raw_outputs_json, {});
+          const rawOutputs = parsedRawOutputs && typeof parsedRawOutputs === 'object' && !Array.isArray(parsedRawOutputs)
+            ? parsedRawOutputs as Record<string, string>
+            : {};
+          const { analysis, findings, metricsObj, correlatedRisks } = resultData;
+          const inspectionSummary = summaryByDevice.get(String(res.device_id)) || resultData.summary;
+          const pingStatus = normalizeConnectivity(res.ping_ok);
+          const sshStatus = normalizeConnectivity(res.ssh_ok);
 
           const complianceItems = analysis.filter((a: any) => (a.category === 'compliance') || (a.key && String(a.key).includes('compliance')));
+          const summaryTone = inspectionSummary.health === 'critical'
+            ? 'border-red-400/25 bg-red-500/10 text-red-200'
+            : inspectionSummary.health === 'warning'
+              ? 'border-amber-400/25 bg-amber-500/10 text-amber-100'
+              : inspectionSummary.health === 'healthy'
+                ? 'border-emerald-400/25 bg-emerald-500/10 text-emerald-100'
+                : 'border-slate-400/20 bg-slate-500/10 text-slate-200';
 
           return (
             <>
@@ -406,16 +804,80 @@ const InspectionView: React.FC<InspectionViewProps> = ({
                 <div className="flex flex-col gap-1">
                   <span className="text-xs text-white/80 font-bold block">{res.hostname} ({res.ip_address})</span>
                   <div className="flex items-center gap-2">
-                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded bg-white/5 ${res.ping_ok ? 'text-emerald-400' : 'text-red-400'}`}>Ping: {res.ping_ok ? 'OK' : 'FAIL'}</span>
-                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded bg-white/5 ${res.ssh_ok ? 'text-emerald-400' : 'text-red-400'}`}>SSH: {res.ssh_ok ? 'OK' : 'FAIL'}</span>
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded bg-white/5 ${getConnectivityTone(pingStatus)}`}>Ping: {getConnectivityLabel(pingStatus, zh)}</span>
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded bg-white/5 ${getConnectivityTone(sshStatus)}`}>SSH: {getConnectivityLabel(sshStatus, zh)}</span>
                     {res.ssh_error && <span className="text-[10px] text-red-400/70 truncate max-w-[200px]" title={res.ssh_error}>{res.ssh_error}</span>}
                   </div>
                 </div>
               </div>
 
-              <div className="flex-1 overflow-auto custom-scrollbar-dark p-6 space-y-8 select-text">
-                {/* Tab bar */}
-                <div className="flex items-center gap-1 border-b border-white/10 -mt-2 -mx-2 px-2">
+              <div className="flex-1 overflow-auto custom-scrollbar-dark p-6 space-y-5 select-text">
+                <section aria-label={zh ? '巡检结果摘要' : 'Inspection summary'} className={`rounded-2xl border p-4 sm:p-5 ${summaryTone}`}>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-widest opacity-60">{zh ? '巡检结论' : 'Inspection result'}</p>
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        <h4 className="text-base font-bold">{getInspectionIssueLabel(inspectionSummary.health, zh)}</h4>
+                        {res.health_score != null && <span className="text-xs opacity-70">{zh ? `评分 ${res.health_score}` : `Score ${res.health_score}`}</span>}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-black/10 px-3 py-2 text-right">
+                      <p className="text-[10px] opacity-60">{zh ? '异常项' : 'Issues'}</p>
+                      <p className="mt-0.5 text-lg font-bold tabular-nums">{inspectionSummary.issueCount}</p>
+                      <p className="text-[10px] opacity-60">
+                        {zh
+                          ? `严重 ${inspectionSummary.criticalCount} · 警告 ${inspectionSummary.warningCount}`
+                          : `Critical ${inspectionSummary.criticalCount} · Warnings ${inspectionSummary.warningCount}`}
+                      </p>
+                    </div>
+                  </div>
+
+                  {inspectionSummary.primaryIssue ? (
+                    <div className="mt-4 rounded-xl border border-white/10 bg-black/10 p-3">
+                      <p className="text-[10px] font-bold uppercase tracking-widest opacity-60">{zh ? '优先处理' : 'Priority'}</p>
+                      <p className="mt-1 text-sm font-semibold">{inspectionSummary.primaryIssue.reason || (zh ? '发现需要关注的异常' : 'An issue needs attention')}</p>
+                      {inspectionSummary.primaryIssue.suggestion && <p className="mt-1 text-xs leading-relaxed opacity-75">{zh ? '建议：' : 'Next: '}{inspectionSummary.primaryIssue.suggestion}</p>}
+                    </div>
+                  ) : (
+                    <p className="mt-3 text-xs opacity-70">
+                      {inspectionSummary.health === 'healthy'
+                        ? (zh ? '未发现需要处理的异常。' : 'No issues need attention.')
+                        : (zh ? '当前没有足够信息生成异常结论。' : 'There is not enough information for an issue summary.')}
+                    </p>
+                  )}
+
+                  {inspectionSummary.notCollectedCount > 0 && (
+                    <p className="mt-3 text-[11px] opacity-70">
+                      {zh
+                        ? `${inspectionSummary.notCollectedCount} 项指标未采集或状态未知，不计为严重故障。`
+                        : `${inspectionSummary.notCollectedCount} metrics were not collected or have unknown status; they are not counted as critical.`}
+                    </p>
+                  )}
+
+                  {inspectionSummary.coreMetrics.length > 0 && (
+                    <div className="mt-4 border-t border-white/10 pt-3">
+                      <p className="text-[10px] font-bold uppercase tracking-widest opacity-60">{zh ? '核心指标' : 'Key metrics'}</p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {inspectionSummary.coreMetrics.map(metric => (
+                          <div key={metric.key} className="min-w-[110px] rounded-lg border border-white/10 bg-black/10 px-3 py-2">
+                            <p className="text-[10px] opacity-60">{metric.label}</p>
+                            <p className="mt-0.5 text-xs font-mono font-semibold">{metric.value}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </section>
+
+                <details className="group rounded-2xl border border-white/10 bg-black/10">
+                  <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 px-4 py-3 text-xs font-bold text-white/70 marker:hidden">
+                    <span>{zh ? '技术详情' : 'Technical details'}</span>
+                    <span className="text-[10px] font-normal text-white/35">{zh ? '完整分析、快照、合规项与原始命令' : 'Full analysis, snapshots, compliance and raw commands'}</span>
+                    <ChevronRight size={14} className="shrink-0 text-white/40 transition-transform group-open:rotate-90" />
+                  </summary>
+                  <div className="p-4 pt-1 space-y-6">
+                    {/* Tab bar */}
+                    <div className="flex items-center gap-1 border-b border-white/10 px-2">
                   {([
                     { key: 'analysis', label: zh ? '指标分析' : 'Analysis' },
                     { key: 'snapshot', label: zh ? '指标快照' : 'Snapshot' },
@@ -432,7 +894,7 @@ const InspectionView: React.FC<InspectionViewProps> = ({
                       {t.label}
                     </button>
                   ))}
-                </div>
+                    </div>
 
                 {/* TAB: Analysis */}
                 {inspDetailTab === 'analysis' && (
@@ -460,6 +922,8 @@ const InspectionView: React.FC<InspectionViewProps> = ({
                     onParseCmd={onParseCmd} onCopyText={onCopyText}
                   />
                 )}
+                  </div>
+                </details>
               </div>
             </>
           );
@@ -544,7 +1008,8 @@ const AnalysisTab: React.FC<{
         </thead>
         <tbody>
           {analysis.map((a, i) => {
-            const rowBg = a.status === 'critical' ? 'bg-red-500/10' : a.status === 'warning' ? 'bg-amber-500/10' : '';
+            const status = normalizeInspectionHealth(a.status);
+            const rowBg = status === 'critical' ? 'bg-red-500/10' : status === 'warning' ? 'bg-amber-500/10' : '';
             const isNumeric = typeof a.value === 'number';
             return (
               <tr key={i} className={`${rowBg} border-b border-white/5`}>
@@ -552,8 +1017,8 @@ const AnalysisTab: React.FC<{
                 <td className="py-2 px-2 text-white/70 font-mono">{String(a.value ?? '—')}</td>
                 <td className="py-2 px-2">
                   <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded ${
-                    a.status === 'critical' ? 'bg-red-500/30 text-red-300' : a.status === 'warning' ? 'bg-amber-500/30 text-amber-300' : 'bg-emerald-500/30 text-emerald-300'
-                  }`}>{a.status?.toUpperCase()}</span>
+                    status === 'critical' ? 'bg-red-500/30 text-red-300' : status === 'warning' ? 'bg-amber-500/30 text-amber-300' : status === 'healthy' ? 'bg-emerald-500/30 text-emerald-300' : 'bg-slate-500/30 text-slate-300'
+                  }`}>{getInspectionIssueLabel(status, zh)}</span>
                 </td>
                 <td className="py-2 px-2 text-white/50">{a.conclusion}</td>
                 <td className="py-2 px-2 text-white/50">{a.suggestion}</td>
@@ -634,16 +1099,20 @@ const ComplianceTab: React.FC<{ zh: boolean; complianceItems: any[] }> = ({ zh, 
         </thead>
         <tbody>
           {complianceItems.map((c, i) => {
-            const passing = c.status === 'healthy';
+            const status = normalizeInspectionHealth(c.status);
             return (
               <tr key={i} className="border-b border-white/5">
                 <td className="py-2 px-2 text-white/90 font-bold">{c.metric}</td>
                 <td className="py-2 px-2 text-white/70 font-mono">{String(c.value ?? '—')}</td>
                 <td className="py-2 px-2">
-                  {passing ? (
+                  {status === 'healthy' ? (
                     <span className="inline-flex items-center gap-1 text-emerald-400 text-[10px] font-bold">✓ {zh ? '通过' : 'Pass'}</span>
-                  ) : (
+                  ) : status === 'critical' ? (
                     <span className="inline-flex items-center gap-1 text-red-400 text-[10px] font-bold">✗ {zh ? '失败' : 'Fail'}</span>
+                  ) : status === 'warning' ? (
+                    <span className="inline-flex items-center gap-1 text-amber-400 text-[10px] font-bold">! {zh ? '警告' : 'Warning'}</span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-slate-400 text-[10px] font-bold">— {getInspectionIssueLabel(status, zh)}</span>
                   )}
                 </td>
                 <td className="py-2 px-2 text-white/50">{c.conclusion}</td>
@@ -696,20 +1165,28 @@ const RawOutputTab: React.FC<{
           <Activity size={12} className="text-cyan-500" /> {zh ? '智能分析' : 'Smart Analysis'}
         </h4>
         <div className="grid grid-cols-1 gap-3">
-          {analysis.map((a, i) => (
-            <div key={i} className="p-3 rounded-lg bg-white/5 border border-white/10 hover:bg-white/[0.08] transition-colors">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[11px] font-bold text-white/80">{a.metric}</span>
-                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
-                  a.status === 'healthy' ? 'text-emerald-400 bg-emerald-400/10' : a.status === 'warning' ? 'text-amber-400 bg-amber-400/10' : 'text-red-400 bg-red-400/10'
-                }`}>{a.status?.toUpperCase()}</span>
+          {analysis.map((a, i) => {
+            const status = normalizeInspectionHealth(a.status);
+            const statusTone = status === 'healthy'
+              ? 'text-emerald-400 bg-emerald-400/10'
+              : status === 'warning'
+                ? 'text-amber-400 bg-amber-400/10'
+                : status === 'critical'
+                  ? 'text-red-400 bg-red-400/10'
+                  : 'text-slate-300 bg-slate-400/10';
+            return (
+              <div key={i} className="p-3 rounded-lg bg-white/5 border border-white/10 hover:bg-white/[0.08] transition-colors">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[11px] font-bold text-white/80">{a.metric}</span>
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${statusTone}`}>{getInspectionIssueLabel(status, zh)}</span>
+                </div>
+                <div className="text-xs text-white/50 leading-relaxed">{a.conclusion}</div>
+                {a.value !== undefined && (
+                  <div className="mt-2 text-[10px] font-mono text-white/30 italic">Value: {String(a.value)}</div>
+                )}
               </div>
-              <div className="text-xs text-white/50 leading-relaxed">{a.conclusion}</div>
-              {a.value !== undefined && (
-                <div className="mt-2 text-[10px] font-mono text-white/30 italic">Value: {String(a.value)}</div>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     )}

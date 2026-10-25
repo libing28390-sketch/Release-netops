@@ -18,7 +18,7 @@ import { hasTagFilterConditions, parseTagFilter, type TagFilterConfig, EMPTY_TAG
 import { ColumnSettingsButton, ListSearchInput, ListToolbar, TableHeaderMultiSelectFilter } from '../../components/ui/TableListControls';
 import { loadVisibleColumnKeys, saveVisibleColumnKeys, type ColumnPreferenceDefinition } from '../../components/ui/columnPreferences';
 
-import { ScheduledJob, EligibleApprover, SystemScheduledJob, FormState, ValidatedDevice, ScheduledJobsTabProps, type ApprovalVerificationMethod, type CollectionPlanFilters, type NsotCollectionPreview } from './types';
+import { ScheduledJob, EligibleApprover, SystemScheduledJob, FormState, ValidatedDevice, ScheduledJobsTabProps, type ApprovalVerificationMethod, type CollectionPlanFilters, type NsotCollectionPreview, type ScheduledJobAuthorizationGrantInput, type ScheduledJobRun, type ScheduledJobRunsResponse } from './types';
 import { INITIAL_FORM, ACTION_TYPES, MAJOR_CATEGORIES } from './constants';
 import { describeCron, describeScope } from './helpers';
 
@@ -47,6 +47,14 @@ interface ScheduledJobOperationManifest {
   use_admin_creds: 0 | 1;
   enabled: boolean;
   config_reason: string;
+  authorization_grant?: ScheduledJobAuthorizationGrantInput;
+}
+
+class ScheduledJobRequestError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = 'ScheduledJobRequestError';
+  }
 }
 
 const SCHEDULED_JOB_COLUMN_STORAGE_KEY = 'netops:scheduled-jobs:columns:v1';
@@ -266,6 +274,47 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
       throw new Error(zh ? '服务器返回的 NSOT 预览格式无法识别。' : 'The server returned an invalid NSOT preview.');
     }
     return payload.data;
+  }, [authHeaders, zh]);
+
+  const fetchScheduledJobDetail = useCallback(async (jobId: string, signal: AbortSignal): Promise<ScheduledJob> => {
+    const response = await fetch(`/api/scheduled-jobs/${encodeURIComponent(jobId)}`, { headers: authHeaders, signal });
+    const payload = await response.json().catch(() => null) as { data?: ScheduledJob; detail?: string; message?: string } | null;
+    const detail = payload?.data || payload as ScheduledJob | null;
+    if (!response.ok || !detail || typeof detail !== 'object' || !('id' in detail)) {
+      throw new ScheduledJobRequestError(payload?.detail || payload?.message || (zh ? '无法加载定时作业详情。' : 'Unable to load scheduled job details.'), response.status);
+    }
+    return detail;
+  }, [authHeaders, zh]);
+
+  const fetchScheduledJobRuns = useCallback(async (jobId: string, pageNumber: number, perPage: number, signal: AbortSignal): Promise<ScheduledJobRunsResponse> => {
+    const params = new URLSearchParams({ page: String(pageNumber), per_page: String(perPage) });
+    const response = await fetch(`/api/scheduled-jobs/${encodeURIComponent(jobId)}/runs?${params.toString()}`, { headers: authHeaders, signal });
+    const payload = await response.json().catch(() => null) as ({ data?: Partial<ScheduledJobRunsResponse>; detail?: string; message?: string } & Partial<ScheduledJobRunsResponse>) | null;
+    const data = payload?.data || payload;
+    if (!response.ok || !data || !Array.isArray(data.items)) {
+      throw new ScheduledJobRequestError(payload?.detail || payload?.message || (zh ? '无法加载作业运行记录。' : 'Unable to load scheduled job runs.'), response.status);
+    }
+    return {
+      items: data.items as ScheduledJobRun[],
+      total: Number(data.total) || 0,
+      page: Number(data.page) || pageNumber,
+      per_page: Number(data.per_page) || perPage,
+      total_pages: Number(data.total_pages) || 0,
+    };
+  }, [authHeaders, zh]);
+
+  const resolveScheduledJobRun = useCallback(async (jobId: string, runId: string, body: { outcome: 'succeeded' | 'partial_failure' | 'failed'; note: string }): Promise<ScheduledJobRun> => {
+    const response = await fetch(`/api/scheduled-jobs/${encodeURIComponent(jobId)}/runs/${encodeURIComponent(runId)}/resolve`, {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify(body),
+    });
+    const payload = await response.json().catch(() => null) as { run?: ScheduledJobRun; data?: { run?: ScheduledJobRun }; detail?: string; message?: string } | null;
+    const run = payload?.run || payload?.data?.run;
+    if (!response.ok || !run) {
+      throw new ScheduledJobRequestError(payload?.detail || payload?.message || (zh ? '人工核实未能保存。' : 'Manual outcome could not be saved.'), response.status);
+    }
+    return run;
   }, [authHeaders, zh]);
 
   const fetchSystemJobs = useCallback(async () => {
@@ -498,6 +547,15 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
       config_reason: job.config_reason || '',
       use_admin_creds: !!job.use_admin_creds,
       major_type: (job.action_type === 'backup' || job.action_type === 'nsot' || job.action_type === 'inspection') ? 'collection' : 'change',
+      enabled: Number(job.enabled) === 1 || job.status === 'reauthorization_required',
+      authorization_grant: {
+        valid_until: job.authorization_grant?.valid_until || '',
+        max_runs: job.authorization_grant?.max_runs ? String(job.authorization_grant.max_runs) : '',
+        max_targets: job.authorization_grant?.max_targets ? String(job.authorization_grant.max_targets) : '',
+        ticket_source_type: job.authorization_grant?.ticket_source_type === 'service_request' ? 'service_request' : 'incident',
+        ticket_id: job.authorization_grant?.ticket_id || '',
+        change_order_id: job.authorization_grant?.change_order_id || '',
+      },
     });
     if (job.device_scope === 'tag') {
       setTagFilter(parseTagFilter(job.device_filter));
@@ -624,6 +682,14 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
             action_type: zh ? (actionLabel?.labelZh || operationManifest.action) : (actionLabel?.labelEn || operationManifest.action),
             schedule_desc: describeCron(operationManifest.cron_expr, zh),
             operation,
+            ...(operationManifest.authorization_grant ? {
+              authorization_valid_until: operationManifest.authorization_grant.valid_until,
+              authorization_max_runs: operationManifest.authorization_grant.max_runs,
+              authorization_max_targets: operationManifest.authorization_grant.max_targets,
+              authorization_scope: `${operationManifest.authorization_grant.scope.type}: ${operationManifest.authorization_grant.scope.filter || (zh ? '无附加过滤' : 'no additional filter')}`,
+              authorization_ticket: `${operationManifest.authorization_grant.ticket_source_type}:${operationManifest.authorization_grant.ticket_id}`,
+              authorization_change_order: operationManifest.authorization_grant.change_order_id || (zh ? '未关联' : 'Not linked'),
+            } : {}),
           },
         }),
       });
@@ -914,6 +980,16 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
     return form.device_filter;
   };
 
+  const buildAuthorizationGrant = (): ScheduledJobAuthorizationGrantInput => ({
+    valid_until: String(form.authorization_grant.valid_until || '').trim(),
+    max_runs: Number(form.authorization_grant.max_runs),
+    max_targets: Number(form.authorization_grant.max_targets),
+    scope: { type: form.device_scope.trim(), filter: resolveFilter().trim() },
+    ticket_source_type: form.authorization_grant.ticket_source_type,
+    ticket_id: form.authorization_grant.ticket_id.trim(),
+    ...(form.authorization_grant.change_order_id.trim() ? { change_order_id: form.authorization_grant.change_order_id.trim() } : {}),
+  });
+
   const buildFormOperationManifest = (operation: 'CREATE' | 'UPDATE'): ScheduledJobOperationManifest => {
     const action = form.action_type.trim();
     const isNsot = action === 'nsot';
@@ -934,8 +1010,9 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
       script_id: isNsot ? '' : form.script_id.trim(),
       is_config: !isNsot && form.is_config ? 1 : 0,
       use_admin_creds: !isNsot && form.use_admin_creds ? 1 : 0,
-      enabled: !editingJob || Number(editingJob.enabled) === 1,
+      enabled: Boolean(form.enabled),
       config_reason: form.config_reason.trim(),
+      authorization_grant: buildAuthorizationGrant(),
     };
   };
 
@@ -970,6 +1047,17 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
       use_admin_creds: Number(job.use_admin_creds) === 1 ? 1 : 0,
       enabled: operation === 'ENABLE' ? true : operation === 'DISABLE' ? false : Number(job.enabled) === 1,
       config_reason: String(job.config_reason || ''),
+      ...(job.authorization_grant ? {
+        authorization_grant: {
+          valid_until: job.authorization_grant.valid_until,
+          max_runs: Number(job.authorization_grant.max_runs),
+          max_targets: Number(job.authorization_grant.max_targets),
+          scope: { type: String(job.device_scope || ''), filter: String(job.device_filter || '') },
+          ticket_source_type: job.authorization_grant.ticket_source_type,
+          ticket_id: String(job.authorization_grant.ticket_id || ''),
+          ...(job.authorization_grant.change_order_id ? { change_order_id: job.authorization_grant.change_order_id } : {}),
+        },
+      } : {}),
     };
   };
 
@@ -1031,6 +1119,14 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
     }
     if (!form.cron_expr.trim()) return zh ? '请配置调度时间(Cron)' : 'Please configure schedule (Cron)';
 
+    const grant = form.authorization_grant;
+    const grantExpiry = new Date(grant.valid_until);
+    if (!grant.valid_until || Number.isNaN(grantExpiry.getTime())) return zh ? '请设置有效的授权到期时间' : 'Enter a valid authorization expiry time';
+    if (grantExpiry.getTime() <= Date.now()) return zh ? '授权到期时间必须晚于当前时间' : 'Authorization expiry must be in the future';
+    if (!Number.isInteger(Number(grant.max_runs)) || Number(grant.max_runs) < 1) return zh ? '最大执行次数必须是正整数' : 'Maximum runs must be a positive integer';
+    if (!Number.isInteger(Number(grant.max_targets)) || Number(grant.max_targets) < 1) return zh ? '最大目标数必须是正整数' : 'Maximum targets must be a positive integer';
+    if (!grant.ticket_id.trim()) return zh ? '请关联工单' : 'Link a ticket';
+
     // Cron 表达式必须是 5 段且每段非空
     const parts = form.cron_expr.trim().split(/\s+/);
     if (parts.length !== 5 || parts.some(p => !p)) {
@@ -1091,6 +1187,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
           is_config: operationManifest.is_config,
           config_reason: operationManifest.config_reason,
           use_admin_creds: operationManifest.use_admin_creds,
+          authorization_grant: operationManifest.authorization_grant,
           enabled: operationManifest.enabled,
           job_type: operationManifest.job_type,
           approval_token: approvalToken,
@@ -1147,6 +1244,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
           is_config: operationManifest.is_config,
           config_reason: operationManifest.config_reason,
           use_admin_creds: operationManifest.use_admin_creds,
+          authorization_grant: operationManifest.authorization_grant,
           approval_token: approvalToken,
           approval_code: approvalCode,
           operation_manifest: operationManifest,
@@ -1772,6 +1870,9 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
         availableScripts={availableScripts}
         openEditModal={openEditModal}
         fetchNsotCollectionPreview={fetchNsotCollectionPreview}
+        fetchScheduledJobDetail={fetchScheduledJobDetail}
+        fetchScheduledJobRuns={fetchScheduledJobRuns}
+        resolveScheduledJobRun={resolveScheduledJobRun}
         language={language}
       />
 

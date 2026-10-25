@@ -35,6 +35,29 @@
             width: 32%;
             color: #111;
         }
+        .status-count-grid {
+            width: 100%;
+            margin: 8pt 0 4pt;
+        }
+        .status-count-grid td {
+            text-align: center;
+            padding: 6pt 3pt;
+            font-size: 8.5pt;
+            background-color: #fff;
+        }
+        .count-value {
+            display: block;
+            margin-top: 3pt;
+            font-size: 14pt;
+            font-weight: bold;
+            color: #111;
+        }
+        .count-healthy .count-value { color: #388e3c; }
+        .count-warning .count-value { color: #f57c00; }
+        .count-critical .count-value { color: #d32f2f; }
+        .count-partial .count-value { color: #2563eb; }
+        .count-unknown .count-value { color: #666; }
+        .summary-note { margin: 5pt 0 0; color: #666; font-size: 8.5pt; }
         table {
             width: 100%;
             border-collapse: collapse;
@@ -65,6 +88,10 @@
         .status-warning { color: #f57c00; font-weight: bold; }
         .status-healthy { color: #388e3c; font-weight: bold; }
         .status-partial { color: #2563eb; font-weight: bold; }
+        .status-unknown, .status-unchecked, .status-not_collected, .status-unavailable,
+        .status-skipped, .status-pending, .status-queued, .status-running {
+            color: #666; font-weight: bold;
+        }
         
         .footer {
             margin-top: 40pt;
@@ -87,34 +114,35 @@
     <div class="summary-box">
         <table class="summary-grid">
             <tr>
-                <td class="summary-label">项目名称:</td>
-                <td class="summary-val">{{ run_info.name or '自动化作业流' }}</td>
-                <td class="summary-label">生成时间:</td>
-                <td class="summary-val">{{ generated_at }}</td>
+                <td class="summary-label">任务名称:</td>
+                <td class="summary-val" colspan="3">{{ run_info.name or run_info.scenario_name or '巡检任务' }}</td>
             </tr>
             <tr>
+                <td class="summary-label">巡检时间:</td>
+                <td class="summary-val" colspan="3">{{ inspection_time }}</td>
+            </tr>
+            <tr>
+                <td class="summary-label">生成时间:</td>
+                <td class="summary-val">{{ generated_at }}</td>
                 <td class="summary-label">客户名称:</td>
                 <td class="summary-val">{{ customer_name or '-' }}</td>
+            </tr>
+            <tr>
                 <td class="summary-label">负责工程师:</td>
-                <td class="summary-val">{{ engineer_name or '-' }}</td>
+                <td class="summary-val" colspan="3">{{ engineer_name or '-' }}</td>
             </tr>
         </table>
-        
-        <div style="margin-top: 12pt; line-height: 1.8; font-size: 10.5pt; border-top: 1px dashed #bfe8ff; padding-top: 10pt;">
-            {% if report_type == 'playbook' %}
-                <strong>执行概览:</strong> 本次自动化作业共覆盖设备 <strong>{{ total_devices }}</strong> 台。
-                执行状态统计：<span class="status-healthy">正常 {{ healthy_count }} 台</span>，
-                <span class="status-warning">告警 {{ warning_count }} 台</span>，
-                <span class="status-critical">异常 {{ critical_count }} 台</span>；
-                部分采集 {{ partial_count }} 台，未采集检查项 <strong>{{ unchecked_count }}</strong> 项。
-            {% else %}
-                <strong>巡检概览:</strong> 本次巡检共覆盖设备 <strong>{{ total_devices }}</strong> 台。
-                巡检状态统计：<span class="status-healthy">正常 {{ healthy_count }}</span>，
-                <span class="status-warning">告警 {{ warning_count }}</span>，
-                <span class="status-critical">异常 {{ critical_count }}</span>；
-                部分采集 {{ partial_count }} 台，未采集检查项 <strong>{{ unchecked_count }}</strong> 项。
-            {% endif %}
-        </div>
+        <table class="status-count-grid">
+            <tr>
+                <td>设备总数<span class="count-value">{{ total_devices }}</span></td>
+                <td class="count-healthy">正常<span class="count-value">{{ healthy_count }}</span></td>
+                <td class="count-warning">告警<span class="count-value">{{ warning_count }}</span></td>
+                <td class="count-critical">异常<span class="count-value">{{ critical_count }}</span></td>
+                <td class="count-partial">部分采集<span class="count-value">{{ partial_count }}</span></td>
+                <td class="count-unknown">未采集/未知<span class="count-value">{{ uncollected_device_count }}</span></td>
+            </tr>
+        </table>
+        <p class="summary-note">未采集检查项：{{ unchecked_count }} 项。未采集或未知设备不计入正常或异常。</p>
     </div>
 
     {% if report_type == 'playbook' %}
@@ -183,15 +211,16 @@
         </table>
 
     {% else %}
-        <h2>一、 严重异常摘要</h2>
+        <h2>一、 异常设备处理摘要</h2>
         {% if abnormal_devices %}
         <table>
             <thead>
                 <tr>
-                    <th width="25%">设备名称</th>
-                    <th width="25%">IP 地址</th>
-                    <th width="15%">状态</th>
-                    <th width="35%">核心发现</th>
+                    <th width="18%">设备名称</th>
+                    <th width="17%">IP 地址</th>
+                    <th width="12%">状态</th>
+                    <th width="27%">最重要问题</th>
+                    <th width="26%">建议处理</th>
                 </tr>
             </thead>
             <tbody>
@@ -201,12 +230,17 @@
                     <td>{{ dev.ip_address }}</td>
                     <td class="status-{{ dev.health_status }}">{{ dev.status_label }}</td>
                     <td>{{ dev.top_finding }}</td>
+                    <td>{{ dev.suggestion }}</td>
                 </tr>
                 {% endfor %}
             </tbody>
         </table>
         {% else %}
-        <p style="color:#666; margin-bottom: 20pt;">未发现严重异常设备。</p>
+        {% if partial_count or uncollected_device_count %}
+        <p style="color:#666; margin-bottom: 20pt;">未发现已确认的告警或异常设备；部分采集 {{ partial_count }} 台、未采集/未知 {{ uncollected_device_count }} 台，请先核实采集范围。</p>
+        {% else %}
+        <p style="color:#666; margin-bottom: 20pt;">未发现告警或异常设备。</p>
+        {% endif %}
         {% endif %}
 
         <h2>二、 关联风险分析</h2>

@@ -33,7 +33,8 @@ interface DeviceSelectionStepProps {
   vendors: string[];
   vendorFilter: string;
   setVendorFilter: (val: string) => void;
-  handleSelectAllOnline: () => void;
+  devicePageSize: number;
+  setDevicePageSize: (val: number) => void;
   deviceViewMode: 'grid' | 'list';
   setDeviceViewMode: (val: 'grid' | 'list') => void;
   batchMode: boolean;
@@ -76,7 +77,8 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
   vendors,
   vendorFilter,
   setVendorFilter,
-  handleSelectAllOnline,
+  devicePageSize,
+  setDevicePageSize,
   deviceViewMode,
   setDeviceViewMode,
   batchMode,
@@ -111,6 +113,7 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
     if (!batchMode) onToggleBatchMode();
     onToggleBatchDevice(device.id);
   };
+  const fillDeviceTableHeight = deviceItems.length === devicePageSize;
 
   return (
     <motion.div
@@ -296,16 +299,6 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
             )}
             <div className="flex-1" />
             <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={handleSelectAllOnline}
-                disabled={devicePageLoading || !deviceItems.some((device) => device.status === 'online')}
-                className="inline-flex min-h-9 items-center gap-1 rounded-lg border border-emerald-100 bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 transition-all hover:bg-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <CheckCircle2 size={11} />
-                {isZh ? '选择本页在线设备' : 'Select online on this page'}
-              </button>
-              <div className="w-px h-5 bg-gray-200" />
               <div role="group" aria-label={isZh ? '设备列表视图' : 'Device list view'} className="flex items-center bg-gray-100 rounded-lg p-0.5">
                 <button
                   type="button"
@@ -414,8 +407,8 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
                 })}
               </div>
             ) : (
-              <div className="rounded-xl border border-gray-100 bg-white overflow-hidden">
-                <DataTable unstyled exportConfig={{ filename: 'automation-device-selection', language: isZh ? 'zh' : 'en', disabled: totalDevices === 0, exportData: exportAllMatchingDevices }} className="nx-data-table nx-data-table--compact text-left">
+              <div className={`${fillDeviceTableHeight ? 'quick-ops-device-table h-full' : ''} rounded-xl border border-gray-100 bg-white overflow-hidden`}>
+                <DataTable unstyled exportConfig={{ filename: 'automation-device-selection', language: isZh ? 'zh' : 'en', disabled: totalDevices === 0, exportData: exportAllMatchingDevices }} className={`nx-data-table nx-data-table--compact text-left ${fillDeviceTableHeight ? 'h-full' : ''}`}>
                   <thead>
                     <tr className="border-b border-gray-100 bg-gray-50/60">
                       <th className="w-10 px-3 py-2">
@@ -528,7 +521,11 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
                 currentPage={devicePage}
                 totalItems={totalDevices}
                 onPageChange={setDevicePage}
-                itemsPerPage={DEVICE_PAGE_SIZE}
+                itemsPerPage={devicePageSize}
+                onItemsPerPageChange={(size) => {
+                  setDevicePageSize(size);
+                  setDevicePage(1);
+                }}
                 language={language}
               />
             </div>

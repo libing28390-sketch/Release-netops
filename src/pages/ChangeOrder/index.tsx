@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ClipboardList, CheckCircle2, AlertTriangle, X, Zap, XCircle, Trash2 } from 'lucide-react';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence } from 'motion/react';
 import PageHero from '../../components/PageHero';
 import type { User as UserOption, SessionUser, ConfigTemplate } from '../../types';
-import type { ChangeOrder as IChangeOrder, ScenarioTemplate, Summary, PlatformMeta } from './types';
+import type { ChangeOrder as IChangeOrder, ScenarioTemplate, Summary, PlatformMeta, ResultReviewAction } from './types';
 
 // Sub-components
 import { ChangeOrderList } from './components/ChangeOrderList';
@@ -12,7 +12,10 @@ import { ChangeOrderDetail } from './components/ChangeOrderDetail';
 import { ChangeOrderEditor } from './components/ChangeOrderEditor';
 import { TerminalExecution } from './components/TerminalExecution';
 import { useEscapeClose } from '../../hooks/useEscapeClose';
-import { useFocusTrap } from '../../hooks/useFocusTrap';
+import { TicketDialog, ticketInputClass } from '../../components/tickets/TicketUI';
+import { TicketReviewerDialog } from '../../components/tickets/TicketReviewerDialog';
+import { ActionButton } from '../../components/ui/ActionIconButton';
+import ToastNotification from '../../components/ToastNotification';
 import { PasswordInputField } from '../../components/ui/PasswordInputField';
 
 // Constants & Helpers
@@ -28,14 +31,40 @@ import {
   isConfigTemplateScenarioId
 } from './constants';
 import {
-  hasChangeGroup,
+  clampChangeOrderPage,
+  getFinalApproverCandidates,
+  getInitialReviewerCandidates,
+  getMissingChangeOrderControlSheetFields,
   isCommandTemplateSnapshot,
   fmtDate,
-  inferVariableMeta
+  inferVariableMeta,
+  canCurrentUserImplement,
+  getAssignedImplementer,
+  getResultReviewer,
+  getResultReviewActions,
+  getVerificationReadiness,
+  getBusinessConfirmer,
+  buildChangeOrderRollbackFields,
+  getImplementerConflictRole,
+  resolveChangeOrderRollbackPlan,
+  getChangeOrderExecutionAuthRole,
+  hasOrderExecutionRequestBeenSent,
+  isChangeOrderRequester,
+  isChangeOrderInitialReviewer,
+  isChangeOrderFinalApprover
 } from './helpers';
+import { synchronizeControlSheetMirrors } from './controlSheetSync';
+import type { AssignmentRequest, ChangeOrderMutationResult, VerificationRequest } from './components/ChangeOrderWorkflowPanels';
 
-const FEATURE_CONTROL_SHEET = import.meta.env.VITE_FEATURE_CONTROL_SHEET === '0' ? false : true;
+const FEATURE_CONTROL_SHEET = true;
 type ChangeOrderRequestError = 'permission' | 'load';
+
+const executionRequestKey = (order: IChangeOrder): string => {
+  const details = order.result_detail || {};
+  const approvalIdentity = String(details.execution_token_id || details.approval_snapshot_hash || '');
+  const approvalVersion = String(details.approval_snapshot_version || '');
+  return `${order.id}:${approvalIdentity}:${approvalVersion}`;
+};
 
 interface Props {
   language: string;
@@ -66,6 +95,10 @@ const ChangeOrderComponent: React.FC<Props> = ({
   const location = useLocation();
   const incidentIdFromQuery = useMemo(
     () => new URLSearchParams(location.search).get('incident_id') || '',
+    [location.search],
+  );
+  const incidentTicketIdFromQuery = useMemo(
+    () => new URLSearchParams(location.search).get('incident_ticket_id') || '',
     [location.search],
   );
   const orderIdFromQuery = useMemo(
@@ -131,7 +164,6 @@ const ChangeOrderComponent: React.FC<Props> = ({
     sensitive?: boolean;
     onConfirm: (val: string) => void;
   } | null>(null);
-  const actionPromptDialogRef = useRef<HTMLDivElement>(null);
 
   // ── Execute-commands modal state ──
   const [executeModal, setExecuteModal] = useState<{
@@ -140,19 +172,19 @@ const ChangeOrderComponent: React.FC<Props> = ({
     output: string;
     error: string;
     success: boolean;
+    requestSent?: boolean;
   } | null>(null);
+  const [sentExecutionRequestKeys, setSentExecutionRequestKeys] = useState<Set<string>>(() => new Set());
 
   const [finalApproverPrompt, setFinalApproverPrompt] = useState<{
     onConfirm: (id: string) => void;
   } | null>(null);
-  const finalApproverDialogRef = useRef<HTMLDivElement>(null);
   const [finalApproverSearch, setFinalApproverSearch] = useState('');
   const [tempSelectedFinalApprover, setTempSelectedFinalApprover] = useState<string>('');
 
   const [initialApproverPrompt, setInitialApproverPrompt] = useState<{
     onConfirm: (id: string) => void;
   } | null>(null);
-  const initialApproverDialogRef = useRef<HTMLDivElement>(null);
   const [initialApproverSearch, setInitialApproverSearch] = useState('');
   const [tempSelectedInitialApprover, setTempSelectedInitialApprover] = useState<string>('');
   const [selectedGroupForInitial, setSelectedGroupForInitial] = useState<string>('');
@@ -161,8 +193,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
   const [showCreateModal, setShowCreateModal] = useState(initialView === 'create');
   const [editingOrder, setEditingOrder] = useState<IChangeOrder | null>(null);
 
-  const isPrivilegedDefault = currentUser.role === 'Administrator';
-  const [form, setForm] = useState(() => ({ ...EMPTY_FORM, authorization_exempt: isPrivilegedDefault }));
+  const [form, setForm] = useState(() => ({ ...EMPTY_FORM }));
   const [saving, setSaving] = useState(false);
   const [selectedGroupForFinal, setSelectedGroupForFinal] = useState<string>('');
 
@@ -193,8 +224,11 @@ const ChangeOrderComponent: React.FC<Props> = ({
       'Only Administrator can reject in final review stage': '只有管理员角色的用户才能在终审阶段驳回工单',
       'Only the assigned initial reviewer can process this change order': '只有被指定的初审人才能处理此工单的初审',
       'Only users in the initial review group can process this change order': '只有初审组成员或管理员才能处理此工单的初审',
+      'Initial reviewer must be an Administrator': '初审人必须是管理员',
+      'Selected user is not in the initial review group': '所选初审人不在初审组，请检查用户的工单职责组配置',
       'Only the assigned final approver can process this change order': '只有被指定的终审人才能处理此工单的终审',
       'Only users in the final approval group can process this change order': '只有终审组成员或管理员才能处理此工单的终审',
+      'Selected user is not in the final approval group': '所选终审人不在终审组，请检查用户的工单职责组配置',
       'Change order not found': '未找到变更工单',
       'Forbidden': '拒绝访问',
     };
@@ -224,6 +258,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
   const isDirty = useMemo(() => {
     if (!editorVisible) return false;
     if (editingOrder) {
+      const existingBusinessConfirmer = getBusinessConfirmer(editingOrder);
       return (
         form.title !== editingOrder.title ||
         form.description !== (editingOrder.description || '') ||
@@ -232,12 +267,15 @@ const ChangeOrderComponent: React.FC<Props> = ({
         form.risk_level !== editingOrder.risk_level ||
         form.target_devices.length !== (editingOrder.target_devices?.length || 0) ||
         form.commands.length !== (editingOrder.commands?.length || 0) ||
-        form.rollback_plan !== (editingOrder.rollback_plan || '')
+        form.rollback_plan !== (editingOrder.rollback_plan || '') ||
+        form.control_sheet.business_confirmer_id !== (existingBusinessConfirmer.id || '') ||
+        form.control_sheet.business_confirmer_username !== (existingBusinessConfirmer.username || '')
       );
     }
     return (
       form.title.trim() !== '' ||
       form.description.trim() !== '' ||
+      Boolean(form.control_sheet.business_confirmer_id) ||
       form.target_devices.length > 0 ||
       form.commands.length > 0
     );
@@ -256,9 +294,9 @@ const ChangeOrderComponent: React.FC<Props> = ({
 
   const resetEditorState = useCallback(() => {
     setEditingOrder(null);
-    setForm({ ...EMPTY_FORM, authorization_exempt: isPrivilegedDefault });
+    setForm({ ...EMPTY_FORM });
     resetTemplateComposer();
-  }, [isPrivilegedDefault, resetTemplateComposer]);
+  }, [resetTemplateComposer]);
 
   const closeEditor = useCallback((forceClose = false) => {
     if (!forceClose && isDirty && !window.confirm(zh ? '确认不保存吗？' : 'Confirm not to save?')) {
@@ -286,12 +324,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
     editorVisible && !saving && !actionPrompt && !finalApproverPrompt && !initialApproverPrompt && !executeModal,
     () => closeEditor(),
   );
-  useEscapeClose(Boolean(actionPrompt), () => setActionPrompt(null));
-  useEscapeClose(Boolean(finalApproverPrompt), closeFinalApproverPrompt);
-  useEscapeClose(Boolean(initialApproverPrompt), closeInitialApproverPrompt);
-  useFocusTrap(actionPromptDialogRef, Boolean(actionPrompt), actionPrompt?.sensitive ? '#change-order-sensitive-response' : 'textarea');
-  useFocusTrap(finalApproverDialogRef, Boolean(finalApproverPrompt), '#change-order-final-approver-search');
-  useFocusTrap(initialApproverDialogRef, Boolean(initialApproverPrompt), '#change-order-initial-reviewer-search');
+
 
   // Handle scenarioId from location state
   useEffect(() => {
@@ -746,6 +779,11 @@ const ChangeOrderComponent: React.FC<Props> = ({
     }
   }, [page, pageSize, search, statusFilter, priorityFilter, requesterFilter, assigneeFilter, bookmarkFilter, orderTypeFilter, createdFrom, createdTo, completedFrom, completedTo, scheduledFrom, scheduledTo, viewTab, currentUser.id, currentUser.username, currentUser.change_groups, zh, showToast, authHeaders]);
 
+  useEffect(() => {
+    const safePage = clampChangeOrderPage(page, total, pageSize);
+    if (safePage !== page) setPage(safePage);
+  }, [page, pageSize, total]);
+
   const fetchBookmarks = useCallback(async () => {
     try {
       const resp = await fetch('/api/change-orders-bookmarks', { headers: authHeaders() });
@@ -798,6 +836,10 @@ const ChangeOrderComponent: React.FC<Props> = ({
   const saveOrder = async (closeAfterSave = true, asDraft = false, explicitInitialReviewerId?: string) => {
     const effectiveScenarioPlatform = selectedScenarioPlatform || selectedScenarioPlatforms[0] || '';
     const reviewerIdToUse = explicitInitialReviewerId || form.assigned_initial_reviewer_id;
+    let validatedRollbackCommands: unknown;
+    let resolvedRollbackPlan = commandMode === 'template'
+      ? resolveChangeOrderRollbackPlan(form.rollback_plan, effectivePreview?.rollback)
+      : String(form.rollback_plan || '').trim();
     
     if (!form.title.trim()) {
       showToast(zh ? '请输入工单标题' : 'Title is required', 'error');
@@ -805,6 +847,43 @@ const ChangeOrderComponent: React.FC<Props> = ({
     }
 
     if (!asDraft) {
+      const implementerConflict = getImplementerConflictRole(form.control_sheet?.implementer_id, {
+        co_reviewer: form.control_sheet?.co_reviewer_id,
+        business_confirmer: form.control_sheet?.business_confirmer_id,
+        initial_reviewer: reviewerIdToUse,
+        final_approver: form.assigned_final_approver_id,
+      });
+      if (implementerConflict) {
+        const roleLabels = {
+          co_reviewer: zh ? '复核人' : 'reviewer',
+          business_confirmer: zh ? '业务确认人' : 'business confirmer',
+          initial_reviewer: zh ? '初审人' : 'initial reviewer',
+          final_approver: zh ? '终审人' : 'final approver',
+        };
+        showToast(zh
+          ? `实施人不能与${roleLabels[implementerConflict]}相同，请重新选择。`
+          : `The implementer must differ from the ${roleLabels[implementerConflict]}.`, 'error');
+        return;
+      }
+      if (form.order_type === 'emergency') {
+        if (!String(form.emergency_reason || '').trim()) {
+          showToast(zh ? '请填写紧急原因' : 'Emergency reason is required', 'error');
+          return;
+        }
+        if (!String(form.emergency_review_owner_id || '').trim()) {
+          showToast(zh ? '请选择事后复核人' : 'Select a post-review owner', 'error');
+          return;
+        }
+        if (form.emergency_review_owner_id === currentUser.id || form.emergency_review_owner_id === form.control_sheet?.implementer_id) {
+          showToast(zh ? '事后复核人必须与申请人、实施人分离' : 'The post-review owner must differ from the requester and implementer', 'error');
+          return;
+        }
+        const reviewDue = new Date(String(form.emergency_review_due_at || '').replace(' ', 'T'));
+        if (!form.emergency_review_due_at || Number.isNaN(reviewDue.getTime()) || reviewDue.getTime() <= Date.now()) {
+          showToast(zh ? '事后复核期限必须晚于当前时间' : 'Post-review due time must be in the future', 'error');
+          return;
+        }
+      }
       if (!form.scheduled_start) {
         showToast(zh ? '请选择计划开始时间' : 'Scheduled start time is required', 'error');
         return;
@@ -832,10 +911,6 @@ const ChangeOrderComponent: React.FC<Props> = ({
       
       if (commandMode === 'manual' && form.commands.length === 0) {
         showToast(zh ? '请至少添加一条执行命令' : 'Add at least one command', 'error');
-        return;
-      }
-      if (commandMode === 'manual' && !form.rollback_plan.trim()) {
-        showToast(zh ? '请输入回退方案' : 'Rollback plan is required', 'error');
         return;
       }
       if (commandMode === 'template') {
@@ -872,11 +947,44 @@ const ChangeOrderComponent: React.FC<Props> = ({
             setSaving(false);
             return;
           }
+          if (Array.isArray(checkData.preview?.rollback)) {
+            validatedRollbackCommands = checkData.preview.rollback;
+          }
+          resolvedRollbackPlan = buildChangeOrderRollbackFields(
+            form.rollback_plan,
+            effectivePreview?.rollback,
+            validatedRollbackCommands,
+          ).rollback_plan;
+          setSaving(false);
         } catch {
           showToast(zh ? '预检查失败' : 'Precheck failed', 'error');
           setSaving(false);
           return;
         }
+      }
+
+      if (!resolvedRollbackPlan) {
+        showToast(zh ? '请输入回退方案，或在模板中配置回退命令。' : 'Enter a rollback plan or configure rollback commands in the template.', 'error');
+        return;
+      }
+
+      const missingControlSheetFields = getMissingChangeOrderControlSheetFields(form.control_sheet);
+      if (missingControlSheetFields.length > 0) {
+        const fieldLabels: Record<string, string> = {
+          implementer_id: zh ? '实施人' : 'Implementer',
+          co_reviewer_id: zh ? '复核人' : 'Reviewer',
+          pre_check: zh ? '变更前检查' : 'Pre-check',
+          execution: zh ? '人工实施步骤' : 'Manual implementation steps',
+          post_verify: zh ? '变更后验证' : 'Post-change verification',
+          business_verify: zh ? '业务验证' : 'Business verification',
+        };
+        showToast(
+          zh
+            ? `请完善变更控制表：${missingControlSheetFields.map((field) => fieldLabels[field]).join('、')}`
+            : `Complete the change control sheet: ${missingControlSheetFields.map((field) => fieldLabels[field]).join(', ')}`,
+          'error',
+        );
+        return;
       }
 
       if (!reviewerIdToUse) {
@@ -893,12 +1001,16 @@ const ChangeOrderComponent: React.FC<Props> = ({
     try {
       const payload: any = {
         ...form,
+        authorization_exempt: form.authorization_exempt ?? false,
         assigned_initial_reviewer_id: reviewerIdToUse || '',
         status: asDraft ? 'draft' : 'initial_review',
         command_template: {},
         commands: form.commands,
-        rollback_plan: form.rollback_plan,
+        rollback_plan: resolvedRollbackPlan,
       };
+      if (!editingOrder && incidentTicketIdFromQuery) {
+        payload.incident_ticket_id = incidentTicketIdFromQuery;
+      }
 
       if (FEATURE_CONTROL_SHEET) {
         const cs = form.control_sheet;
@@ -915,6 +1027,10 @@ const ChangeOrderComponent: React.FC<Props> = ({
             id: cs.co_reviewer_id || '',
             username: cs.co_reviewer_username || '',
           },
+          business_confirmer: {
+            id: cs.business_confirmer_id || '',
+            username: cs.business_confirmer_username || '',
+          },
           device_ips: cs.device_ips
             ? cs.device_ips.split(/[\n,]+/).map((s: string) => s.trim()).filter(Boolean)
             : [],
@@ -922,7 +1038,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
           execution: cs.execution || '',
           post_verify: cs.post_verify || '',
           business_verify: cs.business_verify || '',
-          rollback_plan: cs.rollback_plan || '',
+          rollback_plan: resolvedRollbackPlan,
         };
       }
 
@@ -936,8 +1052,36 @@ const ChangeOrderComponent: React.FC<Props> = ({
         if (effectivePreview?.execute?.length) {
           payload.commands = effectivePreview.execute;
         }
-        payload.rollback_plan = (effectivePreview?.rollback || []).join('\n') || form.rollback_plan;
       }
+
+      if (FEATURE_CONTROL_SHEET) {
+        const synchronizedSheet = synchronizeControlSheetMirrors(form.control_sheet, {
+          scheduledStart: payload.scheduled_start || '',
+          scheduledEnd: payload.scheduled_end || '',
+          targetIps: (payload.target_devices || []).map((device: { ip_address?: string }) => device.ip_address || ''),
+          rollbackPlan: payload.rollback_plan || '',
+        });
+        payload.control_sheet = {
+          ...payload.control_sheet,
+          change_time: {
+            start: synchronizedSheet.change_time_start || '',
+            end: synchronizedSheet.change_time_end || '',
+          },
+          device_ips: synchronizedSheet.device_ips
+            ? synchronizedSheet.device_ips.split(/[\n,]+/).map((value: string) => value.trim()).filter(Boolean)
+            : [],
+          rollback_plan: synchronizedSheet.rollback_plan || '',
+        };
+      }
+
+      const rollbackFields = buildChangeOrderRollbackFields(
+        form.rollback_plan,
+        effectivePreview?.rollback,
+        validatedRollbackCommands,
+        payload.control_sheet || {},
+      );
+      payload.rollback_plan = rollbackFields.rollback_plan;
+      if (FEATURE_CONTROL_SHEET) payload.control_sheet = rollbackFields.control_sheet;
 
       const url = editingOrder ? `/api/change-orders/${editingOrder.id}` : '/api/change-orders';
       const method = editingOrder ? 'PUT' : 'POST';
@@ -1010,6 +1154,96 @@ const ChangeOrderComponent: React.FC<Props> = ({
     } catch { showToast(zh ? '操作失败' : 'Failed', 'error'); }
   };
 
+  const handleAssignment = async (orderId: string, request: AssignmentRequest): Promise<ChangeOrderMutationResult> => {
+    try {
+      const resp = await fetch(`/api/change-orders/${orderId}/assignment`, {
+        method: 'POST',
+        headers: authHeaders(true),
+        body: JSON.stringify(request),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.success || !data.data) {
+        const detail = data.detail ?? data.message;
+        return { success: false, message: typeof detail === 'string' ? detail : detail ? JSON.stringify(detail) : (zh ? '责任分配失败' : 'Assignment failed') };
+      }
+      setSelectedOrder(data.data);
+      fetchTimeline(orderId);
+      window.dispatchEvent(new CustomEvent('refresh-todo-badge'));
+      fetchOrders();
+      fetchSummary();
+      return { success: true, order: data.data };
+    } catch (error) {
+      return { success: false, message: error instanceof Error ? error.message : (zh ? '责任分配请求失败' : 'Assignment request failed') };
+    }
+  };
+
+  const handleVerification = async (orderId: string, request: VerificationRequest): Promise<ChangeOrderMutationResult> => {
+    try {
+      const resp = await fetch(`/api/change-orders/${orderId}/verification`, {
+        method: 'POST',
+        headers: authHeaders(true),
+        body: JSON.stringify(request),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.success || !data.data) {
+        const detail = data.detail ?? data.message;
+        return { success: false, message: typeof detail === 'string' ? detail : detail ? JSON.stringify(detail) : (zh ? '验证结果提交失败' : 'Verification submission failed') };
+      }
+      setSelectedOrder(data.data);
+      fetchTimeline(orderId);
+      window.dispatchEvent(new CustomEvent('refresh-todo-badge'));
+      fetchOrders();
+      fetchSummary();
+      return { success: true, order: data.data };
+    } catch (error) {
+      return { success: false, message: error instanceof Error ? error.message : (zh ? '验证结果请求失败' : 'Verification request failed') };
+    }
+  };
+
+  const handleResultReview = async (orderId: string, action: ResultReviewAction, summary: string) => {
+    try {
+      const response = await fetch(`/api/change-orders/${encodeURIComponent(orderId)}/result-review`, {
+        method: 'POST', headers: authHeaders(true), body: JSON.stringify({ action, summary }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success || !data.data) {
+        showToast(typeof data.detail === 'string' ? data.detail : (zh ? '实施复核提交失败' : 'Result review failed'), 'error');
+        return;
+      }
+      setSelectedOrder(data.data);
+      fetchTimeline(orderId); fetchOrders(); fetchSummary();
+      window.dispatchEvent(new CustomEvent('refresh-todo-badge'));
+      showToast(zh ? '实施复核结果已提交' : 'Result review submitted', 'success');
+    } catch { showToast(zh ? '实施复核请求失败' : 'Result review request failed', 'error'); }
+  };
+
+  const handleEmergencyReview = async (
+    orderId: string,
+    outcome: 'accepted' | 'follow_up_required',
+    note: string,
+  ): Promise<ChangeOrderMutationResult> => {
+    try {
+      const response = await fetch(`/api/change-orders/${encodeURIComponent(orderId)}/emergency-review`, {
+        method: 'POST',
+        headers: authHeaders(true),
+        body: JSON.stringify({ outcome, note }),
+      });
+      const payload = await response.json();
+      const order = payload?.order as IChangeOrder | undefined;
+      if (!response.ok || !payload?.success || !order) {
+        const detail = payload?.detail || payload?.message;
+        return { success: false, message: typeof detail === 'string' ? detail : (zh ? '事后复核未能保存' : 'Post-review could not be saved') };
+      }
+      setSelectedOrder(order);
+      fetchTimeline(orderId);
+      fetchOrders();
+      fetchSummary();
+      return { success: true, order };
+    } catch (error) {
+      return { success: false, message: error instanceof Error ? error.message : (zh ? '事后复核请求失败' : 'Post-review request failed') };
+    }
+  };
+
   // ── Run Order Commands ──
   const runOrderCommands = async () => {
     if (!executeModal) return;
@@ -1026,7 +1260,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
       return;
     }
 
-    setExecuteModal({ ...executeModal, phase: 'running', output: '', error: '', success: false });
+    setExecuteModal({ ...executeModal, phase: 'running', output: '', error: '', success: false, requestSent: false });
 
     try {
       const invResp = await fetch('/api/devices?mode=light', { headers: authHeaders() });
@@ -1068,6 +1302,8 @@ const ChangeOrderComponent: React.FC<Props> = ({
         return;
       }
 
+      setSentExecutionRequestKeys(previous => new Set(previous).add(executionRequestKey(order)));
+      setExecuteModal((prev) => prev && ({ ...prev, requestSent: true }));
       const resp = await fetch('/api/execute', {
         method: 'POST',
         headers: authHeaders(true),
@@ -1077,7 +1313,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
           isConfig: true,
           change_ticket: order.order_number,
           task_name: `ChangeOrder ${order.order_number}: ${order.title}`,
-          auth_role: 'admin',
+          auth_role: getChangeOrderExecutionAuthRole(currentUser),
         }),
       });
       const data = await resp.json();
@@ -1167,6 +1403,9 @@ const ChangeOrderComponent: React.FC<Props> = ({
       incident_id: order.incident_id || '',
       description: order.description,
       order_type: order.order_type,
+      emergency_reason: '',
+      emergency_review_owner_id: '',
+      emergency_review_due_at: '',
       priority: order.priority,
       target_devices: order.target_devices || [],
       commands: order.commands || [],
@@ -1186,6 +1425,8 @@ const ChangeOrderComponent: React.FC<Props> = ({
         implementer_username: existingCs.implementer?.username || '',
         co_reviewer_id: existingCs.co_reviewer?.id || '',
         co_reviewer_username: existingCs.co_reviewer?.username || '',
+        business_confirmer_id: existingCs.business_confirmer?.id || existingCs.business_verifier?.id || existingCs.business_confirmer_id || existingCs.business_verifier_id || '',
+        business_confirmer_username: existingCs.business_confirmer?.username || existingCs.business_verifier?.username || existingCs.business_confirmer_username || existingCs.business_verifier_username || '',
         device_ips: Array.isArray(existingCs.device_ips) ? existingCs.device_ips.join('\n') : (existingCs.device_ips || ''),
         pre_check: existingCs.pre_check || '',
         execution: existingCs.execution || '',
@@ -1252,14 +1493,14 @@ const ChangeOrderComponent: React.FC<Props> = ({
       rows.push([zh ? '变更时间窗口（开始）' : 'Change Time Start', changeTimeStart ? fmtDate(changeTimeStart) : '']);
       rows.push([zh ? '变更时间窗口（结束）' : 'Change Time End', changeTimeEnd ? fmtDate(changeTimeEnd) : '']);
       rows.push([zh ? '实施人' : 'Implementer', cs.implementer?.username || '']);
-      rows.push([zh ? '联合审核人' : 'Co-Reviewer', cs.co_reviewer?.username || '']);
+      rows.push([zh ? '复核人' : 'Reviewer', cs.co_reviewer?.username || '']);
       const deviceIps = Array.isArray(cs.device_ips) ? cs.device_ips.join(', ') : (cs.device_ips || '');
       rows.push([zh ? '目标设备IP' : 'Target Device IPs', deviceIps]);
       rows.push([zh ? '实施前检查' : 'Pre-Check', cs.pre_check || '']);
       rows.push([zh ? '执行步骤' : 'Execution Steps', cs.execution || '']);
       rows.push([zh ? '实施后验证' : 'Post-Verify', cs.post_verify || '']);
       rows.push([zh ? '业务验证' : 'Business Verify', cs.business_verify || '']);
-      rows.push([zh ? '回滚方案' : 'Rollback Plan', cs.rollback_plan || '']);
+      rows.push([zh ? '回退方案' : 'Rollback Plan', cs.rollback_plan || '']);
 
       if (attachments.length > 0) {
         rows.push(['', '']);
@@ -1362,6 +1603,8 @@ const ChangeOrderComponent: React.FC<Props> = ({
       implementer_username: existingCs.implementer?.username || '',
       co_reviewer_id: existingCs.co_reviewer?.id || '',
       co_reviewer_username: existingCs.co_reviewer?.username || '',
+      business_confirmer_id: existingCs.business_confirmer?.id || existingCs.business_verifier?.id || existingCs.business_confirmer_id || existingCs.business_verifier_id || '',
+      business_confirmer_username: existingCs.business_confirmer?.username || existingCs.business_verifier?.username || existingCs.business_confirmer_username || existingCs.business_verifier_username || '',
       device_ips: Array.isArray(existingCs.device_ips) ? existingCs.device_ips.join('\n') : (existingCs.device_ips || ''),
       pre_check: existingCs.pre_check || '',
       execution: existingCs.execution || '',
@@ -1374,6 +1617,9 @@ const ChangeOrderComponent: React.FC<Props> = ({
       incident_id: order.incident_id || '',
       description: order.description,
       order_type: order.order_type,
+      emergency_reason: order.emergency_reason || '',
+      emergency_review_owner_id: order.emergency_review_owner_id || '',
+      emergency_review_due_at: order.emergency_review_due_at || '',
       priority: order.priority,
       risk_level: order.risk_level,
       rollback_plan: order.rollback_plan,
@@ -1414,10 +1660,9 @@ const ChangeOrderComponent: React.FC<Props> = ({
   };
 
   const initialReviewerOptions = useMemo(() => {
-    const grouped = users.filter((item) => item.role !== 'Viewer' && hasChangeGroup(item, 'initial_reviewer') && String(item.id) !== String(currentUser.id));
-    const fallback = users.filter((item) => item.role !== 'Viewer' && String(item.id) !== String(currentUser.id));
-    return grouped.length > 0 ? grouped : fallback;
-  }, [users, currentUser.id]);
+    const implementerId = String(form.control_sheet?.implementer_id || '');
+    return getInitialReviewerCandidates(users, String(currentUser.id || ''), implementerId);
+  }, [users, currentUser.id, form.control_sheet?.implementer_id]);
 
   const groupedInitialReviewers = useMemo(() => {
     const map: Record<string, UserOption[]> = {};
@@ -1439,10 +1684,9 @@ const ChangeOrderComponent: React.FC<Props> = ({
 
   const finalApproverOptions = useMemo(() => {
     const reqId = selectedOrder?.requester_id;
-    const grouped = users.filter((item) => item.role === 'Administrator' && hasChangeGroup(item, 'final_approver') && String(item.id) !== String(currentUser.id) && String(item.id) !== String(reqId || ''));
-    const fallback = users.filter((item) => item.role === 'Administrator' && String(item.id) !== String(currentUser.id) && String(item.id) !== String(reqId || ''));
-    return grouped.length > 0 ? grouped : fallback;
-  }, [users, currentUser.id, selectedOrder?.requester_id]);
+    const implementerId = selectedOrder ? String(getAssignedImplementer(selectedOrder).id || '') : '';
+    return getFinalApproverCandidates(users, String(currentUser.id || ''), String(reqId || ''), implementerId);
+  }, [users, currentUser.id, selectedOrder?.requester_id, selectedOrder?.control_sheet]);
 
   const groupedFinalApprovers = useMemo(() => {
     const map: Record<string, UserOption[]> = {};
@@ -1463,7 +1707,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
   }, [finalApproverOptions, finalApproverSearch, zh]);
 
   const viewMeta: Record<typeof viewTab, { zh: string; en: string; desc_zh: string; desc_en: string }> = {
-    all: { zh: '全部工单', en: 'All Orders', desc_zh: '查看所有变更工单的生命周期', desc_en: 'Browse the full change order lifecycle' },
+    all: { zh: '全部变更单', en: 'All change orders', desc_zh: '查看所有变更工单的生命周期', desc_en: 'Browse the full change order lifecycle' },
     my_todo: { zh: '个人待办', en: 'My Todo', desc_zh: '需要你处理的变更工单', desc_en: 'Change orders awaiting your action' },
     group_todo: { zh: '组内待办', en: 'Group Todo', desc_zh: '你所在职责组的待办事项', desc_en: 'Pending items for your duty groups' },
     my_participated: { zh: '我参与的', en: 'My Participated', desc_zh: '曾参与审批或执行的工单', desc_en: 'Orders you have reviewed or executed' },
@@ -1471,8 +1715,8 @@ const ChangeOrderComponent: React.FC<Props> = ({
     my_drafts: { zh: '草稿箱', en: 'Drafts', desc_zh: '尚未提交的工单草稿', desc_en: 'Pending change order drafts' },
   };
 
-  const heroTitle = zh ? viewMeta[viewTab].zh : viewMeta[viewTab].en;
-  const heroSubtitle = zh ? viewMeta[viewTab].desc_zh : viewMeta[viewTab].desc_en;
+  const heroTitle = editorVisible ? (zh ? (editingOrder ? '编辑变更工单' : '新建变更工单') : (editingOrder ? 'Edit change order' : 'New change order')) : (zh ? viewMeta[viewTab].zh : viewMeta[viewTab].en);
+  const heroSubtitle = editorVisible ? (zh ? '填写变更范围、机器命令和验证要求，提交后进入审核。' : 'Define the scope, commands and verification requirements before review.') : (zh ? viewMeta[viewTab].desc_zh : viewMeta[viewTab].desc_en);
 
   const advancedFilterCount = [requesterFilter, assigneeFilter, bookmarkFilter, orderTypeFilter, createdFrom, createdTo, completedFrom, completedTo, scheduledFrom, scheduledTo].filter(Boolean).length;
 
@@ -1484,54 +1728,9 @@ const ChangeOrderComponent: React.FC<Props> = ({
         subtitle={heroSubtitle}
       />
       
-      <div className="flex flex-col gap-6 flex-1 min-h-0 overflow-y-auto custom-scrollbar px-4 py-4 sm:px-6 sm:py-5">
-        {/* ── Toast ── */}
+      <div className="flex flex-col gap-4 flex-1 min-h-0 overflow-y-auto custom-scrollbar px-4 py-4 sm:px-6 sm:py-5">
         <AnimatePresence>
-          {toast && (
-            <div className="fixed inset-0 pointer-events-none z-[9999] flex items-start justify-center pt-10">
-              <motion.div
-                key="global-toast"
-                initial={{ opacity: 0, y: -40, scale: 0.9 }}
-                animate={{ 
-                  opacity: 1, 
-                  y: 0, 
-                  scale: 1,
-                  x: toast.type === 'error' ? [0, -4, 4, -4, 4, 0] : 0 
-                }}
-                exit={{ opacity: 0, y: -20, scale: 0.9 }}
-                transition={{ 
-                  type: 'spring', 
-                  stiffness: 400, 
-                  damping: 25,
-                  x: { duration: 0.4, ease: "easeInOut" }
-                }}
-                className={`pointer-events-auto min-w-[320px] max-w-md px-6 py-4 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.15)] flex items-center gap-4 border-2 transition-all ${
-                  toast.type === 'success'
-                    ? 'bg-white border-emerald-500/20 text-emerald-900'
-                    : 'bg-white border-rose-500/20 text-rose-900'
-                }`}
-              >
-                <div className={`p-2.5 rounded-2xl shadow-sm ${toast.type === 'success' ? 'bg-emerald-500' : 'bg-rose-500'}`}>
-                  {toast.type === 'success' ? <CheckCircle2 size={20} className="text-white" /> : <AlertTriangle size={20} className="text-white" />}
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-center justify-between mb-0.5">
-                    <span className="text-[15px] font-bold tracking-tight">
-                      {toast.type === 'success' ? (zh ? '操作成功' : 'Operation Success') : (zh ? '操作失败' : 'Operation Failed')}
-                    </span>
-                  </div>
-                  <p className="text-xs font-medium opacity-60 leading-relaxed">{toast.msg}</p>
-                </div>
-                <button 
-                  onClick={() => setToast(null)} 
-                  className="ml-2 p-1.5 hover:bg-black/5 rounded-xl transition-colors group"
-                  title={zh ? '关闭' : 'Close'}
-                >
-                  <X size={16} className="opacity-30 group-hover:opacity-60" />
-                </button>
-              </motion.div>
-            </div>
-          )}
+          {toast && <ToastNotification toast={{ message: toast.msg, type: toast.type }} onClose={() => setToast(null)} />}
         </AnimatePresence>
 
         {editorVisible ? (
@@ -1572,6 +1771,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
             detailError={detailError}
             retryDetail={() => { if (selectedOrder) void openDetail(selectedOrder); }}
             currentUser={currentUser}
+            users={users}
             timeline={timeline}
             timelineLoading={timelineLoading}
             setTimeline={setTimeline}
@@ -1582,11 +1782,13 @@ const ChangeOrderComponent: React.FC<Props> = ({
             handleExportOrder={handleExportOrder}
             openEdit={openEdit}
             getTransitionActions={(order) => {
-              const actions: { label: string; status: string; variant: string; icon: React.ComponentType<any> }[] = [];
-              const isRequester = order.requester_username === currentUser.username;
-              const isInitialReviewer = order.assigned_initial_reviewer_id === String(currentUser.id);
-              const isFinalApprover = order.assigned_final_approver_id === String(currentUser.id);
+              const actions: { label: string; status: string; variant: string; icon: React.ComponentType<any>; disabled?: boolean; disabledReason?: string }[] = [];
+              const isRequester = isChangeOrderRequester(order, currentUser);
+              const isInitialReviewer = isChangeOrderInitialReviewer(order, currentUser);
+              const isFinalApprover = isChangeOrderFinalApprover(order, currentUser);
               const isAdministrator = currentUser.role === 'Administrator';
+              const canImplement = canCurrentUserImplement(order, currentUser);
+              const executionRequestAlreadySent = sentExecutionRequestKeys.has(executionRequestKey(order)) || hasOrderExecutionRequestBeenSent(order);
 
               switch (order.status) {
                 case 'draft':
@@ -1595,46 +1797,68 @@ const ChangeOrderComponent: React.FC<Props> = ({
                   }
                   break;
                 case 'initial_review':
-                  if (isInitialReviewer || (isAdministrator && !order.assigned_initial_reviewer_id)) {
+                  if (!isRequester && (isInitialReviewer || (isAdministrator && !order.assigned_initial_reviewer_id))) {
                     actions.push({ label: zh ? '初审通过' : 'Pass Initial Review', status: 'final_review', variant: 'success', icon: CheckCircle2 });
                     actions.push({ label: zh ? '驳回' : 'Reject', status: 'rejected', variant: 'danger', icon: XCircle });
                   }
                   break;
                 case 'final_review':
-                  if (isFinalApprover || (isAdministrator && !order.assigned_final_approver_id)) {
+                  if (!isRequester && (isFinalApprover || (isAdministrator && !order.assigned_final_approver_id))) {
                     actions.push({ label: zh ? '审批通过' : 'Approve', status: 'approved', variant: 'success', icon: CheckCircle2 });
                     actions.push({ label: zh ? '驳回到初审' : 'Reject to Initial', status: 'initial_review', variant: 'danger', icon: XCircle });
                     actions.push({ label: zh ? '彻底驳回' : 'Reject Completely', status: 'rejected', variant: 'danger', icon: XCircle });
                   }
                   break;
                 case 'approved':
-                  if (isRequester) {
+                  if (canImplement) {
                     actions.push({ label: zh ? '进入实施' : 'Start Implementing', status: 'implementing', variant: 'primary', icon: Zap });
                   }
                   break;
                 case 'implementing':
                 case 'executing':
-                  if (isRequester) {
-                    actions.push({ label: zh ? '下发命令' : 'Push Commands', status: 'execute_commands', variant: 'primary', icon: Zap });
-                    actions.push({ label: zh ? '标记完成' : 'Complete', status: 'completed', variant: 'success', icon: CheckCircle2 });
+                  if (canImplement) {
+                    const readiness = getVerificationReadiness(order);
+                    const blockedReason = readiness.missingKinds.length > 0
+                      ? (zh
+                        ? `完成前需${readiness.missingKinds.map(kind => kind === 'technical' ? '技术验证' : '业务验证').join('、')}通过`
+                        : `Complete after ${readiness.missingKinds.join(' and ')} verification passes`)
+                      : undefined;
+                    actions.push(executionRequestAlreadySent
+                      ? {
+                        label: zh ? '已请求执行' : 'Request sent',
+                        status: 'execute_commands',
+                        variant: 'muted',
+                        icon: CheckCircle2,
+                        disabled: true,
+                        disabledReason: zh
+                          ? '授权已使用；先核实设备实际状态，需再次执行时重新申请审批'
+                          : 'Authorization used. Verify the actual device state first; request a new approval before executing again.',
+                      }
+                      : { label: zh ? '下发命令' : 'Push Commands', status: 'execute_commands', variant: 'primary', icon: Zap });
+                    if (!getResultReviewer(order).id && !getResultReviewer(order).username) actions.push({ label: zh ? '标记完成' : 'Complete', status: 'completed', variant: 'success', icon: CheckCircle2, disabled: !readiness.canComplete, disabledReason: blockedReason });
                     actions.push({ label: zh ? '标记失败' : 'Failed', status: 'failed', variant: 'danger', icon: XCircle });
-                    actions.push({ label: zh ? '触发回溯' : 'Start Rollback', status: 'rollback_in_progress', variant: 'muted', icon: AlertTriangle });
+                    actions.push({ label: zh ? '发起回退' : 'Start Rollback', status: 'rollback_in_progress', variant: 'muted', icon: AlertTriangle });
                   }
                   break;
                 case 'failed':
-                  if (isRequester) {
-                    actions.push({ label: zh ? '发起回溯' : 'Rollback', status: 'rollback_in_progress', variant: 'muted', icon: AlertTriangle });
+                  if (canImplement) {
+                    actions.push({ label: zh ? '发起回退' : 'Rollback', status: 'rollback_in_progress', variant: 'muted', icon: AlertTriangle });
                   }
                   break;
                 case 'rollback_in_progress':
-                  if (isRequester) {
-                    actions.push({ label: zh ? '回溯完成' : 'Rollback Completed', status: 'rolled_back', variant: 'success', icon: CheckCircle2 });
-                    actions.push({ label: zh ? '回溯失败' : 'Rollback Failed', status: 'failed', variant: 'danger', icon: XCircle });
+                  if (canImplement) {
+                    actions.push({ label: zh ? '回退完成' : 'Rollback Completed', status: 'rolled_back', variant: 'success', icon: CheckCircle2 });
+                    actions.push({ label: zh ? '回退失败' : 'Rollback Failed', status: 'failed', variant: 'danger', icon: XCircle });
                   }
                   break;
               }
               
-              if (!['completed', 'cancelled', 'rolled_back'].includes(order.status)) {
+              getResultReviewActions(order, currentUser, language).forEach(action => actions.push({
+                label: action.label, status: `result_review_${action.action}`, variant: ['fail', 'reject'].includes(action.action) ? 'danger' : 'primary',
+                icon: CheckCircle2, disabled: action.disabled, disabledReason: action.disabledReason,
+              }));
+
+              if (!['completed', 'cancelled', 'rolled_back', 'implementation_review', 'implementation_result_review'].includes(order.status)) {
                 if (isRequester) {
                   actions.push({ label: zh ? '废除' : 'Discard', status: 'cancelled', variant: 'danger', icon: Trash2 });
                 } else if (isAdministrator) {
@@ -1644,6 +1868,10 @@ const ChangeOrderComponent: React.FC<Props> = ({
               return actions;
             }}
             handleTransition={handleTransition}
+            handleAssignment={handleAssignment}
+            handleVerification={handleVerification}
+            handleResultReview={handleResultReview}
+            handleEmergencyReview={handleEmergencyReview}
             setExecuteModal={setExecuteModal}
             setActionPrompt={setActionPrompt}
             setFinalApproverPrompt={setFinalApproverPrompt}
@@ -1716,322 +1944,33 @@ const ChangeOrderComponent: React.FC<Props> = ({
           executeModal={executeModal}
           setExecuteModal={setExecuteModal}
           runOrderCommands={runOrderCommands}
-          handleTransition={handleTransition}
         />
       )}
 
-      {/* Action Prompt Modal */}
-      <AnimatePresence>
-        {actionPrompt && (
-          <motion.div
-            className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.15 }}
-            onMouseDown={(e) => e.target === e.currentTarget && setActionPrompt(null)}
-          >
-            <motion.div
-              ref={actionPromptDialogRef}
-              className="w-full max-w-sm rounded-3xl bg-white shadow-2xl overflow-hidden"
-              initial={{ scale: 0.95, opacity: 0, y: 10 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.95, opacity: 0, y: 10 }}
-              transition={{ type: 'spring', stiffness: 400, damping: 25 }}
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="change-order-action-prompt-title"
-              tabIndex={-1}
-            >
-              <div className="px-6 py-5 border-b border-black/5 bg-[linear-gradient(to_right,#f4fbfc_0%,#ffffff_100%)]">
-                <h3 id="change-order-action-prompt-title" className="text-lg font-bold text-[#164e63]">{actionPrompt.title}</h3>
-              </div>
-              <div className="p-6">
-                {!actionPrompt.sensitive && <div className="flex flex-wrap gap-1.5 mb-3">
-                  {(zh ? ['请审核', '同意', '请修改', '不同意'] : ['Please review', 'Agree', 'Please modify', 'Disagree']).map((tag) => (
-                    <button
-                      key={tag}
-                      type="button"
-                      onClick={() => setActionPrompt({ ...actionPrompt, value: tag })}
-                      className="px-2 py-1 rounded-lg text-xs bg-black/[0.04] hover:bg-[#00bceb]/10 hover:text-[#00bceb] border border-black/5 hover:border-[#00bceb]/20 transition-all font-medium text-black/60"
-                    >
-                      {tag}
-                    </button>
-                  ))}
-                </div>}
-                {actionPrompt.sensitive ? (
-                  <PasswordInputField
-                    id="change-order-sensitive-response"
-                    autoFocus
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    showPasswordLabel={zh ? '显示验证码' : 'Show verification code'}
-                    hidePasswordLabel={zh ? '隐藏验证码' : 'Hide verification code'}
-                    aria-label={actionPrompt.placeholder || (zh ? '敏感验证码' : 'Sensitive verification code')}
-                    value={actionPrompt.value}
-                    onChange={(e) => setActionPrompt({ ...actionPrompt, value: e.target.value.replace(/\D/g, '').slice(0, 8) })}
-                    placeholder={actionPrompt.placeholder}
-                    maxLength={8}
-                    className="rounded-xl text-sm tracking-[0.35em] text-[#164e63] focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20 bg-white"
-                  />
-                ) : (
-                  <textarea
-                    autoFocus
-                    rows={3}
-                    aria-label={actionPrompt.title}
-                    value={actionPrompt.value}
-                    onChange={(e) => setActionPrompt({ ...actionPrompt, value: e.target.value })}
-                    placeholder={actionPrompt.placeholder}
-                    className="w-full rounded-xl border border-black/10 px-3 py-2 text-sm text-[#164e63] focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 transition-all resize-none bg-white"
-                  />
-                )}
-              </div>
-              <div className="flex items-center justify-end gap-3 px-6 py-4 bg-[#f8fafc] border-t border-black/5">
-                <button
-                  onClick={() => setActionPrompt(null)}
-                  className="px-4 py-2 rounded-xl border border-black/10 text-sm font-semibold text-black/50 hover:bg-black/5 transition-all"
-                >
-                  {zh ? '取消' : 'Cancel'}
-                </button>
-                <button
-                  disabled={actionPrompt.required && !actionPrompt.value.trim()}
-                  onClick={() => {
-                    actionPrompt.onConfirm(actionPrompt.value.trim());
-                    setActionPrompt(null);
-                  }}
-                  className="px-4 py-2 rounded-xl bg-cyan-600 text-white text-sm font-bold shadow-sm hover:bg-cyan-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
-                >
-                  {zh ? '确认提交' : 'Confirm'}
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {actionPrompt && (
+        <TicketDialog title={actionPrompt.title} language={language} onClose={() => setActionPrompt(null)} widthClassName="max-w-md" initialFocusSelector={actionPrompt.sensitive ? '#change-order-sensitive-response' : 'textarea'} actions={<>
+          <ActionButton onClick={() => setActionPrompt(null)}>{zh ? '取消' : 'Cancel'}</ActionButton>
+          <ActionButton variant="primary" disabled={actionPrompt.required && !actionPrompt.value.trim()} onClick={() => { actionPrompt.onConfirm(actionPrompt.value.trim()); setActionPrompt(null); }}>{zh ? '确认提交' : 'Confirm'}</ActionButton>
+        </>}>
+          {actionPrompt.sensitive ? (
+            <PasswordInputField id="change-order-sensitive-response" inputMode="numeric" autoComplete="one-time-code" showPasswordLabel={zh ? '显示验证码' : 'Show verification code'} hidePasswordLabel={zh ? '隐藏验证码' : 'Hide verification code'} aria-label={actionPrompt.placeholder || (zh ? '敏感验证码' : 'Sensitive verification code')} value={actionPrompt.value} onChange={(event) => setActionPrompt({ ...actionPrompt, value: event.target.value.replace(/\D/g, '').slice(0, 8) })} placeholder={actionPrompt.placeholder} maxLength={8} className="tracking-[0.25em]" />
+          ) : <textarea rows={4} aria-label={actionPrompt.title} value={actionPrompt.value} onChange={(event) => setActionPrompt({ ...actionPrompt, value: event.target.value })} placeholder={actionPrompt.placeholder} className={`${ticketInputClass} resize-y`} />}
+        </TicketDialog>
+      )}
+      {finalApproverPrompt && <TicketReviewerDialog title={zh ? '请指定终审人' : 'Select Final Approver'} language={language} search={finalApproverSearch} onSearchChange={setFinalApproverSearch} groups={groupedFinalApprovers} selectedId={tempSelectedFinalApprover} onSelect={setTempSelectedFinalApprover} onClose={closeFinalApproverPrompt} emptyMessage={zh ? '没有可选终审人，请在用户管理中将管理员加入“终审组”。' : 'No eligible final approvers. Add an administrator to the final-approver group in User Management.'} onConfirm={() => {
+        if (!finalApproverOptions.some((user) => String(user.id) === tempSelectedFinalApprover)) {
+          showToast(zh ? '所选终审人已不在终审组，请重新选择。' : 'The selected user is no longer in the final-approver group. Select another user.', 'error');
+          setTempSelectedFinalApprover('');
+          return;
+        }
+        finalApproverPrompt.onConfirm(tempSelectedFinalApprover);
+        closeFinalApproverPrompt();
+      }} />}
+      {initialApproverPrompt && <TicketReviewerDialog title={zh ? '请指定初审人' : 'Select Initial Reviewer'} language={language} search={initialApproverSearch} onSearchChange={setInitialApproverSearch} groups={groupedInitialReviewers} selectedId={tempSelectedInitialApprover} onSelect={setTempSelectedInitialApprover} onClose={closeInitialApproverPrompt} emptyMessage={zh ? '没有可选初审人，请在用户管理中将管理员加入“初审组”。' : 'No eligible initial reviewers. Add an administrator to the initial-review group in User Management.'} onConfirm={() => {
+        initialApproverPrompt.onConfirm(tempSelectedInitialApprover);
+        closeInitialApproverPrompt();
+      }} />}
 
-      {/* Final Approver Prompt */}
-      <AnimatePresence>
-        {finalApproverPrompt && (
-          <motion.div
-            className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.15 }}
-            onMouseDown={(e) => e.target === e.currentTarget && closeFinalApproverPrompt()}
-          >
-            <motion.div
-              ref={finalApproverDialogRef}
-              className="w-full max-w-md rounded-3xl bg-white shadow-2xl overflow-hidden"
-              initial={{ scale: 0.95, opacity: 0, y: 10 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.95, opacity: 0, y: 10 }}
-              transition={{ type: 'spring', stiffness: 400, damping: 25 }}
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="change-order-final-approver-title"
-              tabIndex={-1}
-            >
-              <div className="px-6 py-5 border-b border-black/5 bg-[linear-gradient(to_right,#f4fbfc_0%,#ffffff_100%)]">
-                <h3 id="change-order-final-approver-title" className="text-lg font-bold text-[#164e63]">{zh ? '请指定终审人' : 'Select Final Approver'}</h3>
-              </div>
-              <div className="p-6 space-y-4">
-                <div>
-                  <label htmlFor="change-order-final-approver-search" className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '搜索候选人 (拼音/中文)' : 'Search Candidates (Pinyin/Chinese)'}</label>
-                  <input
-                    id="change-order-final-approver-search"
-                    type="search"
-                    placeholder={zh ? '输入用户名或拼音筛选...' : 'Type username...'}
-                    value={finalApproverSearch}
-                    onChange={(e) => setFinalApproverSearch(e.target.value)}
-                    className="w-full px-3 py-2 text-sm border border-black/10 rounded-xl outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20 transition-all bg-white text-black"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '勾选终审人' : 'Assigned Approver'}</label>
-                  <div className="max-h-[260px] overflow-y-auto border border-black/10 rounded-xl divide-y divide-black/5 bg-slate-50/50">
-                    {Object.keys(groupedFinalApprovers).length === 0 ? (
-                      <div className="p-4 text-center text-xs text-black/40">
-                        {zh ? '没有匹配的终审人' : 'No matching approvers'}
-                      </div>
-                    ) : (
-                      (Object.entries(groupedFinalApprovers) as [string, UserOption[]][]).map(([groupName, reviewers]) => (
-                        <div key={groupName} className="p-2 border-b border-black/5 last:border-b-0">
-                          <div className="text-[11px] font-bold text-[#00bceb] bg-[#00bceb]/10 px-2.5 py-1 rounded-lg inline-block mb-1.5">
-                            {groupName}
-                          </div>
-                          <div className="space-y-1">
-                            {reviewers.map((item) => (
-                              <label 
-                                key={item.id} 
-                                className={`flex items-center gap-3 p-2.5 rounded-xl hover:bg-white cursor-pointer transition-colors ${
-                                  tempSelectedFinalApprover === String(item.id) ? 'bg-cyan-50/50 border border-cyan-500/20 shadow-sm' : 'border border-transparent'
-                                }`}
-                              >
-                                <input
-                                  type="radio"
-                                  name="final_approver"
-                                  value={String(item.id)}
-                                  checked={tempSelectedFinalApprover === String(item.id)}
-                                  onChange={(e) => setTempSelectedFinalApprover(e.target.value)}
-                                  className="w-4 h-4 text-cyan-500 focus:ring-cyan-400 border-black/20"
-                                />
-                                <div className="flex flex-col">
-                                  <span className="text-sm font-medium text-black/80">
-                                    {item.display_name ? `${item.display_name}` : item.username}
-                                    {item.display_name && <span className="ml-1 text-xs text-black/35">({item.username})</span>}
-                                  </span>
-                                  <span className="text-xs text-black/40">
-                                    {[item.role, item.phone, item.email].filter(Boolean).join(' · ')}
-                                  </span>
-                                </div>
-                              </label>
-                            ))}
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              </div>
-              <div className="flex items-center justify-end gap-3 px-6 py-4 bg-[#f8fafc] border-t border-black/5">
-                <button
-                  onClick={closeFinalApproverPrompt}
-                  className="px-4 py-2 rounded-xl border border-black/10 text-sm font-semibold text-black/50 hover:bg-black/5 transition-all"
-                >
-                  {zh ? '取消' : 'Cancel'}
-                </button>
-                <button
-                  onClick={() => {
-                    if (!tempSelectedFinalApprover) {
-                      showToast(zh ? '请先勾选终审人' : 'Please select an approver first', 'error');
-                      return;
-                    }
-                    finalApproverPrompt.onConfirm(tempSelectedFinalApprover);
-                    closeFinalApproverPrompt();
-                  }}
-                  className="px-4 py-2 rounded-xl bg-[#00bceb] text-white text-sm font-semibold hover:bg-[#0096bd] shadow-lg shadow-[#00bceb]/16 transition-all"
-                >
-                  {zh ? '确定' : 'Confirm'}
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Initial Approver Prompt */}
-      <AnimatePresence>
-        {initialApproverPrompt && (
-          <motion.div
-            className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.15 }}
-            onMouseDown={(e) => e.target === e.currentTarget && closeInitialApproverPrompt()}
-          >
-            <motion.div
-              ref={initialApproverDialogRef}
-              className="w-full max-w-md rounded-3xl bg-white shadow-2xl overflow-hidden"
-              initial={{ scale: 0.95, opacity: 0, y: 10 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.95, opacity: 0, y: 10 }}
-              transition={{ type: 'spring', stiffness: 400, damping: 25 }}
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="change-order-initial-approver-title"
-              tabIndex={-1}
-            >
-              <div className="px-6 py-5 border-b border-black/5 bg-[linear-gradient(to_right,#f4fbfc_0%,#ffffff_100%)]">
-                <h3 id="change-order-initial-approver-title" className="text-lg font-bold text-[#164e63]">{zh ? '请指定初审人' : 'Select Initial Reviewer'}</h3>
-              </div>
-              <div className="p-6 space-y-4">
-                <div>
-                  <label htmlFor="change-order-initial-reviewer-search" className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '搜索候选人 (拼音/中文)' : 'Search Candidates (Pinyin/Chinese)'}</label>
-                  <input
-                    id="change-order-initial-reviewer-search"
-                    type="search"
-                    placeholder={zh ? '输入用户名或拼音筛选...' : 'Type username...'}
-                    value={initialApproverSearch}
-                    onChange={(e) => setInitialApproverSearch(e.target.value)}
-                    className="w-full px-3 py-2 text-sm border border-black/10 rounded-xl outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20 transition-all bg-white text-black"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '勾选初审人' : 'Assigned Approver'}</label>
-                  <div className="max-h-[260px] overflow-y-auto border border-black/10 rounded-xl divide-y divide-black/5 bg-slate-50/50">
-                    {Object.keys(groupedInitialReviewers).length === 0 ? (
-                      <div className="p-4 text-center text-xs text-black/40">
-                        {zh ? '没有匹配的初审人' : 'No matching reviewers'}
-                      </div>
-                    ) : (
-                      (Object.entries(groupedInitialReviewers) as [string, UserOption[]][]).map(([groupName, reviewers]) => (
-                        <div key={groupName} className="p-2 border-b border-black/5 last:border-b-0">
-                          <div className="text-[11px] font-bold text-[#00bceb] bg-[#00bceb]/10 px-2.5 py-1 rounded-lg inline-block mb-1.5">
-                            {groupName}
-                          </div>
-                          <div className="space-y-1">
-                            {reviewers.map((item) => (
-                              <label 
-                                key={item.id} 
-                                className={`flex items-center gap-3 p-2.5 rounded-xl hover:bg-white cursor-pointer transition-colors ${
-                                  tempSelectedInitialApprover === String(item.id) ? 'bg-cyan-50/50 border border-cyan-500/20 shadow-sm' : 'border border-transparent'
-                                }`}
-                              >
-                                <input
-                                  type="radio"
-                                  name="initial_approver"
-                                  value={String(item.id)}
-                                  checked={tempSelectedInitialApprover === String(item.id)}
-                                  onChange={(e) => setTempSelectedInitialApprover(e.target.value)}
-                                  className="w-4 h-4 text-cyan-500 focus:ring-cyan-400 border-black/20"
-                                />
-                                <div className="flex flex-col">
-                                  <span className="text-sm font-medium text-black/80">
-                                    {item.display_name ? `${item.display_name}` : item.username}
-                                    {item.display_name && <span className="ml-1 text-xs text-black/35">({item.username})</span>}
-                                  </span>
-                                  <span className="text-xs text-black/40">
-                                    {[item.role, item.phone, item.email].filter(Boolean).join(' · ')}
-                                  </span>
-                                </div>
-                              </label>
-                            ))}
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              </div>
-              <div className="flex items-center justify-end gap-3 px-6 py-4 bg-[#f8fafc] border-t border-black/5">
-                <button
-                  onClick={closeInitialApproverPrompt}
-                  className="px-4 py-2 rounded-xl border border-black/10 text-sm font-semibold text-black/50 hover:bg-black/5 transition-all"
-                >
-                  {zh ? '取消' : 'Cancel'}
-                </button>
-                <button
-                  onClick={() => {
-                    if (!tempSelectedInitialApprover) {
-                      showToast(zh ? '请先勾选初审人' : 'Please select a reviewer first', 'error');
-                      return;
-                    }
-                    initialApproverPrompt.onConfirm(tempSelectedInitialApprover);
-                    closeInitialApproverPrompt();
-                  }}
-                  className="px-4 py-2 rounded-xl bg-[#00bceb] text-white text-sm font-semibold hover:bg-[#0096bd] shadow-lg shadow-[#00bceb]/16 transition-all"
-                >
-                  {zh ? '确定' : 'Confirm'}
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </div>
   );
 };

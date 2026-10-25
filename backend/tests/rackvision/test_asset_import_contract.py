@@ -91,10 +91,49 @@ def test_asset_import_queues_snmp_enrichment_after_committing_asset(isolated_db)
     assert len(background_tasks.tasks) == 1
     assert result["results"][0]["snmp_identification"]["status"] == "pending"
     with get_db_connection() as conn:
-        assert conn.execute(
-            "SELECT COUNT(*) FROM physical_assets WHERE hostname = ?",
+        row = conn.execute(
+            """SELECT d.snmp_collection_enabled
+                 FROM physical_assets pa JOIN devices d ON d.asset_id = pa.id
+                WHERE pa.hostname = ?""",
             ("edge-import-pending",),
-        ).fetchone()[0] == 1
+        ).fetchone()
+    assert row is not None
+    assert row["snmp_collection_enabled"] is True
+
+
+def test_asset_import_can_disable_snmp_and_skips_enrichment(isolated_db, monkeypatch):
+    from services import collector_sync_service
+
+    monkeypatch.setenv("ENVIRONMENT", "test")
+    monkeypatch.setattr(collector_sync_service, "trigger_async_monitoring_sync", lambda: None)
+    background_tasks = BackgroundTasks()
+    result = assets.import_assets(
+        [assets.AssetCreate(
+            asset_type="network_device",
+            hostname="edge-import-snmp-disabled",
+            asset_tag="tag-edge-import-snmp-disabled",
+            management_ip="192.0.2.91",
+            vendor="Huawei",
+            model="S6730",
+            platform="huawei_vrp",
+            snmp_collection_enabled=False,
+        )],
+        detailed=True,
+        background_tasks=background_tasks,
+    )
+
+    assert result["created"] == 1
+    assert result["enrichment_pending"] is False
+    assert result["snmp_identification"]["pending"] == 0
+    with get_db_connection() as conn:
+        row = conn.execute(
+            """SELECT d.snmp_collection_enabled
+                 FROM devices d JOIN physical_assets pa ON pa.id = d.asset_id
+                WHERE pa.hostname = ?""",
+            ("edge-import-snmp-disabled",),
+        ).fetchone()
+    assert row is not None
+    assert row["snmp_collection_enabled"] is False
 
 
 def test_asset_import_reserved_site_error_is_actionable(isolated_db):

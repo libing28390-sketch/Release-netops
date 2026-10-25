@@ -1,5 +1,5 @@
 import React from 'react';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import NSOTCollectionOperations from './NSOTCollectionOperations';
@@ -76,39 +76,46 @@ describe('NSOTCollectionOperations', () => {
     vi.unstubAllGlobals();
   });
 
-  it('limits the detail profile selector to the row vendor and enables built-in CRUD actions', async () => {
-    installFetch();
+  it('shows one row per template and resolves commands after profile selection', async () => {
+    const fetchMock = installFetch();
     const user = userEvent.setup();
     render(<NSOTCollectionOperations language="zh" searchText="" />);
 
-    const row = await screen.findByRole('row', { name: /基础监控.*迪普.*未知系统/ });
-    expect(screen.getByRole('table', { name: 'NSOT 采集模板与平台版本目录' })).toBeTruthy();
+    const row = await screen.findByRole('row', { name: /基础监控/ });
+    expect(screen.getByRole('table', { name: 'NSOT 采集模板目录' })).toBeTruthy();
     expect(within(row).getByText('系统模板').className).toContain('bg-blue-50');
     expect(within(row).getByText('系统模板').className).toContain('text-blue-700');
     expect(within(row).getByRole('button', { name: '编辑基础监控' }).hasAttribute('disabled')).toBe(false);
     expect(within(row).getByRole('button', { name: '删除基础监控' }).hasAttribute('disabled')).toBe(false);
-    expect(screen.getByText('共 2 行')).toBeTruthy();
+    expect(screen.getByText('共 1 个模板')).toBeTruthy();
+    expect(screen.getAllByRole('row')).toHaveLength(2);
+    expect(screen.getByText('1 个模板 · 2 个厂商 · 2 个可选平台 profile')).toBeTruthy();
     expect(screen.getByRole('combobox', { name: '每页条数' })).toBeTruthy();
 
-    await user.click(within(row).getByRole('button', { name: /查看基础监控在迪普/ }));
+    await user.click(within(row).getByRole('button', { name: '选择平台版本并查看基础监控命令' }));
     const profilePicker = await screen.findByRole('combobox', { name: 'TextFSM 平台 / 版本' });
     const optionLabels = Array.from((profilePicker as HTMLSelectElement).options).map((option) => option.textContent || '');
     expect(optionLabels.some((label) => label.includes('迪普'))).toBe(true);
-    expect(optionLabels.some((label) => label.includes('华三'))).toBe(false);
+    expect(optionLabels.some((label) => label.includes('华三'))).toBe(true);
+    expect(screen.getByText('请选择 TextFSM 平台和版本后查看对应命令与支持状态。')).toBeTruthy();
+
+    await user.selectOptions(profilePicker, 'h3c-v7');
+    expect(await screen.findByText('接口状态与流量')).toBeTruthy();
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([input]) => String(input).includes('platform_profile_id=h3c-v7'))).toBe(true);
+    });
   });
 
-  it('paginates the flattened template and platform rows', async () => {
+  it('does not paginate duplicate rows for each platform profile', async () => {
     installFetch(Array.from({ length: 21 }, (_, index) => ({
       ...profiles[0],
       id: `dptech-profile-${index}`,
     })));
-    const user = userEvent.setup();
     render(<NSOTCollectionOperations language="zh" searchText="" />);
 
-    expect(await screen.findByText('共 21 行')).toBeTruthy();
-    expect(screen.getAllByRole('row')).toHaveLength(11);
-    await user.click(screen.getByTitle('下一页'));
-    expect((screen.getByRole('spinbutton', { name: '当前页' }) as HTMLInputElement).value).toBe('2');
-    expect(screen.getAllByRole('row')).toHaveLength(11);
+    expect(await screen.findByText('共 1 个模板')).toBeTruthy();
+    expect(screen.getAllByRole('row')).toHaveLength(2);
+    expect((screen.getByRole('spinbutton', { name: '当前页' }) as HTMLInputElement).value).toBe('1');
+    expect((screen.getByTitle('下一页') as HTMLButtonElement).disabled).toBe(true);
   });
 });

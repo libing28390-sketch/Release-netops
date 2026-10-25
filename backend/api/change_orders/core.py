@@ -2,10 +2,11 @@ import logging
 import os
 from datetime import datetime, timezone
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Query, Body
+from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from fastapi.responses import FileResponse
 from database import get_db_connection, PROJECT_ROOT
 from core.rbac import (
+    authorize_resource,
     enforce_resource_scope,
     is_global_administrator,
     require_change_requester,
@@ -21,15 +22,19 @@ from services.change_order_service import (
     list_change_orders,
     get_summary,
     delete_change_order,
+    control_sheet_business_confirmer,
+    control_sheet_implementer,
+    control_sheet_result_reviewer,
 )
+from services import incident_ticket_service
 from api.change_orders.schemas import (
     TemplateValidateRequest,
     ChangeOrderCreate,
     ChangeOrderUpdate,
+    EmergencyReviewRequest,
 )
 from api.change_orders.helpers import (
     is_template_required,
-    is_control_sheet_enabled,
     validate_template_parameters,
     _build_command_template_snapshot,
     _normalize_assignment_payload,
@@ -37,6 +42,9 @@ from api.change_orders.helpers import (
     _validate_assignment_rules,
     _validate_template_completeness,
     _validate_control_sheet_completeness,
+    validate_emergency_change_details,
+    resolve_active_order_implementer,
+    is_order_result_review_participant,
 )
 
 logger = logging.getLogger(__name__)
@@ -45,16 +53,50 @@ router = APIRouter()
 
 def _require_change_order_access(order: dict, user: dict, action: str = 'view') -> None:
     """Apply tenant, resource-action, and requester ownership checks to an order."""
+    if str(order.get('status') or '') in {'implementation_review', 'implementation_result_review'} and action != 'view':
+        raise HTTPException(status_code=409, detail='实施结果审核中，不能修改工单或附件')
     tenant_id = str(order.get('tenant_id') or '').strip()
     user_id = str(user.get('user_id') or user.get('id') or '').strip()
+    requester_id = str(order.get('requester_id') or '')
+    is_requester = bool(user_id and requester_id and user_id == requester_id)
+    business_confirmer = control_sheet_business_confirmer(order.get('control_sheet'))
+    confirmer_id = str(business_confirmer.get('id') or '').strip()
+    if not confirmer_id and str(business_confirmer.get('username') or '').strip():
+        conn = get_db_connection()
+        try:
+            confirmer_row = conn.execute(
+                'SELECT id FROM users WHERE username = ?',
+                (str(business_confirmer.get('username') or '').strip(),),
+            ).fetchone()
+            confirmer_id = str(confirmer_row['id'] or '') if confirmer_row else ''
+        finally:
+            conn.close()
+    is_business_confirmer = bool(
+        action == 'view'
+        and user_id
+        and confirmer_id
+        and user_id == confirmer_id
+    )
     if TENANT_ISOLATION_ENABLED and not is_global_administrator(user):
         if not tenant_id or not str(user.get('tenant_id') or '').strip():
             raise HTTPException(status_code=404, detail='Change order not found')
         if tenant_id != tenant_scope_for_user(user):
             raise HTTPException(status_code=404, detail='Change order not found')
+    is_result_review_participant = False
+    if action == 'view' and user_id:
+        conn = get_db_connection()
+        try:
+            is_result_review_participant = is_order_result_review_participant(conn, order, user_id)
+        finally:
+            conn.close()
     if user.get('role_profile') == 'Change Requester':
-        if not user_id or str(order.get('requester_id') or '') != user_id:
+        if not is_requester and not is_business_confirmer and not is_result_review_participant:
             raise HTTPException(status_code=404, detail='Change order not found')
+    if is_business_confirmer or is_result_review_participant:
+        # This grants view access to this single order so the named confirmer
+        # or result reviewer can review evidence. It does not grant update or
+        # assignment actions.
+        return
     enforce_resource_scope(user, 'change_order', action, tenant_id=tenant_id or None)
 
 
@@ -118,7 +160,7 @@ def api_list_change_orders(
     completed_to: str = Query('', description='Filter actual_end <= ISO datetime'),
     scheduled_from: str = Query('', description='Filter scheduled_start >= ISO datetime'),
     scheduled_to: str = Query('', description='Filter scheduled_end <= ISO datetime'),
-    my_todo_kind: str = Query('', description='Filter my_todo by kind (review/implement/modify)'),
+    my_todo_kind: str = Query('', description='Filter my_todo by kind (review/implement/business_verification/modify)'),
     user=require_role("Viewer"),
 ):
     conn = get_db_connection()
@@ -133,6 +175,19 @@ def api_list_change_orders(
             if user.get('role_profile') == 'Change Requester'
             else ''
         )
+        if (
+            user.get('role_profile') == 'Change Requester'
+            and (my_todo or my_todo_kind == 'business_verification')
+            and not my_drafts
+            and not my_participated
+            and not group_todo
+        ):
+            # The service applies exact requester/implementer/confirmer
+            # predicates to a personal todo query. Do not widen unrelated list filters.
+            requester_scope = ''
+            my_todo = str(user.get('username') or '')
+            if not my_todo_kind or my_todo_kind == 'review':
+                my_todo_kind = 'personal'
         orders, total = list_change_orders(
             conn, page=page, page_size=page_size,
             status=status, priority=priority,
@@ -146,6 +201,7 @@ def api_list_change_orders(
             completed_from=completed_from, completed_to=completed_to,
             scheduled_from=scheduled_from, scheduled_to=scheduled_to,
             my_todo_kind=my_todo_kind,
+            my_todo_user_id=str(user.get('user_id') or user.get('id') or ''),
             tenant_id=tenant_scope,
             requester_id=requester_scope,
         )
@@ -326,7 +382,7 @@ def api_validate_template(body: TemplateValidateRequest, user=require_role("View
 
 
 @router.post('/change-orders')
-def api_create_change_order(body: ChangeOrderCreate, user=require_change_requester):
+def api_create_change_order(body: ChangeOrderCreate, user=Depends(require_change_requester)):
     conn = get_db_connection()
     try:
         tenant_id = tenant_id_for_write(user=user)
@@ -336,9 +392,36 @@ def api_create_change_order(body: ChangeOrderCreate, user=require_change_request
         enforce_resource_scope(user, 'change_order', 'create', tenant_id=tenant_id or None)
         payload = _normalize_assignment_payload(conn, body.model_dump())
         payload = _normalize_command_template_payload(payload)
+        incident_id_value = str(payload.get('incident_id') or '').strip()
+        incident_ticket_id = str(payload.get('incident_ticket_id') or '').strip()
+        if incident_ticket_id and not incident_id_value:
+            raise HTTPException(status_code=422, detail='incident_ticket_id requires incident_id')
+        if incident_id_value:
+            incident_ticket_service.validate_incident_target_devices(
+                conn,
+                incident_id=incident_id_value,
+                target_devices=payload.get('target_devices') or [],
+                user=user,
+                action='view',
+            )
+            if incident_ticket_id:
+                incident_ticket_service.validate_ticket_link_context(
+                    conn,
+                    ticket_id=incident_ticket_id,
+                    incident_id=incident_id_value,
+                    target_devices=payload.get('target_devices') or [],
+                    user=user,
+                )
 
         if payload.get('status') not in {'draft', 'initial_review'}:
             raise HTTPException(status_code=400, detail='New change orders must start as draft or initial_review')
+
+        if payload.get('status') == 'initial_review' and payload.get('order_type') == 'emergency':
+            payload.update(validate_emergency_change_details(conn, {
+                **payload,
+                'requester_id': str(user.get('user_id') or ''),
+                'tenant_id': tenant_id,
+            }))
         
         _validate_assignment_rules(user.get('username'), payload)
         
@@ -348,7 +431,7 @@ def api_create_change_order(body: ChangeOrderCreate, user=require_change_request
         if payload.get('status') != 'draft' and not payload.get('assigned_initial_reviewer_id'):
             raise HTTPException(status_code=400, detail='提交初审时必须指定初审人')
         
-        if is_control_sheet_enabled() and payload.get('status') == 'initial_review':
+        if payload.get('status') == 'initial_review':
             _validate_control_sheet_completeness(conn, None, payload, 'initial_review')
 
         # The human-readable number is derived from the current daily maximum;
@@ -380,6 +463,9 @@ def api_create_change_order(body: ChangeOrderCreate, user=require_change_request
             scheduled_start=payload['scheduled_start'],
             scheduled_end=payload['scheduled_end'],
             authorization_exempt=bool(payload.get('authorization_exempt')),
+            emergency_reason=str(payload.get('emergency_reason') or ''),
+            emergency_review_owner_id=str(payload.get('emergency_review_owner_id') or ''),
+            emergency_review_due_at=str(payload.get('emergency_review_due_at') or ''),
             control_sheet=payload.get('control_sheet') or {},
             commit=False,
         )
@@ -409,6 +495,15 @@ def api_create_change_order(body: ChangeOrderCreate, user=require_change_request
                 str(user.get('username') or 'system'),
                 f"Work order {order['order_number']} created for incident",
                 {'order_id': order['id'], 'order_number': order['order_number'], 'status': order.get('status')},
+            )
+        if incident_ticket_id:
+            incident_ticket_service.link_change_order(
+                conn,
+                ticket_id=incident_ticket_id,
+                change_order_id=str(order['id']),
+                incident_id=incident_id_value,
+                target_devices=payload.get('target_devices') or [],
+                actor=user,
             )
         conn.commit()
         return {'success': True, 'data': order, 'message': f"工单 {order['order_number']} 创建成功"}
@@ -481,7 +576,62 @@ def api_update_change_order(order_id: str, body: ChangeOrderUpdate, user=require
             updates['result_detail'] = result_detail
 
         full_payload = {**existing, **updates}
+        if full_payload.get('order_type') != 'emergency':
+            updates.update({
+                'emergency_reason': '',
+                'emergency_review_owner_id': '',
+                'emergency_review_due_at': None,
+                'emergency_review_status': '',
+                'emergency_reviewed_by_id': '',
+                'emergency_reviewed_by': '',
+                'emergency_reviewed_at': None,
+                'emergency_review_note': '',
+            })
+            full_payload = {**existing, **updates}
+        elif target_status == 'initial_review':
+            validated_emergency = validate_emergency_change_details(conn, full_payload)
+            updates.update({
+                'emergency_reason': validated_emergency['emergency_reason'],
+                'emergency_review_owner_id': validated_emergency['emergency_review_owner_id'],
+                'emergency_review_due_at': validated_emergency['emergency_review_due_at'],
+                'emergency_review_status': 'pending',
+                'emergency_reviewed_by_id': '',
+                'emergency_reviewed_by': '',
+                'emergency_reviewed_at': None,
+                'emergency_review_note': '',
+            })
+            full_payload = {**existing, **updates}
         _validate_assignment_rules(existing.get('requester_username'), full_payload)
+
+        linked_ticket = conn.execute(
+            """
+            SELECT t.id, t.source_incident_id
+              FROM incident_ticket_links l
+              JOIN incident_tickets t ON t.id = l.ticket_id
+             WHERE l.change_order_id = ?
+             ORDER BY l.created_at, l.id LIMIT 1
+            """,
+            (order_id,),
+        ).fetchone()
+        resulting_incident_id = str(full_payload.get('incident_id') or '').strip()
+        if linked_ticket and resulting_incident_id != str(linked_ticket['source_incident_id'] or ''):
+            raise HTTPException(status_code=422, detail='A linked incident ticket must remain aligned with incident_id')
+        if resulting_incident_id:
+            incident_ticket_service.validate_incident_target_devices(
+                conn,
+                incident_id=resulting_incident_id,
+                target_devices=full_payload.get('target_devices') or [],
+                user=user,
+                action='view',
+            )
+            if linked_ticket:
+                incident_ticket_service.validate_ticket_link_context(
+                    conn,
+                    ticket_id=str(linked_ticket['id']),
+                    incident_id=resulting_incident_id,
+                    target_devices=full_payload.get('target_devices') or [],
+                    user=user,
+                )
 
         if full_payload.get('status') == 'initial_review' and not full_payload.get('assigned_initial_reviewer_id'):
             raise HTTPException(status_code=400, detail='An initial reviewer is required before submission')
@@ -489,7 +639,7 @@ def api_update_change_order(order_id: str, body: ChangeOrderUpdate, user=require
         if is_template_required():
             _validate_template_completeness(full_payload)
         
-        if is_control_sheet_enabled() and full_payload.get('status') == 'initial_review' and existing.get('status') != 'initial_review':
+        if full_payload.get('status') == 'initial_review' and existing.get('status') != 'initial_review':
              _validate_control_sheet_completeness(conn, order_id, full_payload, 'initial_review')
 
         order = update_change_order(conn, order_id, updates, commit=False)
@@ -510,6 +660,93 @@ def api_update_change_order(order_id: str, body: ChangeOrderUpdate, user=require
         )
         conn.commit()
         return {'success': True, 'data': order}
+    finally:
+        conn.close()
+
+
+@router.post('/change-orders/{order_id}/emergency-review')
+def api_record_emergency_review(
+    order_id: str,
+    body: EmergencyReviewRequest,
+    user=require_role("Operator"),
+):
+    outcome = str(body.outcome or '').strip()
+    note = str(body.note or '').strip()
+    if outcome not in {'accepted', 'follow_up_required'}:
+        raise HTTPException(status_code=422, detail='事后复核结论无效')
+    if not note or len(note) > 4000:
+        raise HTTPException(status_code=422, detail='事后复核说明必填且不能超过 4000 字')
+    conn = get_db_connection()
+    try:
+        import database as database_module
+        if database_module._USE_PG:
+            conn.execute('SELECT id FROM change_orders WHERE id = ? FOR UPDATE', (order_id,))
+        order = get_change_order(conn, order_id)
+        if not order:
+            raise HTTPException(status_code=404, detail='Change order not found')
+        _require_change_order_access(order, user, 'update')
+        if str(order.get('order_type') or '') != 'emergency':
+            raise HTTPException(status_code=409, detail='该工单不是紧急变更')
+        if str(order.get('emergency_review_status') or '') != 'pending':
+            raise HTTPException(status_code=409, detail='该紧急变更已完成事后复核')
+        if str(order.get('status') or '') not in {'completed', 'rolled_back'} or not order.get('actual_end'):
+            raise HTTPException(status_code=409, detail='实施结果完成或已回退后，才能进行事后复核')
+        result_detail = dict(order.get('result_detail') or {})
+        actor_id = str(user.get('user_id') or user.get('id') or '')
+        reviewer_id = str(order.get('emergency_review_owner_id') or '')
+        if not reviewer_id or actor_id != reviewer_id:
+            raise HTTPException(status_code=403, detail='只有指定的事后复核人可以登记复核结论')
+        if actor_id == str(order.get('requester_id') or ''):
+            raise HTTPException(status_code=403, detail='申请人不能复核自己的紧急变更')
+        implementation = control_sheet_implementer(order.get('control_sheet'))
+        implementer_id = str(implementation.get('id') or '').strip()
+        if not implementer_id and str(implementation.get('username') or '').strip():
+            implementer_row = conn.execute(
+                'SELECT id FROM users WHERE username = ?',
+                (str(implementation.get('username') or '').strip(),),
+            ).fetchone()
+            implementer_id = str(implementer_row['id'] or '') if implementer_row else ''
+        if actor_id and actor_id == implementer_id:
+            raise HTTPException(status_code=403, detail='实施人不能复核自己的紧急变更')
+
+        now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
+        result_detail['emergency_post_review'] = {
+            'outcome': outcome,
+            'note': note,
+            'reviewer_id': actor_id,
+            'reviewer_username': str(user.get('username') or ''),
+            'reviewed_at': now,
+        }
+        updated = update_change_order(
+            conn,
+            order_id,
+            {
+                'emergency_review_status': outcome,
+                'emergency_reviewed_by_id': actor_id,
+                'emergency_reviewed_by': str(user.get('username') or ''),
+                'emergency_reviewed_at': now,
+                'emergency_review_note': note,
+                'result_detail': result_detail,
+            },
+            commit=False,
+        )
+        log_audit_event(
+            event_type='change_order.emergency_post_review',
+            category='change_order',
+            severity='medium' if outcome == 'accepted' else 'high',
+            status='open',
+            summary=f"紧急变更 {order['order_number']} 事后复核：{outcome}",
+            actor_id=actor_id,
+            actor_username=user.get('username'),
+            actor_role=user.get('role'),
+            target_type='change_order',
+            target_id=order_id,
+            target_name=order['order_number'],
+            details={'outcome': outcome, 'review_note': note},
+            conn=conn,
+        )
+        conn.commit()
+        return {'success': True, 'order': updated}
     finally:
         conn.close()
 
@@ -571,22 +808,35 @@ def api_delete_attachment(order_id: str, attachment_id: str, user=require_role("
         if not order:
             raise HTTPException(status_code=404, detail='Change order not found')
         _require_change_order_access(order, user, 'update')
+        if str(order.get('status') or '') in {'completed', 'rolled_back', 'cancelled'}:
+            raise HTTPException(status_code=409, detail='终态工单不能更改附件')
+        if str(order.get('status') or '') in {'implementing', 'executing'} and str((order.get('result_detail') or {}).get('execution_started_at') or '').strip():
+            raise HTTPException(status_code=409, detail='设备操作已经开始，不能更改附件')
         row = conn.execute(
             'SELECT file_path FROM change_order_control_sheet_attachments WHERE id = ? AND order_id = ?',
             (attachment_id, order_id)
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail='Attachment not found')
-        
+
         file_path = row['file_path']
+        conn.execute('DELETE FROM change_order_control_sheet_attachments WHERE id = ?', (attachment_id,))
+        from api.change_orders.attachments import _record_attachment_scope_change
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
+        _record_attachment_scope_change(
+            conn,
+            order,
+            user,
+            reason=f'工单附件已删除: {attachment_id}',
+            occurred_at=now,
+        )
+        conn.commit()
         if os.path.exists(file_path):
             try:
                 os.remove(file_path)
-            except Exception:
-                pass
-            
-        conn.execute('DELETE FROM change_order_control_sheet_attachments WHERE id = ?', (attachment_id,))
-        conn.commit()
+            except OSError:
+                logger.warning('Failed to remove deleted change-order attachment file', exc_info=True)
         return {'success': True, 'message': '附件已删除'}
     finally:
         conn.close()

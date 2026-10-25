@@ -1,9 +1,9 @@
 import { DataTable } from '../components/DataTable';
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
-import { AnimatePresence, motion } from 'motion/react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { useLocation } from 'react-router-dom';
 import {
-  Plus, X, Trash2, Pencil, Shield, Search, User, FileCode, Terminal, Layout, Maximize2, XCircle, Wand2, ChevronDown, ChevronUp, CheckCircle2, MessageSquare, AlertCircle, SearchCode, Copy, Filter, RotateCcw
+  Plus, X, Trash2, Pencil, Search, User, FileCode, Terminal, Layout, Maximize2, XCircle, Wand2, ChevronDown, ChevronUp, CheckCircle2, MessageSquare, AlertCircle, SearchCode, Copy, Filter, RotateCcw
 } from 'lucide-react';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
@@ -77,6 +77,10 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [totalScripts, setTotalScripts] = useState(0);
+  const [loadError, setLoadError] = useState<'auth' | 'permission' | 'request' | ''>('');
+  const requestSequenceRef = useRef(0);
+  const activeRequestRef = useRef<AbortController | null>(null);
+  const reduceMotion = useReducedMotion();
 
   const zh = language === 'zh';
   const BRAND_COLOR = "#2563eb";
@@ -115,8 +119,15 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
   };
 
   const fetchScripts = useCallback(async () => {
+    activeRequestRef.current?.abort();
+    const controller = new AbortController();
+    activeRequestRef.current = controller;
+    const requestSequence = ++requestSequenceRef.current;
+    setLoading(true);
+    setLoadError('');
+    setScripts([]);
+    setTotalScripts(0);
     try {
-      setLoading(true);
       const params = new URLSearchParams({
         q: searchQuery.trim(),
         platform: platformFilter === 'All' ? '' : platformFilter,
@@ -126,9 +137,11 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
         page: String(currentPage),
         page_size: String(pageSize),
       });
-      const res = await fetch(`/api/scripts?${params.toString()}`, { headers: getHeaders() });
+      const res = await fetch(`/api/scripts?${params.toString()}`, { headers: getHeaders(), signal: controller.signal });
+      if (controller.signal.aborted || requestSequence !== requestSequenceRef.current) return;
       if (res.ok) {
         const payload = await res.json();
+        if (controller.signal.aborted || requestSequence !== requestSequenceRef.current) return;
         if (Array.isArray(payload)) {
           setScripts(payload);
           setTotalScripts(payload.length);
@@ -137,8 +150,22 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
           setScripts(Array.isArray(data.items) ? data.items : []);
           setTotalScripts(Number(data.total || 0));
         }
+      } else {
+        setScripts([]);
+        setTotalScripts(0);
+        setLoadError(res.status === 401 ? 'auth' : res.status === 403 ? 'permission' : 'request');
       }
-    } catch (err) {} finally { setLoading(false); }
+    } catch {
+      if (controller.signal.aborted || requestSequence !== requestSequenceRef.current) return;
+      setScripts([]);
+      setTotalScripts(0);
+      setLoadError('request');
+    } finally {
+      if (requestSequence === requestSequenceRef.current) {
+        setLoading(false);
+        if (activeRequestRef.current === controller) activeRequestRef.current = null;
+      }
+    }
   }, [getHeaders, searchQuery, platformFilter, categoryFilter, typeFilter, statusFilter, currentPage, pageSize]);
 
   const fetchUsers = async () => {
@@ -158,12 +185,20 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
 
   useEffect(() => {
     if (view === 'scripts') {
-      fetchScripts();
+      void fetchScripts();
     } else {
+      activeRequestRef.current?.abort();
+      requestSequenceRef.current += 1;
       setScripts([]);
       setTotalScripts(0);
+      setLoadError('');
       setLoading(false);
     }
+    return () => {
+      requestSequenceRef.current += 1;
+      activeRequestRef.current?.abort();
+      activeRequestRef.current = null;
+    };
   }, [fetchScripts, view]);
 
   useEffect(() => {
@@ -433,17 +468,36 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-white/5">
-                <AnimatePresence mode="popLayout">
-                  {paginatedScripts.length > 0 ? (
+                {loading ? (
+                  <tr>
+                    <td colSpan={8} role="status" className="px-6 py-12 text-center text-[12px] text-slate-400 italic">
+                      {zh ? '正在加载脚本…' : 'Loading scripts…'}
+                    </td>
+                  </tr>
+                ) : loadError ? (
+                  <tr>
+                    <td colSpan={8}>
+                      <div role="alert" className="flex flex-col items-center gap-3 px-6 py-10 text-center text-[12px] text-rose-700 dark:text-rose-300">
+                        <span>{loadError === 'auth'
+                          ? (zh ? '登录状态已失效，请重新登录。' : 'Your session has expired. Please sign in again.')
+                          : loadError === 'permission'
+                            ? (zh ? '你没有查看操作脚本的权限。' : 'You do not have permission to view operation scripts.')
+                            : (zh ? '脚本列表加载失败，请重试。' : 'Failed to load scripts. Please retry.')}</span>
+                        <button type="button" onClick={() => void fetchScripts()} className="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 dark:border-rose-500/30 dark:bg-slate-900 dark:text-rose-300">
+                          {zh ? '重试' : 'Retry'}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ) : paginatedScripts.length > 0 ? (
                     paginatedScripts.map((script) => {
                       const isSystem = script.submitter_name === 'system' || script.author === 'system';
                       return (
                         <motion.tr
                           key={script.id}
-                          layout
-                          initial={{ opacity: 0 }}
+                          initial={reduceMotion ? false : { opacity: 0 }}
                           animate={{ opacity: 1 }}
-                          exit={{ opacity: 0 }}
+                          transition={{ duration: reduceMotion ? 0 : 0.14 }}
                           className="hover:bg-slate-50/40 dark:hover:bg-slate-800/20 transition-colors group"
                         >
                           <td className="px-6 py-3.5">
@@ -514,7 +568,6 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
                       </td>
                     </tr>
                   )}
-                </AnimatePresence>
               </tbody>
             </DataTable>
           </div>
@@ -667,62 +720,71 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
       {/* Searchable Confirm Audit Modal */}
       <AnimatePresence>
         {showConfirmModal && (
-          <div className="fixed inset-0 z-[120] flex items-center justify-center p-6">
+          <div className="fixed inset-0 z-[120] flex items-center justify-center overflow-y-auto p-4 sm:p-6">
              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowConfirmModal(false)} className="absolute inset-0 bg-black/60 backdrop-blur-md" />
-             <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="relative w-full max-w-sm bg-white dark:bg-slate-900 rounded-[32px] p-10 shadow-2xl border border-white/10">
-                <Shield size={32} className="text-[#2563eb] mb-6" />
-                <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-2">{zh ? '指派审核人' : 'Assign Reviewer'}</h3>
-                
-                <div className="mt-6 mb-8 relative">
-                   <label className={labelClass}>{zh ? '审核人搜索' : 'SEARCH AUDITOR'}</label>
+             <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="relative my-auto w-full max-w-sm max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-slate-700 dark:bg-slate-900">
+                <h3 className="mb-5 text-base font-semibold text-slate-800 dark:text-white">{zh ? '指派审核人' : 'Assign Reviewer'}</h3>
+
+                <div className="mb-5">
+                   <label htmlFor="script-reviewer-search" className={labelClass}>{zh ? '审核人搜索' : 'SEARCH AUDITOR'}</label>
                    <div className="relative">
                       <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
                       <input 
+                        id="script-reviewer-search"
                         type="search"
                         placeholder={zh ? "输入用户名搜索..." : "Search user..."}
                         value={auditorSearch}
                         onFocus={() => setShowAuditorDropdown(true)}
                         onChange={(e) => setAuditorSearch(e.target.value)}
-                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl pl-11 pr-4 py-3 text-[13px] text-slate-700 dark:text-white outline-none focus:ring-2 focus:ring-[#2563eb]/20"
+                        aria-autocomplete="list"
+                        aria-expanded={showAuditorDropdown}
+                        aria-controls="script-reviewer-results"
+                         className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-4 text-[13px] text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                       />
                    </div>
 
                    <AnimatePresence>
                       {showAuditorDropdown && (
                         <motion.div 
-                          initial={{ opacity: 0, y: -10 }} 
+                          id="script-reviewer-results"
+                          role="listbox"
+                          aria-label={zh ? '审核人搜索结果' : 'Reviewer search results'}
+                          initial={{ opacity: 0, y: -4 }}
                           animate={{ opacity: 1, y: 0 }} 
-                          exit={{ opacity: 0, y: -10 }}
-                          className="absolute z-[130] left-0 right-0 mt-2 bg-white dark:bg-slate-800 border border-slate-100 dark:border-white/10 rounded-2xl shadow-2xl max-h-48 overflow-y-auto no-scrollbar"
+                          exit={{ opacity: 0, y: -4 }}
+                          className="mt-2 max-h-40 overflow-y-auto rounded-lg border border-slate-200 bg-white no-scrollbar dark:border-slate-700 dark:bg-slate-800"
                         >
                            {availableReviewers.length > 0 ? (
                              availableReviewers.map(u => (
-                               <div 
+                               <button
                                  key={u.username} 
+                                 type="button"
+                                 role="option"
+                                 aria-selected={editForm.approver_username === u.username}
                                  onClick={() => { setEditForm({...editForm, approver_username: u.username}); setAuditorSearch(u.username); setShowAuditorDropdown(false); }}
-                                 className={`px-5 py-3 text-[13px] cursor-pointer hover:bg-[#2563eb]/10 transition-all flex items-center justify-between ${editForm.approver_username === u.username ? 'bg-[#2563eb]/10 text-[#2563eb]' : 'text-slate-600 dark:text-slate-300'}`}
+                                 className={`flex min-h-10 w-full items-center justify-between px-3 py-2.5 text-left text-[13px] transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 dark:hover:bg-slate-700/60 ${editForm.approver_username === u.username ? 'bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-300' : 'text-slate-600 dark:text-slate-300'}`}
                                >
                                   {u.username}
                                   {editForm.approver_username === u.username && <CheckCircle2 size={14} />}
-                               </div>
+                               </button>
                              ))
                            ) : (
-                             <div className="px-5 py-6 text-center text-[12px] text-slate-400 italic">{zh ? '未找到相关用户' : 'No users found'}</div>
+                             <div className="px-3 py-4 text-center text-xs text-slate-400">{zh ? '未找到相关用户' : 'No users found'}</div>
                            )}
                         </motion.div>
                       )}
                    </AnimatePresence>
                 </div>
 
-                <div className="flex flex-col gap-3">
+                <div className="flex flex-col gap-2">
                   <button 
                     disabled={!editForm.approver_username} 
                     onClick={() => handleAction('pending_audit')} 
-                    className="w-full py-4 bg-[#2563eb] text-white rounded-2xl text-[13px] font-bold shadow-xl shadow-[#2563eb]/20 disabled:opacity-30 active:scale-[0.98] transition-all"
+                    className="w-full rounded-lg bg-blue-600 py-2.5 text-[13px] font-semibold text-white transition-colors hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     {zh ? '发送审核申请' : 'SUBMIT FOR REVIEW'}
                   </button>
-                  <button onClick={() => setShowConfirmModal(false)} className="w-full py-3 text-[12px] font-bold text-slate-400 hover:text-slate-600 transition-colors uppercase tracking-widest">{zh ? '取消' : 'CANCEL'}</button>
+                  <button onClick={() => setShowConfirmModal(false)} className="w-full rounded-lg py-2 text-xs font-medium text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200">{zh ? '取消' : 'CANCEL'}</button>
                 </div>
              </motion.div>
           </div>

@@ -25,6 +25,74 @@ export interface ScheduledJob {
   updated_by?: string;
   updated_at?: string;
   major_type?: string;
+  authorization_grant?: ScheduledJobAuthorizationGrant;
+  allowed_actions?: string[];
+}
+
+export type TicketSourceType = 'incident' | 'service_request';
+
+export interface ScheduledJobAuthorizationGrantInput {
+  valid_until: string;
+  max_runs: number;
+  max_targets: number;
+  scope: { type: string; filter: string };
+  ticket_source_type: TicketSourceType;
+  ticket_id: string;
+  change_order_id?: string;
+}
+
+export interface ScheduledJobAuthorizationGrant extends ScheduledJobAuthorizationGrantInput {
+  grant_id: string;
+  version?: number;
+  status: 'active' | 'expired' | 'exhausted' | 'revoked' | 'reauthorization_required' | string;
+  template_version?: number | string;
+  manifest_hash?: string;
+  used_runs: number;
+  remaining_runs: number;
+  ticket_number?: string;
+  ticket_title?: string;
+  change_order_number?: string;
+  allowed_actions?: string[];
+}
+
+export type ScheduledJobRunOutcome = 'succeeded' | 'partial_failure' | 'failed';
+
+export interface ScheduledJobRun {
+  run_id: string;
+  scheduled_for?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  status: string;
+  target_count?: number | null;
+  success_count?: number | null;
+  failure_count?: number | null;
+  summary?: string | null;
+  error?: string | null;
+  authorization_version?: number | string | null;
+  ticket_source_type?: TicketSourceType | null;
+  ticket_id?: string | null;
+  ticket_number?: string | null;
+  ticket_title?: string | null;
+  change_order_id?: string | null;
+  change_order_number?: string | null;
+  allowed_actions?: string[];
+}
+
+export interface ScheduledJobRunsResponse {
+  items: ScheduledJobRun[];
+  total: number;
+  page: number;
+  per_page: number;
+  total_pages: number;
+}
+
+export interface AuthorizationGrantForm {
+  valid_until: string;
+  max_runs: string;
+  max_targets: string;
+  ticket_source_type: TicketSourceType;
+  ticket_id: string;
+  change_order_id: string;
 }
 
 export interface NsotPreviewCommand {
@@ -108,6 +176,8 @@ export interface FormState {
   config_reason: string;
   use_admin_creds: boolean;
   major_type: string;
+  authorization_grant: AuthorizationGrantForm;
+  enabled: boolean;
 }
 
 export interface ValidatedDevice {

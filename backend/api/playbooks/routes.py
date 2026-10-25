@@ -6,11 +6,11 @@ import logging
 import hashlib
 import hmac
 from datetime import datetime, timezone, timedelta
-from typing import Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Body, Request, Query
 from fastapi.responses import JSONResponse
 
+import database as database_module
 from database import get_db_connection
 from core.rbac import authorize_resource, is_global_administrator, require_permission, require_role
 from core.tenant_policy import TENANT_ISOLATION_ENABLED, tenant_id_for_write, tenant_scope_for_user
@@ -57,6 +57,10 @@ from services.playbook_execution_approval_service import (
     list_execution_approvals,
 )
 from services.playbook_output_service import PlaybookOutputError, load_output, reencrypt_legacy_output
+from services.change_order_service import (
+    get_change_order,
+    update_change_order,
+)
 
 router = APIRouter()
 logger = logging.getLogger("api.playbooks.routes")
@@ -248,6 +252,12 @@ def _prepare_playbook_execution_for_run(execution_id: str) -> tuple[dict, dict]:
             raise _playbook_execution_start_error('EXECUTION_TENANT_SCOPE_DENIED', 'Original operator is outside the execution tenant')
         if not authorize_resource(run_as, 'playbook', 'execute', tenant_id=execution_tenant or None):
             raise _playbook_execution_start_error('EXECUTION_PERMISSION_REVOKED', 'Original operator no longer has Playbook execution permission')
+        from api.change_orders.helpers import assert_explicit_execution_profile
+        try:
+            assert_explicit_execution_profile(run_as, 'playbook')
+            assert_explicit_execution_profile(run_as, 'command')
+        except HTTPException as exc:
+            raise _playbook_execution_start_error('EXECUTION_PERMISSION_REVOKED', str(exc.detail)) from exc
 
         try:
             stored_device_ids = json.loads(execution.get('device_ids') or '[]')
@@ -292,6 +302,49 @@ def _prepare_playbook_execution_for_run(execution_id: str) -> tuple[dict, dict]:
 
         _ensure_controlled_phases(snapshot_phases, user=run_as, operation='resume')
         _assert_playbook_device_scope(conn, device_ids, run_as)
+
+        change_order_binding = definition.get('change_order_binding')
+        if change_order_binding is not None:
+            if not isinstance(change_order_binding, dict):
+                raise _playbook_execution_start_error('CHANGE_ORDER_BINDING_INVALID', 'Change-order binding is invalid', status_code=409)
+            if (
+                str(change_order_binding.get('execution_id') or '') != execution_id
+                or str(change_order_binding.get('actor_id') or '') != str(run_as.get('id') or '')
+                or str(change_order_binding.get('device_ids') or '') == ''
+            ):
+                raise _playbook_execution_start_error('CHANGE_ORDER_BINDING_INVALID', 'Change-order execution identity does not match its snapshot', status_code=409)
+            try:
+                refreshed_binding = _assert_change_order_playbook_scope(
+                    conn,
+                    order_number=str(change_order_binding.get('order_number') or ''),
+                    actor=run_as,
+                    device_ids=device_ids,
+                    variables=variables,
+                    phases=snapshot_phases,
+                    platform=str(definition.get('platform') or ''),
+                    scenario_id=str(definition.get('scenario_id') or ''),
+                    selected_version_id=str(change_order_binding.get('playbook_version_id') or ''),
+                    execution_id=execution_id,
+                    consume=False,
+                )
+            except HTTPException as exc:
+                raise _playbook_execution_start_error('CHANGE_ORDER_AUTHORIZATION_INVALID', str(exc.detail), status_code=exc.status_code) from exc
+            if (
+                refreshed_binding.get('request_hash') != change_order_binding.get('request_hash')
+                or refreshed_binding.get('approval_snapshot_hash') != change_order_binding.get('approval_snapshot_hash')
+                or refreshed_binding.get('order_id') != change_order_binding.get('order_id')
+            ):
+                raise _playbook_execution_start_error('CHANGE_ORDER_BINDING_INVALID', 'Change-order authorization does not match the queued Playbook snapshot', status_code=409)
+            order_row = conn.execute(
+                'SELECT id FROM change_orders WHERE id = ?', (str(change_order_binding.get('order_id') or ''),),
+            ).fetchone()
+            order = get_change_order(conn, str(order_row['id'])) if order_row else None
+            order_detail = order.get('result_detail') if order and isinstance(order.get('result_detail'), dict) else {}
+            if (
+                str(order_detail.get('execution_started_by') or '') != str(run_as.get('id') or '')
+                or str(order_detail.get('execution_request_hash') or '') != str(change_order_binding.get('request_hash') or '')
+            ):
+                raise _playbook_execution_start_error('CHANGE_ORDER_AUTHORIZATION_CONSUMED', 'Change-order single-use authorization is missing or belongs to another run', status_code=409)
 
         expected_approvals = extract_approval_steps(snapshot_phases)
         approval_rows = conn.execute(
@@ -339,6 +392,7 @@ def _prepare_playbook_execution_for_run(execution_id: str) -> tuple[dict, dict]:
             'concurrency': concurrency,
             'platform': str(definition.get('platform') or 'cisco_ios'),
             'commit_confirmed_ttl': commit_confirmed_ttl,
+            'change_order_binding': change_order_binding,
             'status': 'running',
         }, run_as
     except HTTPException:
@@ -374,6 +428,7 @@ def _resume_approved_execution(execution: dict) -> dict:
         payload['platform'],
         payload['commit_confirmed_ttl'],
         run_as,
+        payload.get('change_order_binding'),
     ))
     return payload
 
@@ -1349,110 +1404,206 @@ async def preview_playbook(payload: dict = Body(...), user=require_permission("p
 
 
 
-def _parse_iso_to_utc(value: str | None) -> Optional[datetime]:
-    if not value:
-        return None
-    try:
-        dt = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc)
-    except (TypeError, ValueError):
-        return None
+def _normalized_phase_commands(value, variables: dict) -> list[str]:
+    from .scenarios import _render_phase_commands
+
+    if not isinstance(value, list):
+        raise HTTPException(status_code=409, detail='工单模板阶段缺少已审批命令列表')
+    if any(isinstance(item, dict) for item in value):
+        raise HTTPException(status_code=409, detail='关联工单不支持未纳入工单命令快照的 Playbook 动作步骤')
+    return _render_phase_commands(value, variables)
 
 
-def _assert_change_order_executable(row: dict, scenario_id: str, platform: str, now_utc: datetime) -> None:
-    status = row.get('status') or ''
-    if status not in {'approved', 'implementing'}:
-        raise HTTPException(status_code=400, detail=f"工单状态为 {status}，仅已审批/执行中的工单允许执行任务")
-
-    start_dt = _parse_iso_to_utc(row.get('scheduled_start'))
-    end_dt = _parse_iso_to_utc(row.get('scheduled_end'))
-    if start_dt and now_utc < start_dt:
-        raise HTTPException(status_code=400, detail=f"变更窗口尚未开始（计划开始：{row.get('scheduled_start') or ''}）")
-    if end_dt and now_utc > end_dt:
-        raise HTTPException(status_code=400, detail=f"变更窗口已超时（计划结束：{row.get('scheduled_end') or ''}）")
-
-    raw_template = row.get('command_template_json')
-    try:
-        template = json.loads(raw_template or '{}')
-    except (TypeError, json.JSONDecodeError):
-        template = {}
-    ticket_scenario_id = str(template.get('scenario_id') or '').strip()
-    ticket_platform = str(template.get('platform') or '').strip()
-
-    if ticket_scenario_id and scenario_id and ticket_scenario_id != scenario_id:
-        raise HTTPException(status_code=400, detail="工单绑定场景与当前执行任务不匹配，请检查工单号")
-    if ticket_platform and platform and ticket_platform != platform:
-        raise HTTPException(status_code=400, detail="工单绑定平台与当前执行平台不匹配")
-
-
-def _resolve_change_order_for_playbook(
+def _assert_change_order_playbook_scope(
     conn,
     *,
-    ticket_number: str,
-    scenario_id: str,
+    order_number: str,
+    actor: dict,
+    device_ids: list[str],
+    variables: dict,
+    phases: dict,
     platform: str,
-    now_utc: datetime,
-) -> tuple[dict, bool]:
-    """Resolve explicit ticket or auto-match one active change order for scenario execution."""
-    if ticket_number:
-        row = conn.execute(
-            """
-            SELECT id, order_number, title, status, scheduled_start, scheduled_end, command_template_json
-            FROM change_orders WHERE order_number = ?
-            """,
-            (ticket_number,),
-        ).fetchone()
-        if not row:
-            raise HTTPException(status_code=400, detail="未找到该变更工单，请检查工单号")
-        order = dict(row)
-        _assert_change_order_executable(order, scenario_id, platform, now_utc)
-        return order, False
+    scenario_id: str,
+    selected_version_id: str,
+    execution_id: str,
+    consume: bool,
+) -> dict:
+    """Validate and consume the work-order scope before a linked Playbook run."""
+    from api.change_orders.helpers import (
+        APPROVAL_SNAPSHOT_VERSION,
+        approval_snapshot_hash,
+        assert_change_order_window_open,
+        assert_explicit_execution_profile,
+        assert_order_mfa_valid,
+        resolve_active_order_implementer,
+    )
+    from api.automation import _resolve_change_order_target_ids, _normalize_execution_commands
+    from core.rbac import enforce_resource_scope
 
-    rows = conn.execute(
-        """
-        SELECT id, order_number, title, status, scheduled_start, scheduled_end, command_template_json, updated_at
-        FROM change_orders
-        WHERE status IN ('approved', 'implementing')
-        ORDER BY updated_at DESC
-        LIMIT 200
-        """
+    actor_id = str(actor.get('id') or actor.get('user_id') or '')
+    actor_row = conn.execute(
+        'SELECT id, username, role, role_profile, status, tenant_id, scope_mode FROM users WHERE id = ?',
+        (actor_id,),
+    ).fetchone()
+    if not actor_row or str(actor_row['status'] or '').lower() != 'active':
+        raise HTTPException(status_code=403, detail='Playbook 操作人账号已停用或不可用')
+    actor = {**actor, **dict(actor_row), 'user_id': actor_id}
+    actor_name = str(actor_row['username'] or '')
+
+    if database_module._USE_PG:
+        conn.execute('SELECT id FROM change_orders WHERE order_number = ? FOR UPDATE', (order_number,))
+    row = conn.execute(
+        'SELECT id FROM change_orders WHERE order_number = ?', (order_number,),
+    ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail='未找到关联变更工单')
+    order = get_change_order(conn, str(row['id']))
+    if not order or str(order.get('status') or '') != 'implementing':
+        raise HTTPException(status_code=409, detail='关联变更工单必须处于实施中状态')
+    if str(order.get('order_type') or '') != 'config_change':
+        raise HTTPException(status_code=409, detail='关联工单不是配置变更工单')
+
+    implementer = resolve_active_order_implementer(conn, order)
+    if actor_id != str(implementer.get('id') or ''):
+        raise HTTPException(status_code=403, detail='只有工单指定的实施人可以启动关联 Playbook')
+    approver_id = str(order.get('final_approver_id') or order.get('approver_id') or '')
+    if not approver_id or approver_id == actor_id:
+        raise HTTPException(status_code=403, detail='关联工单的终审人必须独立于 Playbook 实施人')
+
+    tenant_id = str(order.get('tenant_id') or '').strip()
+    enforce_resource_scope(actor, 'pam', 'intervene', tenant_id=tenant_id or None)
+    assert_explicit_execution_profile(actor, 'command')
+    assert_explicit_execution_profile(actor, 'playbook')
+
+    detail = order.get('result_detail') if isinstance(order.get('result_detail'), dict) else {}
+    if int(detail.get('approval_snapshot_version') or 0) != APPROVAL_SNAPSHOT_VERSION:
+        raise HTTPException(status_code=409, detail='关联工单使用旧版审批快照，必须重新审批')
+    approved_snapshot = approval_snapshot_hash(order)
+    if str(detail.get('approval_snapshot_hash') or '') != approved_snapshot or str(detail.get('executing_snapshot_hash') or '') != approved_snapshot:
+        raise HTTPException(status_code=409, detail='关联工单审批快照缺失或已变化')
+    assert_change_order_window_open(order)
+    assert_order_mfa_valid(order, actor_id, actor_name)
+
+    if consume and str(detail.get('execution_started_at') or '').strip():
+        raise HTTPException(status_code=409, detail='关联工单的单次执行授权已被消费')
+
+    expected_device_ids = _resolve_change_order_target_ids(conn, order.get('target_devices') or [])
+    if (
+        len(device_ids) != len(set(device_ids))
+        or set(device_ids) != set(expected_device_ids)
+        or len(device_ids) != len(expected_device_ids)
+    ):
+        raise HTTPException(status_code=409, detail='Playbook 目标设备与工单审批范围不一致')
+    _assert_playbook_device_scope(conn, device_ids, actor)
+    target_placeholders = ','.join('?' for _ in expected_device_ids)
+    target_rows = conn.execute(
+        f'SELECT id, platform, vendor FROM devices WHERE id IN ({target_placeholders})',
+        tuple(expected_device_ids),
     ).fetchall()
+    if len(target_rows) != len(expected_device_ids) or any(
+        _normalize_playbook_platform(row['platform'], row['vendor']) != platform
+        for row in target_rows
+    ):
+        raise HTTPException(status_code=409, detail='工单目标设备平台与已审批 Playbook 平台不一致')
 
-    matched: list[dict] = []
-    for row in rows:
-        order = dict(row)
-        raw_template = order.get('command_template_json')
-        try:
-            template = json.loads(raw_template or '{}')
-        except (TypeError, json.JSONDecodeError):
-            template = {}
+    template = order.get('command_template') if isinstance(order.get('command_template'), dict) else {}
+    template_scenario_id = str(template.get('scenario_id') or '').strip()
+    if template and (not template_scenario_id or template_scenario_id != str(scenario_id or '').strip()):
+        raise HTTPException(status_code=409, detail='工单绑定场景与当前 Playbook 不匹配')
+    template_platform = str(template.get('platform') or '').strip()
+    if template_platform and template_platform != platform:
+        raise HTTPException(status_code=409, detail='工单绑定平台与当前 Playbook 平台不匹配')
 
-        if str(template.get('scenario_id') or '').strip() != scenario_id:
-            continue
-        template_platform = str(template.get('platform') or '').strip()
-        if template_platform and template_platform != platform:
-            continue
+    normalized_variables = {str(key): '' if value is None else str(value) for key, value in variables.items()}
+    if template:
+        expected_variables = template.get('variables') if isinstance(template.get('variables'), dict) else {}
+        if normalized_variables != expected_variables:
+            raise HTTPException(status_code=409, detail='Playbook 参数与工单最终审批的参数不一致')
+    preview = template.get('preview') if isinstance(template.get('preview'), dict) else {}
+    try:
+        playbook_phases, _ = resolve_platform_phases(phases, platform)
+    except KeyError as exc:
+        raise HTTPException(status_code=409, detail='工单目标平台没有对应的 Playbook 阶段') from exc
 
-        start_dt = _parse_iso_to_utc(order.get('scheduled_start'))
-        end_dt = _parse_iso_to_utc(order.get('scheduled_end'))
-        if start_dt and now_utc < start_dt:
-            continue
-        if end_dt and now_utc > end_dt:
-            continue
+    actual_phase_commands: dict[str, list[str]] = {}
+    expected_phase_commands: dict[str, list[str]] = {}
+    for phase_name in ('pre_check', 'execute', 'post_check', 'rollback'):
+        actual = _normalized_phase_commands(playbook_phases.get(phase_name, []), normalized_variables)
+        expected = _normalize_execution_commands(preview.get(phase_name) or [])
+        if template and actual != expected:
+            raise HTTPException(status_code=409, detail=f'Playbook {phase_name} 命令与工单审批快照不一致')
+        if not template and phase_name != 'execute' and actual:
+            raise HTTPException(status_code=409, detail='未绑定场景模板的工单不能授权额外的 Playbook 检查或回退命令')
+        actual_phase_commands[phase_name] = actual
+        expected_phase_commands[phase_name] = expected
 
-        matched.append(order)
+    expected_commands = _normalize_execution_commands(order.get('commands') or [])
+    from .engine import PLATFORM_SAVE_COMMANDS
+    from .scenarios import resolve_platform_value
 
-    if len(matched) == 1:
-        _assert_change_order_executable(matched[0], scenario_id, platform, now_utc)
-        return matched[0], True
+    implicit_save = str(resolve_platform_value(PLATFORM_SAVE_COMMANDS, platform) or '').strip()
+    if actual_phase_commands['execute'] and implicit_save:
+        # The Playbook engine writes configuration after execution.  Require
+        # that command to be present in the ordered command set and bind its
+        # exact position in the immutable work-order snapshot.
+        if template and expected_commands != expected_phase_commands['execute']:
+            raise HTTPException(status_code=409, detail='工单最终命令与已审批模板不一致')
+        if expected_commands != actual_phase_commands['execute'] + [implicit_save]:
+            raise HTTPException(status_code=409, detail='Playbook 将自动执行设备保存命令；工单未明确批准该命令')
+    elif expected_commands != actual_phase_commands['execute'] or (template and expected_commands != expected_phase_commands['execute']):
+        raise HTTPException(status_code=409, detail='Playbook 执行命令与工单最终审批命令不一致')
 
-    if len(matched) > 1:
-        raise HTTPException(status_code=400, detail="匹配到多个有效变更工单，请填写工单号后再执行")
+    execution_id = str(uuid.uuid4())
+    request_hash = hashlib.sha256(json.dumps({
+        'order_id': str(order.get('id') or ''),
+        'approval_snapshot_hash': approved_snapshot,
+        'device_ids': sorted(device_ids),
+        'variables': normalized_variables,
+        'phases': phases,
+        'platform': platform,
+        'scenario_id': str(scenario_id or ''),
+        'playbook_version_id': selected_version_id,
+        'actor_id': actor_id,
+    }, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
 
-    raise HTTPException(status_code=400, detail="未找到当前任务对应的有效变更工单，请先创建并审批工单")
+    if consume:
+        now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+        executions = detail.get('playbook_execution_events')
+        if not isinstance(executions, list):
+            executions = []
+        executions.append({
+            'execution_id': execution_id,
+            'request_hash': request_hash,
+            'status': 'queued',
+            'actor_id': actor_id,
+            'actor_username': actor_name,
+            'created_at': now,
+        })
+        detail['playbook_execution_events'] = executions
+        detail.update({
+            'execution_started_at': now,
+            'execution_started_by': actor_id,
+            'execution_request_hash': request_hash,
+        })
+        conn.execute(
+            'UPDATE change_orders SET result_detail_json = ?, updated_at = ? WHERE id = ? AND status = \'implementing\'',
+            (json.dumps(detail, ensure_ascii=False, sort_keys=True), now, str(order['id'])),
+        )
 
+    return {
+        'execution_id': execution_id,
+        'request_hash': request_hash,
+        'order_id': str(order.get('id') or ''),
+        'order_number': str(order.get('order_number') or ''),
+        'approval_snapshot_hash': approved_snapshot,
+        'actor_id': actor_id,
+        'device_ids': expected_device_ids,
+        'playbook_version_id': selected_version_id,
+        'approved_commands': expected_commands,
+        'phase_commands': actual_phase_commands,
+        'implicit_save_command': implicit_save,
+        'scenario_id': template_scenario_id or str(scenario_id or ''),
+    }
 
 
 @router.post("/playbooks/execute")
@@ -1532,22 +1683,37 @@ async def execute_playbook(
     _ensure_controlled_phases(phases_for_execution, user=user, operation='execute')
     approval_steps = extract_approval_steps(phases_for_execution)
     scenario_name = selected_version.get('name') if selected_version else (scenario['name'] if scenario else payload.get('name', 'Custom Playbook'))
-    scenario_risk = str((scenario or {}).get('risk') or 'low').lower()
-    now_utc = datetime.now(timezone.utc)
+    scenario_risk = str((scenario or {}).get('risk') or version_definition.get('risk') or 'low').lower()
 
     conn = get_db_connection()
     try:
+        from api.change_orders.helpers import assert_explicit_execution_profile
+        assert_explicit_execution_profile(user, 'playbook')
+        assert_explicit_execution_profile(user, 'command')
         _assert_playbook_device_scope(conn, device_ids, user)
         resolved_change_order = None
         auto_matched_change_order = False
-        if scenario and scenario_risk != 'low':
-            resolved_change_order, auto_matched_change_order = _resolve_change_order_for_playbook(
+        change_order_binding = None
+        if change_ticket:
+            change_order_binding = _assert_change_order_playbook_scope(
                 conn,
-                ticket_number=change_ticket,
-                scenario_id=scenario_id,
+                order_number=change_ticket,
+                actor=user,
+                device_ids=device_ids,
+                variables=variables,
+                phases=phases_for_execution,
                 platform=platform,
-                now_utc=now_utc,
+                scenario_id=scenario_id,
+                selected_version_id=requested_version_id,
+                execution_id=execution_id,
+                consume=True,
             )
+            resolved_change_order = {
+                'id': change_order_binding['order_id'],
+                'order_number': change_order_binding['order_number'],
+            }
+        elif scenario_risk != 'low':
+            raise HTTPException(status_code=400, detail='该风险等级的 Playbook 必须填写已审批的变更工单号')
 
         snapshot_id, snapshot_version, snapshot_checksum = _create_playbook_execution_snapshot(
             conn,
@@ -1565,6 +1731,7 @@ async def execute_playbook(
                 'concurrency': concurrency,
                 'commit_confirmed_ttl': commit_confirmed_ttl,
                 'base_playbook_version_id': requested_version_id or None,
+                'change_order_binding': change_order_binding,
             },
             user=user,
         )
@@ -1610,6 +1777,7 @@ async def execute_playbook(
                 start_payload['platform'],
                 start_payload['commit_confirmed_ttl'],
                 run_as,
+                start_payload.get('change_order_binding'),
             ))
         except HTTPException as exc:
             start_error = exc.detail

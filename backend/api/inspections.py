@@ -16,7 +16,13 @@ from core.report_generator import (
     generate_inspection_pdf,
     parse_linux_inspection_output,
 )
-from schemas.schemas import InspectionRunRequest, InspectionScheduleCreate, InspectionScheduleUpdate, InspectionItemCreate
+from schemas.schemas import (
+    InspectionRunRequest,
+    InspectionScheduleCreate,
+    InspectionScheduleUpdate,
+    InspectionItemCreate,
+    InspectionItemUpdate,
+)
 from services.inspection_service import (
     compare_runs,
     create_schedule,
@@ -219,10 +225,10 @@ def add_inspection_item(
 @router.put('/inspections/items/{item_id}')
 def update_item(
     item_id: str,
-    body: dict,
+    body: InspectionItemUpdate,
     _user=require_role('Operator'),
 ):
-    item = update_inspection_item(item_id, body)
+    item = update_inspection_item(item_id, body.model_dump(exclude_unset=True))
     if not item:
         raise HTTPException(status_code=404, detail='指标不存在')
     return {'success': True, 'data': item, 'message': '指标已更新'}

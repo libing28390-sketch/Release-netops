@@ -45,6 +45,30 @@ def _table_columns(conn, table_name: str) -> set[str]:
     return {str(row[0]) for row in rows}
 
 
+def _sync_ticket_source_status(conn, incident_id_value: str, status_value: str) -> None:
+    # Keep low-level monitoring tests and staged upgrades usable before M0292
+    # has installed the ticket projection tables.
+    if "source_incident_id" not in _table_columns(conn, "incident_tickets"):
+        return
+    from services.incident_ticket_service import sync_source_incident_status
+
+    sync_source_incident_status(conn, incident_id_value, status_value)
+
+
+def _sync_all_ticket_source_statuses(conn) -> None:
+    if "source_incident_id" not in _table_columns(conn, "incident_tickets"):
+        return
+    rows = conn.execute(
+        """
+        SELECT DISTINCT t.source_incident_id, i.status
+          FROM incident_tickets t
+          JOIN monitoring_incidents i ON i.id = t.source_incident_id
+        """
+    ).fetchall()
+    for row in rows:
+        _sync_ticket_source_status(conn, str(row[0]), str(row[1] or ""))
+
+
 def _append_timeline(
     conn,
     incident_id_value: str,
@@ -349,6 +373,7 @@ def sync_incidents(
             """,
             (now, now),
         )
+    _sync_all_ticket_source_statuses(conn)
     conn.commit()
     if not return_incidents:
         return None
@@ -532,16 +557,6 @@ def get_incident(conn, incident_id_value: str, *, sync: bool = False) -> dict[st
         {"device_id": device_id, "hostname": next((str(alert.get("hostname") or "") for alert in alerts if str(alert.get("device_id") or "") == device_id), "")}
         for device_id in sorted({str(alert.get("device_id") or "") for alert in alerts if alert.get("device_id")})
     ]
-    change_order_columns = _table_columns(conn, "change_orders")
-    if {"incident_id", "created_at"}.issubset(change_order_columns):
-        work_order_rows = conn.execute(
-            "SELECT id, order_number, title, status FROM change_orders "
-            "WHERE incident_id = ? ORDER BY created_at DESC",
-            (incident_id_value,),
-        ).fetchall()
-        item["work_orders"] = [dict(work_order) for work_order in work_order_rows]
-    else:
-        item["work_orders"] = []
     return item
 
 
@@ -756,6 +771,7 @@ def update_incident_status(conn, incident_id_value: str, status: str, actor: str
             """,
             (status_value, actor, now, now, incident_id_value),
         )
+    _sync_ticket_source_status(conn, incident_id_value, status_value)
     conn.commit()
     return get_incident(conn, incident_id_value, sync=False)
 

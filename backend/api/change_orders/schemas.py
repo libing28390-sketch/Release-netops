@@ -12,6 +12,7 @@ class TemplateValidateRequest(BaseModel):
 class ChangeOrderCreate(BaseModel):
     title: str
     incident_id: str = ''
+    incident_ticket_id: str = ''
     description: str = ''
     order_type: str = 'config_change'
     priority: str = 'medium'
@@ -29,6 +30,9 @@ class ChangeOrderCreate(BaseModel):
     scheduled_end: str = ''
     authorization_exempt: bool = False
     control_sheet: dict = {}
+    emergency_reason: str = ''
+    emergency_review_owner_id: str = ''
+    emergency_review_due_at: str = ''
 
 
 class ChangeOrderUpdate(BaseModel):
@@ -52,9 +56,17 @@ class ChangeOrderUpdate(BaseModel):
     scheduled_start: Optional[str] = None
     scheduled_end: Optional[str] = None
     authorization_exempt: Optional[bool] = None
+    emergency_reason: Optional[str] = None
+    emergency_review_owner_id: Optional[str] = None
+    emergency_review_due_at: Optional[str] = None
     control_sheet: Optional[dict] = None
     actual_start: Optional[str] = None
     actual_end: Optional[str] = None
     result_summary: Optional[str] = None
     result_detail: Optional[dict] = None
     rejected_reason: Optional[str] = None
+
+
+class EmergencyReviewRequest(BaseModel):
+    outcome: str
+    note: str

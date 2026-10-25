@@ -52,4 +52,13 @@ export const INITIAL_FORM: FormState = {
   config_reason: '',
   use_admin_creds: false,
   major_type: 'collection',
+  enabled: true,
+  authorization_grant: {
+    valid_until: '',
+    max_runs: '',
+    max_targets: '',
+    ticket_source_type: 'incident',
+    ticket_id: '',
+    change_order_id: '',
+  },
 };

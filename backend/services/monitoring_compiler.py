@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 import yaml
+from services.snmp_collection_policy_service import is_snmp_collection_enabled
 
 from .monitoring_oid_catalog import (
     OID_CATALOG_VERSION,
@@ -780,6 +781,8 @@ def build_assignments(
 
     for device_value in devices:
         device = _row(device_value)
+        if not is_snmp_collection_enabled(device):
+            continue
         asset_id = str(device.get("asset_id") or device.get("id") or "").strip()
         target = str(device.get("ip_address") or device.get("management_address") or "").strip()
         if not asset_id or not target:

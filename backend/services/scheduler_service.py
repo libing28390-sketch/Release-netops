@@ -4,7 +4,8 @@ import asyncio
 import logging
 import time
 import re
-from datetime import datetime
+from typing import Any
+from datetime import datetime, timezone
 from database import get_db_connection
 from services.automation_service import AutomationService
 from core.crypto import decrypt_credential
@@ -17,12 +18,17 @@ from services.collection_plan_service import (
     normalize_device_role,
     should_collect,
 )
+from services.snmp_collection_policy_service import is_snmp_collection_enabled
 from core.interface_utils import normalize_interface_name
 # Import inspection service to handle specialized inspection jobs
 from services.inspection_service import run_inspection
 from core.rbac import authorize_resource
 from core.tenant_policy import TENANT_ISOLATION_ENABLED
 from services.scheduled_job_authorization import execution_snapshot, manifest_hash
+from services.scheduled_job_run_service import (
+    claim_scheduled_job_run,
+    finalize_scheduled_job_run,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -421,7 +427,186 @@ def _authorize_scheduled_job_targets(conn, owner: dict, job: dict, device_ids: l
     return device_map
 
 
-async def run_scheduled_automation_job(job_id: str):
+def _scheduled_job_max_targets(conn, job: dict) -> int | None:
+    if job.get("authorization_mode") == "system":
+        return None
+    grant_id = str(job.get("current_authorization_grant_id") or "").strip()
+    if not grant_id:
+        return 0
+    row = conn.execute(
+        "SELECT max_targets FROM scheduled_job_authorization_grants WHERE grant_id = ? AND job_id = ?",
+        (grant_id, str(job.get("id") or "")),
+    ).fetchone()
+    return int(row["max_targets"] or 0) if row else 0
+
+
+def _scheduled_occurrence_time(job_id: str, scheduled_for: datetime | str | None = None) -> datetime:
+    if scheduled_for is not None:
+        value = scheduled_for if isinstance(scheduled_for, datetime) else datetime.fromisoformat(str(scheduled_for).replace("Z", "+00:00"))
+        if value.tzinfo is None:
+            value = value.astimezone()
+        return value.astimezone(timezone.utc)
+
+    from core.scheduler_manager import scheduler
+
+    scheduled = scheduler.get_job(f"dyn_{job_id}")
+    if scheduled is not None:
+        if hasattr(scheduled.trigger, "run_date") and scheduled.trigger.run_date is not None:
+            value = scheduled.trigger.run_date
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=scheduler.timezone)
+            return value.astimezone(timezone.utc)
+        trigger = scheduled.trigger
+        now = datetime.now(trigger.timezone)
+        previous = trigger.get_prev_fire_time(None, now)
+        if previous is not None:
+            return previous.astimezone(timezone.utc)
+
+    conn = get_db_connection()
+    try:
+        row = conn.execute("SELECT job_type, scheduled_at FROM scheduled_jobs WHERE id = ?", (job_id,)).fetchone()
+        if row and str(row["job_type"] or "") == "once" and row["scheduled_at"]:
+            value = datetime.fromisoformat(str(row["scheduled_at"]).replace("Z", "+00:00"))
+            if value.tzinfo is None:
+                value = value.astimezone()
+            return value.astimezone(timezone.utc)
+    finally:
+        conn.close()
+    return datetime.now(timezone.utc).replace(second=0, microsecond=0)
+
+
+def _normalized_scheduled_run_status(value: Any) -> str:
+    status = str(value or "").strip().lower()
+    return {
+        "success": "succeeded",
+        "succeeded": "succeeded",
+        "partial": "partial_failure",
+        "partial_failure": "partial_failure",
+        "failed": "failed",
+        "denied": "denied",
+        "skipped": "skipped",
+        "unknown": "unknown",
+    }.get(status, "unknown")
+
+
+def _record_scheduled_job_claim_denial_in_history(claim: dict[str, Any]) -> None:
+    """Keep pre-ledger execution history readable for M5 claim-time refusals."""
+    job = dict(claim.get("job") or {})
+    run = dict(claim.get("run") or {})
+    execution_id = str(claim.get("run_id") or run.get("run_id") or "").strip()
+    job_id = str(job.get("id") or run.get("job_id") or "").strip()
+    if not execution_id or not job_id:
+        return
+
+    conn = get_db_connection()
+    try:
+        created_by = str(job.get("created_by") or "system").strip() or "system"
+        created_by_id = str(job.get("created_by_id") or "").strip()
+        owner_row = None
+        if created_by_id:
+            owner_row = conn.execute(
+                "SELECT tenant_id, username FROM users WHERE id = ?",
+                (created_by_id,),
+            ).fetchone()
+        if not owner_row and created_by:
+            owner_row = conn.execute(
+                "SELECT tenant_id, username FROM users WHERE username = ?",
+                (created_by,),
+            ).fetchone()
+        if owner_row:
+            created_by = str(owner_row["username"] or created_by)
+        tenant_id = str(owner_row["tenant_id"] if owner_row else job.get("tenant_id") or "").strip()
+        reason = str(claim.get("error") or run.get("error_summary") or "作业授权校验未通过")
+        phases_json = json.dumps(
+            {"authorization": {"status": "denied", "reason": reason}},
+            ensure_ascii=False,
+        )
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            """INSERT INTO playbook_executions
+                   (id, scenario_id, scenario_name, platform, device_ids, variables,
+                    status, dry_run, author, concurrency, phases_json, results_json,
+                    created_at, updated_at, tenant_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT (id) DO NOTHING""",
+            (
+                execution_id, f"scheduled:{job_id}", str(job.get("name") or run.get("job_name") or job_id),
+                "mixed", "[]", "{}", "denied", 0, created_by, 1,
+                phases_json, "{}", now, now, tenant_id,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+async def run_scheduled_automation_job(job_id: str, scheduled_for: datetime | str | None = None) -> dict:
+    """Claim the scheduled occurrence, enforce its grant, execute and finalize its audit row."""
+    occurrence = _scheduled_occurrence_time(job_id, scheduled_for)
+    conn = get_db_connection()
+    try:
+        row = conn.execute("SELECT * FROM scheduled_jobs WHERE id = ?", (job_id,)).fetchone()
+        if not row:
+            return {"claimed": False, "status": "skipped", "reason": "job_not_found"}
+        job = dict(row)
+        try:
+            approved_hash = manifest_hash(execution_snapshot(conn, job))
+        except Exception as exc:
+            approved_hash = ""
+            logger.warning("Could not compute scheduled job approval snapshot for %s: %s", job_id, exc)
+        claim = claim_scheduled_job_run(
+            conn, job_id=job_id, scheduled_for=occurrence,
+            authorized_manifest_hash=approved_hash,
+        )
+    finally:
+        conn.close()
+
+    if not claim.get("claimed"):
+        if claim.get("status") == "denied":
+            try:
+                _record_scheduled_job_claim_denial_in_history(claim)
+            except Exception:
+                # The immutable scheduled-job ledger remains authoritative. Keep
+                # the scheduler alive if the compatibility projection is unavailable.
+                logger.exception("Could not project denied scheduled job run into execution history")
+        return claim
+
+    run_id = str(claim["run_id"])
+    job_snapshot = dict(claim.get("job") or {})
+    run_count_before = int(job_snapshot.get("run_count") or 0)
+    try:
+        result = await _run_scheduled_automation_job_body(job_id, run_id=run_id)
+        result = result if isinstance(result, dict) else {}
+        status = _normalized_scheduled_run_status(result.get("status"))
+        target_count = int(result.get("target_count") or 0)
+        success_count = int(result.get("success_count") or 0)
+        failed_count = int(result.get("failed_count") or 0)
+        summary = str(result.get("summary") or "")
+        execution_id = str(result.get("execution_id") or run_id)
+    except Exception as exc:
+        logger.exception("Scheduled job %s run %s raised unexpectedly", job_id, run_id)
+        status, target_count, success_count, failed_count = "unknown", 0, 0, 0
+        summary, execution_id = str(exc), run_id
+
+    final_conn = get_db_connection()
+    try:
+        return finalize_scheduled_job_run(
+            final_conn,
+            job=job_snapshot,
+            run_id=run_id,
+            status=status,
+            target_count=target_count,
+            success_count=success_count,
+            failed_count=failed_count,
+            summary=summary,
+            execution_id=execution_id,
+            run_count_before=run_count_before,
+        )
+    finally:
+        final_conn.close()
+
+
+async def _run_scheduled_automation_job_body(job_id: str, *, run_id: str) -> dict:
     """
     核心执行逻辑：
     1. 获取作业定义
@@ -435,7 +620,7 @@ async def run_scheduled_automation_job(job_id: str):
     try:
         row = conn.execute("SELECT * FROM scheduled_jobs WHERE id = ?", (job_id,)).fetchone()
         if not row or not row['enabled']:
-            return
+            return {"status": "skipped", "target_count": 0, "summary": "作业不存在或已停用"}
         job = dict(row)
         try:
             owner = _authorize_scheduled_job_run(conn, job)
@@ -456,7 +641,7 @@ async def run_scheduled_automation_job(job_id: str):
                 ).fetchone()
             tenant_value = owner_row['tenant_id'] if owner_row is not None else job.get('tenant_id')
             tenant_id = str(tenant_value or '').strip()
-            execution_id = str(uuid.uuid4())
+            execution_id = run_id
             phases_json = json.dumps({
                 'authorization': {
                     'status': 'denied',
@@ -481,7 +666,7 @@ async def run_scheduled_automation_job(job_id: str):
             )
             conn.commit()
             logger.warning("[Scheduler] Refused unauthorized job %s: %s", job_id, exc)
-            return
+            return {"status": "denied", "execution_id": execution_id, "summary": str(exc)}
 
         # NSOT uses the same saved target scope as other Automation tasks, but
         # its target universe is explicitly the online device inventory. Resolve it
@@ -500,7 +685,7 @@ async def run_scheduled_automation_job(job_id: str):
                 )
                 conn.commit()
                 logger.warning("[Scheduler] Refused NSOT job %s due to invalid scope: %s", job_id, exc)
-                return
+                return {"status": "denied", "target_count": 0, "summary": str(exc)}
             if not device_ids:
                 now = datetime.now().isoformat()
                 conn.execute(
@@ -509,7 +694,19 @@ async def run_scheduled_automation_job(job_id: str):
                 )
                 conn.commit()
                 logger.warning("[Scheduler] NSOT job %s skipped: its saved scope matched no online devices", job_id)
-                return
+                return {"status": "skipped", "target_count": 0, "summary": "没有在线设备匹配已批准范围"}
+            max_targets = _scheduled_job_max_targets(conn, job)
+            if max_targets is not None and len(device_ids) > max_targets:
+                now = datetime.now().isoformat()
+                conn.execute(
+                    "UPDATE scheduled_jobs SET last_run_at = ?, last_run_status = ?, run_count = run_count + 1 WHERE id = ?",
+                    (now, "denied", job_id),
+                )
+                conn.commit()
+                return {
+                    "status": "denied", "target_count": len(device_ids),
+                    "summary": f"当前范围匹配 {len(device_ids)} 台设备，超过授权上限 {max_targets} 台",
+                }
 
             # Only the built-in system job may request an unbounded refresh.
             # A tenant owner's scope="all" means all authorized online devices
@@ -520,7 +717,6 @@ async def run_scheduled_automation_job(job_id: str):
                 "[Scheduler] Starting NSOT scheduled collection: %s (%s), target_devices=%s",
                 job['name'], job_id, len(device_ids),
             )
-            run_id = str(uuid.uuid4())
             try:
                 from services.ip_locator_service import run_unified_nsot_sync
 
@@ -545,6 +741,18 @@ async def run_scheduled_automation_job(job_id: str):
                     len(device_ids),
                     ','.join(sorted(result)) if isinstance(result, dict) else 'completed',
                 )
+                detail = topology_summary if isinstance(topology_summary, dict) else {}
+                target_count = int(detail.get("target_count") or detail.get("device_count") or len(device_ids))
+                success_count = int(detail.get("success_count") or (target_count if run_status == "success" else 0))
+                failed_count = int(detail.get("failed_count") or max(0, target_count - success_count))
+                return {
+                    "status": run_status,
+                    "target_count": target_count,
+                    "success_count": success_count,
+                    "failed_count": failed_count,
+                    "execution_id": run_id,
+                    "summary": str(detail.get("summary") or "NSOT 采集已完成"),
+                }
             except Exception as exc:
                 now = datetime.now().isoformat()
                 conn.execute(
@@ -552,18 +760,12 @@ async def run_scheduled_automation_job(job_id: str):
                     (now, 'failed', job_id),
                 )
                 logger.exception("[Scheduler] NSOT scheduled collection failed: %s (%s)", job['name'], job_id)
-                try:
-                    await notify_job_failure(
-                        job,
-                        [f"NSOT 事实库采集失败: {exc}"],
-                        run_id=run_id,
-                        connection=conn,
-                    )
-                    conn.commit()
-                except Exception:
-                    conn.rollback()
-                    logger.exception("[Scheduler] Failed to notify NSOT scheduled collection failure")
-            return
+                conn.commit()
+                return {
+                    "status": "failed", "target_count": len(device_ids),
+                    "failed_count": len(device_ids), "execution_id": run_id,
+                    "summary": f"NSOT 事实库采集失败: {exc}",
+                }
 
         # 1. 确定设备范围
         device_ids = []
@@ -669,17 +871,28 @@ async def run_scheduled_automation_job(job_id: str):
 
         device_map = _authorize_scheduled_job_targets(conn, owner or {}, job, device_ids)
         device_ids = list(device_map.keys())
+        max_targets = _scheduled_job_max_targets(conn, job)
+        if max_targets is not None and len(device_ids) > max_targets:
+            now = datetime.now().isoformat()
+            conn.execute(
+                "UPDATE scheduled_jobs SET last_run_at = ?, last_run_status = ?, run_count = run_count + 1 WHERE id = ?",
+                (now, "denied", job_id),
+            )
+            conn.commit()
+            return {
+                "status": "denied", "target_count": len(device_ids),
+                "summary": f"当前范围匹配 {len(device_ids)} 台设备，超过授权上限 {max_targets} 台",
+            }
 
         if not device_ids:
             logger.warning(f"Job {job_id} has no target devices.")
-            if job.get('action_type') == 'nsot':
-                now = datetime.now().isoformat()
-                conn.execute(
-                    "UPDATE scheduled_jobs SET last_run_at = ?, last_run_status = ?, run_count = run_count + 1 WHERE id = ?",
-                    (now, 'skipped', job_id),
-                )
-                conn.commit()
-            return
+            now = datetime.now().isoformat()
+            conn.execute(
+                "UPDATE scheduled_jobs SET last_run_at = ?, last_run_status = ?, run_count = run_count + 1 WHERE id = ?",
+                (now, 'skipped', job_id),
+            )
+            conn.commit()
+            return {"status": "skipped", "target_count": 0, "summary": "没有设备匹配已批准范围"}
 
         # ── SPECIAL HANDLING FOR INSPECTION JOBS ──
         # If the job is marked as an inspection, we divert it to the specialized
@@ -725,7 +938,14 @@ async def run_scheduled_automation_job(job_id: str):
                 (datetime.now().isoformat(), run_status, job_id)
             )
             conn.commit()
-            return
+            return {
+                "status": run_status,
+                "target_count": int(inspection_result.get("total_devices") or len(device_ids)),
+                "success_count": int(inspection_result.get("success_count") or 0),
+                "failed_count": int(inspection_result.get("failed_count") or 0),
+                "execution_id": str(inspection_result.get("run_id") or ""),
+                "summary": str(inspection_result.get("message") or "巡检执行已完成"),
+            }
 
 
         # 2. 获取命令或脚本内容
@@ -755,7 +975,7 @@ async def run_scheduled_automation_job(job_id: str):
             commands = []  # shell scripts are executed via per-device path below
         
         # 3. 初始化执行历史记录 (Surface in Execution History)
-        execution_id = str(uuid.uuid4())
+        execution_id = run_id
         now_iso = datetime.now().isoformat()
         
         conn.execute(
@@ -1042,18 +1262,20 @@ async def run_scheduled_automation_job(job_id: str):
             "UPDATE scheduled_jobs SET last_run_at = ?, last_run_status = ?, run_count = run_count + 1 WHERE id = ?",
             (datetime.now().isoformat(), final_playbook_status, job_id)
         )
-        if total_failed > 0:
-            await notify_job_failure(
-                job,
-                failure_details,
-                run_id=execution_id,
-                connection=conn,
-            )
         conn.commit()
+        return {
+            "status": final_playbook_status,
+            "target_count": len(device_ids),
+            "success_count": total_success,
+            "failed_count": total_failed,
+            "execution_id": execution_id,
+            "summary": "；".join(failure_details[:10]),
+        }
 
     except Exception as e:
         logger.exception(f"Scheduled job {job_id} failed with exception")
         conn.rollback()
+        return {"status": "unknown", "execution_id": run_id, "summary": str(e)}
     finally:
         conn.close()
 
@@ -1131,7 +1353,7 @@ def sync_scheduler_jobs(scheduler):
 
     conn = get_db_connection()
     try:
-        jobs = conn.execute("SELECT * FROM scheduled_jobs WHERE enabled = 1").fetchall()
+        jobs = conn.execute("SELECT * FROM scheduled_jobs WHERE enabled = 1 AND deleted_at IS NULL").fetchall()
         for job in jobs:
             job_id = job['id']
             # APScheduler 运行协程需要特殊的包装
@@ -1139,13 +1361,13 @@ def sync_scheduler_jobs(scheduler):
                 try:
                     scheduler.add_job(
                         run_scheduled_automation_job_sync_wrapper,
-                        CronTrigger.from_crontab(job['cron_expr']),
+                        CronTrigger.from_crontab(job['cron_expr'], timezone=scheduler.timezone),
                         id=f"dyn_{job_id}",
                         args=[job_id],
                         replace_existing=True,
-                        # 允许至多 2 个实例并发，并合并被错过的触发，避免单次巡检
-                        # 偶尔超时导致后续触发被 "maximum instances reached" 跳过。
-                        max_instances=2,
+                        # A persistent per-job run claim also enforces one active execution
+                        # across scheduler instances; keep the local scheduler consistent.
+                        max_instances=1,
                         coalesce=True,
                         misfire_grace_time=300,
                     )
@@ -1155,6 +1377,8 @@ def sync_scheduler_jobs(scheduler):
             elif job['job_type'] == 'once' and job['scheduled_at']:
                 try:
                     run_dt = datetime.fromisoformat(job['scheduled_at'])
+                    if run_dt.tzinfo is None:
+                        run_dt = run_dt.replace(tzinfo=scheduler.timezone)
                     if run_dt > datetime.now():
                         scheduler.add_job(
                             run_scheduled_automation_job_sync_wrapper,
@@ -2253,7 +2477,8 @@ def poll_endpoints_job():
                 snmp_port = 161
 
             if (
-                snmp_credentials.get('configured')
+                is_snmp_collection_enabled(device)
+                and snmp_credentials.get('configured')
                 and snmp_ip
                 and (snmp_is_v3 or snmp_profile)
             ):
@@ -2637,7 +2862,8 @@ def sync_routing_neighbors_job(
         except (TypeError, ValueError, OverflowError):
             snmp_port = 161
         snmp_configured = bool(
-            snmp_credentials.get('configured')
+            is_snmp_collection_enabled(dev)
+            and snmp_credentials.get('configured')
             and snmp_ip
             and (snmp_is_v3 or snmp_profile)
         )

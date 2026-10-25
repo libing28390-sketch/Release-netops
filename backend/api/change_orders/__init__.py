@@ -11,6 +11,8 @@ from api.change_orders.transition import router as transition_router
 from api.change_orders.templates import router as templates_router
 from api.change_orders.bookmarks import router as bookmarks_router
 from api.change_orders.attachments import router as attachments_router
+from api.change_orders.responsibility import router as responsibility_router
+from api.change_orders.result_review import router as result_review_router
 
 # Import Pydantic models for namespace compatibility
 from api.change_orders.schemas import (
@@ -67,3 +69,5 @@ router.include_router(transition_router)
 router.include_router(templates_router)
 router.include_router(bookmarks_router)
 router.include_router(attachments_router)
+router.include_router(responsibility_router)
+router.include_router(result_review_router)

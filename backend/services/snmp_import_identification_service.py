@@ -281,6 +281,15 @@ async def identify_imported_device(item: Mapping[str, Any], semaphore: Any) -> d
                 hostname_sync={"status": "failed", "hostname": "", "error": "设备记录不存在"},
             )
         device = dict(row)
+        from services.snmp_collection_policy_service import is_snmp_collection_enabled
+
+        if not is_snmp_collection_enabled(device):
+            return _safe_result(
+                item,
+                "collection_disabled",
+                "该设备已关闭 SNMP 采集，未执行自动识别",
+                hostname_sync={"status": "skipped", "hostname": "", "error": "SNMP 采集已关闭"},
+            )
         settings, settings_error = _resolve_probe_settings(
             conn,
             device,

@@ -4,20 +4,20 @@ import {
   CalendarClock, X, Zap, ChevronDown, Search, FileCode, CheckCircle2,
   Trash2, RotateCcw, Database, Activity, RefreshCw,
   Target, Globe, Server, Check, Terminal, Radio, ChevronRight,
-  Sparkles, Layers, Sliders, ShieldCheck, CheckCheck
+  Layers, Sliders, ShieldCheck, CheckCheck
 } from 'lucide-react';
-import TagConditionPicker, { hasTagFilterConditions, type TagFilterConfig } from '../../../components/TagConditionPicker';
+import TagConditionPicker, { hasTagFilterConditions, serializeTagFilter, type TagFilterConfig } from '../../../components/TagConditionPicker';
 import { ActionIconButton } from '../../../components/ui/ActionIconButton';
 import { FormActionBar, FormSection } from '../../../components/ui/FormLayout';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
 import CountdownText from './CountdownText';
-import { ScheduledJob, EligibleApprover, FormState, ValidatedDevice, type ApprovalVerificationMethod, type CollectionPlanFilters } from '../types';
+import { ScheduledJob, EligibleApprover, FormState, ValidatedDevice, type ApprovalVerificationMethod, type AuthorizationGrantForm, type CollectionPlanFilters } from '../types';
 import {
   CRON_PRESETS, CRON_FIELD_LABELS_ZH, CRON_FIELD_LABELS_EN,
-  CRON_FIELD_HINTS_ZH, CRON_FIELD_HINTS_EN, ACTION_TYPES,
+  CRON_FIELD_HINTS_ZH, CRON_FIELD_HINTS_EN,
   MAJOR_CATEGORIES, SCOPE_OPTIONS
 } from '../constants';
-import { describeCron } from '../helpers';
+import { describeCron, describeScope } from '../helpers';
 
 interface JobModalProps {
   isOpen: boolean;
@@ -89,6 +89,19 @@ const areScriptPlatformsCompatible = (devicePlatform: string, requiredPlatform: 
     || requiredKey.includes(deviceKey);
 };
 
+const toLocalDateTimeInput = (value: string): string => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return localDate.toISOString().slice(0, 16);
+};
+
+const toUtcIso = (value: string): string => {
+  if (!value) return '';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '' : date.toISOString();
+};
+
 export const JobModal: React.FC<JobModalProps> = ({
   isOpen,
   onClose,
@@ -141,6 +154,16 @@ export const JobModal: React.FC<JobModalProps> = ({
 }) => {
   const zh = language === 'zh';
   useEscapeClose(isOpen && approvalStatus !== 'sending' && approvalStatus !== 'verifying', onClose);
+  const grant = form.authorization_grant;
+  const updateGrant = <K extends keyof AuthorizationGrantForm,>(key: K, value: AuthorizationGrantForm[K]) => {
+    setForm(current => ({ ...current, authorization_grant: { ...current.authorization_grant, [key]: value } }));
+  };
+  const grantScopeFilter = form.device_scope === 'ip'
+    ? ipDevices.map(device => device.ip).join(',')
+    : form.device_scope === 'tag'
+      ? serializeTagFilter(tagFilter)
+      : form.device_filter;
+  const grantScopeDescription = describeScope(form.device_scope, grantScopeFilter, zh);
   const selectedApprover = approvers.find(item => item.username === approverUsername);
   const availableApprovalMethods = selectedApprover?.verification_methods || [];
 
@@ -187,7 +210,7 @@ export const JobModal: React.FC<JobModalProps> = ({
       void fetchCronPreview(expression, controller.signal)
         .then(occurrences => {
           if (controller.signal.aborted) return;
-          setCronOccurrences(occurrences.slice(0, 10));
+          setCronOccurrences(occurrences.slice(0, 3));
           setCronPreviewStatus('loaded');
         })
         .catch(error => {
@@ -379,9 +402,7 @@ export const JobModal: React.FC<JobModalProps> = ({
   const isScheduleReady = cronParts.length === 5 && cronParts.every(Boolean);
   const isTaskAndTargetReady = isTaskReady && isScopeReady;
   const isFormReady = isTaskAndTargetReady && isScheduleReady;
-  const flowStepLabels = zh ? ['任务与目标', '调度与审批'] : ['Task & targets', 'Schedule & approval'];
-  const actionLabel = ACTION_TYPES.find(action => action.value === form.action_type);
-  const scopeLabel = SCOPE_OPTIONS.find(scope => scope.value === form.device_scope);
+  const flowStepLabels = zh ? ['作业与设备', '时间与审批'] : ['Task & devices', 'Schedule & approval'];
   const canAdvance = flowStep === 0 && isTaskAndTargetReady;
 
   const cronFields = [
@@ -425,10 +446,10 @@ export const JobModal: React.FC<JobModalProps> = ({
             </div>
             <div>
               <h2 id="scheduled-job-form-title" className="text-sm font-bold tracking-tight text-slate-900 sm:text-base">
-                {isEditMode ? (zh ? '编辑周期性定时作业' : 'Edit Scheduled Job') : (zh ? '创建周期性定时作业' : 'Create Scheduled Job')}
+                {isEditMode ? (zh ? '编辑定时作业' : 'Edit Scheduled Job') : (zh ? '创建定时作业' : 'Create Scheduled Job')}
               </h2>
               <p className="mt-0.5 hidden text-[11px] text-slate-400 sm:block">
-                {zh ? '配置执行动作、调度周期与目标设备，实现全网巡检、备份与自动化执行' : 'Configure strategy, schedule, and target fleet for network automation'}
+                {zh ? '配置作业内容、目标设备、执行周期和审批人' : 'Set the task, targets, schedule, and approver'}
               </p>
             </div>
           </div>
@@ -604,8 +625,8 @@ export const JobModal: React.FC<JobModalProps> = ({
                   <ShieldCheck size={14} className="mt-0.5 shrink-0 text-amber-600" />
                   <span>
                     {zh
-                      ? '按周期重复执行，需由其他审批人验证；内容与脚本发布版本绑定，修改后须重新审批。'
-                      : 'Runs on schedule with approval from another user. Content and released script versions are pinned; changes require re-approval.'}
+                      ? '命令和脚本需经其他审批人验证；修改内容后需重新审批。'
+                      : 'Commands and scripts require approval. Changes require re-approval.'}
                   </span>
                 </div>
                 )}
@@ -1160,40 +1181,11 @@ export const JobModal: React.FC<JobModalProps> = ({
                 </div>
               </FormSection>
             </div>
-            ) : (
-              <div className="lg:col-span-12 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-2xs">
-                <div className="mb-2 flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-cyan-500" />
-                  <h3 className="text-xs font-bold text-slate-800">{zh ? '任务摘要' : 'Task summary'}</h3>
-                </div>
-                <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs sm:grid-cols-3 xl:grid-cols-5">
-                  <div className="min-w-0">
-                    <dt className="text-[10px] text-slate-400">{zh ? '作业名称' : 'Job name'}</dt>
-                    <dd className="truncate font-semibold text-slate-800">{form.name || (zh ? '未填写' : 'Not set')}</dd>
-                  </div>
-                  <div className="min-w-0">
-                    <dt className="text-[10px] text-slate-400">{zh ? '执行动作' : 'Action'}</dt>
-                    <dd className="truncate font-semibold text-slate-800">{zh ? actionLabel?.labelZh : actionLabel?.labelEn}</dd>
-                  </div>
-                  <div className="min-w-0">
-                    <dt className="text-[10px] text-slate-400">{zh ? '目标范围' : 'Target scope'}</dt>
-                    <dd className="truncate font-semibold text-slate-800">{zh ? scopeLabel?.labelZh : scopeLabel?.labelEn}</dd>
-                  </div>
-                  <div className="min-w-0">
-                    <dt className="text-[10px] text-slate-400">{zh ? '设备 / 在线' : 'Devices / online'}</dt>
-                    <dd className="font-bold text-cyan-700">{deviceLoadStatus === 'loaded' ? `${matchedDevices.length} / ${onlineCount}` : deviceLoadStatus === 'error' ? (zh ? '加载失败' : 'Load failed') : (zh ? '加载中' : 'Loading')}</dd>
-                  </div>
-                  <div className="min-w-0">
-                    <dt className="text-[10px] text-slate-400">{zh ? '运行周期' : 'Schedule'}</dt>
-                    <dd className="truncate font-semibold text-slate-800">{describeCron(form.cron_expr, zh)}</dd>
-                  </div>
-                </dl>
-              </div>
-            )}
+            ) : null}
 
-            {/* Keep the schedule primary and group target preview and approval in a compact side rail. */}
+            {/* Keep schedule editing on the left and the target/approval checks together on the right. */}
             {flowStep === 1 && (
-            <div className="lg:col-span-12 grid grid-cols-1 items-start gap-4 xl:grid-cols-2 2xl:grid-cols-12">
+            <div className="lg:col-span-12 grid grid-cols-1 items-start gap-3 xl:grid-cols-12">
               <FormSection
                 title={zh ? '目标设备预览' : 'Target preview'}
                 description={(
@@ -1203,8 +1195,8 @@ export const JobModal: React.FC<JobModalProps> = ({
                       : deviceLoadStatus === 'error' ? (zh ? '加载失败' : 'Load failed') : (zh ? '加载中…' : 'Loading…')}
                   </span>
                 )}
-                className="order-2 !mt-0 !rounded-2xl !border-slate-200/90 !bg-white shadow-2xs xl:col-start-2 xl:row-start-1 2xl:col-span-3 2xl:col-start-7 2xl:row-start-1"
-                contentClassName="!space-y-2.5 !p-4"
+                className="order-2 !mt-0 !rounded-2xl !border-slate-200/90 !bg-white shadow-2xs xl:col-span-5 xl:col-start-8 xl:row-start-1"
+                contentClassName="!space-y-2 !p-3.5"
               >
                 {deviceLoadStatus === 'error' ? (
                   <div className="flex items-center justify-between gap-2 rounded-lg bg-rose-50 px-3 py-2 text-[11px] text-rose-700">
@@ -1217,14 +1209,14 @@ export const JobModal: React.FC<JobModalProps> = ({
                   <p className="rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-500">{zh ? '当前范围没有匹配设备。' : 'No devices match this scope.'}</p>
                 ) : (
                   <div className="space-y-1">
-                    {matchedDevices.slice(0, 4).map(dev => (
+                    {matchedDevices.slice(0, 3).map(dev => (
                       <div key={dev.id || dev.ip_address} className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-2.5 py-1.5 text-[11px]">
                         <span className="min-w-0 truncate font-medium text-slate-700">{dev.hostname || dev.ip_address}</span>
                         <span className="shrink-0 font-mono text-slate-500">{dev.ip_address}</span>
                       </div>
                     ))}
-                    {matchedDevices.length > 4 && (
-                      <p className="pt-0.5 text-right text-[10px] text-slate-400">{zh ? `另有 ${matchedDevices.length - 4} 台设备` : `and ${matchedDevices.length - 4} more`}</p>
+                    {matchedDevices.length > 3 && (
+                      <p className="pt-0.5 text-right text-[10px] text-slate-400">{zh ? `另有 ${matchedDevices.length - 3} 台设备` : `and ${matchedDevices.length - 3} more`}</p>
                     )}
                   </div>
                 )}
@@ -1235,9 +1227,9 @@ export const JobModal: React.FC<JobModalProps> = ({
 
               {/* Cron schedule and approval share the same final setup step. */}
               <FormSection
-                title={zh ? 'Cron 调度周期' : 'Cron Schedule'}
-                className="order-1 !mt-0 !rounded-2xl !border-slate-200/90 !bg-white shadow-2xs xl:col-start-1 xl:row-start-1 2xl:col-span-6 2xl:col-start-1 2xl:row-start-1"
-                contentClassName="!space-y-3.5 !p-4"
+                title={zh ? '执行计划' : 'Schedule'}
+                className="order-1 !mt-0 !rounded-2xl !border-slate-200/90 !bg-white shadow-2xs xl:col-span-7 xl:col-start-1 xl:row-start-1"
+                contentClassName="!space-y-3 !p-3.5"
               >
                 {/* Preset Dropdown Trigger */}
                 <div className="relative flex justify-end">
@@ -1298,9 +1290,9 @@ export const JobModal: React.FC<JobModalProps> = ({
                 <div className="text-xs text-cyan-700 font-medium text-center bg-cyan-50/70 py-1 rounded-xl border border-cyan-100">
                   {describeCron(form.cron_expr, zh)}
                 </div>
-                <div className="min-h-[170px] rounded-xl border border-slate-100 bg-slate-50/70 p-3" aria-live="polite" aria-busy={cronPreviewStatus === 'loading'}>
+                <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-2.5" aria-live="polite" aria-busy={cronPreviewStatus === 'loading'}>
                   <div className="mb-2 flex items-center justify-between gap-2">
-                    <span className="text-[11px] font-semibold text-slate-700">{zh ? '未来 10 次执行时间' : 'Next 10 runs'}</span>
+                    <span className="text-[11px] font-semibold text-slate-700">{zh ? '接下来 3 次执行时间' : 'Next 3 runs'}</span>
                     {cronPreviewStatus === 'loading' && <span className="text-[10px] text-slate-400">{zh ? '计算中…' : 'Calculating…'}</span>}
                   </div>
                   {cronPreviewStatus === 'invalid' || cronPreviewStatus === 'error' ? (
@@ -1328,7 +1320,7 @@ export const JobModal: React.FC<JobModalProps> = ({
               </FormSection>
 
               <FormSection
-                title={zh ? '安全审批授权' : 'Approval Gate'}
+                title={zh ? '审批验证' : 'Approval'}
                 description={approvalStatus === 'verified' ? (
                   <span className="inline-flex items-center gap-1 rounded-full border border-emerald-100 bg-emerald-50 px-2 py-0.5 text-xs font-bold text-emerald-600">
                     <Check size={12} />
@@ -1340,11 +1332,108 @@ export const JobModal: React.FC<JobModalProps> = ({
                     {zh ? '正在验证' : 'Verifying'}
                   </span>
                 ) : undefined}
-                className="order-3 !mt-0 !rounded-2xl !border-slate-200/90 !bg-white shadow-2xs xl:col-span-2 xl:col-start-1 xl:row-start-2 2xl:col-span-3 2xl:col-start-10 2xl:row-start-1"
-                contentClassName="!p-4"
+                className="order-3 !mt-0 !rounded-2xl !border-slate-200/90 !bg-white shadow-2xs xl:col-span-5 xl:col-start-8 xl:row-start-2"
+                contentClassName="!p-3.5"
               >
 
                 <div className="space-y-2">
+                  <div className="space-y-2.5 rounded-xl border border-cyan-100 bg-cyan-50/60 p-3">
+                    <div>
+                      <h4 className="text-[11px] font-bold text-slate-800">{zh ? '本次授权清单' : 'Authorization grant'}</h4>
+                      <p className="mt-0.5 text-[10px] leading-relaxed text-slate-500">
+                        {zh ? '审批将绑定当前作业范围、有效期、执行额度和关联工单。范围按审批时配置授权，运行时仍由服务端校验。' : 'Approval binds this job scope, expiry, run and target limits, and linked ticket. The server enforces the approved scope at runtime.'}
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                      <label className="block text-[10px] font-semibold text-slate-600">
+                        {zh ? '授权有效至' : 'Valid until'} <span className="text-rose-600">*</span>
+                        <input
+                          aria-label={zh ? '授权有效至' : 'Authorization valid until'}
+                          type="datetime-local"
+                          required
+                          min={toLocalDateTimeInput(new Date().toISOString())}
+                          value={toLocalDateTimeInput(grant.valid_until)}
+                          onChange={event => updateGrant('valid_until', toUtcIso(event.target.value))}
+                          className="mt-1 min-h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-[11px] font-normal text-slate-700 outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/15"
+                        />
+                      </label>
+                      <label className="block text-[10px] font-semibold text-slate-600">
+                        {zh ? '最大执行次数' : 'Maximum runs'} <span className="text-rose-600">*</span>
+                        <input
+                          aria-label={zh ? '最大执行次数' : 'Maximum runs'}
+                          type="number"
+                          min={1}
+                          step={1}
+                          required
+                          value={grant.max_runs}
+                          onChange={event => updateGrant('max_runs', event.target.value)}
+                          className="mt-1 min-h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-[11px] font-normal text-slate-700 outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/15"
+                        />
+                      </label>
+                      <label className="block text-[10px] font-semibold text-slate-600">
+                        {zh ? '最多目标设备' : 'Maximum targets'} <span className="text-rose-600">*</span>
+                        <input
+                          aria-label={zh ? '最多目标设备' : 'Maximum targets'}
+                          type="number"
+                          min={1}
+                          step={1}
+                          required
+                          value={grant.max_targets}
+                          onChange={event => updateGrant('max_targets', event.target.value)}
+                          className="mt-1 min-h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-[11px] font-normal text-slate-700 outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/15"
+                        />
+                      </label>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <label className="block text-[10px] font-semibold text-slate-600">
+                        {zh ? '关联工单类型' : 'Ticket type'} <span className="text-rose-600">*</span>
+                        <select
+                          aria-label={zh ? '关联工单类型' : 'Ticket type'}
+                          value={grant.ticket_source_type}
+                          onChange={event => updateGrant('ticket_source_type', event.target.value as AuthorizationGrantForm['ticket_source_type'])}
+                          className="mt-1 min-h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-[11px] font-normal text-slate-700 outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/15"
+                        >
+                          <option value="incident">{zh ? '故障工单' : 'Incident ticket'}</option>
+                          <option value="service_request">{zh ? '服务申请' : 'Service request'}</option>
+                        </select>
+                      </label>
+                      <label className="block text-[10px] font-semibold text-slate-600">
+                        {zh ? '工单编号 / ID' : 'Ticket number / ID'} <span className="text-rose-600">*</span>
+                        <input
+                          aria-label={zh ? '工单编号 / ID' : 'Ticket number / ID'}
+                          required
+                          maxLength={120}
+                          value={grant.ticket_id}
+                          onChange={event => updateGrant('ticket_id', event.target.value)}
+                          placeholder={zh ? '粘贴工单 ID' : 'Paste ticket ID'}
+                          className="mt-1 min-h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-[11px] font-normal text-slate-700 outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/15"
+                        />
+                      </label>
+                    </div>
+                    <label className="block text-[10px] font-semibold text-slate-600">
+                      {zh ? '关联变更单 ID（选填）' : 'Change order ID (optional)'}
+                      <input
+                        aria-label={zh ? '关联变更单 ID（选填）' : 'Change order ID (optional)'}
+                        maxLength={120}
+                        value={grant.change_order_id}
+                        onChange={event => updateGrant('change_order_id', event.target.value)}
+                        placeholder={zh ? '需要时填写 CO ID' : 'Enter a CO ID when applicable'}
+                        className="mt-1 min-h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-[11px] font-normal text-slate-700 outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/15"
+                      />
+                    </label>
+                    <dl className="grid gap-1 border-t border-cyan-100 pt-2 text-[10px] sm:grid-cols-2">
+                      <div><dt className="inline text-slate-500">{zh ? '审批范围：' : 'Approved scope: '}</dt><dd className="inline break-words font-semibold text-slate-700">{grantScopeDescription || '—'}</dd></div>
+                      <div><dt className="inline text-slate-500">{zh ? '额度：' : 'Limits: '}</dt><dd className="inline font-semibold text-slate-700">{zh ? `最多 ${grant.max_runs || '—'} 次 · ${grant.max_targets || '—'} 台` : `Up to ${grant.max_runs || '—'} runs · ${grant.max_targets || '—'} targets`}</dd></div>
+                      <div><dt className="inline text-slate-500">{zh ? '关联工单：' : 'Ticket: '}</dt><dd className="inline break-all font-semibold text-slate-700">{grant.ticket_source_type}:{grant.ticket_id || '—'}</dd></div>
+                      <div><dt className="inline text-slate-500">{zh ? '变更单：' : 'Change order: '}</dt><dd className="inline break-all font-semibold text-slate-700">{grant.change_order_id || (zh ? '未关联' : 'Not linked')}</dd></div>
+                    </dl>
+                  </div>
+
+                  <label className="flex items-start gap-2 rounded-lg border border-slate-200 px-3 py-2 text-[11px] text-slate-700">
+                    <input type="checkbox" checked={Boolean(form.enabled)} onChange={event => setForm(current => ({ ...current, enabled: event.target.checked }))} className="mt-0.5 accent-cyan-600" />
+                    <span>{zh ? '审批通过后立即启用作业' : 'Enable the job after approval'}</span>
+                  </label>
+
                   <select
                     value={approverUsername}
                     onChange={e => setApproverUsername(e.target.value)}
@@ -1446,24 +1535,16 @@ export const JobModal: React.FC<JobModalProps> = ({
               FOOTER: 全局就绪状态栏与提交按钮
              ═══════════════════════════════════════════════════════════════════ */}
           <FormActionBar className="shrink-0 !flex-col !items-center !justify-between !gap-2 !border-slate-200 !bg-white !px-3 !py-3 sm:!flex-row sm:!px-4">
-            <div className="flex items-center gap-2 text-xs text-slate-500">
-              <Sparkles size={14} className="text-cyan-600" />
-              <span>
-                {flowStep === 0
-                  ? deviceLoadStatus === 'error'
-                    ? (zh ? '设备清单加载失败，请检查权限后重试。' : 'Inventory loading failed. Check access and retry.')
-                    : deviceLoadStatus !== 'loaded'
-                      ? (zh ? '设备清单加载中…' : 'Loading device inventory…')
-                      : (zh ? '先配置任务和目标设备。' : 'Start by choosing the task and target devices.')
-                  : deviceLoadStatus === 'loaded'
-                    ? (zh ? `目标 ${matchedDevices.length} 台（${onlineCount} 台在线）` : `${matchedDevices.length} targets (${onlineCount} online)`)
-                    : deviceLoadStatus === 'error'
-                      ? (zh ? '设备数量暂不可用' : 'Device count unavailable')
-                      : (zh ? '设备清单加载中…' : 'Loading device inventory…')}
-                {flowStep === 1 && approvalStatus !== 'verified' && (
-                  <span className="ml-2 text-amber-700">{zh ? '完成审批验证后即可创建。' : 'Complete approval verification to create the job.'}</span>
-                )}
-              </span>
+            <div className="text-xs text-slate-500" aria-live="polite">
+              {flowStep === 0
+                ? deviceLoadStatus === 'error'
+                  ? (zh ? '设备清单加载失败，请重试。' : 'Inventory failed to load. Retry.')
+                  : deviceLoadStatus !== 'loaded'
+                    ? (zh ? '设备清单加载中…' : 'Loading device inventory…')
+                    : (zh ? `当前范围匹配 ${matchedDevices.length} 台设备。` : `${matchedDevices.length} devices match this scope.`)
+                : approvalStatus === 'verified'
+                  ? null
+                  : (zh ? '完成审批验证后即可创建。' : 'Complete approval verification to create the job.')}
             </div>
 
             <div className="flex items-center gap-2 w-full sm:w-auto justify-end">

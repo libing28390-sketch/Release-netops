@@ -3,6 +3,7 @@ from typing import Optional, List
 from datetime import datetime
 import ipaddress as _ipaddress
 import re as _re
+import math as _math
 
 class DeviceBase(BaseModel):
     hostname: str
@@ -301,12 +302,88 @@ class InspectionItemBase(BaseModel):
     description: str = ''
     method: str = 'SNMP'
     command: str = ''
+    script_id: str = ''
+    warning_threshold: float | None = None
+    critical_threshold: float | None = None
+    parse_type: str = 'numeric'
+    expected_value: str = ''
+    unit: str = ''
+    threshold_direction: str = 'above'
     vendor: str = ''
     oid: str = ''
     use_admin_creds: bool = False
 
+    @field_validator('parse_type')
+    @classmethod
+    def validate_inspection_item_parse_type(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {'numeric', 'count', 'diff', 'status'}:
+            raise ValueError('parse_type must be numeric, count, diff, or status')
+        return normalized
+
+    @field_validator('threshold_direction')
+    @classmethod
+    def validate_inspection_threshold_direction(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {'above', 'below'}:
+            raise ValueError('threshold_direction must be above or below')
+        return normalized
+
+    @field_validator('warning_threshold', 'critical_threshold')
+    @classmethod
+    def validate_finite_inspection_threshold(cls, value: float | None) -> float | None:
+        if value is not None and not _math.isfinite(value):
+            raise ValueError('threshold must be a finite number')
+        return value
+
 class InspectionItemCreate(InspectionItemBase):
     pass
+
+class InspectionItemUpdate(BaseModel):
+    name: str | None = None
+    name_zh: str | None = None
+    category: str | None = None
+    check_key: str | None = None
+    description: str | None = None
+    method: str | None = None
+    command: str | None = None
+    script_id: str | None = None
+    warning_threshold: float | None = None
+    critical_threshold: float | None = None
+    parse_type: str | None = None
+    expected_value: str | None = None
+    unit: str | None = None
+    threshold_direction: str | None = None
+    vendor: str | None = None
+    oid: str | None = None
+    use_admin_creds: bool | None = None
+
+    @field_validator('parse_type')
+    @classmethod
+    def validate_inspection_item_update_parse_type(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        normalized = value.strip().lower()
+        if normalized not in {'numeric', 'count', 'diff', 'status'}:
+            raise ValueError('parse_type must be numeric, count, diff, or status')
+        return normalized
+
+    @field_validator('threshold_direction')
+    @classmethod
+    def validate_inspection_item_update_threshold_direction(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        normalized = value.strip().lower()
+        if normalized not in {'above', 'below'}:
+            raise ValueError('threshold_direction must be above or below')
+        return normalized
+
+    @field_validator('warning_threshold', 'critical_threshold')
+    @classmethod
+    def validate_finite_inspection_update_threshold(cls, value: float | None) -> float | None:
+        if value is not None and not _math.isfinite(value):
+            raise ValueError('threshold must be a finite number')
+        return value
 
 class InspectionItem(InspectionItemBase):
     id: str

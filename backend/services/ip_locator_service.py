@@ -54,6 +54,7 @@ from services.collector_sweep_state_service import (
 )
 from services.collector_task_queue_service import enqueue_tasks
 from services.vlan_discovery_service import is_svi_interface, parse_vlan_id_from_interface
+from services.snmp_collection_policy_service import is_snmp_collection_enabled
 
 # 并发 SSH 连接上限，避免瞬间打开过多连接
 # 小规模 (≤10 台) 取 5；中规模动态扩展到 10；大规模上限 15
@@ -4346,7 +4347,7 @@ def _collect_full_arp_result(device_info: dict) -> dict[str, Any]:
         from services.snmp_service import collect_arp_table
 
         resolved = resolve_collector_credentials(device_info)
-        snmp_profile = resolved.get('snmp') or {}
+        snmp_profile = (resolved.get('snmp') or {}) if is_snmp_collection_enabled(device_info) else {}
         if snmp_profile.get('configured'):
             version = str(snmp_profile.get('version') or '2c').strip().casefold()
             is_v3 = version in {'3', 'v3', 'snmpv3'}
@@ -5434,7 +5435,7 @@ def _collect_full_mac_table_from_device(device_info: dict) -> dict[str, Any]:
         from services.snmp_service import collect_bridge_mac_table
 
         resolved = resolve_collector_credentials(device_info)
-        snmp_profile = resolved.get('snmp') or {}
+        snmp_profile = (resolved.get('snmp') or {}) if is_snmp_collection_enabled(device_info) else {}
         if snmp_profile.get('configured'):
             version = str(snmp_profile.get('version') or '2c').strip().casefold()
             is_v3 = version in {'3', 'v3', 'snmpv3'}
@@ -6035,7 +6036,11 @@ def _collect_device_interface_ips(device_info: dict) -> list[dict]:
         from services.vault_service import resolve_collector_credentials
         from services.snmp_service import collect_interface_ip_addresses
 
-        snmp_profile = (resolve_collector_credentials(device_info).get('snmp') or {})
+        snmp_profile = (
+            (resolve_collector_credentials(device_info).get('snmp') or {})
+            if is_snmp_collection_enabled(device_info)
+            else {}
+        )
         if snmp_profile.get('configured'):
             version = str(snmp_profile.get('version') or '2c').strip().casefold()
             is_v3 = version in {'3', 'v3', 'snmpv3'}
@@ -7117,6 +7122,8 @@ def run_route_collector(
 
     def _try_snmp_routes_for_vrf(dev: dict, vrf: str) -> list[dict] | None:
         """Return one complete SNMP route context, or None when it needs CLI fallback."""
+        if not is_snmp_collection_enabled(dev):
+            return None
         from services.vault_service import resolve_collector_credentials
         from services.snmp_service import collect_ip_forward_table
 

@@ -1064,6 +1064,7 @@ def _dispatch_to_users(
     alert: dict,
     tenant_id: str | None = None,
     *,
+    user_ids: list[str] | None = None,
     channels: set[str] | list[str] | tuple[str, ...] | None = None,
     profile_id: str | None = None,
     legacy_primary: bool = False,
@@ -1119,7 +1120,15 @@ def _dispatch_to_users(
         if tenant_id:
             user_query += " AND tenant_id = ?"
             user_params.append(tenant_id)
+        if user_ids is not None:
+            normalized_user_ids = sorted({str(user_id or '').strip() for user_id in user_ids if str(user_id or '').strip()})
+            if not normalized_user_ids:
+                return [{'platform': 'notification_user', 'success': False, 'error': 'notification_user_no_recipients', 'recipient_count': 0}]
+            user_query += " AND id IN (" + ", ".join("?" for _ in normalized_user_ids) + ")"
+            user_params.extend(normalized_user_ids)
         user_rows = [dict(row) for row in conn.execute(user_query, user_params).fetchall()]
+        if user_ids is not None and not user_rows:
+            return [{'platform': 'notification_user', 'success': False, 'error': 'notification_user_no_recipients', 'recipient_count': 0}]
         if group_names:
             user_rows = [
                 user for user in user_rows
@@ -1365,6 +1374,33 @@ def dispatch_to_tenant_users(
     return _dispatch_to_users(
         alert,
         tenant_id=tenant_id,
+        channels=channels,
+        profile_id=profile_id,
+        legacy_primary=legacy_primary,
+        raise_on_error=raise_on_error,
+    )
+
+
+def dispatch_to_user_ids(
+    alert: dict,
+    user_ids: list[str],
+    tenant_id: str,
+    *,
+    channels: set[str] | list[str] | tuple[str, ...] | None = None,
+    profile_id: str | None = None,
+    legacy_primary: bool = False,
+    raise_on_error: bool = False,
+) -> list[dict]:
+    """Dispatch only to the explicitly named active users in one tenant."""
+    tenant_id = str(tenant_id or '').strip()
+    normalized_user_ids = sorted({str(user_id or '').strip() for user_id in user_ids if str(user_id or '').strip()})
+    if not tenant_id or not normalized_user_ids:
+        logger.warning('[Notify] user-scoped dispatch rejected without tenant_id or recipients')
+        return [{'platform': 'notification_user', 'success': False, 'error': 'notification_user_no_recipients', 'recipient_count': 0}]
+    return _dispatch_to_users(
+        alert,
+        tenant_id=tenant_id,
+        user_ids=normalized_user_ids,
         channels=channels,
         profile_id=profile_id,
         legacy_primary=legacy_primary,

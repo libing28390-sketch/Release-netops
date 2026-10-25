@@ -17,6 +17,7 @@ import { useMonitoring } from '../hooks/useMonitoring';
 import { useSystem } from '../hooks/useSystem';
 import { authHeaders } from '../api/http';
 import { useEscapeClose } from '../hooks/useEscapeClose';
+import { buildIncidentTicketPath, createOrOpenIncidentTicket } from '../pages/Tickets/api';
 
 type MonitorDevice = {
   id?: string;
@@ -349,6 +350,7 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
   const [incidentRecommendations, setIncidentRecommendations] = useState<MonitoringPlaybookRecommendationsResponse | null>(null);
   const [incidentRecommendationsLoading, setIncidentRecommendationsLoading] = useState(false);
   const [incidentPlaybookRunning, setIncidentPlaybookRunning] = useState<string | null>(null);
+  const [incidentTicketOpening, setIncidentTicketOpening] = useState(false);
   const [collectionDrilldownOpen, setCollectionDrilldownOpen] = useState(false);
   const [collectionDrilldownLoading, setCollectionDrilldownLoading] = useState(false);
   const [collectionStatusItems, setCollectionStatusItems] = useState<any[]>([]);
@@ -534,6 +536,26 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
       setIncidentPlaybookRunning(null);
     }
   }, [fetchMonitoringIncidentDetail, fetchMonitoringOverview, incidentPlaybookRunning, language, runMonitoringIncidentPlaybook, selectedIncident, showToast]);
+
+  const openIncidentTicket = useCallback(async () => {
+    if (!selectedIncident || incidentTicketOpening) return;
+    setIncidentTicketOpening(true);
+    try {
+      const result = await createOrOpenIncidentTicket(selectedIncident.id);
+      showToast(
+        result.created
+          ? (language === 'zh' ? '故障工单已创建' : 'Incident ticket created')
+          : (language === 'zh' ? '已打开现有关联故障工单' : 'Opened the existing incident ticket'),
+        'success',
+      );
+      setSelectedIncident(null);
+      navigate(buildIncidentTicketPath(result.ticket.id));
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : (language === 'zh' ? '故障工单创建或打开失败' : 'Unable to create or open incident ticket'), 'error');
+    } finally {
+      setIncidentTicketOpening(false);
+    }
+  }, [incidentTicketOpening, language, navigate, selectedIncident, showToast]);
 
   const openCollectionDrilldown = useCallback(async () => {
     setCollectionDrilldownOpen(true);
@@ -2029,7 +2051,7 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
             </div>
             <div className="mt-4 flex flex-wrap justify-end gap-2">
               {selectedIncident.primary_device_id && <button type="button" onClick={() => { openMonitorDevice({ id: selectedIncident.primary_device_id, hostname: selectedIncident.hostname, ip_address: selectedIncident.ip_address }); setSelectedIncident(null); }} className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-semibold text-sky-700 hover:bg-sky-100">{language === 'zh' ? '查看设备' : 'View device'}</button>}
-              <button type="button" onClick={() => navigate(`/change-orders/new?incident_id=${encodeURIComponent(selectedIncident.id)}`)} className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100">{language === 'zh' ? '\u521b\u5efa\u5de5\u5355' : 'Create work order'}</button>
+              <button type="button" disabled={incidentTicketOpening} onClick={() => void openIncidentTicket()} className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:cursor-wait disabled:opacity-60">{incidentTicketOpening && <RefreshCw size={12} className="animate-spin" />}{language === 'zh' ? (incidentTicketOpening ? '正在打开故障工单…' : '创建故障工单') : (incidentTicketOpening ? 'Opening incident ticket…' : 'Create incident ticket')}</button>
               <button type="button" onClick={() => navigate('/alerts')} className="rounded-lg border border-[var(--card-border)] px-3 py-1.5 text-xs font-semibold text-[var(--muted-text)] hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700">{language === 'zh' ? '打开告警中心' : 'Open alert center'}</button>
             </div>
           </div>

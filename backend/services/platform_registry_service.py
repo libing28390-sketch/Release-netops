@@ -379,7 +379,7 @@ def get_profile_action_commands(profile: dict[str, Any]) -> dict[str, str]:
     return dict(PLATFORM_ACTION_COMMANDS.get(parser_platform, {}))
 
 _SENSITIVE_OUTPUT_PATTERNS = (
-    re.compile(r"(\b(?:password|passwd|secret|community|token|api[-_ ]?key|private[-_ ]?key)\s*[:=]?\s*)([^\s,;]+)", re.IGNORECASE),
+    re.compile(r"(\b(?:password|passwd|secret|community(?:\s+name)?|token|api[-_ ]?key|private[-_ ]?key)\s*[:=]?\s*)([^\s,;]+)", re.IGNORECASE),
     re.compile(r"(\bsnmp-server\s+community\s+)([^\s]+)", re.IGNORECASE),
     re.compile(r"(\bauthorization\s+key\s+)([^\s]+)", re.IGNORECASE),
 )

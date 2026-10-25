@@ -123,6 +123,7 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
   const [riskFilter, setRiskFilter] = useState<string>('all');
   const [deviceViewMode, setDeviceViewMode] = useState<'grid' | 'list'>('list');
   const [devicePage, setDevicePage] = useState(1);
+  const [devicePageSize, setDevicePageSize] = useState(DEVICE_PAGE_SIZE);
   const [devicePageItems, setDevicePageItems] = useState<Device[]>([]);
   const [deviceTotal, setDeviceTotal] = useState(0);
   const [deviceStatusCounts, setDeviceStatusCounts] = useState<Record<string, number>>({});
@@ -238,7 +239,7 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
       asset_type: 'all',
       include_facets: 'true',
       page: String(page),
-      page_size: String(DEVICE_PAGE_SIZE),
+      page_size: String(devicePageSize),
     });
     if (searchTerm.trim()) params.set('search', searchTerm.trim());
     if (statusFilter !== 'all') params.set('status', statusFilter === 'offline' ? 'not_online' : statusFilter);
@@ -250,7 +251,7 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
     }
     if (deviceTypeFilter !== 'all') params.set('device_category', deviceTypeFilter);
     return params;
-  }, [debouncedDeviceSearch, statusFilter, vendorFilter, treeFilterSite, treeFilterRole, deviceTypeFilter]);
+  }, [debouncedDeviceSearch, statusFilter, vendorFilter, treeFilterSite, treeFilterRole, deviceTypeFilter, devicePageSize]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -286,7 +287,7 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
       setDeviceTotal(total);
       setDeviceStatusCounts(response.status_counts || {});
       setDeviceFacets(response.facets || {});
-      const lastPage = Math.max(1, Math.ceil(total / DEVICE_PAGE_SIZE));
+      const lastPage = Math.max(1, Math.ceil(total / devicePageSize));
       if (devicePage > lastPage) setDevicePage(lastPage);
     }).catch((error: unknown) => {
       if (controller.signal.aborted || (error instanceof Error && error.name === 'AbortError')) return;
@@ -301,7 +302,7 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
       controller.abort();
       if (devicePageAbortRef.current === controller) devicePageAbortRef.current = null;
     };
-  }, [currentStep, devicePage, buildDeviceRequestParams, deviceRequestVersion, isZh]);
+  }, [currentStep, devicePage, devicePageSize, buildDeviceRequestParams, deviceRequestVersion, isZh]);
 
   const deviceTree = useMemo(() => {
     const rolesBySite = new Map<string, Array<{ role: string; count: number; onlineCount: number }>>();
@@ -882,16 +883,6 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
   };
   useFocusTrap(confirmDialogRef, confirmModalOpen, '[data-confirm-cancel]');
 
-  const handleSelectAllOnline = () => {
-    if (!batchMode) onToggleBatchMode();
-    devicePageItems
-      .filter((d) => d.status === 'online')
-      .forEach((d) => {
-        onRememberDevice(d);
-        if (!batchDeviceIds.includes(d.id)) onToggleBatchDevice(d.id);
-      });
-  };
-
   const handleTreeFilter = (site: string | null, role: string | null) => {
     if (treeFilterSite === site && treeFilterRole === role) {
       setTreeFilterSite(null);
@@ -977,7 +968,8 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
                 vendors={vendors}
                 vendorFilter={vendorFilter}
                 setVendorFilter={handleVendorFilterChange}
-                handleSelectAllOnline={handleSelectAllOnline}
+                devicePageSize={devicePageSize}
+                setDevicePageSize={setDevicePageSize}
                 deviceViewMode={deviceViewMode}
                 setDeviceViewMode={setDeviceViewMode}
                 batchMode={batchMode}

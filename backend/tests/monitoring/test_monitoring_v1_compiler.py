@@ -236,6 +236,19 @@ def test_compiler_never_reuses_ssh_credential_for_snmp():
         )
 
 
+def test_compiler_excludes_devices_with_snmp_collection_disabled():
+    assignments = build_assignments(
+        [_device(snmp_collection_enabled=False)],
+        PLANS,
+        MODULES,
+        VARIANTS,
+        COLLECTORS,
+        credential_aliases={"cred-1": "auth_opaque"},
+    )
+
+    assert assignments == []
+
+
 def test_compiler_rejects_same_asset_variant_conflict():
     duplicate_plan = {
         "id": "plan-2", "cli_platform": "*",

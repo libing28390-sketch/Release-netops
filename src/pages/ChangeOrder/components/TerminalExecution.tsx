@@ -12,10 +12,10 @@ interface Props {
     output: string;
     error: string;
     success: boolean;
+    requestSent?: boolean;
   } | null;
   setExecuteModal: (m: any) => void;
   runOrderCommands: () => void;
-  handleTransition: (orderId: string, status: string, payload?: any) => void;
 }
 
 export const TerminalExecution: React.FC<Props> = ({
@@ -23,7 +23,6 @@ export const TerminalExecution: React.FC<Props> = ({
   executeModal,
   setExecuteModal,
   runOrderCommands,
-  handleTransition,
 }) => {
   const dialogRef = useRef<HTMLDivElement>(null);
   useEscapeClose(Boolean(executeModal && executeModal.phase !== 'running'), () => setExecuteModal(null));
@@ -123,6 +122,20 @@ export const TerminalExecution: React.FC<Props> = ({
                     {executeModal.error}
                   </div>
                 )}
+                {executeModal.phase === 'done' && executeModal.success && (
+                  <p role="status" className="mb-2 rounded-xl bg-emerald-50 px-3 py-2 text-xs text-emerald-800 ring-1 ring-emerald-200">
+                    {zh
+                      ? '命令请求已返回。请核实设备实际状态，并在工单验证区记录技术与业务结果后再完成工单。'
+                      : 'The command request has returned. Verify the actual device state and record technical and business results in the order before completing it.'}
+                  </p>
+                )}
+                {executeModal.phase === 'done' && !executeModal.success && executeModal.requestSent && (
+                  <p role="note" className="mb-2 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-amber-200">
+                    {zh
+                      ? '授权已使用，先核实设备实际状态；需再次执行时重新申请审批。'
+                      : 'The authorization has been used. Verify the actual device state first; request a new approval before executing again.'}
+                  </p>
+                )}
                 {executeModal.output && (
                   <div className="bg-slate-900 rounded-xl p-3 font-mono text-xs text-slate-200 leading-relaxed whitespace-pre-wrap break-all max-h-72 overflow-y-auto">
                     {executeModal.output}
@@ -134,8 +147,8 @@ export const TerminalExecution: React.FC<Props> = ({
             {executeModal.phase === 'confirm' && (
               <div className="rounded-xl bg-amber-50 px-3 py-2.5 text-xs text-amber-800 ring-1 ring-amber-200 leading-relaxed font-medium">
                 {zh
-                  ? '⚠ 命令将通过自动化引擎以管理员权限直接下发到上述设备。请确认命令清单和目标设备无误后再执行。'
-                  : '⚠ Commands will be pushed to the listed devices with admin credentials via the automation engine. Confirm before proceeding.'}
+                  ? '⚠ 命令将由自动化引擎按工单实施人获批的设备账号下发到上述设备。请确认命令清单和目标设备无误后再执行。'
+                  : '⚠ Commands will be sent through the automation engine using the device account authorized for the assigned implementer. Confirm the commands and target devices before proceeding.'}
               </div>
             )}
           </div>
@@ -175,31 +188,6 @@ export const TerminalExecution: React.FC<Props> = ({
                 >
                   {zh ? '关闭' : 'Close'}
                 </button>
-                {!executeModal.success && (
-                  <button
-                    type="button"
-                    onClick={runOrderCommands}
-                    className="px-4 py-2 rounded-xl bg-amber-500 text-white text-sm font-bold shadow-sm hover:bg-amber-600 transition-all flex items-center gap-2"
-                  >
-                    <RefreshCw size={14} />
-                    {zh ? '重试' : 'Retry'}
-                  </button>
-                )}
-                {executeModal.success && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const orderId = executeModal.order.id;
-                      const summary = executeModal.output.slice(0, 4000);
-                      setExecuteModal(null);
-                      handleTransition(orderId, 'completed', { result_summary: summary });
-                    }}
-                    className="px-4 py-2 rounded-xl bg-emerald-500 text-white text-sm font-bold shadow-sm hover:bg-emerald-600 transition-all flex items-center gap-2"
-                  >
-                    <CheckCircle2 size={14} />
-                    {zh ? '标记完成并保存输出' : 'Mark Completed & Save Output'}
-                  </button>
-                )}
               </>
             )}
           </div>

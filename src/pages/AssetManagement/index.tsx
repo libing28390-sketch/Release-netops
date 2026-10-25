@@ -609,7 +609,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const openAdd = () => {
     setEditingAsset(null);
     editFormBaselineRef.current = null;
-    setForm({ ...EMPTY_FORM });
+    setForm({ ...EMPTY_FORM, snmp_collection_enabled: true });
     setModalError(null);
     setShowEnableSecret(false);
     setShowModal(true);
@@ -646,6 +646,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       // into an editable field, so an untouched save cannot echo it back.
       snmp_community: '',
       snmp_port: String((a as any).snmp_port || '161'),
+      snmp_collection_enabled: (a as any).snmp_collection_enabled !== false,
       snmp_credential_id: (a as any).snmp_credential_id || '',
       snmp_community_set: Boolean((a as any).snmp_community_set),
       management_port: String(a.management_port ?? '22'),
@@ -904,6 +905,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       auth_model: 'dual',
       snmp_community: a.snmp_community || '',
       snmp_port: String(a.snmp_port || '161'),
+      snmp_collection_enabled: (a as any).snmp_collection_enabled !== false,
       snmp_credential_id: (a as any).snmp_credential_id || '',
       snmp_community_set: Boolean((a as any).snmp_community_set),
       management_port: String(a.management_port ?? '22'),

@@ -19,6 +19,44 @@ def test_locator_normalizes_huawei_ge_and_gigabitethernet_as_the_same_port():
     assert ip_locator_service.normalize_interface_name("GigabitEthernet0/0/4") == "gi0/0/4"
 
 
+def test_snmp_disabled_arp_collection_uses_cli_without_snmp_request(monkeypatch):
+    from services import snmp_service
+
+    device = {**DEVICE, "snmp_collection_enabled": False}
+    cli_calls: list[dict] = []
+    snmp_calls: list[dict] = []
+
+    monkeypatch.setattr(
+        "services.vault_service.resolve_collector_credentials",
+        lambda _device: {"snmp": {"configured": True, "community": "redacted"}},
+    )
+
+    async def unexpected_snmp(*_args, **_kwargs):
+        snmp_calls.append({"called": True})
+        raise AssertionError("disabled device must not be polled over SNMP")
+
+    monkeypatch.setattr(snmp_service, "collect_arp_table", unexpected_snmp)
+
+    def cli_fallback(device_info, **kwargs):
+        cli_calls.append({"device": device_info, **kwargs})
+        return {"categories": [{
+            "key": "arp",
+            "success": True,
+            "parse_status": "matched",
+            "records": [{"ip": "192.0.2.21", "mac": "00:11:22:33:44:55", "interface": "Gi1/0/1"}],
+        }]}
+
+    monkeypatch.setattr(ip_locator_service, "collect_operational_data", cli_fallback)
+
+    result = ip_locator_service._collect_full_arp_result(device)
+
+    assert result["status"] == "success"
+    assert result["transport"] == "ssh"
+    assert result["entries"][0]["ip"] == "192.0.2.21"
+    assert cli_calls
+    assert snmp_calls == []
+
+
 def test_route_selection_prefers_prefix_bound_connected_gateway_over_ospf():
     rows = [
         {

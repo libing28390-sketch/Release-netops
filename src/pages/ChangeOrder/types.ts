@@ -33,12 +33,58 @@ export interface ChangeOrder {
   result_summary: string;
   result_detail: Record<string, unknown>;
   authorization_exempt?: boolean;
+  emergency_reason?: string;
+  emergency_review_owner_id?: string;
+  emergency_review_due_at?: string | null;
+  emergency_review_status?: 'pending' | 'accepted' | 'follow_up_required' | '';
+  emergency_reviewed_by_id?: string;
+  emergency_reviewed_by?: string;
+  emergency_reviewed_at?: string | null;
+  emergency_review_note?: string;
   rejected_reason: string;
   control_sheet?: Record<string, any>;
   control_sheet_attachments?: ControlSheetAttachment[];
   control_sheet_missing?: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export interface ChangeOrderPersonRef {
+  id?: string;
+  username?: string;
+}
+
+export type AssignmentAction = 'assign' | 'claim' | 'transfer';
+export type ResultReviewAction = 'submit' | 'pass' | 'fail' | 'accept' | 'reject';
+
+export interface AssignmentEvent {
+  action?: AssignmentAction;
+  actor_id?: string;
+  actor_username?: string;
+  implementer_id?: string;
+  implementer_username?: string;
+  from_implementer_id?: string;
+  from_id?: string;
+  from_username?: string;
+  to_implementer_id?: string;
+  to_id?: string;
+  to_username?: string;
+  reason?: string;
+  created_at?: string;
+}
+
+export interface VerificationRecord {
+  id?: string;
+  kind: 'technical' | 'business';
+  result: 'passed' | 'failed';
+  summary: string;
+  evidence?: string;
+  actor_id?: string;
+  actor_username?: string;
+  verifier_id?: string;
+  verifier_username?: string;
+  approval_snapshot_hash?: string;
+  created_at?: string;
 }
 
 export interface ControlSheetAttachment {

@@ -31,7 +31,7 @@ export const EMPTY_FORM = {
   admin_username: '', admin_password: '',
   enable_password: '',   
   auth_model: 'dual',
-  snmp_community: '', snmp_community_set: false, snmp_port: '161',
+  snmp_community: '', snmp_community_set: false, snmp_port: '161', snmp_collection_enabled: true,
   management_port: '22',
   winrm_enabled: false,
   winrm_port: '5986',

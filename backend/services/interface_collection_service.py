@@ -446,6 +446,10 @@ def _collect_snmp_interface_domains(
         "errors": {},
         "version": None,
     }
+    from services.snmp_collection_policy_service import is_snmp_collection_enabled
+
+    if not is_snmp_collection_enabled(device):
+        return result
     try:
         from services.vault_service import resolve_collector_credentials
         from services.snmp_service import (
@@ -557,6 +561,10 @@ def _collect_snmp_interface_domains(
 
 def _collect_snmp_interfaces(device: dict[str, Any]) -> list[dict[str, Any]] | None:
     """Collect the lightweight IF-MIB interface snapshot when SNMP is configured."""
+    from services.snmp_collection_policy_service import is_snmp_collection_enabled
+
+    if not is_snmp_collection_enabled(device):
+        return None
     try:
         from services.vault_service import resolve_collector_credentials
         from services.snmp_service import collect_interface_status_data
@@ -600,6 +608,13 @@ def refresh_snmp_interface_inventory(device_id: str) -> dict[str, Any]:
     CLI interface-status job and does not collect unrelated health metrics.
     """
     device = _load_device(device_id)
+    from services.snmp_collection_policy_service import is_snmp_collection_enabled
+
+    if not is_snmp_collection_enabled(device):
+        raise InterfaceInventorySyncError(
+            "snmp_collection_disabled",
+            "该设备已关闭 SNMP 采集。",
+        )
     try:
         from services.vault_service import resolve_collector_credentials
 

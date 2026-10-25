@@ -5,10 +5,18 @@ import logging
 import sys
 import hashlib
 import re
+from datetime import datetime, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo
 from fastapi import HTTPException
 from database import get_db_connection
 from core.rbac import require_role
+from core.tenant_policy import TENANT_ISOLATION_ENABLED
+from services.change_order_service import (
+    control_sheet_implementer,
+    control_sheet_result_reviewer,
+    normalize_control_sheet_identity,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -84,20 +92,278 @@ def scan_change_commands(commands: list, platform: str = '') -> dict:
     }
 
 
+APPROVAL_SNAPSHOT_VERSION = 2
+CHANGE_WINDOW_TIMEZONE = ZoneInfo('Asia/Shanghai')
+
+
+def _parse_change_window_to_utc(value: object) -> datetime | None:
+    """Parse ISO timestamps; legacy and datetime-local values use Asia/Shanghai."""
+    raw = str(value or '').strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace('Z', '+00:00'))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=CHANGE_WINDOW_TIMEZONE)
+    return parsed.astimezone(timezone.utc)
+
+
+def _snapshot_time_value(value: object) -> str:
+    """Hash valid window values in UTC while retaining malformed input evidence."""
+    raw = str(value or '').strip()
+    parsed = _parse_change_window_to_utc(raw)
+    return parsed.isoformat() if parsed else raw
+
+
+def assert_change_order_window_open(order: dict, now: datetime | None = None) -> tuple[datetime, datetime]:
+    """Require an open [start, end) window, comparing all values in UTC.
+
+    ISO offsets are authoritative.  Existing timezone-less UI values are
+    interpreted as Asia/Shanghai wall time for compatibility.
+    """
+    raw_start = str(order.get('scheduled_start') or '').strip()
+    raw_end = str(order.get('scheduled_end') or '').strip()
+    start = _parse_change_window_to_utc(raw_start)
+    end = _parse_change_window_to_utc(raw_end)
+    if not raw_start or not raw_end:
+        raise HTTPException(status_code=409, detail='变更窗口缺失，必须重新申请并重新审批')
+    if start is None or end is None or start >= end:
+        raise HTTPException(status_code=409, detail='变更窗口无效，必须修正后重新审批')
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    current = current.astimezone(timezone.utc)
+    if current < start:
+        raise HTTPException(status_code=409, detail='变更窗口尚未开始，暂不能实施')
+    if current >= end:
+        raise HTTPException(status_code=409, detail='变更窗口已结束，必须重新申请并重新审批')
+    return start, end
+
+
+def assert_change_order_window_approvable(order: dict, now: datetime | None = None) -> tuple[datetime, datetime]:
+    """Require a valid window that has not expired, allowing approval before its start."""
+    raw_start = str(order.get('scheduled_start') or '').strip()
+    raw_end = str(order.get('scheduled_end') or '').strip()
+    start = _parse_change_window_to_utc(raw_start)
+    end = _parse_change_window_to_utc(raw_end)
+    if not raw_start or not raw_end:
+        raise HTTPException(status_code=409, detail='变更窗口缺失，必须调整后重新提交审批')
+    if start is None or end is None or start >= end:
+        raise HTTPException(status_code=409, detail='变更窗口无效，必须修正后重新提交审批')
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    if current.astimezone(timezone.utc) >= end:
+        raise HTTPException(status_code=409, detail='变更窗口已结束，请调整实施时间并重新提交审批')
+    return start, end
+
+
 def approval_snapshot_hash(order: dict) -> str:
-    """Hash the immutable execution scope approved by reviewers."""
+    """Hash all content that can affect an approved change or its execution."""
+    attachments = order.get('control_sheet_attachments')
+    if not isinstance(attachments, list):
+        attachments = []
+    attachment_scope = [
+        {
+            'id': str(item.get('id') or ''),
+            'file_name': str(item.get('file_name') or ''),
+            'file_size': int(item.get('file_size') or 0),
+            'created_at': str(item.get('created_at') or ''),
+            'sha256': str(item.get('sha256') or ''),
+        }
+        for item in attachments if isinstance(item, dict)
+    ]
+    attachment_scope.sort(key=lambda item: (item['id'], item['created_at'], item['file_name']))
     payload = {
+        'version': APPROVAL_SNAPSHOT_VERSION,
+        'title': order.get('title') or '',
+        'description': order.get('description') or '',
+        'requester_id': str(order.get('requester_id') or ''),
+        'assigned_initial_reviewer_id': str(order.get('assigned_initial_reviewer_id') or ''),
+        'assigned_final_approver_id': str(order.get('assigned_final_approver_id') or ''),
         'order_type': order.get('order_type') or '',
+        'emergency_reason': str(order.get('emergency_reason') or '').strip(),
+        'emergency_review_owner_id': str(order.get('emergency_review_owner_id') or '').strip(),
+        'emergency_review_due_at_utc': _snapshot_time_value(order.get('emergency_review_due_at')),
+        'priority': order.get('priority') or '',
         'target_devices': order.get('target_devices') or [],
         'commands': order.get('commands') or [],
         'rollback_plan': order.get('rollback_plan') or '',
         'risk_level': order.get('risk_level') or '',
-        'scheduled_start': order.get('scheduled_start') or '',
-        'scheduled_end': order.get('scheduled_end') or '',
+        'scheduled_start_utc': _snapshot_time_value(order.get('scheduled_start')),
+        'scheduled_end_utc': _snapshot_time_value(order.get('scheduled_end')),
+        'authorization_exempt': bool(order.get('authorization_exempt')),
         'command_template': order.get('command_template') or {},
+        'control_sheet': normalize_control_sheet_identity(order.get('control_sheet')),
+        'control_sheet_attachments': attachment_scope,
     }
     canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
     return hashlib.sha256(canonical.encode('utf-8')).hexdigest()
+
+
+def resolve_active_order_implementer(conn, order: dict) -> dict:
+    """Resolve the explicit, active implementation identity by stable user ID."""
+    control_sheet = normalize_control_sheet_identity(order.get('control_sheet'))
+    implementation = control_sheet_implementer(control_sheet)
+    implementer_id = str(implementation.get('id') or '').strip()
+    if not implementer_id:
+        raise HTTPException(status_code=409, detail='工单未指定实施人，必须指派实施人并重新审批')
+    row = conn.execute(
+        'SELECT id, username, role, role_profile, status, tenant_id, scope_mode FROM users WHERE id = ?',
+        (implementer_id,),
+    ).fetchone()
+    if not row:
+        raise HTTPException(status_code=403, detail='指定实施人账号不存在，不能实施')
+    implementer = dict(row)
+    if str(implementer.get('status') or '').lower() != 'active':
+        raise HTTPException(status_code=403, detail='指定实施人账号已停用，不能实施')
+    if TENANT_ISOLATION_ENABLED and str(implementer.get('tenant_id') or '') != str(order.get('tenant_id') or ''):
+        raise HTTPException(status_code=403, detail='指定实施人与工单不属于同一租户')
+    return implementer
+
+
+def _resolve_active_review_identity(conn, order: dict, user_id: str, username: str, label: str) -> dict:
+    stable_id = str(user_id or '').strip()
+    display_name = str(username or '').strip()
+    if not stable_id and not display_name:
+        return {}
+    if stable_id:
+        row = conn.execute(
+            'SELECT id, username, status, tenant_id FROM users WHERE id = ?', (stable_id,),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            'SELECT id, username, status, tenant_id FROM users WHERE username = ?', (display_name,),
+        ).fetchone()
+    if not row or str(row['status'] or '').lower() != 'active':
+        raise HTTPException(status_code=409, detail=f'{label}账号不存在或已停用')
+    reviewer = dict(row)
+    if TENANT_ISOLATION_ENABLED and str(reviewer.get('tenant_id') or '') != str(order.get('tenant_id') or ''):
+        raise HTTPException(status_code=409, detail=f'{label}必须属于工单所在租户')
+    return reviewer
+
+
+def resolve_active_order_result_reviewer(conn, order: dict, *, required: bool = False) -> dict:
+    """Resolve the optional co_reviewer, retaining username-only legacy compatibility."""
+    configured = control_sheet_result_reviewer(order.get('control_sheet'))
+    if not configured:
+        if required:
+            raise HTTPException(status_code=409, detail='工单未指定实施结果复核人')
+        return {}
+    return _resolve_active_review_identity(
+        conn,
+        order,
+        configured.get('id'),
+        configured.get('username'),
+        '实施结果复核人',
+    )
+
+
+def resolve_active_order_initial_reviewer(conn, order: dict) -> dict:
+    """Resolve the original initial reviewer, preferring the recorded decision maker."""
+    reviewer_id = str(order.get('initial_reviewer_id') or '').strip()
+    if not reviewer_id:
+        reviewer_id = str(order.get('assigned_initial_reviewer_id') or '').strip()
+    reviewer_username = str(order.get('initial_reviewer_username') or '').strip()
+    if not reviewer_username:
+        reviewer_username = str(order.get('assigned_initial_reviewer_username') or '').strip()
+    if not reviewer_id and not reviewer_username:
+        raise HTTPException(status_code=409, detail='工单未保留原初审人身份')
+    return _resolve_active_review_identity(
+        conn, order, reviewer_id, reviewer_username, '原初审人',
+    )
+
+
+def is_order_result_review_participant(conn, order: dict, actor_id: str) -> bool:
+    """Return whether an active, same-tenant assigned reviewer may read this order."""
+    try:
+        result_reviewer = resolve_active_order_result_reviewer(conn, order)
+    except HTTPException:
+        result_reviewer = {}
+    if result_reviewer and str(result_reviewer.get('id') or '') == str(actor_id or ''):
+        return True
+    try:
+        initial_reviewer = resolve_active_order_initial_reviewer(conn, order)
+    except HTTPException:
+        initial_reviewer = {}
+    return bool(initial_reviewer and str(initial_reviewer.get('id') or '') == str(actor_id or ''))
+
+
+def assert_explicit_execution_profile(user: dict, resource_type: str, action: str = 'execute') -> None:
+    """Prevent an Administrator's coarse role wildcard from granting execution."""
+    if user.get('role') == 'Administrator' and not str(user.get('role_profile') or '').strip():
+        raise HTTPException(status_code=403, detail=f'管理员账号必须具备明确的 {resource_type}.{action} 执行权限配置')
+
+
+def assert_order_mfa_valid(order: dict, user_id: str, username: str, now: datetime | None = None) -> None:
+    detail = order.get('result_detail') if isinstance(order.get('result_detail'), dict) else {}
+    if str(detail.get('mfa_verified_by_id') or '') != str(user_id or '') or str(detail.get('mfa_verified_by') or '') != str(username or ''):
+        raise HTTPException(status_code=403, detail='实施 MFA 身份与当前账号不一致')
+    raw_verified_at = str(detail.get('mfa_verified_at') or '').strip()
+    try:
+        verified_at = datetime.fromisoformat(raw_verified_at.replace('Z', '+00:00'))
+        if verified_at.tzinfo is None:
+            verified_at = verified_at.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=403, detail='实施授权缺少有效的 MFA 记录')
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    age = (current.astimezone(timezone.utc) - verified_at.astimezone(timezone.utc)).total_seconds()
+    if age < -30 or age > 300:
+        raise HTTPException(status_code=403, detail='实施 MFA 已过期或时间无效，请重新完成实施授权')
+
+
+def assert_order_verification_complete(order: dict, *, rollback: bool = False) -> None:
+    detail = order.get('result_detail') if isinstance(order.get('result_detail'), dict) else {}
+    records = detail.get('verification_records')
+    if not isinstance(records, list):
+        records = []
+    current_snapshot = approval_snapshot_hash(order)
+    current_records = [
+        item for item in records
+        if isinstance(item, dict) and str(item.get('approval_snapshot_hash') or '') == current_snapshot
+    ]
+    if rollback:
+        rollback_started_at = str(detail.get('rollback_started_at') or '').strip()
+        if not rollback_started_at:
+            raise HTTPException(status_code=409, detail='回退恢复验证缺少回退开始记录')
+        try:
+            rollback_started = datetime.fromisoformat(rollback_started_at.replace('Z', '+00:00'))
+            if rollback_started.tzinfo is None:
+                rollback_started = rollback_started.replace(tzinfo=timezone.utc)
+        except ValueError:
+            raise HTTPException(status_code=409, detail='回退开始时间无效，不能完成回退')
+        filtered_records = []
+        for record in current_records:
+            try:
+                recorded_at = datetime.fromisoformat(str(record.get('created_at') or '').replace('Z', '+00:00'))
+                if recorded_at.tzinfo is None:
+                    recorded_at = recorded_at.replace(tzinfo=timezone.utc)
+            except ValueError:
+                continue
+            if recorded_at.astimezone(timezone.utc) >= rollback_started.astimezone(timezone.utc):
+                filtered_records.append(record)
+        current_records = filtered_records
+    technical = [item for item in current_records if item.get('kind') == 'technical']
+    if not technical or technical[-1].get('result') != 'passed':
+        message = '回退完成前必须记录回退后的技术恢复验证' if rollback else '完成工单前必须有通过的技术验证记录'
+        raise HTTPException(status_code=409, detail=message)
+
+    control_sheet = normalize_control_sheet_identity(order.get('control_sheet'))
+    business_confirmer = control_sheet.get('business_confirmer') or {}
+    business_configured = bool(
+        str(control_sheet.get('business_verify') or '').strip()
+        or str(business_confirmer.get('id') or '').strip()
+        or str(business_confirmer.get('username') or '').strip()
+    )
+    if business_configured:
+        business = [item for item in current_records if item.get('kind') == 'business']
+        if not business or business[-1].get('result') != 'passed':
+            message = '该工单已配置业务验证，回退完成前必须有通过的业务恢复验证' if rollback else '该工单已配置业务验证，完成前必须有通过的业务验证记录'
+            raise HTTPException(status_code=409, detail=message)
 
 
 def is_template_required() -> bool:
@@ -118,6 +384,7 @@ def is_control_sheet_enabled() -> bool:
 
 ALLOWED_STATUSES = {
     'draft', 'initial_review', 'final_review', 'approved', 'implementing', 'completed',
+    'implementation_review', 'implementation_result_review',
     'rollback_in_progress', 'rolled_back', 'rejected', 'failed', 'cancelled',
     'pending', 'executing',
 }
@@ -127,9 +394,11 @@ ALLOWED_TRANSITIONS = {
     'initial_review': {'final_review', 'rejected', 'cancelled'},
     'final_review': {'approved', 'rejected', 'cancelled', 'initial_review'},
     'approved': {'implementing', 'cancelled'},
-    'implementing': {'completed', 'failed', 'rollback_in_progress', 'cancelled'},
+    'implementing': {'completed', 'implementation_review', 'failed', 'rollback_in_progress', 'cancelled'},
     'rollback_in_progress': {'rolled_back', 'failed'},
-    'failed': {'rollback_in_progress', 'cancelled'},
+    'failed': {'implementation_review', 'rollback_in_progress', 'cancelled'},
+    'implementation_review': {'completed', 'implementation_result_review'},
+    'implementation_result_review': {'completed', 'failed'},
     'rejected': {'draft', 'cancelled'},
     'completed': set(),
     'rolled_back': set(),
@@ -149,6 +418,8 @@ STATUS_ZH = {
     'final_review': '终审中',
     'approved': '审批完成',
     'implementing': '实施中',
+    'implementation_review': '实施结果复核中',
+    'implementation_result_review': '实施结果初审中',
     'completed': '完成',
     'rollback_in_progress': '回溯中',
     'rolled_back': '已回溯',
@@ -175,6 +446,95 @@ def _validate_assignment_rules(requester_username: str, payload: dict):
     if rev_id and rev_id == app_id:
         raise HTTPException(status_code=400, detail='初审人与终审人不能为同一人')
 
+    control_sheet = normalize_control_sheet_identity(payload.get('control_sheet'))
+    implementer = control_sheet_implementer(control_sheet)
+    implementer_id = str(implementer.get('id') or '').strip().casefold()
+    implementer_username = str(implementer.get('username') or '').strip().casefold()
+    if not implementer_id and not implementer_username:
+        return
+
+    def _same_person(user_id: object, username: object) -> bool:
+        candidate_id = str(user_id or '').strip().casefold()
+        candidate_username = str(username or '').strip().casefold()
+        if implementer_id and candidate_id:
+            return implementer_id == candidate_id
+        return bool(implementer_username and candidate_username and implementer_username == candidate_username)
+
+    assigned_reviewers = (
+        ('初审人', rev_id, rev_name),
+        ('终审人', app_id, app_name),
+    )
+    for label, reviewer_id, reviewer_username in assigned_reviewers:
+        if _same_person(reviewer_id, reviewer_username):
+            raise HTTPException(status_code=400, detail=f'实施人不能同时担任{label}')
+
+    co_reviewer = control_sheet.get('co_reviewer')
+    co_reviewer = co_reviewer if isinstance(co_reviewer, dict) else {}
+    co_reviewer_id = co_reviewer.get('id') or control_sheet.get('co_reviewer_id')
+    co_reviewer_username = co_reviewer.get('username') or control_sheet.get('co_reviewer_username')
+    if _same_person(co_reviewer_id, co_reviewer_username):
+        raise HTTPException(status_code=400, detail='复核人不能与实施人相同')
+
+    business_confirmer = control_sheet.get('business_confirmer')
+    business_confirmer = business_confirmer if isinstance(business_confirmer, dict) else {}
+    confirmer_id = business_confirmer.get('id')
+    confirmer_username = business_confirmer.get('username')
+    if _same_person(confirmer_id, confirmer_username):
+        raise HTTPException(status_code=400, detail='实施人不能同时担任业务确认人')
+
+
+def validate_emergency_change_details(conn, order: dict) -> dict:
+    """Validate emergency rationale and independent post-implementation review."""
+    if str(order.get('order_type') or '') != 'emergency':
+        return order
+    reason = str(order.get('emergency_reason') or '').strip()
+    reviewer_id = str(order.get('emergency_review_owner_id') or '').strip()
+    due_raw = str(order.get('emergency_review_due_at') or '').strip()
+    if not reason:
+        raise HTTPException(status_code=422, detail='紧急变更必须填写紧急原因')
+    if not reviewer_id:
+        raise HTTPException(status_code=422, detail='紧急变更必须指定事后复核人')
+    if not due_raw:
+        raise HTTPException(status_code=422, detail='紧急变更必须设置事后复核期限')
+    try:
+        due_at = datetime.fromisoformat(due_raw.replace('Z', '+00:00'))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail='事后复核期限格式无效') from exc
+    if due_at.tzinfo is None:
+        due_at = due_at.replace(tzinfo=ZoneInfo('Asia/Shanghai'))
+    due_at = due_at.astimezone(timezone.utc)
+    if due_at <= datetime.now(timezone.utc):
+        raise HTTPException(status_code=422, detail='事后复核期限必须晚于当前时间')
+
+    reviewer_row = conn.execute(
+        'SELECT id, status, tenant_id FROM users WHERE id = ?', (reviewer_id,),
+    ).fetchone()
+    if not reviewer_row or str(reviewer_row['status'] or '').lower() != 'active':
+        raise HTTPException(status_code=422, detail='事后复核人不存在或未启用')
+    reviewer = dict(reviewer_row)
+    tenant_id = str(order.get('tenant_id') or '')
+    if tenant_id and str(reviewer.get('tenant_id') or '') != tenant_id:
+        raise HTTPException(status_code=422, detail='事后复核人必须属于同一租户')
+    if reviewer_id == str(order.get('requester_id') or ''):
+        raise HTTPException(status_code=422, detail='事后复核人必须与申请人分离')
+    try:
+        implementer = resolve_active_order_implementer(conn, order)
+    except HTTPException as exc:
+        raise HTTPException(status_code=422, detail='紧急变更必须先指定有效的实施人') from exc
+    if reviewer_id == str(implementer.get('id') or ''):
+        raise HTTPException(status_code=422, detail='事后复核人必须与实施人分离')
+    return {
+        **order,
+        'emergency_reason': reason,
+        'emergency_review_owner_id': reviewer_id,
+        'emergency_review_due_at': due_at.isoformat().replace('+00:00', 'Z'),
+        'emergency_review_status': 'pending',
+        'emergency_reviewed_by_id': '',
+        'emergency_reviewed_by': '',
+        'emergency_reviewed_at': None,
+        'emergency_review_note': '',
+    }
+
 
 def _validate_template_completeness(payload: dict):
     status = payload.get('status')
@@ -198,25 +558,48 @@ def _validate_template_completeness(payload: dict):
 
 def _validate_control_sheet_completeness(conn, order_id: str, payload: dict, new_status: str):
     if new_status == 'initial_review':
-        cs = payload.get('control_sheet') or {}
-        required_fields = [
-            'change_time', 'implementer', 'co_reviewer', 'device_ips',
-            'pre_check', 'execution', 'post_verify', 'business_verify',
-            'rollback_plan',
-        ]
+        cs = payload.get('control_sheet')
+        cs = cs if isinstance(cs, dict) else {}
         missing = []
-        for f in required_fields:
-            val = cs.get(f)
-            if val is None:
-                missing.append(f)
-            elif isinstance(val, (list,)) and not val:
-                missing.append(f)
-            elif isinstance(val, dict) and not val:
-                missing.append(f)
-            elif isinstance(val, str) and not val.strip():
-                missing.append(f)
+        def add_missing(label: str):
+            if label not in missing:
+                missing.append(label)
+
+        change_time = cs.get('change_time')
+        if not isinstance(change_time, dict) or (
+            not str(change_time.get('start') or '').strip()
+            or not str(change_time.get('end') or '').strip()
+        ):
+            add_missing('变更时间')
+
+        for field, label in (('implementer', '实施人'),):
+            person = cs.get(field)
+            if not isinstance(person, dict) or not (
+                str(person.get('id') or '').strip() or str(person.get('username') or '').strip()
+            ):
+                add_missing(label)
+
+        device_ips = cs.get('device_ips')
+        if not isinstance(device_ips, list) or not any(str(value or '').strip() for value in device_ips):
+            add_missing('目标设备')
+
+        required_text_fields = (
+            ('pre_check', '变更前检查'),
+            ('execution', '人工实施步骤'),
+            ('post_verify', '变更后验证'),
+            ('business_verify', '业务验证'),
+            ('rollback_plan', '回退命令'),
+        )
+        for field, label in required_text_fields:
+            value = cs.get(field)
+            if not isinstance(value, str) or not value.strip():
+                add_missing(label)
+
         if missing:
-            raise HTTPException(status_code=400, detail=f'提交初审前必须填写完整的变更控制表，缺失字段: {", ".join(missing)}')
+            raise HTTPException(
+                status_code=400,
+                detail=f'提交初审前必须填写完整的变更控制表：{"、".join(missing)}',
+            )
 
     if new_status == 'implementing':
         count = conn.execute(
@@ -254,8 +637,8 @@ def _resolve_assignment_user(conn, user_id: str, stage: str) -> dict:
     user = dict(row)
     groups = _parse_change_groups(user.get('change_groups_json'))
     if stage == 'initial':
-        if user.get('role') == 'Viewer':
-            raise HTTPException(status_code=400, detail='Initial reviewer must be Operator or Administrator')
+        if user.get('role') != 'Administrator':
+            raise HTTPException(status_code=400, detail='Initial reviewer must be an Administrator')
         if 'initial_reviewer' not in groups:
             raise HTTPException(status_code=400, detail='Selected user is not in the initial review group')
     if stage == 'final':
@@ -266,7 +649,7 @@ def _resolve_assignment_user(conn, user_id: str, stage: str) -> dict:
     return {'id': str(user.get('id') or ''), 'username': str(user.get('username') or '')}
 
 
-def _normalize_assignment_payload(conn, payload: dict) -> dict:
+def _normalize_assignment_payload(conn, payload: dict, *, tenant_id: str = '') -> dict:
     normalized = dict(payload)
     assignment_fields = (
         ('assigned_initial_reviewer_id', 'assigned_initial_reviewer_username', 'initial'),
@@ -285,6 +668,25 @@ def _normalize_assignment_payload(conn, payload: dict) -> dict:
         assignee = _resolve_assignment_user(conn, assignee_id, stage)
         normalized[id_field] = assignee['id']
         normalized[name_field] = assignee['username']
+
+    configured_result_reviewer = control_sheet_result_reviewer(normalized.get('control_sheet'))
+    reviewer_id = str(configured_result_reviewer.get('id') or '').strip()
+    reviewer_username = str(configured_result_reviewer.get('username') or '').strip()
+    if reviewer_id or reviewer_username:
+        if reviewer_id:
+            reviewer_row = conn.execute(
+                'SELECT id, username, status, tenant_id FROM users WHERE id = ?',
+                (reviewer_id,),
+            ).fetchone()
+        else:
+            reviewer_row = conn.execute(
+                'SELECT id, username, status, tenant_id FROM users WHERE username = ?',
+                (reviewer_username,),
+            ).fetchone()
+        if not reviewer_row or str(reviewer_row['status'] or '').lower() != 'active':
+            raise HTTPException(status_code=400, detail='指定的实施结果复核人不存在或未启用')
+        if TENANT_ISOLATION_ENABLED and tenant_id and str(reviewer_row['tenant_id'] or '') != tenant_id:
+            raise HTTPException(status_code=400, detail='实施结果复核人必须属于工单所在租户')
     return normalized
 
 

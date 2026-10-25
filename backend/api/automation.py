@@ -512,7 +512,14 @@ async def _execute_approved_change_order(
     import database as database_module
     from core.rbac import enforce_resource_scope
     from services.change_order_service import get_change_order
-    from api.change_orders.helpers import approval_snapshot_hash
+    from api.change_orders.helpers import (
+        APPROVAL_SNAPSHOT_VERSION,
+        approval_snapshot_hash,
+        assert_change_order_window_open,
+        assert_explicit_execution_profile,
+        assert_order_mfa_valid,
+        resolve_active_order_implementer,
+    )
 
     if database_module._USE_PG:
         conn.execute('SELECT id FROM change_orders WHERE order_number = ? FOR UPDATE', (order_number,))
@@ -526,39 +533,42 @@ async def _execute_approved_change_order(
     actor_id = str(user.get('user_id') or user.get('id') or '')
     actor_name = str(user.get('username') or '')
     tenant_id = str(order.get('tenant_id') or '').strip()
-    requester_id = str(order.get('requester_id') or '')
-    control_sheet = order.get('control_sheet') if isinstance(order.get('control_sheet'), dict) else {}
-    executor_id = str(control_sheet.get('implementer_id') or requester_id).strip()
+    actor_row = conn.execute(
+        'SELECT id, username, role, role_profile, status, tenant_id, scope_mode FROM users WHERE id = ?',
+        (actor_id,),
+    ).fetchone()
+    if not actor_row or str(actor_row['status'] or '').lower() != 'active':
+        raise HTTPException(status_code=403, detail='当前账号已停用或不可用')
+    actor_name = str(actor_row['username'] or actor_name)
+    execution_user = {**user, **dict(actor_row), 'user_id': actor_id}
+    implementer = resolve_active_order_implementer(conn, order)
+    executor_id = str(implementer.get('id') or '').strip()
     approver_id = str(order.get('final_approver_id') or order.get('approver_id') or '')
     if not actor_id or actor_id != executor_id:
         raise HTTPException(status_code=403, detail='当前账号不是变更工单指定的实施人')
-    if TENANT_ISOLATION_ENABLED and (not tenant_id or tenant_scope_for_user(user) != tenant_id):
+    if TENANT_ISOLATION_ENABLED and (not tenant_id or tenant_scope_for_user(execution_user) != tenant_id):
         raise HTTPException(status_code=404, detail='变更工单不存在')
-    if approver_id and approver_id == actor_id:
+    if not approver_id or approver_id == actor_id:
         raise HTTPException(status_code=403, detail='终审人不能作为该工单的实施人')
-    enforce_resource_scope(user, 'change_order', 'implement', tenant_id=tenant_id)
-    enforce_resource_scope(user, 'pam', 'intervene', tenant_id=tenant_id)
+    enforce_resource_scope(execution_user, 'pam', 'intervene', tenant_id=tenant_id)
+    assert_explicit_execution_profile(execution_user, 'command')
 
     expected_snapshot = approval_snapshot_hash(order)
     result_detail = order.get('result_detail') if isinstance(order.get('result_detail'), dict) else {}
+    if int(result_detail.get('approval_snapshot_version') or 0) != APPROVAL_SNAPSHOT_VERSION:
+        raise HTTPException(status_code=409, detail='工单使用旧版审批快照，必须重新审批')
     if (
         not expected_snapshot
         or str(result_detail.get('approval_snapshot_hash') or '') != expected_snapshot
         or str(result_detail.get('executing_snapshot_hash') or '') != expected_snapshot
     ):
         raise HTTPException(status_code=409, detail='工单批准快照缺失或已变化，必须重新审批')
+    if not str(result_detail.get('execution_token_id') or '').strip() or not str(result_detail.get('execution_token_consumed_at') or '').strip():
+        raise HTTPException(status_code=409, detail='工单缺少有效的单次执行授权')
     if result_detail.get('execution_started_at'):
         raise HTTPException(status_code=409, detail='该工单的执行授权已被消费，不能重复执行')
-    if str(result_detail.get('mfa_verified_by') or '') != actor_name:
-        raise HTTPException(status_code=403, detail='实施人 MFA 身份与当前账号不一致')
-    try:
-        mfa_at = datetime.fromisoformat(str(result_detail.get('mfa_verified_at') or '').replace('Z', '+00:00'))
-        if mfa_at.tzinfo is None:
-            mfa_at = mfa_at.replace(tzinfo=timezone.utc)
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=403, detail='实施授权缺少有效的 MFA 记录')
-    if (datetime.now(timezone.utc) - mfa_at.astimezone(timezone.utc)).total_seconds() > 300:
-        raise HTTPException(status_code=403, detail='实施 MFA 已过期，请重新完成实施授权')
+    assert_order_mfa_valid(order, actor_id, actor_name)
+    assert_change_order_window_open(order)
 
     approved_commands = _normalize_execution_commands(order.get('commands'))
     if not approved_commands or requested_commands != approved_commands:
@@ -587,10 +597,10 @@ async def _execute_approved_change_order(
             'site_id': device.get('site_id') or device.get('site'),
             'device_group_id': device.get('device_group_id'),
         }
-        enforce_resource_scope(user, 'command', 'execute', **scope)
+        enforce_resource_scope(execution_user, 'command', 'execute', **scope)
         if auth_role == 'admin':
-            _assert_execution_auth_role_allowed(user, auth_role)
-            enforce_resource_scope(user, 'credential', 'use', **scope)
+            _assert_execution_auth_role_allowed(execution_user, auth_role)
+            enforce_resource_scope(execution_user, 'credential', 'use', **scope)
 
     execution_fingerprint = hashlib.sha256(json.dumps({
         'order_id': str(order.get('id') or ''),
@@ -657,9 +667,10 @@ async def _execute_approved_change_order(
             )
             batch_results[device_id] = {'status': 'failed', 'output': f'Error: {safe_error}', 'commands': approved_commands}
 
+    execution_status = 'completed' if all(item['status'] == 'success' for item in batch_results.values()) else 'partial_failure'
     log_audit_event(
         event_type='CHANGE_ORDER_EXECUTION', category='change_order', severity='high',
-        status='completed' if all(item['status'] == 'success' for item in batch_results.values()) else 'partial_failure',
+        status=execution_status,
         summary=f"Executed approved change order {order_number}",
         actor_id=actor_id, actor_username=actor_name, actor_role=user.get('role'),
         target_type='change_order', target_id=str(order.get('id') or ''),
@@ -673,8 +684,29 @@ async def _execute_approved_change_order(
         },
         conn=conn,
     )
+
+    if database_module._USE_PG:
+        conn.execute('SELECT id FROM change_orders WHERE id = ? FOR UPDATE', (str(order['id']),))
+    latest_order = get_change_order(conn, str(order['id']))
+    latest_detail = latest_order.get('result_detail') if latest_order and isinstance(latest_order.get('result_detail'), dict) else {}
+    execution_results = latest_detail.get('execution_results')
+    if not isinstance(execution_results, list):
+        execution_results = []
+    execution_results.append({
+        'execution_id': execution_fingerprint,
+        'started_at': started_at,
+        'finished_at': datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        'actor': {'id': actor_id, 'username': actor_name},
+        'device_statuses': {key: value['status'] for key, value in batch_results.items()},
+        'status': execution_status,
+    })
+    latest_detail['execution_results'] = execution_results
+    conn.execute(
+        'UPDATE change_orders SET result_detail_json = ?, updated_at = ? WHERE id = ?',
+        (json.dumps(latest_detail, ensure_ascii=False, sort_keys=True), datetime.now(timezone.utc).isoformat(), str(order['id'])),
+    )
     conn.commit()
-    return {'status': 'completed', 'results': batch_results}
+    return {'status': execution_status, 'results': batch_results}
 
 
 @router.post("/execute")
@@ -728,6 +760,8 @@ async def execute_task(request: Request, payload: dict = Body(...), user: dict =
         raise HTTPException(status_code=403, detail='配置变更必须通过已批准并进入实施阶段的变更工单执行')
 
     from core.rbac import enforce_resource_scope
+    from api.change_orders.helpers import assert_explicit_execution_profile
+    assert_explicit_execution_profile(user, 'command')
     from services.platform_registry_service import (
         PlatformRegistryError,
         execute_platform_action,
@@ -839,11 +873,12 @@ def _build_approval_manifest(approval_type: str, payload: dict, user: dict) -> d
             manifest_tenant_id = tenant_id_for_write(user=user)
             operation = str(source.get('operation') or '').upper()
             job_id = str(source.get('job_id') or '').strip()
+            current = None
             if operation != 'CREATE':
                 if not job_id:
                     raise HTTPException(status_code=400, detail='审批清单缺少计划作业 ID')
                 row = conn.execute('SELECT * FROM scheduled_jobs WHERE id = ?', (job_id,)).fetchone()
-                if not row:
+                if not row or dict(row).get('deleted_at'):
                     raise HTTPException(status_code=404, detail='计划作业不存在')
                 current = dict(row)
                 manifest_tenant_id = str(current.get('tenant_id') or '')
@@ -861,15 +896,43 @@ def _build_approval_manifest(approval_type: str, payload: dict, user: dict) -> d
                     conn, str(source.get('script_id') or ''), require_released=operation != 'DELETE',
                 )
             except ValueError as exc:
-                # A stale or invalid published script is an expected approval
-                # conflict. Return it to the caller instead of logging it as an
-                # unhandled server exception.
+                # Report stale released content as a conflict before validating
+                # the rest of the request, so clients can recover by refreshing it.
                 raise HTTPException(status_code=409, detail=str(exc)) from exc
+            from services.scheduled_job_authorization import (
+                assert_authorization_grant_link_access,
+                current_authorization_grant_input,
+                normalize_authorization_grant,
+                validate_authorization_grant_ticket,
+            )
+            nested_grant = source.get('authorization_grant')
+            top_level_grant = payload.get('authorization_grant')
+            if operation in {'CREATE', 'UPDATE', 'ENABLE'}:
+                try:
+                    normalized_nested = normalize_authorization_grant(nested_grant)
+                    normalized_top_level = normalize_authorization_grant(top_level_grant)
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
+                if normalized_nested != normalized_top_level:
+                    raise HTTPException(
+                        status_code=400,
+                        detail='顶层授权条款必须与审批清单中的授权条款一致',
+                    )
+            elif not isinstance(nested_grant, dict) and current is not None:
+                nested_grant = current_authorization_grant_input(conn, current)
+                source = {**source, 'authorization_grant': nested_grant}
             try:
+                if isinstance(nested_grant, dict):
+                    source = {**source, 'authorization_grant': nested_grant}
                 manifest = normalize_job_manifest(
                     source, operation=operation, requester_id=requester_id,
                     tenant_id=manifest_tenant_id, script_sha256=script_sha, job_id=job_id,
                 )
+                if operation in {'CREATE', 'UPDATE', 'ENABLE'}:
+                    validate_authorization_grant_ticket(
+                        conn, manifest['authorization_grant'], tenant_id=manifest_tenant_id,
+                    )
+                    assert_authorization_grant_link_access(conn, manifest['authorization_grant'], user)
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             if scheduled_job_approval_type(manifest) != approval_type:

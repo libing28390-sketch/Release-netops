@@ -4,6 +4,7 @@ import uuid
 import json
 import logging
 import os
+import hashlib
 from datetime import datetime, timezone
 from database import get_db_connection
 from services.vault_service import resolve_device_credentials
@@ -30,6 +31,199 @@ def _get_device_lock(device_id: str) -> asyncio.Lock:
 
 # P3: 待确认 commit 的回滚任务 (execution_id → asyncio.Task)
 _pending_rollbacks: dict[str, asyncio.Task] = {}
+
+
+def _append_change_order_execution_fact(binding: dict | None, event: dict) -> None:
+    """Append a sanitized execution or rollback fact to its bound work order."""
+    if not isinstance(binding, dict) or not binding.get('order_id'):
+        return
+    from services.change_order_service import get_change_order
+
+    conn = get_db_connection()
+    try:
+        import database as database_module
+        order_id = str(binding.get('order_id') or '')
+        if database_module._USE_PG:
+            conn.execute('SELECT id FROM change_orders WHERE id = ? FOR UPDATE', (order_id,))
+        order = get_change_order(conn, order_id)
+        if not order:
+            logger.error('Bound change order disappeared before execution event recording')
+            return
+        detail = order.get('result_detail') if isinstance(order.get('result_detail'), dict) else {}
+        key = 'playbook_execution_events' if event.get('kind') != 'rollback' else 'rollback_events'
+        records = detail.get(key)
+        if not isinstance(records, list):
+            records = []
+        records.append({
+            'execution_id': str(binding.get('execution_id') or ''),
+            'request_hash': str(binding.get('request_hash') or ''),
+            'actor_id': str(binding.get('actor_id') or ''),
+            'actor_username': str(binding.get('actor_username') or ''),
+            **event,
+            'created_at': datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        })
+        detail[key] = records
+        conn.execute(
+            'UPDATE change_orders SET result_detail_json = ?, updated_at = ? WHERE id = ?',
+            (json.dumps(detail, ensure_ascii=False, sort_keys=True), datetime.now(timezone.utc).isoformat(), order_id),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        logger.exception('Failed to append Playbook execution fact to a change order')
+    finally:
+        conn.close()
+
+
+def _validate_change_order_execution_binding(
+    conn,
+    *,
+    binding: dict,
+    execution_id: str,
+    device_ids: list[str],
+    phases: dict,
+    variables: dict,
+    platform: str,
+    actor: dict,
+) -> None:
+    """Recheck the work-order approval immediately before device operations."""
+    from fastapi import HTTPException
+    from api.change_orders.helpers import (
+        APPROVAL_SNAPSHOT_VERSION,
+        approval_snapshot_hash,
+        assert_change_order_window_open,
+        assert_explicit_execution_profile,
+        assert_order_mfa_valid,
+        resolve_active_order_implementer,
+    )
+    from core.rbac import authorize_resource, enforce_resource_scope
+    from core.tenant_policy import TENANT_ISOLATION_ENABLED, tenant_scope_for_user
+    from services.change_order_service import get_change_order
+    from api.automation import _normalize_execution_commands, _resolve_change_order_target_ids
+    from .builtin_scenarios import PLATFORM_SAVE_COMMANDS
+    from .scenarios import _normalize_playbook_platform
+
+    actor_id = str(actor.get('id') or actor.get('user_id') or '')
+    if actor_id != str(binding.get('actor_id') or '') or str(binding.get('execution_id') or '') != execution_id:
+        raise HTTPException(status_code=403, detail='Playbook 实施人身份与工单执行授权不一致')
+    actor_row = conn.execute(
+        'SELECT id, username, role, role_profile, status, tenant_id, scope_mode FROM users WHERE id = ?',
+        (actor_id,),
+    ).fetchone()
+    if not actor_row or str(actor_row['status'] or '').lower() != 'active':
+        raise HTTPException(status_code=403, detail='Playbook 实施人账号已停用或不可用')
+    actor = {**actor, **dict(actor_row), 'user_id': actor_id}
+
+    order = get_change_order(conn, str(binding.get('order_id') or ''))
+    if not order or str(order.get('order_number') or '') != str(binding.get('order_number') or ''):
+        raise HTTPException(status_code=409, detail='关联变更工单不存在或编号不匹配')
+    if str(order.get('status') or '') != 'implementing':
+        raise HTTPException(status_code=409, detail='关联变更工单已离开实施中状态')
+    implementer = resolve_active_order_implementer(conn, order)
+    if str(implementer.get('id') or '') != actor_id:
+        raise HTTPException(status_code=403, detail='Playbook 操作人已不再是工单指定实施人')
+    approver_id = str(order.get('final_approver_id') or order.get('approver_id') or '')
+    if not approver_id or approver_id == actor_id:
+        raise HTTPException(status_code=403, detail='终审人不能执行关联 Playbook')
+
+    tenant_id = str(order.get('tenant_id') or '').strip()
+    if TENANT_ISOLATION_ENABLED and tenant_scope_for_user(actor) != tenant_id:
+        raise HTTPException(status_code=403, detail='Playbook 实施人不在工单租户范围内')
+    enforce_resource_scope(actor, 'pam', 'intervene', tenant_id=tenant_id or None)
+    assert_explicit_execution_profile(actor, 'command')
+    assert_explicit_execution_profile(actor, 'playbook')
+
+    detail = order.get('result_detail') if isinstance(order.get('result_detail'), dict) else {}
+    if int(detail.get('approval_snapshot_version') or 0) != APPROVAL_SNAPSHOT_VERSION:
+        raise HTTPException(status_code=409, detail='关联工单使用旧版审批快照')
+    current_snapshot = approval_snapshot_hash(order)
+    if (
+        str(binding.get('approval_snapshot_hash') or '') != current_snapshot
+        or str(detail.get('approval_snapshot_hash') or '') != current_snapshot
+        or str(detail.get('executing_snapshot_hash') or '') != current_snapshot
+    ):
+        raise HTTPException(status_code=409, detail='关联工单审批快照已变化')
+    if (
+        not str(detail.get('execution_started_at') or '').strip()
+        or str(detail.get('execution_started_by') or '') != actor_id
+        or str(detail.get('execution_request_hash') or '') != str(binding.get('request_hash') or '')
+    ):
+        raise HTTPException(status_code=409, detail='关联工单的单次授权未消费或属于其他执行')
+    assert_change_order_window_open(order)
+    assert_order_mfa_valid(order, actor_id, str(actor_row['username'] or ''))
+
+    expected_device_ids = _resolve_change_order_target_ids(conn, order.get('target_devices') or [])
+    if (
+        set(device_ids) != set(expected_device_ids)
+        or len(device_ids) != len(expected_device_ids)
+        or set(device_ids) != set(binding.get('device_ids') or [])
+        or len(device_ids) != len(set(device_ids))
+    ):
+        raise HTTPException(status_code=409, detail='Playbook 目标设备与工单审批范围不一致')
+    expected_hash = hashlib.sha256(json.dumps({
+        'order_id': str(order.get('id') or ''),
+        'approval_snapshot_hash': current_snapshot,
+        'device_ids': sorted(device_ids),
+        'variables': {str(key): '' if value is None else str(value) for key, value in variables.items()},
+        'phases': phases,
+        'platform': platform,
+        'scenario_id': str(binding.get('scenario_id') or ''),
+        'playbook_version_id': str(binding.get('playbook_version_id') or ''),
+        'actor_id': actor_id,
+    }, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
+    if expected_hash != str(binding.get('request_hash') or ''):
+        raise HTTPException(status_code=409, detail='Playbook 请求内容与单次工单授权不一致')
+
+    if not authorize_resource(actor, 'playbook', 'execute', tenant_id=tenant_id or None):
+        raise HTTPException(status_code=403, detail='Playbook 执行权限已撤销')
+    placeholders = ','.join('?' for _ in device_ids)
+    devices = conn.execute(
+        f'SELECT id, tenant_id, site_id, site, device_group_id, platform, vendor FROM devices WHERE id IN ({placeholders})',
+        tuple(device_ids),
+    ).fetchall()
+    if len(devices) != len(device_ids):
+        raise HTTPException(status_code=409, detail='Playbook 目标设备已不存在')
+    normalized_platform = _normalize_playbook_platform(platform)
+    for device in devices:
+        device_scope = {
+            'tenant_id': str(device['tenant_id'] or ''),
+            'site_id': device['site_id'] or device['site'] or None,
+            'device_group_id': device['device_group_id'] or None,
+        }
+        if _normalize_playbook_platform(device['platform'], device['vendor']) != normalized_platform:
+            raise HTTPException(status_code=409, detail='Playbook 目标设备平台已变化')
+        for resource in ('command', 'playbook'):
+            if not authorize_resource(actor, resource, 'execute', **device_scope):
+                raise HTTPException(status_code=403, detail='Playbook 设备执行权限已撤销')
+
+    try:
+        selected_phases, _ = resolve_platform_phases(phases, platform)
+    except KeyError as exc:
+        raise HTTPException(status_code=409, detail='工单平台对应的 Playbook 阶段不可用') from exc
+    normalized_variables = {str(key): '' if value is None else str(value) for key, value in variables.items()}
+    recalculated_phase_commands = {}
+    for phase_name in ('pre_check', 'execute', 'post_check', 'rollback'):
+        phase_steps = selected_phases.get(phase_name, [])
+        if not isinstance(phase_steps, list):
+            raise HTTPException(status_code=409, detail='关联工单 Playbook 阶段格式无效')
+        if any(isinstance(item, dict) for item in phase_steps):
+            raise HTTPException(status_code=409, detail='关联工单 Playbook 含未授权动作步骤')
+        recalculated_phase_commands[phase_name] = _render_phase_commands(phase_steps, normalized_variables)
+    if recalculated_phase_commands != binding.get('phase_commands'):
+        raise HTTPException(status_code=409, detail='Playbook 命令阶段与工单单次授权不一致')
+
+    approved_commands = _normalize_execution_commands(order.get('commands') or [])
+    if approved_commands != binding.get('approved_commands'):
+        raise HTTPException(status_code=409, detail='工单命令范围与 Playbook 授权不一致')
+    save_command = str(resolve_platform_value(PLATFORM_SAVE_COMMANDS, platform) or '').strip()
+    if save_command != str(binding.get('implicit_save_command') or ''):
+        raise HTTPException(status_code=409, detail='Playbook 自动保存命令已变化')
+    exec_commands = recalculated_phase_commands['execute']
+    if exec_commands and save_command:
+        if approved_commands != exec_commands + [save_command]:
+            raise HTTPException(status_code=409, detail='Playbook 自动保存命令不在最终审批范围内')
+    elif approved_commands != exec_commands:
+        raise HTTPException(status_code=409, detail='Playbook 执行命令不在最终审批范围内')
 
 
 def _redact_execution_value(value):
@@ -422,6 +616,7 @@ async def _run_playbook(
     platform: str = 'cisco_ios',
     commit_confirmed_ttl: int = 0,
     actor: dict | None = None,
+    change_order_binding: dict | None = None,
 ):
     """
     Execute the playbook across all selected devices with concurrency control.
@@ -430,6 +625,40 @@ async def _run_playbook(
     from services.automation_service import AutomationService
 
     conn = get_db_connection()
+    if change_order_binding:
+        try:
+            _validate_change_order_execution_binding(
+                conn,
+                binding=change_order_binding,
+                execution_id=execution_id,
+                device_ids=device_ids,
+                phases=phases,
+                variables=variables,
+                platform=platform,
+                actor=actor or {},
+            )
+        except Exception as exc:
+            conn.execute(
+                "UPDATE playbook_executions SET status='failed', updated_at=? WHERE id=?",
+                (datetime.now(timezone.utc).isoformat(), execution_id),
+            )
+            conn.commit()
+            conn.close()
+            detail = getattr(exc, 'detail', None)
+            _append_change_order_execution_fact(change_order_binding, {
+                'kind': 'authorization_failed',
+                'status': 'failed',
+                'reason': str(detail or 'Playbook work-order authorization could not be revalidated')[:500],
+            })
+            logger.warning('Bound Playbook execution denied before device operations id=%s', execution_id)
+            await ws_manager.emit(execution_id, {
+                'type': 'complete',
+                'execution_id': execution_id,
+                'status': 'failed',
+                'error': 'Change-order authorization could not be revalidated',
+            })
+            return
+
     conn.execute("UPDATE playbook_executions SET status='running', updated_at=? WHERE id=?",
                  (datetime.now().isoformat(), execution_id))
     conn.commit()
@@ -673,8 +902,19 @@ async def _run_playbook(
                         if not exec_output.get("success", True):
                             overall_ok = False
                             device_result["status"] = "failed"
-                            await _do_rollback(execution_id, service, device, device_phases, variables, actor)
-                            device_result["phases"]["rollback"] = {"triggered": True, "reason": "execute_failed"}
+                            rollback_result = await _do_rollback(execution_id, service, device, device_phases, variables, actor)
+                            device_result["phases"]["rollback"] = {
+                                "triggered": True,
+                                "reason": "execute_failed",
+                                "success": bool((rollback_result or {}).get('success')),
+                            }
+                            _append_change_order_execution_fact(change_order_binding, {
+                                'kind': 'rollback',
+                                'status': 'completed' if (rollback_result or {}).get('success') else 'failed',
+                                'device_id': device_id,
+                                'reason': 'execute_failed',
+                                'success': bool((rollback_result or {}).get('success')),
+                            })
                             await _save_device_result_to_db(execution_id, device_id, device, device_result, started_at_iso)
                             results[device_id] = device_result
                             return
@@ -723,8 +963,19 @@ async def _run_playbook(
                             "hostname": hostname,
                             "message": "Post-check failed, triggering automatic rollback",
                         })
-                        await _do_rollback(execution_id, service, device, device_phases, variables, actor)
-                        device_result["phases"]["rollback"] = {"triggered": True, "reason": "post_check_failed"}
+                        rollback_result = await _do_rollback(execution_id, service, device, device_phases, variables, actor)
+                        device_result["phases"]["rollback"] = {
+                            "triggered": True,
+                            "reason": "post_check_failed",
+                            "success": bool((rollback_result or {}).get('success')),
+                        }
+                        _append_change_order_execution_fact(change_order_binding, {
+                            'kind': 'rollback',
+                            'status': 'completed' if (rollback_result or {}).get('success') else 'failed',
+                            'device_id': device_id,
+                            'reason': 'post_check_failed',
+                            'success': bool((rollback_result or {}).get('success')),
+                        })
                         await _save_device_result_to_db(execution_id, device_id, device, device_result, started_at_iso)
                         results[device_id] = device_result
                         return
@@ -780,6 +1031,29 @@ async def _run_playbook(
     )
     conn2.commit()
     conn2.close()
+    rollback_device_ids = [
+        device_id for device_id, result in results.items()
+        if (result.get('phases') or {}).get('rollback', {}).get('triggered')
+    ]
+    save_statuses = {
+        device_id: ('success' if phase.get('success') else 'failed')
+        for device_id, result in results.items()
+        for phase in [(result.get('phases') or {}).get('save') or {}]
+        if change_order_binding and change_order_binding.get('implicit_save_command')
+    }
+    _append_change_order_execution_fact(change_order_binding, {
+        'kind': 'execution_result',
+        'status': final_status,
+        'total_devices': total,
+        'success_count': success_c,
+        'failed_count': failed_c,
+        'partial_count': partial_c,
+        'device_statuses': {device_id: result.get('status') for device_id, result in results.items()},
+        'approved_commands': (change_order_binding or {}).get('approved_commands', []),
+        'implicit_save_command': (change_order_binding or {}).get('implicit_save_command', ''),
+        'save_statuses': save_statuses,
+        'rollback_device_ids': rollback_device_ids,
+    })
 
     # ──── P3: Commit Confirmed 安全网 ────
     # 若请求方指定了 commit_confirmed_ttl > 0，且本次执行全部成功，
@@ -808,7 +1082,14 @@ async def _run_playbook(
                     except KeyError as exc:
                         logger.warning("[Rollback] No platform phases for %s: %s", did, exc)
                         continue
-                    await _do_rollback(execution_id, svc, dev, dev_phases, variables, actor)
+                    rollback_result = await _do_rollback(execution_id, svc, dev, dev_phases, variables, actor)
+                    _append_change_order_execution_fact(change_order_binding, {
+                        'kind': 'rollback',
+                        'status': 'completed' if (rollback_result or {}).get('success') else 'failed',
+                        'device_id': did,
+                        'reason': 'commit_confirmation_timeout',
+                        'success': bool((rollback_result or {}).get('success')),
+                    })
 
         task = asyncio.create_task(_auto_rollback())
         _pending_rollbacks[execution_id] = task
@@ -890,7 +1171,7 @@ async def _do_rollback(execution_id: str, service, device: dict, phases: dict, v
             "type": "rollback", "device_id": device['id'],
             "hostname": hostname, "status": "no_rollback_defined",
         })
-        return
+        return {'success': False, 'status': 'no_rollback_defined'}
 
     await ws_manager.emit(execution_id, {
         "type": "rollback_start", "device_id": device['id'],
@@ -915,3 +1196,4 @@ async def _do_rollback(execution_id: str, service, device: dict, phases: dict, v
         "type": "rollback_done", "device_id": device['id'],
         "hostname": hostname, "output": result,
     })
+    return result

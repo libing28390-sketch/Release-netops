@@ -18,6 +18,7 @@ from core.textfsm import configure_ntc_templates, smart_parse_cli
 from core.read_cache import invalidate_read_cache
 from database import get_db_connection
 from services.vault_service import resolve_collector_credentials
+from services.snmp_collection_policy_service import is_snmp_collection_enabled
 from services.network_access_limiter import limited_connect_handler
 from services.collection_status_service import record_collection_result
 from services.device_classification_service import is_server_device, server_device_sql, server_device_sql_params
@@ -2376,7 +2377,7 @@ async def _collect_device_observations(
     # community.  Reading ``devices.snmp_community`` directly here can use a
     # stale copy and bypass an updated credential-center value.
     collector_credentials = _collector_credentials_for_device(device)
-    snmp_credentials = collector_credentials.get('snmp') or {}
+    snmp_credentials = (collector_credentials.get('snmp') or {}) if is_snmp_collection_enabled(device) else {}
     snmp_ip = str(snmp_credentials.get('server') or ip or '').strip()
     snmp_community = str(snmp_credentials.get('community') or '').strip()
     snmp_version_key = str(snmp_credentials.get('version') or '2c').strip().casefold()
@@ -3604,7 +3605,7 @@ async def discover_device_neighbors(
         # only at the legacy devices cache can reject an asset whose SNMP
         # community is configured exclusively in the import template.
         collector_credentials = _collector_credentials_for_device(device)
-        snmp_credentials = collector_credentials.get('snmp') or {}
+        snmp_credentials = (collector_credentials.get('snmp') or {}) if is_snmp_collection_enabled(device) else {}
         has_snmp = bool(
             snmp_credentials.get('configured')
             or snmp_credentials.get('community')
@@ -3643,7 +3644,7 @@ async def discover_device_neighbors(
                     device, collector_credentials, snapshot_generation=snapshot_generation,
                 )
                 aggregation_status = str(aggregation_summary.get('status') or '').lower()
-                if aggregation_status in {'unavailable', 'failed', 'partial'} and has_ssh:
+                if aggregation_status in {'unavailable', 'failed', 'partial', 'disabled'} and has_ssh:
                     snmp_detail = str(aggregation_summary.get('detail') or aggregation_status)
                     cli_summary = await asyncio.to_thread(_sync_aggregation_inventory, device)
                     if int(cli_summary.get('parents') or 0) > 0 and int(cli_summary.get('members') or 0) > 0:

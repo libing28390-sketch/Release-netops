@@ -21,6 +21,7 @@ const createExecutionState = (phase: 'confirm' | 'running' | 'done') => ({
   output: '',
   error: '',
   success: false,
+  requestSent: false,
 });
 
 const ExecutionHarness: React.FC<{ initialPhase: 'confirm' | 'running' | 'done' }> = ({ initialPhase }) => {
@@ -31,15 +32,27 @@ const ExecutionHarness: React.FC<{ initialPhase: 'confirm' | 'running' | 'done' 
       executeModal={executeModal}
       setExecuteModal={setExecuteModal}
       runOrderCommands={vi.fn()}
-      handleTransition={vi.fn()}
     />
   );
 };
 
+const renderCompletedExecution = (overrides: Partial<ReturnType<typeof createExecutionState>> = {}) => render(
+  <TerminalExecution
+    language="en"
+    executeModal={{
+      ...createExecutionState('done'),
+      error: 'Request failed',
+      ...overrides,
+    }}
+    setExecuteModal={vi.fn()}
+    runOrderCommands={vi.fn()}
+  />,
+);
+
 describe('TerminalExecution dialog close behavior', () => {
   afterEach(() => cleanup());
 
-  it('keeps the execution dialog open while a privileged command run is active', () => {
+  it('keeps the execution dialog open while a command run is active', () => {
     render(<ExecutionHarness initialPhase="running" />);
 
     fireEvent.keyDown(document, { key: 'Escape' });
@@ -53,5 +66,26 @@ describe('TerminalExecution dialog close behavior', () => {
     fireEvent.keyDown(document, { key: 'Escape' });
 
     expect(screen.queryByRole('dialog', { name: 'Push commands to target devices' })).toBeNull();
+  });
+
+  it('warns after an execution request is sent and never offers a blind retry', () => {
+    renderCompletedExecution({ requestSent: true });
+
+    expect(screen.getByRole('note').textContent).toContain('The authorization has been used');
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+  });
+
+  it('does not claim authorization was consumed for a preflight failure', () => {
+    renderCompletedExecution({ requestSent: false });
+
+    expect(screen.queryByRole('note')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+  });
+
+  it('requires verification records before completion after a successful command response', () => {
+    renderCompletedExecution({ success: true, requestSent: true, error: '', output: 'Interface is up' });
+
+    expect(screen.getByRole('status').textContent).toContain('record technical and business results');
+    expect(screen.queryByRole('button', { name: 'Mark Completed & Save Output' })).toBeNull();
   });
 });

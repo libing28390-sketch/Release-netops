@@ -502,16 +502,16 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
       <div className={`${alertPanelClass} flex-1 min-h-0 flex flex-col overflow-hidden`}>
         {/* Templates Table */}
         <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
-          <DataTable unstyled exportConfig={{ filename: 'textfsm-templates', language: isZh ? 'zh' : 'en', disabled: loading || templates.length === 0, exportData: exportTemplates }} className="nx-data-table min-w-[960px] table-fixed">
+          <DataTable unstyled exportConfig={{ filename: 'textfsm-templates', language: isZh ? 'zh' : 'en', disabled: loading || templates.length === 0, exportData: exportTemplates }} className="nx-data-table table-fixed" style={{ minWidth: 1440 }}>
             <colgroup>
-              <col className="w-[18%]" />
-              <col className="w-[12%]" />
-              <col className="w-[15%]" />
-              <col className="w-[12%]" />
+              <col className="w-[26%]" />
+              <col className="w-[7%]" />
               <col className="w-[9%]" />
-              <col className="w-[18%]" />
-              <col className="w-[8%]" />
-              <col className="w-[8%]" />
+              <col className="w-[10%]" />
+              <col className="w-[7%]" />
+              <col className="w-[16%]" />
+              <col className="w-[11%]" />
+              <col className="w-[6%]" />
               <col className="w-28" />
             </colgroup>
             <thead className="sticky top-0 z-10 border-b border-black/5">
@@ -536,7 +536,7 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
               )}
                 {!loading && templates.map((tpl) => (
                 <tr key={tpl.filename} className="border-t border-black/[0.03] hover:bg-slate-50/50 transition-colors">
-                  <td className="px-4 py-2.5 nx-code-text text-black/70 break-all">{tpl.filename}</td>
+                  <td title={tpl.filename} className="px-4 py-2.5 nx-code-text text-black/70"><span className="block truncate">{tpl.filename}</span></td>
                   <td className="px-4 py-2.5">
                     {(() => { const meta = getTemplateDisplayMeta(tpl); return isZh ? meta.vendor.label : meta.vendor.labelEn; })()}
                   </td>

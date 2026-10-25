@@ -65,6 +65,7 @@ import { authHeaders } from './api/http';
 
 const TerminalWindow = lazy(() => import('./components/access/TerminalWindow'));
 const AppModals = lazy(() => import('./components/modals/AppModals').then(({ AppModals: Component }) => ({ default: Component })));
+const TicketsPage = lazy(() => import('./pages/Tickets'));
 
 // Types imported from ./types — re-export User as UserType to avoid clash with lucide-react User icon
 
@@ -1926,7 +1927,11 @@ const App: React.FC = () => {
         toast={toast}
         onCloseToast={() => setToast(null)}
       >
-        <AppMainContent />
+        {activeTab === 'tickets' ? (
+          <Suspense fallback={<div role="status" className="flex min-h-[240px] items-center justify-center text-sm text-[var(--ui-fg-muted)]">{language === 'zh' ? '正在加载故障工单…' : 'Loading incident tickets…'}</div>}>
+            <TicketsPage language={language} currentUser={currentUser} users={users} showToast={showToast} />
+          </Suspense>
+        ) : <AppMainContent />}
 
       {/* ── Command Preview Modal ── */}
       {showCustomCommandModal && (

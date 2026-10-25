@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
@@ -15,58 +16,177 @@ def analyze_device_inspection(
     返回分析项列表，每项包含：指标、状态、结论、建议。
     """
     analysis_results = []
-    
+    component_codes = {0: 'ok', 1: 'warning', 2: 'failed', 3: 'unknown'}
+    unknown_states = {'', 'unknown', 'unavailable', 'not_collected', 'not collected', 'n/a', 'na', 'null', 'none', '--'}
+    healthy_states = {'normal', 'ok', 'up', 'true', '1', 'running', 'operational', 'ready', 'active'}
+    failure_states = {'fail', 'failed', 'failure', 'error', 'down', 'offline', 'alarm', 'false', '0'}
+
+    def _number(value: Any) -> float | None:
+        if isinstance(value, bool):
+            return None
+        try:
+            number = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return number if math.isfinite(number) else None
+
+    def _crossed(value: Any, threshold: Any, direction: Any) -> bool:
+        actual = _number(value)
+        boundary = _number(threshold)
+        if actual is None or boundary is None:
+            return False
+        return actual < boundary if str(direction or 'above').casefold() == 'below' else actual >= boundary
+
+    def _status_value(value: Any, component_state: bool) -> str:
+        if isinstance(value, bool):
+            return 'ok' if value else 'failed'
+        number = _number(value)
+        if number is not None:
+            if component_state and number.is_integer() and int(number) in component_codes:
+                return component_codes[int(number)]
+            if number.is_integer():
+                return str(int(number))
+        normalized = str(value or '').strip().casefold()
+        if component_state and normalized in {'0', '1', '2', '3'}:
+            return component_codes[int(normalized)]
+        return normalized
+
+    def _expected_matches(value: Any, expected: Any, allow_substring: bool) -> bool:
+        actual_text = str(value or '').strip().casefold()
+        expected_text = str(expected or '').strip().casefold()
+        if not expected_text or actual_text in unknown_states:
+            return False
+        if actual_text == expected_text:
+            return True
+        if not allow_substring or expected_text not in actual_text:
+            return False
+        prefix = actual_text.split(expected_text, 1)[0].strip()
+        return not (
+            prefix in {'un', 'not', 'no', 'non'}
+            or prefix.endswith(('not', 'no', 'non'))
+        )
+
     for item in inspection_items:
         key = item.get('check_key')
         if not key or key not in metrics:
             continue
-            
+
         val = metrics[key]
-        if val is None or isinstance(val, dict): # Skip errors
+        if val is None or isinstance(val, dict):
             continue
-            
+
+        if str(metrics.get(f'{key}_status') or '').strip().upper() in {
+            'NOT_COLLECTED', 'UNCHECKED', 'UNAVAILABLE', 'NOT_APPLICABLE',
+        }:
+            continue
+
         name = item.get('name_zh') or item.get('name') or key
+        unit = str(item.get('unit') or '').strip()
         warn = item.get('warning_threshold')
         crit = item.get('critical_threshold')
-        
+        parse_type = str(item.get('parse_type') or 'numeric').casefold()
+        direction = str(item.get('threshold_direction') or 'above').casefold()
+        metric_status = str(metrics.get(f'{key}_status') or '').strip().upper()
         status = "healthy"
-        conclusion = f"指标正常: {val}"
+        value_text = f"{val}{(' ' + unit) if unit else ''}"
+        conclusion = f"指标正常: {value_text}"
         suggestion = ""
-        
-        # 1. 阈值判断
-        if isinstance(val, (int, float)):
-            if crit is not None and val >= float(crit):
-                status = "critical"
-                conclusion = f"指标严重超标: {val} (阈值 {crit})"
-                suggestion = f"请立即检查设备 {name} 负载或状态。"
-            elif warn is not None and val >= float(warn):
-                status = "warning"
-                conclusion = f"指标达到告警线: {val} (阈值 {warn})"
-                suggestion = f"建议关注 {name} 变化趋势。"
-                
-        # 2. 历史对比判断 (如果提供了历史数据)
-        if historical_metrics and key in historical_metrics:
-            last_val = historical_metrics[key]
-            if isinstance(val, (int, float)) and isinstance(last_val, (int, float)) and last_val > 0:
-                change_pct = (val - last_val) / last_val * 100.0
-                if abs(change_pct) > 20: # 变化超过 20% 记录一下
-                    trend = "上升" if change_pct > 0 else "下降"
-                    conclusion += f" (较上次{trend} {abs(change_pct):.1f}%)"
-                    if status == "healthy" and abs(change_pct) > 50:
+
+        if parse_type == 'status':
+            component_state = (
+                str(item.get('method') or '').casefold() == 'snmp'
+                and str(key).casefold().endswith(('_fan', '_psu'))
+            )
+            normalized = _status_value(val, component_state)
+            if metric_status in {'NOT_COLLECTED', 'UNCHECKED', 'UNAVAILABLE', 'NOT_APPLICABLE'} or normalized in unknown_states:
+                continue
+            if metric_status == 'WARNING':
+                status = 'warning'
+            elif metric_status in {'ERROR', 'CRITICAL'}:
+                status = 'critical' if component_state else 'warning'
+            elif metric_status == 'SUCCESS':
+                status = 'healthy'
+            elif normalized == 'warning':
+                status = 'warning'
+            elif normalized in {'failed', 'fail', 'failure'}:
+                status = 'critical' if component_state else 'warning'
+            else:
+                expected = item.get('expected_value')
+                has_expected = str(expected or '').strip().casefold() not in unknown_states
+                if has_expected:
+                    matches = (
+                        normalized == _status_value(expected, component_state)
+                        if component_state
+                        else _expected_matches(
+                            val,
+                            expected,
+                            str(item.get('category') or '').casefold() == 'compliance',
+                        )
+                    )
+                    if not matches:
+                        status = 'warning'
+                elif normalized in healthy_states:
+                    status = 'healthy'
+                elif normalized in failure_states:
+                    status = 'critical' if component_state else 'warning'
+                else:
+                    status = 'warning'
+
+            if status != 'healthy':
+                conclusion = f"状态异常: 实际 {val}，期望 {item.get('expected_value') or '正常'}"
+                suggestion = f"请检查 {name} 的状态与采集来源。"
+        else:
+            evaluated_value = val
+            if parse_type == 'diff':
+                change_pct = metrics.get(f'{key}_change_pct')
+                if change_pct is None and historical_metrics and key in historical_metrics:
+                    previous = _number(historical_metrics.get(key))
+                    current = _number(val)
+                    if previous is not None and previous > 0 and current is not None:
+                        change_pct = abs(current - previous) / previous * 100.0
+                if change_pct is None:
+                    evaluated_value = None
+                else:
+                    evaluated_value = change_pct
+
+            if evaluated_value is not None:
+                evaluated_unit = '%' if parse_type == 'diff' else unit
+                evaluated_text = f"{evaluated_value}{(' ' + evaluated_unit) if evaluated_unit else ''}"
+                threshold_relation = '低于' if direction == 'below' else '达到或超过'
+                if _crossed(evaluated_value, crit, direction):
+                    status = "critical"
+                    conclusion = f"指标严重超标: {evaluated_text} ({threshold_relation}阈值 {crit}{(' ' + evaluated_unit) if evaluated_unit else ''})"
+                    suggestion = f"请立即检查设备 {name} 负载或状态。"
+                elif _crossed(evaluated_value, warn, direction):
+                    status = "warning"
+                    conclusion = f"指标达到告警线: {evaluated_text} ({threshold_relation}阈值 {warn}{(' ' + evaluated_unit) if evaluated_unit else ''})"
+                    suggestion = f"建议关注 {name} 变化趋势。"
+
+        # 2. Historical trend context; it never overrides a status item or an
+        # already established threshold state.
+        if parse_type != 'status' and historical_metrics and key in historical_metrics:
+            last_val = _number(historical_metrics[key])
+            current_val = _number(val)
+            if current_val is not None and last_val is not None and last_val > 0:
+                change = (current_val - last_val) / last_val * 100.0
+                if abs(change) > 20:
+                    trend = "上升" if change > 0 else "下降"
+                    conclusion += f" (较上次{trend} {abs(change):.1f}%)"
+                    if status == "healthy" and abs(change) > 50:
                         status = "warning"
-                        conclusion = f"指标波动剧烈: {val} (较上次{trend} {abs(change_pct):.1f}%)"
+                        conclusion = f"指标波动剧烈: {value_text} (较上次{trend} {abs(change):.1f}%)"
                         suggestion = "指标波动剧烈，建议排查是否存在潜在风险。"
 
-        # 3. 结果合并
         analysis_results.append({
             "metric": name,
             "key": key,
             "value": val,
+            "unit": unit,
             "status": status,
             "conclusion": conclusion,
             "suggestion": suggestion
         })
-        
+
     return analysis_results
 
 def summarize_run_analysis(device_results: List[Dict[str, Any]]) -> Dict[str, Any]:

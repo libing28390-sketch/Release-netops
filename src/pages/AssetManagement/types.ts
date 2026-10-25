@@ -100,6 +100,8 @@ export interface Asset {
   username: string;
   snmp_community: string;
   snmp_port: string;
+  /** Master switch for all SNMP collection initiated for this device. */
+  snmp_collection_enabled?: boolean;
   snmp_credential_id?: string;
   /** Vault credential name accepted by asset import; IDs remain supported via snmp_credential_id. */
   snmp_credential_name?: string;

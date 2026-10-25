@@ -59,6 +59,15 @@ RESOURCE_ACTION_CATALOG = {
     'script': {'view', 'create', 'edit_draft', 'submit', 'approve', 'publish', 'execute', 'delete'},
     'scheduled_job': {'view', 'create', 'update', 'enable', 'disable', 'delete', 'execute'},
     'change_order': {'view', 'create', 'update', 'submit', 'approve', 'implement', 'cancel', 'delete'},
+    'incident_ticket': {
+        'view', 'create', 'assign', 'claim', 'start', 'request_confirmation',
+        'confirm_close', 'cancel', 'merge', 'link_change_order', 'manage_groups',
+    },
+    'service_catalog': {'view', 'create', 'publish', 'manage_calendar', 'manage_sla'},
+    'service_request': {
+        'view', 'create', 'assign', 'claim', 'approve', 'reject', 'acknowledge', 'start',
+        'wait_external', 'resume', 'deliver', 'confirm_complete', 'return', 'cancel', 'link_change_order',
+    },
     'credential': {'view', 'create', 'update', 'rotate', 'use', 'delete'},
     'user': {'view', 'create', 'update', 'delete', 'manage_scopes'},
     'pam': {'view', 'request_approval', 'approve', 'create_change', 'intervene'},
@@ -78,6 +87,20 @@ RECOMMENDED_ROLE_PROFILES = {
     'Change Requester': {
         'pam': {'view', 'create_change'},
         'change_order': {'view', 'create', 'update'},
+        'asset': {'view'},
+        # Requesters may open and close only tickets they own; claiming stays
+        # a responder action and is not granted to the viewer-class profile.
+        'incident_ticket': {'view', 'create', 'confirm_close', 'cancel', 'link_change_order'},
+        'service_request': {'view', 'create', 'confirm_complete', 'cancel', 'link_change_order'},
+        'service_catalog': {'view'},
+    },
+    'Service Desk Manager': {
+        'incident_ticket': {'view', 'assign', 'claim', 'start', 'request_confirmation', 'confirm_close', 'cancel', 'link_change_order'},
+        'service_request': {
+            'view', 'create', 'assign', 'claim', 'approve', 'reject', 'acknowledge', 'start',
+            'wait_external', 'resume', 'deliver', 'confirm_complete', 'return', 'cancel', 'link_change_order',
+        },
+        'service_catalog': {'view'},
     },
     'Platform Viewer': {
         'rack': {'read', 'view'},
@@ -123,8 +146,13 @@ RECOMMENDED_ROLE_PROFILES = {
     },
     'Automation Operator': {
         'platform': {'view'}, 'command': {'view', 'execute'}, 'textfsm': {'view'},
+        'asset': {'view'},
         'pam': {'view', 'request_approval', 'create_change', 'intervene'},
         'sample_output': {'view'}, 'playbook': {'view', 'execute'},
+        'incident_ticket': {
+            'view', 'create', 'assign', 'claim', 'start', 'request_confirmation',
+            'cancel', 'merge', 'link_change_order',
+        },
     },
     'System Administrator': {'*': {'*'}},
 }
@@ -140,6 +168,8 @@ RESOURCE_ACTIONS = {
         'read', 'view', 'create', 'update', 'edit_draft', 'submit',
         'bind_device', 'test', 'execute', 'upload', 'delete', 'manage', 'cancel', 'retry',
         'request_approval', 'create_change', 'intervene', 'archive',
+        'assign', 'claim', 'start', 'request_confirmation', 'confirm_close', 'merge', 'link_change_order',
+        'approve', 'reject', 'acknowledge', 'wait_external', 'resume', 'deliver', 'confirm_complete', 'return',
         'reserve', 'allocate', 'release', 'export',
     },
     'Viewer': {'read', 'view'},

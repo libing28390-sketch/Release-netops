@@ -5,8 +5,141 @@ Example: BG202603280001
 """
 
 import json
+import hashlib
+import os
 import uuid
 from datetime import datetime, timezone
+from database import PROJECT_ROOT
+
+
+def normalize_control_sheet_identity(value: dict | None) -> dict:
+    """Return the control sheet with canonical, ID-based person references.
+
+    The flat identity fields were written by older clients.  Read them for
+    compatibility, but keep only the nested canonical references in the
+    normalized value so there is one source of truth going forward.
+    """
+    control_sheet = dict(value) if isinstance(value, dict) else {}
+
+    def _person(primary: str, aliases: tuple[str, ...]) -> dict:
+        raw = control_sheet.get(primary)
+        person = dict(raw) if isinstance(raw, dict) else {}
+        user_id = str(person.get('id') or '').strip()
+        username = str(person.get('username') or '').strip()
+        # Older nested aliases (for example business_verifier) precede flat
+        # duplicate fields so a populated identity is not shadowed by a stale
+        # legacy scalar value.
+        for alias in aliases:
+            nested = control_sheet.get(alias)
+            if not isinstance(nested, dict):
+                continue
+            if not user_id:
+                user_id = str(nested.get('id') or '').strip()
+            if not username:
+                username = str(nested.get('username') or '').strip()
+        if not user_id:
+            for alias in aliases:
+                user_id = str(control_sheet.get(f'{alias}_id') or '').strip()
+                if user_id:
+                    break
+        if not username:
+            for alias in aliases:
+                username = str(control_sheet.get(f'{alias}_username') or '').strip()
+                if username:
+                    break
+        return {'id': user_id, 'username': username} if user_id or username else {}
+
+    implementer = _person('implementer', ('implementer',))
+    business_confirmer = _person('business_confirmer', ('business_confirmer', 'business_verifier'))
+    control_sheet.pop('implementer_id', None)
+    control_sheet.pop('implementer_username', None)
+    control_sheet.pop('business_confirmer_id', None)
+    control_sheet.pop('business_confirmer_username', None)
+    control_sheet.pop('business_verifier_id', None)
+    control_sheet.pop('business_verifier_username', None)
+    control_sheet.pop('business_verifier', None)
+    if implementer:
+        control_sheet['implementer'] = implementer
+    else:
+        control_sheet.pop('implementer', None)
+    if business_confirmer:
+        control_sheet['business_confirmer'] = business_confirmer
+    else:
+        control_sheet.pop('business_confirmer', None)
+    return control_sheet
+
+
+def control_sheet_implementer(control_sheet: dict | None) -> dict:
+    """Resolve the canonical implementer from canonical or legacy fields."""
+    return normalize_control_sheet_identity(control_sheet).get('implementer') or {'id': '', 'username': ''}
+
+
+def control_sheet_business_confirmer(control_sheet: dict | None) -> dict:
+    """Resolve the canonical business verifier from all supported old fields."""
+    return normalize_control_sheet_identity(control_sheet).get('business_confirmer') or {'id': '', 'username': ''}
+
+
+def control_sheet_result_reviewer(control_sheet: dict | None) -> dict:
+    """Read the optional result reviewer from the existing control-sheet field."""
+    values = control_sheet if isinstance(control_sheet, dict) else {}
+    nested = values.get('co_reviewer')
+    nested = nested if isinstance(nested, dict) else {}
+    user_id = str(nested.get('id') or values.get('co_reviewer_id') or '').strip()
+    username = str(nested.get('username') or values.get('co_reviewer_username') or '').strip()
+    return {'id': user_id, 'username': username} if user_id or username else {}
+
+
+def _control_sheet_attachment_sha256(file_path: str) -> str:
+    """Hash an attachment only when its resolved path stays in the managed folder."""
+    root = os.path.realpath(os.path.join(str(PROJECT_ROOT), 'data', 'change_order_attachments'))
+    resolved = os.path.realpath(str(file_path or ''))
+    try:
+        if os.path.commonpath((root, resolved)) != root or not os.path.isfile(resolved):
+            return ''
+        digest = hashlib.sha256()
+        with open(resolved, 'rb') as file_handle:
+            for chunk in iter(lambda: file_handle.read(1024 * 1024), b''):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except (OSError, ValueError):
+        return ''
+
+
+def archive_change_order_approval_authorization(
+    result_detail: dict,
+    *,
+    actor: dict,
+    reason: str,
+    at: str,
+) -> None:
+    """Preserve and invalidate the current one-time authorization facts."""
+    authorization_fields = (
+        'approval_snapshot_hash', 'approval_snapshot_version', 'executing_snapshot_hash',
+        'execution_token_id', 'execution_token_consumed_at', 'mfa_verified_at',
+        'mfa_verified_by_id', 'mfa_verified_by', 'execution_started_at',
+        'execution_started_by', 'execution_request_hash',
+    )
+    previous = {
+        key: result_detail.get(key)
+        for key in authorization_fields
+        if result_detail.get(key) not in (None, '')
+    }
+    if not previous:
+        return
+    history = result_detail.get('invalidated_approval_authorizations')
+    if not isinstance(history, list):
+        history = []
+    history.append({
+        'authorization': previous,
+        'invalidated_at': at,
+        'invalidated_by': {'id': actor.get('id'), 'username': actor.get('username')},
+        'reason': reason,
+    })
+    result_detail['invalidated_approval_authorizations'] = history
+    for key in authorization_fields:
+        result_detail.pop(key, None)
+    for key in ('initial_review_at', 'approved_at', 'approval_comment'):
+        result_detail.pop(key, None)
 
 
 def _utc_now_iso() -> str:
@@ -15,6 +148,28 @@ def _utc_now_iso() -> str:
 
 # Alias used by bookmark / template helpers
 _now = _utc_now_iso
+
+
+_CONTROL_SHEET_IMPLEMENTER_ID_SQL = (
+    "COALESCE(NULLIF(control_sheet_json::jsonb #>> '{implementer,id}', ''), "
+    "NULLIF(control_sheet_json::jsonb ->> 'implementer_id', ''), '')"
+)
+_CONTROL_SHEET_IMPLEMENTER_USERNAME_SQL = (
+    "COALESCE(NULLIF(control_sheet_json::jsonb #>> '{implementer,username}', ''), "
+    "NULLIF(control_sheet_json::jsonb ->> 'implementer_username', ''), '')"
+)
+_CONTROL_SHEET_BUSINESS_CONFIRMER_ID_SQL = (
+    "COALESCE(NULLIF(control_sheet_json::jsonb #>> '{business_confirmer,id}', ''), "
+    "NULLIF(control_sheet_json::jsonb #>> '{business_verifier,id}', ''), "
+    "NULLIF(control_sheet_json::jsonb ->> 'business_confirmer_id', ''), "
+    "NULLIF(control_sheet_json::jsonb ->> 'business_verifier_id', ''), '')"
+)
+_CONTROL_SHEET_BUSINESS_CONFIRMER_USERNAME_SQL = (
+    "COALESCE(NULLIF(control_sheet_json::jsonb #>> '{business_confirmer,username}', ''), "
+    "NULLIF(control_sheet_json::jsonb #>> '{business_verifier,username}', ''), "
+    "NULLIF(control_sheet_json::jsonb ->> 'business_confirmer_username', ''), "
+    "NULLIF(control_sheet_json::jsonb ->> 'business_verifier_username', ''), '')"
+)
 
 
 def _today_str() -> str:
@@ -55,6 +210,9 @@ def create_change_order(conn, *, title: str, description: str = '',
                         scheduled_start: str = '',
                         scheduled_end: str = '',
                         authorization_exempt: bool = False,
+                        emergency_reason: str = '',
+                        emergency_review_owner_id: str = '',
+                        emergency_review_due_at: str = '',
                         control_sheet: dict | None = None,
                         commit: bool = True) -> dict:
     order_id = str(uuid.uuid4())
@@ -71,9 +229,11 @@ def create_change_order(conn, *, title: str, description: str = '',
             target_devices_json, commands_json, rollback_plan, risk_level,
             scheduled_start, scheduled_end,
             authorization_exempt,
+            emergency_reason, emergency_review_owner_id, emergency_review_due_at,
+            emergency_review_status,
             control_sheet_json,
             created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''',
         (
             order_id, order_number, title, description, incident_id, order_type, priority, status,
@@ -86,7 +246,10 @@ def create_change_order(conn, *, title: str, description: str = '',
             rollback_plan, risk_level,
             scheduled_start, scheduled_end,
             1 if authorization_exempt else 0,
-            json.dumps(control_sheet or {}, ensure_ascii=False),
+            emergency_reason, emergency_review_owner_id,
+            emergency_review_due_at or None,
+            'pending' if order_type == 'emergency' and emergency_reason and emergency_review_owner_id and emergency_review_due_at else '',
+            json.dumps(normalize_control_sheet_identity(control_sheet), ensure_ascii=False),
             now, now,
         ),
     )
@@ -113,6 +276,9 @@ def update_change_order(conn, order_id: str, updates: dict, *, commit: bool = Tr
         'rollback_plan', 'risk_level',
         'scheduled_start', 'scheduled_end',
         'authorization_exempt',
+        'emergency_reason', 'emergency_review_owner_id', 'emergency_review_due_at',
+        'emergency_review_status', 'emergency_reviewed_by_id', 'emergency_reviewed_by',
+        'emergency_reviewed_at', 'emergency_review_note',
         'actual_start', 'actual_end',
         'result_summary', 'result_detail_json',
         'approval_token', 'rejected_reason',
@@ -129,7 +295,10 @@ def update_change_order(conn, order_id: str, updates: dict, *, commit: bool = Tr
     if 'command_template' in updates:
         updates['command_template_json'] = json.dumps(updates.pop('command_template'), ensure_ascii=False)
     if 'control_sheet' in updates:
-        updates['control_sheet_json'] = json.dumps(updates.pop('control_sheet'), ensure_ascii=False)
+        updates['control_sheet_json'] = json.dumps(
+            normalize_control_sheet_identity(updates.pop('control_sheet')),
+            ensure_ascii=False,
+        )
 
     set_parts = []
     values = []
@@ -162,10 +331,14 @@ def get_change_order(conn, order_id: str) -> dict | None:
     
     # Fetch attachments
     attachments_rows = conn.execute(
-        "SELECT id, file_name, file_size, created_at FROM change_order_control_sheet_attachments WHERE order_id = ? ORDER BY created_at ASC",
+        "SELECT id, file_path, file_name, file_size, created_at FROM change_order_control_sheet_attachments WHERE order_id = ? ORDER BY created_at ASC, id ASC",
         (order_id,)
     ).fetchall()
-    order['control_sheet_attachments'] = [dict(r) for r in attachments_rows]
+    order['control_sheet_attachments'] = []
+    for attachment_row in attachments_rows:
+        attachment = dict(attachment_row)
+        attachment['sha256'] = _control_sheet_attachment_sha256(attachment.pop('file_path', ''))
+        order['control_sheet_attachments'].append(attachment)
 
     # Add control_sheet_missing banner for historical/completed orders that
     # have no control_sheet data (e.g. rows created before the feature was
@@ -180,6 +353,18 @@ def get_change_order(conn, order_id: str) -> dict | None:
         order['control_sheet_missing'] = False
 
     return order
+
+
+def _result_review_todo_sql(user_id: str, username: str) -> tuple[str, list[str]]:
+    reviewer_id = "COALESCE(NULLIF(control_sheet_json::jsonb #>> '{co_reviewer,id}', ''), control_sheet_json::jsonb ->> 'co_reviewer_id', '')"
+    reviewer_name = "COALESCE(NULLIF(control_sheet_json::jsonb #>> '{co_reviewer,username}', ''), control_sheet_json::jsonb ->> 'co_reviewer_username', '')"
+    initial_id = "COALESCE(NULLIF(initial_reviewer_id, ''), assigned_initial_reviewer_id, '')"
+    initial_name = "COALESCE(NULLIF(initial_reviewer_username, ''), assigned_initial_reviewer_username, '')"
+    return (
+        f"((status = 'implementation_review' AND ({reviewer_id} = ? OR ({reviewer_id} = '' AND {reviewer_name} = ?))) OR "
+        f"(status = 'implementation_result_review' AND ({initial_id} = ? OR ({initial_id} = '' AND {initial_name} = ?))))",
+        [user_id, username, user_id, username],
+    )
 
 
 def _build_group_todo_conditions(groups: set[str], exclude_requester: str = '') -> tuple[list[str], list[str]]:
@@ -226,6 +411,7 @@ def list_change_orders(conn, *, page: int = 1, page_size: int = 20,
                        scheduled_to: str = '',
                        exclude_requester: str = '',
                        my_todo_kind: str = '',
+                       my_todo_user_id: str = '',
                        tenant_id: str = '',
                        requester_id: str = '') -> tuple[list[dict], int]:
     """List change orders with optional filters.
@@ -248,7 +434,10 @@ def list_change_orders(conn, *, page: int = 1, page_size: int = 20,
 
         * ``review``   — ``assigned_initial_reviewer_username == U AND status == 'initial_review' AND requester_username != U``
                          OR ``assigned_final_approver_username == U AND status == 'final_review' AND requester_username != U``
-        * ``implement`` — ``requester_username == U AND status == 'approved'``
+        * ``implement`` — explicit control-sheet implementer (or requester for legacy orders
+                          with no implementer) in an implementation status
+        * ``business_verification`` — explicit business confirmer (or requester when no
+                                      confirmer is configured) during implementation/rollback
         * ``modify``   — ``requester_username == U AND status IN ('draft', 'rejected')``
 
         The ``review`` bucket excludes rows where the requester is the same as
@@ -278,6 +467,21 @@ def list_change_orders(conn, *, page: int = 1, page_size: int = 20,
         conditions.append("requester_id = ?")
         params.append(requester_id)
 
+    business_todo_sql = (
+        "(status IN ('implementing', 'failed', 'rollback_in_progress') AND ("
+        f"{_CONTROL_SHEET_BUSINESS_CONFIRMER_ID_SQL} = ? OR "
+        f"({_CONTROL_SHEET_BUSINESS_CONFIRMER_ID_SQL} = '' AND {_CONTROL_SHEET_BUSINESS_CONFIRMER_USERNAME_SQL} = ?) OR "
+        f"({_CONTROL_SHEET_BUSINESS_CONFIRMER_ID_SQL} = '' AND {_CONTROL_SHEET_BUSINESS_CONFIRMER_USERNAME_SQL} = '' AND requester_id = ?)"
+        "))"
+    )
+    business_todo_params = [my_todo_user_id, my_todo, my_todo_user_id]
+    implementer_todo_sql = (
+        f"({_CONTROL_SHEET_IMPLEMENTER_ID_SQL} = ? OR "
+        f"({_CONTROL_SHEET_IMPLEMENTER_ID_SQL} = '' AND {_CONTROL_SHEET_IMPLEMENTER_USERNAME_SQL} = ?) OR "
+        f"({_CONTROL_SHEET_IMPLEMENTER_ID_SQL} = '' AND {_CONTROL_SHEET_IMPLEMENTER_USERNAME_SQL} = '' AND requester_username = ?))"
+    )
+    implementer_todo_params = [my_todo_user_id, my_todo, my_todo]
+
     if my_drafts:
         conditions.append("(requester_username = ? AND status = 'draft')")
         params.append(my_drafts)
@@ -290,9 +494,10 @@ def list_change_orders(conn, *, page: int = 1, page_size: int = 20,
             " OR initial_reviewer_username = ?"
             " OR final_approver_username = ?"
             " OR approver_username = ?"
+            " OR COALESCE(NULLIF(control_sheet_json::jsonb #>> '{co_reviewer,username}', ''), control_sheet_json::jsonb ->> 'co_reviewer_username', '') = ?"
             ")"
         )
-        params.extend([my_participated] * 6)
+        params.extend([my_participated] * 7)
     elif my_todo:
         if my_todo_kind == 'review':
             conditions.append(
@@ -303,25 +508,45 @@ def list_change_orders(conn, *, page: int = 1, page_size: int = 20,
             )
             params.extend([my_todo, my_todo, my_todo, my_todo])
         elif my_todo_kind == 'implement':
-            # Requester's implementation queue: approved (ready to start),
-            # implementing (in progress, needs push/complete/rollback),
-            # failed (needs rollback), rollback_in_progress (needs to mark rolled_back/failed)
+            # Explicit implementers own the operational queue. Historical
+            # orders without an implementer retain the requester fallback.
             conditions.append(
-                "(requester_username = ? AND status IN ('approved', 'implementing', 'executing', 'failed', 'rollback_in_progress'))"
+                "(status IN ('approved', 'implementing', 'executing', 'failed', 'rollback_in_progress') AND "
+                + implementer_todo_sql
+                + ")"
             )
-            params.append(my_todo)
+            params.extend(implementer_todo_params)
+        elif my_todo_kind == 'personal':
+            conditions.append(
+                "((requester_username = ? AND status IN ('draft', 'rejected')) "
+                "OR (status IN ('approved', 'implementing', 'executing', 'failed', 'rollback_in_progress') AND "
+                + implementer_todo_sql
+                + f") OR {business_todo_sql})"
+            )
+            params.extend([my_todo, *implementer_todo_params, *business_todo_params])
         elif my_todo_kind == 'modify':
             conditions.append("(requester_username = ? AND status IN ('draft', 'rejected'))")
             params.append(my_todo)
+        elif my_todo_kind == 'business_verification':
+            conditions.append(business_todo_sql)
+            params.extend(business_todo_params)
         else:
             conditions.append(
                 "("
-                "(requester_username = ? AND status IN ('draft', 'rejected', 'approved', 'implementing', 'executing', 'failed', 'rollback_in_progress'))"
+                "(requester_username = ? AND status IN ('draft', 'rejected'))"
                 " OR (assigned_initial_reviewer_username = ? AND status = 'initial_review' AND requester_username != ?)"
                 " OR (assigned_final_approver_username = ? AND status = 'final_review' AND requester_username != ?)"
+                " OR (status IN ('approved', 'implementing', 'executing', 'failed', 'rollback_in_progress') AND "
+                + implementer_todo_sql
+                + ")"
+                f" OR {business_todo_sql}"
                 ")"
             )
-            params.extend([my_todo, my_todo, my_todo, my_todo, my_todo])
+            params.extend([my_todo, my_todo, my_todo, my_todo, my_todo, *implementer_todo_params, *business_todo_params])
+    if my_todo and my_todo_kind in {'', 'review', 'personal'} and not my_drafts and not my_participated:
+        review_sql, review_params = _result_review_todo_sql(my_todo_user_id, my_todo)
+        conditions[-1] = f"({conditions[-1]} OR {review_sql})"
+        params.extend(review_params)
     if group_todo:
         groups = {g.strip() for g in group_todo.split(',') if g.strip()}
         g_conds, g_params = _build_group_todo_conditions(groups, exclude_requester)
@@ -337,8 +562,15 @@ def list_change_orders(conn, *, page: int = 1, page_size: int = 20,
         conditions.append("requester_username = ?")
         params.append(requester)
     if assignee:
-        conditions.append("(assigned_initial_reviewer_username = ? OR assigned_final_approver_username = ? OR initial_reviewer_username = ? OR final_approver_username = ?)")
-        params.extend([assignee, assignee, assignee, assignee])
+        conditions.append(
+            "(assigned_initial_reviewer_username = ? OR assigned_final_approver_username = ? "
+            "OR initial_reviewer_username = ? OR final_approver_username = ? "
+            f"OR {_CONTROL_SHEET_IMPLEMENTER_ID_SQL} = ? "
+            f"OR {_CONTROL_SHEET_IMPLEMENTER_USERNAME_SQL} = ? "
+            f"OR {_CONTROL_SHEET_BUSINESS_CONFIRMER_ID_SQL} = ? "
+            f"OR {_CONTROL_SHEET_BUSINESS_CONFIRMER_USERNAME_SQL} = ?)"
+        )
+        params.extend([assignee, assignee, assignee, assignee, assignee, assignee, assignee, assignee])
     if bookmarked_by:
         conditions.append("id IN (SELECT order_id FROM change_order_bookmarks WHERE user_id = ?)")
         params.append(bookmarked_by)
@@ -410,10 +642,50 @@ def list_change_orders(conn, *, page: int = 1, page_size: int = 20,
             rev_initial = d.get('assigned_initial_reviewer_username', '')
             rev_final = d.get('assigned_final_approver_username', '')
             st = d.get('status', '')
-            if (rev_initial == my_todo and st == 'initial_review' and req != my_todo) or \
+            control_sheet = d.get('control_sheet') if isinstance(d.get('control_sheet'), dict) else {}
+            implementer = control_sheet_implementer(control_sheet)
+            business_confirmer = control_sheet_business_confirmer(control_sheet)
+            is_implementer = (
+                str(implementer.get('id') or '') == my_todo_user_id
+                or (
+                    not str(implementer.get('id') or '')
+                    and str(implementer.get('username') or '') == my_todo
+                )
+                or (
+                    not str(implementer.get('id') or '')
+                    and not str(implementer.get('username') or '')
+                    and req == my_todo
+                )
+            )
+            is_business_verifier = (
+                str(business_confirmer.get('id') or '') == my_todo_user_id
+                or (
+                    not str(business_confirmer.get('id') or '')
+                    and str(business_confirmer.get('username') or '') == my_todo
+                )
+                or (
+                    not str(business_confirmer.get('id') or '')
+                    and not str(business_confirmer.get('username') or '')
+                    and str(d.get('requester_id') or '') == my_todo_user_id
+                )
+            )
+            if st in {'implementation_review', 'implementation_result_review'}:
+                d['todo_kind'] = 'review'
+            elif my_todo_kind == 'business_verification' and is_business_verifier and st in ('implementing', 'failed', 'rollback_in_progress'):
+                d['todo_kind'] = 'business_verification'
+            elif is_implementer and st in ('approved', 'implementing', 'executing', 'failed', 'rollback_in_progress'):
+                d['todo_kind'] = 'implement'
+            elif is_business_verifier and st in ('implementing', 'failed', 'rollback_in_progress'):
+                d['todo_kind'] = 'business_verification'
+            elif (rev_initial == my_todo and st == 'initial_review' and req != my_todo) or \
                (rev_final == my_todo and st == 'final_review' and req != my_todo):
                 d['todo_kind'] = 'review'
-            elif req == my_todo and st in ('approved', 'implementing', 'executing', 'failed', 'rollback_in_progress'):
+            elif (
+                req == my_todo
+                and st in ('approved', 'implementing', 'executing', 'failed', 'rollback_in_progress')
+                and not str(implementer.get('id') or '')
+                and not str(implementer.get('username') or '')
+            ):
                 d['todo_kind'] = 'implement'
             elif req == my_todo and st in ('draft', 'rejected'):
                 d['todo_kind'] = 'modify'
@@ -448,25 +720,9 @@ def get_summary(conn, user_id: str = '', username: str = '', *, tenant_id: str =
     my_todo_count = 0
     group_todo_count = 0
     if user_id and username:
-        # My Todo - Align with list_change_orders
-        todo_conditions = [
-            "(",
-            "(requester_username = ? AND status IN ('draft', 'rejected', 'approved', 'implementing', 'executing', 'failed', 'rollback_in_progress')) OR ",
-            "(assigned_initial_reviewer_username = ? AND status = 'initial_review' AND requester_username != ?) OR ",
-            "(assigned_final_approver_username = ? AND status = 'final_review' AND requester_username != ?)",
-            ")",
-        ]
-        todo_params = [username, username, username, username, username]
-        if tenant_id:
-            todo_conditions.insert(0, "tenant_id = ? AND ")
-            todo_params.insert(0, tenant_id)
-        if requester_id:
-            todo_conditions.insert(0, "requester_id = ? AND ")
-            todo_params.insert(0, requester_id)
-        my_todo_count = conn.execute(
-            "SELECT COUNT(*) FROM change_orders WHERE " + ''.join(todo_conditions),
-            tuple(todo_params),
-        ).fetchone()[0]
+        # Use the same exact assigned-person predicates as the queue.
+        _, my_todo_count = list_change_orders(conn, page=1, page_size=1, my_todo=username,
+                                               my_todo_user_id=user_id, tenant_id=tenant_id)
 
         # Group Todo - Already using shared helper if it was extracted, otherwise inline
         row = conn.execute('SELECT change_groups_json FROM users WHERE id = ?', (user_id,)).fetchone()
@@ -620,6 +876,8 @@ def _row_to_dict(row) -> dict:
             # Ensure dict types for template and control sheet
             if json_field in ('command_template_json', 'control_sheet_json') and not isinstance(parsed, dict):
                 parsed = {}
+            if json_field == 'control_sheet_json':
+                parsed = normalize_control_sheet_identity(parsed)
             d[json_field.replace('_json', '')] = parsed
         except (json.JSONDecodeError, TypeError):
             if json_field in ('target_devices_json', 'commands_json'):

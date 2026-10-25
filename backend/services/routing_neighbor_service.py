@@ -13,6 +13,10 @@ ROUTING_NEIGHBOR_SNMP_TIMEOUT_SECONDS = 8.0
 
 
 def _snmp_transport(device: Mapping[str, Any], credentials: Mapping[str, Any] | None = None) -> tuple[str, str | Mapping[str, Any], int, str]:
+    from services.snmp_collection_policy_service import is_snmp_collection_enabled
+
+    if not is_snmp_collection_enabled(device):
+        raise RuntimeError("SNMP collection is disabled for this device")
     resolved = dict(credentials or resolve_collector_credentials(dict(device)).get("snmp") or {})
     version = str(resolved.get("version") or "2c").strip().casefold()
     is_v3 = version in {"3", "v3", "snmpv3"}

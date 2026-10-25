@@ -59,6 +59,37 @@ def test_unconfigured_snmp_clears_failure_streak_without_opening_alert(monkeypat
     probe.assert_awaited_once_with(device)
 
 
+def test_disabled_snmp_skips_metric_credentials_and_records_nonfailure(monkeypatch) -> None:
+    device = {**_device("disabled-snmp-device"), "snmp_collection_enabled": False}
+    probe = AsyncMock(return_value=(True, "icmp", None, False))
+    recorded: list[tuple[tuple, dict]] = []
+
+    _mock_monitor_io(monkeypatch, probe=probe)
+    monkeypatch.setattr(monitor, "snmp_failure_streak", {})
+    monkeypatch.setattr(monitor, "open_alerts", {})
+    monkeypatch.setattr(
+        monitor,
+        "resolve_collector_credentials",
+        lambda _device: (_ for _ in ()).throw(AssertionError("disabled SNMP must not resolve credentials")),
+    )
+    monkeypatch.setattr(
+        "services.snmp_hardware_status_service.load_current_hardware_component_statuses",
+        lambda _device_id: {},
+    )
+    monkeypatch.setattr(
+        monitor,
+        "record_collection_result",
+        lambda *args, **kwargs: recorded.append((args, kwargs)),
+    )
+
+    asyncio.run(monitor._process_device_raw(device, cycle_tick=0))
+
+    probe.assert_awaited_once_with(device)
+    snmp_result = next(kwargs for args, kwargs in recorded if args[1] == "snmp_metrics")
+    assert snmp_result["status"] == "skipped"
+    assert snmp_result["error_code"] == "snmp_collection_disabled"
+
+
 def test_configured_snmp_failure_alerts_after_two_consecutive_samples(monkeypatch) -> None:
     device = _device("configured-snmp-device")
     credentials = {"snmp": {"configured": True}}

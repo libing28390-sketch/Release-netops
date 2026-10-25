@@ -13,6 +13,7 @@ Device Inspection Service — 设备巡检引擎
 
 import json
 import logging
+import math
 import platform
 import re
 import socket
@@ -149,8 +150,13 @@ def _execute_shell_script(ip: str, script_content: str, device: dict) -> str:
             stdin, stdout, stderr = ssh.exec_command(script_content, timeout=_SSH_COMMAND_TIMEOUT)
             output = stdout.read().decode('utf-8', errors='ignore').strip()
             err_output = stderr.read().decode('utf-8', errors='ignore').strip()
+            exit_status = stdout.channel.recv_exit_status()
         finally:
             ssh.close()
+        if exit_status != 0:
+            # A script process failure is a collection error even if stdout
+            # happened to contain a plausible number or an NA sentinel.
+            return f"ERROR: 脚本进程退出状态 {exit_status}"
         if not output and err_output:
             return f"ERROR: {err_output}"
         return output
@@ -163,6 +169,9 @@ def _extract_numeric_value(output: str) -> float | None:
     """从输出中提取最后一个数字结果"""
     if not output or "ERROR" in output: return None
     lines = output.split('\n')
+    last_line = next((line.strip() for line in reversed(lines) if line.strip()), '')
+    if re.search(r"(?:^|[:=])\s*(?:NA|N/A|NOT[_ ]COLLECTED|UNAVAILABLE)(?:\s|$)", last_line, re.IGNORECASE):
+        return None
     for line in reversed(lines):
         line = line.strip()
         if not line: continue
@@ -172,6 +181,18 @@ def _extract_numeric_value(output: str) -> float | None:
             try: return float(match.group(1))
             except: continue
     return None
+
+
+def _is_no_data_metric_output(output: Any) -> bool:
+    """Recognize explicit missing-value output from seeded shell scripts."""
+    lines = [line.strip() for line in str(output or '').splitlines() if line.strip()]
+    if not lines:
+        return True
+    return bool(re.search(
+        r"(?:^|[:=])\s*(?:NA|N/A|NOT[_ ]COLLECTED|UNAVAILABLE)(?:\s|$)",
+        lines[-1],
+        re.IGNORECASE,
+    ))
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -448,10 +469,44 @@ def _extract_item_value(item: dict, raw_outputs: dict[str, str]) -> tuple[Any, s
     if "--More--" in raw_str:
         return None, "命令输出分页符未清除，请检查终端分页配置"
 
+    # Never let an SNMP community string enter metrics, findings, or analysis.
+    # The local compliance contract treats empty/public/private/netops as
+    # unsafe. Parse every reported community in memory and return only a
+    # coarse safe/unsafe state; an absent row is a parse/collection failure.
+    if str(item.get('check_key') or '').casefold() == 'cisco_ios_snmp_community':
+        community_rows = re.findall(
+            r'^\s*Community\s+name\s*:\s*([^\r\n]*)$',
+            raw_str,
+            re.MULTILINE | re.IGNORECASE,
+        )
+        if not community_rows:
+            return None, 'SNMP community 输出解析失败：未包含 Community name 条目'
+        insecure_names = {'', 'public', 'private', 'netops'}
+        community_names = []
+        for row in community_rows:
+            value = row.strip()
+            first_token = value.split()[0].rstrip(',;') if value else ''
+            community_names.append(first_token.casefold())
+        return ('unsafe' if any(name in insecure_names for name in community_names) else 'safe'), ''
+
     # ── 2. TextFSM 解析（R2.13/R2.14）──────────────────────────
     records: list[dict] = []
     template_found = True
     parse_state_error: str = ''
+    # A filtered running-config count is not represented by an NTC TextFSM
+    # template. Count its explicitly configured rows before TextFSM lookup;
+    # an empty successful response is a valid zero, while a non-empty response
+    # with no matching row proceeds to parser validation and fails closed.
+    if parse_type == 'count' and fallback_regex:
+        try:
+            matches = list(re.finditer(fallback_regex, raw_str, re.MULTILINE | re.IGNORECASE))
+        except re.error as exc:
+            return None, f"Count fallback regex is invalid: {exc}"
+        if matches:
+            return len(matches), ''
+        if not raw_str.strip():
+            return 0, ''
+
     if textfsm_template or platform_vendor:
         try:
             records = parse_with_textfsm(platform_vendor or 'cisco_ios', command, raw) or []
@@ -752,6 +807,146 @@ def _extract_snmp_item_value(item: dict, snmp_metrics: dict, snmp_interfaces: li
     return None, f'未知的 SNMP 指标 check_key: {check_key}'
 
 
+_INSPECTION_COMPONENT_STATE_CODES = {0: 'ok', 1: 'warning', 2: 'failed', 3: 'unknown'}
+_INSPECTION_UNKNOWN_STATES = {'', 'unknown', 'unavailable', 'not_collected', 'not collected', 'n/a', 'na', 'null', 'none', '--'}
+_INSPECTION_HEALTHY_STATES = {'normal', 'ok', 'up', 'true', '1', 'running', 'operational', 'ready', 'active'}
+_INSPECTION_FAILURE_STATES = {'fail', 'failed', 'failure', 'error', 'down', 'offline', 'alarm', 'false', '0'}
+
+
+def _normalize_inspection_status(value: Any, *, component_state: bool = False) -> str:
+    """Normalize known typed component states without guessing unknown values.
+
+    LibreNMS component-state samples use 0=ok, 1=warning, 2=failed,
+    3=unknown. Their inspection snapshot normally exposes the corresponding
+    lower-case labels, but accepting numeric values here keeps imported and
+    legacy status rows on the same contract.
+    """
+    if isinstance(value, bool):
+        return 'ok' if value else 'failed'
+    if isinstance(value, (int, float)):
+        try:
+            number = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return str(value or '').strip().casefold()
+        if component_state and number.is_integer() and int(number) in _INSPECTION_COMPONENT_STATE_CODES:
+            return _INSPECTION_COMPONENT_STATE_CODES[int(number)]
+        if math.isfinite(number) and number.is_integer():
+            return str(int(number))
+        return str(value).strip().casefold()
+
+    normalized = str(value or '').strip().casefold()
+    if component_state and normalized in {'0', '1', '2', '3'}:
+        return _INSPECTION_COMPONENT_STATE_CODES[int(normalized)]
+    return normalized
+
+
+def _classify_inspection_status(
+    value: Any,
+    expected_value: Any = '',
+    *,
+    component_state: bool = False,
+    allow_expected_substring: bool = False,
+) -> tuple[str, str]:
+    """Return (metric status, finding severity) for a status-valued item."""
+    normalized = _normalize_inspection_status(value, component_state=component_state)
+    if normalized in _INSPECTION_UNKNOWN_STATES:
+        return 'NOT_COLLECTED', ''
+
+    expected = _normalize_inspection_status(expected_value, component_state=component_state)
+    has_expected = expected not in _INSPECTION_UNKNOWN_STATES
+
+    # The source-defined component enum is more precise than substring checks:
+    # warning is a warning, failed is critical for fan/PSU, and unknown is not
+    # a successful sample (handled above).
+    if normalized == 'warning':
+        return 'WARNING', 'warning'
+    if normalized in {'failed', 'fail', 'failure'}:
+        return ('ERROR', 'critical' if component_state else 'warning')
+
+    if has_expected:
+        matches_expected = (
+            normalized == expected
+            if component_state
+            else _inspection_status_matches_expected(
+                value,
+                expected,
+                allow_substring=allow_expected_substring,
+            )
+        )
+        if matches_expected:
+            return 'SUCCESS', ''
+        return 'WARNING', 'warning'
+
+    if normalized in _INSPECTION_HEALTHY_STATES:
+        return 'SUCCESS', ''
+    if normalized in _INSPECTION_FAILURE_STATES:
+        return ('ERROR', 'critical' if component_state else 'warning')
+    # Keep unfamiliar non-empty states visible as a warning rather than
+    # silently accepting them as healthy.
+    return 'WARNING', 'warning'
+
+
+def _inspection_status_matches_expected(
+    value: Any,
+    expected_value: Any,
+    *,
+    allow_substring: bool = False,
+) -> bool:
+    """Compare normalized status values, optionally preserving compliance phrases.
+
+    Compliance checks historically accepted an expected phrase inside a longer
+    CLI status, while SNMP component states require an exact enum match. A
+    leading negation must never satisfy a positive expected phrase.
+    """
+    actual = _normalize_inspection_status(value)
+    expected = _normalize_inspection_status(expected_value)
+    if not expected or actual in _INSPECTION_UNKNOWN_STATES:
+        return False
+    if actual == expected:
+        return True
+    if not allow_substring or expected not in actual:
+        return False
+    prefix = actual.split(expected, 1)[0].strip()
+    if prefix in {'un', 'not', 'no', 'non'} or prefix.endswith(('not', 'no', 'non')):
+        return False
+    return True
+
+
+def _is_unavailable_snmp_snapshot_error(error: Any) -> bool:
+    """Identify unsupported or stale snapshot data, not transport/parse errors."""
+    message = str(error or '').casefold()
+    return any(
+        marker in message
+        for marker in (
+            '失败或设备不支持',
+            '没有可用的完整 if-mib 接口状态快照',
+            'if-mib 完整快照中有',
+            '接口状态快照不存在或已过期',
+            '最近一次完整接口状态快照来自 cli，不是 snmp/if-mib',
+        )
+    )
+
+
+def _inspection_threshold_is_crossed(value: Any, threshold: Any, direction: Any = 'above') -> bool:
+    """Apply the shared threshold contract: above is >=, below is strict <."""
+    if threshold is None:
+        return False
+    try:
+        actual_number = float(value)
+        threshold_number = float(threshold)
+    except (TypeError, ValueError, OverflowError):
+        return False
+    if not math.isfinite(actual_number) or not math.isfinite(threshold_number):
+        return False
+    if str(direction or 'above').strip().casefold() == 'below':
+        return actual_number < threshold_number
+    return actual_number >= threshold_number
+
+
+def _inspection_threshold_relation(direction: Any = 'above') -> str:
+    return '低于' if str(direction or 'above').strip().casefold() == 'below' else '达到或超过'
+
+
 def _load_fresh_snmp_interface_snapshot(device_id: str) -> tuple[list[dict], str]:
     """Read the latest complete SNMP-owned interface snapshot from CMDB."""
     try:
@@ -989,6 +1184,46 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
 
     findings: list[dict] = []
     metrics: dict[str, Any] = {}
+    icmp_items = [it for it in inspection_items if (it.get('method') or '').upper() == 'ICMP']
+    tcp_items = [it for it in inspection_items if (it.get('method') or '').upper() == 'TCP']
+    cli_items = [it for it in inspection_items if (it.get('method') or '').upper() == 'CLI']
+    snmp_items = [it for it in inspection_items if (it.get('method') or '').upper() == 'SNMP']
+    ssh_check: dict[str, Any] | None = None
+    direct_probe_health_deduct = 0
+
+    def _record_connection_probe_item(item: dict, value: Any, unavailable_reason: str) -> None:
+        nonlocal direct_probe_health_deduct
+        key = str(item.get('check_key') or '')
+        if value is None:
+            metrics[key] = {'value': None, 'error': unavailable_reason}
+            metrics[f'{key}_status'] = 'NOT_COLLECTED'
+            return
+        metrics[key] = value
+        direction = item.get('threshold_direction') or 'above'
+        relation = _inspection_threshold_relation(direction)
+        critical = item.get('critical_threshold')
+        warning = item.get('warning_threshold')
+        if _inspection_threshold_is_crossed(value, critical, direction):
+            findings.append(make_finding(
+                'data_error',
+                f"{item.get('name_zh') or key} 严重超标: {value} {relation}阈值 {critical}",
+                severity='critical',
+            ))
+            result['health_status'] = 'critical'
+            direct_probe_health_deduct += 25
+            metrics[f'{key}_status'] = 'ERROR'
+        elif _inspection_threshold_is_crossed(value, warning, direction):
+            findings.append(make_finding(
+                'data_error',
+                f"{item.get('name_zh') or key} 达到告警线: {value} {relation}阈值 {warning}",
+                severity='warning',
+            ))
+            if result['health_status'] == 'healthy':
+                result['health_status'] = 'warning'
+            direct_probe_health_deduct += 14
+            metrics[f'{key}_status'] = 'WARNING'
+        else:
+            metrics[f'{key}_status'] = 'SUCCESS'
 
     # 1. ICMP 连通性
     ping_result = _ping_device(ip, count=2, timeout=2)
@@ -1001,14 +1236,24 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
             'connectivity_error',
             '设备 ICMP 不可达，请检查设备电源及网络路径',
         ))
+        for item in icmp_items:
+            _record_connection_probe_item(item, None, '设备 ICMP 探测失败，本轮未采集时延指标')
+        for item in tcp_items:
+            _record_connection_probe_item(item, None, '设备 ICMP 探测失败，本轮未执行 TCP 端口探测')
         result['health_status'] = 'critical'
         result['health_score'] = 0
+        result['metrics_json'] = json.dumps(metrics, ensure_ascii=False)
         result['findings_json'] = json.dumps(findings, ensure_ascii=False)
         return result
 
+    for item in icmp_items:
+        _record_connection_probe_item(
+            item,
+            ping_result.get('latency_ms'),
+            'ICMP 探测未提供可解析的 RTT 样本',
+        )
+
     # ── 分流：SNMP 性能指标 vs CLI 协议/合规指标 ──
-    cli_items = [it for it in inspection_items if (it.get('method') or '').upper() == 'CLI']
-    snmp_items = [it for it in inspection_items if (it.get('method') or '').upper() == 'SNMP']
     routing_protocol_items = {
         protocol: [it for it in snmp_items if _inspection_routing_protocol(it) == protocol]
         for protocol in ('bgp', 'ospf')
@@ -1115,12 +1360,18 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
 
     # 2b. SSH/CLI 采集（仅在有 CLI 指标或自定义 check_items 时执行）
     raw_outputs: dict[str, str] = {}
-    if cli_items or check_items:
+    if cli_items or tcp_items or check_items:
         mgmt_port = int(device.get('management_port') or 22)
         ssh_check = _check_ssh(ip, port=mgmt_port, timeout=3)
         if not ssh_check.get('success'):
             result['ssh_ok'] = 0
             result['ssh_error'] = ssh_check.get('error', '')
+            for item in tcp_items:
+                _record_connection_probe_item(
+                    item,
+                    None,
+                    'SSH 管理端口探测失败；连接错误已在巡检结果中记录',
+                )
             findings.append(make_finding(
                 'connectivity_error',
                 f'SSH 端口 {mgmt_port} 不通，请检查防火墙策略或 SSH 服务状态',
@@ -1130,12 +1381,19 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
             if not snmp_items:
                 result['health_status'] = 'critical'
                 result['health_score'] = 20
+                result['metrics_json'] = json.dumps(metrics, ensure_ascii=False)
                 result['findings_json'] = json.dumps(findings, ensure_ascii=False)
                 return result
             # 有 SNMP 指标，继续处理
             result['health_status'] = 'warning'
             cli_items = []  # 清空 CLI 指标，不再尝试 SSH 采集
         else:
+            for item in tcp_items:
+                _record_connection_probe_item(
+                    item,
+                    ssh_check.get('latency_ms'),
+                    'TCP 管理端口探测未提供可解析的连接时延',
+                )
             # 3. 收集所有需要的命令（去重）
             commands_set = {
                 item.get('command') or ''
@@ -1193,7 +1451,11 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
                     # SSH 失败：如果有 SNMP 指标，不直接 return
                     if not snmp_items:
                         result['health_status'] = 'critical'
-                        result['health_score'] = 30
+                        result['health_score'] = min(
+                            30,
+                            max(0, 100 - direct_probe_health_deduct),
+                        )
+                        result['metrics_json'] = json.dumps(metrics, ensure_ascii=False)
                         result['findings_json'] = json.dumps(findings, ensure_ascii=False)
                         return result
                     result['health_status'] = 'warning'
@@ -1255,6 +1517,10 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
             value, err = _extract_item_value(item, raw_outputs)
 
         if err and value is None:
+            if item_method == 'SNMP' and _is_unavailable_snmp_snapshot_error(err):
+                metrics[check_key] = {'value': None, 'error': err}
+                metrics[f"{check_key}_status"] = 'NOT_COLLECTED'
+                continue
             # 命令级 / 解析级异常：写入 metrics_json 的 error 子字段（R2.9–R2.16）
             metrics[check_key] = {'value': None, 'error': err}
             metrics[f"{check_key}_status"] = "ERROR"
@@ -1266,6 +1532,11 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
             health_deduct += 10
             if result['health_status'] == 'healthy':
                 result['health_status'] = 'warning'
+            continue
+
+        if value is None:
+            metrics[check_key] = {'value': None, 'error': '指标未采集'}
+            metrics[f"{check_key}_status"] = 'NOT_COLLECTED'
             continue
 
         metrics[check_key] = value
@@ -1281,23 +1552,26 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
             )
             value = metrics.get(check_key, value)
         is_abnormal = False
+        metric_status = 'SUCCESS'
+        threshold_direction = item.get('threshold_direction') or 'above'
+        threshold_relation = _inspection_threshold_relation(threshold_direction)
 
         # 阈值判定
         if parse_type in ('numeric', 'count') and isinstance(value, (int, float)):
-            if crit_threshold is not None and value >= float(crit_threshold):
+            if _inspection_threshold_is_crossed(value, crit_threshold, threshold_direction):
                 findings.append(make_finding(
                     'data_error',
-                    f"{name_zh} 严重超标: {value} (阈值 {crit_threshold})",
+                    f"{name_zh} 严重超标: {value} {threshold_relation}阈值 {crit_threshold}",
                     severity='critical',
                 ))
                 health_deduct += 25
                 if result['health_status'] != 'critical':
                     result['health_status'] = 'critical'
                 is_abnormal = True
-            elif warn_threshold is not None and value >= float(warn_threshold):
+            elif _inspection_threshold_is_crossed(value, warn_threshold, threshold_direction):
                 findings.append(make_finding(
                     'data_error',
-                    f"{name_zh} 达到告警线: {value} (阈值 {warn_threshold})",
+                    f"{name_zh} 达到告警线: {value} {threshold_relation}阈值 {warn_threshold}",
                     severity='warning',
                 ))
                 health_deduct += 14
@@ -1317,20 +1591,20 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
                 change_pct = abs(value - last_val) / last_val * 100.0
                 metrics[f"{check_key}_last"] = last_val
                 metrics[f"{check_key}_change_pct"] = round(change_pct, 2)
-                if crit_threshold is not None and change_pct >= float(crit_threshold):
+                if _inspection_threshold_is_crossed(change_pct, crit_threshold, threshold_direction):
                     findings.append(make_finding(
                         'data_error',
-                        f"{name_zh} 变化异常: 上次 {last_val} → 本次 {value}（变化 {change_pct:.1f}%，阈值 {crit_threshold}%）",
+                        f"{name_zh} 变化异常: 上次 {last_val} → 本次 {value}（变化 {change_pct:.1f}%，{threshold_relation}阈值 {crit_threshold}%）",
                         severity='critical',
                     ))
                     health_deduct += 20
                     if result['health_status'] != 'critical':
                         result['health_status'] = 'critical'
                     is_abnormal = True
-                elif warn_threshold is not None and change_pct >= float(warn_threshold):
+                elif _inspection_threshold_is_crossed(change_pct, warn_threshold, threshold_direction):
                     findings.append(make_finding(
                         'data_error',
-                        f"{name_zh} 变化提醒: 上次 {last_val} → 本次 {value}（变化 {change_pct:.1f}%）",
+                        f"{name_zh} 变化提醒: 上次 {last_val} → 本次 {value}（变化 {change_pct:.1f}%，{threshold_relation}阈值 {warn_threshold}%）",
                         severity='warning',
                     ))
                     health_deduct += 10
@@ -1338,50 +1612,47 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
                         result['health_status'] = 'warning'
                     is_abnormal = True
 
-        # SNMP status 类型（Fan/PSU 等）— 检查状态是否正常
-        elif parse_type == 'status' and item_method == 'SNMP' and value is not None:
-            val_str = str(value).strip().lower()
-            # 正常状态关键字
-            normal_keywords = ('normal', 'ok', 'up', 'true', '1', 'running', 'operational')
-            is_normal = any(kw in val_str for kw in normal_keywords)
-            if not is_normal and val_str not in ('', 'none', 'n/a'):
-                failed_component_state = (
-                    (check_key.lower().endswith('_fan') or check_key.lower().endswith('_psu'))
-                    and val_str in {'failed', 'fail', 'failure'}
+        elif parse_type == 'status' and value is not None:
+            component_state = (
+                item_method == 'SNMP'
+                and (
+                    check_key.casefold().endswith('_fan')
+                    or check_key.casefold().endswith('_psu')
                 )
-                severity = 'critical' if failed_component_state else 'warning'
+            )
+            metric_status, finding_severity = _classify_inspection_status(
+                value,
+                item.get('expected_value'),
+                component_state=component_state,
+                allow_expected_substring=(item.get('category') or '').casefold() == 'compliance',
+            )
+            if metric_status == 'NOT_COLLECTED':
+                # Keep the observed unknown value for diagnostics, but never
+                # report it as SUCCESS or compare it against a passing value.
+                metrics[f"{check_key}_status"] = metric_status
+                continue
+            if finding_severity:
+                expected = str(item.get('expected_value') or '').strip()
+                title = (
+                    f"{name_zh} 状态异常: {value}"
+                    if not expected
+                    else f"{name_zh} 状态不符合期望值: 期望 '{expected}'，实际 '{value}'"
+                )
                 findings.append(make_finding(
                     'data_error',
-                    f"{name_zh} 状态异常: {value}",
-                    severity=severity,
+                    title,
+                    severity=finding_severity,
                 ))
-                health_deduct += 20 if failed_component_state else 10
-                if failed_component_state:
+                health_deduct += 20 if finding_severity == 'critical' else 5 if (item.get('category') or '').casefold() == 'compliance' else 10
+                if finding_severity == 'critical':
                     result['health_status'] = 'critical'
                 elif result['health_status'] == 'healthy':
                     result['health_status'] = 'warning'
                 is_abnormal = True
 
-        # R8.3: 合规判定 — parse_type='status' 且 expected_value 非空时对比
-        elif parse_type == 'status' and item.get('expected_value') and value is not None:
-            expected = item.get('expected_value', '')
-            category = (item.get('category') or '').lower()
-            if category == 'compliance':
-                # 合规检查：对比实际值与期望值
-                actual_str = str(value).strip().lower()
-                expected_str = expected.strip().lower()
-                if expected_str and expected_str not in actual_str:
-                    findings.append(make_finding(
-                        'data_error',
-                        f"{name_zh} 合规检查不通过: 期望 '{expected}'，实际 '{value}'",
-                        severity='warning',
-                    ))
-                    health_deduct += 5
-                    if result['health_status'] == 'healthy':
-                        result['health_status'] = 'warning'
-                    is_abnormal = True
-
-        metrics[f"{check_key}_status"] = "ERROR" if is_abnormal else "SUCCESS"
+        metrics[f"{check_key}_status"] = (
+            metric_status if parse_type == 'status' else 'ERROR' if is_abnormal else 'SUCCESS'
+        )
 
     # 5b. 计算合规状态（R8.5）
     compliance_items = [it for it in inspection_items if (it.get('category') or '').lower() == 'compliance']
@@ -1393,10 +1664,16 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
             val = metrics.get(ck)
             if val is None or isinstance(val, dict):
                 continue  # 采集失败不计入
+            if metrics.get(f"{ck}_status") != 'SUCCESS':
+                continue
             expected = ci.get('expected_value', '')
             if not expected:
                 compliance_pass += 1  # 无期望值的视为通过
-            elif expected.lower() in str(val).lower():
+            elif _inspection_status_matches_expected(
+                val,
+                expected,
+                allow_substring=True,
+            ):
                 compliance_pass += 1
         if compliance_total > 0:
             if compliance_pass == compliance_total:
@@ -1407,7 +1684,7 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
                 result['compliance_status'] = 'partial'
 
     # 6. 汇总健康评分
-    result['health_score'] = max(0, 100 - health_deduct)
+    result['health_score'] = max(0, 100 - health_deduct - direct_probe_health_deduct)
     result['metrics_json'] = json.dumps(metrics, ensure_ascii=False)
 
     # R10.3: raw_outputs_json 大小限制 — 超过 10MB 时截断最长的命令输出
@@ -1526,10 +1803,14 @@ def _inspect_single_device(device: dict[str, Any], alert_stats: dict[str, int], 
         use_admin_creds = True
 
     if is_network_device:
-        # 选 CLI 和 SNMP 方式的指标
+        # Preserve the shared connectivity probes as first-class metric sources.
         cli_items = [it for it in matched_items if (it.get('method') or '').upper() == 'CLI']
         snmp_items = [it for it in matched_items if (it.get('method') or '').upper() == 'SNMP']
-        all_items = cli_items + snmp_items
+        connection_items = [
+            it for it in matched_items
+            if (it.get('method') or '').upper() in {'ICMP', 'TCP'}
+        ]
+        all_items = cli_items + snmp_items + connection_items
         return _inspect_network_device(device, alert_stats, all_items, use_admin_creds, check_items)
 
     if is_server:
@@ -1544,6 +1825,8 @@ def _inspect_single_device(device: dict[str, Any], alert_stats: dict[str, int], 
 
 def _inspect_server_device(device: dict[str, Any], alert_stats: dict[str, int], shell_items: list[dict]) -> dict[str, Any]:
     """服务器巡检（Shell 脚本方式），按指标绑定脚本分组执行并兼容旧配置。"""
+    from services.platform_registry_service import redact_raw_output
+
     device_id = str(device.get('id') or '')
     ip = device.get('ip_address') or ''
     hostname = device.get('hostname') or ip
@@ -1578,16 +1861,21 @@ def _inspect_server_device(device: dict[str, Any], alert_stats: dict[str, int], 
     findings = []
     raw_outputs = {}
 
-    def _parse_metric_from_integrated(output: str, key: str) -> float | None:
-        pattern = rf"^\s*{re.escape(key)}\s*:\s*([-+]?\d*\.\d+|\d+)"
+    def _parse_metric_from_integrated(output: str, key: str) -> tuple[bool, Any]:
+        pattern = rf"^\s*{re.escape(key)}\s*:\s*(.*?)\s*$"
         for line in output.split('\n'):
             match = re.search(pattern, line, re.IGNORECASE)
             if match:
-                try:
-                    return float(match.group(1))
-                except ValueError:
-                    pass
-        return None
+                raw_value = match.group(1).strip()
+                if re.fullmatch(r"(?:NA|N/A|NOT[_ ]COLLECTED|UNAVAILABLE)", raw_value, re.IGNORECASE):
+                    return True, None
+                if re.fullmatch(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)", raw_value):
+                    try:
+                        return True, float(raw_value)
+                    except (TypeError, ValueError, OverflowError):
+                        return True, None
+                return True, raw_value or None
+        return False, None
 
     conn = get_db_connection()
     try:
@@ -1692,7 +1980,7 @@ def _inspect_server_device(device: dict[str, Any], alert_stats: dict[str, int], 
                             metrics_results[f"{ck}_status"] = explicit_status
                         else:
                             metrics_results[ck] = {'value': None, 'error': '未在综合巡检中采集到此指标'}
-                            metrics_results[f"{ck}_status"] = 'ERROR'
+                            metrics_results[f"{ck}_status"] = 'NOT_COLLECTED'
                     elif explicit_status in not_collected_states:
                         metrics_results[ck] = {'value': None, 'error': '指标未采集'}
                         metrics_results[f"{ck}_status"] = 'NOT_COLLECTED'
@@ -1702,6 +1990,30 @@ def _inspect_server_device(device: dict[str, Any], alert_stats: dict[str, int], 
                     elif is_sentinel:
                         metrics_results[ck] = {'value': None, 'error': '指标未采集'}
                         metrics_results[f"{ck}_status"] = 'NOT_COLLECTED'
+                    elif (item.get('parse_type') or 'numeric').casefold() == 'status':
+                        status_code, finding_severity = _classify_inspection_status(
+                            value,
+                            item.get('expected_value'),
+                        )
+                        if status_code == 'NOT_COLLECTED':
+                            metrics_results[ck] = {'value': None, 'error': '指标未采集'}
+                            metrics_results[f"{ck}_status"] = 'NOT_COLLECTED'
+                        else:
+                            metrics_results[ck] = value
+                            current_status = explicit_status or 'SUCCESS'
+                            severity_rank = {'SUCCESS': 0, 'NOT_APPLICABLE': 0, 'UNCHECKED': 0, 'NOT_COLLECTED': 0,
+                                             'WARNING': 1, 'ERROR': 2, 'CRITICAL': 2}
+                            proposed_status = (
+                                'ERROR' if finding_severity == 'critical'
+                                else 'WARNING' if finding_severity == 'warning'
+                                else 'SUCCESS'
+                            )
+                            if severity_rank.get(proposed_status, 0) > severity_rank.get(current_status, 0):
+                                metrics_results[f"{ck}_status"] = proposed_status
+                                metric_threshold_findings.append((
+                                    proposed_status,
+                                    f"{item.get('name_zh') or ck} 状态不符合期望值 {item.get('expected_value')!r}（实际 {value!r}）",
+                                ))
                     elif isinstance(value, (int, float)):
                         # Script checks carry richer platform-specific status. The configured
                         # item threshold still applies; keep whichever result is more severe.
@@ -1711,16 +2023,18 @@ def _inspect_server_device(device: dict[str, Any], alert_stats: dict[str, int], 
                         threshold_status = ''
                         w = item.get('warning_threshold')
                         c = item.get('critical_threshold')
-                        if c is not None and value >= c:
+                        direction = item.get('threshold_direction') or 'above'
+                        relation = _inspection_threshold_relation(direction)
+                        if _inspection_threshold_is_crossed(value, c, direction):
                             threshold_status = 'ERROR'
-                        elif w is not None and value >= w:
+                        elif _inspection_threshold_is_crossed(value, w, direction):
                             threshold_status = 'WARNING'
                         if threshold_status and severity_rank.get(threshold_status, 0) > severity_rank.get(current_status, 0):
                             metrics_results[f"{ck}_status"] = threshold_status
                             threshold_text = (
-                                f"{ck}={value} 超过严重阈值 {c}"
+                                f"{ck}={value} 严重项{relation}阈值 {c}"
                                 if threshold_status == 'ERROR'
-                                else f"{ck}={value} 超过关注阈值 {w}"
+                                else f"{ck}={value} 关注项{relation}阈值 {w}"
                             )
                             metric_threshold_findings.append((threshold_status, threshold_text))
 
@@ -1866,11 +2180,6 @@ def _inspect_server_device(device: dict[str, Any], alert_stats: dict[str, int], 
                 cmd_key = item.get('check_key') or f"script_{script_id}"
                 
                 raw_output = script_outputs.get(script_id, '')
-                if not raw_output:
-                    metrics_results[item['check_key']] = {'value': None, 'error': '未获取到脚本输出'}
-                    metrics_results[f"{item['check_key']}_status"] = "ERROR"
-                    continue
-
                 if "ERROR:" in raw_output:
                     result['ssh_ok'] = 0
                     result['ssh_error'] = raw_output
@@ -1887,35 +2196,91 @@ def _inspect_server_device(device: dict[str, Any], alert_stats: dict[str, int], 
                     continue
 
                 # Parse metric value (try integrated format first, then fallback to legacy)
-                val = _parse_metric_from_integrated(raw_output, item['check_key'])
-                if val is None:
+                parse_type = (item.get('parse_type') or 'numeric').casefold()
+                integrated_key_found, integrated_value = _parse_metric_from_integrated(
+                    raw_output,
+                    item['check_key'],
+                )
+                if use_single_script:
+                    if not integrated_key_found or integrated_value is None:
+                        missing_reason = (
+                            '综合脚本未输出该指标'
+                            if not integrated_key_found
+                            else '指标未采集'
+                        )
+                        metrics_results[item['check_key']] = {'value': None, 'error': missing_reason}
+                        metrics_results[f"{item['check_key']}_status"] = "NOT_COLLECTED"
+                        continue
+                    val = integrated_value
+                else:
+                    if _is_no_data_metric_output(raw_output):
+                        metrics_results[item['check_key']] = {'value': None, 'error': '指标未采集'}
+                        metrics_results[f"{item['check_key']}_status"] = "NOT_COLLECTED"
+                        continue
+                    val = integrated_value if integrated_key_found else None
+
+                if parse_type == 'status' and val is None and not integrated_key_found:
+                    last_output_line = next(
+                        (line.strip() for line in reversed(raw_output.splitlines()) if line.strip()),
+                        '',
+                    )
+                    status_match = re.match(
+                        rf"^{re.escape(item['check_key'])}\s*:\s*(.*?)\s*$",
+                        last_output_line,
+                        re.IGNORECASE,
+                    )
+                    status_text = status_match.group(1) if status_match else last_output_line
+                    if re.fullmatch(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)", status_text):
+                        val = float(status_text)
+                    elif status_text:
+                        val = status_text
+                elif val is None and not use_single_script:
                     val = _extract_numeric_value(raw_output)
 
                 if val is not None:
                     metrics_results[item['check_key']] = val
-                    w = item.get('warning_threshold')
-                    c = item.get('critical_threshold')
+                    if parse_type == 'status':
+                        metric_status, finding_severity = _classify_inspection_status(
+                            val,
+                            item.get('expected_value'),
+                        )
+                        metrics_results[f"{item['check_key']}_status"] = metric_status
+                        if finding_severity:
+                            findings.append(make_finding(
+                                'data_error',
+                                f"{item['name_zh']} 状态不符合期望值 {item.get('expected_value')!r}（实际 {val!r}）",
+                                severity=finding_severity,
+                            ))
+                            if finding_severity == 'critical':
+                                result['health_status'] = 'critical'
+                            elif result['health_status'] != 'critical':
+                                result['health_status'] = 'warning'
+                    else:
+                        w = item.get('warning_threshold')
+                        c = item.get('critical_threshold')
+                        direction = item.get('threshold_direction') or 'above'
+                        relation = _inspection_threshold_relation(direction)
 
-                    is_abnormal = False
-                    if c is not None and val >= c:
-                        findings.append(make_finding(
-                            'data_error',
-                            f"{item['name_zh']} 严重超标: {val} (阈值 {c})",
-                            severity='critical',
-                        ))
-                        result['health_status'] = 'critical'
-                        is_abnormal = True
-                    elif w is not None and val >= w:
-                        findings.append(make_finding(
-                            'data_error',
-                            f"{item['name_zh']} 达到告警线: {val} (阈值 {w})",
-                            severity='warning',
-                        ))
-                        if result['health_status'] != 'critical':
-                            result['health_status'] = 'warning'
-                        is_abnormal = True
-                    
-                    metrics_results[f"{item['check_key']}_status"] = "ERROR" if is_abnormal else "SUCCESS"
+                        is_abnormal = False
+                        if _inspection_threshold_is_crossed(val, c, direction):
+                            findings.append(make_finding(
+                                'data_error',
+                                f"{item['name_zh']} 严重超标: {val} {relation}阈值 {c}",
+                                severity='critical',
+                            ))
+                            result['health_status'] = 'critical'
+                            is_abnormal = True
+                        elif _inspection_threshold_is_crossed(val, w, direction):
+                            findings.append(make_finding(
+                                'data_error',
+                                f"{item['name_zh']} 达到告警线: {val} {relation}阈值 {w}",
+                                severity='warning',
+                            ))
+                            if result['health_status'] != 'critical':
+                                result['health_status'] = 'warning'
+                            is_abnormal = True
+
+                        metrics_results[f"{item['check_key']}_status"] = "ERROR" if is_abnormal else "SUCCESS"
                 else:
                     metrics_results[item['check_key']] = {'value': None, 'error': '采集失败或无法提取数值'}
                     metrics_results[f"{item['check_key']}_status"] = "ERROR"
@@ -2555,7 +2920,12 @@ def list_inspection_items(
 ) -> list[dict[str, Any]] | dict[str, Any]:
     conn = get_db_connection()
     try:
-        def _filter_parts(*, include_category: bool, include_method: bool) -> tuple[list[str], list[str]]:
+        def _filter_parts(
+            *,
+            include_category: bool,
+            include_method: bool,
+            include_vendor: bool = True,
+        ) -> tuple[list[str], list[str]]:
             clauses: list[str] = []
             params: list[str] = []
             if q.strip():
@@ -2568,7 +2938,7 @@ def list_inspection_items(
             if include_method and method and method.lower() != 'all':
                 clauses.append("LOWER(COALESCE(method, '')) = ?")
                 params.append(method.lower())
-            if vendor and vendor.lower() != 'all':
+            if include_vendor and vendor and vendor.lower() != 'all':
                 clauses.append("LOWER(COALESCE(vendor, '')) LIKE ?")
                 params.append(f"%{vendor.lower()}%")
             return clauses, params
@@ -2610,6 +2980,27 @@ def list_inspection_items(
             if str(row['facet_value'] or '').strip()
         }
 
+        # Vendor values are execution/filter keys (for example ``cisco_ios``),
+        # so keep the exact stored spelling here.  The facet respects search,
+        # category, and method filters, but ignores the currently selected
+        # vendor so users can switch between vendors without losing options.
+        vendor_clauses, vendor_params = _filter_parts(
+            include_category=True,
+            include_method=True,
+            include_vendor=False,
+        )
+        vendor_where = f" WHERE {' AND '.join(vendor_clauses)}" if vendor_clauses else ''
+        vendor_rows = conn.execute(
+            f"SELECT COALESCE(vendor, '') AS facet_value, COUNT(*) AS total "
+            f"FROM inspection_items{vendor_where} GROUP BY vendor",
+            tuple(vendor_params),
+        ).fetchall()
+        vendor_counts = {
+            str(row['facet_value'] or '').strip(): int(row['total'] or 0)
+            for row in vendor_rows
+            if str(row['facet_value'] or '').strip()
+        }
+
         safe_page_size = min(max(int(page_size or 20), 1), 100)
         offset = (max(int(page or 1), 1) - 1) * safe_page_size
         rows = conn.execute(
@@ -2626,6 +3017,7 @@ def list_inspection_items(
                 'all': sum(category_counts.values()),
                 'categories': category_counts,
                 'methods': method_counts,
+                'vendors': vendor_counts,
             },
         }
     finally:
@@ -2639,11 +3031,18 @@ def create_inspection_item(item_data: dict[str, Any]) -> dict[str, Any]:
         use_admin = 1 if item_data.get('use_admin_creds') else 0
         conn.execute(
             '''INSERT INTO inspection_items
-                (id, name, name_zh, category, check_key, description, method, command, vendor, oid, use_admin_creds, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                (id, name, name_zh, category, check_key, description, method, command,
+                 script_id, warning_threshold, critical_threshold, parse_type, expected_value,
+                 unit, threshold_direction, vendor, oid, use_admin_creds, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
             (item_id, item_data['name'], item_data['name_zh'], item_data['category'],
              item_data['check_key'], item_data.get('description', ''), 
              item_data.get('method', 'SNMP'), item_data.get('command', ''),
+             item_data.get('script_id', ''), item_data.get('warning_threshold'),
+             item_data.get('critical_threshold'), item_data.get('parse_type', 'numeric'),
+             item_data.get('expected_value', ''),
+             item_data.get('unit', ''),
+             item_data.get('threshold_direction', 'above'),
              item_data.get('vendor', ''), item_data.get('oid', ''), use_admin, now, now)
         )
         conn.commit()
@@ -2651,6 +3050,13 @@ def create_inspection_item(item_data: dict[str, Any]) -> dict[str, Any]:
         item_data['created_at'] = now
         item_data['updated_at'] = now
         item_data['use_admin_creds'] = bool(use_admin)
+        item_data.setdefault('script_id', '')
+        item_data.setdefault('warning_threshold', None)
+        item_data.setdefault('critical_threshold', None)
+        item_data.setdefault('parse_type', 'numeric')
+        item_data.setdefault('expected_value', '')
+        item_data.setdefault('unit', '')
+        item_data.setdefault('threshold_direction', 'above')
         return item_data
     finally:
         conn.close()
@@ -2658,7 +3064,11 @@ def create_inspection_item(item_data: dict[str, Any]) -> dict[str, Any]:
 def update_inspection_item(item_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
     conn = get_db_connection()
     try:
-        allowed = {'name', 'name_zh', 'category', 'check_key', 'description', 'method', 'command', 'vendor', 'oid', 'use_admin_creds'}
+        allowed = {
+            'name', 'name_zh', 'category', 'check_key', 'description', 'method', 'command',
+            'script_id', 'warning_threshold', 'critical_threshold', 'parse_type',
+            'expected_value', 'unit', 'threshold_direction', 'vendor', 'oid', 'use_admin_creds',
+        }
         sets = []
         params = []
         for k, v in updates.items():

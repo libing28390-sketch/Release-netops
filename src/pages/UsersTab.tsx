@@ -11,6 +11,12 @@ import { ActionIconButton } from '../components/ui/ActionIconButton';
 import { IconInputField } from '../components/ui/IconInputField';
 import { PasswordInputField } from '../components/ui/PasswordInputField';
 import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
+import {
+  isAdminOnlyChangeGroup,
+  normalizeUserChangeGroups,
+  USER_CHANGE_GROUP_OPTIONS,
+  type UserChangeGroup,
+} from '../utils/userChangeGroups';
 
 type UserFormState = {
   username: string;
@@ -30,6 +36,53 @@ const CHANGE_REQUESTER_PROFILE = 'Change Requester';
 
 const accountRoleFor = (role: string) => role === ADMINISTRATOR_ROLE ? ADMINISTRATOR_ROLE : STANDARD_USER_ROLE;
 const accountProfileFor = (role: string) => role === ADMINISTRATOR_ROLE ? '' : CHANGE_REQUESTER_PROFILE;
+
+interface UserChangeGroupSelectorProps {
+  role: string;
+  value: string[];
+  onChange: (groups: string[]) => void;
+  isZh: boolean;
+}
+
+const UserChangeGroupSelector: React.FC<UserChangeGroupSelectorProps> = ({ role, value, onChange, isZh }) => {
+  const groups = normalizeUserChangeGroups(value, role);
+  const toggleGroup = (group: UserChangeGroup, checked: boolean) => {
+    const nextGroups = checked
+      ? [...groups, group]
+      : groups.filter((value) => value !== group);
+    onChange(normalizeUserChangeGroups(nextGroups, role));
+  };
+
+  return (
+    <fieldset className="rounded-xl border border-black/10 bg-slate-50/60 p-3">
+      <legend className="px-1 text-xs font-semibold text-black/60">{isZh ? '工单职责' : 'Ticket responsibilities'}</legend>
+      <p className="mb-2 text-[11px] text-black/40">
+        {isZh ? '与账号基础角色分开配置；初审和终审职责仅管理员可选。' : 'Separate from the account role. Initial and final review are administrator-only.'}
+      </p>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {USER_CHANGE_GROUP_OPTIONS.map((option) => {
+          const adminOnly = isAdminOnlyChangeGroup(option.key);
+          const disabled = adminOnly && role !== ADMINISTRATOR_ROLE;
+          return (
+            <label
+              key={option.key}
+              className={`flex items-center gap-2 rounded-lg border border-black/5 bg-white px-3 py-2 text-xs ${disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:border-black/15'}`}
+            >
+              <input
+                type="checkbox"
+                checked={groups.includes(option.key)}
+                disabled={disabled}
+                onChange={(event) => toggleGroup(option.key, event.target.checked)}
+              />
+              <span>{isZh ? option.labelZh : option.labelEn}</span>
+              {disabled && <span className="ml-auto text-[10px] text-black/35">{isZh ? '管理员专属' : 'Admin only'}</span>}
+            </label>
+          );
+        })}
+      </div>
+    </fieldset>
+  );
+};
 
 interface UsersTabProps {
   users: User[];
@@ -68,11 +121,21 @@ const UsersTab: React.FC<UsersTabProps> = ({
   const inputClass = (error: string) => `w-full px-4 py-3 rounded-xl border ${error ? 'border-red-400 focus:border-red-500 focus:ring-red-100' : 'border-black/10 focus:border-black focus:ring-black/5'} focus:ring-4 outline-none transition-all`;
   const openAddUserModal = () => {
     const role = accountRoleFor(newUserForm.role);
-    setNewUserForm({ ...newUserForm, role, role_profile: accountProfileFor(role) });
+    setNewUserForm({
+      ...newUserForm,
+      role,
+      role_profile: accountProfileFor(role),
+      change_groups: normalizeUserChangeGroups(newUserForm.change_groups, role),
+    });
     setShowAddUserModal(true);
   };
   const updateAccountRole = (form: UserFormState, setter: (v: UserFormState) => void, role: string) => {
-    setter({ ...form, role, role_profile: accountProfileFor(role) });
+    setter({
+      ...form,
+      role,
+      role_profile: accountProfileFor(role),
+      change_groups: normalizeUserChangeGroups(form.change_groups, role),
+    });
   };
 
   return (
@@ -103,8 +166,9 @@ const UsersTab: React.FC<UsersTabProps> = ({
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{isZh ? '真实姓名' : 'Display Name'}</th>
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{isZh ? '手机号' : 'Phone'}</th>
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{isZh ? '邮箱' : 'Email'}</th>
-              <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{t('role')}</th>
-              <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{isZh ? '所属分组' : 'Group'}</th>
+              <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{isZh ? '基础角色' : 'Account Role'}</th>
+              <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{isZh ? '工单职责' : 'Ticket Responsibilities'}</th>
+              <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{isZh ? '用户分组' : 'User Group'}</th>
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{t('status')}</th>
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{t('lastLogin')}</th>
               <TableActionHeader className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{t('actions')}</TableActionHeader>
@@ -125,6 +189,18 @@ const UsersTab: React.FC<UsersTabProps> = ({
                 <td className="px-6 py-4 text-xs font-mono text-black/60">{user.phone || '—'}</td>
                 <td className="px-6 py-4 text-xs font-mono text-black/60">{user.email || '—'}</td>
                 <td className="px-6 py-4 text-xs">{user.role === ADMINISTRATOR_ROLE ? (isZh ? '管理员' : 'Administrator') : (isZh ? '普通用户' : 'Standard User')}</td>
+                <td className="px-6 py-4">
+                  {normalizeUserChangeGroups(user.change_groups, user.role).length > 0 ? (
+                    <div className="flex max-w-[240px] flex-wrap gap-1">
+                      {normalizeUserChangeGroups(user.change_groups, user.role).map((group) => {
+                        const option = USER_CHANGE_GROUP_OPTIONS.find((item) => item.key === group);
+                        return <span key={group} className="rounded-md bg-cyan-50 px-1.5 py-0.5 text-[10px] font-medium text-cyan-800">{isZh ? option?.labelZh : option?.labelEn}</span>;
+                      })}
+                    </div>
+                  ) : (
+                    <span className="text-xs text-black/35">{isZh ? '未配置' : 'Not set'}</span>
+                  )}
+                </td>
                 <td className="px-6 py-4 text-xs text-black/60">{user.group_name || (isZh ? '未分组' : 'Ungrouped')}</td>
                 <td className="px-6 py-4">
                   <span className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-emerald-100 text-emerald-700">
@@ -146,7 +222,7 @@ const UsersTab: React.FC<UsersTabProps> = ({
                         role,
                         role_profile: accountProfileFor(role),
                         group_name: user.group_name || '',
-                        change_groups: [...(user.change_groups || [])],
+                        change_groups: normalizeUserChangeGroups(user.change_groups, role),
                         display_name: user.display_name || '',
                         phone: user.phone || '',
                         email: user.email || '',
@@ -167,7 +243,7 @@ const UsersTab: React.FC<UsersTabProps> = ({
           <motion.div
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="bg-white w-full max-w-xl rounded-3xl shadow-2xl border border-black/5 overflow-hidden"
+            className="bg-white w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-3xl shadow-2xl border border-black/5"
           >
             <div className="p-8">
               <h3 className="text-xl font-medium mb-6">{t('addNewUser')}</h3>
@@ -213,6 +289,12 @@ const UsersTab: React.FC<UsersTabProps> = ({
                     <option value={STANDARD_USER_ROLE}>{isZh ? '普通用户' : 'Standard User'}</option>
                   </select>
                 </div>
+                <UserChangeGroupSelector
+                  role={newUserForm.role}
+                  value={newUserForm.change_groups}
+                  onChange={(change_groups) => setNewUserForm({ ...newUserForm, change_groups })}
+                  isZh={isZh}
+                />
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                   <IconInputField
                     id="new-user-display-name"
@@ -272,7 +354,7 @@ const UsersTab: React.FC<UsersTabProps> = ({
           <motion.div
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="bg-white w-full max-w-xl rounded-3xl shadow-2xl border border-black/5 overflow-hidden"
+            className="bg-white w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-3xl shadow-2xl border border-black/5"
           >
             <div className="p-8">
               <h3 className="text-xl font-medium mb-6">编辑用户</h3>
@@ -315,6 +397,12 @@ const UsersTab: React.FC<UsersTabProps> = ({
                     <option value={STANDARD_USER_ROLE}>{isZh ? '普通用户' : 'Standard User'}</option>
                   </select>
                 </div>
+                <UserChangeGroupSelector
+                  role={editUserForm.role}
+                  value={editUserForm.change_groups}
+                  onChange={(change_groups) => setEditUserForm({ ...editUserForm, change_groups })}
+                  isZh={isZh}
+                />
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                   <IconInputField
                     id="edit-user-display-name"

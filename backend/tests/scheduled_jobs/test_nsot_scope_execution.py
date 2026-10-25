@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+import json
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from services import scheduler_service
-from services.scheduled_job_authorization import execution_snapshot, manifest_hash
+from services.scheduled_job_authorization import (
+    execution_snapshot,
+    manifest_hash,
+    normalize_authorization_grant,
+)
 
 
 def test_scheduled_nsot_passes_only_online_devices_from_saved_site_scope(isolated_db, make_user, monkeypatch):
@@ -47,19 +52,47 @@ def test_scheduled_nsot_passes_only_online_devices_from_saved_site_scope(isolate
             "use_admin_creds": 0,
             "enabled": 1,
             "created_by_id": owner["user_id"],
-            "tenant_id": "tenant-history-job",
+            "tenant_id": "tenant-nsot",
+            "authorization_mode": "snapshot",
+            "current_authorization_grant_id": "nsot-site-job-grant",
         }
+        grant = normalize_authorization_grant({
+            "valid_until": (datetime.now(timezone.utc) + timedelta(days=2)).isoformat().replace("+00:00", "Z"),
+            "max_runs": 5,
+            "max_targets": 10,
+            "scope": {"type": "site", "filter": "WH-DC-02"},
+            "ticket_source_type": "incident",
+            "ticket_id": "nsot-scope-fixture-incident",
+        })
+        job["authorization_grant"] = grant
         job["authorization_manifest_hash"] = manifest_hash(execution_snapshot(conn, job))
         conn.execute(
             "INSERT INTO scheduled_jobs "
-            "(id, name, job_type, action_type, cron_expr, scheduled_at, device_scope, device_filter, enabled, status, created_at, updated_at, created_by, created_by_id, tenant_id, authorization_mode, authorization_manifest_hash) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "(id, name, job_type, action_type, cron_expr, scheduled_at, device_scope, device_filter, enabled, status, created_at, updated_at, created_by, created_by_id, tenant_id, authorization_mode, authorization_manifest_hash, current_authorization_grant_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 job["id"], job["name"], job["job_type"], job["action_type"],
                 job["cron_expr"], job["scheduled_at"], job["device_scope"],
                 job["device_filter"], job["enabled"], "approved", now, now,
                 owner["username"], job["created_by_id"], job["tenant_id"],
-                "snapshot", job["authorization_manifest_hash"],
+                "snapshot", job["authorization_manifest_hash"], job["current_authorization_grant_id"],
+            ),
+        )
+        conn.execute(
+            """INSERT INTO scheduled_job_authorization_grants (
+                   grant_id, job_id, version, status, owner_id, tenant_id,
+                   template_version, manifest_hash, grant_json, valid_until,
+                   max_runs, used_runs, max_targets, ticket_source_type,
+                   ticket_id, ticket_number, ticket_title, change_order_id,
+                   change_order_number, created_by_id, approved_by_id
+               ) VALUES (?, ?, 1, 'active', ?, ?, 'nsot-fixture-v1', ?, ?::jsonb,
+                         ?::timestamptz, ?, 0, ?, 'incident', ?, 'INC-NSOT-1',
+                         'NSOT scope fixture', '', '', ?, 'nsot-approver')""",
+            (
+                job["current_authorization_grant_id"], job["id"], owner["user_id"],
+                job["tenant_id"], job["authorization_manifest_hash"],
+                json.dumps(grant, ensure_ascii=False), grant["valid_until"],
+                grant["max_runs"], grant["max_targets"], grant["ticket_id"], owner["user_id"],
             ),
         )
         conn.commit()

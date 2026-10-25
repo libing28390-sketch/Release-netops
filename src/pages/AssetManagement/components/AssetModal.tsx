@@ -1053,6 +1053,24 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                       <Wifi size={12} className="text-[#00bceb]/60" />
                       <span className="text-xs font-bold text-black/30 uppercase tracking-wider">SNMP</span>
                     </div>
+                    <div className="mb-2 flex items-center justify-between gap-3 rounded-lg border border-black/5 bg-slate-50/70 px-3 py-2">
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold text-gray-700">{zh ? 'SNMP 采集' : 'SNMP collection'}</p>
+                        <p className="mt-0.5 text-[11px] leading-4 text-black/40">
+                          {zh ? '关闭后停止 Nexora 对该设备的自动 SNMP 采集。' : 'When off, Nexora stops automatic SNMP collection for this device.'}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={form.snmp_collection_enabled !== false}
+                        aria-label={zh ? '启用 SNMP 采集' : 'Enable SNMP collection'}
+                        onClick={() => setForm((current: any) => ({ ...current, snmp_collection_enabled: current.snmp_collection_enabled === false }))}
+                        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 ${form.snmp_collection_enabled === false ? 'bg-gray-300' : 'bg-blue-600'}`}
+                      >
+                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${form.snmp_collection_enabled === false ? 'translate-x-0.5' : 'translate-x-[18px]'}`} />
+                      </button>
+                    </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-2.5">
                       <div>
                         <Field label={zh ? '团体字' : 'Community'} value={form.snmp_community} onChange={v => setForm(f => ({ ...f, snmp_community: v }))} placeholder={snmpCommunityConfigured ? (zh ? '已安全存储，留空保持不变' : 'Configured; leave empty to keep') : (zh ? '可选' : 'Optional')} />

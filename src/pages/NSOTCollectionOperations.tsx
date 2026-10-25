@@ -531,42 +531,31 @@ const NSOTCollectionOperations: React.FC<NSOTCollectionOperationsProps> = ({ lan
     });
   }, [catalog, searchText]);
 
-  const visiblePlatformRows = useMemo(() => visibleTemplates.flatMap(({ template, operations }) => {
-    const platformRows: Array<OperationProfile | null> = profileOptions.length ? profileOptions : [null];
-    return platformRows.map((profile) => ({ template, operations, profile }));
-  }), [visibleTemplates, profileOptions]);
-  const visiblePlatformRowCount = visiblePlatformRows.length;
-  const totalPages = Math.max(1, Math.ceil(visiblePlatformRowCount / pageSize));
+  const visibleTemplateRowCount = visibleTemplates.length;
+  const totalPages = Math.max(1, Math.ceil(visibleTemplateRowCount / pageSize));
   const safeCurrentPage = Math.min(currentPage, totalPages);
-  const paginatedPlatformRows = visiblePlatformRows.slice(
+  const paginatedTemplates = visibleTemplates.slice(
     (safeCurrentPage - 1) * pageSize,
     safeCurrentPage * pageSize,
   );
   const exportTemplateData = useMemo<TableExportData>(() => ({
     headers: zh
-      ? ['模板名称', '厂商', '平台', '平台版本', '平台代码', '目录发布', '模板类型', '指标数量', '描述', '条件', '备注']
-      : ['Template', 'Vendor', 'Platform', 'Platform version', 'Platform code', 'Registry release', 'Template type', 'Metric count', 'Description', 'Condition', 'Note'],
-    rows: visiblePlatformRows.map(({ template, operations, profile }) => {
-      const details = profile ? profileDetails(profile, zh) : null;
-      const profileName = profile
-        ? ((zh ? profile.name_zh : profile.name_en) || profile.platform_name || profile.platform_code)
-        : (zh ? '暂无可用平台' : 'No platform profiles');
+      ? ['模板名称', '模板 ID', '模板类型', '指标数量', '描述', '条件', '备注', '命令核验']
+      : ['Template', 'Template ID', 'Template type', 'Metric count', 'Description', 'Condition', 'Note', 'Command verification'],
+    rows: visibleTemplates.map(({ template, operations }) => {
       const description = (zh ? template.description_zh : template.description_en) || template.description_zh || template.description_en || '';
       return [
         (zh ? template.name_zh : template.name_en) || template.name_zh || template.name_en || '',
-        details?.vendor || '',
-        details?.platformFamily || profileName,
-        details?.version || '',
-        profile?.platform_code || '',
-        profile?.release_number || '',
+        template.id,
         template.builtin ? (zh ? '系统模板' : 'Built-in') : (zh ? '自定义' : 'Custom'),
         template.collector_keys?.length ?? operations.length,
         description,
         template.condition || '',
         template.note || '',
+        zh ? '需选择 profile 后核验' : 'Select a profile to verify',
       ];
     }),
-  }), [visiblePlatformRows, zh]);
+  }), [visibleTemplates, zh]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -580,7 +569,7 @@ const NSOTCollectionOperations: React.FC<NSOTCollectionOperationsProps> = ({ lan
   const detailProfileOptions = detailVendorKey
     ? profileOptions.filter((profile) => profileVendorKey(profile) === detailVendorKey)
     : profileOptions;
-  const detailOperations = detailTemplate && catalog
+  const detailOperations = detailTemplate && catalog && selectedProfile
     ? templateOperationsFor(detailTemplate, catalog.operations)
     : [];
   const detailDescription = detailTemplate
@@ -596,10 +585,19 @@ const NSOTCollectionOperations: React.FC<NSOTCollectionOperationsProps> = ({ lan
     void loadCatalog(profileId);
   };
 
-  const openTemplateCommands = (templateId: string, profileId: string) => {
-    const profile = catalog?.profiles.find((candidate) => candidate.id === profileId);
+  const openTemplateCommands = (templateId: string, profileId?: string) => {
+    const profile = profileId ? catalog?.profiles.find((candidate) => candidate.id === profileId) : undefined;
     setDetailTemplateId(templateId);
     setDetailVendorKey(profile ? profileVendorKey(profile) : '');
+    setError(null);
+    if (!profileId) {
+      controllerRef.current?.abort();
+      requestSequenceRef.current += 1;
+      setSelectedProfileId('');
+      setCatalog((current) => current ? { ...current, operations: [], selected_profile: null } : current);
+      setLoading(false);
+      return;
+    }
     if (profileId !== selectedProfileId) chooseProfile(profileId);
   };
 
@@ -627,14 +625,22 @@ const NSOTCollectionOperations: React.FC<NSOTCollectionOperationsProps> = ({ lan
           {catalog && (
             <span className="text-xs text-[var(--ui-fg-muted)]">
               {zh
-                ? `${catalog.templates.length} 个模板 · ${profileVendorCount} 个厂商 · ${profileOptions.length} 个平台版本`
-                : `${catalog.templates.length} templates · ${profileVendorCount} vendors · ${profileOptions.length} platform versions`}
+                ? `${catalog.templates.length} 个模板 · ${profileVendorCount} 个厂商 · ${profileOptions.length} 个可选平台 profile`
+                : `${catalog.templates.length} templates · ${profileVendorCount} vendors · ${profileOptions.length} optional platform profiles`}
             </span>
           )}
         </div>
       </div>
 
       {templateActionError && <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">{templateActionError}</p>}
+
+      {!loading && !error && catalog && profileOptions.length > 0 && (
+        <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+          {zh
+            ? '平台 profile 是可选命令目录项，不代表模板对该版本已验证适用；选择版本后会读取该 profile 的命令与支持状态。'
+            : 'Platform profiles are optional command-catalog entries, not proof of template applicability; select one to resolve its commands and support status.'}
+        </p>
+      )}
 
       {error && (
         <div role="alert" className={`flex min-w-0 items-start gap-3 rounded-xl border p-4 ${error.permissionDenied ? 'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200' : 'border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200'}`}>
@@ -671,15 +677,10 @@ const NSOTCollectionOperations: React.FC<NSOTCollectionOperationsProps> = ({ lan
           {visibleTemplates.length > 0 ? (
             <div className="overflow-hidden rounded-2xl border border-[var(--ui-border)] bg-[var(--ui-surface)] shadow-sm">
               <div className="max-h-[min(70vh,820px)] overflow-auto">
-              <DataTable aria-label={zh ? 'NSOT 采集模板与平台版本目录' : 'NSOT collection templates and platform versions'} unstyled exportConfig={{ filename: 'nsot-collection-templates', language: zh ? 'zh' : 'en', disabled: loading || exportTemplateData.rows.length === 0, exportData: exportTemplateData }} className="nx-data-table min-w-[2100px] text-left text-xs">
+              <DataTable aria-label={zh ? 'NSOT 采集模板目录' : 'NSOT collection templates'} unstyled exportConfig={{ filename: 'nsot-collection-templates', language: zh ? 'zh' : 'en', disabled: loading || exportTemplateData.rows.length === 0, exportData: exportTemplateData }} className="nx-data-table min-w-[1500px] text-left text-xs">
                 <thead>
                   <tr className="border-b border-[var(--ui-border)] bg-[var(--ui-surface-muted)]">
                     <th className={`${tableHeaderClass} w-52`}>{zh ? '模板名称' : 'Template'}</th>
-                    <th className={`${tableHeaderClass} w-36`}>{zh ? '厂商' : 'Vendor'}</th>
-                    <th className={`${tableHeaderClass} min-w-[220px]`}>{zh ? '平台' : 'Platform'}</th>
-                    <th className={`${tableHeaderClass} w-32`}>{zh ? '平台版本' : 'Platform version'}</th>
-                    <th className={`${tableHeaderClass} w-40`}>{zh ? '平台代码' : 'Platform code'}</th>
-                    <th className={`${tableHeaderClass} w-32`}>{zh ? '目录发布' : 'Registry release'}</th>
                     <th className={`${tableHeaderClass} w-28`}>{zh ? '模板类型' : 'Template type'}</th>
                     <th className={`${tableHeaderClass} w-24`}>{zh ? '指标数量' : 'Metric count'}</th>
                     <th className={`${tableHeaderClass} min-w-64`}>{zh ? '描述' : 'Description'}</th>
@@ -690,47 +691,35 @@ const NSOTCollectionOperations: React.FC<NSOTCollectionOperationsProps> = ({ lan
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--ui-border)]">
-                  {paginatedPlatformRows.map(({ template, operations, profile }, index) => {
+                  {paginatedTemplates.map(({ template, operations }) => {
                     const templateName = (zh ? template.name_zh : template.name_en) || template.name_zh || template.name_en;
                     const description = (zh ? template.description_zh : template.description_en)
                       || template.description_zh || template.description_en;
-                    const details = profile ? profileDetails(profile, zh) : null;
-                    const profileName = profile
-                      ? ((zh ? profile.name_zh : profile.name_en) || profile.platform_name || profile.platform_code)
-                      : (zh ? '暂无可用平台' : 'No platform profiles');
-                    const startsTemplateGroup = index === 0 || paginatedPlatformRows[index - 1]?.template.id !== template.id;
                     return (
-                        <tr key={`${template.id}:${profile?.id || 'no-platform'}`} className={`align-middle transition-colors hover:bg-[var(--ui-surface-muted)] ${startsTemplateGroup ? 'border-t-2 border-t-[var(--ui-border-strong)]' : ''}`}>
+                        <tr key={template.id} className="align-middle transition-colors hover:bg-[var(--ui-surface-muted)]">
                           <td className="px-5 py-3">
                             {templateName
                               ? <p data-export-primary className="text-xs font-bold leading-tight text-gray-900 dark:text-white">{templateName}</p>
                               : <p data-export-ignore className="text-xs font-bold leading-tight text-gray-900 dark:text-white">{template.id}</p>}
                             <p data-export-ignore className="mt-1 font-mono text-[10px] text-[var(--ui-fg-muted)]">{template.id}</p>
                           </td>
-                          <td className="px-5 py-3">
-                            <span className="text-[13px] font-medium text-[var(--ui-fg)]">{details?.vendor || '—'}</span>
-                          </td>
-                          <td className="px-5 py-3"><span className="text-[13px] font-medium text-[var(--ui-fg)]">{profile ? details?.platformFamily || profileName : profileName}</span></td>
-                          <td className="px-5 py-3 text-xs text-[var(--ui-fg)]">{profile ? details?.version || '—' : '—'}</td>
-                          <td title={profile?.platform_code || undefined} className="px-5 py-3 text-xs text-[var(--ui-fg)]"><span className="font-mono text-xs font-semibold text-slate-800 dark:text-slate-200">{profile?.platform_code || '—'}</span></td>
-                          <td className="px-5 py-3 text-xs text-[var(--ui-fg)]">{profile?.release_number || '—'}</td>
                           <td className="px-5 py-3"><span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">{template.builtin ? (zh ? '系统模板' : 'Built-in') : (zh ? '自定义' : 'Custom')}</span></td>
                           <td className="px-5 py-3 text-xs tabular-nums text-[var(--ui-fg)]">{template.collector_keys?.length ?? operations.length}</td>
                           <td title={description || undefined} className="px-5 py-3 text-xs leading-relaxed text-[var(--ui-fg)]">{description || '—'}</td>
                           <td title={template.condition || undefined} className="px-5 py-3 text-xs leading-relaxed text-[var(--ui-fg)]">{template.condition || '—'}</td>
                           <td title={template.note || undefined} className="px-5 py-3 text-xs leading-relaxed text-[var(--ui-fg)]">{template.note || '—'}</td>
                           <td data-export-ignore className="min-w-[176px] whitespace-nowrap px-5 py-3">
-                            {profile ? (
+                            {profileOptions.length > 0 ? (
                               <button
                                 type="button"
-                                onClick={() => openTemplateCommands(template.id, profile.id)}
-                                disabled={loading}
-                                aria-label={zh ? `查看${templateLabel(template, true)}在${details?.vendor} ${details?.platform}上的命令` : `View ${templateLabel(template, false)} commands for ${details?.vendor} ${details?.platform}`}
+                                onClick={() => openTemplateCommands(template.id)}
+                                disabled={loading || profileOptions.length === 0}
+                                aria-label={zh ? `选择平台版本并查看${templateLabel(template, true)}命令` : `Select a platform profile and view ${templateLabel(template, false)} commands`}
                                 className="inline-flex min-h-9 min-w-[128px] items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-[var(--ui-border)] px-2.5 py-1.5 text-xs font-semibold text-[var(--ui-fg)] transition-colors hover:border-[var(--ui-accent)] hover:bg-[var(--ui-accent-subtle)] hover:text-[var(--ui-accent)] disabled:cursor-wait disabled:opacity-50"
                               >
-                                <Terminal size={14} />{zh ? '查看命令' : 'View commands'}
+                                <Terminal size={14} />{zh ? '选择版本查看命令' : 'Select version'}
                               </button>
-                            ) : <span className="text-xs text-[var(--ui-fg-muted)]">{zh ? '无平台命令' : 'No platform commands'}</span>}
+                            ) : <span className="text-xs text-[var(--ui-fg-muted)]">{zh ? '无可选 profile' : 'No optional profiles'}</span>}
                           </td>
                           <TableActionCell className="px-5 py-3 text-right" label={zh ? '模板操作' : 'Template actions'}>
                               <ActionIconButton icon={Copy} label={zh ? `克隆${templateLabel(template, true)}` : `Clone ${templateLabel(template, false)}`} tooltip={zh ? '克隆为自定义模板' : 'Clone as a custom template'} variant="accent" onClick={() => openTemplateEditor('create', template, true)} />
@@ -745,13 +734,13 @@ const NSOTCollectionOperations: React.FC<NSOTCollectionOperationsProps> = ({ lan
               </div>
               <Pagination
                 currentPage={safeCurrentPage}
-                totalItems={visiblePlatformRowCount}
+                totalItems={visibleTemplateRowCount}
                 itemsPerPage={pageSize}
                 onPageChange={setCurrentPage}
                 onItemsPerPageChange={(size) => { setPageSize(size); setCurrentPage(1); }}
                 language={language}
-                itemLabel={zh ? '行' : 'rows'}
-                pageUnitLabel={zh ? '行/页' : 'rows/page'}
+                itemLabel={zh ? '个模板' : 'templates'}
+                pageUnitLabel={zh ? '个模板/页' : 'templates/page'}
               />
             </div>
           ) : (
@@ -856,6 +845,10 @@ const NSOTCollectionOperations: React.FC<NSOTCollectionOperationsProps> = ({ lan
                     <p className="text-sm font-semibold text-rose-800 dark:text-rose-200">{zh ? '平台命令加载失败' : 'Could not load platform commands'}</p>
                     <p className="mt-1 text-xs text-rose-700 dark:text-rose-300">{error.message}</p>
                     <button type="button" onClick={retry} className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-800 dark:border-rose-500/40 dark:text-rose-200"><RotateCcw size={13} />{zh ? '重试' : 'Retry'}</button>
+                  </div>
+                ) : !selectedProfile ? (
+                  <div role="status" className="rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-10 text-center text-sm text-cyan-900 dark:border-cyan-500/20 dark:bg-cyan-500/10 dark:text-cyan-200">
+                    {zh ? '请选择 TextFSM 平台和版本后查看对应命令与支持状态。' : 'Select a TextFSM platform and version to view its commands and support status.'}
                   </div>
                 ) : detailOperations.length > 0 ? (
                   <div className="space-y-3">

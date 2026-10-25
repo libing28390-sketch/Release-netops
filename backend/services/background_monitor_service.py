@@ -29,6 +29,7 @@ from services.network_access_limiter import get_network_access_limiter
 from services.collection_status_service import record_collection_result
 from services.vault_service import resolve_collector_credentials
 from services.collection_plan_service import should_collect
+from services.snmp_collection_policy_service import is_snmp_collection_enabled
 from services import tag_service
 from services.alert_control_service import (
     AlertState,
@@ -1072,7 +1073,8 @@ async def _collect_protocol_neighbor_alerts(device_row: dict, ip_address: str):
             type(exc).__name__,
         )
 
-    snmp_credentials = (collector_credentials.get('snmp') or {}) if isinstance(collector_credentials, Mapping) else {}
+    snmp_enabled = is_snmp_collection_enabled(device_row)
+    snmp_credentials = (collector_credentials.get('snmp') or {}) if snmp_enabled and isinstance(collector_credentials, Mapping) else {}
     ssh_credentials = (collector_credentials.get('ssh') or {}) if isinstance(collector_credentials, Mapping) else {}
     username = str(ssh_credentials.get('username') or device_row.get('username') or '').strip()
     decrypted_password = str(ssh_credentials.get('password') or decrypt_credential(device_row.get('password')) or '')
@@ -1908,7 +1910,7 @@ async def _probe_device_reachability_snmp_first(
         for key in ('snmp_credential_id', 'snmp_community', 'snmp_username', 'snmp_credential_type')
     )
 
-    if has_snmp_configuration:
+    if has_snmp_configuration and is_snmp_collection_enabled(device):
         try:
             collector_credentials = await asyncio.to_thread(resolve_collector_credentials, device)
             snmp_credentials = collector_credentials.get('snmp') or {}
@@ -2056,9 +2058,11 @@ async def _process_device_raw(device, cycle_tick: int):
         mem_history = json.loads(device['memory_history'] or '[]')
 
         collection_started = _time.perf_counter()
-        if collector_credentials is None:
+        snmp_enabled = is_snmp_collection_enabled(device)
+        if collector_credentials is None and snmp_enabled:
             collector_credentials = await asyncio.to_thread(resolve_collector_credentials, device)
-        snmp_credentials = collector_credentials['snmp']
+        collector_credentials = collector_credentials or {}
+        snmp_credentials = (collector_credentials.get('snmp') or {}) if snmp_enabled else {}
         snmp_ip = snmp_credentials.get('server') or ip
         snmp_community = snmp_credentials.get('community') or ''
         snmp_port = snmp_credentials.get('port') or 161
@@ -2185,7 +2189,7 @@ async def _process_device_raw(device, cycle_tick: int):
                 )
 
         # 3. Device info collection (every ~10 minutes)
-        if collect_info and snmp_community:
+        if snmp_enabled and collect_info and snmp_community:
             try:
                 dev_info = await collect_device_info(snmp_ip, snmp_community, snmp_port)
                 if any(value is not None for value in dev_info.values()):
@@ -2221,7 +2225,7 @@ async def _process_device_raw(device, cycle_tick: int):
 
         # Interface telemetry has no executable pinned LibreNMS YAML rule yet.
         # Do not translate custom metric profiles into device OID requests.
-        if collect_intf:
+        if snmp_enabled and collect_intf:
             await asyncio.to_thread(record_collection_result,
                 dev_id,
                 'snmp_interfaces',
@@ -2235,10 +2239,19 @@ async def _process_device_raw(device, cycle_tick: int):
         is_server_asset = (str(device.get('asset_type') or '').strip().lower() == 'server') or \
                           (str(device.get('platform') or '').strip().lower() in ('linux', 'ubuntu', 'debian', 'centos', 'rhel', 'server')) or \
                           ('server' in str(device.get('device_category') or '').lower())
-        if is_server_asset:
+        if not snmp_enabled:
+            await asyncio.to_thread(record_collection_result,
+                dev_id,
+                'snmp_metrics',
+                status='skipped',
+                source='device_policy',
+                duration_ms=(_time.perf_counter() - collection_started) * 1000,
+                error_code='snmp_collection_disabled',
+                error_message='SNMP collection is disabled for this device',
+                metadata={'reason': 'snmp_collection_disabled'},
+            )
+        elif is_server_asset:
             snmp_available = True  # Linux 服务器采用 SSH 巡检，免除传统 SNMP 可达性告警监控
-
-        if is_server_asset:
             await asyncio.to_thread(record_collection_result,
                 dev_id,
                 'snmp_metrics',
@@ -2265,7 +2278,7 @@ async def _process_device_raw(device, cycle_tick: int):
 
         snmp_rule = resolve_alert_rule('snmp_unreachable', device_row=device, ip_address=ip)
         snmp_key = f"snmp_unreachable:{dev_id}"
-        if not snmp_credentials.get('configured'):
+        if not snmp_enabled or not snmp_credentials.get('configured'):
             # Missing credentials mean SNMP is not configured for this device,
             # not that an SNMP probe failed. Avoid creating an unreachable
             # alert on every poll and silently close any legacy false positive.
@@ -2276,7 +2289,11 @@ async def _process_device_raw(device, cycle_tick: int):
                     False,
                     resolved_alert_severity(snmp_rule, 'major'),
                     'SNMP Unreachable',
-                    f"{dev_label} 未配置 SNMP 凭据，已从 SNMP 可达性告警中排除",
+                    (
+                        f"{dev_label} 已关闭 SNMP 采集，不再执行 SNMP 可达性检查"
+                        if not snmp_enabled
+                        else f"{dev_label} 未配置 SNMP 凭据，已从 SNMP 可达性告警中排除"
+                    ),
                     dev_id,
                     ip_address=ip,
                     status='resolved',

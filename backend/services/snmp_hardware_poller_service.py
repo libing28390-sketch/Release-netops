@@ -793,6 +793,10 @@ async def collect_device_hardware(
     device_id = str(device.get("id") or "").strip()
     if not device_id or _is_server_asset(device):
         return {"status": "skipped"}
+    from services.snmp_collection_policy_service import is_snmp_collection_enabled
+
+    if not is_snmp_collection_enabled(device):
+        return {"status": "skipped", "reason": "snmp_collection_disabled"}
 
     if poll_only:
         try:

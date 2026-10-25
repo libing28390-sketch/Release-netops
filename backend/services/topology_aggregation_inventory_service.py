@@ -177,6 +177,10 @@ async def sync_snmp_aggregation_inventory(
     device: dict[str, Any], collector_credentials: dict[str, Any], *, snapshot_generation: int,
 ) -> dict[str, Any]:
     import asyncio
+    from services.snmp_collection_policy_service import is_snmp_collection_enabled
+
+    if not is_snmp_collection_enabled(device):
+        return {"parents": 0, "members": 0, "status": "disabled", "source": "snmp"}
     from services.topology_snmp_aggregation_service import collect_snmp_aggregation_inventory
 
     snapshot = await collect_snmp_aggregation_inventory(device, collector_credentials)

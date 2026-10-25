@@ -13,6 +13,7 @@ from services.hostname_sync_service import (
     schedule_monitoring_target_sync_if_hostname_changed,
     sync_device_hostname_metadata,
 )
+from services.snmp_collection_policy_service import is_snmp_collection_enabled
 
 
 SYS_NAME_OID = "1.3.6.1.2.1.1.5.0"
@@ -227,6 +228,8 @@ async def refresh_topology_hostname(
     device_id = str(device.get("id") or "").strip()
     if not device_id or not str(run_id or "").strip() or int(snapshot_generation or 0) <= 0:
         return _result("not_attempted")
+    if not is_snmp_collection_enabled(device):
+        return _result("not_attempted", detail="SNMP collection is disabled for this device")
     snmp_result = protocol_results.get("snmp") if isinstance(protocol_results, dict) else None
     snmp_status = str((snmp_result or {}).get("status") or "").strip().lower()
     if snmp_status not in _VALID_PROTOCOL_STATUSES:

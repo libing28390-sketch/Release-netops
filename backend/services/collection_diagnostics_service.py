@@ -11,6 +11,7 @@ from database import get_db_connection
 from services.collection_status_service import record_collection_result
 from services.snmp_service import SYS_UPTIME, _snmp_get
 from services.vault_service import resolve_collector_credentials
+from services.snmp_collection_policy_service import is_snmp_collection_enabled
 
 
 async def _tcp_probe(host: str, port: int, timeout: float) -> tuple[str, str]:
@@ -51,6 +52,7 @@ async def diagnose_device_collection(device_id: str, timeout_seconds: float = 2.
         row = conn.execute(
             '''
             SELECT id, hostname, ip_address, management_port, snmp_port, snmp_credential_id,
+                   snmp_collection_enabled,
                    username, password, credential_id, credential_source, asset_id, snmp_community
             FROM devices WHERE id = ?
             ''',
@@ -94,7 +96,13 @@ async def diagnose_device_collection(device_id: str, timeout_seconds: float = 2.
     }
 
     community = str(snmp_credentials.get('community') or '').strip()
-    if not community:
+    if not is_snmp_collection_enabled(device):
+        result['checks']['snmp_udp'] = {
+            'status': 'skipped',
+            'code': 'snmp_collection_disabled',
+            'port': snmp_port,
+        }
+    elif not community:
         result['checks']['snmp_udp'] = {
             'status': 'not_configured',
             'code': 'snmp_credential_missing',

@@ -81,6 +81,7 @@ export const usePageTitle = ({
       return map[activeTab] || (language === 'zh' ? 'AI 中心' : 'AI Center');
     }
     if (activeTab === 'users') return t('userManagement');
+    if (activeTab === 'tickets') return language === 'zh' ? '故障与服务工单' : 'Incidents & service requests';
     if (activeTab === 'storage') return language === 'zh' ? '存储配置' : 'Storage Settings';
     if (activeTab === 'storage-files') return language === 'zh' ? '文件浏览' : 'File Browser';
     if (activeTab === 'email-settings') return language === 'zh' ? '邮件通知' : 'Email Notifications';
@@ -124,13 +125,13 @@ export const usePageTitle = ({
     if (activeTab === 'racks') return language === 'zh' ? '机柜管理' : 'Rack Management';
     if (activeTab === 'credentials') return language === 'zh' ? '凭据轮换' : 'Credential Rotation';
     if (activeTab === 'change-orders') {
-      if (changeOrderPage === 'all') return language === 'zh' ? '全部工单' : 'All Orders';
+      if (changeOrderPage === 'all') return language === 'zh' ? '全部变更单' : 'All change orders';
       if (changeOrderPage === 'my-todo') return language === 'zh' ? '个人待办' : 'My Todo';
       if (changeOrderPage === 'group-todo') return language === 'zh' ? '组内待办' : 'Group Todo';
       if (changeOrderPage === 'participated') return language === 'zh' ? '我参与的' : 'My Participated';
       if (changeOrderPage === 'focus') return language === 'zh' ? '我的关注' : 'My Focus';
       if (changeOrderPage === 'drafts') return language === 'zh' ? '草稿箱' : 'Drafts';
-      if (changeOrderPage === 'new') return language === 'zh' ? '新建工单' : 'New Order';
+      if (changeOrderPage === 'new') return language === 'zh' ? '新建变更工单' : 'New change order';
       return language === 'zh' ? '变更工单' : 'Change Orders';
     }
     if (activeTab === 'compliance') return t('compliance');

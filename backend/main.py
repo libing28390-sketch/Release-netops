@@ -61,6 +61,7 @@ from api.pam import router as pam_router, ws_router as pam_ws_router
 from api.pam_web import router as pam_web_router
 from api.remote_desktop import router as remote_desktop_router, ws_router as remote_desktop_ws_router
 from api.change_orders import router as change_orders_router
+from api.tickets import router as incident_tickets_router
 from api.setup import router as setup_router
 from api.ip_locator import router as ip_locator_router
 from api.inspections import router as inspections_router
@@ -839,6 +840,7 @@ app.include_router(knowledge_collections_router, prefix="/api")
 app.include_router(knowledge_ingestion_router, prefix="/api")
 app.include_router(device_registry_router, prefix="/api")
 app.include_router(change_orders_router,  prefix="/api")
+app.include_router(incident_tickets_router, prefix="/api")
 app.include_router(pam_router,            prefix="/api")
 app.include_router(pam_web_router,        prefix="/api")
 app.include_router(remote_desktop_router, prefix="/api")

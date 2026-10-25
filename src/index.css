@@ -803,6 +803,10 @@ input[type="search"]:hover::-webkit-search-cancel-button {
 	box-shadow: var(--ops-shadow);
 }
 
+.quick-ops-device-table > .nx-exportable-data-table {
+	height: 100%;
+}
+
 .nx-data-table {
 	width: 100%;
 	min-width: 640px;

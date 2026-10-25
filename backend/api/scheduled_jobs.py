@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Body, Request, Depends, Query
 from typing import Annotated, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import uuid
 import logging
 import os
@@ -17,13 +17,24 @@ from core.read_cache import (
 from services.config_approval_service import verify_code, consume_approval
 from services.scheduled_job_authorization import (
     authorize_job_resource,
+    assert_authorization_grant_link_access,
+    create_authorization_grant,
+    current_authorization_grant_input,
     execution_snapshot,
     job_manifest_source_from_row,
+    load_job_authorization_grant,
     manifest_hash,
     merge_job_source,
+    normalize_authorization_grant,
     normalize_job_manifest,
     scheduled_job_approval_type,
     script_snapshot,
+    validate_authorization_grant_ticket,
+)
+from services.scheduled_job_run_service import (
+    list_scheduled_job_runs,
+    resolve_unknown_scheduled_job_run,
+    serialize_scheduled_job_run,
 )
 from services.audit_service import log_audit_event
 from services.nsot_collection_preview_service import (
@@ -52,7 +63,7 @@ _CRON_ACTION_TYPES = frozenset({
 from core.scheduler_manager import refresh_dynamic_scheduler
 
 
-def _format_job_row(row) -> dict:
+def _format_job_row(row, *, conn=None, user: dict | None = None) -> dict:
     d = dict(row)
     d["updated_by"] = str(d.get("updated_by") or d.get("created_by") or "system")
     d["updated_at"] = str(d.get("updated_at") or d.get("created_at") or "")
@@ -61,6 +72,35 @@ def _format_job_row(row) -> dict:
         d['check_items'] = [c.strip() for c in re.split(r'[,\n]', d['commands']) if c.strip()]
     else:
         d['check_items'] = []
+    if conn is not None and d.get('authorization_mode') != 'system':
+        grant = load_job_authorization_grant(conn, d)
+        if grant is not None:
+            if user is not None:
+                allowed_actions = ['view']
+                if not d.get('deleted_at'):
+                    try:
+                        _authorize_job(user, d, 'update')
+                        allowed_actions.append('update')
+                    except HTTPException:
+                        pass
+                grant['allowed_actions'] = allowed_actions
+            d['authorization_grant'] = grant
+        elif d.get('status') == 'reauthorization_required':
+            can_update = False
+            if user is not None and not d.get('deleted_at'):
+                try:
+                    _authorize_job(user, d, 'update')
+                    can_update = True
+                except HTTPException:
+                    pass
+            d['authorization_grant'] = {
+                'grant_id': '', 'status': 'reauthorization_required', 'template_version': '',
+                'manifest_hash': '', 'valid_until': '', 'max_runs': 0, 'used_runs': 0,
+                'remaining_runs': 0, 'max_targets': 0, 'ticket_source_type': '',
+                'ticket_id': '', 'ticket_number': '', 'ticket_title': '',
+                'change_order_id': '', 'change_order_number': '',
+                'allowed_actions': ['update'] if can_update else [],
+            }
     return d
 
 
@@ -90,6 +130,20 @@ def _prepare_manifest(
 ) -> dict:
     script_id = str(source.get("script_id") or "").strip()
     try:
+        normalized_operation = str(operation).upper()
+        grant_value = source.get("authorization_grant")
+        if normalized_operation in {"CREATE", "UPDATE", "ENABLE"}:
+            grant_value = normalize_authorization_grant(grant_value)
+            validate_authorization_grant_ticket(
+                conn,
+                grant_value,
+                tenant_id=tenant_id if tenant_id is not None else tenant_id_for_write(user=user),
+            )
+            assert_authorization_grant_link_access(conn, grant_value, user)
+        elif not isinstance(grant_value, dict):
+            grant_value = current_authorization_grant_input(conn, source)
+        if isinstance(grant_value, dict):
+            source = {**source, "authorization_grant": grant_value}
         script_sha, _ = script_snapshot(
             conn, script_id, require_released=str(operation).upper() != "DELETE",
         )
@@ -160,7 +214,7 @@ def list_scheduled_jobs(
     _require_job_collection_permission(user, "view")
     conn = get_db_connection()
     try:
-        where, params = [], []
+        where, params = ["deleted_at IS NULL"], []
         tenant_scope = tenant_scope_for_user(user)
         if tenant_scope:
             where.append("tenant_id = ?")
@@ -390,7 +444,7 @@ def list_future_execution_plans(
 
     conn = get_db_connection()
     try:
-        sql = "SELECT * FROM scheduled_jobs WHERE enabled = 1"
+        sql = "SELECT * FROM scheduled_jobs WHERE enabled = 1 AND deleted_at IS NULL"
         params = []
         tenant_scope = tenant_scope_for_user(user)
         if tenant_scope:
@@ -551,7 +605,7 @@ def create_scheduled_job(
             "script_id": script_id,
             "is_config": is_config,
             "use_admin_creds": use_admin_creds,
-            "enabled": True,
+            "enabled": bool(payload.get("enabled", True)),
             "config_reason": config_reason,
         }
         manifest = _prepare_manifest(conn, source, user, "CREATE")
@@ -566,9 +620,35 @@ def create_scheduled_job(
         is_config = manifest["is_config"]
         config_reason = manifest["config_reason"]
         use_admin_creds = manifest["use_admin_creds"]
-        execution_manifest_hash = manifest_hash({
-            **manifest, "operation": "EXECUTION", "job_id": job_id,
-        })
+        approved_execution_manifest = {
+            **manifest, "operation": "EXECUTION", "job_id": job_id, "enabled": True,
+        }
+        persisted_job = {
+            "id": job_id,
+            "name": name,
+            "job_type": job_type,
+            "action_type": action_type,
+            "cron_expr": cron_expr,
+            "scheduled_at": scheduled_at,
+            "device_scope": device_scope,
+            "device_filter": device_filter,
+            "commands": commands,
+            "script_id": script_id,
+            "is_config": is_config,
+            "config_reason": config_reason,
+            "use_admin_creds": use_admin_creds,
+            "enabled": 1 if manifest["enabled"] else 0,
+            "created_by_id": _actor_id(user),
+            "tenant_id": _actor_tenant(user),
+            "authorization_grant": manifest.get("authorization_grant"),
+        }
+        execution_snapshot_manifest = execution_snapshot(conn, persisted_job)
+        execution_manifest_hash = manifest_hash(execution_snapshot_manifest)
+        if execution_manifest_hash != manifest_hash(approved_execution_manifest):
+            raise HTTPException(
+                status_code=409,
+                detail="审批内容与计划作业执行快照不一致，请重新申请审批",
+            )
         approval_type = scheduled_job_approval_type(manifest)
         approval_token = str(payload.get("approval_token") or "").strip()
         approval_code = str(payload.get("approval_code") or "").strip()
@@ -602,16 +682,39 @@ def create_scheduled_job(
                 approved_by, approved_at, created_by, updated_by, created_at, updated_at,
                 created_by_id, tenant_id, script_sha256,
                 authorization_manifest_hash, authorization_mode)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1,'approved',?,?,?,?,?,?,?,?,?,?,'snapshot')""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?,'snapshot')""",
             (
                 job_id, name, job_type, action_type, cron_expr, scheduled_at,
                 device_scope, device_filter, commands, script_id,
                 is_config, config_reason, use_admin_creds,
+                1 if manifest["enabled"] else 0,
+                "approved" if manifest["enabled"] else "disabled",
                 approval_record.get("approver_username") or approval_record.get("approver", ""),
                 now, actor, actor, now, now,
                 _actor_id(user), _actor_tenant(user), manifest.get("script_sha256", ""),
                 execution_manifest_hash,
             ),
+        )
+        grant = create_authorization_grant(
+            conn,
+            job_id=job_id,
+            owner_id=_actor_id(user),
+            tenant_id=_actor_tenant(user),
+            manifest=execution_snapshot_manifest,
+            approved_by_id=str(approval_record.get("approver_id") or ""),
+        )
+        conn.execute(
+            "UPDATE scheduled_jobs SET current_authorization_grant_id = ? WHERE id = ?",
+            (grant["grant_id"], job_id),
+        )
+        if not bool(manifest.get("enabled", True)):
+            conn.execute(
+                "UPDATE scheduled_job_authorization_grants SET status = 'revoked', revoked_at = NOW() WHERE grant_id = ?",
+                (grant["grant_id"],),
+            )
+        conn.execute(
+            "UPDATE scheduled_jobs SET authorization_manifest_hash = ? WHERE id = ?",
+            (manifest_hash(execution_snapshot_manifest), job_id),
         )
         conn.commit()
         log_audit_event(
@@ -648,10 +751,12 @@ def toggle_scheduled_job(
         raise HTTPException(status_code=400, detail="不支持跳过计划作业审批")
     conn = get_db_connection()
     try:
-        row = conn.execute("SELECT * FROM scheduled_jobs WHERE id = ?", (job_id,)).fetchone()
+        row = conn.execute("SELECT * FROM scheduled_jobs WHERE id = ? FOR UPDATE", (job_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="作业不存在")
         current = dict(row)
+        if current.get("deleted_at"):
+            raise HTTPException(status_code=404, detail="作业不存在")
         _authorize_job(user, current, "enable" if enabled else "disable")
         source = merge_job_source(current, {**payload, "enabled": enabled}, "ENABLE" if enabled else "DISABLE")
         manifest = _prepare_manifest(
@@ -685,6 +790,17 @@ def toggle_scheduled_job(
         now = datetime.now().isoformat()
         new_row = {**current, "enabled": 1 if enabled else 0}
         snapshot_hash = manifest_hash(execution_snapshot(conn, new_row))
+        grant = load_job_authorization_grant(conn, current)
+        if enabled:
+            if not grant or grant.get("status") != "active":
+                raise HTTPException(status_code=409, detail="作业授权已撤销、到期或用尽，请编辑作业并重新审批")
+            if grant.get("manifest_hash") != snapshot_hash:
+                raise HTTPException(status_code=409, detail="作业内容与授权不一致，请编辑作业并重新审批")
+            expiry = datetime.fromisoformat(str(grant.get("valid_until") or "").replace("Z", "+00:00"))
+            if expiry <= datetime.now(timezone.utc):
+                raise HTTPException(status_code=409, detail="作业授权已到期，请编辑作业并重新审批")
+            if int(grant.get("remaining_runs") or 0) <= 0:
+                raise HTTPException(status_code=409, detail="作业授权次数已用完，请编辑作业并重新审批")
         conn.execute(
             """UPDATE scheduled_jobs
                   SET enabled = ?, status = ?, updated_at = ?, updated_by = ?,
@@ -699,6 +815,13 @@ def toggle_scheduled_job(
                 (approval_record or {}).get("approver_username", ""), now, job_id,
             ),
         )
+        if not enabled and current.get("current_authorization_grant_id"):
+            conn.execute(
+                """UPDATE scheduled_job_authorization_grants
+                      SET status = 'revoked', revoked_at = NOW()
+                    WHERE grant_id = ? AND status = 'active'""",
+                (str(current.get("current_authorization_grant_id")),),
+            )
         conn.commit()
         log_audit_event(
             event_type="SCHEDULED_JOB_ENABLED" if enabled else "SCHEDULED_JOB_DISABLED",
@@ -735,11 +858,13 @@ def delete_scheduled_job(
 ):
     conn = get_db_connection()
     try:
-        row = conn.execute("SELECT * FROM scheduled_jobs WHERE id = ?", (job_id,)).fetchone()
+        row = conn.execute("SELECT * FROM scheduled_jobs WHERE id = ? FOR UPDATE", (job_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="作业不存在")
 
         current = dict(row)
+        if current.get("deleted_at"):
+            raise HTTPException(status_code=404, detail="作业不存在")
         _authorize_job(user, current, "delete")
         if payload.get("skip_approval") or payload.get("skip_approval_verification"):
             raise HTTPException(status_code=400, detail="不支持跳过计划作业审批")
@@ -771,7 +896,20 @@ def delete_scheduled_job(
         if not approval_record:
             raise HTTPException(status_code=403, detail="审批令牌无效、已过期或与当前作业内容不匹配")
 
-        conn.execute("DELETE FROM scheduled_jobs WHERE id = ?", (job_id,))
+        conn.execute(
+            """UPDATE scheduled_jobs
+                  SET enabled = 0, status = 'deleted', deleted_at = NOW(),
+                      updated_at = ?, updated_by = ?
+                WHERE id = ?""",
+            (datetime.now(timezone.utc).isoformat(), str(user.get("username") or "unknown"), job_id),
+        )
+        if current.get("current_authorization_grant_id"):
+            conn.execute(
+                """UPDATE scheduled_job_authorization_grants
+                      SET status = 'revoked', revoked_at = NOW()
+                    WHERE grant_id = ? AND status = 'active'""",
+                (str(current.get("current_authorization_grant_id")),),
+            )
         conn.commit()
 
         log_audit_event(
@@ -812,7 +950,82 @@ def get_scheduled_job(
         if not row:
             raise HTTPException(status_code=404, detail="作业不存在")
         _authorize_job(user, dict(row), "view")
-        return {"success": True, "data": _format_job_row(row)}
+        return {"success": True, "data": _format_job_row(row, conn=conn, user=user)}
+    finally:
+        conn.close()
+
+
+@router.get("/scheduled-jobs/{job_id}/runs")
+def get_scheduled_job_runs(
+    job_id: str,
+    page: int = Query(1, ge=1),
+    per_page: int = Query(10, ge=1, le=100),
+    user=require_role("Viewer"),
+):
+    conn = get_db_connection()
+    try:
+        row = conn.execute("SELECT * FROM scheduled_jobs WHERE id = ?", (job_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="作业不存在")
+        job = dict(row)
+        _authorize_job(user, job, "view")
+        result = list_scheduled_job_runs(conn, job_id=job_id, page=page, per_page=per_page)
+        can_resolve = False
+        if not job.get("deleted_at"):
+            try:
+                _authorize_job(user, job, "update")
+                can_resolve = True
+            except HTTPException:
+                pass
+        for item in result["items"]:
+            item["allowed_actions"] = ["resolve"] if can_resolve and item["status"] == "unknown" else []
+        return {"success": True, "data": result}
+    finally:
+        conn.close()
+
+
+@router.post("/scheduled-jobs/{job_id}/runs/{run_id}/resolve")
+def resolve_scheduled_job_run(
+    job_id: str,
+    run_id: str,
+    payload: dict = Body(...),
+    user=require_role("Operator"),
+):
+    conn = get_db_connection()
+    try:
+        row = conn.execute("SELECT * FROM scheduled_jobs WHERE id = ?", (job_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="作业不存在")
+        job = dict(row)
+        if job.get("deleted_at"):
+            raise HTTPException(status_code=409, detail="作业已删除，不能再修改运行记录")
+        _authorize_job(user, job, "update")
+        try:
+            resolved = resolve_unknown_scheduled_job_run(
+                conn,
+                job_id=job_id,
+                run_id=run_id,
+                outcome=str(payload.get("outcome") or ""),
+                note=str(payload.get("note") or ""),
+                user=user,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        log_audit_event(
+            event_type="SCHEDULED_JOB_RUN_RESOLVED",
+            category="automation",
+            severity="medium",
+            status="success",
+            summary=f"Recorded manual outcome for scheduled job '{job.get('name')}'",
+            actor_username=str(user.get("username") or "unknown"),
+            actor_role=user.get("role", "Operator"),
+            details={
+                "job_id": job_id,
+                "run_id": run_id,
+                "outcome": str(payload.get("outcome") or ""),
+            },
+        )
+        return {"success": True, "run": serialize_scheduled_job_run(resolved)}
     finally:
         conn.close()
 
@@ -855,10 +1068,12 @@ def update_scheduled_job(
         raise HTTPException(status_code=400, detail="不支持跳过计划作业审批")
     conn = get_db_connection()
     try:
-        row = conn.execute("SELECT * FROM scheduled_jobs WHERE id = ?", (job_id,)).fetchone()
+        row = conn.execute("SELECT * FROM scheduled_jobs WHERE id = ? FOR UPDATE", (job_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="作业不存在")
         current = dict(row)
+        if current.get("deleted_at"):
+            raise HTTPException(status_code=404, detail="作业不存在")
         _authorize_job(user, current, "update")
         source = merge_job_source(current, payload, "UPDATE")
         manifest = _prepare_manifest(
@@ -935,13 +1150,26 @@ def update_scheduled_job(
             "updated_by": str(user.get("username") or "unknown"),
             "updated_at": now,
         }
-        new_row = {**current, **updates}
-        execution_manifest_hash = manifest_hash(execution_snapshot(conn, new_row))
+        new_row = {**current, **updates, "authorization_grant": manifest.get("authorization_grant")}
+        execution_manifest = execution_snapshot(conn, new_row)
+        execution_manifest_hash = manifest_hash(execution_manifest)
         updates["authorization_manifest_hash"] = execution_manifest_hash
         set_clause = ", ".join(f"{key} = ?" for key in updates)
         conn.execute(
             f"UPDATE scheduled_jobs SET {set_clause} WHERE id = ?",
             (*updates.values(), job_id),
+        )
+        grant = create_authorization_grant(
+            conn,
+            job_id=job_id,
+            owner_id=str(current.get("created_by_id") or _actor_id(user)),
+            tenant_id=str(current.get("tenant_id") or _actor_tenant(user)),
+            manifest=execution_manifest,
+            approved_by_id=str(approval_record.get("approver_id") or ""),
+        )
+        conn.execute(
+            "UPDATE scheduled_jobs SET current_authorization_grant_id = ? WHERE id = ?",
+            (grant["grant_id"], job_id),
         )
         conn.commit()
         actor = str(user.get("username") or "unknown")

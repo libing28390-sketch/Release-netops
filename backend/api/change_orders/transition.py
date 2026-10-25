@@ -7,9 +7,14 @@ from core.tenant_policy import TENANT_ISOLATION_ENABLED, tenant_scope_for_user
 from services.audit_service import log_audit_event
 from services.change_order_service import get_change_order, update_change_order
 from api.change_orders.helpers import (
+    APPROVAL_SNAPSHOT_VERSION,
     ALLOWED_STATUSES,
     ALLOWED_TRANSITIONS,
     STATUS_ZH,
+    assert_change_order_window_open,
+    assert_change_order_window_approvable,
+    assert_explicit_execution_profile,
+    assert_order_verification_complete,
     is_template_required,
     is_control_sheet_enabled,
     _utc_now_iso,
@@ -18,7 +23,9 @@ from api.change_orders.helpers import (
     _validate_assignment_rules,
     _validate_template_completeness,
     _validate_control_sheet_completeness,
+    validate_emergency_change_details,
     approval_snapshot_hash,
+    resolve_active_order_implementer,
 )
 
 logger = logging.getLogger(__name__)
@@ -43,6 +50,11 @@ def api_transition_change_order(order_id: str, body: dict = Body(...), user=requ
             raise HTTPException(status_code=404, detail='Change order not found')
 
         current_status = existing.get('status', 'draft')
+        from services.change_order_service import control_sheet_result_reviewer
+        if current_status in {'implementation_review', 'implementation_result_review'} or new_status in {'implementation_review', 'implementation_result_review'}:
+            raise HTTPException(status_code=409, detail='请通过实施复核操作提交结果')
+        if new_status == 'completed' and control_sheet_result_reviewer(existing.get('control_sheet')):
+            raise HTTPException(status_code=409, detail='已指定复核人，请先提交实施复核')
         allowed_next = ALLOWED_TRANSITIONS.get(current_status, set())
         if new_status not in allowed_next:
             raise HTTPException(
@@ -92,6 +104,8 @@ def api_transition_change_order(order_id: str, body: dict = Body(...), user=requ
         if current_status == 'final_review' and new_status in {'rejected', 'initial_review'} and user.get('role') != 'Administrator':
             raise HTTPException(status_code=403, detail='只有管理员角色的用户才能在终审阶段驳回工单')
         if current_status == 'initial_review' and new_status in {'final_review', 'rejected'}:
+            if user.get('role') != 'Administrator':
+                raise HTTPException(status_code=403, detail='只有管理员角色的用户才能处理初审')
             assigned_initial_reviewer_id = str(existing.get('assigned_initial_reviewer_id') or '')
             if assigned_initial_reviewer_id and assigned_initial_reviewer_id != str(user.get('user_id') or ''):
                 raise HTTPException(status_code=403, detail='只有被指定的初审人才能处理此工单的初审')
@@ -107,8 +121,9 @@ def api_transition_change_order(order_id: str, body: dict = Body(...), user=requ
         # Implementation stages: Only requester can operate
         implementation_statuses = {'implementing', 'completed', 'failed', 'rollback_in_progress', 'rolled_back'}
         if new_status in implementation_statuses or current_status in implementation_statuses:
-            if not is_requester and user.get('role') != 'Administrator':
-                raise HTTPException(status_code=403, detail='只有工单申请人（实施人）才能操作实施阶段')
+            implementer = resolve_active_order_implementer(conn, existing)
+            if str(implementer.get('id') or '') != actor_id:
+                raise HTTPException(status_code=403, detail='只有工单指定的实施人可以操作实施阶段')
         
         if new_status == 'final_review' and not existing.get('assigned_final_approver_id'):
             # If moving to final review, check if it was assigned during the transition
@@ -166,6 +181,10 @@ def api_transition_change_order(order_id: str, body: dict = Body(...), user=requ
                 'initial_review_at': _utc_now_iso(),
             }
         if new_status == 'approved':
+            assert_change_order_window_approvable(existing)
+            implementer = resolve_active_order_implementer(conn, existing)
+            if str(implementer.get('id') or '') == actor_id:
+                raise HTTPException(status_code=403, detail='终审人不能作为该工单的实施人')
             updates['approver_id'] = user.get('user_id', '')
             updates['approver_username'] = user.get('username', '')
             updates['final_approver_id'] = user.get('user_id', '')
@@ -175,15 +194,48 @@ def api_transition_change_order(order_id: str, body: dict = Body(...), user=requ
                 'approved_at': _utc_now_iso(),
                 'approval_comment': str(body.get('approval_comment') or ''),
                 'approval_snapshot_hash': approval_snapshot_hash(existing),
-                'approval_snapshot_version': 1,
+                'approval_snapshot_version': APPROVAL_SNAPSHOT_VERSION,
             }
         if new_status == 'implementing':
-            approved_hash = str((existing.get('result_detail') or {}).get('approval_snapshot_hash') or '')
+            result_detail = dict(existing.get('result_detail') or {})
+            approved_hash = str(result_detail.get('approval_snapshot_hash') or '')
             current_hash = approval_snapshot_hash(existing)
             if not approved_hash:
                 raise HTTPException(status_code=409, detail='该工单缺少审批快照，必须退回并重新审批后才能实施')
+            if int(result_detail.get('approval_snapshot_version') or 0) != APPROVAL_SNAPSHOT_VERSION:
+                raise HTTPException(status_code=409, detail='工单使用旧版审批快照，必须重新审批后才能实施')
             if approved_hash != current_hash:
                 raise HTTPException(status_code=409, detail='审批后的设备、参数、命令或 Playbook 快照已变化，必须重新审批')
+
+            implementer = resolve_active_order_implementer(conn, existing)
+            if str(implementer.get('id') or '') != actor_id:
+                raise HTTPException(status_code=403, detail='只有工单指定的实施人可以开始实施')
+            approver_id = str(existing.get('final_approver_id') or existing.get('approver_id') or '')
+            if not approver_id or approver_id == actor_id:
+                raise HTTPException(status_code=403, detail='终审人不能实施，且工单必须保留独立终审身份')
+            assert_explicit_execution_profile(user, 'command')
+            enforce_resource_scope(user, 'command', 'execute', tenant_id=tenant_id or None)
+            assert_change_order_window_open(existing)
+
+            # Check the individual device scope before the state can enter the
+            # implementation phase, including when the implementer is an admin.
+            from api.automation import _resolve_change_order_target_ids
+            from core.rbac import enforce_resource_scope as enforce_scope
+            device_ids = _resolve_change_order_target_ids(conn, existing.get('target_devices') or [])
+            placeholders = ','.join('?' for _ in device_ids)
+            devices = conn.execute(
+                f'SELECT id, tenant_id, site_id, site, device_group_id FROM devices WHERE id IN ({placeholders})',
+                tuple(device_ids),
+            ).fetchall()
+            if len(devices) != len(device_ids):
+                raise HTTPException(status_code=409, detail='工单目标设备已从资产库删除')
+            for device in devices:
+                device_scope = {
+                    'tenant_id': str(device['tenant_id'] or ''),
+                    'site_id': device['site_id'] or device['site'] or None,
+                    'device_group_id': device['device_group_id'] or None,
+                }
+                enforce_scope(user, 'command', 'execute', **device_scope)
 
             # Production execution is PostgreSQL-only and always requires MFA.
             # The repository's isolated legacy tests intentionally replace
@@ -195,10 +247,10 @@ def api_transition_change_order(order_id: str, body: dict = Body(...), user=requ
                 if not mfa_code:
                     raise HTTPException(status_code=400, detail='配置变更实施前必须输入 MFA 动态验证码')
                 actor = conn.execute(
-                    'SELECT mfa_enabled, mfa_secret FROM users WHERE id = ?',
-                    (str(user.get('user_id') or ''),),
+                    'SELECT mfa_enabled, mfa_secret, status, username FROM users WHERE id = ?',
+                    (actor_id,),
                 ).fetchone()
-                if not actor or not actor['mfa_enabled'] or not actor['mfa_secret']:
+                if not actor or str(actor['status'] or '').lower() != 'active' or not actor['mfa_enabled'] or not actor['mfa_secret']:
                     raise HTTPException(status_code=403, detail='实施人尚未启用 MFA，不能执行配置变更')
                 from api.users import verify_totp
                 if not verify_totp(actor['mfa_secret'], mfa_code, window=1):
@@ -206,7 +258,7 @@ def api_transition_change_order(order_id: str, body: dict = Body(...), user=requ
                 mfa_verified = True
 
             verified_at = _utc_now_iso()
-            updates['actual_start'] = existing.get('actual_start') or verified_at
+            updates['actual_start'] = verified_at
             result_detail = {
                 **(existing.get('result_detail') or {}),
                 'execution_token_id': f"exec-{uuid.uuid4().hex}",
@@ -216,9 +268,12 @@ def api_transition_change_order(order_id: str, body: dict = Body(...), user=requ
             if mfa_verified:
                 result_detail.update({
                     'mfa_verified_at': verified_at,
-                    'mfa_verified_by': user.get('username', ''),
+                    'mfa_verified_by_id': actor_id,
+                    'mfa_verified_by': str(actor['username'] or user.get('username') or ''),
                 })
             updates['result_detail'] = result_detail
+        if new_status in {'completed', 'rolled_back'}:
+            assert_order_verification_complete(existing, rollback=new_status == 'rolled_back')
         if new_status in {'completed', 'rolled_back'}:
             updates['result_summary'] = body.get('result_summary', '')
             updates['actual_end'] = _utc_now_iso()
@@ -235,16 +290,43 @@ def api_transition_change_order(order_id: str, body: dict = Body(...), user=requ
                 **(existing.get('result_detail') or {}),
             }
 
+        if new_status in {'failed', 'rollback_in_progress', 'rolled_back'}:
+            result_detail = dict(updates.get('result_detail') or existing.get('result_detail') or {})
+            lifecycle_events = result_detail.get('lifecycle_events')
+            if not isinstance(lifecycle_events, list):
+                lifecycle_events = []
+            lifecycle_events.append({
+                'event_id': f"lifecycle-{uuid.uuid4().hex}",
+                'status': new_status,
+                'summary': str(body.get('result_summary') or body.get('rollback_reason') or '').strip(),
+                'actor': {'id': actor_id, 'username': actor_username},
+                'occurred_at': _utc_now_iso(),
+            })
+            result_detail['lifecycle_events'] = lifecycle_events
+            updates['result_detail'] = result_detail
+
         # Validate assignment rules on transition
         full_payload = {**existing, **updates}
         _validate_assignment_rules(existing.get('requester_username'), full_payload)
         
         # Enforcement checks on transition
         if new_status == 'initial_review':
+            if str(existing.get('order_type') or '') == 'emergency':
+                emergency = validate_emergency_change_details(conn, {**existing, **updates})
+                updates.update({
+                    'emergency_reason': emergency['emergency_reason'],
+                    'emergency_review_owner_id': emergency['emergency_review_owner_id'],
+                    'emergency_review_due_at': emergency['emergency_review_due_at'],
+                    'emergency_review_status': 'pending',
+                    'emergency_reviewed_by_id': '',
+                    'emergency_reviewed_by': '',
+                    'emergency_reviewed_at': None,
+                    'emergency_review_note': '',
+                })
+                full_payload = {**existing, **updates}
             if is_template_required():
                 _validate_template_completeness(full_payload)
-            if is_control_sheet_enabled():
-                _validate_control_sheet_completeness(conn, order_id, full_payload, 'initial_review')
+            _validate_control_sheet_completeness(conn, order_id, full_payload, 'initial_review')
         if new_status == 'implementing':
             if is_control_sheet_enabled():
                 _validate_control_sheet_completeness(conn, order_id, full_payload, 'implementing')

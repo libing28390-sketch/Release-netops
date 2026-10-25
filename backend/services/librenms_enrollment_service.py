@@ -31,7 +31,7 @@ def _load_asset_enrollment_context(device_id: str) -> dict[str, Any]:
     try:
         row = conn.execute(
             """
-            SELECT d.id, d.asset_id,
+            SELECT d.id, d.asset_id, d.snmp_collection_enabled,
                    COALESCE(NULLIF(pa.management_ip, ''), NULLIF(d.ip_address, ''), '') AS management_ip,
                    COALESCE(NULLIF(pa.snmp_port, 0), 161) AS snmp_port,
                    COALESCE(NULLIF(pa.snmp_credential_id, ''), NULLIF(d.snmp_credential_id, ''), '') AS snmp_credential_id,
@@ -271,6 +271,17 @@ async def enroll_imported_network_device(
     if not target or str(target.get("asset_type") or "") != "network_device":
         result = _error_result("not_eligible")
         _audit_enrollment(target=target, actor=actor, status="blocked", reason=result["status"])
+        return result
+
+    from services.snmp_collection_policy_service import is_snmp_collection_enabled
+
+    if not is_snmp_collection_enabled(target):
+        result = {
+            "status": "collection_disabled",
+            "message": "该设备已关闭 SNMP 采集，跳过 LibreNMS 自动纳管",
+            "profile_applied": False,
+        }
+        _audit_enrollment(target=target, actor=actor, status="skipped", reason="snmp_collection_disabled")
         return result
 
     parsed_ip = _canonical_ip(target.get("management_ip"))

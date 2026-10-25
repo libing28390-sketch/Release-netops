@@ -293,7 +293,8 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         vault_path TEXT DEFAULT '',
         ports_count INTEGER DEFAULT 0,
         ports_bandwidth_gbps REAL DEFAULT 0.0,
-        switching_capacity_gbps REAL DEFAULT 0.0
+        switching_capacity_gbps REAL DEFAULT 0.0,
+        snmp_collection_enabled BOOLEAN NOT NULL DEFAULT TRUE
     )
     ''')
 
@@ -1019,7 +1020,8 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
          ('monitoring_enabled', "INTEGER DEFAULT 1"),
          ('config_backup_enabled', "INTEGER DEFAULT 1"),
          ('last_discovered', "TEXT DEFAULT ''"),
-         ('collection_policy_json', "TEXT DEFAULT '{}'")
+         ('collection_policy_json', "TEXT DEFAULT '{}'"),
+         ('snmp_collection_enabled', "BOOLEAN NOT NULL DEFAULT TRUE")
      ]:
         ensure_column('devices', col, dtype)
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_devices_device_group_id ON devices(device_group_id)')
@@ -4013,13 +4015,15 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         critical_threshold REAL,
         vendor TEXT DEFAULT '',
         oid TEXT DEFAULT '',
+        unit TEXT NOT NULL DEFAULT '',
+        threshold_direction TEXT NOT NULL DEFAULT 'above',
         use_admin_creds INTEGER DEFAULT 0,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
     );
     ''')
         
-    for col, dtype in [('script_id', "TEXT DEFAULT ''"), ('warning_threshold', 'REAL'), ('critical_threshold', 'REAL'), ('method', "TEXT DEFAULT 'SNMP'"), ('command', "TEXT DEFAULT ''"),
+    for col, dtype in [('script_id', "TEXT DEFAULT ''"), ('warning_threshold', 'REAL'), ('critical_threshold', 'REAL'), ('method', "TEXT DEFAULT 'SNMP'"), ('command', "TEXT DEFAULT ''"), ('unit', "TEXT NOT NULL DEFAULT ''"), ('threshold_direction', "TEXT NOT NULL DEFAULT 'above'"),
                        ('parse_type', "TEXT DEFAULT 'numeric'"),
                        ('textfsm_template', "TEXT DEFAULT ''"),
                        ('parse_field', "TEXT DEFAULT ''"),
@@ -4197,21 +4201,25 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     
     if _USE_PG:
         pg_sql = '''INSERT INTO inspection_items 
-                    (id, name, name_zh, category, check_key, description, method, command, script_id, warning_threshold, critical_threshold, vendor, oid, created_at, updated_at)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    (id, name, name_zh, category, check_key, description, method, command, script_id, warning_threshold, critical_threshold, vendor, oid, created_at, updated_at, unit, parse_type, expected_value, threshold_direction, enabled)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     ON CONFLICT (id) DO UPDATE SET
                     name = EXCLUDED.name, name_zh = EXCLUDED.name_zh, category = EXCLUDED.category,
                     check_key = EXCLUDED.check_key, description = EXCLUDED.description,
                     method = EXCLUDED.method, command = EXCLUDED.command, script_id = EXCLUDED.script_id,
                     warning_threshold = EXCLUDED.warning_threshold, critical_threshold = EXCLUDED.critical_threshold,
-                    vendor = EXCLUDED.vendor, oid = EXCLUDED.oid, updated_at = EXCLUDED.updated_at'''
+                    vendor = EXCLUDED.vendor, oid = EXCLUDED.oid, updated_at = EXCLUDED.updated_at,
+                    unit = EXCLUDED.unit, parse_type = EXCLUDED.parse_type,
+                    expected_value = EXCLUDED.expected_value,
+                    threshold_direction = EXCLUDED.threshold_direction,
+                    enabled = EXCLUDED.enabled'''
         cursor.executemany(pg_sql, default_items)
     else:
         for item in default_items:
             cursor.execute('''
                 INSERT OR REPLACE INTO inspection_items 
-                (id, name, name_zh, category, check_key, description, method, command, script_id, warning_threshold, critical_threshold, vendor, oid, created_at, updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                (id, name, name_zh, category, check_key, description, method, command, script_id, warning_threshold, critical_threshold, vendor, oid, created_at, updated_at, unit, parse_type, expected_value, threshold_direction, enabled)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ''', item)
 
         valid_srv_ids = [item[0] for item in default_items if item[3] == 'Server']
@@ -4225,12 +4233,12 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     network_sql_columns = (
         'id, name, name_zh, category, check_key, description, method, command, script_id, '
         'warning_threshold, critical_threshold, vendor, oid, created_at, updated_at, '
-        'parse_type, textfsm_template, parse_field, parse_filter, fallback_regex, enabled'
+        'parse_type, textfsm_template, parse_field, parse_filter, fallback_regex, enabled, expected_value, unit, threshold_direction'
     )
     if _USE_PG:
         pg_net_sql = (
             f'INSERT INTO inspection_items ({network_sql_columns}) '
-            f'VALUES (' + ','.join(['%s'] * 21) + ') '
+            f'VALUES (' + ','.join(['%s'] * 24) + ') '
             'ON CONFLICT (id) DO UPDATE SET '
             'name=EXCLUDED.name, name_zh=EXCLUDED.name_zh, category=EXCLUDED.category, '
             'check_key=EXCLUDED.check_key, description=EXCLUDED.description, '
@@ -4239,13 +4247,15 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
             'vendor=EXCLUDED.vendor, oid=EXCLUDED.oid, updated_at=EXCLUDED.updated_at, '
             'parse_type=EXCLUDED.parse_type, textfsm_template=EXCLUDED.textfsm_template, '
             'parse_field=EXCLUDED.parse_field, parse_filter=EXCLUDED.parse_filter, '
-            'fallback_regex=EXCLUDED.fallback_regex, enabled=EXCLUDED.enabled'
+            'fallback_regex=EXCLUDED.fallback_regex, enabled=EXCLUDED.enabled, '
+            'expected_value=EXCLUDED.expected_value, '
+            'unit=EXCLUDED.unit, threshold_direction=EXCLUDED.threshold_direction'
         )
         cursor.executemany(pg_net_sql, network_items_v2)
     else:
         sqlite_net_sql = (
             f'INSERT OR REPLACE INTO inspection_items ({network_sql_columns}) '
-            f'VALUES (' + ','.join(['?'] * 21) + ')'
+            f'VALUES (' + ','.join(['?'] * 24) + ')'
         )
         for item in network_items_v2:
             cursor.execute(sqlite_net_sql, item)

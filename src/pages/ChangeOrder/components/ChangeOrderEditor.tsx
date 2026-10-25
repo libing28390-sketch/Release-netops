@@ -1,21 +1,25 @@
 import { DataTable } from '../../../components/DataTable';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
-  ClipboardList, X, Plus, Search, RefreshCw, CheckCircle2,
-  XCircle, Shield, ChevronDown, Save, AlertTriangle, Info,
-  ClipboardCheck, Paperclip, User, UserCheck
+  X, XCircle, Plus, Search, RefreshCw, CheckCircle2,
+  Shield, ChevronDown, Save, AlertTriangle,
+  ClipboardCheck
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import DateTimePicker from '../../../components/DateTimePicker';
 import type { User as UserOption, SessionUser, ConfigTemplate } from '../../../types';
 import type { ChangeOrder, ScenarioTemplate, ScenarioVariable, PlatformMeta, ScenarioPhasePreview } from '../types';
 import { ORDER_TYPE_META, PRIORITY_META, RISK_META, EMPTY_TEMPLATE_PREVIEW } from '../constants';
+import { getControlSheetMirrorConflicts } from '../controlSheetSync';
 import {
-  riskLabel, variableLabel, getVariableHelpText, fmtTime, inferVariableMeta
+  riskLabel, variableLabel, getVariableHelpText, fmtTime, inferVariableMeta, getImplementerConflictRole,
+  parseRollbackCommands, serializeRollbackCommands, getMissingChangeOrderControlSheetFields,
 } from '../helpers';
 
 import { TableActionCell, TableActionHeader } from '../../../components/ui/TableActionColumn';
-import { ActionIconButton } from '../../../components/ui/ActionIconButton';
+import { ActionButton, ActionIconButton } from '../../../components/ui/ActionIconButton';
+import { FormActionBar, FormSection } from '../../../components/ui/FormLayout';
+import { SelectField, TextField } from '../../../components/ui/FormField';
 interface Props {
   language: string;
   currentUser: SessionUser;
@@ -45,7 +49,7 @@ interface Props {
   authHeaders: (withJson?: boolean) => Record<string, string>;
 }
 
-const FEATURE_CONTROL_SHEET = import.meta.env.VITE_FEATURE_CONTROL_SHEET === '0' ? false : true;
+const FEATURE_CONTROL_SHEET = true;
 
 export const ChangeOrderEditor: React.FC<Props> = ({
   language,
@@ -76,9 +80,51 @@ export const ChangeOrderEditor: React.FC<Props> = ({
   authHeaders,
 }) => {
   const zh = language === 'zh';
+  const implementerId = String(form.control_sheet?.implementer_id || '').trim();
+  const missingControlSheetFields = useMemo(
+    () => getMissingChangeOrderControlSheetFields(form.control_sheet),
+    [form.control_sheet],
+  );
+  const assignmentIds = {
+    co_reviewer: String(form.control_sheet?.co_reviewer_id || '').trim(),
+    business_confirmer: String(form.control_sheet?.business_confirmer_id || '').trim(),
+    initial_reviewer: String(form.assigned_initial_reviewer_id || '').trim(),
+    final_approver: String(form.assigned_final_approver_id || '').trim(),
+  };
+  const excludedImplementerIds = new Set(Object.values(assignmentIds).filter(Boolean));
+  const assignmentConflict = getImplementerConflictRole(implementerId, assignmentIds);
+  const conflictRoleLabel: Record<NonNullable<typeof assignmentConflict>, string> = {
+    co_reviewer: zh ? '复核人' : 'reviewer',
+    business_confirmer: zh ? '业务确认人' : 'business confirmer',
+    initial_reviewer: zh ? '初审人' : 'initial reviewer',
+    final_approver: zh ? '终审人' : 'final approver',
+  };
+  const [mirrorConfirmationChecked, setMirrorConfirmationChecked] = useState(false);
+  const mirrorPrimaryValues = useMemo(() => ({
+    scheduledStart: String(form.scheduled_start || ''),
+    scheduledEnd: String(form.scheduled_end || ''),
+    targetIps: (form.target_devices || []).map((device: any) => String(device.ip_address || '')).filter(Boolean),
+    rollbackPlan: String(form.rollback_plan || ''),
+  }), [form.scheduled_start, form.scheduled_end, form.target_devices, form.rollback_plan]);
+  const mirrorConflicts = useMemo(
+    () => getControlSheetMirrorConflicts(form.control_sheet, mirrorPrimaryValues),
+    [form.control_sheet, mirrorPrimaryValues],
+  );
+  const hasUnconfirmedMirrorConflicts = FEATURE_CONTROL_SHEET && mirrorConflicts.length > 0 && !mirrorConfirmationChecked;
+  const controlSheetMirrorFingerprint = JSON.stringify([
+    form.control_sheet?.change_time_start,
+    form.control_sheet?.change_time_end,
+    form.control_sheet?.device_ips,
+    form.control_sheet?.rollback_plan,
+  ]);
+
+  useEffect(() => {
+    setMirrorConfirmationChecked(false);
+  }, [mirrorPrimaryValues, controlSheetMirrorFingerprint]);
 
   // ── Local UI States ──
   const [commandInput, setCommandInput] = useState('');
+  const [rollbackCommandInput, setRollbackCommandInput] = useState('');
   const [deviceKeyword, setDeviceKeyword] = useState('');
   const [deviceOptions, setDeviceOptions] = useState<any[]>([]);
   const [deviceLoading, setDeviceLoading] = useState(false);
@@ -537,6 +583,28 @@ export const ChangeOrderEditor: React.FC<Props> = ({
     setCommandInput('');
   };
 
+  const addRollbackCommand = () => {
+    const nextCommand = rollbackCommandInput.trim();
+    if (!nextCommand) return;
+    setForm((f: any) => ({
+      ...f,
+      rollback_plan: serializeRollbackCommands([
+        ...parseRollbackCommands(f.rollback_plan),
+        nextCommand,
+      ]),
+    }));
+    setRollbackCommandInput('');
+  };
+
+  const removeRollbackCommand = (index: number) => {
+    setForm((f: any) => ({
+      ...f,
+      rollback_plan: serializeRollbackCommands(
+        parseRollbackCommands(f.rollback_plan).filter((_, commandIndex) => commandIndex !== index),
+      ),
+    }));
+  };
+
   const assignTemplateVariable = (key: string, value: string) => {
     setTemplateVariables((current) => ({ ...current, [key]: value }));
   };
@@ -566,88 +634,159 @@ export const ChangeOrderEditor: React.FC<Props> = ({
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.98, opacity: 0 }}
         transition={{ type: 'spring', stiffness: 380, damping: 30 }}
-        className="bg-white rounded-3xl border border-black/5 shadow-sm overflow-hidden flex flex-col"
+        className="overflow-hidden rounded-xl border border-[var(--ui-border)] bg-[var(--ui-surface)] shadow-sm"
       >
-        {/* Modal header */}
-        <div className="px-4 py-4 sm:px-6 sm:py-5 border-b border-black/5 bg-gradient-to-r from-[#00bceb]/[0.04] to-transparent flex items-center justify-between gap-3">
-          <h3 className="text-lg font-semibold flex items-center gap-2.5">
-            <span className="p-2 rounded-xl bg-[#00bceb]/10 ring-1 ring-[#00bceb]/15">
-              <ClipboardList size={16} className="text-[#00bceb]" />
-            </span>
-            {editingOrder ? (zh ? '编辑工单' : 'Edit Order') : (zh ? '新建变更工单' : 'New Change Order')}
-          </h3>
-          <button title={zh ? '关闭编辑器' : 'Close editor'} onClick={() => closeEditor()} className="p-2 rounded-lg text-black/30 hover:text-black/60 hover:bg-black/5 transition-all">
+        <div className="flex items-center justify-between gap-3 border-b border-[var(--ui-border)] px-4 py-3 sm:px-5">
+          <div className="min-w-0">
+            <p className="text-[13px] font-semibold text-[var(--ui-fg)]">{zh ? '申请内容' : 'Request details'}</p>
+            <p className="mt-0.5 text-[11px] text-[var(--ui-fg-muted)]">{zh ? '补全变更范围、实施方案和必填控制表。' : 'Set the scope, implementation plan, and required control sheet.'}</p>
+          </div>
+          <button type="button" aria-label={zh ? '关闭编辑器' : 'Close editor'} title={zh ? '关闭编辑器' : 'Close editor'} onClick={() => closeEditor()} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[var(--ui-fg-muted)] transition-colors hover:bg-[var(--ui-surface-muted)] hover:text-[var(--ui-fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)]">
             <X size={18} />
           </button>
         </div>
 
-        {/* Modal body */}
-        <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5 space-y-5">
-          {/* Title */}
-          <div>
-            <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '工单标题' : 'Title'} <span className="text-rose-500">*</span></label>
-            <input
-              value={form.title}
-              onChange={e => setForm((f: any) => ({ ...f, title: e.target.value }))}
-              placeholder={zh ? '例如: 核心交换机VLAN调整' : 'e.g.: Core switch VLAN adjustment'}
-              className="w-full px-4 py-2.5 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 focus:ring-2 focus:ring-[#00bceb]/10 transition-all"
+        <div className="space-y-4 bg-[var(--ui-canvas)] p-3 sm:p-4">
+          {FEATURE_CONTROL_SHEET && mirrorConflicts.length > 0 && (
+            <div role="alert" className="rounded-2xl border border-amber-500/25 bg-amber-500/[0.06] p-4">
+              <div className="flex items-start gap-2.5">
+                <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-600" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-semibold text-amber-900">
+                    {zh ? '控制表中的旧镜像值与工单正文不同' : 'Saved control sheet values differ from the order'}
+                  </p>
+                  <p className="mt-1 text-[11px] text-amber-900/75">
+                    {zh ? '请核对差异并确认保存时以工单正文为准。' : 'Review the differences and confirm that the order remains the source of truth when saving.'}
+                  </p>
+                  <div className="mt-3 space-y-2">
+                    {mirrorConflicts.map((conflict) => {
+                      const label = conflict.field === 'change_time'
+                        ? (zh ? '变更时间窗口' : 'Change window')
+                        : conflict.field === 'device_ips'
+                          ? (zh ? '涉及设备 IP' : 'Device IPs')
+                          : (zh ? '回退方案' : 'Rollback plan');
+                      return (
+                        <div key={conflict.field} className="grid gap-1 rounded-xl bg-white/70 px-3 py-2 sm:grid-cols-[120px_1fr_1fr] sm:gap-3">
+                          <span className="text-[11px] font-semibold text-amber-950">{label}</span>
+                          <span className="min-w-0 break-words text-[11px] text-amber-950/75">
+                            <span className="font-medium">{zh ? '控制表' : 'Control sheet'}: </span>{conflict.existingValue || '—'}
+                          </span>
+                          <span className="min-w-0 break-words text-[11px] text-amber-950/75">
+                            <span className="font-medium">{zh ? '工单正文' : 'Order'}: </span>{conflict.primaryValue || '—'}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <label className="mt-3 inline-flex cursor-pointer items-start gap-2 text-xs font-medium text-amber-950">
+                    <input
+                      type="checkbox"
+                      checked={mirrorConfirmationChecked}
+                      onChange={(event) => setMirrorConfirmationChecked(event.target.checked)}
+                      className="mt-0.5 h-4 w-4 rounded border-amber-700/30 text-amber-700 focus:ring-amber-600"
+                    />
+                    <span>{zh ? '保存将以工单正文信息为准' : 'Save using the order body as the source of truth'}</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <FormSection
+            title={zh ? '基本信息与范围' : 'Basics and scope'}
+            description={zh ? '定义变更内容、时间窗口和目标设备。' : 'Set the change details, schedule, and target devices.'}
+            className="rounded-xl"
+            contentClassName="space-y-4"
+          >
+          <TextField
+            label={zh ? '工单标题 *' : 'Title *'}
+            value={form.title}
+            onChange={(value) => setForm((current: any) => ({ ...current, title: value }))}
+            placeholder={zh ? '例如：核心交换机 VLAN 调整' : 'e.g. Core switch VLAN adjustment'}
+          />
+          <TextField
+            label={zh ? '变更说明' : 'Change description'}
+            value={form.description}
+            onChange={(value) => setForm((current: any) => ({ ...current, description: value }))}
+            placeholder={zh ? '描述变更内容和影响范围。' : 'Describe the change and its impact.'}
+            multiline
+            rows={3}
+          />
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <SelectField
+              label={zh ? '变更类型 *' : 'Change type *'}
+              language={zh ? 'zh' : 'en'}
+              value={form.order_type}
+              onChange={(value) => setForm((current: any) => ({
+                ...current,
+                order_type: value,
+                ...(value === 'emergency' ? {} : { emergency_reason: '', emergency_review_owner_id: '', emergency_review_due_at: '' }),
+              }))}
+              options={Object.entries(ORDER_TYPE_META).map(([key, meta]) => ({ value: key, label: meta.label[zh ? 'zh' : 'en'] }))}
+            />
+            <SelectField
+              label={zh ? '优先级 *' : 'Priority *'}
+              language={zh ? 'zh' : 'en'}
+              value={form.priority}
+              onChange={(value) => setForm((current: any) => ({ ...current, priority: value }))}
+              options={Object.entries(PRIORITY_META).map(([key, meta]) => ({ value: key, label: meta.label[zh ? 'zh' : 'en'] }))}
+            />
+            <SelectField
+              label={zh ? '风险等级 *' : 'Risk level *'}
+              language={zh ? 'zh' : 'en'}
+              value={form.risk_level}
+              onChange={(value) => setForm((current: any) => ({ ...current, risk_level: value }))}
+              options={Object.entries(RISK_META).map(([key, meta]) => ({ value: key, label: meta.label[zh ? 'zh' : 'en'] }))}
             />
           </div>
 
-          {/* Description */}
-          <div>
-            <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '描述' : 'Description'}</label>
-            <textarea
-              value={form.description}
-              onChange={e => setForm((f: any) => ({ ...f, description: e.target.value }))}
-              placeholder={zh ? '详细描述变更内容、影响范围...' : 'Describe the change, impact scope...'}
-              rows={3}
-              className="w-full px-4 py-2.5 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 focus:ring-2 focus:ring-[#00bceb]/10 transition-all resize-none"
-            />
-          </div>
-
-          {/* Type + Priority + Risk — 3 columns */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <div>
-              <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '变更类型' : 'Type'} <span className="text-rose-500">*</span></label>
-              <select
-                title={zh ? '变更类型' : 'Change order type'}
-                value={form.order_type}
-                onChange={e => setForm((f: any) => ({ ...f, order_type: e.target.value }))}
-                className="w-full px-3 py-2.5 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 bg-white"
-              >
-                {Object.entries(ORDER_TYPE_META).map(([k, v]) => (
-                  <option key={k} value={k}>{v.label[zh ? 'zh' : 'en']}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '优先级' : 'Priority'} <span className="text-rose-500">*</span></label>
-              <select
-                title={zh ? '优先级' : 'Priority'}
-                value={form.priority}
-                onChange={e => setForm((f: any) => ({ ...f, priority: e.target.value }))}
-                className="w-full px-3 py-2.5 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 bg-white"
-              >
-                {Object.entries(PRIORITY_META).map(([k, v]) => (
-                  <option key={k} value={k}>{v.label[zh ? 'zh' : 'en']}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '风险等级' : 'Risk Level'} <span className="text-rose-500">*</span></label>
-              <select
-                title={zh ? '风险等级' : 'Risk level'}
-                value={form.risk_level}
-                onChange={e => setForm((f: any) => ({ ...f, risk_level: e.target.value }))}
-                className="w-full px-3 py-2.5 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 bg-white"
-              >
-                {Object.entries(RISK_META).map(([k, v]) => (
-                  <option key={k} value={k}>{v.label[zh ? 'zh' : 'en']}</option>
-                ))}
-              </select>
-            </div>
-          </div>
+          {form.order_type === 'emergency' && (
+            <section className="rounded-xl border border-amber-200 bg-amber-50/70 p-4" aria-label={zh ? '紧急变更复核信息' : 'Emergency change review'}>
+              <div className="mb-3 flex items-start gap-2">
+                <AlertTriangle size={15} className="mt-0.5 shrink-0 text-amber-700" />
+                <div>
+                  <h3 className="text-xs font-bold text-amber-900">{zh ? '紧急原因与事后复核' : 'Emergency reason and post-review'}</h3>
+                  <p className="mt-1 text-[11px] leading-relaxed text-amber-800">
+                    {zh ? '紧急类型仍执行现有初审、终审和实施前验证。实施后由独立复核人登记结论。' : 'Emergency orders keep the existing review and pre-execution checks. An independent reviewer records the post-implementation outcome.'}
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <label className="text-[11px] font-semibold text-amber-950 sm:col-span-2">
+                  {zh ? '紧急原因' : 'Emergency reason'} <span className="text-rose-600">*</span>
+                  <textarea
+                    value={form.emergency_reason || ''}
+                    onChange={(event) => setForm((current: any) => ({ ...current, emergency_reason: event.target.value }))}
+                    maxLength={2000}
+                    rows={2}
+                    placeholder={zh ? '说明必须立即处理的故障或风险' : 'Explain the outage or risk requiring immediate action'}
+                    className="mt-1 w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs font-normal text-slate-800 outline-none focus:border-amber-400"
+                  />
+                </label>
+                <label className="text-[11px] font-semibold text-amber-950">
+                  {zh ? '事后复核人' : 'Post-review owner'} <span className="text-rose-600">*</span>
+                  <select
+                    value={form.emergency_review_owner_id || ''}
+                    onChange={(event) => setForm((current: any) => ({ ...current, emergency_review_owner_id: event.target.value }))}
+                    className="mt-1 w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs font-normal text-slate-800 outline-none focus:border-amber-400"
+                  >
+                    <option value="">{zh ? '请选择独立复核人' : 'Select an independent reviewer'}</option>
+                    {users.filter((person) => person.id !== currentUser.id && person.id !== form.control_sheet?.implementer_id).map((person) => (
+                      <option key={person.id} value={person.id}>{person.username}</option>
+                    ))}
+                  </select>
+                </label>
+                <DateTimePicker
+                  label={zh ? '事后复核期限' : 'Post-review due'}
+                  value={form.emergency_review_due_at || ''}
+                  onChange={(value) => setForm((current: any) => ({ ...current, emergency_review_due_at: value }))}
+                  language={language}
+                  required
+                />
+              </div>
+            </section>
+          )}
 
           {/* Schedule */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -693,30 +832,6 @@ export const ChangeOrderEditor: React.FC<Props> = ({
             />
           </div>
 
-          {/* Device login exempt */}
-          <div className="mt-4 rounded-2xl border border-black/8 bg-black/[0.015] p-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-xs font-semibold text-black/70">{zh ? '设备登录免授权' : 'Device Login Auth Exempt'}</p>
-                <p className="text-[11px] text-black/40 mt-1">
-                  {zh ? '开启后变更执行时可跳过设备登录时的额外授权检查，与工单审批流程无关。' : 'Enable to exempt device login authorization during execution; this does not skip the change order approval workflow.'}
-                </p>
-              </div>
-              <label className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-2 text-sm cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={form.authorization_exempt}
-                  onChange={(e) => setForm((f: any) => ({
-                    ...f,
-                    authorization_exempt: e.target.checked,
-                  }))}
-                  className="h-4 w-4 rounded border border-black/10 text-[#06b6d4] focus:ring-[#06b6d4]"
-                />
-                <span>{form.authorization_exempt ? (zh ? '已启用' : 'Enabled') : (zh ? '未启用' : 'Disabled')}</span>
-              </label>
-            </div>
-          </div>
-
           {/* Target Devices */}
           <div className="mt-4">
             <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
@@ -724,35 +839,29 @@ export const ChangeOrderEditor: React.FC<Props> = ({
               <button
                 type="button"
                 onClick={() => setShowDevicePicker(true)}
-                className="rounded-xl bg-[#06b6d4] px-3 py-2 text-xs font-semibold text-white hover:bg-[#0891b2] transition-all"
+                className="min-h-9 rounded-lg bg-[var(--ui-accent)] px-3 py-1.5 text-[13px] font-semibold text-white transition-colors hover:bg-[var(--ui-accent-hover)]"
               >
                 {zh ? '从设备库选择' : 'Pick from inventory'}
               </button>
             </div>
             {form.target_devices.length > 0 && (
               <div className="mt-2 overflow-x-auto rounded-3xl border border-black/10 bg-slate-50">
-                <DataTable unstyled exportConfig={{ filename: 'change-order-target-devices', language: zh ? 'zh' : 'en', disabled: form.target_devices.length === 0 }} className="nx-data-table nx-data-table--compact text-sm text-left">
+                <DataTable unstyled exportConfig={{ filename: 'change-order-target-devices', language: zh ? 'zh' : 'en', disabled: form.target_devices.length === 0 }} className="nx-data-table nx-data-table--compact text-left text-[13px]">
                   <thead>
-                    <tr className="text-xs text-black/50 uppercase tracking-[0.04em]">
-                      <th className="px-3 py-3">{zh ? 'IP地址' : 'IP Address'}</th>
-                      <th className="px-3 py-3">{zh ? '设备名称' : 'Device Name'}</th>
-                      <th className="px-3 py-3">{zh ? '用户名' : 'Username'}</th>
-                      <th className="px-3 py-3">{zh ? '开始时间' : 'Start time'}</th>
-                      <th className="px-3 py-3">{zh ? '结束时间' : 'End time'}</th>
-                      <th className="px-3 py-3">{zh ? '执行人' : 'Executor'}</th>
-                      <TableActionHeader className="px-3 py-3">{zh ? '操作' : 'Actions'}</TableActionHeader>
+                    <tr className="text-[12px] text-[var(--ui-fg-muted)]">
+                      <th className="px-3 py-2.5">{zh ? '管理地址' : 'Management address'}</th>
+                      <th className="px-3 py-2.5">{zh ? '设备' : 'Device'}</th>
+                      <th className="px-3 py-2.5">{zh ? '登录用户' : 'Login user'}</th>
+                      <TableActionHeader className="px-3 py-2.5">{zh ? '操作' : 'Actions'}</TableActionHeader>
                     </tr>
                   </thead>
                   <tbody>
                     {form.target_devices.map((dev: any, i: number) => (
                       <tr key={i} className="border-t border-black/10">
-                        <td className="px-3 py-3 text-black/80">{dev.ip_address || '—'}</td>
-                        <td className="px-3 py-3 text-black/80">{dev.hostname || '—'}</td>
-                        <td className="px-3 py-3 text-black/80">{dev.username || currentUser.username || '—'}</td>
-                        <td className="px-3 py-3 text-black/80">{fmtTime(form.scheduled_start)}</td>
-                        <td className="px-3 py-3 text-black/80">{fmtTime(form.scheduled_end)}</td>
-                        <td className="px-3 py-3 text-black/80">{currentUser.username || '—'}</td>
-                        <TableActionCell className="px-3 py-3">
+                        <td className="px-3 py-2.5 font-mono text-[var(--ui-fg)]">{dev.ip_address || '—'}</td>
+                        <td className="px-3 py-2.5 text-[var(--ui-fg)]">{dev.hostname || '—'}</td>
+                        <td className="px-3 py-2.5 text-[var(--ui-fg-muted)]">{dev.username || currentUser.username || '—'}</td>
+                        <TableActionCell className="px-3 py-2.5">
                           <ActionIconButton
                             icon={X}
                             label={zh ? '移除目标设备' : 'Remove target device'}
@@ -907,12 +1016,21 @@ export const ChangeOrderEditor: React.FC<Props> = ({
             </div>
           )}
 
+          </FormSection>
+
+          <FormSection
+            title={zh ? '机器命令与回退' : 'Machine commands and rollback'}
+            description={zh ? '选择手工命令或模板生成命令；同时准备可执行的回退命令。' : 'Enter commands manually or generate them from a template, and prepare rollback commands.'}
+            className="rounded-xl"
+            contentClassName="space-y-4"
+          >
+
           {/* Commands block */}
           <div className="rounded-2xl border border-black/8 bg-black/[0.015] p-4">
             <div className="flex items-center justify-between gap-3 mb-3">
               <div>
-                <label className="block text-xs font-semibold text-black/50">{zh ? '命令来源' : 'Command Source'}</label>
-                <p className="mt-1 text-[11px] text-black/40">{zh ? '可继续使用手工输入，也可以切换为可参数化的变更模板。' : 'Keep manual commands or switch to a parameterized scenario template.'}</p>
+                <p className="text-xs font-semibold text-black/65">{zh ? '机器命令' : 'Machine Commands'}</p>
+                <p className="mt-1 text-[11px] text-black/40">{zh ? '填写需要在目标设备执行的命令。' : 'Commands to run on the target devices.'}</p>
               </div>
               <div className="inline-flex rounded-xl bg-white p-1 ring-1 ring-black/8">
                 <button
@@ -1140,23 +1258,23 @@ export const ChangeOrderEditor: React.FC<Props> = ({
                     initial={{ opacity: 0, y: -10 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -10 }}
-                    className="rounded-xl bg-gradient-to-r from-amber-500/5 to-orange-500/5 border border-amber-500/20 shadow-sm shadow-amber-500/5 p-3.5 text-xs text-amber-800 flex items-start gap-3 backdrop-blur-sm"
+                    className="flex items-start gap-3 rounded-lg border border-[var(--ui-warning)]/30 bg-[var(--ui-warning-subtle)] p-3 text-[13px] text-[var(--ui-warning)]"
                   >
-                    <div className="p-1.5 rounded-lg bg-amber-500/10 text-amber-600 shrink-0 mt-0.5">
-                      <AlertTriangle size={14} className="animate-pulse" />
+                    <div className="mt-0.5 shrink-0">
+                      <AlertTriangle size={14} />
                     </div>
                     <div className="flex-1 space-y-1.5">
-                      <p className="font-semibold text-amber-900 leading-none">
+                      <p className="font-semibold leading-none">
                         {zh ? '待补充必填变量' : 'Missing Required Variables'}
                       </p>
-                      <p className="text-amber-700/80 leading-relaxed text-[11px]">
+                      <p className="mt-1 leading-5 text-[12px]">
                         {zh ? '请在上方表单中填写以下必填变量的值，否则无法进行下一步操作：' : 'Please fill in values for the following required variables above to proceed:'}
                       </p>
                       <div className="flex flex-wrap gap-1.5 pt-1">
                         {templateMissingRequired.map((varName, idx) => (
                           <span 
                             key={idx} 
-                            className="inline-flex items-center px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-800 border border-amber-500/20 font-medium font-mono text-[10px]"
+                            className="inline-flex items-center rounded-md border border-[var(--ui-warning)]/30 px-2 py-0.5 font-mono text-[11px] font-medium"
                           >
                             {varName}
                           </span>
@@ -1170,16 +1288,16 @@ export const ChangeOrderEditor: React.FC<Props> = ({
                   <motion.div
                     initial={{ opacity: 0, y: -10 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className="rounded-xl bg-gradient-to-r from-rose-500/5 to-pink-500/5 border border-rose-500/20 shadow-sm shadow-rose-500/5 p-3.5 text-xs text-rose-800 flex items-start gap-3 backdrop-blur-sm"
+                    className="flex items-start gap-3 rounded-lg border border-[var(--ui-danger)]/30 bg-[var(--ui-danger-subtle)] p-3 text-[13px] text-[var(--ui-danger)]"
                   >
-                    <div className="p-1.5 rounded-lg bg-rose-500/10 text-rose-600 shrink-0 mt-0.5">
+                    <div className="mt-0.5 shrink-0">
                       <XCircle size={14} />
                     </div>
                     <div className="flex-1 space-y-1.5">
-                      <p className="font-semibold text-rose-900 leading-none">
+                      <p className="font-semibold leading-none">
                         {zh ? '模板渲染失败' : 'Template Rendering Failed'}
                       </p>
-                      <pre className="p-2.5 rounded-lg bg-rose-500/5 border border-rose-500/10 text-rose-700 font-mono text-[10px] whitespace-pre-wrap break-all leading-normal mt-1">
+                      <pre className="mt-2 whitespace-pre-wrap break-all rounded-md border border-[var(--ui-danger)]/30 bg-[var(--ui-surface)] p-2.5 font-mono text-[12px] leading-5">
                         {templatePreviewError}
                       </pre>
                     </div>
@@ -1191,7 +1309,7 @@ export const ChangeOrderEditor: React.FC<Props> = ({
                     type="button"
                     onClick={runPrecheck}
                     disabled={precheckLoading || !selectedScenarioId}
-                    className="px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-500 text-white rounded-xl text-xs font-semibold hover:from-blue-600 hover:to-cyan-600 transition-all shadow-md shadow-blue-500/10 flex items-center gap-1.5 disabled:opacity-50"
+                    className="inline-flex min-h-9 items-center gap-1.5 rounded-lg bg-[var(--ui-accent)] px-3.5 text-[13px] font-semibold text-white transition-colors hover:bg-[var(--ui-accent-hover)] disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {precheckLoading ? <RefreshCw size={12} className="animate-spin" /> : <Shield size={12} />}
                     {zh ? '执行预检查' : 'Run Pre-check'}
@@ -1202,24 +1320,24 @@ export const ChangeOrderEditor: React.FC<Props> = ({
                   <motion.div
                     initial={{ opacity: 0, y: -10 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className="rounded-xl bg-gradient-to-r from-rose-500/5 to-pink-500/5 border border-rose-500/20 shadow-sm shadow-rose-500/5 p-3.5 text-xs text-rose-800 space-y-2.5 backdrop-blur-sm"
+                    className="space-y-2.5 rounded-lg border border-[var(--ui-danger)]/30 bg-[var(--ui-danger-subtle)] p-3 text-[13px] text-[var(--ui-danger)]"
                   >
                     <div className="flex items-start gap-3">
-                      <div className="p-1.5 rounded-lg bg-rose-500/10 text-rose-600 shrink-0">
+                      <div className="shrink-0">
                         <XCircle size={14} />
                       </div>
                       <div className="flex-1 pt-0.5">
-                        <p className="font-semibold text-rose-900 leading-none">
+                        <p className="font-semibold leading-none">
                           {zh ? '参数校验或模板错误' : 'Parameter Validation or Template Errors'}
                         </p>
-                        <p className="text-rose-700/80 text-[11px] mt-1">
+                        <p className="mt-1 text-[12px] leading-5">
                           {zh ? '预检查未通过，请检查并修正以下问题：' : 'Pre-check failed. Please check and correct the following issues:'}
                         </p>
                       </div>
                     </div>
                     <ul className="space-y-1.5 pl-9">
                       {precheckErrors.map((err, i) => (
-                        <li key={i} className="flex items-start gap-2 text-rose-700 leading-relaxed font-mono text-[11px]">
+                      <li key={i} className="flex items-start gap-2 font-mono text-[12px] leading-5">
                           <span className="w-1.5 h-1.5 rounded-full bg-rose-500/40 shrink-0 mt-1.5" />
                           <span className="break-all">{err}</span>
                         </li>
@@ -1232,16 +1350,16 @@ export const ChangeOrderEditor: React.FC<Props> = ({
                   <motion.div
                     initial={{ opacity: 0, scale: 0.98 }}
                     animate={{ opacity: 1, scale: 1 }}
-                    className="rounded-xl bg-gradient-to-r from-emerald-500/5 to-teal-500/5 border border-emerald-500/20 shadow-sm shadow-emerald-500/5 p-3.5 text-xs text-emerald-800 flex items-start gap-3 backdrop-blur-sm"
+                    className="flex items-start gap-3 rounded-lg border border-[var(--ui-success)]/30 bg-[var(--ui-success-subtle)] p-3 text-[13px] text-[var(--ui-success)]"
                   >
-                    <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-600 shrink-0 mt-0.5">
+                    <div className="mt-0.5 shrink-0">
                       <CheckCircle2 size={14} />
                     </div>
                     <div className="flex-1 space-y-1">
-                      <p className="font-semibold text-emerald-900 leading-none">
+                      <p className="font-semibold leading-none">
                         {zh ? '预检查成功' : 'Pre-check Successful'}
                       </p>
-                      <p className="text-emerald-700/90 leading-relaxed text-[11px] mt-1">
+                      <p className="mt-1 leading-5 text-[12px]">
                         {zh ? '所有参数校验均已通过，且已成功生成对应的可执行命令。' : 'All parameters have passed validation, and execution commands were generated successfully.'}
                       </p>
                     </div>
@@ -1250,20 +1368,20 @@ export const ChangeOrderEditor: React.FC<Props> = ({
 
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   {([
-                    { key: 'pre_check', title: zh ? '实施前检查' : 'Pre-check', tone: 'text-cyan-300' },
-                    { key: 'execute', title: zh ? '执行命令' : 'Execute', tone: 'text-emerald-300' },
-                    { key: 'post_check', title: zh ? '实施后检查' : 'Post-check', tone: 'text-amber-300' },
-                    { key: 'rollback', title: zh ? '回退命令' : 'Rollback', tone: 'text-rose-300' },
-                  ] as Array<{ key: keyof ScenarioPhasePreview; title: string; tone: string }>).map((section) => {
+                    { key: 'pre_check', title: zh ? '实施前检查' : 'Pre-check' },
+                    { key: 'execute', title: zh ? '执行命令' : 'Execute' },
+                    { key: 'post_check', title: zh ? '实施后检查' : 'Post-check' },
+                    { key: 'rollback', title: zh ? '回退命令' : 'Rollback' },
+                  ] as Array<{ key: keyof ScenarioPhasePreview; title: string }>).map((section) => {
                     const commands = effectivePreview?.[section.key] || [];
                     return (
-                      <div key={section.key} className="rounded-2xl border border-black/8 bg-white p-3">
+                      <div key={section.key} className="rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface)] p-3">
                         <div className="flex items-center justify-between gap-2 mb-2">
-                          <p className="text-[10px] font-semibold uppercase tracking-wider text-black/35">{section.title}</p>
-                          {templatePreviewLoading && section.key === 'execute' && <RefreshCw size={12} className="animate-spin text-black/30" />}
+                          <p className="text-[12px] font-semibold text-[var(--ui-fg-muted)]">{section.title}</p>
+                          {templatePreviewLoading && section.key === 'execute' && <RefreshCw size={13} className="animate-spin text-[var(--ui-fg-muted)]" />}
                         </div>
-                        <div className={`rounded-xl bg-slate-900 p-3 font-mono text-xs whitespace-pre-wrap break-all ${section.tone} max-h-40 overflow-y-auto`}>
-                          {commands.length > 0 ? commands.map((cmd, index) => <div key={`${section.key}-${index}`}>{index + 1}. {cmd}</div>) : <div className="text-slate-500">{zh ? '暂无内容' : 'No commands'}</div>}
+                        <div className="max-h-40 overflow-y-auto whitespace-pre-wrap break-all rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface-muted)] p-3 font-mono text-[12px] leading-5 text-[var(--ui-fg)]">
+                          {commands.length > 0 ? commands.map((cmd, index) => <div key={`${section.key}-${index}`}>{index + 1}. {cmd}</div>) : <div className="text-[var(--ui-fg-subtle)]">{zh ? '暂无内容' : 'No commands'}</div>}
                         </div>
                       </div>
                     );
@@ -1273,16 +1391,17 @@ export const ChangeOrderEditor: React.FC<Props> = ({
             ) : (
               <div className="space-y-4">
                 <div>
-                  <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '执行命令' : 'Commands'} <span className="text-rose-500">*</span></label>
+                  <label htmlFor="change-order-execute-command" className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '添加执行命令' : 'Add execution command'} <span className="text-rose-500">*</span></label>
                   <div className="flex gap-2">
                     <input
+                      id="change-order-execute-command"
                       value={commandInput}
                       onChange={e => setCommandInput(e.target.value)}
                       onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addCommand(); } }}
                       placeholder={zh ? '输入命令后按 Enter 添加' : 'Type command and press Enter'}
                       className="flex-1 px-3 py-2 text-sm font-mono border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 bg-white text-black"
                     />
-                    <button type="button" title={zh ? '添加命令' : 'Add command'} onClick={addCommand} className="px-3 py-2 rounded-xl bg-[#00bceb]/10 text-[#00bceb] text-sm font-medium hover:bg-[#00bceb]/18 transition-all">
+                    <button type="button" aria-label={zh ? '添加执行命令' : 'Add execution command'} title={zh ? '添加执行命令' : 'Add execution command'} onClick={addCommand} className="px-3 py-2 rounded-xl bg-[#00bceb]/10 text-[#00bceb] text-sm font-medium hover:bg-[#00bceb]/18 transition-all">
                       <Plus size={15} />
                     </button>
                   </div>
@@ -1307,106 +1426,133 @@ export const ChangeOrderEditor: React.FC<Props> = ({
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '回退方案' : 'Rollback Plan'} <span className="text-rose-500">*</span></label>
-                  <textarea
-                    value={form.rollback_plan}
-                    onChange={e => setForm((f: any) => ({ ...f, rollback_plan: e.target.value }))}
-                    placeholder={zh ? '描述失败时的回退步骤...' : 'Describe rollback steps in case of failure...'}
-                    rows={2}
-                    className="w-full px-4 py-2.5 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 focus:ring-2 focus:ring-[#00bceb]/10 transition-all resize-none"
-                  />
+                  <label htmlFor="change-order-rollback-command" className="block text-xs font-semibold text-black/50 mb-1.5">{zh ? '添加回退命令' : 'Add rollback command'} <span className="text-rose-500">*</span></label>
+                  <div className="flex gap-2">
+                    <input
+                      id="change-order-rollback-command"
+                      value={rollbackCommandInput}
+                      onChange={e => setRollbackCommandInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addRollbackCommand(); } }}
+                      placeholder={zh ? '输入回退命令后按 Enter 添加' : 'Type a rollback command and press Enter'}
+                      className="flex-1 px-3 py-2 text-sm font-mono border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 bg-white text-black"
+                    />
+                    <button type="button" aria-label={zh ? '添加回退命令' : 'Add rollback command'} title={zh ? '添加回退命令' : 'Add rollback command'} onClick={addRollbackCommand} className="px-3 py-2 rounded-xl bg-[#00bceb]/10 text-[#00bceb] text-sm font-medium hover:bg-[#00bceb]/18 transition-all">
+                      <Plus size={15} />
+                    </button>
+                  </div>
+                  {parseRollbackCommands(form.rollback_plan).length > 0 ? (
+                    <div className="mt-2 bg-slate-900 rounded-xl p-3 font-mono text-xs text-rose-300 leading-relaxed max-h-28 overflow-y-auto">
+                      {parseRollbackCommands(form.rollback_plan).map((command, index) => (
+                        <div key={`${index}-${command}`} className="flex items-center group">
+                          <span className="text-slate-500 select-none mr-2 w-4 text-right">{index + 1}</span>
+                          <span className="flex-1 break-all">{command}</span>
+                          <button
+                            type="button"
+                            aria-label={zh ? `移除第 ${index + 1} 条回退命令` : `Remove rollback command ${index + 1}`}
+                            title={zh ? '移除回退命令' : 'Remove rollback command'}
+                            onClick={() => removeRollbackCommand(index)}
+                            className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-rose-400 ml-2 transition-opacity"
+                          >
+                            <X size={11} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-[11px] text-black/40">{zh ? '尚未添加回退命令' : 'No rollback commands added yet'}</p>
+                  )}
                 </div>
               </div>
             )}
           </div>
+          </FormSection>
 
           {/* ── 变更控制表 (Control Sheet) ── */}
           {FEATURE_CONTROL_SHEET && (
-            <div className="rounded-2xl border border-black/8 bg-black/[0.015] overflow-hidden">
-              {/* Collapsible header */}
+            <FormSection
+              title={zh ? '变更控制表' : 'Change control sheet'}
+              description={zh ? '正式提交前请补全这些必填项；草稿可先保存。' : 'Complete these required fields before submission; you can save a draft first.'}
+              className="rounded-xl"
+              contentClassName="space-y-3"
+            >
               <button
                 type="button"
+                aria-expanded={showControlSheet}
                 onClick={() => setShowControlSheet(v => !v)}
-                className="w-full flex items-center justify-between px-4 py-3 hover:bg-black/[0.02] transition-colors"
+                className="flex min-h-9 w-full items-center justify-between gap-3 rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface-muted)] px-3 text-left text-[12px] font-medium text-[var(--ui-fg)] hover:bg-[var(--ui-surface-emphasis)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)]"
               >
-                <div className="flex items-center gap-2.5">
-                  <ClipboardCheck size={15} className="text-[#00bceb]" />
-                  <span className="text-xs font-semibold text-black/70">{zh ? '变更控制表' : 'Change Control Sheet'}</span>
-                  <span className="text-[10px] text-black/35 font-medium px-1.5 py-0.5 bg-black/[0.04] rounded-md">
-                    {zh ? '可选' : 'Optional'}
-                  </span>
+                <div className="flex min-w-0 items-center gap-2">
+                  <ClipboardCheck size={15} className="shrink-0 text-[var(--ui-fg-muted)]" />
+                  <span>{showControlSheet ? (zh ? '收起控制表字段' : 'Hide control sheet fields') : (zh ? '填写控制表字段' : 'Edit control sheet fields')}</span>
                 </div>
-                <ChevronDown size={14} className={`text-black/40 transition-transform ${showControlSheet ? 'rotate-180' : ''}`} />
+                <span className="flex shrink-0 items-center gap-2 text-[11px] text-[var(--ui-fg-muted)]">
+                  <span className={`rounded-full border px-2 py-0.5 ${missingControlSheetFields.length ? 'border-[var(--ui-warning)]/35 bg-[var(--ui-warning-subtle)] text-[var(--ui-warning)]' : 'border-[var(--ui-success)]/35 bg-[var(--ui-success-subtle)] text-[var(--ui-success)]'}`}>
+                    {missingControlSheetFields.length
+                      ? (zh ? `必填 · 待补全 ${missingControlSheetFields.length} 项` : `Required · ${missingControlSheetFields.length} remaining`)
+                      : (zh ? '必填 · 已完成' : 'Required · Complete')}
+                  </span>
+                  <ChevronDown size={14} className={`transition-transform ${showControlSheet ? 'rotate-180' : ''}`} />
+                </span>
               </button>
 
               {/* Collapsible body */}
               {showControlSheet && (
-                <div className="px-4 pb-4 pt-1 space-y-4 border-t border-black/5">
-                  {/* 1. change_time — time window picker */}
-                  <div>
-                    <label className="block text-xs font-semibold text-black/50 mb-1.5">
-                      {zh ? '变更时间窗口' : 'Change Time Window'}
-                    </label>
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      <div>
-                        <label className="block text-[11px] text-black/40 mb-1">{zh ? '开始时间' : 'Start'}</label>
-                        <input
-                          type="datetime-local"
-                          value={form.control_sheet.change_time_start}
-                          onChange={e => setForm((f: any) => ({ ...f, control_sheet: { ...f.control_sheet, change_time_start: e.target.value } }))}
-                          className="w-full px-3 py-2 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 focus:ring-2 focus:ring-[#00bceb]/10 transition-all bg-white text-black"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] text-black/40 mb-1">{zh ? '结束时间' : 'End'}</label>
-                        <input
-                          type="datetime-local"
-                          value={form.control_sheet.change_time_end}
-                          onChange={e => setForm((f: any) => ({ ...f, control_sheet: { ...f.control_sheet, change_time_end: e.target.value } }))}
-                          className="w-full px-3 py-2 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 focus:ring-2 focus:ring-[#00bceb]/10 transition-all bg-white text-black"
-                        />
-                      </div>
-                    </div>
-                  </div>
+                <div className="space-y-4 border-t border-[var(--ui-border)] pt-4">
 
                   {/* 2 & 3. implementer + co_reviewer — user pickers */}
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                     {/* implementer */}
                     <div>
                       <label className="block text-xs font-semibold text-black/50 mb-1.5">
-                        {zh ? '实施人' : 'Implementer'}
+                        {zh ? '实施人' : 'Implementer'} <span className="text-rose-500">*</span>
                       </label>
                       <select
                         title={zh ? '选择实施人' : 'Select implementer'}
                         value={form.control_sheet.implementer_id}
                         onChange={e => {
-                          const u = users.find(u => String(u.id) === e.target.value);
+                          const nextImplementerId = e.target.value;
+                          const u = users.find(u => String(u.id) === nextImplementerId);
+                          const clearsCoReviewer = Boolean(nextImplementerId && nextImplementerId === assignmentIds.co_reviewer);
+                          const clearsBusinessConfirmer = Boolean(nextImplementerId && nextImplementerId === assignmentIds.business_confirmer);
                           setForm((f: any) => ({
                             ...f,
                             control_sheet: {
                               ...f.control_sheet,
-                              implementer_id: e.target.value,
+                              implementer_id: nextImplementerId,
                               implementer_username: u?.username || '',
+                              ...(clearsCoReviewer ? { co_reviewer_id: '', co_reviewer_username: '' } : {}),
+                              ...(clearsBusinessConfirmer ? { business_confirmer_id: '', business_confirmer_username: '' } : {}),
                             },
                           }));
+                          if (clearsCoReviewer || clearsBusinessConfirmer) {
+                            showToast(
+                              zh
+                                ? '实施人与审核/业务确认角色不能由同一人承担，冲突选择已清除。'
+                                : 'The implementer must be separate from reviewers and the business confirmer. Conflicting selections were cleared.',
+                              'error',
+                            );
+                          }
                         }}
                         className="w-full px-3 py-2.5 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 bg-white text-black"
                       >
                         <option value="">{zh ? '请选择实施人' : 'Select implementer'}</option>
-                        {users.filter(u => u.role !== 'Viewer').map(u => (
-                          <option key={u.id} value={String(u.id)}>
+                        {users.filter(u => u.role !== 'Viewer').map(u => {
+                          const candidateId = String(u.id);
+                          const isConflictingAssignment = excludedImplementerIds.has(candidateId) && candidateId !== implementerId;
+                          return <option key={u.id} value={candidateId} disabled={isConflictingAssignment}>
                             {u.username}{u.group_name ? ` · ${u.group_name}` : ''}
-                          </option>
-                        ))}
+                            {isConflictingAssignment ? (zh ? '（已分配审核/确认角色）' : ' (assigned to a review/confirmation role)') : ''}
+                          </option>;
+                        })}
                       </select>
                     </div>
                     {/* co_reviewer */}
                     <div>
                       <label className="block text-xs font-semibold text-black/50 mb-1.5">
-                        {zh ? '协同审核人' : 'Co-Reviewer'}
+                        {zh ? '复核人（可选）' : 'Reviewer (optional)'}
                       </label>
                       <select
-                        title={zh ? '选择协同审核人' : 'Select co-reviewer'}
+                        title={zh ? '选择复核人' : 'Select reviewer'}
                         value={form.control_sheet.co_reviewer_id}
                         onChange={e => {
                           const u = users.find(u => String(u.id) === e.target.value);
@@ -1421,130 +1567,125 @@ export const ChangeOrderEditor: React.FC<Props> = ({
                         }}
                         className="w-full px-3 py-2.5 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 bg-white text-black"
                       >
-                        <option value="">{zh ? '请选择协同审核人' : 'Select co-reviewer'}</option>
-                        {users.filter(u => u.role !== 'Viewer').map(u => (
-                          <option key={u.id} value={String(u.id)}>
+                        <option value="">{zh ? '不指定复核人' : 'No reviewer'}</option>
+                        {users.filter(u => (!u.status || String(u.status).toLowerCase() === 'active') && (!implementerId || String(u.id) !== implementerId)).map(u => {
+                          const candidateId = String(u.id);
+                          return <option key={u.id} value={candidateId}>
                             {u.username}{u.group_name ? ` · ${u.group_name}` : ''}
-                          </option>
-                        ))}
+                          </option>;
+                        })}
                       </select>
+                      <p className="mt-1 text-[11px] text-[var(--ui-fg-muted)]">{zh ? '实施完成后审核结果；正常关单，异常转原初审人。' : 'Reviews completed work; accept to close, or escalate abnormal results to the initial reviewer.'}</p>
+                      {assignmentConflict === 'co_reviewer' && <p role="alert" className="mt-1 text-[10px] text-rose-700">{zh ? '复核人不能与实施人相同，请重新选择。' : 'The reviewer must differ from the implementer.'}</p>}
                     </div>
-                  </div>
-
-                  {/* 4. device_ips — IP list */}
-                  <div>
-                    <label className="block text-xs font-semibold text-black/50 mb-1.5">
-                      {zh ? '涉及设备 IP（每行或逗号分隔）' : 'Device IPs (one per line or comma-separated)'}
-                    </label>
-                    <textarea
-                      value={form.control_sheet.device_ips}
-                      onChange={e => setForm((f: any) => ({ ...f, control_sheet: { ...f.control_sheet, device_ips: e.target.value } }))}
-                      placeholder={zh ? '10.0.0.1\n10.0.0.2\n或 10.0.0.1, 10.0.0.2' : '10.0.0.1\n10.0.0.2\nor 10.0.0.1, 10.0.0.2'}
-                      rows={3}
-                      className="w-full px-4 py-2.5 text-sm font-mono border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 focus:ring-2 focus:ring-[#00bceb]/10 transition-all resize-none"
-                    />
+                    {/* business confirmer */}
+                    <div>
+                      <label className="block text-xs font-semibold text-black/50 mb-1.5">
+                        {zh ? '业务确认人' : 'Business Confirmer'}
+                      </label>
+                      <select
+                        title={zh ? '选择业务确认人' : 'Select business confirmer'}
+                        value={form.control_sheet.business_confirmer_id}
+                        onChange={e => {
+                          const user = users.find(candidate => String(candidate.id) === e.target.value);
+                          setForm((formState: any) => ({
+                            ...formState,
+                            control_sheet: {
+                              ...formState.control_sheet,
+                              business_confirmer_id: e.target.value,
+                              business_confirmer_username: user?.username || '',
+                            },
+                          }));
+                        }}
+                        className="w-full px-3 py-2.5 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 bg-white text-black"
+                      >
+                        <option value="">{zh ? '默认由申请人确认' : 'Requester confirms by default'}</option>
+                        {users.filter(user => !implementerId || String(user.id) !== implementerId).map(user => {
+                          const candidateId = String(user.id);
+                          return <option key={user.id} value={candidateId}>
+                            {user.username}{user.group_name ? ` · ${user.group_name}` : ''}
+                          </option>;
+                        })}
+                      </select>
+                      <p className={`mt-1 text-[10px] ${assignmentConflict === 'business_confirmer' ? 'text-rose-700' : 'text-black/40'}`} role={assignmentConflict === 'business_confirmer' ? 'alert' : undefined}>{assignmentConflict === 'business_confirmer' ? (zh ? '业务确认人不能与实施人相同，请重新选择。' : 'The business confirmer must differ from the implementer.') : (zh ? '业务验证可由申请人或此指定人员提交。' : 'Business verification may be submitted by the requester or this person.')}</p>
+                    </div>
                   </div>
 
                   {/* 5–8. Four multi-line text blocks */}
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                    {/* pre_check */}
-                    <div>
-                      <label className="block text-xs font-semibold text-black/50 mb-1.5">
-                        {zh ? '变更前检查' : 'Pre-Check'}
-                      </label>
-                      <textarea
-                        value={form.control_sheet.pre_check}
-                        onChange={e => setForm((f: any) => ({ ...f, control_sheet: { ...f.control_sheet, pre_check: e.target.value } }))}
-                        placeholder={zh ? '描述变更前需要执行的检查步骤...' : 'Describe pre-change verification steps...'}
-                        rows={4}
-                        className="w-full px-4 py-2.5 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 focus:ring-2 focus:ring-[#00bceb]/10 transition-all resize-none"
-                      />
-                    </div>
-                    {/* execution */}
-                    <div>
-                      <label className="block text-xs font-semibold text-black/50 mb-1.5">
-                        {zh ? '实施步骤' : 'Execution Steps'}
-                      </label>
-                      <textarea
-                        value={form.control_sheet.execution}
-                        onChange={e => setForm((f: any) => ({ ...f, control_sheet: { ...f.control_sheet, execution: e.target.value } }))}
-                        placeholder={zh ? '描述具体的实施操作步骤...' : 'Describe the execution steps in detail...'}
-                        rows={4}
-                        className="w-full px-4 py-2.5 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 focus:ring-2 focus:ring-[#00bceb]/10 transition-all resize-none"
-                      />
-                    </div>
-                    {/* post_verify */}
-                    <div>
-                      <label className="block text-xs font-semibold text-black/50 mb-1.5">
-                        {zh ? '变更后验证' : 'Post-Verify'}
-                      </label>
-                      <textarea
-                        value={form.control_sheet.post_verify}
-                        onChange={e => setForm((f: any) => ({ ...f, control_sheet: { ...f.control_sheet, post_verify: e.target.value } }))}
-                        placeholder={zh ? '描述变更后的验证方法和预期结果...' : 'Describe post-change verification and expected results...'}
-                        rows={4}
-                        className="w-full px-4 py-2.5 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 focus:ring-2 focus:ring-[#00bceb]/10 transition-all resize-none"
-                      />
-                    </div>
-                    {/* business_verify */}
-                    <div>
-                      <label className="block text-xs font-semibold text-black/50 mb-1.5">
-                        {zh ? '业务验证' : 'Business Verify'}
-                      </label>
-                      <textarea
-                        value={form.control_sheet.business_verify}
-                        onChange={e => setForm((f: any) => ({ ...f, control_sheet: { ...f.control_sheet, business_verify: e.target.value } }))}
-                        placeholder={zh ? '描述业务层面的验证方法和预期结果...' : 'Describe business-level verification and expected results...'}
-                        rows={4}
-                        className="w-full px-4 py-2.5 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 focus:ring-2 focus:ring-[#00bceb]/10 transition-all resize-none"
-                      />
-                    </div>
-                  </div>
-
-                  {/* 9. rollback_plan — multi-line text block */}
-                  <div>
-                    <label className="block text-xs font-semibold text-black/50 mb-1.5">
-                      {zh ? '回退方案（控制表）' : 'Rollback Plan (Control Sheet)'}
-                    </label>
-                    <textarea
-                      value={form.control_sheet.rollback_plan}
-                      onChange={e => setForm((f: any) => ({ ...f, control_sheet: { ...f.control_sheet, rollback_plan: e.target.value } }))}
-                      placeholder={zh ? '描述变更失败时的回退步骤和恢复方案...' : 'Describe rollback steps and recovery plan if the change fails...'}
-                      rows={4}
-                      className="w-full px-4 py-2.5 text-sm border border-black/10 rounded-xl outline-none focus:border-[#00bceb]/40 focus:ring-2 focus:ring-[#00bceb]/10 transition-all resize-none"
+                    <TextField
+                      label={zh ? '变更前检查 *' : 'Pre-change checks *'}
+                      value={form.control_sheet.pre_check}
+                      onChange={(value) => setForm((current: any) => ({ ...current, control_sheet: { ...current.control_sheet, pre_check: value } }))}
+                      placeholder={zh ? '描述变更前需要执行的检查步骤。' : 'Describe the checks to perform before the change.'}
+                      multiline
+                      rows={3}
+                    />
+                    <TextField
+                      label={zh ? '人工实施步骤说明 *' : 'Manual implementation steps *'}
+                      helperText={zh ? '描述需要人工执行的操作步骤。' : 'Describe steps that must be performed manually.'}
+                      value={form.control_sheet.execution}
+                      onChange={(value) => setForm((current: any) => ({ ...current, control_sheet: { ...current.control_sheet, execution: value } }))}
+                      placeholder={zh ? '描述具体的实施操作步骤。' : 'Describe the implementation steps.'}
+                      multiline
+                      rows={3}
+                    />
+                    <TextField
+                      label={zh ? '变更后技术验证 *' : 'Technical verification *'}
+                      value={form.control_sheet.post_verify}
+                      onChange={(value) => setForm((current: any) => ({ ...current, control_sheet: { ...current.control_sheet, post_verify: value } }))}
+                      placeholder={zh ? '描述变更后的技术验证方法和预期结果。' : 'Describe post-change technical checks and expected results.'}
+                      multiline
+                      rows={3}
+                    />
+                    <TextField
+                      label={zh ? '业务验证 *' : 'Business verification *'}
+                      value={form.control_sheet.business_verify}
+                      onChange={(value) => setForm((current: any) => ({ ...current, control_sheet: { ...current.control_sheet, business_verify: value } }))}
+                      placeholder={zh ? '描述业务层面的验证方法和预期结果。' : 'Describe business-level verification and expected results.'}
+                      multiline
+                      rows={3}
                     />
                   </div>
+
                 </div>
               )}
-            </div>
+            </FormSection>
           )}
         </div>
 
-        {/* Modal footer */}
-        <div className="sticky bottom-0 z-10 border-t border-black/5 bg-[var(--ui-surface)] px-4 py-4 shadow-[0_-8px_24px_rgba(11,35,64,0.08)] flex flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-3 sm:px-6">
-          <button type="button" onClick={() => closeEditor()} className="min-h-10 w-full sm:w-auto px-4 py-2.5 rounded-xl text-sm font-medium text-black/50 hover:bg-black/5 transition-all">
-            {zh ? '取消' : 'Cancel'}
-          </button>
-          <button
-            type="button"
-            onClick={handleSaveDraft}
-            disabled={saving || !form.title.trim()}
-            className="min-h-10 w-full sm:w-auto justify-center px-4 py-2.5 rounded-xl bg-white text-black/70 border border-black/10 text-sm font-medium hover:bg-black/5 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
-          >
-            <Save size={14} />
-            {zh ? '保存草稿' : 'Save Draft'}
-          </button>
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={saving || !form.title.trim() || (commandMode === 'template' && !selectedScenarioId)}
-            className="min-h-10 w-full sm:w-auto justify-center px-5 py-2.5 bg-[#00bceb] text-white rounded-xl text-sm font-medium flex items-center gap-2 hover:bg-[#0096bd] transition-all shadow-lg shadow-[#00bceb]/20 disabled:opacity-40 disabled:cursor-not-allowed"
-            title={commandMode === 'template' && !selectedScenarioId ? (zh ? '请先选择场景并填写必填变量' : 'Please select a scenario and fill in all required variables') : undefined}
-          >
-            {saving ? <RefreshCw size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
-            {editingOrder ? (zh ? '提交' : 'Submit') : (zh ? '创建工单' : 'Create Order')}
-          </button>
-        </div>
+        <FormActionBar sticky className="!justify-between !px-3 sm:!px-5">
+          <p className="text-[11px] leading-4 text-[var(--ui-fg-muted)]">
+            {zh ? '草稿不进入审核；正式提交按现有审核流程处理。' : 'Drafts do not start review; submission follows the existing approval flow.'}
+          </p>
+          <div className="flex flex-wrap justify-end gap-2">
+            <ActionButton size="sm" onClick={() => closeEditor()}>{zh ? '取消' : 'Cancel'}</ActionButton>
+            <ActionButton
+              size="sm"
+              icon={Save}
+              onClick={handleSaveDraft}
+              disabled={saving || !form.title.trim() || hasUnconfirmedMirrorConflicts}
+              title={hasUnconfirmedMirrorConflicts ? (zh ? '请先确认将以工单正文为准' : 'Confirm the order as the source of truth before saving') : undefined}
+            >
+              {zh ? '保存草稿' : 'Save draft'}
+            </ActionButton>
+            <ActionButton
+              size="sm"
+              variant="primary"
+              icon={saving ? RefreshCw : CheckCircle2}
+              iconClassName={saving ? 'animate-spin' : undefined}
+              onClick={() => { setShowControlSheet(true); handleSave(); }}
+              disabled={saving || !form.title.trim() || hasUnconfirmedMirrorConflicts || (commandMode === 'template' && !selectedScenarioId)}
+              title={hasUnconfirmedMirrorConflicts
+                ? (zh ? '请先确认将以工单正文为准' : 'Confirm the order as the source of truth before submitting')
+                : commandMode === 'template' && !selectedScenarioId
+                  ? (zh ? '请先选择场景并填写必填变量' : 'Select a scenario and fill in all required variables')
+                  : undefined}
+            >
+              {editingOrder ? (zh ? '提交' : 'Submit') : (zh ? '创建工单' : 'Create order')}
+            </ActionButton>
+          </div>
+        </FormActionBar>
       </motion.div>
     </motion.div>
   );

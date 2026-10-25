@@ -1,8 +1,9 @@
 import { DataTable } from '../components/DataTable';
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  Activity, Plus, X, Trash2, Pencil, Save, RotateCcw,
+  Activity, Plus, X, Trash2, Pencil, Eye, Save, RotateCcw,
   Shield, CheckCircle2, Filter, Info, ListFilter, Copy, Check, Download, Database, FileCode,
   Terminal, Cpu
 } from 'lucide-react';
@@ -18,8 +19,10 @@ import {
 
 import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
 import { ColumnSettingsButton, ListSearchInput, ListToolbar } from '../components/ui/TableListControls';
+import { FormDialogShell } from '../components/ui/FormLayout';
 import { loadVisibleColumnKeys, saveVisibleColumnKeys, type ColumnPreferenceDefinition } from '../components/ui/columnPreferences';
 import { buildInspectionItemsExportData, filterInspectionItems, getFriendlyInspectionVendor } from './inspectionItemsExport';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 interface InspectionItem {
   id: string;
   name: string;
@@ -36,8 +39,11 @@ interface InspectionItem {
   script_id?: string | null;
   warning_threshold?: number | null;
   critical_threshold?: number | null;
+  threshold_direction?: string;
+  unit?: string | null;
   // ── 扩展字段（TextFSM 解析）──
   parse_type?: string;          // numeric | status | count | diff | info
+  expected_value?: string | null;
   textfsm_template?: string;    // 模板文件名
   parse_field?: string;         // 提取的字段
   parse_filter?: string;        // 过滤条件（JSON）
@@ -49,13 +55,129 @@ interface InspectionItemFacets {
   all: number;
   categories: Record<string, number>;
   methods: Record<string, number>;
+  vendors: Record<string, number>;
 }
+
+const PARSE_TYPE_OPTIONS = ['numeric', 'status', 'count', 'diff'] as const;
+
+interface InspectionItemSignalContext {
+  parse_type?: string;
+  unit?: string | null;
+  threshold_direction?: string;
+  method?: string;
+  check_key?: string;
+  category?: string;
+  expected_value?: string | null;
+}
+
+const isStatusInspectionItem = (item: InspectionItemSignalContext): boolean =>
+  item.parse_type?.toLowerCase() === 'status';
+
+const getInspectionThresholdUnit = (item: InspectionItemSignalContext, zh: boolean): string => {
+  if (isStatusInspectionItem(item)) return zh ? '状态' : 'status';
+  if (item.parse_type?.toLowerCase() === 'diff') return '%';
+  const unit = item.unit?.trim();
+  if (!unit) return zh ? '无单位' : 'unitless';
+  if (unit.toLowerCase() === 'status') return zh ? '无单位' : 'unitless';
+  if (unit.toLowerCase() === 'count') return zh ? '个' : 'count';
+  return unit;
+};
+
+const formatInspectionThreshold = (
+  item: InspectionItemSignalContext,
+  value: number | null | undefined,
+  zh: boolean,
+  severity?: 'warning' | 'critical',
+): string => {
+  if (item.parse_type?.toLowerCase() === 'info') return zh ? '仅采集展示，不触发告警' : 'Collected for display only; no alert';
+  if (value == null) return zh ? '未设置阈值' : 'Threshold not configured';
+  if (isStatusInspectionItem(item)) return zh ? '按状态规则判定' : 'Evaluated by status rule';
+  const unit = getInspectionThresholdUnit(item, zh);
+  const valueWithUnit = unit === '%' || unit === '°C' ? `${value}${unit}` : `${value} ${unit}`;
+  const condition = item.threshold_direction?.toLowerCase() === 'below'
+    ? (zh ? `低于 ${valueWithUnit}` : `below ${valueWithUnit}`)
+    : (zh ? `达到或超过 ${valueWithUnit}` : `at or above ${valueWithUnit}`);
+  if (!severity) return condition;
+  if (zh) return `${condition}时触发${severity === 'warning' ? '告警' : '严重告警'}`;
+  return `${severity === 'warning' ? 'A warning' : 'A critical alert'} is triggered when the value is ${condition}`;
+};
+
+const getThresholdInputLabel = (item: InspectionItemSignalContext, zh: boolean): string => {
+  const unit = getInspectionThresholdUnit(item, zh);
+  if (isStatusInspectionItem(item)) return zh ? '状态规则' : 'Status rule';
+  if (item.parse_type?.toLowerCase() === 'info') return zh ? '不适用' : 'Not applicable';
+  const direction = item.threshold_direction?.toLowerCase() === 'below'
+    ? (zh ? '低于' : 'below')
+    : '≥';
+  if (unit === (zh ? '无单位' : 'unitless')) return zh ? `无单位阈值（${direction}）` : `Unitless threshold (${direction})`;
+  return zh ? `阈值（${direction} ${unit}）` : `Threshold (${direction} ${unit})`;
+};
 
 const getRoutingProtocolFromCheckKey = (checkKey?: string | null): 'bgp' | 'ospf' | null => {
   const tokens = String(checkKey || '').toLowerCase().split(/[^a-z0-9]+/);
   if (tokens.includes('bgp') && tokens.some(token => ['neighbor', 'peer', 'down', 'adjacency'].includes(token))) return 'bgp';
   if (tokens.includes('ospf') && tokens.some(token => ['neighbor', 'peer', 'down', 'adjacency'].includes(token))) return 'ospf';
   return null;
+};
+
+const getStatusThresholdExplanation = (
+  item: InspectionItemSignalContext,
+  severity: 'warning' | 'critical',
+  zh: boolean,
+): string => {
+  const isSnmpComponent = item.method?.trim().toUpperCase() === 'SNMP'
+    && /_(fan|psu)$/i.test(item.check_key || '');
+  const isComplianceText = item.category?.toLowerCase() === 'compliance' && !isSnmpComponent;
+  const expectedValue = item.expected_value?.trim();
+  if (expectedValue) {
+    if (severity === 'warning') {
+      return isSnmpComponent
+        ? (zh
+          ? `期望状态“${expectedValue}”按精确值匹配；组件码：0=正常、1=告警、2=严重、3=未知`
+          : `Expected state “${expectedValue}” uses exact matching; codes: 0=normal, 1=warning, 2=critical, 3=unknown`)
+        : (zh
+          ? `${isComplianceText ? `设备输出应包含“${expectedValue}”` : `状态值应与“${expectedValue}”完全一致`}；其他非空不匹配值触发告警，缺测/未知不视为正常`
+          : `${isComplianceText ? `Device output should contain “${expectedValue}”` : `The state should exactly match “${expectedValue}”`}; other non-empty mismatches trigger a warning; missing/unknown is not healthy`);
+    }
+    return isSnmpComponent
+      ? (zh
+        ? '状态码 2（故障）或 fail/failed/failure 触发严重告警；0=正常、1=警告、3=未知，未知/缺测不参与判定'
+        : 'State code 2 (failed) or fail/failed/failure triggers a critical alert; 0=normal, 1=warning, 3=unknown; unknown/missing is not evaluated')
+      : (zh
+        ? '普通状态不单独触发严重告警；状态不匹配按告警级处理，缺测/未知不参与严重级别判定'
+        : 'Text states do not trigger a separate critical alert; mismatches remain warnings, and missing/unknown is not evaluated at critical level');
+  }
+
+  if (isSnmpComponent) {
+    return severity === 'warning'
+      ? (zh
+        ? '组件状态码：0=正常，1=告警，2=严重，3=未知/未采集；未知状态按异常处理'
+        : 'Component codes: 0=normal, 1=warning, 2=critical, 3=unknown/not collected; unfamiliar states are treated as abnormal')
+      : (zh
+        ? '状态码 2 或 fail/failed/failure 触发严重告警；1 或其他异常状态触发告警，3/缺测不参与判定'
+        : 'Code 2 or fail/failed/failure triggers a critical alert; code 1 or other abnormal states trigger a warning, code 3/missing is not evaluated');
+  }
+
+  return severity === 'warning'
+    ? (zh
+      ? '以下值视为正常：normal、ok、up、true、1、running、operational、ready、active；其他非空异常状态触发告警，缺测/未知不视为正常'
+      : 'Healthy values: normal, ok, up, true, 1, running, operational, ready, active; other non-empty abnormal states trigger a warning; missing/unknown is not healthy')
+    : (zh
+      ? '异常状态按告警级处理，不单独升级为严重告警'
+      : 'Abnormal states trigger a warning; they are not escalated to a separate critical alert');
+};
+
+const getStatusExpectedValueHint = (item: InspectionItemSignalContext, zh: boolean): string => {
+  const isSnmpComponent = item.method?.trim().toUpperCase() === 'SNMP'
+    && /_(fan|psu)$/i.test(item.check_key || '');
+  if (isSnmpComponent) {
+    return zh
+      ? '用于所有状态型指标。风扇/电源按组件状态精确匹配：0 正常、1 警告、2 失败、3 未知；失败仍为严重，未知/缺测不参与判定。'
+      : 'Applies to all status metrics. Fan/PSU values use exact component-state matching: 0 ok, 1 warning, 2 failed, 3 unknown; failed remains critical and unknown/missing is not evaluated.';
+  }
+  return item.category?.toLowerCase() === 'compliance'
+    ? (zh ? '普通文本状态按期望文本包含匹配；缺测/未知不参与判定。' : 'Text statuses use expected-text containment matching; missing/unknown is not evaluated.')
+    : (zh ? '普通文本状态按精确匹配；不匹配时告警，缺测/未知不参与判定。' : 'Text statuses use exact matching; mismatches warn and missing/unknown is not evaluated.');
 };
 
 
@@ -86,11 +208,62 @@ const CATEGORIES = [
 
 const getFriendlyVendor = getFriendlyInspectionVendor;
 
-type InspectionItemColumnKey =
-  | 'nameZh' | 'name' | 'category' | 'vendor' | 'checkKey' | 'method'
-  | 'script' | 'oid' | 'warningThreshold' | 'criticalThreshold' | 'description' | 'actions';
+const getInspectionMethodOptionValue = (method?: string): string => {
+  const normalized = method?.trim().toUpperCase();
+  if (normalized === 'SHELL') return 'Shell';
+  if (normalized === 'AGENT') return 'Agent';
+  return normalized || '';
+};
 
-const INSPECTION_ITEM_COLUMN_STORAGE_KEY = 'netops:inspection-items:columns:v1';
+type InspectionItemColumnKey =
+  | 'nameZh' | 'name' | 'category' | 'vendor' | 'checkKey' | 'method' | 'parseType' | 'unit'
+  | 'script' | 'oid' | 'description' | 'actions';
+
+const INSPECTION_ITEM_COLUMN_STORAGE_KEY = 'netops:inspection-items:columns:v2';
+const LEGACY_INSPECTION_ITEM_COLUMN_STORAGE_KEY = 'netops:inspection-items:columns:v1';
+const LEGACY_DEFAULT_INSPECTION_ITEM_COLUMN_SETS: readonly (readonly string[])[] = [
+  [
+    'nameZh', 'name', 'category', 'vendor', 'checkKey', 'method', 'script', 'oid',
+    'warningThreshold', 'criticalThreshold', 'description', 'actions',
+  ],
+  [
+    'nameZh', 'name', 'category', 'vendor', 'checkKey', 'method', 'parseType', 'unit',
+    'script', 'oid', 'warningThreshold', 'criticalThreshold', 'description', 'actions',
+  ],
+];
+
+const loadInspectionItemColumnKeys = (
+  definitions: readonly ColumnPreferenceDefinition<InspectionItemColumnKey>[],
+): InspectionItemColumnKey[] => {
+  const defaults = definitions
+    .filter((column) => column.defaultVisible || column.required)
+    .map((column) => column.key);
+  if (typeof window === 'undefined') {
+    return loadVisibleColumnKeys(INSPECTION_ITEM_COLUMN_STORAGE_KEY, definitions);
+  }
+
+  try {
+    const storage = window.localStorage;
+    if (storage.getItem(INSPECTION_ITEM_COLUMN_STORAGE_KEY) !== null) {
+      return loadVisibleColumnKeys(INSPECTION_ITEM_COLUMN_STORAGE_KEY, definitions, storage);
+    }
+
+    const legacyValue = storage.getItem(LEGACY_INSPECTION_ITEM_COLUMN_STORAGE_KEY);
+    if (legacyValue === null) return loadVisibleColumnKeys(INSPECTION_ITEM_COLUMN_STORAGE_KEY, definitions, storage);
+
+    const legacyColumns = loadVisibleColumnKeys(LEGACY_INSPECTION_ITEM_COLUMN_STORAGE_KEY, definitions, storage);
+    const wasLegacyDefault = LEGACY_DEFAULT_INSPECTION_ITEM_COLUMN_SETS.some((legacyDefaultColumns) => {
+      const legacyDefaultSet = new Set(legacyDefaultColumns.filter(
+        (key): key is InspectionItemColumnKey => definitions.some((column) => column.key === key),
+      ));
+      return legacyColumns.length === legacyDefaultSet.size
+        && legacyColumns.every((key) => legacyDefaultSet.has(key));
+    });
+    return wasLegacyDefault ? defaults : legacyColumns;
+  } catch {
+    return loadVisibleColumnKeys(INSPECTION_ITEM_COLUMN_STORAGE_KEY, definitions);
+  }
+};
 
 interface InspectionItemsTabProps {
   t: (key: string) => string;
@@ -98,21 +271,206 @@ interface InspectionItemsTabProps {
   showToast: (msg: string, type?: 'success' | 'error' | 'info') => void;
 }
 
+interface InspectionItemDetailsDialogProps {
+  item: InspectionItem | null;
+  language: string;
+  scripts: Array<{ id: string; name?: string; content?: string }>;
+  copiedId: string | null;
+  onCopy: (text: string, id: string) => void;
+  onClose: () => void;
+  onEdit: (item: InspectionItem) => void;
+}
+
+const InspectionItemDetailsDialog: React.FC<InspectionItemDetailsDialogProps> = ({
+  item,
+  language,
+  scripts,
+  copiedId,
+  onCopy,
+  onClose,
+  onEdit,
+}) => {
+  const zh = language === 'zh';
+  const focusReturnRef = useRef<HTMLElement | null>(null);
+  const isOpen = Boolean(item);
+  useEscapeClose(isOpen, onClose);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const activeElement = document.activeElement;
+    focusReturnRef.current = activeElement instanceof HTMLElement && activeElement !== document.body
+      ? activeElement
+      : null;
+    const focusFrame = window.requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>('.inspection-item-detail-dialog button:not([disabled])')?.focus();
+    });
+    const trapTabNavigation = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab') return;
+      const dialog = document.querySelector<HTMLElement>('.inspection-item-detail-dialog');
+      if (!dialog) return;
+      const focusableElements = Array.from(dialog.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), a[href], select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ));
+      if (focusableElements.length === 0) {
+        event.preventDefault();
+        return;
+      }
+      const firstElement = focusableElements[0];
+      const lastElement = focusableElements[focusableElements.length - 1];
+      if (event.shiftKey && document.activeElement === firstElement) {
+        event.preventDefault();
+        lastElement.focus();
+      } else if (!event.shiftKey && document.activeElement === lastElement) {
+        event.preventDefault();
+        firstElement.focus();
+      }
+    };
+    document.addEventListener('keydown', trapTabNavigation);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener('keydown', trapTabNavigation);
+      if (focusReturnRef.current?.isConnected) focusReturnRef.current.focus();
+      focusReturnRef.current = null;
+    };
+  }, [isOpen]);
+
+  if (!item) return null;
+
+  const isStatusMetric = isStatusInspectionItem(item);
+  const category = CATEGORIES.find(candidate => candidate.id.toLowerCase() === item.category?.toLowerCase());
+  const script = item.script_id ? scripts.find(candidate => candidate.id === item.script_id) : undefined;
+  const scriptName = script?.name?.replace(/（精细化）|\(精细化\)/g, '').trim();
+  const sourceCode = item.script_id
+    ? (script?.content || (zh ? '# 脚本内容加载中…' : '# Script content loading...'))
+    : (item.command || (item.method?.toUpperCase() === 'SNMP'
+      ? (zh ? '# SNMP 指标，无 CLI 指令' : '# SNMP-only metric — no CLI command')
+      : (zh ? '# 未配置采集指令' : '# No command defined')));
+  const warningRule = isStatusMetric
+    ? getStatusThresholdExplanation(item, 'warning', zh)
+    : formatInspectionThreshold(item, item.warning_threshold, zh, 'warning');
+  const criticalRule = isStatusMetric
+    ? getStatusThresholdExplanation(item, 'critical', zh)
+    : formatInspectionThreshold(item, item.critical_threshold, zh, 'critical');
+  const metadata = [
+    { label: zh ? '分类' : 'Category', value: category ? (zh ? category.zh : category.en) : item.category || '—' },
+    { label: zh ? '厂商 / 平台' : 'Vendor / Platform', value: getFriendlyVendor(item.vendor) || '—' },
+    { label: zh ? '检查 Key' : 'Check Key', value: item.check_key || '—', mono: true },
+    { label: zh ? '采集方式' : 'Method', value: item.method?.toUpperCase() || '—' },
+    { label: zh ? '解析类型' : 'Parse type', value: item.parse_type || 'numeric' },
+    { label: zh ? '单位' : 'Unit', value: getInspectionThresholdUnit(item, zh) },
+    ...(scriptName ? [{ label: zh ? '绑定脚本' : 'Bound script', value: scriptName }] : []),
+  ];
+  const commandCopyKey = `${item.id}-cmd`;
+  const oidCopyKey = `${item.id}-oid`;
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/45 p-3 backdrop-blur-[2px] sm:p-5"
+      onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}
+    >
+      <FormDialogShell
+        title={item.name_zh || item.name || (zh ? '巡检指标详情' : 'Inspection metric details')}
+        description={item.name_zh && item.name ? item.name : (zh ? '巡检指标详情' : 'Inspection metric details')}
+        onClose={onClose}
+        language={zh ? 'zh' : 'en'}
+        widthClassName="max-w-4xl"
+        className="inspection-item-detail-dialog w-full sm:max-h-[calc(100vh-2.5rem)]"
+        bodyClassName="space-y-5"
+        actions={(
+          <div className="flex justify-end gap-2 px-5 py-3">
+            <button type="button" onClick={onClose} className="inline-flex min-h-9 items-center rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface)] px-3 text-sm font-medium text-[var(--ui-fg)] hover:bg-[var(--ui-surface-muted)]">
+              {zh ? '关闭' : 'Close'}
+            </button>
+            <button type="button" onClick={() => onEdit(item)} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg bg-blue-600 px-3 text-sm font-semibold text-white hover:bg-blue-700">
+              <Pencil size={14} />{zh ? '编辑指标' : 'Edit metric'}
+            </button>
+          </div>
+        )}
+      >
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
+          {metadata.map(field => (
+            <div key={field.label} className="min-w-0 rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface)] px-3 py-2.5">
+              <p className="text-[11px] text-[var(--ui-fg-muted)]">{field.label}</p>
+              <p className={`mt-1 break-words text-sm font-medium text-[var(--ui-fg)] ${'mono' in field && field.mono ? 'font-mono' : ''}`}>{field.value}</p>
+            </div>
+          ))}
+          {item.expected_value && (
+            <div className="min-w-0 rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface)] px-3 py-2.5">
+              <p className="text-[11px] text-[var(--ui-fg-muted)]">{zh ? '期望状态值' : 'Expected state'}</p>
+              <p className="mt-1 break-words text-sm font-medium text-[var(--ui-fg)]">{item.expected_value}</p>
+            </div>
+          )}
+        </div>
+
+        <section className="space-y-2.5">
+          <h3 className="text-sm font-semibold text-[var(--ui-fg)]">{zh ? '告警与严重告警规则' : 'Warning and critical rules'}</h3>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="rounded-lg border border-amber-200 bg-amber-50/60 px-3.5 py-3 dark:border-amber-900/60 dark:bg-amber-950/20">
+              <p className="text-xs font-semibold text-amber-800 dark:text-amber-300">{zh ? '告警触发条件' : 'Warning condition'}</p>
+              <p className="mt-1.5 whitespace-pre-wrap break-words text-sm leading-relaxed text-[var(--ui-fg)]">{warningRule}</p>
+            </div>
+            <div className="rounded-lg border border-rose-200 bg-rose-50/50 px-3.5 py-3 dark:border-rose-900/50 dark:bg-rose-950/15">
+              <p className="text-xs font-semibold text-rose-800 dark:text-rose-300">{zh ? '严重告警条件' : 'Critical condition'}</p>
+              <p className="mt-1.5 whitespace-pre-wrap break-words text-sm leading-relaxed text-[var(--ui-fg)]">{criticalRule}</p>
+            </div>
+          </div>
+        </section>
+
+        <section className="space-y-2">
+          <h3 className="text-sm font-semibold text-[var(--ui-fg)]">{zh ? '指标说明' : 'Description'}</h3>
+          <p className="whitespace-pre-wrap break-words rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface)] px-3.5 py-3 text-sm leading-relaxed text-[var(--ui-fg)]">
+            {item.description || (zh ? '暂无指标说明。' : 'No description provided.')}
+          </p>
+        </section>
+
+        <section className="space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold text-[var(--ui-fg)]">{item.script_id ? (zh ? '采集脚本' : 'Collection script') : (zh ? '采集指令' : 'Collection command')}</h3>
+            <div className="flex items-center gap-2">
+              {item.oid && (
+                <button type="button" onClick={() => onCopy(item.oid, oidCopyKey)} className="inline-flex min-h-8 items-center gap-1.5 rounded-md border border-[var(--ui-border)] bg-[var(--ui-surface)] px-2 text-xs font-mono text-[var(--ui-fg)] hover:bg-[var(--ui-surface-muted)]">
+                  {copiedId === oidCopyKey ? <Check size={13} /> : <Copy size={13} />}
+                  OID: {item.oid}
+                </button>
+              )}
+              <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">{item.method?.toUpperCase() || '—'}</span>
+            </div>
+          </div>
+          <div className="relative max-h-64 overflow-auto rounded-lg border border-slate-800 bg-[#00172d] p-3.5 pr-20">
+            <code className="block whitespace-pre-wrap break-all font-mono text-xs leading-relaxed text-cyan-200">{sourceCode}</code>
+            <button type="button" onClick={() => onCopy(sourceCode, commandCopyKey)} className="absolute right-2 top-2 inline-flex min-h-8 items-center gap-1.5 rounded-md border border-white/15 bg-white/10 px-2 text-xs text-white hover:bg-white/15">
+              {copiedId === commandCopyKey ? <Check size={13} /> : <Copy size={13} />}
+              {copiedId === commandCopyKey ? (zh ? '已复制' : 'Copied') : (zh ? '复制' : 'Copy')}
+            </button>
+          </div>
+        </section>
+
+        <div className="flex flex-wrap gap-x-6 gap-y-1 border-t border-[var(--ui-border)] pt-3 text-[11px] text-[var(--ui-fg-muted)]">
+          <span>{zh ? '更新时间' : 'Updated'}：{item.updated_at || '—'}</span>
+          <span className="font-mono">{zh ? '指标 ID' : 'Metric ID'}：{item.id}</span>
+        </div>
+      </FormDialogShell>
+    </div>,
+    document.body,
+  );
+};
+
 const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showToast }) => {
   const zh = language === 'zh';
 
   const itemColumnDefinitions = useMemo<readonly ColumnPreferenceDefinition<InspectionItemColumnKey>[]>(() => [
     { key: 'nameZh', defaultVisible: true },
-    { key: 'name', defaultVisible: true },
+    { key: 'name', defaultVisible: false },
     { key: 'category', defaultVisible: true },
     { key: 'vendor', defaultVisible: true },
     { key: 'checkKey', defaultVisible: true },
     { key: 'method', defaultVisible: true },
-    { key: 'script', defaultVisible: true },
-    { key: 'oid', defaultVisible: true },
-    { key: 'warningThreshold', defaultVisible: true },
-    { key: 'criticalThreshold', defaultVisible: true },
-    { key: 'description', defaultVisible: true },
+    { key: 'parseType', defaultVisible: false },
+    { key: 'unit', defaultVisible: false },
+    { key: 'script', defaultVisible: false },
+    { key: 'oid', defaultVisible: false },
+    { key: 'description', defaultVisible: false },
     { key: 'actions', defaultVisible: true, required: true, isAction: true },
   ], []);
   const itemColumnOptions = useMemo(() => [
@@ -122,10 +480,10 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
     { key: 'vendor', label: zh ? '厂商' : 'Vendor' },
     { key: 'checkKey', label: zh ? '检查 Key' : 'Check Key' },
     { key: 'method', label: zh ? '采集方式' : 'Method' },
+    { key: 'parseType', label: zh ? '解析类型' : 'Parse type' },
+    { key: 'unit', label: zh ? '单位' : 'Unit' },
     { key: 'script', label: zh ? '绑定脚本' : 'Bound Script' },
     { key: 'oid', label: 'OID' },
-    { key: 'warningThreshold', label: zh ? '警告阈值' : 'Warning Threshold' },
-    { key: 'criticalThreshold', label: zh ? '严重阈值' : 'Critical Threshold' },
     { key: 'description', label: zh ? '描述' : 'Description' },
     { key: 'actions', label: zh ? '操作' : 'Actions', required: true, isAction: true },
   ], [zh]);
@@ -135,8 +493,9 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
     all: 0,
     categories: {},
     methods: {},
+    vendors: {},
   });
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
   const [loadError, setLoadError] = useState<'auth' | 'permission' | 'request' | ''>('');
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -145,6 +504,7 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
   const [form, setForm] = useState<Partial<InspectionItem>>({
     name: '', name_zh: '', category: 'Network', check_key: '', description: '',
     method: 'SNMP', command: '', vendor: '', oid: '', script_id: '',
+    parse_type: 'numeric', unit: '', threshold_direction: 'above', expected_value: '',
     warning_threshold: undefined, critical_threshold: undefined
   });
 
@@ -152,13 +512,16 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
   const [pageSize, setPageSize] = useState(10);
   const [totalItems, setTotalItems] = useState(0);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [detailItemId, setDetailItemId] = useState<string | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<string>('All');
   const [methodFilter, setMethodFilter] = useState<string>('All');
   const [vendorFilter, setVendorFilter] = useState<string>('All');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [scripts, setScripts] = useState<any[]>([]);
+  const itemsRequestSequenceRef = useRef(0);
+  const activeItemsRequestRef = useRef<AbortController | null>(null);
   const [visibleItemColumnKeys, setVisibleItemColumnKeys] = useState<InspectionItemColumnKey[]>(() =>
-    loadVisibleColumnKeys(INSPECTION_ITEM_COLUMN_STORAGE_KEY, itemColumnDefinitions),
+    loadInspectionItemColumnKeys(itemColumnDefinitions),
   );
   const visibleItemColumnSet = useMemo(() => new Set(visibleItemColumnKeys), [visibleItemColumnKeys]);
 
@@ -197,6 +560,10 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
   }, []);
 
   const fetchItems = useCallback(async () => {
+    activeItemsRequestRef.current?.abort();
+    const controller = new AbortController();
+    activeItemsRequestRef.current = controller;
+    const requestSequence = ++itemsRequestSequenceRef.current;
     setLoading(true);
     setLoadError('');
     try {
@@ -208,9 +575,11 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
         page: String(currentPage),
         page_size: String(pageSize),
       });
-      const r = await fetch(`/api/inspections/items/all?${params.toString()}`, { headers: authHeaders });
+      const r = await fetch(`/api/inspections/items/all?${params.toString()}`, { headers: authHeaders, signal: controller.signal });
+      if (controller.signal.aborted || requestSequence !== itemsRequestSequenceRef.current) return;
       if (r.ok) {
         const j = await r.json();
+        if (controller.signal.aborted || requestSequence !== itemsRequestSequenceRef.current) return;
         const data = j.data || {};
         if (Array.isArray(data)) {
           setItems(data);
@@ -226,6 +595,11 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
               if (method) counts[method] = (counts[method] || 0) + 1;
               return counts;
             }, {}),
+            vendors: data.reduce<Record<string, number>>((counts, item) => {
+              const vendor = String(item.vendor || '').trim();
+              if (vendor) counts[vendor] = (counts[vendor] || 0) + 1;
+              return counts;
+            }, {}),
           });
         } else {
           setItems(Array.isArray(data.items) ? data.items : []);
@@ -235,21 +609,26 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
             all: Number(nextFacets.all || 0),
             categories: nextFacets.categories || {},
             methods: nextFacets.methods || {},
+            vendors: nextFacets.vendors || {},
           });
         }
       } else {
         setItems([]);
         setTotalItems(0);
-        setFacets({ all: 0, categories: {}, methods: {} });
+        setFacets({ all: 0, categories: {}, methods: {}, vendors: {} });
         setLoadError(r.status === 401 ? 'auth' : r.status === 403 ? 'permission' : 'request');
       }
     } catch {
+      if (controller.signal.aborted || requestSequence !== itemsRequestSequenceRef.current) return;
       setItems([]);
       setTotalItems(0);
-      setFacets({ all: 0, categories: {}, methods: {} });
+      setFacets({ all: 0, categories: {}, methods: {}, vendors: {} });
       setLoadError('request');
     } finally {
-      setLoading(false);
+      if (requestSequence === itemsRequestSequenceRef.current) {
+        setLoading(false);
+        if (activeItemsRequestRef.current === controller) activeItemsRequestRef.current = null;
+      }
     }
   }, [authHeaders, searchQuery, categoryFilter, methodFilter, vendorFilter, currentPage, pageSize]);
 
@@ -267,6 +646,11 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
   useEffect(() => { 
     fetchItems();
     fetchScripts();
+    return () => {
+      itemsRequestSequenceRef.current += 1;
+      activeItemsRequestRef.current?.abort();
+      activeItemsRequestRef.current = null;
+    };
   }, [fetchItems, fetchScripts]);
 
   useEffect(() => {
@@ -290,7 +674,8 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
         setForm({ 
           name: '', name_zh: '', category: 'Network', check_key: '', 
           description: '', method: 'SNMP', command: '', vendor: '', oid: '',
-          script_id: '', warning_threshold: undefined, critical_threshold: undefined
+          script_id: '', parse_type: 'numeric', unit: '', threshold_direction: 'above', expected_value: '',
+          warning_threshold: undefined, critical_threshold: undefined
         });
         fetchItems();
       } else {
@@ -315,6 +700,7 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
       if (r.ok) {
         showToast(zh ? '更新成功' : 'Updated', 'success');
         setEditingId(null);
+        setExpandedId(null);
         fetchItems();
       } else {
         showToast(r.status === 401
@@ -353,7 +739,7 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
   const itemFilters = useMemo(() => ({
     category: categoryFilter,
     method: methodFilter,
-    vendor: vendorFilter,
+    vendor: vendorFilter === 'All' ? 'All' : getFriendlyVendor(vendorFilter),
     search: searchQuery,
   }), [categoryFilter, methodFilter, vendorFilter, searchQuery]);
   const filteredItems = useMemo(() => filterInspectionItems(items, itemFilters), [items, itemFilters]);
@@ -366,16 +752,31 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
       vendor: vendorFilter === 'All' ? '' : vendorFilter,
     });
     const allItems = await fetchAllPaginatedItems<InspectionItem>('/api/inspections/items/all', params, 100);
-    return buildInspectionItemsExportData(filterInspectionItems(allItems, itemFilters), scripts, language);
-  }, [searchQuery, categoryFilter, methodFilter, vendorFilter, itemFilters, scripts, language]);
+    const exportItems = filterInspectionItems(allItems, itemFilters);
+    const exportData = buildInspectionItemsExportData(exportItems, scripts, language);
+    return {
+      ...exportData,
+      rows: exportData.rows.map((row, index) => {
+        const item = exportItems[index];
+        if (!item) return row;
+        const warning = isStatusInspectionItem(item)
+          ? getStatusThresholdExplanation(item, 'warning', zh)
+          : formatInspectionThreshold(item, item.warning_threshold, zh, 'warning');
+        const critical = isStatusInspectionItem(item)
+          ? getStatusThresholdExplanation(item, 'critical', zh)
+          : formatInspectionThreshold(item, item.critical_threshold, zh, 'critical');
+        return [...row.slice(0, 8), warning, critical, ...row.slice(10)];
+      }),
+    };
+  }, [searchQuery, categoryFilter, methodFilter, vendorFilter, itemFilters, scripts, language, zh]);
 
-  // 当前展示数据涉及的厂商列表 — 用于 Vendor 下拉过滤器（按当前 category 筛选过的列表生成，避免无效选项）
+  // Vendor facets use stored values for API filtering and friendly names for display.
   const availableVendors = useMemo(() => {
-    const pool = categoryFilter === 'All' ? items : items.filter(i => i.category === categoryFilter);
-    const set = new Set<string>();
-    pool.forEach(i => { if (i.vendor) set.add(getFriendlyVendor(i.vendor)); });
-    return Array.from(set).sort();
-  }, [items, categoryFilter]);
+    return Object.entries(facets.vendors)
+      .filter(([, count]) => Number(count) > 0)
+      .map(([value]) => ({ value, label: getFriendlyVendor(value) }))
+      .sort((left, right) => left.label.localeCompare(right.label) || left.value.localeCompare(right.value));
+  }, [facets.vendors]);
 
   // 方法列表由后端 facet 提供，避免当前页没有某种方式时把它隐藏。
   const availableMethods = useMemo(() => {
@@ -387,7 +788,8 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
   const categoryCounts = useMemo(() => {
     const counts: Record<string, number> = { All: facets.all };
     CATEGORIES.forEach(cat => {
-      counts[cat.id] = Number(facets.categories[cat.id] || 0);
+      const match = Object.entries(facets.categories).find(([category]) => category.toLowerCase() === cat.id.toLowerCase());
+      counts[cat.id] = Number(match?.[1] || 0);
     });
     return counts;
   }, [facets]);
@@ -395,6 +797,19 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
   // Method facets ignore only the selected method while keeping the other
   // filters on the backend.
   const methodCounts = useMemo(() => facets.methods, [facets.methods]);
+  const summaryCount = (value: number) => loading ? '…' : loadError ? '—' : value;
+  const methodSummaryCounts = {
+    snmp: Number(methodCounts.SNMP || 0),
+    cliSsh: Number(methodCounts.CLI || 0) + Number(methodCounts.SSH || 0),
+    shell: Number(methodCounts.SHELL || 0),
+    other: Object.entries(methodCounts)
+      .filter(([method]) => !['SNMP', 'CLI', 'SSH', 'SHELL'].includes(method.toUpperCase()))
+      .reduce((total, [, count]) => total + Number(count || 0), 0),
+  };
+  const otherMethodDetails = Object.entries(methodCounts)
+    .filter(([method, count]) => !['SNMP', 'CLI', 'SSH', 'SHELL'].includes(method.toUpperCase()) && Number(count) > 0)
+    .map(([method, count]) => `${method} ${count}`)
+    .join(' · ');
 
   // 切换 category 时重置 method/vendor，避免遗留无效过滤值
   useEffect(() => {
@@ -420,27 +835,40 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
 
       <div className="flex-1 flex flex-col overflow-hidden px-6 py-5 space-y-4 min-h-0">
         {/* Compact summary strip */}
-        <div className="grid flex-shrink-0 grid-cols-2 gap-x-6 gap-y-3 border-b border-slate-200/70 px-1 pb-3 lg:grid-cols-4">
+        <div className="grid flex-shrink-0 grid-cols-2 gap-x-6 gap-y-3 border-b border-slate-200/70 px-1 pb-3 md:grid-cols-3 xl:grid-cols-5">
           <div className="flex min-w-0 items-center gap-2.5">
             <Activity size={16} className="shrink-0 text-blue-600" />
-            <p className="truncate text-xs text-slate-500">{zh ? '总指标数量' : 'Total metrics'}</p>
-            <span className="ml-auto text-base font-semibold tabular-nums text-slate-800">{items.length}</span>
+            <p className="truncate text-xs text-slate-500">{zh ? '当前结果总数' : 'Current result total'}</p>
+            <span className="ml-auto text-base font-semibold tabular-nums text-slate-800">{summaryCount(totalItems)}</span>
           </div>
           <div className="flex min-w-0 items-center gap-2.5">
             <Database size={16} className="shrink-0 text-blue-600" />
             <p className="truncate text-xs text-slate-500">{zh ? 'SNMP 指标' : 'SNMP metrics'}</p>
-            <span className="ml-auto text-base font-semibold tabular-nums text-slate-800">{items.filter(i => i.method?.toUpperCase() === 'SNMP').length}</span>
+            <span className="ml-auto text-base font-semibold tabular-nums text-slate-800">{summaryCount(methodSummaryCounts.snmp)}</span>
           </div>
           <div className="flex min-w-0 items-center gap-2.5">
             <Terminal size={16} className="shrink-0 text-blue-600" />
             <p className="truncate text-xs text-slate-500">{zh ? 'CLI / SSH 指标' : 'CLI / SSH metrics'}</p>
-            <span className="ml-auto text-base font-semibold tabular-nums text-slate-800">{items.filter(i => ['CLI', 'SSH'].includes(i.method?.toUpperCase())).length}</span>
+            <span className="ml-auto text-base font-semibold tabular-nums text-slate-800">{summaryCount(methodSummaryCounts.cliSsh)}</span>
           </div>
           <div className="flex min-w-0 items-center gap-2.5">
             <FileCode size={16} className="shrink-0 text-blue-600" />
-            <p className="truncate text-xs text-slate-500">{zh ? '高级脚本指标' : 'Script metrics'}</p>
-            <span className="ml-auto text-base font-semibold tabular-nums text-slate-800">{items.filter(i => !!i.script_id || i.method?.toUpperCase() === 'SHELL').length}</span>
+            <p className="truncate text-xs text-slate-500">{zh ? 'SHELL 指标' : 'SHELL metrics'}</p>
+            <span className="ml-auto text-base font-semibold tabular-nums text-slate-800">{summaryCount(methodSummaryCounts.shell)}</span>
           </div>
+          <div className="flex min-w-0 items-center gap-2.5">
+            <Activity size={16} className="shrink-0 text-blue-600" />
+            <div className="min-w-0">
+              <p className="truncate text-xs text-slate-500">{zh ? '其他采集方式' : 'Other methods'}</p>
+              {otherMethodDetails && <p className="truncate text-[10px] text-slate-400" title={otherMethodDetails}>{otherMethodDetails}</p>}
+            </div>
+            <span className="ml-auto text-base font-semibold tabular-nums text-slate-800">{summaryCount(methodSummaryCounts.other)}</span>
+          </div>
+          <p className="col-span-full text-[10px] leading-relaxed text-slate-400">
+            {zh
+              ? '当前结果总数按全部筛选条件统计；采集方式数量来自服务端全量统计，保留关键词、分类和平台筛选，但不受当前采集方式筛选限制。'
+              : 'Current results use all active filters. Method counts come from server-side facets, retain search, category, and platform filters, and ignore the selected method filter.'}
+          </p>
         </div>
       <div className={`${alertPanelClass} flex-1 min-h-0 flex flex-col overflow-hidden`}>
         {/* Category filter tabs */}
@@ -512,11 +940,12 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
             </div>
             <select
               value={vendorFilter}
+              aria-label={zh ? '适用平台' : 'Platform'}
               onChange={e => setVendorFilter(e.target.value)}
               className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-700 outline-none transition-colors focus:border-blue-500"
             >
               <option value="All">{zh ? '全部平台' : 'All Platforms'}</option>
-              {availableVendors.map(v => <option key={v} value={v}>{v}</option>)}
+              {availableVendors.map(v => <option key={v.value} value={v.value}>{v.label}</option>)}
             </select>
 
             {(searchQuery || categoryFilter !== 'All' || methodFilter !== 'All' || vendorFilter !== 'All') && (
@@ -584,14 +1013,14 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                   <div>
                     <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '英文名称' : 'Name (EN)'}</label>
                     <input
-                      type="text" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
+                      type="text" value={form.name} aria-label={zh ? '英文名称' : 'Name (EN)'} onChange={e => setForm({ ...form, name: e.target.value })}
                       className="w-full px-3.5 py-2 rounded-xl border border-black/[0.08] text-sm focus:outline-none shadow-sm"
                     />
                   </div>
                   <div>
                     <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '中文名称' : 'Name (ZH)'}</label>
                     <input
-                      type="text" value={form.name_zh} onChange={e => setForm({ ...form, name_zh: e.target.value })}
+                      type="text" value={form.name_zh} aria-label={zh ? '中文名称' : 'Name (ZH)'} onChange={e => setForm({ ...form, name_zh: e.target.value })}
                       className="w-full px-3.5 py-2 rounded-xl border border-black/[0.08] text-sm focus:outline-none shadow-sm"
                     />
                   </div>
@@ -612,7 +1041,7 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                   <div>
                     <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '检查 Key' : 'Check Key'}</label>
                     <input
-                      type="text" value={form.check_key} onChange={e => setForm({ ...form, check_key: e.target.value })}
+                      type="text" value={form.check_key} aria-label={zh ? '检查 Key' : 'Check Key'} onChange={e => setForm({ ...form, check_key: e.target.value })}
                       className="w-full px-3.5 py-2 rounded-xl border border-black/[0.08] text-sm focus:outline-none shadow-sm"
                     />
                   </div>
@@ -641,6 +1070,52 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                       {VENDORS.map(v => <option key={v} value={v}>{v}</option>)}
                     </select>
                   </div>
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '解析类型' : 'Parse type'}</label>
+                    <select
+                      value={form.parse_type || 'numeric'}
+                      aria-label={zh ? '解析类型' : 'Parse type'}
+                      onChange={e => {
+                        const parseType = e.target.value;
+                        setForm(current => ({
+                          ...current,
+                          parse_type: parseType,
+                          unit: parseType === 'status' ? 'status' : current.unit === 'status' ? '' : current.unit,
+                          warning_threshold: parseType === 'status' || parseType === 'info' ? undefined : current.warning_threshold,
+                          critical_threshold: parseType === 'status' || parseType === 'info' ? undefined : current.critical_threshold,
+                        }));
+                      }}
+                      className="w-full px-3.5 py-2 rounded-xl border border-black/[0.08] text-sm focus:outline-none bg-white shadow-sm"
+                    >
+                      {PARSE_TYPE_OPTIONS.map(parseType => <option key={parseType} value={parseType}>{parseType}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '单位' : 'Unit'}</label>
+                    <input
+                      type="text"
+                      value={form.parse_type === 'status' ? 'status' : form.unit === 'status' ? '' : form.unit || ''}
+                      aria-label={zh ? '单位' : 'Unit'}
+                      disabled={form.parse_type === 'status'}
+                      onChange={e => setForm(current => ({ ...current, unit: e.target.value }))}
+                      className="w-full px-3.5 py-2 rounded-xl border border-black/[0.08] text-sm focus:outline-none bg-white shadow-sm disabled:bg-slate-100 disabled:text-slate-500"
+                      placeholder={zh ? '可填写任意单位，如 %、°C、个连接' : 'Any unit, e.g. %, °C, connections'}
+                    />
+                  </div>
+                  {form.parse_type !== 'status' && form.parse_type !== 'info' && (
+                    <div>
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '阈值方向' : 'Threshold direction'}</label>
+                      <select
+                        aria-label={zh ? '阈值方向' : 'Threshold direction'}
+                        value={form.threshold_direction || 'above'}
+                        onChange={e => setForm(current => ({ ...current, threshold_direction: e.target.value }))}
+                        className="w-full px-3.5 py-2 rounded-xl border border-black/[0.08] text-sm focus:outline-none bg-white shadow-sm"
+                      >
+                        <option value="above">{zh ? '达到或超过（≥）' : 'At or above (≥)'}</option>
+                        <option value="below">{zh ? '低于（<）' : 'Below (<)'}</option>
+                      </select>
+                    </div>
+                  )}
                   {form.method === 'SNMP' && (
                     getRoutingProtocolFromCheckKey(form.check_key) ? (
                       <div>
@@ -660,22 +1135,53 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                       </div>
                     )
                   )}
-                  <div>
-                    <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '告警阈值 (%)' : 'Warn Threshold (%)'}</label>
-                    <input
-                      type="number" value={form.warning_threshold ?? ''} onChange={e => setForm({ ...form, warning_threshold: e.target.value ? parseFloat(e.target.value) : undefined })}
-                      className="w-full px-3.5 py-2 rounded-xl border border-black/[0.08] text-sm focus:outline-none shadow-sm"
-                      placeholder="80"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '严重阈值 (%)' : 'Crit Threshold (%)'}</label>
-                    <input
-                      type="number" value={form.critical_threshold ?? ''} onChange={e => setForm({ ...form, critical_threshold: e.target.value ? parseFloat(e.target.value) : undefined })}
-                      className="w-full px-3.5 py-2 rounded-xl border border-black/[0.08] text-sm focus:outline-none shadow-sm"
-                      placeholder="95"
-                    />
-                  </div>
+                  {isStatusInspectionItem(form) ? (
+                    <>
+                      <div className="rounded-xl border border-amber-200 bg-amber-50/70 px-3.5 py-3 text-xs text-amber-900">
+                        <p className="font-semibold">{zh ? '状态判定' : 'Status evaluation'}</p>
+                        <p className="mt-1 leading-relaxed">{getStatusThresholdExplanation(form, 'warning', zh)}</p>
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-xs text-slate-700">
+                        <p className="font-semibold">{zh ? '异常等级' : 'Severity'}</p>
+                        <p className="mt-1 leading-relaxed">{getStatusThresholdExplanation(form, 'critical', zh)}</p>
+                      </div>
+                      <div className="lg:col-span-2">
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '期望状态值（可选）' : 'Expected status value (optional)'}</label>
+                        <input
+                          type="text"
+                          aria-label={zh ? '期望状态值' : 'Expected status value'}
+                          value={form.expected_value || ''}
+                          onChange={e => setForm({ ...form, expected_value: e.target.value })}
+                          className="w-full px-3.5 py-2 rounded-xl border border-black/[0.08] text-sm focus:outline-none shadow-sm"
+                          placeholder={zh ? '例如 ok、up、running 或设备状态文本' : 'For example: ok, up, running, or a device status string'}
+                        />
+                        <p className="mt-1 text-[11px] leading-relaxed text-slate-500">{getStatusExpectedValueHint(form, zh)}</p>
+                      </div>
+                    </>
+                  ) : form.parse_type === 'info' ? (
+                    <div className="lg:col-span-2 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-xs text-slate-600">
+                      {zh ? '此类指标仅采集和展示，不会触发阈值告警。' : 'This metric is collected for display only and does not trigger threshold alerts.'}
+                    </div>
+                  ) : (
+                    <>
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? `警告${getThresholdInputLabel(form, zh)}` : `Warning ${getThresholdInputLabel(form, zh)}`}</label>
+                        <input
+                          type="number" value={form.warning_threshold ?? ''} onChange={e => setForm({ ...form, warning_threshold: e.target.value ? parseFloat(e.target.value) : undefined })}
+                          className="w-full px-3.5 py-2 rounded-xl border border-black/[0.08] text-sm focus:outline-none shadow-sm"
+                          placeholder="80"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? `严重${getThresholdInputLabel(form, zh)}` : `Critical ${getThresholdInputLabel(form, zh)}`}</label>
+                        <input
+                          type="number" value={form.critical_threshold ?? ''} onChange={e => setForm({ ...form, critical_threshold: e.target.value ? parseFloat(e.target.value) : undefined })}
+                          className="w-full px-3.5 py-2 rounded-xl border border-black/[0.08] text-sm focus:outline-none shadow-sm"
+                          placeholder="95"
+                        />
+                      </div>
+                    </>
+                  )}
                   <div className="lg:col-span-2">
                     <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">{zh ? '采集指令' : 'Command'}</label>
                     <input
@@ -721,17 +1227,17 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
             <DataTable unstyled exportConfig={{ filename: 'inspection-items', disabled: Boolean(editingId), exportData }} className="nx-data-table text-left">
               <thead className="sticky top-0 z-10">
                 <tr className="border-y border-black/5 bg-[#f8fafc] text-[10px] font-bold uppercase tracking-widest text-black/40">
-                  <th hidden={!visibleItemColumnSet.has('nameZh')} className="px-6 py-4">{zh ? '中文名称' : 'Chinese Name'}</th>
-                  <th hidden={!visibleItemColumnSet.has('name')} className="px-6 py-4">{zh ? '英文名称' : 'English Name'}</th>
-                  <th hidden={!visibleItemColumnSet.has('category')} className="px-6 py-4">{zh ? '分类' : 'Category'}</th>
-                  <th hidden={!visibleItemColumnSet.has('vendor')} className="px-6 py-4">{zh ? '厂商' : 'Vendor'}</th>
-                  <th hidden={!visibleItemColumnSet.has('checkKey')} className="px-6 py-4">{zh ? '检查 Key' : 'Check Key'}</th>
-                  <th hidden={!visibleItemColumnSet.has('method')} className="px-6 py-4">{zh ? '采集方式' : 'Method'}</th>
-                  <th hidden={!visibleItemColumnSet.has('script')} className="px-6 py-4">{zh ? '绑定脚本' : 'Bound Script'}</th>
-                  <th hidden={!visibleItemColumnSet.has('oid')} className="px-6 py-4">OID</th>
-                  <th hidden={!visibleItemColumnSet.has('warningThreshold')} className="px-6 py-4">{zh ? '警告阈值' : 'Warning Threshold'}</th>
-                  <th hidden={!visibleItemColumnSet.has('criticalThreshold')} className="px-6 py-4">{zh ? '严重阈值' : 'Critical Threshold'}</th>
-                  <th hidden={!visibleItemColumnSet.has('description')} className="px-6 py-4">{zh ? '描述' : 'Description'}</th>
+                  <th hidden={!editingId && !visibleItemColumnSet.has('nameZh')} className="px-6 py-4">{zh ? '中文名称' : 'Chinese Name'}</th>
+                  <th hidden={!editingId && !visibleItemColumnSet.has('name')} className="px-6 py-4">{zh ? '英文名称' : 'English Name'}</th>
+                  <th hidden={!editingId && !visibleItemColumnSet.has('category')} className="px-6 py-4">{zh ? '分类' : 'Category'}</th>
+                  <th hidden={!editingId && !visibleItemColumnSet.has('vendor')} className="px-6 py-4">{zh ? '厂商' : 'Vendor'}</th>
+                  <th hidden={!editingId && !visibleItemColumnSet.has('checkKey')} className="px-6 py-4">{zh ? '检查 Key' : 'Check Key'}</th>
+                  <th hidden={!editingId && !visibleItemColumnSet.has('method')} className="px-6 py-4">{zh ? '采集方式' : 'Method'}</th>
+                  <th hidden={!editingId && !visibleItemColumnSet.has('parseType')} className="px-6 py-4">{zh ? '解析类型' : 'Parse type'}</th>
+                  <th hidden={!editingId && !visibleItemColumnSet.has('unit')} className="px-6 py-4">{zh ? '单位' : 'Unit'}</th>
+                  <th hidden={!editingId && !visibleItemColumnSet.has('script')} className="px-6 py-4">{zh ? '绑定脚本' : 'Bound Script'}</th>
+                  <th hidden={!editingId && !visibleItemColumnSet.has('oid')} className="px-6 py-4">OID</th>
+                  <th hidden={!editingId && !visibleItemColumnSet.has('description')} className="px-6 py-4">{zh ? '描述' : 'Description'}</th>
                   <TableActionHeader className="px-6 py-4 text-right">{zh ? '操作' : 'Actions'}</TableActionHeader>
                 </tr>
               </thead>
@@ -739,16 +1245,19 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                 {paginatedItems.map((item) => {
                   const isEditing = editingId === item.id;
                   const isExpanded = expandedId === item.id;
+                  const isStatusMetric = isStatusInspectionItem(item);
+                  const isInfoMetric = item.parse_type?.toLowerCase() === 'info';
+                  const selectedFormCategory = CATEGORIES.find(category => category.id.toLowerCase() === String(form.category || '').trim().toLowerCase())?.id || form.category || '';
+                  const selectedFormMethod = getInspectionMethodOptionValue(form.method);
+                  const statusWarningExplanation = isStatusMetric ? getStatusThresholdExplanation(isEditing ? form : item, 'warning', zh) : '';
+                  const statusCriticalExplanation = isStatusMetric ? getStatusThresholdExplanation(isEditing ? form : item, 'critical', zh) : '';
                   const boundScriptName = item.script_id
                     ? (scripts.find(s => s.id === item.script_id)?.name || '').replace(/（精细化）|\(精细化\)/g, '').trim()
                     : '';
                   return (
                     <React.Fragment key={item.id}>
-                      <tr
-                        className={`hover:bg-black/[0.01] transition-colors group cursor-pointer ${isExpanded ? 'bg-blue-50/30' : ''}`}
-                        onClick={() => !isEditing && setExpandedId(isExpanded ? null : item.id)}
-                      >
-                        <td hidden={!visibleItemColumnSet.has('nameZh')} className="px-6 py-4">
+                      <tr className={`hover:bg-black/[0.01] transition-colors group ${isExpanded ? 'bg-blue-50/30' : ''}`}>
+                        <td hidden={!editingId && !visibleItemColumnSet.has('nameZh')} className="px-6 py-4">
                           {isEditing ? (
                             <input
                               type="text"
@@ -760,7 +1269,7 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                             />
                           ) : <span className="font-bold text-blue-700">{item.name_zh || '—'}</span>}
                         </td>
-                        <td hidden={!visibleItemColumnSet.has('name')} className="px-6 py-4">
+                        <td hidden={!editingId && !visibleItemColumnSet.has('name')} className="px-6 py-4">
                           {isEditing ? (
                             <div onClick={e => e.stopPropagation()}>
                               <input
@@ -773,11 +1282,11 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                             </div>
                           ) : <span className="text-xs text-[var(--ui-fg-muted)] font-mono">{item.name || '—'}</span>}
                         </td>
-                        <td hidden={!visibleItemColumnSet.has('category')} className="px-6 py-4">
+                        <td hidden={!editingId && !visibleItemColumnSet.has('category')} className="px-6 py-4">
                           {isEditing ? (
                             <div onClick={e => e.stopPropagation()}>
                               <select
-                                value={form.category || ''}
+                                value={selectedFormCategory}
                                 onChange={e => setForm({ ...form, category: e.target.value })}
                                 className="w-full px-2 py-1 rounded border border-blue-200 text-xs focus:outline-none bg-white"
                               >
@@ -795,7 +1304,7 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                             </span>
                           )}
                         </td>
-                        <td hidden={!visibleItemColumnSet.has('vendor')} className="px-6 py-4">
+                        <td hidden={!editingId && !visibleItemColumnSet.has('vendor')} className="px-6 py-4">
                           {isEditing ? (
                             <select value={form.vendor || ''} onChange={e => setForm({ ...form, vendor: e.target.value })} onClick={e => e.stopPropagation()} className="w-full px-2 py-1 rounded border border-blue-100 text-xs text-[var(--ui-fg)] focus:outline-none bg-white">
                               <option value="">{zh ? '选择厂商' : 'Vendor'}</option>
@@ -803,7 +1312,7 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                             </select>
                           ) : <span className="text-xs text-[var(--ui-fg)] font-semibold">{item.vendor || '—'}</span>}
                         </td>
-                        <td hidden={!visibleItemColumnSet.has('checkKey')} className="px-6 py-4 font-mono text-[11px] text-black/50 tracking-tight">
+                        <td hidden={!editingId && !visibleItemColumnSet.has('checkKey')} className="px-6 py-4 font-mono text-[11px] text-black/50 tracking-tight">
                           {isEditing ? (
                             <input
                               type="text"
@@ -814,32 +1323,56 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                             />
                           ) : item.check_key || '—'}
                         </td>
-                        <td hidden={!visibleItemColumnSet.has('method')} className="px-6 py-4">
+                        <td hidden={!editingId && !visibleItemColumnSet.has('method')} className="px-6 py-4">
                           {isEditing ? (
-                            <select value={form.method || ''} onChange={e => setForm({ ...form, method: e.target.value })} onClick={e => e.stopPropagation()} className="w-full px-2 py-1 rounded border border-blue-200 text-xs text-[var(--ui-fg)] focus:outline-none bg-white">
-                              <option value="SNMP">SNMP</option><option value="SSH">SSH</option><option value="Shell">Shell</option><option value="ICMP">ICMP</option><option value="TCP">TCP</option><option value="Agent">Agent</option>
+                            <select value={selectedFormMethod} onChange={e => setForm({ ...form, method: e.target.value })} onClick={e => e.stopPropagation()} className="w-full px-2 py-1 rounded border border-blue-200 text-xs text-[var(--ui-fg)] focus:outline-none bg-white">
+                              <option value="SNMP">SNMP</option><option value="SSH">SSH</option><option value="CLI">CLI</option><option value="Shell">Shell</option><option value="ICMP">ICMP</option><option value="TCP">TCP</option><option value="Agent">Agent</option>
                             </select>
                           ) : <span className="text-xs font-bold uppercase text-[var(--ui-fg)]">{item.method?.toUpperCase() || '—'}</span>}
                         </td>
-                        <td hidden={!visibleItemColumnSet.has('script')} className="px-6 py-4 text-xs text-[var(--ui-fg-muted)]">{boundScriptName || '—'}</td>
-                        <td hidden={!visibleItemColumnSet.has('oid')} className="px-6 py-4 font-mono text-xs text-[var(--ui-fg-muted)]">
+                        <td hidden={!editingId && !visibleItemColumnSet.has('parseType')} className="px-6 py-4">
+                          {isEditing ? (
+                            <select
+                              value={form.parse_type || 'numeric'}
+                              onChange={e => {
+                                const parseType = e.target.value;
+                                setForm(current => ({
+                                  ...current,
+                                  parse_type: parseType,
+                                  unit: parseType === 'status' ? 'status' : current.unit === 'status' ? '' : current.unit,
+                                  warning_threshold: parseType === 'status' ? undefined : current.warning_threshold,
+                                  critical_threshold: parseType === 'status' ? undefined : current.critical_threshold,
+                                }));
+                              }}
+                              onClick={e => e.stopPropagation()}
+                              className="w-full px-2 py-1 rounded border border-blue-200 text-xs text-[var(--ui-fg)] focus:outline-none bg-white"
+                            >
+                              {PARSE_TYPE_OPTIONS.map(parseType => <option key={parseType} value={parseType}>{parseType}</option>)}
+                            </select>
+                          ) : <span className="text-xs font-medium text-[var(--ui-fg)]">{item.parse_type || 'numeric'}</span>}
+                        </td>
+                        <td hidden={!editingId && !visibleItemColumnSet.has('unit')} className="px-6 py-4">
+                          {isEditing && form.parse_type !== 'status' ? (
+                            <input
+                              type="text"
+                              value={form.unit === 'status' ? '' : form.unit || ''}
+                              aria-label={zh ? '单位' : 'Unit'}
+                              onChange={e => setForm(current => ({ ...current, unit: e.target.value }))}
+                              onClick={e => e.stopPropagation()}
+                              className="w-full px-2 py-1 rounded border border-blue-200 text-xs text-[var(--ui-fg)] focus:outline-none bg-white"
+                              placeholder={zh ? '任意单位' : 'Any unit'}
+                            />
+                          ) : <span className="text-xs text-[var(--ui-fg-muted)]">{getInspectionThresholdUnit(item, zh)}</span>}
+                        </td>
+                        <td hidden={!editingId && !visibleItemColumnSet.has('script')} className="px-6 py-4 text-xs text-[var(--ui-fg-muted)]">{boundScriptName || '—'}</td>
+                        <td hidden={!editingId && !visibleItemColumnSet.has('oid')} className="px-6 py-4 font-mono text-xs text-[var(--ui-fg-muted)]">
                           {isEditing && form.method === 'SNMP' && getRoutingProtocolFromCheckKey(form.check_key) ? (
                             <span className="text-xs font-medium text-blue-700">{zh ? '标准邻居 MIB' : 'Standard neighbor MIB'}</span>
                           ) : isEditing && form.method === 'SNMP' ? (
                             <input type="text" value={form.oid || ''} onChange={e => setForm({ ...form, oid: e.target.value })} onClick={e => e.stopPropagation()} className="w-full px-2 py-1 rounded border border-blue-200 text-xs text-[var(--ui-fg)] focus:outline-none" placeholder="OID" />
                           ) : item.oid || '—'}
                         </td>
-                        <td hidden={!visibleItemColumnSet.has('warningThreshold')} className="px-6 py-4 font-mono text-xs text-[var(--ui-fg)]">
-                          {isEditing ? (
-                            <input type="number" value={form.warning_threshold ?? ''} onChange={e => setForm({ ...form, warning_threshold: e.target.value ? parseFloat(e.target.value) : undefined })} onClick={e => e.stopPropagation()} className="w-full px-2 py-1 rounded border border-blue-200 text-xs text-[var(--ui-fg)] focus:outline-none" placeholder="%" />
-                          ) : item.warning_threshold == null ? '—' : `${item.warning_threshold}%`}
-                        </td>
-                        <td hidden={!visibleItemColumnSet.has('criticalThreshold')} className="px-6 py-4 font-mono text-xs text-[var(--ui-fg)]">
-                          {isEditing ? (
-                            <input type="number" value={form.critical_threshold ?? ''} onChange={e => setForm({ ...form, critical_threshold: e.target.value ? parseFloat(e.target.value) : undefined })} onClick={e => e.stopPropagation()} className="w-full px-2 py-1 rounded border border-blue-200 text-xs text-[var(--ui-fg)] focus:outline-none" placeholder="%" />
-                          ) : item.critical_threshold == null ? '—' : `${item.critical_threshold}%`}
-                        </td>
-                        <td hidden={!visibleItemColumnSet.has('description')} className="px-6 py-4 text-xs text-black/60 italic">
+                        <td hidden={!editingId && !visibleItemColumnSet.has('description')} className="px-6 py-4 text-xs text-black/60 italic">
                           {isEditing ? (
                             <div className="space-y-2" onClick={e => e.stopPropagation()}>
                               <textarea
@@ -876,15 +1409,20 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                                 <ActionIconButton
                                   icon={X}
                                   label={zh ? '取消' : 'Cancel'}
-                                  onClick={(e) => { e.stopPropagation(); setEditingId(null); }}
+                                  onClick={(e) => { e.stopPropagation(); setEditingId(null); setExpandedId(null); }}
                                 />
                               </>
                             ) : (
                               <>
                                 <ActionIconButton
+                                  icon={Eye}
+                                  label={zh ? '查看指标详情' : 'View metric details'}
+                                  onClick={(e) => { e.stopPropagation(); setDetailItemId(item.id); }}
+                                />
+                                <ActionIconButton
                                   icon={Pencil}
                                   label={zh ? '编辑指标' : 'Edit Metric'}
-                                  onClick={(e) => { e.stopPropagation(); setEditingId(item.id); setForm(item); }}
+                                  onClick={(e) => { e.stopPropagation(); setExpandedId(item.id); setEditingId(item.id); setForm({ ...item, threshold_direction: item.threshold_direction || 'above' }); }}
                                 />
                                 <ActionIconButton
                                   icon={Trash2}
@@ -898,7 +1436,7 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                         </TableActionCell>
                       </tr>
                       <AnimatePresence>
-                        {isExpanded && !isEditing && (
+                        {isExpanded && (
                           <tr>
                             <td colSpan={visibleItemColumnKeys.length} className="px-6 py-0 border-none">
                               <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
@@ -907,7 +1445,88 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                                   <div className="space-y-4">
                                     <div>
                                       <h4 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--ui-fg-muted)] mb-2">{zh ? '详细描述' : 'DETAILED DESCRIPTION'}</h4>
-                                      <p className="text-sm text-[var(--ui-fg)] leading-relaxed font-medium break-all">{item.description || '-'}</p>
+                                      <p className="whitespace-normal break-all text-sm text-[var(--ui-fg)] leading-relaxed font-medium">{item.description || '-'}</p>
+                                    </div>
+                                    <div>
+                                      <h4 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--ui-fg-muted)] mb-2">{zh ? '阈值与状态规则' : 'THRESHOLDS & STATUS RULES'}</h4>
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                        <div className="space-y-2">
+                                          <p className="mb-1 text-[10px] font-semibold text-amber-700 dark:text-amber-300">{zh ? '告警规则' : 'Warning rule'}</p>
+                                          {isStatusMetric ? (
+                                            <>
+                                              <p className="whitespace-normal break-words text-xs leading-relaxed text-[var(--ui-fg)]">{statusWarningExplanation}</p>
+                                              {isEditing && (
+                                                <label className="block space-y-1">
+                                                  <span className="block text-[10px] font-semibold text-slate-500">{zh ? '期望状态值（可选）' : 'Expected status value (optional)'}</span>
+                                                  <input
+                                                    type="text"
+                                                    aria-label={zh ? '期望状态值' : 'Expected status value'}
+                                                    value={form.expected_value || ''}
+                                                    onChange={e => setForm(current => ({ ...current, expected_value: e.target.value }))}
+                                                    className="w-full rounded border border-blue-200 bg-white px-2 py-1.5 text-xs text-[var(--ui-fg)] focus:outline-none"
+                                                    placeholder={zh ? '如 ok、up 或设备状态' : 'e.g. ok, up, or device state'}
+                                                  />
+                                                  <span className="block text-[10px] leading-relaxed text-slate-500">{getStatusExpectedValueHint(form, zh)}</span>
+                                                </label>
+                                              )}
+                                            </>
+                                          ) : isInfoMetric ? (
+                                            <p className="whitespace-normal break-words text-xs leading-relaxed text-[var(--ui-fg)]">{formatInspectionThreshold(item, item.warning_threshold, zh, 'warning')}</p>
+                                          ) : isEditing ? (
+                                            <div className="space-y-2">
+                                              <div className="flex items-center gap-2">
+                                                <span className="text-[10px] font-semibold text-slate-500">{zh ? '告警阈值' : 'Warning threshold'}</span>
+                                                <input
+                                                  type="number"
+                                                  aria-label={zh ? '告警阈值' : 'Warning threshold'}
+                                                  value={form.warning_threshold ?? ''}
+                                                  onChange={e => setForm(current => ({ ...current, warning_threshold: e.target.value ? parseFloat(e.target.value) : undefined }))}
+                                                  className="w-28 rounded border border-blue-200 bg-white px-2 py-1.5 text-xs text-[var(--ui-fg)] focus:outline-none"
+                                                  placeholder={zh ? '未设置' : 'Not set'}
+                                                />
+                                                <span className="shrink-0 text-[10px] text-slate-500">{getInspectionThresholdUnit(form, zh)}</span>
+                                              </div>
+                                              <label className="flex items-center gap-2 text-[10px] text-slate-500">
+                                                <span>{zh ? '比较方式' : 'Comparison'}</span>
+                                                <select
+                                                  aria-label={zh ? '阈值比较方式' : 'Threshold comparison'}
+                                                  value={form.threshold_direction || 'above'}
+                                                  onChange={e => setForm(current => ({ ...current, threshold_direction: e.target.value }))}
+                                                  className="rounded border border-blue-200 bg-white px-2 py-1.5 text-xs text-[var(--ui-fg)] focus:outline-none"
+                                                >
+                                                  <option value="above">{zh ? '达到或超过（≥）' : 'At or above (≥)'}</option>
+                                                  <option value="below">{zh ? '低于（<）' : 'Below (<)'}</option>
+                                                </select>
+                                              </label>
+                                            </div>
+                                          ) : (
+                                            <p className="whitespace-normal break-words text-xs leading-relaxed text-[var(--ui-fg)]">{formatInspectionThreshold(item, item.warning_threshold, zh, 'warning')}</p>
+                                          )}
+                                        </div>
+                                        <div className="space-y-2">
+                                          <p className="mb-1 text-[10px] font-semibold text-slate-600 dark:text-slate-300">{zh ? '严重规则' : 'Critical rule'}</p>
+                                          {isStatusMetric ? (
+                                            <p className="whitespace-normal break-words text-xs leading-relaxed text-[var(--ui-fg)]">{statusCriticalExplanation}</p>
+                                          ) : isInfoMetric ? (
+                                            <p className="whitespace-normal break-words text-xs leading-relaxed text-[var(--ui-fg)]">{formatInspectionThreshold(item, item.critical_threshold, zh, 'critical')}</p>
+                                          ) : isEditing ? (
+                                            <div className="flex items-center gap-2">
+                                              <span className="text-[10px] font-semibold text-slate-500">{zh ? '严重阈值' : 'Critical threshold'}</span>
+                                              <input
+                                                type="number"
+                                                aria-label={zh ? '严重阈值' : 'Critical threshold'}
+                                                value={form.critical_threshold ?? ''}
+                                                onChange={e => setForm(current => ({ ...current, critical_threshold: e.target.value ? parseFloat(e.target.value) : undefined }))}
+                                                className="w-28 rounded border border-blue-200 bg-white px-2 py-1.5 text-xs text-[var(--ui-fg)] focus:outline-none"
+                                                placeholder={zh ? '未设置' : 'Not set'}
+                                              />
+                                              <span className="shrink-0 text-[10px] text-slate-500">{getInspectionThresholdUnit(form, zh)}</span>
+                                            </div>
+                                          ) : (
+                                            <p className="whitespace-normal break-words text-xs leading-relaxed text-[var(--ui-fg)]">{formatInspectionThreshold(item, item.critical_threshold, zh, 'critical')}</p>
+                                          )}
+                                        </div>
+                                      </div>
                                     </div>
                                     <div className="flex gap-8">
                                       <div>
@@ -1001,6 +1620,20 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
           alwaysVisible
         />
       </div>
+      <InspectionItemDetailsDialog
+        item={detailItemId ? items.find(candidate => candidate.id === detailItemId) || null : null}
+        language={language}
+        scripts={scripts}
+        copiedId={copiedId}
+        onCopy={copyToClipboard}
+        onClose={() => setDetailItemId(null)}
+        onEdit={(item) => {
+          setDetailItemId(null);
+          setExpandedId(item.id);
+          setEditingId(item.id);
+          setForm({ ...item, threshold_direction: item.threshold_direction || 'above' });
+        }}
+      />
       </div>
     </div>
   );
