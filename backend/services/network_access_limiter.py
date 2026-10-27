@@ -17,6 +17,10 @@ from typing import Any, Callable, Iterator
 
 from core.config import settings
 from services.network_access_lease_service import (
+    CMDB_SSH_DEVICE_CAPACITY,
+    CMDB_SSH_GLOBAL_CAPACITY,
+    CMDB_SSH_PURPOSE,
+    NETWORK_SSH_PURPOSE,
     NetworkAccessLeaseError,
     acquire_network_ssh_lease,
 )
@@ -86,6 +90,7 @@ _DEFAULT_LEASE_FACTORY = object()
 @dataclass
 class _Counters:
     ssh: int = 0
+    cmdb_ssh: int = 0
     snmp: int = 0
     probe: int = 0
 
@@ -93,9 +98,9 @@ class _Counters:
 class NetworkAccessLimiter:
     """Process-wide SSH/SNMP/probe concurrency controller.
 
-    The SSH gate has both a global semaphore and a per-device lock.  The
-    per-device lock intentionally serializes normal/admin/collector access to
-    the same device; this avoids competing CLI prompts and VTY exhaustion.
+    Each SSH capacity class has a global semaphore and a per-device lock.
+    Existing callers retain the default pool; explicit CMDB sessions use a
+    separate bounded pool so they cannot occupy the default pool's slots.
     """
 
     def __init__(
@@ -139,6 +144,7 @@ class NetworkAccessLimiter:
         )
 
         self._ssh_global = threading.BoundedSemaphore(self.ssh_global_limit)
+        self._cmdb_ssh_global = threading.BoundedSemaphore(CMDB_SSH_GLOBAL_CAPACITY)
         self._snmp_global = threading.BoundedSemaphore(self.snmp_global_limit)
         self._probe_global = threading.BoundedSemaphore(self.probe_global_limit)
         self._snmp_async: asyncio.Semaphore | None = None
@@ -146,16 +152,19 @@ class NetworkAccessLimiter:
         self._probe_async: asyncio.Semaphore | None = None
         self._probe_async_loop: asyncio.AbstractEventLoop | None = None
         self._device_locks: dict[str, threading.BoundedSemaphore] = {}
+        self._cmdb_device_locks: dict[str, threading.BoundedSemaphore] = {}
         self._locks_guard = threading.Lock()
         self._counter_guard = threading.Lock()
         self._counters = _Counters()
 
-    def _device_lock(self, key: str) -> threading.BoundedSemaphore:
+    def _device_lock(self, key: str, *, capacity_class: str = NETWORK_SSH_PURPOSE) -> threading.BoundedSemaphore:
         with self._locks_guard:
-            lock = self._device_locks.get(key)
+            locks = self._cmdb_device_locks if capacity_class == CMDB_SSH_PURPOSE else self._device_locks
+            capacity = CMDB_SSH_DEVICE_CAPACITY if capacity_class == CMDB_SSH_PURPOSE else self.ssh_per_device_limit
+            lock = locks.get(key)
             if lock is None:
-                lock = threading.BoundedSemaphore(self.ssh_per_device_limit)
-                self._device_locks[key] = lock
+                lock = threading.BoundedSemaphore(capacity)
+                locks[key] = lock
             return lock
 
     @staticmethod
@@ -172,11 +181,19 @@ class NetworkAccessLimiter:
         operation: str = "cli",
         timeout: float | None = None,
         coordinated: bool = True,
+        capacity_class: str = NETWORK_SSH_PURPOSE,
     ) -> Iterator[None]:
         """Reserve local and, by default, PostgreSQL-shared SSH capacity."""
+        if capacity_class not in {NETWORK_SSH_PURPOSE, CMDB_SSH_PURPOSE}:
+            raise ValueError("Unknown SSH capacity class")
+        cmdb_capacity = capacity_class == CMDB_SSH_PURPOSE
+        global_semaphore = self._cmdb_ssh_global if cmdb_capacity else self._ssh_global
+        global_capacity = CMDB_SSH_GLOBAL_CAPACITY if cmdb_capacity else self.ssh_global_limit
+        device_capacity = CMDB_SSH_DEVICE_CAPACITY if cmdb_capacity else self.ssh_per_device_limit
+        counter_name = 'cmdb_ssh' if cmdb_capacity else 'ssh'
         wait_timeout = self.acquire_timeout if timeout is None else timeout
         key = _device_key(device, username=username, port=port)
-        device_lock = self._device_lock(key)
+        device_lock = self._device_lock(key, capacity_class=capacity_class)
         if not self._acquire(device_lock, wait_timeout):
             raise NetworkAccessLimitError(
                 f"device concurrency limit reached for {key} "
@@ -185,28 +202,31 @@ class NetworkAccessLimiter:
         global_acquired = False
         shared_lease = None
         try:
-            if not self._acquire(self._ssh_global, wait_timeout):
+            if not self._acquire(global_semaphore, wait_timeout):
                 raise NetworkAccessLimitError(
-                    f"global SSH concurrency limit reached ({self.ssh_global_limit})"
+                    f"global SSH concurrency limit reached ({global_capacity})"
                 )
             global_acquired = True
             if coordinated and self._ssh_lease_factory is not None:
                 try:
-                    shared_lease = self._ssh_lease_factory(
+                    lease_options = dict(
                         device_id=_managed_device_id(device),
-                        global_capacity=self.ssh_global_limit,
-                        device_capacity=self.ssh_per_device_limit,
+                        global_capacity=global_capacity,
+                        device_capacity=device_capacity,
                         wait_timeout=wait_timeout,
                     )
+                    if cmdb_capacity:
+                        lease_options['capacity_class'] = CMDB_SSH_PURPOSE
+                    shared_lease = self._ssh_lease_factory(**lease_options)
                 except NetworkAccessLeaseError as exc:
                     raise NetworkAccessLimitError(str(exc)) from None
             with self._counter_guard:
-                self._counters.ssh += 1
+                setattr(self._counters, counter_name, getattr(self._counters, counter_name) + 1)
             try:
                 yield
             finally:
                 with self._counter_guard:
-                    self._counters.ssh = max(0, self._counters.ssh - 1)
+                    setattr(self._counters, counter_name, max(0, getattr(self._counters, counter_name) - 1))
         finally:
             try:
                 if shared_lease is not None:
@@ -214,7 +234,7 @@ class NetworkAccessLimiter:
             finally:
                 try:
                     if global_acquired:
-                        self._ssh_global.release()
+                        global_semaphore.release()
                 finally:
                     device_lock.release()
 
@@ -312,6 +332,9 @@ class NetworkAccessLimiter:
         with self._counter_guard:
             return {
                 "active_ssh": self._counters.ssh,
+                "active_cmdb_ssh": self._counters.cmdb_ssh,
+                "cmdb_ssh_global_limit": CMDB_SSH_GLOBAL_CAPACITY,
+                "cmdb_ssh_per_device_limit": CMDB_SSH_DEVICE_CAPACITY,
                 "active_snmp": self._counters.snmp,
                 "active_probes": self._counters.probe,
                 "ssh_global_limit": self.ssh_global_limit,

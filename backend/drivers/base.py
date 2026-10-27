@@ -47,11 +47,15 @@ class BaseDriver(ABC):
     def __enter__(self):
         from services.network_access_limiter import get_network_access_limiter
         limiter = get_network_access_limiter()
+        capacity_options = {}
+        if self.device_info.get('_ssh_capacity_class'):
+            capacity_options['capacity_class'] = self.device_info['_ssh_capacity_class']
         lease = limiter.ssh(
             self.device_info,
             username=self.username,
             port=self.port,
             operation="driver-context",
+            **capacity_options,
         )
         lease.__enter__()
         self._network_access_lease = lease

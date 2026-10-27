@@ -6,12 +6,16 @@ asset model: tenants, sites, VRFs and VLANs. All routes are mounted under
 `/api/cmdb`.
 """
 
+import json
 import logging
 import csv
 import io
 import math
+import time
+import threading
 from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from database import get_db_connection
@@ -30,11 +34,221 @@ from schemas.schemas import (
 )
 from services import cmdb_service
 from services import job_service
+from services.cmdb_version_service import read_versions
+from services.cmdb_cache_runtime import get_cmdb_query_cache
 from services.audit_service import log_audit_event
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+_CMDB_UNVERSIONED_DEPENDENCY_RESOURCES = frozenset({
+    'interfaces', 'vlans', 'vlan_details',
+})
+_CMDB_BUILD_SEMAPHORE = threading.BoundedSemaphore(4)
+
+
+def _begin_cmdb_read_snapshot(conn) -> None:
+    """Pin cache generation and its SQL projection to one PostgreSQL snapshot."""
+    conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+
+
+def _find_active_cmdb_interface_job(conn):
+    """Reuse only an active task that explicitly owns the CMDB CLI scope."""
+    rows = conn.execute(
+        """SELECT id, scope_json FROM jobs
+           WHERE job_type = 'interface_collection'
+             AND status IN ('queued', 'running')
+           ORDER BY created_at DESC"""
+    ).fetchall()
+    for candidate in rows:
+        try:
+            scope = json.loads(candidate["scope_json"] or "{}")
+        except (TypeError, ValueError):
+            continue
+        if isinstance(scope, dict) and scope.get("cmdb_cli_only") is True:
+            return candidate
+    return None
+
+
+def _cmdb_cache_generation(conn, domains: tuple[str, ...]) -> dict:
+    versions = read_versions(conn, domains)
+    return {'cmdb': versions}
+
+
+def _cmdb_projection_meta(
+    conn,
+    generation: dict,
+    cache_state: str,
+    snapshot_domains: tuple[str, ...],
+    *,
+    tenant_id: str | None = None,
+    site_ids: tuple[str, ...] | None = None,
+    site_id: str = "",
+) -> dict:
+    domains = sorted({str(value).strip() for value in snapshot_domains if str(value).strip()})
+    last_success_at: dict[str, str | None] = {}
+    if domains:
+        placeholders = ",".join("?" for _ in domains)
+        scope_clauses: list[str] = []
+        scope_params: list[str] = []
+        if tenant_id is not None:
+            scope_clauses.append("COALESCE(d.tenant_id, 'tenant-default') = ?")
+            scope_params.append(tenant_id)
+        if site_ids is not None:
+            if not site_ids:
+                scope_clauses.append("1 = 0")
+            else:
+                site_placeholders = ",".join("?" for _ in site_ids)
+                scope_clauses.append(f"d.site_id IN ({site_placeholders})")
+                scope_params.extend(site_ids)
+        if site_id:
+            device_site = "COALESCE(NULLIF(d.site_id, ''), NULLIF(d.site, ''), '')"
+            if site_id == "unassigned":
+                scope_clauses.append(f"{device_site} = ''")
+            else:
+                scope_clauses.append(f"{device_site} = ?")
+                scope_params.append(site_id)
+        scope_sql = " AND " + " AND ".join(scope_clauses) if scope_clauses else ""
+        rows = conn.execute(
+            f"""SELECT domain, MAX(last_success_at) AS last_success_at
+                FROM cmdb_collection_snapshots s
+                JOIN devices d ON d.id = s.device_id
+                WHERE domain IN ({placeholders}){scope_sql}
+                GROUP BY domain""",
+            (*domains, *scope_params),
+        ).fetchall()
+        last_success_at = {domain: None for domain in domains}
+        last_success_at.update({str(row["domain"]): row["last_success_at"] for row in rows})
+    snapshot_row = conn.execute(
+        "SELECT transaction_timestamp() AS snapshot_at"
+    ).fetchone()
+    raw_snapshot_at = snapshot_row["snapshot_at"] if snapshot_row else None
+    snapshot_at = raw_snapshot_at.isoformat() if hasattr(raw_snapshot_at, "isoformat") else str(raw_snapshot_at or "")
+    return {
+        "inventory_revision": dict(generation.get("cmdb") or {}),
+        # A request clock is not evidence of successful external collection.
+        "dependency_watermark": None,
+        "snapshot_at": snapshot_at,
+        "last_success_at": last_success_at,
+        "cache_state": cache_state,
+        "stale_domains": [],
+    }
+
+
+def _cache_get(resource: str, generation: dict, scope: dict, query: dict):
+    return get_cmdb_query_cache().get_json(
+        resource, generation=generation, scope=scope, query=query,
+    )
+
+
+def _cache_set(resource: str, generation: dict, scope: dict, query: dict, value) -> None:
+    get_cmdb_query_cache().set_json(
+        resource,
+        generation=generation,
+        scope=scope,
+        query=query,
+        value=jsonable_encoder(value),
+    )
+
+
+def _cached_cmdb_projection(resource: str, generation: dict, scope: dict, query: dict, build):
+    """Read/cache a projection with a short cross-worker rebuild lease.
+
+    Redis remains optional. Contenders wait at most 100 ms, then use the
+    PostgreSQL source of truth directly; none of these paths trigger a device
+    operation. Revisioned keys prevent a slow older builder from overwriting
+    a newer generation.
+    """
+    def build_bounded():
+        with _CMDB_BUILD_SEMAPHORE:
+            return build()
+
+    # These projections include shared observations whose writers do not
+    # publish a trustworthy revision. Read them from this request's database
+    # snapshot, without constructing or consulting a Redis client.
+    if resource in _CMDB_UNVERSIONED_DEPENDENCY_RESOURCES:
+        return build_bounded(), 'bypass'
+
+    cache = get_cmdb_query_cache()
+    if cache.redis_client is None or cache.last_failure_kind:
+        return build_bounded(), 'bypass'
+
+    cached = cache.get_json(
+        resource, generation=generation, scope=scope, query=query,
+    )
+    if cached is not None:
+        return cached, 'hit'
+    if cache.last_failure_kind:
+        return build_bounded(), 'bypass'
+
+    lock = cache.acquire_rebuild_lock(
+        resource,
+        generation=generation,
+        scope=scope,
+        query=query,
+        lease_seconds=30,
+    )
+    if lock is None:
+        if cache.last_failure_kind:
+            return build_bounded(), 'bypass'
+        deadline = time.monotonic() + 0.1
+        while time.monotonic() < deadline:
+            time.sleep(0.025)
+            cached = cache.get_json(
+                resource, generation=generation, scope=scope, query=query,
+            )
+            if cached is not None:
+                return cached, 'hit'
+            if cache.last_failure_kind:
+                return build_bounded(), 'bypass'
+        return build_bounded(), 'bypass'
+
+    try:
+        # Another worker may have completed between the initial GET and SET NX.
+        cached = cache.get_json(
+            resource, generation=generation, scope=scope, query=query,
+        )
+        if cached is not None:
+            return cached, 'hit'
+        if cache.last_failure_kind:
+            return build_bounded(), 'bypass'
+        value = build_bounded()
+        _cache_set(resource, generation, scope, query, value)
+        return value, 'miss'
+    finally:
+        cache.release_rebuild_lock(lock)
+
+
+def _refresh_interface_profiles(conn, data):
+    """Read profile fields live so a cached inventory cannot hide a profile edit."""
+    rows = data.get('items') if isinstance(data, dict) else data
+    if not isinstance(rows, list):
+        return data
+    interface_ids = sorted({
+        str(row.get('id') or '') for row in rows
+        if row.get('id') and not str(row.get('id')).startswith('ipinv-')
+    })
+    if not interface_ids:
+        return data
+    placeholders = ','.join('?' for _ in interface_ids)
+    profiles = conn.execute(
+        f"""SELECT id, interface_role, utilization_warn_pct,
+                   utilization_high_pct, utilization_critical_pct
+            FROM interfaces WHERE id IN ({placeholders})""",
+        tuple(interface_ids),
+    ).fetchall()
+    by_id = {str(row['id']): row for row in profiles}
+    for item in rows:
+        current = by_id.get(str(item.get('id') or ''))
+        if current:
+            item.update({
+                'interface_role': current['interface_role'],
+                'utilization_warn_pct': current['utilization_warn_pct'],
+                'utilization_high_pct': current['utilization_high_pct'],
+                'utilization_critical_pct': current['utilization_critical_pct'],
+            })
+    return data
 
 
 class InterfaceMonitoringProfileUpdate(BaseModel):
@@ -331,16 +545,53 @@ def api_list_cmdb_interfaces(
     search: Optional[str] = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
+    response: Response = None,
     user=require_role("Viewer"),
 ):
     conn = get_db_connection()
     try:
+        _begin_cmdb_read_snapshot(conn)
         tenant_id, site_ids = _cmdb_interface_resource_scope(conn, user, "view")
-        return {"success": True, "data": cmdb_service.list_cmdb_interfaces(
-            conn, has_ip=has_ip, device_id=device_id, search=search,
-            page=page, page_size=page_size,
-            tenant_id=tenant_id, site_ids=site_ids,
-        ), "message": ""}
+        scope = {
+            'role': str(user.get('role') or ''),
+            'tenant_id': tenant_id,
+            'site_ids': sorted(site_ids) if site_ids is not None else None,
+        }
+        query = {
+            'has_ip': has_ip,
+            'device_id': device_id or '',
+            'search': (search or '').strip(),
+            'page': page,
+            'page_size': page_size,
+        }
+        generation = _cmdb_cache_generation(conn, ('interfaces',))
+        data, cache_state = _cached_cmdb_projection(
+            'interfaces', generation, scope, query,
+            lambda: cmdb_service.list_cmdb_interfaces(
+                conn,
+                has_ip=has_ip,
+                device_id=device_id,
+                search=search,
+                page=page,
+                page_size=page_size,
+                tenant_id=tenant_id,
+                site_ids=site_ids,
+            )
+        )
+        if cache_state == 'hit':
+            data = _refresh_interface_profiles(conn, data)
+        if isinstance(data, dict):
+            data['meta'] = _cmdb_projection_meta(
+                conn,
+                generation,
+                cache_state,
+                ("interface_inventory",),
+                tenant_id=tenant_id,
+                site_ids=site_ids,
+            )
+        if response is not None:
+            response.headers['X-CMDB-Cache'] = cache_state
+        return {"success": True, "data": data, "message": ""}
     finally:
         conn.close()
 
@@ -386,12 +637,7 @@ def api_trigger_cmdb_interface_sync(
     """Queue interface collection for online network devices only."""
     conn = get_db_connection()
     try:
-        active = conn.execute(
-            """SELECT id FROM jobs
-               WHERE job_type = 'interface_collection'
-                 AND status IN ('queued', 'running')
-               ORDER BY created_at DESC LIMIT 1"""
-        ).fetchone()
+        active = _find_active_cmdb_interface_job(conn)
         if active:
             job = job_service.get_job(
                 active['id'], conn=conn,
@@ -433,10 +679,9 @@ def api_trigger_cmdb_interface_sync(
     if not targets:
         raise HTTPException(status_code=409, detail="当前没有在线网络设备可采集接口状态")
 
-    from core.config import settings
+    from services.network_access_lease_service import CMDB_SSH_GLOBAL_CAPACITY
     from services.job_worker import run_job
 
-    configured_concurrency = int(getattr(settings, "NETWORK_SSH_GLOBAL_CONCURRENCY", 20))
     job = job_service.create_job(
         job_type="interface_collection",
         task_name="CMDB接口状态采集",
@@ -446,11 +691,12 @@ def api_trigger_cmdb_interface_sync(
         # Interface collection writes several related CMDB projections per
         # device. Keep network I/O concurrent, but bound DB-writing pressure
         # to reduce lock contention and deadlocks when many devices share a site.
-        concurrency_limit=max(1, min(configured_concurrency, 8)),
+        concurrency_limit=CMDB_SSH_GLOBAL_CAPACITY,
         retry_limit=0,
         timeout_seconds=180,
         scope={
-            "collector": "playbook_interfaces_textfsm",
+            "collector": "cmdb_cli_snapshot_v1",
+            "cmdb_cli_only": True,
             "site_concurrency": 2,
             "vendor_concurrency": 4,
         },
@@ -465,7 +711,7 @@ def api_trigger_cmdb_interface_sync(
         "data": {
             "started": True,
             "job_id": job['id'],
-            "collector": "playbook_interfaces_textfsm",
+            "collector": "cmdb_cli_snapshot_v1",
             "job": compact_job,
         },
         "message": "接口状态采集任务已启动",
@@ -556,18 +802,20 @@ def api_list_sites(tenant_id: str = Query('', description="Filter by tenant"),
                    page: int | None = Query(None, ge=1),
                    page_size: int = Query(20, ge=1, le=100),
                    _user=require_role("Viewer")):
-    cache_key = f'sites:{tenant_id}:{q}:{page}:{page_size}'
     if page is not None:
         conn = get_db_connection()
         try:
             return {"success": True, "data": cmdb_service.list_sites(conn, tenant_id=tenant_id, q=q, page=page, page_size=page_size), "message": ""}
         finally:
             conn.close()
-    cache_hit, cached = read_cache.get('references', cache_key)
-    if cache_hit:
-        return cached
     conn = get_db_connection()
     try:
+        _begin_cmdb_read_snapshot(conn)
+        site_revision = read_versions(conn, ("sites",)).get("sites", 0)
+        cache_key = f'sites:{tenant_id}:{q}:{page}:{page_size}:revision:{site_revision}'
+        cache_hit, cached = read_cache.get('references', cache_key)
+        if cache_hit:
+            return cached
         response = {"success": True, "data": cmdb_service.list_sites(conn, tenant_id=tenant_id, q=q), "message": ""}
         read_cache.set('references', cache_key, response, REFERENCE_CACHE_TTL_SECONDS)
         return response
@@ -819,30 +1067,105 @@ def api_delete_vrf(vrf_id: str, user=require_role("Administrator")):
 @router.get("/cmdb/vlans")
 def api_list_vlans(site_id: str = Query('', description="Filter by site"),
                    tenant_id: str = Query('', description="Filter by tenant"),
-                   q: str = Query('', description="Search VLAN ID or description"),
+                   q: str = Query('', max_length=128, description="Search VLAN, prefix, gateway, device or business"),
                    status: str = Query('all', description="Filter by status"),
                    asset_type: str = Query('', description="Filter by asset type"),
                    device_category: str = Query('', description="Filter by device category"),
                    device_role: str = Query('', description="Filter by device role"),
                    page: int | None = Query(None, ge=1),
                    page_size: int = Query(20, ge=1, le=100),
+                   include_details: bool = Query(False, description="Include full VLAN evidence for explicit export consumers"),
+                   response: Response = None,
                    _user=require_role("Viewer")):
     conn = get_db_connection()
     try:
-        data = cmdb_service.list_vlans(
-            conn,
-            site_id=site_id,
-            tenant_id=tenant_id,
-            q=q,
-            status=status,
-            asset_type=asset_type,
-            device_category=device_category,
-            device_role=device_role,
-            page=page,
-            page_size=page_size,
-            device_scoped=True,
+        _begin_cmdb_read_snapshot(conn)
+        scope = {
+            'role': str(_user.get('role') or ''),
+            'site_filter': site_id,
+            'tenant_filter': tenant_id,
+        }
+        query = {
+            'site_id': site_id,
+            'tenant_id': tenant_id,
+            'q': q.strip(),
+            'status': status,
+            'asset_type': asset_type,
+            'device_category': device_category,
+            'device_role': device_role,
+            'page': page,
+            'page_size': page_size,
+            'include_details': include_details,
+        }
+        generation = _cmdb_cache_generation(conn, ('vlans', 'bindings', 'interfaces'))
+        data, cache_state = _cached_cmdb_projection(
+            'vlans', generation, scope, query,
+            lambda: cmdb_service.list_vlans(
+                conn,
+                site_id=site_id,
+                tenant_id=tenant_id,
+                q=q,
+                status=status,
+                asset_type=asset_type,
+                device_category=device_category,
+                device_role=device_role,
+                page=page,
+                page_size=page_size,
+                include_details=include_details,
+                device_scoped=True,
+            )
         )
+        if isinstance(data, dict):
+            data['meta'] = _cmdb_projection_meta(
+                conn,
+                generation,
+                cache_state,
+                ("vlan_inventory",),
+                tenant_id=tenant_id or None,
+                site_id=site_id,
+            )
+        if response is not None:
+            response.headers['X-CMDB-Cache'] = cache_state
         return {"success": True, "data": data, "message": ""}
+    finally:
+        conn.close()
+
+
+@router.get("/cmdb/vlans/{vlan_pk}/details")
+def api_get_vlan_details(
+    vlan_pk: str,
+    site_id: str = Query('', max_length=128),
+    device_id: str = Query('', max_length=128),
+    response: Response = None,
+    user=require_role("Viewer"),
+):
+    """Read full port and endpoint evidence for the selected VLAN row only."""
+    conn = get_db_connection()
+    try:
+        _begin_cmdb_read_snapshot(conn)
+        generation = _cmdb_cache_generation(conn, ('vlans', 'bindings', 'interfaces'))
+        scope = {'role': str(user.get('role') or '')}
+        query = {
+            'vlan_pk': vlan_pk,
+            'site_id': site_id,
+            'device_id': device_id,
+        }
+        data, cache_state = _cached_cmdb_projection(
+            'vlan_details', generation, scope, query,
+            lambda: cmdb_service.get_vlan_details(
+                conn,
+                vlan_pk,
+                site_id=site_id,
+                device_id=device_id,
+            ),
+        )
+        if isinstance(data, dict) and isinstance(data.get('meta'), dict):
+            data['meta']['cache_state'] = cache_state
+        if response is not None:
+            response.headers['X-CMDB-Cache'] = cache_state
+        return {'success': True, 'data': data, 'message': ''}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
     finally:
         conn.close()
 
@@ -927,13 +1250,46 @@ def api_list_vlan_business_bindings(
     site_id: str = Query(''),
     vrf_id: str = Query(''),
     vlan_id: Optional[int] = Query(None, ge=1, le=4094),
-    _user=require_role("Viewer"),
+    q: str = Query('', max_length=100),
+    status: str = Query('', max_length=16),
+    page: Optional[int] = Query(None, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    response: Response = None,
+    user=require_role("Viewer"),
 ):
+    if status and status not in {'active', 'planned', 'retired'}:
+        raise HTTPException(status_code=422, detail="status must be active, planned, retired, or empty")
     conn = get_db_connection()
     try:
-        data = cmdb_service.list_vlan_business_bindings(
-            conn, site_id=site_id, vrf_id=vrf_id, vlan_id=vlan_id
+        _begin_cmdb_read_snapshot(conn)
+        scope = {'role': str(user.get('role') or '')}
+        query = {
+            'site_id': site_id,
+            'vrf_id': vrf_id,
+            'vlan_id': vlan_id,
+            'q': q.strip(),
+            'status': status,
+            'page': page,
+            'page_size': page_size,
+        }
+        generation = _cmdb_cache_generation(conn, ('bindings',))
+        data, cache_state = _cached_cmdb_projection(
+            'bindings', generation, scope, query,
+            lambda: cmdb_service.list_vlan_business_bindings(
+                conn,
+                site_id=site_id,
+                vrf_id=vrf_id,
+                vlan_id=vlan_id,
+                q=q,
+                status=status,
+                page=page,
+                page_size=page_size,
+            )
         )
+        if isinstance(data, dict):
+            data['meta'] = _cmdb_projection_meta(conn, generation, cache_state, ())
+        if response is not None:
+            response.headers['X-CMDB-Cache'] = cache_state
         return {"success": True, "data": data, "message": ""}
     finally:
         conn.close()

@@ -1156,13 +1156,21 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", "5010"))
     workers = int(os.environ.get("WORKERS", "1"))
     is_dev = os.environ.get("NODE_ENV") == "development"
+    backend_directory = os.path.dirname(os.path.abspath(__file__))
     reload_kwargs = (
         {
             'reload': True,
             # The project root also contains node_modules, generated frontend
             # builds, and validation snapshots. Watching those trees causes
             # unrelated file activity to wake the Python reloader.
-            'reload_dirs': [os.path.dirname(os.path.abspath(__file__))],
+            'reload_dirs': [backend_directory],
+            # Test runs and generated artifacts live below backend/ but are not
+            # runtime application code; watching them needlessly restarts the
+            # development server after every test or benchmark write.
+            'reload_excludes': [
+                os.path.join(backend_directory, 'tests'),
+                os.path.join(backend_directory, 'artifacts'),
+            ],
         }
         if is_dev
         else {}

@@ -3,11 +3,15 @@ import { spawn } from 'node:child_process';
 
 const backendPort = Number(process.env.BACKEND_PORT || (process.platform === 'win32' ? 15310 : 5310));
 const frontendPort = Number(process.env.VITE_PORT || 5400);
-const waitTimeoutMs = 120_000;
+const startupNoticeMs = 120_000;
+const healthCheckIntervalMs = 5_000;
+const unhealthyChecksBeforeRestart = 3;
+const restartBaseDelayMs = 1_000;
+const restartMaxDelayMs = 30_000;
 
 let shuttingDown = false;
-let backendChild = null;
-let frontendChild = null;
+let healthMonitor = null;
+const services = new Set();
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -23,7 +27,7 @@ function requestText(url) {
       });
       response.on('end', () => resolve({ statusCode: response.statusCode || 0, body }));
     });
-    request.setTimeout(1500, () => {
+    request.setTimeout(1_500, () => {
       request.destroy();
       resolve({ statusCode: 0, body: '' });
     });
@@ -49,48 +53,163 @@ async function isFrontendRunning() {
     && /id=["']root["']/i.test(response.body);
 }
 
-function startService(script, label) {
-  const child = spawn(process.execPath, [script], {
-    cwd: process.cwd(),
-    stdio: 'inherit',
-    env: { ...process.env },
-  });
-  child.on('error', (error) => {
-    if (!shuttingDown) {
-      console.error(`[dev:internal] ${label} failed to start: ${error.message}`);
-      void shutdown(1);
-    }
-  });
-  child.on('exit', (code, signal) => {
-    if (!shuttingDown && code !== 0) {
-      console.error(`[dev:internal] ${label} exited unexpectedly (code=${code ?? 'null'}, signal=${signal ?? 'none'})`);
-      void shutdown(1);
-    }
-  });
-  return child;
-}
+function createServiceSupervisor(script, label, healthCheck) {
+  const state = {
+    child: null,
+    childStartedAt: 0,
+    consecutiveHealthFailures: 0,
+    healthCheck,
+    healthCheckInProgress: false,
+    label,
+    restartAttempt: 0,
+    restartTimer: null,
+    script,
+    stopped: false,
+  };
 
-async function waitFor(check, child, label) {
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < waitTimeoutMs) {
-    if (await check()) return true;
-    if (child && child.exitCode !== null && child.exitCode !== 0) {
-      console.error(`[dev:internal] ${label} stopped before becoming ready.`);
-      return false;
+  const clearRestartTimer = () => {
+    if (!state.restartTimer) return;
+    clearTimeout(state.restartTimer);
+    state.restartTimer = null;
+  };
+
+  const recordHealthy = () => {
+    state.consecutiveHealthFailures = 0;
+    state.restartAttempt = 0;
+    clearRestartTimer();
+  };
+
+  const startChild = () => {
+    if (shuttingDown || state.stopped || (state.child && state.child.exitCode === null)) return;
+
+    console.log(`[dev:internal] Starting ${state.label} with automatic recovery enabled.`);
+    try {
+      const child = spawn(process.execPath, [state.script], {
+        cwd: process.cwd(),
+        stdio: 'inherit',
+        env: { ...process.env },
+      });
+      state.child = child;
+      state.childStartedAt = Date.now();
+      state.consecutiveHealthFailures = 0;
+
+      child.on('error', (error) => {
+        if (!shuttingDown && !state.stopped) {
+          console.error(`[dev:internal] ${state.label} failed to start: ${error.message}`);
+          scheduleRestart('process start failed');
+        }
+      });
+      child.once('close', (code, signal) => {
+        if (state.child === child) state.child = null;
+        if (shuttingDown || state.stopped) return;
+        scheduleRestart(`process exited (code=${code ?? 'null'}, signal=${signal ?? 'none'})`);
+      });
+    } catch (error) {
+      console.error(`[dev:internal] ${state.label} failed to start: ${error?.message || error}`);
+      scheduleRestart('process spawn failed');
     }
-    await delay(500);
-  }
-  console.error(`[dev:internal] Timed out waiting for ${label}.`);
-  return false;
+  };
+
+  const scheduleRestart = (reason, immediate = false) => {
+    if (shuttingDown || state.stopped || state.restartTimer) return;
+    const attempt = state.restartAttempt + 1;
+    const retryDelayMs = immediate
+      ? 0
+      : Math.min(restartBaseDelayMs * (2 ** state.restartAttempt), restartMaxDelayMs);
+    if (!immediate) state.restartAttempt += 1;
+    console.error(
+      `[dev:internal] ${state.label} unavailable (${reason}); retry ${attempt} in ${retryDelayMs}ms.`,
+    );
+    state.restartTimer = setTimeout(async () => {
+      state.restartTimer = null;
+      if (shuttingDown || state.stopped) return;
+      if (await state.healthCheck()) {
+        recordHealthy();
+        return;
+      }
+      startChild();
+    }, retryDelayMs);
+  };
+
+  const reconcile = async () => {
+    if (shuttingDown || state.stopped || state.healthCheckInProgress) return;
+    state.healthCheckInProgress = true;
+    try {
+      if (await state.healthCheck()) {
+        recordHealthy();
+        return;
+      }
+
+      // Give a newly started service up to the normal startup window before
+      // restarting it for an unhealthy readiness probe.
+      if (state.child && state.child.exitCode === null) {
+        if (Date.now() - state.childStartedAt < startupNoticeMs) return;
+        state.consecutiveHealthFailures += 1;
+        if (state.consecutiveHealthFailures >= unhealthyChecksBeforeRestart) {
+          console.error(`[dev:internal] ${state.label} failed ${state.consecutiveHealthFailures} health checks; restarting it.`);
+          state.consecutiveHealthFailures = 0;
+          state.child.kill();
+        }
+        return;
+      }
+
+      // This also recovers a service that was already running when this
+      // supervisor started, without killing an unowned process. Require the
+      // same consecutive-failure threshold used for owned children so a
+      // transiently slow health endpoint does not trigger repeated launches.
+      state.consecutiveHealthFailures += 1;
+      if (state.consecutiveHealthFailures < unhealthyChecksBeforeRestart) return;
+      state.consecutiveHealthFailures = 0;
+      scheduleRestart(`health check failed ${unhealthyChecksBeforeRestart} consecutive times`);
+    } finally {
+      state.healthCheckInProgress = false;
+    }
+  };
+
+  const waitUntilHealthy = async () => {
+    let lastNoticeAt = Date.now();
+    while (!shuttingDown && !state.stopped) {
+      if (await state.healthCheck()) {
+        recordHealthy();
+        return true;
+      }
+      await reconcile();
+      if (Date.now() - lastNoticeAt >= startupNoticeMs) {
+        console.error(`[dev:internal] Still waiting for ${state.label}; automatic retries continue.`);
+        lastNoticeAt = Date.now();
+      }
+      await delay(500);
+    }
+    return false;
+  };
+
+  const ensureRunning = async () => {
+    if (await state.healthCheck()) {
+      recordHealthy();
+      console.log(`[dev:internal] Reusing healthy ${state.label}.`);
+      return true;
+    }
+    if (!state.child && !state.restartTimer) scheduleRestart('initial readiness check failed', true);
+    return waitUntilHealthy();
+  };
+
+  const stop = () => {
+    state.stopped = true;
+    clearRestartTimer();
+    if (state.child && state.child.exitCode === null && !state.child.killed) state.child.kill();
+  };
+
+  const supervisor = { ensureRunning, reconcile, stop };
+  services.add(supervisor);
+  return supervisor;
 }
 
 async function shutdown(exitCode = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
-  for (const child of [frontendChild, backendChild]) {
-    if (child && child.exitCode === null && !child.killed) child.kill();
-  }
-  await delay(150);
+  if (healthMonitor) clearInterval(healthMonitor);
+  for (const service of services) service.stop();
+  await delay(500);
   process.exit(exitCode);
 }
 
@@ -100,25 +219,17 @@ if (process.platform === 'win32') {
   process.once('SIGBREAK', () => { void shutdown(0); });
 }
 
-if (!await isBackendRunning()) {
-  backendChild = startService('scripts/dev-backend.mjs', 'Backend');
-  if (!await waitFor(isBackendRunning, backendChild, `backend on ${backendPort}`)) {
-    await shutdown(1);
-  }
-} else {
-  console.log(`[dev:internal] Reusing existing NetOps backend on port ${backendPort}.`);
-}
+const backendSupervisor = createServiceSupervisor('scripts/dev-backend.mjs', 'Backend', isBackendRunning);
+const frontendSupervisor = createServiceSupervisor('scripts/dev-frontend.mjs', 'Frontend', isFrontendRunning);
 
-if (!await isFrontendRunning()) {
-  frontendChild = startService('scripts/dev-frontend.mjs', 'Frontend');
-  if (!await waitFor(isFrontendRunning, frontendChild, `frontend on ${frontendPort}`)) {
-    await shutdown(1);
-  }
-} else {
-  console.log(`[dev:internal] Reusing existing Nexora frontend on port ${frontendPort}.`);
-}
+if (!await backendSupervisor.ensureRunning()) await shutdown(1);
+if (!await frontendSupervisor.ensureRunning()) await shutdown(1);
 
-// Keep the supervisor alive while at least one service is owned by this run.
-// If both services were reused, this process still acts as a clean Ctrl+C
-// attachment point without starting duplicate listeners.
+healthMonitor = setInterval(() => {
+  void backendSupervisor.reconcile();
+  void frontendSupervisor.reconcile();
+}, healthCheckIntervalMs);
+
+// Keep monitoring service readiness. Owned children restart with capped
+// exponential backoff; reused services are relaunched if their port goes down.
 await new Promise(() => {});

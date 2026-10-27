@@ -6,6 +6,7 @@ from database.migrations.m0044_vlan_discovery_metadata import upgrade
 from services.cmdb_service import (
     create_vlan_business_binding,
     export_vlans,
+    get_vlan_details,
     list_vlans,
     update_vlan_business_binding,
 )
@@ -82,7 +83,7 @@ def test_svi_observation_creates_vlan_inventory_record(isolated_db):
     assert row[0] == 10
     assert row[1] == "VLAN 10"
     assert row[2] == "interface_svi"
-    assert row[3]
+    assert row[3] == "2026-07-29T00:00:00+00:00"
     summary = list_vlans(conn)
     exported = export_vlans(conn)
     conn.close()
@@ -153,6 +154,132 @@ def test_vlan_summary_exposes_endpoint_evidence_for_arp_and_mac(isolated_db):
             "last_updated": "2026-07-29T15:12:59+08:00",
         },
     ]
+
+
+def test_device_scoped_vlan_keeps_unassigned_separate_and_retains_endpoint_only_device(isolated_db):
+    conn = isolated_db["module"].get_db_connection()
+    conn.execute(
+        "INSERT INTO sites (id, site_code, site_name, status) VALUES (?, ?, ?, ?)",
+        ("site-vlan-scope", "VLAN-SCOPE", "VLAN Scope", "active"),
+    )
+    conn.execute(
+        "INSERT INTO devices (id, hostname, ip_address, status, site_id) VALUES (?, ?, ?, ?, ?)",
+        ("device-vlan-other-site", "SW-other-site", "192.0.2.70", "online", "site-vlan-scope"),
+    )
+    conn.execute(
+        "INSERT INTO vlans (id, vlan_id, name, site_id, tenant_id) VALUES (?, ?, ?, ?, ?)",
+        ("vlan-unassigned-70", 70, "Unassigned 70", None, "tenant-default"),
+    )
+    conn.execute(
+        "INSERT INTO vlans (id, vlan_id, name, site_id, tenant_id) VALUES (?, ?, ?, ?, ?)",
+        ("vlan-site-71", 71, "Endpoint only 71", "site-vlan-scope", "tenant-default"),
+    )
+    conn.execute(
+        """INSERT INTO arp_table
+           (id, device_id, ip_address, mac_address, interface_name, vlan_id, last_updated)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        ("arp-other-site-vlan-70", "device-vlan-other-site", "192.0.2.70", "005079666870", "GE1/0/1", 70, "2026-10-27T01:00:00+00:00"),
+    )
+    conn.execute(
+        """INSERT INTO mac_table
+           (id, device_id, mac_address, interface_name, vlan_id, last_updated)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        ("mac-endpoint-only-vlan-71", "device-vlan-other-site", "005079666871", "GE1/0/2", 71, "2026-10-27T01:00:01+00:00"),
+    )
+    conn.commit()
+
+    result = list_vlans(conn, device_scoped=True, page=1, page_size=100)
+    conn.close()
+    unassigned = next(row for row in result["items"] if row["vlan_id"] == 70)
+    endpoint_only = next(row for row in result["items"] if row["vlan_id"] == 71)
+    assert unassigned["device_count"] == 0
+    assert unassigned["arp_count"] == 0
+    assert endpoint_only["device_hostname"] == "SW-other-site"
+    assert endpoint_only["device_ip"] == "192.0.2.70"
+    assert endpoint_only["port_count"] == 0
+    assert endpoint_only["mac_count"] == 1
+
+
+def test_vlan_list_omits_full_details_and_details_lookup_is_device_scoped(isolated_db):
+    conn = isolated_db["module"].get_db_connection()
+    conn.execute(
+        "INSERT INTO sites (id, site_code, site_name, status) VALUES (?, ?, ?, ?)",
+        ("site-vlan-details", "VLAN-DETAILS", "VLAN Details", "active"),
+    )
+    conn.execute(
+        "INSERT INTO vlans (id, vlan_id, name, site_id, tenant_id) VALUES (?, ?, ?, ?, ?)",
+        ("vlan-details-70", 70, "Details 70", "site-vlan-details", "tenant-default"),
+    )
+    for device_id, hostname, interface_id, interface_name, ip_address, mac_address in (
+        ("device-details-a", "SW-details-a", "interface-details-a", "Gi0/1", "192.0.2.70", "005079000070"),
+        ("device-details-b", "SW-details-b", "interface-details-b", "Gi0/2", "192.0.2.71", "005079000071"),
+    ):
+        conn.execute(
+            "INSERT INTO devices (id, hostname, ip_address, status, site_id) VALUES (?, ?, ?, ?, ?)",
+            (device_id, hostname, "192.0.2.1", "online", "site-vlan-details"),
+        )
+        conn.execute(
+            """INSERT INTO interfaces
+               (id, device_id, interface_name, description, access_vlan, last_seen)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (interface_id, device_id, interface_name, f"port {hostname}", 70, "2026-10-27T00:00:00+00:00"),
+        )
+        conn.execute(
+            """INSERT INTO arp_table
+               (id, device_id, ip_address, mac_address, interface_name, vlan_id, last_updated)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (f"arp-{device_id}", device_id, ip_address, mac_address, interface_name, 70, "2026-10-27T00:00:01+00:00"),
+        )
+        conn.execute(
+            """INSERT INTO mac_table
+               (id, device_id, mac_address, interface_name, vlan_id, last_updated)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (f"mac-{device_id}", device_id, mac_address, interface_name, 70, "2026-10-27T00:00:02+00:00"),
+        )
+    conn.execute(
+        "INSERT INTO devices (id, hostname, status, site_id) VALUES (?, ?, ?, ?)",
+        ("device-details-other-site", "SW-other", "online", "site-other"),
+    )
+    conn.commit()
+
+    result = list_vlans(
+        conn,
+        device_scoped=True,
+        page=1,
+        page_size=20,
+        include_details=False,
+    )
+    row = next(
+        item for item in result["items"]
+        if item["id"] == "vlan-details-70" and item.get("device_id") == "device-details-a"
+    )
+    assert row["port_count"] == 1
+    assert row["arp_count"] == 1
+    assert row["mac_count"] == 1
+    assert "port_detail_rows" not in row
+    assert "endpoint_details" not in row
+    assert "port_details" not in row
+
+    details = get_vlan_details(
+        conn,
+        "vlan-details-70",
+        site_id="site-vlan-details",
+        device_id="device-details-a",
+    )
+    assert [item["interface_name"] for item in details["port_detail_rows"]] == ["Gi0/1"]
+    assert [item["ip_address"] for item in details["endpoint_details"] if item["source"] == "arp"] == ["192.0.2.70"]
+    assert [item["mac_address"] for item in details["endpoint_details"] if item["source"] == "mac"] == ["005079000070"]
+    assert details["meta"]["arp_count"] == 1
+    assert details["meta"]["mac_count"] == 1
+
+    with pytest.raises(ValueError, match="requested scope"):
+        get_vlan_details(
+            conn,
+            "vlan-details-70",
+            site_id="site-vlan-details",
+            device_id="device-details-other-site",
+        )
+    conn.close()
 
 
 def test_cisco_and_huawei_vlan_textfsm_records_project_members_to_interfaces(isolated_db):
@@ -326,7 +453,15 @@ def test_vlan_svi_gateway_deduction_with_cidr_and_mask_fallback(isolated_db):
     conn.commit()
 
     result = list_vlans(conn, device_scoped=True, page=1, page_size=20)
+    lightweight_result = list_vlans(
+        conn,
+        device_scoped=True,
+        page=1,
+        page_size=20,
+        include_details=False,
+    )
     items = result["items"] if isinstance(result, dict) else result
+    lightweight_items = lightweight_result["items"] if isinstance(lightweight_result, dict) else lightweight_result
     conn.close()
 
     vlan_100_item = next(item for item in items if item["vlan_id"] == 100)
@@ -335,8 +470,151 @@ def test_vlan_svi_gateway_deduction_with_cidr_and_mask_fallback(isolated_db):
     assert vlan_100_item["gateway_interface"] == "Vlan-interface100"
     assert "10.254.100.0/29" in vlan_100_item["prefixes"]
 
+    lightweight_vlan_100 = next(item for item in lightweight_items if item["vlan_id"] == 100)
+    assert "10.254.100.0/29" in lightweight_vlan_100["prefixes"]
+    assert "port_detail_rows" not in lightweight_vlan_100
+    assert "endpoint_details" not in lightweight_vlan_100
+
     vlan_112_item = next(item for item in items if item["vlan_id"] == 112)
     assert vlan_112_item["gateway"] == "10.254.12.1"
     assert vlan_112_item["gateway_device"] == "S6850-1"
     assert "10.254.12.0/30" in vlan_112_item["prefixes"]
+
+
+def test_paginated_vlan_candidates_match_full_rows_and_keep_scope_aggregates(isolated_db):
+    conn = isolated_db["module"].get_db_connection()
+    conn.execute(
+        "INSERT INTO sites (id, site_code, site_name, status) VALUES (?, ?, ?, ?)",
+        ("site-vlan-page", "VLAN-PAGE", "VLAN Page", "active"),
+    )
+    conn.execute(
+        """INSERT INTO physical_assets
+           (id, asset_type, site_id, device_category, device_role, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        ("asset-vlan-page-server", "server", "site-vlan-page", "server", "database", "2026-10-27", "2026-10-27"),
+    )
+    for device_id, hostname, device_ip, asset_id in (
+        ("device-vlan-page-a", "SW-page-a", "192.0.2.81", None),
+        ("device-vlan-page-b", "SW-page-b", "192.0.2.82", "asset-vlan-page-server"),
+        ("device-vlan-page-arp", "SW-page-arp", "192.0.2.83", None),
+        ("device-vlan-page-mac", "SW-page-mac", "192.0.2.84", None),
+    ):
+        conn.execute(
+            """INSERT INTO devices (id, hostname, ip_address, status, site_id, asset_id)
+               VALUES (?, ?, ?, 'online', ?, ?)""",
+            (device_id, hostname, device_ip, "site-vlan-page", asset_id),
+        )
+    for vlan_id, name in ((10, "Page VLAN 10"), (20, "Page VLAN 20"), (30, "No evidence VLAN")):
+        conn.execute(
+            "INSERT INTO vlans (id, vlan_id, name, site_id, tenant_id) VALUES (?, ?, ?, ?, ?)",
+            (f"vlan-page-{vlan_id}", vlan_id, name, "site-vlan-page", "tenant-default"),
+        )
+    conn.execute(
+        """INSERT INTO interfaces
+           (id, device_id, interface_name, description, interface_type,
+            primary_ip, ip_address, ip_prefix_length, access_vlan, allowed_vlans, last_seen)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        ("interface-vlan-page-svi", "device-vlan-page-a", "Vlan-interface10", "Page gateway", "svi",
+         "10.20.10.1", "10.20.10.1", None, None, None, "2026-10-27T00:00:00+00:00"),
+    )
+    conn.execute(
+        """INSERT INTO interfaces
+           (id, device_id, interface_name, description, interface_type, access_vlan, allowed_vlans, last_seen)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        ("interface-vlan-page-a", "device-vlan-page-a", "GE0/0/1", "A trunk", "physical", 10, "20", "2026-10-27T00:00:01+00:00"),
+    )
+    conn.execute(
+        """INSERT INTO interfaces
+           (id, device_id, interface_name, description, interface_type, native_vlan, allowed_vlans, last_seen)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        ("interface-vlan-page-b", "device-vlan-page-b", "GE0/0/2", "B trunk", "physical", 10, "20-21", "2026-10-27T00:00:02+00:00"),
+    )
+    conn.execute(
+        """INSERT INTO ip_inventory (device_id, ip, mask, interface, type, last_seen)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        ("device-vlan-page-a", "10.20.10.1", "255.255.255.0", "Vlan-interface10", "interface", "2026-10-27T00:00:00+00:00"),
+    )
+    conn.execute(
+        """INSERT INTO prefixes (id, prefix, prefix_cidr, vlan_id, gateway, status)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        ("prefix-vlan-page-no-evidence", "192.0.2.0/24", "192.0.2.0/24", "vlan-page-30", "192.0.2.254", "active"),
+    )
+    conn.execute(
+        """INSERT INTO arp_table
+           (id, device_id, ip_address, mac_address, interface_name, vlan_id, last_updated)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        ("arp-vlan-page-a", "device-vlan-page-a", "10.20.10.11", "005079000010", "GE0/0/1", 10, "2026-10-27T00:00:03+00:00"),
+    )
+    conn.execute(
+        """INSERT INTO arp_table
+           (id, device_id, ip_address, mac_address, interface_name, vlan_id, last_updated)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        ("arp-vlan-page-only", "device-vlan-page-arp", "10.20.10.12", "005079000011", "GE0/0/3", 10, "2026-10-27T00:00:04+00:00"),
+    )
+    conn.execute(
+        """INSERT INTO mac_table
+           (id, device_id, mac_address, interface_name, vlan_id, last_updated)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        ("mac-vlan-page-only", "device-vlan-page-mac", "005079000020", "GE0/0/4", 20, "2026-10-27T00:00:05+00:00"),
+    )
+    conn.commit()
+
+    full = list_vlans(conn, device_scoped=True, include_details=False)
+    first = list_vlans(conn, device_scoped=True, page=1, page_size=2, include_details=False)
+    pages = [first]
+    for page_number in range(2, (first["total"] + first["page_size"] - 1) // first["page_size"] + 1):
+        pages.append(list_vlans(conn, device_scoped=True, page=page_number, page_size=2, include_details=False))
+    paged_items = [item for page_result in pages for item in page_result["items"]]
+    assert paged_items == full
+    assert all(page_result["summary"] == first["summary"] for page_result in pages)
+    assert all(page_result["site_summary"] == first["site_summary"] for page_result in pages)
+    assert all(page_result["tree"] == first["tree"] for page_result in pages)
+    assert first["summary"] == {"total": 3, "gateways": 2, "arp": 2, "mac": 1, "unbound": 7}
+
+    svi_row = next(item for item in full if item.get("device_id") == "device-vlan-page-a" and item["vlan_id"] == 10)
+    assert svi_row["prefixes"] == "10.20.10.0/24"
+    assert svi_row["port_count"] == 1
+    assert svi_row["svi_count"] == 1
+    assert any(item.get("device_id") == "device-vlan-page-arp" for item in full)
+    assert any(item.get("device_id") == "device-vlan-page-mac" for item in full)
+    no_evidence = next(item for item in full if item["vlan_id"] == 30)
+    assert no_evidence.get("device_id") is None
+    assert no_evidence["gateway"] == "192.0.2.254"
+    assert no_evidence["gateway_device"] is None
+    assert no_evidence["gateway_interface"] is None
+
+    server_page = list_vlans(
+        conn, device_scoped=True, page=1, page_size=2, asset_type="server", include_details=False
+    )
+    assert all(item["asset_type"] == "server" for item in server_page["items"])
+    assert server_page["total"] == 2
+    assert server_page["summary"]["total"] == 2
+    assert server_page["tree"] == first["tree"]
+    assert server_page["site_summary"][0]["count"] == 2
+
+    full_with_details = list_vlans(conn, device_scoped=True, include_details=True)
+    class TrackingConnection:
+        def __init__(self, inner):
+            self.inner = inner
+            self.wide_interface_queries = []
+
+        def execute(self, sql, params=()):
+            normalized_sql = " ".join(str(sql).lower().split())
+            if "i.ip_prefix_length" in normalized_sql:
+                self.wide_interface_queries.append((normalized_sql, tuple(params)))
+            return self.inner.execute(sql, params)
+
+    tracked_conn = TrackingConnection(conn)
+    detail_page = list_vlans(tracked_conn, device_scoped=True, page=2, page_size=1, include_details=True)
+    assert detail_page["items"] == [full_with_details[1]]
+    assert [item["device_hostname"] for item in detail_page["items"][0]["endpoint_details"]] == ["SW-page-a"]
+    assert all(row["device_id"] == "device-vlan-page-a" for row in detail_page["items"][0]["port_detail_rows"])
+    assert detail_page["summary"] == first["summary"]
+    assert detail_page["tree"] == first["tree"]
+    assert len(tracked_conn.wide_interface_queries) == 1
+    wide_sql, wide_params = tracked_conn.wide_interface_queries[0]
+    assert "where i.id in" in wide_sql
+    assert set(wide_params) == {"interface-vlan-page-a", "interface-vlan-page-svi"}
+
+    conn.close()
 

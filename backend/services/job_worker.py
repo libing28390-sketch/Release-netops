@@ -6,6 +6,7 @@ executor only controls work within this API/worker process.
 
 from __future__ import annotations
 
+import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -29,7 +30,16 @@ def _execute_target(job: dict, target: dict) -> dict:
             raise RuntimeError(result.get('error') or 'Discovery failed')
         return result
     if job_type == 'interface_collection':
+        try:
+            scope = json.loads(job.get('scope_json') or '{}')
+        except (TypeError, ValueError):
+            scope = {}
+        if scope.get('cmdb_cli_only') is True:
+            from services.cmdb_cli_collection_service import collect_cmdb_interface_status_target
+
+            return collect_cmdb_interface_status_target(target['target_id'])
         from services.interface_collection_service import collect_interface_status_target
+
         return collect_interface_status_target(
             target['target_id'],
             require_online_network_device=True,

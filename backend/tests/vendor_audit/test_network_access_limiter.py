@@ -1,5 +1,6 @@
 import threading
 import time
+from contextlib import ExitStack
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -105,6 +106,52 @@ def test_unknown_operation_label_is_not_echoed_in_errors():
                 pass
     assert "user-provided-sensitive-label" not in str(error.value)
     assert "operation=ssh" in str(error.value)
+
+
+def test_cmdb_and_default_capacity_are_independent_for_the_same_device():
+    limiter = NetworkAccessLimiter(
+        ssh_global_limit=1, ssh_per_device_limit=1,
+        acquire_timeout=0, ssh_lease_factory=None,
+    )
+    with limiter.ssh({"id": "device-1"}):
+        with limiter.ssh({"id": "device-1"}, capacity_class="cmdb_cli"):
+            assert limiter.snapshot()["active_ssh"] == 1
+            assert limiter.snapshot()["active_cmdb_ssh"] == 1
+            with pytest.raises(NetworkAccessLimitError):
+                with limiter.ssh({"id": "device-1"}, capacity_class="cmdb_cli"):
+                    pytest.fail("Duplicate CMDB session must be rejected")
+    assert limiter.snapshot()["active_ssh"] == 0
+    assert limiter.snapshot()["active_cmdb_ssh"] == 0
+
+
+def test_cmdb_global_capacity_is_three_and_does_not_block_default_pool():
+    limiter = NetworkAccessLimiter(acquire_timeout=0, ssh_lease_factory=None)
+    with ExitStack() as stack:
+        for device in range(3):
+            stack.enter_context(limiter.ssh({"id": f"device-{device}"}, capacity_class="cmdb_cli"))
+        with pytest.raises(NetworkAccessLimitError, match="global SSH"):
+            with limiter.ssh({"id": "device-extra"}, capacity_class="cmdb_cli"):
+                pytest.fail("CMDB capacity must not exceed three")
+        with limiter.ssh({"id": "device-0"}):
+            assert limiter.snapshot()["active_cmdb_ssh"] == 3
+            assert limiter.snapshot()["active_ssh"] == 1
+    assert limiter.snapshot()["active_cmdb_ssh"] == 0
+
+
+def test_cmdb_shared_lease_failure_releases_local_capacity():
+    def unavailable_lease(**kwargs):
+        assert kwargs["capacity_class"] == "cmdb_cli"
+        assert kwargs["global_capacity"] == 3
+        assert kwargs["device_capacity"] == 1
+        raise NetworkAccessLeaseError("simulated CMDB coordination failure")
+
+    limiter = NetworkAccessLimiter(acquire_timeout=0, ssh_lease_factory=unavailable_lease)
+    with pytest.raises(NetworkAccessLimitError, match="simulated CMDB"):
+        with limiter.ssh({"id": "device-1"}, capacity_class="cmdb_cli"):
+            pytest.fail("SSH cannot run without its shared lease")
+    with limiter.ssh({"id": "device-1"}, capacity_class="cmdb_cli", coordinated=False):
+        assert limiter.snapshot()["active_cmdb_ssh"] == 1
+    assert limiter.snapshot()["active_cmdb_ssh"] == 0
 
 
 def test_role_poll_profile_keeps_snmp_interface_frequent_and_cli_periodic():

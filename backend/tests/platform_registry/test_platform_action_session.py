@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 from services.platform_registry_service import PlatformActionSession, execute_platform_action
 
 
-def test_platform_action_session_reuses_one_driver_for_multiple_read_actions(isolated_db):
+@pytest.mark.parametrize("capacity_class", ["network_ssh", "cmdb_cli"])
+def test_platform_action_session_reuses_one_driver_for_multiple_read_actions(isolated_db, capacity_class):
     conn = isolated_db["module"].get_db_connection()
     try:
         conn.execute(
@@ -53,12 +55,18 @@ def test_platform_action_session_reuses_one_driver_for_multiple_read_actions(iso
             return SimpleNamespace(success=True, output="", error=None)
 
     class FakeFactory:
+        devices = []
+
         @classmethod
-        def get_driver(cls, *_args, **_kwargs):
+        def get_driver(cls, _driver_type, device):
+            cls.devices.append(dict(device))
             return FakeDriver()
 
     user = {"id": "admin-1", "username": "admin", "role": "Administrator", "tenant_id": "tenant-1"}
-    session = PlatformActionSession("session-device-1", user, driver_factory=FakeFactory)
+    session = PlatformActionSession(
+        "session-device-1", user, driver_factory=FakeFactory,
+        ssh_capacity_class=capacity_class,
+    )
     with session:
         clock = execute_platform_action(
             "session-device-1",
@@ -81,3 +89,6 @@ def test_platform_action_session_reuses_one_driver_for_multiple_read_actions(iso
     assert FakeDriver.instances[0].commands == ["show clock", "show running-config"]
     assert FakeDriver.instances[0].entered is True
     assert FakeDriver.instances[0].exited is True
+    assert FakeFactory.devices[0].get("_ssh_capacity_class") == (
+        "cmdb_cli" if capacity_class == "cmdb_cli" else None
+    )

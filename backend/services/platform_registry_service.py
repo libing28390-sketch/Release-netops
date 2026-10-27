@@ -685,10 +685,16 @@ class PlatformActionSession:
     same device/release, avoiding a fresh SSH login for every command.
     """
 
-    def __init__(self, device_id: str, user: dict[str, Any], driver_factory=None):
+    def __init__(
+        self, device_id: str, user: dict[str, Any], driver_factory=None, *,
+        ssh_capacity_class: str = 'network_ssh',
+    ):
+        if ssh_capacity_class not in {'network_ssh', 'cmdb_cli'}:
+            raise ValueError('Unknown SSH capacity class')
         self.device_id = str(device_id)
         self.user = user or {}
         self.driver_factory = driver_factory
+        self._ssh_capacity_class = ssh_capacity_class
         self._driver = None
         self._release_id = ''
         self._connection_driver = ''
@@ -741,6 +747,8 @@ class PlatformActionSession:
             if self.driver_factory is None:
                 from drivers.factory import DriverFactory
                 self.driver_factory = DriverFactory
+            if self._ssh_capacity_class != 'network_ssh':
+                device['_ssh_capacity_class'] = self._ssh_capacity_class
             self._driver = self.driver_factory.get_driver(driver_type, device)
             try:
                 self._driver.__enter__()

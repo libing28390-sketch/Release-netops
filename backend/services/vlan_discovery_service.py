@@ -241,7 +241,14 @@ def _record_interfaces(record: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(result))
 
 
-def project_vlan_records(device_id: str, records: list[dict[str, Any]]) -> dict[str, int]:
+def project_vlan_records(
+    device_id: str,
+    records: list[dict[str, Any]],
+    *,
+    observed_at: str | None = None,
+    snapshot_attempt: dict[str, Any] | None = None,
+    snapshot_metadata: dict[str, Any] | None = None,
+) -> dict[str, int]:
     """Project TextFSM ``show/display vlan`` records into VLAN and ports.
 
     Cisco ``show vlan`` reports access members in ``INTERFACES``. Huawei
@@ -249,6 +256,8 @@ def project_vlan_records(device_id: str, records: list[dict[str, Any]]) -> dict[
     Both are facts about the physical interface, so they are normalized into
     the same ``interfaces`` VLAN columns.
     """
+    if not records and snapshot_attempt is not None:
+        raise ValueError("VLAN CLI snapshot has no rows and cannot replace the last-good snapshot")
     if not records:
         return {"vlans": 0, "interfaces": 0}
     conn = get_db_connection()
@@ -261,7 +270,9 @@ def project_vlan_records(device_id: str, records: list[dict[str, Any]]) -> dict[
         tenant_id = str(device["tenant_id"] or "tenant-default")
         vlan_count = 0
         interface_count = 0
-        now = _now()
+        collected_at = str(observed_at or _now())
+        now = collected_at
+        observed_vlans: list[dict[str, Any]] = []
         interface_rows_by_key: dict[str, list[dict[str, Any]]] = {}
         for interface_row in conn.execute(
             "SELECT id, interface_name, allowed_vlans FROM interfaces WHERE device_id = ?",
@@ -276,15 +287,24 @@ def project_vlan_records(device_id: str, records: list[dict[str, Any]]) -> dict[
                 })
         for record in records:
             if not isinstance(record, dict):
+                if snapshot_attempt is not None:
+                    raise ValueError("VLAN CLI snapshot contains a malformed record")
                 continue
             raw_vlan = _record_value(record, "vlan_id", "vlan", "vid")
             match = re.search(r"\d+", str(raw_vlan or ""))
             if not match:
+                if snapshot_attempt is not None:
+                    raise ValueError("VLAN CLI snapshot contains a record without a VLAN ID")
                 continue
             vlan_id = int(match.group(0))
             if not 1 <= vlan_id <= 4094:
+                if snapshot_attempt is not None:
+                    raise ValueError("VLAN CLI snapshot contains an ID outside 1..4094")
                 continue
-            vlan_name = str(_record_value(record, "vlan_name", "name", "description") or f"VLAN {vlan_id}").strip()
+            raw_vlan_name = _record_value(record, "vlan_name", "name", "description")
+            if snapshot_attempt is not None and not raw_vlan_name:
+                raise ValueError("VLAN CLI snapshot contains a VLAN without a name")
+            vlan_name = str(raw_vlan_name or f"VLAN {vlan_id}").strip()
             if is_system_default_vlan(
                 vlan_id,
                 vlan_name,
@@ -292,13 +312,27 @@ def project_vlan_records(device_id: str, records: list[dict[str, Any]]) -> dict[
                 discovery_source="vlan_command",
             ):
                 continue
+            observed_vlans.append({
+                "vlan_id": vlan_id,
+                "site_id": site_id,
+                "vlan_name": vlan_name,
+                "vlan_status": str(_record_value(record, "status", "vlan_status") or "active").strip(),
+            })
             vlan = conn.execute(
                 "SELECT id, name FROM vlans WHERE COALESCE(site_id, '') = ? AND vlan_id = ? LIMIT 1",
                 (site_id, vlan_id),
             ).fetchone()
             if vlan:
                 if not str(vlan["name"] or "").strip() or str(vlan["name"]).strip().lower() == f"vlan {vlan_id}":
-                    conn.execute("UPDATE vlans SET name = ?, last_discovered_at = ? WHERE id = ?", (vlan_name, now, vlan["id"]))
+                    conn.execute(
+                        "UPDATE vlans SET name = ?, last_discovered_at = ? WHERE id = ?",
+                        (vlan_name, collected_at, vlan["id"]),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE vlans SET last_discovered_at = ? WHERE id = ?",
+                        (collected_at, vlan["id"]),
+                    )
             else:
                 vlan_id_pk = f"vlan-{uuid.uuid4().hex[:12]}"
                 conn.execute(
@@ -306,7 +340,7 @@ def project_vlan_records(device_id: str, records: list[dict[str, Any]]) -> dict[
                        (id, vlan_id, name, site_id, status, tenant_id, discovery_source,
                         first_discovered_at, last_discovered_at, discovery_run_id)
                        VALUES (?, ?, ?, ?, 'active', ?, 'vlan_command', ?, ?, '')""",
-                    (vlan_id_pk, vlan_id, vlan_name, site_scope, tenant_id, now, now),
+                    (vlan_id_pk, vlan_id, vlan_name, site_scope, tenant_id, collected_at, collected_at),
                 )
                 vlan = {"id": vlan_id_pk, "name": vlan_name}
             vlan_count += 1
@@ -391,6 +425,27 @@ def project_vlan_records(device_id: str, records: list[dict[str, Any]]) -> dict[
                             "allowed_vlans": "",
                         })
                 interface_count += 1
+        if snapshot_attempt is not None:
+            from services.cmdb_snapshot_service import (
+                complete_snapshot,
+                replace_device_vlan_observations,
+            )
+
+            attempt = {**snapshot_attempt, "observed_at": collected_at}
+            observation_count = replace_device_vlan_observations(conn, attempt, observed_vlans)
+            if not complete_snapshot(
+                conn,
+                attempt,
+                observed_at=collected_at,
+                transport="ssh",
+                record_count=observation_count,
+                metadata={
+                    "parser": "textfsm",
+                    "raw_vlan_records": len(records),
+                    **(snapshot_metadata or {}),
+                },
+            ):
+                raise RuntimeError("CMDB VLAN snapshot was superseded")
         conn.commit()
         return {"vlans": vlan_count, "interfaces": interface_count}
     finally:
@@ -406,14 +461,33 @@ def sync_observed_vlans() -> dict[str, int]:
     conn = get_db_connection()
     try:
         observed: dict[tuple[str, int], set[str]] = {}
+        observed_times: dict[tuple[str, int], tuple[datetime, str]] = {}
         device_sites: dict[str, str] = {}
         device_platforms: dict[str, str] = {}
         for row in conn.execute("SELECT id, site_id, site, platform, vendor FROM devices").fetchall():
             device_sites[str(row["id"])] = str(row["site_id"] or row["site"] or "")
             device_platforms[str(row["id"])] = str(row["platform"] or row["vendor"] or "")
 
+        def record_observation(
+            key: tuple[str, int], source: str, timestamp: Any,
+        ) -> None:
+            observed.setdefault(key, set()).add(source)
+            raw_timestamp = str(timestamp or '').strip()
+            if not raw_timestamp:
+                return
+            try:
+                parsed = datetime.fromisoformat(raw_timestamp.replace('Z', '+00:00'))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                parsed = parsed.astimezone(timezone.utc)
+            except (TypeError, ValueError, OverflowError):
+                return
+            current = observed_times.get(key)
+            if current is None or parsed > current[0]:
+                observed_times[key] = (parsed, raw_timestamp)
+
         for row in conn.execute(
-            "SELECT device_id, interface_name, access_vlan, native_vlan, allowed_vlans FROM interfaces"
+            "SELECT device_id, interface_name, access_vlan, native_vlan, allowed_vlans, last_seen FROM interfaces"
         ).fetchall():
             scope = device_sites.get(str(row["device_id"] or ""), "")
             names = parse_vlan_values(row["access_vlan"]) | parse_vlan_values(row["native_vlan"])
@@ -434,11 +508,11 @@ def sync_observed_vlans() -> dict[str, int]:
             for vlan_id in names:
                 if is_system_default_vlan(vlan_id, platform=device_platforms.get(str(row["device_id"]), ""), discovery_source=source):
                     continue
-                observed.setdefault((scope, vlan_id), set()).add(source)
+                record_observation((scope, vlan_id), source, row['last_seen'])
 
         for table, source in (("arp_table", "arp_table"), ("mac_table", "mac_table")):
             for row in conn.execute(
-                f"SELECT device_id, vlan_id FROM {table} WHERE vlan_id IS NOT NULL"
+                f"SELECT device_id, vlan_id, last_updated FROM {table} WHERE vlan_id IS NOT NULL"
             ).fetchall():
                 vlan_id = int(row["vlan_id"])
                 if 1 <= vlan_id <= 4094:
@@ -449,9 +523,8 @@ def sync_observed_vlans() -> dict[str, int]:
                         discovery_source=source,
                     ):
                         continue
-                    observed.setdefault((scope, vlan_id), set()).add(source)
+                    record_observation((scope, vlan_id), source, row['last_updated'])
 
-        now = _now()
         created = 0
         updated = 0
         for (site_id, vlan_id), sources in observed.items():
@@ -462,15 +535,17 @@ def sync_observed_vlans() -> dict[str, int]:
                 (site_id, vlan_id),
             ).fetchone()
             source = "interface_svi" if "interface_svi" in sources else sorted(sources)[0]
+            observed_at = observed_times.get((site_id, vlan_id), (None, None))[1]
             if existing:
                 conn.execute(
                     "UPDATE vlans SET "
                     "site_id = COALESCE(NULLIF(site_id, ''), ?), "
                     "name = CASE WHEN COALESCE(name, '') = '' THEN ? ELSE name END, "
                     "status = COALESCE(NULLIF(status, ''), 'active'), "
-                    "discovery_source = ?, first_discovered_at = COALESCE(first_discovered_at, ?), "
-                    "last_discovered_at = ?, discovery_run_id = ? WHERE id = ?",
-                    (site_scope, f"VLAN {vlan_id}", source, now, now, "", existing["id"]),
+                    "discovery_source = CASE WHEN discovery_source = 'manual' THEN discovery_source ELSE ? END, "
+                    "first_discovered_at = COALESCE(first_discovered_at, ?), "
+                    "last_discovered_at = COALESCE(?, last_discovered_at), discovery_run_id = ? WHERE id = ?",
+                    (site_scope, f"VLAN {vlan_id}", source, observed_at, observed_at, "", existing["id"]),
                 )
                 updated += 1
             else:
@@ -481,7 +556,7 @@ def sync_observed_vlans() -> dict[str, int]:
                     "VALUES (?, ?, ?, ?, 'active', 'tenant-default', ?, ?, ?, ?)",
                     (
                         f"vlan-{uuid.uuid4().hex[:12]}", vlan_id, f"VLAN {vlan_id}",
-                        site_scope, source, now, now, "",
+                        site_scope, source, observed_at, observed_at, "",
                     ),
                 )
                 created += 1

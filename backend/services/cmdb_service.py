@@ -18,8 +18,9 @@ import re
 import ipaddress
 import math
 from datetime import datetime, timezone
+from functools import lru_cache
 from database import _USE_PG
-from core.interface_utils import normalize_interface_name
+from core.interface_utils import normalize_interface_name as _normalize_interface_name
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,365 @@ DEFAULT_INTERFACE_ROLE = 'unclassified'
 DEFAULT_UTILIZATION_WARN_PCT = 60.0
 DEFAULT_UTILIZATION_HIGH_PCT = 75.0
 DEFAULT_UTILIZATION_CRITICAL_PCT = 90.0
+
+
+@lru_cache(maxsize=8192)
+def _normalize_interface_name_cached(value: str | None) -> str:
+    """Memoize the pure shared normalizer for repeated CMDB interface names."""
+    return _normalize_interface_name(value)
+
+
+def _device_site_predicate(alias: str, site_id: str) -> tuple[str, tuple[str, ...]]:
+    """Match one site scope exactly; empty means unassigned, never every site."""
+    site_expr = _device_site_expression(alias)
+    if str(site_id or '').strip():
+        return f"{site_expr} = ?", (str(site_id),)
+    return f"{site_expr} = ''", ()
+
+
+def _device_site_expression(alias: str, conn=None) -> str:
+    """Resolve device site with the physical asset as the canonical source."""
+    if conn is not None:
+        device_columns = {
+            str(column[0])
+            for column in (conn.execute("SELECT * FROM devices LIMIT 0").description or [])
+        }
+        candidates: list[str] = []
+        if 'asset_id' in device_columns:
+            asset_state = conn.execute(
+                "SELECT to_regclass('physical_assets') AS table_name"
+            ).fetchone()
+            if asset_state and _row_to_dict(asset_state).get('table_name'):
+                candidates.append(
+                    f"NULLIF((SELECT pa.site_id FROM physical_assets pa WHERE pa.id = {alias}.asset_id), '')"
+                )
+        if 'site_id' in device_columns:
+            candidates.append(f"NULLIF({alias}.site_id, '')")
+        if 'site' in device_columns:
+            candidates.append(f"NULLIF({alias}.site, '')")
+        return "COALESCE(" + ", ".join([*candidates, "''"]) + ")"
+    return (
+        f"COALESCE(NULLIF((SELECT pa.site_id FROM physical_assets pa "
+        f"WHERE pa.id = {alias}.asset_id), ''), NULLIF({alias}.site_id, ''), "
+        f"NULLIF({alias}.site, ''), '')"
+    )
+
+
+def _cmdb_snapshot_schema_available(conn) -> bool:
+    row = conn.execute(
+        "SELECT to_regclass('cmdb_collection_snapshots') AS table_name"
+    ).fetchone()
+    if not row:
+        return False
+    return bool(_row_to_dict(row).get('table_name'))
+
+
+def _successful_collection_devices(
+    conn,
+    domains: tuple[str, ...],
+    *,
+    tenant_id: str | None = None,
+    site_ids: tuple[str, ...] | None = None,
+    device_id: str | None = None,
+) -> dict[tuple[str, str], dict]:
+    """Return only successful snapshot generations within the requested scope."""
+    if not domains:
+        return {}
+    if not _cmdb_snapshot_schema_available(conn):
+        # Minimal PostgreSQL contract fixtures predating M0298 exercise the
+        # legacy read path without installing the optional CMDB snapshot schema.
+        return {}
+    clauses = ["s.domain IN (" + ",".join("?" for _ in domains) + ")", "s.successful_generation > 0"]
+    params: list = list(domains)
+    if tenant_id is not None:
+        clauses.append("COALESCE(d.tenant_id, 'tenant-default') = ?")
+        params.append(tenant_id)
+    if site_ids is not None:
+        if not site_ids:
+            clauses.append("1 = 0")
+        else:
+            placeholders = ",".join("?" for _ in site_ids)
+            clauses.append(f"{_device_site_expression('d')} IN ({placeholders})")
+            params.extend(site_ids)
+    if device_id:
+        clauses.append("d.id = ?")
+        params.append(device_id)
+    rows = conn.execute(
+        f"""SELECT s.device_id, s.domain, s.successful_generation,
+                   s.last_success_at, s.observed_at, d.hostname AS device_hostname,
+                   d.ip_address AS device_ip, d.platform AS device_platform,
+                   d.status AS device_status,
+                   {_device_site_expression('d')} AS resolved_site_id
+            FROM cmdb_collection_snapshots s
+            JOIN devices d ON d.id = s.device_id
+            WHERE {' AND '.join(clauses)}""",
+        tuple(params),
+    ).fetchall()
+    return {
+        (str(row['domain'] or ''), str(row['device_id'] or '')): dict(row)
+        for row in rows
+    }
+
+
+def _current_interface_observations(conn, successful_devices: dict[tuple[str, str], dict]) -> list[dict]:
+    """Load interface rows fenced to each device's last successful generation."""
+    domain_devices = [
+        (device_id, state)
+        for (domain, device_id), state in successful_devices.items()
+        if domain == 'interface_inventory'
+    ]
+    if not domain_devices:
+        return []
+    device_ids = sorted({device_id for device_id, _state in domain_devices})
+    placeholders = ','.join('?' for _ in device_ids)
+    rows = conn.execute(
+        f"""SELECT o.device_id, o.normalized_interface_name, o.interface_name,
+                   o.description, o.admin_status, o.oper_status, o.ip_address,
+                   o.ip_prefix_length, o.interface_type, o.generation, o.observed_at,
+                   d.hostname AS device_hostname, d.ip_address AS device_ip,
+                   d.platform AS device_platform, d.status AS device_status
+            FROM cmdb_device_interface_observations o
+            JOIN cmdb_collection_snapshots s ON s.device_id = o.device_id
+                 AND s.domain = 'interface_inventory'
+                 AND s.successful_generation = o.generation
+            JOIN devices d ON d.id = o.device_id
+            WHERE o.device_id IN ({placeholders})
+            ORDER BY o.device_id, o.normalized_interface_name""",
+        tuple(device_ids),
+    ).fetchall()
+    return [_row_to_dict(row) for row in rows]
+
+
+def _current_vlan_snapshot_projection(
+    conn,
+    *,
+    tenant_id: str | None = None,
+    site_id: str = '',
+) -> dict:
+    """Load successful CLI VLAN, port, and interface facts by snapshot generation."""
+    resolved_site_filter = ('',) if site_id == 'unassigned' else ((site_id,) if site_id else None)
+    successful = _successful_collection_devices(
+        conn,
+        ('interface_inventory', 'vlan_inventory'),
+        tenant_id=tenant_id,
+        site_ids=resolved_site_filter,
+    )
+    vlan_device_ids = sorted({
+        device_id for (domain, device_id) in successful if domain == 'vlan_inventory'
+    })
+    vlan_observations: list[dict] = []
+    vlan_ports: list[dict] = []
+    if vlan_device_ids:
+        placeholders = ','.join('?' for _ in vlan_device_ids)
+        vlan_rows = conn.execute(
+            f"""SELECT o.device_id, o.vlan_id, o.site_id AS observed_site_id,
+                       o.vlan_name, o.vlan_status, o.generation, o.observed_at,
+                       d.hostname AS device_hostname, d.ip_address AS device_ip,
+                       d.tenant_id AS tenant_id,
+                       {_device_site_expression('d')} AS resolved_site_id,
+                       d.platform AS device_platform, d.vendor AS device_vendor
+                FROM cmdb_device_vlan_observations o
+                JOIN cmdb_collection_snapshots s ON s.device_id = o.device_id
+                     AND s.domain = 'vlan_inventory'
+                     AND s.successful_generation = o.generation
+                JOIN devices d ON d.id = o.device_id
+                WHERE o.device_id IN ({placeholders})
+                ORDER BY o.vlan_id, o.device_id""",
+            tuple(vlan_device_ids),
+        ).fetchall()
+        vlan_observations = [_row_to_dict(row) for row in vlan_rows]
+        port_rows = conn.execute(
+            f"""SELECT p.device_id, p.vlan_id, p.normalized_interface_name,
+                       p.interface_name, p.port_mode, p.tagging, p.generation,
+                       p.observed_at, p.metadata_json,
+                       d.hostname AS device_hostname, d.ip_address AS device_ip,
+                       {_device_site_expression('d')} AS resolved_site_id
+                FROM cmdb_device_vlan_port_observations p
+                JOIN cmdb_collection_snapshots s ON s.device_id = p.device_id
+                     AND s.domain = 'vlan_inventory'
+                     AND s.successful_generation = p.generation
+                JOIN devices d ON d.id = p.device_id
+                WHERE p.device_id IN ({placeholders})
+                ORDER BY p.vlan_id, p.device_id, p.normalized_interface_name""",
+            tuple(vlan_device_ids),
+        ).fetchall()
+        vlan_ports = [_row_to_dict(row) for row in port_rows]
+    interface_observations = _current_interface_observations(conn, successful)
+    interface_by_device_identity: dict[tuple[str, str], dict] = {}
+    for row in interface_observations:
+        identity = _interface_identity(row.get('device_id'), row.get('normalized_interface_name'))
+        if identity[1]:
+            interface_by_device_identity[identity] = row
+    successful_by_domain: dict[str, dict[str, dict]] = {
+        'interface_inventory': {},
+        'vlan_inventory': {},
+    }
+    for (domain, device_id), row in successful.items():
+        successful_by_domain.setdefault(domain, {})[device_id] = row
+    return {
+        'successful': successful_by_domain,
+        'vlan_observations': vlan_observations,
+        'vlan_ports': vlan_ports,
+        'interface_observations': interface_observations,
+        'interface_by_device_identity': interface_by_device_identity,
+    }
+
+
+def _interface_identity(device_id: object, interface_name: object) -> tuple[str, str]:
+    device_key = str(device_id or '')
+    raw_name = str(interface_name or '')
+    normalized = _normalize_interface_name_cached(raw_name).lower() or raw_name.strip().lower()
+    return device_key, normalized
+
+
+def _interface_shared_candidates(conn, device_ids: set[str]) -> dict[tuple[str, str], list[dict]]:
+    """Load narrow shared-interface IDs/counts for snapshot identity matching."""
+    if not device_ids:
+        return {}
+    by_identity: dict[tuple[str, str], list[dict]] = {}
+    sorted_ids = sorted(device_ids)
+    for offset in range(0, len(sorted_ids), 500):
+        batch = sorted_ids[offset:offset + 500]
+        placeholders = ','.join('?' for _ in batch)
+        rows = conn.execute(
+            f"""SELECT i.id, i.device_id, i.interface_name,
+                       (SELECT COUNT(*) FROM ip_addresses ip
+                        WHERE ip.interface_id = i.id
+                           OR (ip.device_id = i.device_id AND ip.interface_name = i.interface_name)) AS ip_count,
+                       (SELECT COUNT(*) FROM topology_links tl
+                        WHERE tl.source_interface_id = i.id OR tl.target_interface_id = i.id) AS link_count
+                FROM interfaces i WHERE i.device_id IN ({placeholders})
+                ORDER BY i.device_id, i.interface_name, i.id""",
+            tuple(batch),
+        ).fetchall()
+        for row in rows:
+            candidate = _row_to_dict(row)
+            identity = _interface_identity(candidate.get('device_id'), candidate.get('interface_name'))
+            if identity[1]:
+                by_identity.setdefault(identity, []).append(candidate)
+    return by_identity
+
+
+def _interface_skeleton_display_rows(conn, interface_ids: set[str]) -> dict[tuple[str, str], dict]:
+    """Load the wide shared profile once, and only for selected page identities."""
+    if not interface_ids:
+        return {}
+    rows_by_identity: dict[tuple[str, str], list[dict]] = {}
+    sorted_ids = sorted(interface_ids)
+    for offset in range(0, len(sorted_ids), 500):
+        batch = sorted_ids[offset:offset + 500]
+        placeholders = ','.join('?' for _ in batch)
+        rows = conn.execute(
+            f"""SELECT i.id, i.device_id,
+                       d.hostname AS device_hostname, d.ip_address AS device_ip,
+                       d.platform AS device_platform, d.status AS device_status,
+                       i.interface_name, i.description,
+                       COALESCE(NULLIF(i.primary_ip, ''), NULLIF(i.ip_address, ''), '') AS interface_ip,
+                       i.admin_status, i.oper_status, i.mac_address, i.speed, i.bandwidth,
+                       i.interface_type, i.switchport_mode, i.access_vlan, i.native_vlan,
+                       i.allowed_vlans, i.vrf_id, v.vrf_name, i.ip_enabled, i.last_flapped,
+                       i.interface_role, i.utilization_warn_pct, i.utilization_high_pct,
+                       i.utilization_critical_pct,
+                       (SELECT COUNT(*) FROM ip_addresses ip
+                        WHERE ip.interface_id = i.id
+                           OR (ip.device_id = i.device_id AND ip.interface_name = i.interface_name)) AS ip_count,
+                       (SELECT COUNT(*) FROM topology_links tl
+                        WHERE tl.source_interface_id = i.id OR tl.target_interface_id = i.id) AS link_count
+                FROM interfaces i LEFT JOIN devices d ON d.id = i.device_id
+                LEFT JOIN vrfs v ON v.id = i.vrf_id
+                WHERE i.id IN ({placeholders})
+                ORDER BY COALESCE(d.hostname, ''), i.interface_name, i.id""",
+            tuple(batch),
+        ).fetchall()
+        for row in rows:
+            item = _row_to_dict(row)
+            rows_by_identity.setdefault(
+                _interface_identity(item.get('device_id'), item.get('interface_name')), []
+            ).append(item)
+
+    def score(item: dict) -> tuple:
+        return (
+            bool(item.get('interface_ip')),
+            str(item.get('oper_status') or '').lower() not in {'', 'unknown'},
+            str(item.get('admin_status') or '').lower() not in {'', 'unknown'},
+            bool(item.get('access_vlan') or item.get('native_vlan') or str(item.get('allowed_vlans') or '').strip()),
+            int(item.get('link_count') or 0) > 0,
+            str(item.get('interface_role') or '').strip().lower() not in {'', 'unclassified'},
+            sum(
+                _as_profile_pct(item.get(field), default) != default
+                for field, default in (
+                    ('utilization_warn_pct', DEFAULT_UTILIZATION_WARN_PCT),
+                    ('utilization_high_pct', DEFAULT_UTILIZATION_HIGH_PCT),
+                    ('utilization_critical_pct', DEFAULT_UTILIZATION_CRITICAL_PCT),
+                )
+            ),
+            -len(str(item.get('interface_name') or '')),
+        )
+
+    merged: dict[tuple[str, str], dict] = {}
+    for identity, candidates in rows_by_identity.items():
+        candidates.sort(key=lambda item: (score(item), str(item.get('id') or '')), reverse=True)
+        preferred = dict(candidates[0])
+        for secondary in candidates[1:]:
+            for field in (
+                'mac_address', 'speed', 'bandwidth', 'vrf_id', 'vrf_name', 'last_flapped',
+                'switchport_mode', 'access_vlan', 'native_vlan', 'allowed_vlans',
+                'interface_role', 'utilization_warn_pct', 'utilization_high_pct',
+                'utilization_critical_pct',
+            ):
+                value = preferred.get(field)
+                if value in (None, '') or str(value).strip().lower() in {'unknown', '-', '--', 'unclassified'}:
+                    if secondary.get(field) not in (None, ''):
+                        preferred[field] = secondary[field]
+            preferred['ip_count'] = max(int(preferred.get('ip_count') or 0), int(secondary.get('ip_count') or 0))
+            preferred['link_count'] = max(int(preferred.get('link_count') or 0), int(secondary.get('link_count') or 0))
+        merged[identity] = preferred
+    return merged
+
+
+def _interface_observation_item(observation: dict, shared: dict | None = None) -> dict:
+    """Project CLI-owned fields over optional read-only shared supplements."""
+    shared = shared or {}
+    item = dict(shared)
+    device_id = str(observation.get('device_id') or '')
+    normalized_name = str(observation.get('normalized_interface_name') or '')
+    interface_name = str(observation.get('interface_name') or '')
+    has_shared_id = bool(shared.get('id'))
+    item.update({
+        'id': str(shared.get('id') or f'cmdb-interface-observed:{device_id}:{normalized_name}'),
+        'device_id': device_id,
+        'device_hostname': str(observation.get('device_hostname') or shared.get('device_hostname') or device_id),
+        'device_ip': str(observation.get('device_ip') or shared.get('device_ip') or ''),
+        'device_platform': str(observation.get('device_platform') or shared.get('device_platform') or ''),
+        'device_status': str(observation.get('device_status') or shared.get('device_status') or ''),
+        'interface_name': interface_name,
+        'description': str(observation.get('description') or ''),
+        'admin_status': str(observation.get('admin_status') or 'unknown'),
+        'oper_status': str(observation.get('oper_status') or 'unknown'),
+        'interface_ip': str(observation.get('ip_address') or ''),
+        'interface_ip_source': 'cmdb_cli_snapshot',
+        'has_ip': bool(str(observation.get('ip_address') or '').strip()),
+        'ip_prefix_length': observation.get('ip_prefix_length'),
+        'interface_type': str(observation.get('interface_type') or 'unknown'),
+        'interface_observed_at': observation.get('observed_at'),
+        'interface_generation': int(observation.get('generation') or 0),
+        'interface_source': 'cmdb_cli_snapshot',
+        'profile_editable': has_shared_id,
+        'ip_count': int(shared.get('ip_count') or observation.get('ip_count') or 0),
+        'link_count': int(shared.get('link_count') or observation.get('link_count') or 0),
+    })
+    if not has_shared_id:
+        item.update({
+            'mac_address': '', 'speed': None, 'bandwidth': None,
+            'switchport_mode': 'unknown', 'access_vlan': None,
+            'native_vlan': None, 'allowed_vlans': '', 'vrf_id': None,
+            'vrf_name': '', 'ip_enabled': 1, 'last_flapped': None,
+            'interface_role': DEFAULT_INTERFACE_ROLE,
+            'utilization_warn_pct': DEFAULT_UTILIZATION_WARN_PCT,
+            'utilization_high_pct': DEFAULT_UTILIZATION_HIGH_PCT,
+            'utilization_critical_pct': DEFAULT_UTILIZATION_CRITICAL_PCT,
+        })
+    return _normalize_interface_monitoring_profile(item)
 
 
 def _as_profile_pct(value: object, default: float) -> float:
@@ -117,6 +477,19 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def _bump_cmdb_reference_versions(conn, *, reference_domain: str) -> None:
+    """Version CMDB projections and the exact reference directory changed."""
+    normalized_domain = str(reference_domain or "").strip().lower()
+    if normalized_domain not in {"sites", "vrfs"}:
+        raise ValueError("reference_domain must be sites or vrfs")
+    from services.cmdb_version_service import bump_read_versions
+
+    bump_read_versions(
+        conn,
+        ("interfaces", "vlans", "bindings", normalized_domain),
+    )
+
+
 def _count_reference(conn, table: str, column: str, value: str) -> int:
     row = conn.execute(
         f"SELECT COUNT(*) AS cnt FROM {table} WHERE {column} = ?",
@@ -166,7 +539,7 @@ def _distinct_interface_counts(conn) -> dict[str, int]:
         raw_name = str(name_value or '').strip()
         if not device_id or not raw_name:
             continue
-        identity = normalize_interface_name(raw_name).lower() or raw_name.lower()
+        identity = _normalize_interface_name_cached(raw_name).lower() or raw_name.lower()
         identities.setdefault(device_id, set()).add(identity)
     return {device_id: len(names) for device_id, names in identities.items()}
 
@@ -465,15 +838,845 @@ def list_cmdb_interfaces(
     site_ids: tuple[str, ...] | None = None,
 ) -> list[dict] | dict:
     """Return interfaces as CMDB skeleton resources with optional has_ip, device_id, search filters."""
-    # Device deletion historically did not remove the legacy IP inventory
-    # projection.  Purge those orphaned rows at the read boundary so stale
-    # ``Unknown device`` groups cannot reappear in the CMDB interface view.
-    conn.execute(
-        """DELETE FROM ip_inventory
-           WHERE device_id IS NULL
-              OR NOT EXISTS (SELECT 1 FROM devices d WHERE d.id = ip_inventory.device_id)"""
+    snapshot_schema_available = _cmdb_snapshot_schema_available(conn)
+    successful_devices = _successful_collection_devices(
+        conn, ('interface_inventory',), tenant_id=tenant_id,
+        site_ids=site_ids, device_id=device_id,
     )
-    conn.commit()
+    successful_interface_device_ids = {
+        scoped_device_id
+        for (domain, scoped_device_id) in successful_devices
+        if domain == 'interface_inventory'
+    }
+    snapshot_observations = _current_interface_observations(conn, successful_devices)
+    snapshot_shared_candidates = _interface_shared_candidates(
+        conn, successful_interface_device_ids,
+    )
+    snapshot_by_identity: dict[tuple[str, str], dict] = {}
+    snapshot_candidates: list[dict] = []
+    snapshot_ids_by_identity: dict[tuple[str, str], list[str]] = {}
+    search_value = str(search or '').strip().lower()
+    for observation in snapshot_observations:
+        identity = _interface_identity(
+            observation.get('device_id'), observation.get('normalized_interface_name')
+        )
+        if not identity[1]:
+            continue
+        hostname = str(observation.get('device_hostname') or '')
+        device_ip = str(observation.get('device_ip') or '')
+        interface_ip = str(observation.get('ip_address') or '').strip()
+        description = str(observation.get('description') or '')
+        shared_rows = snapshot_shared_candidates.get(identity, [])
+        ip_count = max((int(row.get('ip_count') or 0) for row in shared_rows), default=0)
+        link_count = max((int(row.get('link_count') or 0) for row in shared_rows), default=0)
+        if has_ip is True and not interface_ip:
+            continue
+        if has_ip is False and interface_ip:
+            continue
+        if search_value and search_value not in ' '.join((
+            str(observation.get('interface_name') or ''), hostname, device_ip,
+            interface_ip, description,
+        )).lower():
+            continue
+        observation['ip_count'] = ip_count
+        observation['link_count'] = link_count
+        snapshot_by_identity[identity] = observation
+        snapshot_ids_by_identity[identity] = [
+            str(row.get('id') or '') for row in shared_rows if row.get('id')
+        ]
+        snapshot_candidates.append({
+            'id': (snapshot_ids_by_identity[identity][0]
+                   if snapshot_ids_by_identity[identity]
+                   else f"cmdb-interface-observed:{identity[0]}:{identity[1]}"),
+            'device_id': identity[0],
+            'device_hostname': hostname,
+            'device_ip': device_ip,
+            'device_platform': str(observation.get('device_platform') or ''),
+            'device_status': str(observation.get('device_status') or ''),
+            'interface_name': str(observation.get('interface_name') or ''),
+            'interface_ip': interface_ip,
+            'interface_ip_source': 'cmdb_cli_snapshot',
+            'has_ip': bool(interface_ip),
+            'admin_status': str(observation.get('admin_status') or 'unknown'),
+            'oper_status': str(observation.get('oper_status') or 'unknown'),
+            'interface_type': str(observation.get('interface_type') or 'unknown'),
+            'ip_count': ip_count,
+            'link_count': link_count,
+            'interface_source': 'cmdb_cli_snapshot',
+            'profile_editable': bool(snapshot_ids_by_identity[identity]),
+        })
+
+    if page is not None or page_size is not None:
+        # The paged API needs global alias identity/counts, but only page rows
+        # need the wide display projection and correlated IP/topology counts.
+        # Keep the legacy unpaged return path below unchanged.
+        where_clauses: list[str] = []
+        candidate_params: list = []
+        if tenant_id is not None:
+            where_clauses.append("d.id IS NOT NULL AND COALESCE(d.tenant_id, 'tenant-default') = ?")
+            candidate_params.append(tenant_id)
+        if site_ids is not None:
+            if not site_ids:
+                where_clauses.append("1 = 0")
+            else:
+                site_placeholders = ",".join("?" for _ in site_ids)
+                where_clauses.append(f"{_device_site_expression('d', conn)} IN ({site_placeholders})")
+                candidate_params.extend(site_ids)
+        if has_ip is True:
+            where_clauses.append("""(
+                NULLIF(i.primary_ip, '') IS NOT NULL
+                OR NULLIF(i.ip_address, '') IS NOT NULL
+                OR EXISTS (
+                    SELECT 1 FROM ip_addresses ip
+                    WHERE (ip.interface_id = i.id
+                        OR (ip.device_id = i.device_id AND ip.interface_name = i.interface_name))
+                      AND COALESCE(i.ip_enabled, 0) = 1
+                      AND COALESCE(NULLIF(ip.ip_address, ''), NULLIF(ip.address, '')) IS NOT NULL
+                )
+            )""")
+        elif has_ip is False:
+            where_clauses.append("""(
+                NULLIF(i.primary_ip, '') IS NULL
+                AND NULLIF(i.ip_address, '') IS NULL
+                AND NOT EXISTS (
+                    SELECT 1 FROM ip_addresses ip
+                    WHERE (ip.interface_id = i.id
+                        OR (ip.device_id = i.device_id AND ip.interface_name = i.interface_name))
+                      AND COALESCE(i.ip_enabled, 0) = 1
+                      AND COALESCE(NULLIF(ip.ip_address, ''), NULLIF(ip.address, '')) IS NOT NULL
+                )
+            )""")
+        if device_id:
+            where_clauses.append("i.device_id = ?")
+            candidate_params.append(device_id)
+        if search:
+            search_pattern = f"%{search.strip()}%"
+            where_clauses.append("""(
+                i.interface_name LIKE ? OR d.hostname LIKE ? OR d.ip_address LIKE ?
+                OR i.primary_ip LIKE ? OR i.ip_address LIKE ? OR i.description LIKE ?
+                OR EXISTS (
+                    SELECT 1 FROM ip_addresses ip
+                    WHERE (ip.interface_id = i.id
+                        OR (ip.device_id = i.device_id AND ip.interface_name = i.interface_name))
+                      AND (ip.ip_address LIKE ? OR ip.address LIKE ?)
+                )
+            )""")
+            candidate_params.extend([search_pattern] * 8)
+        candidate_where = " AND ".join(where_clauses)
+        candidate_where_sql = (
+            " AND NOT EXISTS (\n                SELECT 1 FROM cmdb_collection_snapshots s\n"
+            "                WHERE s.device_id = i.device_id AND s.domain = 'interface_inventory'\n"
+            "                  AND s.successful_generation > 0\n            )"
+            if snapshot_schema_available else ''
+        )
+        if candidate_where:
+            candidate_where_sql += f" AND ({candidate_where})"
+
+        def _paged_identity(candidate: dict) -> tuple[str, str]:
+            identity_device = str(candidate.get('device_id') or '')
+            identity_name = _normalize_interface_name_cached(candidate.get('interface_name')).lower()
+            if not identity_name:
+                identity_name = str(candidate.get('interface_name') or '').strip().lower()
+            return identity_device, identity_name
+
+        def _merge_paged_aliases(raw_items: list[dict]) -> dict[tuple[str, str], dict]:
+            """Apply the existing score and secondary-field merge to a row set."""
+            grouped: dict[tuple[str, str], dict] = {}
+            for candidate in raw_items:
+                identity = _paged_identity(candidate)
+                current = grouped.get(identity)
+                if current is None:
+                    grouped[identity] = candidate
+                    continue
+                candidate_score = (
+                    bool(candidate.get('interface_ip')),
+                    str(candidate.get('oper_status') or '').lower() not in {'', 'unknown'},
+                    str(candidate.get('admin_status') or '').lower() not in {'', 'unknown'},
+                    bool(candidate.get('access_vlan') or candidate.get('native_vlan')
+                         or str(candidate.get('allowed_vlans') or '').strip()),
+                    int(candidate.get('link_count') or 0) > 0,
+                    str(candidate.get('interface_role') or '').strip().lower() not in {'', 'unclassified'},
+                    sum(
+                        _as_profile_pct(candidate.get(field), default) != default
+                        for field, default in (
+                            ('utilization_warn_pct', DEFAULT_UTILIZATION_WARN_PCT),
+                            ('utilization_high_pct', DEFAULT_UTILIZATION_HIGH_PCT),
+                            ('utilization_critical_pct', DEFAULT_UTILIZATION_CRITICAL_PCT),
+                        )
+                    ),
+                    -len(str(candidate.get('interface_name') or '')),
+                )
+                current_score = (
+                    bool(current.get('interface_ip')),
+                    str(current.get('oper_status') or '').lower() not in {'', 'unknown'},
+                    str(current.get('admin_status') or '').lower() not in {'', 'unknown'},
+                    bool(current.get('access_vlan') or current.get('native_vlan')
+                         or str(current.get('allowed_vlans') or '').strip()),
+                    int(current.get('link_count') or 0) > 0,
+                    str(current.get('interface_role') or '').strip().lower() not in {'', 'unclassified'},
+                    sum(
+                        _as_profile_pct(current.get(field), default) != default
+                        for field, default in (
+                            ('utilization_warn_pct', DEFAULT_UTILIZATION_WARN_PCT),
+                            ('utilization_high_pct', DEFAULT_UTILIZATION_HIGH_PCT),
+                            ('utilization_critical_pct', DEFAULT_UTILIZATION_CRITICAL_PCT),
+                        )
+                    ),
+                    -len(str(current.get('interface_name') or '')),
+                )
+                preferred, secondary = (candidate, current) if candidate_score > current_score else (current, candidate)
+                for field in (
+                    'interface_ip', 'description', 'mac_address', 'speed', 'bandwidth', 'vrf_id', 'last_flapped',
+                    'interface_type', 'switchport_mode', 'access_vlan', 'native_vlan', 'allowed_vlans',
+                    'interface_role', 'utilization_warn_pct', 'utilization_high_pct',
+                    'utilization_critical_pct',
+                ):
+                    preferred_value = str(preferred.get(field) or '').strip().lower()
+                    if preferred_value in {'', 'unknown', '-', '--'} and secondary.get(field) not in (None, ''):
+                        preferred[field] = secondary[field]
+                if str(preferred.get('interface_role') or '').strip().lower() in {'', 'unclassified'}:
+                    secondary_role = str(secondary.get('interface_role') or '').strip().lower()
+                    if secondary_role not in {'', 'unclassified'}:
+                        preferred['interface_role'] = secondary['interface_role']
+                for field, default in (
+                    ('utilization_warn_pct', DEFAULT_UTILIZATION_WARN_PCT),
+                    ('utilization_high_pct', DEFAULT_UTILIZATION_HIGH_PCT),
+                    ('utilization_critical_pct', DEFAULT_UTILIZATION_CRITICAL_PCT),
+                ):
+                    if _as_profile_pct(preferred.get(field), default) == default and secondary.get(field) not in (None, ''):
+                        preferred[field] = secondary[field]
+                for field in ('admin_status', 'oper_status'):
+                    if str(preferred.get(field) or '').strip().lower() in {'', 'unknown', '-', '--'}:
+                        if str(secondary.get(field) or '').strip().lower() not in {'', 'unknown', '-', '--'}:
+                            preferred[field] = secondary[field]
+                preferred['ip_count'] = max(int(preferred.get('ip_count') or 0), int(secondary.get('ip_count') or 0))
+                preferred['link_count'] = max(int(preferred.get('link_count') or 0), int(secondary.get('link_count') or 0))
+                grouped[identity] = preferred
+            return grouped
+
+        candidate_sql = """
+            SELECT i.id, i.device_id,
+                   d.hostname AS device_hostname,
+                   i.interface_name,
+                   COALESCE(
+                       NULLIF(i.primary_ip, ''), NULLIF(i.ip_address, ''),
+                       (SELECT COALESCE(NULLIF(ip.ip_address, ''), NULLIF(ip.address, ''))
+                        FROM ip_addresses ip
+                        WHERE (ip.interface_id = i.id
+                            OR (ip.device_id = i.device_id AND ip.interface_name = i.interface_name))
+                          AND COALESCE(i.ip_enabled, 0) = 1
+                          AND COALESCE(NULLIF(ip.ip_address, ''), NULLIF(ip.address, '')) IS NOT NULL
+                        ORDER BY ip.updated_at DESC NULLS LAST LIMIT 1)
+                   ) AS interface_ip,
+                   i.admin_status, i.oper_status,
+                   i.access_vlan, i.native_vlan, i.allowed_vlans,
+                   i.interface_role, i.utilization_warn_pct, i.utilization_high_pct,
+                   i.utilization_critical_pct,
+                   CASE WHEN EXISTS (
+                       SELECT 1 FROM ip_addresses ip
+                       WHERE ip.interface_id = i.id
+                          OR (ip.device_id = i.device_id AND ip.interface_name = i.interface_name)
+                   ) THEN 1 ELSE 0 END AS ip_count,
+                   CASE WHEN EXISTS (
+                       SELECT 1 FROM topology_links tl
+                       WHERE tl.source_interface_id = i.id OR tl.target_interface_id = i.id
+                   ) THEN 1 ELSE 0 END AS link_count
+            FROM interfaces i
+            LEFT JOIN devices d ON d.id = i.device_id
+            WHERE 1=1
+        """ + candidate_where_sql + " ORDER BY COALESCE(d.hostname, ''), COALESCE(i.interface_name, ''), i.id"
+        safe_page = max(1, int(page or 1))
+        safe_page_size = max(1, min(int(page_size or 20), 100))
+        page_offset = (safe_page - 1) * safe_page_size
+        fast_projection = False
+        fast_total = 0
+        fast_summary: dict[str, int] = {}
+        fast_device_options: list[dict] = []
+        fast_option_pairs: set[tuple[str, str]] = set()
+        fast_selected_identities: list[tuple[str, str]] = []
+        candidate_ids_by_identity: dict[tuple[str, str], list[str]] = {}
+        inventory_may_affect_candidates = False
+        if has_ip is True:
+            inventory_guard_clauses = ["COALESCE(inv.ip, '') <> ''", "d.id IS NOT NULL"]
+            inventory_guard_params: list = []
+            if snapshot_schema_available:
+                inventory_guard_clauses.append(
+                    "NOT EXISTS (SELECT 1 FROM cmdb_collection_snapshots s "
+                    "WHERE s.device_id = inv.device_id AND s.domain = 'interface_inventory' "
+                    "AND s.successful_generation > 0)"
+                )
+            if device_id:
+                inventory_guard_clauses.append("inv.device_id = ?")
+                inventory_guard_params.append(device_id)
+            if tenant_id is not None:
+                inventory_guard_clauses.append(
+                    "COALESCE(d.tenant_id, 'tenant-default') = ?"
+                )
+                inventory_guard_params.append(tenant_id)
+            if site_ids is not None:
+                if not site_ids:
+                    inventory_guard_clauses.append("1 = 0")
+                else:
+                    site_placeholders = ",".join("?" for _ in site_ids)
+                    inventory_guard_clauses.append(
+                        f"{_device_site_expression('d', conn)} IN ({site_placeholders})"
+                    )
+                    inventory_guard_params.extend(site_ids)
+            # Search is intentionally omitted here: this is a conservative
+            # guard. An inventory row outside the search may select the legacy
+            # path, but can never make the SQL fast path change results.
+            inventory_guard_clauses.append(
+                "(i.id IS NULL OR i.ip_enabled IS NULL OR COALESCE(i.ip_enabled, 0) <> 0)"
+            )
+            inventory_may_affect_candidates = bool(conn.execute(
+                f"""SELECT 1 FROM ip_inventory inv
+                    LEFT JOIN devices d ON d.id = inv.device_id
+                    LEFT JOIN interfaces i
+                      ON i.device_id = inv.device_id
+                     AND LOWER(TRIM(i.interface_name)) = LOWER(TRIM(inv.interface))
+                    WHERE {' AND '.join(inventory_guard_clauses)}
+                    LIMIT 1""",
+                tuple(inventory_guard_params),
+            ).fetchone())
+
+        # Verify candidate identity uniqueness through the shared Python
+        # normalizer using only narrow keys. Once every candidate has a unique
+        # identity, SQL can count and page rows without loading the full
+        # candidate projection into Python. Alias groups stay on the existing
+        # merge path. Snapshot candidates and relevant ip_inventory rows also
+        # retain the existing precedence and total logic.
+        if not search and not snapshot_candidates and not inventory_may_affect_candidates:
+            candidate_ip_sql = """COALESCE(
+                NULLIF(i.primary_ip, ''), NULLIF(i.ip_address, ''),
+                (SELECT COALESCE(NULLIF(ip.ip_address, ''), NULLIF(ip.address, ''))
+                 FROM ip_addresses ip
+                 WHERE (ip.interface_id = i.id
+                     OR (ip.device_id = i.device_id AND ip.interface_name = i.interface_name))
+                   AND COALESCE(i.ip_enabled, 0) = 1
+                   AND COALESCE(NULLIF(ip.ip_address, ''), NULLIF(ip.address, '')) IS NOT NULL
+                 ORDER BY ip.updated_at DESC NULLS LAST LIMIT 1)
+            )"""
+            preflight_fields = (
+                "i.id, i.device_id, i.interface_name, COALESCE(d.hostname, '') AS device_hostname"
+            )
+            if has_ip is True:
+                preflight_fields += f", {candidate_ip_sql} AS interface_ip"
+            preflight_rows = [
+                _row_to_dict(row)
+                for row in conn.execute(
+                    f"""SELECT {preflight_fields}
+                        FROM interfaces i LEFT JOIN devices d ON d.id = i.device_id
+                        WHERE 1=1 {candidate_where_sql}""",
+                    tuple(candidate_params),
+                ).fetchall()
+            ]
+            known_identities: set[tuple[str, str]] = set()
+            can_page_unique_candidates = True
+            for candidate in preflight_rows:
+                identity = _paged_identity(candidate)
+                option_device_id = str(candidate.get('device_id') or '')
+                option_hostname = str(candidate.get('device_hostname') or '')
+                if option_device_id and option_hostname:
+                    fast_option_pairs.add((option_device_id, option_hostname))
+                if identity in known_identities:
+                    can_page_unique_candidates = False
+                    break
+                known_identities.add(identity)
+                if has_ip is True and not all(
+                    str(candidate.get(field) or '').isascii()
+                    for field in ('id', 'device_hostname', 'interface_name', 'interface_ip')
+                ):
+                    can_page_unique_candidates = False
+                    break
+
+            if can_page_unique_candidates:
+                fast_projection = True
+                page_order_sql = (
+                    f"ORDER BY COALESCE(d.hostname, '') COLLATE \"C\", "
+                    f"COALESCE(i.interface_name, '') COLLATE \"C\", "
+                    f"COALESCE({candidate_ip_sql}, '') COLLATE \"C\", i.id::text COLLATE \"C\""
+                    if has_ip is True else
+                    "ORDER BY COALESCE(d.hostname, ''), COALESCE(i.interface_name, ''), i.id"
+                )
+                page_fields = """i.id, i.device_id, i.interface_name,
+                    COUNT(*) OVER() AS total,
+                    SUM(CASE WHEN NULLIF(i.primary_ip, '') IS NOT NULL
+                                  OR NULLIF(i.ip_address, '') IS NOT NULL
+                                  OR EXISTS (
+                                      SELECT 1 FROM ip_addresses ip
+                                      WHERE ip.interface_id = i.id
+                                         OR (ip.device_id = i.device_id AND ip.interface_name = i.interface_name)
+                                  )
+                             THEN 1 ELSE 0 END) OVER() AS with_ip,
+                    SUM(CASE WHEN LOWER(COALESCE(i.oper_status, '')) = 'up'
+                             THEN 1 ELSE 0 END) OVER() AS oper_up,
+                    SUM(CASE WHEN EXISTS (
+                                  SELECT 1 FROM topology_links tl
+                                  WHERE tl.source_interface_id = i.id OR tl.target_interface_id = i.id
+                             ) THEN 1 ELSE 0 END) OVER() AS with_links"""
+                if has_ip is True:
+                    page_fields += f", {candidate_ip_sql} AS interface_ip"
+                page_rows = conn.execute(
+                    f"""SELECT {page_fields}
+                        FROM interfaces i LEFT JOIN devices d ON d.id = i.device_id
+                        WHERE 1=1 {candidate_where_sql}
+                        {page_order_sql}
+                        LIMIT ? OFFSET ?""",
+                    (*candidate_params, safe_page_size, page_offset),
+                ).fetchall()
+                if page_rows:
+                    projection = _row_to_dict(page_rows[0])
+                    fast_total = int(projection.get('total') or 0)
+                    fast_summary = {
+                        'total': fast_total,
+                        'with_ip': int(projection.get('with_ip') or 0),
+                        'oper_up': int(projection.get('oper_up') or 0),
+                        'with_links': int(projection.get('with_links') or 0),
+                    }
+                else:
+                    # Window aggregates return no row for an empty or out of
+                    # range page; pay for the full summary only in this case.
+                    empty_page_summary = _row_to_dict(conn.execute(
+                        f"""SELECT COUNT(*) AS total,
+                            COALESCE(SUM(CASE WHEN NULLIF(i.primary_ip, '') IS NOT NULL
+                                                   OR NULLIF(i.ip_address, '') IS NOT NULL
+                                                   OR EXISTS (
+                                                       SELECT 1 FROM ip_addresses ip
+                                                       WHERE ip.interface_id = i.id
+                                                          OR (ip.device_id = i.device_id AND ip.interface_name = i.interface_name)
+                                                   )
+                                              THEN 1 ELSE 0 END), 0) AS with_ip,
+                            COALESCE(SUM(CASE WHEN LOWER(COALESCE(i.oper_status, '')) = 'up'
+                                              THEN 1 ELSE 0 END), 0) AS oper_up,
+                            COALESCE(SUM(CASE WHEN EXISTS (
+                                                   SELECT 1 FROM topology_links tl
+                                                   WHERE tl.source_interface_id = i.id OR tl.target_interface_id = i.id
+                                               ) THEN 1 ELSE 0 END), 0) AS with_links
+                            FROM interfaces i LEFT JOIN devices d ON d.id = i.device_id
+                            WHERE 1=1 {candidate_where_sql}""",
+                        tuple(candidate_params),
+                    ).fetchone())
+                    fast_total = int(empty_page_summary.get('total') or 0)
+                    fast_summary = {
+                        'total': fast_total,
+                        'with_ip': int(empty_page_summary.get('with_ip') or 0),
+                        'oper_up': int(empty_page_summary.get('oper_up') or 0),
+                        'with_links': int(empty_page_summary.get('with_links') or 0),
+                    }
+                for page_row in page_rows:
+                    candidate = _row_to_dict(page_row)
+                    identity = _paged_identity(candidate)
+                    fast_selected_identities.append(identity)
+                    candidate_ids_by_identity.setdefault(identity, []).append(str(candidate.get('id') or ''))
+                fast_device_options = [
+                    {'value': device_key, 'label': hostname}
+                    for device_key, hostname in sorted(
+                        fast_option_pairs, key=lambda value: value[1].lower(),
+                    )
+                ]
+
+        raw_candidates = [] if fast_projection else [
+            _row_to_dict(row)
+            for row in conn.execute(candidate_sql, tuple(candidate_params)).fetchall()
+        ]
+        if not fast_projection:
+            for candidate in raw_candidates:
+                candidate_ids_by_identity.setdefault(_paged_identity(candidate), []).append(str(candidate.get('id') or ''))
+        candidate_items_by_identity = _merge_paged_aliases(raw_candidates)
+        candidate_items = list(candidate_items_by_identity.values())
+        for identity, candidate in candidate_items_by_identity.items():
+            candidate.setdefault('interface_source', 'shared_interface')
+            candidate.setdefault('profile_editable', bool(candidate.get('id')))
+        candidate_ids_by_identity.update(snapshot_ids_by_identity)
+        for identity, candidate in _merge_paged_aliases(snapshot_candidates).items():
+            candidate_items.append(candidate)
+
+        # ip_inventory participates in the global total only for has_ip=True.
+        # This candidate scan intentionally omits the fallback detail columns.
+        eligible_inventory_rows: list[dict] = []
+        inventory_scope: list[str] = []
+        inventory_params: list = []
+        if tenant_id is not None:
+            inventory_scope.append("d.id IS NOT NULL AND COALESCE(d.tenant_id, 'tenant-default') = ?")
+            inventory_params.append(tenant_id)
+        if site_ids is not None:
+            if not site_ids:
+                inventory_scope.append("1 = 0")
+            else:
+                site_placeholders = ",".join("?" for _ in site_ids)
+                inventory_scope.append(f"{_device_site_expression('d', conn)} IN ({site_placeholders})")
+                inventory_params.extend(site_ids)
+        inventory_scope_sql = " AND " + " AND ".join(inventory_scope) if inventory_scope else ""
+        search_value = search.strip().lower() if search else ''
+        if has_ip is True and not fast_projection:
+            inventory_candidate_sql = """
+                SELECT inv.ip, inv.device_id, inv.interface, inv.type, inv.last_seen,
+                       d.hostname AS device_hostname, d.ip_address AS device_ip,
+                       i.id AS skeleton_interface_id, i.ip_enabled AS skeleton_ip_enabled,
+                       i.oper_status AS skeleton_oper_status
+                FROM ip_inventory inv
+                LEFT JOIN devices d ON d.id = inv.device_id
+                LEFT JOIN interfaces i
+                  ON i.device_id = inv.device_id
+                 AND LOWER(TRIM(i.interface_name)) = LOWER(TRIM(inv.interface))
+                WHERE COALESCE(inv.ip, '') <> '' AND d.id IS NOT NULL
+            """ + (
+                " AND NOT EXISTS (SELECT 1 FROM cmdb_collection_snapshots s "
+                "WHERE s.device_id = inv.device_id AND s.domain = 'interface_inventory' "
+                "AND s.successful_generation > 0)"
+                if snapshot_schema_available else ''
+            ) + inventory_scope_sql + " ORDER BY COALESCE(d.hostname, ''), COALESCE(inv.interface, ''), inv.ip"
+            try:
+                inventory_candidates = conn.execute(
+                    inventory_candidate_sql, tuple(inventory_params)
+                ).fetchall()
+            except Exception:
+                inventory_candidates = []
+            for inventory_row in inventory_candidates:
+                inventory = _row_to_dict(inventory_row)
+                if device_id and str(inventory.get('device_id') or '') != str(device_id):
+                    continue
+                if search_value:
+                    searchable = ' '.join(str(inventory.get(key) or '') for key in (
+                        'ip', 'device_hostname', 'device_ip', 'interface', 'type',
+                    )).lower()
+                    if search_value not in searchable:
+                        continue
+                eligible_inventory_rows.append(inventory)
+
+            existing_by_identity = {
+                _paged_identity(item): item for item in candidate_items
+            }
+            for inventory in eligible_inventory_rows:
+                if inventory.get('skeleton_interface_id') and inventory.get('skeleton_ip_enabled') in (0, False, '0'):
+                    continue
+                ip_value = str(inventory.get('ip') or '').strip()
+                inventory_device_id = str(inventory.get('device_id') or '')
+                interface_name = str(inventory.get('interface') or '').strip()
+                identity = (inventory_device_id, _normalize_interface_name_cached(interface_name).lower())
+                if not identity[1]:
+                    identity = (identity[0], interface_name.lower())
+                existing = existing_by_identity.get(identity)
+                if existing is not None:
+                    if ip_value:
+                        existing['interface_ip'] = ip_value
+                        existing['interface_ip_source'] = 'ip_inventory'
+                        existing['ip_count'] = max(1, int(existing.get('ip_count') or 0))
+                    if inventory.get('last_seen'):
+                        existing['last_seen'] = inventory.get('last_seen')
+                    continue
+                fallback_candidate = {
+                    'id': inventory.get('skeleton_interface_id') or f"ipinv-{inventory_device_id}-{interface_name}-{ip_value}",
+                    'device_id': inventory_device_id,
+                    'device_hostname': inventory.get('device_hostname') or '',
+                    'interface_name': interface_name,
+                    'interface_ip': ip_value,
+                    'interface_ip_source': 'ip_inventory',
+                    'oper_status': inventory.get('skeleton_oper_status') or 'unknown',
+                    'ip_count': 1,
+                    'link_count': 0,
+                    'last_seen': inventory.get('last_seen'),
+                }
+                candidate_items.append(fallback_candidate)
+                existing_by_identity[identity] = fallback_candidate
+            candidate_items.sort(key=lambda item: (
+                str(item.get('device_hostname') or ''),
+                str(item.get('interface_name') or ''),
+                str(item.get('interface_ip') or ''),
+                str(item.get('id') or ''),
+            ))
+
+        if fast_projection:
+            total = fast_total
+            selected_identities = fast_selected_identities
+        else:
+            total = len(candidate_items)
+            start = (safe_page - 1) * safe_page_size
+            selected_page = candidate_items[start:start + safe_page_size]
+            selected_identities = [_paged_identity(item) for item in selected_page]
+
+        # Pull full skeleton columns and correlated associations for all alias
+        # rows in the selected identity groups, never by raw-row LIMIT/OFFSET.
+        full_items_by_identity: dict[tuple[str, str], dict] = {}
+        selected_ids: list[str] = []
+        seen_ids: set[str] = set()
+        for identity in selected_identities:
+            for interface_row_id in candidate_ids_by_identity.get(identity, []):
+                if interface_row_id and interface_row_id not in seen_ids:
+                    seen_ids.add(interface_row_id)
+                    selected_ids.append(interface_row_id)
+        full_select = """
+            SELECT i.id, i.device_id,
+                   d.hostname AS device_hostname, d.ip_address AS device_ip,
+                   d.platform AS device_platform, d.status AS device_status,
+                   i.interface_name, i.description,
+                   COALESCE(
+                       NULLIF(i.primary_ip, ''), NULLIF(i.ip_address, ''),
+                       (SELECT COALESCE(NULLIF(ip.ip_address, ''), NULLIF(ip.address, ''))
+                        FROM ip_addresses ip
+                        WHERE (ip.interface_id = i.id
+                            OR (ip.device_id = i.device_id AND ip.interface_name = i.interface_name))
+                          AND COALESCE(i.ip_enabled, 0) = 1
+                          AND COALESCE(NULLIF(ip.ip_address, ''), NULLIF(ip.address, '')) IS NOT NULL
+                        ORDER BY ip.updated_at DESC NULLS LAST LIMIT 1)
+                   ) AS interface_ip,
+                   i.admin_status, i.oper_status, i.mac_address, i.speed, i.bandwidth,
+                   i.interface_type, i.switchport_mode, i.access_vlan, i.native_vlan,
+                   i.allowed_vlans, i.vrf_id, v.vrf_name, i.ip_enabled, i.last_flapped,
+                   i.interface_role, i.utilization_warn_pct, i.utilization_high_pct,
+                   i.utilization_critical_pct,
+                   (SELECT COUNT(*) FROM ip_addresses ip
+                    WHERE ip.interface_id = i.id
+                       OR (ip.device_id = i.device_id AND ip.interface_name = i.interface_name)) AS ip_count,
+                   (SELECT COUNT(*) FROM topology_links tl
+                    WHERE tl.source_interface_id = i.id OR tl.target_interface_id = i.id) AS link_count
+            FROM interfaces i
+            LEFT JOIN devices d ON d.id = i.device_id
+            LEFT JOIN vrfs v ON v.id = i.vrf_id
+            WHERE i.id IN ({placeholders})
+            ORDER BY COALESCE(d.hostname, ''), COALESCE(i.interface_name, ''), i.id
+        """
+        full_rows: list[dict] = []
+        for offset in range(0, len(selected_ids), 500):
+            id_batch = selected_ids[offset:offset + 500]
+            full_rows.extend(
+                _row_to_dict(row)
+                for row in conn.execute(
+                    full_select.format(placeholders=','.join('?' for _ in id_batch)),
+                    tuple(id_batch),
+                ).fetchall()
+            )
+        full_items_by_identity = _merge_paged_aliases(full_rows)
+        display_by_identity = {
+            identity: full_items_by_identity[identity]
+            for identity in selected_identities
+            if identity in full_items_by_identity
+        }
+        for identity in selected_identities:
+            observation = snapshot_by_identity.get(identity)
+            if observation is not None:
+                display_by_identity[identity] = _interface_observation_item(
+                    observation, full_items_by_identity.get(identity),
+                )
+
+        if has_ip is True and selected_identities and not fast_projection:
+            selected_identity_set = set(selected_identities)
+            fallback_fact_devices = sorted({
+                str(inventory.get('device_id') or '')
+                for inventory in eligible_inventory_rows
+                if _paged_identity({
+                    'device_id': inventory.get('device_id'),
+                    'interface_name': inventory.get('interface'),
+                }) in selected_identity_set
+                and _paged_identity({
+                    'device_id': inventory.get('device_id'),
+                    'interface_name': inventory.get('interface'),
+                }) not in full_items_by_identity
+                and not (
+                    inventory.get('skeleton_interface_id')
+                    and inventory.get('skeleton_ip_enabled') in (0, False, '0')
+                )
+            } - {''})
+            interface_facts_by_identity: dict[tuple[str, str], dict] = {}
+            fact_fields = (
+                'interface_type', 'switchport_mode', 'access_vlan', 'native_vlan', 'allowed_vlans',
+                'admin_status', 'oper_status', 'mac_address', 'description', 'speed', 'bandwidth',
+                'vrf_id', 'ip_enabled', 'last_flapped', 'interface_role',
+                'utilization_warn_pct', 'utilization_high_pct', 'utilization_critical_pct',
+            )
+            for offset in range(0, len(fallback_fact_devices), 500):
+                device_batch = fallback_fact_devices[offset:offset + 500]
+                fact_rows = conn.execute(
+                    f"""SELECT device_id, interface_name, {', '.join(fact_fields)}
+                        FROM interfaces WHERE device_id IN ({','.join('?' for _ in device_batch)})
+                        ORDER BY device_id, interface_name, id""",
+                    tuple(device_batch),
+                ).fetchall()
+                for fact_row in fact_rows:
+                    fact = _row_to_dict(fact_row)
+                    identity = _paged_identity(fact)
+                    if not identity[1]:
+                        continue
+                    current_fact = interface_facts_by_identity.setdefault(identity, fact)
+                    for field in fact_fields:
+                        current_value = str(current_fact.get(field) or '').strip().lower()
+                        candidate_value = fact.get(field)
+                        if current_value in {'', 'unknown', '-', '--'} and candidate_value not in (None, ''):
+                            current_fact[field] = candidate_value
+
+            selected_inventory_pairs = list(dict.fromkeys(
+                (str(row.get('device_id') or ''), row.get('interface'))
+                for row in eligible_inventory_rows
+                if _paged_identity({'device_id': row.get('device_id'), 'interface_name': row.get('interface')})
+                in selected_identity_set
+            ))
+            inventory_detail_rows: list[dict] = []
+            for offset in range(0, len(selected_inventory_pairs), 200):
+                pair_batch = selected_inventory_pairs[offset:offset + 200]
+                pair_clauses: list[str] = []
+                pair_params: list = []
+                for selected_device_id, interface_name in pair_batch:
+                    if interface_name is None:
+                        pair_clauses.append("(inv.device_id = ? AND inv.interface IS NULL)")
+                        pair_params.append(selected_device_id)
+                    else:
+                        pair_clauses.append("(inv.device_id = ? AND LOWER(TRIM(inv.interface)) = LOWER(TRIM(?)))")
+                        pair_params.extend((selected_device_id, str(interface_name)))
+                details_sql = """
+                    SELECT inv.ip, inv.device_id, inv.interface, inv.type, inv.last_seen,
+                           d.hostname AS device_hostname, d.ip_address AS device_ip,
+                           d.platform AS device_platform, d.status AS device_status,
+                           i.id AS skeleton_interface_id,
+                           i.admin_status AS skeleton_admin_status, i.oper_status AS skeleton_oper_status,
+                           i.interface_type AS skeleton_interface_type,
+                           i.switchport_mode AS skeleton_switchport_mode,
+                           i.access_vlan AS skeleton_access_vlan, i.native_vlan AS skeleton_native_vlan,
+                           i.allowed_vlans AS skeleton_allowed_vlans, i.mac_address AS skeleton_mac_address,
+                           i.description AS skeleton_description, i.speed AS skeleton_speed,
+                           i.bandwidth AS skeleton_bandwidth, i.vrf_id AS skeleton_vrf_id,
+                           i.ip_enabled AS skeleton_ip_enabled, i.last_flapped AS skeleton_last_flapped,
+                           i.interface_role AS skeleton_interface_role,
+                           i.utilization_warn_pct AS skeleton_utilization_warn_pct,
+                           i.utilization_high_pct AS skeleton_utilization_high_pct,
+                           i.utilization_critical_pct AS skeleton_utilization_critical_pct
+                    FROM ip_inventory inv
+                    LEFT JOIN devices d ON d.id = inv.device_id
+                    LEFT JOIN interfaces i
+                      ON i.device_id = inv.device_id
+                     AND LOWER(TRIM(i.interface_name)) = LOWER(TRIM(inv.interface))
+                    WHERE COALESCE(inv.ip, '') <> '' AND d.id IS NOT NULL
+                """ + inventory_scope_sql + " AND (" + " OR ".join(pair_clauses) + ")"
+                details_sql += " ORDER BY COALESCE(d.hostname, ''), COALESCE(inv.interface, ''), inv.ip"
+                inventory_detail_rows.extend(
+                    _row_to_dict(row)
+                    for row in conn.execute(
+                        details_sql, tuple(inventory_params + pair_params)
+                    ).fetchall()
+                )
+
+            def _inventory_signature(inventory: dict) -> tuple:
+                return tuple(inventory.get(field) for field in ('device_id', 'interface', 'ip', 'type', 'last_seen'))
+
+            full_inventory_by_signature: dict[tuple, list[dict]] = {}
+            for inventory in inventory_detail_rows:
+                if device_id and str(inventory.get('device_id') or '') != str(device_id):
+                    continue
+                if search_value:
+                    searchable = ' '.join(str(inventory.get(key) or '') for key in (
+                        'ip', 'device_hostname', 'device_ip', 'interface', 'type',
+                    )).lower()
+                    if search_value not in searchable:
+                        continue
+                full_inventory_by_signature.setdefault(_inventory_signature(inventory), []).append(inventory)
+            signature_offsets: dict[tuple, int] = {}
+            page_inventory_rows: list[dict] = []
+            for inventory in eligible_inventory_rows:
+                identity = _paged_identity({'device_id': inventory.get('device_id'), 'interface_name': inventory.get('interface')})
+                if identity not in selected_identity_set:
+                    continue
+                signature = _inventory_signature(inventory)
+                matches = full_inventory_by_signature.get(signature, [])
+                match_offset = signature_offsets.get(signature, 0)
+                if match_offset < len(matches):
+                    page_inventory_rows.append(matches[match_offset])
+                    signature_offsets[signature] = match_offset + 1
+
+            for inventory in page_inventory_rows:
+                if inventory.get('skeleton_interface_id') and inventory.get('skeleton_ip_enabled') in (0, False, '0'):
+                    continue
+                ip_value = str(inventory.get('ip') or '').strip()
+                inventory_device_id = str(inventory.get('device_id') or '')
+                interface_name = str(inventory.get('interface') or '').strip()
+                identity = (inventory_device_id, _normalize_interface_name_cached(interface_name).lower())
+                if not identity[1]:
+                    identity = (identity[0], interface_name.lower())
+                existing = display_by_identity.get(identity)
+                if existing is not None:
+                    if ip_value:
+                        existing['interface_ip'] = ip_value
+                        existing['interface_ip_source'] = 'ip_inventory'
+                        existing['ip_count'] = max(1, int(existing.get('ip_count') or 0))
+                    if inventory.get('last_seen'):
+                        existing['last_seen'] = inventory.get('last_seen')
+                    continue
+                interface_fact = interface_facts_by_identity.get(identity, {})
+                display_by_identity[identity] = {
+                    'id': inventory.get('skeleton_interface_id') or f"ipinv-{inventory_device_id}-{interface_name}-{ip_value}",
+                    'device_id': inventory_device_id,
+                    'device_hostname': inventory.get('device_hostname') or '',
+                    'device_ip': inventory.get('device_ip') or '',
+                    'device_platform': inventory.get('device_platform') or '',
+                    'device_status': inventory.get('device_status') or '',
+                    'interface_name': interface_name,
+                    'description': inventory.get('skeleton_description') or '',
+                    'interface_ip': ip_value,
+                    'interface_ip_source': 'ip_inventory',
+                    'admin_status': inventory.get('skeleton_admin_status') or 'unknown',
+                    'oper_status': inventory.get('skeleton_oper_status') or 'unknown',
+                    'mac_address': inventory.get('skeleton_mac_address') or '',
+                    'speed': inventory.get('skeleton_speed'),
+                    'bandwidth': inventory.get('skeleton_bandwidth'),
+                    'interface_type': inventory.get('skeleton_interface_type') or interface_fact.get('interface_type') or inventory.get('type') or 'unknown',
+                    'switchport_mode': inventory.get('skeleton_switchport_mode') or interface_fact.get('switchport_mode') or 'routed',
+                    'access_vlan': inventory.get('skeleton_access_vlan') if inventory.get('skeleton_access_vlan') is not None else interface_fact.get('access_vlan'),
+                    'native_vlan': inventory.get('skeleton_native_vlan') if inventory.get('skeleton_native_vlan') is not None else interface_fact.get('native_vlan'),
+                    'allowed_vlans': inventory.get('skeleton_allowed_vlans') or interface_fact.get('allowed_vlans') or '',
+                    'vrf_id': inventory.get('skeleton_vrf_id'),
+                    'vrf_name': '',
+                    'ip_enabled': inventory.get('skeleton_ip_enabled') if inventory.get('skeleton_ip_enabled') is not None else 1,
+                    'last_flapped': inventory.get('skeleton_last_flapped'),
+                    'interface_role': inventory.get('skeleton_interface_role') or interface_fact.get('interface_role') or DEFAULT_INTERFACE_ROLE,
+                    'utilization_warn_pct': inventory.get('skeleton_utilization_warn_pct') if inventory.get('skeleton_utilization_warn_pct') is not None else interface_fact.get('utilization_warn_pct', DEFAULT_UTILIZATION_WARN_PCT),
+                    'utilization_high_pct': inventory.get('skeleton_utilization_high_pct') if inventory.get('skeleton_utilization_high_pct') is not None else interface_fact.get('utilization_high_pct', DEFAULT_UTILIZATION_HIGH_PCT),
+                    'utilization_critical_pct': inventory.get('skeleton_utilization_critical_pct') if inventory.get('skeleton_utilization_critical_pct') is not None else interface_fact.get('utilization_critical_pct', DEFAULT_UTILIZATION_CRITICAL_PCT),
+                    'ip_count': 1,
+                    'link_count': 0,
+                    'last_seen': inventory.get('last_seen'),
+                }
+
+        display_items = [
+            display_by_identity[identity]
+            for identity in selected_identities
+            if identity in display_by_identity
+        ]
+        for item in display_items:
+            item.setdefault('interface_source', 'shared_interface')
+            item.setdefault('profile_editable', bool(item.get('id')))
+            _normalize_interface_monitoring_profile(item)
+        if fast_projection:
+            device_options = fast_device_options
+            summary = fast_summary
+        else:
+            device_options = [
+                {'value': str(option_device_id), 'label': str(label)}
+                for option_device_id, label in sorted({
+                    (str(item.get('device_id') or ''), str(item.get('device_hostname') or ''))
+                    for item in candidate_items
+                    if item.get('device_id') and item.get('device_hostname')
+                }, key=lambda value: value[1].lower())
+            ]
+            summary = {
+                'total': total,
+                'with_ip': sum(1 for item in candidate_items if (
+                    bool(item.get('interface_ip'))
+                    if item.get('interface_source') == 'cmdb_cli_snapshot'
+                    else item.get('interface_ip') or int(item.get('ip_count') or 0) > 0
+                )),
+                'oper_up': sum(1 for item in candidate_items if str(item.get('oper_status') or '').lower() == 'up'),
+                'with_links': sum(1 for item in candidate_items if int(item.get('link_count') or 0) > 0),
+            }
+        return {
+            'items': display_items,
+            'total': total,
+            'page': safe_page,
+            'page_size': safe_page_size,
+            'total_pages': max(1, -(-total // safe_page_size)),
+            'summary': summary,
+            'device_options': device_options,
+        }
+
+    # Listing is read-only. Legacy orphan inventory rows are filtered by the
+    # devices join below and must be reconciled by an explicit maintenance path.
     sql = """
         SELECT
             i.id,
@@ -547,8 +1750,14 @@ def list_cmdb_interfaces(
             sql += " AND 1 = 0"
         else:
             site_placeholders = ",".join("?" for _ in site_ids)
-            sql += f" AND d.site_id IN ({site_placeholders})"
+            sql += f" AND {_device_site_expression('d', conn)} IN ({site_placeholders})"
             params.extend(site_ids)
+    if snapshot_schema_available:
+        sql += """ AND NOT EXISTS (
+            SELECT 1 FROM cmdb_collection_snapshots s
+            WHERE s.device_id = i.device_id AND s.domain = 'interface_inventory'
+              AND s.successful_generation > 0
+        )"""
     if has_ip is True:
         sql += """ AND (
             NULLIF(i.primary_ip, '') IS NOT NULL
@@ -618,7 +1827,7 @@ def list_cmdb_interfaces(
     for candidate in raw_items:
         identity = (
             str(candidate.get('device_id') or ''),
-            normalize_interface_name(candidate.get('interface_name')).lower(),
+            _normalize_interface_name_cached(candidate.get('interface_name')).lower(),
         )
         if not identity[1]:
             identity = (identity[0], str(candidate.get('interface_name') or '').strip().lower())
@@ -721,7 +1930,7 @@ def list_cmdb_interfaces(
             fact = _row_to_dict(interface_row)
             identity = (
                 str(fact.get('device_id') or ''),
-                normalize_interface_name(fact.get('interface_name')).lower(),
+                _normalize_interface_name_cached(fact.get('interface_name')).lower(),
             )
             if not identity[1]:
                 continue
@@ -747,7 +1956,7 @@ def list_cmdb_interfaces(
                 inventory_scope.append("1 = 0")
             else:
                 site_placeholders = ",".join("?" for _ in site_ids)
-                inventory_scope.append(f"d.site_id IN ({site_placeholders})")
+                inventory_scope.append(f"{_device_site_expression('d', conn)} IN ({site_placeholders})")
                 inventory_params.extend(site_ids)
         inventory_scope_sql = " AND " + " AND ".join(inventory_scope) if inventory_scope else ""
         try:
@@ -782,7 +1991,12 @@ def list_cmdb_interfaces(
                  AND LOWER(TRIM(i.interface_name)) = LOWER(TRIM(inv.interface))
                  WHERE COALESCE(inv.ip, '') <> ''
                    AND d.id IS NOT NULL
-                 """ + inventory_scope_sql + """
+                 """ + (
+                    " AND NOT EXISTS (SELECT 1 FROM cmdb_collection_snapshots s "
+                    "WHERE s.device_id = inv.device_id AND s.domain = 'interface_inventory' "
+                    "AND s.successful_generation > 0)"
+                    if snapshot_schema_available else ''
+                 ) + inventory_scope_sql + """
                 ORDER BY COALESCE(d.hostname, ''), COALESCE(inv.interface, ''), inv.ip
                 """
                 , tuple(inventory_params)
@@ -793,7 +2007,7 @@ def list_cmdb_interfaces(
         existing_by_identity = {
             (
                 str(item.get('device_id') or ''),
-                normalize_interface_name(item.get('interface_name')).lower(),
+                _normalize_interface_name_cached(item.get('interface_name')).lower(),
             ): item
             for item in items
         }
@@ -816,7 +2030,7 @@ def list_cmdb_interfaces(
                 )).lower()
                 if search_value not in searchable:
                     continue
-            identity = (inventory_device_id, normalize_interface_name(interface_name).lower())
+            identity = (inventory_device_id, _normalize_interface_name_cached(interface_name).lower())
             existing = existing_by_identity.get(identity)
             if existing is not None:
                 # ip_inventory owns the freshest address observation. Enrich
@@ -886,7 +2100,33 @@ def list_cmdb_interfaces(
             str(item.get('interface_name') or ''),
             str(item.get('interface_ip') or ''),
         ))
+    if snapshot_by_identity:
+        selected_shared_ids = {
+            interface_id
+            for identity, interface_ids in snapshot_ids_by_identity.items()
+            if identity in snapshot_by_identity
+            for interface_id in interface_ids
+        }
+        shared_display_by_identity = _interface_skeleton_display_rows(conn, selected_shared_ids)
+        existing_by_identity = {
+            _interface_identity(item.get('device_id'), item.get('interface_name')): item
+            for item in items
+        }
+        for identity, observation in snapshot_by_identity.items():
+            existing_by_identity[identity] = _interface_observation_item(
+                observation, shared_display_by_identity.get(identity),
+            )
+        items = list(existing_by_identity.values())
+
     for item in items:
+        item.setdefault(
+            'interface_source',
+            'ip_inventory' if str(item.get('id') or '').startswith('ipinv-') else 'shared_interface',
+        )
+        item.setdefault(
+            'profile_editable',
+            bool(item.get('id') and not str(item.get('id')).startswith('ipinv-')),
+        )
         _normalize_interface_monitoring_profile(item)
     if page is None and page_size is None:
         return items
@@ -1298,6 +2538,7 @@ def create_site(conn, *, site_code: str | None = None, site_name: str, country: 
          contact_name, contact_phone, contact_email, timezone, address, status, tenant_id or _DEFAULT_TENANT,
          now, now),
     )
+    _bump_cmdb_reference_versions(conn, reference_domain="sites")
     conn.commit()
     logger.info(f"[CmdbService] Created site '{site_code}'")
     return get_site(conn, site_id)
@@ -1323,6 +2564,7 @@ def update_site(conn, site_id: str, **fields) -> dict:
     params.append(_utc_now())
     params.append(site_id)
     conn.execute(f"UPDATE sites SET {', '.join(updates)} WHERE id = ?", params)
+    _bump_cmdb_reference_versions(conn, reference_domain="sites")
     conn.commit()
     return get_site(conn, site_id)
 
@@ -1517,6 +2759,7 @@ def delete_site(conn, site_id: str, replacement_site_id: str = '') -> dict:
                     # changes between inspection and update.
                     raise
         conn.execute("DELETE FROM sites WHERE id = ?", (site_id,))
+        _bump_cmdb_reference_versions(conn, reference_domain="sites")
         conn.commit()
     except Exception:
         conn.rollback()
@@ -1580,6 +2823,7 @@ def create_vrf(conn, *, vrf_name: str, rd: str = '', description: str = '',
         "INSERT INTO vrfs (id, vrf_name, rd, description, tenant_id) VALUES (?, ?, ?, ?, ?)",
         (vrf_id, vrf_name, rd, description, target_tenant),
     )
+    _bump_cmdb_reference_versions(conn, reference_domain="vrfs")
     conn.commit()
     logger.info(f"[CmdbService] Created VRF '{vrf_name}'")
     return get_vrf(conn, vrf_id)
@@ -1605,6 +2849,7 @@ def update_vrf(conn, vrf_id: str, **fields) -> dict:
         return get_vrf(conn, vrf_id)
     params.append(vrf_id)
     conn.execute(f"UPDATE vrfs SET {', '.join(updates)} WHERE id = ?", params)
+    _bump_cmdb_reference_versions(conn, reference_domain="vrfs")
     conn.commit()
     return get_vrf(conn, vrf_id)
 
@@ -1617,6 +2862,7 @@ def delete_vrf(conn, vrf_id: str) -> None:
         ('ip_addresses', 'vrf_id', vrf_id),
     ])
     conn.execute("DELETE FROM vrfs WHERE id = ?", (vrf_id,))
+    _bump_cmdb_reference_versions(conn, reference_domain="vrfs")
     conn.commit()
     logger.info(f"[CmdbService] Deleted VRF {vrf_id}")
 
@@ -1631,7 +2877,7 @@ def _build_vlan_scope_tree(conn, rows: list[dict]) -> list[dict]:
     metadata = {
         str(row['id']): dict(row)
         for row in conn.execute(
-            """SELECT d.id,
+            """SELECT d.id, d.hostname, d.ip_address,
                       COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''), NULLIF(d.site, ''), 'unassigned') AS site_id,
                       COALESCE(NULLIF(s.site_name, ''), NULLIF(s.site_code, ''), NULLIF(d.site, ''), 'Unassigned site') AS site_name,
                       COALESCE(NULLIF(pa.asset_type, ''), 'network_device') AS asset_type,
@@ -1670,27 +2916,1050 @@ def _build_vlan_scope_tree(conn, rows: list[dict]) -> list[dict]:
     return [root]
 
 
-def list_vlans(conn, site_id: str = '', tenant_id: str = '', *, device_scoped: bool = False, q: str = '', status: str = 'all', asset_type: str = '', device_category: str = '', device_role: str = '', page: int | None = None, page_size: int = 20) -> list[dict] | dict:
+def _vlan_list_filter_sql(
+    site_id: str,
+    tenant_id: str,
+    q: str,
+    status: str,
+) -> tuple[str, tuple]:
+    clauses: list[str] = []
+    params: list = []
+    if site_id:
+        if site_id == 'unassigned':
+            clauses.append("COALESCE(v.site_id, '') = ''")
+        else:
+            clauses.append("v.site_id = ?")
+            params.append(site_id)
+    if tenant_id:
+        clauses.append("v.tenant_id = ?")
+        params.append(tenant_id)
+    if status and status != 'all':
+        clauses.append("v.status = ?")
+        params.append(status)
+    if q and q.strip():
+        fuzzy = f"%{q.strip().lower()}%"
+        clauses.append(
+            "(LOWER(CAST(v.vlan_id AS TEXT)) LIKE ? OR LOWER(COALESCE(v.name, '')) LIKE ? "
+            "OR EXISTS (SELECT 1 FROM interfaces i JOIN devices d ON d.id = i.device_id "
+            "WHERE " + _device_site_expression('d') + " = COALESCE(v.site_id, '') "
+            "AND (LOWER(COALESCE(d.hostname, '')) LIKE ? OR LOWER(COALESCE(d.ip_address, '')) LIKE ? "
+            "OR LOWER(COALESCE(i.interface_name, '')) LIKE ? OR LOWER(COALESCE(i.primary_ip, '')) LIKE ? "
+            "OR LOWER(COALESCE(i.ip_address, '')) LIKE ? OR LOWER(COALESCE(i.description, '')) LIKE ?)) "
+            "OR EXISTS (SELECT 1 FROM cmdb_device_vlan_observations o "
+            "JOIN cmdb_collection_snapshots s ON s.device_id=o.device_id AND s.domain='vlan_inventory' "
+            "AND s.successful_generation=o.generation JOIN devices d ON d.id=o.device_id "
+            "WHERE o.vlan_id=v.vlan_id AND " + _device_site_expression('d') + "=COALESCE(v.site_id, '') "
+            "AND (LOWER(COALESCE(o.vlan_name, '')) LIKE ? OR LOWER(COALESCE(d.hostname, '')) LIKE ? "
+            "OR LOWER(COALESCE(d.ip_address, '')) LIKE ?)) "
+            "OR EXISTS (SELECT 1 FROM cmdb_device_vlan_port_observations p "
+            "JOIN cmdb_collection_snapshots s ON s.device_id=p.device_id AND s.domain='vlan_inventory' "
+            "AND s.successful_generation=p.generation JOIN devices d ON d.id=p.device_id "
+            "WHERE p.vlan_id=v.vlan_id AND " + _device_site_expression('d') + "=COALESCE(v.site_id, '') "
+            "AND LOWER(COALESCE(p.interface_name, '')) LIKE ?) "
+            "OR EXISTS (SELECT 1 FROM prefixes p WHERE p.vlan_id = v.id "
+            "AND (LOWER(COALESCE(p.prefix, '')) LIKE ? OR LOWER(COALESCE(p.gateway, '')) LIKE ?)) "
+            "OR EXISTS (SELECT 1 FROM vlan_business_bindings b WHERE b.vlan_id = v.vlan_id "
+            "AND b.site_id = COALESCE(v.site_id, '') AND (LOWER(COALESCE(b.business_system, '')) LIKE ? "
+            "OR LOWER(COALESCE(b.department, '')) LIKE ? OR LOWER(COALESCE(b.owner, '')) LIKE ?)))"
+        )
+        params.extend([fuzzy] * 17)
+    return (" WHERE " + " AND ".join(clauses)) if clauses else "", tuple(params)
+
+
+def _vlan_svi_networks(svi_rows: list, inventory: dict[str, str]) -> tuple[list[str], list[str]]:
+    """Project SVI gateway addresses and prefixes using the inventory mask fallback."""
+    gateways: list[str] = []
+    prefixes: list[str] = []
+    for svi in svi_rows:
+        raw_ip = str(svi['primary_ip'] or svi['ip_address'] or '').strip()
+        if not raw_ip:
+            continue
+        prefix_length = str(svi['ip_prefix_length'] or '').strip()
+        if not prefix_length:
+            if '/' in raw_ip:
+                raw_ip, prefix_length = raw_ip.split('/', 1)
+            else:
+                prefix_length = inventory.get(_normalize_interface_name_cached(svi['interface_name']), '')
+
+        clean_host_ip = raw_ip.split('/', 1)[0].strip()
+        if not clean_host_ip:
+            continue
+        if prefix_length and '.' in prefix_length:
+            try:
+                prefix_length = str(ipaddress.IPv4Network(f'0.0.0.0/{prefix_length}').prefixlen)
+            except ValueError:
+                prefix_length = ''
+        try:
+            address = ipaddress.ip_interface(f'{clean_host_ip}/{prefix_length or 32}')
+        except ValueError:
+            continue
+        gateways.append(str(address.ip))
+        if prefix_length and prefix_length != '32':
+            prefixes.append(str(address.network))
+        elif '/' in str(svi['primary_ip'] or svi['ip_address'] or ''):
+            prefixes.append(str(address.network))
+        else:
+            prefixes.append(str(address.ip))
+    return gateways, list(dict.fromkeys(prefixes))
+
+
+def _vlan_svi_gateway_present(svi_facts: list[dict]) -> bool:
+    """Summarize gateway presence from narrow SVI address scalars."""
+    for fact in svi_facts:
+        raw_ip = str(fact.get('svi_ip') or '').strip()
+        if not raw_ip:
+            continue
+        try:
+            if '/' in raw_ip:
+                ipaddress.ip_interface(raw_ip)
+            else:
+                ipaddress.ip_address(raw_ip)
+        except ValueError:
+            continue
+        return True
+    return False
+
+
+def _load_vlan_page_endpoint_details(conn, candidates: list[dict]) -> dict[tuple[str, int, str], list[dict]]:
+    """Load endpoint arrays only for page keys, in two bounded set queries."""
+    keys = sorted({
+        (str(row.get('_scope_site') or ''), int(row.get('vlan_id') or 0), str(row.get('device_id') or ''))
+        for row in candidates
+    })
+    details: dict[tuple[str, int, str], list[dict]] = {key: [] for key in keys}
+    if not keys:
+        return details
+
+    site_expression = _device_site_expression('d')
+    predicates: list[str] = []
+    params: list = []
+    for scope_site, vlan_number, device_id in keys:
+        predicate = f"(x.vlan_id = ? AND {site_expression} = ?"
+        params.extend((vlan_number, scope_site))
+        if device_id:
+            predicate += " AND x.device_id = ?"
+            params.append(device_id)
+        predicates.append(predicate + ")")
+    where = " OR ".join(predicates)
+    # Include scope and VLAN in the result key so duplicate hostnames cannot
+    # leak endpoint evidence across otherwise distinct page candidates.
+    arp_rows = conn.execute(
+        f"""SELECT {site_expression} AS site_scope, x.vlan_id, x.device_id,
+                   x.ip_address, x.mac_address, x.interface_name,
+                   x.last_updated, d.hostname AS device_hostname, d.ip_address AS device_ip
+            FROM arp_table x JOIN devices d ON d.id = x.device_id
+            WHERE {where}
+            ORDER BY x.ip_address, d.hostname""",
+        tuple(params),
+    ).fetchall()
+    for row in arp_rows:
+        key = (str(row['site_scope'] or ''), int(row['vlan_id'] or 0), str(row['device_id'] or ''))
+        if key not in details:
+            continue
+        value = {
+            'source': 'arp',
+            'ip_address': str(row['ip_address'] or ''),
+            'mac_address': str(row['mac_address'] or ''),
+            'interface_name': str(row['interface_name'] or ''),
+            'device_hostname': str(row['device_hostname'] or ''),
+            'device_ip': str(row['device_ip'] or ''),
+            'last_updated': row['last_updated'],
+        }
+        identity = (value['source'], value['ip_address'], value['mac_address'], value['device_hostname'])
+        if not any((item['source'], item['ip_address'], item['mac_address'], item['device_hostname']) == identity for item in details[key]):
+            details[key].append(value)
+
+    mac_rows = conn.execute(
+        f"""SELECT {site_expression} AS site_scope, x.vlan_id, x.device_id,
+                   x.mac_address, x.interface_name, x.last_updated,
+                   d.hostname AS device_hostname, d.ip_address AS device_ip
+            FROM mac_table x JOIN devices d ON d.id = x.device_id
+            WHERE {where}
+            ORDER BY x.mac_address, d.hostname""",
+        tuple(params),
+    ).fetchall()
+    for row in mac_rows:
+        key = (str(row['site_scope'] or ''), int(row['vlan_id'] or 0), str(row['device_id'] or ''))
+        if key not in details:
+            continue
+        value = {
+            'source': 'mac',
+            'ip_address': '',
+            'mac_address': str(row['mac_address'] or ''),
+            'interface_name': str(row['interface_name'] or ''),
+            'device_hostname': str(row['device_hostname'] or ''),
+            'device_ip': str(row['device_ip'] or ''),
+            'last_updated': row['last_updated'],
+        }
+        identity = (value['source'], '', value['mac_address'], f"{value['device_hostname']}:{value['interface_name']}")
+        if not any((item['source'], item['ip_address'], item['mac_address'],
+                    f"{item['device_hostname']}:{item['interface_name']}") == identity for item in details[key]):
+            details[key].append(value)
+    return details
+
+
+def _list_vlans_page(
+    conn,
+    site_id: str,
+    tenant_id: str,
+    *,
+    device_scoped: bool,
+    q: str,
+    status: str,
+    asset_type: str,
+    device_category: str,
+    device_role: str,
+    page: int,
+    page_size: int,
+    include_details: bool,
+    all_rows: bool = False,
+    detail_vlan_pk: str | None = None,
+    detail_device_id: str = '',
+) -> dict:
+    """Build skinny page candidates and materialize display rows only for the page."""
+    from services.vlan_discovery_service import is_system_default_vlan, parse_vlan_id_from_interface, parse_vlan_values
+
+    where, filter_params = _vlan_list_filter_sql(site_id, tenant_id, q, status)
+    vlan_rows = conn.execute(
+        f"""SELECT v.id, v.vlan_id, v.name, v.site_id, v.tenant_id, v.status,
+                   v.discovery_source
+            FROM vlans v{where} ORDER BY v.vlan_id""",
+        filter_params,
+    ).fetchall()
+    raw_vlans = [_row_to_dict(row) for row in vlan_rows]
+    snapshot_projection = _current_vlan_snapshot_projection(
+        conn, tenant_id=tenant_id or None, site_id=site_id,
+    )
+    snapshot_vlan_rows = snapshot_projection['vlan_observations']
+    snapshot_port_rows = snapshot_projection['vlan_ports']
+    snapshot_interface_rows = snapshot_projection['interface_observations']
+    canonical_vlan_keys = {
+        (str(row['site_id'] or ''), int(row['vlan_id'] or 0))
+        for row in conn.execute("SELECT site_id, vlan_id FROM vlans").fetchall()
+    }
+    synthetic_vlan_rows: dict[str, dict] = {}
+    q_value = str(q or '').strip().lower()
+    snapshot_interfaces_by_device: dict[str, list[dict]] = {}
+    for observation in snapshot_interface_rows:
+        snapshot_interfaces_by_device.setdefault(str(observation.get('device_id') or ''), []).append(observation)
+    snapshot_ports_by_device_vlan: dict[tuple[str, int], list[dict]] = {}
+    for port in snapshot_port_rows:
+        snapshot_ports_by_device_vlan.setdefault(
+            (str(port.get('device_id') or ''), int(port.get('vlan_id') or 0)), []
+        ).append(port)
+    for observation in snapshot_vlan_rows:
+        scope_site = str(observation.get('resolved_site_id') or '')
+        vlan_number = int(observation.get('vlan_id') or 0)
+        if (scope_site, vlan_number) in canonical_vlan_keys:
+            continue
+        observed_status = str(observation.get('vlan_status') or '')
+        if status and status != 'all' and observed_status != status:
+            continue
+        search_parts = [
+            str(vlan_number), str(observation.get('vlan_name') or ''),
+            str(observation.get('device_hostname') or ''), str(observation.get('device_ip') or ''),
+        ]
+        search_parts.extend(
+            str(port.get('interface_name') or '')
+            for port in snapshot_ports_by_device_vlan.get((str(observation.get('device_id') or ''), vlan_number), [])
+        )
+        for interface in snapshot_interfaces_by_device.get(str(observation.get('device_id') or ''), []):
+            if parse_vlan_id_from_interface(interface.get('interface_name')) == vlan_number:
+                search_parts.extend((
+                    str(interface.get('interface_name') or ''),
+                    str(interface.get('description') or ''),
+                    str(interface.get('ip_address') or ''),
+                ))
+        if q_value and q_value not in ' '.join(search_parts).lower():
+            continue
+        synthetic_id = f"cmdb-vlan-observed:{scope_site or 'unassigned'}:{vlan_number}"
+        synthetic_vlan_rows.setdefault(synthetic_id, {
+            'id': synthetic_id,
+            'vlan_id': vlan_number,
+            'name': str(observation.get('vlan_name') or ''),
+            'site_id': scope_site,
+            'tenant_id': str(observation.get('tenant_id') or tenant_id or _DEFAULT_TENANT),
+            'status': observed_status or 'active',
+            'discovery_source': 'vlan_command',
+            'cmdb_observed_only': True,
+        })
+    raw_vlans.extend(synthetic_vlan_rows.values())
+
+    site_platforms: dict[str, set[str]] = {}
+    for device in conn.execute(
+        f"SELECT {_device_site_expression('d')} AS site_id, d.platform, d.vendor FROM devices d"
+    ).fetchall():
+        scope = str(device['site_id'] or '')
+        site_platforms.setdefault(scope, set()).add(str(device['platform'] or device['vendor'] or ''))
+    filtered_vlans = []
+    for vlan in raw_vlans:
+        scope_site = str(vlan.get('site_id') or '')
+        platform = next(
+            (value for value in site_platforms.get(scope_site, set())
+             if any(token in value.lower() for token in ('cisco', 'ios', 'nxos'))),
+            '',
+        )
+        if not is_system_default_vlan(
+            vlan.get('vlan_id'), vlan.get('name'), platform=platform,
+            discovery_source=vlan.get('discovery_source'),
+        ):
+            filtered_vlans.append(vlan)
+    if detail_vlan_pk:
+        filtered_vlans = [row for row in filtered_vlans if str(row.get('id') or '') == str(detail_vlan_pk)]
+
+    vlan_pks = [str(row['id']) for row in filtered_vlans if row.get('id')]
+    vlan_numbers = sorted({int(row.get('vlan_id') or 0) for row in filtered_vlans})
+    scope_sites = sorted({str(row.get('site_id') or '') for row in filtered_vlans})
+    if not vlan_pks:
+        vlan_pk_placeholders = ''
+        vlan_number_placeholders = ''
+        site_placeholders = ''
+    else:
+        vlan_pk_placeholders = ','.join('?' for _ in vlan_pks)
+        vlan_number_placeholders = ','.join('?' for _ in vlan_numbers)
+        site_placeholders = ','.join('?' for _ in scope_sites)
+
+    sites_by_id: dict[str, dict] = {}
+    named_scope_sites = [scope for scope in scope_sites if scope]
+    if named_scope_sites:
+        placeholders = ','.join('?' for _ in named_scope_sites)
+        sites_by_id = {
+            str(row['id']): _row_to_dict(row)
+            for row in conn.execute(
+                f"SELECT id, site_code, site_name FROM sites WHERE id IN ({placeholders})",
+                tuple(named_scope_sites),
+            ).fetchall()
+        }
+
+    # Interface membership is parsed once into a skinny index. Display fields
+    # are loaded below only for selected page candidate interface IDs.
+    member_by_scope_vlan_device: dict[tuple[str, int, str], dict[str, object]] = {}
+    member_by_scope_vlan: dict[tuple[str, int], dict[str, object]] = {}
+    snapshot_member_rows_by_id: dict[str, dict] = {}
+    shared_interface_by_identity: dict[tuple[str, str], dict] = {}
+
+    def add_member(scope_site: str, vlan_number: int, device_id: str, role: str, fact: dict) -> None:
+        device_key = (scope_site, int(vlan_number), device_id)
+        device_members = member_by_scope_vlan_device.setdefault(
+            device_key, {'svi_rows': [], 'access_rows': [], 'device_ids': set()}
+        )
+        member_members = member_by_scope_vlan.setdefault(
+            device_key[:2], {'svi_rows': [], 'access_rows': [], 'device_ids': set()}
+        )
+        if not any(str(existing.get('id') or '') == str(fact.get('id') or '') for existing in device_members[role]):
+            device_members[role].append(fact)
+        if not any(
+            str(existing.get('id') or '') == str(fact.get('id') or '')
+            and str(existing.get('device_id') or '') == device_id
+            for existing in member_members[role]
+        ):
+            member_members[role].append(fact)
+        device_members['device_ids'].add(device_id)
+        member_members['device_ids'].add(device_id)
+
+    if vlan_numbers and scope_sites:
+        site_expression = _device_site_expression('d')
+        interface_rows = conn.execute(
+            f"""SELECT {site_expression} AS site_scope, i.id, i.device_id,
+                       i.interface_name,
+                       i.description,
+                       NULLIF(TRIM(COALESCE(i.description, '')), '') IS NULL AS description_is_empty,
+                       COALESCE(NULLIF(i.primary_ip, ''), NULLIF(i.ip_address, ''), '') AS svi_ip,
+                       i.access_vlan, i.native_vlan, i.allowed_vlans
+                FROM interfaces i JOIN devices d ON d.id = i.device_id
+                WHERE {site_expression} IN ({site_placeholders})
+                ORDER BY d.hostname, i.interface_name""",
+            tuple(scope_sites),
+        ).fetchall()
+        requested_numbers = set(vlan_numbers)
+        for row in interface_rows:
+            scope_site = str(row['site_scope'] or '')
+            device_id = str(row['device_id'] or '')
+            svi_vlan = parse_vlan_id_from_interface(row['interface_name'])
+            identity = _interface_identity(device_id, row['interface_name'])
+            member_numbers = (
+                parse_vlan_values(row['access_vlan'])
+                | parse_vlan_values(row['native_vlan'])
+                | parse_vlan_values(row['allowed_vlans'])
+            ) & requested_numbers
+            interface_fact = {
+                'id': str(row['id'] or ''),
+                'device_id': device_id,
+                'interface_name': str(row['interface_name'] or ''),
+                'description': str(row['description'] or ''),
+                'description_is_empty': bool(row['description_is_empty']),
+                'svi_ip': str(row['svi_ip'] or ''),
+                'port_mode': 'unknown',
+                'tagging': 'unknown',
+            }
+            shared_interface_by_identity.setdefault(identity, interface_fact)
+            has_interface_snapshot = device_id in snapshot_projection['successful']['interface_inventory']
+            has_vlan_snapshot = device_id in snapshot_projection['successful']['vlan_inventory']
+            if svi_vlan in requested_numbers and not has_interface_snapshot:
+                add_member(scope_site, int(svi_vlan), device_id, 'svi_rows', interface_fact)
+            if not has_vlan_snapshot:
+                for member_vlan in member_numbers:
+                    if svi_vlan != member_vlan:
+                        add_member(scope_site, int(member_vlan), device_id, 'access_rows', interface_fact)
+
+        for observation in snapshot_interface_rows:
+            device_id = str(observation.get('device_id') or '')
+            scope_site = str(snapshot_projection['successful']['interface_inventory'][device_id].get('resolved_site_id') or '')
+            svi_vlan = parse_vlan_id_from_interface(observation.get('interface_name'))
+            if svi_vlan not in requested_numbers:
+                continue
+            observed_id = f"cmdb-interface-observed:{device_id}:{observation.get('normalized_interface_name') or ''}"
+            fact = {
+                'id': observed_id,
+                'device_id': device_id,
+                'interface_name': str(observation.get('interface_name') or ''),
+                'description': str(observation.get('description') or ''),
+                'description_is_empty': not bool(str(observation.get('description') or '').strip()),
+                'svi_ip': str(observation.get('ip_address') or ''),
+                'primary_ip': str(observation.get('ip_address') or ''),
+                'ip_address': str(observation.get('ip_address') or ''),
+                'ip_prefix_length': observation.get('ip_prefix_length'),
+                'last_seen': observation.get('observed_at'),
+                'port_mode': 'unknown',
+                'tagging': 'unknown',
+                'source': 'cmdb_cli_snapshot',
+            }
+            snapshot_member_rows_by_id[observed_id] = fact
+            add_member(scope_site, int(svi_vlan), device_id, 'svi_rows', fact)
+
+        for port in snapshot_port_rows:
+            scope_site = str(port.get('resolved_site_id') or '')
+            vlan_number = int(port.get('vlan_id') or 0)
+            device_id = str(port.get('device_id') or '')
+            if scope_site not in scope_sites or vlan_number not in requested_numbers:
+                continue
+            identity = _interface_identity(device_id, port.get('normalized_interface_name'))
+            interface_observation = snapshot_projection['interface_by_device_identity'].get(identity)
+            shared_fact = shared_interface_by_identity.get(identity, {})
+            if device_id in snapshot_projection['successful']['interface_inventory']:
+                description = str(interface_observation.get('description') or '') if interface_observation else ''
+            else:
+                description = str(shared_fact.get('description') or '')
+            observed_id = (
+                f"cmdb-vlan-port-observed:{device_id}:{vlan_number}:"
+                f"{port.get('normalized_interface_name') or ''}"
+            )
+            fact = {
+                'id': observed_id,
+                'device_id': device_id,
+                'interface_name': str(port.get('interface_name') or ''),
+                'description': description,
+                'description_is_empty': not bool(description.strip()),
+                'svi_ip': '',
+                'primary_ip': '',
+                'ip_address': '',
+                'ip_prefix_length': None,
+                'last_seen': port.get('observed_at'),
+                'port_mode': str(port.get('port_mode') or 'unknown'),
+                'tagging': str(port.get('tagging') or 'unknown'),
+                'source': 'cmdb_cli_snapshot',
+            }
+            snapshot_member_rows_by_id[observed_id] = fact
+            add_member(scope_site, vlan_number, device_id, 'access_rows', fact)
+
+    observation_by_scope_vlan_device: dict[tuple[str, int], dict[str, dict]] = {}
+    arp_by_scope_vlan_device: dict[tuple[str, int], dict[str, dict]] = {}
+    mac_by_scope_vlan_device: dict[tuple[str, int], dict[str, dict]] = {}
+    site_expression = _device_site_expression('d')
+    if vlan_numbers and scope_sites:
+        for row in snapshot_vlan_rows:
+            scope_site = str(row.get('resolved_site_id') or '')
+            vlan_number = int(row.get('vlan_id') or 0)
+            if scope_site in scope_sites and vlan_number in set(vlan_numbers):
+                key = (scope_site, vlan_number)
+                observation_by_scope_vlan_device.setdefault(key, {})[str(row['device_id'])] = row
+        for table, target in (('arp_table', arp_by_scope_vlan_device), ('mac_table', mac_by_scope_vlan_device)):
+            aggregate_rows = conn.execute(
+                f"""SELECT {site_expression} AS site_scope, x.vlan_id, x.device_id,
+                           COUNT(*) AS count, MAX(x.last_updated) AS last_updated
+                    FROM {table} x JOIN devices d ON d.id = x.device_id
+                    WHERE x.vlan_id IN ({vlan_number_placeholders})
+                      AND {site_expression} IN ({site_placeholders})
+                    GROUP BY {site_expression}, x.vlan_id, x.device_id""",
+                (*vlan_numbers, *scope_sites),
+            ).fetchall()
+            for row in aggregate_rows:
+                key = (str(row['site_scope'] or ''), int(row['vlan_id'] or 0))
+                target.setdefault(key, {})[str(row['device_id'])] = {
+                    'count': int(row['count'] or 0), 'last_updated': row['last_updated'],
+                }
+
+    prefix_gateway_by_vlan: dict[str, str] = {}
+    if vlan_pks:
+        for row in conn.execute(
+            f"""SELECT p.vlan_id, p.gateway
+                FROM prefixes p WHERE p.vlan_id IN ({vlan_pk_placeholders})
+                  AND NULLIF(p.gateway, '') IS NOT NULL
+                ORDER BY p.prefix""",
+            tuple(vlan_pks),
+        ).fetchall():
+            prefix_gateway_by_vlan.setdefault(str(row['vlan_id'] or ''), str(row['gateway'] or ''))
+
+    business_count_by_scope_vlan: dict[tuple[int, str], int] = {}
+    if vlan_numbers and scope_sites:
+        for row in conn.execute(
+            f"""SELECT vlan_id, site_id, COUNT(*) AS count
+                FROM vlan_business_bindings
+                WHERE vlan_id IN ({vlan_number_placeholders})
+                  AND site_id IN ({site_placeholders}) AND status <> 'retired'
+                GROUP BY vlan_id, site_id""",
+            (*vlan_numbers, *scope_sites),
+        ).fetchall():
+            business_count_by_scope_vlan[(int(row['vlan_id'] or 0), str(row['site_id'] or ''))] = int(row['count'] or 0)
+
+    all_candidate_device_ids: set[str] = set()
+    candidate_specs: list[dict] = []
+    for vlan in filtered_vlans:
+        vlan_pk = str(vlan.get('id') or '')
+        vlan_number = int(vlan.get('vlan_id') or 0)
+        scope_site = str(vlan.get('site_id') or '')
+        vlan_scope_key = (scope_site, vlan_number)
+        device_ids = set(member_by_scope_vlan.get(vlan_scope_key, {}).get('device_ids') or set())
+        device_ids.update(observation_by_scope_vlan_device.get(vlan_scope_key, {}))
+        device_ids.update(arp_by_scope_vlan_device.get(vlan_scope_key, {}))
+        device_ids.update(mac_by_scope_vlan_device.get(vlan_scope_key, {}))
+        all_candidate_device_ids.update(device_ids)
+        site_vlan_members = member_by_scope_vlan.get(vlan_scope_key, {'svi_rows': [], 'access_rows': []})
+        site_svi_count = len({str(row['interface_name']) for row in site_vlan_members['svi_rows']})
+        if device_scoped and device_ids:
+            for device_id in sorted(device_ids):
+                member = member_by_scope_vlan_device.get((scope_site, vlan_number, device_id), {'svi_rows': [], 'access_rows': []})
+                candidate_specs.append({
+                    '_vlan_pk': vlan_pk,
+                    '_scope_site': scope_site,
+                    'vlan_id': vlan_number,
+                    'device_id': device_id,
+                    '_summary_gateway': _vlan_svi_gateway_present(member['svi_rows']),
+                    '_summary_arp': int(arp_by_scope_vlan_device.get(vlan_scope_key, {}).get(device_id, {}).get('count') or 0),
+                    '_summary_mac': int(mac_by_scope_vlan_device.get(vlan_scope_key, {}).get(device_id, {}).get('count') or 0),
+                    '_summary_business': business_count_by_scope_vlan.get((vlan_number, scope_site), 0),
+                    '_summary_svi_count': site_svi_count,
+                    '_summary_port_count': len(member['access_rows']),
+                    '_summary_undocumented_ports': sum(1 for row in member['access_rows'] if row['description_is_empty']),
+                })
+        else:
+            member = member_by_scope_vlan.get(vlan_scope_key, {'svi_rows': [], 'access_rows': []})
+            gateway = prefix_gateway_by_vlan.get(vlan_pk, '')
+            if not gateway:
+                gateway = next((str(row['svi_ip'] or '').split('/', 1)[0].strip()
+                                for row in member['svi_rows'] if str(row['svi_ip'] or '').strip()), '')
+            candidate_specs.append({
+                '_vlan_pk': vlan_pk,
+                '_scope_site': scope_site,
+                'site_id': scope_site,
+                'vlan_id': vlan_number,
+                '_summary_gateway': bool(str(gateway or '').strip()),
+                '_summary_arp': sum(int(row.get('count') or 0) for row in arp_by_scope_vlan_device.get(vlan_scope_key, {}).values()),
+                '_summary_mac': sum(int(row.get('count') or 0) for row in mac_by_scope_vlan_device.get(vlan_scope_key, {}).values()),
+                '_summary_business': business_count_by_scope_vlan.get((vlan_number, scope_site), 0),
+                '_summary_svi_count': site_svi_count,
+                '_summary_port_count': len(member['access_rows']),
+                '_summary_undocumented_ports': sum(1 for row in member['access_rows'] if row['description_is_empty']),
+            })
+
+    device_metadata: dict[str, dict] = {}
+    if all_candidate_device_ids:
+        device_ids = sorted(all_candidate_device_ids)
+        for start in range(0, len(device_ids), 500):
+            batch = device_ids[start:start + 500]
+            placeholders = ','.join('?' for _ in batch)
+            for row in conn.execute(
+                f"""SELECT d.id, d.hostname, d.ip_address,
+                           COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''), NULLIF(d.site, ''), 'unassigned') AS resolved_site_id,
+                           COALESCE(NULLIF(pa.asset_type, ''), 'network_device') AS asset_type,
+                           COALESCE(NULLIF(pa.device_category, ''), NULLIF(d.device_category, ''), 'other') AS device_category,
+                           COALESCE(NULLIF(pa.device_role, ''), NULLIF(d.role, ''), 'unassigned') AS device_role
+                    FROM devices d LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+                    WHERE d.id IN ({placeholders})""",
+                tuple(batch),
+            ).fetchall():
+                device_metadata[str(row['id'])] = dict(row)
+
+    for candidate in candidate_specs:
+        device_id = str(candidate.get('device_id') or '')
+        vlan_pk = str(candidate['_vlan_pk'])
+        scope_site = str(candidate['_scope_site'])
+        vlan_number = int(candidate.get('vlan_id') or 0)
+        site = sites_by_id.get(scope_site, {})
+        candidate['site_code'] = site.get('site_code') or ''
+        candidate['site_name'] = site.get('site_name') or ''
+        candidate['asset_type'] = 'network_device'
+        candidate['device_category'] = 'other'
+        candidate['device_role'] = 'unassigned'
+        if device_id:
+            device = device_metadata.get(device_id, {})
+            candidate['device_hostname'] = str(device.get('hostname') or device_id)
+            candidate['device_ip'] = str(device.get('ip_address') or '')
+            candidate['asset_type'] = device.get('asset_type') or 'network_device'
+            candidate['device_category'] = device.get('device_category') or 'other'
+            candidate['device_role'] = device.get('device_role') or 'unassigned'
+            candidate['site_id'] = device.get('resolved_site_id') or scope_site or ''
+        else:
+            candidate['device_hostname'] = ''
+            candidate['device_ip'] = ''
+
+    full_candidates = sorted(
+        candidate_specs,
+        key=lambda row: (
+            str(row.get('device_hostname') or '').lower(),
+            int(row.get('vlan_id') or 0),
+            str(row.get('device_ip') or ''),
+        ),
+    )
+    filtered_candidates = [
+        row for row in full_candidates
+        if (not asset_type or str(row.get('asset_type') or 'network_device') == asset_type)
+        and (not device_category or str(row.get('device_category') or 'other') == device_category)
+        and (not device_role or str(row.get('device_role') or 'unassigned') == device_role)
+    ]
+    if detail_device_id:
+        filtered_candidates = [
+            row for row in filtered_candidates
+            if str(row.get('device_id') or '') == str(detail_device_id)
+        ]
+    normalized_page_size = max(1, len(filtered_candidates)) if all_rows else min(max(int(page_size or 20), 1), 100)
+    normalized_page = max(int(page or 1), 1)
+    start = (normalized_page - 1) * normalized_page_size
+    page_candidates = filtered_candidates[start:start + normalized_page_size]
+
+    def _page_candidate_key(candidate: dict) -> tuple[str, str, int, str]:
+        return (
+            str(candidate['_vlan_pk']),
+            str(candidate['_scope_site']),
+            int(candidate.get('vlan_id') or 0),
+            str(candidate.get('device_id') or '') if device_scoped else '',
+        )
+
+    page_members: dict[tuple[str, str, int, str], dict[str, list]] = {
+        _page_candidate_key(candidate): {'svi_rows': [], 'access_rows': []}
+        for candidate in page_candidates
+    }
+    page_interface_roles: dict[str, list[tuple[tuple[str, str, int, str], str]]] = {}
+    for candidate in page_candidates:
+        candidate_key = _page_candidate_key(candidate)
+        scope_site = str(candidate['_scope_site'])
+        vlan_number = int(candidate.get('vlan_id') or 0)
+        device_id = str(candidate.get('device_id') or '')
+        if device_scoped and device_id:
+            narrow_members = member_by_scope_vlan_device.get(
+                (scope_site, vlan_number, device_id), {'svi_rows': [], 'access_rows': []}
+            )
+        else:
+            narrow_members = member_by_scope_vlan.get(
+                (scope_site, vlan_number), {'svi_rows': [], 'access_rows': []}
+            )
+        for role in ('svi_rows', 'access_rows'):
+            for fact in narrow_members[role]:
+                interface_id = str(fact['id'] or '')
+                if interface_id:
+                    page_interface_roles.setdefault(interface_id, []).append((candidate_key, role))
+
+    page_svi_device_ids: set[str] = set()
+    for interface_id, fact in snapshot_member_rows_by_id.items():
+        roles = page_interface_roles.get(interface_id, [])
+        if not roles:
+            continue
+        device_id = str(fact.get('device_id') or '')
+        device = device_metadata.get(device_id, {})
+        wide_row = dict(fact)
+        wide_row['device_hostname'] = device.get('hostname') or device_id
+        wide_row['device_ip'] = device.get('ip_address') or ''
+        for candidate_key, role in roles:
+            page_members[candidate_key][role].append(wide_row)
+            if role == 'svi_rows' and device_id:
+                page_svi_device_ids.add(device_id)
+    selected_interface_ids = sorted(
+        interface_id for interface_id in page_interface_roles
+        if interface_id not in snapshot_member_rows_by_id
+    )
+    page_site_expression = _device_site_expression('d')
+    for start_index in range(0, len(selected_interface_ids), 500):
+        batch = selected_interface_ids[start_index:start_index + 500]
+        placeholders = ','.join('?' for _ in batch)
+        for row in conn.execute(
+            f"""SELECT {page_site_expression} AS site_scope, i.id, i.device_id,
+                       i.interface_name, i.description, i.primary_ip, i.ip_address,
+                       i.ip_prefix_length, i.access_vlan, i.native_vlan, i.allowed_vlans,
+                       i.last_seen
+                FROM interfaces i JOIN devices d ON d.id = i.device_id
+                WHERE i.id IN ({placeholders})
+                ORDER BY d.hostname, i.interface_name""",
+            tuple(batch),
+        ).fetchall():
+            wide_row = _row_to_dict(row)
+            device_id = str(wide_row.get('device_id') or '')
+            device = device_metadata.get(device_id, {})
+            wide_row['device_hostname'] = device.get('hostname')
+            wide_row['device_ip'] = device.get('ip_address')
+            interface_id = str(wide_row.get('id') or '')
+            for candidate_key, role in page_interface_roles.get(interface_id, []):
+                page_members[candidate_key][role].append(wide_row)
+                if role == 'svi_rows' and device_id:
+                    page_svi_device_ids.add(device_id)
+
+    ip_inventory_by_device: dict[str, dict[str, str]] = {}
+    if page_svi_device_ids:
+        selected_svi_devices = sorted(page_svi_device_ids)
+        for start_index in range(0, len(selected_svi_devices), 500):
+            batch = selected_svi_devices[start_index:start_index + 500]
+            placeholders = ','.join('?' for _ in batch)
+            for row in conn.execute(
+                f"""SELECT device_id, interface, mask FROM ip_inventory
+                    WHERE device_id IN ({placeholders})
+                      AND NOT EXISTS (
+                          SELECT 1 FROM cmdb_collection_snapshots s
+                          WHERE s.device_id = ip_inventory.device_id
+                            AND s.domain = 'interface_inventory'
+                            AND s.successful_generation > 0
+                      )""",
+                tuple(batch),
+            ).fetchall():
+                device_id = str(row['device_id'] or '')
+                interface_name = _normalize_interface_name_cached(row['interface'])
+                if interface_name:
+                    ip_inventory_by_device.setdefault(device_id, {})[interface_name] = str(row['mask'] or '').strip()
+
+    for members in page_members.values():
+        for role in ('svi_rows', 'access_rows'):
+            members[role].sort(key=lambda row: (
+                row['device_hostname'] is None,
+                str(row['device_hostname'] or ''),
+                row['interface_name'] is None,
+                str(row['interface_name'] or ''),
+            ))
+
+    site_counts: dict[str, dict[str, object]] = {}
+    for row in filtered_candidates:
+        site_key = str(row.get('site_id') or '').strip() or 'unassigned'
+        entry = site_counts.setdefault(site_key, {
+            'key': site_key,
+            'label': str(row.get('site_name') or row.get('site_code') or '未分配站点'),
+            'count': 0,
+        })
+        entry['count'] = int(entry['count']) + 1
+    summary = {
+        'total': len({(str(row.get('site_id') or ''), int(row.get('vlan_id') or 0)) for row in filtered_candidates}),
+        'gateways': sum(1 for row in filtered_candidates if row['_summary_gateway']),
+        'arp': sum(int(row['_summary_arp'] or 0) for row in filtered_candidates),
+        'mac': sum(int(row['_summary_mac'] or 0) for row in filtered_candidates),
+        'unbound': sum(1 for row in filtered_candidates if not int(row['_summary_business'] or 0)),
+    }
+
+    selected_vlan_pks = sorted({str(row['_vlan_pk']) for row in page_candidates})
+    selected_vlan_numbers = sorted({int(row['vlan_id']) for row in page_candidates})
+    selected_scope_sites = sorted({str(row['_scope_site']) for row in page_candidates})
+    page_vlan_rows: dict[str, dict] = {}
+    selected_vlan_placeholders = ','.join('?' for _ in selected_vlan_pks)
+    if selected_vlan_pks:
+        page_vlan_rows = {
+            str(row['id']): _row_to_dict(row)
+            for row in conn.execute(
+                f"SELECT v.* FROM vlans v WHERE v.id IN ({selected_vlan_placeholders})",
+                tuple(selected_vlan_pks),
+            ).fetchall()
+        }
+        page_vlan_rows.update({
+            vlan_pk: synthetic_vlan_rows[vlan_pk]
+            for vlan_pk in selected_vlan_pks
+            if vlan_pk in synthetic_vlan_rows
+        })
+
+    prefixes_by_vlan_pk: dict[str, list] = {}
+    ip_count_by_prefix: dict[str, int] = {}
+    if selected_vlan_pks:
+        prefix_rows = conn.execute(
+            f"""SELECT p.id, p.vlan_id, p.prefix, p.gateway, p.vrf_id,
+                       v.vrf_name, gd.hostname AS gateway_device_name,
+                       gi.interface_name AS gateway_interface_name
+                FROM prefixes p LEFT JOIN vrfs v ON v.id = p.vrf_id
+                LEFT JOIN devices gd ON gd.id = p.gateway_device_id
+                LEFT JOIN interfaces gi ON gi.id = p.gateway_interface_id
+                WHERE p.vlan_id IN ({selected_vlan_placeholders})
+                ORDER BY p.prefix""",
+            tuple(selected_vlan_pks),
+        ).fetchall()
+        for row in prefix_rows:
+            prefix = _row_to_dict(row)
+            prefixes_by_vlan_pk.setdefault(str(prefix.get('vlan_id') or ''), []).append(prefix)
+        prefix_ids = sorted({str(row['id']) for row in prefix_rows if row['id']})
+        if prefix_ids:
+            prefix_placeholders = ','.join('?' for _ in prefix_ids)
+            ip_count_by_prefix = {
+                str(row['prefix_id']): int(row['count'] or 0)
+                for row in conn.execute(
+                    f"SELECT prefix_id, COUNT(*) AS count FROM ip_addresses WHERE prefix_id IN ({prefix_placeholders}) GROUP BY prefix_id",
+                    tuple(prefix_ids),
+                ).fetchall()
+            }
+
+    bindings_by_vlan_scope: dict[tuple[int, str], list] = {}
+    if selected_vlan_numbers and selected_scope_sites:
+        number_placeholders = ','.join('?' for _ in selected_vlan_numbers)
+        scope_placeholders = ','.join('?' for _ in selected_scope_sites)
+        for row in conn.execute(
+            f"""SELECT vlan_id, site_id, business_system, department, owner, business_level
+                FROM vlan_business_bindings
+                WHERE vlan_id IN ({number_placeholders}) AND site_id IN ({scope_placeholders})
+                  AND status <> 'retired' ORDER BY business_system""",
+            (*selected_vlan_numbers, *selected_scope_sites),
+        ).fetchall():
+            binding = _row_to_dict(row)
+            key = (int(binding.get('vlan_id') or 0), str(binding.get('site_id') or ''))
+            bindings_by_vlan_scope.setdefault(key, []).append(binding)
+
+    endpoint_details_by_candidate = _load_vlan_page_endpoint_details(conn, page_candidates) if include_details else {}
+    display_rows: list[dict] = []
+    base_items: dict[str, dict] = {}
+    for candidate in page_candidates:
+        vlan_pk = str(candidate['_vlan_pk'])
+        vlan = page_vlan_rows.get(vlan_pk)
+        if vlan is None:
+            continue
+        if vlan_pk not in base_items:
+            item = dict(vlan)
+            scope_site = str(candidate['_scope_site'])
+            site = sites_by_id.get(scope_site)
+            item['site_code'] = site.get('site_code') if site else ''
+            item['site_name'] = site.get('site_name') if site else ''
+            prefix_rows = prefixes_by_vlan_pk.get(vlan_pk, [])
+            prefix_ids = [str(row['id']) for row in prefix_rows if row.get('id')]
+            item['prefix_count'] = len(prefix_rows)
+            item['prefixes'] = ', '.join(str(row.get('prefix') or '') for row in prefix_rows if row.get('prefix'))
+            item['ip_count'] = sum(ip_count_by_prefix.get(prefix_id, 0) for prefix_id in prefix_ids)
+            gateway = next((row for row in prefix_rows if row.get('gateway')), None)
+            item['gateway'] = gateway.get('gateway') if gateway else ''
+            item['gateway_device'] = gateway.get('gateway_device_name') if gateway else ''
+            item['gateway_interface'] = gateway.get('gateway_interface_name') if gateway else ''
+            item['vrf_name'] = gateway.get('vrf_name') if gateway else ''
+            bindings = bindings_by_vlan_scope.get((int(item.get('vlan_id') or 0), scope_site), [])
+            item['business_count'] = len(bindings)
+            item['business_systems'] = ', '.join(str(row['business_system'] or '') for row in bindings)
+            item['business_departments'] = ', '.join(sorted({str(row['department'] or '') for row in bindings if row['department']}))
+            item['business_owners'] = ', '.join(sorted({str(row['owner'] or '') for row in bindings if row['owner']}))
+            item['highest_business_level'] = next(
+                (level for level in ('P1', 'P2', 'P3', 'P4') if any(row['business_level'] == level for row in bindings)),
+                '',
+            )
+            base_items[vlan_pk] = item
+
+        item = dict(base_items[vlan_pk])
+        scope_site = str(candidate['_scope_site'])
+        vlan_number = int(candidate['vlan_id'])
+        device_id = str(candidate.get('device_id') or '')
+        if device_scoped and device_id:
+            device_info = device_metadata.get(device_id, {})
+            members = page_members.get(_page_candidate_key(candidate), {'svi_rows': [], 'access_rows': []})
+            svi_rows = members['svi_rows']
+            access_rows = members['access_rows']
+            gateways, prefixes = _vlan_svi_networks(svi_rows, ip_inventory_by_device.get(device_id, {}))
+            vlan_observation = observation_by_scope_vlan_device.get((scope_site, vlan_number), {}).get(device_id)
+            arp_summary = arp_by_scope_vlan_device.get((scope_site, vlan_number), {}).get(device_id, {})
+            mac_summary = mac_by_scope_vlan_device.get((scope_site, vlan_number), {}).get(device_id, {})
+            device_hostname = str(candidate.get('device_hostname') or device_id)
+            device_ip = str(candidate.get('device_ip') or '')
+            interface_times = [row['last_seen'] for row in (*svi_rows, *access_rows) if row['last_seen']]
+            arp_time = arp_summary.get('last_updated')
+            mac_time = mac_summary.get('last_updated')
+            item.update({
+                'device_id': device_id,
+                'device_hostname': device_hostname,
+                'device_ip': device_ip,
+                'asset_type': device_info.get('asset_type') or 'network_device',
+                'device_category': device_info.get('device_category') or 'other',
+                'device_role': device_info.get('device_role') or 'unassigned',
+                'device_vlan_name': str(vlan_observation['vlan_name'] or '') if vlan_observation else '',
+                'device_vlan_status': str(vlan_observation['vlan_status'] or '') if vlan_observation else '',
+                'device_vlan_observed_at': str(vlan_observation['observed_at'] or '') if vlan_observation else '',
+                'device_vlan_generation': int(vlan_observation['generation'] or 0) if vlan_observation else 0,
+                'site_id': device_info.get('resolved_site_id') or item.get('site_id') or '',
+                'device_count': 1,
+                'device_names': device_hostname,
+                'port_count': len(access_rows),
+                'svi_count': int(candidate.get('_summary_svi_count') or 0),
+                'undocumented_port_count': sum(1 for row in access_rows if not str(row['description'] or '').strip()),
+                'svi_interfaces': ', '.join(str(row['interface_name'] or '') for row in svi_rows),
+                'description': '; '.join(sorted({str(row['description'] or '') for row in svi_rows if row['description']})),
+                'prefixes': ', '.join(prefixes),
+                'gateway': gateways[0] if gateways else '',
+                'gateway_device': device_hostname if gateways else '',
+                'gateway_interface': str(svi_rows[0]['interface_name'] or '') if gateways and svi_rows else '',
+                'arp_count': int(arp_summary.get('count') or 0),
+                'mac_count': int(mac_summary.get('count') or 0),
+                'endpoint_last_seen_at': max([value for value in (arp_time, mac_time) if value] or ['']),
+                'interface_collected_at': max(interface_times) if interface_times else '',
+                'arp_collected_at': arp_time or '',
+                'mac_collected_at': mac_time or '',
+            })
+            if include_details:
+                item['port_detail_rows'] = [{
+                    'device_id': device_id,
+                    'device_hostname': device_hostname,
+                    'device_ip': device_ip,
+                    'interface_name': str(row['interface_name'] or ''),
+                    'description': str(row['description'] or ''),
+                    **({
+                        'port_mode': str(row.get('port_mode') or 'unknown'),
+                        'tagging': str(row.get('tagging') or 'unknown'),
+                        'source': 'cmdb_cli_snapshot',
+                    } if row.get('source') == 'cmdb_cli_snapshot' else {}),
+                } for row in access_rows]
+                item['port_details'] = '; '.join(
+                    f"{device_hostname}:{row['interface_name']} - {str(row['description'] or '')}"
+                    for row in access_rows
+                )
+                item['endpoint_details'] = endpoint_details_by_candidate.get((scope_site, vlan_number, device_id), [])
+        else:
+            members = page_members.get(_page_candidate_key(candidate), {'svi_rows': [], 'access_rows': []})
+            svi_rows = members['svi_rows']
+            access_rows = members['access_rows']
+            device_names = {
+                str(row['device_hostname'] or row['device_id']) for row in (*svi_rows, *access_rows)
+            }
+            ports = {
+                f"{row['device_hostname'] or row['device_id']}:{row['interface_name']}" for row in access_rows
+            }
+            svi_names = {str(row['interface_name']) for row in svi_rows}
+            svi_descriptions = {str(row['description'] or '').strip() for row in svi_rows if str(row['description'] or '').strip()}
+            gateway = str(item.get('gateway') or '')
+            gateway_device = item.get('gateway_device')
+            gateway_interface = item.get('gateway_interface')
+            if not gateway:
+                for row in svi_rows:
+                    svi_ip = str(row['primary_ip'] or row['ip_address'] or '').strip()
+                    if svi_ip:
+                        gateway = svi_ip.split('/', 1)[0]
+                        gateway_device = str(row['device_hostname'] or row['device_id'])
+                        gateway_interface = str(row['interface_name'])
+                        break
+            arp_summary = arp_by_scope_vlan_device.get((scope_site, vlan_number), {})
+            mac_summary = mac_by_scope_vlan_device.get((scope_site, vlan_number), {})
+            arp_times = [row.get('last_updated') for row in arp_summary.values() if row.get('last_updated')]
+            mac_times = [row.get('last_updated') for row in mac_summary.values() if row.get('last_updated')]
+            item.update({
+                'device_count': len(device_names),
+                'device_names': ', '.join(sorted(device_names)),
+                'port_count': len(ports),
+                'svi_count': len(svi_names),
+                'svi_interfaces': ', '.join(sorted(svi_names)),
+                'description': '; '.join(sorted(svi_descriptions)),
+                'gateway': gateway,
+                'gateway_device': gateway_device,
+                'gateway_interface': gateway_interface,
+                'undocumented_port_count': sum(1 for row in access_rows if not str(row['description'] or '').strip()),
+                'arp_count': sum(int(row.get('count') or 0) for row in arp_summary.values()),
+                'mac_count': sum(int(row.get('count') or 0) for row in mac_summary.values()),
+                'endpoint_last_seen_at': max(arp_times + mac_times) if arp_times + mac_times else '',
+            })
+            if include_details:
+                item['port_details'] = '; '.join(sorted(
+                    f"{row['device_hostname'] or row['device_id']}:{row['interface_name']} - {str(row['description'] or '').strip()}"
+                    for row in access_rows
+                ))
+                item['port_detail_rows'] = [{
+                    'device_id': str(row['device_id'] or ''),
+                    'device_hostname': str(row['device_hostname'] or row['device_id'] or ''),
+                    'device_ip': str(row['device_ip'] or ''),
+                    'interface_name': str(row['interface_name'] or ''),
+                    'description': str(row['description'] or '').strip(),
+                    **({
+                        'port_mode': str(row.get('port_mode') or 'unknown'),
+                        'tagging': str(row.get('tagging') or 'unknown'),
+                        'source': 'cmdb_cli_snapshot',
+                    } if row.get('source') == 'cmdb_cli_snapshot' else {}),
+                } for row in access_rows]
+                item['endpoint_details'] = endpoint_details_by_candidate.get((scope_site, vlan_number, ''), [])
+        display_rows.append(item)
+
+    return {
+        'items': display_rows,
+        'total': len(filtered_candidates),
+        'page': normalized_page,
+        'page_size': normalized_page_size,
+        'site_summary': sorted(site_counts.values(), key=lambda item: str(item['label']).lower()),
+        'tree': _build_vlan_scope_tree(conn, full_candidates),
+        'summary': summary,
+    }
+
+
+def list_vlans(conn, site_id: str = '', tenant_id: str = '', *, device_scoped: bool = False, q: str = '', status: str = 'all', asset_type: str = '', device_category: str = '', device_role: str = '', page: int | None = None, page_size: int = 20, include_details: bool = True) -> list[dict] | dict:
+    if page is not None:
+        return _list_vlans_page(
+            conn,
+            site_id,
+            tenant_id,
+            device_scoped=device_scoped,
+            q=q,
+            status=status,
+            asset_type=asset_type,
+            device_category=device_category,
+            device_role=device_role,
+            page=page,
+            page_size=page_size,
+            include_details=include_details,
+        )
+
+    resolved_site_scope = ('',) if site_id == 'unassigned' else ((site_id,) if site_id else None)
+    if _successful_collection_devices(
+        conn,
+        ('interface_inventory', 'vlan_inventory'),
+        tenant_id=tenant_id or None,
+        site_ids=resolved_site_scope,
+    ):
+        # Keep the historical complete-list return shape while sharing one
+        # generation-aware projection with the paged API and export callers.
+        return _list_vlans_page(
+            conn,
+            site_id,
+            tenant_id,
+            device_scoped=device_scoped,
+            q=q,
+            status=status,
+            asset_type=asset_type,
+            device_category=device_category,
+            device_role=device_role,
+            page=1,
+            page_size=page_size,
+            include_details=include_details,
+            all_rows=True,
+        )['items']
+
     clauses, params = [], []
     if site_id:
         if site_id == 'unassigned':
-            clauses.append("COALESCE(site_id, '') = ''")
+            clauses.append("COALESCE(v.site_id, '') = ''")
         else:
-            clauses.append("site_id = ?")
+            clauses.append("v.site_id = ?")
             params.append(site_id)
     if tenant_id:
-        clauses.append("tenant_id = ?")
+        clauses.append("v.tenant_id = ?")
         params.append(tenant_id)
     if status and status != 'all':
-        clauses.append("status = ?")
+        clauses.append("v.status = ?")
         params.append(status)
     if q and q.strip():
-        clauses.append("(LOWER(CAST(vlan_id AS TEXT)) LIKE ? OR LOWER(COALESCE(name, '')) LIKE ?)")
         fuzzy = f"%{q.strip().lower()}%"
-        params.extend([fuzzy, fuzzy])
+        clauses.append(
+            "(LOWER(CAST(v.vlan_id AS TEXT)) LIKE ? OR LOWER(COALESCE(v.name, '')) LIKE ? "
+            "OR EXISTS (SELECT 1 FROM interfaces i JOIN devices d ON d.id = i.device_id "
+            "WHERE " + _device_site_expression('d') + " = COALESCE(v.site_id, '') "
+            "AND (LOWER(COALESCE(d.hostname, '')) LIKE ? OR LOWER(COALESCE(d.ip_address, '')) LIKE ? "
+            "OR LOWER(COALESCE(i.interface_name, '')) LIKE ? OR LOWER(COALESCE(i.primary_ip, '')) LIKE ? "
+            "OR LOWER(COALESCE(i.ip_address, '')) LIKE ? OR LOWER(COALESCE(i.description, '')) LIKE ?)) "
+            "OR EXISTS (SELECT 1 FROM prefixes p WHERE p.vlan_id = v.id "
+            "AND (LOWER(COALESCE(p.prefix, '')) LIKE ? OR LOWER(COALESCE(p.gateway, '')) LIKE ?)) "
+            "OR EXISTS (SELECT 1 FROM vlan_business_bindings b WHERE b.vlan_id = v.vlan_id "
+            "AND b.site_id = COALESCE(v.site_id, '') AND (LOWER(COALESCE(b.business_system, '')) LIKE ? "
+            "OR LOWER(COALESCE(b.department, '')) LIKE ? OR LOWER(COALESCE(b.owner, '')) LIKE ?)))"
+        )
+        params.extend([fuzzy] * 13)
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     rows = conn.execute(
-        f"SELECT * FROM vlans{where} ORDER BY vlan_id", params
+        f"SELECT v.* FROM vlans v{where} ORDER BY v.vlan_id", params
     ).fetchall()
     result = []
     from services.vlan_discovery_service import (
@@ -1699,12 +3968,129 @@ def list_vlans(conn, site_id: str = '', tenant_id: str = '', *, device_scoped: b
         parse_vlan_values,
     )
     site_platforms: dict[str, set[str]] = {}
-    for device in conn.execute("SELECT site_id, site, platform, vendor FROM devices").fetchall():
-        scope = str(device['site_id'] or device['site'] or '')
+    for device in conn.execute(
+        f"SELECT {_device_site_expression('d')} AS site_id, d.platform, d.vendor FROM devices d"
+    ).fetchall():
+        scope = str(device['site_id'] or '')
         site_platforms.setdefault(scope, set()).add(str(device['platform'] or device['vendor'] or ''))
 
-    for raw_row in rows:
-        item = _row_to_dict(raw_row)
+    # Load list projections in bounded batches. The list API does not need to
+    # materialize endpoint evidence; its counts and timestamps come from the
+    # aggregate queries below. The full evidence arrays remain available to
+    # explicit detail/export callers through include_details=True.
+    vlan_rows = [_row_to_dict(row) for row in rows]
+    vlan_pks = [str(row.get('id') or '') for row in vlan_rows if row.get('id')]
+    vlan_numbers = sorted({int(row.get('vlan_id') or 0) for row in vlan_rows if row.get('vlan_id') is not None})
+    scope_sites = sorted({str(row.get('site_id') or '') for row in vlan_rows})
+    site_expression = _device_site_expression('d')
+    site_placeholders = ','.join('?' for _ in scope_sites)
+    vlan_pk_placeholders = ','.join('?' for _ in vlan_pks)
+    vlan_number_placeholders = ','.join('?' for _ in vlan_numbers)
+
+    sites_by_id: dict[str, dict] = {}
+    if scope_sites:
+        named_scope_sites = [scope for scope in scope_sites if scope]
+        if named_scope_sites:
+            placeholders = ','.join('?' for _ in named_scope_sites)
+            sites_by_id = {
+                str(row['id']): _row_to_dict(row)
+                for row in conn.execute(
+                    f"SELECT id, site_code, site_name FROM sites WHERE id IN ({placeholders})",
+                    tuple(named_scope_sites),
+                ).fetchall()
+            }
+
+    prefixes_by_vlan_pk: dict[str, list] = {}
+    ip_count_by_prefix: dict[str, int] = {}
+    if vlan_pks:
+        prefix_rows = conn.execute(
+            f"""SELECT p.id, p.vlan_id, p.prefix, p.gateway, p.vrf_id,
+                       v.vrf_name, gd.hostname AS gateway_device_name,
+                       gi.interface_name AS gateway_interface_name
+                FROM prefixes p
+                LEFT JOIN vrfs v ON v.id = p.vrf_id
+                LEFT JOIN devices gd ON gd.id = p.gateway_device_id
+                LEFT JOIN interfaces gi ON gi.id = p.gateway_interface_id
+                WHERE p.vlan_id IN ({vlan_pk_placeholders})
+                ORDER BY p.prefix""",
+            tuple(vlan_pks),
+        ).fetchall()
+        for prefix_row in prefix_rows:
+            prefix = _row_to_dict(prefix_row)
+            prefixes_by_vlan_pk.setdefault(str(prefix.get('vlan_id') or ''), []).append(prefix)
+        prefix_ids = sorted({str(row['id']) for row in prefix_rows if row['id']})
+        if prefix_ids:
+            prefix_placeholders = ','.join('?' for _ in prefix_ids)
+            ip_rows = conn.execute(
+                f"""SELECT prefix_id, COUNT(*) AS count
+                    FROM ip_addresses WHERE prefix_id IN ({prefix_placeholders})
+                    GROUP BY prefix_id""",
+                tuple(prefix_ids),
+            ).fetchall()
+            ip_count_by_prefix = {
+                str(row['prefix_id']): int(row['count'] or 0) for row in ip_rows
+            }
+
+    interfaces_by_site: dict[str, list] = {}
+    if scope_sites:
+        interface_rows = conn.execute(
+            f"""SELECT {site_expression} AS site_scope,
+                       i.device_id, d.hostname, d.hostname AS device_hostname,
+                       d.ip_address AS device_ip,
+                       i.interface_name, i.description, i.interface_type,
+                       i.primary_ip, i.ip_address, i.ip_prefix_length,
+                       i.access_vlan, i.native_vlan, i.allowed_vlans, i.last_seen
+                FROM interfaces i
+                JOIN devices d ON d.id = i.device_id
+                WHERE {site_expression} IN ({site_placeholders})
+                ORDER BY d.hostname, i.interface_name""",
+            tuple(scope_sites),
+        ).fetchall()
+        for interface_row in interface_rows:
+            site_scope = str(interface_row['site_scope'] or '')
+            interfaces_by_site.setdefault(site_scope, []).append(interface_row)
+    for scope_site in scope_sites:
+        interfaces_by_site.setdefault(scope_site, [])
+
+    observation_counts: dict[tuple[str, int, str], dict[str, object]] = {}
+    observation_max_times: dict[tuple[str, int], list[object]] = {}
+    if vlan_number_placeholders and site_placeholders:
+        for table in ('arp_table', 'mac_table'):
+            aggregate_rows = conn.execute(
+                f"""SELECT {site_expression} AS site_scope, x.vlan_id,
+                           COUNT(*) AS count, MAX(x.last_updated) AS last_updated
+                    FROM {table} x
+                    JOIN devices d ON d.id = x.device_id
+                    WHERE x.vlan_id IN ({vlan_number_placeholders})
+                      AND {site_expression} IN ({site_placeholders})
+                    GROUP BY {site_expression}, x.vlan_id""",
+                (*vlan_numbers, *scope_sites),
+            ).fetchall()
+            for aggregate in aggregate_rows:
+                key = (str(aggregate['site_scope'] or ''), int(aggregate['vlan_id'] or 0), table)
+                observation_counts[key] = {
+                    'count': int(aggregate['count'] or 0),
+                    'last_updated': aggregate['last_updated'],
+                }
+                observation_max_times.setdefault(key[:2], []).append(aggregate['last_updated'])
+
+    bindings_by_vlan_scope: dict[tuple[int, str], list] = {}
+    if vlan_number_placeholders and site_placeholders:
+        binding_rows = conn.execute(
+            f"""SELECT vlan_id, site_id, business_system, department, owner, business_level
+                FROM vlan_business_bindings
+                WHERE vlan_id IN ({vlan_number_placeholders})
+                  AND site_id IN ({site_placeholders})
+                  AND status <> 'retired'
+                ORDER BY business_system""",
+            (*vlan_numbers, *scope_sites),
+        ).fetchall()
+        for binding_row in binding_rows:
+            binding = _row_to_dict(binding_row)
+            key = (int(binding.get('vlan_id') or 0), str(binding.get('site_id') or ''))
+            bindings_by_vlan_scope.setdefault(key, []).append(binding)
+
+    for item in vlan_rows:
         vlan_number = int(item.get('vlan_id') or 0)
         scope_site = str(item.get('site_id') or '')
         if is_system_default_vlan(
@@ -1718,53 +4104,23 @@ def list_vlans(conn, site_id: str = '', tenant_id: str = '', *, device_scoped: b
             discovery_source=item.get('discovery_source'),
         ):
             continue
-        site = conn.execute(
-            "SELECT site_code, site_name FROM sites WHERE id = ? LIMIT 1",
-            (scope_site,),
-        ).fetchone() if scope_site else None
-        item['site_code'] = site['site_code'] if site else ''
-        item['site_name'] = site['site_name'] if site else ''
+        site = sites_by_id.get(scope_site)
+        item['site_code'] = site.get('site_code') if site else ''
+        item['site_name'] = site.get('site_name') if site else ''
 
-        prefix_rows = conn.execute(
-            """SELECT p.id, p.prefix, p.gateway, p.vrf_id,
-                      v.vrf_name, gd.hostname AS gateway_device_name,
-                      gi.interface_name AS gateway_interface_name
-               FROM prefixes p
-               LEFT JOIN vrfs v ON v.id = p.vrf_id
-               LEFT JOIN devices gd ON gd.id = p.gateway_device_id
-               LEFT JOIN interfaces gi ON gi.id = p.gateway_interface_id
-               WHERE p.vlan_id = ?
-               ORDER BY p.prefix""",
-            (item.get('id'),),
-        ).fetchall()
-        prefix_ids = [str(row['id']) for row in prefix_rows if row['id']]
+        prefix_rows = prefixes_by_vlan_pk.get(str(item.get('id') or ''), [])
+        prefix_ids = [str(row['id']) for row in prefix_rows if row.get('id')]
         item['prefix_count'] = len(prefix_rows)
-        item['prefixes'] = ', '.join(str(row['prefix'] or '') for row in prefix_rows if row['prefix'])
-        item['ip_count'] = 0
-        if prefix_ids:
-            placeholders = ','.join('?' for _ in prefix_ids)
-            ip_count = conn.execute(
-                f"SELECT COUNT(*) AS count FROM ip_addresses WHERE prefix_id IN ({placeholders})",
-                tuple(prefix_ids),
-            ).fetchone()
-            item['ip_count'] = int(ip_count['count'] or 0) if ip_count else 0
+        item['prefixes'] = ', '.join(str(row.get('prefix') or '') for row in prefix_rows if row.get('prefix'))
+        item['ip_count'] = sum(ip_count_by_prefix.get(prefix_id, 0) for prefix_id in prefix_ids)
 
-        gateway = next((row for row in prefix_rows if row['gateway']), None)
-        item['gateway'] = gateway['gateway'] if gateway else ''
-        item['gateway_device'] = gateway['gateway_device_name'] if gateway else ''
-        item['gateway_interface'] = gateway['gateway_interface_name'] if gateway else ''
-        item['vrf_name'] = gateway['vrf_name'] if gateway else ''
+        gateway = next((row for row in prefix_rows if row.get('gateway')), None)
+        item['gateway'] = gateway.get('gateway') if gateway else ''
+        item['gateway_device'] = gateway.get('gateway_device_name') if gateway else ''
+        item['gateway_interface'] = gateway.get('gateway_interface_name') if gateway else ''
+        item['vrf_name'] = gateway.get('vrf_name') if gateway else ''
 
-        device_rows = conn.execute(
-            """SELECT i.device_id, d.hostname, d.ip_address AS device_ip,
-                      i.interface_name, i.description, i.interface_type,
-                      i.primary_ip, i.ip_address, i.ip_prefix_length,
-                      i.access_vlan, i.native_vlan, i.allowed_vlans
-               FROM interfaces i
-               JOIN devices d ON d.id = i.device_id
-               WHERE (? = '' OR COALESCE(d.site_id, d.site, '') = ?)""",
-            (scope_site, scope_site),
-        ).fetchall()
+        device_rows = interfaces_by_site.get(scope_site, [])
         devices: set[str] = set()
         ports: set[str] = set()
         svi_names: set[str] = set()
@@ -1800,115 +4156,107 @@ def list_vlans(conn, site_id: str = '', tenant_id: str = '', *, device_scoped: b
                 port_details.append(
                     f"{interface['hostname'] or interface['device_id']}:{interface['interface_name']} - {description}"
                 )
-                port_detail_rows.append({
-                    'device_id': str(interface['device_id'] or ''),
-                    'device_hostname': str(interface['hostname'] or interface['device_id'] or ''),
-                    'device_ip': str(interface['device_ip'] or ''),
-                    'interface_name': str(interface['interface_name'] or ''),
-                    'description': description,
-                })
+                if include_details:
+                    port_detail_rows.append({
+                        'device_id': str(interface['device_id'] or ''),
+                        'device_hostname': str(interface['hostname'] or interface['device_id'] or ''),
+                        'device_ip': str(interface['device_ip'] or ''),
+                        'interface_name': str(interface['interface_name'] or ''),
+                        'description': description,
+                    })
         item['device_count'] = len(devices)
         item['device_names'] = ', '.join(sorted(devices))
         item['port_count'] = len(ports)
         item['svi_count'] = len(svi_names)
         item['svi_interfaces'] = ', '.join(sorted(svi_names))
         item['description'] = '; '.join(sorted(svi_descriptions))
-        item['port_details'] = '; '.join(sorted(port_details))
-        item['port_detail_rows'] = port_detail_rows
+        if include_details:
+            item['port_details'] = '; '.join(sorted(port_details))
+        if include_details:
+            item['port_detail_rows'] = port_detail_rows
         item['undocumented_port_count'] = undocumented_ports
 
-        def count_observations(table: str) -> int:
-            row = conn.execute(
-                f"""SELECT COUNT(*) AS count FROM {table} x
-                    JOIN devices d ON d.id = x.device_id
-                    WHERE x.vlan_id = ?
-                      AND (? = '' OR COALESCE(d.site_id, d.site, '') = ?)""",
-                (vlan_number, scope_site, scope_site),
-            ).fetchone()
-            return int(row['count'] or 0) if row else 0
-
-        item['arp_count'] = count_observations('arp_table')
-        item['mac_count'] = count_observations('mac_table')
+        arp_summary = observation_counts.get((scope_site, vlan_number, 'arp_table'), {})
+        mac_summary = observation_counts.get((scope_site, vlan_number, 'mac_table'), {})
+        item['arp_count'] = int(arp_summary.get('count') or 0)
+        item['mac_count'] = int(mac_summary.get('count') or 0)
 
         # Keep the actual endpoint evidence alongside the aggregate counts so
         # the VLAN page can answer the operator's next question: which IP/MAC
         # was learned on which device/interface? ARP and MAC observations are
         # intentionally merged and de-duplicated for a compact detail view.
         endpoint_details: list[dict] = []
-        endpoint_keys: set[tuple[str, str, str, str]] = set()
-        arp_rows = conn.execute(
-            """SELECT a.ip_address, a.mac_address, a.interface_name, a.vlan_id,
-                      a.last_updated, d.hostname AS device_hostname, d.ip_address AS device_ip
-               FROM arp_table a
-               JOIN devices d ON d.id = a.device_id
-               WHERE a.vlan_id = ?
-                 AND (? = '' OR COALESCE(d.site_id, d.site, '') = ?)
-               ORDER BY a.ip_address, d.hostname""",
-            (vlan_number, scope_site, scope_site),
-        ).fetchall()
-        for observation in arp_rows:
-            key = (
-                'arp', str(observation['ip_address'] or ''),
-                str(observation['mac_address'] or ''),
-                str(observation['device_hostname'] or ''),
+        if include_details:
+            endpoint_keys: set[tuple[str, str, str, str]] = set()
+            endpoint_scope, endpoint_scope_params = _device_site_predicate('d', scope_site)
+            arp_rows = conn.execute(
+                f"""SELECT a.ip_address, a.mac_address, a.interface_name, a.vlan_id,
+                          a.last_updated, d.hostname AS device_hostname, d.ip_address AS device_ip
+                   FROM arp_table a
+                   JOIN devices d ON d.id = a.device_id
+                   WHERE a.vlan_id = ? AND {endpoint_scope}
+                   ORDER BY a.ip_address, d.hostname""",
+                (vlan_number, *endpoint_scope_params),
+            ).fetchall()
+            for observation in arp_rows:
+                key = (
+                    'arp', str(observation['ip_address'] or ''),
+                    str(observation['mac_address'] or ''),
+                    str(observation['device_hostname'] or ''),
+                )
+                if key in endpoint_keys:
+                    continue
+                endpoint_keys.add(key)
+                endpoint_details.append({
+                    'source': 'arp',
+                    'ip_address': str(observation['ip_address'] or ''),
+                    'mac_address': str(observation['mac_address'] or ''),
+                    'interface_name': str(observation['interface_name'] or ''),
+                    'device_hostname': str(observation['device_hostname'] or ''),
+                    'device_ip': str(observation['device_ip'] or ''),
+                    'last_updated': observation['last_updated'],
+                })
+
+            mac_rows = conn.execute(
+                f"""SELECT m.mac_address, m.interface_name, m.vlan_id,
+                          m.last_updated, d.hostname AS device_hostname, d.ip_address AS device_ip
+                   FROM mac_table m
+                   JOIN devices d ON d.id = m.device_id
+                   WHERE m.vlan_id = ? AND {endpoint_scope}
+                   ORDER BY m.mac_address, d.hostname""",
+                (vlan_number, *endpoint_scope_params),
+            ).fetchall()
+            for observation in mac_rows:
+                key = (
+                    'mac', '', str(observation['mac_address'] or ''),
+                    f"{observation['device_hostname'] or ''}:{observation['interface_name'] or ''}",
+                )
+                if key in endpoint_keys:
+                    continue
+                endpoint_keys.add(key)
+                endpoint_details.append({
+                    'source': 'mac',
+                    'ip_address': '',
+                    'mac_address': str(observation['mac_address'] or ''),
+                    'interface_name': str(observation['interface_name'] or ''),
+                    'device_hostname': str(observation['device_hostname'] or ''),
+                    'device_ip': str(observation['device_ip'] or ''),
+                    'last_updated': observation['last_updated'],
+                })
+            item['endpoint_details'] = endpoint_details
+            observation_times = [
+                observation['last_updated']
+                for observation in (*arp_rows, *mac_rows)
+                if observation['last_updated']
+            ]
+            item['endpoint_last_seen_at'] = max(observation_times) if observation_times else ''
+        else:
+            observation_times = observation_max_times.get((scope_site, vlan_number), [])
+            item['endpoint_last_seen_at'] = max(
+                (value for value in observation_times if value), default=''
             )
-            if key in endpoint_keys:
-                continue
-            endpoint_keys.add(key)
-            endpoint_details.append({
-                'source': 'arp',
-                'ip_address': str(observation['ip_address'] or ''),
-                'mac_address': str(observation['mac_address'] or ''),
-                'interface_name': str(observation['interface_name'] or ''),
-                'device_hostname': str(observation['device_hostname'] or ''),
-                'device_ip': str(observation['device_ip'] or ''),
-                'last_updated': observation['last_updated'],
-            })
 
-        mac_rows = conn.execute(
-            """SELECT m.mac_address, m.interface_name, m.vlan_id,
-                      m.last_updated, d.hostname AS device_hostname, d.ip_address AS device_ip
-               FROM mac_table m
-               JOIN devices d ON d.id = m.device_id
-               WHERE m.vlan_id = ?
-                 AND (? = '' OR COALESCE(d.site_id, d.site, '') = ?)
-               ORDER BY m.mac_address, d.hostname""",
-            (vlan_number, scope_site, scope_site),
-        ).fetchall()
-        for observation in mac_rows:
-            key = (
-                'mac', '', str(observation['mac_address'] or ''),
-                f"{observation['device_hostname'] or ''}:{observation['interface_name'] or ''}",
-            )
-            if key in endpoint_keys:
-                continue
-            endpoint_keys.add(key)
-            endpoint_details.append({
-                'source': 'mac',
-                'ip_address': '',
-                'mac_address': str(observation['mac_address'] or ''),
-                'interface_name': str(observation['interface_name'] or ''),
-                'device_hostname': str(observation['device_hostname'] or ''),
-                'device_ip': str(observation['device_ip'] or ''),
-                'last_updated': observation['last_updated'],
-            })
-
-        item['endpoint_details'] = endpoint_details
-        observation_times = [
-            observation['last_updated']
-            for observation in (*arp_rows, *mac_rows)
-            if observation['last_updated']
-        ]
-        item['endpoint_last_seen_at'] = max(observation_times) if observation_times else ''
-
-        bindings = conn.execute(
-            """SELECT business_system, department, owner, business_level
-               FROM vlan_business_bindings
-               WHERE vlan_id = ? AND (site_id = ? OR (site_id = '' AND ? = ''))
-                 AND status <> 'retired'
-               ORDER BY business_system""",
-            (vlan_number, scope_site, scope_site),
-        ).fetchall()
+        bindings = bindings_by_vlan_scope.get((vlan_number, scope_site), [])
         item['business_count'] = len(bindings)
         item['business_systems'] = ', '.join(str(row['business_system'] or '') for row in bindings)
         item['business_departments'] = ', '.join(sorted({str(row['department'] or '') for row in bindings if row['department']}))
@@ -1918,47 +4266,272 @@ def list_vlans(conn, site_id: str = '', tenant_id: str = '', *, device_scoped: b
             '',
         )
         result.append(item)
-    expanded = _expand_vlan_rows_by_device(conn, result) if device_scoped else result
-    full_expanded = list(expanded)
+    expanded = _expand_vlan_rows_by_device(
+        conn,
+        result,
+        include_details=include_details,
+        preloaded={
+            'interfaces_by_site': interfaces_by_site,
+        },
+    ) if device_scoped else result
     if asset_type:
         expanded = [row for row in expanded if str(row.get('asset_type') or 'network_device') == asset_type]
     if device_category:
         expanded = [row for row in expanded if str(row.get('device_category') or 'other') == device_category]
     if device_role:
         expanded = [row for row in expanded if str(row.get('device_role') or 'unassigned') == device_role]
-    if page is None:
-        return expanded
-    normalized_page_size = min(max(int(page_size or 20), 1), 100)
-    normalized_page = max(int(page or 1), 1)
-    start = (normalized_page - 1) * normalized_page_size
-    site_counts: dict[str, dict[str, object]] = {}
-    for row in expanded:
-        site_id = str(row.get('site_id') or '').strip()
-        key = site_id or 'unassigned'
-        entry = site_counts.setdefault(key, {
-            'key': key,
-            'label': str(row.get('site_name') or row.get('site_code') or '未分配站点'),
-            'count': 0,
+    return expanded
+
+
+def get_vlan_details(
+    conn,
+    vlan_pk: str,
+    *,
+    site_id: str = '',
+    device_id: str = '',
+) -> dict:
+    """Load full port and ARP/MAC evidence for one VLAN and optional device."""
+    from services.vlan_discovery_service import parse_vlan_id_from_interface, parse_vlan_values
+
+    snapshot_projection = _current_vlan_snapshot_projection(conn)
+    observed_only = str(vlan_pk or '').startswith('cmdb-vlan-observed:')
+    if observed_only:
+        try:
+            site_token, vlan_token = str(vlan_pk).removeprefix('cmdb-vlan-observed:').rsplit(':', 1)
+            vlan_number = int(vlan_token)
+        except (TypeError, ValueError) as exc:
+            raise ValueError('VLAN not found') from exc
+        if not 1 <= vlan_number <= 4094:
+            raise ValueError('VLAN not found')
+        vlan_site = '' if site_token == 'unassigned' else site_token
+        matching_observations = [
+            row for row in snapshot_projection['vlan_observations']
+            if int(row.get('vlan_id') or 0) == vlan_number
+            and str(row.get('resolved_site_id') or '') == vlan_site
+        ]
+        if not matching_observations:
+            raise ValueError('VLAN not found')
+        vlan = {'id': str(vlan_pk), 'vlan_id': vlan_number, 'site_id': vlan_site}
+    else:
+        vlan = conn.execute(
+            "SELECT id, vlan_id, site_id FROM vlans WHERE id = ?",
+            (str(vlan_pk),),
+        ).fetchone()
+        if not vlan:
+            raise ValueError('VLAN not found')
+        vlan_number = int(vlan['vlan_id'] or 0)
+        vlan_site = str(vlan['site_id'] or '')
+    requested_site = str(site_id or '').strip()
+    if requested_site == 'unassigned':
+        if vlan_site:
+            raise ValueError('VLAN or device not found in the requested scope')
+        requested_site = ''
+
+    device_clause = ''
+    device_params: tuple[str, ...] = ()
+    resolved_device_site = ''
+    if device_id:
+        device = conn.execute(
+            f"""SELECT d.id,
+                       {_device_site_expression('d')} AS device_scope_site,
+                       COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''), NULLIF(d.site, ''), 'unassigned') AS resolved_site_id
+                FROM devices d
+                LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+                WHERE d.id = ?""",
+            (str(device_id),),
+        ).fetchone()
+        if not device or str(device['device_scope_site'] or '') != vlan_site:
+            raise ValueError('VLAN or device not found in the requested scope')
+        resolved_device_site = str(device['resolved_site_id'] or '')
+        allowed_sites = {vlan_site, resolved_device_site}
+        if requested_site and requested_site not in allowed_sites:
+            raise ValueError('VLAN or device not found in the requested scope')
+        device_clause = ' AND d.id = ?'
+        device_params = (str(device_id),)
+    elif requested_site != vlan_site:
+        raise ValueError('VLAN not found in the requested site')
+
+    site_predicate, site_params = _device_site_predicate('d', vlan_site)
+    interface_rows = conn.execute(
+        f"""SELECT i.device_id, d.hostname AS device_hostname, d.ip_address AS device_ip,
+                   i.interface_name, i.description, i.primary_ip, i.ip_address,
+                   i.last_seen, i.access_vlan, i.native_vlan, i.allowed_vlans
+            FROM interfaces i
+            JOIN devices d ON d.id = i.device_id
+            WHERE {site_predicate}{device_clause}
+            ORDER BY d.hostname, i.interface_name""",
+        (*site_params, *device_params),
+    ).fetchall()
+
+    port_detail_rows: list[dict] = []
+    interface_times: list[object] = []
+    interface_snapshot_devices = snapshot_projection['successful']['interface_inventory']
+    vlan_snapshot_devices = snapshot_projection['successful']['vlan_inventory']
+    snapshot_interface_by_identity = snapshot_projection['interface_by_device_identity']
+    shared_interface_by_identity: dict[tuple[str, str], dict] = {}
+    for row in interface_rows:
+        row_device_id = str(row['device_id'] or '')
+        identity = _interface_identity(row_device_id, row['interface_name'])
+        shared_interface_by_identity.setdefault(identity, _row_to_dict(row))
+        svi_vlan = parse_vlan_id_from_interface(row['interface_name'])
+        if svi_vlan == vlan_number:
+            if row_device_id in interface_snapshot_devices:
+                continue
+            if row['last_seen']:
+                interface_times.append(row['last_seen'])
+            continue
+        if row_device_id in vlan_snapshot_devices:
+            continue
+        member_vlans = (
+            parse_vlan_values(row['access_vlan'])
+            | parse_vlan_values(row['native_vlan'])
+            | parse_vlan_values(row['allowed_vlans'])
+        )
+        if vlan_number not in member_vlans:
+            continue
+        if row['last_seen']:
+            interface_times.append(row['last_seen'])
+        port_detail_rows.append({
+            'device_id': row_device_id,
+            'device_hostname': str(row['device_hostname'] or row['device_id'] or ''),
+            'device_ip': str(row['device_ip'] or ''),
+            'interface_name': str(row['interface_name'] or ''),
+            'description': str(row['description'] or '').strip(),
+            'port_mode': 'unknown',
+            'tagging': 'unknown',
+            'source': 'shared_interface',
         })
-        entry['count'] = int(entry['count']) + 1
+
+    for observation in snapshot_projection['interface_observations']:
+        observed_device_id = str(observation.get('device_id') or '')
+        state = interface_snapshot_devices.get(observed_device_id, {})
+        if str(state.get('resolved_site_id') or '') != vlan_site:
+            continue
+        if device_id and observed_device_id != str(device_id):
+            continue
+        identity = _interface_identity(observed_device_id, observation.get('normalized_interface_name'))
+        interface_vlan = parse_vlan_id_from_interface(observation.get('interface_name'))
+        has_port_membership = any(
+            str(port.get('device_id') or '') == observed_device_id
+            and int(port.get('vlan_id') or 0) == vlan_number
+            and str(port.get('normalized_interface_name') or '') == identity[1]
+            for port in snapshot_projection['vlan_ports']
+        )
+        if interface_vlan == vlan_number or has_port_membership:
+            if observation.get('observed_at'):
+                interface_times.append(observation.get('observed_at'))
+
+    for port in snapshot_projection['vlan_ports']:
+        observed_device_id = str(port.get('device_id') or '')
+        if int(port.get('vlan_id') or 0) != vlan_number:
+            continue
+        if str(port.get('resolved_site_id') or '') != vlan_site:
+            continue
+        if device_id and observed_device_id != str(device_id):
+            continue
+        identity = _interface_identity(observed_device_id, port.get('normalized_interface_name'))
+        interface_observation = snapshot_interface_by_identity.get(identity)
+        shared_interface = shared_interface_by_identity.get(identity, {})
+        if observed_device_id in interface_snapshot_devices:
+            description = str(interface_observation.get('description') or '') if interface_observation else ''
+        else:
+            description = str(shared_interface.get('description') or '')
+        port_detail_rows.append({
+            'device_id': observed_device_id,
+            'device_hostname': str(port.get('device_hostname') or observed_device_id),
+            'device_ip': str(port.get('device_ip') or ''),
+            'interface_name': str(port.get('interface_name') or ''),
+            'description': description.strip(),
+            'port_mode': str(port.get('port_mode') or 'unknown'),
+            'tagging': str(port.get('tagging') or 'unknown'),
+            'source': 'cmdb_cli_snapshot',
+        })
+        if port.get('observed_at'):
+            interface_times.append(port.get('observed_at'))
+
+    endpoint_details: list[dict] = []
+    endpoint_keys: set[tuple[str, str, str, str]] = set()
+    arp_rows = conn.execute(
+        f"""SELECT a.ip_address, a.mac_address, a.interface_name, a.last_updated,
+                   d.hostname AS device_hostname, d.ip_address AS device_ip
+            FROM arp_table a
+            JOIN devices d ON d.id = a.device_id
+            WHERE a.vlan_id = ? AND {site_predicate}{device_clause}
+            ORDER BY a.ip_address, d.hostname""",
+        (vlan_number, *site_params, *device_params),
+    ).fetchall()
+    mac_rows = conn.execute(
+        f"""SELECT m.mac_address, m.interface_name, m.last_updated,
+                   d.hostname AS device_hostname, d.ip_address AS device_ip
+            FROM mac_table m
+            JOIN devices d ON d.id = m.device_id
+            WHERE m.vlan_id = ? AND {site_predicate}{device_clause}
+            ORDER BY m.mac_address, d.hostname""",
+        (vlan_number, *site_params, *device_params),
+    ).fetchall()
+
+    for row in arp_rows:
+        key = (
+            'arp', str(row['ip_address'] or ''), str(row['mac_address'] or ''),
+            str(row['device_hostname'] or ''),
+        )
+        if key in endpoint_keys:
+            continue
+        endpoint_keys.add(key)
+        endpoint_details.append({
+            'source': 'arp',
+            'ip_address': str(row['ip_address'] or ''),
+            'mac_address': str(row['mac_address'] or ''),
+            'interface_name': str(row['interface_name'] or ''),
+            'device_hostname': str(row['device_hostname'] or ''),
+            'device_ip': str(row['device_ip'] or ''),
+            'last_updated': row['last_updated'],
+        })
+    for row in mac_rows:
+        key = (
+            'mac', '', str(row['mac_address'] or ''),
+            f"{row['device_hostname'] or ''}:{row['interface_name'] or ''}",
+        )
+        if key in endpoint_keys:
+            continue
+        endpoint_keys.add(key)
+        endpoint_details.append({
+            'source': 'mac',
+            'ip_address': '',
+            'mac_address': str(row['mac_address'] or ''),
+            'interface_name': str(row['interface_name'] or ''),
+            'device_hostname': str(row['device_hostname'] or ''),
+            'device_ip': str(row['device_ip'] or ''),
+            'last_updated': row['last_updated'],
+        })
+
+    arp_times = [row['last_updated'] for row in arp_rows if row['last_updated']]
+    mac_times = [row['last_updated'] for row in mac_rows if row['last_updated']]
+    endpoint_times = arp_times + mac_times
     return {
-        'items': expanded[start:start + normalized_page_size],
-        'total': len(expanded),
-        'page': normalized_page,
-        'page_size': normalized_page_size,
-        'site_summary': sorted(site_counts.values(), key=lambda item: str(item['label']).lower()),
-        'tree': _build_vlan_scope_tree(conn, full_expanded),
-        'summary': {
-            'total': len(expanded),
-            'gateways': sum(1 for row in expanded if str(row.get('gateway') or '').strip()),
-            'arp': sum(int(row.get('arp_count') or 0) for row in expanded),
-            'mac': sum(int(row.get('mac_count') or 0) for row in expanded),
-            'unbound': sum(1 for row in expanded if not int(row.get('business_count') or 0)),
+        'cmdb_observed_only': observed_only,
+        'port_detail_rows': port_detail_rows,
+        'endpoint_details': endpoint_details,
+        'meta': {
+            'port_count': len(port_detail_rows),
+            'undocumented_port_count': sum(1 for row in port_detail_rows if not row['description']),
+            'arp_count': len(arp_rows),
+            'mac_count': len(mac_rows),
+            'endpoint_last_seen_at': max(endpoint_times) if endpoint_times else '',
+            'interface_collected_at': max(interface_times) if interface_times else '',
+            'arp_collected_at': max(arp_times) if arp_times else '',
+            'mac_collected_at': max(mac_times) if mac_times else '',
         },
     }
 
 
-def _expand_vlan_rows_by_device(conn, vlan_rows: list[dict]) -> list[dict]:
+def _expand_vlan_rows_by_device(
+    conn,
+    vlan_rows: list[dict],
+    *,
+    include_details: bool = True,
+    preloaded: dict | None = None,
+) -> list[dict]:
     """Return VLAN facts at the operator's device -> VLAN grain.
 
     The relational VLAN record remains scoped by site + VLAN, but a site can
@@ -1971,7 +4544,7 @@ def _expand_vlan_rows_by_device(conn, vlan_rows: list[dict]) -> list[dict]:
     device_metadata = {
         str(row['id']): dict(row)
         for row in conn.execute(
-            """SELECT d.id,
+            """SELECT d.id, d.hostname, d.ip_address,
                       COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''), NULLIF(d.site, ''), 'unassigned') AS resolved_site_id,
                       COALESCE(NULLIF(pa.asset_type, ''), 'network_device') AS asset_type,
                       COALESCE(NULLIF(pa.device_category, ''), NULLIF(d.device_category, ''), 'other') AS device_category,
@@ -1980,21 +4553,158 @@ def _expand_vlan_rows_by_device(conn, vlan_rows: list[dict]) -> list[dict]:
                LEFT JOIN physical_assets pa ON pa.id = d.asset_id"""
         ).fetchall()
     }
+    preloaded = preloaded or {}
+    device_interfaces_by_site: dict[str, list] = preloaded.get('interfaces_by_site') or {}
+    device_interfaces_by_site_and_device: dict[str, dict[str, list]] = {}
+    ip_inventory_by_device: dict[str, dict[str, str]] = {}
+
+    # A paged list still needs all matching VLAN rows to compute its tree and
+    # summary, but it only needs aggregate endpoint facts. Fetch those facts
+    # once for the whole candidate set instead of loading every endpoint row
+    # once per VLAN.
+    vlan_numbers = sorted({int(row.get('vlan_id') or 0) for row in vlan_rows})
+    scope_sites = sorted({str(row.get('site_id') or '') for row in vlan_rows})
+    vlan_number_placeholders = ','.join('?' for _ in vlan_numbers)
+    site_placeholders = ','.join('?' for _ in scope_sites)
+    site_expression = _device_site_expression('d')
+    observations_by_scope: dict[tuple[str, int], dict[str, dict]] = {}
+    arp_by_scope_device: dict[tuple[str, int], dict[str, dict]] = {}
+    mac_by_scope_device: dict[tuple[str, int], dict[str, dict]] = {}
+    if not include_details and vlan_numbers and scope_sites:
+        observation_rows = conn.execute(
+            f"""SELECT {site_expression} AS site_scope, o.device_id, o.vlan_id,
+                       o.vlan_name, o.vlan_status, o.observed_at, o.generation
+                FROM cmdb_device_vlan_observations o
+                JOIN cmdb_collection_snapshots s ON s.device_id = o.device_id
+                     AND s.domain = 'vlan_inventory' AND s.successful_generation = o.generation
+                JOIN devices d ON d.id = o.device_id
+                WHERE o.vlan_id IN ({vlan_number_placeholders})
+                  AND {site_expression} IN ({site_placeholders})""",
+            (*vlan_numbers, *scope_sites),
+        ).fetchall()
+        for row in observation_rows:
+            key = (str(row['site_scope'] or ''), int(row['vlan_id'] or 0))
+            observations_by_scope.setdefault(key, {})[str(row['device_id'])] = dict(row)
+
+        for table, target in (('arp_table', arp_by_scope_device), ('mac_table', mac_by_scope_device)):
+            aggregate_rows = conn.execute(
+                f"""SELECT {site_expression} AS site_scope, x.vlan_id, x.device_id,
+                           COUNT(*) AS count, MAX(x.last_updated) AS last_updated
+                    FROM {table} x
+                    JOIN devices d ON d.id = x.device_id
+                    WHERE x.vlan_id IN ({vlan_number_placeholders})
+                      AND {site_expression} IN ({site_placeholders})
+                    GROUP BY {site_expression}, x.vlan_id, x.device_id""",
+                (*vlan_numbers, *scope_sites),
+            ).fetchall()
+            for row in aggregate_rows:
+                key = (str(row['site_scope'] or ''), int(row['vlan_id'] or 0))
+                target.setdefault(key, {})[str(row['device_id'])] = {
+                    'count': int(row['count'] or 0),
+                    'last_updated': row['last_updated'],
+                }
+
+    if not device_interfaces_by_site and scope_sites:
+        interface_rows = conn.execute(
+            f"""SELECT {site_expression} AS site_scope,
+                       i.device_id, d.hostname AS device_hostname, d.ip_address AS device_ip,
+                       i.interface_name, i.description, i.primary_ip, i.ip_address,
+                       i.ip_prefix_length, i.access_vlan, i.native_vlan, i.allowed_vlans,
+                       i.last_seen
+                FROM interfaces i JOIN devices d ON d.id = i.device_id
+                WHERE {site_expression} IN ({site_placeholders})
+                ORDER BY d.hostname, i.interface_name""",
+            tuple(scope_sites),
+        ).fetchall()
+        for row in interface_rows:
+            device_interfaces_by_site.setdefault(str(row['site_scope'] or ''), []).append(row)
+    for scope_site in scope_sites:
+        device_interfaces_by_site.setdefault(scope_site, [])
+    device_ids = sorted({
+        str(row['device_id'])
+        for site_rows in device_interfaces_by_site.values()
+        for row in site_rows
+        if row['device_id']
+    })
+    if device_ids:
+        device_placeholders = ','.join('?' for _ in device_ids)
+        for row in conn.execute(
+            f"""SELECT device_id, interface, mask
+                FROM ip_inventory WHERE device_id IN ({device_placeholders})""",
+            tuple(device_ids),
+        ).fetchall():
+            device_id = str(row['device_id'] or '')
+            interface_name = _normalize_interface_name_cached(row['interface'])
+            if interface_name:
+                ip_inventory_by_device.setdefault(device_id, {})[interface_name] = str(row['mask'] or '').strip()
+    for device_id in device_ids:
+        ip_inventory_by_device.setdefault(device_id, {})
 
     scoped_rows: list[dict] = []
     for item in vlan_rows:
         vlan_number = int(item.get('vlan_id') or 0)
         scope_site = str(item.get('site_id') or '')
-        device_interfaces = conn.execute(
-            """SELECT i.device_id, d.hostname AS device_hostname, d.ip_address AS device_ip,
-                      i.interface_name, i.description, i.primary_ip, i.ip_address,
-                      i.ip_prefix_length, i.access_vlan, i.native_vlan, i.allowed_vlans,
-                      i.last_seen
-               FROM interfaces i JOIN devices d ON d.id = i.device_id
-               WHERE (? = '' OR COALESCE(d.site_id, d.site, '') = ?)
-               ORDER BY d.hostname, i.interface_name""",
-            (scope_site, scope_site),
-        ).fetchall()
+        device_scope, device_scope_params = _device_site_predicate('d', scope_site)
+        if scope_site not in device_interfaces_by_site:
+            device_interfaces_by_site[scope_site] = conn.execute(
+                f"""SELECT i.device_id, d.hostname AS device_hostname, d.ip_address AS device_ip,
+                          i.interface_name, i.description, i.primary_ip, i.ip_address,
+                          i.ip_prefix_length, i.access_vlan, i.native_vlan, i.allowed_vlans,
+                          i.last_seen
+                   FROM interfaces i JOIN devices d ON d.id = i.device_id
+                   WHERE {device_scope}
+                   ORDER BY d.hostname, i.interface_name""",
+                device_scope_params,
+            ).fetchall()
+        device_interfaces = device_interfaces_by_site[scope_site]
+        if scope_site not in device_interfaces_by_site_and_device:
+            rows_by_device: dict[str, list] = {}
+            for row in device_interfaces:
+                rows_by_device.setdefault(str(row['device_id'] or ''), []).append(row)
+            device_interfaces_by_site_and_device[scope_site] = rows_by_device
+        if include_details:
+            vlan_observations = conn.execute(
+                f"""SELECT o.device_id, o.vlan_name, o.vlan_status,
+                          o.observed_at, o.generation
+                   FROM cmdb_device_vlan_observations o
+                   JOIN cmdb_collection_snapshots s ON s.device_id = o.device_id
+                        AND s.domain = 'vlan_inventory' AND s.successful_generation = o.generation
+                   JOIN devices d ON d.id = o.device_id
+                   WHERE o.vlan_id = ? AND {device_scope}""",
+                (vlan_number, *device_scope_params),
+            ).fetchall()
+        else:
+            vlan_observations = list(observations_by_scope.get((scope_site, vlan_number), {}).values())
+        vlan_observations_by_device = {
+            str(row['device_id']): row for row in vlan_observations
+        }
+        arp_rows_by_device: dict[str, list] = {}
+        mac_rows_by_device: dict[str, list] = {}
+        arp_summaries = arp_by_scope_device.get((scope_site, vlan_number), {})
+        mac_summaries = mac_by_scope_device.get((scope_site, vlan_number), {})
+        if include_details:
+            for row in conn.execute(
+                f"""SELECT a.device_id, a.ip_address, a.mac_address, a.interface_name, a.last_updated,
+                          d.hostname AS device_hostname, d.ip_address AS device_ip
+                   FROM arp_table a JOIN devices d ON d.id = a.device_id
+                   WHERE a.vlan_id = ? AND {device_scope}
+                   ORDER BY a.ip_address, d.hostname""",
+                (vlan_number, *device_scope_params),
+            ).fetchall():
+                arp_rows_by_device.setdefault(str(row['device_id']), []).append(row)
+            for row in conn.execute(
+                f"""SELECT m.device_id, m.mac_address, m.interface_name, m.last_updated,
+                          d.hostname AS device_hostname, d.ip_address AS device_ip
+                   FROM mac_table m JOIN devices d ON d.id = m.device_id
+                   WHERE m.vlan_id = ? AND {device_scope}
+                   ORDER BY m.mac_address, d.hostname""",
+                (vlan_number, *device_scope_params),
+            ).fetchall():
+                mac_rows_by_device.setdefault(str(row['device_id']), []).append(row)
+        else:
+            arp_rows_by_device = {device_id: [] for device_id in arp_summaries}
+            mac_rows_by_device = {device_id: [] for device_id in mac_summaries}
+
         device_ids = {
             str(row['device_id']) for row in device_interfaces
             if parse_vlan_id_from_interface(row['interface_name']) == vlan_number
@@ -2004,27 +4714,20 @@ def _expand_vlan_rows_by_device(conn, vlan_rows: list[dict]) -> list[dict]:
                 | parse_vlan_values(row['allowed_vlans'])
             )
         }
-        device_ids.update(str(row['device_id']) for row in conn.execute(
-            """SELECT DISTINCT a.device_id FROM arp_table a JOIN devices d ON d.id = a.device_id
-               WHERE a.vlan_id = ? AND (? = '' OR COALESCE(d.site_id, d.site, '') = ?)""",
-            (vlan_number, scope_site, scope_site),
-        ).fetchall())
-        device_ids.update(str(row['device_id']) for row in conn.execute(
-            """SELECT DISTINCT m.device_id FROM mac_table m JOIN devices d ON d.id = m.device_id
-               WHERE m.vlan_id = ? AND (? = '' OR COALESCE(d.site_id, d.site, '') = ?)""",
-            (vlan_number, scope_site, scope_site),
-        ).fetchall())
+        device_ids.update(arp_rows_by_device)
+        device_ids.update(mac_rows_by_device)
+        device_ids.update(vlan_observations_by_device)
 
         if not device_ids:
             scoped_rows.append(item)
             continue
 
         for device_id in sorted(device_ids):
-            rows = [row for row in device_interfaces if str(row['device_id']) == device_id]
-            if not rows:
-                continue
-            device_hostname = str(rows[0]['device_hostname'] or device_id)
-            device_ip = str(rows[0]['device_ip'] or '')
+            rows = device_interfaces_by_site_and_device[scope_site].get(device_id, [])
+            device_info = device_metadata.get(device_id, {})
+            vlan_observation = vlan_observations_by_device.get(device_id)
+            device_hostname = str((rows[0]['device_hostname'] if rows else device_info.get('hostname')) or device_id)
+            device_ip = str((rows[0]['device_ip'] if rows else device_info.get('ip_address')) or '')
             svi_rows = [row for row in rows if parse_vlan_id_from_interface(row['interface_name']) == vlan_number]
             access_rows = [
                 row for row in rows
@@ -2046,13 +4749,20 @@ def _expand_vlan_rows_by_device(conn, vlan_rows: list[dict]) -> list[dict]:
                     if '/' in raw_ip:
                         raw_ip, prefix_length = raw_ip.split('/', 1)
                     else:
-                        norm_intf = normalize_interface_name(svi['interface_name'])
-                        inv_row = conn.execute(
-                            "SELECT mask FROM ip_inventory WHERE device_id = ? AND (interface = ? OR LOWER(interface) = ?) LIMIT 1",
-                            (device_id, svi['interface_name'], norm_intf),
-                        ).fetchone()
-                        if inv_row and inv_row['mask']:
-                            prefix_length = str(inv_row['mask']).strip()
+                        norm_intf = _normalize_interface_name_cached(svi['interface_name'])
+                        if device_id not in ip_inventory_by_device:
+                            ip_rows = conn.execute(
+                                "SELECT interface, mask FROM ip_inventory WHERE device_id = ?",
+                                (device_id,),
+                            ).fetchall()
+                            ip_inventory_by_device[device_id] = {
+                                _normalize_interface_name_cached(row['interface']): str(row['mask'] or '').strip()
+                                for row in ip_rows
+                                if _normalize_interface_name_cached(row['interface'])
+                            }
+                        inv_mask = ip_inventory_by_device[device_id].get(norm_intf)
+                        if inv_mask:
+                            prefix_length = inv_mask
 
                 clean_host_ip = raw_ip.split('/', 1)[0].strip()
                 if not clean_host_ip:
@@ -2080,30 +4790,28 @@ def _expand_vlan_rows_by_device(conn, vlan_rows: list[dict]) -> list[dict]:
                 except ValueError:
                     continue
 
-            arp_rows = conn.execute(
-                "SELECT ip_address, mac_address, interface_name, last_updated FROM arp_table WHERE device_id = ? AND vlan_id = ? ORDER BY ip_address",
-                (device_id, vlan_number),
-            ).fetchall()
-            mac_rows = conn.execute(
-                "SELECT mac_address, interface_name, last_updated FROM mac_table WHERE device_id = ? AND vlan_id = ? ORDER BY mac_address",
-                (device_id, vlan_number),
-            ).fetchall()
+            arp_rows = arp_rows_by_device.get(device_id, [])
+            mac_rows = mac_rows_by_device.get(device_id, [])
             endpoint_details = [
                 detail for detail in (item.get('endpoint_details') or [])
                 if str(detail.get('device_hostname') or '') == device_hostname
-            ]
+            ] if include_details else None
             port_detail_rows = [{
                 'device_id': device_id,
                 'device_hostname': device_hostname,
                 'device_ip': device_ip,
                 'interface_name': str(row['interface_name'] or ''),
                 'description': str(row['description'] or ''),
-            } for row in access_rows]
+            } for row in access_rows] if include_details else []
             interface_times = [row['last_seen'] for row in (*svi_rows, *access_rows) if row['last_seen']]
+            arp_summary = arp_summaries.get(device_id, {})
+            mac_summary = mac_summaries.get(device_id, {})
             arp_times = [row['last_updated'] for row in arp_rows if row['last_updated']]
             mac_times = [row['last_updated'] for row in mac_rows if row['last_updated']]
+            if not include_details:
+                arp_times = [arp_summary.get('last_updated')] if arp_summary.get('last_updated') else []
+                mac_times = [mac_summary.get('last_updated')] if mac_summary.get('last_updated') else []
             device_row = dict(item)
-            device_info = device_metadata.get(device_id, {})
             device_row.update({
                 'device_id': device_id,
                 'device_hostname': device_hostname,
@@ -2111,30 +4819,35 @@ def _expand_vlan_rows_by_device(conn, vlan_rows: list[dict]) -> list[dict]:
                 'asset_type': device_info.get('asset_type') or 'network_device',
                 'device_category': device_info.get('device_category') or 'other',
                 'device_role': device_info.get('device_role') or 'unassigned',
+                'device_vlan_name': str(vlan_observation['vlan_name'] or '') if vlan_observation else '',
+                'device_vlan_status': str(vlan_observation['vlan_status'] or '') if vlan_observation else '',
+                'device_vlan_observed_at': str(vlan_observation['observed_at'] or '') if vlan_observation else '',
+                'device_vlan_generation': int(vlan_observation['generation'] or 0) if vlan_observation else 0,
                 'site_id': device_info.get('resolved_site_id') or device_row.get('site_id') or '',
                 'device_count': 1,
                 'device_names': device_hostname,
-                'port_count': len(port_detail_rows),
-                'port_detail_rows': port_detail_rows,
-                'port_details': '; '.join(
-                    f"{row['device_hostname']}:{row['interface_name']} - {row['description']}"
-                    for row in port_detail_rows
-                ),
-                'undocumented_port_count': sum(1 for row in port_detail_rows if not row['description']),
+                'port_count': len(access_rows),
+                'undocumented_port_count': sum(1 for row in access_rows if not str(row['description'] or '').strip()),
                 'svi_interfaces': ', '.join(str(row['interface_name'] or '') for row in svi_rows),
                 'description': '; '.join(sorted({str(row['description'] or '') for row in svi_rows if row['description']})),
                 'prefixes': ', '.join(dict.fromkeys(prefixes)),
                 'gateway': gateways[0] if gateways else '',
                 'gateway_device': device_hostname if gateways else '',
                 'gateway_interface': str(svi_rows[0]['interface_name'] or '') if gateways and svi_rows else '',
-                'arp_count': len(arp_rows),
-                'mac_count': len(mac_rows),
-                'endpoint_details': endpoint_details,
+                'arp_count': int(arp_summary.get('count') or len(arp_rows)),
+                'mac_count': int(mac_summary.get('count') or len(mac_rows)),
                 'endpoint_last_seen_at': max(arp_times + mac_times) if arp_times + mac_times else '',
                 'interface_collected_at': max(interface_times) if interface_times else '',
                 'arp_collected_at': max(arp_times) if arp_times else '',
                 'mac_collected_at': max(mac_times) if mac_times else '',
             })
+            if include_details:
+                device_row['port_detail_rows'] = port_detail_rows
+                device_row['port_details'] = '; '.join(
+                    f"{device_hostname}:{row['interface_name']} - {str(row['description'] or '')}"
+                    for row in access_rows
+                )
+                device_row['endpoint_details'] = endpoint_details or []
             scoped_rows.append(device_row)
     return sorted(
         scoped_rows,
@@ -2154,38 +4867,11 @@ def export_vlans(conn, site_id: str = '', tenant_id: str = '') -> list[dict]:
     ARP/MAC observations aggregated for that device/interface.  A gateway-only
     row is emitted when no access interface was discovered.
     """
-    from services.vlan_discovery_service import parse_vlan_id_from_interface, parse_vlan_values
-
     export_rows: list[dict] = []
     for vlan in list_vlans(conn, site_id=site_id, tenant_id=tenant_id, device_scoped=True):
         vlan_number = int(vlan.get('vlan_id') or 0)
-        scope_site = str(vlan.get('site_id') or '')
-        site_label = str(vlan.get('site_name') or vlan.get('site_code') or scope_site or '未分配站点')
-        device_id = str(vlan.get('device_id') or '')
-        device_clause = " AND d.id = ?" if device_id else ""
-        device_params = (scope_site, scope_site, device_id) if device_id else (scope_site, scope_site)
-        port_rows = conn.execute(
-            f"""SELECT i.device_id, d.hostname AS device_hostname, d.ip_address AS device_ip,
-                      i.interface_name, i.description, i.access_vlan, i.native_vlan,
-                      i.allowed_vlans
-               FROM interfaces i
-               JOIN devices d ON d.id = i.device_id
-               WHERE (? = '' OR COALESCE(d.site_id, d.site, '') = ?){device_clause}
-               ORDER BY d.hostname, i.interface_name""",
-            device_params,
-        ).fetchall()
-        access_rows: list[dict] = []
-        for row in port_rows:
-            interface_name = str(row['interface_name'] or '')
-            if parse_vlan_id_from_interface(interface_name) == vlan_number:
-                continue
-            interface_vlans = (
-                parse_vlan_values(row['access_vlan'])
-                | parse_vlan_values(row['native_vlan'])
-                | parse_vlan_values(row['allowed_vlans'])
-            )
-            if vlan_number in interface_vlans:
-                access_rows.append(dict(row))
+        site_label = str(vlan.get('site_name') or vlan.get('site_code') or vlan.get('site_id') or '未分配站点')
+        access_rows = list(vlan.get('port_detail_rows') or [])
 
         endpoint_details = vlan.get('endpoint_details') or []
         common = {
@@ -2237,17 +4923,17 @@ def export_vlans(conn, site_id: str = '', tenant_id: str = '') -> list[dict]:
             })
 
         if not access_rows:
+            gateway_device = str(vlan.get('gateway_device') or '')
+            gateway_device_ip = str(vlan.get('device_ip') or '') if (
+                not gateway_device or gateway_device == str(vlan.get('device_hostname') or '')
+            ) else ''
             export_rows.append({
                 **common,
-                '设备名称': str(vlan.get('gateway_device') or ''),
-                '设备IP': next(
-                    (str(row['device_ip'] or '') for row in port_rows
-                     if str(row['device_hostname'] or '') == str(vlan.get('gateway_device') or '')),
-                    '',
-                ),
+                '设备名称': gateway_device,
+                '设备IP': gateway_device_ip,
                 '接入接口': str(vlan.get('gateway_interface') or ''),
                 '接口描述': str(vlan.get('description') or ''),
-                'ARP/MAC信息': endpoint_text(str(vlan.get('gateway_device') or ''), ''),
+                'ARP/MAC信息': endpoint_text(gateway_device, ''),
             })
     return export_rows
 
@@ -2275,6 +4961,8 @@ def create_vlan(conn, *, vlan_id: int, name: str, site_id: str | None = None,
         "INSERT INTO vlans (id, vlan_id, name, site_id, status, tenant_id) VALUES (?, ?, ?, ?, ?, ?)",
         (pk, int(vlan_id), name, site_id, status, tenant_id or _DEFAULT_TENANT),
     )
+    from services.cmdb_version_service import bump_read_versions
+    bump_read_versions(conn, ("vlans", "bindings"))
     conn.commit()
     logger.info(f"[CmdbService] Created VLAN {vlan_id} ('{name}')")
     return get_vlan(conn, pk)
@@ -2303,6 +4991,8 @@ def update_vlan(conn, vlan_pk: str, **fields) -> dict:
         return get_vlan(conn, vlan_pk)
     params.append(vlan_pk)
     conn.execute(f"UPDATE vlans SET {', '.join(updates)} WHERE id = ?", params)
+    from services.cmdb_version_service import bump_read_versions
+    bump_read_versions(conn, ("vlans", "bindings"))
     conn.commit()
     return get_vlan(conn, vlan_pk)
 
@@ -2322,6 +5012,8 @@ def delete_vlan(conn, vlan_pk: str) -> None:
         )
     _raise_if_referenced(conn, "VLAN", refs)
     conn.execute("DELETE FROM vlans WHERE id = ?", (vlan_pk,))
+    from services.cmdb_version_service import bump_read_versions
+    bump_read_versions(conn, ("vlans", "bindings"))
     conn.commit()
     logger.info(f"[CmdbService] Deleted VLAN {vlan_pk}")
 
@@ -2334,7 +5026,11 @@ def list_vlan_business_bindings(
     site_id: str = '',
     vrf_id: str = '',
     vlan_id: int | None = None,
-) -> list[dict]:
+    q: str = '',
+    status: str = '',
+    page: int | None = None,
+    page_size: int = 20,
+) -> list[dict] | dict:
     clauses = []
     params: list = []
     if site_id:
@@ -2346,20 +5042,54 @@ def list_vlan_business_bindings(
     if vlan_id is not None:
         clauses.append('b.vlan_id = ?')
         params.append(int(vlan_id))
+    if status:
+        clauses.append('b.status = ?')
+        params.append(status)
+    if q and q.strip():
+        pattern = f"%{q.strip().lower()}%"
+        clauses.append(
+            "(LOWER(b.business_system) LIKE ? OR LOWER(COALESCE(b.department, '')) LIKE ? "
+            "OR LOWER(COALESCE(b.owner, '')) LIKE ? OR LOWER(COALESCE(b.description, '')) LIKE ? "
+            "OR CAST(b.vlan_id AS TEXT) LIKE ?)"
+        )
+        params.extend([pattern, pattern, pattern, pattern, pattern])
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ''
-    rows = conn.execute(
-        f'''SELECT b.*, s.site_name, s.site_code, r.vrf_name,
-                   v.name AS vlan_name, v.status AS vlan_status
-            FROM vlan_business_bindings b
+    base_query = f'''FROM vlan_business_bindings b
             LEFT JOIN sites s ON s.id = NULLIF(b.site_id, '')
             LEFT JOIN vrfs r ON r.id = NULLIF(b.vrf_id, '')
             LEFT JOIN vlans v ON v.vlan_id = b.vlan_id
                               AND COALESCE(v.site_id, '') = b.site_id
-            {where}
-            ORDER BY b.site_id, b.vrf_id, b.vlan_id, b.business_system''',
-        tuple(params),
+            {where}'''
+    select_columns = '''SELECT b.*, s.site_name, s.site_code, r.vrf_name,
+                   v.name AS vlan_name, v.status AS vlan_status
+            '''
+    if page is None:
+        rows = conn.execute(
+            f'''{select_columns}{base_query}
+                ORDER BY b.site_id, b.vrf_id, b.vlan_id, b.business_system''',
+            tuple(params),
+        ).fetchall()
+        return [_row_to_dict(row) for row in rows]
+
+    normalized_page = max(1, int(page))
+    normalized_page_size = min(100, max(1, int(page_size or 20)))
+    count_row = conn.execute(f"SELECT COUNT(DISTINCT b.id) AS total {base_query}", tuple(params)).fetchone()
+    total = int(count_row['total'] or 0) if count_row else 0
+    rows = conn.execute(
+        f'''SELECT b.*, s.site_name, s.site_code, r.vrf_name,
+                   v.name AS vlan_name, v.status AS vlan_status
+            {base_query}
+            ORDER BY b.site_id, b.vrf_id, b.vlan_id, b.business_system
+            LIMIT ? OFFSET ?''',
+        (*params, normalized_page_size, (normalized_page - 1) * normalized_page_size),
     ).fetchall()
-    return [_row_to_dict(row) for row in rows]
+    return {
+        'items': [_row_to_dict(row) for row in rows],
+        'total': total,
+        'page': normalized_page,
+        'page_size': normalized_page_size,
+        'total_pages': max(1, -(-total // normalized_page_size)),
+    }
 
 
 def get_vlan_business_binding(conn, binding_id: str) -> dict:
@@ -2447,6 +5177,8 @@ def create_vlan_business_binding(conn, **fields) -> dict:
         (binding_id, site_id, vrf_id, vlan_id, business_system, department, owner,
          business_level, status, description, now, now),
     )
+    from services.cmdb_version_service import bump_read_versions
+    bump_read_versions(conn, ("bindings",))
     conn.commit()
     return get_vlan_business_binding(conn, binding_id)
 
@@ -2489,6 +5221,8 @@ def update_vlan_business_binding(conn, binding_id: str, **fields) -> dict:
          str(merged.get('owner') or '').strip(), business_level, status,
          str(merged.get('description') or '').strip(), _utc_now(), binding_id),
     )
+    from services.cmdb_version_service import bump_read_versions
+    bump_read_versions(conn, ("bindings",))
     conn.commit()
     return get_vlan_business_binding(conn, binding_id)
 
@@ -2496,4 +5230,6 @@ def update_vlan_business_binding(conn, binding_id: str, **fields) -> dict:
 def delete_vlan_business_binding(conn, binding_id: str) -> None:
     get_vlan_business_binding(conn, binding_id)
     conn.execute('DELETE FROM vlan_business_bindings WHERE id = ?', (binding_id,))
+    from services.cmdb_version_service import bump_read_versions
+    bump_read_versions(conn, ("bindings",))
     conn.commit()

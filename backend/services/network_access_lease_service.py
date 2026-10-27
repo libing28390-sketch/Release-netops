@@ -17,9 +17,13 @@ from database import _USE_PG, get_db_connection
 logger = logging.getLogger(__name__)
 
 NETWORK_SSH_PURPOSE = "network_ssh"
+CMDB_SSH_PURPOSE = "cmdb_cli"
+CMDB_SSH_GLOBAL_CAPACITY = 3
+CMDB_SSH_DEVICE_CAPACITY = 1
 DEFAULT_LEASE_SECONDS = 90.0
 DEFAULT_HEARTBEAT_SECONDS = 20.0
 _RETRY_INTERVAL_SECONDS = 0.05
+_SUPPORTED_CAPACITY_CLASSES = frozenset({NETWORK_SSH_PURPOSE, CMDB_SSH_PURPOSE})
 
 
 class NetworkAccessLeaseError(TimeoutError):
@@ -33,6 +37,7 @@ class _LeaseClaim:
     global_slot_id: int
     device_id: str | None
     device_slot_id: int | None
+    purpose: str = NETWORK_SSH_PURPOSE
 
 
 def _positive_capacity(value: Any, default: int) -> int:
@@ -40,6 +45,13 @@ def _positive_capacity(value: Any, default: int) -> int:
         return max(1, int(value))
     except (TypeError, ValueError):
         return default
+
+
+def _capacity_purpose(capacity_class: str) -> str:
+    normalized = str(capacity_class or "").strip()
+    if normalized not in _SUPPORTED_CAPACITY_CLASSES:
+        raise ValueError("capacity_class must be 'network_ssh' or 'cmdb_cli'")
+    return normalized
 
 
 def _claim_slots_once(
@@ -50,6 +62,7 @@ def _claim_slots_once(
     global_capacity: int,
     device_capacity: int,
     lease_seconds: float,
+    purpose: str = NETWORK_SSH_PURPOSE,
 ) -> _LeaseClaim | None:
     """Claim the global and optional device rows in one short transaction."""
     if not _USE_PG:
@@ -65,7 +78,7 @@ def _claim_slots_once(
               FROM generate_series(0, ? - 1) AS slots(slot_id)
             ON CONFLICT (purpose, slot_id) DO NOTHING
             """,
-            (NETWORK_SSH_PURPOSE, global_capacity),
+            (purpose, global_capacity),
         )
 
         if device_id:
@@ -79,7 +92,7 @@ def _claim_slots_once(
                   FROM generate_series(0, ? - 1) AS slots(slot_id)
                 ON CONFLICT (canonical_device_id, purpose, slot_id) DO NOTHING
                 """,
-                (device_id, NETWORK_SSH_PURPOSE, device_capacity),
+                (device_id, purpose, device_capacity),
             )
 
         global_row = connection.execute(
@@ -91,7 +104,7 @@ def _claim_slots_once(
              LIMIT 1
              FOR UPDATE SKIP LOCKED
             """,
-            (NETWORK_SSH_PURPOSE, global_capacity),
+            (purpose, global_capacity),
         ).fetchone()
         if global_row is None:
             connection.commit()
@@ -109,7 +122,7 @@ def _claim_slots_once(
                  LIMIT 1
                  FOR UPDATE SKIP LOCKED
                 """,
-                (device_id, NETWORK_SSH_PURPOSE, device_capacity),
+                (device_id, purpose, device_capacity),
             ).fetchone()
             if device_row is None:
                 # The global row is only locked, not changed; committing here
@@ -127,7 +140,7 @@ def _claim_slots_once(
                    updated_at = clock_timestamp()
              WHERE purpose = ? AND slot_id = ?
             """,
-            (owner_id, lease_token, lease_seconds, NETWORK_SSH_PURPOSE, global_slot_id),
+            (owner_id, lease_token, lease_seconds, purpose, global_slot_id),
         )
         if global_update.rowcount != 1:
             raise RuntimeError("global SSH slot changed while locked")
@@ -147,7 +160,7 @@ def _claim_slots_once(
                     lease_token,
                     lease_seconds,
                     device_id,
-                    NETWORK_SSH_PURPOSE,
+                    purpose,
                     device_slot_id,
                 ),
             )
@@ -161,6 +174,7 @@ def _claim_slots_once(
             global_slot_id=global_slot_id,
             device_id=device_id,
             device_slot_id=device_slot_id,
+            purpose=purpose,
         )
     except Exception:
         try:
@@ -187,7 +201,7 @@ def _renew_claim(claim: _LeaseClaim, lease_seconds: float) -> bool:
             """,
             (
                 lease_seconds,
-                NETWORK_SSH_PURPOSE,
+                claim.purpose,
                 claim.global_slot_id,
                 claim.owner_id,
                 claim.lease_token,
@@ -210,7 +224,7 @@ def _renew_claim(claim: _LeaseClaim, lease_seconds: float) -> bool:
                 (
                     lease_seconds,
                     claim.device_id,
-                    NETWORK_SSH_PURPOSE,
+                    claim.purpose,
                     claim.device_slot_id,
                     claim.owner_id,
                     claim.lease_token,
@@ -246,7 +260,7 @@ def _release_claim(claim: _LeaseClaim) -> bool:
                AND lease_owner = ? AND lease_token = ?
             """,
             (
-                NETWORK_SSH_PURPOSE,
+                claim.purpose,
                 claim.global_slot_id,
                 claim.owner_id,
                 claim.lease_token,
@@ -268,7 +282,7 @@ def _release_claim(claim: _LeaseClaim) -> bool:
                 """,
                 (
                     claim.device_id,
-                    NETWORK_SSH_PURPOSE,
+                    claim.purpose,
                     claim.device_slot_id,
                     claim.owner_id,
                     claim.lease_token,
@@ -299,6 +313,7 @@ class NetworkAccessLease:
         self.global_slot_id = claim.global_slot_id
         self.device_id = claim.device_id
         self.device_slot_id = claim.device_slot_id
+        self.purpose = claim.purpose
         self._claim = claim
         self._lease_seconds = lease_seconds
         self._heartbeat_seconds = heartbeat_seconds
@@ -368,6 +383,7 @@ class NetworkAccessLease:
 
 def acquire_network_ssh_lease(
     *,
+    capacity_class: str = NETWORK_SSH_PURPOSE,
     device_id: str | None = None,
     global_capacity: int | None = None,
     device_capacity: int | None = None,
@@ -379,16 +395,34 @@ def acquire_network_ssh_lease(
 
     Database errors fail closed.  Transactions cover only slot seeding and
     claim/renew/release statements; no transaction remains open while callers
-    perform network I/O.
+    perform network I/O. ``cmdb_cli`` uses an independent purpose with hard
+    limits of three global and one per-device slot.
     """
-    resolved_global_capacity = _positive_capacity(
-        global_capacity if global_capacity is not None else getattr(settings, "NETWORK_SSH_GLOBAL_CONCURRENCY", 20),
-        20,
-    )
-    resolved_device_capacity = _positive_capacity(
-        device_capacity if device_capacity is not None else getattr(settings, "NETWORK_SSH_PER_DEVICE_CONCURRENCY", 1),
-        1,
-    )
+    purpose = _capacity_purpose(capacity_class)
+    if purpose == CMDB_SSH_PURPOSE:
+        default_global_capacity = CMDB_SSH_GLOBAL_CAPACITY
+        default_device_capacity = CMDB_SSH_DEVICE_CAPACITY
+        resolved_global_capacity = _positive_capacity(
+            global_capacity if global_capacity is not None else default_global_capacity,
+            default_global_capacity,
+        )
+        resolved_device_capacity = _positive_capacity(
+            device_capacity if device_capacity is not None else default_device_capacity,
+            default_device_capacity,
+        )
+        resolved_global_capacity = min(resolved_global_capacity, CMDB_SSH_GLOBAL_CAPACITY)
+        resolved_device_capacity = min(resolved_device_capacity, CMDB_SSH_DEVICE_CAPACITY)
+    else:
+        resolved_global_capacity = _positive_capacity(
+            global_capacity if global_capacity is not None
+            else getattr(settings, "NETWORK_SSH_GLOBAL_CONCURRENCY", 20),
+            20,
+        )
+        resolved_device_capacity = _positive_capacity(
+            device_capacity if device_capacity is not None
+            else getattr(settings, "NETWORK_SSH_PER_DEVICE_CONCURRENCY", 1),
+            1,
+        )
     resolved_wait_timeout = max(
         0.0,
         float(
@@ -418,6 +452,7 @@ def acquire_network_ssh_lease(
                 global_capacity=resolved_global_capacity,
                 device_capacity=resolved_device_capacity,
                 lease_seconds=resolved_lease_seconds,
+                purpose=purpose,
             )
         except Exception:
             logger.warning("Shared SSH lease acquisition failed; denying SSH access")
@@ -439,6 +474,9 @@ def acquire_network_ssh_lease(
 
 
 __all__ = [
+    "CMDB_SSH_DEVICE_CAPACITY",
+    "CMDB_SSH_GLOBAL_CAPACITY",
+    "CMDB_SSH_PURPOSE",
     "DEFAULT_HEARTBEAT_SECONDS",
     "DEFAULT_LEASE_SECONDS",
     "NETWORK_SSH_PURPOSE",

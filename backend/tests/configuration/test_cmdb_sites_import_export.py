@@ -1,4 +1,7 @@
+import uuid
+
 from api import cmdb as cmdb_api
+from services import cmdb_service
 from schemas.schemas import SiteCreate, SiteImportRequest
 
 
@@ -86,4 +89,29 @@ def test_site_import_supports_domestic_chinese_phone_numbers(isolated_db, monkey
     assert imported['success'] is True
     assert imported['data']['imported'] == 2
     assert imported['data']['failed'] == 0
+
+
+def test_unpaged_site_cache_uses_database_revision_across_workers(isolated_db):
+    query = f"cross-worker-{uuid.uuid4().hex}"
+    site_name = f"Cross Worker Site {query}"
+
+    first = cmdb_api.api_list_sites(
+        tenant_id='', q=query, page=None, page_size=20, _user={'role': 'Viewer'}
+    )
+    assert first['data'] == []
+
+    # Simulate a write in another API worker: the shared PostgreSQL revision
+    # advances, while this process-local read cache receives no invalidation.
+    writer = cmdb_api.get_db_connection()
+    try:
+        created = cmdb_service.create_site(writer, site_name=site_name)
+    finally:
+        writer.close()
+
+    second = cmdb_api.api_list_sites(
+        tenant_id='', q=query, page=None, page_size=20, _user={'role': 'Viewer'}
+    )
+
+    assert [row['id'] for row in second['data']] == [created['id']]
+    assert second['data'][0]['site_name'] == site_name
 

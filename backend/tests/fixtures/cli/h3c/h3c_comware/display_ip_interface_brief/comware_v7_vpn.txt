@@ -1,0 +1,12 @@
+S6850-5#
+display ip interface brief
+
+*DOWN: administratively down
+(S): spoofing  (L): loopback
+  Interface       Physical   Protocol   IP address/Mask   VPN instance          Description
+  Loop0            UP         UP(S)      192.0.2.2/32      CORE-VPN               Router identifier
+  XGE1/0/50        UP         UP         198.51.100.2/30   tenant-blue           Core uplink to aggregation switch
+  Vlan7            UP         UP         203.0.113.2/24    --
+  Vlan8            DOWN       DOWN       --                management-vrf        Management SVI
+
+S6850-5#

@@ -29,6 +29,21 @@ interface Props {
 
 type EntityKey = 'credentials' | 'devices' | 'interfaces' | 'sites' | 'vrfs' | 'vlans' | 'vlan-business';
 
+const ENTITY_KEYS: readonly EntityKey[] = ['credentials', 'devices', 'interfaces', 'sites', 'vrfs', 'vlans', 'vlan-business'];
+const VLAN_FORM_PAGE_SIZE = 100;
+const VLAN_DETAIL_CACHE_LIMIT = 12;
+
+function isEntityKey(value: string | undefined): value is EntityKey {
+  return Boolean(value && ENTITY_KEYS.includes(value as EntityKey));
+}
+
+export function calculatePageCount(total: number, pageSize: number): number {
+  const normalizedTotal = Number.isFinite(total) ? Math.max(0, total) : 0;
+  const normalizedPageSize = Number.isFinite(pageSize) ? Math.floor(pageSize) : 0;
+  if (normalizedPageSize <= 0) return 1;
+  return Math.max(1, Math.ceil(normalizedTotal / normalizedPageSize));
+}
+
 /**
  * Interface descriptions are supplied by the dedicated interface-description
  * collector. Keep the explicit alias for newer API responses, while retaining
@@ -79,8 +94,8 @@ function humanizeCredentialError(message: string, zh: boolean): string {
   return value;
 }
 
-async function apiList<T>(url: string): Promise<T[]> {
-  const res = await fetch(url, { headers: authHeaders() });
+async function apiList<T>(url: string, signal?: AbortSignal): Promise<T[]> {
+  const res = await fetch(url, { headers: authHeaders(), signal });
   const json = await res.json();
   if (!res.ok || !json.success) throw new Error(formatErrorDetail(json.detail || json.message));
   return (json.data || []) as T[];
@@ -110,8 +125,8 @@ function dedupeSiteRows<T extends Record<string, any>>(rows: T[]): T[] {
   return Array.from(merged.values()).sort((left, right) => String(left.site_name || left.site_code || '').localeCompare(String(right.site_name || right.site_code || '')));
 }
 
-async function apiListPage<T>(url: string): Promise<{ items: T[]; total: number; page: number; page_size: number; total_pages: number; summary?: Record<string, number>; site_summary?: Array<{ key: string; label: string; count: number }>; device_options?: Array<{ value: string; label: string }>; tree?: any[] }> {
-  const res = await fetch(url, { headers: authHeaders() });
+async function apiListPage<T>(url: string, signal?: AbortSignal): Promise<{ items: T[]; total: number; page: number; page_size: number; total_pages: number; summary?: Record<string, number>; site_summary?: Array<{ key: string; label: string; count: number }>; device_options?: Array<{ value: string; label: string }>; tree?: any[] }> {
+  const res = await fetch(url, { headers: authHeaders(), signal });
   const json = await res.json();
   if (!res.ok || !json.success) throw new Error(formatErrorDetail(json.detail || json.message));
   const data = json.data || {};
@@ -125,6 +140,37 @@ async function apiListPage<T>(url: string): Promise<{ items: T[]; total: number;
     site_summary: Array.isArray(data.site_summary) ? data.site_summary : [],
     device_options: data.device_options || [],
     tree: Array.isArray(data.tree) ? data.tree : [],
+  };
+}
+
+type VlanDetailFields = {
+  port_detail_rows: any[];
+  endpoint_details: any[];
+  meta?: Record<string, any>;
+};
+
+function vlanDetailsCacheKey(row: any): string {
+  const vlanPk = String(row?.vlan_pk ?? row?.id ?? '').trim();
+  if (!vlanPk) return '';
+  return JSON.stringify([vlanPk, String(row?.site_id ?? ''), String(row?.device_id ?? '')]);
+}
+
+async function apiVlanDetails(vlanPk: string, params: URLSearchParams, signal: AbortSignal): Promise<VlanDetailFields> {
+  const endpoint = `/api/cmdb/vlans/${encodeURIComponent(vlanPk)}/details`;
+  const query = params.toString();
+  const url = query ? `${endpoint}?${query}` : endpoint;
+  const res = await fetch(url, { headers: authHeaders(), signal });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || !json.success) {
+    const error: any = new Error(formatErrorDetail(json.detail || json.message));
+    error.status = res.status;
+    throw error;
+  }
+  const data = json.data || {};
+  return {
+    port_detail_rows: Array.isArray(data.port_detail_rows) ? data.port_detail_rows : [],
+    endpoint_details: Array.isArray(data.endpoint_details) ? data.endpoint_details : [],
+    meta: data.meta && typeof data.meta === 'object' ? data.meta : {},
   };
 }
 
@@ -1632,12 +1678,10 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     [],
   );
   const vlanDetailTableRef = useRef<HTMLTableElement>(null);
-  const [tab, setTab] = useState<EntityKey>((cmdbPage as EntityKey) || 'credentials');
+  const [tab, setTab] = useState<EntityKey>(isEntityKey(cmdbPage) ? cmdbPage : 'credentials');
 
   useEffect(() => {
-    if (cmdbPage) {
-      setTab(cmdbPage as EntityKey);
-    }
+    if (isEntityKey(cmdbPage)) setTab(cmdbPage);
   }, [cmdbPage]);
   const [rows, setRows] = useState<any[]>([]);
   const [sites, setSites] = useState<any[]>([]);
@@ -1648,6 +1692,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
   const [interfaceJobStatus, setInterfaceJobStatus] = useState<any | null>(null);
   const interfaceTerminalHandledRef = useRef<string | null>(null);
   const loadRequestRef = useRef(0);
+  const listRequestControllerRef = useRef<AbortController | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [credentialJobStatus, setCredentialJobStatus] = useState<any | null>(null);
@@ -1684,7 +1729,20 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
   const [geoCityLoading, setGeoCityLoading] = useState(false);
   const [geoError, setGeoError] = useState('');
   const [geoCityError, setGeoCityError] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [search, setSearch] = useState('');
+  const [serverSearchQuery, setServerSearchQuery] = useState('');
+  const [vlanSearchInput, setVlanSearchInput] = useState('');
+  const [vlanSearchQuery, setVlanSearchQuery] = useState('');
+  const [vlanBusinessStatusFilter, setVlanBusinessStatusFilter] = useState('');
+  const [vlanCatalogSearchInput, setVlanCatalogSearchInput] = useState('');
+  const [vlanCatalogSearchQuery, setVlanCatalogSearchQuery] = useState('');
+  const [vlanCatalogPage, setVlanCatalogPage] = useState(1);
+  const [vlanCatalogTotal, setVlanCatalogTotal] = useState(0);
+  const [vlanCatalogLoading, setVlanCatalogLoading] = useState(false);
+  const [vlanCatalogError, setVlanCatalogError] = useState('');
+  const [vlanCatalogRetryKey, setVlanCatalogRetryKey] = useState(0);
   const [vlanSiteFilter, setVlanSiteFilter] = useState('');
   const [vlanTreeCollapsed, setVlanTreeCollapsed] = useState(false);
   const [vlanScopeTree, setVlanScopeTree] = useState<any[]>([]);
@@ -1701,6 +1759,11 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
   const [credentialExporting, setCredentialExporting] = useState(false);
   const [credentialTemplateDownloading, setCredentialTemplateDownloading] = useState(false);
   const [vlanDetailRow, setVlanDetailRow] = useState<any | null>(null);
+  const [vlanDetailLoading, setVlanDetailLoading] = useState(false);
+  const [vlanDetailError, setVlanDetailError] = useState<{ message: string; status?: number } | null>(null);
+  const vlanDetailCacheRef = useRef(new Map<string, VlanDetailFields>());
+  const vlanDetailRequestIdRef = useRef(0);
+  const vlanDetailAbortControllerRef = useRef<AbortController | null>(null);
   const [interfaceSearchInput, setInterfaceSearchInput] = useState('');
   const [interfaceSearchQuery, setInterfaceSearchQuery] = useState('');
   const [interfacePage, setInterfacePage] = useState(1);
@@ -1720,11 +1783,38 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
   const [interfaceProfileError, setInterfaceProfileError] = useState('');
   const [interfaceProfileSaving, setInterfaceProfileSaving] = useState(false);
   const [genericListMeta, setGenericListMeta] = useState({ total: 0, page: 1, page_size: 10 });
+  const [vlanBusinessListMeta, setVlanBusinessListMeta] = useState({ total: 0, page: 1, page_size: 10 });
   const readOnlyTabs = useMemo(() => new Set<EntityKey>(['devices', 'interfaces']), []);
   const isReadOnlyTab = readOnlyTabs.has(tab);
   const isAdministrator = currentUser?.role === 'Administrator';
   const canEditInterfaceProfile = currentUser?.role === 'Administrator' || currentUser?.role === 'Operator';
-  const appliedSearch = tab === 'interfaces' ? interfaceSearchQuery : search;
+  const appliedSearch = tab === 'interfaces'
+    ? interfaceSearchQuery
+    : tab === 'vlans'
+      ? vlanSearchQuery
+      : ['sites', 'vrfs', 'vlan-business'].includes(tab)
+        ? serverSearchQuery
+        : '';
+  const serverPaginatedTab = ['sites', 'vrfs', 'vlans', 'vlan-business'].includes(tab);
+  const requestPage = serverPaginatedTab ? page : 1;
+  const requestPageSize = serverPaginatedTab ? pageSize : 10;
+
+  const applySearch = useCallback(() => {
+    const normalized = (tab === 'vlans' ? vlanSearchInput : search).trim();
+    if (tab === 'vlans') {
+      setVlanSearchInput(normalized);
+      setVlanSearchQuery(normalized);
+    } else {
+      setSearch(normalized);
+      setServerSearchQuery(normalized);
+    }
+    setPage(1);
+  }, [search, tab, vlanSearchInput]);
+
+  const applyVlanCatalogSearch = useCallback(() => {
+    setVlanCatalogSearchQuery(vlanCatalogSearchInput.trim());
+    setVlanCatalogPage(1);
+  }, [vlanCatalogSearchInput]);
 
   const applyInterfaceSearch = useCallback(() => {
     const normalized = interfaceSearchInput.trim();
@@ -1756,9 +1846,6 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     return { total, withIp, operUp, withLinks };
   }, [interfaceListMeta, rows, tab]);
 
-  // Pagination states
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
   const [siteImportOpen, setSiteImportOpen] = useState(false);
   const [siteImportFileName, setSiteImportFileName] = useState('');
   const [siteImportRows, setSiteImportRows] = useState<SiteImportRow[]>([]);
@@ -1800,6 +1887,11 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
   useFocusTrap(vlanDetailDialogRef, Boolean(vlanDetailRow));
   useFocusTrap(bindingDialogRef, Boolean(bindingModal));
   useFocusTrap(deleteDialogRef, Boolean(confirmDelete));
+
+  useEffect(() => () => {
+    vlanDetailRequestIdRef.current += 1;
+    vlanDetailAbortControllerRef.current?.abort();
+  }, []);
 
   useEffect(() => {
     const jobId = credentialJobStatus?.job_id;
@@ -2146,6 +2238,9 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
   };
 
   const load = useCallback(async () => {
+    listRequestControllerRef.current?.abort();
+    const controller = new AbortController();
+    listRequestControllerRef.current = controller;
     const requestId = ++loadRequestRef.current;
     setLoading(true);
     setError('');
@@ -2162,7 +2257,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
         endpoint = `${endpoint}?${params.toString()}`;
       }
       if (tab === 'interfaces') {
-        const pageData = await apiListPage<any>(endpoint);
+        const pageData = await apiListPage<any>(endpoint, controller.signal);
         if (requestId !== loadRequestRef.current) return;
         setRows(pageData.items);
         setInterfaceListMeta({
@@ -2176,16 +2271,16 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
         });
       } else if (tab === 'vlans') {
         const params = new URLSearchParams({
-          page: String(page),
-          page_size: String(pageSize),
-          q: search.trim(),
+          page: String(requestPage),
+          page_size: String(requestPageSize),
+          q: appliedSearch.trim(),
           status: vlanStatusFilter,
         });
         if (vlanSiteFilter) params.set('site_id', vlanSiteFilter);
         Object.entries(vlanTreeBranch).forEach(([key, value]) => {
           if (value && key !== 'site_id') params.set(key, value);
         });
-        const pageData = await apiListPage<any>(`${endpoint}?${params.toString()}`);
+        const pageData = await apiListPage<any>(`${endpoint}?${params.toString()}`, controller.signal);
         if (requestId !== loadRequestRef.current) return;
         setRows(pageData.items);
         setVlanListMeta({
@@ -2203,34 +2298,109 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
         });
         setVlanScopeTree(pageData.tree || []);
       } else {
-        const pagedEntity = ['sites', 'vrfs'].includes(tab);
+        const pagedEntity = ['sites', 'vrfs', 'vlan-business'].includes(tab);
         if (pagedEntity) {
-          const params = new URLSearchParams({ page: String(page), page_size: String(pageSize), q: search.trim() });
-          const pageData = await apiListPage<any>(`${endpoint}?${params.toString()}`);
+          const params = new URLSearchParams({ page: String(requestPage), page_size: String(requestPageSize), q: appliedSearch.trim() });
+          if (tab === 'vlan-business' && vlanBusinessStatusFilter) params.set('status', vlanBusinessStatusFilter);
+          const pageData = await apiListPage<any>(`${endpoint}?${params.toString()}`, controller.signal);
           if (requestId !== loadRequestRef.current) return;
           setRows(tab === 'sites' ? dedupeSiteRows(pageData.items) : pageData.items);
-          setGenericListMeta({ total: pageData.total, page: pageData.page, page_size: pageData.page_size });
+          if (tab === 'vlan-business') {
+            setVlanBusinessListMeta({ total: pageData.total, page: pageData.page, page_size: pageData.page_size });
+          } else {
+            setGenericListMeta({ total: pageData.total, page: pageData.page, page_size: pageData.page_size });
+          }
         } else {
-          const data = await apiList<any>(endpoint);
+          const data = await apiList<any>(endpoint, controller.signal);
           if (requestId !== loadRequestRef.current) return;
           setRows(tab === 'sites' ? dedupeSiteRows(data) : data);
           setGenericListMeta({ total: data.length, page: 1, page_size: data.length || pageSize });
         }
       }
       if (tab === 'vlans' && sites.length === 0) {
-        const siteRows = dedupeSiteRows(await apiList<any>('/api/cmdb/sites').catch(() => []));
+        const siteRows = dedupeSiteRows(await apiList<any>('/api/cmdb/sites', controller.signal).catch(() => []));
         if (requestId === loadRequestRef.current) setSites(siteRows);
       }
     } catch (e: any) {
-      if (requestId !== loadRequestRef.current) return;
+      if (requestId !== loadRequestRef.current || controller.signal.aborted || e?.name === 'AbortError') return;
       setError(e.message || String(e));
       setRows([]);
     } finally {
       if (requestId === loadRequestRef.current) setLoading(false);
     }
-  }, [tab, appliedSearch, interfacePage, interfacePageSize, page, pageSize, vlanSiteFilter, vlanStatusFilter, vlanTreeBranch]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tab, appliedSearch, interfacePage, interfacePageSize, requestPage, requestPageSize, vlanBusinessStatusFilter, vlanSiteFilter, vlanStatusFilter, vlanTreeBranch]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    void load();
+    return () => listRequestControllerRef.current?.abort();
+  }, [load]);
+
+  const closeVlanDetails = () => {
+    vlanDetailRequestIdRef.current += 1;
+    vlanDetailAbortControllerRef.current?.abort();
+    vlanDetailAbortControllerRef.current = null;
+    setVlanDetailLoading(false);
+    setVlanDetailError(null);
+    setVlanDetailRow(null);
+  };
+
+  const loadVlanDetails = async (row: any, force = false) => {
+    const selectedRow = row?.site_id || !vlanSiteFilter ? row : { ...row, site_id: vlanSiteFilter };
+    const cacheKey = vlanDetailsCacheKey(selectedRow);
+    const vlanPk = String(row?.vlan_pk ?? row?.id ?? '').trim();
+    const requestId = ++vlanDetailRequestIdRef.current;
+    vlanDetailAbortControllerRef.current?.abort();
+    vlanDetailAbortControllerRef.current = null;
+    setVlanDetailError(null);
+
+    const cachedDetails = !force && cacheKey ? vlanDetailCacheRef.current.get(cacheKey) : undefined;
+    setVlanDetailRow({ ...selectedRow, ...(cachedDetails || { port_detail_rows: undefined, endpoint_details: undefined, meta: undefined }) });
+    if (cachedDetails) {
+      vlanDetailCacheRef.current.delete(cacheKey);
+      vlanDetailCacheRef.current.set(cacheKey, cachedDetails);
+      setVlanDetailLoading(false);
+      return;
+    }
+    if (!vlanPk) {
+      setVlanDetailLoading(false);
+      setVlanDetailError({ message: zh ? 'VLAN 记录缺少标识，无法加载明细。' : 'This VLAN record has no identifier, so its details cannot be loaded.' });
+      return;
+    }
+
+    const params = new URLSearchParams();
+    const siteId = String(selectedRow?.site_id ?? '').trim();
+    const deviceId = String(selectedRow?.device_id ?? '').trim();
+    if (siteId) params.set('site_id', siteId);
+    if (deviceId) params.set('device_id', deviceId);
+    const controller = new AbortController();
+    vlanDetailAbortControllerRef.current = controller;
+    setVlanDetailLoading(true);
+
+    try {
+      const details = await apiVlanDetails(vlanPk, params, controller.signal);
+      if (controller.signal.aborted || requestId !== vlanDetailRequestIdRef.current) return;
+      if (cacheKey) {
+        const cache = vlanDetailCacheRef.current;
+        cache.delete(cacheKey);
+        cache.set(cacheKey, details);
+        if (cache.size > VLAN_DETAIL_CACHE_LIMIT) {
+          const oldestKey = cache.keys().next().value;
+          if (oldestKey) cache.delete(oldestKey);
+        }
+      }
+      setVlanDetailRow(current => current && vlanDetailsCacheKey(current) === cacheKey
+        ? { ...current, ...details }
+        : current);
+    } catch (error: any) {
+      if (controller.signal.aborted || requestId !== vlanDetailRequestIdRef.current || error?.name === 'AbortError') return;
+      setVlanDetailError({ message: error?.message || String(error), status: error?.status });
+    } finally {
+      if (requestId === vlanDetailRequestIdRef.current) {
+        vlanDetailAbortControllerRef.current = null;
+        setVlanDetailLoading(false);
+      }
+    }
+  };
 
   const openInterfaceProfile = (row: any) => {
     if (!canEditInterfaceProfile) return;
@@ -2679,25 +2849,55 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     };
   }, [interfaceJobStatus?.job_id, tab, zh, load]);
 
-  // Preload scope catalogs so VLAN and VLAN-business forms can be edited
-  // without another round trip when the modal opens.
+  // Site and VRF catalogs are compact reference lists used across the CMDB.
+  // VLAN options are larger and are fetched only while the business form is open.
   useEffect(() => {
-    apiList<any>('/api/cmdb/sites').then(data => setSites(dedupeSiteRows(data))).catch(() => {});
-    apiList<any>('/api/cmdb/vrfs').then(setVrfs).catch(() => {});
-    let cancelled = false;
-    const loadVlanCatalog = async () => {
-      try {
-        const firstPage = await apiListPage<any>('/api/cmdb/vlans?page=1&page_size=100&status=all');
-        const pages = Array.from({ length: Math.max(0, firstPage.total_pages - 1) }, (_, index) => index + 2);
-        const remaining = await Promise.all(pages.map(pageNumber => apiListPage<any>(`/api/cmdb/vlans?page=${pageNumber}&page_size=100&status=all`)));
-        if (!cancelled) setVlanCatalog([firstPage, ...remaining].flatMap(pageData => pageData.items));
-      } catch {
-        if (!cancelled) setVlanCatalog([]);
-      }
-    };
-    void loadVlanCatalog();
-    return () => { cancelled = true; };
+    const controller = new AbortController();
+    apiList<any>('/api/cmdb/sites', controller.signal).then(data => setSites(dedupeSiteRows(data))).catch(() => {});
+    apiList<any>('/api/cmdb/vrfs', controller.signal).then(setVrfs).catch(() => {});
+    return () => controller.abort();
   }, []);
+
+  useEffect(() => {
+    if (!modalOpen || tab !== 'vlan-business') return undefined;
+    const controller = new AbortController();
+    let active = true;
+    const params = new URLSearchParams({
+      page: String(vlanCatalogPage),
+      page_size: String(VLAN_FORM_PAGE_SIZE),
+      site_id: String(form.site_id || 'unassigned'),
+      q: vlanCatalogSearchQuery,
+      status: 'all',
+    });
+    setVlanCatalogLoading(true);
+    setVlanCatalogError('');
+    apiListPage<any>(`/api/cmdb/vlans?${params.toString()}`, controller.signal)
+      .then(pageData => {
+        if (!active) return;
+        setVlanCatalog(pageData.items);
+        setVlanCatalogTotal(pageData.total);
+      })
+      .catch(error => {
+        if (!active || controller.signal.aborted || error?.name === 'AbortError') return;
+        setVlanCatalog([]);
+        setVlanCatalogTotal(0);
+        setVlanCatalogError(error?.message || (zh ? 'VLAN 目录加载失败' : 'Could not load VLAN options'));
+      })
+      .finally(() => {
+        if (active) setVlanCatalogLoading(false);
+      });
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [form.site_id, modalOpen, tab, vlanCatalogPage, vlanCatalogRetryKey, vlanCatalogSearchQuery, zh]);
+
+  const vlanCatalogTotalPages = calculatePageCount(vlanCatalogTotal, VLAN_FORM_PAGE_SIZE);
+  useEffect(() => {
+    if (modalOpen && tab === 'vlan-business' && vlanCatalogPage > vlanCatalogTotalPages) {
+      setVlanCatalogPage(vlanCatalogTotalPages);
+    }
+  }, [modalOpen, tab, vlanCatalogPage, vlanCatalogTotalPages]);
 
   // Reset page number on tab or the active (submitted for interfaces) search query change.
   useEffect(() => {
@@ -2728,6 +2928,12 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     setNotice('');
     setFieldErrors({});
     setVisiblePasswordFields({});
+    if (tab === 'vlan-business') {
+      setVlanCatalogSearchInput('');
+      setVlanCatalogSearchQuery('');
+      setVlanCatalogPage(1);
+      setVlanCatalogError('');
+    }
     setModalOpen(true);
   };
 
@@ -2742,6 +2948,13 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     });
     if (tab === 'credentials') {
       f.enable_password_enabled = Boolean(row.enable_password_supported || row.has_enable_password);
+    }
+    if (tab === 'vlan-business') {
+      const vlanSearch = String(row.vlan_id || '');
+      setVlanCatalogSearchInput(vlanSearch);
+      setVlanCatalogSearchQuery(vlanSearch);
+      setVlanCatalogPage(1);
+      setVlanCatalogError('');
     }
     setForm(f);
     setEditing(row);
@@ -3352,6 +3565,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
   };
 
   const filteredRows = useMemo(() => {
+    if (serverPaginatedTab) return rows;
     if (!search.trim()) return rows;
     const q = search.toLowerCase();
     const cols = fieldDefs[tab];
@@ -3362,11 +3576,17 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
         return String(val).toLowerCase().includes(q);
       });
     });
-  }, [rows, tab, search, fieldDefs]);
+  }, [rows, tab, search, fieldDefs, serverPaginatedTab]);
 
   // Compute pagination values
-  const totalForTab = (tab === 'sites' || tab === 'vrfs') ? genericListMeta.total : filteredRows.length;
-  const totalPages = Math.max(1, Math.ceil(totalForTab / pageSize));
+  const totalForTab = tab === 'vlans'
+    ? vlanListMeta.total
+    : tab === 'vlan-business'
+      ? vlanBusinessListMeta.total
+      : (tab === 'sites' || tab === 'vrfs')
+        ? genericListMeta.total
+        : filteredRows.length;
+  const totalPages = calculatePageCount(totalForTab, pageSize);
 
   // Clamp page selection
   useEffect(() => {
@@ -3374,10 +3594,10 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
   }, [page, totalPages]);
 
   const paginatedRows = useMemo(() => {
-    if (tab === 'sites' || tab === 'vrfs') return filteredRows;
+    if (serverPaginatedTab) return filteredRows;
     const start = (page - 1) * pageSize;
     return filteredRows.slice(start, start + pageSize);
-  }, [filteredRows, page, pageSize, tab]);
+  }, [filteredRows, page, pageSize, serverPaginatedTab]);
 
   // Interface results are already paginated and filtered by the API. Keep the
   // draft search text from hiding the last response before the user submits it.
@@ -3440,7 +3660,6 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     );
   };
 
-  const vlanTotalPages = Math.max(1, Math.ceil(vlanListMeta.total / pageSize));
   const paginatedVlanRows = vlanFilteredRows;
 
   const vlanSummary = vlanListMeta.summary;
@@ -3450,10 +3669,6 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
   const vlanPageDeviceCount = vlanPageDeviceKeys.size || vlanFilteredRows.reduce((total, row) => total + Number(row.device_count || 0), 0);
   const vlanPagePortCount = vlanFilteredRows.reduce((total, row) => total + Number(row.port_count || 0), 0);
 
-  useEffect(() => {
-    if (tab === 'vlans' && page > vlanTotalPages) setPage(vlanTotalPages);
-  }, [page, tab, vlanTotalPages]);
-
   const interfaceDeviceCount = useMemo(() => {
     if (tab !== 'interfaces') return 0;
     const deviceKeys = new Set(
@@ -3462,43 +3677,52 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     return deviceKeys.size;
   }, [rows, tab]);
 
-  const renderDataRow = (row: any, index: number | string) => (
-    <tr key={idOf(row) || index} className="hover:bg-slate-50/80 transition-colors group">
-      {tableColumns.map(c => (
-        <td key={c.key} className={`${tab === 'credentials' ? 'px-4 py-3 align-middle' : 'px-6 py-4'} ${tab === 'interfaces' ? 'whitespace-nowrap' : ''}`}>{renderCell(row, c)}</td>
-      ))}
-      {(!isReadOnlyTab || (tab === 'interfaces' && canEditInterfaceProfile)) && (
-        <TableActionCell className={tab === 'credentials' ? 'px-4 py-3 align-middle' : 'px-6 py-4 align-middle'}>
-          <ActionIconGroup label={zh ? '记录操作' : 'Record actions'} className="opacity-0 transition-opacity group-hover:opacity-100">
-            {tab === 'interfaces' ? (
-              canEditInterfaceProfile && !String(row.id || '').startsWith('ipinv-') ? (
-                <ActionIconButton
-                  icon={Pencil}
-                  label={zh ? '编辑监控配置' : 'Edit monitoring profile'}
-                  variant="accent"
-                  onClick={() => openInterfaceProfile(row)}
-                />
-              ) : null
-            ) : (
-              <>
-                <ActionIconButton
-                  icon={Pencil}
-                  label={zh ? '编辑' : 'Edit'}
-                  onClick={() => openEdit(row)}
-                />
-                <ActionIconButton
-                  icon={Trash2}
-                  label={zh ? '删除' : 'Delete'}
-                  variant="danger"
-                  onClick={() => openDeleteConfirm(row)}
-                />
-              </>
-            )}
-          </ActionIconGroup>
-        </TableActionCell>
-      )}
-    </tr>
-  );
+  const renderDataRow = (row: any, index: number | string) => {
+    const interfaceId = String(row.id || '').trim();
+    const canEditRowInterfaceProfile = canEditInterfaceProfile
+      && Boolean(interfaceId)
+      && row.profile_editable !== false
+      && !interfaceId.startsWith('ipinv-')
+      && !interfaceId.startsWith('cmdb-interface-observed:');
+
+    return (
+      <tr key={idOf(row) || index} className="hover:bg-slate-50/80 transition-colors group">
+        {tableColumns.map(c => (
+          <td key={c.key} className={`${tab === 'credentials' ? 'px-4 py-3 align-middle' : 'px-6 py-4'} ${tab === 'interfaces' ? 'whitespace-nowrap' : ''}`}>{renderCell(row, c)}</td>
+        ))}
+        {(!isReadOnlyTab || (tab === 'interfaces' && canEditInterfaceProfile)) && (
+          <TableActionCell className={tab === 'credentials' ? 'px-4 py-3 align-middle' : 'px-6 py-4 align-middle'}>
+            <ActionIconGroup label={zh ? '记录操作' : 'Record actions'} className="opacity-0 transition-opacity group-hover:opacity-100">
+              {tab === 'interfaces' ? (
+                canEditRowInterfaceProfile ? (
+                  <ActionIconButton
+                    icon={Pencil}
+                    label={zh ? '编辑监控配置' : 'Edit monitoring profile'}
+                    variant="accent"
+                    onClick={() => openInterfaceProfile(row)}
+                  />
+                ) : null
+              ) : (
+                <>
+                  <ActionIconButton
+                    icon={Pencil}
+                    label={zh ? '编辑' : 'Edit'}
+                    onClick={() => openEdit(row)}
+                  />
+                  <ActionIconButton
+                    icon={Trash2}
+                    label={zh ? '删除' : 'Delete'}
+                    variant="danger"
+                    onClick={() => openDeleteConfirm(row)}
+                  />
+                </>
+              )}
+            </ActionIconGroup>
+          </TableActionCell>
+        )}
+      </tr>
+    );
+  };
 
   const buildManagementExport = async () => {
     let exportRows = filteredRows;
@@ -3664,25 +3888,69 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                 <option value="deprecated">{zh ? '已弃用' : 'Deprecated'}</option>
               </select>
             )}
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <input
-                type="text"
-                placeholder={tab === 'vlans'
-                  ? (zh ? '搜索 VLAN、网段、网关、设备或业务...' : 'Search VLAN, prefix, gateway, device or business...')
-                  : (zh ? '搜索当前列表...' : 'Search current list...')}
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                className="h-9 w-64 rounded-md border border-slate-200 bg-white py-2 pl-10 pr-9 text-sm outline-none transition-colors focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
-              />
-              {search && (
+            {tab === 'vlan-business' && (
+              <select
+                value={vlanBusinessStatusFilter}
+                onChange={event => { setVlanBusinessStatusFilter(event.target.value); setPage(1); }}
+                aria-label={zh ? '业务绑定状态' : 'Binding status'}
+                className="h-9 rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-600 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
+              >
+                <option value="">{zh ? '所有状态' : 'All Status'}</option>
+                <option value="active">{zh ? '启用' : 'Active'}</option>
+                <option value="planned">{zh ? '规划中' : 'Planned'}</option>
+                <option value="retired">{zh ? '已停用' : 'Retired'}</option>
+              </select>
+            )}
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder={tab === 'vlans'
+                    ? (zh ? '搜索 VLAN ID 或名称...' : 'Search VLAN ID or name...')
+                    : tab === 'vlan-business'
+                      ? (zh ? '搜索业务、部门、负责人或 VLAN ID...' : 'Search business, department, owner or VLAN ID...')
+                      : (zh ? '搜索当前列表...' : 'Search current list...')}
+                  aria-label={tab === 'vlans'
+                    ? (zh ? '搜索 VLAN ID 或名称' : 'Search VLAN ID or name')
+                    : tab === 'vlan-business'
+                      ? (zh ? '搜索业务绑定' : 'Search VLAN business bindings')
+                      : (zh ? '搜索当前列表' : 'Search current list')}
+                  value={tab === 'vlans' ? vlanSearchInput : search}
+                  onChange={event => tab === 'vlans' ? setVlanSearchInput(event.target.value) : setSearch(event.target.value)}
+                  onKeyDown={event => {
+                    if (event.key === 'Enter' && serverPaginatedTab) applySearch();
+                  }}
+                  className="h-9 w-64 rounded-md border border-slate-200 bg-white py-2 pl-10 pr-9 text-sm outline-none transition-colors focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
+                />
+                {(tab === 'vlans' ? vlanSearchInput : search) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (tab === 'vlans') {
+                        setVlanSearchInput('');
+                        setVlanSearchQuery('');
+                      } else {
+                        setSearch('');
+                        if (serverPaginatedTab) setServerSearchQuery('');
+                      }
+                      setPage(1);
+                    }}
+                    aria-label={zh ? '清除搜索' : 'Clear search'}
+                    className="search-clear-button absolute right-3 top-1/2 -translate-y-1/2"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+              {serverPaginatedTab && (
                 <button
                   type="button"
-                  onClick={() => setSearch('')}
-                  aria-label={zh ? '清除搜索' : 'Clear search'}
-                  className="search-clear-button absolute right-3 top-1/2 -translate-y-1/2"
+                  onClick={applySearch}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-md border border-blue-200 bg-white px-3 text-sm font-medium text-blue-700 transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  <X size={14} />
+                  <Search size={14} />
+                  {zh ? '搜索' : 'Search'}
                 </button>
               )}
             </div>
@@ -3866,7 +4134,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
 
               <div className="flex items-center gap-2">
                 <label htmlFor="cmdb-interface-search" className="whitespace-nowrap text-xs font-medium text-slate-500">
-                  {zh ? '搜索设备：' : 'Search device:'}
+                  {zh ? '搜索接口：' : 'Search interfaces:'}
                 </label>
                 <div className="relative">
                   <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
@@ -3874,7 +4142,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                     id="cmdb-interface-search"
                     type="text"
                     value={interfaceSearchInput}
-                    placeholder={zh ? '设备名称或 IP' : 'Device name or IP'}
+                    placeholder={zh ? '设备、接口、IP 或描述' : 'Device, interface, IP or description'}
                     onChange={event => setInterfaceSearchInput(event.target.value)}
                     onKeyDown={event => {
                       if (event.key === 'Enter') {
@@ -3883,7 +4151,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                       }
                     }}
                     className="w-52 rounded-xl border border-slate-200 bg-slate-50 py-1.5 pl-9 pr-8 text-xs text-slate-700 outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/30 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
-                    aria-label={zh ? '按设备名称或 IP 搜索接口' : 'Search interfaces by device name or IP'}
+                    aria-label={zh ? '按设备、接口、IP 或描述搜索接口' : 'Search interfaces by device, interface, IP or description'}
                   />
                   {interfaceSearchInput && (
                     <button
@@ -3893,7 +4161,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                         setInterfaceSearchQuery('');
                         setInterfacePage(1);
                       }}
-                      aria-label={zh ? '清除设备搜索' : 'Clear device search'}
+                      aria-label={zh ? '清除接口搜索' : 'Clear interface search'}
                       className="search-clear-button absolute right-2 top-1/2 -translate-y-1/2"
                     >
                       <X size={13} />
@@ -3968,6 +4236,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                     disabled={loading}
                     exportData={async () => {
                       const params = new URLSearchParams({ q: search.trim(), status: vlanStatusFilter });
+                      params.set('include_details', 'true');
                       if (vlanSiteFilter) params.set('site_id', vlanSiteFilter);
                       Object.entries(vlanTreeBranch).forEach(([key, value]) => {
                         if (value && key !== 'site_id') params.set(key, value);
@@ -4136,9 +4405,9 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                                   icon={Eye}
                                   label={zh ? '查看明细' : 'View details'}
                                   variant="accent"
-                                  onClick={() => setVlanDetailRow(row)}
+                                  onClick={() => { void loadVlanDetails(row); }}
                                 />
-                                {!isReadOnlyTab && (
+                                {!isReadOnlyTab && !row.cmdb_observed_only && (
                                   <>
                                     <ActionIconButton icon={Pencil} label={zh ? '编辑' : 'Edit'} onClick={() => openEdit(row)} size="sm" />
                                     <ActionIconButton icon={Trash2} label={zh ? '删除' : 'Delete'} variant="danger" onClick={() => openDeleteConfirm(row)} size="sm" />
@@ -4229,7 +4498,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
 
           <Pagination
             currentPage={tab === 'interfaces' ? interfacePage : page}
-            totalItems={tab === 'interfaces' ? interfaceListMeta.total : (tab === 'sites' || tab === 'vrfs' ? genericListMeta.total : filteredRows.length)}
+            totalItems={tab === 'interfaces' ? interfaceListMeta.total : totalForTab}
             onPageChange={tab === 'interfaces' ? setInterfacePage : setPage}
             itemsPerPage={tab === 'interfaces' ? interfacePageSize : pageSize}
             onItemsPerPageChange={(size) => {
@@ -4478,6 +4747,57 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                         </span>
                       )}
                     </label>
+                    {tab === 'vlan-business' && fd.key === 'vlan_id' && (
+                      <div className="mb-2 space-y-2">
+                        <div className="flex gap-2">
+                          <input
+                            type="search"
+                            aria-label={zh ? '搜索 VLAN ID 或名称' : 'Search VLAN ID or name'}
+                            value={vlanCatalogSearchInput}
+                            onChange={event => setVlanCatalogSearchInput(event.target.value)}
+                            onKeyDown={event => {
+                              if (event.key === 'Enter') {
+                                event.preventDefault();
+                                applyVlanCatalogSearch();
+                              }
+                            }}
+                            placeholder={zh ? '按 VLAN ID 或名称搜索' : 'Search by VLAN ID or name'}
+                            className="h-9 min-w-0 flex-1 rounded-xl border border-black/10 bg-white px-3 text-sm text-[#164e63] outline-none focus:border-[#06b6d4]/45 focus:ring-2 focus:ring-[#06b6d4]/10"
+                          />
+                          <button
+                            type="button"
+                            onClick={applyVlanCatalogSearch}
+                            className="inline-flex h-9 shrink-0 items-center gap-1 rounded-xl border border-cyan-200 bg-cyan-50 px-3 text-xs font-semibold text-cyan-800 hover:bg-cyan-100"
+                          >
+                            <Search size={13} />
+                            {zh ? '搜索' : 'Search'}
+                          </button>
+                        </div>
+                        {vlanCatalogLoading ? (
+                          <p role="status" className="text-xs text-slate-500">
+                            <RefreshCw size={12} className="mr-1 inline animate-spin" />
+                            {zh ? '正在加载 VLAN 选项...' : 'Loading VLAN options...'}
+                          </p>
+                        ) : vlanCatalogError ? (
+                          <div role="alert" className="flex items-center justify-between gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                            <span>{vlanCatalogError}</span>
+                            <button type="button" onClick={() => setVlanCatalogRetryKey(value => value + 1)} className="shrink-0 font-semibold underline">
+                              {zh ? '重试' : 'Retry'}
+                            </button>
+                          </div>
+                        ) : vlanCatalogTotalPages > 1 ? (
+                          <div className="flex items-center justify-end gap-2 text-xs text-slate-500">
+                            <span>{zh ? `第 ${vlanCatalogPage} / ${vlanCatalogTotalPages} 页` : `Page ${vlanCatalogPage} of ${vlanCatalogTotalPages}`}</span>
+                            <button type="button" disabled={vlanCatalogPage <= 1} onClick={() => setVlanCatalogPage(value => Math.max(1, value - 1))} className="rounded border border-slate-200 px-2 py-1 disabled:opacity-40">
+                              {zh ? '上一页' : 'Previous'}
+                            </button>
+                            <button type="button" disabled={vlanCatalogPage >= vlanCatalogTotalPages} onClick={() => setVlanCatalogPage(value => Math.min(vlanCatalogTotalPages, value + 1))} className="rounded border border-slate-200 px-2 py-1 disabled:opacity-40">
+                              {zh ? '下一页' : 'Next'}
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                    )}
                     {isGeoField ? (
                       <SearchableGeoSelect
                         value={form[fd.key] ?? ''}
@@ -4513,12 +4833,15 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                     ) : fd.type === 'select' && opts ? (
                       <select
                         value={form[fd.key] ?? ''}
+                        disabled={tab === 'vlan-business' && fd.key === 'vlan_id' && (vlanCatalogLoading || Boolean(vlanCatalogError))}
                         onChange={e => {
                           const nextValue = e.target.value;
                           if (tab === 'vlan-business' && fd.key === 'site_id') {
-                            const currentVlan = String(form.vlan_id || '');
-                            const stillValid = vlanCatalog.some(vlan => String(vlan.site_id || '') === nextValue && String(vlan.vlan_id) === currentVlan);
-                            setForm({ ...form, site_id: nextValue, vlan_id: stillValid ? currentVlan : '' });
+                            setForm({ ...form, site_id: nextValue, vlan_id: '' });
+                            setVlanCatalogSearchInput('');
+                            setVlanCatalogSearchQuery('');
+                            setVlanCatalogPage(1);
+                            setVlanCatalogError('');
                           } else {
                             const resetCiscoEnable = tab === 'credentials'
                               && fd.key === 'credential_type'
@@ -4753,7 +5076,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
 
       {vlanDetailRow && (
         <div className="fixed inset-0 z-[105] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/45 backdrop-blur-sm" onClick={() => setVlanDetailRow(null)} />
+          <div className="absolute inset-0 bg-black/45 backdrop-blur-sm" onClick={closeVlanDetails} />
           <div ref={vlanDetailDialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="vlan-detail-dialog-title" className="nx-form-dialog-surface relative flex max-h-[88vh] w-full max-w-7xl flex-col overflow-hidden shadow-2xl">
             <div className="flex items-start justify-between gap-4 border-b border-black/5 px-6 py-5">
               <div>
@@ -4768,10 +5091,9 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                   filename={`cmdb-vlan-${vlanDetailRow.vlan_id}-details`}
                   language={zh ? 'zh' : 'en'}
                   disabled={!((Array.isArray(vlanDetailRow.port_detail_rows) && vlanDetailRow.port_detail_rows.length > 0)
-                    || (Array.isArray(vlanDetailRow.endpoint_details) && vlanDetailRow.endpoint_details.length > 0)
-                    || String(vlanDetailRow.port_details || '').trim())}
+                    || (Array.isArray(vlanDetailRow.endpoint_details) && vlanDetailRow.endpoint_details.length > 0))}
                 />
-                <button type="button" onClick={() => setVlanDetailRow(null)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700" title={zh ? '关闭' : 'Close'} aria-label={zh ? '关闭' : 'Close'}><X size={18} /></button>
+                <button type="button" onClick={closeVlanDetails} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700" title={zh ? '关闭' : 'Close'} aria-label={zh ? '关闭' : 'Close'}><X size={18} /></button>
               </div>
             </div>
             <div className="overflow-auto p-5">
@@ -4811,54 +5133,57 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                     description: item.description || '',
                     last_updated: vlanDetailRow.last_discovered_at || '',
                   }))
-                  : splitVlanValues(vlanDetailRow.port_details).map(value => {
-                  const [left, ...descriptionParts] = value.split(' - ');
-                  const separatorIndex = left.indexOf(':');
-                  return {
-                    source: '接口',
-                    ip_address: '',
-                    mac_address: '',
-                    device_hostname: separatorIndex >= 0 ? left.slice(0, separatorIndex) : left,
-                    device_ip: '',
-                    interface_name: separatorIndex >= 0 ? left.slice(separatorIndex + 1) : '',
-                    description: descriptionParts.join(' - '),
-                    last_updated: vlanDetailRow.last_discovered_at || '',
-                  };
-                });
+                  : [];
                 const detailRows = [...portRows, ...endpointRows];
                 return (
                   <>
-                    {vlanMetadata.length > 0 && (
-                      <dl className="mb-4 grid gap-x-5 gap-y-3 rounded-2xl border border-slate-200/80 bg-slate-50/70 p-4 sm:grid-cols-2 lg:grid-cols-4 dark:border-slate-800 dark:bg-slate-900/50">
-                        {vlanMetadata.map(item => (
-                          <div key={item.label} className="min-w-0">
-                            <dt className="text-[10px] font-semibold text-slate-400 dark:text-slate-500">{item.label}</dt>
-                            <dd className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-words text-xs text-slate-700 dark:text-slate-300">{item.value}</dd>
-                          </div>
-                        ))}
-                      </dl>
+                    {vlanDetailLoading && <div role="status" className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-12 text-center text-sm text-slate-500">{zh ? '正在加载 VLAN 明细…' : 'Loading VLAN details...'}</div>}
+                    {vlanDetailError && (
+                      <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-6 text-sm text-rose-800">
+                        <p className="font-semibold">{vlanDetailError.status === 403
+                          ? (zh ? '当前账号无权查看该 VLAN 明细。' : 'You do not have permission to view this VLAN’s details.')
+                          : vlanDetailError.status === 401
+                            ? (zh ? '登录状态已失效，请重新登录后重试。' : 'Your session has expired. Sign in again and retry.')
+                            : (zh ? 'VLAN 明细加载失败。' : 'Could not load VLAN details.')}</p>
+                        {vlanDetailError.message && <p className="mt-1 break-words text-xs text-rose-700">{vlanDetailError.message}</p>}
+                        <button type="button" onClick={() => { void loadVlanDetails(vlanDetailRow, true); }} className="mt-3 rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-semibold text-rose-800 hover:bg-rose-100">{zh ? '重试' : 'Retry'}</button>
+                      </div>
                     )}
-                    {detailRows.length ? (
-                      <table ref={vlanDetailTableRef} className="nx-data-table nx-data-table--compact min-w-[980px] text-left text-xs">
-                        <thead className="sticky top-0 bg-slate-50 text-[11px] font-semibold text-slate-500">
-                          <tr className="border-b border-slate-200"><th className="px-3 py-3">{zh ? '来源' : 'Source'}</th><th className="px-3 py-3">{zh ? '设备名称' : 'Device'}</th><th className="px-3 py-3">{zh ? '设备 IP' : 'Device IP'}</th><th className="px-3 py-3">{zh ? '接口' : 'Interface'}</th><th className="px-3 py-3">{zh ? '接口描述' : 'Interface description'}</th><th className="px-3 py-3">{zh ? 'IP 地址' : 'IP address'}</th><th className="px-3 py-3">{zh ? 'MAC 地址' : 'MAC address'}</th><th className="px-3 py-3">{zh ? '来源时间' : 'Collected at'}</th></tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {detailRows.map((item: any, detailIndex: number) => (
-                            <tr key={`${item.source}-${item.device_hostname}-${item.interface_name}-${item.ip_address}-${detailIndex}`} className="hover:bg-cyan-50/30">
-                              <td className="px-3 py-3"><span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-600">{String(item.source || '—').toUpperCase()}</span></td>
-                              <td className="px-3 py-3 font-semibold text-slate-700">{item.device_hostname || '—'}</td>
-                              <td className="px-3 py-3 font-mono text-slate-600">{item.device_ip || '—'}</td>
-                              <td className="px-3 py-3 font-mono text-slate-700">{item.interface_name || '—'}</td>
-                              <td className="px-3 py-3 text-slate-600">{item.description || '—'}</td>
-                              <td className="px-3 py-3 font-mono text-slate-700">{item.ip_address || '—'}</td>
-                              <td className="px-3 py-3 font-mono text-slate-700">{formatMacAddress(item.mac_address) || '—'}</td>
-                              <td className="px-3 py-3 whitespace-nowrap text-slate-500">{item.last_updated ? new Date(item.last_updated).toLocaleString(zh ? 'zh-CN' : 'en-US', { hour12: false }) : '—'}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    ) : <div className="rounded-xl border border-dashed border-slate-200 px-4 py-12 text-center text-sm text-slate-400">{zh ? '暂无接口或 ARP/MAC 明细' : 'No interface or ARP/MAC details'}</div>}
+                    {!vlanDetailLoading && !vlanDetailError && (
+                      <>
+                        {vlanMetadata.length > 0 && (
+                          <dl className="mb-4 grid gap-x-5 gap-y-3 rounded-2xl border border-slate-200/80 bg-slate-50/70 p-4 sm:grid-cols-2 lg:grid-cols-4 dark:border-slate-800 dark:bg-slate-900/50">
+                            {vlanMetadata.map(item => (
+                              <div key={item.label} className="min-w-0">
+                                <dt className="text-[10px] font-semibold text-slate-400 dark:text-slate-500">{item.label}</dt>
+                                <dd className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-words text-xs text-slate-700 dark:text-slate-300">{item.value}</dd>
+                              </div>
+                            ))}
+                          </dl>
+                        )}
+                        {detailRows.length ? (
+                          <table ref={vlanDetailTableRef} className="nx-data-table nx-data-table--compact min-w-[980px] text-left text-xs">
+                            <thead className="sticky top-0 bg-slate-50 text-[11px] font-semibold text-slate-500">
+                              <tr className="border-b border-slate-200"><th className="px-3 py-3">{zh ? '来源' : 'Source'}</th><th className="px-3 py-3">{zh ? '设备名称' : 'Device'}</th><th className="px-3 py-3">{zh ? '设备 IP' : 'Device IP'}</th><th className="px-3 py-3">{zh ? '接口' : 'Interface'}</th><th className="px-3 py-3">{zh ? '接口描述' : 'Interface description'}</th><th className="px-3 py-3">{zh ? 'IP 地址' : 'IP address'}</th><th className="px-3 py-3">{zh ? 'MAC 地址' : 'MAC address'}</th><th className="px-3 py-3">{zh ? '来源时间' : 'Collected at'}</th></tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {detailRows.map((item: any, detailIndex: number) => (
+                                <tr key={`${item.source}-${item.device_hostname}-${item.interface_name}-${item.ip_address}-${detailIndex}`} className="hover:bg-cyan-50/30">
+                                  <td className="px-3 py-3"><span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-600">{String(item.source || '—').toUpperCase()}</span></td>
+                                  <td className="px-3 py-3 font-semibold text-slate-700">{item.device_hostname || '—'}</td>
+                                  <td className="px-3 py-3 font-mono text-slate-600">{item.device_ip || '—'}</td>
+                                  <td className="px-3 py-3 font-mono text-slate-700">{item.interface_name || '—'}</td>
+                                  <td className="px-3 py-3 text-slate-600">{item.description || '—'}</td>
+                                  <td className="px-3 py-3 font-mono text-slate-700">{item.ip_address || '—'}</td>
+                                  <td className="px-3 py-3 font-mono text-slate-700">{formatMacAddress(item.mac_address) || '—'}</td>
+                                  <td className="px-3 py-3 whitespace-nowrap text-slate-500">{item.last_updated ? new Date(item.last_updated).toLocaleString(zh ? 'zh-CN' : 'en-US', { hour12: false }) : '—'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        ) : <div className="rounded-xl border border-dashed border-slate-200 px-4 py-12 text-center text-sm text-slate-400">{zh ? '暂无接口或 ARP/MAC 明细' : 'No interface or ARP/MAC details'}</div>}
+                      </>
+                    )}
                   </>
                 );
               })()}

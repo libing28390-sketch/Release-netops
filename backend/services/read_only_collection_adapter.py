@@ -34,13 +34,19 @@ def collect_read_only_evidence(
     *,
     categories: list[str] | None = None,
     auth_role: str = "auto",
+    _platform_action_session=None,
 ) -> dict[str, Any]:
     requested = [str(item).strip().lower() for item in (categories or READ_ONLY_EVIDENCE_CATEGORIES)]
     invalid = [item for item in requested if item not in READ_ONLY_EVIDENCE_CATEGORIES]
     if invalid:
         raise ValueError(f"Unsupported read-only evidence categories: {', '.join(sorted(set(invalid)))}")
 
-    payload = collect_operational_data(device_info, categories=requested, auth_role=auth_role)
+    payload = collect_operational_data(
+        device_info,
+        categories=requested,
+        auth_role=auth_role,
+        _platform_action_session=_platform_action_session,
+    )
     categories_out: list[dict[str, Any]] = []
     for category in payload.get("categories") or []:
         item = dict(category)
