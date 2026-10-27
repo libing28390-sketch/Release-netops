@@ -2,7 +2,7 @@
 
 - 时间：2026-10-27（Asia/Shanghai）。
 - 对应方案：`docs/plans/plan_20261027_1237_01_CMDB采集与Redis缓存.md`。
-- 状态：实施中。独立CMDB观察读写、轻量候选分页、CLI单会话锁修正和H3C V7接口IP现场采集已验证；其他平台覆盖、隔离Redis、浏览器和性能验收仍未完成。
+- 状态：本次约定范围的实现及发布门禁已完成。代码提交 `0aa1136293f2d3bdc11972fe96b2561c60a51ae0` 已推送到 `origin/main`，对应 Actions run `40535628669` 为 success。未验证项仍单独列明；这不代表额外平台覆盖、Redis现场验收或原生Network面板已通过。
 - 用户硬约束：严禁修改监控相关代码。本轮监控保护文件、配置和共享接口采集器均保持原样。
 
 ## 已实施
@@ -163,3 +163,11 @@
 - 完整回归期间未收集开发库连接；隔离runner创建的测试源由finally清理。此前已知的4个无活动连接历史测试库归属不明，未删除。
 - Git credential helper错误源于用户级 `.gitconfig` 指向不存在的WorkBuddy PortableGit路径；仅在此仓库 `.git/config` 覆盖为系统Git Credential Manager，`git ls-remote origin refs/heads/main`成功，远端main与本地基线当前相同。未更改全局Git配置或输出令牌。
 - 浏览器Network面板仍未完成；浏览器工具报当前Windows浏览器URL无法充分确认后本轮停止了Computer Use。已保存的接口/VLAN详情截图、页面DOM交互证据及性能报告仍在`backend/artifacts/`，不会纳入源码提交。
+
+## 2026-10-28 交付状态复核
+
+- 当前 `main` 与 `origin/main` 均指向代码提交 `0aa1136293f2d3bdc11972fe96b2561c60a51ae0`。对应 `Build and Sync to Release Repo` push run `40535628669` 已完成且结论为 `success`。
+- 该 run 的后端完整 pytest、前端 lint/测试/build、Docker发布输入校验、后端 compileall、发布树提交和Linux发布包打包均成功。Knowledge Engine评估仅在tag或workflow_dispatch触发，故本次main push为skipped；百度网盘上传和公开GitHub Release同样为skipped，不是失败。
+- 当前本机监听正常：`127.0.0.1:15310/api/health` 返回HTTP 200；`127.0.0.1:5400/cmdb/interfaces` 返回HTTP 200。本次无需重启服务。
+- 最近一次Git状态复核未发现未提交业务源码；仍有私有 `.agents/`、`handoff.md` 改动及本地构建、日志、截图/性能等产物，均保留且未纳入main提交。
+- 本次复核重新尝试读取Chrome页面时，Computer Use因无法可靠确定Windows浏览器当前URL而停止；遵守工具要求后没有继续UI输入或换通道规避。因此原生Network面板仍未验收。Redis运行验收按用户要求忽略；额外平台/profile/parser覆盖与更大样本性能对比仍未声称完成。
