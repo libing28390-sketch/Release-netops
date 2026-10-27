@@ -45,4 +45,43 @@ describe('CMDB import dialog interaction', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Upload Credentials' })).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(uploadButton));
   });
+
+  it('shows SNMP bindings as collection credentials without SSH binding actions', async () => {
+    const credential = {
+      id: 'cred-snmp',
+      credential_name: 'snmp-ro',
+      credential_type: 'snmpv2',
+      username: '',
+      account_role: 'snmp',
+      account_role_label: 'SNMP 采集',
+      device_count: 1,
+      devices: [{ id: 'device-ac11', hostname: 'AC_11', ip_address: '192.0.2.11', binding_role: 'snmp' }],
+      devices_truncated: false,
+      enable_password_supported: false,
+    };
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      if (String(input).endsWith('/api/credentials')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ success: true, data: [credential] }),
+        } as Response);
+      }
+      return Promise.resolve(fetchSuccess());
+    }));
+
+    render(
+      <MemoryRouter>
+        <CmdbManagementTab language="en" currentUser={{ role: 'Administrator' }} />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('snmp-ro')).toBeTruthy();
+    expect(screen.getByText('AC_11')).toBeTruthy();
+    expect(screen.getByText('SNMP Collection')).toBeTruthy();
+    expect(screen.getByText('SNMP')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'SNMP' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Normal' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Priv' })).toBeNull();
+  });
 });

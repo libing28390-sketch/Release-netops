@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from core.rbac import enforce_resource_scope, resource_action_allowed
+from core.rbac import enforce_resource_scope, is_global_administrator, resource_action_allowed
 from core.tenant_policy import TENANT_ISOLATION_ENABLED, tenant_scope_for_user
 from fastapi import HTTPException
 
@@ -88,7 +88,7 @@ def allowed_resource_scope(
             device_group_ids=(),
         )
 
-    if user.get("role") == "Administrator":
+    if is_global_administrator(user):
         return RackScope()
 
     tenant_id = tenant_scope_for_user(user)

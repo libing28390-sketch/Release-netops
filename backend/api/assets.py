@@ -1607,6 +1607,28 @@ def _sync_rack_device_from_asset(
 
     existing = conn.execute("SELECT id FROM rack_devices WHERE asset_id = ? LIMIT 1", (asset_id,)).fetchone()
 
+    # SNMP may supply the exact chassis model after the asset transaction. A
+    # rack placement cannot reference a model-less device type yet, so retain
+    # the requested rack coordinates and finish placement during enrichment.
+    if not str(model or '').strip():
+        rack_reference = rack_id or rack
+        if rack_reference:
+            from services import rack_service
+
+            resolved_rack = rack_service.resolve_rack_reference(conn, rack_reference)
+            if not resolved_rack:
+                raise ValueError(f"Rack '{rack_reference}' does not exist")
+            if isinstance(user, dict):
+                scope_row = conn.execute(
+                    """SELECT r.*, s.tenant_id AS site_tenant_id
+                         FROM racks r LEFT JOIN sites s ON s.id = r.site_id
+                        WHERE r.id = ?""",
+                    (resolved_rack['id'],),
+                ).fetchone()
+                if scope_row:
+                    rack_scope_service.enforce_loaded_rack(user, dict(scope_row), "update")
+        return
+
     from services import rack_service
     rack_reference = rack_id or rack
     resolved_rack = rack_service.resolve_rack_reference(conn, rack_reference)
@@ -1716,6 +1738,96 @@ def _sync_rack_device_from_asset(
             commit=False,
         )
 
+
+
+def _sync_enriched_asset_rack_device(item: dict, actor) -> dict[str, str]:
+    """Resolve a newly detected model into the asset's rack device type."""
+    device_id = str(item.get('device_id') or '').strip()
+    conn = get_db_connection()
+    try:
+        device_row = conn.execute('SELECT asset_id FROM devices WHERE id = ?', (device_id,)).fetchone()
+        asset_id = str(dict(device_row or {}).get('asset_id') or '').strip()
+        if not asset_id:
+            return {'status': 'skipped', 'message': '设备未关联实体资产'}
+
+        asset_row = conn.execute(
+            'SELECT * FROM physical_assets WHERE id = ?', (asset_id,)
+        ).fetchone()
+        if not asset_row:
+            return {'status': 'skipped', 'message': '实体资产已不存在'}
+        asset = dict(asset_row)
+        if not str(asset.get('model') or '').strip():
+            return {'status': 'unresolved', 'message': 'SNMP 未获取到可用于机柜关联的型号'}
+
+        # Preserve canonical placement inputs supplied with the import. When a
+        # model is blank, the first asset transaction cannot create a
+        # rack_devices row yet, so its API request snapshot completes this
+        # projection after SNMP returns the exact model.
+        for field in (
+            'rack_id', 'rack_position', 'rack_mount_kind', 'rack_height_u',
+            'rack_placement_status', 'rack_placement_source', 'rack_dimension_status',
+            'rack_location_note', 'rack_model_key', 'planned_start_u', 'u_height',
+            'device_role', 'power_watts',
+        ):
+            value = item.get(field)
+            if asset.get(field) in (None, '') and value not in (None, ''):
+                asset[field] = value
+
+        placement = conn.execute(
+            'SELECT * FROM rack_devices WHERE asset_id = ? LIMIT 1', (asset_id,)
+        ).fetchone()
+        placement_values = dict(placement) if placement else {}
+        if not placement and not (asset.get('rack_id') or asset.get('rack')):
+            return {'status': 'skipped', 'message': '资产未配置机柜位置'}
+
+        # Older placements may predate the physical-asset projection. Reuse
+        # their canonical coordinates so a model update does not detach them.
+        if placement:
+            for asset_field, placement_field in (
+                ('rack_id', 'rack_id'),
+                ('planned_start_u', 'start_u'),
+                ('rack_position', 'position'),
+                ('rack_mount_kind', 'mount_kind'),
+                ('rack_height_u', 'height_u'),
+                ('rack_placement_status', 'placement_status'),
+                ('rack_dimension_status', 'dimension_status'),
+                ('rack_location_note', 'location_note'),
+            ):
+                if asset.get(asset_field) in (None, ''):
+                    asset[asset_field] = placement_values.get(placement_field)
+
+        model_key = str(
+            (placement_values.get('model_key') if placement else None)
+            or asset.get('rack_model_key')
+            or ''
+        ).strip()
+        if model_key.casefold().startswith('generic_'):
+            asset['rack_model_key'] = ''
+            if placement:
+                conn.execute(
+                    'UPDATE rack_devices SET model_key = ? WHERE id = ?',
+                    ('', placement_values['id']),
+                )
+
+        _sync_rack_device_from_asset(conn, asset_id, asset, actor)
+        conn.commit()
+        refreshed = conn.execute(
+            'SELECT 1 FROM rack_devices WHERE asset_id = ? LIMIT 1', (asset_id,)
+        ).fetchone()
+        return {
+            'status': 'synced' if refreshed else 'skipped',
+            'message': '机柜设备型号已同步' if refreshed else '资产尚未安装到机柜',
+        }
+    except Exception as exc:
+        conn.rollback()
+        logger.warning(
+            'Asset import rack model sync failed for device %s (%s)',
+            str(device_id or ''),
+            type(exc).__name__,
+        )
+        return {'status': 'failed', 'message': '型号已保存，但机柜设备类型同步失败'}
+    finally:
+        conn.close()
 
 
 def _delete_linked_device(conn, asset_id: str) -> None:
@@ -2130,6 +2242,18 @@ class BatchTakeoverRequest(BaseModel):
 
 class BatchAssetDeleteRequest(BaseModel):
     asset_ids: list[str] = Field(min_length=1, max_length=1000)
+
+    @field_validator('asset_ids')
+    @classmethod
+    def normalize_asset_ids(cls, value: list[str]) -> list[str]:
+        normalized = list(dict.fromkeys(str(asset_id).strip() for asset_id in value if str(asset_id).strip()))
+        if not normalized:
+            raise ValueError('asset_ids must contain at least one asset ID')
+        return normalized
+
+
+class BatchAssetSnmpSyncRequest(BaseModel):
+    asset_ids: list[str] = Field(min_length=1)
 
     @field_validator('asset_ids')
     @classmethod
@@ -2890,7 +3014,8 @@ def create_asset(
 
         asset_columns = (
             'id', 'asset_type', 'asset_tag', 'serial_number', 'vendor', 'model', 'hostname',
-            'site_id', 'rack', 'rack_unit', 'u_height', 'planned_start_u', 'management_ip', 'business_ip', 'device_role',
+            'site_id', 'rack', 'rack_unit', 'rack_id', 'rack_position', 'rack_mount_kind',
+            'u_height', 'planned_start_u', 'management_ip', 'business_ip', 'device_role',
             'vlan', 'uplink_switch', 'uplink_port',
             'status', 'lifecycle_status', 'asset_origin', 'purchase_date', 'warranty_expiry', 'department', 'notes',
             'platform', 'connection_method', 'username', 'password',
@@ -2905,6 +3030,7 @@ def create_asset(
         asset_values = (
             asset_id, body.asset_type, body.asset_tag, body.serial_number, body.vendor,
             body.model, body.hostname, body.site_id, body.rack, body.rack_unit,
+            body.rack_id, body.rack_position, body.rack_mount_kind,
             max(1, min(60, body.u_height)), body.planned_start_u,
             body.management_ip, body.business_ip, body.device_role,
             body.vlan, body.uplink_switch, body.uplink_port,
@@ -2992,6 +3118,19 @@ def create_asset(
                 'declared_vendor': declared_identity['vendor'],
                 'declared_platform': declared_identity['platform'],
                 'declared_model': declared_identity['model'],
+                'rack_id': body.rack_id,
+                'rack_position': body.rack_position,
+                'rack_mount_kind': body.rack_mount_kind,
+                'rack_height_u': body.rack_height_u,
+                'rack_placement_status': body.rack_placement_status,
+                'rack_placement_source': body.rack_placement_source,
+                'rack_dimension_status': body.rack_dimension_status,
+                'rack_location_note': body.rack_location_note,
+                'rack_model_key': body.rack_model_key,
+                'planned_start_u': body.planned_start_u,
+                'u_height': body.u_height,
+                'device_role': body.device_role,
+                'power_watts': body.power_watts,
             }
             if background_tasks is not None:
                 background_tasks.add_task(
@@ -3620,6 +3759,8 @@ def _finish_manual_network_asset_enrichment(item: dict, actor) -> None:
             from services.snmp_import_identification_service import identify_imported_device
 
             result = await identify_imported_device(item, asyncio.Semaphore(1))
+            if result.get('status') == 'identified':
+                result['rack_sync'] = _sync_enriched_asset_rack_device(item, actor)
             logger.info(
                 'Manual asset SNMP identification finished for device %s (%s)',
                 item['device_id'],
@@ -3690,6 +3831,283 @@ def batch_delete_assets(body: BatchAssetDeleteRequest, _user=require_role("Admin
         raise
     finally:
         conn.close()
+
+
+@router.post('/assets/batch-snmp-sync')
+def batch_snmp_sync_assets(
+    body: BatchAssetSnmpSyncRequest,
+    _user=require_role("Operator"),
+):
+    """Retry SNMP hostname/model synchronization for selected network assets."""
+    asset_ids = list(dict.fromkeys(str(asset_id).strip() for asset_id in body.asset_ids if str(asset_id).strip()))
+    if not asset_ids:
+        raise HTTPException(status_code=422, detail='请选择至少一台设备')
+
+    targets: list[dict] = []
+    results: list[dict] = []
+    conn = get_db_connection()
+    try:
+        for asset_id in asset_ids:
+            row = conn.execute(
+                '''SELECT pa.*, s.tenant_id AS site_tenant_id,
+                          d.id AS linked_device_id, d.hostname AS device_hostname,
+                          d.ip_address AS device_ip, d.vendor AS device_vendor,
+                          d.platform AS device_platform, d.snmp_credential_id AS device_snmp_credential_id,
+                          d.snmp_community AS device_snmp_community
+                     FROM physical_assets pa
+                     LEFT JOIN sites s ON s.id = pa.site_id
+                     LEFT JOIN devices d ON d.asset_id = pa.id
+                    WHERE pa.id = ?''',
+                (asset_id,),
+            ).fetchone()
+            if not row:
+                results.append({
+                    'asset_id': asset_id,
+                    'device_id': '',
+                    'hostname': '',
+                    'management_ip': '',
+                    'status': 'failed',
+                    'message': '资产不存在或已删除',
+                    'hostname_sync': {'status': 'failed', 'hostname': '', 'error': '资产不存在或已删除'},
+                    'detected_model': '',
+                    'synced_model': '',
+                    'model_source': '',
+                    'rack_sync': {'status': 'skipped', 'message': '未执行机柜同步'},
+                })
+                continue
+
+            asset = dict(row)
+            # Validate all selected rows before any network request begins. A
+            # single out-of-scope item therefore cannot cause partial probing.
+            _enforce_asset_row_scope(_user, asset, 'update')
+            device_id = str(asset.get('linked_device_id') or '').strip()
+            hostname = str(asset.get('hostname') or asset.get('device_hostname') or '').strip()
+            management_ip = str(asset.get('management_ip') or asset.get('device_ip') or '').strip()
+            if asset.get('asset_type') != 'network_device':
+                results.append({
+                    'asset_id': asset_id,
+                    'device_id': device_id,
+                    'hostname': hostname,
+                    'management_ip': management_ip,
+                    'status': 'skipped',
+                    'message': '仅支持同步网络设备',
+                    'hostname_sync': {'status': 'skipped', 'hostname': '', 'error': '仅支持同步网络设备'},
+                    'detected_model': '',
+                    'synced_model': '',
+                    'model_source': '',
+                    'rack_sync': {'status': 'skipped', 'message': '未执行机柜同步'},
+                })
+                continue
+            if not device_id:
+                results.append({
+                    'asset_id': asset_id,
+                    'device_id': '',
+                    'hostname': hostname,
+                    'management_ip': management_ip,
+                    'status': 'skipped',
+                    'message': '资产尚未关联网络设备记录',
+                    'hostname_sync': {'status': 'skipped', 'hostname': '', 'error': '设备记录不存在'},
+                    'detected_model': '',
+                    'synced_model': '',
+                    'model_source': '',
+                    'rack_sync': {'status': 'skipped', 'message': '未执行机柜同步'},
+                })
+                continue
+
+            targets.append({
+                'device_id': device_id,
+                'asset_id': asset_id,
+                'asset_tag': str(asset.get('asset_tag') or ''),
+                'hostname': hostname,
+                'ip': management_ip,
+                'snmp_configured': bool(
+                    asset.get('snmp_credential_id')
+                    or asset.get('snmp_community')
+                    or asset.get('device_snmp_credential_id')
+                    or asset.get('device_snmp_community')
+                ),
+                'declared_vendor': str(asset.get('vendor') or asset.get('device_vendor') or ''),
+                'declared_platform': str(asset.get('platform') or asset.get('device_platform') or ''),
+                # An empty declared model asks the shared identity service to
+                # read ENTITY-MIB/sysDescr again while retaining its normal
+                # protection for an existing operator-entered model.
+                'declared_model': '',
+                'audit_before': asset,
+                'rack_id': asset.get('rack_id'),
+                'rack_position': asset.get('rack_position'),
+                'rack_mount_kind': asset.get('rack_mount_kind'),
+                'rack_height_u': asset.get('rack_height_u'),
+                'rack_placement_status': asset.get('rack_placement_status'),
+                'rack_placement_source': asset.get('rack_placement_source'),
+                'rack_dimension_status': asset.get('rack_dimension_status'),
+                'rack_location_note': asset.get('rack_location_note'),
+                'rack_model_key': asset.get('rack_model_key'),
+                'planned_start_u': asset.get('planned_start_u'),
+                'u_height': asset.get('u_height'),
+                'device_role': asset.get('device_role'),
+                'power_watts': asset.get('power_watts'),
+            })
+    finally:
+        conn.close()
+
+    async_outputs: list[dict] = []
+    if targets:
+        import asyncio
+
+        from services.snmp_import_identification_service import identify_imported_device
+
+        async def _identify_one(item: dict, identity_semaphore, model_semaphore) -> dict:
+            try:
+                result = await identify_imported_device(item, identity_semaphore, model_semaphore)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    'Manual asset SNMP identity sync failed for device %s (%s)',
+                    item['device_id'],
+                    type(exc).__name__,
+                )
+                result = {
+                    'device_id': item['device_id'],
+                    'hostname': item.get('hostname') or '',
+                    'ip': item.get('ip') or '',
+                    'status': 'identification_failed',
+                    'message': 'SNMP 同步暂时失败，请检查设备连通性和凭据后重试',
+                    'hostname_sync': {
+                        'status': 'failed',
+                        'hostname': '',
+                        'error': 'SNMP 同步暂时失败',
+                    },
+                }
+            return result
+
+        async def _identify_selected_devices() -> list[dict]:
+            identity_semaphore = asyncio.Semaphore(min(5, len(targets)))
+            model_semaphore = asyncio.Semaphore(1)
+            return await asyncio.gather(
+                *(
+                    _identify_one(item, identity_semaphore, model_semaphore)
+                    for item in targets
+                )
+            )
+
+        async_outputs = asyncio.run(_identify_selected_devices())
+
+    results_by_asset: dict[str, dict] = {}
+    for item, identity_result in zip(targets, async_outputs):
+        hostname_sync = dict(identity_result.get('hostname_sync') or {})
+        identity_status = str(identity_result.get('status') or 'identification_failed')
+        detected_model = str(identity_result.get('detected_model') or '').strip()
+        synced_model = str(identity_result.get('synced_model') or '').strip()
+        model_value = synced_model or detected_model
+        model_source = str(identity_result.get('model_source') or '')
+        model_refreshed = bool(model_value and model_source in {'entity_mib', 'sysDescr'})
+        hostname_synced = str(hostname_sync.get('status') or '') == 'synced'
+
+        rack_sync = (
+            _sync_enriched_asset_rack_device(item, _user)
+            if identity_status == 'identified'
+            else {'status': 'skipped', 'message': '设备身份未识别，机柜型号未更新'}
+        )
+        if identity_status == 'collection_disabled':
+            sync_status = 'skipped'
+        elif identity_status == 'identified' and hostname_synced and model_refreshed:
+            sync_status = 'synced'
+        elif hostname_synced or model_refreshed or identity_status == 'identified':
+            sync_status = 'partial'
+        else:
+            sync_status = 'failed'
+
+        if sync_status == 'synced':
+            message = '主机名和型号已同步'
+        elif sync_status == 'partial' and hostname_synced and not model_refreshed:
+            message = (
+                '主机名已同步，本次未获取到新型号，当前型号已保留'
+                if model_value
+                else '主机名已同步，但未获取到型号；可检查设备 SNMP 型号表后重试'
+            )
+        elif sync_status == 'partial' and model_value and not hostname_synced:
+            host_error = str(hostname_sync.get('error') or '').strip()
+            model_message = '型号已同步' if model_refreshed else '本次未获取到新型号，当前型号已保留'
+            message = model_message + '，主机名未同步' + (f'：{host_error}' if host_error else '')
+        else:
+            message = str(identity_result.get('message') or 'SNMP 同步失败，请检查凭据和设备连通性后重试')
+
+        response_item = {
+            'asset_id': item['asset_id'],
+            'device_id': item['device_id'],
+            'hostname': str(hostname_sync.get('hostname') or identity_result.get('hostname') or item['hostname']),
+            'management_ip': str(identity_result.get('ip') or item['ip']),
+            'status': sync_status,
+            'message': message,
+            'hostname_sync': hostname_sync,
+            'detected_model': detected_model,
+            'synced_model': synced_model,
+            'model_source': model_source,
+            'rack_sync': rack_sync,
+        }
+        results_by_asset[item['asset_id']] = response_item
+
+        # Keep manual identity changes in the asset audit trail. The projection
+        # excludes Community and all other credential material.
+        audit_conn = get_db_connection()
+        try:
+            after = audit_conn.execute(
+                'SELECT * FROM physical_assets WHERE id = ?', (item['asset_id'],)
+            ).fetchone()
+            before = item.get('audit_before') or {}
+            after_row = dict(after) if after else {}
+            changed = any(
+                str(before.get(field) or '').strip() != str(after_row.get(field) or '').strip()
+                for field in ('hostname', 'vendor', 'platform', 'model')
+            )
+            if after_row and (changed or sync_status == 'failed'):
+                _audit_asset_event(
+                    audit_conn,
+                    event_type='asset.snmp_identity_sync',
+                    summary='Manual SNMP identity synchronization',
+                    user=_user,
+                    asset_id=item['asset_id'],
+                    target_name=item.get('asset_tag') or item.get('hostname') or item['asset_id'],
+                    status='failed' if sync_status == 'failed' else 'success',
+                    before=before,
+                    after=after_row,
+                    details={
+                        'source': 'asset_management_manual_snmp_sync',
+                        'sync_status': sync_status,
+                        'identity_status': identity_status,
+                        'hostname_sync_status': str(hostname_sync.get('status') or ''),
+                        'model_source': str(identity_result.get('model_source') or ''),
+                        'rack_sync_status': str((rack_sync or {}).get('status') or ''),
+                    },
+                )
+                audit_conn.commit()
+        except Exception as exc:  # noqa: BLE001
+            audit_conn.rollback()
+            logger.warning(
+                'Manual asset SNMP audit write failed for asset %s (%s)',
+                item['asset_id'],
+                type(exc).__name__,
+            )
+        finally:
+            audit_conn.close()
+
+    ordered_results = [
+        results_by_asset.get(item['asset_id'])
+        for item in targets
+    ]
+    ordered_results = [item for item in ordered_results if item is not None]
+    # Keep preflight skipped/missing results in the same order the UI submitted.
+    all_results_by_asset = {str(item.get('asset_id') or ''): item for item in results}
+    all_results_by_asset.update({item['asset_id']: item for item in ordered_results})
+    ordered_results = [all_results_by_asset[asset_id] for asset_id in asset_ids]
+
+    return {
+        'requested': len(asset_ids),
+        'synced': sum(item['status'] == 'synced' for item in ordered_results),
+        'partial': sum(item['status'] == 'partial' for item in ordered_results),
+        'failed': sum(item['status'] == 'failed' for item in ordered_results),
+        'skipped': sum(item['status'] == 'skipped' for item in ordered_results),
+        'results': ordered_results,
+    }
 
 @router.delete('/assets/{asset_id}')
 def delete_asset(asset_id: str, _user=require_role("Administrator")):
@@ -3823,6 +4241,24 @@ def import_assets(
                     if detail.get(key) is not None:
                         safe_detail[key] = detail[key]
                 return safe_detail
+            if isinstance(detail, str):
+                # Expected SNMP validation errors must reach the import UI.
+                # Only allow known messages; never return arbitrary exception
+                # text or echo a community/password supplied by the caller.
+                snmp_errors = (
+                    ('SNMP凭据不存在:', 'ASSET_SNMP_CREDENTIAL_NOT_FOUND', 'SNMP 凭据名称或 ID 在凭据中心中不存在。'),
+                    ('SNMP凭据类型不受支持:', 'ASSET_SNMP_CREDENTIAL_TYPE_UNSUPPORTED', '绑定的凭据不是 SNMPv2/v3 Profile。'),
+                    ('SNMPv2 凭据未配置 Community', 'ASSET_SNMP_CREDENTIAL_INCOMPLETE', 'SNMPv2 Profile 未配置 Community。'),
+                    ('SNMPv3 凭据缺少', 'ASSET_SNMP_CREDENTIAL_INCOMPLETE', 'SNMPv3 Profile 缺少用户名或有效安全级别。'),
+                    ('SNMPv3 凭据未配置', 'ASSET_SNMP_CREDENTIAL_INCOMPLETE', 'SNMPv3 Profile 缺少所选安全级别要求的认证或加密密码。'),
+                    ('SNMPv2 凭据无法解密', 'ASSET_SNMP_CREDENTIAL_UNREADABLE', 'SNMP Profile 无法解密，请重新保存凭据或检查服务器加密配置。'),
+                    ('SNMPv3 认证算法', 'ASSET_SNMP_CREDENTIAL_ALGORITHM_UNSUPPORTED', 'SNMPv3 Profile 的认证算法不受支持。'),
+                    ('SNMPv3 加密算法', 'ASSET_SNMP_CREDENTIAL_ALGORITHM_UNSUPPORTED', 'SNMPv3 Profile 的加密算法不受支持。'),
+                    ('SNMP Community 无法安全存储', 'ASSET_SNMP_COMMUNITY_STORAGE_UNAVAILABLE', '服务器无法安全保存 SNMP Community，请联系管理员检查加密配置。'),
+                )
+                for prefix, code, message in snmp_errors:
+                    if detail.startswith(prefix):
+                        return {'code': code, 'message': message, 'field': 'snmp_credential_name'}
             if isinstance(exc, ValueError):
                 return {'code': 'ASSET_IMPORT_VALIDATION_FAILED', 'message': str(exc)}
             logger.exception('Asset import row failed')
@@ -3991,7 +4427,8 @@ def import_assets(
 
             asset_columns = (
                 'id', 'asset_type', 'asset_tag', 'serial_number', 'vendor', 'model', 'hostname',
-                'site_id', 'rack', 'rack_unit', 'u_height', 'planned_start_u', 'management_ip', 'business_ip', 'device_role',
+                'site_id', 'rack', 'rack_unit', 'rack_id', 'rack_position', 'rack_mount_kind',
+                'u_height', 'planned_start_u', 'management_ip', 'business_ip', 'device_role',
                 'vlan', 'uplink_switch', 'uplink_port',
                 'status', 'lifecycle_status', 'asset_origin', 'purchase_date', 'warranty_expiry', 'department', 'notes',
                 'platform', 'connection_method', 'username', 'password',
@@ -4007,6 +4444,7 @@ def import_assets(
             asset_values = (
                 asset_id, body.asset_type, body.asset_tag, body.serial_number, body.vendor,
                 body.model, body.hostname, body.site_id, body.rack, body.rack_unit,
+                body.rack_id, body.rack_position, body.rack_mount_kind,
                 max(1, min(60, body.u_height)), body.planned_start_u,
                 body.management_ip, body.business_ip, body.device_role,
                 body.vlan, body.uplink_switch, body.uplink_port,
@@ -4048,6 +4486,19 @@ def import_assets(
                         'asset_tag': body.asset_tag or '',
                         'hostname': body.hostname or '',
                         'ip': body.management_ip or '',
+                        'rack_id': body.rack_id,
+                        'rack_position': body.rack_position,
+                        'rack_mount_kind': body.rack_mount_kind,
+                        'rack_height_u': body.rack_height_u,
+                        'rack_placement_status': body.rack_placement_status,
+                        'rack_placement_source': body.rack_placement_source,
+                        'rack_dimension_status': body.rack_dimension_status,
+                        'rack_location_note': body.rack_location_note,
+                        'rack_model_key': body.rack_model_key,
+                        'planned_start_u': body.planned_start_u,
+                        'u_height': body.u_height,
+                        'device_role': body.device_role,
+                        'power_watts': body.power_watts,
                     }
                     if str(body.management_ip or '').strip():
                         pending_librenms_enrollment.append(enrichment_item)
@@ -4472,8 +4923,12 @@ def import_assets(
 
                 async def _identify_all_imported_devices() -> list:
                     semaphore = _aio.Semaphore(min(5, len(pending_snmp_identification)))
+                    model_semaphore = _aio.Semaphore(1)
                     return await _aio.gather(
-                        *(identify_imported_device(item, semaphore) for item in pending_snmp_identification),
+                        *(
+                            identify_imported_device(item, semaphore, model_semaphore)
+                            for item in pending_snmp_identification
+                        ),
                         return_exceptions=True,
                     )
 
@@ -4497,6 +4952,8 @@ def import_assets(
                             'error': f'主机名同步任务异常（{type(output).__name__}）',
                         })
                     else:
+                        if output.get('status') == 'identified':
+                            output['rack_sync'] = _sync_enriched_asset_rack_device(item, _user)
                         hostname_result = output.get('hostname_sync')
                         if isinstance(hostname_result, dict):
                             hostname_sync_results.append({
@@ -4532,7 +4989,8 @@ def import_assets(
                         key: identity_result.get(key)
                         for key in (
                             'status', 'message', 'detected_vendor', 'detected_platform',
-                            'detected_model', 'identity_source',
+                            'detected_model', 'synced_model', 'model_source',
+                            'identity_source', 'rack_sync',
                         )
                         if identity_result.get(key) is not None
                     }

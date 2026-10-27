@@ -6,6 +6,7 @@ import {
   clampChangeOrderPage,
   canRecordEmergencyPostReview,
   canCurrentUserImplement,
+  canUploadControlSheetAttachment,
   describeCurrentResponsibility,
   describeNextWorkflowAction,
   getChangeOrderExecutionAuthRole,
@@ -27,6 +28,7 @@ import {
   getNextWorkflowAction,
   getChangeOrderWindowState,
   getResultReviewActions,
+  formatChangeOrderApiMessage,
   buildWorkflowPresentation,
   isBusinessVerifier,
   isChangeOrderFinalApprover,
@@ -67,6 +69,57 @@ const createOrder = (overrides: Partial<ChangeOrder> = {}): ChangeOrder => ({
   created_at: '',
   updated_at: '',
   ...overrides,
+});
+
+describe('change order API error messages', () => {
+  const scopeDenied = {
+    code: 'RESOURCE_SCOPE_DENIED',
+    message: 'Insufficient permission for this resource scope',
+    resource_type: 'command',
+    action: 'execute',
+  };
+
+  it('localizes structured device command scope denial', () => {
+    expect(formatChangeOrderApiMessage(scopeDenied, 'zh', '操作失败'))
+      .toBe('当前账号无权对目标设备执行命令，请联系管理员检查授权。');
+    expect(formatChangeOrderApiMessage(scopeDenied, 'en', 'Operation failed'))
+      .toBe('You are not authorized to execute commands on these devices. Ask an administrator to review access.');
+  });
+
+  it('returns bounded text for string and message details, and a localized fallback for other values', () => {
+    expect(formatChangeOrderApiMessage('  Not allowed  ', 'en', 'Fallback')).toBe('Not allowed');
+    expect(formatChangeOrderApiMessage(`  ${'x'.repeat(300)}  `, 'en', 'Fallback')).toHaveLength(240);
+    expect(formatChangeOrderApiMessage({ code: 'OTHER', message: ' Server rejected the request ' }, 'en', 'Fallback'))
+      .toBe('Server rejected the request');
+    expect(formatChangeOrderApiMessage({ code: 'OTHER', message: { reason: 'hidden' } }, 'zh', '操作失败'))
+      .toBe('操作失败');
+    expect(formatChangeOrderApiMessage(['unexpected'], 'en', 'Fallback')).toBe('Fallback');
+    expect(formatChangeOrderApiMessage(null, 'zh', '请求失败')).toBe('请求失败');
+  });
+});
+
+describe('control sheet attachment upload eligibility', () => {
+  const requester: SessionUser = { id: 'requester-id', username: 'requester', role: 'Operator' };
+
+  it('allows the requester or an administrator to upload before execution begins', () => {
+    expect(canUploadControlSheetAttachment(createOrder({ status: 'draft' }), requester)).toBe(true);
+    expect(canUploadControlSheetAttachment(createOrder({ status: 'initial_review' }), requester)).toBe(true);
+    expect(canUploadControlSheetAttachment(createOrder({ status: 'final_review' }), requester)).toBe(true);
+    expect(canUploadControlSheetAttachment(createOrder({ status: 'approved' }), requester)).toBe(true);
+    expect(canUploadControlSheetAttachment(createOrder({ status: 'approved' }), {
+      id: 'requester-id', username: 'requester', role: 'Viewer', role_profile: 'Change Requester',
+    })).toBe(true);
+    expect(canUploadControlSheetAttachment(createOrder({ status: 'approved' }), { id: 'admin', username: 'admin', role: 'Administrator' })).toBe(true);
+  });
+
+  it('blocks other users, execution-started orders, and terminal workflow states', () => {
+    expect(canUploadControlSheetAttachment(createOrder({ status: 'approved' }), { id: 'other', username: 'other', role: 'Operator' })).toBe(false);
+    expect(canUploadControlSheetAttachment(createOrder({ status: 'approved' }), {
+      id: 'operator-admin', username: 'operator-admin', role: 'Administrator', role_profile: 'Automation Operator',
+    })).toBe(false);
+    expect(canUploadControlSheetAttachment(createOrder({ status: 'implementing', result_detail: { execution_started_at: '2026-10-26T10:00:00Z' } }), requester)).toBe(false);
+    expect(canUploadControlSheetAttachment(createOrder({ status: 'completed' }), requester)).toBe(false);
+  });
 });
 
 describe('change order pagination', () => {

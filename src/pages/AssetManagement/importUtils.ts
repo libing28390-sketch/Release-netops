@@ -460,6 +460,48 @@ const stringValue = (value: unknown): string => (
   typeof value === 'string' ? value.trim() : String(value ?? '').trim()
 );
 
+const hasImportValue = (value: unknown): boolean => {
+  if (typeof value === 'string') return value.trim().length > 0;
+  if (typeof value === 'number') return Number.isFinite(value);
+  return value === true;
+};
+
+const safeIdentityValue = (value: unknown): string => (
+  typeof value === 'string' || typeof value === 'number' ? String(value).trim() : ''
+);
+
+/**
+ * Return network-device import rows which are eligible for SNMP but have no
+ * explicit SNMP credential. Row numbers match the 1-based API asset list.
+ */
+export const getMissingSnmpCredentialRows = (
+  assets: ReadonlyArray<Record<string, unknown>>,
+  createdRows?: ReadonlySet<number>,
+): Array<{ row: number; identity: string }> => {
+  const rows: Array<{ row: number; identity: string }> = [];
+
+  assets.forEach((asset, index) => {
+    const row = index + 1;
+    if (createdRows && !createdRows.has(row)) return;
+    if (stringValue(asset.asset_type) !== 'network_device') return;
+    if (!safeIdentityValue(asset.management_ip)) return;
+    if (asset.snmp_collection_enabled === false) return;
+    if ([
+      asset.snmp_community,
+      asset.community,
+      asset.snmp_credential_id,
+      asset.snmp_credential_name,
+    ].some(hasImportValue)) return;
+
+    const identity = [asset.asset_tag, asset.hostname, asset.management_ip]
+      .map(safeIdentityValue)
+      .find(Boolean) || safeIdentityValue(asset.management_ip);
+    rows.push({ row, identity });
+  });
+
+  return rows;
+};
+
 const safeSiteLabel = (value: unknown, zh: boolean): string => {
   const raw = stringValue(value);
   if (!raw) {
@@ -471,6 +513,117 @@ const safeSiteLabel = (value: unknown, zh: boolean): string => {
   return raw.replace(/\bsite-default\b|\bdefault_site\b/gi, zh ? '系统默认站点' : 'system default site');
 };
 
+type SnmpImportErrorCopy = { zh: { text: string; detail: string }; en: { text: string; detail: string } };
+
+const SNMP_IMPORT_ERROR_COPY: Record<string, SnmpImportErrorCopy> = {
+  ASSET_SNMP_CREDENTIAL_NOT_FOUND: {
+    zh: {
+      text: '绑定的 SNMP 凭据未找到。',
+      detail: '请在凭据中心确认凭据名称或 ID，并选择仍然存在的 SNMP 凭据。',
+    },
+    en: {
+      text: 'The bound SNMP credential was not found.',
+      detail: 'Check the credential name or ID in the credential center and select an existing SNMP credential.',
+    },
+  },
+  ASSET_SNMP_CREDENTIAL_TYPE_UNSUPPORTED: {
+    zh: {
+      text: '绑定项不是受支持的 SNMP 凭据类型。',
+      detail: '请改为选择凭据中心中的 SNMPv2 或 SNMPv3 凭据。',
+    },
+    en: {
+      text: 'The bound item is not a supported SNMP credential type.',
+      detail: 'Select an SNMPv2 or SNMPv3 credential from the credential center.',
+    },
+  },
+  ASSET_SNMP_CREDENTIAL_INCOMPLETE: {
+    zh: {
+      text: '绑定的 SNMP 凭据配置不完整，无法用于采集或识别。',
+      detail: '请在凭据中心补齐所需字段：SNMPv2 需要社区名；SNMPv3 需要与安全级别对应的用户及认证/加密字段。',
+    },
+    en: {
+      text: 'The bound SNMP credential is incomplete and cannot be used for collection or identification.',
+      detail: 'Complete the profile in the credential center: SNMPv2 requires a community; SNMPv3 requires the user and authentication/privacy fields for its security level.',
+    },
+  },
+  ASSET_SNMP_CREDENTIAL_UNREADABLE: {
+    zh: {
+      text: '系统无法安全读取绑定的 SNMP 凭据。',
+      detail: '请在凭据中心重新保存该凭据；如果问题仍然存在，请联系管理员检查凭据加密存储。',
+    },
+    en: {
+      text: 'The bound SNMP credential could not be read safely.',
+      detail: 'Save the credential again in the credential center. If the issue persists, ask an administrator to check credential encryption storage.',
+    },
+  },
+  ASSET_SNMP_CREDENTIAL_ALGORITHM_UNSUPPORTED: {
+    zh: {
+      text: '绑定的 SNMPv3 凭据使用了当前识别流程不支持的算法。',
+      detail: '请在凭据中心为 SNMPv3 凭据选择受支持的认证和加密算法后重试。',
+    },
+    en: {
+      text: 'The bound SNMPv3 credential uses an algorithm unsupported by the identification flow.',
+      detail: 'Choose supported authentication and privacy algorithms for the SNMPv3 credential, then retry.',
+    },
+  },
+  ASSET_SNMP_COMMUNITY_STORAGE_UNAVAILABLE: {
+    zh: {
+      text: '系统暂时无法安全保存 SNMP 社区凭据。',
+      detail: '请稍后重试；如果问题仍然存在，请联系管理员检查凭据加密存储服务。',
+    },
+    en: {
+      text: 'SNMP community credentials cannot be stored securely right now.',
+      detail: 'Retry later. If the issue persists, ask an administrator to check the credential encryption storage service.',
+    },
+  },
+};
+
+const LEGACY_SNMP_IMPORT_ERROR_CODES: Record<string, string> = {
+  CREDENTIAL_MISSING: 'ASSET_SNMP_CREDENTIAL_NOT_FOUND',
+  MISSING_CREDENTIALS: 'ASSET_SNMP_CREDENTIAL_NOT_FOUND',
+  SNMP_CREDENTIAL_MISSING: 'ASSET_SNMP_CREDENTIAL_NOT_FOUND',
+  CREDENTIAL_TYPE_UNSUPPORTED: 'ASSET_SNMP_CREDENTIAL_TYPE_UNSUPPORTED',
+  CREDENTIAL_INCOMPLETE: 'ASSET_SNMP_CREDENTIAL_INCOMPLETE',
+  SNMPV3_AUTH_UNSUPPORTED: 'ASSET_SNMP_CREDENTIAL_ALGORITHM_UNSUPPORTED',
+  SNMPV3_PRIV_UNSUPPORTED: 'ASSET_SNMP_CREDENTIAL_ALGORITHM_UNSUPPORTED',
+  CREDENTIAL_UNREADABLE: 'ASSET_SNMP_CREDENTIAL_UNREADABLE',
+  SNMP_COMMUNITY_STORAGE_UNAVAILABLE: 'ASSET_SNMP_COMMUNITY_STORAGE_UNAVAILABLE',
+};
+
+const normalizeErrorCode = (value: unknown): string => stringValue(value).toUpperCase().replace(/[^A-Z0-9]+/g, '_');
+
+const getSnmpImportErrorCode = (codeValues: unknown[], message: string): string | null => {
+  for (const value of codeValues) {
+    const code = normalizeErrorCode(value);
+    if (SNMP_IMPORT_ERROR_COPY[code]) return code;
+    if (LEGACY_SNMP_IMPORT_ERROR_CODES[code]) return LEGACY_SNMP_IMPORT_ERROR_CODES[code];
+  }
+
+  const candidates = codeValues.map(stringValue).filter(Boolean).concat(message);
+  for (const candidate of candidates) {
+    if (/snmpv3_(?:auth|priv)_unsupported|(?:authentication|privacy|auth|priv).{0,24}(?:algorithm|protocol).{0,20}(?:unsupported|not supported)|(?:unsupported|not supported).{0,24}(?:snmpv3|authentication|privacy|auth|priv).{0,20}(?:algorithm|protocol)|(?:unsupported|not supported).{0,20}algorithm|(?:算法|认证算法|加密算法).{0,12}不支持|不支持.{0,16}(?:SNMPv3|认证算法|加密算法|算法)/i.test(candidate)) {
+      return 'ASSET_SNMP_CREDENTIAL_ALGORITHM_UNSUPPORTED';
+    }
+    if (/snmp_community_storage_unavailable|community.{0,24}storage.{0,20}(?:unavailable|not available|failed)|storage.{0,24}(?:unavailable|not available|failed).{0,20}community|credential encryption key.{0,20}(?:missing|not configured)|(?:SNMP社区|community).{0,20}(?:加密存储|保存).{0,12}(?:不可用|失败)/i.test(candidate)) {
+      return 'ASSET_SNMP_COMMUNITY_STORAGE_UNAVAILABLE';
+    }
+    if (/credential_unreadable|(?:credential|secret|profile).{0,24}(?:unreadable|could not be read|failed to decrypt|could not decrypt)|(?:could not decrypt|failed to decrypt|decryption failed).{0,24}(?:credential|secret|snmp)|(?:凭据|密钥).{0,12}(?:无法读取|解密失败)/i.test(candidate)) {
+      return 'ASSET_SNMP_CREDENTIAL_UNREADABLE';
+    }
+    if (/credential_type_unsupported|(?:credential|profile).{0,24}(?:type )?(?:unsupported|not supported)|(?:unsupported|not supported).{0,24}(?:credential|profile) type|当前凭据类型不支持\s*SNMP/i.test(candidate)) {
+      return 'ASSET_SNMP_CREDENTIAL_TYPE_UNSUPPORTED';
+    }
+    if (/credential_incomplete|(?:credential|profile|fields?).{0,24}(?:incomplete|missing required)|SNMPv2 credentials require an SNMP community|SNMP community (?:is )?(?:missing|required)|SNMPv3 requires a bound credential profile|SNMP\s*凭据字段不完整|SNMPv2\s*凭据.*社区名/i.test(candidate)) {
+      return 'ASSET_SNMP_CREDENTIAL_INCOMPLETE';
+    }
+    if (/missing_credentials|credential_missing|snmp_credential_missing|no usable snmp credentials?|(?:snmp )?(?:credential|profile).{0,24}(?:not found|does not exist|is missing|unavailable)|(?:not found|does not exist|missing).{0,24}(?:snmp )?(?:credential|profile)|未配置\s*SNMP\s*凭据|绑定的\s*SNMP\s*凭据已不存在|SNMP凭据.{0,12}(?:不存在|未找到)/i.test(candidate)) {
+      return 'ASSET_SNMP_CREDENTIAL_NOT_FOUND';
+    }
+  }
+
+  return null;
+};
+
 /**
  * Convert the structured import error contract into a localized toast model.
  * Keep this tolerant of older deployments that returned a string or omitted
@@ -480,20 +633,46 @@ export const formatAssetImportError = (detail: unknown, language: string): Asset
   const zh = language === 'zh';
   const root = isRecord(detail) ? detail : {};
   const nested = isRecord(root.details) ? root.details : {};
+  const nestedDetail = isRecord(root.detail) ? root.detail : {};
   const source = stringValue(nested.reason) ? nested : root;
-  const rawMessage = typeof root.message === 'string'
-    ? root.message
-    : typeof detail === 'string'
-      ? detail
-      : '';
+  const rawMessage = typeof nested.message === 'string'
+    ? nested.message
+    : typeof nestedDetail.message === 'string'
+      ? nestedDetail.message
+      : typeof root.message === 'string'
+        ? root.message
+        : typeof detail === 'string'
+          ? detail
+          : '';
   const reason = stringValue(source.reason);
+  const code = getSnmpImportErrorCode([
+    nested.code,
+    nested.reason,
+    nestedDetail.code,
+    root.code,
+    reason,
+  ], rawMessage);
   const looksReserved = reason === 'reserved_system_site'
     || /system default site|site-default|default_site/i.test(rawMessage);
-  const row = Number(source.row);
+  const row = Number(nested.row ?? source.row ?? root.row);
   const rowLabelZh = Number.isInteger(row) && row > 0 ? `第 ${row} 条` : '';
   const rowLabelEn = Number.isInteger(row) && row > 0 ? `item ${row}` : '';
-  const assetLabel = stringValue(source.asset_label);
+  const assetLabel = stringValue(nested.asset_label || nested.asset_tag || nested.hostname || nested.management_ip
+    || source.asset_label || source.asset_tag || source.hostname || source.management_ip
+    || root.asset_label || root.asset_tag || root.hostname || root.management_ip);
   const siteLabel = safeSiteLabel(source.site_label, zh);
+
+  if (code && SNMP_IMPORT_ERROR_COPY[code]) {
+    const copy = SNMP_IMPORT_ERROR_COPY[code][zh ? 'zh' : 'en'];
+    const subjectZh = assetLabel ? `资产“${assetLabel}”` : '该资产';
+    const subjectEn = assetLabel ? `asset “${assetLabel}”` : 'this asset';
+    return {
+      text: zh
+        ? `导入失败${rowLabelZh ? `：${rowLabelZh}` : ''}${subjectZh}：${copy.text}`
+        : `Import failed${rowLabelEn ? ` (${rowLabelEn})` : ''} for ${subjectEn}: ${copy.text}`,
+      details: [copy.detail],
+    };
+  }
 
   if (looksReserved) {
     const subjectZh = assetLabel ? `资产“${assetLabel}”` : '该资产';
@@ -518,6 +697,15 @@ export const formatAssetImportError = (detail: unknown, language: string): Asset
       details: [zh
         ? '请填写已存在的站点 ID、编码或名称；如果资产暂时没有站点，请清空“站点/数据中心”列。'
         : 'Enter an existing site ID, code or name, or clear the Site/Datacenter column when the asset is not assigned to a site.'],
+    };
+  }
+
+  if (/(?:snmp|community|团体字|社区名)/i.test(rawMessage)) {
+    return {
+      text: zh ? 'SNMP 凭据验证失败。' : 'SNMP credential validation failed.',
+      details: [zh
+        ? '请检查所选 SNMP 凭据是否存在、类型正确且配置完整，然后重试。'
+        : 'Check that the selected SNMP credential exists, has a supported type, and is complete, then retry.'],
     };
   }
 

@@ -111,6 +111,20 @@ def test_credential_resolver_keeps_enable_secret_independent() -> None:
     assert resolved["enable_password"] == ""
 
 
+def test_h3c_snmp_community_is_redacted_from_commands_and_echoed_output() -> None:
+    secret = "unit-test-community"
+    commands = (
+        f"snmp-agent community read simple {secret} acl name nexora-snmp-ro",
+        f"undo snmp-agent community {secret}",
+        f"[H3C] snmp-agent community read simple {secret} acl name nexora-snmp-ro",
+    )
+
+    for command in commands:
+        sanitized = netmiko_driver._sanitize_command(command)
+        assert secret not in sanitized
+        assert "********" in sanitized
+
+
 def test_engine_driver_does_not_call_enable_without_explicit_secret(monkeypatch) -> None:
     connection = FakeEngineConnection()
     captured: dict = {}

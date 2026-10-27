@@ -1,6 +1,7 @@
 import React from 'react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as XLSX from 'xlsx';
 import AssetManagementTab from './index';
 import { useInventoryStore } from '../../store/inventoryStore';
 
@@ -82,6 +83,9 @@ describe('AssetManagementTab request states', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn());
     useInventoryStore.setState(useInventoryStore.getInitialState());
+    vi.mocked(XLSX.utils.sheet_to_json).mockReturnValue([
+      { Hostname: 'progressive-import-server', 'Asset Type': 'server', 'Mgmt IP': '192.0.2.220' },
+    ]);
   });
 
   afterEach(() => {
@@ -359,6 +363,43 @@ describe('AssetManagementTab request states', () => {
     await screen.findByText(/Import done: 1 created/);
   });
 
+  it.each([
+    {
+      label: 'missing Profile reference',
+      result: { created: 0, skipped: 0, failed: 1, failed_items: [{ row: 1, hostname: 'snmp-feedback', code: 'ASSET_SNMP_CREDENTIAL_NOT_FOUND', message: 'generic row failure' }] },
+      expected: /credential center/i,
+    },
+    {
+      label: 'missing Community and Profile on a created asset',
+      result: { created: 1, skipped: 0, failed: 0, enrichment_pending: true, results: [{ row: 1, status: 'created' }] },
+      expected: /lack SNMP Community\/Profile/i,
+    },
+  ])('explains $label in the import feedback', async ({ result, expected }) => {
+    vi.mocked(XLSX.utils.sheet_to_json).mockReturnValue([
+      { Hostname: 'snmp-feedback', 'Asset Type': 'network_device', 'Mgmt IP': '192.0.2.222' },
+    ]);
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input);
+      if (url.startsWith('/api/assets?')) return response({ items: [], total: 0 });
+      if (url === '/api/assets/summary') return assetSummary(0, 0);
+      if (url === '/api/cmdb/sites') return response({ data: [] });
+      if (url === '/api/racks') return response({ success: true, data: [] });
+      if (url === '/api/tags/definitions') return response({ data: [] });
+      if (url === '/api/assets/import?detailed=true') return response(result);
+      return response({});
+    });
+
+    renderAssetPage();
+    await screen.findByText('No asset records');
+    fireEvent.change(document.querySelector('input[type="file"]')!, {
+      target: { files: [new File(['workbook'], 'snmp-feedback.xlsx')] },
+    });
+
+    await screen.findByText(/Import done:/);
+    expect(screen.getByRole('alert').textContent).toMatch(expected);
+    expect(screen.getByRole('alert').textContent).not.toContain('generic row failure');
+  });
+
   it('sends one batch-delete request for the selected assets', async () => {
     const asset = {
       id: 'asset-batch-delete-1',
@@ -397,6 +438,264 @@ describe('AssetManagementTab request states', () => {
     expect(batchDeleteCalls).toHaveLength(1);
     expect(batchDeleteCalls[0][1]?.body).toBe(JSON.stringify({ asset_ids: [asset.id] }));
     expect(vi.mocked(fetch).mock.calls.some(([input, init]) => String(input) === `/api/assets/${asset.id}` && init?.method === 'DELETE')).toBe(false);
+  });
+
+  it('retries hostname and model sync for selected devices and refreshes the displayed asset', async () => {
+    const asset = {
+      id: 'asset-manual-snmp-sync-1',
+      asset_type: 'network_device',
+      asset_tag: 'NET-MANUAL-SYNC-1',
+      hostname: 'switch-before-sync',
+      management_ip: '192.0.2.81',
+      model: '',
+      status: 'active',
+      lifecycle_status: 'production',
+      tags: [],
+    };
+    let syncCompleted = false;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.startsWith('/api/assets?')) {
+        return response({
+          items: [syncCompleted ? { ...asset, hostname: 'switch-after-sync', model: 'H3C S6850' } : asset],
+          total: 1,
+        });
+      }
+      if (url === '/api/assets/summary') return assetSummary(1, 0);
+      if (url === '/api/cmdb/sites') return response({ data: [] });
+      if (url === '/api/racks') return response({ success: true, data: [] });
+      if (url === '/api/tags/definitions') return response({ data: [] });
+      if (url === '/api/assets/batch-snmp-sync' && init?.method === 'POST') {
+        syncCompleted = true;
+        return response({
+          requested: 1,
+          synced: 1,
+          partial: 0,
+          failed: 0,
+          skipped: 0,
+          results: [{
+            asset_id: asset.id,
+            device_id: 'device-manual-snmp-sync-1',
+            hostname: 'switch-after-sync',
+            management_ip: asset.management_ip,
+            status: 'synced',
+            message: '已获取主机名和型号',
+            hostname_sync: { status: 'synced', hostname: 'switch-after-sync', error: '' },
+            detected_model: 'H3C S6850',
+            synced_model: 'H3C S6850',
+            model_source: 'entity_mib',
+            rack_sync: { status: 'synced', message: '机柜设备型号已同步' },
+          }],
+        });
+      }
+      return response({});
+    });
+
+    renderAssetPage();
+    await screen.findByText('switch-before-sync');
+    fireEvent.click(screen.getAllByRole('checkbox')[1]);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry name/model sync' }));
+
+    await screen.findByText('Manual sync results');
+    expect(await screen.findAllByText('switch-after-sync')).toHaveLength(2);
+    expect(screen.getAllByText('H3C S6850').length).toBeGreaterThan(0);
+    expect((screen.getAllByRole('checkbox')[1] as HTMLInputElement).checked).toBe(false);
+    const requests = vi.mocked(fetch).mock.calls.filter(([input, init]) =>
+      String(input) === '/api/assets/batch-snmp-sync' && init?.method === 'POST',
+    );
+    expect(requests).toHaveLength(1);
+    expect(requests[0][1]?.body).toBe(JSON.stringify({ asset_ids: [asset.id] }));
+  });
+
+  it('keeps the in-progress message visible when manual sync takes longer than the toast lifetime', async () => {
+    const asset = {
+      id: 'asset-manual-snmp-long-running',
+      asset_type: 'network_device',
+      asset_tag: 'NET-MANUAL-SYNC-LONG',
+      hostname: 'switch-long-running',
+      management_ip: '192.0.2.83',
+      status: 'active',
+      lifecycle_status: 'production',
+      tags: [],
+    };
+    let resolveSync!: (value: Response) => void;
+    const pendingSync = new Promise<Response>(resolve => { resolveSync = resolve; });
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.startsWith('/api/assets?')) return response({ items: [asset], total: 1 });
+      if (url === '/api/assets/summary') return assetSummary(1, 0);
+      if (url === '/api/cmdb/sites') return response({ data: [] });
+      if (url === '/api/racks') return response({ success: true, data: [] });
+      if (url === '/api/tags/definitions') return response({ data: [] });
+      if (url === '/api/assets/batch-snmp-sync' && init?.method === 'POST') return pendingSync;
+      return response({});
+    });
+
+    renderAssetPage();
+    await screen.findByText('switch-long-running');
+    fireEvent.click(screen.getAllByRole('checkbox')[1]);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry name/model sync' }));
+
+    const progressMessage = /Retrying hostname and model sync for 1 device/;
+    expect(await screen.findByText(progressMessage)).toBeTruthy();
+    await new Promise(resolve => setTimeout(resolve, 5200));
+    expect(screen.getByText(progressMessage)).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Syncing…' }) as HTMLButtonElement).disabled).toBe(true);
+
+    resolveSync(response({
+      requested: 1,
+      synced: 1,
+      partial: 0,
+      failed: 0,
+      skipped: 0,
+      results: [{
+        asset_id: asset.id,
+        hostname: asset.hostname,
+        management_ip: asset.management_ip,
+        status: 'synced',
+        message: '已同步',
+        hostname_sync: { status: 'synced', hostname: asset.hostname, error: '' },
+        detected_model: 'H3C S6850',
+        synced_model: 'H3C S6850',
+        model_source: 'entity_mib',
+        rack_sync: { status: 'synced', message: '机柜型号已同步' },
+      }],
+    }));
+    await screen.findByText('Manual sync results');
+  }, 10000);
+
+  it('keeps failed sync devices selected so the user can retry them', async () => {
+    const asset = {
+      id: 'asset-manual-snmp-retry-1',
+      asset_type: 'network_device',
+      asset_tag: 'NET-MANUAL-RETRY-1',
+      hostname: 'switch-retry',
+      management_ip: '192.0.2.82',
+      status: 'active',
+      lifecycle_status: 'production',
+      tags: [],
+    };
+    let attempts = 0;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.startsWith('/api/assets?')) return response({ items: [asset], total: 1 });
+      if (url === '/api/assets/summary') return assetSummary(1, 0);
+      if (url === '/api/cmdb/sites') return response({ data: [] });
+      if (url === '/api/racks') return response({ success: true, data: [] });
+      if (url === '/api/tags/definitions') return response({ data: [] });
+      if (url === '/api/assets/batch-snmp-sync' && init?.method === 'POST') {
+        attempts += 1;
+        if (attempts === 1) {
+          return response({
+            requested: 1,
+            synced: 0,
+            partial: 0,
+            failed: 1,
+            skipped: 0,
+            results: [{
+              asset_id: asset.id,
+              hostname: asset.hostname,
+              management_ip: asset.management_ip,
+              status: 'failed',
+              message: 'SNMP 查询超时，请检查设备响应后重试',
+              hostname_sync: { status: 'failed', hostname: '', error: 'timeout' },
+              detected_model: '',
+              synced_model: '',
+              model_source: '',
+              rack_sync: { status: 'skipped', message: '型号未获取' },
+            }],
+          });
+        }
+        return response({
+          requested: 1,
+          synced: 1,
+          partial: 0,
+          failed: 0,
+          skipped: 0,
+          results: [{
+            asset_id: asset.id,
+            hostname: 'switch-retry-new',
+            management_ip: asset.management_ip,
+            status: 'synced',
+            message: '已同步',
+            hostname_sync: { status: 'synced', hostname: 'switch-retry-new', error: '' },
+            detected_model: 'H3C S6850',
+            synced_model: 'H3C S6850',
+            model_source: 'entity_mib',
+            rack_sync: { status: 'synced', message: '机柜设备型号已同步' },
+          }],
+        });
+      }
+      return response({});
+    });
+
+    renderAssetPage();
+    await screen.findByText('switch-retry');
+    fireEvent.click(screen.getAllByRole('checkbox')[1]);
+    const retryButton = screen.getByRole('button', { name: 'Retry name/model sync' });
+    fireEvent.click(retryButton);
+
+    expect(await screen.findByText(/SNMP 查询超时/)).toBeTruthy();
+    expect((screen.getAllByRole('checkbox')[1] as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(retryButton);
+    await waitFor(() => expect(attempts).toBe(2));
+    await screen.findByText(/Model: H3C S6850/);
+    expect((screen.getAllByRole('checkbox')[1] as HTMLInputElement).checked).toBe(false);
+  });
+
+  it('submits all selected devices without a client-side batch cap', async () => {
+    const assets = Array.from({ length: 11 }, (_unused, index) => ({
+      id: `asset-manual-limit-${index + 1}`,
+      asset_type: 'network_device',
+      asset_tag: `NET-MANUAL-LIMIT-${index + 1}`,
+      hostname: `switch-limit-${index + 1}`,
+      management_ip: `192.0.2.${90 + index}`,
+      status: 'active',
+      lifecycle_status: 'production',
+      tags: [],
+    }));
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.startsWith('/api/assets?')) return response({ items: assets, total: assets.length });
+      if (url === '/api/assets/summary') return assetSummary(11, 0);
+      if (url === '/api/cmdb/sites') return response({ data: [] });
+      if (url === '/api/racks') return response({ success: true, data: [] });
+      if (url === '/api/tags/definitions') return response({ data: [] });
+      if (url === '/api/assets/batch-snmp-sync' && init?.method === 'POST') {
+        return response({
+          requested: assets.length,
+          synced: assets.length,
+          partial: 0,
+          failed: 0,
+          skipped: 0,
+          results: assets.map(asset => ({
+            asset_id: asset.id,
+            hostname: asset.hostname,
+            management_ip: asset.management_ip,
+            status: 'synced',
+            message: '已同步',
+            hostname_sync: { status: 'synced', hostname: asset.hostname, error: '' },
+            detected_model: 'H3C S6850',
+            synced_model: 'H3C S6850',
+            model_source: 'entity_mib',
+            rack_sync: { status: 'synced', message: '机柜型号已同步' },
+          })),
+        });
+      }
+      return response({});
+    });
+
+    renderAssetPage();
+    await screen.findByText('switch-limit-11');
+    fireEvent.click(screen.getAllByRole('checkbox')[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry name/model sync' }));
+
+    expect(await screen.findByText(/11 synced/)).toBeTruthy();
+    const requests = vi.mocked(fetch).mock.calls.filter(([input, init]) =>
+      String(input) === '/api/assets/batch-snmp-sync' && init?.method === 'POST',
+    );
+    expect(requests).toHaveLength(1);
+    expect(requests[0][1]?.body).toBe(JSON.stringify({ asset_ids: assets.map(asset => asset.id) }));
   });
 
   it('migrates the previously auto-saved default columns', async () => {

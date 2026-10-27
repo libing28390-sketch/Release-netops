@@ -147,6 +147,9 @@ RECOMMENDED_ROLE_PROFILES = {
     'Automation Operator': {
         'platform': {'view'}, 'command': {'view', 'execute'}, 'textfsm': {'view'},
         'asset': {'view'},
+        # Implementers need to open assigned change orders. Their device
+        # execution remains bounded by explicit command resource scopes.
+        'change_order': {'view'},
         'pam': {'view', 'request_approval', 'create_change', 'intervene'},
         'sample_output': {'view'}, 'playbook': {'view', 'execute'},
         'incident_ticket': {

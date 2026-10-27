@@ -9,6 +9,7 @@ import type { ChangeOrder as IChangeOrder, ScenarioTemplate, Summary, PlatformMe
 // Sub-components
 import { ChangeOrderList } from './components/ChangeOrderList';
 import { ChangeOrderDetail } from './components/ChangeOrderDetail';
+import type { ControlSheetUploadResult } from './components/ControlSheetPanel';
 import { ChangeOrderEditor } from './components/ChangeOrderEditor';
 import { TerminalExecution } from './components/TerminalExecution';
 import { useEscapeClose } from '../../hooks/useEscapeClose';
@@ -34,6 +35,7 @@ import {
   clampChangeOrderPage,
   getFinalApproverCandidates,
   getInitialReviewerCandidates,
+  formatChangeOrderApiMessage,
   getMissingChangeOrderControlSheetFields,
   isCommandTemplateSnapshot,
   fmtDate,
@@ -81,7 +83,6 @@ interface Props {
 const ChangeOrderComponent: React.FC<Props> = ({
   language,
   t,
-  users,
   scenarios,
   configTemplates,
   platforms,
@@ -108,6 +109,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
 
   // ── Data state ──
   const [orders, setOrders] = useState<IChangeOrder[]>([]);
+  const [assignmentUsers, setAssignmentUsers] = useState<UserOption[]>([]);
   const [total, setTotal] = useState(0);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loading, setLoading] = useState(false);
@@ -217,7 +219,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
   // ── Toast ──
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
 
-  const showToast = useCallback((msg: string, type: 'success' | 'error' = 'success') => {
+  const showToast = useCallback((msg: unknown, type: 'success' | 'error' = 'success') => {
     const translationMap: Record<string, string> = {
       'Requester cannot review/approve own change order': '申请人不能审核或审批自己的变更工单',
       'Only Administrator can finalize approval for change orders': '只有管理员角色的用户才能执行最终审批',
@@ -233,10 +235,11 @@ const ChangeOrderComponent: React.FC<Props> = ({
       'Forbidden': '拒绝访问',
     };
 
-    const finalMsg = zh ? (translationMap[msg] || msg) : msg;
+    const safeMessage = formatChangeOrderApiMessage(msg, language, zh ? '操作失败，请稍后重试。' : 'Request failed. Please try again.');
+    const finalMsg = zh ? (translationMap[safeMessage] || safeMessage) : safeMessage;
     setToast({ msg: finalMsg, type });
     setTimeout(() => setToast(null), type === 'error' ? 5000 : 3000);
-  }, [zh]);
+  }, [language, zh]);
 
   const authHeaders = useCallback((withJson = false) => {
     const token = localStorage.getItem('netops_token');
@@ -245,6 +248,27 @@ const ChangeOrderComponent: React.FC<Props> = ({
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     };
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    setAssignmentUsers([]);
+    const loadAssignmentUsers = async () => {
+      try {
+        const response = await fetch('/api/change-orders/assignment-options', {
+          headers: authHeaders(),
+        });
+        if (!response.ok) return;
+        const payload = await response.json();
+        if (active && Array.isArray(payload?.data)) {
+          setAssignmentUsers(payload.data);
+        }
+      } catch {
+        if (active) setAssignmentUsers([]);
+      }
+    };
+    void loadAssignmentUsers();
+    return () => { active = false; };
+  }, [authHeaders, currentUser.id]);
 
   const resetTemplateComposer = useCallback(() => {
     setCommandMode('manual');
@@ -1118,7 +1142,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
           navigate('/change-orders/drafts');
         }
       } else {
-        showToast(data.detail || data.message || 'Error', 'error');
+        showToast(formatChangeOrderApiMessage(data.detail ?? data.message, language, zh ? '保存失败' : 'Save failed'), 'error');
       }
     } catch {
       showToast(zh ? '保存失败' : 'Save failed', 'error');
@@ -1149,7 +1173,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
         fetchOrders();
         fetchSummary();
       } else {
-        showToast(data.detail || data.message || 'Error', 'error');
+        showToast(formatChangeOrderApiMessage(data.detail ?? data.message, language, zh ? '操作失败' : 'Action failed'), 'error');
       }
     } catch { showToast(zh ? '操作失败' : 'Failed', 'error'); }
   };
@@ -1164,7 +1188,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
       const data = await resp.json();
       if (!resp.ok || !data.success || !data.data) {
         const detail = data.detail ?? data.message;
-        return { success: false, message: typeof detail === 'string' ? detail : detail ? JSON.stringify(detail) : (zh ? '责任分配失败' : 'Assignment failed') };
+        return { success: false, message: formatChangeOrderApiMessage(detail, language, zh ? '责任分配失败' : 'Assignment failed') };
       }
       setSelectedOrder(data.data);
       fetchTimeline(orderId);
@@ -1173,7 +1197,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
       fetchSummary();
       return { success: true, order: data.data };
     } catch (error) {
-      return { success: false, message: error instanceof Error ? error.message : (zh ? '责任分配请求失败' : 'Assignment request failed') };
+      return { success: false, message: formatChangeOrderApiMessage(error, language, zh ? '责任分配请求失败' : 'Assignment request failed') };
     }
   };
 
@@ -1187,7 +1211,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
       const data = await resp.json();
       if (!resp.ok || !data.success || !data.data) {
         const detail = data.detail ?? data.message;
-        return { success: false, message: typeof detail === 'string' ? detail : detail ? JSON.stringify(detail) : (zh ? '验证结果提交失败' : 'Verification submission failed') };
+        return { success: false, message: formatChangeOrderApiMessage(detail, language, zh ? '验证结果提交失败' : 'Verification submission failed') };
       }
       setSelectedOrder(data.data);
       fetchTimeline(orderId);
@@ -1196,7 +1220,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
       fetchSummary();
       return { success: true, order: data.data };
     } catch (error) {
-      return { success: false, message: error instanceof Error ? error.message : (zh ? '验证结果请求失败' : 'Verification request failed') };
+      return { success: false, message: formatChangeOrderApiMessage(error, language, zh ? '验证结果请求失败' : 'Verification request failed') };
     }
   };
 
@@ -1207,7 +1231,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
       });
       const data = await response.json();
       if (!response.ok || !data.success || !data.data) {
-        showToast(typeof data.detail === 'string' ? data.detail : (zh ? '实施复核提交失败' : 'Result review failed'), 'error');
+        showToast(formatChangeOrderApiMessage(data.detail ?? data.message, language, zh ? '实施复核提交失败' : 'Result review failed'), 'error');
         return;
       }
       setSelectedOrder(data.data);
@@ -1232,7 +1256,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
       const order = payload?.order as IChangeOrder | undefined;
       if (!response.ok || !payload?.success || !order) {
         const detail = payload?.detail || payload?.message;
-        return { success: false, message: typeof detail === 'string' ? detail : (zh ? '事后复核未能保存' : 'Post-review could not be saved') };
+        return { success: false, message: formatChangeOrderApiMessage(detail, language, zh ? '事后复核未能保存' : 'Post-review could not be saved') };
       }
       setSelectedOrder(order);
       fetchTimeline(orderId);
@@ -1240,7 +1264,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
       fetchSummary();
       return { success: true, order };
     } catch (error) {
-      return { success: false, message: error instanceof Error ? error.message : (zh ? '事后复核请求失败' : 'Post-review request failed') };
+      return { success: false, message: formatChangeOrderApiMessage(error, language, zh ? '事后复核请求失败' : 'Post-review request failed') };
     }
   };
 
@@ -1322,7 +1346,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
           ...prev,
           phase: 'done',
           success: false,
-          error: data.detail || data.message || (zh ? '执行失败' : 'Execution failed'),
+          error: formatChangeOrderApiMessage(data.detail ?? data.message, language, zh ? '执行失败' : 'Execution failed'),
         }));
         return;
       }
@@ -1340,7 +1364,14 @@ const ChangeOrderComponent: React.FC<Props> = ({
       if (unresolved.length) {
         combined += `\n\n[${zh ? '已跳过资产库中不存在的设备' : 'Skipped devices not found in inventory'}]: ${unresolved.join(', ')}`;
       }
-      const hasError = /Error:/i.test(combined);
+      const resultEntries = Object.entries((data.results || {}) as Record<string, any>);
+      const hasFailedDevice = resultEntries.some(([, result]) =>
+        String(result?.status || '').toLowerCase() !== 'success'
+      );
+      const hasError = /Error:/i.test(combined)
+        || data.status !== 'completed'
+        || resultEntries.length === 0
+        || hasFailedDevice;
       setExecuteModal((prev) => prev && ({
         ...prev,
         phase: 'done',
@@ -1348,12 +1379,12 @@ const ChangeOrderComponent: React.FC<Props> = ({
         output: combined.trim(),
         error: hasError ? (zh ? '部分命令执行返回错误，请检查输出' : 'Some commands returned errors, please review the output') : '',
       }));
-    } catch (err: any) {
+    } catch (err: unknown) {
       setExecuteModal((prev) => prev && ({
         ...prev,
         phase: 'done',
         success: false,
-        error: err?.message || (zh ? '请求失败' : 'Request failed'),
+        error: formatChangeOrderApiMessage(err, language, zh ? '请求失败' : 'Request failed'),
       }));
     }
   };
@@ -1372,7 +1403,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
         fetchOrders();
         fetchSummary();
       } else {
-        showToast(data.detail || 'Error', 'error');
+        showToast(formatChangeOrderApiMessage(data.detail ?? data.message, language, zh ? '删除失败' : 'Delete failed'), 'error');
       }
     } catch { showToast(zh ? '删除失败' : 'Delete failed', 'error'); }
   };
@@ -1455,7 +1486,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
       if (data.success) {
         showToast(data.message || (zh ? '模板已保存' : 'Template saved'));
       } else {
-        showToast(data.detail || 'Error', 'error');
+        showToast(formatChangeOrderApiMessage(data.detail ?? data.message, language, zh ? '保存失败' : 'Save failed'), 'error');
       }
     } catch { showToast(zh ? '保存失败' : 'Save failed', 'error'); }
   };
@@ -1571,6 +1602,65 @@ const ChangeOrderComponent: React.FC<Props> = ({
     }
   };
 
+  const handleControlSheetUpload = async (orderId: string, file: File): Promise<ControlSheetUploadResult> => {
+    const requiresReview = selectedOrder?.id === orderId && ['final_review', 'approved', 'implementing'].includes(selectedOrder.status);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const response = await fetch(`/api/change-orders/${encodeURIComponent(orderId)}/control-sheet`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: formData,
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload?.success) {
+        return {
+          success: false,
+          message: formatChangeOrderApiMessage(payload?.detail ?? payload?.message, language, zh ? '附件上传失败' : 'Attachment upload failed'),
+        };
+      }
+
+      const orderForRefresh = selectedOrder?.id === orderId ? selectedOrder : orders.find(order => order.id === orderId);
+      const detailRefresh = orderForRefresh ? openDetail(orderForRefresh) : Promise.resolve();
+      await Promise.all([detailRefresh, fetchOrders(), fetchSummary()]);
+      return { success: true, requiresReview };
+    } catch (error) {
+      return {
+        success: false,
+        message: formatChangeOrderApiMessage(error, language, zh ? '附件上传请求失败' : 'Attachment upload request failed'),
+      };
+    }
+  };
+
+  const handleControlSheetDownload = async (orderId: string, attachmentId: string, filename: string) => {
+    try {
+      const response = await fetch(
+        `/api/change-orders/${encodeURIComponent(orderId)}/attachments/${encodeURIComponent(attachmentId)}`,
+        { headers: authHeaders() },
+      );
+      if (!response.ok) {
+        let payload: unknown = {};
+        try { payload = await response.json(); } catch { /* use a localized fallback */ }
+        const errorPayload = payload && typeof payload === 'object' && !Array.isArray(payload)
+          ? payload as Record<string, unknown>
+          : {};
+        showToast(formatChangeOrderApiMessage(errorPayload.detail ?? errorPayload.message, language, zh ? '附件下载失败' : 'Attachment download failed'), 'error');
+        return;
+      }
+      const objectUrl = URL.createObjectURL(await response.blob());
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = filename;
+      link.style.display = 'none';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch (error) {
+      showToast(formatChangeOrderApiMessage(error, language, zh ? '附件下载请求失败' : 'Attachment download request failed'), 'error');
+    }
+  };
+
   useEffect(() => {
     if (!orderIdFromQuery || isCreateView) return;
     let cancelled = false;
@@ -1661,8 +1751,8 @@ const ChangeOrderComponent: React.FC<Props> = ({
 
   const initialReviewerOptions = useMemo(() => {
     const implementerId = String(form.control_sheet?.implementer_id || '');
-    return getInitialReviewerCandidates(users, String(currentUser.id || ''), implementerId);
-  }, [users, currentUser.id, form.control_sheet?.implementer_id]);
+    return getInitialReviewerCandidates(assignmentUsers, String(currentUser.id || ''), implementerId);
+  }, [assignmentUsers, currentUser.id, form.control_sheet?.implementer_id]);
 
   const groupedInitialReviewers = useMemo(() => {
     const map: Record<string, UserOption[]> = {};
@@ -1685,8 +1775,8 @@ const ChangeOrderComponent: React.FC<Props> = ({
   const finalApproverOptions = useMemo(() => {
     const reqId = selectedOrder?.requester_id;
     const implementerId = selectedOrder ? String(getAssignedImplementer(selectedOrder).id || '') : '';
-    return getFinalApproverCandidates(users, String(currentUser.id || ''), String(reqId || ''), implementerId);
-  }, [users, currentUser.id, selectedOrder?.requester_id, selectedOrder?.control_sheet]);
+    return getFinalApproverCandidates(assignmentUsers, String(currentUser.id || ''), String(reqId || ''), implementerId);
+  }, [assignmentUsers, currentUser.id, selectedOrder?.requester_id, selectedOrder?.control_sheet]);
 
   const groupedFinalApprovers = useMemo(() => {
     const map: Record<string, UserOption[]> = {};
@@ -1737,7 +1827,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
           <ChangeOrderEditor
             language={language}
             currentUser={currentUser}
-            users={users}
+            users={assignmentUsers}
             platforms={platforms}
             editingOrder={editingOrder}
             form={form}
@@ -1771,7 +1861,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
             detailError={detailError}
             retryDetail={() => { if (selectedOrder) void openDetail(selectedOrder); }}
             currentUser={currentUser}
-            users={users}
+            users={assignmentUsers}
             timeline={timeline}
             timelineLoading={timelineLoading}
             setTimeline={setTimeline}
@@ -1872,6 +1962,8 @@ const ChangeOrderComponent: React.FC<Props> = ({
             handleVerification={handleVerification}
             handleResultReview={handleResultReview}
             handleEmergencyReview={handleEmergencyReview}
+            handleControlSheetUpload={handleControlSheetUpload}
+            handleControlSheetDownload={handleControlSheetDownload}
             setExecuteModal={setExecuteModal}
             setActionPrompt={setActionPrompt}
             setFinalApproverPrompt={setFinalApproverPrompt}
@@ -1930,7 +2022,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
             fetchOrders={fetchOrders}
             fetchSummary={fetchSummary}
             fetchBookmarks={fetchBookmarks}
-            users={users}
+            users={assignmentUsers}
             currentUser={currentUser}
             advancedFilterCount={advancedFilterCount}
           />

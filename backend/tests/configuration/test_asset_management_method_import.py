@@ -143,6 +143,18 @@ def test_batch_import_binds_snmp_credential_name_to_asset_and_device(isolated_db
 
 
 def test_batch_import_auto_identifies_device_without_custom_metric_profile_binding(isolated_db, monkeypatch):
+    import asyncio
+
+    from services import rack_service
+
+    with get_db_connection() as conn:
+        rack = rack_service.create_rack(
+            conn,
+            name="snmp-model-sync-rack",
+            site_id="site-default",
+            total_u=20,
+            rack_code="snmp-model-sync-rack",
+        )
     with get_db_connection() as conn:
         conn.execute(
             """INSERT INTO credentials (
@@ -157,17 +169,46 @@ def test_batch_import_auto_identifies_device_without_custom_metric_profile_bindi
         )
         conn.commit()
 
-    identity_values = {
-        "1.3.6.1.2.1.1.2.0": ".1.3.6.1.4.1.25506.11.1.1",
-        "1.3.6.1.2.1.1.1.0": "H3C Comware Version 7.1.070",
-        "1.3.6.1.2.1.1.5.0": "AP_12",
+    identity_values_by_ip = {
+        f"192.0.2.{91 + index}": {
+            "1.3.6.1.2.1.1.2.0": ".1.3.6.1.4.1.25506.11.1.1",
+            "1.3.6.1.2.1.1.1.0": "H3C Comware Version 7.1.070",
+            "1.3.6.1.2.1.1.5.0": f"AP_{12 + index}",
+        }
+        for index in range(6)
     }
 
-    async def fake_snmp_get(_ip, _community, oid, _port, **_kwargs):
-        return identity_values.get(oid)
+    async def fake_snmp_get(ip, _community, oid, _port, **_kwargs):
+        return identity_values_by_ip.get(ip, {}).get(oid)
 
     import services.snmp_service as snmp_service
     monkeypatch.setattr(snmp_service, "_snmp_get", fake_snmp_get)
+
+    from services import librenms_enrollment_service, snmp_entity_model_service
+
+    async def fake_enrollment(device_id, *, actor=None):
+        return {"status": "local_snmp", "device_id": device_id}
+
+    active_model_probes = 0
+    max_active_model_probes = 0
+
+    async def fake_chassis_model(_ip, _settings):
+        nonlocal active_model_probes, max_active_model_probes
+        active_model_probes += 1
+        max_active_model_probes = max(max_active_model_probes, active_model_probes)
+        await asyncio.sleep(0.03)
+        # Optional ENTITY-MIB discovery must not hold up the established
+        # sysName writeback path.
+        with get_db_connection() as conn:
+            current = conn.execute(
+                'SELECT hostname FROM devices WHERE ip_address = ?', (_ip,)
+            ).fetchone()
+        assert current['hostname'] == identity_values_by_ip[_ip]["1.3.6.1.2.1.1.5.0"]
+        active_model_probes -= 1
+        return "S5130-28S-HI"
+
+    monkeypatch.setattr(librenms_enrollment_service, "enroll_imported_network_device", fake_enrollment)
+    monkeypatch.setattr(snmp_entity_model_service, "read_chassis_model", fake_chassis_model)
 
     from services import snmp_import_identification_service as identification_service
     monkeypatch.setattr(identification_service, "ensure_rules_available", lambda: {"status": "cached"})
@@ -187,31 +228,45 @@ def test_batch_import_auto_identifies_device_without_custom_metric_profile_bindi
     result = assets.import_assets([
         assets.AssetCreate(
             asset_type="network_device",
-            asset_tag="AUTO-SNMP-IDENTITY-1",
-            hostname="ap-import-placeholder",
-            management_ip="192.0.2.91",
+            asset_tag=f"AUTO-SNMP-IDENTITY-{index + 1}",
+            hostname=f"ap-import-placeholder-{index + 1}",
+            management_ip=f"192.0.2.{91 + index}",
             vendor="H3C",
             model="",
             platform="",
+            rack_id=rack["id"],
+            planned_start_u=3 + index,
+            rack_model_key="generic_switch_1u_24p",
             snmp_credential_name="import-auto-profile",
         )
+        for index in range(6)
     ])
 
-    assert result["created"] == 1
+    assert result["created"] == 6
     identified = result["snmp_identification"]
-    assert identified["identified"] == 1
+    assert identified["identified"] == 6
     assert identified["unresolved"] == 0
     item = identified["items"][0]
     assert item["status"] == "identified"
     assert item["detected_vendor"] == "H3C"
     assert item["detected_platform"] == "h3c_comware"
+    assert item["detected_model"] == "S5130-28S-HI"
+    assert item["synced_model"] == "S5130-28S-HI"
+    assert item["model_source"] == "entity_mib"
+    assert item["rack_sync"]["status"] == "synced"
+    assert max_active_model_probes == 1
+    assert all(
+        result_item["synced_model"] == "S5130-28S-HI"
+        for result_item in identified["items"]
+    )
     assert "profile_bound" not in identified
     assert "profile_id" not in item
     assert "identity-probe-secret" not in str(result)
 
     with get_db_connection() as conn:
         asset = conn.execute(
-            "SELECT vendor, platform, model FROM physical_assets WHERE asset_tag = ?",
+            "SELECT vendor, platform, model, rack_id, rack_position, rack_mount_kind "
+            "FROM physical_assets WHERE asset_tag = ?",
             ("AUTO-SNMP-IDENTITY-1",),
         ).fetchone()
         device = conn.execute(
@@ -221,11 +276,23 @@ def test_batch_import_auto_identifies_device_without_custom_metric_profile_bindi
                  )""",
             ("AUTO-SNMP-IDENTITY-1",),
         ).fetchone()
-    assert (asset["vendor"], asset["platform"], asset["model"]) == (
-        "H3C", "h3c_comware", "WA6320-HCL"
+    assert (asset["vendor"], asset["platform"], asset["model"], asset["rack_id"]) == (
+        "H3C", "h3c_comware", "S5130-28S-HI", rack["id"]
     )
     assert device["snmp_metric_profile_id"] == ""
     assert device["version"] == "7.1.070"
+
+    with get_db_connection() as conn:
+        placement = conn.execute(
+            """SELECT rd.model_key, dt.vendor, dt.model, rd.start_u
+                 FROM rack_devices rd
+                 JOIN device_types dt ON dt.id = rd.device_type_id
+                WHERE rd.asset_id = (SELECT id FROM physical_assets WHERE asset_tag = ?)""",
+            ("AUTO-SNMP-IDENTITY-1",),
+        ).fetchone()
+    assert (placement["model_key"], placement["vendor"], placement["model"], placement["start_u"]) == (
+        "H3C:S5130-28S-HI", "H3C", "S5130-28S-HI", 3
+    )
 
 
 def test_import_commits_asset_then_enrolls_with_bound_snmpv3_profile(isolated_db, monkeypatch):
@@ -571,3 +638,303 @@ def test_batch_import_rejects_missing_snmp_credential_name(isolated_db):
                 snmp_credential_name="missing-snmp-credential",
             )
         ])
+
+
+def test_detailed_import_explains_missing_snmp_profile_without_echoing_input(isolated_db):
+    result = assets.import_assets([
+        assets.AssetCreate(
+            asset_type='network_device', hostname='missing-profile-feedback',
+            management_ip='192.0.2.86', vendor='H3C', platform='h3c_comware',
+            snmp_credential_name='missing-profile-do-not-echo',
+        )
+    ], detailed=True)
+
+    assert result['created'] == 0
+    assert result['failed'] == 1
+    failure = result['failed_items'][0]
+    assert failure['code'] == 'ASSET_SNMP_CREDENTIAL_NOT_FOUND'
+    assert '凭据中心' in failure['message']
+    assert 'missing-profile-do-not-echo' not in str(result)
+
+
+def _create_asset_deferred_enrichment(body, actor):
+    from unittest.mock import Mock
+
+    # Keep asset creation on the normal API path while preventing its
+    # post-commit enrichment task from running before the manual retry test.
+    return assets.create_asset(body, background_tasks=Mock(), _user=actor)
+
+
+def test_batch_manual_snmp_sync_updates_hostname_model_and_rack(isolated_db, make_user, monkeypatch):
+    from services import rack_service, snmp_entity_model_service, snmp_import_identification_service, snmp_service
+
+    actor = make_user("manual-snmp-sync-admin", role="Administrator", tenant_id="tenant-default")
+    with get_db_connection() as conn:
+        rack = rack_service.create_rack(
+            conn,
+            name="manual-snmp-sync-rack",
+            site_id="site-default",
+            total_u=20,
+            rack_code="manual-snmp-sync-rack",
+        )
+
+    asset = _create_asset_deferred_enrichment(
+        assets.AssetCreate(
+            asset_type="network_device",
+            asset_tag="MANUAL-SNMP-SYNC-1",
+            hostname="retry-placeholder",
+            management_ip="192.0.2.241",
+            vendor="H3C",
+            platform="h3c_comware",
+            snmp_community="manual-retry-community",
+            rack_id=rack["id"],
+            planned_start_u=7,
+            rack_model_key="generic_switch_1u_24p",
+        ),
+        actor,
+    )
+
+    identity_values = {
+        "1.3.6.1.2.1.1.2.0": ".1.3.6.1.4.1.25506.11.1.1",
+        "1.3.6.1.2.1.1.1.0": "H3C Comware Platform Software, Software Version 7.1.070\r\nH3C S6850",
+        "1.3.6.1.2.1.1.5.0": "manual-retry-switch",
+    }
+    observed_gets = []
+
+    async def fake_snmp_get(_ip, _community, oid, _port, **_kwargs):
+        observed_gets.append(oid)
+        return identity_values.get(oid)
+
+    async def fake_chassis_model(_ip, _settings):
+        return "H3C S6850"
+
+    monkeypatch.setattr(snmp_service, "_snmp_get", fake_snmp_get)
+    monkeypatch.setattr(snmp_entity_model_service, "read_chassis_model", fake_chassis_model)
+    monkeypatch.setattr(snmp_import_identification_service, "ensure_rules_available", lambda: {"status": "cached"})
+    monkeypatch.setattr(snmp_import_identification_service, "resolve_rule", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        snmp_import_identification_service,
+        "resolve_snmp_vendor_identity",
+        lambda *_args, **_kwargs: {
+            "status": "identified",
+            "vendor": "H3C",
+            "platform": "h3c_comware",
+            "model": "H3C S6850",
+            "software_version": "7.1.070",
+            "source": "sysDescr",
+        },
+    )
+
+    result = assets.batch_snmp_sync_assets(
+        assets.BatchAssetSnmpSyncRequest(asset_ids=[asset["id"]]),
+        _user=actor,
+    )
+
+    assert result["requested"] == 1
+    assert result["synced"] == 1
+    assert result["partial"] == result["failed"] == result["skipped"] == 0
+    item = result["results"][0]
+    assert item["status"] == "synced"
+    assert item["hostname"] == "manual-retry-switch"
+    assert item["detected_model"] == item["synced_model"] == "S6850"
+    assert item["model_source"] == "entity_mib"
+    assert item["rack_sync"]["status"] == "synced"
+    assert set(observed_gets) == set(identity_values)
+    assert "manual-retry-community" not in str(result)
+
+    with get_db_connection() as conn:
+        stored_asset = conn.execute(
+            "SELECT hostname, model, rack_id FROM physical_assets WHERE id = ?", (asset["id"],)
+        ).fetchone()
+        stored_device = conn.execute(
+            "SELECT hostname, model FROM devices WHERE id = ?", (asset["device_id"],)
+        ).fetchone()
+        placement = conn.execute(
+            """SELECT rd.model_key, dt.vendor, dt.model, rd.start_u
+                 FROM rack_devices rd JOIN device_types dt ON dt.id = rd.device_type_id
+                WHERE rd.asset_id = ?""",
+            (asset["id"],),
+        ).fetchone()
+        audit_count = conn.execute(
+            "SELECT COUNT(*) AS count FROM audit_events WHERE event_type = ? AND target_id = ?",
+            ("asset.snmp_identity_sync", asset["id"]),
+        ).fetchone()["count"]
+    assert (stored_asset["hostname"], stored_asset["model"], stored_asset["rack_id"]) == (
+        "manual-retry-switch", "S6850", rack["id"]
+    )
+    assert (stored_device["hostname"], stored_device["model"]) == ("manual-retry-switch", "S6850")
+    assert (placement["model_key"], placement["vendor"], placement["model"], placement["start_u"]) == (
+        "H3C:S6850", "H3C", "S6850", 7
+    )
+    assert audit_count == 1
+
+
+def test_batch_manual_snmp_sync_marks_retained_model_partial_when_no_new_model_is_read(
+    isolated_db,
+    make_user,
+    monkeypatch,
+):
+    from services import snmp_entity_model_service, snmp_import_identification_service, snmp_service
+
+    actor = make_user("manual-snmp-sync-retained-model", role="Administrator", tenant_id="tenant-default")
+    asset = _create_asset_deferred_enrichment(
+        assets.AssetCreate(
+            asset_type="network_device",
+            asset_tag="MANUAL-SNMP-RETAINED-MODEL",
+            hostname="retained-model-placeholder",
+            management_ip="192.0.2.245",
+            vendor="H3C",
+            platform="h3c_comware",
+            model="H3C S6850",
+            snmp_community="manual-retained-model-community",
+        ),
+        actor,
+    )
+    identity_values = {
+        "1.3.6.1.2.1.1.2.0": ".1.3.6.1.4.1.25506.11.1.1",
+        "1.3.6.1.2.1.1.1.0": "H3C Comware Platform Software, Software Version 7.1.070",
+        "1.3.6.1.2.1.1.5.0": "retained-model-switch",
+    }
+
+    async def fake_snmp_get(_ip, _community, oid, _port, **_kwargs):
+        return identity_values.get(oid)
+
+    async def no_chassis_model(_ip, _settings):
+        return ""
+
+    monkeypatch.setattr(snmp_service, "_snmp_get", fake_snmp_get)
+    monkeypatch.setattr(snmp_entity_model_service, "read_chassis_model", no_chassis_model)
+    monkeypatch.setattr(snmp_import_identification_service, "ensure_rules_available", lambda: {"status": "cached"})
+    monkeypatch.setattr(snmp_import_identification_service, "resolve_rule", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        snmp_import_identification_service,
+        "resolve_snmp_vendor_identity",
+        lambda *_args, **_kwargs: {
+            "status": "identified",
+            "vendor": "H3C",
+            "platform": "h3c_comware",
+            "model": "",
+            "software_version": "7.1.070",
+            "source": "sysObjectID",
+        },
+    )
+
+    result = assets.batch_snmp_sync_assets(
+        assets.BatchAssetSnmpSyncRequest(asset_ids=[asset["id"]]),
+        _user=actor,
+    )
+
+    assert result["synced"] == 0
+    assert result["partial"] == 1
+    item = result["results"][0]
+    assert item["status"] == "partial"
+    assert item["hostname"] == "retained-model-switch"
+    assert item["synced_model"] == "S6850"
+    assert item["model_source"] == "existing"
+    assert "本次未获取到新型号" in item["message"]
+    assert "当前型号已保留" in item["message"]
+
+
+def test_batch_manual_snmp_sync_skips_disabled_or_non_network_assets(isolated_db, make_user, monkeypatch):
+    from unittest.mock import Mock
+    from services import snmp_entity_model_service, snmp_service
+
+    actor = make_user("manual-snmp-sync-disabled", role="Administrator", tenant_id="tenant-default")
+    network_asset = _create_asset_deferred_enrichment(
+        assets.AssetCreate(
+            asset_type="network_device",
+            asset_tag="MANUAL-SNMP-SYNC-DISABLED",
+            hostname="disabled-sync-host",
+            management_ip="192.0.2.242",
+            vendor="H3C",
+            platform="h3c_comware",
+            model="Existing Model",
+            snmp_community="must-not-probe-community",
+        ),
+        actor,
+    )
+    server_asset = assets.create_asset(
+        assets.AssetCreate(
+            asset_type="server",
+            asset_tag="MANUAL-SNMP-SYNC-SERVER",
+            hostname="manual-sync-server",
+            management_ip="192.0.2.243",
+        ),
+        background_tasks=Mock(),
+        _user=actor,
+    )
+    with get_db_connection() as conn:
+        conn.execute(
+            "UPDATE devices SET snmp_collection_enabled = FALSE WHERE id = ?",
+            (network_asset["device_id"],),
+        )
+        conn.commit()
+
+    observed_gets = []
+    observed_walks = []
+
+    async def forbidden_snmp_get(*_args, **_kwargs):
+        observed_gets.append(True)
+        return None
+
+    async def forbidden_chassis_walk(*_args, **_kwargs):
+        observed_walks.append(True)
+        return ""
+
+    monkeypatch.setattr(snmp_service, "_snmp_get", forbidden_snmp_get)
+    monkeypatch.setattr(snmp_entity_model_service, "read_chassis_model", forbidden_chassis_walk)
+    result = assets.batch_snmp_sync_assets(
+        assets.BatchAssetSnmpSyncRequest(asset_ids=[network_asset["id"], server_asset["id"]]),
+        _user=actor,
+    )
+
+    assert result["requested"] == 2
+    assert result["skipped"] == 2
+    assert result["results"][0]["message"] == "该设备已关闭 SNMP 采集，未执行自动识别"
+    assert result["results"][1]["message"] == "仅支持同步网络设备"
+    assert observed_gets == []
+    assert observed_walks == []
+    with get_db_connection() as conn:
+        unchanged = conn.execute(
+            "SELECT hostname, model FROM physical_assets WHERE id = ?", (network_asset["id"],)
+        ).fetchone()
+    assert (unchanged["hostname"], unchanged["model"]) == ("disabled-sync-host", "Existing Model")
+
+
+def test_batch_manual_snmp_sync_reports_missing_credentials_and_checks_scope(isolated_db, make_user, monkeypatch):
+    actor = make_user("manual-snmp-sync-owner", role="Administrator", tenant_id="tenant-default")
+    network_asset = _create_asset_deferred_enrichment(
+        assets.AssetCreate(
+            asset_type="network_device",
+            asset_tag="MANUAL-SNMP-SYNC-NO-CREDENTIAL",
+            hostname="no-credential-host",
+            management_ip="192.0.2.244",
+            vendor="H3C",
+            platform="h3c_comware",
+        ),
+        actor,
+    )
+    result = assets.batch_snmp_sync_assets(
+        assets.BatchAssetSnmpSyncRequest(asset_ids=[network_asset["id"]]),
+        _user=actor,
+    )
+    assert result["failed"] == 1
+    assert result["results"][0]["status"] == "failed"
+    assert "未配置 SNMP 凭据" in result["results"][0]["message"]
+
+    def deny_update_scope(_user, _row, action):
+        assert action == "update"
+        raise HTTPException(status_code=403, detail="Asset is outside the user's scope")
+
+    monkeypatch.setattr(assets, "_enforce_asset_row_scope", deny_update_scope)
+    with pytest.raises(HTTPException) as exc_info:
+        assets.batch_snmp_sync_assets(
+            assets.BatchAssetSnmpSyncRequest(asset_ids=[network_asset["id"]]),
+            _user=actor,
+        )
+    assert exc_info.value.status_code == 403
+
+
+def test_batch_manual_snmp_sync_request_has_no_fixed_device_count_cap():
+    request = assets.BatchAssetSnmpSyncRequest(asset_ids=[f"asset-{index}" for index in range(1, 21)])
+    assert len(request.asset_ids) == 20

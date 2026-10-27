@@ -670,6 +670,7 @@ async def create_user(request: Request, user: dict = Body(...)):
         )
         if role_profile == 'Change Requester':
             for resource_type, actions in (
+                ('asset', ['view']),
                 ('pam', ['create_change', 'view']),
                 ('change_order', ['create', 'update', 'view']),
             ):
@@ -1508,6 +1509,7 @@ async def _update_user_record(
                     raise HTTPException(status_code=403, detail='Ordinary users must be assigned to a tenant')
                 conn.execute('DELETE FROM user_resource_scopes WHERE user_id = ?', (user_id,))
                 for resource_type, actions in (
+                    ('asset', ['view']),
                     ('pam', ['create_change', 'view']),
                     ('change_order', ['create', 'update', 'view']),
                 ):

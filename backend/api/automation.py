@@ -466,6 +466,16 @@ def _normalize_execution_commands(value) -> list[str]:
     return [line.strip() for line in raw_lines if line and line.strip()]
 
 
+def _is_h3c_read_only_command_batch(device: dict, commands: list[str]) -> bool:
+    """Keep H3C display/show commands in operational mode, one command at a time."""
+    from core.platform_utils import normalize_device_platform
+
+    platform = normalize_device_platform('', str(device.get('platform') or ''))
+    if platform != 'h3c_comware' or not commands:
+        return False
+    return all(re.match(r'^(?:display|show)(?:\s|$)', command, re.IGNORECASE) for command in commands)
+
+
 def _resolve_change_order_target_ids(conn, target_devices: list) -> list[str]:
     resolved: list[str] = []
     for target in target_devices:
@@ -631,20 +641,35 @@ async def _execute_approved_change_order(
             device['username'] = credentials['username']
             device['password'] = credentials['password']
             device['enable_password'] = credentials['enable_password']
+            use_operational_mode = _is_h3c_read_only_command_batch(device, approved_commands)
             rows = await asyncio.get_event_loop().run_in_executor(
-                None, lambda d=device: service.execute_commands(d, approved_commands, is_config=True),
+                None,
+                lambda d=device, operational=use_operational_mode: service.execute_commands(
+                    d, approved_commands, is_config=not operational,
+                ),
             )
             lines = []
-            all_success = len(rows) == len(approved_commands)
+            all_success = bool(rows)
+            if use_operational_mode and len(rows) != len(approved_commands):
+                all_success = False
+                lines.append(
+                    f'Error: Received {len(rows)} of {len(approved_commands)} command results; '
+                    'the remaining commands may not have run.'
+                )
+            from drivers.ssh_compat import contains_paging_prompt
             for result in rows:
                 success = bool(result.get('success')) if isinstance(result, dict) else False
                 output = str((result or {}).get('output') or (result or {}).get('stdout') or '') if isinstance(result, dict) else ''
-                if not success:
+                paginated = contains_paging_prompt(output)
+                if output:
+                    lines.append(output)
+                if paginated:
+                    all_success = False
+                    lines.append('Error: CLI output stopped at a pagination prompt and is incomplete.')
+                elif not success:
                     all_success = False
                     error = str((result or {}).get('error') or (result or {}).get('stderr') or 'Command failed')
                     lines.append(f'Error: {error}')
-                else:
-                    lines.append(output)
             output_text = '\n'.join(lines)
             from services.pam_audit_service import redact_output
             safe_output, _ = redact_output(output_text)

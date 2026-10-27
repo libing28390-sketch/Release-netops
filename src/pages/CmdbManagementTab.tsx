@@ -393,6 +393,7 @@ const CRED_TYPE_OPTS = [
 const CRED_ROLE_OPTS = [
   { value: 'normal', label: '普通账号', labelEn: 'Normal account' },
   { value: 'admin', label: '特权账号', labelEn: 'Privileged account' },
+  { value: 'snmp', label: 'SNMP 采集', labelEn: 'SNMP collection' },
   { value: 'shared', label: '通用账号', labelEn: 'Shared account' },
   { value: 'unbound', label: '未指定', labelEn: 'Unassigned' },
 ];
@@ -2945,6 +2946,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
       switch (role) {
         case 'normal': return 'Normal';
         case 'admin': return 'Privileged Account';
+        case 'snmp': return 'SNMP Collection';
         case 'mixed': return 'Mixed';
         case 'shared': return 'Shared';
         case 'unbound': return 'Unbound';
@@ -2955,6 +2957,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     switch (role) {
       case 'normal': return '普通账号';
       case 'admin': return '特权账号';
+      case 'snmp': return 'SNMP 采集';
       case 'mixed': return '多角色';
       case 'shared': return '通用账号';
       case 'unbound': return '未关联';
@@ -2973,6 +2976,8 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
         return 'bg-amber-50 text-amber-700 border-amber-100 dark:bg-amber-950/20 dark:text-amber-400 dark:border-amber-900/30';
       case 'shared':
         return 'bg-violet-50 text-violet-700 border-violet-100 dark:bg-violet-950/20 dark:text-violet-400 dark:border-violet-900/30';
+      case 'snmp':
+        return 'bg-purple-50 text-purple-700 border-purple-100 dark:bg-purple-950/20 dark:text-purple-400 dark:border-purple-900/30';
       case 'unbound':
         return 'bg-slate-50 text-slate-500 border-slate-200 dark:bg-slate-900/20 dark:text-slate-400 dark:border-slate-800';
       case 'login':
@@ -3026,7 +3031,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
   };
 
   const openBindingModal = (row: any, device: any) => {
-    if (!isAdministrator) return;
+    if (!isAdministrator || device.binding_role === 'snmp') return;
     setBindingModal({
       credentialId: String(row.id || ''),
       credentialName: String(row.credential_name || row.id || ''),
@@ -3169,7 +3174,14 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                 <Server size={11} className="text-slate-400" />
                 {d.hostname || d.ip_address || <span data-export-ignore>{d.id}</span>}
               </button>
-              {isAdministrator && (
+              {d.binding_role === 'snmp' ? (
+                <span
+                  className="-ml-1 inline-flex items-center gap-0.5 rounded-r border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:border-violet-900/40 dark:bg-violet-950/30 dark:text-violet-300"
+                  title={zh ? '此凭据用于 SNMP 采集' : 'This credential is used for SNMP collection'}
+                >
+                  {zh ? '采集' : 'SNMP'}
+                </span>
+              ) : isAdministrator && (
                 <button
                   type="button"
                   onClick={() => openBindingModal(row, d)}

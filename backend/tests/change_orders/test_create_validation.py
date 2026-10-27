@@ -63,6 +63,33 @@ def test_authenticated_requester_can_create_change_order_and_persist_rollback_pl
     assert saved["control_sheet"]["rollback_plan"] == "Restore the previous interface configuration."
 
 
+def test_update_change_order_authorization_exempt_uses_integer_for_postgresql(isolated_db):
+    from services.change_order_service import create_change_order, get_change_order, update_change_order
+
+    connection = isolated_db["module"].get_db_connection()
+    try:
+        order = create_change_order(
+            connection,
+            title="Authorization exemption type regression",
+            status="draft",
+            authorization_exempt=False,
+        )
+
+        updated = update_change_order(connection, order["id"], {"authorization_exempt": True})
+        assert updated["authorization_exempt"] is True
+        stored_value = connection.execute(
+            "SELECT authorization_exempt FROM change_orders WHERE id = ?",
+            (order["id"],),
+        ).fetchone()
+        assert dict(stored_value)["authorization_exempt"] == 1
+
+        reverted = update_change_order(connection, order["id"], {"authorization_exempt": False})
+        assert reverted["authorization_exempt"] is False
+        assert get_change_order(connection, order["id"])["authorization_exempt"] is False
+    finally:
+        connection.close()
+
+
 def test_initial_review_requires_control_sheet_even_when_feature_flag_is_disabled(
     isolated_db, make_user, monkeypatch,
 ):

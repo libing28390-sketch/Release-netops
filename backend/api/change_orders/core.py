@@ -1,5 +1,6 @@
 import logging
 import os
+import json
 from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
@@ -133,6 +134,57 @@ def api_change_order_summary(user=require_role("Viewer")):
             tenant_id=tenant_scope,
             requester_id=requester_scope,
         )}
+    finally:
+        conn.close()
+
+
+@router.get('/change-orders/assignment-options')
+def api_change_order_assignment_options(user=require_role("Viewer")):
+    """Return minimal same-tenant identities needed to assign a change order."""
+    tenant_id = tenant_scope_for_user(user)
+    if TENANT_ISOLATION_ENABLED and not tenant_id and not is_global_administrator(user):
+        raise HTTPException(status_code=403, detail='A tenant assignment is required')
+
+    can_create = authorize_resource(
+        user, 'change_order', 'create', tenant_id=tenant_id or None,
+    )
+    can_view = authorize_resource(
+        user, 'change_order', 'view', tenant_id=tenant_id or None,
+    )
+    if not can_create and not can_view:
+        raise HTTPException(status_code=403, detail='Insufficient permission to view change order assignees')
+
+    clauses = ["LOWER(TRIM(COALESCE(status, ''))) = 'active'"]
+    params: list[str] = []
+    if not is_global_administrator(user) and tenant_id:
+        clauses.append("COALESCE(NULLIF(tenant_id, ''), 'tenant-default') = ?")
+        params.append(tenant_id)
+
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            "SELECT id, username, role, role_profile, status, group_name, "
+            "change_groups_json, display_name FROM users WHERE "
+            + ' AND '.join(clauses) + ' ORDER BY username',
+            tuple(params),
+        ).fetchall()
+        options = []
+        for row in rows:
+            try:
+                groups = json.loads(row['change_groups_json'] or '[]')
+            except (TypeError, ValueError):
+                groups = []
+            options.append({
+                'id': str(row['id'] or ''),
+                'username': str(row['username'] or ''),
+                'role': str(row['role'] or ''),
+                'role_profile': str(row['role_profile'] or ''),
+                'status': str(row['status'] or ''),
+                'group_name': str(row['group_name'] or ''),
+                'display_name': str(row['display_name'] or ''),
+                'change_groups': groups if isinstance(groups, list) else [],
+            })
+        return {'success': True, 'data': options}
     finally:
         conn.close()
 

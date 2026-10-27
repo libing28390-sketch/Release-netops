@@ -15,6 +15,7 @@ import {
   canRecordEmergencyPostReview,
 } from '../helpers';
 import { ControlSheetPanel } from './ControlSheetPanel';
+import type { ControlSheetUploadResult } from './ControlSheetPanel';
 import { ChangeOrderWorkflowPanels, type AssignmentRequest, type ChangeOrderMutationResult, type VerificationRequest } from './ChangeOrderWorkflowPanels';
 import { ActionButton } from '../../../components/ui/ActionIconButton';
 import { TicketFacts, ticketSurfaceClass } from '../../../components/tickets/TicketUI';
@@ -44,6 +45,8 @@ interface Props {
   handleVerification: (orderId: string, request: VerificationRequest) => Promise<ChangeOrderMutationResult>;
   handleResultReview: (orderId: string, action: ResultReviewAction, summary: string) => Promise<void>;
   handleEmergencyReview: (orderId: string, outcome: 'accepted' | 'follow_up_required', note: string) => Promise<ChangeOrderMutationResult>;
+  handleControlSheetUpload: (orderId: string, file: File) => Promise<ControlSheetUploadResult>;
+  handleControlSheetDownload: (orderId: string, attachmentId: string, filename: string) => void;
   setExecuteModal: (m: any) => void;
   setActionPrompt: (p: any) => void;
   setFinalApproverPrompt: (p: any) => void;
@@ -74,6 +77,8 @@ export const ChangeOrderDetail: React.FC<Props> = ({
   handleAssignment,
   handleVerification,
   handleEmergencyReview,
+  handleControlSheetUpload,
+  handleControlSheetDownload,
   handleResultReview,
   setExecuteModal,
   setActionPrompt,
@@ -94,11 +99,21 @@ export const ChangeOrderDetail: React.FC<Props> = ({
     : windowState === 'ended'
       ? (zh ? '实施窗口已结束，请调整计划并重新审批' : 'Window ended. Reschedule and request approval again.')
       : (zh ? '实施窗口无效，请调整计划并重新审批' : 'Invalid window. Reschedule and request approval again.');
-  const transitionActions = detailLoading || detailError ? [] : getTransitionActions(selectedOrder).map(action => (
-    selectedOrder.status === 'approved' && action.status === 'implementing' && windowState !== 'open'
+  const hasControlSheetAttachment = Boolean(selectedOrder.control_sheet_attachments?.length);
+  const transitionActions = detailLoading || detailError ? [] : getTransitionActions(selectedOrder).map(action => {
+    if (action.status === 'implementing' && !hasControlSheetAttachment) {
+      return {
+        ...action,
+        disabled: true,
+        disabledReason: zh
+          ? '实施前请先上传至少一份控制表附件。'
+          : 'Upload at least one control sheet attachment before implementation.',
+      };
+    }
+    return selectedOrder.status === 'approved' && action.status === 'implementing' && windowState !== 'open'
       ? { ...action, disabled: true, disabledReason: windowBlockReason }
-      : action
-  ));
+      : action;
+  });
   const nextStep = getNextWorkflowAction(selectedOrder, transitionActions, language, currentTime, currentUser);
   useEffect(() => {
     setCurrentTime(Date.now());
@@ -717,7 +732,13 @@ export const ChangeOrderDetail: React.FC<Props> = ({
 
           {/* ── Control Sheet Section & Attachments ── */}
           {FEATURE_CONTROL_SHEET && !selectedOrder.control_sheet_missing && (
-            <ControlSheetPanel language={language} selectedOrder={selectedOrder} />
+            <ControlSheetPanel
+              language={language}
+              selectedOrder={selectedOrder}
+              currentUser={currentUser}
+              onUpload={handleControlSheetUpload}
+              onDownload={handleControlSheetDownload}
+            />
           )}
 
           <details className={`${ticketSurfaceClass} overflow-hidden`}>

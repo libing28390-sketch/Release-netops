@@ -75,6 +75,7 @@ def api_transition_change_order(order_id: str, body: dict = Body(...), user=requ
                 raise HTTPException(status_code=404, detail='Change order not found')
         permission_action = (
             'approve' if new_status == 'approved' or (current_status == 'final_review' and new_status in {'rejected', 'initial_review'})
+            else 'create_change' if current_status == 'draft' and new_status == 'initial_review'
             else 'request_approval' if new_status in {'initial_review', 'final_review', 'rejected'}
             else 'intervene' if new_status in {'implementing', 'completed', 'failed', 'rollback_in_progress', 'rolled_back'}
             else 'create_change'
@@ -214,11 +215,13 @@ def api_transition_change_order(order_id: str, body: dict = Body(...), user=requ
             if not approver_id or approver_id == actor_id:
                 raise HTTPException(status_code=403, detail='终审人不能实施，且工单必须保留独立终审身份')
             assert_explicit_execution_profile(user, 'command')
-            enforce_resource_scope(user, 'command', 'execute', tenant_id=tenant_id or None)
             assert_change_order_window_open(existing)
 
             # Check the individual device scope before the state can enter the
             # implementation phase, including when the implementer is an admin.
+            # A tenant-only check here would incorrectly reject an operator
+            # whose explicit command grant is narrower (site/device-group),
+            # even though the per-device check below can validate that grant.
             from api.automation import _resolve_change_order_target_ids
             from core.rbac import enforce_resource_scope as enforce_scope
             device_ids = _resolve_change_order_target_ids(conn, existing.get('target_devices') or [])

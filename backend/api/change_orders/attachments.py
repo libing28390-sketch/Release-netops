@@ -105,7 +105,7 @@ _EXT_TO_MIME: dict[str, str] = {
 
 # Statuses that allow control-sheet uploads
 _CONTROL_SHEET_UPLOAD_STATUSES: frozenset[str] = frozenset({
-    'approved', 'implementing',
+    'draft', 'initial_review', 'final_review', 'approved', 'implementing',
 })
 
 _CONTROL_SHEET_MAX_BYTES: int = 20 * 1024 * 1024  # 20 MiB
@@ -116,7 +116,7 @@ async def api_upload_control_sheet(
     order_id: str,
     file: UploadFile = File(...),
     note: Optional[str] = Form(None),
-    user=require_role("Operator"),
+    user=require_role("Viewer"),
 ):
     conn = get_db_connection()
     try:

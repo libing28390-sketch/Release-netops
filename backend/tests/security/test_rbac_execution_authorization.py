@@ -51,6 +51,41 @@ def test_platform_actions_allow_legacy_tenant_device_when_tenant_isolation_is_di
     _authorize_action_device(automation_operator, {"id": "legacy-device", "tenant_id": "tenant-b"})
 
 
+def test_scoped_administrator_device_list_honors_explicit_device_group_scope(isolated_db, make_user):
+    from services.rack_scope_service import allowed_resource_scope, device_scope_predicate
+
+    account = make_user("scoped-admin-device-list", role="Administrator")
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        conn.execute(
+            "UPDATE users SET role_profile = 'Automation Operator', scope_mode = 'restricted' WHERE id = ?",
+            (account["user_id"],),
+        )
+        conn.execute(
+            """INSERT INTO user_resource_scopes
+               (id, user_id, resource_type, scope_type, scope_id, actions_json, created_at)
+               VALUES (?, ?, 'asset', 'device_group', ?, '[\"view\"]', '2026-10-26T00:00:00Z')""",
+            ("scoped-admin-asset-view", account["user_id"], "qa-device-group-only"),
+        )
+        conn.commit()
+        actor = {
+            **account,
+            "id": account["user_id"],
+            "role": "Administrator",
+            "role_profile": "Automation Operator",
+            "tenant_id": "tenant-default",
+            "scope_mode": "restricted",
+        }
+        scope = allowed_resource_scope(conn, actor, "asset", "view")
+    finally:
+        conn.close()
+
+    assert scope.device_group_ids == ("qa-device-group-only",)
+    predicate, params = device_scope_predicate(scope)
+    assert "device_group_id IN" in predicate
+    assert params == ("qa-device-group-only",)
+
+
 def test_enable_secret_requires_credential_use_for_user_actions():
     from services.platform_registry_service import _enable_secret_for_action
 

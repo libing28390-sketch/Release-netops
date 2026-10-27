@@ -63,6 +63,7 @@ import {
   parseManagementMethodSheet,
   parseRemoteDesktopProfileSheet,
   formatAssetImportError,
+  getMissingSnmpCredentialRows,
   type ManagementMethodImportRow,
   type RemoteDesktopProfileImportRow,
 } from './importUtils';
@@ -93,6 +94,21 @@ type BatchTakeoverResult = {
   device_count?: number;
   device_names?: string[];
 };
+
+type BatchSnmpSyncResult = {
+  asset_id: string;
+  device_id?: string;
+  hostname?: string;
+  management_ip?: string;
+  status: 'synced' | 'partial' | 'failed' | 'skipped';
+  message?: string;
+  hostname_sync?: { status?: string; hostname?: string; error?: string };
+  detected_model?: string;
+  synced_model?: string;
+  model_source?: string;
+  rack_sync?: { status?: string; message?: string };
+};
+
 
 type AssetColumnKey = Exclude<AssetExportColumnKey, 'ssh_algorithm_profile'>;
 
@@ -379,6 +395,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   } | null>(null);
   const [importInProgress, setImportInProgress] = useState(false);
   const [batchDeleting, setBatchDeleting] = useState(false);
+  const [batchSnmpSyncing, setBatchSnmpSyncing] = useState(false);
   const [deptFilter, setDeptFilter]     = useState('all');
   const [severityFilter, setSeverityFilter] = useState<string>('all');
   const [lifecycleFilter, setLifecycleFilter] = useState('all');
@@ -406,6 +423,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const [showAdvancedFilter, setShowAdvancedFilter] = useState(false);
   const [rotatingAssetId, setRotatingAssetId] = useState<string | null>(null);
   const [batchTakeoverResults, setBatchTakeoverResults] = useState<BatchTakeoverResult[]>([]);
+  const [batchSnmpSyncResults, setBatchSnmpSyncResults] = useState<BatchSnmpSyncResult[]>([]);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const importInProgressRef = React.useRef(false);
   const importPollRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -548,10 +566,11 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     if (!feedbackMsg) return;
     if (rotatingAssetId) return;
     if (importInProgress && feedbackMsg.type === 'info') return;
-    if (feedbackMsg.type === 'warning' && feedbackMsg.details?.length) return;
+    if (batchSnmpSyncing && feedbackMsg.type === 'info') return;
+    if ((feedbackMsg.type === 'warning' || feedbackMsg.type === 'error') && feedbackMsg.details?.length) return;
     const t = setTimeout(() => setFeedbackMsg(null), feedbackMsg.type === 'error' || feedbackMsg.type === 'warning' ? 10000 : 5000);
     return () => clearTimeout(t);
-  }, [feedbackMsg, importInProgress, rotatingAssetId]);
+  }, [feedbackMsg, importInProgress, rotatingAssetId, batchSnmpSyncing]);
 
   const vendorList = useMemo(() => summary?.by_vendor ? Object.keys(summary.by_vendor).sort() : [], [summary]);
   const dcList = useMemo(
@@ -958,8 +977,73 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const toggleAll = () => setSelectedIds(p => p.size === displayAssets.length ? new Set() : new Set(displayAssets.map(a => a.id)));
   const clearSel  = () => setSelectedIds(new Set());
 
+  const handleBatchSnmpSync = async () => {
+    if (selectedIds.size === 0 || batchSnmpSyncing || batchDeleting) return;
+    const assetIds = Array.from(selectedIds);
+    setBatchSnmpSyncing(true);
+    setBatchSnmpSyncResults([]);
+    setFeedbackMsg({
+      type: 'info',
+      text: zh
+        ? `正在重新同步 ${assetIds.length} 台设备的主机名和型号…`
+        : `Retrying hostname and model sync for ${assetIds.length} device(s)…`,
+      description: zh ? '型号查询会逐台进行；设备较多时请等待结果完成。' : 'Model queries run one device at a time; larger selections may take longer.',
+    });
+
+    try {
+      const response = await fetch('/api/assets/batch-snmp-sync', {
+        method: 'POST',
+        headers: authHeaders(true),
+        body: JSON.stringify({ asset_ids: assetIds }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const detail = typeof payload?.detail === 'string'
+          ? payload.detail
+          : typeof payload?.detail?.message === 'string'
+            ? payload.detail.message
+            : payload?.message;
+        throw new Error(detail || (zh ? '手动同步请求失败，请稍后重试。' : 'Manual sync failed. Please retry shortly.'));
+      }
+
+      const results = Array.isArray(payload?.results)
+        ? payload.results as BatchSnmpSyncResult[]
+        : [];
+      setBatchSnmpSyncResults(results);
+      const resultsByAssetId = new Map(results.map(item => [item.asset_id, item]));
+      setSelectedIds(new Set(assetIds.filter(assetId => resultsByAssetId.get(assetId)?.status !== 'synced')));
+
+      const countFor = (status: BatchSnmpSyncResult['status']) => results.filter(item => item.status === status).length;
+      const synced = Number.isFinite(Number(payload?.synced)) ? Number(payload.synced) : countFor('synced');
+      const partial = Number.isFinite(Number(payload?.partial)) ? Number(payload.partial) : countFor('partial');
+      const failed = Number.isFinite(Number(payload?.failed)) ? Number(payload.failed) : countFor('failed');
+      const skipped = Number.isFinite(Number(payload?.skipped)) ? Number(payload.skipped) : countFor('skipped');
+      const hasIncomplete = partial > 0 || failed > 0 || skipped > 0;
+      setFeedbackMsg({
+        type: hasIncomplete ? 'warning' : 'success',
+        text: zh
+          ? `同步完成：成功 ${synced} 台，部分完成 ${partial} 台，失败 ${failed} 台，跳过 ${skipped} 台。`
+          : `Sync complete: ${synced} synced, ${partial} partial, ${failed} failed, ${skipped} skipped.`,
+        description: hasIncomplete
+          ? (zh ? '未完成的设备仍保持勾选，可检查原因后再次重试。' : 'Incomplete devices remain selected so you can review and retry them.')
+          : undefined,
+      });
+      await Promise.all([fetchAssets({ silent: true }), fetchSummary()]);
+    } catch (error) {
+      setFeedbackMsg({
+        type: 'error',
+        text: error instanceof Error
+          ? error.message
+          : (zh ? '手动同步失败，请检查网络后重试。' : 'Manual sync failed. Check the connection and retry.'),
+      });
+      await fetchAssets({ silent: true });
+    } finally {
+      setBatchSnmpSyncing(false);
+    }
+  };
+
   const handleBatchDelete = async () => {
-    if (selectedIds.size === 0 || batchDeleting) return;
+    if (selectedIds.size === 0 || batchDeleting || batchSnmpSyncing) return;
     if (!confirm(zh ? '确定删除选中的资产吗？' : 'Delete selected assets?')) return;
     const assetIds = Array.from(selectedIds);
     setBatchDeleting(true);
@@ -1008,7 +1092,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   };
 
   const handleBatchTakeover = async () => {
-    if (selectedIds.size === 0) return;
+    if (selectedIds.size === 0 || batchSnmpSyncing) return;
 
     setLoading(true);
     try {
@@ -1242,18 +1326,32 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       const failedDetails = failedItems.slice(0, 8).map((item) => {
         const identity = [item.asset_tag, item.hostname].filter(Boolean).join(' / ');
         const row = Number(item.row || 0);
-        const reason = String(item.message || item.code || (zh ? '该行导入失败' : 'row import failed'));
+        const formatted = formatAssetImportError({ code: item.code, message: item.message }, language);
+        const reason = [formatted.text, ...(formatted.details || [])].join(' ');
         return zh
           ? `第 ${row || '?'} 行${identity ? `（${identity}）` : ''}：${reason}`
           : `Row ${row || '?'}${identity ? ` (${identity})` : ''}: ${reason}`;
       });
-      const importDetails = [...failedDetails, ...skippedDetails].slice(0, 8);
+      const resultRows = Array.isArray(res.results) ? res.results as Array<Record<string, unknown>> : undefined;
+      const createdRows = resultRows
+        ? new Set(resultRows.filter(item => item.status === 'created').map(item => Number(item.row)))
+        : undefined;
+      const missingSnmpRows = Number(res.created) > 0 ? getMissingSnmpCredentialRows(payload, createdRows) : [];
+      const missingSnmpDetails = missingSnmpRows.map(item => zh
+        ? `第 ${item.row} 条（${item.identity}）：未填写 SNMP 社区名或 SNMPv2/v3 Profile，主机名和型号无法自动同步。请补充其中一项；SSH 登录凭据不能代替 SNMP 凭据。`
+        : `Item ${item.row} (${item.identity}): no SNMP Community or SNMPv2/v3 profile was supplied, so hostname and model cannot sync automatically. Configure either one; SSH credentials do not replace SNMP credentials.`);
+      const importDetails = [...failedDetails, ...missingSnmpDetails, ...skippedDetails].slice(0, 8);
+      const missingSnmpSummary = missingSnmpRows.length > 0
+        ? (zh
+          ? `；${missingSnmpRows.length} 台设备缺少 SNMP Community/Profile，无法自动同步主机名和型号`
+          : `; ${missingSnmpRows.length} device(s) lack SNMP Community/Profile, so hostname and model cannot sync automatically`)
+        : '';
       const enrichmentPending = Boolean(res.enrichment_pending);
       setFeedbackMsg({
-        type: skippedCount > 0 || failedCount > 0 ? 'warning' : 'success',
+        type: skippedCount > 0 || failedCount > 0 || missingSnmpRows.length > 0 ? 'warning' : 'success',
         text: zh
-          ? `导入完成：新增 ${res.created} 条，跳过 ${skippedCount} 条，失败 ${failedCount} 条${enrichmentPending ? '；设备名称和识别信息将在后台继续同步，稍后刷新可查看' : ''}`
-          : `Import done: ${res.created} created, ${skippedCount} skipped, ${failedCount} failed${enrichmentPending ? '; device names and identity details will continue syncing in the background; refresh later to view them' : ''}`,
+          ? `导入完成：新增 ${res.created} 条，跳过 ${skippedCount} 条，失败 ${failedCount} 条${missingSnmpSummary}${enrichmentPending && missingSnmpRows.length === 0 ? '；设备名称和识别信息将在后台继续同步，稍后刷新可查看' : ''}`
+          : `Import done: ${res.created} created, ${skippedCount} skipped, ${failedCount} failed${missingSnmpSummary}${enrichmentPending && missingSnmpRows.length === 0 ? '; device names and identity details will continue syncing in the background; refresh later to view them' : ''}`,
         details: importDetails.length > 0 ? importDetails : undefined,
       });
     } catch {
@@ -2109,6 +2207,82 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
           </div>
         )}
 
+        {batchSnmpSyncResults.length > 0 && (
+          <section
+            aria-label={zh ? '手动 SNMP 同步结果' : 'Manual SNMP sync results'}
+            className="rounded-2xl border border-gray-200/70 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/90 shadow-2xs overflow-hidden"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 dark:border-zinc-800 bg-gray-50/70 dark:bg-zinc-800/40 px-4 py-3">
+              <div>
+                <div className="text-xs font-bold text-gray-900 dark:text-white">{zh ? '手动同步结果' : 'Manual sync results'}</div>
+                <div className="mt-0.5 text-[11px] text-gray-500 dark:text-zinc-400">
+                  {zh ? '主机名和型号分别显示；失败或部分完成的设备会保持勾选，方便再次重试。设备较多时同步会需要更久。' : 'Hostname and model are reported separately. Failed or partial devices remain selected for another retry; larger batches take longer.'}
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-xs font-semibold">
+                {([
+                  { key: 'synced', label: zh ? '成功' : 'Synced', cls: 'text-emerald-600 dark:text-emerald-400' },
+                  { key: 'partial', label: zh ? '部分完成' : 'Partial', cls: 'text-amber-600 dark:text-amber-400' },
+                  { key: 'failed', label: zh ? '失败' : 'Failed', cls: 'text-rose-600 dark:text-rose-400' },
+                  { key: 'skipped', label: zh ? '跳过' : 'Skipped', cls: 'text-slate-500 dark:text-zinc-400' },
+                ] as const).map(item => (
+                  <span key={item.key} className={item.cls}>
+                    {item.label} {batchSnmpSyncResults.filter(result => result.status === item.key).length}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div role="list" className="max-h-72 overflow-auto divide-y divide-gray-100 dark:divide-zinc-800">
+              {batchSnmpSyncResults.map(result => {
+                const statusMeta = result.status === 'synced'
+                  ? { label: zh ? '成功' : 'Synced', cls: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300', Icon: CheckCircle2 }
+                  : result.status === 'partial'
+                    ? { label: zh ? '部分完成' : 'Partial', cls: 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300', Icon: AlertTriangle }
+                    : result.status === 'skipped'
+                      ? { label: zh ? '已跳过' : 'Skipped', cls: 'bg-slate-100 text-slate-600 dark:bg-zinc-800 dark:text-zinc-300', Icon: Info }
+                      : { label: zh ? '失败' : 'Failed', cls: 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300', Icon: AlertCircle };
+                const StatusIcon = statusMeta.Icon;
+                const hostname = result.hostname_sync?.hostname || result.hostname || '—';
+                const model = result.synced_model || result.detected_model || '';
+                const details = [
+                  result.message,
+                  result.hostname_sync?.error,
+                  result.rack_sync?.status === 'failed' || result.rack_sync?.status === 'unresolved'
+                    ? result.rack_sync.message
+                    : '',
+                ].filter((detail, index, values): detail is string => Boolean(detail) && values.indexOf(detail) === index);
+                return (
+                  <div key={result.asset_id} role="listitem" className="flex flex-wrap items-start gap-3 px-4 py-3 text-xs">
+                    <div className="min-w-[180px] flex-1">
+                      <div className="font-bold text-gray-800 dark:text-zinc-200">{hostname}</div>
+                      <div className="mt-0.5 font-mono text-[11px] text-gray-400 dark:text-zinc-500">{result.management_ip || result.asset_id}</div>
+                    </div>
+                    <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-semibold ${statusMeta.cls}`}>
+                      <StatusIcon size={12} />
+                      {statusMeta.label}
+                    </span>
+                    <div className="min-w-[180px] flex-1 text-gray-600 dark:text-zinc-300">
+                      <div className="font-semibold">{zh ? '型号：' : 'Model: '}{model || (zh ? '未获取' : 'Not detected')}</div>
+                      {details.map((detail, index) => (
+                        <div key={`${detail}-${index}`} className="mt-0.5 leading-4 text-gray-500 dark:text-zinc-400">{detail}</div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex justify-end border-t border-gray-100 px-4 py-2 dark:border-zinc-800">
+              <button
+                type="button"
+                onClick={() => setBatchSnmpSyncResults([])}
+                className="rounded-lg px-2 py-1 text-[11px] font-semibold text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+              >
+                {zh ? '关闭结果' : 'Dismiss results'}
+              </button>
+            </div>
+          </section>
+        )}
+
         {/* 5-Bento Status Cards */}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3.5">
           {([
@@ -2345,13 +2519,28 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                     </span>
                     <button
                       type="button"
+                      onClick={() => { void handleBatchSnmpSync(); }}
+                      disabled={batchSnmpSyncing || batchDeleting}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-sky-50 text-sky-700 hover:bg-sky-100 text-xs font-semibold transition-all cursor-pointer whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-55 dark:bg-sky-950/40 dark:text-sky-300 dark:hover:bg-sky-900/60"
+                      title={zh ? '重新读取所选设备的 SNMP 主机名和型号' : 'Read SNMP hostnames and models again for selected devices'}
+                    >
+                      {batchSnmpSyncing
+                        ? <Loader2 size={12} className="animate-spin" />
+                        : <RefreshCw size={12} />}
+                      {batchSnmpSyncing
+                        ? (zh ? '同步中…' : 'Syncing…')
+                        : (zh ? '手动同步名称/型号' : 'Retry name/model sync')}
+                    </button>
+                    <button
+                      type="button"
                       onClick={requestBatchTakeover}
-                      className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-blue-50 text-blue-600 hover:bg-blue-100 text-xs font-semibold transition-all cursor-pointer whitespace-nowrap"
+                      disabled={batchSnmpSyncing || batchDeleting}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-blue-50 text-blue-600 hover:bg-blue-100 text-xs font-semibold transition-all cursor-pointer whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-55"
                     >
                       <Shield size={12} />
                       {zh ? '批量上收' : 'Takeover'}
                     </button>
-                    <ActionButton icon={Trash2} variant="danger" size="sm" onClick={handleBatchDelete} disabled={batchDeleting}>
+                    <ActionButton icon={Trash2} variant="danger" size="sm" onClick={handleBatchDelete} disabled={batchDeleting || batchSnmpSyncing}>
                       {batchDeleting ? (zh ? '删除中…' : 'Deleting…') : (zh ? '批量删除' : 'Delete selected')}
                     </ActionButton>
                     <button
@@ -2360,6 +2549,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                       className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 cursor-pointer"
                       title={zh ? '清除选择' : 'Clear selection'}
                       aria-label={zh ? '清除选择' : 'Clear selection'}
+                      disabled={batchSnmpSyncing}
                     >
                       <X size={12} />
                     </button>
@@ -2447,7 +2637,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                 <thead>
                   <tr className="border-b border-gray-100 dark:border-zinc-800 bg-gray-50/50 dark:bg-zinc-800/40">
                     <th className="w-8 px-3 py-3 text-center">
-                      <input type="checkbox" checked={selectedIds.size === displayAssets.length && displayAssets.length > 0} onChange={toggleAll} className="h-3.5 w-3.5 rounded border-gray-300 accent-blue-600 cursor-pointer" />
+                      <input type="checkbox" checked={selectedIds.size === displayAssets.length && displayAssets.length > 0} onChange={toggleAll} disabled={batchSnmpSyncing} className="h-3.5 w-3.5 rounded border-gray-300 accent-blue-600 cursor-pointer disabled:cursor-not-allowed" />
                     </th>
                     {visibleAssetColumns.map(column => (
                       <th key={column.key} className={`text-left px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 ${column.width}`}>
@@ -2511,7 +2701,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                         className={`border-b border-gray-100 dark:border-zinc-800 cursor-pointer transition-colors ${sel ? 'bg-blue-50/50 dark:bg-blue-950/20' : isDrawerTarget ? 'bg-gray-50 dark:bg-zinc-800/40' : 'hover:bg-gray-50/70 dark:hover:bg-zinc-800/30'}`}
                       >
                         <td className="px-3 py-2.5 text-right" onClick={e => e.stopPropagation()}>
-                          <input type="checkbox" checked={sel} onChange={() => toggle(a.id)} className="h-3.5 w-3.5 rounded border-gray-300 accent-blue-600 cursor-pointer" />
+                          <input type="checkbox" checked={sel} onChange={() => toggle(a.id)} disabled={batchSnmpSyncing} className="h-3.5 w-3.5 rounded border-gray-300 accent-blue-600 cursor-pointer disabled:cursor-not-allowed" />
                         </td>
                         {visibleAssetColumns.map(column => (
                           <td key={column.key} className="px-3 py-2.5 text-xs">

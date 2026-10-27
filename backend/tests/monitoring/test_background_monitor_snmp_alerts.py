@@ -216,3 +216,39 @@ def test_snmp_credential_and_server_targets_still_schedule_sync(monkeypatch) -> 
     monitor._schedule_monitoring_target_sync({"role": "server", "asset_id": "server-asset"})
 
     assert scheduled == [15.0, 15.0]
+
+
+def test_snmp_sysdescr_fallback_cannot_overwrite_current_asset_model(isolated_db) -> None:
+    database = isolated_db["module"]
+    conn = database.get_db_connection()
+    conn.execute(
+        """INSERT INTO physical_assets
+           (id, asset_type, asset_tag, model, created_at, updated_at)
+           VALUES (?, 'network_device', ?, ?, '2026-10-26T00:00:00Z', '2026-10-26T00:00:00Z')""",
+        ("asset-model-race", "NET-MODEL-RACE", "H3C F1060"),
+    )
+    conn.execute(
+        "INSERT INTO devices (id, hostname, ip_address, model, asset_id) VALUES (?, ?, ?, ?, ?)",
+        ("device-model-race", "edge-model-race", "192.0.2.140", "H3C F1060", "asset-model-race"),
+    )
+    conn.commit()
+    conn.close()
+
+    monitor._persist_snmp_device_info(
+        "device-model-race",
+        {
+            "sys_name": "edge-model-race",
+            "model": "H3C Comware Platform Software, Version 7.1.064",
+        },
+    )
+
+    conn = database.get_db_connection()
+    try:
+        device = conn.execute(
+            "SELECT model, sys_name FROM devices WHERE id = ?",
+            ("device-model-race",),
+        ).fetchone()
+        assert device["model"] == "H3C F1060"
+        assert device["sys_name"] == "edge-model-race"
+    finally:
+        conn.close()

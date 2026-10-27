@@ -14,7 +14,7 @@ from services.config_vendor_platform_service import (
     validate_vendor_platform,
 )
 from services.librenms_rule_service import ensure_rules_available, resolve_rule
-from services.snmp_discovery_service import resolve_snmp_vendor_identity
+from services.snmp_discovery_service import normalize_model_name, resolve_snmp_vendor_identity
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +89,33 @@ def _canonical_detected_platform(vendor: str, platform: Any) -> str:
         return default_platform
     except ValueError:
         return raw
+
+
+def _select_import_model(
+    *,
+    declared_model: str,
+    current_asset_model: str,
+    current_device_model: str,
+    chassis_model: str,
+    sysdescr_model: str,
+    observed_sysdescr_model: str,
+    vendor: str = "",
+) -> str:
+    """Prefer operator/asset identity and ENTITY chassis data over stale sysDescr values."""
+    declared = normalize_model_name(vendor, declared_model)
+    asset_model = normalize_model_name(vendor, current_asset_model)
+    device_model = normalize_model_name(vendor, current_device_model)
+    chassis = normalize_model_name(vendor, chassis_model)
+    sysdescr = normalize_model_name(vendor, sysdescr_model)
+    observed_descr = normalize_model_name(vendor, observed_sysdescr_model)
+    low_confidence = {value.casefold() for value in (sysdescr, observed_descr) if value}
+
+    if declared:
+        return declared
+    for candidate in (asset_model, device_model):
+        if candidate and candidate.casefold() not in low_confidence:
+            return candidate
+    return chassis or sysdescr or asset_model or device_model
 
 
 def _resolve_probe_settings(
@@ -259,7 +286,11 @@ def _sync_hostname_from_sys_name(item: Mapping[str, Any], raw_sys_name: Any) -> 
     return {"status": "synced", "hostname": clean_name, "error": ""}
 
 
-async def identify_imported_device(item: Mapping[str, Any], semaphore: Any) -> dict[str, Any]:
+async def identify_imported_device(
+    item: Mapping[str, Any],
+    semaphore: Any,
+    model_semaphore: Any | None = None,
+) -> dict[str, Any]:
     """Probe one committed device and enrich its LibreNMS-derived identity fields."""
     device_id = str(item.get("device_id") or "").strip()
     if not device_id:
@@ -340,6 +371,7 @@ async def identify_imported_device(item: Mapping[str, Any], semaphore: Any) -> d
             "SNMP 身份读取失败，请检查管理 IP、端口、凭据及访问控制",
             hostname_sync={"status": "failed", "hostname": "", "error": failure},
         )
+
     raw_sys_name = str(observed.get("sys_name") or "").strip()
     hostname_sync = _sync_hostname_from_sys_name(item, raw_sys_name) if raw_sys_name else {
         "status": "failed",
@@ -357,6 +389,36 @@ async def identify_imported_device(item: Mapping[str, Any], semaphore: Any) -> d
             "设备未返回 SNMP 系统身份信息，请检查管理 IP、端口、凭据及访问控制",
             hostname_sync=hostname_sync,
         )
+
+    # Hostname writeback uses the sysName already fetched above. Keep this
+    # optional chassis table walk after it so unsupported/slow ENTITY-MIB
+    # responses cannot delay the existing hostname synchronization path.
+    declared_vendor = str(item.get("declared_vendor", device.get("vendor")) or "")
+    declared_model = normalize_model_name(
+        declared_vendor,
+        item.get("declared_model", device.get("model")),
+    )
+    chassis_model = ""
+    if not declared_model:
+        try:
+            from services.snmp_entity_model_service import read_chassis_model
+
+            # ENTITY-MIB walks fan out to three tables per device. Keep those
+            # model probes on their own, lower-concurrency gate: H3C HCL agents
+            # answer sysName in parallel but time out when several table walks
+            # for multiple devices run together.
+            model_limit = model_semaphore if model_semaphore is not None else semaphore
+            async with model_limit:
+                chassis_model = normalize_model_name(
+                    declared_vendor,
+                    await read_chassis_model(ip, settings or {}),
+                )
+        except Exception as exc:
+            logger.warning(
+                "Asset import SNMP chassis model probe failed for device %s (%s)",
+                device_id,
+                type(exc).__name__,
+            )
 
     try:
         await asyncio.to_thread(ensure_rules_available)
@@ -385,9 +447,7 @@ async def identify_imported_device(item: Mapping[str, Any], semaphore: Any) -> d
                 identity_source="librenms",
             )
 
-        declared_vendor = str(item.get("declared_vendor", device.get("vendor")) or "")
         declared_platform = str(item.get("declared_platform", device.get("platform")) or "")
-        declared_model = str(item.get("declared_model", device.get("model")) or "")
         identity = resolve_snmp_vendor_identity(
             conn,
             sys_object_id=observed.get("sys_object_id", ""),
@@ -406,7 +466,7 @@ async def identify_imported_device(item: Mapping[str, Any], semaphore: Any) -> d
                 "SNMP 识别到的厂商与导入填写的厂商不一致，未覆盖资产信息",
                 hostname_sync=hostname_sync,
                 detected_vendor=detected_vendor,
-                detected_model=str(identity.get("model") or ""),
+                detected_model=normalize_model_name(detected_vendor, identity.get("model")),
                 identity_source=str(identity.get("source") or ""),
             )
         if identity_status != "identified" or not detected_vendor:
@@ -419,7 +479,20 @@ async def identify_imported_device(item: Mapping[str, Any], semaphore: Any) -> d
             )
 
         detected_platform = _canonical_detected_platform(detected_vendor, identity.get("platform") or declared_platform)
-        detected_model = str(identity.get("model") or declared_model or "").strip()
+        declared_model = normalize_model_name(detected_vendor or declared_vendor, declared_model)
+        identity_model = normalize_model_name(detected_vendor, identity.get("model"))
+        sysdescr_model = identity_model if identity_model and identity_model != declared_model else ""
+        chassis_model = normalize_model_name(detected_vendor, chassis_model)
+        detected_model = normalize_model_name(
+            detected_vendor,
+            chassis_model or sysdescr_model or declared_model,
+        )
+        model_source = (
+            "entity_mib" if chassis_model
+            else "sysDescr" if sysdescr_model
+            else "operator" if declared_model
+            else ""
+        )
         detected_version = str(identity.get("software_version") or "").strip()
         # The importer may fill a default platform before the first probe. Use
         # the explicit input snapshot to distinguish that default from a
@@ -428,13 +501,34 @@ async def identify_imported_device(item: Mapping[str, Any], semaphore: Any) -> d
         next_platform = str(device.get("platform") or detected_platform)
         if not declared_platform:
             next_platform = detected_platform
-        next_model = str(device.get("model") or detected_model)
+        current_device_row = conn.execute(
+            "SELECT model FROM devices WHERE id = ?",
+            (device_id,),
+        ).fetchone()
+        current_asset_model = ""
+        asset_id = str(device.get("asset_id") or "").strip()
+        if asset_id:
+            current_asset_row = conn.execute(
+                "SELECT model FROM physical_assets WHERE id = ?",
+                (asset_id,),
+            ).fetchone()
+            current_asset_model = str((current_asset_row or {}).get("model") or "").strip()
+        current_device_model = str((current_device_row or {}).get("model") or "").strip()
+        observed_sysdescr_model = str(observed.get("sys_descr") or "").split("\r\n")[0].split("\n")[0].strip()[:80]
+        next_model = _select_import_model(
+            declared_model=declared_model,
+            current_asset_model=current_asset_model,
+            current_device_model=current_device_model,
+            chassis_model=chassis_model,
+            sysdescr_model=sysdescr_model,
+            observed_sysdescr_model=observed_sysdescr_model,
+            vendor=detected_vendor,
+        )
         next_version = str(device.get("version") or detected_version)
         conn.execute(
             "UPDATE devices SET vendor = ?, platform = ?, model = ?, version = ? WHERE id = ?",
             (next_vendor, next_platform, next_model, next_version, device_id),
         )
-        asset_id = str(device.get("asset_id") or "").strip()
         if asset_id:
             conn.execute(
                 "UPDATE physical_assets SET vendor = ?, platform = ?, model = ? WHERE id = ?",
@@ -450,6 +544,8 @@ async def identify_imported_device(item: Mapping[str, Any], semaphore: Any) -> d
             detected_vendor=detected_vendor,
             detected_platform=detected_platform,
             detected_model=detected_model,
+            synced_model=next_model,
+            model_source=model_source or ("existing" if next_model else ""),
             identity_source=str(identity.get("source") or ""),
         )
     except Exception as exc:

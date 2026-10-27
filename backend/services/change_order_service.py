@@ -304,6 +304,11 @@ def update_change_order(conn, order_id: str, updates: dict, *, commit: bool = Tr
     values = []
     for key, val in updates.items():
         if key in allowed_fields:
+            if key == 'authorization_exempt':
+                # This flag is stored as INTEGER in the PostgreSQL schema.
+                # psycopg2 binds Python bool as PostgreSQL BOOLEAN, which is
+                # not implicitly assignable to an INTEGER column.
+                val = 1 if val else 0
             set_parts.append(f"{key} = ?")
             values.append(val)
 

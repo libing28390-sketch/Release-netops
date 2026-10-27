@@ -77,6 +77,31 @@ def _db_quick(sql, params=(), fetch=False, fetchall=False, connection=None):
         if owns_connection:
             conn.close()
 
+
+def _persist_snmp_device_info(device_id: str, updates: Mapping[str, Any]) -> None:
+    """Persist polled system fields without letting stale sysDescr erase a chassis model."""
+    values = dict(updates or {})
+    observed_model = str(values.pop('model', '') or '').strip()
+    if values:
+        set_clause = ', '.join(f'{key} = ?' for key in values)
+        _db_quick(
+            f'UPDATE devices SET {set_clause} WHERE id = ?',
+            (*values.values(), device_id),
+        )
+    if observed_model:
+        _db_quick(
+            """UPDATE devices
+                  SET model = COALESCE(
+                      (SELECT NULLIF(BTRIM(pa.model), '')
+                         FROM physical_assets pa
+                        WHERE pa.id = devices.asset_id),
+                      ?
+                  )
+                WHERE id = ?
+                  AND NULLIF(BTRIM(COALESCE(model, '')), '') IS NULL""",
+            (observed_model, device_id),
+        )
+
 def _db_many(sql, rows):
     if not rows:
         return
@@ -2214,9 +2239,7 @@ async def _process_device_raw(device, cycle_tick: int):
                 if dev_info.get('sys_contact'):
                     updates['sys_contact'] = dev_info['sys_contact']
                 if updates:
-                    set_clause = ', '.join(f'{k} = ?' for k in updates)
-                    _db_quick(f'UPDATE devices SET {set_clause} WHERE id = ?',
-                              (*updates.values(), dev_id))
+                    _persist_snmp_device_info(dev_id, updates)
             except Exception as info_err:
                 logger.debug(f"[SNMP] {ip} device info collection failed: {info_err}")
 

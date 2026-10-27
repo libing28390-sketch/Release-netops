@@ -6,6 +6,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 import hashlib
+import uuid
 
 
 def _actor(user: dict) -> dict:
@@ -342,6 +343,16 @@ def test_admin_role_alone_does_not_grant_device_execution():
         {'role': 'Administrator', 'role_profile': 'Automation Operator'},
         'command',
         'execute',
+    )
+    assert resource_action_allowed(
+        {'role': 'Administrator', 'role_profile': 'Automation Operator'},
+        'change_order',
+        'view',
+    )
+    assert not resource_action_allowed(
+        {'role': 'Administrator', 'role_profile': 'Automation Operator'},
+        'change_order',
+        'create',
     )
     assert authorize_resource(
         {'role': 'Administrator', 'role_profile': 'System Administrator'},
@@ -1149,8 +1160,11 @@ def test_direct_execute_reports_partial_failure_and_keeps_order_implementing(iso
     finally:
         conn.close()
 
+    execution_calls = []
+
     class _FailedService:
-        def execute_commands(self, *_args, **_kwargs):
+        def execute_commands(self, _device, requested_commands, is_config=False):
+            execution_calls.append((list(requested_commands), is_config))
             return [{'success': False, 'error': 'synthetic command failure'}]
 
     monkeypatch.setattr(automation, '_resolve_execution_credentials', lambda *_args, **_kwargs: {
@@ -1173,6 +1187,7 @@ def test_direct_execute_reports_partial_failure_and_keeps_order_implementing(iso
     assert response.status_code == 200, response.text
     assert response.json()['status'] == 'partial_failure'
     assert response.json()['results']['m2-direct-device']['status'] == 'failed'
+    assert execution_calls == [([command], True)]
     duplicate = client.post(
         '/api/execute',
         headers={'Authorization': 'Bearer direct-token'},
@@ -1191,6 +1206,127 @@ def test_direct_execute_reports_partial_failure_and_keeps_order_implementing(iso
         conn.close()
     assert updated['status'] == 'implementing'
     assert updated['result_detail']['execution_results'][-1]['status'] == 'partial_failure'
+
+
+@pytest.mark.parametrize(
+    ('result_mode', 'expected_status'),
+    [
+        ('complete', 'completed'),
+        ('pagination', 'partial_failure'),
+        ('missing_command', 'partial_failure'),
+    ],
+)
+def test_direct_execute_runs_h3c_read_only_commands_operationally_and_rejects_incomplete_output(
+    isolated_db, make_user, monkeypatch, result_mode, expected_status,
+):
+    import json
+
+    from api import automation
+    from api.change_orders.helpers import APPROVAL_SNAPSHOT_VERSION, approval_snapshot_hash
+    from services.change_order_service import create_change_order, get_change_order
+
+    database = isolated_db['module']
+    requester = make_user('m2-batch-requester')
+    implementer = make_user('m2-batch-implementer')
+    approver = make_user('m2-batch-approver', role='Administrator', change_groups=['final_approver'])
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    commands = ['display version', 'display interface brief']
+    conn = database.get_db_connection()
+    try:
+        conn.execute(
+            'INSERT INTO devices (id, hostname, platform, tenant_id, status) VALUES (?, ?, ?, ?, ?)',
+            ('m2-batch-device', 'edge-batch', 'h3c_comware', 'tenant-default', 'online'),
+        )
+        order = create_change_order(
+            conn,
+            title='Successful multi-command configuration batch',
+            status='implementing',
+            requester_id=requester['user_id'],
+            requester_username=requester['username'],
+            tenant_id='tenant-default',
+            assigned_final_approver_id=approver['user_id'],
+            target_devices=[{'id': 'm2-batch-device'}],
+            commands=commands,
+            rollback_plan='只读查询，无需配置回退',
+            scheduled_start=(now - timedelta(minutes=5)).isoformat(),
+            scheduled_end=(now + timedelta(minutes=10)).isoformat(),
+            control_sheet={'implementer': {'id': implementer['user_id'], 'username': implementer['username']}},
+            commit=False,
+        )
+        conn.execute(
+            'UPDATE change_orders SET final_approver_id = ?, approver_id = ? WHERE id = ?',
+            (approver['user_id'], approver['user_id'], order['id']),
+        )
+        current = get_change_order(conn, order['id'])
+        snapshot = approval_snapshot_hash(current)
+        conn.execute(
+            'UPDATE change_orders SET result_detail_json = ? WHERE id = ?',
+            (json.dumps({
+                'approval_snapshot_hash': snapshot,
+                'approval_snapshot_version': APPROVAL_SNAPSHOT_VERSION,
+                'executing_snapshot_hash': snapshot,
+                'execution_token_id': 'm2-batch-single-use-token',
+                'execution_token_consumed_at': now.isoformat(),
+                'mfa_verified_at': now.isoformat(),
+                'mfa_verified_by_id': implementer['user_id'],
+                'mfa_verified_by': implementer['username'],
+            }), order['id']),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    execution_calls = []
+
+    class _H3CCommandService:
+        def execute_commands(self, _device, requested_commands, is_config=False):
+            execution_calls.append((list(requested_commands), is_config))
+            if result_mode == 'pagination':
+                return [{'success': True, 'output': 'H3C Comware output\n---- More ----'}]
+            if result_mode == 'missing_command':
+                return [{'success': True, 'output': 'First command output'}]
+            return [
+                {'success': True, 'command': requested_commands[0], 'output': 'H3C Comware Software, Version 7.1.070'},
+                {'success': True, 'command': requested_commands[1], 'output': 'Brief information on interfaces in route mode'},
+            ]
+
+    monkeypatch.setattr(automation, '_resolve_execution_credentials', lambda *_args, **_kwargs: {
+        'username': 'operator', 'password': '', 'enable_password': '', 'resolved_role': 'normal',
+    })
+    monkeypatch.setattr(automation, 'AutomationService', _H3CCommandService)
+    monkeypatch.setattr(automation, '_record_instant_execution', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(automation, 'log_audit_event', lambda *_args, **_kwargs: None)
+    client = _authorize_test_client(monkeypatch, {'batch-token': _actor(implementer)})
+    response = client.post(
+        '/api/execute',
+        headers={'Authorization': 'Bearer batch-token'},
+        json={
+            'device_ids': ['m2-batch-device'],
+            'command': commands,
+            'isConfig': True,
+            'change_ticket': order['order_number'],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    result = response.json()['results']['m2-batch-device']
+    assert response.json()['status'] == expected_status
+    assert result['status'] == ('success' if expected_status == 'completed' else 'failed')
+    assert execution_calls == [(commands, False)]
+    if result_mode == 'complete':
+        assert 'H3C Comware Software, Version 7.1.070' in result['output']
+        assert 'Brief information on interfaces in route mode' in result['output']
+    elif result_mode == 'pagination':
+        assert 'pagination prompt' in result['output']
+    elif result_mode == 'missing_command':
+        assert 'Received 1 of 2 command results' in result['output']
+    conn = database.get_db_connection()
+    try:
+        updated = get_change_order(conn, order['id'])
+    finally:
+        conn.close()
+    assert updated['status'] == 'implementing'
+    assert updated['result_detail']['execution_results'][-1]['status'] == expected_status
 
 
 def test_implementing_transition_requires_valid_mfa_and_records_stable_identity(
@@ -1272,6 +1408,131 @@ def test_implementing_transition_requires_valid_mfa_and_records_stable_identity(
     assert detail['mfa_verified_by_id'] == implementer['user_id']
     assert detail['mfa_verified_by'] == implementer['username']
     assert detail['approval_snapshot_version'] == APPROVAL_SNAPSHOT_VERSION
+
+
+@pytest.mark.parametrize(
+    ('target_group_id', 'expected_status'),
+    [
+        ('m2-group-scope-only', 200),
+        ('m2-group-scope-outside', 403),
+    ],
+)
+def test_device_group_scoped_implementer_can_start_only_an_approved_target(
+    isolated_db, make_user, monkeypatch, target_group_id, expected_status,
+):
+    import json
+
+    from api.change_orders.helpers import APPROVAL_SNAPSHOT_VERSION, approval_snapshot_hash
+    from backend.tests.conftest import current_test_totp
+    from services.change_order_service import create_change_order, get_change_order
+
+    database = isolated_db['module']
+    requester = make_user('m2-group-scope-requester', tenant_id='tenant-default')
+    implementer = make_user(
+        'm2-group-scope-implementer', role='Administrator', tenant_id='tenant-default', mfa_enabled=True,
+    )
+    approver = make_user(
+        'm2-group-scope-approver', role='Administrator', tenant_id='tenant-default', change_groups=['final_approver'],
+    )
+    group_id = 'm2-group-scope-only'
+    device_id = 'm2-group-scope-device'
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    scheduled_start = (now - timedelta(minutes=5)).isoformat()
+    scheduled_end = (now + timedelta(minutes=10)).isoformat()
+    conn = database.get_db_connection()
+    try:
+        conn.execute(
+            "UPDATE users SET role_profile = ?, scope_mode = 'restricted' WHERE id = ?",
+            ('Automation Operator', implementer['user_id']),
+        )
+        for resource_type, scope_type, scope_id, actions in (
+            ('pam', 'tenant', 'tenant-default', ['view', 'intervene']),
+            ('command', 'device_group', group_id, ['view', 'execute']),
+        ):
+            conn.execute(
+                '''INSERT INTO user_resource_scopes
+                   (id, user_id, resource_type, scope_type, scope_id, actions_json, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                (
+                    str(uuid.uuid4()), implementer['user_id'], resource_type, scope_type, scope_id,
+                    json.dumps(actions), now.isoformat(),
+                ),
+            )
+        conn.execute(
+            '''INSERT INTO devices
+               (id, hostname, ip_address, platform, tenant_id, site_id, device_group_id, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+            (device_id, 'edge-group-scope', '192.0.2.81', 'h3c_comware', 'tenant-default', 'site-test', target_group_id, 'online'),
+        )
+        order = create_change_order(
+            conn,
+            title='Device-group-scoped implementer transition',
+            status='approved',
+            requester_id=requester['user_id'],
+            requester_username=requester['username'],
+            tenant_id='tenant-default',
+            assigned_final_approver_id=approver['user_id'],
+            assigned_final_approver_username=approver['username'],
+            target_devices=[{'id': device_id, 'hostname': 'edge-group-scope', 'ip_address': '192.0.2.81'}],
+            commands=['display version'],
+            rollback_plan='Read-only verification; no configuration rollback is needed.',
+            scheduled_start=scheduled_start,
+            scheduled_end=scheduled_end,
+            control_sheet={
+                'change_time': {'start': scheduled_start, 'end': scheduled_end},
+                'implementer': {'id': implementer['user_id'], 'username': implementer['username']},
+                'device_ips': ['192.0.2.81'],
+                'pre_check': 'Confirm the target device is reachable.',
+                'execution': 'Run the approved read-only display command.',
+                'post_verify': 'Confirm the command returned without a CLI error.',
+                'business_verify': 'Confirm the service remains available.',
+                'rollback_plan': 'Read-only verification; no configuration rollback is needed.',
+            },
+            commit=False,
+        )
+        conn.execute(
+            'UPDATE change_orders SET final_approver_id = ?, approver_id = ? WHERE id = ?',
+            (approver['user_id'], approver['user_id'], order['id']),
+        )
+        conn.execute(
+            '''INSERT INTO change_order_control_sheet_attachments
+               (id, order_id, file_path, file_name, file_size, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)''',
+            (str(uuid.uuid4()), order['id'], 'm2-group-scope-test-attachment', 'test-control-sheet.png', 0, now.isoformat()),
+        )
+        current = get_change_order(conn, order['id'])
+        snapshot = approval_snapshot_hash(current)
+        conn.execute(
+            'UPDATE change_orders SET result_detail_json = ? WHERE id = ?',
+            (json.dumps({
+                'approval_snapshot_hash': snapshot,
+                'approval_snapshot_version': APPROVAL_SNAPSHOT_VERSION,
+            }), order['id']),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    actor = _actor(implementer)
+    actor.update({'role_profile': 'Automation Operator', 'scope_mode': 'restricted'})
+    client = _authorize_test_client(monkeypatch, {'group-scope-token': actor})
+    response = client.post(
+        f"/api/change-orders/{order['id']}/transition",
+        headers={'Authorization': 'Bearer group-scope-token'},
+        json={'status': 'implementing', 'mfa_code': current_test_totp(implementer['mfa_secret'])},
+    )
+
+    assert response.status_code == expected_status, response.text
+    if expected_status == 200:
+        assert response.json()['data']['status'] == 'implementing'
+        assert response.json()['data']['result_detail']['mfa_verified_by_id'] == implementer['user_id']
+    else:
+        assert response.json()['detail']['code'] == 'RESOURCE_SCOPE_DENIED'
+        conn = database.get_db_connection()
+        try:
+            assert get_change_order(conn, order['id'])['status'] == 'approved'
+        finally:
+            conn.close()
 
 
 def test_concurrent_initial_review_actions_commit_only_one_transition(

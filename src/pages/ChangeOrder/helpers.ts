@@ -29,6 +29,38 @@ export const fmtDate = (iso: string) => {
 export const statusLabel = (status: string, lang: string) =>
   STATUS_META[status]?.label?.[lang === 'zh' ? 'zh' : 'en'] ?? status;
 
+const MAX_API_MESSAGE_LENGTH = 240;
+
+const safeApiMessageText = (value: unknown): string => typeof value === 'string'
+  ? value.replace(/[\u0000-\u001F\u007F]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, MAX_API_MESSAGE_LENGTH)
+  : '';
+
+/** Convert API error details into a bounded text value that is safe for UI text nodes. */
+export const formatChangeOrderApiMessage = (detail: unknown, lang: string, fallback: string): string => {
+  const zh = lang === 'zh';
+  const fallbackText = safeApiMessageText(fallback) || (zh ? '操作失败，请稍后重试。' : 'Request failed. Please try again.');
+  if (detail instanceof Error) return safeApiMessageText(detail.message) || fallbackText;
+  if (typeof detail === 'string') return safeApiMessageText(detail) || fallbackText;
+  if (!detail || typeof detail !== 'object' || Array.isArray(detail)) return fallbackText;
+
+  const record = detail as Record<string, unknown>;
+  const code = safeApiMessageText(record.code).toUpperCase();
+  if (code === 'RESOURCE_SCOPE_DENIED') {
+    const resource = safeApiMessageText(record.resource_type).toLowerCase();
+    const action = safeApiMessageText(record.action).toLowerCase();
+    if (resource === 'command' && action === 'execute') {
+      return zh
+        ? '当前账号无权对目标设备执行命令，请联系管理员检查授权。'
+        : 'You are not authorized to execute commands on these devices. Ask an administrator to review access.';
+    }
+    return zh
+      ? '当前账号无此资源范围的访问权限，请联系管理员。'
+      : 'You are not authorized for this resource scope. Ask an administrator to review access.';
+  }
+
+  return safeApiMessageText(record.message) || fallbackText;
+};
+
 /** Emergency post-review is recorded only after the change has reached an end state. */
 export const canRecordEmergencyPostReview = (
   order: Pick<ChangeOrder, 'order_type' | 'status' | 'actual_end' | 'emergency_review_status' | 'emergency_review_owner_id'>,
@@ -320,6 +352,17 @@ const currentUserMatches = (user: SessionUser, person: ChangeOrderPersonRef): bo
 
 export const isChangeOrderRequester = (order: ChangeOrder, user: SessionUser): boolean =>
   currentUserMatches(user, { id: order.requester_id, username: order.requester_username });
+
+/** Match the control-sheet upload actor and status rules enforced by the API. */
+export const canUploadControlSheetAttachment = (order: ChangeOrder, user: SessionUser): boolean => {
+  const uploadableStatus = ['draft', 'initial_review', 'final_review', 'approved', 'implementing'].includes(order.status);
+  const executionStarted = nonEmptyString(order.result_detail?.execution_started_at);
+  const profile = nonEmptyString(user.role_profile);
+  const canUpdateChangeOrder = profile === 'Change Requester' || profile === 'System Administrator'
+    || (!profile && user.role !== 'Viewer');
+  const uploadActor = user.role === 'Administrator' || isChangeOrderRequester(order, user);
+  return uploadableStatus && !executionStarted && canUpdateChangeOrder && uploadActor;
+};
 
 export const isChangeOrderInitialReviewer = (order: ChangeOrder, user: SessionUser): boolean =>
   user.role === 'Administrator' && currentUserMatches(user, {

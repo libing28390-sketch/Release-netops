@@ -147,6 +147,16 @@ def _sanitize_command(cmd: str) -> str:
         cmd,
         flags=re.IGNORECASE
     )
+
+    # 8. H3C: SNMPv1/v2c community names are credentials. Redact both
+    # configuration and removal commands, including echoed CLI output.
+    cmd = re.sub(
+        r"(\b(?:undo\s+)?snmp-agent\s+community\s+"
+        r"(?:(?:read|write)\s+)?(?:(?:simple|cipher)\s+)?)(\S+)",
+        r"\1********",
+        cmd,
+        flags=re.IGNORECASE,
+    )
     
     return cmd
 

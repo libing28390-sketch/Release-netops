@@ -89,11 +89,17 @@ export interface VerificationRecord {
 
 export interface ControlSheetAttachment {
   id: string;
-  filename: string;
-  mime_type: string;
-  size_bytes: number;
-  uploaded_by_username: string;
-  uploaded_at: string;
+  /** Upload response fields. */
+  filename?: string;
+  mime_type?: string;
+  size_bytes?: number;
+  uploaded_by_username?: string;
+  uploaded_at?: string;
+  /** Persisted change-order detail fields. */
+  file_name?: string;
+  file_size?: number;
+  created_at?: string;
+  sha256?: string;
   download_url?: string;
 }
 

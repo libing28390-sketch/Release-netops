@@ -444,7 +444,11 @@ const TicketsPage: React.FC<TicketsPageProps> = ({ language, currentUser, users 
     try {
       await addTicketAssignmentGroupMember(managerGroupId, managerMemberUserId);
       setManagerMemberUserId('');
-      setManagerMembers(await getTicketAssignmentGroupMembers(managerGroupId));
+      const [members] = await Promise.all([
+        getTicketAssignmentGroupMembers(managerGroupId),
+        refreshGroups(),
+      ]);
+      setManagerMembers(members);
       showToast?.(zh ? '成员已添加' : 'Member added', 'success');
     } catch (error) {
       setManagerError(error instanceof Error ? error.message : (zh ? '成员添加失败' : 'Unable to add member'));
@@ -459,7 +463,11 @@ const TicketsPage: React.FC<TicketsPageProps> = ({ language, currentUser, users 
     setManagerError('');
     try {
       await removeTicketAssignmentGroupMember(managerGroupId, userId);
-      setManagerMembers(await getTicketAssignmentGroupMembers(managerGroupId));
+      const [members] = await Promise.all([
+        getTicketAssignmentGroupMembers(managerGroupId),
+        refreshGroups(),
+      ]);
+      setManagerMembers(members);
       showToast?.(zh ? '成员已移除' : 'Member removed', 'success');
     } catch (error) {
       setManagerError(error instanceof Error ? error.message : (zh ? '成员移除失败' : 'Unable to remove member'));

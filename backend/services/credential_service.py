@@ -27,6 +27,7 @@ _SECRET_FIELDS = ('encrypted_password', 'enable_password', 'private_key', 'snmp_
 _ACCOUNT_ROLE_LABELS = {
     'normal': '普通账号',
     'admin': '特权账号',
+    'snmp': 'SNMP 采集',
     'login': '登录账号',
     'mixed': '多角色',
     'shared': '通用账号',
@@ -84,7 +85,10 @@ def _infer_device_account_role(credential_id: str, credential_username: str, dev
     """
     dev_cred_id = device.get('credential_id')
     dev_admin_cred_id = device.get('admin_credential_id')
+    dev_snmp_cred_id = device.get('snmp_credential_id')
 
+    if dev_snmp_cred_id == credential_id:
+        return 'snmp'
     if dev_admin_cred_id == credential_id:
         return 'admin'
     if dev_cred_id == credential_id:
@@ -117,9 +121,12 @@ def _account_role_from_devices(credential_id: str, credential_username: str, dev
 def _with_account_role(view: dict, devices: list[dict]) -> dict:
     stored_role = str(view.get('account_role') or '').strip().lower()
     role = stored_role if stored_role in _EXPLICIT_ACCOUNT_ROLES else ''
-    if role == 'unbound' and devices:
+    credential_type = str(view.get('credential_type') or '').strip().lower()
+    if credential_type in {'snmpv2', 'snmpv3'}:
+        role = 'snmp'
+    elif role == 'unbound' and devices:
         role = _account_role_from_devices(view.get('id') or '', view.get('username') or '', devices)
-    if not role:
+    elif not role:
         role = _account_role_from_devices(view.get('id') or '', view.get('username') or '', devices)
 
     # Device-local rows created by asset entry historically stored the generic
@@ -151,7 +158,8 @@ def _public_device_refs(devices: list[dict], credential_id: str | None = None) -
             'hostname': d.get('hostname'),
             'ip_address': d.get('ip_address'),
             'binding_role': (
-                'admin' if credential_id and str(d.get('admin_credential_id') or '') == str(credential_id)
+                'snmp' if credential_id and str(d.get('snmp_credential_id') or '') == str(credential_id)
+                else 'admin' if credential_id and str(d.get('admin_credential_id') or '') == str(credential_id)
                 else 'normal'
             ),
         }
@@ -167,11 +175,31 @@ def _list_devices_using_rows_for_credentials(conn, credential_ids: list[str]) ->
 
     try:
         rows = conn.execute(
-            """SELECT id, hostname, ip_address, platform, username, normal_username, admin_username, auth_model, credential_id, admin_credential_id
-               FROM devices
-               WHERE credential_id = ANY(?) OR admin_credential_id = ANY(?)
+            """SELECT d.id,
+                      COALESCE(NULLIF(pa.hostname, ''), d.hostname, '') AS hostname,
+                      COALESCE(NULLIF(d.ip_address, ''), pa.management_ip, '') AS ip_address,
+                      COALESCE(NULLIF(pa.platform, ''), d.platform, '') AS platform,
+                      COALESCE(NULLIF(pa.username, ''), d.username, '') AS username,
+                      COALESCE(NULLIF(pa.normal_username, ''), d.normal_username, '') AS normal_username,
+                      COALESCE(NULLIF(pa.admin_username, ''), d.admin_username, '') AS admin_username,
+                      COALESCE(NULLIF(pa.auth_model, ''), d.auth_model, '') AS auth_model,
+                      COALESCE(NULLIF(pa.credential_id, ''), NULLIF(d.credential_id, ''), '') AS credential_id,
+                      COALESCE(NULLIF(pa.admin_credential_id, ''), NULLIF(d.admin_credential_id, ''), '') AS admin_credential_id,
+                      COALESCE(NULLIF(pa.snmp_credential_id, ''), NULLIF(d.snmp_credential_id, ''), '') AS snmp_credential_id
+               FROM devices d
+               LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+               WHERE COALESCE(NULLIF(pa.credential_id, ''), NULLIF(d.credential_id, ''), '') = ANY(?)
+                  OR COALESCE(NULLIF(pa.admin_credential_id, ''), NULLIF(d.admin_credential_id, ''), '') = ANY(?)
+                  OR COALESCE(NULLIF(pa.snmp_credential_id, ''), NULLIF(d.snmp_credential_id, ''), '') = ANY(?)
+               UNION ALL
+               SELECT pa.id, pa.hostname, pa.management_ip, pa.platform, pa.username,
+                      pa.normal_username, pa.admin_username, pa.auth_model, pa.credential_id,
+                      pa.admin_credential_id, pa.snmp_credential_id
+               FROM physical_assets pa
+               WHERE (pa.credential_id = ANY(?) OR pa.admin_credential_id = ANY(?) OR pa.snmp_credential_id = ANY(?))
+                 AND NOT EXISTS (SELECT 1 FROM devices d WHERE d.asset_id = pa.id)
                ORDER BY hostname""",
-            (credential_ids, credential_ids),
+            (credential_ids, credential_ids, credential_ids, credential_ids, credential_ids, credential_ids),
         ).fetchall()
     except Exception:
         # Keep the existing list helper's failure contract: missing/unavailable
@@ -182,10 +210,10 @@ def _list_devices_using_rows_for_credentials(conn, credential_ids: list[str]) ->
         device = _row_to_dict(row)
         normal_credential_id = device.get('credential_id')
         admin_credential_id = device.get('admin_credential_id')
-        if normal_credential_id in devices_by_credential:
-            devices_by_credential[normal_credential_id].append(device)
-        if admin_credential_id in devices_by_credential and admin_credential_id != normal_credential_id:
-            devices_by_credential[admin_credential_id].append(device)
+        snmp_credential_id = device.get('snmp_credential_id')
+        for credential_id in {normal_credential_id, admin_credential_id, snmp_credential_id}:
+            if credential_id in devices_by_credential:
+                devices_by_credential[credential_id].append(device)
 
     return devices_by_credential
 
@@ -209,7 +237,7 @@ def list_credentials(conn) -> list[dict]:
         view["enable_password_supported"] = bool(device_rows) and all(
             str(device.get('platform') or '').strip().lower().startswith('cisco')
             for device in device_rows
-        )
+        ) and not str(view.get('credential_type') or '').lower().startswith('snmp')
         _with_account_role(view, device_rows)
         res.append(view)
     return res
@@ -226,7 +254,7 @@ def get_credential(conn, cred_id: str) -> dict:
     view["enable_password_supported"] = bool(device_rows) and all(
         str(device.get('platform') or '').strip().lower().startswith('cisco')
         for device in device_rows
-    )
+    ) and not str(view.get('credential_type') or '').lower().startswith('snmp')
     return _with_account_role(view, device_rows)
 
 
@@ -395,9 +423,20 @@ def count_devices_using(conn, cred_id: str) -> int:
     try:
         row = conn.execute(
             """SELECT COUNT(*) AS cnt
-               FROM devices
-               WHERE credential_id = ? OR admin_credential_id = ?""",
-            (cred_id, cred_id),
+               FROM (
+                   SELECT d.id
+                   FROM devices d
+                   LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+                   WHERE COALESCE(NULLIF(pa.credential_id, ''), NULLIF(d.credential_id, ''), '') = ?
+                      OR COALESCE(NULLIF(pa.admin_credential_id, ''), NULLIF(d.admin_credential_id, ''), '') = ?
+                      OR COALESCE(NULLIF(pa.snmp_credential_id, ''), NULLIF(d.snmp_credential_id, ''), '') = ?
+                   UNION ALL
+                   SELECT pa.id
+                   FROM physical_assets pa
+                   WHERE (pa.credential_id = ? OR pa.admin_credential_id = ? OR pa.snmp_credential_id = ?)
+                     AND NOT EXISTS (SELECT 1 FROM devices d WHERE d.asset_id = pa.id)
+               ) AS credential_refs""",
+            (cred_id, cred_id, cred_id, cred_id, cred_id, cred_id),
         ).fetchone()
     except Exception:
         return 0
@@ -428,11 +467,31 @@ def _list_devices_using_rows(conn, cred_id: str) -> list[dict]:
     """Return device info needed for safe credential metadata inference."""
     try:
         rows = conn.execute(
-            """SELECT id, hostname, ip_address, platform, username, normal_username, admin_username, auth_model, credential_id, admin_credential_id
-               FROM devices
-               WHERE credential_id = ? OR admin_credential_id = ?
+            """SELECT d.id,
+                      COALESCE(NULLIF(pa.hostname, ''), d.hostname, '') AS hostname,
+                      COALESCE(NULLIF(d.ip_address, ''), pa.management_ip, '') AS ip_address,
+                      COALESCE(NULLIF(pa.platform, ''), d.platform, '') AS platform,
+                      COALESCE(NULLIF(pa.username, ''), d.username, '') AS username,
+                      COALESCE(NULLIF(pa.normal_username, ''), d.normal_username, '') AS normal_username,
+                      COALESCE(NULLIF(pa.admin_username, ''), d.admin_username, '') AS admin_username,
+                      COALESCE(NULLIF(pa.auth_model, ''), d.auth_model, '') AS auth_model,
+                      COALESCE(NULLIF(pa.credential_id, ''), NULLIF(d.credential_id, ''), '') AS credential_id,
+                      COALESCE(NULLIF(pa.admin_credential_id, ''), NULLIF(d.admin_credential_id, ''), '') AS admin_credential_id,
+                      COALESCE(NULLIF(pa.snmp_credential_id, ''), NULLIF(d.snmp_credential_id, ''), '') AS snmp_credential_id
+               FROM devices d
+               LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+               WHERE COALESCE(NULLIF(pa.credential_id, ''), NULLIF(d.credential_id, ''), '') = ?
+                  OR COALESCE(NULLIF(pa.admin_credential_id, ''), NULLIF(d.admin_credential_id, ''), '') = ?
+                  OR COALESCE(NULLIF(pa.snmp_credential_id, ''), NULLIF(d.snmp_credential_id, ''), '') = ?
+               UNION ALL
+               SELECT pa.id, pa.hostname, pa.management_ip, pa.platform, pa.username,
+                      pa.normal_username, pa.admin_username, pa.auth_model, pa.credential_id,
+                      pa.admin_credential_id, pa.snmp_credential_id
+               FROM physical_assets pa
+               WHERE (pa.credential_id = ? OR pa.admin_credential_id = ? OR pa.snmp_credential_id = ?)
+                 AND NOT EXISTS (SELECT 1 FROM devices d WHERE d.asset_id = pa.id)
                ORDER BY hostname""",
-            (cred_id, cred_id),
+            (cred_id, cred_id, cred_id, cred_id, cred_id, cred_id),
         ).fetchall()
     except Exception:
         return []
@@ -441,4 +500,4 @@ def _list_devices_using_rows(conn, cred_id: str) -> list[dict]:
 
 def list_devices_using(conn, cred_id: str) -> list[dict]:
     """Return minimal device info for devices bound to this credential."""
-    return _public_device_refs(_list_devices_using_rows(conn, cred_id))
+    return _public_device_refs(_list_devices_using_rows(conn, cred_id), cred_id)

@@ -100,6 +100,23 @@ def normalize_vendor(value: Any) -> str:
     return _text(value, 128)
 
 
+def normalize_model_name(vendor: Any, model: Any) -> str:
+    """Remove a redundant leading vendor label from a model name.
+
+    Vendor remains a separate asset field. Strip only an exact canonical
+    vendor prefix followed by whitespace; model families and codes remain
+    intact.
+    """
+    model_text = _text(model, 256)
+    vendor_name = normalize_vendor(vendor)
+    if not model_text or not vendor_name:
+        return model_text
+    vendor_prefix = f"{vendor_name} "
+    if model_text.casefold().startswith(vendor_prefix.casefold()):
+        return _text(model_text[len(vendor_prefix):], 256)
+    return model_text
+
+
 def _version_from_descr(descr: str) -> str:
     match = re.search(r"\bversion\s+([\w.()\-/]+)", descr, re.IGNORECASE)
     return match.group(1) if match else ""
@@ -115,6 +132,21 @@ def _model_from_descr(descr: str) -> str:
         match = re.search(pattern, descr, re.IGNORECASE)
         if match:
             return _text(match.group(1), 256)
+
+    # H3C Comware commonly puts the product model after the software/version
+    # text (for example, "H3C S6850"). sysDescr normalization collapses line
+    # breaks, so match only explicit H3C product families; generic Comware
+    # software/version text cannot satisfy these family-code patterns.
+    h3c_match = re.search(
+        r"\bH3C[ \t]+(?:(SecPath)[ \t]+)?"
+        r"((?:S\d{3,5}|F\d{3,5}|WX\d{3,5}|WA\d{3,5}|MSR\d{2,4}|SR\d{3,5}|CR\d{3,5})[A-Z0-9-]*)"
+        r"\b",
+        descr,
+        re.IGNORECASE,
+    )
+    if h3c_match:
+        family = f"{h3c_match.group(1)} " if h3c_match.group(1) else ""
+        return _text(f"{family}{h3c_match.group(2)}", 256)
     return ""
 
 
@@ -408,6 +440,8 @@ def resolve_snmp_vendor_identity(
         platform = asset_platform_value
         reason = "SNMP identity did not match an asset-import vendor"
 
+    model_value = normalize_model_name(observed_vendor or canonical_asset_vendor, model_value)
+
     if observed_vendor and canonical_asset_vendor and observed_vendor != canonical_asset_vendor:
         status = "conflict"
         reason = f"asset vendor conflicts with observed {observed_vendor} identity"
@@ -416,8 +450,6 @@ def resolve_snmp_vendor_identity(
     else:
         status = "unidentified"
 
-    if rule and source == "librenms":
-        model_value = model_value or _text(rule.get("display_name"), 256)
     return {
         "status": status,
         "vendor": observed_vendor,

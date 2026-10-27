@@ -11,6 +11,7 @@ import {
   mergeManagementMethods,
   parseManagementMethodSheet,
   formatAssetImportError,
+  getMissingSnmpCredentialRows,
 } from './importUtils';
 
 describe('asset management method import', () => {
@@ -44,6 +45,92 @@ describe('asset management method import', () => {
     expect(result.text).toContain('item 2');
     expect(result.text).toContain('missing-site');
     expect(result.details?.[0]).toContain('Site/Datacenter');
+  });
+
+  it('localizes every structured SNMP credential error without exposing raw messages', () => {
+    const codes = [
+      'ASSET_SNMP_CREDENTIAL_NOT_FOUND',
+      'ASSET_SNMP_CREDENTIAL_TYPE_UNSUPPORTED',
+      'ASSET_SNMP_CREDENTIAL_INCOMPLETE',
+      'ASSET_SNMP_CREDENTIAL_UNREADABLE',
+      'ASSET_SNMP_CREDENTIAL_ALGORITHM_UNSUPPORTED',
+      'ASSET_SNMP_COMMUNITY_STORAGE_UNAVAILABLE',
+    ];
+
+    for (const code of codes) {
+      const detail = {
+        code,
+        row: 4,
+        asset_tag: 'EDGE-004',
+        message: 'SNMP backend failure included secret-community-value',
+      };
+      const zh = formatAssetImportError(detail, 'zh');
+      const en = formatAssetImportError(detail, 'en');
+
+      expect(zh.text).toContain('第 4 条');
+      expect(zh.text).toContain('EDGE-004');
+      expect(zh.details?.[0]).toBeTruthy();
+      expect(en.text).toContain('item 4');
+      expect(en.text).toContain('EDGE-004');
+      expect(en.details?.[0]).toBeTruthy();
+      expect(JSON.stringify([zh, en])).not.toContain('secret-community-value');
+    }
+  });
+
+  it('reads atomic SNMP errors from nested details.code/message', () => {
+    const result = formatAssetImportError({
+      message: 'outer message should not be used',
+      details: {
+        code: 'ASSET_SNMP_CREDENTIAL_TYPE_UNSUPPORTED',
+        message: 'unsupported SNMP credential type: private-community-value',
+        row: 2,
+        hostname: 'switch-02',
+      },
+    }, 'en');
+
+    expect(result.text).toContain('item 2');
+    expect(result.text).toContain('switch-02');
+    expect(result.text).toContain('not a supported SNMP credential type');
+    expect(JSON.stringify(result)).not.toContain('private-community-value');
+    expect(result.details?.[0]).toContain('credential center');
+  });
+
+  it('maps legacy SNMP reason strings and suppresses unknown raw SNMP errors', () => {
+    const legacy = formatAssetImportError({
+      reason: 'snmpv3_auth_unsupported',
+      message: '当前识别探测不支持该 SNMPv3 认证算法',
+    }, 'zh');
+    expect(legacy.text).toContain('不支持的算法');
+    expect(legacy.details?.[0]).toContain('认证和加密算法');
+
+    const unknown = formatAssetImportError({
+      message: 'SNMP request rejected for community secret-community-value',
+    }, 'en');
+    expect(unknown.text).toBe('SNMP credential validation failed.');
+    expect(JSON.stringify(unknown)).not.toContain('secret-community-value');
+  });
+
+  it('finds only eligible network rows without explicit SNMP credentials', () => {
+    const assets: Record<string, unknown>[] = [
+      { asset_type: 'network_device', asset_tag: 'EDGE-001', hostname: 'edge-01', management_ip: '192.0.2.1' },
+      { asset_type: 'network_device', asset_tag: 'EDGE-002', management_ip: '192.0.2.2', snmp_collection_enabled: false },
+      { asset_type: 'server', asset_tag: 'SRV-003', management_ip: '192.0.2.3' },
+      { asset_type: 'network_device', asset_tag: 'EDGE-004', management_ip: '   ' },
+      { asset_type: 'network_device', asset_tag: 'EDGE-005', management_ip: '192.0.2.5', snmp_community: 'secret-community-value' },
+      { asset_type: 'network_device', hostname: 'edge-06', management_ip: '192.0.2.6', snmp_credential_name: '   ' },
+      { asset_type: 'network_device', asset_tag: 'EDGE-007', management_ip: '192.0.2.7', community: 'community-secret' },
+      { asset_type: 'network_device', asset_tag: 'EDGE-008', management_ip: '192.0.2.8', snmp_credential_id: 'credential-8' },
+      { asset_type: 'network_device', asset_tag: 'EDGE-009', management_ip: '192.0.2.9' },
+    ];
+
+    const rows = getMissingSnmpCredentialRows(assets, new Set([1, 9]));
+
+    expect(rows).toEqual([{ row: 1, identity: 'EDGE-001' }, { row: 9, identity: 'EDGE-009' }]);
+    expect(getMissingSnmpCredentialRows(assets)).toEqual([
+      { row: 1, identity: 'EDGE-001' }, { row: 6, identity: 'edge-06' }, { row: 9, identity: 'EDGE-009' },
+    ]);
+    expect(getMissingSnmpCredentialRows(assets, new Set())).toEqual([]);
+    expect(JSON.stringify(rows)).not.toContain('secret');
   });
 
   it('recognizes the new sheet names and keeps the old management sheet compatible', () => {

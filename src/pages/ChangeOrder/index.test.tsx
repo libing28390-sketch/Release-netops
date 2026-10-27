@@ -365,6 +365,9 @@ describe('ChangeOrder list request states', () => {
       if (url === '/api/change-orders-bookmarks') {
         return Promise.resolve({ ok: true, json: async () => ({ success: true, data: [] }) } as Response);
       }
+      if (url === '/api/change-orders/assignment-options') {
+        return Promise.resolve({ ok: true, json: async () => ({ success: true, data: [{ id: 'approver-1', username: 'alex', display_name: 'Alex Admin', role: 'Administrator', change_groups: ['final_approver'] }] }) } as Response);
+      }
       if (url === '/api/change-orders/order-1/timeline') {
         return Promise.resolve({ ok: true, json: async () => ({ success: true, data: [] }) } as Response);
       }
@@ -395,5 +398,168 @@ describe('ChangeOrder list request states', () => {
     expect(await screen.findByRole('dialog', { name: 'Select Final Approver' })).toBeTruthy();
     expect((screen.getByRole('radio', { name: /Alex Admin/ }) as HTMLInputElement).checked).toBe(false);
     expect(finalApproverDialog).toBeTruthy();
+  });
+
+  it('shows a bilingual message for a structured resource-scope 403 after MFA submission without crashing', async () => {
+    const approvedOrder: ChangeOrder = {
+      ...reviewOrder,
+      status: 'approved',
+      requester_id: 'operator-1',
+      requester_username: 'operator',
+      assigned_final_approver_id: 'approver-1',
+      assigned_final_approver_username: 'approver',
+      final_approver_id: 'approver-1',
+      final_approver_username: 'approver',
+      approver_id: 'approver-1',
+      approver_username: 'approver',
+      control_sheet: { implementer: { id: 'operator-1', username: 'operator' } },
+      control_sheet_attachments: [{
+        id: 'attachment-1',
+        file_name: 'change-plan.pdf',
+        file_size: 100,
+        created_at: '2026-10-26T09:00:00Z',
+        sha256: 'digest',
+      }],
+      result_detail: { approval_snapshot_hash: 'snapshot-1', approval_snapshot_version: 1 },
+      scheduled_start: new Date(Date.now() - 60_000).toISOString(),
+      scheduled_end: new Date(Date.now() + 60_000).toISOString(),
+    };
+    const transitionBodies: Array<Record<string, unknown>> = [];
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith('/api/change-orders?')) {
+        return Promise.resolve({ ok: true, json: async () => ({ success: true, data: [approvedOrder], total: 1 }) } as Response);
+      }
+      if (url === '/api/change-orders/summary') {
+        return Promise.resolve({ ok: true, json: async () => ({ success: true, data: { total: 1, by_status: { approved: 1 }, by_priority: {}, by_type: {} } }) } as Response);
+      }
+      if (url === '/api/change-orders-bookmarks' || url === '/api/change-orders/assignment-options') {
+        return Promise.resolve({ ok: true, json: async () => ({ success: true, data: [] }) } as Response);
+      }
+      if (url === '/api/change-orders/order-1/timeline') {
+        return Promise.resolve({ ok: true, json: async () => ({ success: true, data: [] }) } as Response);
+      }
+      if (url === '/api/change-orders/order-1') {
+        return Promise.resolve({ ok: true, json: async () => ({ success: true, data: approvedOrder }) } as Response);
+      }
+      if (url.endsWith('/transition')) {
+        transitionBodies.push(JSON.parse(String(init?.body || '{}')) as Record<string, unknown>);
+        return Promise.resolve({
+          ok: false,
+          status: 403,
+          json: async () => ({ detail: {
+            code: 'RESOURCE_SCOPE_DENIED',
+            message: 'Insufficient permission for this resource scope',
+            resource_type: 'command',
+            action: 'execute',
+          } }),
+        } as Response);
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ success: true, data: [] }) } as Response);
+    }));
+
+    renderChangeOrders([], { id: 'operator-1', username: 'operator', role: 'Operator', change_groups: [] });
+    await screen.findByText('CO-1');
+    fireEvent.click(screen.getByRole('button', { name: 'View change order CO-1' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Start Implementing' }));
+    fireEvent.change(screen.getByLabelText('Enter the code from your authenticator'), { target: { value: '123456' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+
+    expect(await screen.findByText('You are not authorized to execute commands on these devices. Ask an administrator to review access.')).toBeTruthy();
+    expect(screen.getByText('Core switch change')).toBeTruthy();
+    expect(transitionBodies).toEqual([{ status: 'implementing', mfa_code: '123456' }]);
+  });
+
+  it('disables implementation until at least one control sheet attachment is present', async () => {
+    const approvedOrder: ChangeOrder = {
+      ...reviewOrder,
+      status: 'approved',
+      control_sheet: { implementer: { id: 'operator-1', username: 'operator' } },
+      control_sheet_attachments: [],
+      result_detail: { approval_snapshot_hash: 'snapshot-1', approval_snapshot_version: 1 },
+      scheduled_start: new Date(Date.now() - 60_000).toISOString(),
+      scheduled_end: new Date(Date.now() + 60_000).toISOString(),
+    };
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith('/api/change-orders?')) return Promise.resolve({ ok: true, json: async () => ({ success: true, data: [approvedOrder], total: 1 }) } as Response);
+      if (url === '/api/change-orders/summary') return Promise.resolve({ ok: true, json: async () => ({ success: true, data: { total: 1, by_status: { approved: 1 }, by_priority: {}, by_type: {} } }) } as Response);
+      if (url === '/api/change-orders-bookmarks' || url === '/api/change-orders/assignment-options') return Promise.resolve({ ok: true, json: async () => ({ success: true, data: [] }) } as Response);
+      if (url === '/api/change-orders/order-1/timeline') return Promise.resolve({ ok: true, json: async () => ({ success: true, data: [] }) } as Response);
+      if (url === '/api/change-orders/order-1') return Promise.resolve({ ok: true, json: async () => ({ success: true, data: approvedOrder }) } as Response);
+      return Promise.resolve({ ok: true, json: async () => ({ success: true, data: [] }) } as Response);
+    }));
+
+    renderChangeOrders([], { id: 'operator-1', username: 'operator', role: 'Operator', change_groups: [] });
+    fireEvent.click(await screen.findByRole('button', { name: 'View change order CO-1' }));
+    const implement = await screen.findByRole('button', { name: 'Start Implementing' }) as HTMLButtonElement;
+    expect(implement.disabled).toBe(true);
+    expect(implement.title).toBe('Upload at least one control sheet attachment before implementation.');
+    expect(screen.getByText('Upload at least one PDF, Word, or Excel control sheet attachment before implementation.')).toBeTruthy();
+  });
+
+  it('uploads a control sheet file and refreshes the order, activity timeline, and list', async () => {
+    const initialOrder: ChangeOrder = {
+      ...reviewOrder,
+      status: 'approved',
+      requester_id: 'requester-1',
+      requester_username: 'requester',
+      control_sheet: { pre_check: 'show version' },
+      control_sheet_attachments: [],
+    };
+    const refreshedOrder: ChangeOrder = {
+      ...initialOrder,
+      status: 'initial_review',
+      control_sheet_attachments: [{
+        id: 'attachment-1',
+        file_name: 'change-plan.pdf',
+        file_size: 100,
+        created_at: '2026-10-26T09:00:00Z',
+        sha256: 'digest',
+      }],
+    };
+    let activeOrder = initialOrder;
+    let detailRequests = 0;
+    let timelineRequests = 0;
+    let listRequests = 0;
+    let uploadBody: BodyInit | null | undefined;
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith('/api/change-orders?')) {
+        listRequests += 1;
+        return Promise.resolve({ ok: true, json: async () => ({ success: true, data: [activeOrder], total: 1 }) } as Response);
+      }
+      if (url === '/api/change-orders/summary') return Promise.resolve({ ok: true, json: async () => ({ success: true, data: { total: 1, by_status: { [activeOrder.status]: 1 }, by_priority: {}, by_type: {} } }) } as Response);
+      if (url === '/api/change-orders-bookmarks' || url === '/api/change-orders/assignment-options') return Promise.resolve({ ok: true, json: async () => ({ success: true, data: [] }) } as Response);
+      if (url === '/api/change-orders/order-1/timeline') {
+        timelineRequests += 1;
+        return Promise.resolve({ ok: true, json: async () => ({ success: true, data: [] }) } as Response);
+      }
+      if (url === '/api/change-orders/order-1') {
+        detailRequests += 1;
+        return Promise.resolve({ ok: true, json: async () => ({ success: true, data: activeOrder }) } as Response);
+      }
+      if (url === '/api/change-orders/order-1/control-sheet') {
+        uploadBody = init?.body;
+        activeOrder = refreshedOrder;
+        return Promise.resolve({ ok: true, json: async () => ({ success: true, data: { id: 'attachment-1', filename: 'change-plan.pdf' } }) } as Response);
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ success: true, data: [] }) } as Response);
+    }));
+
+    renderChangeOrders([], { id: 'requester-1', username: 'requester', role: 'Operator', change_groups: [] });
+    await screen.findByText('CO-1');
+    fireEvent.click(screen.getByRole('button', { name: 'View change order CO-1' }));
+    const file = new File(['change plan'], 'change-plan.pdf', { type: 'application/pdf' });
+    fireEvent.change(await screen.findByLabelText('Upload control sheet attachment'), { target: { files: [file] } });
+
+    await waitFor(() => expect(activeOrder.status).toBe('initial_review'));
+    await waitFor(() => expect(detailRequests).toBeGreaterThanOrEqual(2));
+    await waitFor(() => expect(timelineRequests).toBeGreaterThanOrEqual(2));
+    await waitFor(() => expect(listRequests).toBeGreaterThanOrEqual(2));
+    expect(uploadBody).toBeInstanceOf(FormData);
+    expect(await screen.findByText('change-plan.pdf')).toBeTruthy();
+    expect(screen.getAllByText('Initial Review').length).toBeGreaterThan(0);
+    expect(screen.getByRole('status').textContent).toContain('needs approval again');
   });
 });

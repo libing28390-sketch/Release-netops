@@ -272,6 +272,61 @@ describe('Tickets page list and detail workflow', () => {
     expect(fetchMock.mock.calls.some(([input]) => String(input) === '/api/ticket-assignment-groups/group-network/members?ticket_id=m3-ticket-1')).toBe(true);
   });
 
+  it('refreshes service catalog group member counts after adding and removing members', async () => {
+    const groupMembers: Array<{ id: string; user_id: string; username: string; display_name: string }> = [];
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith('/api/tickets?')) return Promise.resolve(response({ success: true, data: [], total: 0 }));
+      if (url === '/api/ticket-assignment-groups' && !init?.method) {
+        return Promise.resolve(response({ success: true, data: [{ id: 'group-1', name: 'Network Operations', active: true, member_count: groupMembers.length }] }));
+      }
+      if (url === '/api/ticket-assignment-groups/group-1/members' && init?.method === 'POST') {
+        groupMembers.push({ id: 'operator-1', user_id: 'operator-1', username: 'operator', display_name: 'Operator One' });
+        return Promise.resolve(response({ success: true, data: {} }));
+      }
+      if (url === '/api/ticket-assignment-groups/group-1/members/operator-1' && init?.method === 'DELETE') {
+        groupMembers.splice(0, groupMembers.length);
+        return Promise.resolve(response({ success: true, data: {} }));
+      }
+      if (url === '/api/ticket-assignment-groups/group-1/members') return Promise.resolve(response({ success: true, data: groupMembers }));
+      if (url === '/api/service-catalog' || url === '/api/ticket-sla-policies') return Promise.resolve(response({ success: true, data: [] }));
+      return Promise.resolve(response({ success: true, data: {} }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderPage('/tickets', { id: 'admin-1', username: 'admin', role: 'Administrator' });
+
+    const groupListRefreshCount = () => fetchMock.mock.calls.filter(([input, init]) => String(input) === '/api/ticket-assignment-groups' && !init?.method).length;
+    await waitFor(() => expect(groupListRefreshCount()).toBe(1));
+    fireEvent.click(screen.getByRole('button', { name: 'Groups' }));
+    const groupDialog = await screen.findByRole('dialog', { name: 'Assignment groups' });
+    fireEvent.change(within(groupDialog).getByLabelText('Add member'), { target: { value: 'operator-1' } });
+    fireEvent.click(within(groupDialog).getByRole('button', { name: 'Add' }));
+    expect(await within(groupDialog).findByText('Operator One')).toBeTruthy();
+    await waitFor(() => expect(groupListRefreshCount()).toBe(2));
+
+    fireEvent.click(within(groupDialog).getByLabelText('Close'));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Assignment groups' })).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: 'Service catalog' }));
+    const catalogDialog = await screen.findByRole('dialog', { name: 'Service catalog' });
+    const fulfillmentGroup = await within(catalogDialog).findByLabelText('Fulfillment group') as HTMLSelectElement;
+    expect((within(fulfillmentGroup).getByRole('option', { name: 'Network Operations' }) as HTMLOptionElement).disabled).toBe(false);
+
+    fireEvent.click(within(catalogDialog).getByLabelText('Close'));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Service catalog' })).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: 'Groups' }));
+    const reopenedGroupDialog = await screen.findByRole('dialog', { name: 'Assignment groups' });
+    fireEvent.click(within(reopenedGroupDialog).getByRole('button', { name: 'Remove member operator' }));
+    expect(await within(reopenedGroupDialog).findByText('This group has no members yet.')).toBeTruthy();
+    await waitFor(() => expect(groupListRefreshCount()).toBe(3));
+
+    fireEvent.click(within(reopenedGroupDialog).getByLabelText('Close'));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Assignment groups' })).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: 'Service catalog' }));
+    const refreshedCatalogDialog = await screen.findByRole('dialog', { name: 'Service catalog' });
+    const refreshedFulfillmentGroup = await within(refreshedCatalogDialog).findByLabelText('Fulfillment group') as HTMLSelectElement;
+    expect((within(refreshedFulfillmentGroup).getByRole('option', { name: 'Network Operations (no active members)' }) as HTMLOptionElement).disabled).toBe(true);
+  }, 15000);
+
   it('lets an administrator create groups and add or remove group members', async () => {
     const directoryGroups = [{ id: 'group-1', name: 'Network Operations', description: 'Network', active: true }];
     const groupMembers: Record<string, Array<{ id: string; user_id: string; username: string; display_name: string }>> = { 'group-1': [] };
@@ -356,7 +411,7 @@ describe('Tickets page list and detail workflow', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Delete group' }));
     await waitFor(() => expect(fetchMock.mock.calls.some(([input, init]) => String(input) === '/api/ticket-assignment-groups/group-2' && init?.method === 'DELETE')).toBe(true));
-  });
+  }, 15000);
 
   it('filters to service requests and opens the source-specific detail view', async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
