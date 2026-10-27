@@ -29,7 +29,7 @@ _OPERATION_SPECS: tuple[dict[str, Any], ...] = (
     {"collector_key": "lldp", "quick_ops_category": "neighbors", "label": "LLDP 邻居", "transport": "SNMP 优先（CLI 回退）", "category": "neighbors", "action_code": "get_lldp_neighbors"},
     {"collector_key": "arp", "quick_ops_category": "arp", "label": "ARP 表", "transport": "SNMP 优先（CLI 回退）", "category": "arp", "action_code": "get_arp_table"},
     {"collector_key": "mac_table", "quick_ops_category": "mac_table", "label": "MAC 地址表", "transport": "Q-BRIDGE-MIB 优先（CLI 回退）", "category": "mac_table", "action_code": "get_mac_table"},
-    {"collector_key": "vlan", "quick_ops_category": "vlan", "label": "VLAN", "transport": "Q-BRIDGE-MIB 优先（CLI 回退）", "category": "vlan", "action_code": "get_vlan_table"},
+    {"collector_key": "vlan", "quick_ops_category": "vlan", "label": "VLAN", "transport": "CLI/SSH", "category": "vlan", "action_code": "get_vlan_table"},
     {"collector_key": "routes", "quick_ops_category": "routing_table", "label": "路由表", "transport": "IP-FORWARD-MIB 优先（VRF 按设备能力回退 CLI）", "category": "routing_table", "action_code": "get_route_table"},
     {"collector_key": "bgp", "quick_ops_category": "bgp", "label": "BGP 邻居", "transport": "SNMP 优先（CLI 回退）", "category": "bgp", "action_code": "get_bgp_neighbors"},
     {"collector_key": "bgp", "quick_ops_category": "bgp", "label": "BGP 路由", "transport": "CLI/TextFSM（缺少等价的完整 RIB SNMP 数据）", "category": "bgp_routes", "action_code": "get_bgp_routes"},
@@ -669,6 +669,8 @@ def build_nsot_collection_preview(conn, job: dict[str, Any], user: dict[str, Any
                 "transport": (
                     "database"
                     if key in {"endpoint_location", "prefix_projection"}
+                    else "CLI/SSH"
+                    if key == "vlan"
                     else "邻居 SNMP 优先；完整 RIB 使用 CLI/TextFSM"
                     if key == "bgp"
                     else "SNMP 优先（CLI 按事实范围回退）"

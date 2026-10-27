@@ -1178,11 +1178,12 @@ def _collect_interface_status_target(
     domains = _collect_snmp_interface_domains(
         device,
         collect_interfaces=collect_interfaces,
-        collect_vlans=collect_vlans,
+        # VLAN inventory uses the CMDB CLI snapshot path below, avoiding a
+        # duplicate Q-BRIDGE walk during the interface inventory task.
+        collect_vlans=False,
     )
     snmp_interfaces = domains.get("interfaces") if domains["complete"]["interface_status"] else None
     snmp_addresses = domains.get("addresses") if domains["complete"]["interface_addresses"] else None
-    snmp_vlan_data = domains.get("vlan_data") if domains["complete"]["vlan"] else None
     snmp_used = bool(snmp_interfaces)
     snmp_updated = 0
     address_updated = 0
@@ -1208,15 +1209,6 @@ def _collect_interface_status_target(
         else:
             domains.setdefault("persisted", {})["interface_addresses"] = True
 
-    if snmp_vlan_data:
-        try:
-            vlan_projection = _upsert_qbridge_vlan_data(device_id, snmp_vlan_data)
-            domains.setdefault("persisted", {})["vlan"] = True
-        except Exception as exc:
-            logger.warning("Q-BRIDGE VLAN persistence failed for %s (%s)", device_id, type(exc).__name__, exc_info=True)
-            vlan_projection = {"vlans": 0, "interfaces": 0, "error": str(exc)}
-            domains.setdefault("persisted", {})["vlan"] = False
-
     categories: list[str] = []
     if collect_interfaces and (
         not domains["complete"]["interface_status"]
@@ -1225,8 +1217,6 @@ def _collect_interface_status_target(
         categories.append("interfaces")
     if collect_interfaces and not domains["complete"]["interface_description"]:
         categories.append("interface_description")
-    if collect_vlans and not domains["complete"]["vlan"]:
-        categories.append("vlan")
 
     payload = {"categories": [], "collected_at": _now()}
     cli_collection_error = None
@@ -1276,17 +1266,21 @@ def _collect_interface_status_target(
     descriptions = _description_records(description_category) if (
         description_category.get("success") and description_category.get("parse_status") == "matched"
     ) else {}
-    vlan_category = next(
-        (item for item in payload.get("categories", []) if item.get("key") == "vlan"),
-        {},
-    )
-    if not snmp_vlan_data and vlan_category.get("success") and vlan_category.get("parse_status") == "matched":
+    vlan_cli_error = None
+    if collect_vlans:
         try:
-            from services.vlan_discovery_service import project_vlan_records
-            vlan_projection = project_vlan_records(device_id, vlan_category.get("records") or [])
+            # Keep interface collection as the trigger and reuse the existing
+            # CMDB CLI VLAN action, session pool, validation, and snapshot.
+            from services.cmdb_cli_collection_service import collect_cmdb_interface_status_target
+
+            vlan_result = collect_cmdb_interface_status_target(device_id, vlan_only=True)
+            if vlan_result.get("success") is not True or vlan_result.get("skipped") is True:
+                raise RuntimeError(vlan_result.get("skip_reason") or "CMDB VLAN CLI collection did not complete")
+            vlan_projection = (vlan_result.get("domains") or {}).get("vlans") or vlan_projection
         except Exception as vlan_exc:
-            logger.warning("VLAN member projection failed for %s: %s", device_id, vlan_exc, exc_info=True)
-            vlan_projection = {"vlans": 0, "interfaces": 0, "error": str(vlan_exc)}
+            vlan_cli_error = str(vlan_exc) or type(vlan_exc).__name__
+            logger.warning("VLAN CLI snapshot failed for %s: %s", device_id, vlan_cli_error, exc_info=True)
+            vlan_projection = {"vlans": 0, "interfaces": 0, "error": vlan_cli_error}
 
     parsed_by_interface, rows = _build_interface_status_rows(
         status_records,
@@ -1340,11 +1334,12 @@ def _collect_interface_status_target(
         "snmp_address_count": address_updated,
         "snmp_used": snmp_used,
         "snmp_domains": {
-            "requested": {"interfaces": collect_interfaces, "vlans": collect_vlans},
+            "requested": {"interfaces": collect_interfaces, "vlans": False},
             "complete": dict(domains["complete"]),
             "persisted": dict(domains.get("persisted") or {}),
             "errors": dict(domains.get("errors") or {}),
         },
+        "vlan_transport": "ssh" if collect_vlans and not vlan_cli_error else ("failed" if vlan_cli_error else "disabled"),
         "description_updated_count": description_updated,
         "vlan_projection": vlan_projection,
         "unknown_status_count": unknown,

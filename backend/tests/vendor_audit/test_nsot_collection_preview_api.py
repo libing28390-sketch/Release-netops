@@ -130,6 +130,7 @@ def test_operation_catalog_and_scheduled_preview_share_nsot_template_operations(
     preview_by_key = {item["key"]: item for item in group["collectors"]}
     assert preview_by_key["endpoint_location"]["status"] == "projection"
     assert preview_by_key["prefix_projection"]["status"] == "projection"
+    assert preview_by_key["vlan"]["transport"] == "CLI/SSH"
     preview_keys = {item["key"] for item in group["collectors"]}
     assert {"mac_table", "vlan", "lldp"} <= preview_keys
     assert "eigrp" not in preview_keys

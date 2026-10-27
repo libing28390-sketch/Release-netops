@@ -527,7 +527,11 @@ def _persist_vlan_snapshot(
         conn.close()
 
 
-def collect_cmdb_interface_status_target(device_id: str) -> dict[str, Any]:
+def collect_cmdb_interface_status_target(
+    device_id: str,
+    *,
+    vlan_only: bool = False,
+) -> dict[str, Any]:
     """Collect only the CMDB inventory domains selected by the device policy."""
     from services.collection_plan_service import should_collect
     from services.cmdb_snapshot_service import begin_snapshot_attempt, fail_snapshot_attempt
@@ -540,7 +544,7 @@ def collect_cmdb_interface_status_target(device_id: str) -> dict[str, Any]:
     if not is_online_network_device_for_interface_collection(device):
         raise RuntimeError("接口采集目标已离线或不再属于网络设备")
 
-    collect_interfaces = should_collect(device, "interface_status")
+    collect_interfaces = not vlan_only and should_collect(device, "interface_status")
     collect_vlans = should_collect(device, "vlan")
     if not collect_interfaces and not collect_vlans:
         return {

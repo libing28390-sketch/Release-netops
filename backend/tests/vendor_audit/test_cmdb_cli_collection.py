@@ -132,6 +132,91 @@ def test_cmdb_vlan_job_uses_cli_projection_without_snmp(monkeypatch):
     assert attempts[0]["domain"] == "vlan_inventory"
 
 
+def test_cmdb_interface_job_can_reuse_the_same_cli_flow_for_vlan_only(monkeypatch):
+    attempts = _install_common(monkeypatch, interface=True, vlan=True)
+    requested: list[str] = []
+
+    def collect(_device, *, categories, auth_role, _platform_action_session):
+        requested.extend(categories)
+        return {
+            "categories": [{
+                "key": "vlan",
+                "success": True,
+                "parse_status": "matched",
+                "records": [{"VLAN_ID": "219", "VLAN_NAME": "APP-219"}],
+            }],
+        }
+
+    monkeypatch.setattr("services.read_only_collection_adapter.collect_read_only_evidence", collect)
+    monkeypatch.setattr(
+        cmdb_cli_collection_service,
+        "_persist_vlan_snapshot",
+        lambda *_args, **_kwargs: {"vlans": 1, "interfaces": 0},
+    )
+
+    result = cmdb_cli_collection_service.collect_cmdb_interface_status_target(
+        "cmdb-cli-device", vlan_only=True,
+    )
+
+    assert requested == ["vlan"]
+    assert attempts[0]["domain"] == "vlan_inventory"
+    assert result["domains"]["vlans"] == {"vlans": 1, "interfaces": 0}
+
+
+def test_interface_inventory_uses_cmdb_cli_snapshot_for_vlan(monkeypatch):
+    device = _device()
+    calls: dict = {}
+    monkeypatch.setattr(interface_collection_service, "_load_device", lambda _device_id: device)
+    monkeypatch.setattr(interface_collection_service, "_load_ip_inventory", lambda _device_id: {})
+    monkeypatch.setattr(
+        "services.collection_plan_service.should_collect",
+        lambda _device, category: category in {"interface_status", "vlan"},
+    )
+
+    def collect_snmp(_device, *, collect_interfaces, collect_vlans):
+        calls["snmp"] = {"interfaces": collect_interfaces, "vlans": collect_vlans}
+        return {
+            "interfaces": [{"name": "GigabitEthernet1/0/1", "status": "up", "admin_status": "up"}],
+            "addresses": [],
+            "complete": {
+                "interface_status": True,
+                "interface_description": True,
+                "interface_mac": True,
+                "interface_mtu": True,
+                "interface_addresses": True,
+                "vlan": False,
+            },
+            "persisted": {},
+            "errors": {},
+            "version": "2c",
+        }
+
+    monkeypatch.setattr(interface_collection_service, "_collect_snmp_interface_domains", collect_snmp)
+    monkeypatch.setattr(interface_collection_service, "_upsert_snmp_interfaces", lambda *_args: 1)
+    monkeypatch.setattr(interface_collection_service, "_build_interface_status_rows", lambda *_args, **_kwargs: ({}, []))
+    monkeypatch.setattr(interface_collection_service, "_upsert_interfaces", lambda *_args: 0)
+    monkeypatch.setattr(interface_collection_service, "_description_records", lambda *_args: {})
+    monkeypatch.setattr("services.vlan_discovery_service.sync_observed_vlans", lambda: {"observed": 0, "created": 0, "updated": 0})
+    monkeypatch.setattr("services.collection_status_service.record_collection_result", lambda *_args, **_kwargs: None)
+
+    def collect_cli_vlan(device_id, *, vlan_only=False):
+        calls["cli"] = {"device_id": device_id, "vlan_only": vlan_only}
+        return {"success": True, "domains": {"vlans": {"vlans": 3, "interfaces": 12}}}
+
+    monkeypatch.setattr(
+        "services.cmdb_cli_collection_service.collect_cmdb_interface_status_target",
+        collect_cli_vlan,
+    )
+
+    result = interface_collection_service._collect_interface_status_target(device["id"])
+
+    assert calls["snmp"] == {"interfaces": True, "vlans": False}
+    assert calls["cli"] == {"device_id": device["id"], "vlan_only": True}
+    assert result["vlan_projection"] == {"vlans": 3, "interfaces": 12}
+    assert result["snmp_domains"]["requested"]["vlans"] is False
+    assert result["vlan_transport"] == "ssh"
+
+
 @pytest.mark.parametrize("fail_evidence", [False, True])
 def test_cmdb_session_acquires_device_ssh_gate_once_and_releases_it(monkeypatch, fail_evidence):
     from drivers.base import BaseDriver
