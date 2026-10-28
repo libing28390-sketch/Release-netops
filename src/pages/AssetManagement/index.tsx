@@ -1333,6 +1333,53 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
           : `Row ${row || '?'}${identity ? ` (${identity})` : ''}: ${reason}`;
       });
       const resultRows = Array.isArray(res.results) ? res.results as Array<Record<string, unknown>> : undefined;
+      const platformBindingResults: Array<{
+        row: number;
+        platform_binding_status: string;
+        platform_profile_name?: unknown;
+        platform_profile_id?: unknown;
+        platform_binding_message?: unknown;
+      }> = (resultRows || []).flatMap((item) => {
+        const identity = item.snmp_identification;
+        if (!identity || typeof identity !== 'object') return [];
+        const binding = identity as Record<string, unknown>;
+        const status = String(binding.platform_binding_status || '').trim().toLowerCase();
+        if (!['auto_bound', 'suggested', 'unbound', 'skipped'].includes(status)) return [];
+        return [{
+          row: Number(item.row || 0),
+          platform_binding_status: status,
+          platform_profile_name: binding.platform_profile_name,
+          platform_profile_id: binding.platform_profile_id,
+          platform_binding_message: binding.platform_binding_message,
+        }];
+      });
+      const platformBindingDetails = platformBindingResults.slice(0, 8).map((item) => {
+        const row = item.row || '?';
+        const profile = String(item.platform_profile_name || item.platform_profile_id || '').trim();
+        const message = String(item.platform_binding_message || '').trim();
+        const detail = message ? `：${message}` : '';
+        if (item.platform_binding_status === 'auto_bound') {
+          return zh
+            ? `第 ${row} 行：已通过 SNMP 自动绑定平台${profile ? `「${profile}」` : ''}`
+            : `Row ${row}: platform automatically bound from SNMP${profile ? ` (${profile})` : ''}`;
+        }
+        if (item.platform_binding_status === 'suggested') {
+          return zh
+            ? `第 ${row} 行：已找到平台候选${profile ? `「${profile}」` : ''}，需要人工确认${detail}`
+            : `Row ${row}: platform candidate${profile ? ` (${profile})` : ''} needs manual confirmation${detail}`;
+        }
+        if (item.platform_binding_status === 'unbound') {
+          return zh
+          ? `第 ${row} 行：未自动绑定平台${detail || '：请在网络设备页手动绑定'}`
+            : `Row ${row}: platform was not auto-bound${detail || '; bind it from Network Devices'}`;
+        }
+        return zh
+          ? `第 ${row} 行：跳过自动平台绑定${detail}`
+          : `Row ${row}: automatic platform binding was skipped${detail}`;
+      });
+      const platformBindingNeedsAction = platformBindingResults.some((item) => (
+        item.platform_binding_status === 'suggested' || item.platform_binding_status === 'unbound'
+      ));
       const createdRows = resultRows
         ? new Set(resultRows.filter(item => item.status === 'created').map(item => Number(item.row)))
         : undefined;
@@ -1340,7 +1387,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       const missingSnmpDetails = missingSnmpRows.map(item => zh
         ? `第 ${item.row} 条（${item.identity}）：未填写 SNMP 社区名或 SNMPv2/v3 Profile，主机名和型号无法自动同步。请补充其中一项；SSH 登录凭据不能代替 SNMP 凭据。`
         : `Item ${item.row} (${item.identity}): no SNMP Community or SNMPv2/v3 profile was supplied, so hostname and model cannot sync automatically. Configure either one; SSH credentials do not replace SNMP credentials.`);
-      const importDetails = [...failedDetails, ...missingSnmpDetails, ...skippedDetails].slice(0, 8);
+      const importDetails = [...failedDetails, ...missingSnmpDetails, ...platformBindingDetails, ...skippedDetails].slice(0, 8);
       const missingSnmpSummary = missingSnmpRows.length > 0
         ? (zh
           ? `；${missingSnmpRows.length} 台设备缺少 SNMP Community/Profile，无法自动同步主机名和型号`
@@ -1348,10 +1395,10 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         : '';
       const enrichmentPending = Boolean(res.enrichment_pending);
       setFeedbackMsg({
-        type: skippedCount > 0 || failedCount > 0 || missingSnmpRows.length > 0 ? 'warning' : 'success',
+        type: skippedCount > 0 || failedCount > 0 || missingSnmpRows.length > 0 || platformBindingNeedsAction ? 'warning' : 'success',
         text: zh
-          ? `导入完成：新增 ${res.created} 条，跳过 ${skippedCount} 条，失败 ${failedCount} 条${missingSnmpSummary}${enrichmentPending && missingSnmpRows.length === 0 ? '；设备名称和识别信息将在后台继续同步，稍后刷新可查看' : ''}`
-          : `Import done: ${res.created} created, ${skippedCount} skipped, ${failedCount} failed${missingSnmpSummary}${enrichmentPending && missingSnmpRows.length === 0 ? '; device names and identity details will continue syncing in the background; refresh later to view them' : ''}`,
+          ? `导入完成：新增 ${res.created} 条，跳过 ${skippedCount} 条，失败 ${failedCount} 条${missingSnmpSummary}${enrichmentPending && missingSnmpRows.length === 0 ? '；设备名称、SNMP 身份和平台绑定将在后台继续处理，稍后刷新网络设备页查看' : ''}`
+          : `Import done: ${res.created} created, ${skippedCount} skipped, ${failedCount} failed${missingSnmpSummary}${enrichmentPending && missingSnmpRows.length === 0 ? '; device names, SNMP identity, and platform binding will continue in the background; refresh Network Devices later to view them' : ''}`,
         details: importDetails.length > 0 ? importDetails : undefined,
       });
     } catch {

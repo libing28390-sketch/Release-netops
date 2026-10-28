@@ -4219,6 +4219,14 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center justify-end gap-2 text-xs text-slate-500">
+                  <ActionIconButton
+                    icon={RefreshCw}
+                    label={zh ? '刷新 VLAN 列表' : 'Refresh VLAN list'}
+                    variant="accent"
+                    disabled={loading}
+                    iconClassName={loading ? 'animate-spin' : undefined}
+                    onClick={() => void load()}
+                  />
                   {vlanSiteFilter && (
                     <button
                       type="button"

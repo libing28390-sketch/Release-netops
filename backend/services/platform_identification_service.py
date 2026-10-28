@@ -714,6 +714,45 @@ def _find_inventory_profile(conn, profile_code: str, user: dict[str, Any]) -> di
     return _row_dict(row) if row else None
 
 
+def resolve_inventory_profile_candidate(
+    platform: str,
+    version: str,
+    vendor: str,
+    user: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Resolve one visible inventory Profile without performing device I/O.
+
+    This deliberately uses the same concrete platform/version mapping as the
+    inventory identification flow. Callers must pass version evidence from
+    their current observation; a previously persisted version is not fresh
+    evidence for an automatic binding decision.
+    """
+    profile_code, parser_platform = _inventory_profile_code(platform, version, vendor)
+    if not profile_code:
+        return None
+
+    conn = get_db_connection()
+    try:
+        profile = _find_inventory_profile(conn, profile_code, user)
+        if not profile:
+            return None
+        # Profile metadata is only returned when the caller may view it.
+        _assert_profile_access(conn, str(profile.get("id") or ""), user)
+    finally:
+        conn.close()
+
+    return {
+        "platform_profile_id": profile.get("id"),
+        "platform_code": profile.get("platform_code"),
+        "parser_platform": profile.get("parser_platform") or parser_platform,
+        "name_zh": profile.get("name_zh"),
+        "name_en": profile.get("name_en"),
+        "vendor": profile.get("vendor"),
+        "status": str(profile.get("status") or "ACTIVE").upper(),
+        "source": profile.get("source"),
+    }
+
+
 def _version_evidence_candidate(
     device: dict[str, Any],
     version: str,
@@ -1093,11 +1132,15 @@ def bind_device(
     lock: bool = False,
     force: bool = False,
     allow_version_mismatch: bool = False,
+    binding_source: str = "MANUAL",
 ) -> dict[str, Any]:
     if not platform_profile_id:
         raise PlatformRegistryError("PLATFORM_REQUIRED", "platform_profile_id is required")
     if force and user.get("role") != "Administrator":
         raise _scope_denied("PLATFORM_BIND_FORCE_FORBIDDEN")
+    normalized_binding_source = str(binding_source or "MANUAL").strip().upper()
+    if normalized_binding_source not in {"MANUAL", "SNMP_AUTO"}:
+        raise PlatformRegistryError("INVALID_BINDING_SOURCE", "Unsupported platform binding source")
     _assert_version_override_permission(allow_version_mismatch, user)
     conn = get_db_connection()
     try:
@@ -1163,7 +1206,7 @@ def bind_device(
             (
                 platform_profile_id,
                 profile.get("parser_platform") or profile["platform_code"],
-                "MANUAL",
+                normalized_binding_source,
                 1 if effective_lock else 0,
                 device_id,
             ),
@@ -1181,6 +1224,31 @@ def bind_device(
                 device_id,
             ),
         )
+        if normalized_binding_source == "SNMP_AUTO":
+            from services.audit_service import log_audit_event
+
+            log_audit_event(
+                conn=conn,
+                event_type="platform.binding.snmp_auto",
+                category="asset",
+                severity="info",
+                status="success",
+                summary="Automatically bound imported device to a platform profile",
+                actor_id=str(user.get("id") or user.get("user_id") or "") or None,
+                actor_username=str(user.get("username") or "") or None,
+                actor_role=str(user.get("role") or "") or None,
+                target_type="device",
+                target_id=device_id,
+                target_name=str(device.get("hostname") or device_id),
+                device_id=device_id,
+                before={"platform_profile_id": existing_profile_id},
+                after={
+                    "platform_profile_id": platform_profile_id,
+                    "platform_code": profile.get("platform_code"),
+                    "platform_source": normalized_binding_source,
+                },
+                details={"binding_source": normalized_binding_source},
+            )
         conn.commit()
         result = _load_device(conn, device_id, user)
         result["compatibility"] = _binding_compatibility(device, profile)

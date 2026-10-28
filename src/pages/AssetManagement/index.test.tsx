@@ -374,6 +374,23 @@ describe('AssetManagementTab request states', () => {
       result: { created: 1, skipped: 0, failed: 0, enrichment_pending: true, results: [{ row: 1, status: 'created' }] },
       expected: /lack SNMP Community\/Profile/i,
     },
+    {
+      label: 'successful SNMP platform binding',
+      result: {
+        created: 1,
+        skipped: 0,
+        failed: 0,
+        results: [{
+          row: 1,
+          status: 'created',
+          snmp_identification: {
+            platform_binding_status: 'auto_bound',
+            platform_profile_name: 'H3C Comware V7',
+          },
+        }],
+      },
+      expected: /automatically bound from SNMP.*H3C Comware V7/i,
+    },
   ])('explains $label in the import feedback', async ({ result, expected }) => {
     vi.mocked(XLSX.utils.sheet_to_json).mockReturnValue([
       { Hostname: 'snmp-feedback', 'Asset Type': 'network_device', 'Mgmt IP': '192.0.2.222' },

@@ -286,15 +286,179 @@ def _sync_hostname_from_sys_name(item: Mapping[str, Any], raw_sys_name: Any) -> 
     return {"status": "synced", "hostname": clean_name, "error": ""}
 
 
+def _auto_bind_imported_platform(
+    *,
+    device: Mapping[str, Any],
+    device_id: str,
+    vendor: str,
+    platform: str,
+    observed_version: str,
+    user: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Bind only a visible, active, compatible Profile using this SNMP result."""
+    skipped = {
+        "platform_binding_status": "skipped",
+        "platform_profile_id": None,
+        "platform_profile_name": None,
+    }
+    if not isinstance(user, Mapping):
+        return {**skipped, "platform_binding_message": "缺少导入操作者上下文，未执行平台自动绑定"}
+    if str(device.get("platform_profile_id") or "").strip() or bool(device.get("platform_locked")):
+        return {**skipped, "platform_binding_message": "设备已有平台绑定或锁定标记，已保留现有绑定"}
+
+    from services.platform_identification_service import (
+        _assert_device_profile_platform,
+        bind_device,
+        resolve_inventory_profile_candidate,
+    )
+    from services.platform_registry_service import PlatformRegistryError
+
+    try:
+        candidate = resolve_inventory_profile_candidate(
+            platform,
+            observed_version,
+            vendor,
+            dict(user),
+        )
+    except PlatformRegistryError as exc:
+        logger.info(
+            "Imported device platform candidate is not visible for device %s (%s)",
+            device_id,
+            exc.code,
+        )
+        return {
+            "platform_binding_status": "unbound",
+            "platform_profile_id": None,
+            "platform_profile_name": None,
+            "platform_binding_message": "没有可访问的匹配平台 Profile，设备信息已保存",
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Imported device platform candidate lookup failed for device %s (%s)",
+            device_id,
+            type(exc).__name__,
+        )
+        return {
+            "platform_binding_status": "unbound",
+            "platform_profile_id": None,
+            "platform_profile_name": None,
+            "platform_binding_message": "平台 Profile 匹配查询失败，设备信息已保存",
+        }
+
+    if not candidate:
+        return {
+            "platform_binding_status": "unbound",
+            "platform_profile_id": None,
+            "platform_profile_name": None,
+            "platform_binding_message": "未找到可访问的精确平台 Profile 匹配，设备信息已保存",
+        }
+
+    profile_id = str(candidate.get("platform_profile_id") or "")
+    profile_name = str(candidate.get("name_zh") or candidate.get("name_en") or candidate.get("platform_code") or "")
+    suggestion = {
+        "platform_binding_status": "suggested",
+        "platform_profile_id": profile_id or None,
+        "platform_profile_name": profile_name or None,
+    }
+    if str(candidate.get("status") or "").upper() != "ACTIVE":
+        return {
+            **suggestion,
+            "platform_binding_message": "匹配到的平台 Profile 当前未激活，未自动绑定",
+        }
+
+    # Check the fresh SNMP evidence against the mapped Profile before calling
+    # the normal binder. The binder repeats these checks against the persisted
+    # device row after the latest observed version has been written.
+    observed_device = {
+        "vendor": vendor,
+        "platform": platform,
+        "version": observed_version,
+    }
+    try:
+        _assert_device_profile_platform(observed_device, candidate)
+    except PlatformRegistryError as exc:
+        return {
+            **suggestion,
+            "platform_binding_message": f"SNMP 识别结果与平台 Profile 不兼容（{exc.code}），需人工确认",
+        }
+
+    try:
+        bound = bind_device(
+            device_id,
+            profile_id,
+            dict(user),
+            binding_source="SNMP_AUTO",
+        )
+    except PlatformRegistryError as exc:
+        if exc.code == "PLATFORM_BINDING_LOCKED":
+            return {
+                **skipped,
+                "platform_binding_message": "设备绑定状态已变化或已锁定，保留现有绑定",
+            }
+        logger.info(
+            "Imported device automatic platform binding was not applied for device %s (%s)",
+            device_id,
+            exc.code,
+        )
+        return {
+            **suggestion,
+            "platform_binding_message": "平台候选已识别，但当前权限或设备状态不允许自动绑定",
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Imported device automatic platform binding failed for device %s (%s)",
+            device_id,
+            type(exc).__name__,
+        )
+        return {
+            **suggestion,
+            "platform_binding_message": "平台候选已识别，但绑定保存失败，设备信息已保留",
+        }
+
+    bound_profile = bound.get("platform_profile") if isinstance(bound.get("platform_profile"), dict) else {}
+    return {
+        "platform_binding_status": "auto_bound",
+        "platform_profile_id": str(bound_profile.get("id") or profile_id) or None,
+        "platform_profile_name": profile_name or None,
+        "platform_binding_message": "已根据本次 SNMP 身份识别自动绑定平台 Profile",
+    }
+
+
 async def identify_imported_device(
     item: Mapping[str, Any],
     semaphore: Any,
     model_semaphore: Any | None = None,
+    *,
+    user: Mapping[str, Any] | None = None,
+    auto_bind_platform: bool = False,
 ) -> dict[str, Any]:
     """Probe one committed device and enrich its LibreNMS-derived identity fields."""
+    def result(
+        item: Mapping[str, Any],
+        status: str,
+        message: str,
+        *,
+        hostname_sync: Mapping[str, Any] | None = None,
+        **details: Any,
+    ) -> dict[str, Any]:
+        if auto_bind_platform and "platform_binding_status" not in details:
+            details.update({
+                "platform_binding_status": "skipped",
+                "platform_profile_id": None,
+                "platform_profile_name": None,
+                "platform_binding_message": f"SNMP 身份状态为“{status}”，未执行平台自动绑定",
+            })
+        return _safe_result(
+            item,
+            status,
+            message,
+            hostname_sync=hostname_sync,
+            **details,
+        )
+
     device_id = str(item.get("device_id") or "").strip()
     if not device_id:
-        return _safe_result(
+        return result(
             item,
             "device_missing",
             "导入结果中缺少设备记录",
@@ -305,7 +469,7 @@ async def identify_imported_device(
     try:
         row = conn.execute("SELECT * FROM devices WHERE id = ?", (device_id,)).fetchone()
         if not row:
-            return _safe_result(
+            return result(
                 item,
                 "device_missing",
                 "设备记录不存在",
@@ -315,7 +479,7 @@ async def identify_imported_device(
         from services.snmp_collection_policy_service import is_snmp_collection_enabled
 
         if not is_snmp_collection_enabled(device):
-            return _safe_result(
+            return result(
                 item,
                 "collection_disabled",
                 "该设备已关闭 SNMP 采集，未执行自动识别",
@@ -339,7 +503,7 @@ async def identify_imported_device(
             "snmpv3_priv_unsupported": "当前识别探测不支持该 SNMPv3 加密算法",
         }
         failure = messages.get(settings_error, "SNMP 凭据不可用于识别")
-        return _safe_result(
+        return result(
             item,
             settings_error,
             failure,
@@ -348,7 +512,7 @@ async def identify_imported_device(
 
     ip = str(settings.get("server") or device.get("ip_address") or item.get("ip") or "").strip()
     if not ip:
-        return _safe_result(
+        return result(
             item,
             "missing_ip",
             "缺少管理 IP，未执行自动识别",
@@ -365,7 +529,7 @@ async def identify_imported_device(
             type(exc).__name__,
         )
         failure = f"SNMP 主机名读取失败（{type(exc).__name__}）"
-        return _safe_result(
+        return result(
             item,
             "probe_failed",
             "SNMP 身份读取失败，请检查管理 IP、端口、凭据及访问控制",
@@ -383,7 +547,7 @@ async def identify_imported_device(
         ),
     }
     if not any(observed.get(field) for field in IDENTITY_OIDS):
-        return _safe_result(
+        return result(
             item,
             "probe_failed",
             "设备未返回 SNMP 系统身份信息，请检查管理 IP、端口、凭据及访问控制",
@@ -437,7 +601,7 @@ async def identify_imported_device(
         rule = resolve_rule(conn, identity_probe)
         rule_conflicts = (rule or {}).get("identity_match", {}).get("conflicts") or []
         if rule_conflicts:
-            return _safe_result(
+            return result(
                 item,
                 "rule_ambiguous",
                 "多条 LibreNMS 识别规则同分匹配，未自动选择设备身份",
@@ -445,6 +609,12 @@ async def identify_imported_device(
                 detected_vendor=str((rule or {}).get("vendor") or ""),
                 detected_platform=str((rule or {}).get("platform") or ""),
                 identity_source="librenms",
+                **({
+                    "platform_binding_status": "unbound",
+                    "platform_profile_id": None,
+                    "platform_profile_name": None,
+                    "platform_binding_message": "SNMP 身份规则存在冲突，未自动选择平台 Profile",
+                } if auto_bind_platform else {}),
             )
 
         declared_platform = str(item.get("declared_platform", device.get("platform")) or "")
@@ -460,7 +630,7 @@ async def identify_imported_device(
         identity_status = str(identity.get("status") or "unidentified")
         detected_vendor = str(identity.get("vendor") or "")
         if identity_status == "conflict":
-            return _safe_result(
+            return result(
                 item,
                 "identity_conflict",
                 "SNMP 识别到的厂商与导入填写的厂商不一致，未覆盖资产信息",
@@ -468,14 +638,26 @@ async def identify_imported_device(
                 detected_vendor=detected_vendor,
                 detected_model=normalize_model_name(detected_vendor, identity.get("model")),
                 identity_source=str(identity.get("source") or ""),
+                **({
+                    "platform_binding_status": "unbound",
+                    "platform_profile_id": None,
+                    "platform_profile_name": None,
+                    "platform_binding_message": "SNMP 识别厂商与导入信息冲突，未自动绑定平台 Profile",
+                } if auto_bind_platform else {}),
             )
         if identity_status != "identified" or not detected_vendor:
-            return _safe_result(
+            return result(
                 item,
                 "unidentified",
                 "已读取 SNMP 信息，但本地 LibreNMS 规则和厂商映射未能识别设备",
                 hostname_sync=hostname_sync,
                 identity_source=str(identity.get("source") or "none"),
+                **({
+                    "platform_binding_status": "unbound",
+                    "platform_profile_id": None,
+                    "platform_profile_name": None,
+                    "platform_binding_message": "本次 SNMP 结果未能确定厂商和平台，未自动绑定",
+                } if auto_bind_platform else {}),
             )
 
         detected_platform = _canonical_detected_platform(detected_vendor, identity.get("platform") or declared_platform)
@@ -524,7 +706,10 @@ async def identify_imported_device(
             observed_sysdescr_model=observed_sysdescr_model,
             vendor=detected_vendor,
         )
-        next_version = str(device.get("version") or detected_version)
+        # The latest SNMP sysDescr observation is fresher than an existing
+        # inventory value. Keep the stored version when this probe yields no
+        # version, but never let an older value override a current observation.
+        next_version = detected_version or str(device.get("version") or "")
         conn.execute(
             "UPDATE devices SET vendor = ?, platform = ?, model = ?, version = ? WHERE id = ?",
             (next_vendor, next_platform, next_model, next_version, device_id),
@@ -536,7 +721,17 @@ async def identify_imported_device(
             )
 
         conn.commit()
-        return _safe_result(
+        platform_binding = {}
+        if auto_bind_platform:
+            platform_binding = _auto_bind_imported_platform(
+                device=device,
+                device_id=device_id,
+                vendor=detected_vendor,
+                platform=detected_platform,
+                observed_version=detected_version,
+                user=user,
+            )
+        return result(
             item,
             "identified",
             "已按 LibreNMS 设备身份规则识别厂商、平台和型号；硬件采集由对应 LibreNMS YAML 规则决定",
@@ -547,11 +742,12 @@ async def identify_imported_device(
             synced_model=next_model,
             model_source=model_source or ("existing" if next_model else ""),
             identity_source=str(identity.get("source") or ""),
+            **platform_binding,
         )
     except Exception as exc:
         conn.rollback()
         logger.warning("Asset import SNMP identity resolution failed for device %s (%s)", device_id, type(exc).__name__)
-        return _safe_result(
+        return result(
             item,
             "identification_failed",
             "SNMP 身份识别失败，资产数据已保留",

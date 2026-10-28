@@ -4926,7 +4926,13 @@ def import_assets(
                     model_semaphore = _aio.Semaphore(1)
                     return await _aio.gather(
                         *(
-                            identify_imported_device(item, semaphore, model_semaphore)
+                            identify_imported_device(
+                                item,
+                                semaphore,
+                                model_semaphore,
+                                user=_user if isinstance(_user, dict) else None,
+                                auto_bind_platform=True,
+                            )
                             for item in pending_snmp_identification
                         ),
                         return_exceptions=True,
@@ -4944,6 +4950,10 @@ def import_assets(
                             **{key: item.get(key) for key in ('device_id', 'row', 'asset_tag', 'hostname', 'ip')},
                             'status': 'identification_failed',
                             'message': 'SNMP 身份识别失败，资产已保存',
+                            'platform_binding_status': 'skipped',
+                            'platform_profile_id': None,
+                            'platform_profile_name': None,
+                            'platform_binding_message': 'SNMP 身份识别任务失败，未执行平台自动绑定',
                         })
                         hostname_sync_results.append({
                             **item,
@@ -4991,6 +5001,8 @@ def import_assets(
                             'status', 'message', 'detected_vendor', 'detected_platform',
                             'detected_model', 'synced_model', 'model_source',
                             'identity_source', 'rack_sync',
+                            'platform_binding_status', 'platform_profile_id',
+                            'platform_profile_name', 'platform_binding_message',
                         )
                         if identity_result.get(key) is not None
                     }

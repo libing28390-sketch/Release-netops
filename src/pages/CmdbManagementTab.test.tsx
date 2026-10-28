@@ -163,6 +163,11 @@ describe('CMDB server-side pagination', () => {
     await waitFor(() => expect(vlanRequests).toHaveLength(3));
     expect(vlanRequests[2].searchParams.get('q')).toBe('42');
     expect(vlanRequests[2].searchParams.get('page')).toBe('1');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh VLAN list' }));
+    await waitFor(() => expect(vlanRequests).toHaveLength(4));
+    expect(vlanRequests[3].searchParams.get('q')).toBe('42');
+    expect(vlanRequests[3].searchParams.get('page')).toBe('1');
   });
 
   it('keeps interface server pages intact without applying client-side slicing', async () => {

@@ -4999,9 +4999,19 @@ def update_vlan(conn, vlan_pk: str, **fields) -> dict:
 
 def delete_vlan(conn, vlan_pk: str) -> None:
     vlan = get_vlan(conn, vlan_pk)
-    refs = [
-        ('prefixes', 'vlan_id', vlan_pk),
-    ]
+    discovery_source = str(vlan.get('discovery_source') or 'manual').strip().lower()
+    site_scope = str(vlan.get('site_id') or '')
+    binding_count = int(conn.execute(
+        """SELECT COUNT(*) FROM vlan_business_bindings
+           WHERE COALESCE(site_id, '') = ? AND vlan_id = ?""",
+        (site_scope, int(vlan.get('vlan_id') or 0)),
+    ).fetchone()[0] or 0)
+    if binding_count:
+        raise ValueError(
+            "Cannot delete VLAN: "
+            f"vlan_business_bindings.site_id={site_scope},vlan_id={vlan.get('vlan_id')} ({binding_count})"
+        )
+
     try:
         access_cnt = _count_reference(conn, 'interfaces', 'access_vlan', str(vlan.get('vlan_id')))
     except Exception:
@@ -5010,7 +5020,38 @@ def delete_vlan(conn, vlan_pk: str) -> None:
         raise ValueError(
             f"Cannot delete VLAN: interfaces.access_vlan={vlan.get('vlan_id')} ({access_cnt})"
         )
-    _raise_if_referenced(conn, "VLAN", refs)
+
+    if discovery_source == 'manual':
+        _raise_if_referenced(conn, "VLAN", [('prefixes', 'vlan_id', vlan_pk)])
+    else:
+        from services.vlan_discovery_service import has_live_vlan_observations
+
+        if has_live_vlan_observations(
+            conn,
+            site_id=site_scope,
+            vlan_id=int(vlan.get('vlan_id') or 0),
+        ):
+            raise ValueError(
+                f"Cannot delete VLAN: active device observations for "
+                f"site_id={site_scope}, vlan_id={vlan.get('vlan_id')}"
+            )
+        manual_prefix_count = int(conn.execute(
+            """SELECT COUNT(*) FROM prefixes
+               WHERE vlan_id = ? AND COALESCE(manual_override, 0) <> 0""",
+            (vlan_pk,),
+        ).fetchone()[0] or 0)
+        if manual_prefix_count:
+            raise ValueError(
+                f"Cannot delete VLAN: prefixes.vlan_id={vlan_pk} "
+                f"({manual_prefix_count} manual override)"
+            )
+        # A stale automatic directory entry may be deleted while keeping its
+        # prefix record. Only the automatic relation is cleared.
+        conn.execute(
+            """UPDATE prefixes SET vlan_id = NULL
+               WHERE vlan_id = ? AND COALESCE(manual_override, 0) = 0""",
+            (vlan_pk,),
+        )
     conn.execute("DELETE FROM vlans WHERE id = ?", (vlan_pk,))
     from services.cmdb_version_service import bump_read_versions
     bump_read_versions(conn, ("vlans", "bindings"))

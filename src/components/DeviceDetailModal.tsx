@@ -506,6 +506,11 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
                   <div>
                     <h4 className="text-[10px] font-bold uppercase tracking-widest text-cyan-900">{language === 'zh' ? '平台识别与绑定' : 'Platform identification & binding'}</h4>
                     <p className="mt-1 text-[11px] text-cyan-800/70">{platformAlreadyBound ? (language === 'zh' ? `当前绑定控制自动化驱动、命令和解析模板；修改已有绑定需要管理员确认。${isAdministrator ? '' : '当前账号不能修改或解除已有绑定。'}` : `The current binding controls the automation driver, commands, and parser; changing it requires Administrator confirmation.${isAdministrator ? '' : ' The current account cannot change or remove an existing binding.'}`) : (language === 'zh' ? '首次绑定后自动锁定，并决定自动化驱动、命令和解析模板。' : 'The first binding is locked automatically and controls the automation driver, commands, and parser.')}</p>
+                    {String(viewingDevice.platform_source || '').toUpperCase() === 'SNMP_AUTO' && (
+                      <span className="mt-1 inline-flex rounded-md bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
+                        {language === 'zh' ? '来源：导入时 SNMP 自动识别' : 'Source: SNMP auto-detected on import'}
+                      </span>
+                    )}
                   </div>
                   <button type="button" onClick={() => void detectPlatform()} disabled={platformDetectionLoading} className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-cyan-700 px-2.5 py-1.5 text-[11px] font-semibold text-white disabled:opacity-50">
                     {platformDetectionLoading ? <RotateCcw size={12} className="animate-spin" /> : <Activity size={12} />}

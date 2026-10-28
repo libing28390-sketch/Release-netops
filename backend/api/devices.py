@@ -2018,7 +2018,14 @@ def create_device(device: dict = Body(...), user=require_role("Operator")):
 def delete_device(device_id: str):
     conn = get_db_connection()
     try:
-        row = conn.execute('SELECT hostname, asset_id FROM devices WHERE id = ?', (device_id,)).fetchone()
+        row = conn.execute(
+            '''SELECT d.hostname, d.asset_id,
+                      COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''), NULLIF(d.site, ''), '') AS vlan_site_scope
+               FROM devices d
+               LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+               WHERE d.id = ?''',
+            (device_id,),
+        ).fetchone()
         # Plan-A: cascade-delete linked asset
         if row and row['asset_id']:
             # PAM: archive (don't delete) sessions and access requests so the
@@ -2063,6 +2070,17 @@ def delete_device(device_id: str):
         from services.wan_link_service import delete_wan_links_for_device
         delete_wan_links_for_device(conn, device_id)
         conn.execute('DELETE FROM devices WHERE id = ?', (device_id,))
+        if row:
+            # Reconcile automatic VLAN rows in the same transaction after
+            # device-owned interfaces, endpoints, snapshots, and observations
+            # have been removed. The saved site scope keeps unrelated sites
+            # out of this deletion path.
+            from services.vlan_discovery_service import sync_observed_vlans
+
+            sync_observed_vlans(
+                conn=conn,
+                site_scope=str(row['vlan_site_scope'] or ''),
+            )
         # Credentials are managed resources and must survive asset/device
         # deletion. They can only be removed explicitly from the credential
         # center after all normal/admin device references are cleared.

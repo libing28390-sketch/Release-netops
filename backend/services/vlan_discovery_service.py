@@ -107,7 +107,12 @@ def _now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def _link_prefixes_to_svis(conn, device_sites: dict[str, str]) -> int:
+def _link_prefixes_to_svis(
+    conn,
+    device_sites: dict[str, str],
+    *,
+    site_scope: str | None = None,
+) -> int:
     """Attach connected prefixes to the VLAN represented by an SVI.
 
     Prefix discovery intentionally stores evidence JSON first and does not
@@ -140,6 +145,9 @@ def _link_prefixes_to_svis(conn, device_sites: dict[str, str]) -> int:
             inventory_masks.setdefault(key, str(row["mask"]).strip())
     candidates: list[dict[str, Any]] = []
     for row in svi_rows:
+        row_site = device_sites.get(str(row["device_id"]), "")
+        if site_scope is not None and row_site != site_scope:
+            continue
         vlan_id = parse_vlan_id_from_interface(row["interface_name"])
         if vlan_id is None:
             continue
@@ -177,16 +185,21 @@ def _link_prefixes_to_svis(conn, device_sites: dict[str, str]) -> int:
             "ip": str(address.ip),
             "network": address.network,
             "vlan_id": vlan_id,
-            "site_id": device_sites.get(str(row["device_id"]), ""),
+            "site_id": row_site,
         })
 
     linked = 0
-    for prefix in conn.execute(
+    prefix_sql = (
         """SELECT id, prefix, gateway, vlan_id, site_id, gateway_device_id,
                   gateway_interface_id, manual_override
            FROM prefixes
            WHERE COALESCE(manual_override, 0) = 0"""
-    ).fetchall():
+    )
+    prefix_params: tuple = ()
+    if site_scope is not None:
+        prefix_sql += " AND COALESCE(site_id, '') = ?"
+        prefix_params = (site_scope,)
+    for prefix in conn.execute(prefix_sql, prefix_params).fetchall():
         try:
             prefix_network = ipaddress.ip_network(str(prefix["prefix"]), strict=False)
         except ValueError:
@@ -452,20 +465,148 @@ def project_vlan_records(
         conn.close()
 
 
-def sync_observed_vlans() -> dict[str, int]:
-    """Upsert VLANs observed by interfaces, ARP or MAC collectors.
+def _prune_unobserved_auto_vlans(
+    conn,
+    observed: set[tuple[str, int]],
+    *,
+    site_scope: str | None = None,
+) -> int:
+    """Remove automatic directory rows after their last live source vanishes.
 
-    The canonical row is scoped by ``site_id + vlan_id``.  Unknown site data
-    uses an empty site scope until the device is assigned to a site.
+    Prefix records remain durable. Only their automatic VLAN association is
+    cleared; manual prefix overrides and business bindings keep the VLAN row.
     """
-    conn = get_db_connection()
+    sql = (
+        "SELECT id, vlan_id, site_id FROM vlans "
+        "WHERE COALESCE(NULLIF(discovery_source, ''), 'manual') <> 'manual'"
+    )
+    params: tuple = ()
+    if site_scope is not None:
+        sql += " AND COALESCE(site_id, '') = ?"
+        params = (site_scope,)
+
+    deleted = 0
+    for row in conn.execute(sql, params).fetchall():
+        vlan_pk = str(row["id"])
+        vlan_id = int(row["vlan_id"])
+        current_site = str(row["site_id"] or "")
+        if (current_site, vlan_id) in observed:
+            continue
+
+        business_binding = conn.execute(
+            """SELECT 1 FROM vlan_business_bindings
+               WHERE COALESCE(site_id, '') = ? AND vlan_id = ? LIMIT 1""",
+            (current_site, vlan_id),
+        ).fetchone()
+        manual_prefix = conn.execute(
+            """SELECT 1 FROM prefixes
+               WHERE vlan_id = ? AND COALESCE(manual_override, 0) <> 0 LIMIT 1""",
+            (vlan_pk,),
+        ).fetchone()
+        if business_binding or manual_prefix:
+            continue
+
+        # Preserve prefix data and detach only the non-manual association.
+        # PostgreSQL's ON DELETE SET NULL FK is a second line of defense.
+        conn.execute(
+            """UPDATE prefixes SET vlan_id = NULL
+               WHERE vlan_id = ? AND COALESCE(manual_override, 0) = 0""",
+            (vlan_pk,),
+        )
+        conn.execute("DELETE FROM vlans WHERE id = ?", (vlan_pk,))
+        deleted += 1
+    return deleted
+
+
+def has_live_vlan_observations(conn, *, site_id: str | None, vlan_id: int) -> bool:
+    """Return whether any current source still reports this site/VLAN key."""
+    target_site = str(site_id or "")
+    target_vlan = int(vlan_id)
+    device_sites: dict[str, str] = {}
+    device_platforms: dict[str, str] = {}
+    for row in conn.execute(
+        """SELECT d.id,
+                  COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''), NULLIF(d.site, ''), '') AS site_id,
+                  d.platform, d.vendor
+           FROM devices d LEFT JOIN physical_assets pa ON pa.id = d.asset_id"""
+    ).fetchall():
+        device_id = str(row["id"])
+        device_sites[device_id] = str(row["site_id"] or "")
+        device_platforms[device_id] = str(row["platform"] or row["vendor"] or "")
+
+    for row in conn.execute(
+        """SELECT device_id, interface_name, access_vlan, native_vlan, allowed_vlans
+           FROM interfaces"""
+    ).fetchall():
+        device_id = str(row["device_id"] or "")
+        if device_sites.get(device_id, "") != target_site:
+            continue
+        names = parse_vlan_values(row["access_vlan"]) | parse_vlan_values(row["native_vlan"])
+        names |= parse_vlan_values(row["allowed_vlans"])
+        names.add(parse_vlan_id_from_interface(row["interface_name"]) or -1)
+        if target_vlan in names and not is_system_default_vlan(
+            target_vlan, platform=device_platforms.get(device_id, ""),
+        ):
+            return True
+
+    for table in ("arp_table", "mac_table"):
+        for row in conn.execute(
+            f"SELECT device_id FROM {table} WHERE vlan_id = ?",
+            (target_vlan,),
+        ).fetchall():
+            if (
+                device_sites.get(str(row["device_id"] or ""), "") == target_site
+                and not is_system_default_vlan(
+                    target_vlan,
+                    platform=device_platforms.get(str(row["device_id"] or ""), ""),
+                    discovery_source=table,
+                )
+            ):
+                return True
+
+    snapshot = conn.execute(
+        """SELECT 1
+           FROM cmdb_device_vlan_observations o
+           JOIN cmdb_collection_snapshots s
+             ON s.device_id = o.device_id
+            AND s.domain = 'vlan_inventory'
+            AND s.successful_generation > 0
+            AND s.successful_generation = o.generation
+           JOIN devices d ON d.id = o.device_id
+           LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+           WHERE o.vlan_id = ?
+             AND COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''), NULLIF(d.site, ''), '') = ?
+           LIMIT 1""",
+        (target_vlan, target_site),
+    ).fetchone()
+    return snapshot is not None
+
+
+def sync_observed_vlans(
+    *,
+    conn=None,
+    site_scope: str | None = None,
+) -> dict[str, int]:
+    """Reconcile the VLAN directory from current interface, endpoint and CLI facts.
+
+    A caller may pass its transaction connection and a site scope so device
+    deletion can reconcile atomically with its cascading fact cleanup.
+    """
+    owns_connection = conn is None
+    if owns_connection:
+        conn = get_db_connection()
     try:
         observed: dict[tuple[str, int], set[str]] = {}
         observed_times: dict[tuple[str, int], tuple[datetime, str]] = {}
         device_sites: dict[str, str] = {}
         device_platforms: dict[str, str] = {}
-        for row in conn.execute("SELECT id, site_id, site, platform, vendor FROM devices").fetchall():
-            device_sites[str(row["id"])] = str(row["site_id"] or row["site"] or "")
+        for row in conn.execute(
+            """SELECT d.id,
+                      COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''), NULLIF(d.site, ''), '') AS site_id,
+                      d.platform, d.vendor
+               FROM devices d LEFT JOIN physical_assets pa ON pa.id = d.asset_id"""
+        ).fetchall():
+            device_sites[str(row["id"])] = str(row["site_id"] or "")
             device_platforms[str(row["id"])] = str(row["platform"] or row["vendor"] or "")
 
         def record_observation(
@@ -489,7 +630,10 @@ def sync_observed_vlans() -> dict[str, int]:
         for row in conn.execute(
             "SELECT device_id, interface_name, access_vlan, native_vlan, allowed_vlans, last_seen FROM interfaces"
         ).fetchall():
-            scope = device_sites.get(str(row["device_id"] or ""), "")
+            device_id = str(row["device_id"] or "")
+            scope = device_sites.get(device_id, "")
+            if site_scope is not None and scope != site_scope:
+                continue
             names = parse_vlan_values(row["access_vlan"]) | parse_vlan_values(row["native_vlan"])
             names |= parse_vlan_values(row["allowed_vlans"])
             svi_vlan = parse_vlan_id_from_interface(row["interface_name"])
@@ -506,7 +650,7 @@ def sync_observed_vlans() -> dict[str, int]:
             else:
                 source = "interface_vlan"
             for vlan_id in names:
-                if is_system_default_vlan(vlan_id, platform=device_platforms.get(str(row["device_id"]), ""), discovery_source=source):
+                if is_system_default_vlan(vlan_id, platform=device_platforms.get(device_id, ""), discovery_source=source):
                     continue
                 record_observation((scope, vlan_id), source, row['last_seen'])
 
@@ -515,20 +659,54 @@ def sync_observed_vlans() -> dict[str, int]:
                 f"SELECT device_id, vlan_id, last_updated FROM {table} WHERE vlan_id IS NOT NULL"
             ).fetchall():
                 vlan_id = int(row["vlan_id"])
+                device_id = str(row["device_id"] or "")
+                scope = device_sites.get(device_id, "")
+                if site_scope is not None and scope != site_scope:
+                    continue
                 if 1 <= vlan_id <= 4094:
-                    scope = device_sites.get(str(row["device_id"] or ""), "")
                     if is_system_default_vlan(
                         vlan_id,
-                        platform=device_platforms.get(str(row["device_id"]), ""),
+                        platform=device_platforms.get(device_id, ""),
                         discovery_source=source,
                     ):
                         continue
                     record_observation((scope, vlan_id), source, row['last_updated'])
 
+        cli_names: dict[tuple[str, int], str] = {}
+        for row in conn.execute(
+            """SELECT o.device_id, o.vlan_id, o.vlan_name, o.observed_at,
+                      COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''), NULLIF(d.site, ''), '') AS site_id,
+                      d.platform, d.vendor
+               FROM cmdb_device_vlan_observations o
+               JOIN cmdb_collection_snapshots s
+                 ON s.device_id = o.device_id
+                AND s.domain = 'vlan_inventory'
+                AND s.successful_generation > 0
+                AND s.successful_generation = o.generation
+               JOIN devices d ON d.id = o.device_id
+               LEFT JOIN physical_assets pa ON pa.id = d.asset_id"""
+        ).fetchall():
+            vlan_id = int(row["vlan_id"])
+            scope = str(row["site_id"] or "")
+            if site_scope is not None and scope != site_scope:
+                continue
+            platform = str(row["platform"] or row["vendor"] or "")
+            if is_system_default_vlan(
+                vlan_id, row["vlan_name"], platform=platform, discovery_source="cli_vlan",
+            ):
+                continue
+            key = (scope, vlan_id)
+            record_observation(key, "cli_vlan", row["observed_at"])
+            cli_name = str(row["vlan_name"] or "").strip()
+            if cli_name and key not in cli_names:
+                cli_names[key] = cli_name
+
         created = 0
         updated = 0
         for (site_id, vlan_id), sources in observed.items():
-            site_scope = site_id or None
+            if site_scope is not None and site_id != site_scope:
+                continue
+            db_site_scope = site_id or None
             existing = conn.execute(
                 "SELECT id, name, discovery_source, first_discovered_at "
                 "FROM vlans WHERE COALESCE(site_id, '') = ? AND vlan_id = ? LIMIT 1",
@@ -536,6 +714,7 @@ def sync_observed_vlans() -> dict[str, int]:
             ).fetchone()
             source = "interface_svi" if "interface_svi" in sources else sorted(sources)[0]
             observed_at = observed_times.get((site_id, vlan_id), (None, None))[1]
+            display_name = cli_names.get((site_id, vlan_id)) or f"VLAN {vlan_id}"
             if existing:
                 conn.execute(
                     "UPDATE vlans SET "
@@ -545,7 +724,7 @@ def sync_observed_vlans() -> dict[str, int]:
                     "discovery_source = CASE WHEN discovery_source = 'manual' THEN discovery_source ELSE ? END, "
                     "first_discovered_at = COALESCE(first_discovered_at, ?), "
                     "last_discovered_at = COALESCE(?, last_discovered_at), discovery_run_id = ? WHERE id = ?",
-                    (site_scope, f"VLAN {vlan_id}", source, observed_at, observed_at, "", existing["id"]),
+                    (db_site_scope, display_name, source, observed_at, observed_at, "", existing["id"]),
                 )
                 updated += 1
             else:
@@ -555,13 +734,25 @@ def sync_observed_vlans() -> dict[str, int]:
                     "first_discovered_at, last_discovered_at, discovery_run_id) "
                     "VALUES (?, ?, ?, ?, 'active', 'tenant-default', ?, ?, ?, ?)",
                     (
-                        f"vlan-{uuid.uuid4().hex[:12]}", vlan_id, f"VLAN {vlan_id}",
-                        site_scope, source, observed_at, observed_at, "",
+                        f"vlan-{uuid.uuid4().hex[:12]}", vlan_id, display_name,
+                        db_site_scope, source, observed_at, observed_at, "",
                     ),
                 )
                 created += 1
-        linked_prefixes = _link_prefixes_to_svis(conn, device_sites)
-        conn.commit()
-        return {"observed": len(observed), "created": created, "updated": updated, "linked_prefixes": linked_prefixes}
+        deleted = _prune_unobserved_auto_vlans(
+            conn, set(observed), site_scope=site_scope,
+        )
+        linked_prefixes = _link_prefixes_to_svis(conn, device_sites, site_scope=site_scope)
+        if created or updated or deleted or linked_prefixes:
+            from services.cmdb_version_service import bump_read_versions
+
+            bump_read_versions(conn, ("vlans", "bindings", "interfaces"))
+        if owns_connection:
+            conn.commit()
+        return {
+            "observed": len(observed), "created": created, "updated": updated,
+            "deleted": deleted, "linked_prefixes": linked_prefixes,
+        }
     finally:
-        conn.close()
+        if owns_connection:
+            conn.close()

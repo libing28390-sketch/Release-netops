@@ -28,6 +28,7 @@ const device: Device = {
   platform: 'h3c_comware',
   platform_profile_id: profile.id,
   platform_binding: profile,
+  platform_source: 'SNMP_AUTO',
   platform_locked: true,
   status: 'online',
   compliance: 'unknown',
@@ -72,6 +73,7 @@ describe('DeviceDetailModal platform binding permissions', () => {
 
     const versionSelect = await screen.findByLabelText('平台版本');
     await waitFor(() => expect((versionSelect as HTMLSelectElement).disabled).toBe(true));
+    expect(screen.getByText('来源：导入时 SNMP 自动识别')).toBeTruthy();
     expect(screen.getByRole('alert').textContent).toContain('版本提示');
 
     const saveButton = screen.getByRole('button', { name: '保存绑定' });

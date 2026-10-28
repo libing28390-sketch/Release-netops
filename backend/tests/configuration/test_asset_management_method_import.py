@@ -55,6 +55,7 @@ def test_batch_import_persists_web_only_management_method_and_sanitizes_password
 
     assert result["created"] == 1
     assert result["snmp_identification"]["items"][0]["status"] == "missing_credentials"
+    assert result["snmp_identification"]["items"][0]["platform_binding_status"] == "skipped"
     listed = assets.list_assets(q="WEB-ONLY-IMPORT-1", page=1, page_size=10)
     item = listed["items"][0]
     assert item["connection_method"] == "web"
@@ -142,9 +143,10 @@ def test_batch_import_binds_snmp_credential_name_to_asset_and_device(isolated_db
     assert listed["items"][0]["snmp_community_set"] is True
 
 
-def test_batch_import_auto_identifies_device_without_custom_metric_profile_binding(isolated_db, monkeypatch):
+def test_batch_import_auto_identifies_device_and_binds_matching_platform_profile(isolated_db, make_user, monkeypatch):
     import asyncio
 
+    actor = make_user("asset_import_platform_binding", role="Operator", tenant_id="tenant-default")
     from services import rack_service
 
     with get_db_connection() as conn:
@@ -177,8 +179,10 @@ def test_batch_import_auto_identifies_device_without_custom_metric_profile_bindi
         }
         for index in range(6)
     }
+    identity_reads = []
 
     async def fake_snmp_get(ip, _community, oid, _port, **_kwargs):
+        identity_reads.append((ip, oid))
         return identity_values_by_ip.get(ip, {}).get(oid)
 
     import services.snmp_service as snmp_service
@@ -240,7 +244,7 @@ def test_batch_import_auto_identifies_device_without_custom_metric_profile_bindi
             snmp_credential_name="import-auto-profile",
         )
         for index in range(6)
-    ])
+    ], _user=actor)
 
     assert result["created"] == 6
     identified = result["snmp_identification"]
@@ -254,6 +258,12 @@ def test_batch_import_auto_identifies_device_without_custom_metric_profile_bindi
     assert item["synced_model"] == "S5130-28S-HI"
     assert item["model_source"] == "entity_mib"
     assert item["rack_sync"]["status"] == "synced"
+    assert item["platform_binding_status"] == "auto_bound"
+    assert item["platform_profile_id"]
+    assert item["platform_profile_name"]
+    assert item["platform_binding_message"]
+    assert len(identity_reads) == 6 * len(identification_service.IDENTITY_OIDS)
+    assert len(set(identity_reads)) == len(identity_reads)
     assert max_active_model_probes == 1
     assert all(
         result_item["synced_model"] == "S5130-28S-HI"
@@ -270,7 +280,8 @@ def test_batch_import_auto_identifies_device_without_custom_metric_profile_bindi
             ("AUTO-SNMP-IDENTITY-1",),
         ).fetchone()
         device = conn.execute(
-            """SELECT vendor, platform, model, version, snmp_metric_profile_id
+            """SELECT vendor, platform, model, version, snmp_metric_profile_id,
+                      platform_profile_id, platform_source, platform_locked
                  FROM devices WHERE asset_id = (
                      SELECT id FROM physical_assets WHERE asset_tag = ?
                  )""",
@@ -281,6 +292,23 @@ def test_batch_import_auto_identifies_device_without_custom_metric_profile_bindi
     )
     assert device["snmp_metric_profile_id"] == ""
     assert device["version"] == "7.1.070"
+    assert device["platform_profile_id"] == item["platform_profile_id"]
+    assert device["platform_source"] == "SNMP_AUTO"
+    assert device["platform_locked"] == 1
+
+    with get_db_connection() as conn:
+        audit = conn.execute(
+            """SELECT event_type, after_json FROM audit_events
+                 WHERE event_type = 'platform.binding.snmp_auto' AND device_id = (
+                     SELECT id FROM devices WHERE asset_id = (
+                         SELECT id FROM physical_assets WHERE asset_tag = ?
+                     )
+                 )""",
+            ("AUTO-SNMP-IDENTITY-1",),
+        ).fetchone()
+    assert audit is not None
+    assert audit["event_type"] == "platform.binding.snmp_auto"
+    assert "SNMP_AUTO" in audit["after_json"]
 
     with get_db_connection() as conn:
         placement = conn.execute(
@@ -293,6 +321,107 @@ def test_batch_import_auto_identifies_device_without_custom_metric_profile_bindi
     assert (placement["model_key"], placement["vendor"], placement["model"], placement["start_u"]) == (
         "H3C:S5130-28S-HI", "H3C", "S5130-28S-HI", 3
     )
+
+
+def test_import_platform_binding_refreshes_existing_version_from_snmp_observation(isolated_db, make_user, monkeypatch):
+    import asyncio
+
+    actor = make_user("asset_import_stale_version", role="Operator", tenant_id="tenant-default")
+    async def no_initial_snmp_response(*_args, **_kwargs):
+        return None
+
+    import services.snmp_service as snmp_service
+    monkeypatch.setattr(snmp_service, "_snmp_get", no_initial_snmp_response)
+    from services import librenms_enrollment_service
+
+    async def fake_enrollment(device_id, *, actor=None):
+        return {"status": "local_snmp", "device_id": device_id}
+
+    monkeypatch.setattr(librenms_enrollment_service, "enroll_imported_network_device", fake_enrollment)
+    with get_db_connection() as conn:
+        conn.execute(
+            """INSERT INTO credentials (
+                   id, credential_name, credential_type, snmp_community, created_at
+               ) VALUES (?, ?, 'snmpv2', ?, ?)""",
+            (
+                "cred-import-stale-version",
+                "import-stale-version",
+                encrypt_credential("identity-probe-secret"),
+                "2026-10-28T00:00:00+00:00",
+            ),
+        )
+        conn.commit()
+
+    result = assets.import_assets([
+        assets.AssetCreate(
+            asset_type="network_device",
+            asset_tag="AUTO-SNMP-STALE-VERSION",
+            hostname="stale-version-import",
+            management_ip="192.0.2.199",
+            vendor="H3C",
+            model="S5130-28S-HI",
+            platform="h3c_comware",
+            snmp_credential_name="import-stale-version",
+        )
+    ], detailed=True, _user=actor)
+    device_id = result["results"][0]["device_id"]
+    with get_db_connection() as conn:
+        conn.execute("UPDATE devices SET version = '5.20' WHERE id = ?", (device_id,))
+        conn.commit()
+
+    async def fake_snmp_get(_ip, _community, oid, _port, **_kwargs):
+        return {
+            "1.3.6.1.2.1.1.2.0": ".1.3.6.1.4.1.25506",
+            "1.3.6.1.2.1.1.1.0": (
+                "H3C Comware Software. Software Version 7.1.064, Alpha 7164\n"
+                "H3C SecPath F1090..."
+            ),
+            "1.3.6.1.2.1.1.5.0": "stale-version-import",
+        }.get(oid)
+
+    monkeypatch.setattr(snmp_service, "_snmp_get", fake_snmp_get)
+    from services import snmp_import_identification_service as identification_service
+    monkeypatch.setattr(identification_service, "ensure_rules_available", lambda: {"status": "cached"})
+    monkeypatch.setattr(identification_service, "resolve_rule", lambda *_args, **_kwargs: None)
+    from services import snmp_discovery_service
+    monkeypatch.setattr(snmp_discovery_service, "ensure_rules_available", lambda: {"status": "cached"})
+    monkeypatch.setattr(snmp_discovery_service, "_resolve_optional_identity_rule", lambda *_args, **_kwargs: None)
+
+    identity = asyncio.run(identification_service.identify_imported_device(
+        {
+            "device_id": device_id,
+            "row": 1,
+            "asset_tag": "AUTO-SNMP-STALE-VERSION",
+            "hostname": "stale-version-import",
+            "ip": "192.0.2.199",
+            "snmp_configured": True,
+            "declared_vendor": "H3C",
+            "declared_platform": "h3c_comware",
+            "declared_model": "S5130-28S-HI",
+        },
+        asyncio.Semaphore(1),
+        asyncio.Semaphore(1),
+        user=actor,
+        auto_bind_platform=True,
+    ))
+
+    assert identity["status"] == "identified"
+    assert identity["platform_binding_status"] == "auto_bound"
+    assert identity["platform_profile_id"]
+    assert identity["platform_profile_name"]
+    assert identity["identity_source"] == "sysDescr"
+    with get_db_connection() as conn:
+        stored = conn.execute(
+            """SELECT d.version, d.platform_profile_id, d.platform_source, p.platform_code
+               FROM devices d
+               LEFT JOIN platform_profiles p ON p.id = d.platform_profile_id
+               WHERE d.id = ?""",
+            (device_id,),
+        ).fetchone()
+    assert stored["version"] == "7.1.064"
+    assert stored["platform_profile_id"] == identity["platform_profile_id"]
+    assert stored["platform_source"] == "SNMP_AUTO"
+    assert stored["platform_code"] == "h3c_comware_v7"
 
 
 def test_import_commits_asset_then_enrolls_with_bound_snmpv3_profile(isolated_db, monkeypatch):
