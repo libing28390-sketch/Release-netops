@@ -89,9 +89,11 @@ def test_projection_keeps_arp_without_mac_and_does_not_renew_time(isolated_db,mo
         assert c.execute("SELECT COUNT(*) AS n FROM network_endpoints").fetchone()["n"]==0
 
 
-def test_completed_run_context_and_failed_metadata_are_distinguished(isolated_db):
+def test_completed_run_context_and_failed_metadata_are_distinguished(isolated_db, monkeypatch):
     seed()
-    when=datetime.now(timezone.utc)-timedelta(seconds=10)
+    now=datetime(2026, 1, 1, tzinfo=timezone.utc)
+    monkeypatch.setattr(discovery, "_utc_now", lambda: now)
+    when=now-timedelta(seconds=10)
     raw_arp(when)
     mark_run(when)
     discovery.run_ipam_discovery_projection()
@@ -102,8 +104,15 @@ def test_completed_run_context_and_failed_metadata_are_distinguished(isolated_db
     assert len(result["undocumented_endpoints"])==1  # Empty ledger is a valid comparison.
     mark_run(when+timedelta(seconds=2),run="failed-run",status="failed")
     discovery.run_ipam_discovery_projection()
-    item=discovery.list_discovered_endpoints(kind="ip")["items"][0]
+    response=discovery.list_discovered_endpoints(kind="ip")
+    # Both source contexts remain visible with the same observed_at. UUID
+    # ordering cannot identify which collector run an assertion belongs to.
+    failed_items=[row for row in response["items"] if row["source_run_id"]=="failed-run"]
+    assert len(failed_items)==1
+    item=failed_items[0]
     assert item["scope_status"]=="scope_pending" and not item["coverage_complete"]
+    assert any(row["source_run_id"]=="run-current" and row["coverage_complete"] for row in response["items"])
+    assert response["summary"]["coverage_status"]!="complete"
 
 
 def test_unknown_source_timestamp_cannot_be_hidden_by_old_valid_row(isolated_db):
