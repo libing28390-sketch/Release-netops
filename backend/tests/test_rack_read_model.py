@@ -204,7 +204,7 @@ def test_postgres_asset_check_uses_transaction_scoped_advisory_and_row_locks(mon
             calls.append((sql, params))
             return _Result()
 
-    monkeypatch.setattr(database, '_USE_PG', True)
+    monkeypatch.setattr(database.core, '_USE_PG', True)
     rack_service._check_asset_installation(_Connection(), ' asset-1 ')
 
     assert 'pg_advisory_xact_lock' in calls[0][0]
