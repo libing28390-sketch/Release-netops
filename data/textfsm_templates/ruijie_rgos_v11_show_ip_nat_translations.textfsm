@@ -1,0 +1,23 @@
+Value PROTOCOL (\w+)
+Value INSIDE_GLOBAL_IP (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|---)
+Value INSIDE_GLOBAL_PORT (\d+|---)
+Value INSIDE_LOCAL_IP (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|---)
+Value INSIDE_LOCAL_PORT (\d+|---)
+Value OUTSIDE_LOCAL_IP (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|---)
+Value OUTSIDE_LOCAL_PORT (\d+|---)
+Value OUTSIDE_GLOBAL_IP (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|---)
+Value OUTSIDE_GLOBAL_PORT (\d+|---)
+
+Start
+  ^.*#\s*show\s+ -> Next
+  ^Pro\s+Inside\s+global\s+Inside\s+local\s+Outside\s+local\s+Outside\s+global -> Table
+  ^\s*$$
+  ^. -> Next
+
+Table
+  ^\s*${PROTOCOL}\s+${INSIDE_GLOBAL_IP}:${INSIDE_GLOBAL_PORT}\s+${INSIDE_LOCAL_IP}:${INSIDE_LOCAL_PORT}\s+${OUTSIDE_LOCAL_IP}:${OUTSIDE_LOCAL_PORT}\s+${OUTSIDE_GLOBAL_IP}:${OUTSIDE_GLOBAL_PORT}\s*$$ -> Record
+  ^\s*${PROTOCOL}\s+${INSIDE_GLOBAL_IP}:${INSIDE_GLOBAL_PORT}\s+${INSIDE_LOCAL_IP}:${INSIDE_LOCAL_PORT}\s+${OUTSIDE_LOCAL_IP}\s+${OUTSIDE_GLOBAL_IP}\s*$$ -> Record
+  ^\s*${PROTOCOL}\s+${INSIDE_GLOBAL_IP}\s+${INSIDE_LOCAL_IP}\s+${OUTSIDE_LOCAL_IP}\s+${OUTSIDE_GLOBAL_IP}\s*$$ -> Record
+  ^\s*${OUTSIDE_LOCAL_IP}:${OUTSIDE_LOCAL_PORT}\s+${OUTSIDE_GLOBAL_IP}:${OUTSIDE_GLOBAL_PORT}\s*$$ -> Record
+  ^\s*$$
+  ^. -> Next

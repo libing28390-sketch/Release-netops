@@ -1,0 +1,19 @@
+# nexora-action-code: get_mac_table
+Value Required MAC_ADDRESS ([0-9A-Fa-f]{4}(?:-[0-9A-Fa-f]{4}){2})
+Value Required VLAN (\d+|-)
+Value PEVLAN (\S+)
+Value CEVLAN (\S+)
+Value Required PORT ((?:[0-9]+)?[A-Za-z][A-Za-z0-9-]*\s*\d[\w/.-]*)
+Value Required TYPE ([Dd]ynamic|[Ss]tatic|[Bb]lackhole|[Ss]ecure|[Aa]uthen)
+Value LSP_LSR_ID (\S+)
+
+Start
+  ^\s*${MAC_ADDRESS}\s+${VLAN}\s+${PEVLAN}\s+${CEVLAN}\s+${PORT}\s+${TYPE}(?:\s+${LSP_LSR_ID})?\s*$$ -> Record
+  ^\s*${MAC_ADDRESS}\s+${VLAN}\s+${PORT}\s+${TYPE}\s*$$ -> Record
+  ^\s*MAC\s+Address\s+VLAN/VSI(?:/BD)?\s+.*$$
+  ^\s*MAC\s+Address\s+VLAN\s+.*$$
+  ^\s*(?:Flags:|BD\s*:|Total\s+.*|Total\s*:).*$$
+  ^\s*[-=]+\s*$$
+  ^\s*<[^>]+>.*$$
+  ^\s*$$
+  ^. -> Error

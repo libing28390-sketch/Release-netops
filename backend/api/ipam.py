@@ -1,0 +1,1056 @@
+"""
+IPAM API — IP/VLAN resource management endpoints.
+All write operations require Operator+; delete requires Administrator.
+"""
+
+import logging
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
+from core.rbac import authorize_resource, enforce_resource_scope, require_permission, require_role
+from core.tenant_policy import DEFAULT_TENANT_ID, TENANT_ISOLATION_ENABLED, tenant_id_for_write
+from database import get_db_connection
+from schemas.schemas import (
+    PrefixCreate, PrefixUpdate, BatchPrefixNetworkTypeUpdate,
+    IPAddressCreate, IPAddressUpdate,
+    IPAMDiscoveryRegistrationRequest, IPAMDiscoveryMACCalibrationRequest,
+    IPPoolCreate, IPPoolUpdate,
+    VIPCreate, VIPUpdate,
+    DHCPLeaseCreate, DHCPLeaseUpdate
+)
+from services.ipam_service import (
+    list_subnets,
+    create_subnet,
+    update_subnet,
+    batch_update_subnet_network_type,
+    delete_subnet,
+    list_addresses,
+    list_ip_inventory,
+    create_address,
+    update_address,
+    delete_address,
+    detect_conflicts,
+    ipam_summary,
+    get_subnets_tree,
+    # New tables
+    list_pools,
+    create_pool,
+    update_pool,
+    delete_pool,
+    list_vips,
+    create_vip,
+    update_vip,
+    delete_vip,
+    list_leases,
+    create_lease,
+    update_lease,
+    delete_lease,
+    get_utilization_analytics,
+    get_next_available_ip,
+    get_next_available_prefix,
+    get_ipam_reconciliation,
+    allocate_next_address,
+    reserve_address,
+    release_address,
+    preview_interface_prefixes,
+    generate_interface_prefixes,
+    get_prefix_gateway_candidates,
+)
+from services.prefix_discovery_service import get_prefix_classification_summary
+from services.audit_service import log_audit_event
+from services.ipam_discovery_service import (
+    list_discovered_endpoints,
+    get_discovered_endpoint,
+    register_discovered_observation,
+    calibrate_ipam_mac,
+)
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+
+class AllocationRequest(BaseModel):
+    hostname: str = ''
+    device_id: str = ''
+    interface_id: str = ''
+    interface_name: str = ''
+    mac_address: str = ''
+    device_type: str = ''
+    purpose: str = ''
+    requested_by: str = ''
+    expires_at: str = ''
+    status: str = 'allocated'
+
+
+class ReservationRequest(AllocationRequest):
+    address: str
+
+
+class ReleaseRequest(BaseModel):
+    released_by: str = ''
+
+
+class InterfacePrefixGenerateRequest(BaseModel):
+    candidate_ids: list[str] | None = None
+    all_pending: bool = False
+    vrf_overrides: dict[str, str] = Field(default_factory=dict)
+
+
+def _prefix_scope(subnet_id: str) -> dict:
+    conn = get_db_connection()
+    try:
+        row = conn.execute("SELECT tenant_id, site_id FROM prefixes WHERE id = ?", (subnet_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail='Prefix not found')
+        return {'tenant_id': row['tenant_id'], 'site_id': row['site_id']}
+    finally:
+        conn.close()
+
+
+def _address_scope(address_id: str) -> dict:
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            """SELECT p.tenant_id, p.site_id FROM ip_addresses ip
+               JOIN prefixes p ON p.id = ip.subnet_id WHERE ip.id = ?""",
+            (address_id,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail='Address not found')
+        return {'tenant_id': row['tenant_id'], 'site_id': row['site_id']}
+    finally:
+        conn.close()
+
+
+def _ipam_discovery_visible_scopes(user: dict) -> set[tuple[str, str]] | None:
+    """Build the site/tenant view boundary for evidence and selector options."""
+    if user.get('role') == 'Administrator' and (
+        not user.get('tenant_id') or user.get('role_profile') == 'System Administrator'
+    ):
+        return None
+    conn = get_db_connection()
+    try:
+        candidates: set[tuple[str, str]] = set()
+        for row in conn.execute('SELECT id, tenant_id FROM sites').fetchall():
+            candidates.add((str(row['tenant_id'] or DEFAULT_TENANT_ID), str(row['id'] or '')))
+        for row in conn.execute(
+            'SELECT DISTINCT tenant_id, site_id FROM ipam_discovery_snapshots'
+        ).fetchall():
+            candidates.add((str(row['tenant_id'] or ''), str(row['site_id'] or '')))
+        if not candidates:
+            candidates.add((DEFAULT_TENANT_ID, ''))
+        return {
+            scope for scope in candidates
+            if authorize_resource(
+                user, 'ip_address', 'view',
+                tenant_id=scope[0] or None, site_id=scope[1] or None,
+            )
+        }
+    finally:
+        conn.close()
+
+
+def _new_ipam_child_tenant_id(requested_tenant_id: str | None, user: dict, prefix_id: str | None) -> str:
+    """Keep child records attached to a legacy prefix's stored identity key."""
+    normalized_prefix_id = str(prefix_id or '').strip()
+    if normalized_prefix_id and not TENANT_ISOLATION_ENABLED:
+        return str(_prefix_scope(normalized_prefix_id).get('tenant_id') or 'tenant-default')
+    return tenant_id_for_write(requested=requested_tenant_id, user=user)
+
+
+# ── Prefixes (Subnets) ──────────────────────────
+
+@router.get('/ipam/subnets')
+def api_list_subnets(
+    site: str = 'all',
+    status: str = 'all',
+    q: str = '',
+    family: str = 'all',
+    classification: str = Query('all', pattern='^(all|auto|manual|unclassified|mixed|conflict|reuse|stale)$'),
+    page: int | None = None,
+    page_size: int = 20,
+    _user=require_role("Viewer"),
+):
+    return list_subnets(
+        site=site, status=status, q=q, family=family, classification=classification,
+        page=page, page_size=page_size,
+    )
+
+
+@router.get('/ipam/prefixes/interface-candidates')
+def api_preview_interface_prefixes(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100),
+    status: str = Query('all', pattern='^(all|to_create|existing|scope_pending|global_default)$'),
+    _user=require_role("Viewer"),
+):
+    """Preview prefixes derived from current L3 interface collection only."""
+    return preview_interface_prefixes(page=page, page_size=page_size, status=status)
+
+
+@router.get('/ipam/prefixes/classification-summary')
+def api_prefix_classification_summary(
+    site: str = 'all',
+    status: str = 'all',
+    q: str = '',
+    family: str = Query('all', pattern='^(all|ipv4|ipv6)$'),
+    _user=require_role("Viewer"),
+):
+    return get_prefix_classification_summary(site=site, status=status, q=q, family=family)
+
+
+@router.post('/ipam/prefixes/generate-from-interfaces')
+def api_generate_interface_prefixes(
+    body: InterfacePrefixGenerateRequest,
+    user=require_permission('prefix', 'create'),
+):
+    if body.all_pending and body.candidate_ids is not None:
+        raise HTTPException(
+            status_code=422,
+            detail='candidate_ids 与 all_pending 不能同时提供',
+        )
+    if not body.all_pending and not body.candidate_ids:
+        raise HTTPException(
+            status_code=422,
+            detail='请提供非空 candidate_ids，或显式设置 all_pending=true',
+        )
+
+    try:
+        result = generate_interface_prefixes(
+            candidate_ids=body.candidate_ids,
+            all_pending=body.all_pending,
+            vrf_overrides=body.vrf_overrides,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+    log_audit_event(
+        event_type="ipam.prefix.generate_from_interfaces",
+        category="ipam",
+        severity="info",
+        status="success",
+        summary=(
+            f"Generated {result['created_prefixes']} prefixes and "
+            f"{result['created_addresses']} addresses from interface collection"
+        ),
+        actor_username=user.get("username"),
+        actor_role=user.get("role"),
+        target_type="ipam",
+        target_id="interface-collection",
+        details=result,
+    )
+    return result
+
+
+@router.post('/ipam/subnets', status_code=201)
+def api_create_subnet(body: PrefixCreate, user=require_permission('prefix', 'create')):
+    tenant_id = tenant_id_for_write(requested=body.tenant_id, user=user)
+    enforce_resource_scope(user, 'prefix', 'create', tenant_id=tenant_id, site_id=body.site_id)
+    try:
+        result = create_subnet(
+            prefix=body.prefix,
+            vrf_id=body.vrf_id,
+            vlan_id=body.vlan_id,
+            site_id=body.site_id,
+            tenant_id=tenant_id,
+            status=body.status,
+            name=body.name,
+            gateway=body.gateway,
+            description=body.description,
+            network_type=body.network_type,
+            gateway_device_id=body.gateway_device_id,
+            gateway_interface_id=body.gateway_interface_id,
+            traceable=body.traceable,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    log_audit_event(
+        event_type="ipam.prefix.create",
+        category="ipam",
+        severity="info",
+        status="success",
+        summary=f"Created prefix {body.prefix}",
+        actor_username=user.get("username"),
+        actor_role=user.get("role"),
+        target_type="prefix",
+        target_id=result["id"],
+        target_name=body.name or body.prefix,
+    )
+    return result
+
+
+@router.put('/ipam/subnets/{subnet_id}')
+def api_update_subnet(subnet_id: str, body: PrefixUpdate, user=require_permission('prefix', 'update')):
+    enforce_resource_scope(user, 'prefix', 'update', **_prefix_scope(subnet_id))
+    fields = body.model_dump(exclude_none=True)
+    fields.pop('tenant_id', None)
+    if not update_subnet(subnet_id, **fields):
+        raise HTTPException(status_code=404, detail='Prefix not found')
+
+    log_audit_event(
+        event_type="ipam.prefix.update",
+        category="ipam",
+        severity="info",
+        status="success",
+        summary=f"Updated prefix {subnet_id}",
+        actor_username=user.get("username"),
+        actor_role=user.get("role"),
+        target_type="prefix",
+        target_id=subnet_id,
+        details=fields,
+    )
+    return {'ok': True}
+
+
+@router.delete('/ipam/subnets/{subnet_id}')
+def api_delete_subnet(subnet_id: str, user=require_permission('prefix', 'delete')):
+    enforce_resource_scope(user, 'prefix', 'delete', **_prefix_scope(subnet_id))
+    if not delete_subnet(subnet_id):
+        raise HTTPException(status_code=404, detail='Prefix not found')
+
+    log_audit_event(
+        event_type="ipam.prefix.delete",
+        category="ipam",
+        severity="warning",
+        status="success",
+        summary=f"Deleted prefix {subnet_id}",
+        actor_username=user.get("username"),
+        actor_role=user.get("role"),
+        target_type="prefix",
+        target_id=subnet_id,
+    )
+    return {'ok': True}
+
+
+@router.post('/ipam/subnets/batch-delete')
+def api_batch_delete_subnets(body: dict, user=require_permission('prefix', 'delete')):
+    ids = body.get("ids", [])
+    if not ids or not isinstance(ids, list):
+        raise HTTPException(status_code=422, detail="ids must be a non-empty list")
+    deleted = 0
+    failed = 0
+    for sid in ids:
+        enforce_resource_scope(user, 'prefix', 'delete', **_prefix_scope(str(sid)))
+        if delete_subnet(str(sid)):
+            deleted += 1
+            log_audit_event(
+                event_type="ipam.prefix.delete",
+                category="ipam",
+                severity="warning",
+                status="success",
+                summary=f"Batch deleted prefix {sid}",
+                actor_username=user.get("username"),
+                actor_role=user.get("role"),
+                target_type="prefix",
+                target_id=str(sid),
+            )
+        else:
+            failed += 1
+    return {'ok': True, 'deleted': deleted, 'failed': failed}
+
+
+@router.post('/ipam/subnets/batch-update-network-type')
+def api_batch_update_subnet_network_type(
+    body: BatchPrefixNetworkTypeUpdate,
+    user=require_permission('prefix', 'update'),
+):
+    def validate_scope(row: dict) -> None:
+        enforce_resource_scope(
+            user,
+            'prefix',
+            'update',
+            tenant_id=row.get('tenant_id') or DEFAULT_TENANT_ID,
+            site_id=row.get('site_id') or None,
+        )
+
+    try:
+        result = batch_update_subnet_network_type(
+            body.ids,
+            body.network_type,
+            scope_validator=validate_scope,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    log_audit_event(
+        event_type='ipam.prefix.batch_update_network_type',
+        category='ipam',
+        severity='info',
+        status='success',
+        summary=f"Updated network type for {result['updated']} prefixes",
+        actor_username=user.get('username'),
+        actor_role=user.get('role'),
+        target_type='prefix',
+        target_id='batch',
+        details={
+            'ids': result['ids'],
+            'network_type': result['network_type'],
+            'updated': result['updated'],
+        },
+    )
+    return result
+
+
+@router.get('/ipam/prefixes/gateway-candidates')
+def api_prefix_gateway_candidates(
+    prefix: str = Query(..., min_length=3, max_length=80),
+    site_id: str | None = Query(None, min_length=1, max_length=128),
+    gateway_ip: str | None = Query(None, max_length=128),
+    user=require_role('Viewer'),
+):
+    tenant_id = tenant_id_for_write(user=user)
+    if site_id:
+        enforce_resource_scope(
+            user,
+            'prefix',
+            'view',
+            tenant_id=tenant_id,
+            site_id=site_id,
+        )
+    try:
+        return get_prefix_gateway_candidates(
+            prefix=prefix,
+            site_id=site_id,
+            tenant_id=tenant_id,
+            gateway_ip=gateway_ip,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+# ── IP Addresses ──────────────────────────────
+
+@router.get('/ipam/addresses')
+def api_list_ip_inventory(
+    site_id: str = 'all',
+    prefix_id: str = '',
+    q: str = '',
+    status: str = 'all',
+    device_type: str = 'all',
+    purpose: str = 'all',
+    page: int = 1,
+    page_size: int = 20,
+    registered_only: bool = Query(False, description='Return only persisted IPAM address records'),
+    _user=require_role("Viewer"),
+):
+    """List manual IPAM records together with active discovered endpoints."""
+    return list_ip_inventory(
+        site_id=site_id,
+        prefix_id=prefix_id,
+        q=q,
+        status=status,
+        device_type=device_type,
+        purpose=purpose,
+        page=page,
+        page_size=page_size,
+        registered_only=registered_only,
+    )
+
+@router.get('/ipam/subnets/{subnet_id}/addresses')
+def api_list_addresses(subnet_id: str, q: str = '', status: str = 'all', device_type: str = 'all',
+                       purpose: str = 'all',
+                       page: int | None = Query(None, ge=1), page_size: int = Query(20, ge=1, le=100),
+                       _user=require_role("Viewer")):
+    return list_addresses(subnet_id, q=q, status=status, device_type=device_type, purpose=purpose, page=page, page_size=page_size)
+
+
+@router.post('/ipam/subnets/{subnet_id}/addresses', status_code=201)
+def api_create_address(subnet_id: str, body: IPAddressCreate, user=require_permission('ip_address', 'create')):
+    enforce_resource_scope(user, 'ip_address', 'create', **_prefix_scope(subnet_id))
+    try:
+        result = create_address(
+            subnet_id,
+            address=body.address,
+            hostname=body.hostname,
+            device_id=body.device_id,
+            interface_name=body.interface_name,
+            interface_id=getattr(body, 'interface_id', ''),
+            mac_address=body.mac_address,
+            device_type=body.device_type,
+            purpose=body.purpose,
+            description=body.description,
+            status=body.status,
+            requested_by=user.get('username', ''),
+            expires_at=body.expires_at,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    log_audit_event(
+        event_type="ipam.address.create",
+        category="ipam",
+        severity="info",
+        status="success",
+        summary=f"Added IP {body.address} to prefix {subnet_id}",
+        actor_username=user.get("username"),
+        actor_role=user.get("role"),
+        target_type="ip_address",
+        target_id=result["id"],
+        target_name=body.address,
+    )
+    return result
+
+
+@router.post('/ipam/subnets/{subnet_id}/allocate-next', status_code=201)
+def api_allocate_next_address(subnet_id: str, body: AllocationRequest, user=require_permission('ip_address', 'allocate')):
+    enforce_resource_scope(user, 'ip_address', 'allocate', **_prefix_scope(subnet_id))
+    values = body.model_dump()
+    try:
+        result = allocate_next_address(
+            subnet_id,
+            hostname=values['hostname'], device_id=values['device_id'],
+            interface_id=values['interface_id'], interface_name=values['interface_name'],
+            mac_address=values['mac_address'], device_type=values['device_type'], purpose=values['purpose'],
+            requested_by=values['requested_by'] or user.get('username', ''),
+            status=values['status'], expires_at=values['expires_at'],
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    log_audit_event(
+        event_type="ipam.address.allocate",
+        category="ipam",
+        severity="info",
+        status="success",
+        summary=f"Allocated next IP {result.get('address')} from prefix {subnet_id}",
+        actor_username=user.get("username"),
+        actor_role=user.get("role"),
+        target_type="ip_address",
+        target_id=result["id"],
+        target_name=result.get("address"),
+        details={'subnet_id': subnet_id, **values},
+    )
+    return result
+
+
+@router.post('/ipam/subnets/{subnet_id}/reserve', status_code=201)
+def api_reserve_address(subnet_id: str, body: ReservationRequest, user=require_permission('ip_address', 'reserve')):
+    enforce_resource_scope(user, 'ip_address', 'reserve', **_prefix_scope(subnet_id))
+    values = body.model_dump()
+    try:
+        result = reserve_address(
+            subnet_id,
+            address=values['address'], hostname=values['hostname'],
+            device_id=values['device_id'], interface_id=values['interface_id'],
+            interface_name=values['interface_name'], mac_address=values['mac_address'],
+            device_type=values['device_type'],
+            purpose=values['purpose'], requested_by=values['requested_by'] or user.get('username', ''),
+            expires_at=values['expires_at'],
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    log_audit_event(
+        event_type="ipam.address.reserve",
+        category="ipam",
+        severity="info",
+        status="success",
+        summary=f"Reserved IP {result.get('address')} in prefix {subnet_id}",
+        actor_username=user.get("username"),
+        actor_role=user.get("role"),
+        target_type="ip_address",
+        target_id=result["id"],
+        target_name=result.get("address"),
+        details={'subnet_id': subnet_id, **values},
+    )
+    return result
+
+
+@router.put('/ipam/addresses/{address_id}')
+def api_update_address(address_id: str, body: IPAddressUpdate, user=require_permission('ip_address', 'update')):
+    enforce_resource_scope(user, 'ip_address', 'update', **_address_scope(address_id))
+    fields = body.model_dump(exclude_none=True)
+    try:
+        if not update_address(address_id, **fields):
+            raise HTTPException(status_code=404, detail='Address not found')
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    log_audit_event(
+        event_type="ipam.address.update",
+        category="ipam",
+        severity="info",
+        status="success",
+        summary=f"Updated address {address_id}",
+        actor_username=user.get("username"),
+        actor_role=user.get("role"),
+        target_type="ip_address",
+        target_id=address_id,
+        details=fields,
+    )
+    return {'ok': True}
+
+
+@router.delete('/ipam/addresses/{address_id}')
+def api_delete_address(address_id: str, user=require_permission('ip_address', 'delete')):
+    enforce_resource_scope(user, 'ip_address', 'delete', **_address_scope(address_id))
+    if not delete_address(address_id):
+        raise HTTPException(status_code=404, detail='Address not found')
+
+    log_audit_event(
+        event_type="ipam.address.delete",
+        category="ipam",
+        severity="warning",
+        status="success",
+        summary=f"Deleted address {address_id}",
+        actor_username=user.get("username"),
+        actor_role=user.get("role"),
+        target_type="ip_address",
+        target_id=address_id,
+    )
+    return {'ok': True}
+
+
+@router.post('/ipam/addresses/{address_id}/release')
+def api_release_address(address_id: str, body: ReleaseRequest | None = None, user=require_permission('ip_address', 'release')):
+    enforce_resource_scope(user, 'ip_address', 'release', **_address_scope(address_id))
+    values = body.model_dump() if body else {}
+    if not release_address(address_id, released_by=values.get('released_by') or user.get('username', '')):
+        raise HTTPException(status_code=404, detail='Address not found')
+
+    log_audit_event(
+        event_type="ipam.address.release",
+        category="ipam",
+        severity="info",
+        status="success",
+        summary=f"Released address {address_id}",
+        actor_username=user.get("username"),
+        actor_role=user.get("role"),
+        target_type="ip_address",
+        target_id=address_id,
+        details=values,
+    )
+    return {'ok': True}
+
+
+# ── Dynamic Pools (ipam_pools) ─────────────────
+
+@router.get('/ipam/pools')
+def api_list_pools(
+    q: str = Query('', description='Search pool name, prefix or description'),
+    status: str = Query('', description='Filter pool status'),
+    prefix_id: str = Query('', description='Filter pools within a prefix'),
+    page: int | None = Query(None, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    _user=require_role("Viewer"),
+):
+    return list_pools(q=q, status=status, prefix_id=prefix_id, page=page, page_size=page_size)
+
+
+@router.post('/ipam/pools', status_code=201)
+def api_create_pool(body: IPPoolCreate, user=require_role("Operator")):
+    tenant_id = _new_ipam_child_tenant_id(body.tenant_id, user, body.prefix_id)
+    try:
+        result = create_pool(
+            name=body.name,
+            prefix_id=body.prefix_id or '',
+            start_ip=body.start_ip,
+            end_ip=body.end_ip,
+            description=body.description,
+            status=body.status,
+            tenant_id=tenant_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    log_audit_event(
+        event_type="ipam.pool.create",
+        category="ipam",
+        severity="info",
+        status="success",
+        summary=f"Created IP Pool {body.name}",
+        actor_username=user.get("username"),
+        actor_role=user.get("role"),
+        target_type="ipam_pool",
+        target_id=result["id"],
+        target_name=body.name,
+    )
+    return result
+
+
+@router.put('/ipam/pools/{pool_id}')
+def api_update_pool(pool_id: str, body: IPPoolUpdate, user=require_role("Operator")):
+    fields = body.model_dump(exclude_none=True)
+    fields.pop('tenant_id', None)
+    try:
+        if not update_pool(pool_id, **fields):
+            raise HTTPException(status_code=404, detail='IP Pool not found')
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    log_audit_event(
+        event_type="ipam.pool.update",
+        category="ipam",
+        severity="info",
+        status="success",
+        summary=f"Updated IP Pool {pool_id}",
+        actor_username=user.get("username"),
+        actor_role=user.get("role"),
+        target_type="ipam_pool",
+        target_id=pool_id,
+        details=fields,
+    )
+    return {'ok': True}
+
+
+@router.delete('/ipam/pools/{pool_id}')
+def api_delete_pool(pool_id: str, user=require_role("Administrator")):
+    if not delete_pool(pool_id):
+        raise HTTPException(status_code=404, detail='IP Pool not found')
+
+    log_audit_event(
+        event_type="ipam.pool.delete",
+        category="ipam",
+        severity="warning",
+        status="success",
+        summary=f"Deleted IP Pool {pool_id}",
+        actor_username=user.get("username"),
+        actor_role=user.get("role"),
+        target_type="ipam_pool",
+        target_id=pool_id,
+    )
+    return {'ok': True}
+
+
+# ── Virtual IPs (ipam_vips) ───────────────────
+
+@router.get('/ipam/vips')
+def api_list_vips(
+    q: str = Query('', description='Search VIP address or description'),
+    vip_type: str = Query('', description='Filter VIP type'),
+    status: str = Query('', description='Filter VIP status'),
+    prefix_id: str = Query('', description='Filter VIPs within a prefix'),
+    page: int | None = Query(None, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    _user=require_role("Viewer"),
+):
+    return list_vips(q=q, vip_type=vip_type, status=status, prefix_id=prefix_id, page=page, page_size=page_size)
+
+
+@router.post('/ipam/vips', status_code=201)
+def api_create_vip(body: VIPCreate, user=require_role("Operator")):
+    tenant_id = _new_ipam_child_tenant_id(body.tenant_id, user, body.prefix_id)
+    try:
+        result = create_vip(
+            address=body.address,
+            vip_type=body.vip_type,
+            device_id=body.device_id,
+            backup_device_id=body.backup_device_id,
+            interface_name=body.interface_name,
+            description=body.description,
+            real_servers=body.real_servers,
+            status=body.status,
+            tenant_id=tenant_id,
+            prefix_id=body.prefix_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    log_audit_event(
+        event_type="ipam.vip.create",
+        category="ipam",
+        severity="info",
+        status="success",
+        summary=f"Created VIP {body.address}",
+        actor_username=user.get("username"),
+        actor_role=user.get("role"),
+        target_type="ipam_vip",
+        target_id=result["id"],
+        target_name=body.address,
+    )
+    return result
+
+
+@router.put('/ipam/vips/{vip_id}')
+def api_update_vip(vip_id: str, body: VIPUpdate, user=require_role("Operator")):
+    fields = body.model_dump(exclude_none=True)
+    fields.pop('tenant_id', None)
+    try:
+        if not update_vip(vip_id, **fields):
+            raise HTTPException(status_code=404, detail='VIP not found')
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    log_audit_event(
+        event_type="ipam.vip.update",
+        category="ipam",
+        severity="info",
+        status="success",
+        summary=f"Updated VIP {vip_id}",
+        actor_username=user.get("username"),
+        actor_role=user.get("role"),
+        target_type="ipam_vip",
+        target_id=vip_id,
+        details=fields,
+    )
+    return {'ok': True}
+
+
+@router.delete('/ipam/vips/{vip_id}')
+def api_delete_vip(vip_id: str, user=require_role("Administrator")):
+    if not delete_vip(vip_id):
+        raise HTTPException(status_code=404, detail='VIP not found')
+
+    log_audit_event(
+        event_type="ipam.vip.delete",
+        category="ipam",
+        severity="warning",
+        status="success",
+        summary=f"Deleted VIP {vip_id}",
+        actor_username=user.get("username"),
+        actor_role=user.get("role"),
+        target_type="ipam_vip",
+        target_id=vip_id,
+    )
+    return {'ok': True}
+
+
+# ── DHCP Leases (ipam_dhcp_leases) ────────────
+
+@router.get('/ipam/leases')
+def api_list_leases(
+    q: str = Query('', description='Search lease address, MAC or hostname'),
+    state: str = Query('', description='Filter lease state'),
+    page: int | None = Query(None, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    _user=require_role("Viewer"),
+):
+    return list_leases(q=q, state=state, page=page, page_size=page_size)
+
+
+@router.post('/ipam/leases', status_code=201)
+def api_create_lease(body: DHCPLeaseCreate, user=require_role("Operator")):
+    try:
+        result = create_lease(
+            address=body.address,
+            mac_address=body.mac_address,
+            hostname=body.hostname,
+            dhcp_server=body.dhcp_server,
+            lease_state=body.lease_state,
+            lease_start=body.lease_start,
+            lease_end=body.lease_end,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    log_audit_event(
+        event_type="ipam.lease.create",
+        category="ipam",
+        severity="info",
+        status="success",
+        summary=f"Created DHCP Lease {body.address}",
+        actor_username=user.get("username"),
+        actor_role=user.get("role"),
+        target_type="ipam_lease",
+        target_id=result["id"],
+        target_name=body.address,
+    )
+    return result
+
+
+@router.put('/ipam/leases/{lease_id}')
+def api_update_lease(lease_id: str, body: DHCPLeaseUpdate, user=require_role("Operator")):
+    fields = body.model_dump(exclude_none=True)
+    if not update_lease(lease_id, **fields):
+        raise HTTPException(status_code=404, detail='DHCP Lease not found')
+
+    log_audit_event(
+        event_type="ipam.lease.update",
+        category="ipam",
+        severity="info",
+        status="success",
+        summary=f"Updated DHCP Lease {lease_id}",
+        actor_username=user.get("username"),
+        actor_role=user.get("role"),
+        target_type="ipam_lease",
+        target_id=lease_id,
+        details=fields,
+    )
+    return {'ok': True}
+
+
+@router.delete('/ipam/leases/{lease_id}')
+def api_delete_lease(lease_id: str, user=require_role("Administrator")):
+    if not delete_lease(lease_id):
+        raise HTTPException(status_code=404, detail='DHCP Lease not found')
+
+    log_audit_event(
+        event_type="ipam.lease.delete",
+        category="ipam",
+        severity="warning",
+        status="success",
+        summary=f"Deleted DHCP Lease {lease_id}",
+        actor_username=user.get("username"),
+        actor_role=user.get("role"),
+        target_type="ipam_lease",
+        target_id=lease_id,
+    )
+    return {'ok': True}
+
+
+# ── Conflict, Summary & Tree ──────────────────
+
+@router.get('/ipam/conflicts')
+def api_detect_conflicts(_user=require_role("Viewer")):
+    return detect_conflicts()
+
+
+@router.get('/ipam/summary')
+def api_ipam_summary(_user=require_role("Viewer")):
+    return ipam_summary()
+
+
+@router.get('/ipam/subnets/tree')
+def api_get_subnets_tree(_user=require_role("Viewer")):
+    return get_subnets_tree()
+
+
+@router.get('/ipam/analytics')
+def api_get_analytics(_user=require_role("Viewer")):
+    return get_utilization_analytics()
+
+
+@router.get('/ipam/subnets/{subnet_id}/next-available-ip')
+def api_next_available_ip(subnet_id: str, _user=require_role("Viewer")):
+    ip = get_next_available_ip(subnet_id)
+    if not ip:
+        raise HTTPException(status_code=404, detail="No available IP addresses in this subnet")
+    return {"subnet_id": subnet_id, "next_available_ip": ip}
+
+
+@router.get('/ipam/subnets/{subnet_id}/next-available-prefix')
+def api_next_available_prefix(subnet_id: str, prefix_len: int = Query(..., ge=1, le=128), _user=require_role("Viewer")):
+    prefix = get_next_available_prefix(subnet_id, prefix_len)
+    if not prefix:
+        raise HTTPException(status_code=404, detail="No available child prefixes found")
+    return {"parent_subnet_id": subnet_id, "next_available_prefix": prefix}
+
+
+@router.get('/ipam/reconciliation')
+def api_ipam_reconciliation(
+    active_tab: str = Query('', description='Current reconciliation result tab'),
+    q: str = Query('', description='Search reconciliation findings'),
+    page: int | None = Query(None, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    user=require_permission('ip_address', 'view'),
+):
+    return get_ipam_reconciliation(
+        active_tab=active_tab, q=q, page=page, page_size=page_size,
+        visible_scopes=_ipam_discovery_visible_scopes(user),
+    )
+
+
+@router.get('/ipam/endpoints')
+def api_list_discovered_endpoints(
+    site_id: str = Query('', description='Filter by authorized site'),
+    vrf_id: str = Query('', description='Filter by evidenced VRF; use __unknown__ for unresolved scope'),
+    device_id: str = Query('', description='Filter by a source device'),
+    q: str = Query('', description='Search IP, MAC, site, VLAN, device, or port'),
+    kind: str = Query('all', pattern='^(ip|mac|all)$'),
+    evidence_status: str = Query('', pattern='^(|recent|historical|scope_pending|conflict|unknown)$'),
+    registration_status: str = Query('', pattern='^(|registered|unregistered|scope_pending)$'),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    user=require_permission('ip_address', 'view'),
+):
+    visible_scopes = _ipam_discovery_visible_scopes(user)
+    if site_id and visible_scopes is not None and not any(site == site_id for _tenant, site in visible_scopes):
+        raise HTTPException(status_code=403, detail='Insufficient permission for this site scope')
+    return list_discovered_endpoints(
+        site_id=site_id, vrf_id=vrf_id, device_id=device_id, q=q,
+        kind=kind, evidence_status=evidence_status,
+        registration_status=registration_status, page=page, page_size=page_size,
+        visible_scopes=visible_scopes,
+    )
+
+
+@router.get('/ipam/endpoints/{observation_id}')
+def api_get_discovered_endpoint(
+    observation_id: str,
+    user=require_permission('ip_address', 'view'),
+):
+    item = get_discovered_endpoint(observation_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail='Discovery evidence not found')
+    visible_scopes = _ipam_discovery_visible_scopes(user)
+    item_scope = (str(item.get('tenant_id') or ''), str(item.get('site_id') or ''))
+    if visible_scopes is not None and item_scope not in visible_scopes:
+        raise HTTPException(status_code=403, detail='Insufficient permission for this discovery evidence')
+    return item
+
+
+@router.post('/ipam/reconciliation/register')
+def api_register_discovered_observation(
+    body: IPAMDiscoveryRegistrationRequest,
+    user=require_permission('ip_address', 'create'),
+):
+    values = body.model_dump()
+    target_scope = _prefix_scope(values['subnet_id'])
+    if TENANT_ISOLATION_ENABLED and tenant_id_for_write(requested=None, user=user) != str(target_scope.get('tenant_id') or DEFAULT_TENANT_ID):
+        raise HTTPException(status_code=403, detail='Subnet tenant does not match the authorized tenant')
+    enforce_resource_scope(
+        user, 'ip_address', 'create',
+        tenant_id=target_scope.get('tenant_id'), site_id=target_scope.get('site_id'),
+    )
+    try:
+        result = register_discovered_observation(
+            observation_id=values['observation_id'], subnet_id=values['subnet_id'],
+            expected_observed_at=values['expected_observed_at'],
+            confirmed_scope=values['confirmed_scope'],
+            requested_by=str(user.get('username') or ''),
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        status_code = 422 if str(exc) == 'scope_confirmation_required' else 409
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+
+    log_audit_event(
+        event_type='ipam.discovery.register', category='ipam', severity='info', status='success',
+        summary=f"Registered discovered IP {result.get('scope', {}).get('subnet_id')} from observation {values['observation_id']}",
+        actor_id=user.get('id'), actor_username=user.get('username'), actor_role=user.get('role'),
+        target_type='ip_address', target_id=result.get('ipam_address_id'),
+        target_name=result.get('scope', {}).get('subnet_id'), snapshot_id=values['observation_id'],
+        before={'source_scope': result.get('source_scope'), 'scope_status': 'scope_pending'},
+        after={'scope': result.get('scope'), 'assertion_id': result.get('assertion_id'), 'confirmed_scope': True},
+        details={'manual_scope_assertion': True},
+    )
+    return result
+
+
+@router.post('/ipam/reconciliation/calibrate')
+def api_calibrate_discovered_mac(
+    body: IPAMDiscoveryMACCalibrationRequest,
+    user=require_permission('ip_address', 'update'),
+):
+    values = body.model_dump()
+    address_scope = _address_scope(values['ipam_address_id'])
+    if TENANT_ISOLATION_ENABLED and tenant_id_for_write(requested=None, user=user) != str(address_scope.get('tenant_id') or DEFAULT_TENANT_ID):
+        raise HTTPException(status_code=403, detail='IPAM address tenant does not match the authorized tenant')
+    enforce_resource_scope(user, 'ip_address', 'update', **address_scope)
+    try:
+        result = calibrate_ipam_mac(
+            observation_id=values['observation_id'], ipam_address_id=values['ipam_address_id'],
+            expected_observed_at=values['expected_observed_at'],
+            expected_mac_address=values['expected_mac_address'], confirmed=values['confirmed'],
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        status_code = 422 if str(exc) == 'mac_calibration_confirmation_required' else 409
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+
+    log_audit_event(
+        event_type='ipam.discovery.mac_calibrate', category='ipam', severity='warning', status='success',
+        summary=f"Calibrated IPAM MAC for address {values['ipam_address_id']}",
+        actor_id=user.get('id'), actor_username=user.get('username'), actor_role=user.get('role'),
+        target_type='ip_address', target_id=values['ipam_address_id'],
+        snapshot_id=values['observation_id'],
+        before={'mac_address': result.get('previous_mac')},
+        after={'mac_address': result.get('mac'), 'observation_id': values['observation_id']},
+        details={'confirmed': True, 'observed_at': result.get('observed_at'), 'scope': result.get('scope')},
+    )
+    return result

@@ -1,0 +1,3843 @@
+# GENERATED FILE - source workbook is preserved separately.
+# Network device catalog
+# Review dimension_status/data_confidence before binding a model to production.
+-
+  catalog_key: "huawei__s5755_h24t4y2cz"
+  vendor: "huawei"
+  family: "CloudEngine S5755-H"
+  exact_model: "S5755-H24T4Y2CZ"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入/汇聚"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "24×GE Base-T + 4×25GE SFP28 + 2×100GE QSFP28"
+  port_count: 30
+  port_media_type: "mixed"
+  port_breakdown: "[{'count': 24, 'spec': 'GE Base-T'}, {'count': 4, 'spec': '25GE SFP28'}, {'count': 2, 'spec': '100GE QSFP28'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "银灰前面板、RJ45密集区、SFP28/QSFP28上联区、Huawei标识"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "huawei_s5755_h_family.glb"
+  notes: null
+  source_row: 4
+  source_title: "huawei CloudEngine S5755-H official product page"
+  source_url: "https://e.huawei.com/cn/products/switches/campus-switches/s5755-h-ge"
+  source_version: "2026-09-06"
+-
+  catalog_key: "huawei__s5755_h24p4y2cz"
+  vendor: "huawei"
+  family: "CloudEngine S5755-H"
+  exact_model: "S5755-H24P4Y2CZ"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "24×GE Base-T PoE+ + 4×25GE + 2×100GE"
+  port_count: 30
+  port_media_type: "copper"
+  port_breakdown: "[{'count': 24, 'spec': 'GE Base-T PoE'}, {'count': 4, 'spec': '25GE'}, {'count': 2, 'spec': '100GE'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "银灰前面板、RJ45密集区、SFP28/QSFP28上联区、Huawei标识"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "huawei_s5755_h_family.glb"
+  notes: null
+  source_row: 5
+  source_title: "huawei CloudEngine S5755-H official product page"
+  source_url: "https://e.huawei.com/cn/products/switches/campus-switches/s5755-h-ge"
+  source_version: "2026-09-06"
+-
+  catalog_key: "huawei__s5755_h24u4y2cz"
+  vendor: "huawei"
+  family: "CloudEngine S5755-H"
+  exact_model: "S5755-H24U4Y2CZ"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "24×GE Base-T PoE++ + 4×25GE + 2×100GE"
+  port_count: 30
+  port_media_type: "copper"
+  port_breakdown: "[{'count': 24, 'spec': 'GE Base-T PoE'}, {'count': 4, 'spec': '25GE'}, {'count': 2, 'spec': '100GE'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "银灰前面板、RJ45密集区、SFP28/QSFP28上联区、Huawei标识"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "huawei_s5755_h_family.glb"
+  notes: null
+  source_row: 6
+  source_title: "huawei CloudEngine S5755-H official product page"
+  source_url: "https://e.huawei.com/cn/products/switches/campus-switches/s5755-h-ge"
+  source_version: "2026-09-06"
+-
+  catalog_key: "huawei__s5755_h48t4y2cz"
+  vendor: "huawei"
+  family: "CloudEngine S5755-H"
+  exact_model: "S5755-H48T4Y2CZ"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入/汇聚"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×GE Base-T + 4×25GE + 2×100GE"
+  port_count: 54
+  port_media_type: "copper"
+  port_breakdown: "[{'count': 48, 'spec': 'GE Base-T'}, {'count': 4, 'spec': '25GE'}, {'count': 2, 'spec': '100GE'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "银灰前面板、RJ45密集区、SFP28/QSFP28上联区、Huawei标识"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "huawei_s5755_h_family.glb"
+  notes: null
+  source_row: 7
+  source_title: "huawei CloudEngine S5755-H official product page"
+  source_url: "https://e.huawei.com/cn/products/switches/campus-switches/s5755-h-ge"
+  source_version: "2026-09-06"
+-
+  catalog_key: "huawei__s5755_h48p4y2cz"
+  vendor: "huawei"
+  family: "CloudEngine S5755-H"
+  exact_model: "S5755-H48P4Y2CZ"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×GE Base-T PoE+ + 4×25GE + 2×100GE"
+  port_count: 54
+  port_media_type: "copper"
+  port_breakdown: "[{'count': 48, 'spec': 'GE Base-T PoE'}, {'count': 4, 'spec': '25GE'}, {'count': 2, 'spec': '100GE'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "银灰前面板、RJ45密集区、SFP28/QSFP28上联区、Huawei标识"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "huawei_s5755_h_family.glb"
+  notes: null
+  source_row: 8
+  source_title: "huawei CloudEngine S5755-H official product page"
+  source_url: "https://e.huawei.com/cn/products/switches/campus-switches/s5755-h-ge"
+  source_version: "2026-09-06"
+-
+  catalog_key: "huawei__s5755_h48u4y2cz"
+  vendor: "huawei"
+  family: "CloudEngine S5755-H"
+  exact_model: "S5755-H48U4Y2CZ"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×GE Base-T PoE++ + 4×25GE + 2×100GE"
+  port_count: 54
+  port_media_type: "copper"
+  port_breakdown: "[{'count': 48, 'spec': 'GE Base-T PoE'}, {'count': 4, 'spec': '25GE'}, {'count': 2, 'spec': '100GE'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "银灰前面板、RJ45密集区、SFP28/QSFP28上联区、Huawei标识"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "huawei_s5755_h_family.glb"
+  notes: null
+  source_row: 9
+  source_title: "huawei CloudEngine S5755-H official product page"
+  source_url: "https://e.huawei.com/cn/products/switches/campus-switches/s5755-h-ge"
+  source_version: "2026-09-06"
+-
+  catalog_key: "huawei__s6730_h24x6c_v2"
+  vendor: "huawei"
+  family: "CloudEngine S6730-H-V2"
+  exact_model: "S6730-H24X6C-V2"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "汇聚/核心"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "24×10GE SFP+ + 6×40/100GE QSFP28"
+  port_count: 30
+  port_media_type: "optical"
+  port_breakdown: "[{'count': 24, 'spec': '10GE SFP'}, {'count': 6, 'spec': '40/100GE QSFP28'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "全光前面板、SFP+矩阵、QSFP28上联区"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "huawei_s6730_h_v2_family.glb"
+  notes: null
+  source_row: 10
+  source_title: "huawei CloudEngine S6730-H-V2 official product page"
+  source_url: "https://e.huawei.com/cn/products/switches/campus-switches/s6730-h-v2-10g"
+  source_version: "2026-09-06"
+-
+  catalog_key: "huawei__s6730_h48x6c_v2"
+  vendor: "huawei"
+  family: "CloudEngine S6730-H-V2"
+  exact_model: "S6730-H48X6C-V2"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "汇聚/核心"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×10GE SFP+ + 6×40/100GE QSFP28"
+  port_count: 54
+  port_media_type: "optical"
+  port_breakdown: "[{'count': 48, 'spec': '10GE SFP'}, {'count': 6, 'spec': '40/100GE QSFP28'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "全光前面板、SFP+矩阵、QSFP28上联区"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "huawei_s6730_h_v2_family.glb"
+  notes: null
+  source_row: 11
+  source_title: "huawei CloudEngine S6730-H-V2 official product page"
+  source_url: "https://e.huawei.com/cn/products/switches/campus-switches/s6730-h-v2-10g"
+  source_version: "2026-09-06"
+-
+  catalog_key: "huawei__s6730_h28x6cz_v2"
+  vendor: "huawei"
+  family: "CloudEngine S6730-H-V2"
+  exact_model: "S6730-H28X6CZ-V2"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "汇聚/核心"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "28×10GE SFP+ + 6×40/100GE QSFP28"
+  port_count: 34
+  port_media_type: "optical"
+  port_breakdown: "[{'count': 28, 'spec': '10GE SFP'}, {'count': 6, 'spec': '40/100GE QSFP28'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "全光前面板、SFP+矩阵、QSFP28上联区"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "huawei_s6730_h_v2_family.glb"
+  notes: null
+  source_row: 12
+  source_title: "huawei CloudEngine S6730-H-V2 official product page"
+  source_url: "https://e.huawei.com/cn/products/switches/campus-switches/s6730-h-v2-10g"
+  source_version: "2026-09-06"
+-
+  catalog_key: "huawei__s6730_h48x6cz_v2"
+  vendor: "huawei"
+  family: "CloudEngine S6730-H-V2"
+  exact_model: "S6730-H48X6CZ-V2"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "汇聚/核心"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×10GE SFP+ + 6×40/100GE QSFP28"
+  port_count: 54
+  port_media_type: "optical"
+  port_breakdown: "[{'count': 48, 'spec': '10GE SFP'}, {'count': 6, 'spec': '40/100GE QSFP28'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "全光前面板、SFP+矩阵、QSFP28上联区"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "huawei_s6730_h_v2_family.glb"
+  notes: null
+  source_row: 13
+  source_title: "huawei CloudEngine S6730-H-V2 official product page"
+  source_url: "https://e.huawei.com/cn/products/switches/campus-switches/s6730-h-v2-10g"
+  source_version: "2026-09-06"
+-
+  catalog_key: "huawei__ce6855_48xs8cq"
+  vendor: "huawei"
+  family: "CloudEngine 6800"
+  exact_model: "CE6855-48XS8CQ"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf/ToR"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×10GE SFP+ + 8×40/100GE QSFP28"
+  port_count: 56
+  port_media_type: "optical"
+  port_breakdown: "[{'count': 48, 'spec': '10GE SFP'}, {'count': 8, 'spec': '40/100GE QSFP28'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "深色/银灰机身、高密SFP/SFP28、QSFP上联、前后风道"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "huawei_ce6800_family.glb"
+  notes: null
+  source_row: 14
+  source_title: "huawei CloudEngine 6800 official product page"
+  source_url: "https://e.huawei.com/en/products/switches/data-center-switches/ce6800"
+  source_version: "2026-09-06"
+-
+  catalog_key: "huawei__ce6855_48t8cq"
+  vendor: "huawei"
+  family: "CloudEngine 6800"
+  exact_model: "CE6855-48T8CQ"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf/ToR"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×10G Base-T + 8×40/100GE QSFP28"
+  port_count: 56
+  port_media_type: "mixed"
+  port_breakdown: "[{'count': 48, 'spec': '10G Base-T'}, {'count': 8, 'spec': '40/100GE QSFP28'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "深色/银灰机身、高密SFP/SFP28、QSFP上联、前后风道"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "huawei_ce6800_family.glb"
+  notes: null
+  source_row: 15
+  source_title: "huawei CloudEngine 6800 official product page"
+  source_url: "https://e.huawei.com/en/products/switches/data-center-switches/ce6800"
+  source_version: "2026-09-06"
+-
+  catalog_key: "huawei__ce6870_48s6cq_ei_a"
+  vendor: "huawei"
+  family: "CloudEngine 6800"
+  exact_model: "CE6870-48S6CQ-EI-A"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf/ToR"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×10GE + 6×40/100GE"
+  port_count: 54
+  port_media_type: "ethernet"
+  port_breakdown: "[{'count': 48, 'spec': '10GE'}, {'count': 6, 'spec': '40/100GE'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "深色/银灰机身、高密SFP/SFP28、QSFP上联、前后风道"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "huawei_ce6800_family.glb"
+  notes: null
+  source_row: 16
+  source_title: "huawei CloudEngine 6800 official product page"
+  source_url: "https://e.huawei.com/en/products/switches/data-center-switches/ce6800"
+  source_version: "2026-09-06"
+-
+  catalog_key: "huawei__ce6881_48s6cq"
+  vendor: "huawei"
+  family: "CloudEngine 6800"
+  exact_model: "CE6881-48S6CQ"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf/ToR"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×10GE + 6×40/100GE"
+  port_count: 54
+  port_media_type: "ethernet"
+  port_breakdown: "[{'count': 48, 'spec': '10GE'}, {'count': 6, 'spec': '40/100GE'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "深色/银灰机身、高密SFP/SFP28、QSFP上联、前后风道"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "huawei_ce6800_family.glb"
+  notes: null
+  source_row: 17
+  source_title: "huawei CloudEngine 6800 official product page"
+  source_url: "https://e.huawei.com/en/products/switches/data-center-switches/ce6800"
+  source_version: "2026-09-06"
+-
+  catalog_key: "huawei__ce6881_48t6cq"
+  vendor: "huawei"
+  family: "CloudEngine 6800"
+  exact_model: "CE6881-48T6CQ"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf/ToR"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×10G Base-T + 6×40/100GE"
+  port_count: 54
+  port_media_type: "copper"
+  port_breakdown: "[{'count': 48, 'spec': '10G Base-T'}, {'count': 6, 'spec': '40/100GE'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "深色/银灰机身、高密SFP/SFP28、QSFP上联、前后风道"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "huawei_ce6800_family.glb"
+  notes: null
+  source_row: 18
+  source_title: "huawei CloudEngine 6800 official product page"
+  source_url: "https://e.huawei.com/en/products/switches/data-center-switches/ce6800"
+  source_version: "2026-09-06"
+-
+  catalog_key: "huawei__ce6885_48ys8cq"
+  vendor: "huawei"
+  family: "CloudEngine 6800"
+  exact_model: "CE6885-48YS8CQ"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf/Spine"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×10/25/50GE + 8×40/100/200GE"
+  port_count: 56
+  port_media_type: "ethernet"
+  port_breakdown: "[{'count': 48, 'spec': '10/25/50GE'}, {'count': 8, 'spec': '40/100/200GE'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "深色/银灰机身、高密SFP/SFP28、QSFP上联、前后风道"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "huawei_ce6800_family.glb"
+  notes: null
+  source_row: 19
+  source_title: "huawei CloudEngine 6800 official product page"
+  source_url: "https://e.huawei.com/en/products/switches/data-center-switches/ce6800"
+  source_version: "2026-09-06"
+-
+  catalog_key: "huawei__ce6885h_48ys8cq"
+  vendor: "huawei"
+  family: "CloudEngine 6800"
+  exact_model: "CE6885H-48YS8CQ"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf/Spine"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×10/25/50GE + 8×40/100/200GE"
+  port_count: 56
+  port_media_type: "ethernet"
+  port_breakdown: "[{'count': 48, 'spec': '10/25/50GE'}, {'count': 8, 'spec': '40/100/200GE'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "深色/银灰机身、高密SFP/SFP28、QSFP上联、前后风道"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "huawei_ce6800_family.glb"
+  notes: null
+  source_row: 20
+  source_title: "huawei CloudEngine 6800 official product page"
+  source_url: "https://e.huawei.com/en/products/switches/data-center-switches/ce6800"
+  source_version: "2026-09-06"
+-
+  catalog_key: "huawei__ce6885l_48ys8cq"
+  vendor: "huawei"
+  family: "CloudEngine 6800"
+  exact_model: "CE6885L-48YS8CQ"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×10/25GE + 8×40/100GE"
+  port_count: 56
+  port_media_type: "ethernet"
+  port_breakdown: "[{'count': 48, 'spec': '10/25GE'}, {'count': 8, 'spec': '40/100GE'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "深色/银灰机身、高密SFP/SFP28、QSFP上联、前后风道"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "huawei_ce6800_family.glb"
+  notes: null
+  source_row: 21
+  source_title: "huawei CloudEngine 6800 official product page"
+  source_url: "https://e.huawei.com/en/products/switches/data-center-switches/ce6800"
+  source_version: "2026-09-06"
+-
+  catalog_key: "huawei__ce6863e_48s6cq"
+  vendor: "huawei"
+  family: "CloudEngine 6800"
+  exact_model: "CE6863E-48S6CQ"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×10/25GE + 6×40/100GE"
+  port_count: 54
+  port_media_type: "ethernet"
+  port_breakdown: "[{'count': 48, 'spec': '10/25GE'}, {'count': 6, 'spec': '40/100GE'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "深色/银灰机身、高密SFP/SFP28、QSFP上联、前后风道"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "huawei_ce6800_family.glb"
+  notes: null
+  source_row: 22
+  source_title: "huawei CloudEngine 6800 official product page"
+  source_url: "https://e.huawei.com/en/products/switches/data-center-switches/ce6800"
+  source_version: "2026-09-06"
+-
+  catalog_key: "huawei__ce6863h_48s6cq"
+  vendor: "huawei"
+  family: "CloudEngine 6800"
+  exact_model: "CE6863H-48S6CQ"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×10/25GE + 6×40/100GE"
+  port_count: 54
+  port_media_type: "ethernet"
+  port_breakdown: "[{'count': 48, 'spec': '10/25GE'}, {'count': 6, 'spec': '40/100GE'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "深色/银灰机身、高密SFP/SFP28、QSFP上联、前后风道"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "huawei_ce6800_family.glb"
+  notes: null
+  source_row: 23
+  source_title: "huawei CloudEngine 6800 official product page"
+  source_url: "https://e.huawei.com/en/products/switches/data-center-switches/ce6800"
+  source_version: "2026-09-06"
+-
+  catalog_key: "h3c__s5130s_20p_ei"
+  vendor: "h3c"
+  family: "S5130S-EI"
+  exact_model: "S5130S-20P-EI"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入"
+  height_u: 1
+  width_mm: 330
+  depth_mm: 230
+  height_mm: 43.6
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "16×GE RJ45 + 4×GE SFP"
+  port_count: 20
+  port_media_type: "mixed"
+  port_breakdown: "[{'count': 16, 'spec': 'GE RJ45'}, {'count': 4, 'spec': 'GE SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "H3C黑色1U、RJ45密集区、右侧SFP/SFP+"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "h3c_s5130s_ei_family.glb"
+  notes: null
+  source_row: 24
+  source_title: "h3c S5130S-EI official product page"
+  source_url: "https://www.h3c.com/cn/Products_And_Solution/InterConnect/Products/Switches/Products/Park_Switches/Access_Switch/S5130/H3C_S5130S-EI/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "h3c__s5130s_28p_ei"
+  vendor: "h3c"
+  family: "S5130S-EI"
+  exact_model: "S5130S-28P-EI"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入"
+  height_u: 1
+  width_mm: 440
+  depth_mm: 160
+  height_mm: 43.6
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "24×GE RJ45 + 4×GE SFP"
+  port_count: 28
+  port_media_type: "mixed"
+  port_breakdown: "[{'count': 24, 'spec': 'GE RJ45'}, {'count': 4, 'spec': 'GE SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "H3C黑色1U、RJ45密集区、右侧SFP/SFP+"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "h3c_s5130s_ei_family.glb"
+  notes: null
+  source_row: 25
+  source_title: "h3c S5130S-EI official product page"
+  source_url: "https://www.h3c.com/cn/Products_And_Solution/InterConnect/Products/Switches/Products/Park_Switches/Access_Switch/S5130/H3C_S5130S-EI/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "h3c__s5130s_28s_ei"
+  vendor: "h3c"
+  family: "S5130S-EI"
+  exact_model: "S5130S-28S-EI"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入"
+  height_u: 1
+  width_mm: 440
+  depth_mm: 160
+  height_mm: 43.6
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "24×GE RJ45 + 4×1/2.5/10GE SFP+"
+  port_count: 28
+  port_media_type: "mixed"
+  port_breakdown: "[{'count': 24, 'spec': 'GE RJ45'}, {'count': 4, 'spec': '1/2.5/10GE SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "H3C黑色1U、RJ45密集区、右侧SFP/SFP+"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "h3c_s5130s_ei_family.glb"
+  notes: null
+  source_row: 26
+  source_title: "h3c S5130S-EI official product page"
+  source_url: "https://www.h3c.com/cn/Products_And_Solution/InterConnect/Products/Switches/Products/Park_Switches/Access_Switch/S5130/H3C_S5130S-EI/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "h3c__s5130s_52p_ei"
+  vendor: "h3c"
+  family: "S5130S-EI"
+  exact_model: "S5130S-52P-EI"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入"
+  height_u: 1
+  width_mm: 440
+  depth_mm: 230
+  height_mm: 43.6
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "48×GE RJ45 + 4×GE SFP"
+  port_count: 52
+  port_media_type: "mixed"
+  port_breakdown: "[{'count': 48, 'spec': 'GE RJ45'}, {'count': 4, 'spec': 'GE SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "H3C黑色1U、RJ45密集区、右侧SFP/SFP+"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "h3c_s5130s_ei_family.glb"
+  notes: null
+  source_row: 27
+  source_title: "h3c S5130S-EI official product page"
+  source_url: "https://www.h3c.com/cn/Products_And_Solution/InterConnect/Products/Switches/Products/Park_Switches/Access_Switch/S5130/H3C_S5130S-EI/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "h3c__s5130s_52s_ei"
+  vendor: "h3c"
+  family: "S5130S-EI"
+  exact_model: "S5130S-52S-EI"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入"
+  height_u: 1
+  width_mm: 440
+  depth_mm: 230
+  height_mm: 43.6
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "48×GE RJ45 + 4×1/2.5/10GE SFP+"
+  port_count: 52
+  port_media_type: "mixed"
+  port_breakdown: "[{'count': 48, 'spec': 'GE RJ45'}, {'count': 4, 'spec': '1/2.5/10GE SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "H3C黑色1U、RJ45密集区、右侧SFP/SFP+"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "h3c_s5130s_ei_family.glb"
+  notes: null
+  source_row: 28
+  source_title: "h3c S5130S-EI official product page"
+  source_url: "https://www.h3c.com/cn/Products_And_Solution/InterConnect/Products/Switches/Products/Park_Switches/Access_Switch/S5130/H3C_S5130S-EI/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "h3c__s5560x_30c_ei"
+  vendor: "h3c"
+  family: "S5560X-EI"
+  exact_model: "S5560X-30C-EI"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "汇聚/核心"
+  height_u: 1
+  width_mm: 440
+  depth_mm: 360
+  height_mm: 43.6
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "24×GE RJ45（部分Combo）+ 4×10GE SFP+"
+  port_count: 28
+  port_media_type: "mixed"
+  port_breakdown: "[{'count': 24, 'spec': 'GE RJ45（部分Combo）'}, {'count': 4, 'spec': '10GE SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "黑色面板、RJ45/SFP组合、右侧高速上联"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "h3c_s5560x_ei_family.glb"
+  notes: null
+  source_row: 29
+  source_title: "h3c S5560X-EI official product page"
+  source_url: "https://wwwsg.h3c.com/en/Products_and_Solutions/InterConnect/Switches/Products/Campus_Network/Aggregation/S5500/H3C_S5560X-EI/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "h3c__s5560x_54c_ei"
+  vendor: "h3c"
+  family: "S5560X-EI"
+  exact_model: "S5560X-54C-EI"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "汇聚/核心"
+  height_u: 1
+  width_mm: 440
+  depth_mm: 360
+  height_mm: 43.6
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "48×GE RJ45 + 4×10GE SFP+"
+  port_count: 52
+  port_media_type: "mixed"
+  port_breakdown: "[{'count': 48, 'spec': 'GE RJ45'}, {'count': 4, 'spec': '10GE SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "黑色面板、RJ45/SFP组合、右侧高速上联"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "h3c_s5560x_ei_family.glb"
+  notes: null
+  source_row: 30
+  source_title: "h3c S5560X-EI official product page"
+  source_url: "https://wwwsg.h3c.com/en/Products_and_Solutions/InterConnect/Switches/Products/Campus_Network/Aggregation/S5500/H3C_S5560X-EI/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "h3c__s5560x_30f_ei"
+  vendor: "h3c"
+  family: "S5560X-EI"
+  exact_model: "S5560X-30F-EI"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "汇聚/核心"
+  height_u: 1
+  width_mm: 440
+  depth_mm: 360
+  height_mm: 43.6
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "24×GE SFP（部分Combo）+ 4×10GE SFP+"
+  port_count: 28
+  port_media_type: "optical"
+  port_breakdown: "[{'count': 24, 'spec': 'GE SFP（部分Combo）'}, {'count': 4, 'spec': '10GE SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "黑色面板、RJ45/SFP组合、右侧高速上联"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "h3c_s5560x_ei_family.glb"
+  notes: null
+  source_row: 31
+  source_title: "h3c S5560X-EI official product page"
+  source_url: "https://wwwsg.h3c.com/en/Products_and_Solutions/InterConnect/Switches/Products/Campus_Network/Aggregation/S5500/H3C_S5560X-EI/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "h3c__s5560x_54f_ei"
+  vendor: "h3c"
+  family: "S5560X-EI"
+  exact_model: "S5560X-54F-EI"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "汇聚/核心"
+  height_u: 1
+  width_mm: 440
+  depth_mm: 360
+  height_mm: 43.6
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "48×GE SFP + 4×10GE SFP+"
+  port_count: 52
+  port_media_type: "optical"
+  port_breakdown: "[{'count': 48, 'spec': 'GE SFP'}, {'count': 4, 'spec': '10GE SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "黑色面板、RJ45/SFP组合、右侧高速上联"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "h3c_s5560x_ei_family.glb"
+  notes: null
+  source_row: 32
+  source_title: "h3c S5560X-EI official product page"
+  source_url: "https://wwwsg.h3c.com/en/Products_and_Solutions/InterConnect/Switches/Products/Campus_Network/Aggregation/S5500/H3C_S5560X-EI/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "h3c__s5560x_34s_ei"
+  vendor: "h3c"
+  family: "S5560X-EI"
+  exact_model: "S5560X-34S-EI"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "汇聚/核心"
+  height_u: 1
+  width_mm: 440
+  depth_mm: 260
+  height_mm: 43.6
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "28×GE RJ45（4 Combo）+ 4×10GE SFP+ + 2×40GE QSFP+"
+  port_count: 34
+  port_media_type: "mixed"
+  port_breakdown: "[{'count': 28, 'spec': 'GE RJ45（4 Combo）'}, {'count': 4, 'spec': '10GE SFP'}, {'count': 2, 'spec': '40GE QSFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "黑色面板、RJ45/SFP组合、右侧高速上联"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "h3c_s5560x_ei_family.glb"
+  notes: null
+  source_row: 33
+  source_title: "h3c S5560X-EI official product page"
+  source_url: "https://wwwsg.h3c.com/en/Products_and_Solutions/InterConnect/Switches/Products/Campus_Network/Aggregation/S5500/H3C_S5560X-EI/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "h3c__s6850_56hf"
+  vendor: "h3c"
+  family: "S6850"
+  exact_model: "S6850-56HF"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf/ToR"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×25GE SFP28 + 8×100GE QSFP28 + 2×1GE SFP"
+  port_count: 58
+  port_media_type: "optical"
+  port_breakdown: "[{'count': 48, 'spec': '25GE SFP28'}, {'count': 8, 'spec': '100GE QSFP28'}, {'count': 2, 'spec': '1GE SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "黑色高密25G前面板、QSFP28区、双电源/风扇"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P0"
+  recommended_glb: "h3c_s6850_family.glb"
+  notes: null
+  source_row: 34
+  source_title: "h3c S6850 official product page"
+  source_url: "https://www.h3c.com/cn/Products_And_Solution/InterConnect/Products/Switches/Products/Data_Center_Switch/Access_Switch/S6800/S6850/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "h3c__s6850_56hf_h3"
+  vendor: "h3c"
+  family: "S6850"
+  exact_model: "S6850-56HF-H3"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf/ToR"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×25GE SFP28 + 8×100GE QSFP28"
+  port_count: 56
+  port_media_type: "optical"
+  port_breakdown: "[{'count': 48, 'spec': '25GE SFP28'}, {'count': 8, 'spec': '100GE QSFP28'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "黑色高密25G前面板、QSFP28区、双电源/风扇"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P0"
+  recommended_glb: "h3c_s6850_family.glb"
+  notes: null
+  source_row: 35
+  source_title: "h3c S6850 official product page"
+  source_url: "https://www.h3c.com/cn/Products_And_Solution/InterConnect/Products/Switches/Products/Data_Center_Switch/Access_Switch/S6800/S6850/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "h3c__s6850_56hf_g"
+  vendor: "h3c"
+  family: "S6850"
+  exact_model: "S6850-56HF-G"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf/ToR"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×25GE SFP28 + 8×100GE QSFP28"
+  port_count: 56
+  port_media_type: "optical"
+  port_breakdown: "[{'count': 48, 'spec': '25GE SFP28'}, {'count': 8, 'spec': '100GE QSFP28'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "黑色高密25G前面板、QSFP28区、双电源/风扇"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P0"
+  recommended_glb: "h3c_s6850_family.glb"
+  notes: null
+  source_row: 36
+  source_title: "h3c S6850 official product page"
+  source_url: "https://www.h3c.com/cn/Products_And_Solution/InterConnect/Products/Switches/Products/Data_Center_Switch/Access_Switch/S6800/S6850/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "h3c__s6850s_48y8c_g"
+  vendor: "h3c"
+  family: "S6850"
+  exact_model: "S6850S-48Y8C-G"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf/ToR"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×25GE SFP28 + 8×100GE QSFP28"
+  port_count: 56
+  port_media_type: "optical"
+  port_breakdown: "[{'count': 48, 'spec': '25GE SFP28'}, {'count': 8, 'spec': '100GE QSFP28'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "黑色高密25G前面板、QSFP28区、双电源/风扇"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P0"
+  recommended_glb: "h3c_s6850_family.glb"
+  notes: null
+  source_row: 37
+  source_title: "h3c S6850 official product page"
+  source_url: "https://www.h3c.com/cn/Products_And_Solution/InterConnect/Products/Switches/Products/Data_Center_Switch/Access_Switch/S6800/S6850/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "h3c__s6850_2c"
+  vendor: "h3c"
+  family: "S6850"
+  exact_model: "S6850-2C"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf/ToR"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "2业务插槽 + 2×100GE QSFP28"
+  port_count: 2
+  port_media_type: "optical"
+  port_breakdown: "[{'count': 2, 'spec': '100GE QSFP28'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "黑色高密25G前面板、QSFP28区、双电源/风扇"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P0"
+  recommended_glb: "h3c_s6850_family.glb"
+  notes: null
+  source_row: 38
+  source_title: "h3c S6850 official product page"
+  source_url: "https://www.h3c.com/cn/Products_And_Solution/InterConnect/Products/Switches/Products/Data_Center_Switch/Access_Switch/S6800/S6850/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "h3c__s6805_54hf"
+  vendor: "h3c"
+  family: "S6805"
+  exact_model: "S6805-54HF"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf/ToR"
+  height_u: 1
+  width_mm: 440
+  depth_mm: 460
+  height_mm: 44
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "48×10GE SFP+ + 6×100GE QSFP28"
+  port_count: 54
+  port_media_type: "optical"
+  port_breakdown: "[{'count': 48, 'spec': '10GE SFP'}, {'count': 6, 'spec': '100GE QSFP28'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "高密万兆端口、QSFP28上联、前后风道"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "h3c_s6805_family.glb"
+  notes: null
+  source_row: 39
+  source_title: "h3c S6805 official product page"
+  source_url: "https://www.h3c.com/cn/Products_And_Solution/InterConnect/Products/Switches/Products/Data_Center_Switch/Access_Switch/S6800/S6805/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "h3c__s6805_54ht"
+  vendor: "h3c"
+  family: "S6805"
+  exact_model: "S6805-54HT"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf/ToR"
+  height_u: 1
+  width_mm: 440
+  depth_mm: 460
+  height_mm: 44
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "48×10G Base-T + 6×100GE QSFP28"
+  port_count: 54
+  port_media_type: "mixed"
+  port_breakdown: "[{'count': 48, 'spec': '10G Base-T'}, {'count': 6, 'spec': '100GE QSFP28'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "高密万兆端口、QSFP28上联、前后风道"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "h3c_s6805_family.glb"
+  notes: null
+  source_row: 40
+  source_title: "h3c S6805 official product page"
+  source_url: "https://www.h3c.com/cn/Products_And_Solution/InterConnect/Products/Switches/Products/Data_Center_Switch/Access_Switch/S6800/S6805/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "h3c__s6805_56hf_g"
+  vendor: "h3c"
+  family: "S6805"
+  exact_model: "S6805-56HF-G"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf/ToR"
+  height_u: 1
+  width_mm: 440
+  depth_mm: 400
+  height_mm: 44
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "48×10GE SFP+ + 8×100GE QSFP28"
+  port_count: 56
+  port_media_type: "optical"
+  port_breakdown: "[{'count': 48, 'spec': '10GE SFP'}, {'count': 8, 'spec': '100GE QSFP28'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "高密万兆端口、QSFP28上联、前后风道"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "h3c_s6805_family.glb"
+  notes: null
+  source_row: 41
+  source_title: "h3c S6805 official product page"
+  source_url: "https://www.h3c.com/cn/Products_And_Solution/InterConnect/Products/Switches/Products/Data_Center_Switch/Access_Switch/S6800/S6805/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "h3c__s6805s_48x8c_g"
+  vendor: "h3c"
+  family: "S6805"
+  exact_model: "S6805S-48X8C-G"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf/ToR"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×10GE SFP+ + 8×100GE QSFP28"
+  port_count: 56
+  port_media_type: "optical"
+  port_breakdown: "[{'count': 48, 'spec': '10GE SFP'}, {'count': 8, 'spec': '100GE QSFP28'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "高密万兆端口、QSFP28上联、前后风道"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "h3c_s6805_family.glb"
+  notes: null
+  source_row: 42
+  source_title: "h3c S6805 official product page"
+  source_url: "https://www.h3c.com/cn/Products_And_Solution/InterConnect/Products/Switches/Products/Data_Center_Switch/Access_Switch/S6800/S6805/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "h3c__s6805_56ht_g"
+  vendor: "h3c"
+  family: "S6805"
+  exact_model: "S6805-56HT-G"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf/ToR"
+  height_u: 1
+  width_mm: 440
+  depth_mm: 400
+  height_mm: 44
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "48×100M/1G/2.5G/5G/10G Base-T + 8×100GE"
+  port_count: 56
+  port_media_type: "copper"
+  port_breakdown: "[{'count': 48, 'spec': '100M/1G/2.5G/5G/10G Base-T'}, {'count': 8, 'spec': '100GE'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "高密万兆端口、QSFP28上联、前后风道"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "h3c_s6805_family.glb"
+  notes: null
+  source_row: 43
+  source_title: "h3c S6805 official product page"
+  source_url: "https://www.h3c.com/cn/Products_And_Solution/InterConnect/Products/Switches/Products/Data_Center_Switch/Access_Switch/S6800/S6805/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "ruijie__rg_s6160_28vs8cq_x"
+  vendor: "ruijie"
+  family: "园区盒式交换机"
+  exact_model: "RG-S6160-28VS8CQ-X"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入/汇聚/核心"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "24×1/2.5/10/25G SFP28 + 4×25G + 8×40/100G"
+  port_count: 36
+  port_media_type: "optical"
+  port_breakdown: "[{'count': 24, 'spec': '1/2.5/10/25G SFP28'}, {'count': 4, 'spec': '25G'}, {'count': 8, 'spec': '40/100G'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "锐捷深灰/黑前面板，按端口布局区分RJ45/SFP/高速口"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "ruijie_campus_family.glb"
+  notes: null
+  source_row: 44
+  source_title: "ruijie 园区盒式交换机 official product page"
+  source_url: "https://www.ruijie.com.cn/cp/jh-yqw-hjjh/RG-S6160-28VS8CQ-X/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "ruijie__rg_s6160_48vs8cq_x"
+  vendor: "ruijie"
+  family: "园区盒式交换机"
+  exact_model: "RG-S6160-48VS8CQ-X"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入/汇聚/核心"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×1/2.5/10/25G SFP28 + 8×40/100G"
+  port_count: 56
+  port_media_type: "optical"
+  port_breakdown: "[{'count': 48, 'spec': '1/2.5/10/25G SFP28'}, {'count': 8, 'spec': '40/100G'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "锐捷深灰/黑前面板，按端口布局区分RJ45/SFP/高速口"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "ruijie_campus_family.glb"
+  notes: null
+  source_row: 45
+  source_title: "ruijie 园区盒式交换机 official product page"
+  source_url: "https://www.ruijie.com.cn/cp/jh-yqw-hjjh/RG-S6160-28VS8CQ-X/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "ruijie__rg_s6160_48xmg4vs2cq_up_x"
+  vendor: "ruijie"
+  family: "园区盒式交换机"
+  exact_model: "RG-S6160-48XMG4VS2CQ-UP-X"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入/汇聚/核心"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×100M/1/2.5/5/10G Base-T + 4×25G + 2×40/100G"
+  port_count: 54
+  port_media_type: "copper"
+  port_breakdown: "[{'count': 48, 'spec': '100M/1/2.5/5/10G Base-T'}, {'count': 4, 'spec': '25G'}, {'count': 2, 'spec': '40/100G'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "锐捷深灰/黑前面板，按端口布局区分RJ45/SFP/高速口"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "ruijie_campus_family.glb"
+  notes: null
+  source_row: 46
+  source_title: "ruijie 园区盒式交换机 official product page"
+  source_url: "https://www.ruijie.com.cn/cp/jh-yqw-hjjh/RG-S6160-28VS8CQ-X/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "ruijie__rg_s6120_20xs4vs2qxs"
+  vendor: "ruijie"
+  family: "园区盒式交换机"
+  exact_model: "RG-S6120-20XS4VS2QXS"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入/汇聚/核心"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "20×10G + 4×25G + 2×40G"
+  port_count: 26
+  port_media_type: "ethernet"
+  port_breakdown: "[{'count': 20, 'spec': '10G'}, {'count': 4, 'spec': '25G'}, {'count': 2, 'spec': '40G'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "锐捷深灰/黑前面板，按端口布局区分RJ45/SFP/高速口"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "ruijie_campus_family.glb"
+  notes: null
+  source_row: 47
+  source_title: "ruijie 园区盒式交换机 official product page"
+  source_url: "https://www.ruijie.com.cn/cp/jh-yqw-hjjh/s612020xs4vs2qxs/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "ruijie__rg_s6110_48mg4vs2qxs_up"
+  vendor: "ruijie"
+  family: "园区盒式交换机"
+  exact_model: "RG-S6110-48MG4VS2QXS-UP"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入/汇聚/核心"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×5G Base-T + 4×25G + 2×40G"
+  port_count: 54
+  port_media_type: "copper"
+  port_breakdown: "[{'count': 48, 'spec': '5G Base-T'}, {'count': 4, 'spec': '25G'}, {'count': 2, 'spec': '40G'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "锐捷深灰/黑前面板，按端口布局区分RJ45/SFP/高速口"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "ruijie_campus_family.glb"
+  notes: null
+  source_row: 48
+  source_title: "ruijie 园区盒式交换机 official product page"
+  source_url: "https://www.ruijie.com.cn/cp/jh-yqw-hjjh/s611048mg4vs2qxsup/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "ruijie__rg_s6120_24xmg4xs4vs_up_h"
+  vendor: "ruijie"
+  family: "园区盒式交换机"
+  exact_model: "RG-S6120-24XMG4XS4VS-UP-H"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入/汇聚/核心"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "24×10G multi-rate Base-T + 4×10G + 4×25G"
+  port_count: 32
+  port_media_type: "copper"
+  port_breakdown: "[{'count': 24, 'spec': '10G multi-rate Base-T'}, {'count': 4, 'spec': '10G'}, {'count': 4, 'spec': '25G'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "锐捷深灰/黑前面板，按端口布局区分RJ45/SFP/高速口"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "ruijie_campus_family.glb"
+  notes: null
+  source_row: 49
+  source_title: "ruijie 园区盒式交换机 official product page"
+  source_url: "https://www.ruijie.com.cn/cp/jh-yqw-hjjh/s611048mg4vs2qxsup/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "ruijie__rg_s5760c_48gt4xs_hp_x"
+  vendor: "ruijie"
+  family: "园区盒式交换机"
+  exact_model: "RG-S5760C-48GT4XS-HP-X"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入/汇聚/核心"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×GE RJ45 PoE + 4×10G SFP+"
+  port_count: 52
+  port_media_type: "mixed"
+  port_breakdown: "[{'count': 48, 'spec': 'GE RJ45 PoE'}, {'count': 4, 'spec': '10G SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "锐捷深灰/黑前面板，按端口布局区分RJ45/SFP/高速口"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "ruijie_campus_family.glb"
+  notes: null
+  source_row: 50
+  source_title: "ruijie 园区盒式交换机 official product page"
+  source_url: "https://www.ruijie.com.cn/cp/jh-yqw-hjjh/RG-S5760C-48GT4XS-X/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "ruijie__rg_s5760c_48sfp4xs_x"
+  vendor: "ruijie"
+  family: "园区盒式交换机"
+  exact_model: "RG-S5760C-48SFP4XS-X"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入/汇聚/核心"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×GE SFP + 4×10G SFP+"
+  port_count: 52
+  port_media_type: "optical"
+  port_breakdown: "[{'count': 48, 'spec': 'GE SFP'}, {'count': 4, 'spec': '10G SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "锐捷深灰/黑前面板，按端口布局区分RJ45/SFP/高速口"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "ruijie_campus_family.glb"
+  notes: null
+  source_row: 51
+  source_title: "ruijie 园区盒式交换机 official product page"
+  source_url: "https://www.ruijie.com.cn/cp/jh-yqw-hjjh/RG-S5760C-48GT4XS-X/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "ruijie__rg_s5750c_28gt4xs_h"
+  vendor: "ruijie"
+  family: "园区盒式交换机"
+  exact_model: "RG-S5750C-28GT4XS-H"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入/汇聚/核心"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "28×GE RJ45 + 4×10G SFP+"
+  port_count: 32
+  port_media_type: "mixed"
+  port_breakdown: "[{'count': 28, 'spec': 'GE RJ45'}, {'count': 4, 'spec': '10G SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "锐捷深灰/黑前面板，按端口布局区分RJ45/SFP/高速口"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "ruijie_campus_family.glb"
+  notes: null
+  source_row: 52
+  source_title: "ruijie 园区盒式交换机 official product page"
+  source_url: "https://www.ruijie.com.cn/cp/jh-yqw-hjjh/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "ruijie__rg_s5750c_48gt4xs_h"
+  vendor: "ruijie"
+  family: "园区盒式交换机"
+  exact_model: "RG-S5750C-48GT4XS-H"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入/汇聚/核心"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×GE RJ45 + 4×10G SFP+"
+  port_count: 52
+  port_media_type: "mixed"
+  port_breakdown: "[{'count': 48, 'spec': 'GE RJ45'}, {'count': 4, 'spec': '10G SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "锐捷深灰/黑前面板，按端口布局区分RJ45/SFP/高速口"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "ruijie_campus_family.glb"
+  notes: null
+  source_row: 53
+  source_title: "ruijie 园区盒式交换机 official product page"
+  source_url: "https://www.ruijie.com.cn/cp/jh-yqw-hjjh/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "ruijie__rg_s6990_128qc2xs"
+  vendor: "ruijie"
+  family: "数据中心核心/AI交换机"
+  exact_model: "RG-S6990-128QC2XS"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "AI Spine"
+  height_u: 4
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "128×100/200/400GE QSFP112 + 2×10GE"
+  port_count: 130
+  port_media_type: "optical"
+  port_breakdown: "[{'count': 128, 'spec': '100/200/400GE QSFP112'}, {'count': 2, 'spec': '10GE'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "400G/800G高密前面板或模块化机框；风扇、电源区要独立"
+  modeling_approach: "精确模型"
+  asset_priority: "P0"
+  recommended_glb: "ruijie_dc_family.glb"
+  notes: null
+  source_row: 54
+  source_title: "ruijie 数据中心核心/AI交换机 official product page"
+  source_url: "https://www.ruijie.com.cn/cp/jh-shjzhx-sjzxhx/s6990128qc/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "ruijie__rg_s6921_4c"
+  vendor: "ruijie"
+  family: "数据中心核心/AI交换机"
+  exact_model: "RG-S6921-4C"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Spine/Core"
+  height_u: null
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "4业务槽；最大128×100G/64×200G/32×400G"
+  port_count: 128
+  port_media_type: "ethernet"
+  port_breakdown: "[{'count': 128, 'spec': '100G/64×200G/32×400G'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "400G/800G高密前面板或模块化机框；风扇、电源区要独立"
+  modeling_approach: "精确模型"
+  asset_priority: "P0"
+  recommended_glb: "ruijie_dc_family.glb"
+  notes: null
+  source_row: 55
+  source_title: "ruijie 数据中心核心/AI交换机 official product page"
+  source_url: "https://www.ruijie.com.cn/cp/jh-shjzhx-sjzxhx/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "ruijie__rg_s6990_64oc2xs"
+  vendor: "ruijie"
+  family: "数据中心核心/AI交换机"
+  exact_model: "RG-S6990-64OC2XS"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "AI Spine"
+  height_u: 2
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "64×800GE 或 128×400GE + 2×10GE"
+  port_count: 66
+  port_media_type: "ethernet"
+  port_breakdown: "[{'count': 64, 'spec': '800GE 或 128×400GE'}, {'count': 2, 'spec': '10GE'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "400G/800G高密前面板或模块化机框；风扇、电源区要独立"
+  modeling_approach: "精确模型"
+  asset_priority: "P0"
+  recommended_glb: "ruijie_dc_family.glb"
+  notes: null
+  source_row: 56
+  source_title: "ruijie 数据中心核心/AI交换机 official product page"
+  source_url: "https://www.ruijie.com.cn/cp/jh-shjzhx-sjzxhx/s6990128qc/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "ruijie__rg_n18010_xh"
+  vendor: "ruijie"
+  family: "数据中心核心/AI交换机"
+  exact_model: "RG-N18010-XH"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Core/Spine"
+  height_u: null
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "8业务槽；100G/400G线卡"
+  port_count: null
+  port_media_type: "unknown"
+  port_breakdown: "[]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "400G/800G高密前面板或模块化机框；风扇、电源区要独立"
+  modeling_approach: "精确模型"
+  asset_priority: "P0"
+  recommended_glb: "ruijie_dc_family.glb"
+  notes: null
+  source_row: 57
+  source_title: "ruijie 数据中心核心/AI交换机 official product page"
+  source_url: "https://www.ruijie.com.cn/cp/jh-shjzhx-sjzxhx/n18010xh/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "ruijie__rg_n18018_x"
+  vendor: "ruijie"
+  family: "数据中心核心/AI交换机"
+  exact_model: "RG-N18018-X"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Core"
+  height_u: null
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "16业务槽；10/40/100/200G线卡"
+  port_count: null
+  port_media_type: "unknown"
+  port_breakdown: "[]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "400G/800G高密前面板或模块化机框；风扇、电源区要独立"
+  modeling_approach: "精确模型"
+  asset_priority: "P0"
+  recommended_glb: "ruijie_dc_family.glb"
+  notes: null
+  source_row: 58
+  source_title: "ruijie 数据中心核心/AI交换机 official product page"
+  source_url: "https://www.ruijie.com.cn/cp/jh-shjzhx-sjzxhx/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "ruijie__rg_n18010_x"
+  vendor: "ruijie"
+  family: "数据中心核心/AI交换机"
+  exact_model: "RG-N18010-X"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Core"
+  height_u: null
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "8业务槽；10/40/100/200/400G线卡"
+  port_count: null
+  port_media_type: "unknown"
+  port_breakdown: "[]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "400G/800G高密前面板或模块化机框；风扇、电源区要独立"
+  modeling_approach: "精确模型"
+  asset_priority: "P0"
+  recommended_glb: "ruijie_dc_family.glb"
+  notes: null
+  source_row: 59
+  source_title: "ruijie 数据中心核心/AI交换机 official product page"
+  source_url: "https://www.ruijie.com.cn/cp/jh-shjzhx-sjzxhx/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "ruijie__rg_n18006_x"
+  vendor: "ruijie"
+  family: "数据中心核心/AI交换机"
+  exact_model: "RG-N18006-X"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Core"
+  height_u: null
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "4业务槽；10/40/100/200/400G线卡"
+  port_count: null
+  port_media_type: "unknown"
+  port_breakdown: "[]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "400G/800G高密前面板或模块化机框；风扇、电源区要独立"
+  modeling_approach: "精确模型"
+  asset_priority: "P0"
+  recommended_glb: "ruijie_dc_family.glb"
+  notes: null
+  source_row: 60
+  source_title: "ruijie 数据中心核心/AI交换机 official product page"
+  source_url: "https://www.ruijie.com.cn/cp/jh-shjzhx-sjzxhx/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "ruijie__rg_s6980_64qc"
+  vendor: "ruijie"
+  family: "数据中心核心/AI交换机"
+  exact_model: "RG-S6980-64QC"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "AI Spine"
+  height_u: 4
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "64×400G QSFP-DD"
+  port_count: 64
+  port_media_type: "optical"
+  port_breakdown: "[{'count': 64, 'spec': '400G QSFP-DD'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "400G/800G高密前面板或模块化机框；风扇、电源区要独立"
+  modeling_approach: "精确模型"
+  asset_priority: "P0"
+  recommended_glb: "ruijie_dc_family.glb"
+  notes: null
+  source_row: 61
+  source_title: "ruijie 数据中心核心/AI交换机 official product page"
+  source_url: "https://www.ruijie.com.cn/cp/jh-shjzhx-sjzxhx/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "ruijie__rg_s6930_2c"
+  vendor: "ruijie"
+  family: "数据中心核心/AI交换机"
+  exact_model: "RG-S6930-2C"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Core/Spine"
+  height_u: 4
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "2业务槽；最大144×100G/72×200G"
+  port_count: 144
+  port_media_type: "ethernet"
+  port_breakdown: "[{'count': 144, 'spec': '100G/72×200G'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "400G/800G高密前面板或模块化机框；风扇、电源区要独立"
+  modeling_approach: "精确模型"
+  asset_priority: "P0"
+  recommended_glb: "ruijie_dc_family.glb"
+  notes: null
+  source_row: 62
+  source_title: "ruijie 数据中心核心/AI交换机 official product page"
+  source_url: "https://www.ruijie.com.cn/cp/jh-shjzhx-sjzxhx/s69302c/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "ruijie__rg_s6920_4c"
+  vendor: "ruijie"
+  family: "数据中心核心/AI交换机"
+  exact_model: "RG-S6920-4C"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Core/Spine"
+  height_u: null
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "4业务槽；最大128×100G/32×400G"
+  port_count: 128
+  port_media_type: "ethernet"
+  port_breakdown: "[{'count': 128, 'spec': '100G/32×400G'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "400G/800G高密前面板或模块化机框；风扇、电源区要独立"
+  modeling_approach: "精确模型"
+  asset_priority: "P0"
+  recommended_glb: "ruijie_dc_family.glb"
+  notes: null
+  source_row: 63
+  source_title: "ruijie 数据中心核心/AI交换机 official product page"
+  source_url: "https://www.ruijie.com.cn/cp/jh-shjzhx-sjzxhx/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "zte__zxr10_c89e_4"
+  vendor: "zte"
+  family: "C89E-4"
+  exact_model: "ZXR10 C89E-4"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "园区核心"
+  height_u: 11
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "4业务槽；FE/GE/10GE/40GE/100GE线卡"
+  port_count: null
+  port_media_type: "unknown"
+  port_breakdown: "[]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "中兴黑灰面板；框式型号按槽位建模，盒式按端口纹理/几何"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P0"
+  recommended_glb: "zte_campus_family.glb"
+  notes: null
+  source_row: 64
+  source_title: "zte C89E-4 official product page"
+  source_url: "https://www.zte.com.cn/global/product_index/campus-ethernet-switch/campus-core-switch/zxr10/zxr10-c89e-4.html"
+  source_version: "2026-09-06"
+-
+  catalog_key: "zte__zxr10_c89e_3"
+  vendor: "zte"
+  family: "C89E-3"
+  exact_model: "ZXR10 C89E-3"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "园区核心/汇聚"
+  height_u: 4
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "3业务槽；园区模块化核心/汇聚"
+  port_count: null
+  port_media_type: "unknown"
+  port_breakdown: "[]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "中兴黑灰面板；框式型号按槽位建模，盒式按端口纹理/几何"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P0"
+  recommended_glb: "zte_campus_family.glb"
+  notes: null
+  source_row: 65
+  source_title: "zte C89E-3 official product page"
+  source_url: "https://www.zte.com.cn/content/dam/zte-site/res-www-zte-com-cn/%E6%94%BF%E4%BC%81/2025%E6%94%BF%E4%BC%81%E5%AE%98%E7%BD%91%E6%9B%B4%E6%96%B0%E8%B5%84%E6%96%99%E6%96%87%E4%BB%B6%E5%A4%B9/2025%E5%B9%B4%E8%A1%8C%E4%B8%9A%E7%94%BB%E5%86%8C/%EF%BC%88%E5%8D%95%E9%A1%B5%E9%A2%84%E8%A7%88%E7%89%88%EF%BC%89%E7%94%B5%E5%8A%9B%E5%AE%A3%E4%BC%A0%E5%86%8C.pdf"
+  source_version: "2026-09-06"
+-
+  catalog_key: "zte__zxr10_5950_36tm_e"
+  vendor: "zte"
+  family: "5950-36TM-E"
+  exact_model: "ZXR10 5950-36TM-E"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "汇聚"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "24×GE RJ45 + 4×10GE SFP+ + 1扩展卡"
+  port_count: 28
+  port_media_type: "mixed"
+  port_breakdown: "[{'count': 24, 'spec': 'GE RJ45'}, {'count': 4, 'spec': '10GE SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "中兴黑灰面板；框式型号按槽位建模，盒式按端口纹理/几何"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P0"
+  recommended_glb: "zte_campus_family.glb"
+  notes: null
+  source_row: 66
+  source_title: "zte 5950-36TM-E official product page"
+  source_url: "https://www.zte.com.cn/jp/switch_list/switch_product_5950-E.html"
+  source_version: "2026-09-06"
+-
+  catalog_key: "zte__zxr10_5950_60tm_e"
+  vendor: "zte"
+  family: "5950-60TM-E"
+  exact_model: "ZXR10 5950-60TM-E"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "汇聚"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×GE RJ45 + 4×10GE SFP+ + 1扩展卡"
+  port_count: 52
+  port_media_type: "mixed"
+  port_breakdown: "[{'count': 48, 'spec': 'GE RJ45'}, {'count': 4, 'spec': '10GE SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "中兴黑灰面板；框式型号按槽位建模，盒式按端口纹理/几何"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P0"
+  recommended_glb: "zte_campus_family.glb"
+  notes: null
+  source_row: 67
+  source_title: "zte 5950-60TM-E official product page"
+  source_url: "https://www.zte.com.cn/jp/switch_list/switch_product_5950-E.html"
+  source_version: "2026-09-06"
+-
+  catalog_key: "zte__zxr10_5950_60sm_e"
+  vendor: "zte"
+  family: "5950-60SM-E"
+  exact_model: "ZXR10 5950-60SM-E"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "汇聚"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×GE SFP + 4×10GE SFP+ + 1扩展卡"
+  port_count: 52
+  port_media_type: "optical"
+  port_breakdown: "[{'count': 48, 'spec': 'GE SFP'}, {'count': 4, 'spec': '10GE SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "中兴黑灰面板；框式型号按槽位建模，盒式按端口纹理/几何"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P0"
+  recommended_glb: "zte_campus_family.glb"
+  notes: null
+  source_row: 68
+  source_title: "zte 5950-60SM-E official product page"
+  source_url: "https://www.zte.com.cn/jp/switch_list/switch_product_5950-E.html"
+  source_version: "2026-09-06"
+-
+  catalog_key: "zte__zxr10_5950_36pm_e"
+  vendor: "zte"
+  family: "5950-36PM-E"
+  exact_model: "ZXR10 5950-36PM-E"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "汇聚/接入"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "24×GE PoE+ + 4×10GE SFP+ + 1扩展卡"
+  port_count: 28
+  port_media_type: "mixed"
+  port_breakdown: "[{'count': 24, 'spec': 'GE PoE'}, {'count': 4, 'spec': '10GE SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "中兴黑灰面板；框式型号按槽位建模，盒式按端口纹理/几何"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P0"
+  recommended_glb: "zte_campus_family.glb"
+  notes: null
+  source_row: 69
+  source_title: "zte 5950-36PM-E official product page"
+  source_url: "https://www.zte.com.cn/jp/switch_list/switch_product_5950-E.html"
+  source_version: "2026-09-06"
+-
+  catalog_key: "zte__zxr10_5950_60pm_e"
+  vendor: "zte"
+  family: "5950-60PM-E"
+  exact_model: "ZXR10 5950-60PM-E"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "汇聚/接入"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×GE PoE+ + 4×10GE SFP+ + 1扩展卡"
+  port_count: 52
+  port_media_type: "mixed"
+  port_breakdown: "[{'count': 48, 'spec': 'GE PoE'}, {'count': 4, 'spec': '10GE SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "中兴黑灰面板；框式型号按槽位建模，盒式按端口纹理/几何"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P0"
+  recommended_glb: "zte_campus_family.glb"
+  notes: null
+  source_row: 70
+  source_title: "zte 5950-60PM-E official product page"
+  source_url: "https://www.zte.com.cn/jp/switch_list/switch_product_5950-E.html"
+  source_version: "2026-09-06"
+-
+  catalog_key: "zte__zxr10_5970_60pm"
+  vendor: "zte"
+  family: "5970-60PM"
+  exact_model: "ZXR10 5970-60PM"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "高性能接入/汇聚"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "多速率PoE：12×10G/5G/2.5G/GE +36×2.5G/GE +4×25G"
+  port_count: 52
+  port_media_type: "ethernet"
+  port_breakdown: "[{'count': 12, 'spec': '10G/5G/2.5G/GE'}, {'count': 36, 'spec': '2.5G/GE'}, {'count': 4, 'spec': '25G'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "中兴黑灰面板；框式型号按槽位建模，盒式按端口纹理/几何"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P0"
+  recommended_glb: "zte_campus_family.glb"
+  notes: null
+  source_row: 71
+  source_title: "zte 5970-60PM official product page"
+  source_url: "https://www.zte.com.cn/jp/switch_list/switch_product_5970.html"
+  source_version: "2026-09-06"
+-
+  catalog_key: "zte__zxr10_5260_52ts_s"
+  vendor: "zte"
+  family: "5260-52TS-S"
+  exact_model: "ZXR10 5260-52TS-S"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×GE RJ45 + 4×GE SFP"
+  port_count: 52
+  port_media_type: "mixed"
+  port_breakdown: "[{'count': 48, 'spec': 'GE RJ45'}, {'count': 4, 'spec': 'GE SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "中兴黑灰面板；框式型号按槽位建模，盒式按端口纹理/几何"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P0"
+  recommended_glb: "zte_campus_family.glb"
+  notes: null
+  source_row: 72
+  source_title: "zte 5260-52TS-S official product page"
+  source_url: "https://www.zte.com.cn/content/dam/zte-site/res-www-zte-com-cn/%E6%94%BF%E4%BC%81/2025%E6%94%BF%E4%BC%81%E5%AE%98%E7%BD%91%E6%9B%B4%E6%96%B0%E8%B5%84%E6%96%99%E6%96%87%E4%BB%B6%E5%A4%B9/2025%E5%B9%B4%E8%A1%8C%E4%B8%9A%E7%94%BB%E5%86%8C/%EF%BC%88%E5%8D%95%E9%A1%B5%E9%A2%84%E8%A7%88%E7%89%88%EF%BC%89%E7%94%B5%E5%8A%9B%E5%AE%A3%E4%BC%A0%E5%86%8C.pdf"
+  source_version: "2026-09-06"
+-
+  catalog_key: "zte__zxr10_5260_52pd_s"
+  vendor: "zte"
+  family: "5260-52PD-S"
+  exact_model: "ZXR10 5260-52PD-S"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×GE PoE+ + 4×10GE SFP+"
+  port_count: 52
+  port_media_type: "mixed"
+  port_breakdown: "[{'count': 48, 'spec': 'GE PoE'}, {'count': 4, 'spec': '10GE SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "中兴黑灰面板；框式型号按槽位建模，盒式按端口纹理/几何"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P0"
+  recommended_glb: "zte_campus_family.glb"
+  notes: null
+  source_row: 73
+  source_title: "zte 5260-52PD-S official product page"
+  source_url: "https://www.zte.com.cn/content/dam/zte-site/res-www-zte-com-cn/%E6%94%BF%E4%BC%81/2025%E6%94%BF%E4%BC%81%E5%AE%98%E7%BD%91%E6%9B%B4%E6%96%B0%E8%B5%84%E6%96%99%E6%96%87%E4%BB%B6%E5%A4%B9/2025%E5%B9%B4%E8%A1%8C%E4%B8%9A%E7%94%BB%E5%86%8C/%EF%BC%88%E5%8D%95%E9%A1%B5%E9%A2%84%E8%A7%88%E7%89%88%EF%BC%89%E7%94%B5%E5%8A%9B%E5%AE%A3%E4%BC%A0%E5%86%8C.pdf"
+  source_version: "2026-09-06"
+-
+  catalog_key: "zte__zxr10_5960_52tm"
+  vendor: "zte"
+  family: "ZXR10 5960"
+  exact_model: "ZXR10 5960-52TM"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf/ToR"
+  height_u: 1
+  width_mm: 442
+  depth_mm: 440
+  height_mm: 43.6
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "GE/10GE"
+  port_count: null
+  port_media_type: "unknown"
+  port_breakdown: "[]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "高密光口、双电源/模块风扇、前后风道"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "zte_zxr10_5960_family.glb"
+  notes: null
+  source_row: 74
+  source_title: "zte ZXR10 5960 official product page"
+  source_url: "https://www.zte.com.cn/global/product_index/ip_network_en/item03_en/zxr10-5960/zxr10_5960.html"
+  source_version: "2026-09-06"
+-
+  catalog_key: "zte__zxr10_5960_32dl"
+  vendor: "zte"
+  family: "ZXR10 5960"
+  exact_model: "ZXR10 5960-32DL"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf/ToR"
+  height_u: 1
+  width_mm: 442
+  depth_mm: 440
+  height_mm: 43.6
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "10GE/40GE"
+  port_count: null
+  port_media_type: "unknown"
+  port_breakdown: "[]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "高密光口、双电源/模块风扇、前后风道"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "zte_zxr10_5960_family.glb"
+  notes: null
+  source_row: 75
+  source_title: "zte ZXR10 5960 official product page"
+  source_url: "https://www.zte.com.cn/global/product_index/ip_network_en/item03_en/zxr10-5960/zxr10_5960.html"
+  source_version: "2026-09-06"
+-
+  catalog_key: "zte__zxr10_5960_64dl"
+  vendor: "zte"
+  family: "ZXR10 5960"
+  exact_model: "ZXR10 5960-64DL"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf/ToR"
+  height_u: 1
+  width_mm: 442
+  depth_mm: 440
+  height_mm: 43.6
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "10GE/40GE"
+  port_count: null
+  port_media_type: "unknown"
+  port_breakdown: "[]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "高密光口、双电源/模块风扇、前后风道"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "zte_zxr10_5960_family.glb"
+  notes: null
+  source_row: 76
+  source_title: "zte ZXR10 5960 official product page"
+  source_url: "https://www.zte.com.cn/global/product_index/ip_network_en/item03_en/zxr10-5960/zxr10_5960.html"
+  source_version: "2026-09-06"
+-
+  catalog_key: "zte__zxr10_5960_4m_hc"
+  vendor: "zte"
+  family: "ZXR10 5960"
+  exact_model: "ZXR10 5960-4M-HC"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf/ToR"
+  height_u: 2
+  width_mm: 444
+  depth_mm: 600
+  height_mm: 88.1
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "10/25/40/100GE"
+  port_count: null
+  port_media_type: "unknown"
+  port_breakdown: "[]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "高密光口、双电源/模块风扇、前后风道"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "zte_zxr10_5960_family.glb"
+  notes: null
+  source_row: 77
+  source_title: "zte ZXR10 5960 official product page"
+  source_url: "https://www.zte.com.cn/global/product_index/ip_network_en/item03_en/zxr10-5960/zxr10_5960.html"
+  source_version: "2026-09-06"
+-
+  catalog_key: "zte__zxr10_5960_32lc_h"
+  vendor: "zte"
+  family: "ZXR10 5960"
+  exact_model: "ZXR10 5960-32LC-H"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf/ToR"
+  height_u: 1
+  width_mm: 442
+  depth_mm: 440
+  height_mm: 43.6
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "10GE/40GE"
+  port_count: null
+  port_media_type: "unknown"
+  port_breakdown: "[]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "高密光口、双电源/模块风扇、前后风道"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "zte_zxr10_5960_family.glb"
+  notes: null
+  source_row: 78
+  source_title: "zte ZXR10 5960 official product page"
+  source_url: "https://www.zte.com.cn/global/product_index/ip_network_en/item03_en/zxr10-5960/zxr10_5960.html"
+  source_version: "2026-09-06"
+-
+  catalog_key: "zte__zxr10_5960_64dl_h"
+  vendor: "zte"
+  family: "ZXR10 5960"
+  exact_model: "ZXR10 5960-64DL-H"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf/ToR"
+  height_u: 1
+  width_mm: 442
+  depth_mm: 440
+  height_mm: 43.6
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "10GE/40GE"
+  port_count: null
+  port_media_type: "unknown"
+  port_breakdown: "[]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "高密光口、双电源/模块风扇、前后风道"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "zte_zxr10_5960_family.glb"
+  notes: null
+  source_row: 79
+  source_title: "zte ZXR10 5960 official product page"
+  source_url: "https://www.zte.com.cn/global/product_index/ip_network_en/item03_en/zxr10-5960/zxr10_5960.html"
+  source_version: "2026-09-06"
+-
+  catalog_key: "zte__zxr10_5960_72dl_h"
+  vendor: "zte"
+  family: "ZXR10 5960"
+  exact_model: "ZXR10 5960-72DL-H"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf/ToR"
+  height_u: 1
+  width_mm: 442
+  depth_mm: 440
+  height_mm: 43.6
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "10GE/40GE"
+  port_count: null
+  port_media_type: "unknown"
+  port_breakdown: "[]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "高密光口、双电源/模块风扇、前后风道"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "zte_zxr10_5960_family.glb"
+  notes: null
+  source_row: 80
+  source_title: "zte ZXR10 5960 official product page"
+  source_url: "https://www.zte.com.cn/global/product_index/ip_network_en/item03_en/zxr10-5960/zxr10_5960.html"
+  source_version: "2026-09-06"
+-
+  catalog_key: "zte__zxr10_5960_72nl_h"
+  vendor: "zte"
+  family: "ZXR10 5960"
+  exact_model: "ZXR10 5960-72NL-H"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf/ToR"
+  height_u: 1
+  width_mm: 442
+  depth_mm: 440
+  height_mm: 43.6
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "10GE/40GE"
+  port_count: null
+  port_media_type: "unknown"
+  port_breakdown: "[]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "高密光口、双电源/模块风扇、前后风道"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "zte_zxr10_5960_family.glb"
+  notes: null
+  source_row: 81
+  source_title: "zte ZXR10 5960 official product page"
+  source_url: "https://www.zte.com.cn/global/product_index/ip_network_en/item03_en/zxr10-5960/zxr10_5960.html"
+  source_version: "2026-09-06"
+-
+  catalog_key: "zte__zxr10_5960_56qu_hc"
+  vendor: "zte"
+  family: "ZXR10 5960"
+  exact_model: "ZXR10 5960-56QU-HC"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf/ToR"
+  height_u: 1
+  width_mm: 442
+  depth_mm: 440
+  height_mm: 43.6
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "25GE/100GE"
+  port_count: null
+  port_media_type: "unknown"
+  port_breakdown: "[]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "高密光口、双电源/模块风扇、前后风道"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P0"
+  recommended_glb: "zte_zxr10_5960_family.glb"
+  notes: null
+  source_row: 82
+  source_title: "zte ZXR10 5960 official product page"
+  source_url: "https://www.zte.com.cn/global/product_index/ip_network_en/item03_en/zxr10-5960/zxr10_5960.html"
+  source_version: "2026-09-06"
+-
+  catalog_key: "zte__zxr10_9904_s"
+  vendor: "zte"
+  family: "ZXR10 9900"
+  exact_model: "ZXR10 9904-S"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Core/Spine"
+  height_u: 8
+  width_mm: 445
+  depth_mm: 681
+  height_mm: 352.8
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "10/40/100GE模块化核心"
+  port_count: null
+  port_media_type: "unknown"
+  port_breakdown: "[]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "模块槽位、主控/业务板、电源/风扇模块分离"
+  modeling_approach: "精确框式模型"
+  asset_priority: "P1"
+  recommended_glb: "zte_zxr10_9904_s.glb"
+  notes: null
+  source_row: 83
+  source_title: "zte ZXR10 9900 official product page"
+  source_url: "https://www.zte.com.cn/global/product_index/ip_network_en/item03_en/zxr10-9900/zxr10_9900.html"
+  source_version: "2026-09-06"
+-
+  catalog_key: "maipu__s4530_30mltxp"
+  vendor: "maipu"
+  family: "Campus Switch"
+  exact_model: "S4530-30MLTXP"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入/汇聚"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "2.5GE园区接入/汇聚，具体端口按产品页"
+  port_count: null
+  port_media_type: "unknown"
+  port_breakdown: "[]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "麦普深色1U，端口分区、双电源/风扇槽按系列呈现"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P1"
+  recommended_glb: "maipu_campus_family.glb"
+  notes: null
+  source_row: 84
+  source_title: "maipu Campus Switch official product page"
+  source_url: "https://www.maipu.com/Goods/Details/1307"
+  source_version: "2026-09-06"
+-
+  catalog_key: "maipu__nss5813_48xf8qs"
+  vendor: "maipu"
+  family: "Campus Switch"
+  exact_model: "NSS5813-48XF8QS"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "汇聚/核心"
+  height_u: 1
+  width_mm: 442
+  depth_mm: 420
+  height_mm: 44.2
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "48×1/10G SFP+ + 8×40/100G QSFP28"
+  port_count: 56
+  port_media_type: "optical"
+  port_breakdown: "[{'count': 48, 'spec': '1/10G SFP'}, {'count': 8, 'spec': '40/100G QSFP28'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "麦普深色1U，端口分区、双电源/风扇槽按系列呈现"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P1"
+  recommended_glb: "maipu_campus_family.glb"
+  notes: null
+  source_row: 85
+  source_title: "maipu Campus Switch official product page"
+  source_url: "https://www.maipu.com/Goods/Details?id=1379"
+  source_version: "2026-09-06"
+-
+  catalog_key: "maipu__nss5810_50txfp"
+  vendor: "maipu"
+  family: "Campus Switch"
+  exact_model: "NSS5810-50TXFP"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "汇聚"
+  height_u: 1
+  width_mm: 442
+  depth_mm: 420
+  height_mm: 44.2
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "24×GE RJ45 + 18×10G SFP+ + 8×25G SFP28"
+  port_count: 50
+  port_media_type: "mixed"
+  port_breakdown: "[{'count': 24, 'spec': 'GE RJ45'}, {'count': 18, 'spec': '10G SFP'}, {'count': 8, 'spec': '25G SFP28'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "麦普深色1U，端口分区、双电源/风扇槽按系列呈现"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P1"
+  recommended_glb: "maipu_campus_family.glb"
+  notes: null
+  source_row: 86
+  source_title: "maipu Campus Switch official product page"
+  source_url: "https://www.maipu.com/Goods/Details/1037"
+  source_version: "2026-09-06"
+-
+  catalog_key: "maipu__nss5810_26xf_v2"
+  vendor: "maipu"
+  family: "Campus Switch"
+  exact_model: "NSS5810-26XF V2"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "汇聚"
+  height_u: 1
+  width_mm: 442
+  depth_mm: 420
+  height_mm: 44.2
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "24×10G SFP+ + 2×40/100G QSFP28"
+  port_count: 26
+  port_media_type: "optical"
+  port_breakdown: "[{'count': 24, 'spec': '10G SFP'}, {'count': 2, 'spec': '40/100G QSFP28'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "麦普深色1U，端口分区、双电源/风扇槽按系列呈现"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P1"
+  recommended_glb: "maipu_campus_family.glb"
+  notes: null
+  source_row: 87
+  source_title: "maipu Campus Switch official product page"
+  source_url: "https://www.maipu.com/Goods/Details/1037"
+  source_version: "2026-09-06"
+-
+  catalog_key: "maipu__nss5810_48xf"
+  vendor: "maipu"
+  family: "Campus Switch"
+  exact_model: "NSS5810-48XF"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "汇聚"
+  height_u: 1
+  width_mm: 442
+  depth_mm: 420
+  height_mm: 44.2
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "48×10G SFP+"
+  port_count: 48
+  port_media_type: "optical"
+  port_breakdown: "[{'count': 48, 'spec': '10G SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "麦普深色1U，端口分区、双电源/风扇槽按系列呈现"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P1"
+  recommended_glb: "maipu_campus_family.glb"
+  notes: null
+  source_row: 88
+  source_title: "maipu Campus Switch official product page"
+  source_url: "https://www.maipu.com/Goods/Details/1037"
+  source_version: "2026-09-06"
+-
+  catalog_key: "maipu__nss4330_32txf"
+  vendor: "maipu"
+  family: "Campus Switch"
+  exact_model: "NSS4330-32TXF"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "汇聚"
+  height_u: 1
+  width_mm: 442
+  depth_mm: 420
+  height_mm: 44.2
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "24×GE RJ45 + 6×10G SFP+ + 1扩展槽"
+  port_count: 30
+  port_media_type: "mixed"
+  port_breakdown: "[{'count': 24, 'spec': 'GE RJ45'}, {'count': 6, 'spec': '10G SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "麦普深色1U，端口分区、双电源/风扇槽按系列呈现"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P1"
+  recommended_glb: "maipu_campus_family.glb"
+  notes: null
+  source_row: 89
+  source_title: "maipu Campus Switch official product page"
+  source_url: "https://www.maipu.com/Goods/Details/1128"
+  source_version: "2026-09-06"
+-
+  catalog_key: "maipu__nss4330_56txf"
+  vendor: "maipu"
+  family: "Campus Switch"
+  exact_model: "NSS4330-56TXF"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "汇聚"
+  height_u: 1
+  width_mm: 442
+  depth_mm: 420
+  height_mm: 44.2
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "48×GE RJ45 + 6×10G SFP+ + 1扩展槽"
+  port_count: 54
+  port_media_type: "mixed"
+  port_breakdown: "[{'count': 48, 'spec': 'GE RJ45'}, {'count': 6, 'spec': '10G SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "麦普深色1U，端口分区、双电源/风扇槽按系列呈现"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P1"
+  recommended_glb: "maipu_campus_family.glb"
+  notes: null
+  source_row: 90
+  source_title: "maipu Campus Switch official product page"
+  source_url: "https://www.maipu.com/Goods/Details/1128"
+  source_version: "2026-09-06"
+-
+  catalog_key: "maipu__s3330_28txf_ac"
+  vendor: "maipu"
+  family: "Campus Switch"
+  exact_model: "S3330-28TXF-AC"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "24×GE RJ45 + 高速上联（按产品页）"
+  port_count: 24
+  port_media_type: "copper"
+  port_breakdown: "[{'count': 24, 'spec': 'GE RJ45'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "麦普深色1U，端口分区、双电源/风扇槽按系列呈现"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P1"
+  recommended_glb: "maipu_campus_family.glb"
+  notes: null
+  source_row: 91
+  source_title: "maipu Campus Switch official product page"
+  source_url: "https://www.maipu.com/Goods/Details?id=1131"
+  source_version: "2026-09-06"
+-
+  catalog_key: "maipu__s3330_28txp_ac"
+  vendor: "maipu"
+  family: "Campus Switch"
+  exact_model: "S3330-28TXP-AC"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "24×GE PoE + 高速上联（按产品页）"
+  port_count: 24
+  port_media_type: "copper"
+  port_breakdown: "[{'count': 24, 'spec': 'GE PoE'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "麦普深色1U，端口分区、双电源/风扇槽按系列呈现"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P1"
+  recommended_glb: "maipu_campus_family.glb"
+  notes: null
+  source_row: 92
+  source_title: "maipu Campus Switch official product page"
+  source_url: "https://www.maipu.com/Goods/Details?id=1131"
+  source_version: "2026-09-06"
+-
+  catalog_key: "maipu__s3330_54txf_ac"
+  vendor: "maipu"
+  family: "Campus Switch"
+  exact_model: "S3330-54TXF-AC"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×GE RJ45 + 高速上联（按产品页）"
+  port_count: 48
+  port_media_type: "copper"
+  port_breakdown: "[{'count': 48, 'spec': 'GE RJ45'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "麦普深色1U，端口分区、双电源/风扇槽按系列呈现"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P1"
+  recommended_glb: "maipu_campus_family.glb"
+  notes: null
+  source_row: 93
+  source_title: "maipu Campus Switch official product page"
+  source_url: "https://www.maipu.com/Goods/Details?id=1131"
+  source_version: "2026-09-06"
+-
+  catalog_key: "maipu__nss18500_04"
+  vendor: "maipu"
+  family: "DataCenter Switch"
+  exact_model: "NSS18500-04"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Core/Spine"
+  height_u: null
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "4业务槽；CLOS核心"
+  port_count: null
+  port_media_type: "unknown"
+  port_breakdown: "[]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "高速光口矩阵或模块化框式结构；前后风道"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P1"
+  recommended_glb: "maipu_dc_family.glb"
+  notes: null
+  source_row: 94
+  source_title: "maipu DataCenter Switch official product page"
+  source_url: "https://www.maipu.com/Goods/Details?id=1088"
+  source_version: "2026-09-06"
+-
+  catalog_key: "maipu__nss18500_08"
+  vendor: "maipu"
+  family: "DataCenter Switch"
+  exact_model: "NSS18500-08"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Core/Spine"
+  height_u: null
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "8业务槽；CLOS核心"
+  port_count: null
+  port_media_type: "unknown"
+  port_breakdown: "[]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "高速光口矩阵或模块化框式结构；前后风道"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P1"
+  recommended_glb: "maipu_dc_family.glb"
+  notes: null
+  source_row: 95
+  source_title: "maipu DataCenter Switch official product page"
+  source_url: "https://www.maipu.com/Goods/Details?id=1088"
+  source_version: "2026-09-06"
+-
+  catalog_key: "maipu__nss5830_32xqfp"
+  vendor: "maipu"
+  family: "DataCenter Switch"
+  exact_model: "NSS5830-32XQFP"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf"
+  height_u: 1
+  width_mm: 442
+  depth_mm: 420
+  height_mm: 44.2
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "24×1/10G + 8×40/100G"
+  port_count: 32
+  port_media_type: "ethernet"
+  port_breakdown: "[{'count': 24, 'spec': '1/10G'}, {'count': 8, 'spec': '40/100G'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "高速光口矩阵或模块化框式结构；前后风道"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P1"
+  recommended_glb: "maipu_dc_family.glb"
+  notes: null
+  source_row: 96
+  source_title: "maipu DataCenter Switch official product page"
+  source_url: "https://www.maipu.com/Goods/Details?id=1006"
+  source_version: "2026-09-06"
+-
+  catalog_key: "maipu__nss5830_56xqfp"
+  vendor: "maipu"
+  family: "DataCenter Switch"
+  exact_model: "NSS5830-56XQFP"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf"
+  height_u: 1
+  width_mm: 442
+  depth_mm: 480
+  height_mm: 44.2
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "48×1/10G + 8×40/100G"
+  port_count: 56
+  port_media_type: "ethernet"
+  port_breakdown: "[{'count': 48, 'spec': '1/10G'}, {'count': 8, 'spec': '40/100G'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "高速光口矩阵或模块化框式结构；前后风道"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P1"
+  recommended_glb: "maipu_dc_family.glb"
+  notes: null
+  source_row: 97
+  source_title: "maipu DataCenter Switch official product page"
+  source_url: "https://www.maipu.com/Goods/Details?id=1006"
+  source_version: "2026-09-06"
+-
+  catalog_key: "maipu__nss5930_56sqfp"
+  vendor: "maipu"
+  family: "DataCenter Switch"
+  exact_model: "NSS5930-56SQFP"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×10/25G + 8×40/100G"
+  port_count: 56
+  port_media_type: "ethernet"
+  port_breakdown: "[{'count': 48, 'spec': '10/25G'}, {'count': 8, 'spec': '40/100G'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "高速光口矩阵或模块化框式结构；前后风道"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P1"
+  recommended_glb: "maipu_dc_family.glb"
+  notes: null
+  source_row: 98
+  source_title: "maipu DataCenter Switch official product page"
+  source_url: "https://www.maipu.com/Goods/Details/1085"
+  source_version: "2026-09-06"
+-
+  catalog_key: "maipu__nss5950_04c"
+  vendor: "maipu"
+  family: "DataCenter Switch"
+  exact_model: "NSS5950-04C"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Core/Spine"
+  height_u: 2
+  width_mm: 442
+  depth_mm: 560
+  height_mm: 88.5
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "4业务槽 + 固定4×10G；可扩展100G"
+  port_count: 4
+  port_media_type: "ethernet"
+  port_breakdown: "[{'count': 4, 'spec': '10G'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "高速光口矩阵或模块化框式结构；前后风道"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P1"
+  recommended_glb: "maipu_dc_family.glb"
+  notes: null
+  source_row: 99
+  source_title: "maipu DataCenter Switch official product page"
+  source_url: "https://www.maipu.com/Goods/Details?id=1256"
+  source_version: "2026-09-06"
+-
+  catalog_key: "maipu__nss7810_24qv16qe"
+  vendor: "maipu"
+  family: "DataCenter Switch"
+  exact_model: "NSS7810-24QV16QE"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "AI Spine"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "24×200G QSFP56 + 16×400G QSFP112 + 2×25G"
+  port_count: 42
+  port_media_type: "optical"
+  port_breakdown: "[{'count': 24, 'spec': '200G QSFP56'}, {'count': 16, 'spec': '400G QSFP112'}, {'count': 2, 'spec': '25G'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "高速光口矩阵或模块化框式结构；前后风道"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P1"
+  recommended_glb: "maipu_dc_family.glb"
+  notes: null
+  source_row: 100
+  source_title: "maipu DataCenter Switch official product page"
+  source_url: "https://www.maipu.com/Goods/Details?id=1305"
+  source_version: "2026-09-06"
+-
+  catalog_key: "maipu__nss7816_32qe"
+  vendor: "maipu"
+  family: "DataCenter Switch"
+  exact_model: "NSS7816-32QE"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "AI Spine"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "32×400G级高速端口（以产品页为准）"
+  port_count: 32
+  port_media_type: "ethernet"
+  port_breakdown: "[{'count': 32, 'spec': '400G级高速端口（以产品页为准）'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "高速光口矩阵或模块化框式结构；前后风道"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P1"
+  recommended_glb: "maipu_dc_family.glb"
+  notes: null
+  source_row: 101
+  source_title: "maipu DataCenter Switch official product page"
+  source_url: "https://www.maipu.com/Goods/Details/1304"
+  source_version: "2026-09-06"
+-
+  catalog_key: "maipu__nss7830_09c"
+  vendor: "maipu"
+  family: "DataCenter Switch"
+  exact_model: "NSS7830-09C"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Core/Spine"
+  height_u: null
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "8业务槽；25/100/200/400G线卡"
+  port_count: null
+  port_media_type: "unknown"
+  port_breakdown: "[]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "高速光口矩阵或模块化框式结构；前后风道"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P1"
+  recommended_glb: "maipu_dc_family.glb"
+  notes: null
+  source_row: 102
+  source_title: "maipu DataCenter Switch official product page"
+  source_url: "https://www.maipu.com/Goods/Details?id=1306"
+  source_version: "2026-09-06"
+-
+  catalog_key: "maipu__nss5950_32qfp"
+  vendor: "maipu"
+  family: "DataCenter Switch"
+  exact_model: "NSS5950-32QFP"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Spine"
+  height_u: 1
+  width_mm: 442
+  depth_mm: 480
+  height_mm: 44.2
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "32×40/100G"
+  port_count: 32
+  port_media_type: "ethernet"
+  port_breakdown: "[{'count': 32, 'spec': '40/100G'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "高速光口矩阵或模块化框式结构；前后风道"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P1"
+  recommended_glb: "maipu_dc_family.glb"
+  notes: null
+  source_row: 103
+  source_title: "maipu DataCenter Switch official product page"
+  source_url: "https://www.maipu.com/"
+  source_version: "2026-09-06"
+-
+  catalog_key: "dptech__lsw3600_24gt4gp_li"
+  vendor: "dptech"
+  family: "LSW Series"
+  exact_model: "LSW3600-24GT4GP-LI"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入/汇聚"
+  height_u: 1
+  width_mm: 440
+  depth_mm: 230
+  height_mm: 44
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "24×GE RJ45 + 4×GE SFP"
+  port_count: 28
+  port_media_type: "mixed"
+  port_breakdown: "[{'count': 24, 'spec': 'GE RJ45'}, {'count': 4, 'spec': 'GE SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "黑色1U、左/中部端口阵列、右侧管理与上联区域"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P1"
+  recommended_glb: "dptech_campus_family.glb"
+  notes: null
+  source_row: 104
+  source_title: "dptech LSW Series official product page"
+  source_url: "https://www.dptech.com/index.php?a=lists&c=index&catid=589&m=content&tmp=2"
+  source_version: "2026-09-06"
+-
+  catalog_key: "dptech__lsw3600_8gt2gp"
+  vendor: "dptech"
+  family: "LSW Series"
+  exact_model: "LSW3600-8GT2GP"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入/汇聚"
+  height_u: 1
+  width_mm: 280
+  depth_mm: 180
+  height_mm: 44
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "8×GE RJ45 + 2×GE SFP"
+  port_count: 10
+  port_media_type: "mixed"
+  port_breakdown: "[{'count': 8, 'spec': 'GE RJ45'}, {'count': 2, 'spec': 'GE SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "黑色1U、左/中部端口阵列、右侧管理与上联区域"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P1"
+  recommended_glb: "dptech_campus_family.glb"
+  notes: null
+  source_row: 105
+  source_title: "dptech LSW Series official product page"
+  source_url: "https://www.dptech.com/index.php?a=lists&c=index&catid=589&m=content&tmp=2"
+  source_version: "2026-09-06"
+-
+  catalog_key: "dptech__lsw3600_24gt4gp"
+  vendor: "dptech"
+  family: "LSW Series"
+  exact_model: "LSW3600-24GT4GP"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入/汇聚"
+  height_u: 1
+  width_mm: 440
+  depth_mm: 244
+  height_mm: 44
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "24×GE RJ45 + 4×GE SFP"
+  port_count: 28
+  port_media_type: "mixed"
+  port_breakdown: "[{'count': 24, 'spec': 'GE RJ45'}, {'count': 4, 'spec': 'GE SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "黑色1U、左/中部端口阵列、右侧管理与上联区域"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P1"
+  recommended_glb: "dptech_campus_family.glb"
+  notes: null
+  source_row: 106
+  source_title: "dptech LSW Series official product page"
+  source_url: "https://www.dptech.com/index.php?a=lists&c=index&catid=589&m=content&tmp=2"
+  source_version: "2026-09-06"
+-
+  catalog_key: "dptech__lsw3600_48gt4gp"
+  vendor: "dptech"
+  family: "LSW Series"
+  exact_model: "LSW3600-48GT4GP"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入/汇聚"
+  height_u: 1
+  width_mm: 440
+  depth_mm: 296
+  height_mm: 44
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "48×GE RJ45 + 4×GE SFP"
+  port_count: 52
+  port_media_type: "mixed"
+  port_breakdown: "[{'count': 48, 'spec': 'GE RJ45'}, {'count': 4, 'spec': 'GE SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "黑色1U、左/中部端口阵列、右侧管理与上联区域"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P1"
+  recommended_glb: "dptech_campus_family.glb"
+  notes: null
+  source_row: 107
+  source_title: "dptech LSW Series official product page"
+  source_url: "https://www.dptech.com/index.php?a=lists&c=index&catid=589&m=content&tmp=2"
+  source_version: "2026-09-06"
+-
+  catalog_key: "dptech__lsw3620_24gt4xgs"
+  vendor: "dptech"
+  family: "LSW Series"
+  exact_model: "LSW3620-24GT4XGS"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入/汇聚"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "24×GE RJ45 + 4×10G SFP+"
+  port_count: 28
+  port_media_type: "mixed"
+  port_breakdown: "[{'count': 24, 'spec': 'GE RJ45'}, {'count': 4, 'spec': '10G SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "黑色1U、左/中部端口阵列、右侧管理与上联区域"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P1"
+  recommended_glb: "dptech_campus_family.glb"
+  notes: null
+  source_row: 108
+  source_title: "dptech LSW Series official product page"
+  source_url: "https://www.dptech.com/index.php?a=lists&c=index&catid=587&m=content&tmp=2"
+  source_version: "2026-09-06"
+-
+  catalog_key: "dptech__lsw3620_48gt4xgs"
+  vendor: "dptech"
+  family: "LSW Series"
+  exact_model: "LSW3620-48GT4XGS"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入/汇聚"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×GE RJ45 + 4×10G SFP+"
+  port_count: 52
+  port_media_type: "mixed"
+  port_breakdown: "[{'count': 48, 'spec': 'GE RJ45'}, {'count': 4, 'spec': '10G SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "黑色1U、左/中部端口阵列、右侧管理与上联区域"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P1"
+  recommended_glb: "dptech_campus_family.glb"
+  notes: null
+  source_row: 109
+  source_title: "dptech LSW Series official product page"
+  source_url: "https://www.dptech.com/index.php?a=lists&c=index&catid=587&m=content&tmp=2"
+  source_version: "2026-09-06"
+-
+  catalog_key: "dptech__lsw3620_24gt4xgs_pwr"
+  vendor: "dptech"
+  family: "LSW Series"
+  exact_model: "LSW3620-24GT4XGS-PWR"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入/汇聚"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "24×GE PoE + 4×10G SFP+"
+  port_count: 28
+  port_media_type: "mixed"
+  port_breakdown: "[{'count': 24, 'spec': 'GE PoE'}, {'count': 4, 'spec': '10G SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "黑色1U、左/中部端口阵列、右侧管理与上联区域"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P1"
+  recommended_glb: "dptech_campus_family.glb"
+  notes: null
+  source_row: 110
+  source_title: "dptech LSW Series official product page"
+  source_url: "https://www.dptech.com/index.php?a=lists&c=index&catid=587&m=content&tmp=2"
+  source_version: "2026-09-06"
+-
+  catalog_key: "dptech__lsw3620_48gt6xgs_pwr"
+  vendor: "dptech"
+  family: "LSW Series"
+  exact_model: "LSW3620-48GT6XGS-PWR"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入/汇聚"
+  height_u: 1
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "48×GE PoE + 6×10G SFP+"
+  port_count: 54
+  port_media_type: "mixed"
+  port_breakdown: "[{'count': 48, 'spec': 'GE PoE'}, {'count': 6, 'spec': '10G SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "黑色1U、左/中部端口阵列、右侧管理与上联区域"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P1"
+  recommended_glb: "dptech_campus_family.glb"
+  notes: null
+  source_row: 111
+  source_title: "dptech LSW Series official product page"
+  source_url: "https://www.dptech.com/index.php?a=lists&c=index&catid=587&m=content&tmp=2"
+  source_version: "2026-09-06"
+-
+  catalog_key: "dptech__lsw5620_24gt4xgs"
+  vendor: "dptech"
+  family: "LSW Series"
+  exact_model: "LSW5620-24GT4XGS"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入/汇聚"
+  height_u: 1
+  width_mm: 440
+  depth_mm: 400
+  height_mm: 44
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "24×GE RJ45 + 4×10G SFP+"
+  port_count: 28
+  port_media_type: "mixed"
+  port_breakdown: "[{'count': 24, 'spec': 'GE RJ45'}, {'count': 4, 'spec': '10G SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "黑色1U、左/中部端口阵列、右侧管理与上联区域"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P1"
+  recommended_glb: "dptech_campus_family.glb"
+  notes: null
+  source_row: 112
+  source_title: "dptech LSW Series official product page"
+  source_url: "https://www.dptech.com/index.php?a=lists&c=index&catid=2143&m=content"
+  source_version: "2026-09-06"
+-
+  catalog_key: "dptech__lsw5620_48gt4xgs"
+  vendor: "dptech"
+  family: "LSW Series"
+  exact_model: "LSW5620-48GT4XGS"
+  device_type: "switch"
+  deployment_domain: "园区网"
+  role: "接入/汇聚"
+  height_u: 1
+  width_mm: 440
+  depth_mm: 400
+  height_mm: 44
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "48×GE RJ45 + 4×10G SFP+"
+  port_count: 52
+  port_media_type: "mixed"
+  port_breakdown: "[{'count': 48, 'spec': 'GE RJ45'}, {'count': 4, 'spec': '10G SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "黑色1U、左/中部端口阵列、右侧管理与上联区域"
+  modeling_approach: "系列精细模型"
+  asset_priority: "P1"
+  recommended_glb: "dptech_campus_family.glb"
+  notes: null
+  source_row: 113
+  source_title: "dptech LSW Series official product page"
+  source_url: "https://www.dptech.com/index.php?a=lists&c=index&catid=2143&m=content"
+  source_version: "2026-09-06"
+-
+  catalog_key: "dptech__lsw6600_24xgs8cq_g"
+  vendor: "dptech"
+  family: "LSW/DPX DC"
+  exact_model: "LSW6600-24XGS8CQ-G"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf/ToR"
+  height_u: 1
+  width_mm: 440
+  depth_mm: 451
+  height_mm: 44
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "24×10G SFP+ + 8×100G QSFP28"
+  port_count: 32
+  port_media_type: "optical"
+  port_breakdown: "[{'count': 24, 'spec': '10G SFP'}, {'count': 8, 'spec': '100G QSFP28'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "高密光口或模块化核心；前后风道、电源/风扇模块可独立"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P1"
+  recommended_glb: "dptech_dc_family.glb"
+  notes: null
+  source_row: 114
+  source_title: "dptech LSW/DPX DC official product page"
+  source_url: "https://www.dptech.com/index.php?a=lists&c=index&catid=584&m=content"
+  source_version: "2026-09-06"
+-
+  catalog_key: "dptech__lsw6600_48xgs8cq_gc"
+  vendor: "dptech"
+  family: "LSW/DPX DC"
+  exact_model: "LSW6600-48XGS8CQ-GC"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf/ToR"
+  height_u: 1
+  width_mm: 440
+  depth_mm: 451
+  height_mm: 44
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "48×10G SFP+ + 8×100G QSFP28"
+  port_count: 56
+  port_media_type: "optical"
+  port_breakdown: "[{'count': 48, 'spec': '10G SFP'}, {'count': 8, 'spec': '100G QSFP28'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "高密光口或模块化核心；前后风道、电源/风扇模块可独立"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P1"
+  recommended_glb: "dptech_dc_family.glb"
+  notes: null
+  source_row: 115
+  source_title: "dptech LSW/DPX DC official product page"
+  source_url: "https://www.dptech.com/index.php?a=lists&c=index&catid=584&m=content"
+  source_version: "2026-09-06"
+-
+  catalog_key: "dptech__lsw6600_48tfg8cq_gc"
+  vendor: "dptech"
+  family: "LSW/DPX DC"
+  exact_model: "LSW6600-48TFG8CQ-GC"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf"
+  height_u: 1
+  width_mm: 440
+  depth_mm: 451
+  height_mm: 44
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "48×25G SFP28 + 8×100G QSFP28"
+  port_count: 56
+  port_media_type: "optical"
+  port_breakdown: "[{'count': 48, 'spec': '25G SFP28'}, {'count': 8, 'spec': '100G QSFP28'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "高密光口或模块化核心；前后风道、电源/风扇模块可独立"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P1"
+  recommended_glb: "dptech_dc_family.glb"
+  notes: null
+  source_row: 116
+  source_title: "dptech LSW/DPX DC official product page"
+  source_url: "https://www.dptech.com/index.php?a=lists&c=index&catid=584&m=content"
+  source_version: "2026-09-06"
+-
+  catalog_key: "dptech__lsw6600_24xgs2cq"
+  vendor: "dptech"
+  family: "LSW/DPX DC"
+  exact_model: "LSW6600-24XGS2CQ"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Leaf"
+  height_u: 1
+  width_mm: 440
+  depth_mm: 400
+  height_mm: 44
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "24×10G SFP+ + 2×100G QSFP28"
+  port_count: 26
+  port_media_type: "optical"
+  port_breakdown: "[{'count': 24, 'spec': '10G SFP'}, {'count': 2, 'spec': '100G QSFP28'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "高密光口或模块化核心；前后风道、电源/风扇模块可独立"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P1"
+  recommended_glb: "dptech_dc_family.glb"
+  notes: null
+  source_row: 117
+  source_title: "dptech LSW/DPX DC official product page"
+  source_url: "https://www.dptech.com/index.php?a=lists&c=index&catid=584&m=content"
+  source_version: "2026-09-06"
+-
+  catalog_key: "dptech__lsw6600_2tfg32qcq"
+  vendor: "dptech"
+  family: "LSW/DPX DC"
+  exact_model: "LSW6600-2TFG32QCQ"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "AI Spine"
+  height_u: 1
+  width_mm: 440
+  depth_mm: 451
+  height_mm: 44
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "2×25G + 32×400G QSFP112"
+  port_count: 34
+  port_media_type: "optical"
+  port_breakdown: "[{'count': 2, 'spec': '25G'}, {'count': 32, 'spec': '400G QSFP112'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "高密光口或模块化核心；前后风道、电源/风扇模块可独立"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P1"
+  recommended_glb: "dptech_dc_family.glb"
+  notes: null
+  source_row: 118
+  source_title: "dptech LSW/DPX DC official product page"
+  source_url: "https://www.dptech.com/index.php?a=lists&c=index&catid=2153&m=content"
+  source_version: "2026-09-06"
+-
+  catalog_key: "dptech__lsw6600_2tfg64qcq"
+  vendor: "dptech"
+  family: "LSW/DPX DC"
+  exact_model: "LSW6600-2TFG64QCQ"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "AI Spine"
+  height_u: 2
+  width_mm: 440
+  depth_mm: 579
+  height_mm: 86.4
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "2×25G + 64×400G QSFP112"
+  port_count: 66
+  port_media_type: "optical"
+  port_breakdown: "[{'count': 2, 'spec': '25G'}, {'count': 64, 'spec': '400G QSFP112'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "高密光口或模块化核心；前后风道、电源/风扇模块可独立"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P1"
+  recommended_glb: "dptech_dc_family.glb"
+  notes: null
+  source_row: 119
+  source_title: "dptech LSW/DPX DC official product page"
+  source_url: "https://www.dptech.com/index.php?a=lists&c=index&catid=2153&m=content"
+  source_version: "2026-09-06"
+-
+  catalog_key: "dptech__dpx29000_a10"
+  vendor: "dptech"
+  family: "LSW/DPX DC"
+  exact_model: "DPX29000-A10"
+  device_type: "switch"
+  deployment_domain: "数据中心"
+  role: "Core"
+  height_u: null
+  width_mm: null
+  depth_mm: null
+  height_mm: null
+  dimension_status: "pending_verification"
+  data_confidence: "verified_official"
+  port_layout: "8业务槽；多种GE/10GE/40GE/100GE线卡"
+  port_count: null
+  port_media_type: "unknown"
+  port_breakdown: "[]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "高密光口或模块化核心；前后风道、电源/风扇模块可独立"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P1"
+  recommended_glb: "dptech_dc_family.glb"
+  notes: null
+  source_row: 120
+  source_title: "dptech LSW/DPX DC official product page"
+  source_url: "https://www.dptech.com/index.php?a=lists&c=index&catid=1893&m=content"
+  source_version: "2026-09-06"
+-
+  catalog_key: "dptech__lsw5620_24gp4xgs"
+  vendor: "dptech"
+  family: "LSW/DPX DC"
+  exact_model: "LSW5620-24GP4XGS"
+  device_type: "server"
+  deployment_domain: "数据中心"
+  role: "服务器接入"
+  height_u: 1
+  width_mm: 440
+  depth_mm: 400
+  height_mm: 44
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "24×GE SFP + 4×10G SFP+"
+  port_count: 28
+  port_media_type: "optical"
+  port_breakdown: "[{'count': 24, 'spec': 'GE SFP'}, {'count': 4, 'spec': '10G SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "高密光口或模块化核心；前后风道、电源/风扇模块可独立"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P1"
+  recommended_glb: "dptech_dc_family.glb"
+  notes: null
+  source_row: 121
+  source_title: "dptech LSW/DPX DC official product page"
+  source_url: "https://www.dptech.com/index.php?a=lists&c=index&catid=2143&m=content"
+  source_version: "2026-09-06"
+-
+  catalog_key: "dptech__lsw5620_48gp4xgs"
+  vendor: "dptech"
+  family: "LSW/DPX DC"
+  exact_model: "LSW5620-48GP4XGS"
+  device_type: "server"
+  deployment_domain: "数据中心"
+  role: "服务器接入"
+  height_u: 1
+  width_mm: 440
+  depth_mm: 400
+  height_mm: 44
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "48×GE SFP + 4×10G SFP+"
+  port_count: 52
+  port_media_type: "optical"
+  port_breakdown: "[{'count': 48, 'spec': 'GE SFP'}, {'count': 4, 'spec': '10G SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "高密光口或模块化核心；前后风道、电源/风扇模块可独立"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P1"
+  recommended_glb: "dptech_dc_family.glb"
+  notes: null
+  source_row: 122
+  source_title: "dptech LSW/DPX DC official product page"
+  source_url: "https://www.dptech.com/index.php?a=lists&c=index&catid=2143&m=content"
+  source_version: "2026-09-06"
+-
+  catalog_key: "dptech__lsw5620_20gp4gc4xgs_s"
+  vendor: "dptech"
+  family: "LSW/DPX DC"
+  exact_model: "LSW5620-20GP4GC4XGS-S"
+  device_type: "server"
+  deployment_domain: "数据中心"
+  role: "服务器接入"
+  height_u: 1
+  width_mm: 440
+  depth_mm: 290
+  height_mm: 44
+  dimension_status: "estimated"
+  data_confidence: "verified_official"
+  port_layout: "20×GE SFP + 4×GE Combo + 4×10G SFP+"
+  port_count: 28
+  port_media_type: "optical"
+  port_breakdown: "[{'count': 20, 'spec': 'GE SFP'}, {'count': 4, 'spec': 'GE Combo'}, {'count': 4, 'spec': '10G SFP'}]"
+  uplink_ports: null
+  management_ports: null
+  console_ports: null
+  psu_count: null
+  fan_count: null
+  blender_features: "高密光口或模块化核心；前后风道、电源/风扇模块可独立"
+  modeling_approach: "精确/系列模型"
+  asset_priority: "P1"
+  recommended_glb: "dptech_dc_family.glb"
+  notes: null
+  source_row: 123
+  source_title: "dptech LSW/DPX DC official product page"
+  source_url: "https://www.dptech.com/index.php?a=lists&c=index&catid=2143&m=content"
+  source_version: "2026-09-06"

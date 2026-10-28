@@ -1,0 +1,13 @@
+{
+  "vendor": "Huawei",
+  "platform": "huawei_vrpv8",
+  "software_family": "VRP8",
+  "model": "NetEngine A816",
+  "command": "display version",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://support.huawei.com/enterprise/en/doc/EDOC1100400980/55e776e6/troubleshooting-high-cpu-usage",
+  "source_title": "Troubleshooting High CPU Usage - Huawei",
+  "source_section": "Checking the Software Version and Board Status",
+  "expected_record_count": 1,
+  "expected_fields": ["VRP_VERSION", "PRODUCT_VERSION", "MODEL", "UPTIME"]
+}

@@ -1,0 +1,9 @@
+Value PROTOCOL ([A-Z>\*]+)
+Value NETWORK (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/\d+|\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})
+Value NEXTHOP_IP (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})
+Value INTERFACE (.*)
+
+Start
+  ^Codes:
+  ^${PROTOCOL}\s+${NETWORK}\s+.*via\s+${NEXTHOP_IP}.*,\s*${INTERFACE}\s*$$ -> Record
+  ^${PROTOCOL}\s+${NETWORK}\s+.*is directly connected,\s*${INTERFACE}\s*$$ -> Record

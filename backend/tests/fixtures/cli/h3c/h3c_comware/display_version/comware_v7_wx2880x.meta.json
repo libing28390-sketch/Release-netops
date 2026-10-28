@@ -1,0 +1,13 @@
+{
+  "vendor": "H3C",
+  "platform": "h3c_comware",
+  "software_family": "Comware7/9",
+  "model": "WX2880X",
+  "command": "display version",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/en/d_202411/2299384_294551_0.htm",
+  "source_title": "04-Hardware management and maintenance - H3C",
+  "source_section": "Displaying software and hardware version information",
+  "expected_record_count": 1,
+  "expected_fields": ["SOFTWARE_VERSION", "RELEASE", "DEVICE", "UPTIME", "LAST_REBOOT_REASON", "BOOT_IMAGE", "SYSTEM_IMAGE", "HARDWARE_VERSION"]
+}
