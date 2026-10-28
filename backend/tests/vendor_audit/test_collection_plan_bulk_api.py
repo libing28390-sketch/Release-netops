@@ -53,7 +53,7 @@ def bulk_api_context(monkeypatch):
     user = {"id": "bulk-user", "username": "bulk-test", "role": "Operator", "tenant_id": "tenant-default"}
     connection.execute("INSERT INTO users (id, role_profile) VALUES (?, ?)", (user["id"], ""))
     connection.commit()
-    monkeypatch.setattr(database, "get_db_connection", lambda: connection)
+    monkeypatch.setattr(database.core, "get_db_connection", lambda: connection)
     monkeypatch.setattr(collection_plans_api, "get_db_connection", lambda: connection)
     monkeypatch.setattr(
         users,

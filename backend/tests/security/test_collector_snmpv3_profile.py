@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import database.core as database_core
 from services import vault_service
 
 
@@ -31,7 +32,7 @@ def test_collector_credentials_resolve_bound_snmpv3_profile(monkeypatch) -> None
         def close(self):
             pass
 
-    monkeypatch.setattr("database.get_db_connection", lambda: Connection())
+    monkeypatch.setattr(database_core, "get_db_connection", lambda: Connection())
     monkeypatch.setattr(
         "core.crypto.decrypt_credential",
         lambda value: {

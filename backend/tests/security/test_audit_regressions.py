@@ -182,10 +182,10 @@ def test_password_change_revokes_other_sessions(make_user, route):
 
 
 def test_authorization_denies_on_database_error(monkeypatch):
-    import database
+    import database.core as database_core
     def unavailable():
         raise RuntimeError('simulated database outage')
-    monkeypatch.setattr(database, 'get_db_connection', unavailable)
+    monkeypatch.setattr(database_core, 'get_db_connection', unavailable)
     assert not rbac.authorize_resource({'user_id': 'actor', 'role': 'Operator'}, 'command', 'execute')
     assert not rbac.authorize_resource({'user_id': 'actor', 'role': 'Operator', 'role_profile': 'Automation Operator'}, 'command', 'execute')
     assert not rbac.authorize_resource({'role': 'Administrator', 'role_profile': 'unknown-profile'}, 'command', 'execute')

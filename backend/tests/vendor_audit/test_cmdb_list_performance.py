@@ -322,7 +322,7 @@ def test_manual_cmdb_list_performance_benchmark(isolated_db, make_user, monkeypa
 
     # Both the router's imported alias and runtime database lookups (for the
     # Viewer scope) use the same isolated PostgreSQL connection source.
-    monkeypatch.setattr(database, "get_db_connection", counted_get_db_connection)
+    monkeypatch.setattr(database.core, "get_db_connection", counted_get_db_connection)
     monkeypatch.setattr(cmdb_api, "get_db_connection", counted_get_db_connection)
 
     # Inject a disabled cache directly. This never invokes the default runtime

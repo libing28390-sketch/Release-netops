@@ -394,7 +394,7 @@ def test_vrp_fixture_executes_external_and_self_oid_skip_conditions(monkeypatch)
         if item["measurement_type"] == "cpu_usage_percent"
     ]
     samples = []
-    monkeypatch.setattr(database, "get_db_connection", lambda: Connection())
+    monkeypatch.setattr(database.core, "get_db_connection", lambda: Connection())
     monkeypatch.setattr(
         inventory, "record_sensor_samples_batch",
         lambda _conn, batch: samples.extend(
@@ -712,7 +712,7 @@ def test_unimplemented_librenms_user_func_never_exports_raw_as_canonical(monkeyp
         def close(self):
             pass
 
-    monkeypatch.setattr(database, "get_db_connection", lambda: Connection())
+    monkeypatch.setattr(database.core, "get_db_connection", lambda: Connection())
     monkeypatch.setattr(
         inventory, "record_sensor_samples_batch",
         lambda _conn, batch: writes.extend(
