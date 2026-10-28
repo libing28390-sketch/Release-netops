@@ -461,6 +461,17 @@ async def lifespan(app: FastAPI):
         max_instances=1, coalesce=True,
     )
 
+    # IPAM projects existing database evidence into its own history. This
+    # task never opens device sessions or changes the collection schedule.
+    from services.ipam_discovery_service import run_ipam_discovery_projection
+    scheduler.add_job(
+        synchronized_scheduler_job('ipam_discovery_projection', expire_seconds=55)(
+            run_ipam_discovery_projection
+        ),
+        'interval', seconds=60, id='ipam_discovery_projection', replace_existing=True,
+        max_instances=1, coalesce=True,
+    )
+
     # Other NSOT collectors remain in the ordered daily workflow and the
     # manual NSOT trigger.
     from services.topology_service import TOPOLOGY_AUTOMATIC_INTERVAL_SECONDS

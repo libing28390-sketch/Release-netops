@@ -599,4 +599,56 @@ describe('CMDB observed-only row actions', () => {
     expect(within(observedRow as HTMLElement).queryByRole('button', { name: 'Edit' })).toBeNull();
     expect(within(observedRow as HTMLElement).queryByRole('button', { name: 'Delete' })).toBeNull();
   });
+
+  it('retains the terminal interface collection summary after polling stops and a later start fails', async () => {
+    const terminalJob = {
+      job_id: 'interface-job-final',
+      status: 'succeeded',
+      total_targets: 2,
+      success_count: 2,
+      failed_count: 0,
+      target_status_counts: { queued: 0, running: 0, succeeded: 2, failed: 0, timeout: 0, cancelled: 0 },
+      targets: [],
+    };
+    let launchAttempts = 0;
+
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://localhost');
+      if (url.pathname === '/api/cmdb/interfaces/sync' && init?.method === 'POST') {
+        launchAttempts += 1;
+        if (launchAttempts > 1) {
+          return Promise.resolve({
+            ok: false,
+            status: 403,
+            json: async () => ({ detail: 'Permission denied' }),
+          } as Response);
+        }
+        return Promise.resolve({
+          ok: true,
+          status: 202,
+          json: async () => ({ success: true, data: { job_id: terminalJob.job_id, job: { ...terminalJob, status: 'running', success_count: 0, target_status_counts: { queued: 1, running: 1, succeeded: 0, failed: 0, timeout: 0, cancelled: 0 } } } }),
+        } as Response);
+      }
+      if (url.pathname === `/api/cmdb/interfaces/sync/${terminalJob.job_id}`) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ success: true, data: terminalJob }) } as Response);
+      }
+      if (url.pathname === '/api/cmdb/interfaces') return Promise.resolve(pagedResponse([], 0, 1));
+      return Promise.resolve(fetchSuccess());
+    }));
+
+    render(
+      <MemoryRouter>
+        <CmdbManagementTab language="en" cmdbPage="interfaces" currentUser={{ role: 'Administrator' }} />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Collect Interfaces' }));
+    expect(await screen.findByText('Completed 2 / 2')).toBeTruthy();
+    expect(screen.getByText('Interface collection finished: 2 succeeded, 0 failed.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'View details' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Collect Interfaces' }));
+    expect(await screen.findByText('Permission denied')).toBeTruthy();
+    expect(screen.getByText('Completed 2 / 2')).toBeTruthy();
+  });
 });

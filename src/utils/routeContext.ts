@@ -200,6 +200,8 @@ export function getRouteContext(pathname: string): RouteContext {
       ipamPage = 'prefixes';
     } else if (second === 'ips') {
       ipamPage = 'ips';
+    } else if (second === 'endpoints') {
+      ipamPage = 'endpoints';
     } else if (second === 'pools') {
       ipamPage = 'pools';
     } else if (second === 'vips') {

@@ -4,6 +4,7 @@ import { Plus, Pencil, Trash2, RefreshCw, X, KeyRound, Building2, Network, Layer
 import * as XLSX from 'xlsx';
 import PageHero from '../components/PageHero';
 import Pagination from '../components/Pagination';
+import CmdbInterfaceCollectionProgress from '../components/CmdbInterfaceCollectionProgress';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
 import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
 import { TableExportMenu } from '../components/ui/TableExportMenu';
@@ -1690,6 +1691,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
   const [loading, setLoading] = useState(false);
   const [interfaceSyncing, setInterfaceSyncing] = useState(false);
   const [interfaceJobStatus, setInterfaceJobStatus] = useState<any | null>(null);
+  const [interfaceJobSummary, setInterfaceJobSummary] = useState<any | null>(null);
   const interfaceTerminalHandledRef = useRef<string | null>(null);
   const loadRequestRef = useRef(0);
   const listRequestControllerRef = useRef<AbortController | null>(null);
@@ -2805,6 +2807,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
       const job = json.data?.job || json.data || {};
       const jobId = json.data?.job_id || job.job_id || job.id;
       if (!jobId) throw new Error(zh ? '接口采集任务未返回任务编号' : 'Interface collection did not return a job id');
+      setInterfaceJobSummary(null);
       setInterfaceJobStatus({ ...job, job_id: jobId });
       setNotice(zh ? `接口采集任务已启动，共 ${job.total_targets || job.targets?.length || 0} 台设备；进度和失败原因会显示在本页。` : `Interface collection started for ${job.total_targets || job.targets?.length || 0} device(s); progress and failures will appear here.`);
     } catch (e: any) {
@@ -2834,6 +2837,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
           setNotice(zh
             ? `接口采集已结束：成功 ${next.success_count || 0} 台，失败 ${failed} 台。`
             : `Interface collection finished: ${next.success_count || 0} succeeded, ${failed} failed.`);
+          setInterfaceJobSummary({ ...next, job_id: jobId });
           setInterfaceJobStatus(null);
           await load();
         }
@@ -3975,76 +3979,13 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
           </div>
         )}
 
-        {tab === 'interfaces' && interfaceJobStatus?.job_id && (() => {
-          const targets = Array.isArray(interfaceJobStatus.targets) ? interfaceJobStatus.targets : [];
-          const failedTargets = targets.filter((target: any) => ['failed', 'timeout'].includes(String(target.status || '').toLowerCase()));
-          const runningTargets = targets.filter((target: any) => String(target.status || '').toLowerCase() === 'running');
-          const visibleTargets = [...failedTargets, ...runningTargets.slice(0, 8)];
-          const totalCount = Number(interfaceJobStatus.total_targets || targets.length || 0);
-          const successCount = Number(interfaceJobStatus.success_count || 0);
-          const failedCount = Number(interfaceJobStatus.failed_count || 0);
-          const completedCount = successCount + failedCount + Number(interfaceJobStatus.cancelled_count || 0);
-          const progress = Math.max(0, Math.min(100, Number(interfaceJobStatus.progress || (totalCount ? (completedCount / totalCount) * 100 : 0))));
-          const jobStatus = String(interfaceJobStatus.status || 'queued').toLowerCase();
-          const statusLabel = jobStatus === 'succeeded'
-            ? (zh ? '已完成' : 'Succeeded')
-            : jobStatus === 'partially_failed'
-              ? (zh ? '部分失败' : 'Partially failed')
-              : jobStatus === 'failed'
-                ? (zh ? '失败' : 'Failed')
-                : jobStatus === 'running'
-                  ? (zh ? '采集中' : 'Collecting')
-                  : (zh ? '排队中' : 'Queued');
-          return (
-            <div className={`mb-4 rounded-2xl border px-4 py-3 ${failedTargets.length ? 'border-rose-200 bg-rose-50/70' : 'border-cyan-200 bg-cyan-50/70'}`}>
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <Network size={16} className={failedTargets.length ? 'text-rose-600' : 'text-cyan-600'} />
-                  <div>
-                    <div className="text-sm font-semibold text-[#164e63]">
-                      {zh ? '接口状态采集进度' : 'Interface status collection'}
-                      <span className="ml-2 rounded-full bg-white/80 px-2 py-0.5 text-[11px] font-medium text-slate-500">{statusLabel}</span>
-                    </div>
-                    <div className="mt-0.5 text-xs text-slate-500">
-                      {zh ? `任务 ${interfaceJobStatus.job_id} · 使用 Playbook 接口状态 TextFSM · ${successCount} 成功 / ${failedCount} 失败 / ${totalCount} 总计` : `Job ${interfaceJobStatus.job_id} · Playbook interface-status TextFSM · ${successCount} succeeded / ${failedCount} failed / ${totalCount} total`}
-                    </div>
-                  </div>
-                </div>
-                <span className="text-sm font-bold text-cyan-700">{Math.round(progress)}%</span>
-              </div>
-              <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/80">
-                <div className={`h-full rounded-full transition-all ${failedTargets.length ? 'bg-rose-500' : 'bg-cyan-500'}`} style={{ width: `${progress}%` }} />
-              </div>
-              {(visibleTargets.length > 0 || runningTargets.length > 8 || interfaceJobStatus.targets_truncated) && (
-                <div className="mt-3 max-h-44 space-y-1.5 overflow-y-auto pr-1">
-                  {runningTargets.length > 8 && <div className="rounded-lg border border-white/80 bg-white/70 px-3 py-2 text-xs text-slate-500">正在处理 {runningTargets.length} 台设备，仅展示前 8 台；完成设备不在进度区重复列出。</div>}
-                  {interfaceJobStatus.targets_truncated && <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">设备数量较多，仅展示进行中和异常设备的部分明细。</div>}
-                  {visibleTargets.map((target: any) => {
-                    const targetStatus = String(target.status || 'queued').toLowerCase();
-                    const failed = ['failed', 'timeout'].includes(targetStatus);
-                    const targetLabel = target.target_hostname || target.target_ip || target.target_id;
-                    const targetStatusLabel = targetStatus === 'succeeded'
-                      ? (zh ? '成功' : 'Succeeded')
-                      : failed
-                        ? (zh ? '失败' : 'Failed')
-                        : targetStatus === 'running'
-                          ? (zh ? '采集中' : 'Collecting')
-                          : (zh ? '等待中' : 'Queued');
-                    return (
-                      <div key={target.id || target.target_id} className={`rounded-lg border px-3 py-2 text-xs ${failed ? 'border-rose-200 bg-white text-rose-700' : 'border-white/80 bg-white/70 text-slate-600'}`}>
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="font-medium">{targetLabel}</span>
-                          <span className="font-semibold">{targetStatusLabel}</span>
-                        </div>
-                        {failed && target.error_message && <div className="mt-1 leading-5 text-rose-600">{target.error_message}</div>}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          );
-        })()}
+        {tab === 'interfaces' && (interfaceJobStatus?.job_id || interfaceJobSummary?.job_id || interfaceSyncing) && (
+          <CmdbInterfaceCollectionProgress
+            job={interfaceJobStatus || interfaceJobSummary}
+            language={language}
+            loading={interfaceSyncing && !interfaceJobStatus?.job_id}
+          />
+        )}
 
         {tab === 'credentials' && credentialJobStatus?.job_id && (() => {
           const targets = Array.isArray(credentialJobStatus.targets) ? credentialJobStatus.targets : [];

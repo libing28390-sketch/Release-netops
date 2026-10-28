@@ -276,13 +276,17 @@ def test_prefix_classification_summary_returns_sql_row(monkeypatch) -> None:
     conn.row_factory = postgresql_test_driver.Row
     conn.execute('''
         CREATE TABLE prefixes (
+            prefix TEXT, tenant_id TEXT, site_id TEXT, vrf_id TEXT,
             classification_status TEXT, manual_override INTEGER, source_type TEXT,
             network_type TEXT, mixed_network INTEGER, conflict_status TEXT,
             is_active INTEGER, status TEXT
         )
     ''')
     conn.execute(
-        "INSERT INTO prefixes VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        """INSERT INTO prefixes (
+               classification_status, manual_override, source_type, network_type,
+               mixed_network, conflict_status, is_active, status
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
         ('auto', 0, 'interface_collection', 'loopback', 0, '', 1, 'active'),
     )
 
@@ -298,6 +302,7 @@ def test_prefix_classification_summary_returns_sql_row(monkeypatch) -> None:
     assert summary['total'] == 1
     assert summary['auto_count'] == 1
     assert summary['unclassified_count'] == 0
+    assert summary['reuse_count'] == 0
 
 
 def test_arp_and_mac_evidence_enrich_existing_interface_prefix() -> None:

@@ -33,6 +33,14 @@ describe('getRouteContext platform management routes', () => {
   });
 });
 
+describe('getRouteContext IPAM discovery route', () => {
+  it('maps discovered endpoints to the IPAM workbench subpage', () => {
+    const context = getRouteContext('/ipam/endpoints');
+    expect(context.activeTab).toBe('ipam');
+    expect(context.ipamPage).toBe('endpoints');
+  });
+});
+
 describe('getRouteContext terminal access routes', () => {
   it('keeps favorites and personal history as peer access tabs', () => {
     expect(getRouteContext('/access/favorites').activeTab).toBe('access-favorites');

@@ -15,6 +15,7 @@ from core.interface_utils import normalize_interface_name
 from services.collection_plan_service import should_collect
 from services.read_only_collection_adapter import collect_read_only_evidence
 from services.vlan_discovery_service import is_svi_interface
+from services.ipam_service import CROSS_SITE_REUSE_CONDITION, build_prefix_filter_clause
 
 
 CLASSIFICATION_RULE_VERSION = "prefix-classification-v1"
@@ -346,30 +347,9 @@ def _upsert_candidate(conn, candidate: dict[str, Any], collection_run_id: str, n
              _json(candidate.get("observed_vrfs") or []), evidence_json,
              _json({candidate["network_type"]: candidate["confidence"]}), now, now, now, now),
         )
-    # A prefix may be valid in multiple sites, but that is an explicit data
-    # quality finding rather than a silent merge. Keep site ownership in the
-    # identity and surface the global tenant/prefix collision to reconciliation.
-    conflict_rows = conn.execute(
-        """
-        SELECT id, site_id FROM prefixes
-        WHERE prefix = ? AND COALESCE(tenant_id, 'tenant-default') = ?
-          AND COALESCE(site_id, '') <> ?
-        """,
-        (candidate["prefix"], candidate["tenant_id"], candidate["site_id"]),
-    ).fetchall()
-    if conflict_rows:
-        conflict_payload = {
-            "type": "same_prefix_across_sites",
-            "prefix": candidate["prefix"],
-            "tenant_id": candidate["tenant_id"],
-            "sites": sorted({candidate["site_id"]} | {str(row["site_id"] or "") for row in conflict_rows}),
-        }
-        ids = [prefix_id] + [str(row["id"]) for row in conflict_rows]
-        for item_id in ids:
-            conn.execute(
-                "UPDATE prefixes SET conflict_status = 'cross_site_prefix', conflict_json = ? WHERE id = ?",
-                (_json(conflict_payload), item_id),
-            )
+    # Site is an IPAM address-space boundary. The same CIDR may be reused in
+    # another site; list/summary APIs expose that as a dynamic reuse hint and
+    # discovery must not persist it as a true conflict.
     return prefix_id
 
 
@@ -732,21 +712,29 @@ def age_missing_prefixes(
         conn.close()
 
 
-def get_prefix_classification_summary() -> dict[str, Any]:
+def get_prefix_classification_summary(
+    *, site: str = 'all', status: str = 'all', q: str = '', family: str = 'all',
+) -> dict[str, Any]:
     conn = get_db_connection()
     try:
+        where_sql, params = build_prefix_filter_clause(
+            site=site, status=status, q=q, family=family, classification='all',
+        )
         rows = conn.execute(
-            """
+            f"""
             SELECT
                 COUNT(*) AS total,
-                SUM(CASE WHEN COALESCE(classification_status, 'manual') = 'auto' THEN 1 ELSE 0 END) AS auto_count,
-                SUM(CASE WHEN COALESCE(manual_override, 0) = 1 OR COALESCE(source_type, '') = 'manual' THEN 1 ELSE 0 END) AS manual_count,
-                SUM(CASE WHEN COALESCE(network_type, 'unclassified') = 'unclassified' THEN 1 ELSE 0 END) AS unclassified_count,
-                SUM(CASE WHEN COALESCE(mixed_network, 0) = 1 THEN 1 ELSE 0 END) AS mixed_count,
-                SUM(CASE WHEN COALESCE(conflict_status, '') <> '' THEN 1 ELSE 0 END) AS conflict_count,
-                SUM(CASE WHEN COALESCE(is_active, 1) = 0 OR COALESCE(status, '') = 'stale' THEN 1 ELSE 0 END) AS stale_count
-            FROM prefixes
-            """
+                SUM(CASE WHEN COALESCE(p.classification_status, 'manual') = 'auto' THEN 1 ELSE 0 END) AS auto_count,
+                SUM(CASE WHEN COALESCE(p.manual_override, 0) = 1 OR COALESCE(p.source_type, '') = 'manual' THEN 1 ELSE 0 END) AS manual_count,
+                SUM(CASE WHEN COALESCE(p.network_type, 'unclassified') = 'unclassified' THEN 1 ELSE 0 END) AS unclassified_count,
+                SUM(CASE WHEN COALESCE(p.mixed_network, 0) = 1 THEN 1 ELSE 0 END) AS mixed_count,
+                SUM(CASE WHEN COALESCE(p.conflict_status, '') NOT IN ('', 'cross_site_prefix') THEN 1 ELSE 0 END) AS conflict_count,
+                SUM(CASE WHEN {CROSS_SITE_REUSE_CONDITION} THEN 1 ELSE 0 END) AS reuse_count,
+                SUM(CASE WHEN COALESCE(p.is_active, 1) = 0 OR COALESCE(p.status, '') = 'stale' THEN 1 ELSE 0 END) AS stale_count
+            FROM prefixes p
+            WHERE {where_sql}
+            """,
+            params,
         ).fetchone()
         return {key: int(rows[key] or 0) for key in rows.keys()} if rows else {}
     finally:

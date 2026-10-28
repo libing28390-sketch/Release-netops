@@ -33,6 +33,15 @@ describe('IPAM export', () => {
     expect(request.mock.calls[0][1]).toEqual({ headers: { Authorization: 'Bearer test-token' } });
   });
 
+  it.each(['never_observed', 'unscoped', 'unavailable'] as const)('exports all pages for the %s evidence category', async (tab) => {
+    const request = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ [tab]: [{ ip: '10.0.0.1' }], result_total: 2 }) } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ [tab]: [{ ip: '10.0.0.2' }], result_total: 2 }) } as Response);
+    const items = await fetchAllIpamReconciliationItems<{ ip: string }>('/api/ipam/reconciliation', new URLSearchParams({ active_tab: tab }), tab, request);
+    expect(items).toHaveLength(2);
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
   it('rejects incomplete reconciliation exports instead of returning partial pages', async () => {
     const request = vi.fn<typeof fetch>()
       .mockResolvedValueOnce({ ok: true, json: async () => ({ stale_ip_addresses: [{ address: '10.0.0.1' }], result_total: 2 }) } as Response)

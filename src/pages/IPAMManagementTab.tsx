@@ -9,6 +9,7 @@ const VIPManagementTab = lazy(() => import('./IPVlan/VIPManagementTab'));
 const DHCPLeaseTab = lazy(() => import('./IPVlan/DHCPLeaseTab'));
 const IPUtilizationTab = lazy(() => import('./IPVlan/IPUtilizationTab'));
 const IPReconciliationTab = lazy(() => import('./IPVlan/IPReconciliationTab'));
+const DiscoveredEndpointsTab = lazy(() => import('./IPVlan/DiscoveredEndpointsTab'));
 const IPLocatorPage = lazy(() => import('./IPLocatorPage'));
 
 interface IPAMPrefixContext {
@@ -111,6 +112,7 @@ const IPAMManagementTab: React.FC<IPAMManagementTabProps> = ({ language, t, ipam
           {ipamPage === 'dhcp' && <DHCPLeaseTab language={language} t={t} />}
           {ipamPage === 'utilization' && <IPUtilizationTab language={language} t={t} />}
           {ipamPage === 'reconciliation' && <IPReconciliationTab language={language} t={t} />}
+          {ipamPage === 'endpoints' && <DiscoveredEndpointsTab language={language} t={t} />}
           {ipamPage === 'locate' && <IPLocatorPage language={language} t={t} mode="toolbox" />}
         </Suspense>
       </div>

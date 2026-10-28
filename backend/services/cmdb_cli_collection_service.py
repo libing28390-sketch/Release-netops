@@ -532,7 +532,7 @@ def collect_cmdb_interface_status_target(
     *,
     vlan_only: bool = False,
 ) -> dict[str, Any]:
-    """Collect only the CMDB inventory domains selected by the device policy."""
+    """Collect CMDB interfaces and their VLAN inventory in one CLI session."""
     from services.collection_plan_service import should_collect
     from services.cmdb_snapshot_service import begin_snapshot_attempt, fail_snapshot_attempt
     from services.interface_collection_service import _load_device, is_online_network_device_for_interface_collection
@@ -545,7 +545,10 @@ def collect_cmdb_interface_status_target(
         raise RuntimeError("接口采集目标已离线或不再属于网络设备")
 
     collect_interfaces = not vlan_only and should_collect(device, "interface_status")
-    collect_vlans = should_collect(device, "vlan")
+    # A manual CMDB interface refresh includes VLAN inventory. Scheduler
+    # defaults disable VLAN collection and must not suppress this companion
+    # domain (or an explicitly requested VLAN-only refresh).
+    collect_vlans = vlan_only or collect_interfaces or should_collect(device, "vlan")
     if not collect_interfaces and not collect_vlans:
         return {
             "success": True,
@@ -574,6 +577,7 @@ def collect_cmdb_interface_status_target(
                 device,
                 categories=categories,
                 auth_role="auto",
+                policy_override_categories={"vlan"} if collect_vlans else None,
                 _platform_action_session=session,
             )
             evidence_categories = {

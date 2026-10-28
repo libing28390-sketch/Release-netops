@@ -100,6 +100,7 @@ export const usePageTitle = ({
         locate: language === 'zh' ? 'IP 定位' : 'IP Locator',
         prefixes: language === 'zh' ? 'Prefix管理' : 'Prefix Management',
         ips: language === 'zh' ? 'IP地址' : 'IP Address Management',
+        endpoints: language === 'zh' ? '发现终端' : 'Discovered Endpoints',
         pools: language === 'zh' ? '地址池' : 'IP Pool Management',
         vips: language === 'zh' ? 'VIP管理' : 'VIP Management',
         dhcp: language === 'zh' ? 'DHCP租约' : 'DHCP Leases',

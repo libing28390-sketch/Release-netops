@@ -42,11 +42,14 @@ export function fetchAllIpamExportItems<T>(endpoint: string, filters: URLSearchP
   return fetchAllPaginatedItems<T>(endpoint, new URLSearchParams(filters), 100);
 }
 
-export type IpamReconciliationTab = 'undocumented' | 'stale' | 'mismatched';
+export type IpamReconciliationTab = 'undocumented' | 'stale' | 'mismatched' | 'never_observed' | 'unscoped' | 'unavailable';
 export interface IpamReconciliationResponse<T> {
   undocumented_endpoints?: T[];
   stale_ip_addresses?: T[];
   mismatched_endpoints?: T[];
+  never_observed?: T[];
+  unscoped?: T[];
+  unavailable?: T[];
   result_total?: number;
   page?: number;
   page_size?: number;
@@ -63,6 +66,9 @@ export async function fetchAllIpamReconciliationItems<T>(
     undocumented: 'undocumented_endpoints',
     stale: 'stale_ip_addresses',
     mismatched: 'mismatched_endpoints',
+    never_observed: 'never_observed',
+    unscoped: 'unscoped',
+    unavailable: 'unavailable',
   };
   const key = resultKey[tab];
   const rows: T[] = [];

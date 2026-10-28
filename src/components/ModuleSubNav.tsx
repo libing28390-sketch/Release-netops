@@ -147,14 +147,18 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
 
   const [expandedNestedIds, setExpandedNestedIds] = useState<string[]>([]);
 
-  // Keep the active nested section visible, but collapse it when the user
-  // navigates to another item in the module sidebar.
+  // Reveal the active section without closing other sections the user opened.
   useEffect(() => {
     const activeNestedParent = currentGroup?.children.find(child =>
       child.children?.some(nestedChild => checkChildActive(nestedChild, pathname))
     );
 
-    setExpandedNestedIds(activeNestedParent ? [activeNestedParent.id] : []);
+    setExpandedNestedIds(current => {
+      const visibleIds = current.filter(id => currentGroup?.children.some(child => child.id === id));
+      return activeNestedParent && !visibleIds.includes(activeNestedParent.id)
+        ? [...visibleIds, activeNestedParent.id]
+        : visibleIds;
+    });
   }, [currentGroup?.id, pathname]);
 
   useEffect(() => {
@@ -280,7 +284,7 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
       )}
 
       {/* Nav items */}
-      <nav className={`flex-1 overflow-y-auto ${isCompactNav ? 'px-1.5 pt-2' : 'px-2'}`}>
+      <nav className={`min-h-0 flex-1 overflow-y-auto ${isCompactNav ? 'px-1.5 pt-2' : 'px-2'}`}>
         {visibleChildren.map(child => {
           const active = isActive(child);
           const label = zh ? child.label : (child.labelEn || child.label);
@@ -334,11 +338,12 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
                   type="button"
                   onClick={() => {
                     setExpandedNestedIds(current =>
-                      current.includes(child.id) ? current.filter(id => id !== child.id) : [child.id]
+                      current.includes(child.id) ? current.filter(id => id !== child.id) : [...current, child.id]
                     );
                   }}
                   aria-expanded={nestedExpanded}
-                  className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px]"
+                  aria-controls={`module-nav-${child.id}`}
+                  className="flex min-h-9 w-full items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] transition-colors hover:bg-[var(--app-hover-bg)]"
                   style={{
                     color: nestedActive ? ACCENT : 'var(--body-text)',
                     fontWeight: nestedActive ? 600 : 500,
@@ -357,7 +362,7 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
                 </button>
 
                 {nestedExpanded && (
-                  <div className="ml-5 pl-2 border-l border-slate-200/70 dark:border-white/10">
+                  <div id={`module-nav-${child.id}`} className="ml-5 pl-2 border-l border-slate-200/70 dark:border-white/10">
                     {nestedChildren.map(nestedChild => {
                       const nestedIsActive = isActive(nestedChild);
                       const nestedLabel = zh ? nestedChild.label : (nestedChild.labelEn || nestedChild.label);

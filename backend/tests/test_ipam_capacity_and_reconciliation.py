@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from backend.tests.pg_test_utils import postgresql_test_driver
-from services import ipam_service
+from services import ipam_discovery_service, ipam_service
 
 
 def _connection() -> postgresql_test_driver.Connection:
@@ -138,26 +138,44 @@ def test_utilization_excludes_container_point_to_point_and_host_routes(monkeypat
     }
 
 
-def test_reconciliation_returns_readable_switch_and_evidence(monkeypatch):
+def test_reconciliation_delegates_to_independent_discovery_evidence(monkeypatch):
     conn = _connection()
     monkeypatch.setattr(ipam_service, 'get_db_connection', lambda: conn)
+    captured = {}
+    expected = {
+        'undocumented_endpoints': [{
+            'observation_id': 'arp-observation', 'source_device_id': 'device-1',
+            'source_device_name': 'access-sw-01', 'source_type': 'arp',
+            'ip': '10.0.0.20', 'mac': 'aa:bb:cc:dd:ee:20',
+        }],
+        'stale_ip_addresses': [], 'mismatched_endpoints': [],
+        'never_observed': [], 'unscoped': [], 'unavailable': [],
+        'summary': {'coverage_status': 'partial'},
+    }
+
+    def build(conn_arg, **kwargs):
+        captured['conn'] = conn_arg
+        captured['kwargs'] = kwargs
+        return expected
+
+    monkeypatch.setattr(ipam_discovery_service, 'build_ipam_reconciliation', build)
 
     data = ipam_service.get_ipam_reconciliation()
 
-    endpoint = data['undocumented_endpoints'][0]
-    assert endpoint['switch_id'] == 'device-1'
-    assert endpoint['switch_name'] == 'access-sw-01'
-    assert endpoint['source_type'] == 'arp'
-    assert endpoint['confidence'] == '95%'
+    assert data == expected
+    assert captured['conn'] is conn
+    assert captured['kwargs']['active_tab'] == ''
 
 
 def test_ip_inventory_merges_discovered_endpoints_by_site_and_prefix(monkeypatch):
+    # This fixture isolates legacy endpoint inventory; CLI snapshots have separate integration coverage.
+    monkeypatch.setattr(ipam_service, '_current_cmdb_interface_ip_observations', lambda _conn: [])
     conn = _connection()
     monkeypatch.setattr(ipam_service, 'get_db_connection', lambda: conn)
 
     data = ipam_service.list_ip_inventory(prefix_id='prefix-capacity')
 
-    assert data['summary'] == {'total': 2, 'discovered': 1, 'manual': 1, 'gateways': 0, 'prefixes': 4}
+    assert data['summary'] == {'total': 2, 'discovered': 1, 'manual': 1, 'gateways': 0, 'prefixes': 4, 'interface_observed': 0, 'interface_observed_networks': 0, 'interface_unmatched_prefix': 0, 'interface_vrf_review': 0, 'interface_matched': 0}
     assert {item['address'] for item in data['items']} == {'10.0.0.10', '10.0.0.20'}
     discovered = next(item for item in data['items'] if item['address'] == '10.0.0.20')
     assert discovered['is_discovered'] is True

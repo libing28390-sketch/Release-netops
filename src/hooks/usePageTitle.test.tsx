@@ -20,3 +20,20 @@ describe('usePageTitle tickets route', () => {
     expect(getTitle('en')).toBe('Incidents & service requests');
   });
 });
+
+describe('usePageTitle IPAM discovery route', () => {
+  it('uses a specific title for the discovered endpoints page', () => {
+    const { result } = renderHook(() => usePageTitle({
+      activeTab: 'ipam',
+      automationPage: '',
+      configPage: '',
+      inventorySubPage: '',
+      changeOrderPage: '',
+      ipamPage: 'endpoints',
+      cmdbPage: '',
+      language: 'zh',
+      t: (key) => key,
+    }));
+    expect(result.current).toBe('发现终端');
+  });
+});

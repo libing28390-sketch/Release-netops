@@ -1,1200 +1,590 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import {
-  ClipboardCheck,
-  AlertTriangle,
-  RefreshCw,
-  CheckCircle2,
-  Trash2,
-  Plus,
-  Search,
-  X,
-  Info,
-  Database,
-  WifiOff,
-  UserCheck,
-  ArrowRight,
-  ShieldAlert,
-} from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, CheckCircle2, ClipboardCheck, Eye, Globe, Info, Plus, RefreshCw, Search, ShieldAlert, WifiOff, X } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import PageHero from '../../components/PageHero';
 import Pagination from '../../components/Pagination';
+import { DataTable } from '../../components/DataTable';
 import { ActionIconButton } from '../../components/ui/ActionIconButton';
-import { TableExportMenu } from '../../components/ui/TableExportMenu';
-import { useEscapeClose } from '../../hooks/useEscapeClose';
-import { buildVisibleIpamExportData, fetchAllIpamReconciliationItems } from './ipamExport';
-
 import { TableActionCell, TableActionHeader } from '../../components/ui/TableActionColumn';
-interface UndocumentedEndpoint {
-  ip: string;
-  mac: string;
-  hostname: string;
-  vendor: string;
-  switch_id: string;
-  switch_name: string;
-  switch_port: string;
-  vlan: string;
-  vrf: string;
-  site: string;
-  last_seen: string;
-  source_type: string;
-  confidence: string;
-  subnet_id: string;
-  subnet_prefix: string;
-  subnet_name: string;
-}
+import { useEscapeClose } from '../../hooks/useEscapeClose';
+import { getDiscoveryCoverageLabel } from './ipamDiscoveryPresentation';
+import { fetchAllIpamReconciliationItems } from './ipamExport';
+import {
+  canCalibrateMac,
+  getReconciliationCategoryCount,
+  getReconciliationEmptyMessage,
+  getReconciliationEmptyState,
+  RECONCILIATION_TABS,
+  type ReconciliationTab,
+} from './ipReconciliationPresentation';
 
-interface StaleIPAddress {
-  id: string;
-  address: string;
-  hostname: string;
-  mac_address: string;
-  subnet_id: string;
-  subnet_prefix: string;
-  subnet_name: string;
-  status: string;
-  last_seen: string;
-  days_since_seen: number;
-}
+type ReconciliationRow = Record<string, unknown> & {
+  observation_id?: string;
+  ipam_address_id?: string;
+  ip?: string;
+  address?: string;
+  mac?: string;
+  ipam_mac?: string;
+  observed_mac?: string;
+  observed_at?: string;
+  last_observed_at?: string | null;
+  scope_status?: string;
+  evidence_status?: string;
+  mac_mismatch?: boolean;
+  subnet_id?: string;
+  subnet_prefix?: string;
+  site_id?: string | null;
+  site?: string;
+  site_name?: string;
+  vrf_id?: string | null;
+  vrf?: string;
+  vrf_name?: string;
+  source_device_id?: string;
+  source_device_name?: string;
+  switch_name?: string;
+  switch_port?: string;
+  vlan?: string;
+  reason?: string;
+};
 
-interface MismatchedEndpoint {
-  ip: string;
-  ipam_address_id: string;
-  ipam_hostname: string;
-  endpoint_hostname: string;
-  ipam_mac: string;
-  endpoint_mac: string;
-  subnet_id: string;
-  subnet_prefix: string;
-  subnet_name: string;
-  mac_mismatch: boolean;
-  hostname_mismatch: boolean;
-  site_mismatch?: boolean;
-  ipam_site?: string;
-  endpoint_site?: string;
-  status_mismatch?: boolean;
-  ipam_status?: string;
+interface ReconciliationSummary extends Record<string, unknown> {
+  total_undocumented?: number;
+  total_mismatched?: number;
+  total_stale?: number;
+  total_never_observed?: number;
+  total_unscoped?: number;
+  total_unavailable?: number;
+  ipam_address_record_count?: number;
+  allocated_ipam_address_count?: number;
+  active_endpoint_count?: number;
+  current_endpoint_count?: number;
+  interface_snapshot_ip_count?: number;
+  coverage_status?: string;
+  coverage_reason?: string;
+  latest_active_endpoint_seen?: string | null;
+  latest_endpoint_seen?: string | null;
+  endpoint_cache_fresh?: boolean;
+  stale_after_days?: number;
 }
 
 interface ReconciliationData {
-  undocumented_endpoints: UndocumentedEndpoint[];
-  stale_ip_addresses: StaleIPAddress[];
-  mismatched_endpoints: MismatchedEndpoint[];
-  summary: {
-    total_undocumented: number;
-    total_stale: number;
-    total_mismatched: number;
-    total_unscoped: number;
-    endpoint_cache_fresh: boolean;
-    latest_endpoint_seen: string;
-    current_window_minutes: number;
-    stale_after_days: number;
-  };
+  undocumented_endpoints: ReconciliationRow[];
+  mismatched_endpoints: ReconciliationRow[];
+  stale_ip_addresses: ReconciliationRow[];
+  never_observed: ReconciliationRow[];
+  unscoped: ReconciliationRow[];
+  unavailable: ReconciliationRow[];
+  summary: ReconciliationSummary;
+  resultTotal: number;
 }
 
-const DEFAULT_CURRENT_WINDOW_MINUTES = 15;
-const DEFAULT_STALE_AFTER_DAYS = 7;
+interface SubnetOption {
+  id: string;
+  prefix: string;
+  name?: string;
+  site_id?: string | null;
+  site_name?: string | null;
+  vrf_id?: string | null;
+  vrf_name?: string | null;
+  tenant_id?: string | null;
+}
 
-const createEmptyReconciliationData = (): ReconciliationData => ({
-  undocumented_endpoints: [],
-  stale_ip_addresses: [],
-  mismatched_endpoints: [],
-  summary: {
-    total_undocumented: 0,
-    total_stale: 0,
-    total_mismatched: 0,
-    total_unscoped: 0,
-    endpoint_cache_fresh: false,
-    latest_endpoint_seen: '',
-    current_window_minutes: DEFAULT_CURRENT_WINDOW_MINUTES,
-    stale_after_days: DEFAULT_STALE_AFTER_DAYS,
-  },
-});
-
-const asRecord = (value: unknown): Record<string, unknown> | null =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
-
-const asString = (value: unknown): string => typeof value === 'string' ? value : '';
-
-const hasLastSeenEvidence = (value: unknown): value is string => {
-  if (typeof value !== 'string' || !value.trim()) return false;
-  return !['unknown', 'n/a', 'none', 'null', 'never', '-'].includes(value.trim().toLowerCase());
-};
-
-const asNonNegativeNumber = (value: unknown, fallback = 0): number => {
-  const parsed = typeof value === 'number' ? value : typeof value === 'string' && value.trim() ? Number(value) : NaN;
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
-};
-
-const asPositiveNumber = (value: unknown, fallback: number): number => {
-  const parsed = asNonNegativeNumber(value, fallback);
-  return parsed > 0 ? parsed : fallback;
-};
-
-const normalizeReconciliationData = (payload: unknown): ReconciliationData => {
-  const root = asRecord(payload) || {};
-  const rawSummary = asRecord(root.summary) || {};
-  const staleAfterDays = asPositiveNumber(rawSummary.stale_after_days, DEFAULT_STALE_AFTER_DAYS);
-  const records = (value: unknown): Record<string, unknown>[] =>
-    Array.isArray(value) ? value.map(asRecord).filter((item): item is Record<string, unknown> => item !== null) : [];
-
-  const undocumentedEndpoints = records(root.undocumented_endpoints)
-    .filter((item) => asString(item.ip).trim())
-    .map((item): UndocumentedEndpoint => ({
-      ip: asString(item.ip),
-      mac: asString(item.mac),
-      hostname: asString(item.hostname),
-      vendor: asString(item.vendor),
-      switch_id: asString(item.switch_id),
-      switch_name: asString(item.switch_name),
-      switch_port: asString(item.switch_port),
-      vlan: asString(item.vlan),
-      vrf: asString(item.vrf),
-      site: asString(item.site),
-      last_seen: asString(item.last_seen),
-      source_type: asString(item.source_type),
-      confidence: asString(item.confidence),
-      subnet_id: asString(item.subnet_id),
-      subnet_prefix: asString(item.subnet_prefix),
-      subnet_name: asString(item.subnet_name),
-    }));
-
-  const staleIpAddresses = records(root.stale_ip_addresses)
-    .map((item): StaleIPAddress | null => {
-      const lastSeen = asString(item.last_seen).trim();
-      const daysSinceSeen = asNonNegativeNumber(item.days_since_seen, -1);
-      if (!asString(item.id).trim() || !asString(item.address).trim() || !hasLastSeenEvidence(lastSeen) || daysSinceSeen < staleAfterDays) return null;
-      return {
-        id: asString(item.id),
-        address: asString(item.address),
-        hostname: asString(item.hostname),
-        mac_address: asString(item.mac_address),
-        subnet_id: asString(item.subnet_id),
-        subnet_prefix: asString(item.subnet_prefix),
-        subnet_name: asString(item.subnet_name),
-        status: asString(item.status),
-        last_seen: lastSeen,
-        days_since_seen: daysSinceSeen,
-      };
-    })
-    .filter((item): item is StaleIPAddress => item !== null);
-
-  const mismatchedEndpoints = records(root.mismatched_endpoints)
-    .filter((item) => asString(item.ip).trim())
-    .map((item): MismatchedEndpoint => ({
-      ip: asString(item.ip),
-      ipam_address_id: asString(item.ipam_address_id),
-      ipam_hostname: asString(item.ipam_hostname),
-      endpoint_hostname: asString(item.endpoint_hostname),
-      ipam_mac: asString(item.ipam_mac),
-      endpoint_mac: asString(item.endpoint_mac),
-      subnet_id: asString(item.subnet_id),
-      subnet_prefix: asString(item.subnet_prefix),
-      subnet_name: asString(item.subnet_name),
-      mac_mismatch: item.mac_mismatch === true,
-      hostname_mismatch: item.hostname_mismatch === true,
-      site_mismatch: item.site_mismatch === true,
-      ipam_site: asString(item.ipam_site),
-      endpoint_site: asString(item.endpoint_site),
-      status_mismatch: item.status_mismatch === true,
-      ipam_status: asString(item.ipam_status),
-    }));
-
-  return {
-    undocumented_endpoints: undocumentedEndpoints,
-    stale_ip_addresses: staleIpAddresses,
-    mismatched_endpoints: mismatchedEndpoints,
-    summary: {
-      total_undocumented: asNonNegativeNumber(rawSummary.total_undocumented),
-      total_stale: asNonNegativeNumber(rawSummary.total_stale),
-      total_mismatched: asNonNegativeNumber(rawSummary.total_mismatched),
-      total_unscoped: asNonNegativeNumber(rawSummary.total_unscoped),
-      endpoint_cache_fresh: rawSummary.endpoint_cache_fresh === true,
-      latest_endpoint_seen: asString(rawSummary.latest_endpoint_seen),
-      current_window_minutes: asPositiveNumber(rawSummary.current_window_minutes, DEFAULT_CURRENT_WINDOW_MINUTES),
-      stale_after_days: staleAfterDays,
-    },
-  };
-};
-
-const getAuthorizationErrorMessage = (status: number, zh: boolean): string => {
-  if (status === 401) return zh ? '登录状态已失效，请重新登录。' : 'Your session has expired. Please sign in again.';
-  if (status === 403) return zh ? '当前账号没有权限访问此 IPAM 操作。' : 'Your account does not have permission for this IPAM action.';
-  return '';
-};
+interface EndpointEvidenceDetail extends Record<string, unknown> {
+  observations?: Array<Record<string, unknown>>;
+}
 
 interface IPReconciliationTabProps {
   language: string;
   t: (key: string) => string;
 }
 
-const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }) => {
-  const tableRef = useRef<HTMLTableElement>(null);
+const TAB_METADATA: Record<ReconciliationTab, { title: [string, string]; icon: React.ComponentType<{ size?: number; className?: string }>; countKey: string }> = {
+  undocumented: { title: ['发现未登记', 'Undocumented'], icon: Plus, countKey: 'total_undocumented' },
+  mismatched: { title: ['信息不一致', 'Mismatched'], icon: ShieldAlert, countKey: 'total_mismatched' },
+  stale: { title: ['长期未发现', 'Stale'], icon: WifiOff, countKey: 'total_stale' },
+  never_observed: { title: ['登记后未观察', 'Never observed'], icon: Info, countKey: 'total_never_observed' },
+  unscoped: { title: ['归属待确认', 'Unscoped'], icon: Globe, countKey: 'total_unscoped' },
+  unavailable: { title: ['来源不可用', 'Unavailable'], icon: AlertTriangle, countKey: 'total_unavailable' },
+};
+
+const emptyData = (): ReconciliationData => ({
+  undocumented_endpoints: [],
+  mismatched_endpoints: [],
+  stale_ip_addresses: [],
+  never_observed: [],
+  unscoped: [],
+  unavailable: [],
+  summary: {},
+  resultTotal: 0,
+});
+
+const asRecord = (value: unknown): Record<string, unknown> | null =>
+  typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null;
+
+const asString = (value: unknown): string => typeof value === 'string' ? value : '';
+
+const asCount = (value: unknown): number => {
+  const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+};
+
+const asRows = (value: unknown): ReconciliationRow[] => Array.isArray(value)
+  ? value.map(asRecord).filter((row): row is Record<string, unknown> => row !== null) as ReconciliationRow[]
+  : [];
+
+const textValue = (row: ReconciliationRow, ...keys: string[]): string => {
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value === 'string' && value.trim()) return value;
+  }
+  return '';
+};
+
+const evidenceStatusLabel = (status: string, zh: boolean): string => {
+  const labels: Record<string, [string, string]> = {
+    recent: ['近期观察', 'Recent'], historical: ['历史观察', 'Historical'],
+    scope_pending: ['归属待确认', 'Scope pending'], conflict: ['存在冲突', 'Conflict'],
+    unknown: ['观察时间未知（不参与当前对账）', 'Observation time unknown (excluded from reconciliation)'],
+  };
+  return labels[status]?.[zh ? 0 : 1] || status || '—';
+};
+
+const scopeStatusLabel = (status: string, zh: boolean): string => {
+  const labels: Record<string, [string, string]> = {
+    resolved: ['范围已确认', 'Scope resolved'], scope_pending: ['归属待确认', 'Scope pending'], conflict: ['范围冲突', 'Scope conflict'],
+  };
+  return labels[status]?.[zh ? 0 : 1] || status || '—';
+};
+
+const safeErrorMessage = async (response: Response, zh: boolean): Promise<string> => {
+  if (response.status === 401) return zh ? '登录状态已失效，请重新登录。' : 'Your session expired. Sign in again.';
+  if (response.status === 403) return zh ? '当前账号没有权限执行此 IPAM 操作。' : 'You do not have permission for this IPAM action.';
+  try {
+    const body = asRecord(await response.json());
+    const detail = body?.detail ?? body?.message;
+    if (typeof detail === 'string' && detail.trim()) return detail;
+  } catch { /* Response may not contain JSON. */ }
+  if (response.status === 409) return zh ? '证据版本或地址状态已变化，请刷新后复核。' : 'Evidence or address state changed. Refresh and review again.';
+  if (response.status === 422) return zh ? '所选地址范围或提交字段不符合要求。' : 'The selected scope or submitted fields are invalid.';
+  return zh ? '操作失败，请刷新后重试。' : 'The operation failed. Refresh and retry.';
+};
+
+const getRowsForTab = (data: ReconciliationData, tab: ReconciliationTab): ReconciliationRow[] => {
+  const keys: Record<ReconciliationTab, keyof ReconciliationData> = {
+    undocumented: 'undocumented_endpoints',
+    mismatched: 'mismatched_endpoints',
+    stale: 'stale_ip_addresses',
+    never_observed: 'never_observed',
+    unscoped: 'unscoped',
+    unavailable: 'unavailable',
+  };
+  const rows = data[keys[tab]];
+  return Array.isArray(rows) ? rows as ReconciliationRow[] : [];
+};
+
+const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language }) => {
   const zh = language === 'zh';
-  const [data, setData] = useState<ReconciliationData>(createEmptyReconciliationData);
+  const navigate = useNavigate();
+  const requestRef = useRef<AbortController | null>(null);
+  const requestSequence = useRef(0);
+  const [data, setData] = useState<ReconciliationData>(emptyData);
+  const [hasLoaded, setHasLoaded] = useState(false);
+  const [activeTab, setActiveTab] = useState<ReconciliationTab>('undocumented');
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'undocumented' | 'stale' | 'mismatched'>('undocumented');
+  const [searchDraft, setSearchDraft] = useState('');
   const [search, setSearch] = useState('');
-  const [apiError, setApiError] = useState('');
-  const [successMsg, setSuccessMsg] = useState('');
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
-  const [resultTotal, setResultTotal] = useState(0);
+  const [pageSize, setPageSize] = useState(20);
+  const [apiError, setApiError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
+  const [evidenceItem, setEvidenceItem] = useState<ReconciliationRow | null>(null);
+  const [evidenceDetail, setEvidenceDetail] = useState<EndpointEvidenceDetail | null>(null);
+  const [evidenceLoading, setEvidenceLoading] = useState(false);
+  const [evidenceError, setEvidenceError] = useState('');
+  const [registerItem, setRegisterItem] = useState<ReconciliationRow | null>(null);
+  const [subnets, setSubnets] = useState<SubnetOption[]>([]);
+  const [subnetsLoading, setSubnetsLoading] = useState(false);
+  const [registerSubnetId, setRegisterSubnetId] = useState('');
+  const [confirmedScope, setConfirmedScope] = useState(false);
+  const [registerError, setRegisterError] = useState('');
+  const [registerSubmitting, setRegisterSubmitting] = useState(false);
+  const [calibrateItem, setCalibrateItem] = useState<ReconciliationRow | null>(null);
+  const [calibrateConfirmed, setCalibrateConfirmed] = useState(false);
+  const [calibrateError, setCalibrateError] = useState('');
+  const [calibrateSubmitting, setCalibrateSubmitting] = useState(false);
+  useEscapeClose(Boolean(evidenceItem), () => setEvidenceItem(null));
+  useEscapeClose(Boolean(registerItem), () => setRegisterItem(null));
+  useEscapeClose(Boolean(calibrateItem), () => setCalibrateItem(null));
 
-  // Modals state
-  const [registeringItem, setRegisteringItem] = useState<UndocumentedEndpoint | null>(null);
-  const [releasingItem, setReleasingItem] = useState<StaleIPAddress | null>(null);
-  const [syncingItem, setSyncingItem] = useState<MismatchedEndpoint | null>(null);
-  useEscapeClose(Boolean(registeringItem), () => setRegisteringItem(null));
-  useEscapeClose(Boolean(releasingItem), () => setReleasingItem(null));
-  useEscapeClose(Boolean(syncingItem), () => setSyncingItem(null));
-
-  // Subnet list (for registering items where subnet is not auto-matched)
-  const [subnets, setSubnets] = useState<any[]>([]);
-
-  // Form State for Registration
-  const [registerForm, setRegisterForm] = useState({
-    subnet_id: '',
-    address: '',
-    hostname: '',
-    device_type: 'host',
-    mac_address: '',
-    interface_name: '',
-    status: 'active',
-    description: '',
-  });
-
-  const authHeaders = useCallback(() => {
+  const authHeaders = useCallback((): Record<string, string> => {
     const token = localStorage.getItem('netops_token');
     return token ? { Authorization: `Bearer ${token}` } : {};
   }, []);
 
   const loadData = useCallback(async () => {
+    requestRef.current?.abort();
+    const controller = new AbortController();
+    requestRef.current = controller;
+    const currentRequest = ++requestSequence.current;
     setLoading(true);
     setApiError('');
-    setData((current) => ({
-      ...current,
-      summary: { ...current.summary, endpoint_cache_fresh: false },
-    }));
+    const params = new URLSearchParams({ active_tab: activeTab, q: search.trim(), page: String(page), page_size: String(pageSize) });
     try {
-      const hdrs = authHeaders();
-      const params = new URLSearchParams({
-        active_tab: activeTab,
-        q: search.trim(),
-        page: String(page),
-        page_size: String(pageSize),
+      const response = await fetch(`/api/ipam/reconciliation?${params.toString()}`, { headers: authHeaders(), signal: controller.signal });
+      if (controller.signal.aborted || requestSequence.current !== currentRequest) return;
+      if (!response.ok) {
+        setApiError(await safeErrorMessage(response, zh));
+        setData(emptyData());
+        setHasLoaded(false);
+        return;
+      }
+      const payload = asRecord(await response.json()) || {};
+      const summary = asRecord(payload.summary) || {};
+      const rawResultTotal = payload.result_total ?? payload.total;
+      const resultTotal = typeof rawResultTotal === 'number' && rawResultTotal >= 0
+        ? rawResultTotal
+        : getReconciliationCategoryCount(summary, activeTab);
+      setData({
+        undocumented_endpoints: asRows(payload.undocumented_endpoints),
+        mismatched_endpoints: asRows(payload.mismatched_endpoints),
+        stale_ip_addresses: asRows(payload.stale_ip_addresses),
+        never_observed: asRows(payload.never_observed),
+        unscoped: asRows(payload.unscoped),
+        unavailable: asRows(payload.unavailable),
+        summary: summary as ReconciliationSummary,
+        resultTotal,
       });
-      const res = await fetch(`/api/ipam/reconciliation?${params.toString()}`, { headers: hdrs });
-      if (res.ok) {
-        const payload = await res.json();
-        const normalizedData = normalizeReconciliationData(payload);
-        setData(normalizedData);
-        const summaryKey = activeTab === 'undocumented' ? 'total_undocumented' : activeTab === 'stale' ? 'total_stale' : 'total_mismatched';
-        const result = asRecord(payload);
-        setResultTotal(asNonNegativeNumber(result?.result_total, normalizedData.summary[summaryKey]));
-      } else {
-        const authorizationError = getAuthorizationErrorMessage(res.status, zh);
-        setApiError(authorizationError || (zh ? '获取对账数据失败' : 'Failed to fetch reconciliation data'));
-        if (authorizationError) {
-          setData(createEmptyReconciliationData());
-          setResultTotal(0);
-          setSubnets([]);
-        } else {
-          setData((current) => ({
-            ...current,
-            summary: { ...current.summary, endpoint_cache_fresh: false },
-          }));
-        }
-      }
-
-      // Fetch subnets for the fallback select
-      const subRes = await fetch('/api/ipam/subnets', { headers: hdrs });
-      if (subRes.ok) {
-        const payload = await subRes.json();
-        setSubnets(Array.isArray(payload) ? payload : (payload?.items || payload?.data?.items || payload?.data || []));
-      } else if (subRes.status === 401 || subRes.status === 403) {
-        setApiError(getAuthorizationErrorMessage(subRes.status, zh));
-      }
-    } catch (e) {
-      setApiError(zh ? '网络错误，无法刷新对账数据。' : 'Network error while refreshing reconciliation data.');
-      setData((current) => ({
-        ...current,
-        summary: { ...current.summary, endpoint_cache_fresh: false },
-      }));
+      setHasLoaded(true);
+    } catch (error) {
+      if (controller.signal.aborted || requestSequence.current !== currentRequest) return;
+      setApiError(zh ? '网络错误，无法加载对账结果。' : 'Network error while loading reconciliation results.');
+      setData(emptyData());
+      setHasLoaded(false);
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted && requestSequence.current === currentRequest) setLoading(false);
     }
-  }, [authHeaders, zh, activeTab, search, page, pageSize]);
+  }, [activeTab, authHeaders, page, pageSize, search, zh]);
 
   useEffect(() => {
-    loadData();
+    void loadData();
+    return () => requestRef.current?.abort();
   }, [loadData]);
 
-  // Flash messages helper
-  const triggerSuccess = (msg: string) => {
-    setSuccessMsg(msg);
-    setTimeout(() => setSuccessMsg(''), 4000);
-  };
+  const activeRows = useMemo(() => getRowsForTab(data, activeTab), [data, activeTab]);
+  const emptyState = getReconciliationEmptyState({
+    endpoint_cache_fresh: data.summary.endpoint_cache_fresh,
+    allocated_ipam_address_count: typeof data.summary.allocated_ipam_address_count === 'number' ? data.summary.allocated_ipam_address_count : undefined,
+    active_endpoint_count: typeof data.summary.active_endpoint_count === 'number'
+      ? data.summary.active_endpoint_count
+      : typeof data.summary.current_endpoint_count === 'number' ? data.summary.current_endpoint_count : undefined,
+    interface_snapshot_ip_count: typeof data.summary.interface_snapshot_ip_count === 'number' ? data.summary.interface_snapshot_ip_count : undefined,
+    total_unscoped: asCount(data.summary.total_unscoped),
+    coverage_status: asString(data.summary.coverage_status) || undefined,
+    coverage_reason: asString(data.summary.coverage_reason) || undefined,
+  }, { resultTotal: data.resultTotal, search });
+  const emptyMessage = getReconciliationEmptyMessage(emptyState, activeTab, zh, asString(data.summary.coverage_reason));
 
-  // Actions implementation
-  const handleOpenRegister = (item: UndocumentedEndpoint) => {
-    setRegisterForm({
-      subnet_id: item.subnet_id || (subnets.length > 0 ? subnets[0].id : ''),
-      address: item.ip,
-      hostname: item.hostname,
-      device_type: 'host',
-      mac_address: item.mac,
-      interface_name: item.switch_port ? `${item.switch_name || item.switch_id}:${item.switch_port}` : '',
-      status: 'active',
-      description: zh ? '从对账中心自动登记' : 'Discovered via reconciliation audit',
-    });
-    setRegisteringItem(item);
+  const refresh = () => { void loadData(); };
+  const applySearch = () => { setPage(1); setSearch(searchDraft.trim()); };
+
+  const openRegister = async (item: ReconciliationRow) => {
+    setRegisterItem(item);
+    setRegisterSubnetId('');
+    setConfirmedScope(false);
+    setRegisterError('');
+    setSubnetsLoading(true);
+    try {
+      const response = await fetch('/api/ipam/subnets', { headers: authHeaders() });
+      if (!response.ok) {
+        setRegisterError(await safeErrorMessage(response, zh));
+        setSubnets([]);
+        return;
+      }
+      const payload = await response.json();
+      const rows = Array.isArray(payload) ? payload : Array.isArray(asRecord(payload)?.items) ? asRecord(payload)?.items as unknown[] : [];
+      setSubnets(rows.flatMap((raw): SubnetOption[] => {
+        const row = asRecord(raw);
+        if (!row || typeof row.id !== 'string' || typeof row.prefix !== 'string') return [];
+        return [{
+          id: row.id,
+          prefix: row.prefix,
+          name: typeof row.name === 'string' ? row.name : undefined,
+          site_id: typeof row.site_id === 'string' ? row.site_id : null,
+          site_name: typeof row.site_name === 'string' ? row.site_name : null,
+          vrf_id: typeof row.vrf_id === 'string' ? row.vrf_id : null,
+          vrf_name: typeof row.vrf_name === 'string' ? row.vrf_name : null,
+          tenant_id: typeof row.tenant_id === 'string' ? row.tenant_id : null,
+        }];
+      }));
+    } catch {
+      setRegisterError(zh ? '网络错误，无法加载可选网段。' : 'Network error while loading candidate prefixes.');
+    } finally {
+      setSubnetsLoading(false);
+    }
   };
 
   const submitRegister = async () => {
-    setApiError('');
-    if (!registerForm.subnet_id) {
-      setApiError(zh ? '请选择一个子网网段' : 'Please select a subnet');
+    if (!registerItem) return;
+    const observationId = textValue(registerItem, 'observation_id');
+    const observedAt = textValue(registerItem, 'observed_at');
+    const ip = textValue(registerItem, 'ip', 'address');
+    if (!observationId || !observedAt || !ip || !registerSubnetId || !confirmedScope) {
+      setRegisterError(zh ? '请确认来源观察、选择网段并确认该 IP 的站点归属。' : 'Confirm the source observation, choose a prefix, and confirm the IP scope.');
       return;
     }
+    setRegisterSubmitting(true);
+    setRegisterError('');
     try {
-      const res = await fetch(`/api/ipam/subnets/${registerForm.subnet_id}/addresses`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...authHeaders(),
-        },
-        body: JSON.stringify(registerForm),
-      });
-      if (res.ok) {
-        setRegisteringItem(null);
-        triggerSuccess(zh ? `成功登记 IP ${registerForm.address}` : `Successfully registered IP ${registerForm.address}`);
-        loadData();
-      } else {
-        const err = await res.json();
-        setApiError(getAuthorizationErrorMessage(res.status, zh) || err.detail || (zh ? '登记失败' : 'Registration failed'));
-      }
-    } catch (e) {
-      setApiError(zh ? '网络请求出错' : 'Network request error');
-    }
-  };
-
-  const submitRelease = async () => {
-    if (!releasingItem) return;
-    setApiError('');
-    try {
-      const res = await fetch(`/api/ipam/addresses/${releasingItem.id}/release`, {
+      const response = await fetch('/api/ipam/reconciliation/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: '{}',
+        body: JSON.stringify({ observation_id: observationId, subnet_id: registerSubnetId, expected_observed_at: observedAt, confirmed_scope: true }),
       });
-      if (res.ok) {
-        setReleasingItem(null);
-        triggerSuccess(zh ? `成功释放 IP ${releasingItem.address}` : `Successfully released IP ${releasingItem.address}`);
-        loadData();
-      } else {
-        const err = await res.json();
-        setApiError(getAuthorizationErrorMessage(res.status, zh) || err.detail || (zh ? '释放 IP 失败' : 'Failed to release IP'));
+      if (!response.ok) {
+        setRegisterError(await safeErrorMessage(response, zh));
+        return;
       }
-    } catch (e) {
-      setApiError(zh ? '网络请求出错' : 'Network request error');
+      setRegisterItem(null);
+      setSuccessMessage(zh ? `已登记 IP ${ip}。原观察中的未知归属不会被回写。` : `Registered ${ip}. Unknown scope on the source observation was not rewritten.`);
+      window.setTimeout(() => setSuccessMessage(''), 4500);
+      void loadData();
+    } catch {
+      setRegisterError(zh ? '网络错误，登记未完成。' : 'Network error. Registration was not completed.');
+    } finally {
+      setRegisterSubmitting(false);
     }
   };
 
-  const submitSync = async () => {
-    if (!syncingItem) return;
-    setApiError('');
-    const updates: { hostname?: string; mac_address?: string } = {};
-    const endpointHostname = syncingItem.endpoint_hostname.trim();
-    const endpointMac = syncingItem.endpoint_mac.trim();
-    if (syncingItem.hostname_mismatch && endpointHostname) updates.hostname = endpointHostname;
-    if (syncingItem.mac_mismatch && endpointMac) updates.mac_address = endpointMac;
-    if (Object.keys(updates).length === 0) {
-      setApiError(zh
-        ? '没有可安全提交的主机名或 MAC 值，请复核端点缓存证据。'
-        : 'No non-empty hostname or MAC value can be safely submitted. Review the cached endpoint evidence.');
+  const submitMacCalibration = async () => {
+    if (!calibrateItem || !canCalibrateMac(calibrateItem) || !calibrateConfirmed) {
+      setCalibrateError(zh ? '请确认只校准此 IPAM 地址的 MAC。' : 'Confirm that only this IPAM address MAC will be calibrated.');
       return;
     }
+    setCalibrateSubmitting(true);
+    setCalibrateError('');
     try {
-      const res = await fetch(`/api/ipam/addresses/${syncingItem.ipam_address_id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          ...authHeaders(),
-        },
-        body: JSON.stringify(updates),
+      const response = await fetch('/api/ipam/reconciliation/calibrate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({
+          observation_id: calibrateItem.observation_id,
+          ipam_address_id: calibrateItem.ipam_address_id,
+          expected_observed_at: calibrateItem.observed_at,
+          expected_mac_address: calibrateItem.ipam_mac,
+          confirmed: true,
+        }),
       });
-      if (res.ok) {
-        setSyncingItem(null);
-        triggerSuccess(zh ? `已将 IP ${syncingItem.ip} 校准为端点缓存中的发现信息` : `Aligned IP ${syncingItem.ip} with cached endpoint evidence`);
-        loadData();
-      } else {
-        const err = await res.json();
-        setApiError(getAuthorizationErrorMessage(res.status, zh) || err.detail || (zh ? '同步失败' : 'Failed to sync info'));
+      if (!response.ok) {
+        setCalibrateError(await safeErrorMessage(response, zh));
+        return;
       }
-    } catch (e) {
-      setApiError(zh ? '网络请求出错' : 'Network request error');
+      const ip = textValue(calibrateItem, 'ip', 'address');
+      setCalibrateItem(null);
+      setSuccessMessage(zh ? `已更新 ${ip} 的登记 MAC。` : `Updated the registered MAC for ${ip}.`);
+      window.setTimeout(() => setSuccessMessage(''), 4500);
+      void loadData();
+    } catch {
+      setCalibrateError(zh ? '网络错误，MAC 校准未完成。' : 'Network error. MAC calibration was not completed.');
+    } finally {
+      setCalibrateSubmitting(false);
     }
   };
 
-  // Pagination & Filtering
-  const filteredList = useMemo(() => {
-    const q = search.toLowerCase().trim();
-    if (activeTab === 'undocumented') {
-      return data.undocumented_endpoints.filter(
-        (item) =>
-          item.ip.includes(q) ||
-          (item.hostname || '').toLowerCase().includes(q) ||
-          (item.mac || '').toLowerCase().includes(q) ||
-          (item.subnet_prefix || '').toLowerCase().includes(q)
-      );
-    } else if (activeTab === 'stale') {
-      return data.stale_ip_addresses.filter(
-        (item) =>
-          item.address.includes(q) ||
-          (item.hostname || '').toLowerCase().includes(q) ||
-          (item.mac_address || '').toLowerCase().includes(q) ||
-          (item.subnet_prefix || '').toLowerCase().includes(q) ||
-          item.last_seen.toLowerCase().includes(q) ||
-          String(item.days_since_seen).includes(q)
-      );
-    } else {
-      return data.mismatched_endpoints.filter(
-        (item) =>
-          item.ip.includes(q) ||
-          (item.ipam_hostname || '').toLowerCase().includes(q) ||
-          (item.endpoint_hostname || '').toLowerCase().includes(q) ||
-          (item.ipam_mac || '').toLowerCase().includes(q) ||
-          (item.endpoint_mac || '').toLowerCase().includes(q) ||
-          (item.ipam_site || '').toLowerCase().includes(q) ||
-          (item.endpoint_site || '').toLowerCase().includes(q) ||
-          (item.ipam_status || '').toLowerCase().includes(q) ||
-          String(item.status_mismatch).includes(q)
-      );
-    }
-  }, [data, activeTab, search]);
-
-  const paginatedList = filteredList;
-
-  const exportData = useCallback(async () => {
-    const params = new URLSearchParams({ active_tab: activeTab, q: search.trim() });
-    if (activeTab === 'undocumented') {
-      const allItems = await fetchAllIpamReconciliationItems<UndocumentedEndpoint>('/api/ipam/reconciliation', params, activeTab);
-      const query = search.trim().toLowerCase();
-      const matchingItems = allItems.filter((item) => !query
-        || item.ip.includes(query)
-        || (item.hostname || '').toLowerCase().includes(query)
-        || (item.mac || '').toLowerCase().includes(query)
-        || (item.subnet_prefix || '').toLowerCase().includes(query));
-      return buildVisibleIpamExportData(tableRef.current, [
-        { header: zh ? 'IP地址' : 'IP Address', value: (item) => item.ip },
-        { header: zh ? '发现 MAC' : 'Discovered MAC', value: (item) => item.mac || '-' },
-        { header: zh ? '发现主机名' : 'Hostname', value: (item) => item.hostname || '-' },
-        { header: zh ? '接入交换机' : 'Access Switch', value: (item) => item.switch_name || '-' },
-        { header: zh ? '交换机端口' : 'Switch Port', value: (item) => item.switch_port || '-' },
-        { header: 'VLAN', value: (item) => item.vlan || '-' },
-        { header: zh ? '网段前缀' : 'Prefix', value: (item) => item.subnet_prefix || '-' },
-        { header: zh ? '网段名称' : 'Subnet Name', value: (item) => item.subnet_name || '-' },
-        { header: zh ? '发现来源' : 'Source Type', value: (item) => item.source_type || '-' },
-        { header: zh ? '置信度' : 'Confidence', value: (item) => item.confidence || '-' },
-        { header: zh ? '最后发现时间' : 'Last Seen', value: (item) => item.last_seen || '-' },
-      ], matchingItems);
-    }
-    if (activeTab === 'stale') {
-      const allItems = await fetchAllIpamReconciliationItems<StaleIPAddress>('/api/ipam/reconciliation', params, activeTab);
-      const query = search.trim().toLowerCase();
-      const matchingItems = allItems.filter((item) => hasLastSeenEvidence(item.last_seen)
-        && asNonNegativeNumber(item.days_since_seen, -1) >= data.summary.stale_after_days).filter((item) => !query
-        || item.address.includes(query)
-        || (item.hostname || '').toLowerCase().includes(query)
-        || (item.mac_address || '').toLowerCase().includes(query)
-        || (item.subnet_prefix || '').toLowerCase().includes(query)
-        || item.last_seen.toLowerCase().includes(query)
-        || String(item.days_since_seen).includes(query));
-      return buildVisibleIpamExportData(tableRef.current, [
-        { header: zh ? 'IP地址' : 'IP Address', value: (item) => item.address },
-        { header: zh ? '登记 MAC' : 'Documented MAC', value: (item) => item.mac_address || '-' },
-        { header: zh ? '登记主机名' : 'Hostname', value: (item) => item.hostname || '-' },
-        { header: zh ? '网段前缀' : 'Prefix', value: (item) => item.subnet_prefix || '-' },
-        { header: zh ? '网段名称' : 'Subnet Name', value: (item) => item.subnet_name || '-' },
-        { header: zh ? '最后发现时间' : 'Last Seen', value: (item) => item.last_seen },
-        { header: zh ? '未发现天数' : 'Days Since Seen', value: (item) => item.days_since_seen },
-        { header: zh ? '登记状态' : 'Status', value: (item) => String(item.status || '').toUpperCase() || '-' },
-      ], matchingItems);
-    }
-
-    const allItems = await fetchAllIpamReconciliationItems<MismatchedEndpoint>('/api/ipam/reconciliation', params, activeTab);
-    const query = search.trim().toLowerCase();
-    const matchingItems = allItems.filter((item) => !query
-      || item.ip.includes(query)
-      || (item.ipam_hostname || '').toLowerCase().includes(query)
-      || (item.endpoint_hostname || '').toLowerCase().includes(query)
-      || (item.ipam_mac || '').toLowerCase().includes(query)
-      || (item.endpoint_mac || '').toLowerCase().includes(query)
-      || (item.ipam_site || '').toLowerCase().includes(query)
-      || (item.endpoint_site || '').toLowerCase().includes(query)
-      || (item.ipam_status || '').toLowerCase().includes(query)
-      || String(item.status_mismatch).includes(query));
-    return buildVisibleIpamExportData(tableRef.current, [
-      { header: zh ? 'IP地址' : 'IP Address', value: (item) => item.ip },
-      { header: zh ? '登记 MAC' : 'IPAM MAC', value: (item) => item.ipam_mac || '(Empty)' },
-      { header: zh ? '发现 MAC' : 'Discovered MAC', value: (item) => item.endpoint_mac || '(Empty)' },
-      { header: zh ? '登记主机名' : 'IPAM Hostname', value: (item) => item.ipam_hostname || '(Empty)' },
-      { header: zh ? '发现主机名' : 'Discovered Hostname', value: (item) => item.endpoint_hostname || '(Empty)' },
-      { header: zh ? '登记站点' : 'IPAM Site', value: (item) => item.ipam_site || '-' },
-      { header: zh ? '发现站点' : 'Discovered Site', value: (item) => item.endpoint_site || '-' },
-      { header: zh ? 'IPAM 状态' : 'IPAM Status', value: (item) => item.ipam_status || '-' },
-      { header: zh ? '状态冲突' : 'Status Mismatch', value: (item) => item.status_mismatch ? (zh ? '是' : 'Yes') : (zh ? '否' : 'No') },
-      { header: zh ? '缓存观测证据' : 'Cached Observation Evidence', value: (item) => item.status_mismatch ? (zh ? '缓存中有端点观测' : 'Endpoint observed in cache') : '-' },
-      { header: zh ? '网段前缀' : 'Prefix', value: (item) => item.subnet_prefix || '-' },
-      { header: zh ? '网段名称' : 'Subnet Name', value: (item) => item.subnet_name || '-' },
-    ], matchingItems);
-  }, [activeTab, search, zh, data.summary.stale_after_days]);
-
   useEffect(() => {
-    setPage(1);
-  }, [activeTab, search]);
+    if (!evidenceItem) {
+      setEvidenceDetail(null);
+      setEvidenceError('');
+      setEvidenceLoading(false);
+      return;
+    }
+    const observationId = textValue(evidenceItem, 'observation_id');
+    if (!observationId) {
+      setEvidenceDetail(null);
+      setEvidenceError('');
+      setEvidenceLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    setEvidenceDetail(null);
+    setEvidenceError('');
+    setEvidenceLoading(true);
+    fetch(`/api/ipam/endpoints/${encodeURIComponent(observationId)}`, { headers: authHeaders(), signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw Object.assign(new Error('evidence'), { status: response.status });
+        return response.json();
+      })
+      .then((payload) => {
+        if (controller.signal.aborted) return;
+        setEvidenceDetail(asRecord(payload) as EndpointEvidenceDetail | null);
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        const status = asRecord(error)?.status;
+        setEvidenceError(typeof status === 'number'
+          ? status === 401 ? (zh ? '登录状态已失效。' : 'Your session expired.') : status === 403 ? (zh ? '没有权限查看来源证据。' : 'You do not have permission to view this evidence.') : (zh ? '加载来源证据失败。' : 'Failed to load source evidence.')
+          : (zh ? '网络错误，无法加载来源证据。' : 'Network error while loading source evidence.'));
+      })
+      .finally(() => { if (!controller.signal.aborted) setEvidenceLoading(false); });
+    return () => controller.abort();
+  }, [authHeaders, evidenceItem, zh]);
+
+  const selectedSubnet = subnets.find((subnet) => subnet.id === registerSubnetId) || null;
+  const categoryCountDisplay = (tab: ReconciliationTab): string => {
+    const key = TAB_METADATA[tab].countKey;
+    const raw = data.summary[key];
+    const count = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw) : NaN;
+    return hasLoaded && Number.isFinite(count) && count >= 0 ? count.toLocaleString() : '—';
+  };
+  const coverageStatus = getDiscoveryCoverageLabel(asString(data.summary.coverage_status), zh);
+  const exportAll = useCallback(async () => {
+    const rows = await fetchAllIpamReconciliationItems<ReconciliationRow>('/api/ipam/reconciliation', new URLSearchParams({ active_tab: activeTab, q: search }), activeTab);
+    const site = (item: ReconciliationRow) => `${textValue(item, 'site_name', 'site') || '—'} / ${textValue(item, 'vrf_name', 'vrf') || '—'}`;
+    if (activeTab === 'unavailable') return {
+      headers: [zh ? '来源设备' : 'Source device', zh ? '来源类型' : 'Source type', zh ? '采集状态' : 'Collection status', zh ? '最近成功时间' : 'Last success', zh ? '原因' : 'Reason'],
+      rows: rows.map(item => [textValue(item, 'source_device_name', 'source_device_id'), textValue(item, 'source_type'), textValue(item, 'status'), textValue(item, 'last_success_at'), textValue(item, 'reason')]),
+    };
+    if (activeTab === 'stale' || activeTab === 'never_observed') return {
+      headers: ['IP', zh ? '状态' : 'Status', zh ? '网段' : 'Prefix', zh ? '站点 / VRF' : 'Site / VRF', zh ? '最近观察' : 'Last observed', zh ? '完整未发现次数' : 'Complete misses'],
+      rows: rows.map(item => [textValue(item, 'ip', 'address'), textValue(item, 'registration_status', 'status'), textValue(item, 'subnet_prefix'), site(item), textValue(item, 'last_observed_at'), textValue(item, 'miss_count')]),
+    };
+    if (activeTab === 'mismatched') return {
+      headers: ['IP', 'IPAM MAC', zh ? '观察 MAC' : 'Observed MAC', zh ? '站点 / VRF' : 'Site / VRF', zh ? '观察时间' : 'Observed at', zh ? '范围 / 证据' : 'Scope / evidence'],
+      rows: rows.map(item => [textValue(item, 'ip', 'address'), textValue(item, 'ipam_mac'), textValue(item, 'observed_mac'), site(item), textValue(item, 'observed_at'), `${scopeStatusLabel(textValue(item, 'scope_status'), zh)} / ${evidenceStatusLabel(textValue(item, 'evidence_status'), zh)}`]),
+    };
+    return {
+      headers: ['IP', 'MAC', zh ? '站点 / VRF' : 'Site / VRF', zh ? '来源设备 / 端口' : 'Source device / port', zh ? '网段' : 'Prefix', zh ? '观察时间' : 'Observed at', zh ? '范围 / 证据' : 'Scope / evidence'],
+      rows: rows.map(item => [textValue(item, 'ip', 'address'), textValue(item, 'mac'), site(item), `${textValue(item, 'source_device_name', 'switch_name')} / ${textValue(item, 'switch_port')}`, textValue(item, 'subnet_prefix'), textValue(item, 'observed_at', 'last_observed_at'), `${scopeStatusLabel(textValue(item, 'scope_status'), zh)} / ${evidenceStatusLabel(textValue(item, 'evidence_status'), zh)}`]),
+    };
+  }, [activeTab, search, zh]);
+
+
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden px-6 py-5 space-y-4">
+    <div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden px-5 py-4 sm:px-6">
       <PageHero
+        compact
         icon={ClipboardCheck}
-        title={zh ? 'IPAM 对账中心' : 'IP Reconciliation Center'}
-        subtitle={zh ? '分配状态以 IPAM 台账为准；设备发现缓存用于比对。' : 'IPAM is the allocation baseline; cached device discoveries provide comparison evidence.'}
-        actions={
-          <button
-            onClick={loadData}
-            disabled={loading}
-            className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white rounded-xl text-xs font-bold shadow-lg shadow-cyan-500/20 active:scale-95 transition-all cursor-pointer disabled:opacity-55"
-          >
-            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-            {zh ? '刷新结果' : 'Refresh results'}
-          </button>
-        }
+        title={zh ? 'IPAM 对账' : 'IPAM Reconciliation'}
+        subtitle={zh ? '核对 IPAM 登记与 ARP/MAC 发现记录，找出需要确认的差异。' : 'Review differences between the IPAM ledger and discovery evidence. This page does not release addresses or collect from devices.'}
+        actions={<button type="button" onClick={refresh} disabled={loading} className="inline-flex h-9 items-center gap-2 rounded-lg bg-[var(--ui-accent)] px-3 text-xs font-semibold text-white disabled:opacity-60"><RefreshCw size={14} className={loading ? 'animate-spin' : ''} />{zh ? '刷新结果' : 'Refresh'}</button>}
       />
 
-      {/* Message Notifications */}
-      {apiError && (
-        <div className="flex items-center gap-2.5 px-4 py-3 rounded-2xl bg-red-50 border border-red-200 text-red-700 text-xs font-semibold">
-          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-          <span className="flex-1">{apiError}</span>
-          <button onClick={() => setApiError('')} className="text-red-400 hover:text-red-600">
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
+      {apiError && <div role="alert" className="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-xs text-rose-800"><AlertTriangle size={15} /><span className="flex-1">{apiError}</span><button type="button" onClick={() => setApiError('')} aria-label={zh ? '关闭错误' : 'Dismiss error'}><X size={14} /></button></div>}
+      {successMessage && <div role="status" className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-xs text-emerald-800"><CheckCircle2 size={15} />{successMessage}</div>}
 
-      {successMsg && (
-        <div className="flex items-center gap-2.5 px-4 py-3 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-semibold">
-          <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
-          <span className="flex-1">{successMsg}</span>
-          <button onClick={() => setSuccessMsg('')} className="text-emerald-400 hover:text-emerald-600">
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
+      <section aria-label={zh ? '对账覆盖摘要' : 'Reconciliation coverage summary'} className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-[var(--muted-text)]">
+        <span>{zh ? 'IPAM 已登记 IP' : 'Registered IPs'}: <strong>{typeof data.summary.ipam_address_record_count === 'number' ? data.summary.ipam_address_record_count.toLocaleString() : typeof data.summary.allocated_ipam_address_count === 'number' ? data.summary.allocated_ipam_address_count.toLocaleString() : '—'}</strong></span>
+        <span>{zh ? '可核对发现 IP' : 'Comparable discovered IPs'}: <strong>{typeof data.summary.active_endpoint_count === 'number' ? data.summary.active_endpoint_count.toLocaleString() : '—'}</strong></span>
+        <span>{coverageStatus}</span>
+      </section>
 
-      <div
-        className={"flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border px-4 py-2.5 text-xs " + (
-          data.summary.endpoint_cache_fresh
-            ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-            : 'bg-amber-50 border-amber-200 text-amber-800'
-        )}
-      >
-        <Database className="w-4 h-4 flex-shrink-0" />
-        <span className="font-semibold">{zh ? '发现缓存' : 'Discovery cache'}</span>
-        <span className={"px-2 py-0.5 rounded-full text-[10px] font-bold " + (
-          data.summary.endpoint_cache_fresh ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'
-        )}>
-          {data.summary.endpoint_cache_fresh
-            ? (zh ? '窗口内有观测' : 'Observed within window')
-            : (zh ? '观测超窗或未知' : 'Stale or unknown')}
-        </span>
-        <span>
-          {zh ? '最新观测' : 'Latest seen'}:
-          <span className="ml-1 font-mono">{data.summary.latest_endpoint_seen || (zh ? '未知' : 'Unknown')}</span>
-        </span>
-        <span>
-          {zh ? '判定窗口' : 'Window'}: {data.summary.current_window_minutes} {zh ? '分钟' : 'min'}
-        </span>
-        {!data.summary.endpoint_cache_fresh && (
-          <span className="font-semibold">{zh ? '结果可能不完整' : 'Results may be incomplete'}</span>
-        )}
-      </div>
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-        {/* Undocumented */}
-        <div
-          onClick={() => setActiveTab('undocumented')}
-          className={`cursor-pointer p-4 rounded-3xl border transition-all ${
-            activeTab === 'undocumented'
-              ? 'bg-cyan-500/[0.04] border-cyan-400 shadow-md shadow-cyan-500/5'
-              : 'bg-white border-black/5 hover:border-black/10'
-          }`}
-        >
-          <div className="flex justify-between items-start">
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">{zh ? '发现但未登记的端点' : 'Undocumented Discovered Endpoints'}</p>
-              <h3 className="text-2xl font-black mt-1 text-[#00172D] font-mono">{data.summary.total_undocumented}</h3>
-            </div>
-            <div className={`p-2.5 rounded-2xl ${activeTab === 'undocumented' ? 'bg-cyan-500 text-white' : 'bg-cyan-50 text-cyan-600'}`}>
-              <Plus size={18} />
-            </div>
-          </div>
-        </div>
-
-        {/* Stale */}
-        <div
-          onClick={() => setActiveTab('stale')}
-          className={`cursor-pointer p-4 rounded-3xl border transition-all ${
-            activeTab === 'stale'
-              ? 'bg-amber-500/[0.04] border-amber-400 shadow-md shadow-amber-500/5'
-              : 'bg-white border-black/5 hover:border-black/10'
-          }`}
-        >
-          <div className="flex justify-between items-start">
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">{zh ? `长期未发现的已分配 IP（${data.summary.stale_after_days}天+）` : `Allocated IPs unseen for ${data.summary.stale_after_days} days+`}</p>
-              <h3 className="text-2xl font-black mt-1 text-[#00172D] font-mono">{data.summary.total_stale}</h3>
-            </div>
-            <div className={`p-2.5 rounded-2xl ${activeTab === 'stale' ? 'bg-amber-500 text-white' : 'bg-amber-50 text-amber-600'}`}>
-              <WifiOff size={18} />
-            </div>
-          </div>
-        </div>
-
-        {/* Mismatched */}
-        <div
-          onClick={() => setActiveTab('mismatched')}
-          className={`cursor-pointer p-4 rounded-3xl border transition-all ${
-            activeTab === 'mismatched'
-              ? 'bg-rose-500/[0.04] border-rose-400 shadow-md shadow-rose-500/5'
-              : 'bg-white border-black/5 hover:border-black/10'
-          }`}
-        >
-          <div className="flex justify-between items-start">
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">{zh ? 'IPAM 与缓存发现信息不一致' : 'IPAM vs Cached Endpoint Mismatches'}</p>
-              <h3 className="text-2xl font-black mt-1 text-[#00172D] font-mono">{data.summary.total_mismatched}</h3>
-            </div>
-            <div className={`p-2.5 rounded-2xl ${activeTab === 'mismatched' ? 'bg-rose-500 text-white' : 'bg-rose-50 text-rose-600'}`}>
-              <ShieldAlert size={18} />
-            </div>
-          </div>
-        </div>
-
-        <div className="p-4 rounded-3xl border bg-white border-black/5">
-          <div className="flex justify-between items-start">
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">{zh ? '无法安全归属范围' : 'Unscoped Discoveries'}</p>
-              <h3 className="text-2xl font-black mt-1 text-[#00172D] font-mono">{data.summary.total_unscoped}</h3>
-            </div>
-            <div className="p-2.5 rounded-2xl bg-violet-50 text-violet-600">
-              <Info size={18} />
-            </div>
-          </div>
-        </div>
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-3 2xl:grid-cols-6" role="group" aria-label={zh ? '对账分类' : 'Reconciliation categories'}>
+        {RECONCILIATION_TABS.map((tab) => {
+          const active = activeTab === tab;
+          const metadata = TAB_METADATA[tab];
+          const Icon = metadata.icon;
+          return (
+            <button key={tab} type="button" aria-pressed={active} onClick={() => { setActiveTab(tab); setPage(1); }} className={`rounded-xl border px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-accent)] ${active ? 'border-[var(--ui-accent)] bg-[var(--ui-accent-soft)]' : 'border-[var(--card-border)] bg-[var(--card-bg)] hover:border-[var(--ui-accent)]'}`}>
+              <span className="flex items-center justify-between gap-2"><span className="text-[10px] font-semibold text-[var(--muted-text)]">{metadata.title[zh ? 0 : 1]}</span><Icon size={14} className="text-[var(--ui-accent)]" /></span>
+              <strong className="mt-1 block text-lg tabular-nums text-[var(--ui-fg)]">{categoryCountDisplay(tab)}</strong>
+            </button>
+          );
+        })}
       </div>
 
-      {/* Main content table card */}
-      <div className="flex-1 min-h-0 bg-white rounded-[28px] border border-black/5 shadow-[0_16px_36px_rgba(11,35,64,0.06)] overflow-hidden flex flex-col">
-        {/* Table Toolbar */}
-        <div className="px-6 py-4 bg-gray-50/40 border-b border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-3 select-none flex-shrink-0">
-          <h4 className="text-xs font-bold text-gray-700 uppercase tracking-widest">
-            {activeTab === 'undocumented' && (zh ? '缓存发现但未登记的端点' : 'Undocumented Cached Endpoints')}
-            {activeTab === 'stale' && (zh ? `长期未发现的已分配 IP（${data.summary.stale_after_days}天+）` : `Allocated IPs unseen for ${data.summary.stale_after_days} days+`)}
-            {activeTab === 'mismatched' && (zh ? '主机名、MAC、站点或状态不一致的 IP 列表' : 'Hostname, MAC, Site, or Status Mismatches')}
-          </h4>
-
-          {/* Search */}
-          <div className="flex w-full items-center gap-2 md:w-auto">
-            <div className="relative w-full md:w-64">
-            <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input
-              type="search"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder={zh ? '过滤搜索 IP / MAC / 描述...' : 'Filter IP / MAC...'}
-              className="w-full pl-10 pr-4 py-1.5 text-xs rounded-xl border border-black/5 bg-gray-50/50 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium"
-            />
-            </div>
-            <TableExportMenu tableRef={tableRef} exportData={exportData} filename="ipam-reconciliation" language={zh ? 'zh' : 'en'} disabled={loading || resultTotal === 0} />
+      <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--ui-border)] px-4 py-3">
+          <div><h2 className="text-sm font-bold text-[var(--ui-fg)]">{TAB_METADATA[activeTab].title[zh ? 0 : 1]}</h2><p className="mt-0.5 text-[10px] text-[var(--muted-text)]">{zh ? `当前分类 ${data.resultTotal.toLocaleString()} 条` : `${data.resultTotal.toLocaleString()} results in this category`}</p></div>
+          <div className="flex flex-wrap items-center gap-2">
+            <form onSubmit={(event) => { event.preventDefault(); applySearch(); }} className="flex gap-1.5">
+              <label className="relative"><span className="sr-only">{zh ? '搜索 IP、MAC、站点或来源设备' : 'Search IP, MAC, site, or source device'}</span><Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--muted-text)]" /><input value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder={zh ? '搜索 IP / MAC / 站点...' : 'Search IP / MAC / site...'} className="h-9 w-56 rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface)] pl-8 pr-2 text-xs text-[var(--ui-fg)]" /></label>
+              <button type="submit" className="h-9 rounded-lg border border-[var(--ui-border)] px-3 text-xs font-semibold text-[var(--ui-fg)]">{zh ? '搜索' : 'Search'}</button>
+              {search && <button type="button" onClick={() => { setSearch(''); setSearchDraft(''); setPage(1); }} className="h-9 rounded-lg px-2 text-xs text-[var(--ui-fg-muted)]">{zh ? '清除' : 'Clear'}</button>}
+            </form>
           </div>
         </div>
 
-        {/* Table Area */}
-        <div className="flex-1 overflow-auto">
-          {loading ? (
-            <div className="h-full flex items-center justify-center text-xs text-gray-400 font-semibold gap-2">
-              <RefreshCw className="w-4 h-4 animate-spin text-cyan-500" />
-              {zh ? '正在基于端点缓存重新计算结果...' : 'Recomputing results from the endpoint cache...'}
-            </div>
-          ) : (
-            <table ref={tableRef} className="nx-data-table text-left">
-              {/* Tab 1: Undocumented */}
-              {activeTab === 'undocumented' && (
-                <>
-                  <thead>
-                    <tr className="border-b border-gray-100 bg-gray-50/20 text-[10px] font-bold text-gray-400 uppercase tracking-wider select-none">
-                      <th className="pl-6 py-4">{zh ? 'IP地址' : 'IP Address'}</th>
-                      <th className="px-4 py-4">{zh ? '发现 MAC' : 'Discovered MAC'}</th>
-                      <th className="px-4 py-4">{zh ? '发现主机名' : 'Hostname'}</th>
-                      <th className="px-4 py-4">{zh ? '接入交换机' : 'Access Switch'}</th>
-                      <th className="px-4 py-4">{zh ? '交换机端口' : 'Switch Port'}</th>
-                      <th className="px-4 py-4">{zh ? 'VLAN' : 'VLAN'}</th>
-                      <th className="px-4 py-4">{zh ? '网段前缀' : 'Prefix'}</th>
-                      <th className="px-4 py-4">{zh ? '网段名称' : 'Subnet Name'}</th>
-                      <th className="px-4 py-4">{zh ? '发现来源' : 'Source Type'}</th>
-                      <th className="px-4 py-4">{zh ? '置信度' : 'Confidence'}</th>
-                      <th className="px-4 py-4">{zh ? '最后发现时间' : 'Last Seen'}</th>
-                      <TableActionHeader className="pr-6 py-4 text-right">{zh ? '操作' : 'Actions'}</TableActionHeader>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {paginatedList.length > 0 ? (
-                      (paginatedList as UndocumentedEndpoint[]).map((node) => (
-                        <tr key={node.ip} className="hover:bg-gray-50/50 transition-colors border-b border-gray-100 group">
-                          <td className="pl-6 py-4 font-mono font-bold text-xs text-gray-800">{node.ip}</td>
-                          <td className="px-4 py-4 font-mono text-xs text-gray-500">{node.mac}</td>
-                          <td className="px-4 py-4 text-xs font-semibold text-gray-600">{node.hostname || '-'}</td>
-                          <td className="px-4 py-4 text-xs font-semibold text-cyan-600">{node.switch_name || '-'}</td>
-                          <td className="px-4 py-4 text-xs font-mono text-gray-600">{node.switch_port || '-'}</td>
-                          <td className="px-4 py-4 text-xs text-gray-500 font-bold">{node.vlan || '-'}</td>
-                          <td className="px-4 py-4 text-xs font-mono text-gray-600 font-semibold">{node.subnet_prefix || '-'}</td>
-                          <td className="px-4 py-4 text-xs text-gray-500">{node.subnet_name || '-'}</td>
-                          <td className="px-4 py-4 text-xs text-gray-500">{node.source_type || '-'}</td>
-                          <td className="px-4 py-4 text-xs text-gray-500">{node.confidence || '-'}</td>
-                          <td className="px-4 py-4 font-mono text-[10px] text-gray-400">{node.last_seen || '-'}</td>
-                          <TableActionCell className="pr-6 py-4 text-right">
-                            <ActionIconButton
-                              icon={UserCheck}
-                              label={zh ? '标准登记' : 'Register'}
-                              variant="accent"
-                              onClick={() => handleOpenRegister(node)}
-                            />
-                          </TableActionCell>
-                        </tr>
-                      ))
-                    ) : (
-                      <tr>
-                        <td colSpan={12} className="py-12 text-center text-xs text-gray-400 font-medium">
-                          {zh ? '缓存中没有发现未登记端点' : 'No undocumented endpoints found in the cache'}
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </>
-              )}
-
-              {/* Tab 2: Stale */}
-              {activeTab === 'stale' && (
-                <>
-                  <thead>
-                    <tr className="border-b border-gray-100 bg-gray-50/20 text-[10px] font-bold text-gray-400 uppercase tracking-wider select-none">
-                      <th className="pl-6 py-4">{zh ? 'IP地址' : 'IP Address'}</th>
-                      <th className="px-4 py-4">{zh ? '登记 MAC' : 'Documented MAC'}</th>
-                      <th className="px-4 py-4">{zh ? '登记主机名' : 'Hostname'}</th>
-                      <th className="px-4 py-4">{zh ? '网段前缀' : 'Prefix'}</th>
-                      <th className="px-4 py-4">{zh ? '网段名称' : 'Subnet Name'}</th>
-                      <th className="px-4 py-4">{zh ? '最后发现时间' : 'Last Seen'}</th>
-                      <th className="px-4 py-4">{zh ? '未发现天数' : 'Days Since Seen'}</th>
-                      <th className="px-4 py-4">{zh ? '登记状态' : 'Status'}</th>
-                      <TableActionHeader className="pr-6 py-4 text-right">{zh ? '操作' : 'Actions'}</TableActionHeader>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {paginatedList.length > 0 ? (
-                      (paginatedList as StaleIPAddress[]).map((node) => (
-                        <tr key={node.id} className="hover:bg-gray-50/50 transition-colors border-b border-gray-100 group">
-                          <td className="pl-6 py-4 font-mono font-bold text-xs text-gray-800">{node.address}</td>
-                          <td className="px-4 py-4 font-mono text-xs text-gray-500">{node.mac_address || '-'}</td>
-                          <td className="px-4 py-4 text-xs font-semibold text-gray-500">{node.hostname || '-'}</td>
-                          <td className="px-4 py-4 text-xs font-mono text-gray-600 font-semibold">{node.subnet_prefix || '-'}</td>
-                          <td className="px-4 py-4 text-xs text-gray-500">{node.subnet_name || '-'}</td>
-                          <td className="px-4 py-4 text-xs font-mono text-gray-500">{node.last_seen}</td>
-                          <td className="px-4 py-4 text-xs font-semibold text-amber-700">{node.days_since_seen} {zh ? '天' : 'days'}</td>
-                          <td className="px-4 py-4 text-xs">
-                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-600 border border-amber-500/10`}>
-                              {node.status.toUpperCase()}
-                            </span>
-                          </td>
-                          <TableActionCell className="pr-6 py-4 text-right">
-                            <ActionIconButton
-                              icon={Trash2}
-                              label={zh ? '释放此 IP' : 'Release IP'}
-                              variant="danger"
-                              onClick={() => setReleasingItem(node)}
-                            />
-                          </TableActionCell>
-                        </tr>
-                      ))
-                    ) : (
-                      <tr>
-                        <td colSpan={9} className="py-12 text-center text-xs text-gray-400 font-medium">
-                          {zh ? '暂无达到未发现天数阈值的已分配 IP' : 'No allocated IPs meet the unseen-day threshold'}
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </>
-              )}
-
-              {/* Tab 3: Mismatched */}
-              {activeTab === 'mismatched' && (
-                <>
-                  <thead>
-                    <tr className="border-b border-gray-100 bg-gray-50/20 text-[10px] font-bold text-gray-400 uppercase tracking-wider select-none">
-                      <th className="pl-6 py-4">{zh ? 'IP地址' : 'IP Address'}</th>
-                      <th className="px-4 py-4">{zh ? '登记 MAC' : 'IPAM MAC'}</th>
-                      <th className="px-4 py-4">{zh ? '发现 MAC' : 'Discovered MAC'}</th>
-                      <th className="px-4 py-4">{zh ? '登记主机名' : 'IPAM Hostname'}</th>
-                      <th className="px-4 py-4">{zh ? '发现主机名' : 'Discovered Hostname'}</th>
-                      <th className="px-4 py-4">{zh ? '站点（登记 → 缓存发现）' : 'Site (IPAM → Cached Discovery)'}</th>
-                      <th className="px-4 py-4">{zh ? 'IPAM 状态 / 端点旁证' : 'IPAM Status / Endpoint Evidence'}</th>
-                      <th className="px-4 py-4">{zh ? '网段前缀' : 'Prefix'}</th>
-                      <th className="px-4 py-4">{zh ? '网段名称' : 'Subnet Name'}</th>
-                      <TableActionHeader className="pr-6 py-4 text-right">{zh ? '操作' : 'Actions'}</TableActionHeader>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {paginatedList.length > 0 ? (
-                      (paginatedList as MismatchedEndpoint[]).map((node) => (
-                        <tr key={node.ip} className="hover:bg-gray-50/50 transition-colors border-b border-gray-100 group">
-                          <td className="pl-6 py-4 font-mono font-bold text-xs text-gray-800">{node.ip}</td>
-                          <td className={`px-4 py-4 text-xs font-mono ${node.mac_mismatch ? 'text-rose-600 line-through' : 'text-gray-500'}`}>{node.ipam_mac || '(Empty)'}</td>
-                          <td className={`px-4 py-4 text-xs font-mono ${node.mac_mismatch ? 'text-emerald-600 font-bold' : 'text-gray-500'}`}>{node.endpoint_mac || '(Empty)'}</td>
-                          <td className={`px-4 py-4 text-xs ${node.hostname_mismatch ? 'text-rose-600 line-through' : 'text-gray-500'}`}>{node.ipam_hostname || '(Empty)'}</td>
-                          <td className={`px-4 py-4 text-xs ${node.hostname_mismatch ? 'text-emerald-600 font-bold' : 'text-gray-500'}`}>{node.endpoint_hostname || '(Empty)'}</td>
-                          <td className={`px-4 py-4 text-xs ${node.site_mismatch ? 'text-rose-600 font-bold' : 'text-gray-500'}`}>
-                            {node.site_mismatch
-                              ? <>{node.ipam_site || '(Empty)'} <ArrowRight size={10} className="inline mx-1" /> {node.endpoint_site || '(Empty)'}</>
-                              : (node.ipam_site || node.endpoint_site || '-')}
-                          </td>
-                          <td className={`px-4 py-4 text-xs ${node.status_mismatch ? 'text-rose-600 font-bold' : 'text-gray-500'}`}>
-                            {node.status_mismatch
-                              ? <>{node.ipam_status || (zh ? '未知状态' : 'Unknown status')} <ArrowRight size={10} className="inline mx-1" /> {zh ? '端点缓存有观测' : 'Endpoint observed in cache'}</>
-                              : (node.ipam_status || '-')}
-                          </td>
-                          <td className="px-4 py-4 text-xs font-mono text-gray-600 font-semibold">{node.subnet_prefix || '-'}</td>
-                          <td className="px-4 py-4 text-xs text-gray-500">{node.subnet_name || '-'}</td>
-                          <TableActionCell className="pr-6 py-4 text-right">
-                            {(node.site_mismatch || node.status_mismatch) && !node.mac_mismatch && !node.hostname_mismatch ? (
-                              <span className="text-[10px] text-gray-400">
-                                {node.site_mismatch && node.status_mismatch
-                                  ? (zh ? '请核对站点归属与 IPAM 生命周期状态' : 'Review site assignment and IPAM lifecycle status')
-                                  : node.site_mismatch
-                                    ? (zh ? '请核对站点资产归属' : 'Review site asset assignment')
-                                    : (zh ? '请核对 IPAM 生命周期状态' : 'Review IPAM lifecycle status')}
-                              </span>
-                            ) : (
-                              <ActionIconButton
-                                icon={RefreshCw}
-                                label={zh ? '校准同步' : 'Sync Info'}
-                                variant="accent"
-                                onClick={() => setSyncingItem(node)}
-                              />
-                            )}
-                          </TableActionCell>
-                        </tr>
-                      ))
-                    ) : (
-                      <tr>
-                        <td colSpan={10} className="py-12 text-center text-xs text-gray-400 font-medium">
-                          {zh ? '缓存发现证据中暂无建档信息不一致的 IP' : 'No mismatches found in cached endpoint evidence'}
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </>
-              )}
-            </table>
-          )}
+        <div className="min-h-0 flex-1 overflow-auto">
+          {loading ? <div className="flex h-full min-h-40 items-center justify-center gap-2 text-xs text-[var(--muted-text)]"><RefreshCw size={14} className="animate-spin" />{zh ? '正在加载对账结果…' : 'Loading reconciliation results…'}</div>
+            : apiError ? <div className="flex h-full min-h-40 items-center justify-center text-xs text-[var(--muted-text)]">{zh ? '结果暂不可用，请修复错误后重试。' : 'Results are unavailable. Retry after resolving the error.'}</div>
+              : <DataTable className="min-w-[1020px] text-left" exportConfig={{ filename: `ipam-reconciliation-${activeTab}`, exportData: exportAll, language: zh ? 'zh' : 'en', disabled: loading || activeRows.length === 0 }}>
+                <thead><tr>
+                  {activeTab === 'unavailable' ? <><th>{zh ? '来源设备' : 'Source device'}</th><th>{zh ? '来源类型' : 'Source type'}</th><th>{zh ? '采集状态' : 'Collection status'}</th><th>{zh ? '最近成功时间' : 'Last success'}</th><th>{zh ? '原因' : 'Reason'}</th></>
+                    : activeTab === 'stale' || activeTab === 'never_observed' ? <><th>IP</th><th>{zh ? '状态' : 'Status'}</th><th>{zh ? '网段' : 'Prefix'}</th><th>{zh ? '站点 / VRF' : 'Site / VRF'}</th><th>{zh ? '最近观察' : 'Last observed'}</th><th>{zh ? '完整未发现次数' : 'Complete misses'}</th></>
+                      : activeTab === 'mismatched' ? <><th>IP</th><th>{zh ? 'IPAM MAC' : 'IPAM MAC'}</th><th>{zh ? '观察 MAC' : 'Observed MAC'}</th><th>{zh ? '站点 / VRF' : 'Site / VRF'}</th><th>{zh ? '观察时间' : 'Observed at'}</th><th>{zh ? '范围 / 证据' : 'Scope / evidence'}</th></>
+                        : <><th>IP</th><th>MAC</th><th>{zh ? '站点 / VRF' : 'Site / VRF'}</th><th>{zh ? '来源设备 / 端口' : 'Source device / port'}</th><th>{zh ? '网段' : 'Prefix'}</th><th>{zh ? '观察时间' : 'Observed at'}</th><th>{zh ? '范围 / 证据' : 'Scope / evidence'}</th></>}
+                  <TableActionHeader>{zh ? '操作' : 'Actions'}</TableActionHeader>
+                </tr></thead>
+                <tbody>
+                  {activeRows.length ? activeRows.map((item, index) => {
+                    const ip = textValue(item, 'ip', 'address');
+                    const observationId = textValue(item, 'observation_id');
+                    const isRegisterable = activeTab === 'undocumented'
+                      && Boolean(observationId && ip && textValue(item, 'observed_at'))
+                      && textValue(item, 'evidence_status') === 'recent'
+                      && textValue(item, 'timestamp_status') === 'valid';
+                    const isCalibratable = activeTab === 'mismatched' && canCalibrateMac(item);
+                    return <tr key={observationId || textValue(item, 'ipam_address_id', 'id') || `${activeTab}-${index}`}>
+                      {activeTab === 'unavailable' ? <><td>{textValue(item, 'source_device_name', 'source_device_id') || (zh ? '未知来源' : 'Unknown source')}</td><td>{textValue(item, 'source_type') || '—'}</td><td>{textValue(item, 'status') || (zh ? '未知' : 'Unknown')}</td><td className="font-mono">{textValue(item, 'last_success_at') || '—'}</td><td>{textValue(item, 'reason') || '—'}</td></>
+                        : activeTab === 'stale' || activeTab === 'never_observed' ? <><td className="font-mono font-semibold">{ip || '—'}</td><td>{textValue(item, 'registration_status', 'status') || (zh ? '已登记' : 'Registered')}</td><td className="font-mono">{textValue(item, 'subnet_prefix') || '—'}</td><td>{textValue(item, 'site_name', 'site') || (zh ? '未知站点' : 'Unknown site')} / {textValue(item, 'vrf_name', 'vrf') || (zh ? '待确认' : 'Pending')}</td><td className="font-mono">{textValue(item, 'last_observed_at') || (zh ? '从未观察' : 'Never observed')}</td><td>{textValue(item, 'miss_count') ? `${textValue(item, 'miss_count')}/${textValue(item, 'required_misses') || '—'}` : '—'}</td></>
+                      : activeTab === 'mismatched' ? <><td className="font-mono font-semibold">{ip || '—'}</td><td className="font-mono">{textValue(item, 'ipam_mac') || '—'}</td><td className="font-mono">{textValue(item, 'observed_mac') || '—'}</td><td>{textValue(item, 'site_name', 'site') || (zh ? '未知站点' : 'Unknown site')} / {textValue(item, 'vrf_name', 'vrf') || (zh ? '待确认' : 'Pending')}</td><td className="font-mono">{textValue(item, 'observed_at') || '—'}</td><td>{scopeStatusLabel(textValue(item, 'scope_status'), zh)} / {evidenceStatusLabel(textValue(item, 'evidence_status'), zh)}</td></>
+                            : <><td className="font-mono font-semibold">{ip || '—'}</td><td className="font-mono">{textValue(item, 'mac') || '—'}</td><td>{textValue(item, 'site_name', 'site') || (zh ? '未知站点' : 'Unknown site')} / {textValue(item, 'vrf_name', 'vrf') || (zh ? '待确认' : 'Pending')}</td><td>{textValue(item, 'source_device_name', 'switch_name') || (zh ? '未知设备' : 'Unknown device')} / {textValue(item, 'switch_port') || (zh ? '端口待定位' : 'Port pending')}</td><td className="font-mono">{textValue(item, 'subnet_prefix') || '—'}</td><td className="font-mono">{textValue(item, 'observed_at', 'last_observed_at') || '—'}</td><td>{scopeStatusLabel(textValue(item, 'scope_status'), zh)} / {evidenceStatusLabel(textValue(item, 'evidence_status'), zh)}</td></>}
+                      <TableActionCell><div className="flex items-center justify-end gap-1">
+                        <ActionIconButton icon={Eye} label={zh ? '查看证据' : 'View evidence'} onClick={() => setEvidenceItem(item)} />
+                        {isRegisterable && <ActionIconButton icon={Plus} label={zh ? '登记到 IPAM' : 'Register in IPAM'} variant="accent" onClick={() => void openRegister(item)} />}
+                        {isCalibratable && <ActionIconButton icon={CheckCircle2} label={zh ? '校准 MAC' : 'Calibrate MAC'} variant="accent" onClick={() => { setCalibrateItem(item); setCalibrateConfirmed(false); setCalibrateError(''); }} />}
+                        <ActionIconButton icon={Globe} label={zh ? '打开 IP 地址台账' : 'Open IP address ledger'} onClick={() => navigate('/ipam/ips')} />
+                      </div></TableActionCell>
+                    </tr>;
+                  }) : <tr><td colSpan={activeTab === 'unavailable' ? 6 : activeTab === 'stale' || activeTab === 'never_observed' ? 7 : activeTab === 'mismatched' ? 7 : 8} className="py-12 text-center text-xs text-[var(--ui-fg-muted)]">{emptyMessage}</td></tr>}
+                </tbody>
+              </DataTable>}
         </div>
+        <Pagination currentPage={page} totalItems={data.resultTotal} itemsPerPage={pageSize} onPageChange={setPage} onItemsPerPageChange={(size) => { setPageSize(size); setPage(1); }} language={language} alwaysVisible />
+      </section>
 
-        {/* Pagination */}
-        <div className="px-6 py-4 border-t border-gray-100 flex-shrink-0">
-          <Pagination
-            currentPage={page}
-            totalItems={resultTotal}
-            itemsPerPage={pageSize}
-            onPageChange={setPage}
-            onItemsPerPageChange={(size) => { setPageSize(size); setPage(1); }}
-            language={language}
-            alwaysVisible={true}
-          />
-        </div>
-      </div>
-
-      {/* Modal 1: Register IP */}
-      <AnimatePresence>
-        {registeringItem && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-            <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white w-full max-w-lg rounded-3xl overflow-hidden shadow-2xl border border-black/5 flex flex-col max-h-[90vh]"
-            >
-              {/* Header */}
-              <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-2xl bg-cyan-50 flex items-center justify-center text-cyan-600">
-                    <Plus size={20} />
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-gray-900">{zh ? '将发现终端标准登记到 IPAM' : 'Register Discovered Host'}</h3>
-                    <p className="text-xs text-gray-500 mt-0.5">{zh ? '请核对发现来源、置信度和归属网段后再创建分配记录。' : 'Review the evidence, confidence, and resolved prefix before creating the allocation.'}</p>
-                  </div>
-                </div>
-                <button onClick={() => setRegisteringItem(null)} className="p-1.5 rounded-lg hover:bg-gray-50 transition-colors text-gray-400">
-                  <X size={16} />
-                </button>
-              </div>
-
-              {/* Form Content */}
-              <div className="flex-1 overflow-y-auto p-6 space-y-4">
-                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
-                  <p className="font-bold">{zh ? '风险提示' : 'Risk notice'}</p>
-                  <p className="mt-1 leading-relaxed">
-                    {zh
-                      ? `来源：${registeringItem.source_type || '未知'}；置信度：${registeringItem.confidence || '未知'}；最后发现：${registeringItem.last_seen || '未知'}。登记会写入正式 IPAM 数据，请先核对。`
-                      : `Source: ${registeringItem.source_type || 'unknown'}; confidence: ${registeringItem.confidence || 'unknown'}; last seen: ${registeringItem.last_seen || 'unknown'}. This writes a managed IPAM record.`}
-                  </p>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  {/* Select Subnet */}
-                  <div className="space-y-1.5 col-span-2">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '归属网段前缀' : 'Subnet Prefix'}</label>
-                    <select
-                      value={registerForm.subnet_id}
-                      onChange={(e) => setRegisterForm({ ...registerForm, subnet_id: e.target.value })}
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
-                    >
-                      {subnets.map((sub: any) => (
-                        <option key={sub.id} value={sub.id}>
-                          {sub.prefix} {sub.name ? `(${sub.name})` : ''}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* IP Address */}
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? 'IP 地址' : 'IP Address'}</label>
-                    <input
-                      type="text"
-                      value={registerForm.address}
-                      disabled
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none transition-all font-mono font-bold bg-gray-100 text-gray-500"
-                    />
-                  </div>
-
-                  {/* MAC Address */}
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? 'MAC 地址' : 'MAC Address'}</label>
-                    <input
-                      type="text"
-                      value={registerForm.mac_address}
-                      onChange={(e) => setRegisterForm({ ...registerForm, mac_address: e.target.value })}
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-mono font-medium bg-gray-50/50"
-                    />
-                  </div>
-
-                  {/* Hostname */}
-                  <div className="space-y-1.5 col-span-2">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '主机名 / 域名' : 'Hostname'}</label>
-                    <input
-                      type="text"
-                      value={registerForm.hostname}
-                      onChange={(e) => setRegisterForm({ ...registerForm, hostname: e.target.value })}
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-semibold bg-gray-50/50"
-                    />
-                  </div>
-
-                  {/* Device Type */}
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? 'IP 角色类型' : 'Role Type'}</label>
-                    <select
-                      value={registerForm.device_type}
-                      onChange={(e) => setRegisterForm({ ...registerForm, device_type: e.target.value })}
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
-                    >
-                      <option value="host">{zh ? '普通主机' : 'Host'}</option>
-                      <option value="server">{zh ? '服务器' : 'Server'}</option>
-                      <option value="device">{zh ? '网络设备' : 'Network Device'}</option>
-                      <option value="gateway">{zh ? '网关' : 'Gateway'}</option>
-                    </select>
-                  </div>
-
-                  {/* Bound Interface */}
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '绑定物理接口' : 'Access Interface'}</label>
-                    <input
-                      type="text"
-                      value={registerForm.interface_name}
-                      onChange={(e) => setRegisterForm({ ...registerForm, interface_name: e.target.value })}
-                      placeholder="e.g. Switch-Core:Gi0/1"
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
-                    />
-                  </div>
-
-                  {/* Description */}
-                  <div className="space-y-1.5 col-span-2">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '备注描述说明' : 'Description'}</label>
-                    <textarea
-                      value={registerForm.description}
-                      onChange={(e) => setRegisterForm({ ...registerForm, description: e.target.value })}
-                      rows={2}
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50 resize-none"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Actions */}
-              <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 flex items-center justify-end gap-3 flex-shrink-0">
-                <button
-                  onClick={() => setRegisteringItem(null)}
-                  className="px-4 py-2 text-xs font-bold text-gray-500 hover:bg-gray-100 rounded-xl transition-all"
-                >
-                  {zh ? '取消' : 'Cancel'}
-                </button>
-                <button
-                  onClick={submitRegister}
-                  className="px-6 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white text-xs font-extrabold rounded-xl shadow-md transition-all active:scale-95"
-                >
-                  {zh ? '确认标准登记' : 'Confirm Registration'}
-                </button>
-              </div>
-            </motion.div>
+      {evidenceItem && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 p-3" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setEvidenceItem(null); }}>
+        <section role="dialog" aria-modal="true" aria-labelledby="reconciliation-evidence-title" className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-[var(--ui-border)] bg-[var(--ui-surface)] shadow-2xl">
+          <header className="flex items-start justify-between border-b border-[var(--ui-border)] px-5 py-4"><div><h2 id="reconciliation-evidence-title" className="text-sm font-bold text-[var(--ui-fg)]">{zh ? '核查证据' : 'Review evidence'}</h2><p className="mt-1 font-mono text-xs text-[var(--ui-fg-muted)]">{textValue(evidenceItem, 'ip', 'address') || '—'} · {textValue(evidenceItem, 'observation_id') || (zh ? '无观察 ID' : 'No observation ID')}</p></div><button type="button" onClick={() => setEvidenceItem(null)} aria-label={zh ? '关闭证据' : 'Close evidence'} className="rounded-lg p-2 text-[var(--ui-fg-muted)] hover:bg-[var(--ui-surface-muted)]"><X size={15} /></button></header>
+          <div className="min-h-0 flex-1 overflow-y-auto p-5">
+            {evidenceLoading && <div className="flex items-center gap-2 py-4 text-xs text-[var(--ui-fg-muted)]"><RefreshCw size={14} className="animate-spin" />{zh ? '正在加载来源证据…' : 'Loading source evidence…'}</div>}
+            {evidenceError && <div role="alert" className="mb-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">{evidenceError}</div>}
+            <dl className="grid grid-cols-1 gap-3 rounded-xl border border-[var(--ui-border)] p-3 text-xs sm:grid-cols-2">
+              <div><dt className="text-[var(--ui-fg-muted)]">{zh ? 'IPAM 地址 ID' : 'IPAM address ID'}</dt><dd className="mt-1 font-mono">{textValue(evidenceItem, 'ipam_address_id') || '—'}</dd></div>
+              <div><dt className="text-[var(--ui-fg-muted)]">{zh ? 'MAC（登记 / 观察）' : 'MAC (registered / observed)'}</dt><dd className="mt-1 font-mono">{textValue(evidenceItem, 'ipam_mac') || '—'} / {textValue(evidenceItem, 'observed_mac', 'mac') || '—'}</dd></div>
+              <div><dt className="text-[var(--ui-fg-muted)]">{zh ? '站点 / VRF' : 'Site / VRF'}</dt><dd className="mt-1">{textValue(evidenceItem, 'site_name', 'site') || '—'} / {textValue(evidenceItem, 'vrf_name', 'vrf') || '—'}</dd></div>
+              <div><dt className="text-[var(--ui-fg-muted)]">{zh ? '范围 / 证据状态' : 'Scope / evidence status'}</dt><dd className="mt-1">{scopeStatusLabel(textValue(evidenceItem, 'scope_status'), zh)} / {evidenceStatusLabel(textValue(evidenceItem, 'evidence_status'), zh)}</dd></div>
+              <div><dt className="text-[var(--ui-fg-muted)]">{zh ? '观察时间 / 最近成功' : 'Observed / last success'}</dt><dd className="mt-1 font-mono">{textValue(evidenceItem, 'observed_at', 'last_observed_at', 'last_success_at') || '—'}</dd></div>
+              <div><dt className="text-[var(--ui-fg-muted)]">{zh ? '来源 / 原因' : 'Source / reason'}</dt><dd className="mt-1">{textValue(evidenceItem, 'source_device_name', 'source_device_id', 'source_type') || '—'} / {textValue(evidenceItem, 'reason') || '—'}</dd></div>
+            </dl>
+            {evidenceDetail?.observations?.length ? <div className="mt-4 space-y-2"><h3 className="text-xs font-bold">{zh ? '原始观察' : 'Source observations'}</h3>{evidenceDetail.observations.map((observation, index) => <article key={String(observation.source_version || observation.observed_at || index)} className="rounded-xl border border-[var(--ui-border)] p-3 text-xs"><div className="flex justify-between gap-2"><strong>{asString(observation.source_type).toUpperCase() || '—'} · {asString(observation.source_device_name) || asString(observation.source_device_id) || '—'}</strong><span className="font-mono">{asString(observation.observed_at) || (zh ? '时间未知' : 'Time unknown')}</span></div><div className="mt-2 grid grid-cols-2 gap-2 text-[var(--ui-fg-muted)] sm:grid-cols-4"><span>IP: {asString(observation.ip) || '—'}</span><span>MAC: {asString(observation.mac) || '—'}</span><span>{zh ? '接口' : 'Interface'}: {asString(observation.interface_name) || '—'}</span><span>VLAN: {asString(observation.vlan) || '—'}</span></div><div className="mt-1 text-[10px] text-[var(--ui-fg-muted)]">{zh ? '源版本' : 'Source version'}: {asString(observation.source_version) || '—'} · {zh ? '时间校验' : 'Timestamp'}: {asString(observation.timestamp_status) || '—'} · {zh ? '覆盖状态' : 'Coverage'}: {asString(observation.coverage_status) || '—'}</div></article>)}</div> : null}
+            {!textValue(evidenceItem, 'observation_id') && <p className="mt-3 text-[11px] text-[var(--ui-fg-muted)]">{zh ? '该记录没有单条观察 ID，以上为对账返回的历史/来源状态；请前往 IP 地址台账继续核查。' : 'This row has no individual observation ID. The fields above are the returned historical/source status; continue in the IP address ledger.'}</p>}
+            <button type="button" onClick={() => { setEvidenceItem(null); navigate('/ipam/ips'); }} className="mt-4 inline-flex items-center gap-2 rounded-lg border border-[var(--ui-border)] px-3 py-2 text-xs font-semibold text-[var(--ui-fg)]"><Globe size={13} />{zh ? '打开 IP 地址台账' : 'Open IP address ledger'}</button>
           </div>
-        )}
-      </AnimatePresence>
+        </section>
+      </div>}
 
-      {/* Modal 2: Release IP */}
-      <AnimatePresence>
-        {releasingItem && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-            <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white w-full max-w-md rounded-3xl overflow-hidden shadow-2xl border border-black/5"
-            >
-              <div className="p-6">
-                <h3 className="text-base font-bold text-gray-900 mb-2">
-                  {zh
-                    ? `释放长期未发现的已分配 IP（${data.summary.stale_after_days}天+）？`
-                    : `Release IP unseen for ${data.summary.stale_after_days} days+?`}
-                </h3>
-                <p className="text-xs text-gray-500 leading-relaxed">
-                  {zh
-                    ? `IP ${releasingItem.address} 最后发现于 ${releasingItem.last_seen}，已 ${releasingItem.days_since_seen} 天未发现。确认后会从 IPAM 释放该分配，使其可重新分配。`
-                    : `IP ${releasingItem.address} was last seen at ${releasingItem.last_seen}, ${releasingItem.days_since_seen} days ago. Releasing it removes the IPAM allocation and makes it available for reassignment.`}
-                </p>
-              </div>
-              <div className="px-6 py-4 bg-gray-50 flex items-center justify-end gap-3 border-t border-gray-100">
-                <button
-                  onClick={() => setReleasingItem(null)}
-                  className="px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-100 rounded-lg font-semibold transition-colors"
-                >
-                  {zh ? '我再想想' : 'Cancel'}
-                </button>
-                <button
-                  onClick={submitRelease}
-                  className="px-4 py-1.5 text-xs bg-rose-500 hover:bg-rose-600 text-white rounded-lg font-bold transition-colors"
-                >
-                  {zh ? '确认释放' : 'Release'}
-                </button>
-              </div>
-            </motion.div>
+      {registerItem && <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/45 p-3" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setRegisterItem(null); }}>
+        <section role="dialog" aria-modal="true" aria-labelledby="register-observation-title" className="w-full max-w-xl overflow-hidden rounded-2xl border border-[var(--ui-border)] bg-[var(--ui-surface)] shadow-2xl">
+          <header className="flex items-start justify-between border-b border-[var(--ui-border)] px-5 py-4"><div><h2 id="register-observation-title" className="text-sm font-bold">{zh ? '登记观察到的 IP' : 'Register observed IP'}</h2><p className="mt-1 text-[11px] text-[var(--ui-fg-muted)]">{zh ? '请选择目标网段并明确确认地址归属；不会修改原始观察的站点或 VRF。' : 'Choose the target prefix and explicitly confirm scope. The source observation site or VRF will not be changed.'}</p></div><button type="button" onClick={() => setRegisterItem(null)} aria-label={zh ? '关闭登记' : 'Close registration'}><X size={15} /></button></header>
+          <div className="space-y-3 p-5">
+            <div className="grid grid-cols-2 gap-3 rounded-xl border border-[var(--ui-border)] p-3 text-xs"><div><span className="text-[var(--ui-fg-muted)]">IP</span><div className="mt-1 font-mono font-bold">{textValue(registerItem, 'ip', 'address') || '—'}</div></div><div><span className="text-[var(--ui-fg-muted)]">MAC</span><div className="mt-1 font-mono">{textValue(registerItem, 'mac') || '—'}</div></div><div><span className="text-[var(--ui-fg-muted)]">{zh ? '来源站点 / VRF' : 'Observed site / VRF'}</span><div className="mt-1">{textValue(registerItem, 'site_name', 'site') || (zh ? '待确认' : 'Pending')} / {textValue(registerItem, 'vrf_name', 'vrf') || (zh ? '待确认' : 'Pending')}</div></div><div><span className="text-[var(--ui-fg-muted)]">{zh ? '来源版本时间' : 'Observation version'}</span><div className="mt-1 font-mono">{textValue(registerItem, 'observed_at') || '—'}</div></div></div>
+            <label className="block text-xs font-semibold">{zh ? '目标网段' : 'Target prefix'}<select aria-label={zh ? '目标 IPAM 网段' : 'Target IPAM prefix'} value={registerSubnetId} onChange={(event) => setRegisterSubnetId(event.target.value)} disabled={subnetsLoading} className="mt-1.5 h-10 w-full rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface)] px-3 text-xs"><option value="">{subnetsLoading ? (zh ? '加载网段…' : 'Loading prefixes…') : (zh ? '请选择网段' : 'Select a prefix')}</option>{subnets.map((subnet) => <option key={subnet.id} value={subnet.id}>{subnet.prefix}{subnet.name ? ` · ${subnet.name}` : ''} · {subnet.site_name || subnet.site_id || (zh ? '未知站点' : 'Unknown site')}{subnet.vrf_name ? ` · ${subnet.vrf_name}` : ''}</option>)}</select></label>
+            {selectedSubnet && <div className="rounded-lg border border-sky-200 bg-sky-50 p-3 text-xs text-sky-900"><strong>{zh ? '登记预览' : 'Registration preview'}</strong><p className="mt-1 font-mono">{textValue(registerItem, 'ip', 'address')} → {selectedSubnet.prefix}</p><p className="mt-1">{zh ? '目标站点 / VRF' : 'Target site / VRF'}: {selectedSubnet.site_name || selectedSubnet.site_id || (zh ? '未提供' : 'Not provided')} / {selectedSubnet.vrf_name || (zh ? '未提供' : 'Not provided')}</p></div>}
+            <label className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900"><input type="checkbox" checked={confirmedScope} onChange={(event) => setConfirmedScope(event.target.checked)} className="mt-0.5" /><span>{zh ? '我已核对来源、目标网段和站点归属，确认将此 IP 登记到所选网段。若服务端无法验证来源设备范围，操作会被拒绝。' : 'I reviewed the source, target prefix, and site assignment and confirm registering this IP in the selected prefix. The server will reject the operation if the source device scope cannot be verified.'}</span></label>
+            {registerError && <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-2.5 text-xs text-rose-800">{registerError}</div>}
           </div>
-        )}
-      </AnimatePresence>
+          <footer className="flex justify-end gap-2 border-t border-[var(--ui-border)] px-5 py-3"><button type="button" onClick={() => setRegisterItem(null)} className="rounded-lg border border-[var(--ui-border)] px-3 py-2 text-xs">{zh ? '取消' : 'Cancel'}</button><button type="button" onClick={() => void submitRegister()} disabled={registerSubmitting || subnetsLoading || !registerSubnetId || !confirmedScope} className="rounded-lg bg-[var(--ui-accent)] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">{registerSubmitting ? (zh ? '提交中…' : 'Submitting…') : (zh ? '确认登记' : 'Confirm registration')}</button></footer>
+        </section>
+      </div>}
 
-      {/* Modal 3: Sync mismatched details */}
-      <AnimatePresence>
-        {syncingItem && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-            <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white w-full max-w-md rounded-3xl overflow-hidden shadow-2xl border border-black/5"
-            >
-              <div className="p-6">
-                <h3 className="text-base font-bold text-gray-900 mb-2">{zh ? '执行 IP 资产信息校准？' : 'Align IP asset information?'}</h3>
-                <p className="text-xs text-gray-500 leading-relaxed mb-4">
-                  {zh
-                  ? `是否使用端点缓存中的发现数据，来更新 IP ${syncingItem.ip} 在 IPAM 中的登记信息？`
-                  : `Do you want to update the IPAM registration details for IP ${syncingItem.ip} using cached endpoint evidence?`}
-                </p>
-                <div className="space-y-2.5 p-3 rounded-2xl bg-cyan-50/50 border border-cyan-500/10 text-xs">
-                  {syncingItem.hostname_mismatch && (
-                    <div className="flex justify-between items-center">
-                      <span className="text-gray-400">{zh ? '主机名校准' : 'Hostname'}</span>
-                      <span className="font-bold text-gray-800">
-                        {syncingItem.ipam_hostname || '(Empty)'} <ArrowRight size={10} className="inline mx-1" />{' '}
-                        {syncingItem.endpoint_hostname}
-                      </span>
-                    </div>
-                  )}
-                  {syncingItem.mac_mismatch && (
-                    <div className="flex justify-between items-center">
-                      <span className="text-gray-400">{zh ? 'MAC地址校准' : 'MAC Address'}</span>
-                      <span className="font-mono font-bold text-gray-800">
-                        {syncingItem.ipam_mac || '(Empty)'} <ArrowRight size={10} className="inline mx-1" />{' '}
-                        {syncingItem.endpoint_mac}
-                      </span>
-                    </div>
-                  )}
-                  {syncingItem.site_mismatch && (
-                    <div className="flex justify-between items-center gap-3">
-                      <span className="text-gray-400 flex-shrink-0">{zh ? '站点校准' : 'Site'}</span>
-                      <span className="font-bold text-gray-800 text-right">
-                        {syncingItem.ipam_site || '(Empty)'} <ArrowRight size={10} className="inline mx-1" />{' '}
-                        {syncingItem.endpoint_site || '(Empty)'}
-                        <span className="block text-[10px] text-gray-400 font-normal">
-                          {zh ? '登记站点 → 缓存发现站点' : 'IPAM site → cached endpoint site'}
-                        </span>
-                      </span>
-                    </div>
-                  )}
-                  {syncingItem.status_mismatch && (
-                    <div className="flex justify-between items-center gap-3">
-                      <span className="text-gray-400 flex-shrink-0">{zh ? 'IPAM 生命周期状态' : 'IPAM lifecycle status'}</span>
-                      <span className="font-bold text-gray-800 text-right">
-                        {syncingItem.ipam_status || (zh ? '未知状态' : 'Unknown status')} <ArrowRight size={10} className="inline mx-1" />{' '}
-                        {zh ? '端点缓存有观测' : 'Endpoint observed in cache'}
-                      </span>
-                    </div>
-                  )}
-                </div>
-                <p className="mt-2 text-[10px] text-gray-400">
-                  {zh
-                    ? '此校准操作只同步主机名和 MAC；不会修改 IPAM 生命周期状态或站点归属。IPAM 台账仍是状态基准，缓存只作旁证。'
-                    : 'This action only syncs hostname and MAC; it does not change IPAM lifecycle status or site assignment. The IPAM ledger remains authoritative; cache data is corroborating evidence.'}
-                </p>
-              </div>
-              <div className="px-6 py-4 bg-gray-50 flex items-center justify-end gap-3 border-t border-gray-100">
-                <button
-                  onClick={() => setSyncingItem(null)}
-                  className="px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-100 rounded-lg font-semibold transition-colors"
-                >
-                  {zh ? '取消' : 'Cancel'}
-                </button>
-                <button
-                  onClick={submitSync}
-                  className="px-4 py-1.5 text-xs bg-cyan-500 hover:bg-cyan-600 text-white rounded-lg font-bold transition-colors"
-                >
-                  {zh ? '同步并保存' : 'Align Now'}
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+      {calibrateItem && <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/45 p-3" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setCalibrateItem(null); }}>
+        <section role="dialog" aria-modal="true" aria-labelledby="calibrate-mac-title" className="w-full max-w-lg overflow-hidden rounded-2xl border border-[var(--ui-border)] bg-[var(--ui-surface)] shadow-2xl">
+          <header className="flex items-start justify-between border-b border-[var(--ui-border)] px-5 py-4"><div><h2 id="calibrate-mac-title" className="text-sm font-bold">{zh ? '确认校准登记 MAC' : 'Confirm registered MAC calibration'}</h2><p className="mt-1 text-[11px] text-[var(--ui-fg-muted)]">{zh ? '仅更新当前 IPAM 地址的 MAC；不会修改主机名、状态、站点或 VRF。' : 'Only the MAC on this IPAM address will change. Hostname, status, site, and VRF remain unchanged.'}</p></div><button type="button" onClick={() => setCalibrateItem(null)} aria-label={zh ? '关闭校准' : 'Close calibration'}><X size={15} /></button></header>
+          <div className="space-y-3 p-5 text-xs"><div className="rounded-xl border border-[var(--ui-border)] p-3"><div>{zh ? 'IP / 站点 / VRF' : 'IP / Site / VRF'}: <strong className="font-mono">{textValue(calibrateItem, 'ip')}</strong> · {textValue(calibrateItem, 'site_name', 'site') || '—'} / {textValue(calibrateItem, 'vrf_name', 'vrf') || '—'}</div><div className="mt-2 font-mono">{textValue(calibrateItem, 'ipam_mac')} → {textValue(calibrateItem, 'observed_mac')}</div><div className="mt-2 text-[10px] text-[var(--ui-fg-muted)]">{zh ? '当前观察版本' : 'Observation version'}: {textValue(calibrateItem, 'observed_at')}</div></div><p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">{zh ? '仅当范围明确、当前 ARP 观察唯一且无同 IP 多 MAC 冲突时允许校准。提交会携带当前 MAC 与观察时间做版本校验。' : 'Calibration is allowed only for a resolved scope with one current ARP observation and no same-IP multi-MAC conflict. The request carries the current MAC and observation timestamp for version checks.'}</p><label className="flex items-start gap-2"><input type="checkbox" checked={calibrateConfirmed} onChange={(event) => setCalibrateConfirmed(event.target.checked)} className="mt-0.5" /><span>{zh ? '我确认仅将 IPAM 登记 MAC 更新为本次显示的 ARP 观察 MAC。' : 'I confirm changing only the registered MAC to the ARP MAC shown above.'}</span></label>{calibrateError && <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-2.5 text-rose-800">{calibrateError}</div>}</div>
+          <footer className="flex justify-end gap-2 border-t border-[var(--ui-border)] px-5 py-3"><button type="button" onClick={() => setCalibrateItem(null)} className="rounded-lg border border-[var(--ui-border)] px-3 py-2 text-xs">{zh ? '取消' : 'Cancel'}</button><button type="button" onClick={() => void submitMacCalibration()} disabled={calibrateSubmitting || !calibrateConfirmed} className="rounded-lg bg-amber-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">{calibrateSubmitting ? (zh ? '校准中…' : 'Calibrating…') : (zh ? '确认校准 MAC' : 'Confirm MAC calibration')}</button></footer>
+        </section>
+      </div>}
     </div>
   );
 };

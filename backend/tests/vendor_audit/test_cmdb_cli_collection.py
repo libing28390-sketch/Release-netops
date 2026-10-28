@@ -52,6 +52,29 @@ class _FakeNetworkLimiter:
         return _FakeNetworkLease()
 
 
+def test_manual_vlan_policy_override_reaches_operational_selection(monkeypatch):
+    from services import read_only_collection_adapter, operational_data_service
+
+    selected = []
+
+    def collect(device, *, categories, auth_role, policy_override_categories, _platform_action_session):
+        selected.extend(operational_data_service._resolve_categories(
+            categories, device_info=device, policy_override_categories=policy_override_categories,
+        ))
+        return {"categories": []}
+
+    monkeypatch.setattr(read_only_collection_adapter, "collect_operational_data", collect)
+    read_only_collection_adapter.collect_read_only_evidence(
+        _device(), categories=["interfaces", "vlan"], policy_override_categories={"vlan"},
+    )
+    assert selected == ["interfaces", "vlan"]
+    selected.clear()
+    read_only_collection_adapter.collect_read_only_evidence(
+        _device(), categories=["interfaces", "vlan"],
+    )
+    assert selected == ["interfaces"]
+
+
 def _install_common(monkeypatch, *, interface: bool, vlan: bool) -> list[dict]:
     attempts: list[dict] = []
     monkeypatch.setattr(interface_collection_service, "_load_device", lambda _device_id: _device())
@@ -95,7 +118,7 @@ def test_cmdb_vlan_job_uses_cli_projection_without_snmp(monkeypatch):
     requested: list[str] = []
     persisted: list[dict] = []
 
-    def collect(_device, *, categories, auth_role, _platform_action_session):
+    def collect(_device, *, categories, auth_role, policy_override_categories, _platform_action_session):
         requested.extend(categories)
         assert auth_role == "auto"
         assert isinstance(_platform_action_session, _FakeActionSession)
@@ -133,10 +156,10 @@ def test_cmdb_vlan_job_uses_cli_projection_without_snmp(monkeypatch):
 
 
 def test_cmdb_interface_job_can_reuse_the_same_cli_flow_for_vlan_only(monkeypatch):
-    attempts = _install_common(monkeypatch, interface=True, vlan=True)
+    attempts = _install_common(monkeypatch, interface=True, vlan=False)
     requested: list[str] = []
 
-    def collect(_device, *, categories, auth_role, _platform_action_session):
+    def collect(_device, *, categories, auth_role, policy_override_categories, _platform_action_session):
         requested.extend(categories)
         return {
             "categories": [{
@@ -347,8 +370,9 @@ def test_cmdb_interface_job_uses_one_cli_session_and_commits_snapshot(
     )
     captured: dict = {}
 
-    def collect(_device, *, categories, auth_role, _platform_action_session):
-        assert categories == ["interfaces", "interface_description"]
+    def collect(_device, *, categories, auth_role, policy_override_categories, _platform_action_session):
+        assert categories == ["interfaces", "interface_description", "vlan"]
+        assert policy_override_categories == {"vlan"}
         assert auth_role == "auto"
         captured["session"] = _platform_action_session
         return {
@@ -361,6 +385,10 @@ def test_cmdb_interface_job_uses_one_cli_session_and_commits_snapshot(
                     "records": [{"INTERFACE": "Vlan-interface219", "STATUS": "up"}],
                 },
                 description_category,
+                {
+                    "key": "vlan", "success": True, "parse_status": "matched",
+                    "records": [{"VLAN_ID": "219", "VLAN_NAME": "APP-219"}],
+                },
             ],
         }
 
@@ -389,6 +417,13 @@ def test_cmdb_interface_job_uses_one_cli_session_and_commits_snapshot(
             "device": device, "rows": rows, "attempt": attempt, **kwargs,
         }) or 1,
     )
+    vlan_writes = []
+    monkeypatch.setattr(
+        cmdb_cli_collection_service, "_persist_vlan_snapshot",
+        lambda device_id, records, attempt, **kwargs: vlan_writes.append(
+            (device_id, records, attempt)
+        ) or {"vlans": 1, "interfaces": 0},
+    )
     monkeypatch.setattr(
         "services.collection_status_service.record_collection_result",
         lambda *_args, **_kwargs: pytest.fail("CMDB CLI collection must not write monitoring status"),
@@ -398,6 +433,10 @@ def test_cmdb_interface_job_uses_one_cli_session_and_commits_snapshot(
 
     assert result["transport_policy"] == "cmdb_cli_only"
     assert result["domains"]["interfaces"]["record_count"] == 1
+    assert result["domains"]["vlans"]["vlans"] == 1
+    assert [attempt["domain"] for attempt in attempts] == ["interface_inventory", "vlan_inventory"]
+    assert vlan_writes[0][2] is attempts[1]
+    assert vlan_writes[0][1] == [{"VLAN_ID": "219", "VLAN_NAME": "APP-219"}]
     assert captured["attempt"] == attempts[0]
     assert captured["metadata"]["action_code"] == "get_ip_interfaces"
     assert result["domains"]["interfaces"]["unsupported_fields"] == expected_unsupported

@@ -34,6 +34,7 @@ def collect_read_only_evidence(
     *,
     categories: list[str] | None = None,
     auth_role: str = "auto",
+    policy_override_categories: set[str] | None = None,
     _platform_action_session=None,
 ) -> dict[str, Any]:
     requested = [str(item).strip().lower() for item in (categories or READ_ONLY_EVIDENCE_CATEGORIES)]
@@ -45,6 +46,7 @@ def collect_read_only_evidence(
         device_info,
         categories=requested,
         auth_role=auth_role,
+        policy_override_categories=policy_override_categories,
         _platform_action_session=_platform_action_session,
     )
     categories_out: list[dict[str, Any]] = []

@@ -30,6 +30,22 @@ import { DEFAULT_TENANT_ID } from '../../types/cmdb';
 import { useNavigate } from 'react-router-dom';
 import { isValidIPv4, isValidIPv6, toNum } from './helpers';
 import IPPoolTab from './IPPoolTab';
+import {
+  buildGatewayCandidateQuery,
+  getAutomaticGatewayBinding,
+  isValidGatewayCandidatePrefix,
+  type GatewayBindingSource,
+  type GatewayCandidateEndpoint,
+  type GatewayCandidateResponse,
+} from './prefixGatewayBinding';
+import { areAllVisiblePrefixIdsSelected, toggleVisiblePrefixSelection } from './prefixManagementSelection';
+import {
+  buildPrefixClassificationSummaryQuery,
+  buildPrefixListQuery,
+  togglePrefixClassificationFilter,
+  type PrefixClassificationCategory,
+  type PrefixClassificationFilter,
+} from './prefixClassificationFilters';
 
 import { TableActionCell, TableActionHeader } from '../../components/ui/TableActionColumn';
 interface Prefix {
@@ -60,6 +76,7 @@ interface Prefix {
   manual_override?: number;
   mixed_network?: number;
   conflict_status?: string;
+  cross_site_reuse?: boolean | number;
   address_roles_json?: string;
   last_seen_at?: string;
   is_active?: number;
@@ -120,6 +137,7 @@ interface PrefixClassificationSummary {
   unclassified_count: number;
   mixed_count: number;
   conflict_count: number;
+  reuse_count?: number;
   stale_count: number;
 }
 
@@ -153,6 +171,14 @@ function prefixStatusLabel(status: string, zh: boolean): string {
   return label ? (zh ? label.zh : label.en) : status;
 }
 
+function gatewayCandidateEndpointLabel(endpoint: GatewayCandidateEndpoint, zh: boolean): string {
+  return [
+    endpoint.device_name || endpoint.device_id || (zh ? '未知设备' : 'Unknown device'),
+    endpoint.interface_name,
+    endpoint.address || endpoint.ip_address,
+  ].filter(Boolean).join(' · ');
+}
+
 const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }) => {
   const treeTableRef = useRef<HTMLTableElement>(null);
   const prefixTableRef = useRef<HTMLTableElement>(null);
@@ -169,6 +195,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   const [familyFilter, setFamilyFilter] = useState<'all' | 'ipv4' | 'ipv6'>('all');
   const [siteFilter, setSiteFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [classificationFilter, setClassificationFilter] = useState<PrefixClassificationFilter>('all');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [collapsedSites, setCollapsedSites] = useState<Record<string, boolean>>({});
 
@@ -183,11 +210,17 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   const [editingPrefix, setEditingPrefix] = useState<Prefix | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
   const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
+  const [showBatchNetworkTypeModal, setShowBatchNetworkTypeModal] = useState(false);
+  const [batchNetworkType, setBatchNetworkType] = useState('server');
+  const [batchNetworkTypeError, setBatchNetworkTypeError] = useState('');
+  const [batchNetworkTypeUpdating, setBatchNetworkTypeUpdating] = useState(false);
+  const [batchNetworkTypeResult, setBatchNetworkTypeResult] = useState('');
   const [showInterfaceGeneration, setShowInterfaceGeneration] = useState(false);
   const [poolManagerPrefix, setPoolManagerPrefix] = useState<Prefix | null>(null);
   useEscapeClose(showAddEdit, () => { setShowAddEdit(false); setEditingPrefix(null); });
   useEscapeClose(Boolean(showDeleteConfirm), () => setShowDeleteConfirm(null));
   useEscapeClose(showBatchDeleteConfirm, () => setShowBatchDeleteConfirm(false));
+  useEscapeClose(showBatchNetworkTypeModal && !batchNetworkTypeUpdating, () => setShowBatchNetworkTypeModal(false));
   useEscapeClose(showInterfaceGeneration, () => setShowInterfaceGeneration(false));
   useEscapeClose(Boolean(poolManagerPrefix), () => setPoolManagerPrefix(null));
   const [interfaceCandidates, setInterfaceCandidates] = useState<InterfacePrefixCandidate[]>([]);
@@ -231,6 +264,11 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
     gateway_interface_id: '',
     traceable: 1,
   });
+  const gatewayBindingSourceRef = useRef<GatewayBindingSource>('none');
+  const gatewayCandidateRequestId = useRef(0);
+  const [gatewayCandidates, setGatewayCandidates] = useState<GatewayCandidateResponse | null>(null);
+  const [gatewayCandidatesLoading, setGatewayCandidatesLoading] = useState(false);
+  const [gatewayCandidatesError, setGatewayCandidatesError] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [parentSubnetId, setParentSubnetId] = useState('');
   const [desiredPrefixLen, setDesiredPrefixLen] = useState(24);
@@ -511,17 +549,24 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
     setLoadError('');
     try {
       const headers = authHeaders();
-      const prefixQuery = new URLSearchParams({
+      const prefixQuery = buildPrefixListQuery({
         q: search,
         site: siteFilter,
         status: statusFilter,
         family: familyFilter,
-        page: String(page),
-        page_size: String(pageSize),
+        page,
+        pageSize,
+        classification: classificationFilter,
+      });
+      const summaryQuery = buildPrefixClassificationSummaryQuery({
+        q: search,
+        site: siteFilter,
+        status: statusFilter,
+        family: familyFilter,
       });
       const [prefixRes, summaryRes] = await Promise.all([
         fetch(`/api/ipam/subnets?${prefixQuery.toString()}`, { headers }),
-        fetch('/api/ipam/prefixes/classification-summary', { headers }),
+        fetch(`/api/ipam/prefixes/classification-summary?${summaryQuery.toString()}`, { headers }),
       ]);
       if (prefixRes.ok) {
         const payload = await prefixRes.json();
@@ -536,10 +581,13 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
             : (zh ? '加载网段列表失败，请重试。' : 'Failed to load prefixes. Please retry.'));
       }
       if (summaryRes.ok) setClassificationSummary(await summaryRes.json());
-      else if (prefixRes.ok) {
-        setLoadError(summaryRes.status === 401 || summaryRes.status === 403
-          ? (zh ? '当前账号无法读取网段分类汇总。' : 'You do not have permission to view the prefix summary.')
-          : (zh ? '加载网段分类汇总失败。' : 'Failed to load prefix classification summary.'));
+      else {
+        setClassificationSummary(null);
+        if (prefixRes.ok) {
+          setLoadError(summaryRes.status === 401 || summaryRes.status === 403
+            ? (zh ? '当前账号无法读取网段分类汇总。' : 'You do not have permission to view the prefix summary.')
+            : (zh ? '加载网段分类汇总失败。' : 'Failed to load prefix classification summary.'));
+        }
       }
     } catch (e) {
       console.error(e);
@@ -547,7 +595,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [search, siteFilter, statusFilter, familyFilter, page, pageSize, authHeaders, zh]);
+  }, [search, siteFilter, statusFilter, familyFilter, page, pageSize, classificationFilter, authHeaders, zh]);
 
   const loadInterfaceCandidates = async (requestedPage = 1, status: InterfaceCandidateFilter = interfaceCandidateFilter) => {
     const requestId = ++interfaceCandidateRequestId.current;
@@ -665,6 +713,89 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
     fetchLookups();
   }, [loadData, fetchLookups]);
 
+  useEffect(() => {
+    const requestId = ++gatewayCandidateRequestId.current;
+    setGatewayCandidatesError('');
+    if (!showAddEdit || !isValidGatewayCandidatePrefix(form.prefix)) {
+      setGatewayCandidates(null);
+      setGatewayCandidatesLoading(false);
+      return undefined;
+    }
+    if (!form.site_id) {
+      setGatewayCandidates({ status: 'needs_site', selected: null, endpoints: [] });
+      setGatewayCandidatesLoading(false);
+      if (gatewayBindingSourceRef.current === 'auto') {
+        gatewayBindingSourceRef.current = 'none';
+        setForm((current) => gatewayBindingSourceRef.current === 'manual'
+          ? current
+          : { ...current, gateway_device_id: '', gateway_interface_id: '' });
+      }
+      return undefined;
+    }
+
+    setGatewayCandidates(null);
+    setGatewayCandidatesLoading(true);
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      try {
+        const query = buildGatewayCandidateQuery({
+          prefix: form.prefix,
+          siteId: form.site_id,
+          gatewayIp: form.gateway,
+        });
+        const response = await fetch(`/api/ipam/prefixes/gateway-candidates?${query.toString()}`, {
+          headers: authHeaders(),
+          signal: controller.signal,
+        });
+        const data = await response.json().catch(() => ({})) as GatewayCandidateResponse & { detail?: unknown };
+        if (requestId !== gatewayCandidateRequestId.current) return;
+        if (!response.ok) {
+          setGatewayCandidatesError(response.status === 401
+            ? (zh ? '登录已过期，无法查询网关候选。' : 'Your session expired; gateway candidates could not be loaded.')
+            : response.status === 403
+              ? (zh ? '当前账号没有读取网关候选的权限。' : 'You do not have permission to read gateway candidates.')
+              : (zh ? '读取网关候选失败，请稍后重试。' : 'Failed to load gateway candidates. Retry shortly.'));
+          setGatewayCandidates(null);
+          return;
+        }
+
+        setGatewayCandidates({
+          status: data.status,
+          selected: data.selected || null,
+          endpoints: Array.isArray(data.endpoints) ? data.endpoints : [],
+          gateway_ip: data.gateway_ip || null,
+        });
+        const automaticBinding = getAutomaticGatewayBinding(gatewayBindingSourceRef.current, data);
+        if (automaticBinding) {
+          gatewayBindingSourceRef.current = 'auto';
+          setForm((current) => gatewayBindingSourceRef.current === 'manual'
+            ? current
+            : {
+              ...current,
+              gateway_device_id: automaticBinding.deviceId,
+              gateway_interface_id: automaticBinding.interfaceId,
+            });
+        } else if (gatewayBindingSourceRef.current === 'auto') {
+          gatewayBindingSourceRef.current = 'none';
+          setForm((current) => gatewayBindingSourceRef.current === 'manual'
+            ? current
+            : { ...current, gateway_device_id: '', gateway_interface_id: '' });
+        }
+      } catch (error) {
+        if (controller.signal.aborted || requestId !== gatewayCandidateRequestId.current) return;
+        setGatewayCandidatesError(zh ? '查询网关候选时发生网络错误。' : 'A network error occurred while loading gateway candidates.');
+        setGatewayCandidates(null);
+      } finally {
+        if (requestId === gatewayCandidateRequestId.current) setGatewayCandidatesLoading(false);
+      }
+    }, 250);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [showAddEdit, form.prefix, form.site_id, form.gateway, authHeaders, zh]);
+
   // Tree mode support
   const [treeData, setTreeData] = useState<Prefix[]>([]);
   useEffect(() => {
@@ -698,6 +829,10 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   };
 
   const openForm = (prefixItem: Prefix | null = null) => {
+    gatewayCandidateRequestId.current += 1;
+    setGatewayCandidates(null);
+    setGatewayCandidatesError('');
+    setGatewayCandidatesLoading(false);
     setErrorMsg('');
     setParentSubnetId('');
     setDesiredPrefixLen(24);
@@ -707,6 +842,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
     setExcludeNetBroadcast(true);
     setExcludeGateway(true);
     if (prefixItem) {
+      gatewayBindingSourceRef.current = prefixItem.gateway_device_id || prefixItem.gateway_interface_id ? 'manual' : 'none';
       setEditingPrefix(prefixItem);
       setForm({
         prefix: prefixItem.prefix,
@@ -717,12 +853,13 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
         status: prefixItem.status || 'active',
         gateway: prefixItem.gateway || '',
         description: prefixItem.description || '',
-        network_type: prefixItem.network_type || 'server',
+        network_type: prefixItem.network_type === 'user' ? 'user_access' : (prefixItem.network_type || 'server'),
         gateway_device_id: prefixItem.gateway_device_id || '',
         gateway_interface_id: prefixItem.gateway_interface_id || '',
         traceable: prefixItem.traceable ?? 1,
       });
     } else {
+      gatewayBindingSourceRef.current = 'none';
       setEditingPrefix(null);
       setForm({
         prefix: '',
@@ -777,7 +914,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
       site_id: form.site_id || null,
       tenant_id: DEFAULT_TENANT_ID,
       gateway_device_id: form.gateway_device_id || null,
-      gateway_interface_id: editingPrefix?.gateway_interface_id || null,
+      gateway_interface_id: form.gateway_interface_id || null,
     };
 
     setIsSaving(true);
@@ -846,8 +983,46 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
     }
   };
 
+  const handleBatchNetworkTypeUpdate = async () => {
+    if (batchNetworkTypeUpdating || selectedIds.size === 0) return;
+    setBatchNetworkTypeError('');
+    setBatchNetworkTypeResult('');
+    setBatchNetworkTypeUpdating(true);
+    const selectedCount = selectedIds.size;
+    try {
+      const response = await fetch('/api/ipam/subnets/batch-update-network-type', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders(),
+        },
+        body: JSON.stringify({ ids: Array.from(selectedIds), network_type: batchNetworkType }),
+      });
+      const data = await response.json().catch(() => ({})) as { detail?: unknown };
+      if (!response.ok) {
+        const detail = typeof data.detail === 'string' ? data.detail.trim().slice(0, 300) : '';
+        setBatchNetworkTypeError(response.status === 401
+          ? (zh ? '登录已过期，请重新登录后重试。' : 'Your session has expired. Sign in and retry.')
+          : response.status === 403
+            ? (zh ? '当前账号没有批量修改网段用途的权限。' : 'You do not have permission to batch update prefix purposes.')
+            : detail || (zh ? '批量修改网段用途失败，请检查所选记录后重试。' : 'Batch purpose update failed. Review the selected prefixes and retry.'));
+        return;
+      }
+
+      setSelectedIds(new Set());
+      setShowBatchNetworkTypeModal(false);
+      setBatchNetworkTypeResult(zh ? `已将 ${selectedCount} 个网段设为人工保护。` : `${selectedCount} prefixes were updated and protected from automatic classification.`);
+      await loadData({ silent: true });
+    } catch {
+      setBatchNetworkTypeError(zh ? '网络请求失败，所选网段未更新，请重试。' : 'The request failed; selected prefixes were not updated. Retry.');
+    } finally {
+      setBatchNetworkTypeUpdating(false);
+    }
+  };
+
   // Toggle selection
   const toggleSelectRow = (id: string) => {
+    setBatchNetworkTypeResult('');
     const next = new Set(selectedIds);
     if (next.has(id)) next.delete(id);
     else next.add(id);
@@ -855,11 +1030,8 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   };
 
   const toggleSelectAll = () => {
-    if (selectedIds.size === filteredPrefixes.length) {
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds(new Set(filteredPrefixes.map((p) => p.id)));
-    }
+    setBatchNetworkTypeResult('');
+    setSelectedIds((current) => toggleVisiblePrefixSelection(current, visiblePrefixIds));
   };
 
   // IPv4 / IPv6 family filter (an IPv6 prefix always contains a colon)
@@ -871,8 +1043,10 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
     },
     [familyFilter],
   );
-  const filteredPrefixes = prefixes;
   const paginatedPrefixes = prefixes;
+  const visiblePrefixIds = paginatedPrefixes
+    .filter((prefix) => !collapsedSites[String(prefix.site_id || 'unassigned')])
+    .map((prefix) => prefix.id);
 
   const exportData = useCallback(async () => {
     const table = viewMode === 'tree' ? treeTableRef.current : prefixTableRef.current;
@@ -881,7 +1055,15 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
       const flatten = (prefix: Prefix): Prefix[] => [prefix, ...(prefix.children || []).flatMap(flatten)];
       allPrefixes = treeData.filter(matchFamily).flatMap(flatten);
     } else {
-      const params = new URLSearchParams({ q: search, site: siteFilter, status: statusFilter, family: familyFilter });
+      const params = buildPrefixListQuery({
+        q: search,
+        site: siteFilter,
+        status: statusFilter,
+        family: familyFilter,
+        page: 1,
+        pageSize,
+        classification: classificationFilter,
+      });
       allPrefixes = await fetchAllIpamExportItems<Prefix>('/api/ipam/subnets', params);
     }
 
@@ -895,6 +1077,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
         if (prefix.manual_override) labels.push(zh ? '人工' : 'Manual');
         if (prefix.mixed_network) labels.push(zh ? '混合' : 'Mixed');
         if (prefix.conflict_status) labels.push(zh ? '冲突' : 'Conflict');
+        if (prefix.cross_site_reuse) labels.push(zh ? '跨站点复用（同租户同 CIDR）' : 'Cross-site reuse (same tenant/CIDR)');
       }
       return labels.join(' · ');
     };
@@ -915,7 +1098,23 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
       { header: zh ? '可用容量' : 'Usable Capacity', value: (prefix) => prefix.total_ips ?? 0 },
       { header: zh ? '利用率' : 'Utilization', value: (prefix) => `${prefix.utilization ?? 0}%` },
     ], allPrefixes);
-  }, [viewMode, treeData, matchFamily, search, siteFilter, statusFilter, familyFilter, zh, language]);
+  }, [viewMode, treeData, matchFamily, search, siteFilter, statusFilter, familyFilter, classificationFilter, pageSize, zh, language]);
+
+  const classificationCards = classificationSummary ? [
+    { key: 'auto', label: zh ? '自动分类' : 'Auto', value: classificationSummary.auto_count, tone: 'text-cyan-700 bg-cyan-50' },
+    { key: 'manual', label: zh ? '人工保护' : 'Manual', value: classificationSummary.manual_count, tone: 'text-violet-700 bg-violet-50' },
+    { key: 'unclassified', label: zh ? '待确认' : 'Unclassified', value: classificationSummary.unclassified_count, tone: 'text-slate-700 bg-slate-100' },
+    { key: 'mixed', label: zh ? '混合网段' : 'Mixed', value: classificationSummary.mixed_count, tone: 'text-amber-700 bg-amber-50' },
+    { key: 'conflict', label: zh ? '地址冲突' : 'Address conflicts', value: classificationSummary.conflict_count, tone: 'text-rose-700 bg-rose-50' },
+    { key: 'reuse', label: zh ? '跨站点复用' : 'Cross-site reuse', value: classificationSummary.reuse_count ?? 0, tone: 'text-blue-700 bg-blue-50' },
+    { key: 'stale', label: zh ? '已老化' : 'Stale', value: classificationSummary.stale_count, tone: 'text-gray-600 bg-gray-100' },
+  ] as const : [];
+  const activeClassificationLabel = classificationCards.find((item) => item.key === classificationFilter)?.label || '';
+  const handleClassificationCardClick = (classification: PrefixClassificationCategory) => {
+    setClassificationFilter((current) => togglePrefixClassificationFilter(current, classification));
+    setPage(1);
+    setViewMode('table');
+  };
 
   // Recursive tree renderer
   const renderTreeNode = (node: Prefix, depth = 0) => {
@@ -1020,28 +1219,19 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
           <div className="flex flex-wrap items-center justify-end gap-2">
             <TableExportMenu tableRef={viewMode === 'tree' ? treeTableRef : prefixTableRef} exportData={exportData} filename="ipam-prefixes" language={zh ? 'zh' : 'en'} disabled={loading} />
             <ActionButton
-              icon={Plus}
-              variant="primary"
-              onClick={() => openForm(null)}
-            >
-              {zh ? '新增网段' : 'Add Prefix'}
-            </ActionButton>
-            <ActionButton
               icon={RefreshCw}
               variant="accent"
               onClick={() => openInterfaceGeneration()}
             >
               {zh ? '从接口 IP 生成' : 'Generate from Interfaces'}
             </ActionButton>
-            {selectedIds.size > 0 && (
-              <ActionButton
-                icon={Trash2}
-                variant="danger"
-                onClick={() => setShowBatchDeleteConfirm(true)}
-              >
-                {zh ? '批量删除' : 'Batch Delete'}
-              </ActionButton>
-            )}
+            <ActionButton
+              icon={Plus}
+              variant="primary"
+              onClick={() => openForm(null)}
+            >
+              {zh ? '新增网段' : 'Add Prefix'}
+            </ActionButton>
           </div>
         }
         extras={
@@ -1099,10 +1289,13 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
               </button>
               {search === '' && (
                 <button
+                  type="button"
+                  disabled={classificationFilter !== 'all'}
+                  title={classificationFilter !== 'all' ? (zh ? '请先清除分类筛选再查看层次树' : 'Clear the category filter before switching to hierarchy view') : undefined}
                   onClick={() => setViewMode('tree')}
                   className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
                     viewMode === 'tree' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-400 hover:text-gray-600'
-                  }`}
+                  } ${classificationFilter !== 'all' ? 'cursor-not-allowed opacity-40' : ''}`}
                 >
                   <GitBranch size={13} />
                   {zh ? '层次树视图' : 'Hierarchy Tree'}
@@ -1139,20 +1332,84 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
       )}
 
       {classificationSummary && (
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
-          {[
-            { label: zh ? '自动分类' : 'Auto', value: classificationSummary.auto_count, tone: 'text-cyan-700 bg-cyan-50' },
-            { label: zh ? '人工保护' : 'Manual', value: classificationSummary.manual_count, tone: 'text-violet-700 bg-violet-50' },
-            { label: zh ? '待确认' : 'Unclassified', value: classificationSummary.unclassified_count, tone: 'text-slate-700 bg-slate-100' },
-            { label: zh ? '混合网段' : 'Mixed', value: classificationSummary.mixed_count, tone: 'text-amber-700 bg-amber-50' },
-            { label: zh ? '冲突' : 'Conflicts', value: classificationSummary.conflict_count, tone: 'text-rose-700 bg-rose-50' },
-            { label: zh ? '已老化' : 'Stale', value: classificationSummary.stale_count, tone: 'text-gray-600 bg-gray-100' },
-          ].map((item) => (
-            <div key={item.label} className={`rounded-2xl px-3 py-2 ${item.tone} border border-black/5`}>
-              <div className="text-[10px] font-bold uppercase tracking-wider opacity-70">{item.label}</div>
-              <div className="text-lg font-extrabold">{item.value}</div>
+        <div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7">
+            {classificationCards.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                aria-pressed={classificationFilter === item.key}
+                aria-label={`${item.label}: ${item.value}. ${zh ? '点击筛选此类网段' : 'Click to filter this category'}`}
+                title={item.key === 'reuse'
+                  ? (zh
+                    ? '同一租户下相同 CIDR 出现在不同站点。地址空间按站点切分，因此这是复用提示而非冲突；请按地址规划确认。数字按受影响的网段记录数统计。'
+                    : 'The same CIDR appears for the same tenant at multiple sites. Site-scoped address space makes this a reuse notice, not a conflict; confirm it against the address plan. Count is affected prefix records.')
+                  : item.key === 'conflict'
+                    ? (zh ? '当前筛选范围内的真实地址冲突网段记录数；点击查看记录。' : 'True address-conflict prefix records in the current filter scope; click to review.')
+                    : (zh ? '点击查看当前筛选范围内此分类的网段记录。' : 'Click to view this category within the current filter scope.')}
+                onClick={() => handleClassificationCardClick(item.key)}
+                className={`w-full rounded-2xl border border-black/5 px-3 py-2 text-left transition hover:-translate-y-0.5 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 focus-visible:ring-offset-2 ${item.tone} ${
+                  classificationFilter === item.key ? 'ring-2 ring-cyan-600 ring-offset-1 shadow-sm' : ''
+                }`}
+              >
+                <span className="block text-[10px] font-bold uppercase tracking-wider opacity-70">{item.label}</span>
+                <span className="block text-lg font-extrabold tabular-nums">{item.value}</span>
+              </button>
+            ))}
+          </div>
+          {classificationFilter !== 'all' && (
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-cyan-100 bg-cyan-50/70 px-3 py-2 text-[11px] text-cyan-900" role="status" aria-live="polite">
+              <span>{zh ? `当前分类筛选：${activeClassificationLabel} · ${totalPrefixes} 条网段记录` : `Classification filter: ${activeClassificationLabel} · ${totalPrefixes} prefix records`}</span>
+              <button
+                type="button"
+                onClick={() => { setClassificationFilter('all'); setPage(1); }}
+                className="rounded-md px-2 py-1 font-bold text-cyan-800 underline-offset-2 hover:bg-white hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
+              >
+                {zh ? '清除分类筛选' : 'Clear category filter'}
+              </button>
             </div>
-          ))}
+          )}
+        </div>
+      )}
+
+      {batchNetworkTypeResult && (
+        <div role="status" aria-live="polite" className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-800">
+          {batchNetworkTypeResult}
+        </div>
+      )}
+
+      {selectedIds.size > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-cyan-200 bg-cyan-50/80 px-4 py-3" aria-label={zh ? '所选网段操作' : 'Selected prefix actions'}>
+          <div className="text-xs font-bold text-cyan-900">
+            {zh ? `已选 ${selectedIds.size} 个网段` : `${selectedIds.size} prefixes selected`}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <ActionButton
+              icon={Pencil}
+              variant="default"
+              onClick={() => {
+                setBatchNetworkTypeError('');
+                setBatchNetworkTypeResult('');
+                setShowBatchNetworkTypeModal(true);
+              }}
+            >
+              {zh ? '批量修改用途' : 'Batch change purpose'}
+            </ActionButton>
+            <ActionButton
+              icon={Trash2}
+              variant="danger"
+              onClick={() => setShowBatchDeleteConfirm(true)}
+            >
+              {zh ? '批量删除' : 'Batch delete'}
+            </ActionButton>
+            <button
+              type="button"
+              onClick={() => { setSelectedIds(new Set()); setBatchNetworkTypeResult(''); }}
+              className="rounded-lg px-2.5 py-2 text-xs font-semibold text-cyan-800 hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
+            >
+              {zh ? '清除选择' : 'Clear selection'}
+            </button>
+          </div>
         </div>
       )}
 
@@ -1204,7 +1461,8 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                   <th className="pl-6 py-4 w-10">
                     <input
                       type="checkbox"
-                      checked={filteredPrefixes.length > 0 && selectedIds.size === filteredPrefixes.length}
+                      aria-label={zh ? '选择本页可见网段' : 'Select visible prefixes on this page'}
+                      checked={areAllVisiblePrefixIdsSelected(selectedIds, visiblePrefixIds)}
                       onChange={toggleSelectAll}
                       className="rounded border-gray-300 text-cyan-600 focus:ring-cyan-500"
                     />
@@ -1303,8 +1561,13 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                                   </span>
                                 ) : null}
                                 {node.conflict_status ? (
-                                  <span title={zh ? '同租户同前缀跨站点冲突' : 'Same tenant/prefix appears across sites'} className="inline-flex items-center gap-0.5 whitespace-nowrap px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                                  <span title={zh ? `IPAM 检测到地址冲突：${node.conflict_status}。请核对所属站点、VRF 与地址规划。` : `IPAM detected an address conflict (${node.conflict_status}). Review the site, VRF, and address plan.`} className="inline-flex items-center gap-0.5 whitespace-nowrap px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
                                     <AlertTriangle size={10} />{zh ? '冲突' : 'Conflict'}
+                                  </span>
+                                ) : null}
+                                {node.cross_site_reuse ? (
+                                  <span title={zh ? '同一租户下相同 CIDR 出现在不同站点。地址空间按站点切分，这是复用提示而非冲突；请按地址规划确认。' : 'The same CIDR appears for the same tenant at different sites. Site-scoped address space makes this a reuse notice, not a conflict; confirm it against the address plan.'} className="inline-flex items-center gap-0.5 whitespace-nowrap px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                                    {zh ? '跨站点复用' : 'Cross-site reuse'}
                                   </span>
                                 ) : null}
                               </div>
@@ -1819,7 +2082,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                       onChange={(e) => setForm({ ...form, network_type: e.target.value })}
                       className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                     >
-                      {Object.entries(NETWORK_TYPES).map(([key, val]) => (
+                      {Object.entries(NETWORK_TYPES).filter(([key]) => key !== 'user').map(([key, val]) => (
                         <option key={key} value={key}>{zh ? val.labelZh : val.label}</option>
                       ))}
                     </select>
@@ -1908,14 +2171,68 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                     <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '网关设备' : 'Gateway Device'}</label>
                     <select
                       value={form.gateway_device_id}
-                      onChange={(e) => setForm({ ...form, gateway_device_id: e.target.value })}
+                      onChange={(e) => {
+                        gatewayBindingSourceRef.current = 'manual';
+                        setForm((current) => ({
+                          ...current,
+                          gateway_device_id: e.target.value,
+                          gateway_interface_id: '',
+                        }));
+                      }}
                       className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                     >
                       <option value="">{zh ? '未绑定' : 'None'}</option>
+                      {form.gateway_device_id && !devices.some((device: any) => String(device.id) === form.gateway_device_id) && (
+                        <option value={form.gateway_device_id}>
+                          {gatewayCandidates?.selected?.device_id === form.gateway_device_id
+                            ? gatewayCandidates.selected.device_name || form.gateway_device_id
+                            : form.gateway_device_id}
+                        </option>
+                      )}
                       {devices.map((d: any) => (
                         <option key={d.id} value={d.id}>{d.hostname} ({d.ip_address})</option>
                       ))}
                     </select>
+                    {(gatewayCandidatesLoading || gatewayCandidatesError || gatewayCandidates) && (
+                      <div
+                        role={gatewayCandidatesError ? 'alert' : 'status'}
+                        aria-live="polite"
+                        className={`rounded-lg border px-3 py-2 text-[10px] leading-relaxed ${
+                          gatewayCandidatesError
+                            ? 'border-rose-200 bg-rose-50 text-rose-700'
+                            : gatewayCandidates?.status === 'matched'
+                              ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                              : 'border-amber-200 bg-amber-50 text-amber-900'
+                        }`}
+                      >
+                        <p>
+                          {gatewayCandidatesError || (gatewayCandidatesLoading
+                            ? (zh ? '正在读取最新成功接口快照中的网关候选…' : 'Checking gateway candidates from the latest successful interface snapshot…')
+                            : gatewayCandidates?.status === 'needs_site'
+                              ? (zh ? '请先选择物理站点，再匹配网关候选。' : 'Choose a physical site to match gateway candidates.')
+                              : gatewayCandidates?.status === 'matched'
+                                ? gatewayBindingSourceRef.current === 'manual'
+                                  ? (zh ? `发现唯一候选 ${gatewayCandidates.selected ? gatewayCandidateEndpointLabel(gatewayCandidates.selected, zh) : ''}；已保留当前人工设备选择。` : `Unique candidate found${gatewayCandidates.selected ? `: ${gatewayCandidateEndpointLabel(gatewayCandidates.selected, zh)}` : ''}; the manual device selection is preserved.`)
+                                  : (zh ? `已按唯一证据自动关联：${gatewayCandidates.selected ? gatewayCandidateEndpointLabel(gatewayCandidates.selected, zh) : '设备'}` : `Automatically bound from unique evidence: ${gatewayCandidates.selected ? gatewayCandidateEndpointLabel(gatewayCandidates.selected, zh) : 'device'}`)
+                                : gatewayCandidates?.status === 'no_unique_gateway'
+                                  ? gatewayBindingSourceRef.current === 'manual'
+                                    ? (zh ? '发现多个接口端点，没有唯一网关证据；已保留人工设备选择。' : 'Multiple interface endpoints have no unique gateway evidence; the manual device selection is preserved.')
+                                    : (zh ? '发现接口端点，但没有唯一证据确认网关；当前未绑定网关。' : 'Interface endpoints were found, but there is no unique gateway evidence; no gateway is bound.')
+                                  : gatewayBindingSourceRef.current === 'manual'
+                                    ? (zh ? '没有匹配的网关接口候选；已保留人工设备选择。' : 'No matching gateway-interface candidate was found; the manual device selection is preserved.')
+                                    : (zh ? '未找到匹配的网关接口候选，当前未绑定网关。' : 'No matching gateway-interface candidate was found; no gateway is bound.'))}
+                        </p>
+                        {gatewayCandidates && gatewayCandidates.endpoints.length > 0 && (
+                          <ul className="mt-1 list-disc space-y-0.5 pl-4 font-medium">
+                            {gatewayCandidates.endpoints.map((endpoint) => (
+                              <li key={`${endpoint.device_id || endpoint.device_name}-${endpoint.interface_name}-${endpoint.address || endpoint.ip_address || ''}`}>
+                                {gatewayCandidateEndpointLabel(endpoint, zh)}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    )}
                     <p className="text-[10px] leading-relaxed text-gray-400">{zh ? '可选 CMDB 设备关联，用于 IP 定位和 ARP 上下文；不会代填网关 IP。' : 'Optional CMDB device association for IP location and ARP context; it does not set the gateway IP.'}</p>
                   </div>
 
@@ -1930,10 +2247,10 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                   <div className="space-y-1.5">
                     <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '已保存的接口关联 ID' : 'Saved interface association ID'}</label>
                     <div className="w-full rounded-xl border border-gray-150 bg-gray-100/70 px-4 py-2.5 font-mono text-xs text-gray-500" aria-readonly="true">
-                      {editingPrefix?.gateway_interface_id || (zh ? '无' : 'None')}
+                      {form.gateway_interface_id || (zh ? '无' : 'None')}
                     </div>
                     <p className="text-[10px] leading-relaxed text-gray-400">
-                      {zh ? '此处需要数据库接口 ID；当前表单未加载接口 ID 选项，因此只读保留已有值，新建时留空。' : 'This field requires a database interface ID. Since interface ID options are not loaded here, existing values are preserved read-only and new prefixes leave it empty.'}
+                      {zh ? '只有快照明确提供共享接口 ID 时才写入；未提供 ID 时保持为空，不会伪造。' : 'An interface ID is saved only when the snapshot provides a shared interface ID; missing IDs remain empty and are never fabricated.'}
                     </p>
                   </div>
 
@@ -2112,6 +2429,80 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                 <button onClick={handleBatchDelete} className="px-4 py-1.5 text-xs bg-rose-500 hover:bg-rose-600 text-white rounded-lg font-bold transition-colors">
                   {zh ? '确定批量删除' : 'Batch Delete'}
                 </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showBatchNetworkTypeModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+            <motion.div
+              initial={{ scale: 0.97, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.97, opacity: 0 }}
+              role="dialog"
+              aria-modal="true"
+              aria-label={zh ? '批量修改网段用途' : 'Batch change prefix purpose'}
+              className="w-full max-w-lg overflow-hidden rounded-2xl border border-black/5 bg-white shadow-2xl"
+            >
+              <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
+                <div>
+                  <h3 className="text-sm font-bold text-gray-900">{zh ? '批量修改网段用途' : 'Batch change prefix purpose'}</h3>
+                  <p className="mt-1 text-[11px] text-gray-500">{zh ? `将更新已选的 ${selectedIds.size} 个网段` : `Update ${selectedIds.size} selected prefixes`}</p>
+                </div>
+                <button
+                  type="button"
+                  aria-label={zh ? '关闭批量修改用途' : 'Close batch purpose update'}
+                  disabled={batchNetworkTypeUpdating}
+                  onClick={() => setShowBatchNetworkTypeModal(false)}
+                  className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-40"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <div className="space-y-4 px-5 py-5">
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-900">
+                  {zh ? '保存后，这些网段会设为人工保护，自动分类不会再覆盖所选用途。' : 'Saving marks these prefixes as manually protected; automatic classification will not overwrite the selected purpose.'}
+                </div>
+                <div className="space-y-1.5">
+                  <label htmlFor="batch-prefix-network-type" className="text-xs font-semibold text-gray-700">{zh ? '网络用途' : 'Network purpose'}</label>
+                  <select
+                    id="batch-prefix-network-type"
+                    value={batchNetworkType}
+                    onChange={(e) => setBatchNetworkType(e.target.value)}
+                    disabled={batchNetworkTypeUpdating}
+                    className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-xs font-medium text-gray-700 outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100 disabled:opacity-60"
+                  >
+                    {Object.entries(NETWORK_TYPES).filter(([key]) => key !== 'user').map(([key, value]) => (
+                      <option key={key} value={key}>{zh ? value.labelZh : value.label}</option>
+                    ))}
+                  </select>
+                </div>
+                {batchNetworkTypeError && (
+                  <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">
+                    {batchNetworkTypeError}
+                  </div>
+                )}
+              </div>
+              <div className="flex justify-end gap-2 border-t border-gray-100 bg-gray-50 px-5 py-4">
+                <button
+                  type="button"
+                  disabled={batchNetworkTypeUpdating}
+                  onClick={() => setShowBatchNetworkTypeModal(false)}
+                  className="rounded-lg px-3 py-2 text-xs font-semibold text-gray-600 hover:bg-white disabled:opacity-40"
+                >
+                  {zh ? '取消' : 'Cancel'}
+                </button>
+                <ActionButton
+                  icon={Check}
+                  variant="primary"
+                  disabled={batchNetworkTypeUpdating || selectedIds.size === 0}
+                  onClick={handleBatchNetworkTypeUpdate}
+                >
+                  {batchNetworkTypeUpdating ? (zh ? '更新中…' : 'Updating…') : (zh ? '确认修改' : 'Apply changes')}
+                </ActionButton>
               </div>
             </motion.div>
           </div>

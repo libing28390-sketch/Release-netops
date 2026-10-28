@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, field_validator, model_validator
-from typing import Optional, List
+from typing import Optional, List, Literal
 from datetime import datetime
 import ipaddress as _ipaddress
 import re as _re
@@ -162,6 +162,26 @@ class IPAddressUpdate(BaseModel):
         if v and v not in ('active', 'reserved', 'deprecated'):
             raise ValueError("status must be one of: active, reserved, deprecated")
         return v
+
+
+class IPAMDiscoveryRegistrationRequest(BaseModel):
+    observation_id: str
+    subnet_id: str
+    expected_observed_at: str
+    confirmed_scope: bool = False
+
+
+class IPAMDiscoveryMACCalibrationRequest(BaseModel):
+    observation_id: str
+    ipam_address_id: str
+    expected_observed_at: str
+    expected_mac_address: str = ''
+    confirmed: bool = False
+
+    @field_validator('expected_mac_address')
+    @classmethod
+    def validate_expected_mac_address(cls, value: str) -> str:
+        return _normalize_mac(value) or ''
 
 
 # ──────────────────────────────────────────────
@@ -1562,6 +1582,28 @@ class PrefixUpdate(BaseModel):
     gateway_device_id: Optional[str] = None
     gateway_interface_id: Optional[str] = None
     traceable: Optional[int] = None
+
+
+PrefixNetworkType = Literal[
+    'management', 'server', 'user', 'user_access', 'network_service', 'unclassified',
+    'wireless', 'voice', 'dmz', 'transit', 'loopback', 'wan', 'vpn', 'storage',
+    'vip', 'p2p', 'container',
+]
+
+
+class BatchPrefixNetworkTypeUpdate(BaseModel):
+    ids: List[str] = Field(min_length=1, max_length=500)
+    network_type: PrefixNetworkType
+
+    @field_validator('ids')
+    @classmethod
+    def validate_ids(cls, values: List[str]) -> List[str]:
+        normalized = [value.strip() for value in values]
+        if any(not value for value in normalized):
+            raise ValueError('ids must contain non-empty prefix IDs')
+        if len(set(normalized)) != len(normalized):
+            raise ValueError('ids must not contain duplicates')
+        return normalized
 
 
 class IPPoolCreate(BaseModel):
