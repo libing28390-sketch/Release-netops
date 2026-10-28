@@ -1,0 +1,26 @@
+# nexora-action-code: get_ip_interfaces
+Value Required INTERFACE (\S+)
+Value Required PHYSICAL ((?i:up|down))
+Value Required PROTOCOL ((?i:up|down)(?:\([A-Za-z]+\))?)
+Value Required IP_ADDRESS ((?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(?:3[0-2]|[12][0-9]|[0-9])|--)
+Value Required VPN_INSTANCE (\S+)
+Value DESCRIPTION (.*)
+
+Start
+  ^\s*$$ -> Next
+  ^(?i:\*down:\s+administratively\s+down)\s*$$ -> Next
+  ^\([^)]*\):.*$$ -> Next
+  ^\s*(?i:Interface\s+Physical\s+Protocol\s+IP\s+address/Mask\s+VPN\s+instance(?:\s+Description)?)\s*$$ -> Rows
+  ^\s*(?i:display\s+ip\s+interface\s+brief)\s*$$ -> Next
+  ^\s*(?:[A-Za-z0-9_.:/-]+[>#]|[<\[][A-Za-z0-9_.:/-]+[>\]]|[A-Za-z0-9_.:/-]+<[A-Za-z0-9_.:/-]+\.?)\s*$$ -> Next
+  ^.*$$ -> Error "Unexpected preamble before interface table"
+
+Rows
+  ^\s*$$ -> Next
+  ^(?i:\*down:\s+administratively\s+down)\s*$$ -> Next
+  ^\([^)]*\):.*$$ -> Next
+  ^\s*(?i:Interface\s+Physical\s+Protocol\s+IP\s+address/Mask\s+VPN\s+instance(?:\s+Description)?)\s*$$ -> Next
+  ^\s*(?i:display\s+ip\s+interface\s+brief)\s*$$ -> Next
+  ^\s*(?:[A-Za-z0-9_.:/-]+[>#]|[<\[][A-Za-z0-9_.:/-]+[>\]]|[A-Za-z0-9_.:/-]+<[A-Za-z0-9_.:/-]+\.?)\s*$$ -> Next
+  ^\s*${INTERFACE}\s+${PHYSICAL}\s+${PROTOCOL}\s+${IP_ADDRESS}\s+${VPN_INSTANCE}(?:\s+${DESCRIPTION})?\s*$$ -> Record
+  ^.*$$ -> Error "Unmatched interface row"

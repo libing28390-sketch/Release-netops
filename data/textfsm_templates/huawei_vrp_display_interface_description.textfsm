@@ -1,0 +1,22 @@
+Value INTERFACE (\S+)
+Value PHY (down|\*down|\^down|up|up\(s\))
+Value PROTOCOL (down|\*down|\^down|up|up\(s\))
+Value DESCRIPTION (\S+.*?)
+
+Start
+  ^\s*Interface\s+PHY\s+Protocol\s+Description\s*$$ -> Rows
+  ^\s*PHY:\s+Physical\s*$$
+  ^\s*(?:\*|\^|#|-)down:\s+.*$$
+  ^\s*\(\w+\):\s+.*$$
+  ^\s*$$
+  ^\s*<[A-Za-z0-9_\-\.]+>.*$$
+  ^.*>\s*$$
+  ^. -> Error
+
+Rows
+  ^\s*${INTERFACE}\s+${PHY}\s+${PROTOCOL}\s+${DESCRIPTION}\s*$$ -> Record
+  ^\s*${INTERFACE}\s+${PHY}\s+${PROTOCOL}\s*$$ -> Record
+  ^\s*$$
+  ^\s*<[A-Za-z0-9_\-\.]+>.*$$
+  ^.*>\s*$$
+  ^. -> Error

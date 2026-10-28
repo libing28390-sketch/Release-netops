@@ -1,0 +1,8 @@
+Value POWER_ID (\S+)
+Value STATUS (\S+)
+Value MODE (\S+)
+Value TYPE (\S+)
+Value REAL_POWER (\S+)
+
+Start
+  ^\s*${POWER_ID}\s+${STATUS}\s+${MODE}\s+${TYPE}\s+${REAL_POWER} -> Record

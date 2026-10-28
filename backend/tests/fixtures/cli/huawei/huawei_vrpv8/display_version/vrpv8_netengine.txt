@@ -1,0 +1,6 @@
+<HUAWEI> display version
+Huawei Versatile Routing Platform Software
+VRP (R) software, Version 8.24 (NetEngine A800 series V800R024C00SPC500)
+Copyright (C) 2012-2020 Huawei Technologies Co., Ltd.
+HUAWEI NetEngine A816 uptime is 7 days, 1 hour, 18 minutes
+

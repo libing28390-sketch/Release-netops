@@ -1,0 +1,7 @@
+Value TOTAL_VLANS (\d+)
+Value VLAN_LIST (.*)
+
+Start
+  ^Total VLANs:\s+${TOTAL_VLANS}
+  ^The VLANs include:
+  ^${VLAN_LIST}\s*$$ -> Record

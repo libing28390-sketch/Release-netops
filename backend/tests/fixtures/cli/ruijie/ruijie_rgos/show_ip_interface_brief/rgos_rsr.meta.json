@@ -1,0 +1,13 @@
+{
+  "vendor": "Ruijie",
+  "platform": "ruijie_rgos",
+  "software_family": "RGOS",
+  "model": "RSR series",
+  "command": "show ip interface brief",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.ruijie.com.cn/fw/wt/36825/",
+  "source_title": "路由器系统类异常，即CPU利用率高",
+  "source_section": "show ip interface brief",
+  "expected_record_count": 1,
+  "expected_fields": ["INTERFACE", "IP_ADDRESS_PRI", "IP_ADDRESS_SEC", "STATUS", "PROTOCOL"]
+}

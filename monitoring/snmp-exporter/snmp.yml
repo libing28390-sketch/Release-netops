@@ -1,0 +1,8 @@
+# Safe static fallback. LibreNMS rule-based collection is performed by the
+# Nexora collector. No snmp_exporter OID modules are enabled without a
+# verified mapping to a pinned LibreNMS rule source.
+auths:
+  bootstrap_disabled_v2:
+    version: 2
+    community: __nexora_bootstrap_disabled__
+modules: {}

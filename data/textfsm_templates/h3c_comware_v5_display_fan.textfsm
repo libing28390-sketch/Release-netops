@@ -1,0 +1,11 @@
+# nexora-action-code: get_fans
+Value Filldown SLOT (\d+)
+Value FAN_ID (\d+)
+Value STATE (.+?)
+Value AIRFLOW (.+?)
+
+Start
+  ^\s*Slot\s*$$
+  ^\s*${SLOT}:\s*$$
+  ^\s*Fan\s+${FAN_ID}\s+State:\s+${STATE}\s*$$
+  ^\s*Airflow\s+Direction:\s+${AIRFLOW}\s*$$ -> Record

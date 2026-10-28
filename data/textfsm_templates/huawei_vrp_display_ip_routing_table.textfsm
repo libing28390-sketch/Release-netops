@@ -1,0 +1,18 @@
+Value Filldown DESTINATION (\d{1,3}(?:\.\d{1,3}){3}/\d{1,2})
+Value Required PROTOCOL (\S+)
+Value PREFERENCE (\d+)
+Value COST (\d+)
+Value FLAGS ([A-Za-z]+)
+Value Required NEXT_HOP (\S+)
+Value Required INTERFACE (\S+)
+
+Start
+  ^\s*Route\s+Flags:.*$$
+  ^\s*-+\s*$$
+  ^\s*Routing\s+Tables?:.*$$
+  ^\s*Destinations\s*:.*$$
+  ^\s*Destination/Mask\s+Proto\s+Pre\s+Cost\s+Flags\s+NextHop\s+Interface\s*$$
+  ^\s*${DESTINATION}\s+${PROTOCOL}\s+${PREFERENCE}\s+${COST}\s+${FLAGS}\s+${NEXT_HOP}\s+${INTERFACE}\s*$$ -> Record
+  ^\s+${PROTOCOL}\s+${PREFERENCE}\s+${COST}\s+${FLAGS}\s+${NEXT_HOP}\s+${INTERFACE}\s*$$ -> Record
+  ^\s*$$
+  ^.*$$
