@@ -175,7 +175,7 @@ def test_ip_inventory_merges_discovered_endpoints_by_site_and_prefix(monkeypatch
 
     data = ipam_service.list_ip_inventory(prefix_id='prefix-capacity')
 
-    assert data['summary'] == {'total': 2, 'discovered': 1, 'manual': 1, 'gateways': 0, 'prefixes': 4, 'interface_observed': 0, 'interface_observed_networks': 0, 'interface_unmatched_prefix': 0, 'interface_vrf_review': 0, 'interface_matched': 0}
+    assert data['summary'] == {'total': 2, 'discovered': 1, 'manual': 1, 'gateways': 0, 'prefixes': 4, 'interface_observed': 0, 'interface_observed_networks': 0, 'interface_unmatched_prefix': 0, 'interface_vrf_review': 0, 'interface_global_default': 0, 'interface_matched': 0}
     assert {item['address'] for item in data['items']} == {'10.0.0.10', '10.0.0.20'}
     discovered = next(item for item in data['items'] if item['address'] == '10.0.0.20')
     assert discovered['is_discovered'] is True
