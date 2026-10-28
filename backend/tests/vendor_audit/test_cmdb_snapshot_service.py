@@ -10,9 +10,23 @@ from services.cmdb_snapshot_service import (
 from services.cmdb_version_service import read_versions
 
 
+def _insert_device(device_id: str) -> None:
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            "INSERT INTO devices (id, hostname, status) VALUES (?, ?, 'online')",
+            (device_id, device_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def test_superseded_interface_attempt_cannot_publish_or_advance_cache_revision(isolated_db):
-    old = begin_snapshot_attempt("cmdb-snapshot-device", "interface_inventory")
-    current = begin_snapshot_attempt("cmdb-snapshot-device", "interface_inventory")
+    device_id = "cmdb-snapshot-device"
+    _insert_device(device_id)
+    old = begin_snapshot_attempt(device_id, "interface_inventory")
+    current = begin_snapshot_attempt(device_id, "interface_inventory")
     conn = get_db_connection()
     try:
         assert not complete_snapshot(
@@ -35,7 +49,7 @@ def test_superseded_interface_attempt_cannot_publish_or_advance_cache_revision(i
         row = conn.execute(
             "SELECT attempt_generation, successful_generation, attempt_status, observed_at "
             "FROM cmdb_collection_snapshots WHERE device_id = ? AND domain = ?",
-            ("cmdb-snapshot-device", "interface_inventory"),
+            (device_id, "interface_inventory"),
         ).fetchone()
         assert tuple(row) == (current["generation"], current["generation"], "success", "2026-10-27T10:01:00+00:00")
         assert read_versions(conn, ["interfaces"]) == {"interfaces": 1}
@@ -44,7 +58,9 @@ def test_superseded_interface_attempt_cannot_publish_or_advance_cache_revision(i
 
 
 def test_failed_attempt_preserves_last_success_and_vlan_observations_replace_atomically(isolated_db):
-    old = begin_snapshot_attempt("cmdb-snapshot-vlan-device", "vlan_inventory")
+    device_id = "cmdb-snapshot-vlan-device"
+    _insert_device(device_id)
+    old = begin_snapshot_attempt(device_id, "vlan_inventory")
     conn = get_db_connection()
     try:
         assert replace_device_vlan_observations(
@@ -61,16 +77,16 @@ def test_failed_attempt_preserves_last_success_and_vlan_observations_replace_ato
         )
         conn.commit()
 
-        newer = begin_snapshot_attempt("cmdb-snapshot-vlan-device", "vlan_inventory")
+        newer = begin_snapshot_attempt(device_id, "vlan_inventory")
         fail_snapshot_attempt(newer, error_code="ParserMismatch")
         row = conn.execute(
             "SELECT successful_generation, attempt_status, last_success_at, failure_code "
             "FROM cmdb_collection_snapshots WHERE device_id = ? AND domain = ?",
-            ("cmdb-snapshot-vlan-device", "vlan_inventory"),
+            (device_id, "vlan_inventory"),
         ).fetchone()
         observations = conn.execute(
             "SELECT vlan_id, vlan_name, generation, observed_at FROM cmdb_device_vlan_observations WHERE device_id = ?",
-            ("cmdb-snapshot-vlan-device",),
+            (device_id,),
         ).fetchall()
         assert row["successful_generation"] == old["generation"]
         assert row["attempt_status"] == "failed"
@@ -84,7 +100,9 @@ def test_failed_attempt_preserves_last_success_and_vlan_observations_replace_ato
 
 
 def test_vlan_snapshot_replacement_removes_only_prior_device_generation(isolated_db):
-    first = begin_snapshot_attempt("cmdb-vlan-replace-device", "vlan_inventory")
+    device_id = "cmdb-vlan-replace-device"
+    _insert_device(device_id)
+    first = begin_snapshot_attempt(device_id, "vlan_inventory")
     conn = get_db_connection()
     try:
         replace_device_vlan_observations(
@@ -100,7 +118,7 @@ def test_vlan_snapshot_replacement_removes_only_prior_device_generation(isolated
         )
         conn.commit()
 
-        second = begin_snapshot_attempt("cmdb-vlan-replace-device", "vlan_inventory")
+        second = begin_snapshot_attempt(device_id, "vlan_inventory")
         replace_device_vlan_observations(
             conn,
             {**second, "observed_at": "2026-10-27T11:00:00+00:00"},
@@ -113,7 +131,7 @@ def test_vlan_snapshot_replacement_removes_only_prior_device_generation(isolated
         rows = conn.execute(
             "SELECT vlan_id, vlan_name, generation FROM cmdb_device_vlan_observations "
             "WHERE device_id = ? ORDER BY vlan_id",
-            ("cmdb-vlan-replace-device",),
+            (device_id,),
         ).fetchall()
         assert [tuple(row) for row in rows] == [
             (219, "APP-219-UPDATED", second["generation"]),

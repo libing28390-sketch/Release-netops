@@ -58,6 +58,8 @@
 - 后端修改文件 `py_compile`：通过。
 - `git diff --check`：通过；只有工作区既有 CRLF/LF 提示。
 - `scripts/validate_postgresql_only.py`：`0 violation(s)`。
+- 第一次推送 `d3304e91` 后，Actions #759 的完整 pytest 为 `3612 passed, 2 skipped, 3 failed`。失败集中在 `test_cmdb_snapshot_service.py`：m0300 新加的设备外键拒绝了测试中没有父 `devices` 行的伪设备 ID。业务代码和数据迁移本身没有失败。
+- 后续修正三个 snapshot service 测试夹具，在各自隔离 PostgreSQL 用例中先创建真实父设备；复跑整个文件：`3 passed in 152.19s`。对应修复提交正在准备推送与 Actions 复验。
 - 运行环境浏览器验收：现有 Chrome 的 `http://192.168.56.1:5400/cmdb/vlans` 页面已加载。刷新前为 13 条；点击“刷新 VLAN 列表”后显示 11 条，按钮恢复可用。
 - 配置数据库 `netops` 的只读核验显示 migration 300 已记录，`cmdb_collection_snapshots` 和 `cmdb_device_vlan_observations` 孤儿数均为 0。
 - 后端日志在验收期间记录 `DELETE /api/cmdb/vlans/vlan-ea7c710cdd07` 返回 200。该 DELETE 不是本 Agent 发起；随后只读查询确认 VLAN 目录行已删除、prefix `10.200.7.0/24` 保留且 `vlan_id=NULL`、`manual_override=0`。
@@ -65,11 +67,10 @@
 ## 未执行验证与剩余风险
 
 - 未对 `192.168.56.11` 重新导入或覆盖资产。配置数据库中该 IP 已有 H3C 设备记录（型号 `F1060`、版本 `7.1.064`、平台 Profile 未绑定），而用户本次 SNMP 样本报告 `H3C SecPath F1090`。为避免在型号证据不一致时改写现有资产，未在运行环境对该 IP 执行自动导入或绑定；自动导入流程由隔离 PostgreSQL 回归用例验证。
-- 未运行完整后端回归套件。
-- 未运行完整后端回归套件。
+- 完整后端 pytest 的第一次 CI 运行发现上述测试夹具问题；修正后尚未完成第二次完整 CI 复验。
 - `devices.version` 同时被现有 SNMP 指标 Profile 兼容性匹配读取。按用户要求同步正确设备版本后，候选兼容性判断可能随之变化；本次没有修改监控代码，也没有写入 `snmp_metric_profile_id`。
 - 首次自动绑定遵循现有绑定服务的锁定语义，记录 `SNMP_AUTO` 来源及审计事件；需要纠正绑定时沿用现有管理员更正流程。
-- 未提交或推送代码；浏览器验收使用现有运行环境，工作区其他未提交文件保持原样。
+- `d3304e91` 已推送到 `main`；其 Actions #759 失败后已修正测试夹具，跟进提交及新 Actions 结果待完成。其他工作区未提交文件保持原样。
 
 ## 回滚说明
 
