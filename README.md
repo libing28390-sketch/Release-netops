@@ -8,7 +8,7 @@
 
 `CMDB` · `IPAM` · `Monitoring` · `Topology` · `Automation` · `PAM` · `Change Management` · `AI / RAG`
 
-[![Release](https://img.shields.io/badge/Release-main-0f766e?style=flat-square)](https://github.com/libing28390-sketch/Release-netops)
+[![Release](https://img.shields.io/badge/Release-v1.0.11-0f766e?style=flat-square)](docs/deploy/release-notes.md)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ed?style=flat-square&logo=docker&logoColor=white)](#快速开始--quick-start)
 [![License](https://img.shields.io/badge/License-Apache--2.0-f59e0b?style=flat-square)](LICENSE)
 
@@ -23,7 +23,7 @@ Nexora 面向网络运维团队，将分散在表格、监控系统、终端工�
 当前公开仓库由私有开发仓库通过 GitHub Actions 清理并同步：
 
 - `main`：Linux / Docker Compose 发布树。
-- 版本标签：生成 Linux / Docker 发布制品。
+- 正式版本标签：对应发布快照和 Linux / Docker 发布制品；当前版本为 `v1.0.11`，详见[版本更新记录](docs/deploy/release-notes.md)。
 
 > Nexora 会连接网络设备、执行命令并保存加密凭据。首次生产部署前，请先完成密钥替换、权限规划、数据库备份和网络访问控制。
 
@@ -34,18 +34,18 @@ Nexora 面向网络运维团队，将分散在表格、监控系统、终端工�
 | **实时监控** | 运营总览、SNMP 设备与接口遥测、服务器监控、网络监控、互联网出口探测、健康趋势与运行状态汇总。 |
 | **告警处置** | 告警工作台、历史告警、阈值与规则、维护期抑制、确认/关闭流程，以及飞书、钉钉、企业微信和通用 Webhook 通知。 |
 | **网络拓扑** | 基于 LLDP/CDP、接口、VLAN、链路聚合等信息发现和归一化链路，提供交互式拓扑展示。 |
-| **终端接入与 PAM** | SSH/Web 终端操作工作台、收藏和历史记录、一次性会话令牌、会话审计、录屏/回放、危险操作控制与管理员强制下线。 |
-| **资产与 CMDB** | 网络设备、服务器、标签、站点、租户、设备/接口骨架、VRF、VLAN、资源检索、凭据中心，以及 2D/3D 机柜与容量视图。 |
-| **网络事实库与诊断** | NSOT 网络事实库、ARP/MAC/路由等运行数据采集、IP 定位，以及 NPA 智能路径诊断。 |
-| **IPAM** | Prefix 前缀树、IP 地址、地址池、VIP、DHCP 租约、利用率分析、IP 定位和多源对账。 |
+| **终端接入与 PAM** | SSH 与 Web PAM 操作入口、一次性会话授权、会话审计、录屏/回放、危险命令控制与管理员强制下线。 |
+| **资产与 CMDB** | 网络设备、服务器、标签、站点、设备/接口骨架、VRF/VLAN、资源检索、凭据中心及 2D/3D 机柜视图。设备 CLI 快照独立采集接口与 VLAN/端口成员并关联 CMDB 目录；资产导入可执行 SNMP 系统身份与型号识别，并回显识别结果。 |
+| **网络事实库与诊断** | NSOT 网络事实库、ARP/MAC/路由等设备运行观察、IP 定位，以及 NPA 智能路径诊断。 |
+| **IPAM** | Prefix、IP 地址、地址池、VIP、DHCP 租约和利用率台账；ARP/MAC 等发现终端单独呈现并保留来源观察证据。对账覆盖发现未登记、信息不一致、长期未发现、登记后未观察、归属待确认、来源不可用六类，并对符合条件的项目提供登记或校准操作。 |
 | **配置管理** | 配置备份、备份计划、版本 Diff、全文搜索、漂移检测、配置模板与差异分析。 |
 | **自动化与巡检** | 多设备并发 CLI、快捷操作、Playbook/场景编排、执行计划、定时作业、执行历史、巡检指标与记录、可管理的 TextFSM 解析模板。 |
-| **变更工单** | 草稿、提交、初审、终审、实施、完成/失败/回滚等状态流转，支持分派、待办、关注、附件、模板和审批快照。 |
+| **ITSM 工单** | 故障工单与服务申请统一工作台，包含服务目录、SLA 和处理跟踪；变更单支持草稿、提交、初审、终审、实施、完成/失败/回滚等流转，以及分派、待办、关注、附件、模板和审批快照。 |
 | **容量与报表** | 容量趋势分析、设备与资源统计、巡检和运行报表导出。 |
 | **AI 中心与知识引擎** | Provider 管理、模型与场景路由、Prompt、Copilot、Agent 注册表、知识库采集与检索测试、产品目录、治理、Token 审计和 AI 安全网关。外部 AI 默认关闭，需管理员显式启用。 |
-| **平台治理** | 用户与 RBAC、全局审计日志、凭据轮换、SNMP 指标模板、敏感信息脱敏和租户边界。 |
+| **平台治理** | 用户与 RBAC、全局审计日志、凭据轮换、SNMP 指标模板与敏感信息脱敏；按单组织模式运行。 |
 
-具体页面和操作会受版本授权、RBAC 角色、功能开关和运行环境影响。网络写入、密码轮换、外部 AI 和实验性 RAG 组件默认不开启或需要额外配置。
+具体页面和操作会受 RBAC 角色、功能开关和运行环境影响。单组织模式保留历史 `tenant_id` 作为兼容数据标识，不将其作为跨租户授权边界；角色、操作、站点、设备组、对象归属、审批和 MFA 等控制仍按权限策略执行。网络写入、密码轮换、外部 AI 和实验性 RAG 组件默认不开启或需要额外配置。
 
 ### 多厂商网络接入
 
@@ -62,6 +62,12 @@ flowchart LR
     API --> Scheduler[APScheduler / Background Services]
     API --> Drivers[SSH · SNMP · TextFSM]
     API --> AI[AI Gateway · RAG · Security Vault]
+    API -. optional cache .-> Cache[(Redis cache)]
+    API --> Objects[Local or S3-compatible object storage]
+    DB --> Relay[Alert Relay]
+    Relay --> AlertBroker[(Dedicated alert-redis)]
+    AlertBroker --> Workers[Notification workers]
+    Workers --> Channels[Feishu · DingTalk · WeCom · Webhook]
     Drivers --> Devices[Network Devices / Servers]
     API --> VM[(VictoriaMetrics)]
     VM --> Grafana[Grafana Dashboards]
@@ -73,10 +79,12 @@ flowchart LR
 | Web 前端 | React 19、TypeScript、Vite、Zustand、Recharts、D3、Three.js、xterm.js | 管理页面、设备详情、拓扑、3D 机柜和 Web 终端；Grafana 承载全局监控大盘。 |
 | API 与调度 | FastAPI、Pydantic、APScheduler、WebSocket | REST API、RBAC、任务调度、实时执行状态和终端通道。 |
 | 网络接入 | Netmiko、Scrapli、SNMP、TextFSM | 多厂商 SSH/CLI、遥测采集、配置备份和结构化解析。 |
-| 指标与数据层 | PostgreSQL 18、pgvector、pg_trgm、VictoriaMetrics | 业务数据、审计、知识向量、全文检索和 Prometheus-compatible 指标时序。 |
+| 业务数据库与指标 | PostgreSQL 18、pgvector、pg_trgm、VictoriaMetrics | PostgreSQL 保存业务台账、CMDB 快照与审计数据；VictoriaMetrics 保存 Prometheus-compatible 指标时序。 |
+| 缓存与告警投递 | 可选 Redis 缓存、独立 `alert-redis`、Relay 与 Worker | Redis 缓存用于可重建数据；告警投递 broker 与缓存 Redis 分开部署和配置。 |
+| 文件与对象存储 | 本地存储或 S3-compatible 存储 | 配置备份和 PAM 录像使用统一存储接口；Docker 模板默认配置 SeaweedFS S3 服务，也可按需使用本地或外部 S3 存储。 |
 | 接入网关 | Nginx | 前端静态资源、API/WebSocket 代理、HTTP/HTTPS 入口。 |
 
-生产和发布基线统一使用 PostgreSQL 18；AI/知识库迁移还要求数据库具备 `vector` 与 `pg_trgm` 扩展。PG17 升级到 PG18 属于主版本升级，旧数据目录或 Docker 数据卷不能直接复用；请先备份，再通过 `pg_upgrade` 或 `pg_dump`/`pg_restore` 完成迁移。
+生产和发布基线统一使用 PostgreSQL 18；AI/知识库迁移还要求数据库具备 `vector` 与 `pg_trgm` 扩展。PG17 升级到 PG18 属于主版本升级，旧数据目录或 Docker 数据卷不能直接复用；请先备份，再通过 `pg_upgrade` 或 `pg_dump`/`pg_restore` 完成迁移。IPAM 台账保存在 PostgreSQL，Redis 仅提供可重建缓存，不是 IPAM 的数据依赖；Docker 部署脚本可用 `NETOPS_REDIS_ENABLED=0` 关闭缓存 Redis，独立的 `alert-redis` 不受该设置影响。对象存储由 `STORAGE_BACKEND` 选择；Docker 安装脚本在 S3 模式下启用 SeaweedFS Compose profile。
 
 ## 快速开始 / Quick Start
 
@@ -90,7 +98,7 @@ cd nexora-automation
 bash scripts/deploy-docker.sh install
 ```
 
-脚本会创建 `.env`、生成初始密钥和数据库密码、构建 PostgreSQL/后端/Nginx 镜像并启动 PostgreSQL、后端、Nginx、VictoriaMetrics、vmagent、snmp-exporter 和 Grafana。完成后访问：
+脚本会创建 `.env`、生成初始密钥和数据库密码、构建应用镜像，并启动 PostgreSQL、后端、Nginx、VictoriaMetrics、vmagent、SNMP Exporter、Grafana 及告警 Relay/Worker（使用独立 `alert-redis`）。可选缓存 Redis 默认随主栈启动，可通过 `NETOPS_REDIS_ENABLED=0` 关闭；Docker 示例配置默认使用 SeaweedFS 提供 S3 兼容对象存储。完成后访问：
 
 ```text
 https://<服务器IP>
@@ -143,6 +151,8 @@ Docker 部署脚本从 `.env.example` 初始化 `.env`；Ubuntu/systemd 部署�
 | `NETWORK_SSH_GLOBAL_CONCURRENCY` | 单进程 SSH 全局并发预算 | 默认 `20`。 |
 | `NETWORK_SNMP_GLOBAL_CONCURRENCY` | 单进程 SNMP 全局并发预算 | 默认 `30`。 |
 | `BACKUP_CONCURRENCY` | 配置备份并发数 | 默认 `10`。 |
+| `STORAGE_BACKEND` / `S3_ENDPOINT_URL` | 配置备份与 PAM 录像存储位置 | `local` 或 `s3`；Docker 示例默认使用 SeaweedFS S3。 |
+| `NETOPS_REDIS_ENABLED` | Docker 部署脚本中的可选缓存 Redis 开关 | 默认启用；设为 `0` 时关闭缓存 Redis，不影响独立告警 broker。 |
 | `TLS_COMMON_NAME` | 自动生成自签名证书时使用的名称 | 默认 `localhost`。 |
 
 > 不要复用示例值。修改数据库密码时必须同步更新 `DATABASE_URL`；Provider Key 应通过加密管理页面或 Secret Manager 配置，不应写入仓库。
@@ -188,6 +198,7 @@ Release-netops/
 
 ## 文档 / Documentation
 
+- [v1.0.11 版本更新记录](docs/deploy/release-notes.md)
 - [部署方式总览](docs/deploy/README.md)
 - [生产部署与安全说明](DEPLOY.md)
 - [Docker Compose 部署](docs/deploy/docker.md)

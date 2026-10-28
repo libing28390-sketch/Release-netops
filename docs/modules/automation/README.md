@@ -1,44 +1,31 @@
 # 自动化模块说明
 
 - 模块 ID：`automation`
-- 英文名称：AUTOMATION
 - 导航来源：`src/components/AppSidebar/navConfig.ts`
-- 子功能数量：9
-- 数据库约束：仅使用 PostgreSQL；缓存只作为辅助，不能覆盖数据库事实。
-- 状态约束：正常、异常、未知、未配置、无数据必须分别表达。
+- 末级菜单入口：10
+- 生产数据库：PostgreSQL
 
-## 模块目标
+当前侧栏包含快捷操作、巡检、执行计划与历史、定时作业、巡检指标、解析模板，以及操作管理下的脚本/系统操作和 NSOT 采集目录。快捷操作入口使用 `/automation/quick-ops`；相关执行、任务等页面由该入口的活动路由匹配覆盖。
 
-自动化用于承载 自动化任务、巡检概览、巡检记录、执行计划、执行历史、定时作业、巡检指标、解析模板、操作管理 等能力。页面、API、权限和审计必须围绕同一业务对象，任何写操作均需经过角色校验，任何无证据状态均不得默认显示为正常。
+## 当前菜单与路由
 
-## 子功能目录
+| 末级菜单 | 路由 | 功能介绍 | 使用指南 |
+|---|---|---|---|
+| 快捷操作 | `/automation/quick-ops` | [功能介绍](./features/auto-exec/功能介绍.md) | [使用指南](./features/auto-exec/使用指南.md) |
+| 巡检概览 | `/automation/inspections` | [功能介绍](./features/inspection/功能介绍.md) | [使用指南](./features/inspection/使用指南.md) |
+| 巡检记录 | `/automation/records` | [功能介绍](./features/inspection-records/功能介绍.md) | [使用指南](./features/inspection-records/使用指南.md) |
+| 执行计划 | `/automation/schedules` | [功能介绍](./features/exec-schedule/功能介绍.md) | [使用指南](./features/exec-schedule/使用指南.md) |
+| 执行历史 | `/automation/history` | [功能介绍](./features/exec-history/功能介绍.md) | [使用指南](./features/exec-history/使用指南.md) |
+| 定时作业 | `/automation/scheduled-jobs` | [功能介绍](./features/scheduled-jobs/功能介绍.md) | [使用指南](./features/scheduled-jobs/使用指南.md) |
+| 巡检指标 | `/automation/metrics` | [功能介绍](./features/inspection-metrics/功能介绍.md) | [使用指南](./features/inspection-metrics/使用指南.md) |
+| 解析模板 | `/automation/textfsm` | [功能介绍](./features/textfsm-templates/功能介绍.md) | [使用指南](./features/textfsm-templates/使用指南.md) |
+| 脚本 / 系统操作 | `/automation/scripts` | [功能介绍](./features/scripts/功能介绍.md) | [使用指南](./features/scripts/使用指南.md) |
+| NSOT 采集目录 | `/automation/nsot` | — | — |
 
-| # | 子功能 | 路由 | 功能介绍 | 使用指南 |
-|---:|---|---|---|---|
-| 1 | 自动化任务 | `/automation/tasks` | [功能介绍](./features/auto-exec/功能介绍.md) | [使用指南](./features/auto-exec/使用指南.md) |
-| 2 | 巡检概览 | `/automation/inspections` | [功能介绍](./features/inspection/功能介绍.md) | [使用指南](./features/inspection/使用指南.md) |
-| 3 | 巡检记录 | `/automation/records` | [功能介绍](./features/inspection-records/功能介绍.md) | [使用指南](./features/inspection-records/使用指南.md) |
-| 4 | 执行计划 | `/automation/schedules` | [功能介绍](./features/exec-schedule/功能介绍.md) | [使用指南](./features/exec-schedule/使用指南.md) |
-| 5 | 执行历史 | `/automation/history` | [功能介绍](./features/exec-history/功能介绍.md) | [使用指南](./features/exec-history/使用指南.md) |
-| 6 | 定时作业 | `/automation/scheduled-jobs` | [功能介绍](./features/scheduled-jobs/功能介绍.md) | [使用指南](./features/scheduled-jobs/使用指南.md) |
-| 7 | 巡检指标 | `/automation/metrics` | [功能介绍](./features/inspection-metrics/功能介绍.md) | [使用指南](./features/inspection-metrics/使用指南.md) |
-| 8 | 解析模板 | `/automation/textfsm` | [功能介绍](./features/textfsm-templates/功能介绍.md) | [使用指南](./features/textfsm-templates/使用指南.md) |
-| 9 | 操作管理 | `/automation/scripts` | [功能介绍](./features/scripts/功能介绍.md) | [使用指南](./features/scripts/使用指南.md) |
-
-## 通用验收口径
-
-1. 路由可从侧栏进入，刷新后仍保持正确页面。
-2. 加载、空数据、未知、失败、成功均有明确反馈。
-3. 列表支持与业务规模匹配的筛选、分页或搜索。
-4. 写操作有权限校验、确认反馈和可追踪审计。
-5. 数据源、采集时间或更新时间在需要判断新鲜度时可见。
-6. 后端持久化与查询兼容 PostgreSQL，不新增 SQLite/MySQL 专用实现。
+“操作管理”是包含两个入口的分组菜单，不计入末级入口数。
 
 ## 相关代码
 
-- 导航：`src/components/AppSidebar/navConfig.ts`
-- 路由：`src/App.tsx`
-- 前端页面：`src/pages`
-- 后端 API：`backend/api`
-- 服务与数据库：`backend/services`、`backend/database`
-
+- 导航与路由匹配：`src/components/AppSidebar/navConfig.ts`
+- 路由解析：`src/utils/routeContext.ts`
+- 页面与执行入口：`src/pages/AutomationExecute`

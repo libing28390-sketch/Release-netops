@@ -1,46 +1,31 @@
 # 工单管理模块说明
 
 - 模块 ID：`tickets`
-- 英文名称：TICKETS
 - 导航来源：`src/components/AppSidebar/navConfig.ts`
-- 子功能数量：7
-- 数据库约束：仅使用 PostgreSQL；缓存只作为辅助，不能覆盖数据库事实。
-- 状态约束：正常、异常、未知、未配置、无数据必须分别表达。
+- 末级菜单入口：8
+- 生产数据库：PostgreSQL
 
-## 模块目标
+“故障与服务”入口 `/tickets` 汇总故障工单和服务申请；相关变更单可以关联这些事项。其余入口管理变更单的创建、个人/组内待办、参与记录、关注、全部变更单和草稿。
 
-流程建设基线见 [Nexora 工单管理流程规范 V1.0](./Nexora工单管理流程规范.md)，其中明确区分现行能力与待建设流程。
+流程目标见 [Nexora 工单管理流程规范 V1.0](./Nexora工单管理流程规范.md)。该规范区分现行源码能力与待建设项；流程目标本身不代表所有目标控制均已上线。
 
-配套实施路线见 [工单规范改造计划](../../plans/plan_20261024_1539_01_Nexora工单规范改造.md)，按里程碑跟踪代码改造、迁移和验收。
+## 当前菜单与路由
 
-工单管理用于承载 新建工单、个人待办、组内待办、我参与的、我的关注、全部工单、草稿箱 等能力。页面、API、权限和审计必须围绕同一业务对象，任何写操作均需经过角色校验，任何无证据状态均不得默认显示为正常。
-
-## 子功能目录
-
-| # | 子功能 | 路由 | 功能介绍 | 使用指南 |
-|---:|---|---|---|---|
-| 1 | 新建工单 | `/change-orders/new` | [功能介绍](./features/new-order/功能介绍.md) | [使用指南](./features/new-order/使用指南.md) |
-| 2 | 个人待办 | `/change-orders/my-todo` | [功能介绍](./features/my-todo/功能介绍.md) | [使用指南](./features/my-todo/使用指南.md) |
-| 3 | 组内待办 | `/change-orders/group-todo` | [功能介绍](./features/group-todo/功能介绍.md) | [使用指南](./features/group-todo/使用指南.md) |
-| 4 | 我参与的 | `/change-orders/participated` | [功能介绍](./features/my-participated/功能介绍.md) | [使用指南](./features/my-participated/使用指南.md) |
-| 5 | 我的关注 | `/change-orders/focus` | [功能介绍](./features/my-focus/功能介绍.md) | [使用指南](./features/my-focus/使用指南.md) |
-| 6 | 全部工单 | `/change-orders/all` | [功能介绍](./features/change-orders/功能介绍.md) | [使用指南](./features/change-orders/使用指南.md) |
-| 7 | 草稿箱 | `/change-orders/drafts` | [功能介绍](./features/my-drafts/功能介绍.md) | [使用指南](./features/my-drafts/使用指南.md) |
-
-## 通用验收口径
-
-1. 路由可从侧栏进入，刷新后仍保持正确页面。
-2. 加载、空数据、未知、失败、成功均有明确反馈。
-3. 列表支持与业务规模匹配的筛选、分页或搜索。
-4. 写操作有权限校验、确认反馈和可追踪审计。
-5. 数据源、采集时间或更新时间在需要判断新鲜度时可见。
-6. 后端持久化与查询兼容 PostgreSQL，不新增 SQLite/MySQL 专用实现。
+| 末级菜单 | 路由 | 功能介绍 | 使用指南 |
+|---|---|---|---|
+| 故障与服务 | `/tickets` | — | — |
+| 新建工单 | `/change-orders/new` | [功能介绍](./features/new-order/功能介绍.md) | [使用指南](./features/new-order/使用指南.md) |
+| 个人待办 | `/change-orders/my-todo` | [功能介绍](./features/my-todo/功能介绍.md) | [使用指南](./features/my-todo/使用指南.md) |
+| 组内待办 | `/change-orders/group-todo` | [功能介绍](./features/group-todo/功能介绍.md) | [使用指南](./features/group-todo/使用指南.md) |
+| 我参与的 | `/change-orders/participated` | [功能介绍](./features/my-participated/功能介绍.md) | [使用指南](./features/my-participated/使用指南.md) |
+| 我的关注 | `/change-orders/focus` | [功能介绍](./features/my-focus/功能介绍.md) | [使用指南](./features/my-focus/使用指南.md) |
+| 全部变更单 | `/change-orders/all` | [功能介绍](./features/change-orders/功能介绍.md) | [使用指南](./features/change-orders/使用指南.md) |
+| 草稿箱 | `/change-orders/drafts` | [功能介绍](./features/my-drafts/功能介绍.md) | [使用指南](./features/my-drafts/使用指南.md) |
 
 ## 相关代码
 
-- 导航：`src/components/AppSidebar/navConfig.ts`
-- 路由：`src/App.tsx`
-- 前端页面：`src/pages`
-- 后端 API：`backend/api`
-- 服务与数据库：`backend/services`、`backend/database`
-
+- 导航与路由：`src/components/AppSidebar/navConfig.ts`、`src/utils/routeContext.ts`
+- 故障与服务工单：`src/pages/Tickets`
+- 变更单界面：`src/pages/ChangeOrderTab.tsx`、`src/pages/ChangeOrder`
+- 后端接口：`backend/api/tickets`、`backend/api/change_orders`
+- 服务：`backend/services/service_request_service.py`

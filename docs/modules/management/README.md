@@ -1,38 +1,25 @@
 # 平台管理模块说明
 
 - 模块 ID：`management`
-- 英文名称：MANAGEMENT
 - 导航来源：`src/components/AppSidebar/navConfig.ts`
-- 子功能数量：3
-- 数据库约束：仅使用 PostgreSQL；缓存只作为辅助，不能覆盖数据库事实。
-- 状态约束：正常、异常、未知、未配置、无数据必须分别表达。
+- 末级菜单入口：6
+- 生产数据库：PostgreSQL
 
-## 模块目标
+当前平台管理菜单包括审计日志、用户管理、凭据轮换、邮件通知，以及对象存储下的存储配置和文件浏览。六个入口均在导航配置中要求 Administrator。
 
-平台管理用于承载 审计日志、用户管理、凭据轮换 等能力。页面、API、权限和审计必须围绕同一业务对象，任何写操作均需经过角色校验，任何无证据状态均不得默认显示为正常。
+## 当前菜单与路由
 
-## 子功能目录
-
-| # | 子功能 | 路由 | 功能介绍 | 使用指南 |
-|---:|---|---|---|---|
-| 1 | 审计日志 | `/management/audit` | [功能介绍](./features/audit/功能介绍.md) | [使用指南](./features/audit/使用指南.md) |
-| 2 | 用户管理 | `/management/users` | [功能介绍](./features/users/功能介绍.md) | [使用指南](./features/users/使用指南.md) |
-| 3 | 凭据轮换 | `/management/credentials` | [功能介绍](./features/credentials/功能介绍.md) | [使用指南](./features/credentials/使用指南.md) |
-
-## 通用验收口径
-
-1. 路由可从侧栏进入，刷新后仍保持正确页面。
-2. 加载、空数据、未知、失败、成功均有明确反馈。
-3. 列表支持与业务规模匹配的筛选、分页或搜索。
-4. 写操作有权限校验、确认反馈和可追踪审计。
-5. 数据源、采集时间或更新时间在需要判断新鲜度时可见。
-6. 后端持久化与查询兼容 PostgreSQL，不新增 SQLite/MySQL 专用实现。
+| 末级菜单 | 路由 | 功能介绍 | 使用指南 |
+|---|---|---|---|
+| 审计日志 | `/management/audit` | [功能介绍](./features/audit/功能介绍.md) | [使用指南](./features/audit/使用指南.md) |
+| 用户管理 | `/management/users` | [功能介绍](./features/users/功能介绍.md) | [使用指南](./features/users/使用指南.md) |
+| 凭据轮换 | `/management/credentials` | [功能介绍](./features/credentials/功能介绍.md) | [使用指南](./features/credentials/使用指南.md) |
+| 邮件通知 | `/management/notifications` | — | — |
+| 存储配置 | `/management/storage` | — | — |
+| 文件浏览 | `/management/storage/files` | — | — |
 
 ## 相关代码
 
-- 导航：`src/components/AppSidebar/navConfig.ts`
-- 路由：`src/App.tsx`
-- 前端页面：`src/pages`
-- 后端 API：`backend/api`
-- 服务与数据库：`backend/services`、`backend/database`
-
+- 导航与菜单权限：`src/components/AppSidebar/navConfig.ts`
+- 路由解析：`src/utils/routeContext.ts`
+- 页面组合：`src/App.tsx`；对象存储页面：`src/pages/StorageManagementPage.tsx`、`src/pages/StorageFilesPage.tsx`
