@@ -64,11 +64,21 @@ def test_ip_inventory_reads_only_last_successful_interface_snapshot(isolated_db)
     assert row['site_name'] == 'IPAM Snapshot Site'
     assert row['observed_prefix'] == '10.20.30.0/24'
     assert row['subnet_id'] == ''
-    assert row['prefix_match_status'] == 'vrf_unavailable'
+    assert row['prefix_match_status'] == 'global_default'
     assert row['discovered_last_seen'] == '2026-10-28T10:00:00+00:00'
     assert inventory['summary']['interface_observed'] == 1
-    assert inventory['summary']['interface_vrf_review'] == 1
-    assert list_ip_inventory(prefix_id=subnet['id'])['total'] == 0
+    assert inventory['summary']['discovered'] == 0
+    assert inventory['summary']['interface_vrf_review'] == 0
+    assert inventory['summary']['interface_global_default'] == 1
+    formal_inventory = list_ip_inventory(
+        site_id='ipam-snapshot-site', page=1, page_size=20, registered_only=True,
+    )
+    assert formal_inventory['total'] == 0
+    assert formal_inventory['summary']['manual'] == 0
+    prefix_inventory = list_ip_inventory(prefix_id=subnet['id'])
+    assert prefix_inventory['total'] == 1
+    assert prefix_inventory['items'][0]['source'] == 'interface_cli'
+    assert prefix_inventory['items'][0]['subnet_id'] == ''
     assert attempt['generation'] == 2
 
 

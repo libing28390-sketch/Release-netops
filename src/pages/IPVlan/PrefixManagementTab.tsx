@@ -100,11 +100,15 @@ interface InterfacePrefixCandidate {
   tenant_id: string;
   site_id: string | null;
   vrf_id: string | null;
-  status: 'existing' | 'to_create';
+  status: 'existing' | 'to_create' | 'scope_pending';
+  vrf_scope_pending?: boolean;
+  vrf_scope_defaulted?: boolean;
+  scope_review_reason?: string;
   interface_count: number;
   ip_count: number;
   interfaces: Array<{
-    interface_id: string;
+    interface_id: string | null;
+    source_ref?: string;
     device_id: string;
     device_name: string;
     device_ip?: string;
@@ -113,13 +117,14 @@ interface InterfacePrefixCandidate {
   }>;
 }
 
-type InterfaceCandidateFilter = 'to_create' | 'existing' | 'all';
+type InterfaceCandidateFilter = 'to_create' | 'existing' | 'global_default' | 'all';
 
 interface InterfaceCandidateSummary {
   candidate_count: number;
   existing_count: number;
   to_create_count: number;
   interface_count: number;
+  vrf_defaulted_count: number;
   skipped_count: number;
 }
 
@@ -225,12 +230,14 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   useEscapeClose(Boolean(poolManagerPrefix), () => setPoolManagerPrefix(null));
   const [interfaceCandidates, setInterfaceCandidates] = useState<InterfacePrefixCandidate[]>([]);
   const [selectedInterfaceCandidates, setSelectedInterfaceCandidates] = useState<Set<string>>(new Set());
+  const [selectedInterfaceVrfs, setSelectedInterfaceVrfs] = useState<Record<string, string>>({});
   const [interfaceSkipped, setInterfaceSkipped] = useState<Array<{ device_name: string; interface_name: string; address: string; reason: string }>>([]);
   const [interfaceCandidateSummary, setInterfaceCandidateSummary] = useState<InterfaceCandidateSummary>({
     candidate_count: 0,
     existing_count: 0,
     to_create_count: 0,
     interface_count: 0,
+    vrf_defaulted_count: 0,
     skipped_count: 0,
   });
   const [interfaceCandidatePage, setInterfaceCandidatePage] = useState<InterfaceCandidatePage>({
@@ -239,7 +246,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
     filtered_count: 0,
     total_pages: 0,
   });
-  const [interfaceCandidateFilter, setInterfaceCandidateFilter] = useState<InterfaceCandidateFilter>('to_create');
+  const [interfaceCandidateFilter, setInterfaceCandidateFilter] = useState<InterfaceCandidateFilter>('all');
   const [interfaceGenerationLoading, setInterfaceGenerationLoading] = useState(false);
   const [interfaceCandidatesLoading, setInterfaceCandidatesLoading] = useState(false);
   const [interfaceGenerationError, setInterfaceGenerationError] = useState('');
@@ -615,13 +622,24 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
       }
       if (requestId !== interfaceCandidateRequestId.current) return;
 
-      setInterfaceCandidates(Array.isArray(data?.candidates) ? data.candidates : []);
+      const candidates = Array.isArray(data?.candidates) ? data.candidates : [];
+      setInterfaceCandidates(candidates);
+      setSelectedInterfaceVrfs((current) => {
+        const next = { ...current };
+        candidates.forEach((candidate: InterfacePrefixCandidate) => {
+          if (candidate.vrf_scope_defaulted && !(candidate.candidate_id in next)) {
+            next[candidate.candidate_id] = '__global__';
+          }
+        });
+        return next;
+      });
       setInterfaceSkipped(Array.isArray(data?.skipped) ? data.skipped : []);
       setInterfaceCandidateSummary({
         candidate_count: Number(data?.candidate_count || 0),
         existing_count: Number(data?.existing_count || 0),
         to_create_count: Number(data?.to_create_count || 0),
         interface_count: Number(data?.interface_count || 0),
+        vrf_defaulted_count: Number(data?.vrf_defaulted_count || 0),
         skipped_count: Number(data?.skipped_count || 0),
       });
       setInterfaceCandidatePage({
@@ -643,12 +661,13 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
     setInterfaceGenerationError('');
     setInterfaceGenerationResult('');
     setSelectedInterfaceCandidates(new Set());
-    setInterfaceCandidateFilter('to_create');
+    setSelectedInterfaceVrfs({});
+    setInterfaceCandidateFilter('all');
     setInterfaceCandidatePage((current) => ({ ...current, page: 1 }));
     setShowSkippedDetails(false);
     setShowGenerateAllPendingConfirm(false);
     setShowInterfaceGeneration(true);
-    await loadInterfaceCandidates(1, 'to_create');
+    await loadInterfaceCandidates(1, 'all');
   };
 
   const toggleInterfaceCandidate = (candidateId: string) => {
@@ -659,7 +678,9 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   };
 
   const selectVisibleInterfaceCandidates = () => {
-    const visibleIds = interfaceCandidates.map((candidate) => candidate.candidate_id);
+    const visibleIds = interfaceCandidates
+      .filter((candidate) => !candidate.vrf_scope_pending || Boolean(selectedInterfaceVrfs[candidate.candidate_id]))
+      .map((candidate) => candidate.candidate_id);
     const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((candidateId) => selectedInterfaceCandidates.has(candidateId));
     const next = new Set(selectedInterfaceCandidates);
     visibleIds.forEach((candidateId) => {
@@ -678,8 +699,20 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify(allPending
-          ? { all_pending: true }
-          : { candidate_ids: Array.from(selectedInterfaceCandidates) }),
+          ? {
+            all_pending: true,
+            vrf_overrides: Object.fromEntries(
+              Object.entries(selectedInterfaceVrfs).filter(([, vrfId]) => Boolean(vrfId)),
+            ),
+          }
+          : {
+            candidate_ids: Array.from(selectedInterfaceCandidates),
+            vrf_overrides: Object.fromEntries(
+              Array.from(selectedInterfaceCandidates)
+                .filter((candidateId) => Boolean(selectedInterfaceVrfs[candidateId]))
+                .map((candidateId) => [candidateId, selectedInterfaceVrfs[candidateId]]),
+            ),
+          }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -697,9 +730,9 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
       );
       setShowGenerateAllPendingConfirm(false);
       setSelectedInterfaceCandidates(new Set());
-      setInterfaceCandidateFilter('to_create');
+      setInterfaceCandidateFilter('all');
       await loadData({ silent: true });
-      await loadInterfaceCandidates(1, 'to_create');
+      await loadInterfaceCandidates(1, 'all');
     } catch (error) {
       setShowGenerateAllPendingConfirm(false);
       setInterfaceGenerationError(error instanceof Error ? error.message : String(error));
@@ -1674,7 +1707,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
               <div className="flex shrink-0 items-center justify-between gap-3 border-b border-gray-100 px-4 py-4 sm:px-6">
                 <div className="min-w-0">
                   <h3 className="font-bold text-gray-900">{zh ? '从接口采集生成 IPAM 网段' : 'Generate IPAM Prefixes from Interfaces'}</h3>
-                  <p className="mt-1 text-xs text-gray-500">{zh ? '来源为当前接口采集结果；按精确 CIDR 生成，不合并相邻网段。' : 'Uses current interface collection and preserves each exact CIDR without merging adjacent prefixes.'}</p>
+                <p className="mt-1 text-xs text-gray-500">{zh ? '优先使用最后一次成功的 CMDB 接口快照；快照未提供 VRF 时默认全局/默认，可在生成前改选。' : 'Uses the last successful CMDB interface snapshot; missing VRF values default to global and can be changed before generation.'}</p>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
                   {interfaceCandidates.length > 0 && <>
@@ -1726,7 +1759,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                     { label: zh ? '待创建' : 'To create', value: interfaceCandidateSummary.to_create_count },
                     { label: zh ? '已存在' : 'Existing', value: interfaceCandidateSummary.existing_count },
                     { label: zh ? '接口 IP' : 'Interface IPs', value: interfaceCandidateSummary.interface_count },
-                    { label: zh ? '未纳入接口' : 'Skipped interfaces', value: interfaceCandidateSummary.skipped_count },
+                    { label: zh ? '默认全局' : 'Default global', value: interfaceCandidateSummary.vrf_defaulted_count },
                   ].map((item) => (
                     <div key={item.label} className="rounded-xl border border-gray-100 bg-gray-50/70 px-3 py-2.5">
                       <div className="text-[10px] font-semibold text-gray-500">{item.label}</div>
@@ -1739,6 +1772,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                     {([
                       ['to_create', zh ? '待创建' : 'To create', interfaceCandidateSummary.to_create_count],
                       ['existing', zh ? '已存在' : 'Existing', interfaceCandidateSummary.existing_count],
+                      ['global_default', zh ? '默认全局' : 'Default global', interfaceCandidateSummary.vrf_defaulted_count],
                       ['all', zh ? '全部候选' : 'All candidates', interfaceCandidateSummary.candidate_count],
                     ] as Array<[InterfaceCandidateFilter, string, number]>).map(([status, label, count]) => (
                       <button
@@ -1762,7 +1796,9 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                       ? (zh ? '正在更新候选项…' : 'Updating candidates…')
                       : (zh ? `当前筛选 ${interfaceCandidatePage.filtered_count.toLocaleString()} 项` : `${interfaceCandidatePage.filtered_count.toLocaleString()} filtered`)}</span>
                     <button type="button" onClick={selectVisibleInterfaceCandidates} disabled={interfaceCandidates.length === 0 || interfaceCandidatesLoading || interfaceGenerationLoading} className="rounded-lg border border-gray-200 px-2.5 py-1.5 font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50">
-                      {interfaceCandidates.length > 0 && interfaceCandidates.every((candidate) => selectedInterfaceCandidates.has(candidate.candidate_id))
+                      {interfaceCandidates.filter((candidate) => !candidate.vrf_scope_pending || Boolean(selectedInterfaceVrfs[candidate.candidate_id])).length > 0 && interfaceCandidates
+                        .filter((candidate) => !candidate.vrf_scope_pending || Boolean(selectedInterfaceVrfs[candidate.candidate_id]))
+                        .every((candidate) => selectedInterfaceCandidates.has(candidate.candidate_id))
                         ? (zh ? '取消本页选择' : 'Clear page selection')
                         : (zh ? '选择本页' : 'Select page')}
                     </button>
@@ -1770,31 +1806,34 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                 </div>
 
                 <div className="min-h-[220px] overflow-x-auto rounded-2xl border border-gray-100">
-                  <div className="grid min-w-[500px] grid-cols-[34px_minmax(200px,1fr)_70px_70px_82px] gap-2 bg-gray-50 px-3 py-3 text-[10px] font-bold uppercase text-gray-400 sm:grid-cols-[42px_minmax(260px,1fr)_88px_88px_100px] sm:gap-3 sm:px-4">
+                  <div className="grid min-w-[650px] grid-cols-[34px_minmax(190px,1fr)_62px_62px_minmax(145px,0.8fr)_82px] gap-2 bg-gray-50 px-3 py-3 text-[10px] font-bold uppercase text-gray-400 sm:grid-cols-[42px_minmax(230px,1fr)_72px_72px_minmax(170px,0.8fr)_100px] sm:gap-3 sm:px-4">
                     <span aria-label={zh ? '选择' : 'Select'} />
                     <span>{zh ? '精确候选网段与接口样例' : 'Exact candidate prefix and interface samples'}</span>
                     <span>{zh ? '接口数' : 'Interfaces'}</span>
                     <span>{zh ? 'IP 数' : 'IPs'}</span>
+                    <span>{zh ? 'VRF 归属' : 'VRF scope'}</span>
                     <span>{zh ? '状态' : 'Status'}</span>
                   </div>
                   {interfaceCandidatesLoading && interfaceCandidates.length === 0 ? (
                     <div role="status" className="py-16 text-center text-xs font-semibold text-gray-400">{zh ? '正在读取接口候选项…' : 'Loading interface candidates…'}</div>
                   ) : interfaceCandidates.length === 0 ? (
                     <div className="py-16 text-center text-xs text-gray-400">
-                      {interfaceCandidateSummary.candidate_count === 0
+                      {interfaceCandidateSummary.candidate_count === 0 && interfaceCandidateSummary.interface_count === 0
                         ? (zh ? '没有可生成的接口 IP。请先完成接口采集。' : 'No interface IP candidates. Run interface collection first.')
+                        : interfaceCandidateSummary.candidate_count === 0
+                          ? (zh ? `已读取 ${interfaceCandidateSummary.interface_count} 个接口 IP，但没有可生成的网段。请查看下方未纳入原因。` : `${interfaceCandidateSummary.interface_count} interface IPs were read, but none can be generated. Review the skipped reasons below.`)
                         : (zh ? '此状态下没有候选网段。' : 'No candidates match this status.')}
                     </div>
                   ) : (
                     <div className="max-h-[340px] min-w-[500px] overflow-y-auto">
                       {interfaceCandidates.map((candidate) => (
-                        <label key={candidate.candidate_id} className="grid grid-cols-[34px_minmax(200px,1fr)_70px_70px_82px] items-center gap-2 border-t border-gray-100 px-3 py-3 hover:bg-cyan-50/30 sm:grid-cols-[42px_minmax(260px,1fr)_88px_88px_100px] sm:gap-3 sm:px-4">
+                        <div key={candidate.candidate_id} className="grid min-w-[650px] grid-cols-[34px_minmax(190px,1fr)_62px_62px_minmax(145px,0.8fr)_82px] items-center gap-2 border-t border-gray-100 px-3 py-3 hover:bg-cyan-50/30 sm:grid-cols-[42px_minmax(230px,1fr)_72px_72px_minmax(170px,0.8fr)_100px] sm:gap-3 sm:px-4">
                           <input
+                            aria-label={`${zh ? '选择网段' : 'Select prefix'} ${candidate.prefix}`}
                             type="checkbox"
                             checked={selectedInterfaceCandidates.has(candidate.candidate_id)}
                             onChange={() => toggleInterfaceCandidate(candidate.candidate_id)}
-                            disabled={interfaceCandidatesLoading || interfaceGenerationLoading || Boolean(interfaceGenerationError)}
-                            aria-label={`${zh ? '选择网段' : 'Select prefix'} ${candidate.prefix}`}
+                            disabled={interfaceCandidatesLoading || interfaceGenerationLoading || Boolean(interfaceGenerationError) || Boolean(candidate.vrf_scope_pending && !selectedInterfaceVrfs[candidate.candidate_id])}
                             className="rounded border-gray-300 text-cyan-600 focus:ring-cyan-500"
                           />
                           <div className="min-w-0">
@@ -1808,11 +1847,27 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                           </div>
                           <span className="text-xs tabular-nums text-gray-600">{candidate.interface_count.toLocaleString()}</span>
                           <span className="text-xs tabular-nums text-gray-600">{candidate.ip_count.toLocaleString()}</span>
-                          <span className={`inline-flex items-center gap-1 text-[10px] font-bold ${candidate.status === 'existing' ? 'text-emerald-600' : 'text-cyan-600'}`}>
-                            {candidate.status === 'existing' ? <Check size={13} /> : <Plus size={13} />}
-                            {candidate.status === 'existing' ? (zh ? '已存在' : 'Existing') : (zh ? '待创建' : 'To create')}
+                          {candidate.vrf_scope_pending || candidate.vrf_scope_defaulted ? (
+                            <select
+                              aria-label={`${zh ? '为' : 'Choose VRF for'} ${candidate.prefix}`}
+                              value={selectedInterfaceVrfs[candidate.candidate_id] || (candidate.vrf_scope_defaulted ? '__global__' : '')}
+                              onChange={(event) => setSelectedInterfaceVrfs((current) => ({
+                                ...current, [candidate.candidate_id]: event.target.value,
+                              }))}
+                              className={`min-w-0 rounded-lg border bg-white px-2 py-1.5 text-[10px] text-gray-700 ${candidate.vrf_scope_defaulted ? 'border-cyan-200' : 'border-amber-200'}`}
+                            >
+                              {!candidate.vrf_scope_defaulted && <option value="">{zh ? '请选择 VRF' : 'Select VRF'}</option>}
+                              <option value="__global__">{zh ? '全局/默认' : 'Global/default'}</option>
+                              {vrfs
+                                .filter((item) => String(item.tenant_id || 'tenant-default') === candidate.tenant_id)
+                                .map((item) => <option key={item.id} value={item.id}>{item.vrf_name || item.name || item.id}</option>)}
+                            </select>
+                          ) : <span className="truncate text-[10px] text-gray-600">{candidate.vrf_id ? (vrfs.find((item) => item.id === candidate.vrf_id)?.vrf_name || candidate.vrf_id) : (zh ? '全局/默认' : 'Global/default')}</span>}
+                          <span className={`inline-flex items-center gap-1 text-[10px] font-bold ${candidate.status === 'existing' ? 'text-emerald-600' : candidate.status === 'scope_pending' ? 'text-amber-600' : 'text-cyan-600'}`}>
+                            {candidate.status === 'existing' ? <Check size={13} /> : candidate.status === 'scope_pending' ? <AlertTriangle size={13} /> : <Plus size={13} />}
+                            {candidate.status === 'existing' ? (zh ? '已存在' : 'Existing') : candidate.status === 'scope_pending' ? (zh ? '归属待确认' : 'Scope review') : (zh ? '待创建' : 'To create')}
                           </span>
-                        </label>
+                        </div>
                       ))}
                     </div>
                   )}

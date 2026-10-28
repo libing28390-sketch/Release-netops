@@ -5,7 +5,7 @@ All write operations require Operator+; delete requires Administrator.
 
 import logging
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from core.rbac import authorize_resource, enforce_resource_scope, require_permission, require_role
 from core.tenant_policy import DEFAULT_TENANT_ID, TENANT_ISOLATION_ENABLED, tenant_id_for_write
 from database import get_db_connection
@@ -93,6 +93,7 @@ class ReleaseRequest(BaseModel):
 class InterfacePrefixGenerateRequest(BaseModel):
     candidate_ids: list[str] | None = None
     all_pending: bool = False
+    vrf_overrides: dict[str, str] = Field(default_factory=dict)
 
 
 def _prefix_scope(subnet_id: str) -> dict:
@@ -180,7 +181,7 @@ def api_list_subnets(
 def api_preview_interface_prefixes(
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=100),
-    status: str = Query('all', pattern='^(all|to_create|existing)$'),
+    status: str = Query('all', pattern='^(all|to_create|existing|scope_pending|global_default)$'),
     _user=require_role("Viewer"),
 ):
     """Preview prefixes derived from current L3 interface collection only."""
@@ -218,6 +219,7 @@ def api_generate_interface_prefixes(
         result = generate_interface_prefixes(
             candidate_ids=body.candidate_ids,
             all_pending=body.all_pending,
+            vrf_overrides=body.vrf_overrides,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))

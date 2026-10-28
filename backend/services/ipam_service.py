@@ -853,12 +853,12 @@ def _load_interface_prefix_candidates(
 ) -> dict:
     """Build IPAM candidates from the current L3 interface collection.
 
-    ``interfaces`` is the authoritative current interface source.  ``ip_inventory``
-    is consulted only for a missing mask because older collectors stored the mask
-    there; it is deliberately never returned as IPAM data and is never migrated by
-    this function.
+    Current devices use their last successful CMDB CLI snapshot. Legacy devices
+    without a successful snapshot continue to use ``interfaces``. CMDB snapshots
+    do not assert a VRF; an operator must choose a VRF (including explicit global)
+    before a new prefix can be generated from an otherwise unscoped observation.
     """
-    interface_rows = conn.execute(
+    legacy_interface_rows = conn.execute(
         '''SELECT i.id, i.device_id, i.interface_name, i.primary_ip, i.ip_address,
                   i.ip_prefix_length, i.ip_version, i.is_l3, i.ip_enabled,
                   i.vrf_id, i.last_seen, d.hostname, d.ip_address AS device_ip,
@@ -882,13 +882,67 @@ def _load_interface_prefix_candidates(
             key = (str(row['device_id'] or ''), normalize_interface_name(row['interface']))
             inventory_by_interface.setdefault(key, dict(row))
     except Exception:
-        # IPAM generation must still work if the optional collection snapshot is
-        # unavailable on an older installation.
+        # Older installations may not have the optional legacy IP mask table.
         try:
             conn.rollback()
         except Exception:
             pass
 
+    snapshot_observations: list[dict] = []
+    snapshot_device_ids: set[str] = set()
+    try:
+        snapshot_device_ids = {
+            str(row['device_id'])
+            for row in conn.execute(
+                """SELECT device_id FROM cmdb_collection_snapshots
+                   WHERE domain = 'interface_inventory' AND successful_generation IS NOT NULL"""
+            ).fetchall()
+        }
+        snapshot_observations = _current_cmdb_interface_ip_observations(conn)
+    except Exception:
+        # Older installations may not have the isolated CMDB snapshot tables.
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        snapshot_device_ids = set()
+        snapshot_observations = []
+
+    interface_rows: list[dict] = []
+    _, site_catalog, _ = load_inventory_catalog(conn)
+    for observation in snapshot_observations:
+        owner = {
+            'cmdb_device_id': observation.get('device_id'),
+            'asset_site_id': observation.get('asset_site_id'),
+            'device_site_id': observation.get('device_site_id'),
+            'device_site': observation.get('device_site'),
+        }
+        interface_rows.append({
+            'id': None,
+            '_source_ref': f"cmdb-interface:{observation.get('device_id')}:{observation.get('normalized_interface_name')}",
+            'device_id': observation.get('device_id'),
+            'interface_name': observation.get('interface_name'),
+            'primary_ip': observation.get('ip_address'),
+            'ip_address': observation.get('ip_address'),
+            'ip_prefix_length': observation.get('ip_prefix_length'),
+            'ip_version': None,
+            'is_l3': True,
+            'ip_enabled': True,
+            # CMDB CLI snapshot rows intentionally have no VRF ownership field.
+            'vrf_id': None,
+            '_vrf_unknown': True,
+            'last_seen': observation.get('observed_at'),
+            'hostname': observation.get('device_hostname'),
+            'device_ip': observation.get('device_ip'),
+            'site_id': endpoint_site_id(owner, site_catalog),
+            'tenant_id': observation.get('tenant_id') or 'tenant-default',
+            'platform': '',
+            'device_type_id': '',
+        })
+    interface_rows.extend(
+        dict(row) for row in legacy_interface_rows
+        if str(row.get('device_id') or '') not in snapshot_device_ids
+    )
     existing_rows = conn.execute(
         'SELECT id, prefix, tenant_id, site_id, vrf_id, name FROM prefixes'
     ).fetchall()
@@ -901,6 +955,14 @@ def _load_interface_prefix_candidates(
         ): dict(row)
         for row in existing_rows
     }
+    existing_by_network_scope: dict[tuple[str, str, str], list[dict]] = {}
+    for row in existing_rows:
+        key = (
+            str(row['prefix'] or ''),
+            str(row['tenant_id'] or 'tenant-default'),
+            str(row['site_id'] or ''),
+        )
+        existing_by_network_scope.setdefault(key, []).append(dict(row))
 
     candidates: dict[str, dict] = {}
     skipped: list[dict] = []
@@ -963,25 +1025,55 @@ def _load_interface_prefix_candidates(
         tenant_id = str(row['tenant_id'] or 'tenant-default')
         site_id = str(row['site_id'] or '')
         vrf_id = str(row['vrf_id'] or '')
+        vrf_unknown = bool(row.get('_vrf_unknown'))
+        vrf_defaulted = False
+        if vrf_unknown:
+            # Reuse an existing prefix's VRF only when the exact prefix has one
+            # unambiguous tenant/site owner. Otherwise, the IPAM policy treats
+            # an absent snapshot VRF as global/default.
+            matches = existing_by_network_scope.get((prefix, tenant_id, site_id), [])
+            if len(matches) == 1:
+                vrf_id = str(matches[0].get('vrf_id') or '')
+                vrf_unknown = False
+            elif not site_id:
+                record_skipped({
+                    'interface_id': row.get('id'),
+                    'device_name': row.get('hostname'),
+                    'interface_name': row.get('interface_name'),
+                    'address': address,
+                    'reason': '接口快照未包含有效站点，无法确认网段归属',
+                })
+                continue
+            else:
+                vrf_id = ''
+                vrf_unknown = False
+                vrf_defaulted = True
         candidate_id = _interface_prefix_candidate_id(prefix, tenant_id, site_id, vrf_id)
         item = candidates.setdefault(candidate_id, {
             'candidate_id': candidate_id,
             'prefix': prefix,
             'tenant_id': tenant_id,
             'site_id': site_id or None,
-            'vrf_id': vrf_id or None,
-            'status': 'existing' if candidate_id in existing_by_scope else 'to_create',
+            'vrf_id': None if vrf_unknown else vrf_id or None,
+            'status': 'scope_pending' if vrf_unknown else 'existing' if candidate_id in existing_by_scope else 'to_create',
+            'vrf_scope_pending': vrf_unknown,
+            'vrf_scope_defaulted': vrf_defaulted,
+            'scope_review_reason': '接口快照未包含 VRF，按全局/默认生成；可在本页改选 VRF' if vrf_defaulted else '',
             'existing_prefix_id': (existing_by_scope.get(candidate_id) or {}).get('id'),
             'existing_prefix_name': (existing_by_scope.get(candidate_id) or {}).get('name') or '',
             'interface_count': 0,
             'ip_count': 0,
             'interfaces': [],
         })
+        if vrf_defaulted:
+            item['vrf_scope_defaulted'] = True
+            item['scope_review_reason'] = '接口采集快照未包含 VRF，当前默认全局/默认'
         item['interface_count'] += 1
         item['ip_count'] += 1
         if include_all_interfaces or len(item['interfaces']) < 3:
             item['interfaces'].append({
                 'interface_id': row['id'],
+                'source_ref': row.get('_source_ref') or str(row['id'] or ''),
                 'device_id': row['device_id'],
                 'device_name': row['hostname'],
                 'device_ip': row['device_ip'],
@@ -989,11 +1081,16 @@ def _load_interface_prefix_candidates(
                 'address': address,
             })
 
-    result_candidates = sorted(candidates.values(), key=lambda item: item['prefix'])
+    result_candidates = sorted(
+        candidates.values(),
+        key=lambda item: (item['prefix'], item['tenant_id'], item['site_id'] or '', item['candidate_id']),
+    )
     return {
-        'source': 'interfaces',
-        'source_label': '当前接口采集结果',
+        'source': 'cmdb_interface_snapshot',
+        'source_label': '最后一次成功的接口快照',
         'interface_count': interface_count,
+        'scope_pending_count': sum(1 for item in result_candidates if item['status'] == 'scope_pending'),
+        'vrf_defaulted_count': sum(1 for item in result_candidates if item.get('vrf_scope_defaulted')),
         'candidate_count': len(result_candidates),
         'existing_count': sum(1 for item in result_candidates if item['status'] == 'existing'),
         'to_create_count': sum(1 for item in result_candidates if item['status'] == 'to_create'),
@@ -1010,8 +1107,8 @@ def preview_interface_prefixes(*, page: int = 1, page_size: int = 25, status: st
         raise ValueError('page 必须大于等于 1')
     if page_size < 1 or page_size > 100:
         raise ValueError('page_size 必须在 1 到 100 之间')
-    if status not in {'all', 'to_create', 'existing'}:
-        raise ValueError('status 必须为 all、to_create 或 existing')
+    if status not in {'all', 'to_create', 'existing', 'scope_pending', 'global_default'}:
+        raise ValueError('status 必须为 all、to_create、existing、scope_pending 或 global_default')
 
     conn = get_db_connection()
     try:
@@ -1021,7 +1118,9 @@ def preview_interface_prefixes(*, page: int = 1, page_size: int = 25, status: st
 
     filtered_candidates = [
         item for item in preview['candidates']
-        if status == 'all' or item['status'] == status
+        if status == 'all'
+        or item['status'] == status
+        or (status == 'global_default' and item.get('vrf_scope_defaulted'))
     ]
     filtered_count = len(filtered_candidates)
     start = (page - 1) * page_size
@@ -1033,6 +1132,8 @@ def preview_interface_prefixes(*, page: int = 1, page_size: int = 25, status: st
         'existing_count': preview['existing_count'],
         'to_create_count': preview['to_create_count'],
         'interface_count': preview['interface_count'],
+        'scope_pending_count': preview['scope_pending_count'],
+        'vrf_defaulted_count': preview['vrf_defaulted_count'],
         'skipped_count': preview['skipped_count'],
         'page': page,
         'page_size': page_size,
@@ -1048,6 +1149,7 @@ def generate_interface_prefixes(
     candidate_ids: Optional[list[str]] = None,
     *,
     all_pending: bool = False,
+    vrf_overrides: Optional[dict[str, str]] = None,
 ) -> dict:
     """Create canonical prefixes and interface IP records from current interfaces.
 
@@ -1061,8 +1163,15 @@ def generate_interface_prefixes(
     existing_prefixes = 0
     existing_addresses = 0
     skipped_addresses: list[dict] = []
+    confirmed_vrf_scopes: list[dict] = []
+    defaulted_vrf_scopes: list[dict] = []
     try:
         preview = _load_interface_prefix_candidates(conn, include_all_interfaces=True)
+        normalized_vrf_overrides = {
+            str(key).strip(): str(value).strip()
+            for key, value in (vrf_overrides or {}).items()
+            if str(key).strip()
+        }
         if all_pending and candidate_ids is not None:
             raise ValueError('candidate_ids 与 all_pending 不能同时提供')
         if all_pending:
@@ -1084,6 +1193,61 @@ def generate_interface_prefixes(
                 item for item in preview['candidates']
                 if item['candidate_id'] in requested
             ]
+        override_candidate_ids = {
+            item['candidate_id'] for item in selected
+            if item.get('vrf_scope_pending') or item.get('vrf_scope_defaulted')
+        }
+        if all_pending:
+            # Bulk generation includes only to-create candidates. A page-level
+            # override map may also contain visible candidates already marked
+            # existing; ignore those without applying them to a different row.
+            normalized_vrf_overrides = {
+                key: value for key, value in normalized_vrf_overrides.items()
+                if key in override_candidate_ids
+            }
+        if set(normalized_vrf_overrides) - override_candidate_ids:
+            raise ValueError('VRF 选择只能应用于已选择且默认全局/归属待确认的候选网段')
+
+        for candidate in selected:
+            if not (candidate.get('vrf_scope_pending') or candidate.get('vrf_scope_defaulted')):
+                continue
+            original_candidate_id = candidate['candidate_id']
+            selected_vrf = normalized_vrf_overrides.get(original_candidate_id)
+            if not selected_vrf and candidate.get('vrf_scope_pending'):
+                raise ValueError(f"请先确认 {candidate['prefix']} 的 VRF 或全局/默认归属")
+            if candidate.get('vrf_scope_defaulted') and not selected_vrf:
+                defaulted_vrf_scopes.append({
+                    'prefix': candidate['prefix'],
+                    'tenant_id': candidate['tenant_id'],
+                    'site_id': candidate['site_id'] or '',
+                    'vrf_id': '',
+                    'source': 'snapshot_missing_vrf_defaulted_global',
+                })
+            if not selected_vrf or selected_vrf == '__global__':
+                # Missing snapshot VRF defaults to global; NULL is the valid
+                # database representation because vrf_id references vrfs(id).
+                candidate['vrf_id'] = None
+            else:
+                vrf = conn.execute(
+                    "SELECT id FROM vrfs WHERE id = ? AND COALESCE(tenant_id, 'tenant-default') = ?",
+                    (selected_vrf, candidate['tenant_id']),
+                ).fetchone()
+                if not vrf:
+                    raise ValueError(f"{candidate['prefix']} 的 VRF 不存在或不属于当前租户")
+                candidate['vrf_id'] = str(vrf['id'])
+            if original_candidate_id in normalized_vrf_overrides:
+                confirmed_vrf_scopes.append({
+                    'prefix': candidate['prefix'],
+                    'tenant_id': candidate['tenant_id'],
+                    'site_id': candidate['site_id'] or '',
+                    'vrf_id': candidate['vrf_id'] or '',
+                })
+            candidate['candidate_id'] = _interface_prefix_candidate_id(
+                candidate['prefix'], candidate['tenant_id'], candidate['site_id'] or '', candidate['vrf_id'],
+            )
+            candidate['vrf_scope_pending'] = False
+            candidate['vrf_scope_defaulted'] = False
+            candidate['scope_review_reason'] = ''
         now = _utc_now()
         prefix_ids: dict[str, str] = {}
 
@@ -1160,7 +1324,7 @@ def generate_interface_prefixes(
                         device_type='interface',
                         status='active',
                         source_type='interface_collection',
-                        source_ref=interface['interface_id'],
+                        source_ref=interface.get('source_ref') or interface.get('interface_id'),
                     )
                     created_addresses += 1
                 except ValueError as exc:
@@ -1183,6 +1347,8 @@ def generate_interface_prefixes(
             'created_addresses': created_addresses,
             'existing_addresses': existing_addresses,
             'skipped_addresses': skipped_addresses,
+            'confirmed_vrf_scopes': confirmed_vrf_scopes,
+            'defaulted_vrf_scopes': defaulted_vrf_scopes,
         }
     except Exception:
         conn.rollback()
@@ -1630,15 +1796,14 @@ def list_ip_inventory(*, site_id: str = 'all', prefix_id: str = '', q: str = '',
             candidate_prefixes = [
                 prefix for prefix in prefix_catalog
                 if prefix['tenant_id'] == tenant_id
+                and not prefix.get('vrf_id')
                 and not prefix.get('invalid_site_assignment')
                 and ip_obj.version == prefix['network'].version
                 and ip_obj in prefix['network']
                 and (not observed_site_id or not prefix['site_id'] or prefix['site_id'] == observed_site_id)
             ]
-            # The isolated interface snapshot currently has no VRF field. Even
-            # a unique CIDR is therefore only a candidate: assigning it to a
-            # global or named-VRF prefix could silently misclassify the IP.
-            prefix_match_status = 'vrf_unavailable' if candidate_prefixes else 'unmatched'
+            # IPAM treats an absent snapshot VRF as global/default.
+            prefix_match_status = 'global_default' if candidate_prefixes else 'unmatched'
             prefix_length = _parse_interface_prefix_length(observation.get('ip_prefix_length'))
             observed_prefix = ''
             if prefix_length is not None:
@@ -1693,7 +1858,7 @@ def list_ip_inventory(*, site_id: str = 'all', prefix_id: str = '', q: str = '',
                 'bound_device_hostname': str(observation.get('device_hostname') or ''),
                 'observed_prefix': observed_prefix,
                 'prefix_match_status': prefix_match_status,
-                'prefix_review_reason': 'VRF未包含在接口观察快照中' if candidate_prefixes else '未找到匹配的IPAM前缀',
+                'prefix_review_reason': '接口观察未包含 VRF，按全局/默认范围匹配' if candidate_prefixes else '未找到匹配的全局/默认 IPAM 前缀',
                 'vrf_unknown': True,
             })
 
@@ -1723,9 +1888,22 @@ def list_ip_inventory(*, site_id: str = 'all', prefix_id: str = '', q: str = '',
         if registered_only:
             all_items = [item for item in all_items if item.get('_registered_ipam_record')]
 
+        prefix_by_id = {str(item.get('id') or ''): item for item in prefix_catalog}
+
+        def is_matching_interface_observation(item: dict) -> bool:
+            selected_prefix = prefix_by_id.get(prefix_id)
+            return bool(
+                item.get('source') == 'interface_cli'
+                and selected_prefix is not None
+                and str(item.get('observed_prefix') or '') == str(selected_prefix.get('prefix') or '')
+                and str(item.get('tenant_id') or 'tenant-default') == str(selected_prefix.get('tenant_id') or 'tenant-default')
+                and str(item.get('site_id') or '') == str(selected_prefix.get('site_id') or '')
+            )
+
         for item in all_items:
             if prefix_id and str(item.get('subnet_id') or '') != prefix_id:
-                continue
+                if not is_matching_interface_observation(item):
+                    continue
             site_key = str(item.get('site_id') or '')
             if site_key in sites and not item.get('is_virtual_gateway'):
                 sites[site_key]['ip_count'] += 1
@@ -1733,7 +1911,7 @@ def list_ip_inventory(*, site_id: str = 'all', prefix_id: str = '', q: str = '',
         normalized_query = q.strip().lower()
         items = []
         for item in all_items:
-            if prefix_id and str(item.get('subnet_id') or '') != prefix_id:
+            if prefix_id and str(item.get('subnet_id') or '') != prefix_id and not is_matching_interface_observation(item):
                 continue
             item_site = str(item.get('site_id') or '')
             if site_id != 'all' and site_id and item_site != site_id:
@@ -1782,7 +1960,7 @@ def list_ip_inventory(*, site_id: str = 'all', prefix_id: str = '', q: str = '',
                 # Virtual gateways are visible inventory rows, but not persisted
                 # IPAM/discovery records and are counted separately.
                 'total': sum(1 for item in items if not item.get('is_virtual_gateway')),
-                'discovered': sum(1 for item in items if item.get('is_discovered')),
+                'discovered': sum(1 for item in items if item.get('source') == 'discovered'),
                 'manual': sum(1 for item in items if str(item.get('source') or '').startswith('manual')),
                 'gateways': sum(1 for item in items if item.get('is_prefix_gateway')),
                 'prefixes': len(prefix_catalog),
@@ -1794,6 +1972,7 @@ def list_ip_inventory(*, site_id: str = 'all', prefix_id: str = '', q: str = '',
                 }),
                 'interface_unmatched_prefix': sum(1 for item in items if item.get('prefix_match_status') == 'unmatched'),
                 'interface_vrf_review': sum(1 for item in items if item.get('prefix_match_status') == 'vrf_unavailable'),
+                'interface_global_default': sum(1 for item in items if item.get('prefix_match_status') == 'global_default'),
                 'interface_matched': sum(1 for item in items if item.get('source') == 'interface_cli')
                     - sum(1 for item in items if item.get('prefix_match_status') in {'unmatched', 'vrf_unavailable'}),
             },

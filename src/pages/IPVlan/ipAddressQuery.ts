@@ -1,4 +1,4 @@
-export interface RegisteredIPAddressFilterInput {
+export interface IPAddressInventoryFilterInput {
   siteId: string;
   prefixId: string;
   search: string;
@@ -8,11 +8,11 @@ export interface RegisteredIPAddressFilterInput {
   isMatrixView: boolean;
 }
 
-/** Shared list/export filters for the formal IPAM address ledger. */
-export function buildRegisteredIPAddressFilterQuery(input: RegisteredIPAddressFilterInput): URLSearchParams {
+/** Shared list/export filters for registered records and read-only observations. */
+export function buildIPAddressInventoryQuery(input: IPAddressInventoryFilterInput): URLSearchParams {
   const params = new URLSearchParams({
     site_id: input.siteId,
-    registered_only: 'true',
+    registered_only: 'false',
   });
   if (input.prefixId) params.set('prefix_id', input.prefixId);
   if (input.search.trim()) params.set('q', input.search.trim());

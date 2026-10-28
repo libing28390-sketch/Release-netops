@@ -21,7 +21,7 @@ import { useEscapeClose } from '../../hooks/useEscapeClose';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { formatMacAddress } from '../../utils/resourceFormatters';
 import { buildVisibleIpamExportData, fetchAllIpamExportItems } from './ipamExport';
-import { buildRegisteredIPAddressFilterQuery } from './ipAddressQuery';
+import { buildIPAddressInventoryQuery } from './ipAddressQuery';
 import {
   getIPAddressRegisteredPrefixLabel,
   getIPAddressSourceLabel,
@@ -48,6 +48,7 @@ interface IPAddress {
   site_id?: string;
   site_name?: string;
   subnet_prefix?: string;
+  observed_prefix?: string;
   subnet_name?: string;
   network_type?: string;
   source?: 'manual' | 'manual+discovered' | 'discovered' | 'prefix_gateway' | 'interface_cli';
@@ -104,6 +105,9 @@ interface SiteSummary {
 interface IPAddressInventorySummary {
   gateways: number;
   prefixes: number;
+  manual: number;
+  interface_observed: number;
+  discovered: number;
 }
 
 interface Prefix {
@@ -567,7 +571,9 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
   const [addresses, setAddresses] = useState<IPAddress[]>([]);
   const [prefixes, setPrefixes] = useState<Prefix[]>([]);
   const [sites, setSites] = useState<SiteSummary[]>([]);
-  const [inventorySummary, setInventorySummary] = useState<IPAddressInventorySummary>({ gateways: 0, prefixes: 0 });
+  const [inventorySummary, setInventorySummary] = useState<IPAddressInventorySummary>({
+    gateways: 0, prefixes: 0, manual: 0, interface_observed: 0, discovered: 0,
+  });
   const [loading, setLoading] = useState(true);
   const [inventoryError, setInventoryError] = useState('');
   const inventoryRequest = useRef<AbortController | null>(null);
@@ -644,7 +650,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
     const hdrs = authHeaders();
     let loadSucceeded = false;
     try {
-      const query = buildRegisteredIPAddressFilterQuery({
+      const query = buildIPAddressInventoryQuery({
         siteId: selectedSiteId,
         prefixId: selectedPrefixId,
         search,
@@ -695,7 +701,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
         if (!hasLoadedInventory.current) {
           setAddresses([]);
           setTotalItems(0);
-          setInventorySummary({ gateways: 0, prefixes: 0 });
+          setInventorySummary({ gateways: 0, prefixes: 0, manual: 0, interface_observed: 0, discovered: 0 });
         }
         return;
       }
@@ -707,6 +713,9 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
         setInventorySummary({
           gateways: Number(firstPageData.summary?.gateways || 0),
           prefixes: Number(firstPageData.summary?.prefixes || 0),
+          manual: Number(firstPageData.summary?.manual || 0),
+          interface_observed: Number(firstPageData.summary?.interface_observed || 0),
+          discovered: Number(firstPageData.summary?.discovered || 0),
         });
       }
     } catch (e) {
@@ -715,7 +724,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
       if (!hasLoadedInventory.current) {
         setAddresses([]);
         setTotalItems(0);
-        setInventorySummary({ gateways: 0, prefixes: 0 });
+        setInventorySummary({ gateways: 0, prefixes: 0, manual: 0, interface_observed: 0, discovered: 0 });
       }
       setInventoryError(zh ? '加载 IP 地址库存失败，请重试。' : 'Failed to load IP inventory. Please retry.');
     } finally {
@@ -872,7 +881,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
   const paginatedAddresses = filteredAddresses;
 
   const exportData = useCallback(async () => {
-    const params = buildRegisteredIPAddressFilterQuery({
+    const params = buildIPAddressInventoryQuery({
       siteId: selectedSiteId,
       prefixId: selectedPrefixId,
       search,
@@ -889,7 +898,15 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
     };
     return buildVisibleIpamExportData(addressTableRef.current, [
       { header: zh ? '站点' : 'Site', value: (node) => node.site_name || '-' },
-      { header: zh ? 'IPAM登记网段 / CIDR' : 'IPAM Registered Prefix / CIDR', value: (node) => node.subnet_prefix || (zh ? '未关联网段' : 'No linked prefix') },
+      {
+        header: zh ? 'IPAM登记网段 / CIDR' : 'IPAM Registered Prefix / CIDR',
+        value: (node) => {
+          const registeredPrefix = node.subnet_prefix || (zh ? '未关联网段' : 'No linked prefix');
+          return node.source === 'interface_cli' && node.observed_prefix
+            ? `${registeredPrefix} · ${zh ? '接口观察' : 'Observed'} ${node.observed_prefix} · ${zh ? '全局/默认' : 'Global/default'}`
+            : registeredPrefix;
+        },
+      },
       { header: zh ? 'IP地址' : 'IP Address', value: (node) => node.address },
       { header: zh ? '用途' : 'Purpose', value: (node) => purposeLabel(node.purpose || inferIpPurpose(node.network_type), zh) },
       { header: zh ? '类型' : 'Role Type', value: (node) => roleLabel(node.device_type, zh) },
@@ -1083,7 +1100,9 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
               </div>
 
               <div className="flex min-h-9 flex-wrap items-center gap-2 text-[10px] text-gray-400 sm:col-span-2 xl:col-span-1 xl:justify-end">
-                <span className="rounded-full bg-cyan-50 px-2.5 py-1 font-bold text-cyan-600">{zh ? `IPAM登记地址 ${loading ? '—' : totalItems}` : `${loading ? '—' : totalItems} registered IPs`}</span>
+                <span className="rounded-full bg-cyan-50 px-2.5 py-1 font-bold text-cyan-600">{zh ? `IPAM登记地址 ${loading ? '—' : inventorySummary.manual}` : `${loading ? '—' : inventorySummary.manual} registered IPs`}</span>
+                {inventorySummary.interface_observed > 0 && <span className="rounded-full bg-violet-50 px-2.5 py-1 font-bold text-violet-700">{zh ? `接口观察 ${inventorySummary.interface_observed}` : `${inventorySummary.interface_observed} interface observations`}</span>}
+                {inventorySummary.discovered > 0 && <span className="rounded-full bg-blue-50 px-2.5 py-1 font-bold text-blue-700">{zh ? `终端发现 ${inventorySummary.discovered}` : `${inventorySummary.discovered} discovered`}</span>}
                 {inventorySummary.gateways > 0 && <span className="rounded-full bg-amber-50 px-2.5 py-1 font-bold text-amber-700">{zh ? `前缀网关 ${inventorySummary.gateways}` : `${inventorySummary.gateways} gateways`}</span>}
               </div>
             </div>
@@ -1183,9 +1202,8 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
       <section role="note" aria-label={zh ? 'IPAM 地址台账说明' : 'IPAM address ledger scope'} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50/90 px-4 py-2.5 text-[11px] leading-4 text-slate-600">
         <p>
           {zh
-            ? `当前筛选 ${loading ? '—' : totalItems} 条登记地址；当前站点共 ${siteScopedPrefixes.length} 个网段。`
-            : `This list contains registered IPAM address records only; ${loading ? '—' : totalItems} match the current filters and ${siteScopedPrefixes.length} prefixes are registered at this site. Prefix and address counts are separate.`}
-          {' '}{zh ? '网络发现记录请在发现终端查看；设备接口信息请在 CMDB 接口页查看。' : 'Review ARP/MAC discoveries under Discovered Endpoints; CLI interface snapshots remain in CMDB Interfaces.'}
+            ? `当前筛选共 ${loading ? '—' : totalItems} 条记录（已登记 ${loading ? '—' : inventorySummary.manual}，接口观察 ${loading ? '—' : inventorySummary.interface_observed}，终端发现 ${loading ? '—' : inventorySummary.discovered}）；当前站点共 ${siteScopedPrefixes.length} 个网段。接口与终端观察均为只读，不代表 IPAM 已登记分配。`
+            : `${loading ? '—' : totalItems} records match the current filters (${loading ? '—' : inventorySummary.manual} registered, ${loading ? '—' : inventorySummary.interface_observed} interface observations, ${loading ? '—' : inventorySummary.discovered} discovered endpoints) across ${siteScopedPrefixes.length} prefixes. Interface and endpoint observations are read-only, not IPAM registrations.`}
         </p>
         <button type="button" onClick={() => navigate('/ipam/endpoints')} className="shrink-0 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-semibold text-cyan-700 hover:border-cyan-300">
           {zh ? '查看发现终端' : 'View discovered endpoints'}
@@ -1342,6 +1360,11 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                       <td className="bg-[var(--ui-surface)] px-3 py-3 text-xs font-bold text-cyan-700 group-hover:bg-[var(--ui-surface-muted)] xl:sticky xl:left-0 xl:z-20"><span className="block whitespace-normal break-words" title={node.site_name || '-'}>{node.site_name || '-'}</span></td>
                       <td className="bg-[var(--ui-surface)] px-3 py-3 text-gray-600 group-hover:bg-[var(--ui-surface-muted)] xl:sticky xl:z-20" style={{ left: 170 }}>
                         <span className="font-mono text-[10px] text-gray-700">{getIPAddressRegisteredPrefixLabel(node.subnet_prefix, zh)}</span>
+                        {node.source === 'interface_cli' && node.observed_prefix && (
+                          <span className="mt-1 block break-all font-mono text-[9px] text-violet-600" title={zh ? '接口快照未包含 VRF，按全局/默认范围展示' : 'Interface snapshot omits VRF; shown under global/default'}>
+                            {zh ? `接口观察 ${node.observed_prefix} · 全局/默认` : `Observed ${node.observed_prefix} · Global/default`}
+                          </span>
+                        )}
                       </td>
                       <td className="bg-[var(--ui-surface)] px-3 py-3 font-mono font-bold text-xs text-gray-800 group-hover:bg-[var(--ui-surface-muted)] xl:sticky xl:z-20" style={{ left: 430 }}>
                         <button
