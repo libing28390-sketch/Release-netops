@@ -54,11 +54,33 @@ def test_legacy_algorithm_lists_contain_full_network_device_suites():
     assert "3des-cbc" in LEGACY_CIPHERS
     assert "diffie-hellman-group1-sha1" in LEGACY_KEX_ALGORITHMS
 
-    cmd = build_system_ssh_open_cmd("legacy_break_glass")
-    cmd_str = " ".join(cmd)
-    assert "hmac-md5" in cmd_str
-    assert "ssh-dss" in cmd_str
-    assert "diffie-hellman-group1-sha1" in cmd_str
+
+@pytest.mark.parametrize(
+    ("supported_host_keys", "expected"),
+    [
+        ({"ssh-rsa", "ssh-dss"}, "HostKeyAlgorithms=+ssh-rsa,ssh-dss"),
+        ({"ssh-rsa"}, "HostKeyAlgorithms=+ssh-rsa"),
+    ],
+)
+def test_system_ssh_host_key_arguments_follow_local_client_capabilities(
+    monkeypatch,
+    supported_host_keys,
+    expected,
+):
+    import drivers.ssh_compat as ssh_compat
+
+    monkeypatch.setattr(
+        ssh_compat,
+        "_system_ssh_algorithms",
+        lambda query: supported_host_keys if query == "key" else set(),
+    )
+    monkeypatch.setattr(ssh_compat, "_system_pubkey_accepted_option", lambda: None)
+
+    command = " ".join(build_system_ssh_open_cmd("legacy_break_glass"))
+
+    assert expected in command
+    if "ssh-dss" not in supported_host_keys:
+        assert "ssh-dss" not in command
 
 
 @pytest.mark.parametrize("profile", [None, "auto", "legacy_compat", "legacy_break_glass"])
