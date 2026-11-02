@@ -2,11 +2,25 @@ from __future__ import annotations
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from api import assets
 from core.crypto import encrypt_credential
 from database import get_db_connection
 from schemas.web import WebAccessProfileInput
+
+
+@pytest.fixture(autouse=True)
+def isolate_identity_tests_from_optional_chassis_network_io(monkeypatch):
+    # These existing cases exercise hostname/model/credential handling. The
+    # separate chassis integration module verifies the new SN stage end to end.
+    # Do not let old identity fixtures start additional unmocked UDP requests.
+    from services import snmp_import_identification_service
+
+    async def retain_identity_result(_item, identity_result, *_limits):
+        return identity_result
+
+    monkeypatch.setattr(snmp_import_identification_service, '_sync_import_chassis_serials', retain_identity_result)
 
 
 def test_batch_import_without_management_ip_reports_missing_ip_without_network_enrichment(isolated_db):
@@ -27,6 +41,51 @@ def test_batch_import_without_management_ip_reports_missing_ip_without_network_e
     assert result["hostname_sync"]["failed_items"][0]["error"] == "缺少管理 IP"
     assert result["librenms_enrollment"]["total"] == 0
     assert result["snmp_identification"]["total"] == 0
+
+
+def test_batch_import_allows_server_without_hostname_when_management_ip_is_valid(isolated_db):
+    management_ip = "192.0.2.221"
+    result = assets.import_assets([
+        assets.AssetCreate(
+            asset_type="server",
+            asset_tag="SERVER-EMPTY-HOSTNAME-IMPORT",
+            hostname="",
+            management_ip=management_ip,
+        )
+    ])
+
+    assert result["created"] == 1
+    with get_db_connection() as conn:
+        row = conn.execute(
+            """SELECT pa.hostname AS asset_hostname, d.hostname AS device_hostname
+                 FROM physical_assets pa
+                 JOIN devices d ON d.asset_id = pa.id
+                WHERE pa.asset_tag = ?""",
+            ("SERVER-EMPTY-HOSTNAME-IMPORT",),
+        ).fetchone()
+    assert row["asset_hostname"] == management_ip
+    assert row["device_hostname"] == management_ip
+
+    missing_ip_result = assets.import_assets([
+        assets.AssetCreate(
+            asset_type="server",
+            asset_tag="SERVER-EMPTY-HOSTNAME-NO-IP",
+            hostname="",
+            management_ip="",
+        )
+    ], detailed=True)
+    assert missing_ip_result["created"] == 0
+    assert missing_ip_result["failed"] == 1
+    failure = missing_ip_result["failed_items"][0]
+    assert failure["code"] == "ASSET_HOSTNAME_REQUIRED"
+    assert failure["message"] == "请填写主机名或有效管理IP"
+
+    with pytest.raises(ValidationError, match="不是有效的 IPv4 或 IPv6 地址"):
+        assets.AssetCreate(
+            asset_type="server",
+            hostname="",
+            management_ip="not-an-ip",
+        )
 
 
 def test_batch_import_persists_web_only_management_method_and_sanitizes_password(isolated_db):

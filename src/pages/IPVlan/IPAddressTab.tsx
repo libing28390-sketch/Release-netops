@@ -24,6 +24,7 @@ import { buildVisibleIpamExportData, fetchAllIpamExportItems } from './ipamExpor
 import { buildIPAddressInventoryQuery } from './ipAddressQuery';
 import {
   getIPAddressRegisteredPrefixLabel,
+  getIPAddressObservationStatus,
   getIPAddressSourceLabel,
   getIPAddressTimestampPresentation,
 } from './ipAddressTablePresentation';
@@ -49,9 +50,13 @@ interface IPAddress {
   site_name?: string;
   subnet_prefix?: string;
   observed_prefix?: string;
+  interface_admin_status?: string;
+  interface_oper_status?: string;
   subnet_name?: string;
   network_type?: string;
   source?: 'manual' | 'manual+discovered' | 'discovered' | 'prefix_gateway' | 'interface_cli';
+  source_type?: string;
+  has_interface_observation?: boolean;
   is_discovered?: boolean;
   is_prefix_gateway?: boolean;
   is_virtual_gateway?: boolean;
@@ -135,6 +140,7 @@ const ROLE_OPTIONS: { value: string; zh: string; en: string }[] = [
   { value: 'device', zh: '网络设备', en: 'Network Device' },
   { value: 'vip', zh: 'VIP', en: 'VIP' },
   { value: 'physical', zh: '物理接口', en: 'Physical Interface' },
+  { value: 'interface', zh: '设备接口', en: 'Device Interface' },
   { value: 'loopback', zh: '环回接口', en: 'Loopback Interface' },
   { value: 'vlan', zh: 'VLAN接口', en: 'VLAN Interface' },
   { value: 'tunnel', zh: '隧道接口', en: 'Tunnel Interface' },
@@ -181,7 +187,7 @@ const PREFIX_PURPOSE_MAP: Record<string, string> = {
   vpn: 'business',
 };
 
-const inferIpPurpose = (networkType?: string): string => PREFIX_PURPOSE_MAP[String(networkType || '').trim().toLowerCase()] || 'business';
+const inferIpPurpose = (networkType?: string): string => PREFIX_PURPOSE_MAP[String(networkType || '').trim().toLowerCase()] || 'other';
 
 const defaultRoleForPurpose = (purpose: string): string => ({
   management: 'device',
@@ -1073,7 +1079,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
             <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-[minmax(220px,0.9fr)_minmax(280px,1.1fr)_auto]">
               {/* Site scope */}
               <label className="flex min-w-0 items-center gap-2">
-                <span className="shrink-0 text-xs font-bold uppercase tracking-wider text-gray-400">{zh ? '站点' : 'Site'}</span>
+                <span className="shrink-0 text-xs font-bold uppercase tracking-wider text-[var(--ui-fg-muted)]">{zh ? '站点' : 'Site'}</span>
                 <select
                   value={selectedSiteId}
                   onChange={(e) => handleSiteChange(e.target.value)}
@@ -1088,7 +1094,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
 
               {/* Prefix Selector */}
               <div className="flex min-w-0 items-center gap-2">
-                <span className="shrink-0 text-xs font-bold uppercase tracking-wider text-gray-400">{zh ? '网段' : 'Prefix'}</span>
+                <span className="shrink-0 text-xs font-bold uppercase tracking-wider text-[var(--ui-fg-muted)]">{zh ? '网段' : 'Prefix'}</span>
                 <div className="min-w-0 flex-1">
                   <PrefixSearchSelect
                     prefixes={siteScopedPrefixes}
@@ -1099,7 +1105,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                 </div>
               </div>
 
-              <div className="flex min-h-9 flex-wrap items-center gap-2 text-[10px] text-gray-400 sm:col-span-2 xl:col-span-1 xl:justify-end">
+              <div className="flex min-h-9 flex-wrap items-center gap-2 text-[10px] text-[var(--ui-fg-muted)] sm:col-span-2 xl:col-span-1 xl:justify-end">
                 <span className="rounded-full bg-cyan-50 px-2.5 py-1 font-bold text-cyan-600">{zh ? `IPAM登记地址 ${loading ? '—' : inventorySummary.manual}` : `${loading ? '—' : inventorySummary.manual} registered IPs`}</span>
                 {inventorySummary.interface_observed > 0 && <span className="rounded-full bg-violet-50 px-2.5 py-1 font-bold text-violet-700">{zh ? `接口观察 ${inventorySummary.interface_observed}` : `${inventorySummary.interface_observed} interface observations`}</span>}
                 {inventorySummary.discovered > 0 && <span className="rounded-full bg-blue-50 px-2.5 py-1 font-bold text-blue-700">{zh ? `终端发现 ${inventorySummary.discovered}` : `${inventorySummary.discovered} discovered`}</span>}
@@ -1165,7 +1171,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                   className={`px-3 py-1 text-[10px] font-bold rounded-lg transition-all ${
                     !isMatrixView
                       ? 'bg-white shadow-sm text-cyan-600'
-                      : 'text-gray-450 hover:text-gray-600'
+                      : 'text-[var(--ui-fg-muted)] hover:text-[var(--ui-fg)]'
                   }`}
                 >
                   {zh ? '列表' : 'List'}
@@ -1179,7 +1185,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                       ? 'bg-white shadow-sm text-cyan-600'
                       : !matrixPrefixCandidate
                       ? 'text-gray-250 cursor-not-allowed opacity-50'
-                      : 'text-gray-450 hover:text-gray-600'
+                      : 'text-[var(--ui-fg-muted)] hover:text-[var(--ui-fg)]'
                   }`}
                 >
                   {zh ? '矩阵' : 'Matrix'}
@@ -1202,8 +1208,8 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
       <section role="note" aria-label={zh ? 'IPAM 地址台账说明' : 'IPAM address ledger scope'} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50/90 px-4 py-2.5 text-[11px] leading-4 text-slate-600">
         <p>
           {zh
-            ? `当前筛选共 ${loading ? '—' : totalItems} 条记录（已登记 ${loading ? '—' : inventorySummary.manual}，接口观察 ${loading ? '—' : inventorySummary.interface_observed}，终端发现 ${loading ? '—' : inventorySummary.discovered}）；当前站点共 ${siteScopedPrefixes.length} 个网段。接口与终端观察均为只读，不代表 IPAM 已登记分配。`
-            : `${loading ? '—' : totalItems} records match the current filters (${loading ? '—' : inventorySummary.manual} registered, ${loading ? '—' : inventorySummary.interface_observed} interface observations, ${loading ? '—' : inventorySummary.discovered} discovered endpoints) across ${siteScopedPrefixes.length} prefixes. Interface and endpoint observations are read-only, not IPAM registrations.`}
+            ? `当前筛选共 ${loading ? '—' : totalItems} 条记录；已登记 ${loading ? '—' : inventorySummary.manual}，含接口观察 ${loading ? '—' : inventorySummary.interface_observed}，终端发现 ${loading ? '—' : inventorySummary.discovered}。当前站点共 ${siteScopedPrefixes.length} 个网段。观察数量可与登记重叠，采集记录不代表当前在线。`
+            : `${loading ? '—' : totalItems} records: ${loading ? '—' : inventorySummary.manual} registered, ${loading ? '—' : inventorySummary.interface_observed} with interface observations, ${loading ? '—' : inventorySummary.discovered} discovered endpoints, across ${siteScopedPrefixes.length} prefixes. Observation counts may overlap registrations and do not prove current availability.`}
         </p>
         <button type="button" onClick={() => navigate('/ipam/endpoints')} className="shrink-0 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-semibold text-cyan-700 hover:border-cyan-300">
           {zh ? '查看发现终端' : 'View discovered endpoints'}
@@ -1333,7 +1339,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                 <col style={{ width: 112 }} />
               </colgroup>
               <thead>
-                <tr className="border-b border-gray-100 bg-gray-50/40 text-[10px] font-bold text-gray-400 uppercase tracking-wider select-none">
+                <tr className="border-b border-gray-100 bg-gray-50/40 text-[10px] font-bold text-[var(--ui-fg-muted)] uppercase tracking-wider select-none">
                   <th className="sticky top-0 z-20 whitespace-nowrap bg-[var(--ui-surface-muted)] px-3 py-3 xl:sticky xl:left-0 xl:z-30">{zh ? '站点' : 'Site'}</th>
                   <th className="sticky top-0 z-20 whitespace-nowrap bg-[var(--ui-surface-muted)] px-3 py-3 xl:sticky xl:left-[170px] xl:z-30">{zh ? 'IPAM登记网段 / CIDR' : 'IPAM Registered Prefix / CIDR'}</th>
                   <th className="sticky top-0 z-20 whitespace-nowrap bg-[var(--ui-surface-muted)] px-3 py-3 xl:sticky xl:left-[430px] xl:z-30">{zh ? 'IP地址' : 'IP Address'}</th>
@@ -1361,7 +1367,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                       <td className="bg-[var(--ui-surface)] px-3 py-3 text-gray-600 group-hover:bg-[var(--ui-surface-muted)] xl:sticky xl:z-20" style={{ left: 170 }}>
                         <span className="font-mono text-[10px] text-gray-700">{getIPAddressRegisteredPrefixLabel(node.subnet_prefix, zh)}</span>
                         {node.source === 'interface_cli' && node.observed_prefix && (
-                          <span className="mt-1 block break-all font-mono text-[9px] text-violet-600" title={zh ? '接口快照未包含 VRF，按全局/默认范围展示' : 'Interface snapshot omits VRF; shown under global/default'}>
+                          <span className="mt-1 block break-all font-mono text-[9px] font-semibold text-[var(--ui-fg-muted)]" title={zh ? '接口快照未包含 VRF，按全局/默认范围展示' : 'Interface snapshot omits VRF; shown under global/default'}>
                             {zh ? `接口观察 ${node.observed_prefix} · 全局/默认` : `Observed ${node.observed_prefix} · Global/default`}
                           </span>
                         )}
@@ -1391,11 +1397,11 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                         {(() => {
                           const timestamp = getIPAddressTimestampPresentation(node, zh);
                           return timestamp.kind === 'missing' ? (
-                            <span className="text-[10px] font-medium text-gray-400">{timestamp.label}</span>
+                            <span className="text-[10px] font-medium text-[var(--ui-fg-muted)]">{timestamp.label}</span>
                           ) : (
                             <div className="flex min-w-0 flex-col gap-0.5">
-                              <span className="text-[9px] font-semibold text-gray-400">{timestamp.label}</span>
-                              <time className="break-all font-mono text-[10px] leading-4 text-gray-600" dateTime={timestamp.value.replace(' ', 'T')} title={timestamp.value}>{timestamp.value}</time>
+                              <span className="text-[9px] font-semibold text-[var(--ui-fg-muted)]">{timestamp.label}</span>
+                              <time className="break-all font-mono text-[10px] leading-4 text-[var(--ui-fg)]" dateTime={timestamp.value.replace(' ', 'T')} title={timestamp.value}>{timestamp.value}</time>
                             </div>
                           );
                         })()}
@@ -1422,13 +1428,23 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                           {roleLabel(node.device_type, zh)}
                         </span>
                       </td>
-                      <td className="px-3 py-3 text-xs font-semibold text-gray-500"><span className="block max-w-[130px] truncate" title={node.hostname || '-'}>{node.hostname || '-'}</span></td>
-                      <td className="px-3 py-3 text-xs font-bold text-cyan-600 hover:underline cursor-pointer"><span className="block max-w-[140px] truncate" title={node.switch_name || node.bound_device_hostname || getDeviceName(node)}>{node.switch_name || node.bound_device_hostname || getDeviceName(node)}</span></td>
-                      <td className="px-3 py-3 text-xs font-medium text-gray-500"><span className="block max-w-[135px] truncate" title={assetInfoLabel(node, zh)}>{assetInfoLabel(node, zh)}</span></td>
-                      <td className="px-3 py-3 text-xs font-semibold text-gray-600"><span className="block max-w-[100px] truncate" title={node.switch_port || node.interface_name || '-'}>{node.switch_port || node.interface_name || '-'}</span></td>
-                      <td className="px-3 py-3 font-mono text-xs text-gray-500">{formatMacAddress(node.mac_address) || '-'}</td>
+                      <td className="px-3 py-3 text-xs font-semibold text-[var(--ui-fg)]"><span className="block max-w-[130px] truncate" title={node.hostname || '-'}>{node.hostname || '-'}</span></td>
+                      <td className="px-3 py-3 text-xs font-bold text-[var(--ui-accent)] hover:underline cursor-pointer"><span className="block max-w-[140px] truncate" title={node.switch_name || node.bound_device_hostname || getDeviceName(node)}>{node.switch_name || node.bound_device_hostname || getDeviceName(node)}</span></td>
+                      <td className="px-3 py-3 text-xs font-medium text-[var(--ui-fg-muted)]"><span className="block max-w-[135px] truncate" title={assetInfoLabel(node, zh)}>{assetInfoLabel(node, zh)}</span></td>
+                      <td className="px-3 py-3 text-xs font-semibold text-[var(--ui-fg)]"><span className="block max-w-[100px] truncate" title={node.switch_port || node.interface_name || '-'}>{node.switch_port || node.interface_name || '-'}</span></td>
+                      <td className="px-3 py-3 font-mono text-xs text-[var(--ui-fg)]">{formatMacAddress(node.mac_address) || '-'}</td>
                       <td className="px-3 py-3">
-                        <span className={`inline-flex max-w-[96px] items-center gap-1 truncate whitespace-nowrap px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                        {getIPAddressObservationStatus(node, zh) ? (
+                          <span className={`inline-flex max-w-[120px] truncate whitespace-nowrap rounded-full border px-1.5 py-0.5 text-[10px] font-bold ${
+                            getIPAddressObservationStatus(node, zh)?.tone === 'success'
+                              ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                              : getIPAddressObservationStatus(node, zh)?.tone === 'warning'
+                                ? 'border-amber-200 bg-amber-50 text-amber-800'
+                                : 'border-[var(--ui-border)] bg-[var(--ui-surface-muted)] text-[var(--ui-fg-muted)]'
+                          }`} title={zh ? '采集快照状态；不代表终端当前在线' : 'Collected snapshot; does not prove current endpoint availability'}>
+                            {getIPAddressObservationStatus(node, zh)?.label}
+                          </span>
+                        ) : <span className={`inline-flex max-w-[96px] items-center gap-1 truncate whitespace-nowrap px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
                           node.status === 'active' 
                             ? 'bg-emerald-50 text-emerald-600 border border-emerald-500/10' 
                             : node.status === 'reserved' 
@@ -1439,9 +1455,9 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                             node.status === 'active' ? 'bg-emerald-500' : node.status === 'reserved' ? 'bg-amber-500' : 'bg-rose-500'
                           }`} />
                           {statusLabel(node.status, zh)}
-                        </span>
+                        </span>}
                       </td>
-                      <td className="px-3 py-3 text-xs font-medium text-gray-400"><span className="block max-w-[150px] truncate" title={node.description || '-'}>{node.description || '-'}</span></td>
+                      <td className="px-3 py-3 text-xs font-medium text-[var(--ui-fg-muted)]"><span className="block max-w-[150px] truncate" title={node.description || '-'}>{node.description || '-'}</span></td>
                       <TableActionCell className="px-3 py-3 text-right">
                         {!node.is_discovered && !node.is_virtual_gateway ? (
                           <ActionIconGroup label={zh ? '地址操作' : 'Address actions'} className="opacity-0 transition-opacity group-hover:opacity-100">
@@ -1457,13 +1473,13 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                               onClick={() => setShowDeleteConfirm(node.id)}
                             />}
                           </ActionIconGroup>
-                        ) : <span className="text-[10px] font-semibold text-cyan-500">{node.is_virtual_gateway ? (zh ? '只读前缀配置' : 'Read-only prefix config') : (zh ? '只读采集' : 'Read-only')}</span>}
+                        ) : <span className="text-[10px] font-semibold text-[var(--ui-accent)]">{node.is_virtual_gateway ? (zh ? '只读前缀配置' : 'Read-only prefix config') : (zh ? '只读采集' : 'Read-only')}</span>}
                       </TableActionCell>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={14} className="py-12 text-center text-xs text-gray-400 font-medium">
+                    <td colSpan={14} className="py-12 text-center text-xs text-[var(--ui-fg-muted)] font-medium">
                       {zh ? '当前筛选范围暂无 IP 记录' : 'No IP record in the current scope'}
                     </td>
                   </tr>

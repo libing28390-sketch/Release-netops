@@ -23,6 +23,7 @@ export interface DiscoveredEndpointRow {
   site_name?: string | null;
   vrf_id?: string | null;
   vrf_name?: string | null;
+  vrf_context_inferred?: boolean;
   scope_status?: string;
   registration_status?: string;
   subnet_id?: string | null;
@@ -48,6 +49,7 @@ export interface DiscoveryFilterOption {
 export function buildDiscoveredEndpointQuery(filters: DiscoveredEndpointFilters): URLSearchParams {
   const params = new URLSearchParams({
     kind: filters.kind,
+    network_scope: 'business_vlan',
     page: String(Math.max(1, filters.page)),
     page_size: String(Math.max(1, filters.pageSize)),
   });

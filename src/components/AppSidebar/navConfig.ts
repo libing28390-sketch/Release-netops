@@ -108,7 +108,7 @@ export const navConfig: NavGroup[] = [
         icon: 'Activity',
         children: [
           { id: 'ipam-ips', label: 'IP 地址', labelEn: 'IP Addresses', path: '/ipam/ips', icon: 'Globe' },
-          { id: 'ipam-endpoints', label: '发现终端', labelEn: 'Discovered Endpoints', path: '/ipam/endpoints', icon: 'Monitor' },
+          { id: 'ipam-endpoints', label: '发现终端', labelEn: 'Discovered Endpoints', path: '/ipam/endpoints', icon: 'Terminal' },
           { id: 'ipam-locate', label: 'IP 定位', labelEn: 'IP Locator', path: '/ipam/locate', icon: 'Globe' },
           { id: 'ipam-utilization', label: '利用率', labelEn: 'Utilization', path: '/ipam/utilization', icon: 'BarChart2' },
           { id: 'ipam-reconciliation', label: 'IP 对账', labelEn: 'IP Reconciliation', path: '/ipam/reconciliation', icon: 'ClipboardList' },

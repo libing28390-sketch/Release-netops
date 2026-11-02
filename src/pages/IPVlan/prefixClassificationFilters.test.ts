@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  canUsePrefixTreeView,
   buildPrefixClassificationSummaryQuery,
   buildPrefixListQuery,
   togglePrefixClassificationFilter,
@@ -36,5 +37,14 @@ describe('IPAM prefix classification filters', () => {
 
     expect(query.toString()).toBe('q=10.255&site=site-wh-dc-01&status=active&family=ipv4');
     expect(query.has('classification')).toBe(false);
+  });
+
+  it('allows hierarchy view only when its unsupported filters are cleared', () => {
+    const base = { q: '', site: 'all', status: 'all', classification: 'all' as const };
+    expect(canUsePrefixTreeView(base)).toBe(true);
+    expect(canUsePrefixTreeView({ ...base, site: 'site-1' })).toBe(false);
+    expect(canUsePrefixTreeView({ ...base, status: 'active' })).toBe(false);
+    expect(canUsePrefixTreeView({ ...base, classification: 'manual' })).toBe(false);
+    expect(canUsePrefixTreeView({ ...base, q: '10.1' })).toBe(false);
   });
 });

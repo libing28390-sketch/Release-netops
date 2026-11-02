@@ -278,38 +278,38 @@ const HomePage: React.FC<HomePageProps> = ({
   ];
 
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-6">
+    <div className="w-full p-6 max-w-7xl mx-auto space-y-6">
       {/* ════════ 1. Title + Inline Metrics ════════ */}
       <motion.div
-        initial={{ opacity: 0, y: -6 }}
-        animate={{ opacity: 1, y: 0 }}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
         transition={{ duration: 0.25 }}
         className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b pb-5"
         style={{ borderColor: 'var(--card-border)' }}
       >
-        <div>
+        <div className="min-w-0 flex-1">
           <h1 className="nx-page-title" style={{ color: 'var(--heading-text)' }}>
             {zh ? '你好，欢迎回来' : 'Welcome back'}
           </h1>
-          <p className="nx-page-description mt-1" style={{ color: 'var(--muted-text)' }}>
-            {zh
-              ? `今日网络 · ${stats.total} 台设备 · ${stats.online} 台在线 · ${stats.critical} 条严重告警`
-              : `Today · ${stats.total} devices · ${stats.online} online · ${stats.critical} critical alerts`}
+          {/* Loading/error text replaces the summary instead of adding a row
+              that collapses and pulls every card upward when loading ends. */}
+          <p
+            className="nx-page-description mt-1 min-h-[3em] sm:min-h-[1.5em]"
+            style={{ color: !deviceSummaryLoading && deviceSummaryError ? 'var(--ui-warning)' : 'var(--muted-text)' }}
+            role="status"
+          >
+            {deviceSummaryLoading && !deviceSummary
+              ? (zh ? '正在加载设备统计…' : 'Loading device summary…')
+              : !deviceSummaryLoading && deviceSummaryError
+                ? (deviceSummary
+                  ? (zh ? '设备统计刷新失败，显示最近一次数据' : 'Device summary refresh failed; showing the latest data')
+                  : (zh ? '设备统计加载失败，请稍后重试' : 'Device summary failed to load; try again later'))
+                : (zh
+                  ? `今日网络 · ${stats.total} 台设备 · ${stats.online} 台在线 · ${stats.critical} 条严重告警`
+                  : `Today · ${stats.total} devices · ${stats.online} online · ${stats.critical} critical alerts`)}
           </p>
-          {deviceSummaryLoading && !deviceSummary && (
-            <p className="mt-1 text-[11px]" style={{ color: 'var(--dim-text)' }} role="status">
-              {zh ? '正在加载设备统计…' : 'Loading device summary…'}
-            </p>
-          )}
-          {!deviceSummaryLoading && deviceSummaryError && (
-            <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400" role="status">
-              {deviceSummary
-                ? (zh ? '设备统计刷新失败，显示最近一次数据' : 'Device summary refresh failed; showing the latest data')
-                : (zh ? '设备统计加载失败，请稍后重试' : 'Device summary failed to load; try again later')}
-            </p>
-          )}
         </div>
-        <div className="flex items-center gap-2 text-[11px]" style={{ color: 'var(--dim-text)' }}>
+        <div className="flex min-h-7 shrink-0 items-center gap-2 text-[11px]" style={{ color: 'var(--dim-text)' }}>
           {stats.hostname && (
             <span className="px-2.5 py-1 rounded-full" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
               {stats.hostname}
@@ -331,8 +331,8 @@ const HomePage: React.FC<HomePageProps> = ({
 
       {/* ════════ 2. Stat Blocks — 4 cols ════════ */}
       <motion.div
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
         transition={{ duration: 0.3, delay: 0.04 }}
         className="grid grid-cols-2 sm:grid-cols-4 gap-3.5"
       >
@@ -367,8 +367,8 @@ const HomePage: React.FC<HomePageProps> = ({
 
       {/* ════════ 3. Module Grid — 4 cols card nav (12 Modules) ════════ */}
       <motion.div
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
         transition={{ duration: 0.3, delay: 0.08 }}
         className="grid grid-cols-2 sm:grid-cols-4 gap-3"
       >
@@ -377,8 +377,8 @@ const HomePage: React.FC<HomePageProps> = ({
           return (
             <motion.button
               key={app.id}
-              initial={{ opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
               transition={{ duration: 0.2, delay: 0.06 + 0.025 * idx }}
               onClick={() => navigate(app.path)}
               className="group flex items-center gap-3 rounded-xl px-3.5 py-3 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 transition-all duration-150 text-left"
@@ -409,8 +409,8 @@ const HomePage: React.FC<HomePageProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         {/* Left (2 cols): System Platform Overview */}
         <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
           transition={{ duration: 0.3, delay: 0.18 }}
           className="lg:col-span-2 rounded-xl p-5 space-y-4"
           style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: '12px', boxShadow: '0 4px 16px rgba(0,0,0,0.04)' }}
@@ -462,8 +462,8 @@ const HomePage: React.FC<HomePageProps> = ({
 
         {/* Right (1 col): Quick Actions */}
         <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
           transition={{ duration: 0.3, delay: 0.22 }}
           className="rounded-xl p-5 space-y-4"
           style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: '12px', boxShadow: '0 4px 16px rgba(0,0,0,0.04)' }}

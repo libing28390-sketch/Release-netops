@@ -1,4 +1,5 @@
 import type { SessionUser } from '../../types';
+import type { AssetChassisMember } from '../../components/AssetChassisMembers';
 
 export type SshAlgorithmProfile = 'auto' | 'modern' | 'legacy_compat' | 'legacy_break_glass';
 
@@ -136,6 +137,8 @@ export interface Asset {
   placement?: AssetPlacement | null;
   web_profiles?: WebAccessProfile[];
   remote_desktop_profiles?: RemoteDesktopProfile[];
+  chassis_members?: AssetChassisMember[];
+  serial_number_source?: string;
 }
 
 export interface AssetSummary {

@@ -30,6 +30,7 @@ from netmiko import ConnectHandler, NetmikoAuthenticationException
 from database import get_db_connection, _SERIAL_PK, _USE_PG, init_db
 from core.scheduler_lock import acquire_scheduler_lock
 from core.crypto import decrypt_credential
+from core.tenant_policy import DEFAULT_TENANT_ID
 from services.vault_service import resolve_device_credentials
 from services.network_access_limiter import limited_connect_handler
 from drivers.ssh_compat import build_netmiko_compatibility_kwargs
@@ -481,6 +482,9 @@ def _normalize_arp_record(record: dict[str, Any], device_info: dict[str, Any]) -
         'source_device_id': device_info.get('id'),
         'source_device': device_info.get('hostname') or device_info.get('ip_address'),
     }
+    vrf_context_status, vrf_value = _explicit_vrf_context(record)
+    normalized['vrf_context_status'] = vrf_context_status
+    normalized['vrf'] = vrf_value
     entry_type = _record_value(record, 'type', 'entry_type', 'arp_type', 'kind')
     flags = _record_value(record, 'flags', 'flag', 'arp_flags')
     if entry_type not in (None, ''):
@@ -516,6 +520,122 @@ def _normalize_arp_record(record: dict[str, Any], device_info: dict[str, Any]) -
             normalized['vlan'] = str(interface_vlan)
             normalized['vlan_source'] = 'arp_interface'
     return normalized
+
+
+def _explicit_vrf_context(record: dict[str, Any]) -> tuple[str, str]:
+    """Keep an explicit VRF claim separate from a missing/default context."""
+    context_status = str(_record_value(record, 'vrf_context_status') or '').strip().lower()
+    if context_status in {'explicit_global', 'global'}:
+        return 'explicit_global', ''
+
+    raw = _record_value(
+        record, 'vrf_id', 'vrf_name', 'vrf', 'routing_instance',
+        'virtual_router', 'address_space', 'vrf_context',
+    )
+    if isinstance(raw, dict):
+        raw = raw.get('vrf_id') or raw.get('vrf_name') or raw.get('vrf_context')
+    value = str(raw or '').strip()
+    normalized = value.lower().replace('-', '_').replace(' ', '_')
+    if normalized in {'global', 'global_table', 'default', 'default_vrf', 'public'}:
+        return 'explicit_global', ''
+    if context_status == 'explicit_vrf' and value:
+        return 'explicit_vrf', value
+    if value and normalized not in {'unknown', 'n_a', 'na', '--', 'none'}:
+        return 'explicit_vrf', value
+    return 'unknown', ''
+
+
+def _endpoint_vrf_key(record: dict[str, Any]) -> tuple[str, str] | None:
+    """Return a comparable VRF key only when the source states it explicitly."""
+    context_status, vrf_value = _explicit_vrf_context(record)
+    if context_status == 'explicit_global':
+        return ('explicit_global', '')
+    if context_status == 'explicit_vrf' and vrf_value:
+        return ('explicit_vrf', vrf_value.strip().casefold())
+    return None
+
+
+def _canonical_endpoint_vrf_key(
+    conn, tenant_id: str, vrf_key: tuple[str, str] | None,
+) -> tuple[str, str] | None:
+    """Canonicalize an explicit VRF name/id to the tenant's VRF id."""
+    if vrf_key is None or vrf_key[0] == 'explicit_global':
+        return vrf_key
+    value = str(vrf_key[1] or '').strip().casefold()
+    if not value:
+        return None
+    rows = conn.execute(
+        """SELECT id FROM vrfs
+             WHERE COALESCE(tenant_id, 'tenant-default') = ?
+               AND (LOWER(id) = ? OR LOWER(vrf_name) = ?)""",
+        (str(tenant_id or DEFAULT_TENANT_ID), value, value),
+    ).fetchall()
+    ids = {str(row['id'] or '') for row in rows if row['id']}
+    if len(ids) != 1:
+        return None
+    return ('explicit_vrf', next(iter(ids)))
+
+
+def endpoint_vlan_vrf_key(
+    conn, tenant_id: str, site_id: str, vlan: Any,
+) -> tuple[str, str] | None:
+    """Resolve a VLAN to a VRF only when active IPAM associations are unique.
+
+    L2 MAC tables normally have no VRF column.  A site/tenant/VLAN may supply
+    an association key when all active, VLAN-linked prefixes resolve to the
+    same canonical VRF id.  The returned key is for matching only; it does not
+    change the source observation's unknown VRF context.
+    """
+    normalized_tenant = str(tenant_id or DEFAULT_TENANT_ID).strip()
+    normalized_site = str(site_id or '').strip()
+    vlan_id = _parse_vlan_id(vlan)
+    if not normalized_tenant or not normalized_site or vlan_id is None:
+        return None
+    rows = conn.execute(
+        """SELECT p.vrf_id, v.vrf_name, v.tenant_id AS vrf_tenant_id
+             FROM prefixes p
+             JOIN vlans vl ON vl.id = p.vlan_id
+             LEFT JOIN vrfs v ON v.id = p.vrf_id
+            WHERE COALESCE(p.tenant_id, 'tenant-default') = ?
+              AND COALESCE(p.site_id, '') = ?
+              AND COALESCE(vl.tenant_id, 'tenant-default') = ?
+              AND COALESCE(vl.site_id, '') = ?
+              AND vl.vlan_id = ?
+              AND LOWER(COALESCE(vl.status, 'active')) = 'active'
+              AND COALESCE(p.is_active, 1) = 1
+              AND LOWER(COALESCE(p.status, 'active')) = 'active'""",
+        (normalized_tenant, normalized_site, normalized_tenant, normalized_site, vlan_id),
+    ).fetchall()
+    if not rows:
+        return None
+
+    keys: set[tuple[str, str]] = set()
+    for row in rows:
+        vrf_id = str(row['vrf_id'] or '').strip()
+        if not vrf_id:
+            keys.add(('explicit_global', ''))
+            continue
+        vrf_tenant_id = str(row['vrf_tenant_id'] or '').strip()
+        if (
+            not row['vrf_name']
+            or (vrf_tenant_id and vrf_tenant_id != normalized_tenant)
+        ):
+            return None
+        keys.add(('explicit_vrf', vrf_id))
+    return next(iter(keys)) if len(keys) == 1 else None
+
+
+def _endpoint_vlan_key(value: Any) -> str:
+    vlan_id = _parse_vlan_id(value)
+    return str(vlan_id) if vlan_id is not None else ''
+
+
+def _canonical_endpoint_ip(value: Any) -> str:
+    text = str(value or '').strip().split('/', 1)[0].strip()
+    try:
+        return str(ipaddress.ip_address(text))
+    except ValueError:
+        return ''
 
 
 _ARP_OUTPUT_MAC_RE = re.compile(
@@ -4291,7 +4411,17 @@ def _load_arp_sweep_devices(
     skipped_backoff = 0
 
     for device in all_eligible:
-        candidate = _prepare_arp_candidate(device, svi_devices, respect_collection_policy=True)
+        # The role-default collection plan enables ARP for switch/access roles
+        # only when an SVI has been observed.  Pass that evidence into the plan
+        # resolver; the live locator has a separate capability-based path.
+        candidate_input = dict(device)
+        candidate_input['_has_svi'] = (
+            bool(candidate_input.get('_has_svi'))
+            or str(candidate_input.get('id') or '') in svi_devices
+        )
+        candidate = _prepare_arp_candidate(
+            candidate_input, svi_devices, respect_collection_policy=True,
+        )
         if candidate is None:
             continue
         state = state_by_device.get(str(candidate.get('id') or ''), {})
@@ -4559,6 +4689,8 @@ def _persist_arp_device_entries(device_info: dict, entries: list[dict]) -> dict[
                 'interface': entry.get('interface') or '',
                 'vlan': entry.get('vlan') or '',
                 'vlan_source': entry.get('vlan_source') or 'unknown',
+                'vrf': entry.get('vrf') or '',
+                'vrf_context_status': entry.get('vrf_context_status') or 'unknown',
             }
             conn.execute(
                 f'''INSERT INTO arp_cache
@@ -4609,6 +4741,8 @@ def _persist_arp_device_entries(device_info: dict, entries: list[dict]) -> dict[
                     'device_id': device_id,
                     'device': entry.get('source_device') or '',
                     'interface': entry.get('interface') or '',
+                    'vrf': entry.get('vrf') or '',
+                    'vrf_context_status': entry.get('vrf_context_status') or 'unknown',
                 },
                 'cached_at': cached_at,
                 'created_at_epoch': now_ts,
@@ -4865,6 +4999,8 @@ def _run_arp_sweep_locked(device_ids: set[str] | None = None) -> dict[str, Any]:
                     'interface': e['interface'],
                     'vlan': e.get('vlan', ''),
                     'vlan_source': e.get('vlan_source', 'unknown'),
+                    'vrf': e.get('vrf') or '',
+                    'vrf_context_status': e.get('vrf_context_status') or 'unknown',
                 }
                 conn.execute(
                     '''INSERT INTO arp_cache (target_ip, mac, vlan_id, arp_source, cached_at, expires_at, source_device_id)
@@ -4913,6 +5049,8 @@ def _run_arp_sweep_locked(device_ids: set[str] | None = None) -> dict[str, Any]:
                     'device_id': e['source_device_id'],
                     'device': e['source_device'],
                     'interface': e['interface'],
+                    'vrf': e.get('vrf') or '',
+                    'vrf_context_status': e.get('vrf_context_status') or 'unknown',
                 },
                 'cached_at': cached_at,
                 'created_at_epoch': now_ts,
@@ -5067,6 +5205,8 @@ def get_arp_table() -> dict[str, Any]:
                     'vlan': str(vlan_id or ''),
                     'vlan_id': vlan_id,
                     'vlan_source': source.get('vlan_source') or ('mac_table' if vlan_id else 'unknown'),
+                    'vrf': str(source.get('vrf') or ''),
+                    'vrf_context_status': str(source.get('vrf_context_status') or 'unknown'),
                     'vendor': lookup_vendor(mac_raw),
                     'interface': source.get('interface', ''),
                     'device': source.get('device', ''),
@@ -5105,6 +5245,8 @@ def get_arp_table() -> dict[str, Any]:
             'vlan': str(vlan_id or ''),
             'vlan_id': vlan_id,
             'vlan_source': 'arp_table' if row['vlan_id'] else ('mac_table' if vlan_id else 'unknown'),
+            'vrf': '',
+            'vrf_context_status': 'unknown',
             'vendor': lookup_vendor(mac_raw),
             'interface': row['interface_name'] or '',
             'device': row['device_hostname'] or '',
@@ -5337,6 +5479,131 @@ def _resolve_endpoint_site_id(
     return lookup_site(site_hint)
 
 
+def _load_endpoint_device_contexts(conn, device_ids: set[str]) -> dict[str, dict[str, Any]]:
+    """Resolve source devices to tenant/site scope without using hostnames as sites."""
+    normalized_ids = sorted({str(value or '').strip() for value in device_ids if str(value or '').strip()})
+    if not normalized_ids:
+        return {}
+    placeholders = ','.join('?' for _ in normalized_ids)
+    device_rows = conn.execute(
+        f"SELECT id, tenant_id, ip_address FROM devices WHERE id IN ({placeholders})",
+        tuple(normalized_ids),
+    ).fetchall()
+    site_tenants = {
+        str(row['id']): str(row['tenant_id'] or '')
+        for row in conn.execute('SELECT id, tenant_id FROM sites').fetchall()
+    }
+    contexts: dict[str, dict[str, Any]] = {}
+    for row in device_rows:
+        device_id = str(row['id'] or '')
+        site_id = _resolve_endpoint_site_id(conn, device_id)
+        device_tenant = str(row['tenant_id'] or '').strip()
+        site_tenant = str(site_tenants.get(site_id) or '').strip() if site_id else ''
+        scope_conflict = bool(device_tenant and site_tenant and device_tenant != site_tenant)
+        contexts[device_id] = {
+            'tenant_id': device_tenant or site_tenant or DEFAULT_TENANT_ID,
+            'site_id': site_id,
+            'scope_valid': bool(site_id) and not scope_conflict,
+            'device_ip': _canonical_endpoint_ip(row['ip_address']),
+        }
+    return contexts
+
+
+def _endpoint_scope_relation(conn, existing: dict[str, Any], incoming: dict[str, Any]) -> str:
+    """Compare terminal-cache scopes without treating missing VRF as global."""
+    existing_site_id = _resolve_endpoint_site_id(conn, None, existing.get('site'))
+    incoming_site_id = str(incoming.get('site') or '').strip()
+
+    existing_site_tenant = ''
+    if existing_site_id:
+        site_row = conn.execute('SELECT tenant_id FROM sites WHERE id = ?', (existing_site_id,)).fetchone()
+        existing_site_tenant = str(site_row['tenant_id'] or '').strip() if site_row else ''
+    existing_device_id = str(existing.get('switch_id') or '').strip()
+    existing_device_tenant = ''
+    if existing_device_id:
+        device_row = conn.execute(
+            'SELECT tenant_id FROM devices WHERE id = ?', (existing_device_id,),
+        ).fetchone()
+        existing_device_tenant = str(device_row['tenant_id'] or '').strip() if device_row else ''
+    existing_tenant_id = existing_site_tenant or existing_device_tenant or DEFAULT_TENANT_ID
+    incoming_tenant_id = str(incoming.get('tenant_id') or DEFAULT_TENANT_ID).strip()
+    existing_vrf_key = _canonical_endpoint_vrf_key(
+        conn, existing_tenant_id, _endpoint_vrf_key(existing),
+    )
+    incoming_vrf_key = _canonical_endpoint_vrf_key(
+        conn, incoming_tenant_id, _endpoint_vrf_key(incoming),
+    )
+
+    if existing_site_id and incoming_site_id and existing_site_id != incoming_site_id:
+        return 'conflict'
+    if existing_tenant_id and incoming_tenant_id and existing_tenant_id != incoming_tenant_id:
+        return 'conflict'
+    if existing_vrf_key is not None and incoming_vrf_key is not None and existing_vrf_key != incoming_vrf_key:
+        return 'conflict'
+
+    if (
+        existing_site_id and incoming_site_id
+        and existing_tenant_id and incoming_tenant_id
+        and existing_vrf_key is not None and incoming_vrf_key is not None
+        and existing_site_id == incoming_site_id
+        and existing_tenant_id == incoming_tenant_id
+        and existing_vrf_key == incoming_vrf_key
+    ):
+        return 'same'
+    return 'unknown'
+
+
+def _classify_endpoint_port(
+    interface_row: dict[str, Any] | None,
+    *,
+    is_topology_link: bool = False,
+) -> str:
+    """Require positive interface evidence before calling a MAC port access."""
+    if not interface_row:
+        return 'unknown'
+    if (
+        is_topology_link
+        or _trace_interface_is_aggregation(interface_row)
+        or str(interface_row.get('switchport_mode') or '').strip().lower()
+        in {'trunk', 'tagged', 'hybrid'}
+    ):
+        return 'uplink'
+    if _trace_access_evidence(interface_row):
+        return 'access'
+    return 'unknown'
+
+
+def endpoint_access_port_evidence(conn, source_device_id: str, interface_name: str) -> str:
+    """Read-only proof that a device/interface is an edge port.
+
+    Returns ``access`` only for an explicitly access/untagged CMDB interface
+    with no topology-uplink, bundle, or trunk evidence.  ``unknown`` is a
+    fail-closed result for absent device/interface metadata.
+    """
+    device_id = str(source_device_id or '').strip()
+    raw_name = str(interface_name or '').strip()
+    normalized_name = normalize_interface_name(raw_name).strip().lower()
+    if not device_id or not normalized_name:
+        return 'unknown'
+
+    topology_rows = conn.execute(
+        """SELECT source_port AS interface_name FROM topology_links WHERE source_device_id = ?
+           UNION ALL
+           SELECT target_port AS interface_name FROM topology_links WHERE target_device_id = ?""",
+        (device_id, device_id),
+    ).fetchall()
+    is_topology_link = any(
+        normalize_interface_name(str(row['interface_name'] or '')).strip().lower() == normalized_name
+        for row in topology_rows
+    )
+    identity = _load_trace_port_identity(conn, device_id, raw_name)
+    if not identity.get('has_interface_record'):
+        return 'uplink' if is_topology_link else 'unknown'
+    if is_topology_link or identity.get('is_aggregation') or identity.get('is_trunk'):
+        return 'uplink'
+    return 'access' if _trace_identity_confirms_access_terminal(identity) else 'unknown'
+
+
 def _set_cached_endpoint(
     ip: str, mac: str, device_id: str, port: str,
     vlan: str = '', site: str = '', confidence: str = '95%',
@@ -5354,8 +5621,38 @@ def _set_cached_endpoint(
         conn = get_db_connection()
         try:
             canonical_site_id = _resolve_endpoint_site_id(conn, device_id, site)
-            existing = conn.execute("SELECT first_seen, switch_id, switch_port, vlan FROM network_endpoints WHERE ip = ?", (ip,)).fetchone()
+            device_context = _load_endpoint_device_contexts(
+                conn, {str(device_id or '').strip()} if str(device_id or '').strip() else set(),
+            ).get(str(device_id or '').strip(), {})
+            site_row = conn.execute(
+                'SELECT tenant_id FROM sites WHERE id = ?', (canonical_site_id,),
+            ).fetchone() if canonical_site_id else None
+            tenant_id = str(
+                device_context.get('tenant_id')
+                or (site_row['tenant_id'] if site_row else '')
+                or DEFAULT_TENANT_ID
+            )
+            vrf_context_status, normalized_vrf = _explicit_vrf_context({'vrf': vrf})
+            stored_vrf = 'global' if vrf_context_status == 'explicit_global' else normalized_vrf
+            incoming_scope = {
+                'tenant_id': tenant_id,
+                'site': canonical_site_id,
+                'vrf': stored_vrf,
+                'vrf_context_status': vrf_context_status,
+            }
+            existing = conn.execute(
+                """SELECT first_seen, switch_id, switch_port, vlan, vrf, site, is_active
+                     FROM network_endpoints WHERE ip = ?""",
+                (ip,),
+            ).fetchone()
             if existing:
+                relation = _endpoint_scope_relation(conn, dict(existing), incoming_scope)
+                if relation != 'same':
+                    logger.info(
+                        "[IPLocator] Skipping endpoint cache update for %s because scope is %s",
+                        ip, relation,
+                    )
+                    return
                 first_seen = existing['first_seen']
                 old_sw = existing['switch_id']
                 old_port = existing['switch_port']
@@ -5385,8 +5682,12 @@ def _set_cached_endpoint(
                        source_type = excluded.source_type,
                        confidence = excluded.confidence,
                        last_seen = excluded.last_seen,
-                       is_active = 1''',
-                (uid, ip, mac, hostname, vendor or lookup_vendor(mac), os_type, asset_type, device_id, port, vlan, vrf, canonical_site_id, source_type, confidence, first_seen, last_seen),
+                       is_active = 1
+                   WHERE COALESCE(network_endpoints.site, '') <> ''
+                     AND network_endpoints.site = excluded.site
+                     AND COALESCE(network_endpoints.vrf, '') <> ''
+                     AND network_endpoints.vrf = excluded.vrf''',
+                (uid, ip, mac, hostname, vendor or lookup_vendor(mac), os_type, asset_type, device_id, port, vlan, stored_vrf, canonical_site_id, source_type, confidence, first_seen, last_seen),
             )
             conn.commit()
         except Exception:
@@ -5416,6 +5717,7 @@ def _normalize_mac_table_snapshot(records: list[dict], device_info: dict) -> lis
         port = str(_record_value(record, 'port', 'interface', 'destination_port') or '').strip()
         if len(mac) != 12 or not port:
             return None
+        vrf_context_status, vrf_value = _explicit_vrf_context(record)
         normalized_records.append({
             'mac': mac,
             'vlan': str(_record_value(record, 'vlan', 'vlan_id') or '').strip(),
@@ -5423,6 +5725,8 @@ def _normalize_mac_table_snapshot(records: list[dict], device_info: dict) -> lis
             'type': str(_record_value(record, 'type', 'entry_type') or '').strip(),
             'switch_id': device_id,
             'switch_name': device_name,
+            'vrf_context_status': vrf_context_status,
+            'vrf': vrf_value,
         })
     return normalized_records or None
 
@@ -6528,11 +6832,28 @@ def run_endpoint_collector(
                 logger.error("[Endpoint Collector] Error syncing IP Inventory after empty MAC collection: %s", exc)
         return
 
-    # 3. 收集 LLDP 邻居以判定上联口
+    # 3. 收集 LLDP、CMDB 站点/租户和接口证据。
+    arp_source_device_ids = {
+        str(item.get('device_id') or '').strip() for item in arp_entries
+        if str(item.get('device_id') or '').strip()
+    }
+    mac_source_device_ids = {
+        str(item.get('switch_id') or '').strip() for item in all_mac_records
+        if str(item.get('switch_id') or '').strip()
+    }
+    endpoint_context_device_ids = (
+        arp_source_device_ids
+        | mac_source_device_ids
+        | {str(device.get('id') or '').strip() for device in all_eligible if device.get('id')}
+    )
     conn = get_db_connection()
     uplink_ports = set()
-    interface_modes: dict[tuple[str, str], str] = {}
+    interface_rows_by_port: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    device_contexts: dict[str, dict[str, Any]] = {}
+    interface_ips_by_scope: dict[tuple[str, str, tuple[str, str]], set[str]] = {}
+    interface_vrf_cache: dict[tuple[str, str], tuple[str, str] | None] = {}
     try:
+        device_contexts = _load_endpoint_device_contexts(conn, endpoint_context_device_ids)
         rows = conn.execute("SELECT source_device_id, source_port, target_device_id, target_port FROM topology_links").fetchall()
         for r in rows:
             if r['source_device_id'] and r['source_port']:
@@ -6540,79 +6861,209 @@ def run_endpoint_collector(
             if r['target_device_id'] and r['target_port']:
                 uplink_ports.add((r['target_device_id'], normalize_interface_name(r['target_port']).lower()))
         interface_rows = conn.execute(
-            "SELECT device_id, interface_name, switchport_mode FROM interfaces"
+            """SELECT device_id, interface_name, interface_type, switchport_mode,
+                      access_vlan, primary_ip, ip_address, vrf_id
+                 FROM interfaces"""
         ).fetchall()
         for row in interface_rows:
-            key = (str(row['device_id'] or ''), normalize_interface_name(row['interface_name']).lower())
-            interface_modes[key] = str(row['switchport_mode'] or '').strip().lower()
+            device_id = str(row['device_id'] or '')
+            port_key = (device_id, normalize_interface_name(row['interface_name']).lower())
+            interface_rows_by_port.setdefault(port_key, []).append(dict(row))
+            scope = device_contexts.get(device_id) or {}
+            if not scope.get('scope_valid'):
+                continue
+            raw_interface_vrf = str(row['vrf_id'] or '').strip()
+            interface_vrf_cache_key = (str(scope['tenant_id']), raw_interface_vrf)
+            if not raw_interface_vrf:
+                interface_vrf_key = ('explicit_global', '')
+            else:
+                if interface_vrf_cache_key not in interface_vrf_cache:
+                    interface_vrf_cache[interface_vrf_cache_key] = _canonical_endpoint_vrf_key(
+                        conn, str(scope['tenant_id']), ('explicit_vrf', raw_interface_vrf),
+                    )
+                interface_vrf_key = interface_vrf_cache[interface_vrf_cache_key]
+            if interface_vrf_key is None:
+                continue
+            scope_key = (str(scope['tenant_id']), str(scope['site_id']), interface_vrf_key)
+            for field in ('primary_ip', 'ip_address'):
+                address = _canonical_endpoint_ip(row[field])
+                if address:
+                    interface_ips_by_scope.setdefault(scope_key, set()).add(address)
+        for scope in device_contexts.values():
+            if not scope.get('scope_valid') or not scope.get('device_ip'):
+                continue
+            # devices.ip_address is the management/default-table address. It
+            # is not evidence that the same IP is owned in every VRF.
+            scope_key = (str(scope['tenant_id']), str(scope['site_id']), ('explicit_global', ''))
+            interface_ips_by_scope.setdefault(scope_key, set()).add(str(scope['device_ip']))
     except Exception as e:
         logger.debug(f"[Endpoint Collector] Error querying topology links: {e}")
+        uplink_ports = set()
+        interface_rows_by_port = {}
+        device_contexts = {}
+        interface_ips_by_scope = {}
     finally:
         conn.close()
 
-    # 4. 对比匹配
-    mac_counts: dict[tuple[str, str], int] = {}
-    for item in all_mac_records:
-        key = (str(item.get('switch_id') or ''), normalize_interface_name(item.get('port')).lower())
-        mac_counts[key] = mac_counts.get(key, 0) + 1
+    # L2 MAC rows usually have no VRF field. Use a VLAN mapping only as a
+    # join key, and only when active IPAM VLAN-linked prefixes resolve it to
+    # one canonical VRF. The source MAC record itself remains VRF-unknown.
+    association_conn = get_db_connection()
+    vlan_vrf_cache: dict[tuple[str, str, str], tuple[str, str] | None] = {}
+    explicit_vrf_cache: dict[tuple[str, tuple[str, str]], tuple[str, str] | None] = {}
 
-    mac_to_locations = {}
-    for rec in all_mac_records:
-        mac = rec['mac']
-        switch_id = rec['switch_id']
-        port_norm = normalize_interface_name(rec['port']).lower()
+    def explicit_vrf_key(record: dict[str, Any], tenant_id: str) -> tuple[str, str] | None:
+        source_key = _endpoint_vrf_key(record)
+        if source_key is None or source_key[0] == 'explicit_global':
+            return source_key
+        cache_key = (tenant_id, source_key)
+        if cache_key not in explicit_vrf_cache:
+            explicit_vrf_cache[cache_key] = _canonical_endpoint_vrf_key(
+                association_conn, tenant_id, source_key,
+            )
+        return explicit_vrf_cache[cache_key]
 
-        mode = interface_modes.get((str(switch_id), port_norm), '')
-        is_bundle = any(kw in port_norm for kw in ('po', 'port-channel', 'lag', 'eth-trunk'))
-        is_trunk = mode in {'trunk', 'tagged', 'hybrid'}
-        is_access_with_single_mac = mode in {'access', 'untagged'} and mac_counts.get((str(switch_id), port_norm), 0) <= 1
-        is_uplink = (switch_id, port_norm) in uplink_ports or is_bundle or (is_trunk and not is_access_with_single_mac)
-        rec['is_uplink'] = is_uplink
+    def mac_association_vrf_key(
+        record: dict[str, Any], tenant_id: str, site_id: str, vlan_key: str,
+    ) -> tuple[str, str] | None:
+        source_key = _endpoint_vrf_key(record)
+        if source_key is not None:
+            return explicit_vrf_key(record, tenant_id)
+        cache_key = (tenant_id, site_id, vlan_key)
+        if cache_key not in vlan_vrf_cache:
+            vlan_vrf_cache[cache_key] = endpoint_vlan_vrf_key(
+                association_conn, tenant_id, site_id, vlan_key,
+            )
+        return vlan_vrf_cache[cache_key]
 
-        if mac not in mac_to_locations:
-            mac_to_locations[mac] = []
-        mac_to_locations[mac].append(rec)
+    try:
+        mac_to_locations: dict[tuple[str, str, str, tuple[str, str], str], list[dict[str, Any]]] = {}
+        for rec in all_mac_records:
+            mac = _normalize_mac(rec.get('mac'))
+            switch_id = str(rec.get('switch_id') or '').strip()
+            port = str(rec.get('port') or '').strip()
+            port_norm = normalize_interface_name(port).lower()
+            scope = device_contexts.get(switch_id) or {}
+            vlan_key = _endpoint_vlan_key(rec.get('vlan'))
+            if (
+                not mac or not switch_id or not port_norm or not scope.get('scope_valid')
+                or not vlan_key
+            ):
+                continue
+            tenant_id = str(scope['tenant_id'])
+            site_id = str(scope['site_id'])
+            vrf_key = mac_association_vrf_key(rec, tenant_id, site_id, vlan_key)
+            if vrf_key is None:
+                continue
 
-    endpoints_to_save = []
-    for arp in arp_entries:
-        ip = arp['ip']
-        mac_raw = arp['mac_raw']
-        mac_norm = _normalize_mac(mac_raw)
+            port_rows = interface_rows_by_port.get((switch_id, port_norm), [])
+            port_row = port_rows[0] if len(port_rows) == 1 else None
+            is_topology_link = (switch_id, port_norm) in uplink_ports
+            port_evidence = _classify_endpoint_port(port_row, is_topology_link=is_topology_link)
+            if port_evidence != 'access':
+                continue
 
-        locations = mac_to_locations.get(mac_norm, [])
-        if not locations:
-            if arp.get('device_id') and arp.get('interface'):
-                endpoints_to_save.append({
-                    'ip': ip,
-                    'mac': mac_norm,
-                    'device_id': arp['device_id'],
-                    'port': arp['interface'],
-                    'vlan': '',
-                    # The ARP source device label is not a site.  Resolve the
-                    # canonical site id from CMDB at the write boundary.
-                    'site': '',
-                    'confidence': '80% (基于 ARP 学习源)',
-                })
+            key = (tenant_id, site_id, vlan_key, vrf_key, mac)
+            mac_to_locations.setdefault(key, []).append({**rec, 'mac': mac, 'port_evidence': port_evidence})
+
+        endpoints_to_save = []
+        unresolved_scope_ip_addresses: set[str] = set()
+        for arp in arp_entries:
+            ip = _canonical_endpoint_ip(arp.get('ip'))
+            mac_norm = _normalize_mac(arp.get('mac_raw') or arp.get('mac'))
+            if not ip or not mac_norm:
+                continue
+
+            source_device_id = str(arp.get('device_id') or '').strip()
+            scope = device_contexts.get(source_device_id) or {}
+            if not scope.get('scope_valid'):
+                # Keep unassigned/conflicting observations in the raw ARP source;
+                # the IP-unique endpoint projection cannot safely own that scope.
+                unresolved_scope_ip_addresses.add(ip)
+                continue
+            tenant_id = str(scope['tenant_id'])
+            site_id = str(scope['site_id'])
+            vlan_key = _endpoint_vlan_key(arp.get('vlan'))
+            vrf_key = explicit_vrf_key(arp, tenant_id)
+            if vrf_key == ('explicit_global', ''):
+                vrf_value = 'global'
+                vrf_context_status = 'explicit_global'
+            elif vrf_key is not None:
+                vrf_value = vrf_key[1]
+                vrf_context_status = 'explicit_vrf'
+            else:
+                vrf_value = ''
+                vrf_context_status = 'unknown'
+            if vrf_key is not None and ip in interface_ips_by_scope.get((tenant_id, site_id, vrf_key), set()):
+                # Router, switch, and other managed-interface IPs are not terminal
+                # facts even when they appear in a device ARP table.
+                continue
+
+            locations = []
+            if vlan_key and vrf_key is not None:
+                locations = mac_to_locations.get(
+                    (tenant_id, site_id, vlan_key, vrf_key, mac_norm),
+                    [],
+                )
+            unique_access_ports = {
+                (
+                    str(item.get('switch_id') or ''),
+                    normalize_interface_name(str(item.get('port') or '')).lower(),
+                ): item
+                for item in locations
+            }
+            best_loc = next(iter(unique_access_ports.values())) if len(unique_access_ports) == 1 else None
+            endpoints_to_save.append({
+                'ip': ip,
+                'mac': mac_norm,
+                # Keep ARP-only positive observations, but never label the source
+                # router's SVI as the endpoint's final access switch/port.
+                'device_id': str(best_loc.get('switch_id') or '') if best_loc else '',
+                'port': str(best_loc.get('port') or '') if best_loc else '',
+                'vlan': vlan_key or str(arp.get('vlan') or ''),
+                'site': site_id,
+                'tenant_id': tenant_id,
+                'vrf': vrf_value,
+                'vrf_context_status': vrf_context_status,
+                'source_type': 'arp',
+                'confidence': (
+                    '98% (同租户/站点/VLAN/VRF 且有接入端口证据)'
+                    if best_loc else '仅 ARP 正向观察，接入口未确认'
+                ),
+            })
+    finally:
+        association_conn.close()
+
+    # ``network_endpoints.ip`` is globally unique.  Do not let iteration order
+    # choose one of several same-IP observations from different scopes, MACs,
+    # VLANs, VRFs, or access ports.
+    endpoint_candidates_by_ip: dict[str, list[dict[str, Any]]] = {}
+    for endpoint in endpoints_to_save:
+        endpoint_candidates_by_ip.setdefault(str(endpoint.get('ip') or ''), []).append(endpoint)
+    unprojectable_ip_addresses: set[str] = set(unresolved_scope_ip_addresses)
+    deduplicated_endpoints: list[dict[str, Any]] = []
+    for ip_address, candidates in endpoint_candidates_by_ip.items():
+        identities = {
+            (
+                str(candidate.get('tenant_id') or ''),
+                str(candidate.get('site') or ''),
+                _endpoint_vrf_key(candidate),
+                _endpoint_vlan_key(candidate.get('vlan')),
+                _normalize_mac(candidate.get('mac')),
+                str(candidate.get('device_id') or ''),
+                normalize_interface_name(str(candidate.get('port') or '')).lower(),
+            )
+            for candidate in candidates
+        }
+        if ip_address in unprojectable_ip_addresses or len(identities) > 1:
+            unprojectable_ip_addresses.add(ip_address)
+            logger.info(
+                "[Endpoint Collector] Keeping raw evidence for %s because one collection produced multiple scopes or identities",
+                ip_address,
+            )
             continue
-
-        locations.sort(key=lambda x: (x.get('is_uplink', False), x.get('type', '') == 'STATIC'))
-        best_loc = locations[0]
-
-        confidence = '98% (精准接入端口)'
-        if best_loc.get('is_uplink'):
-            confidence = '70% (仅发现上联端口匹配)'
-
-        endpoints_to_save.append({
-            'ip': ip,
-            'mac': mac_norm,
-            'device_id': best_loc['switch_id'],
-            'port': best_loc['port'],
-            'vlan': best_loc['vlan'],
-            # The switch hostname is not a site.  Resolve the canonical site
-            # id from the CMDB device/asset relationship at write time.
-            'site': '',
-            'confidence': confidence,
-        })
+        deduplicated_endpoints.append(candidates[0])
+    endpoints_to_save = deduplicated_endpoints
 
     if device_ids is not None:
         # A scoped run may use globally cached ARP as evidence, but it must not
@@ -6623,18 +7074,61 @@ def run_endpoint_collector(
         try:
             conn = get_db_connection()
             try:
+                candidate_ips = sorted({str(endpoint.get('ip') or '') for endpoint in endpoints_to_save})
+                existing_before_refresh: dict[str, dict[str, Any]] = {}
+                if candidate_ips:
+                    placeholders = ','.join('?' for _ in candidate_ips)
+                    previous_rows = conn.execute(
+                        f"""SELECT ip, first_seen, switch_id, switch_port, vlan, vrf, site, is_active
+                              FROM network_endpoints WHERE ip IN ({placeholders})""",
+                        tuple(candidate_ips),
+                    ).fetchall()
+                    existing_before_refresh = {
+                        str(row['ip']): dict(row) for row in previous_rows
+                    }
                 if device_ids is None:
-                    conn.execute("UPDATE network_endpoints SET is_active = 0")
+                    if unprojectable_ip_addresses:
+                        blocked_placeholders = ','.join('?' for _ in unprojectable_ip_addresses)
+                        conn.execute(
+                            f"UPDATE network_endpoints SET is_active = 0 WHERE ip NOT IN ({blocked_placeholders})",
+                            tuple(sorted(unprojectable_ip_addresses)),
+                        )
+                    else:
+                        conn.execute("UPDATE network_endpoints SET is_active = 0")
                 else:
                     scope_placeholders = ','.join('?' for _ in device_ids)
-                    conn.execute(
-                        f"UPDATE network_endpoints SET is_active = 0 WHERE switch_id IN ({scope_placeholders})",
-                        tuple(device_ids),
-                    )
+                    if unprojectable_ip_addresses:
+                        blocked_placeholders = ','.join('?' for _ in unprojectable_ip_addresses)
+                        conn.execute(
+                            f"UPDATE network_endpoints SET is_active = 0 "
+                            f"WHERE switch_id IN ({scope_placeholders}) AND ip NOT IN ({blocked_placeholders})",
+                            (*tuple(device_ids), *tuple(sorted(unprojectable_ip_addresses))),
+                        )
+                    else:
+                        conn.execute(
+                            f"UPDATE network_endpoints SET is_active = 0 WHERE switch_id IN ({scope_placeholders})",
+                            tuple(device_ids),
+                        )
 
                 last_seen = _beijing_now_iso()
                 for ep in endpoints_to_save:
-                    existing = conn.execute("SELECT first_seen, switch_id, switch_port, vlan FROM network_endpoints WHERE ip = ?", (ep['ip'],)).fetchone()
+                    existing = existing_before_refresh.get(str(ep.get('ip') or ''))
+                    if existing:
+                        relation = _endpoint_scope_relation(conn, existing, ep)
+                        if relation != 'same':
+                            # The table is globally unique by IP.  Preserve an
+                            # existing row from another or unresolved authority
+                            # scope, including its prior active flag; keep the
+                            # new source evidence in the independent ARP/MAC ledgers.
+                            conn.execute(
+                                'UPDATE network_endpoints SET is_active = ? WHERE ip = ?',
+                                (existing['is_active'], ep['ip']),
+                            )
+                            logger.info(
+                                "[Endpoint Collector] Skipping endpoint cache update for %s because scope is %s",
+                                ep['ip'], relation,
+                            )
+                            continue
                     if (
                         device_ids is not None
                         and existing
@@ -6666,6 +7160,9 @@ def run_endpoint_collector(
                         ep.get('device_id'),
                         ep.get('site'),
                     )
+                    normalized_vrf = str(ep.get('vrf') or '')
+                    if ep.get('vrf_context_status') == 'explicit_global':
+                        normalized_vrf = 'global'
 
                     conn.execute(
                         '''INSERT INTO network_endpoints (id, ip, mac, hostname, vendor, os_type, asset_type, switch_id, switch_port, vlan, vrf, site, source_type, confidence, first_seen, last_seen, is_active)
@@ -6684,8 +7181,12 @@ def run_endpoint_collector(
                                source_type = excluded.source_type,
                                confidence = excluded.confidence,
                                last_seen = excluded.last_seen,
-                               is_active = 1''',
-                        (uid, ep['ip'], ep['mac'], ep.get('hostname', ''), lookup_vendor(ep['mac']), ep.get('os_type', ''), ep.get('asset_type', 'host'), ep['device_id'], ep['port'], ep['vlan'], ep.get('vrf', ''), canonical_site_id, ep.get('source_type', 'arp'), ep['confidence'], first_seen, last_seen),
+                               is_active = 1
+                           WHERE COALESCE(network_endpoints.site, '') <> ''
+                             AND network_endpoints.site = excluded.site
+                             AND COALESCE(network_endpoints.vrf, '') <> ''
+                             AND network_endpoints.vrf = excluded.vrf''',
+                        (uid, ep['ip'], ep['mac'], ep.get('hostname', ''), lookup_vendor(ep['mac']), ep.get('os_type', ''), ep.get('asset_type', 'host'), ep['device_id'], ep['port'], ep['vlan'], normalized_vrf, canonical_site_id, ep.get('source_type', 'arp'), ep['confidence'], first_seen, last_seen),
                     )
                 conn.commit()
                 logger.info(f"[Endpoint Collector] Successfully synced {len(endpoints_to_save)} endpoints to Network Source of Truth cache.")

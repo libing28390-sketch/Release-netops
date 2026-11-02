@@ -6,8 +6,26 @@ from services.ipam_service import (
     delete_subnet,
     list_subnets,
     update_subnet,
+    rebuild_prefixes_hierarchy,
 )
 from services.prefix_discovery_service import _now, _upsert_candidate
+
+
+def test_prefix_hierarchy_does_not_cross_site_or_tenant(isolated_db):
+    _seed_prefix_scope()
+    parent = create_subnet(prefix='10.0.0.0/8', tenant_id='tenant-default', site_id='reuse-site-a')
+    local = create_subnet(prefix='10.1.0.0/16', tenant_id='tenant-default', site_id='reuse-site-a')
+    remote = create_subnet(prefix='10.2.0.0/16', tenant_id='tenant-default', site_id='reuse-site-b')
+    with get_db_connection() as conn:
+        conn.execute("INSERT INTO tenants(id,name) VALUES ('tenant-other','Other') ON CONFLICT DO NOTHING")
+        conn.commit()
+    other = create_subnet(prefix='10.3.0.0/16', tenant_id='tenant-other', site_id='reuse-site-a')
+    rebuild_prefixes_hierarchy()
+    with get_db_connection() as conn:
+        parents = {r['id']: r['parent_prefix_id'] for r in conn.execute('SELECT id,parent_prefix_id FROM prefixes').fetchall()}
+    assert parents[local['id']] == parent['id']
+    assert not parents[remote['id']]
+    assert not parents[other['id']]
 
 
 def _seed_prefix_scope() -> None:

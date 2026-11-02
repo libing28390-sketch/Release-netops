@@ -302,6 +302,74 @@ def test_background_arp_sweep_honors_l2_template_while_live_locator_keeps_role_f
     assert live is not None
 
 
+def test_periodic_sweep_passes_svi_evidence_into_default_collection_plan(monkeypatch):
+    devices = [
+        {"id": "access-svi", "role": "access"},
+        {"id": "access-no-svi", "role": "access"},
+        {
+            "id": "access-disabled",
+            "role": "switch",
+            "collection_policy_json": '{"collectors":{"arp":false}}',
+        },
+    ]
+    monkeypatch.setattr(ip_locator_service, "_load_eligible_devices", lambda **_kwargs: devices)
+    monkeypatch.setattr(ip_locator_service, "_load_svi_evidence", lambda: {"access-svi", "access-disabled"})
+    monkeypatch.setattr(ip_locator_service, "_load_arp_collection_state", lambda: {})
+    monkeypatch.setattr(
+        ip_locator_service,
+        "reserve_collector_sweep_batch",
+        lambda *_args, **_kwargs: {"start_cursor": 0, "selected_count": 10},
+    )
+
+    selected, _total, _backoff = ip_locator_service._load_arp_sweep_devices("run-svi")
+
+    assert [device["id"] for device in selected] == ["access-svi"]
+    assert selected[0]["_has_svi"] is True
+    assert selected[0]["_arp_policy_override"] is True
+
+
+def test_endpoint_access_port_evidence_requires_positive_cmdb_fact(isolated_db):
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        conn.execute(
+            "INSERT INTO devices (id, hostname, status, role) VALUES (?, ?, ?, ?)",
+            ("device-port-evidence", "SW-PORT-EVIDENCE", "online", "switch"),
+        )
+        conn.execute(
+            """INSERT INTO interfaces
+               (id, device_id, interface_name, interface_type, switchport_mode, access_vlan)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            ("interface-default-access", "device-port-evidence", "Gi1/0/1", "physical", "access", None),
+        )
+        conn.execute(
+            """INSERT INTO interfaces
+               (id, device_id, interface_name, interface_type, switchport_mode, access_vlan)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            ("interface-explicit-access", "device-port-evidence", "Gi1/0/2", "physical", "access", 10),
+        )
+        conn.execute(
+            """INSERT INTO interfaces
+               (id, device_id, interface_name, interface_type, switchport_mode, access_vlan)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            ("interface-trunk", "device-port-evidence", "Gi1/0/48", "physical", "trunk", None),
+        )
+
+        assert ip_locator_service.endpoint_access_port_evidence(
+            conn, "device-port-evidence", "Gi1/0/1"
+        ) == "unknown"
+        assert ip_locator_service.endpoint_access_port_evidence(
+            conn, "device-port-evidence", "Gi1/0/2"
+        ) == "access"
+        assert ip_locator_service.endpoint_access_port_evidence(
+            conn, "device-port-evidence", "Gi1/0/48"
+        ) == "uplink"
+        assert ip_locator_service.endpoint_access_port_evidence(
+            conn, "device-port-evidence", "Gi1/0/99"
+        ) == "unknown"
+    finally:
+        conn.close()
+
+
 def test_eligible_device_diagnostics_explain_pre_route_exclusions(monkeypatch):
     rows = [
         {"id": "offline", "status": "offline", "platform": "cisco_ios", "has_credentials": True},
@@ -832,7 +900,23 @@ def test_normalize_arp_record_accepts_textfsm_standard_fields():
         "interface": "GE1/0/1",
         "source_device_id": "device-1",
         "source_device": "sw-01",
+        "vrf_context_status": "unknown",
+        "vrf": "",
     }
+
+
+def test_arp_normalizer_retains_explicit_vrf_context_without_defaulting_missing_vrf():
+    global_record = ip_locator_service._normalize_arp_record(
+        {"ip": "192.0.2.1", "mac": "0011.2233.4455", "vrf_name": "global"}, DEVICE,
+    )
+    vrf_record = ip_locator_service._normalize_arp_record(
+        {"ip": "192.0.2.2", "mac": "0011.2233.4466", "vrf_name": "Blue"}, DEVICE,
+    )
+
+    assert global_record["vrf_context_status"] == "explicit_global"
+    assert global_record["vrf"] == ""
+    assert vrf_record["vrf_context_status"] == "explicit_vrf"
+    assert vrf_record["vrf"] == "Blue"
 
 
 def test_targeted_arp_query_uses_published_registry_action_for_bound_device(monkeypatch):
@@ -1136,6 +1220,8 @@ Total matching items on slot 0 displayed = 1
         "type": "dynamic",
         "switch_id": "device-1",
         "switch_name": "sw-01",
+        "vrf_context_status": "unknown",
+        "vrf": "",
     }]
 
 

@@ -23,7 +23,7 @@ const makeProps = (overrides: Record<string, unknown> = {}) => ({
   onClose: vi.fn(),
   isEditMode: false,
   editingAsset: null,
-  form: { ...EMPTY_FORM, hostname: 'asset-01' },
+  form: { ...EMPTY_FORM, hostname: 'asset-01', asset_tag: 'NET-TEST-01', management_ip: '192.0.2.10' },
   setForm: vi.fn(),
   saving: false,
   modalError: null,
@@ -183,6 +183,50 @@ describe('AssetModal lookup states', () => {
     expect(hostname.placeholder).toBe('e.g. host-01');
     expect(hostname.getAttribute('aria-describedby')).toBeTruthy();
     expect(screen.getByText('Network device imports may sync the hostname through SNMP; you can also enter it here.')).toBeTruthy();
+  });
+
+  it('requires asset tag and management IP while allowing missing collected identity fields', async () => {
+    vi.mocked(fetch).mockImplementation(async input => lookupResponse(String(input)));
+    const props = makeProps({ form: { ...EMPTY_FORM, asset_type: 'network_device', asset_tag: 'NET-TEST-01', management_ip: '192.0.2.10' } });
+    const { rerender } = render(<AssetModal {...props} />);
+    expect(screen.getByRole('textbox', { name: 'Asset Tag' })).toHaveProperty('required', true);
+    expect(screen.getByRole('textbox', { name: 'Mgmt IP' })).toHaveProperty('required', true);
+    expect(screen.getByLabelText('Hostname')).toHaveProperty('required', false);
+    expect(screen.getByLabelText('Model')).toHaveProperty('required', false);
+    expect(screen.getAllByRole('button', { name: 'Save' })[0]).toHaveProperty('disabled', false);
+    fireEvent.click(screen.getByRole('button', { name: /More details \(optional\)/ }));
+    expect(screen.getByLabelText('Serial Number')).toHaveProperty('required', false);
+    rerender(<AssetModal {...props} form={{ ...props.form, asset_tag: '', hostname: 'known-name' }} />);
+    expect(screen.getAllByRole('button', { name: 'Save' })[0]).toHaveProperty('disabled', true);
+    rerender(<AssetModal {...props} form={{ ...props.form, management_ip: '' }} />);
+    expect(screen.getAllByRole('button', { name: 'Save' })[0]).toHaveProperty('disabled', true);
+  });
+
+  it('shows required identity markers in edit mode without blocking legacy blanks and keeps scalar SN visible', async () => {
+    vi.mocked(fetch).mockImplementation(async input => lookupResponse(String(input)));
+    const chassisMembers = [
+      { entity_index: 1, entity_name: 'Control board', entity_description: 'Main controller', model: 'CTRL-1', serial_number: 'CHASSIS-SN-1', collected_at: '2026-10-30T08:00:00Z' },
+      { entity_index: 2, entity_name: 'Line card', entity_description: '48-port card', model: 'LC-48', serial_number: 'CHASSIS-SN-2', collected_at: '2026-10-30T08:00:00Z' },
+    ];
+    render(<AssetModal {...makeProps({
+      isEditMode: true,
+      editingAsset: { ...EMPTY_FORM, id: 'legacy-asset', asset_tag: '', management_ip: '', serial_number: 'MANUAL-SCALAR-SN', chassis_members: chassisMembers },
+      form: { ...EMPTY_FORM, asset_tag: '', management_ip: '', serial_number: 'MANUAL-SCALAR-SN' },
+    })} />);
+
+    const assetTag = screen.getByRole('textbox', { name: 'Asset Tag' }) as HTMLInputElement;
+    const managementIp = screen.getByRole('textbox', { name: 'Mgmt IP' }) as HTMLInputElement;
+    expect(assetTag.required).toBe(true);
+    expect(managementIp.required).toBe(true);
+    expect(assetTag.disabled).toBe(true);
+    expect(managementIp.disabled).toBe(true);
+    expect(assetTag.labels?.[0]?.textContent).toContain('*');
+    expect(managementIp.labels?.[0]?.textContent).toContain('*');
+    expect(screen.getAllByRole('button', { name: 'Save' })[0]).toHaveProperty('disabled', false);
+
+    expect(screen.getByRole('textbox', { name: 'Serial Number' })).toHaveProperty('value', 'MANUAL-SCALAR-SN');
+    expect(screen.getByText('CHASSIS-SN-1')).toBeTruthy();
+    expect(screen.getByText('CHASSIS-SN-2')).toBeTruthy();
   });
 
   it('announces the selected credential mode and switches between existing and manual fields', async () => {

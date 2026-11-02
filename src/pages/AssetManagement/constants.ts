@@ -233,7 +233,7 @@ export const SERVER_ONLY_VENDOR_VALUES = [
 ] as const;
 
 export const SSH_ALGORITHM_PROFILE_OPTIONS = [
-  { value: 'auto', label: { zh: '自动（现代优先，兼容安全旧算法）', en: 'Auto (modern first, safe legacy fallback)' } },
+  { value: 'auto', label: { zh: '自动（现代优先，兼容旧算法）', en: 'Auto (modern first, legacy compatibility)' } },
   { value: 'modern', label: { zh: '现代算法（严格）', en: 'Modern algorithms (strict)' } },
   { value: 'legacy_compat', label: { zh: '旧算法兼容（受控）', en: 'Legacy compatibility (controlled)' } },
   { value: 'legacy_break_glass', label: { zh: '极旧设备紧急兼容（高风险）', en: 'Legacy break-glass (high risk)' } },

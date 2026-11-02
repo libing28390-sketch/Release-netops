@@ -1543,7 +1543,7 @@ class PrefixCreate(BaseModel):
     name: str = ''
     gateway: str = ''
     description: str = ''
-    network_type: str = 'server'
+    network_type: str = 'unclassified'
     gateway_device_id: Optional[str] = None
     gateway_interface_id: Optional[str] = None
     traceable: int = 1

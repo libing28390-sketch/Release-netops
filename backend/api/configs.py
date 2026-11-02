@@ -2061,7 +2061,7 @@ async def run_scheduled_backup(
             "JOIN platform_release_actions ba ON ba.release_id = br.id AND ba.action_code = 'get_running_config' "
             "WHERE bp.id = d.platform_profile_id AND UPPER(COALESCE(bp.status, 'ACTIVE')) <> 'ARCHIVED') "
             "AS has_published_backup_action, "
-            "d.config_backup_enabled, d.username, d.password, "
+            "d.config_backup_enabled, d.ssh_algorithm_profile, d.username, d.password, "
             "d.normal_username, d.normal_password, d.admin_username, d.admin_password, d.enable_password, "
             "d.credential_id, d.admin_credential_id, d.credential_source, d.vault_path, d.management_port "
             "FROM devices d LEFT JOIN physical_assets pa ON pa.id = d.asset_id "

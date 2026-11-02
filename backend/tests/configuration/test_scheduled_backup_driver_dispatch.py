@@ -79,3 +79,40 @@ def test_scheduled_backup_routes_cmdb_network_asset_to_vendor_driver(
 def test_unknown_asset_type_still_returns_an_explicit_driver_error():
     with pytest.raises(ValueError, match="No driver found for asset_type: unsupported_kind"):
         DriverRegistry.get_driver("unsupported_kind", {})
+
+
+def test_backup_device_query_preserves_saved_ssh_profiles(isolated_db, monkeypatch):
+    import asyncio
+    from api import configs
+    from database import get_db_connection
+
+    profiles = ("auto", "modern", "legacy_compat")
+    conn = get_db_connection()
+    try:
+        for index, profile in enumerate(profiles):
+            conn.execute(
+                "INSERT INTO devices (id, hostname, ip_address, vendor, platform, status, ssh_algorithm_profile) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (f"backup-profile-{index}", f"backup-profile-{index}", f"192.0.2.{index + 1}",
+                 "Cisco", "cisco_ios", "online", profile),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    class QueryObserved(Exception):
+        pass
+
+    observed = {}
+
+    def capture_scope(_conn, rows, _scope):
+        observed.update({row["id"]: dict(row).get("ssh_algorithm_profile") for row in rows})
+        # Stop before dispatch: this test exercises the real PostgreSQL query,
+        # and must never open a device connection or write a config snapshot.
+        raise QueryObserved
+
+    monkeypatch.setattr(configs.config_backup_policy_service, "get_policy", lambda *_: {"scope": {}})
+    monkeypatch.setattr(configs.config_backup_policy_service, "filter_devices_by_scope", capture_scope)
+    with pytest.raises(QueryObserved):
+        asyncio.run(configs.run_scheduled_backup(policy_id="synthetic-profile-query"))
+    assert observed == {f"backup-profile-{index}": profile for index, profile in enumerate(profiles)}

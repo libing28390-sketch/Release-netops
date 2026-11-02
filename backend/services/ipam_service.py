@@ -15,6 +15,11 @@ from services.ipam_inventory_scope import (
     endpoint_address_key, endpoint_site_id, load_inventory_catalog,
     manual_address_key, match_inventory_prefix,
 )
+from services.ipam_network_scope import (
+    BUSINESS_UTILIZATION_NETWORK_TYPES,
+    INTERCONNECT_NETWORK_TYPES,
+    is_business_utilization_network as _is_business_utilization_network,
+)
 
 from database import get_db_connection
 
@@ -61,7 +66,7 @@ PREFIX_TO_IP_PURPOSE = {
 
 
 def _infer_ip_purpose(network_type: str | None) -> str:
-    return PREFIX_TO_IP_PURPOSE.get(str(network_type or '').strip().lower(), 'business')
+    return PREFIX_TO_IP_PURPOSE.get(str(network_type or '').strip().lower(), 'other')
 
 
 def _utc_now() -> str:
@@ -314,6 +319,7 @@ def _current_cmdb_interface_ip_observations(conn) -> list[dict]:
     rows = conn.execute(
         """SELECT o.device_id, o.normalized_interface_name, o.interface_name,
                   o.ip_address, o.ip_prefix_length, o.interface_type, o.observed_at,
+                  o.admin_status, o.oper_status,
                   d.hostname AS device_hostname, d.ip_address AS device_ip,
                   COALESCE(d.tenant_id, 'tenant-default') AS tenant_id,
                   d.site_id AS device_site_id, d.site AS device_site,
@@ -533,7 +539,7 @@ def rebuild_prefixes_hierarchy(conn=None):
     if conn is None:
         conn = get_db_connection()
     try:
-        rows = conn.execute('SELECT id, prefix, vrf_id FROM prefixes').fetchall()
+        rows = conn.execute('SELECT id, prefix, vrf_id, tenant_id, site_id FROM prefixes').fetchall()
         items = []
         for r in rows:
             try:
@@ -542,6 +548,8 @@ def rebuild_prefixes_hierarchy(conn=None):
                     'id': r['id'],
                     'prefix': r['prefix'],
                     'vrf_id': r['vrf_id'] or '',
+                    'tenant_id': r['tenant_id'] or 'tenant-default',
+                    'site_id': r['site_id'] or '',
                     'net': net,
                     'prefixlen': net.prefixlen,
                 })
@@ -560,6 +568,8 @@ def rebuild_prefixes_hierarchy(conn=None):
                 if i == j:
                     continue
                 if item['vrf_id'] != candidate['vrf_id']:
+                    continue
+                if (item['tenant_id'], item['site_id']) != (candidate['tenant_id'], candidate['site_id']):
                     continue
                 # IPv4 and IPv6 prefixes never nest within each other
                 if item['net'].version != candidate['net'].version:
@@ -1275,10 +1285,13 @@ def generate_interface_prefixes(
                 site_id=candidate['site_id'],
             )
             prefix_id = f'prefix-{uuid.uuid4().hex[:12]}'
-            network_type = 'transit' if (
-                (network.version == 4 and network.prefixlen in (30, 31))
-                or (network.version == 6 and network.prefixlen == 127)
-            ) else 'server'
+            # An address mask or SVI name does not establish business purpose.
+            # Keep unknown purposes reviewable instead of silently calling them
+            # server or transit networks. Explicit loopback names are evidence.
+            interface_names = [str(item.get('interface_name') or '').lower() for item in candidate['interfaces']]
+            network_type = 'loopback' if interface_names and all(
+                name.startswith('loopback') or name.startswith('lo0') for name in interface_names
+            ) else 'unclassified'
             conn.execute(
                 f'''INSERT INTO prefixes
                    (id, prefix, vrf_id, site_id, tenant_id, status, name,
@@ -1368,7 +1381,7 @@ def create_subnet(
     name: str = '',
     gateway: str = '',
     description: str = '',
-    network_type: str = 'server',
+    network_type: str = 'unclassified',
     gateway_device_id: Optional[str] = None,
     gateway_interface_id: Optional[str] = None,
     traceable: int = 1,
@@ -1815,7 +1828,7 @@ def list_ip_inventory(*, site_id: str = 'all', prefix_id: str = '', q: str = '',
                     pass
 
             interface_type = str(observation.get('interface_type') or '').strip().lower()
-            device_type = {
+            observed_device_type = {
                 'loopback': 'loopback',
                 'svi': 'vlan',
                 'tunnel': 'tunnel',
@@ -1824,6 +1837,30 @@ def list_ip_inventory(*, site_id: str = 'all', prefix_id: str = '', q: str = '',
                 f"cmdb-interface-observed:{observation.get('device_id')}:"
                 f"{observation.get('normalized_interface_name')}"
             )
+            generated_records = [
+                item for item in all_items
+                if item.get('_registered_ipam_record')
+                and item.get('source_type') == 'interface_collection'
+                and str(item.get('device_id') or '') == str(observation.get('device_id') or '')
+                and str(item.get('address') or '') == normalized_address
+                and str(item.get('tenant_id') or 'tenant-default') == tenant_id
+                and str(item.get('site_id') or '') == observed_site_id
+                and not item.get('vrf_id')
+            ]
+            if len(generated_records) == 1:
+                # An interface-generated ledger entry and its own snapshot
+                # describe the same address. Keep the ledger ID and allocation
+                # fields; attach the independent observation without another row.
+                if not registered_only:
+                    generated_records[0].update({
+                        'has_interface_observation': True,
+                        'interface_admin_status': str(observation.get('admin_status') or 'unknown'),
+                        'interface_oper_status': str(observation.get('oper_status') or 'unknown'),
+                        'discovered_last_seen': str(observation.get('observed_at') or ''),
+                        'observed_prefix': observed_prefix,
+                        'prefix_match_status': prefix_match_status,
+                    })
+                continue
             all_items.append({
                 'id': observation_id,
                 'subnet_id': '',
@@ -1834,7 +1871,7 @@ def list_ip_inventory(*, site_id: str = 'all', prefix_id: str = '', q: str = '',
                 'device_id': str(observation.get('device_id') or ''),
                 'interface_name': str(observation.get('interface_name') or ''),
                 'mac_address': '',
-                'device_type': device_type,
+                'device_type': observed_device_type,
                 'purpose': 'other',
                 'status': 'active',
                 'description': '',
@@ -1847,6 +1884,8 @@ def list_ip_inventory(*, site_id: str = 'all', prefix_id: str = '', q: str = '',
                 'subnet_name': '',
                 'network_type': '',
                 'source': 'interface_cli',
+                'interface_admin_status': str(observation.get('admin_status') or 'unknown'),
+                'interface_oper_status': str(observation.get('oper_status') or 'unknown'),
                 'is_discovered': True,
                 '_registered_ipam_record': False,
                 'is_prefix_gateway': False,
@@ -1964,16 +2003,16 @@ def list_ip_inventory(*, site_id: str = 'all', prefix_id: str = '', q: str = '',
                 'manual': sum(1 for item in items if str(item.get('source') or '').startswith('manual')),
                 'gateways': sum(1 for item in items if item.get('is_prefix_gateway')),
                 'prefixes': len(prefix_catalog),
-                'interface_observed': sum(1 for item in items if item.get('source') == 'interface_cli'),
+                'interface_observed': sum(1 for item in items if item.get('source') == 'interface_cli' or item.get('has_interface_observation')),
                 'interface_observed_networks': len({
                     str(item.get('observed_prefix') or '')
                     for item in items
-                    if item.get('source') == 'interface_cli' and item.get('observed_prefix')
+                    if (item.get('source') == 'interface_cli' or item.get('has_interface_observation')) and item.get('observed_prefix')
                 }),
                 'interface_unmatched_prefix': sum(1 for item in items if item.get('prefix_match_status') == 'unmatched'),
                 'interface_vrf_review': sum(1 for item in items if item.get('prefix_match_status') == 'vrf_unavailable'),
                 'interface_global_default': sum(1 for item in items if item.get('prefix_match_status') == 'global_default'),
-                'interface_matched': sum(1 for item in items if item.get('source') == 'interface_cli')
+                'interface_matched': sum(1 for item in items if item.get('source') == 'interface_cli' or item.get('has_interface_observation'))
                     - sum(1 for item in items if item.get('prefix_match_status') in {'unmatched', 'vrf_unavailable'}),
             },
         }
@@ -2326,21 +2365,42 @@ def ipam_summary() -> dict:
         conn.close()
 
 
-def get_utilization_analytics() -> dict:
+def get_utilization_analytics(network_scope: str = 'all') -> dict:
     """Return analytics data for IPAM utilization dashboards.
 
-    Shape matches the frontend IPUtilizationTab:
+    ``business`` uses explicitly classified business prefixes; ``all`` keeps
+    the historical capacity report. Every aggregate is computed from one
+    consistent prefix set. Shape matches the frontend IPUtilizationTab:
       { overview, top_utilized_prefixes, site_breakdown, forecast_trend }
     """
+    network_scope = str(network_scope or '').strip().lower()
+    if network_scope not in {'business', 'all'}:
+        raise ValueError('Unsupported IPAM utilization network_scope')
+
     conn = get_db_connection()
     try:
         # ── Per-prefix utilization ──────────────────────────
         rows = conn.execute(
             '''SELECT p.id, p.prefix, p.name, p.status, p.site_id, p.gateway, p.tenant_id,
+                      p.network_type,
                       s.site_name, s.site_code
                FROM prefixes p
                LEFT JOIN sites s ON p.site_id = s.id'''
         ).fetchall()
+        scoped_rows = (
+            [row for row in rows if _is_business_utilization_network(row['network_type'])]
+            if network_scope == 'business'
+            else rows
+        )
+        scope_excluded_prefixes_count = len(rows) - len(scoped_rows)
+        interconnect_prefixes_excluded_count = (
+            sum(
+                str(row['network_type'] or '').strip().lower() in INTERCONNECT_NETWORK_TYPES
+                for row in rows
+            )
+            if network_scope == 'business'
+            else 0
+        )
 
         per_prefix = []
         total_ips_sum = 0
@@ -2349,7 +2409,7 @@ def get_utilization_analytics() -> dict:
         excluded_prefixes_count = 0
         site_agg: dict[str, dict] = {}
 
-        for r in rows:
+        for r in scoped_rows:
             total = _calculate_total_ips(r['prefix'])
             exclusion_reason = _capacity_exclusion_reason(r['prefix'], r['status'])
             capacity_eligible = not exclusion_reason
@@ -2367,6 +2427,7 @@ def get_utilization_analytics() -> dict:
                 'prefix': r['prefix'],
                 'name': r['name'],
                 'status': r['status'],
+                'network_type': r['network_type'] or 'unclassified',
                 'total_ips': total,
                 'used_ips': used_count,
                 'utilization': round(used_count / total * 100, 1) if total > 0 else 0,
@@ -2413,7 +2474,7 @@ def get_utilization_analytics() -> dict:
             row = conn.execute(f'SELECT COUNT(*) as cnt FROM {table}').fetchone()
             return row['cnt'] if row else 0
 
-        prefixes_count = len(per_prefix)
+        prefixes_count = len(scoped_rows)
         ips_count = _count('ip_addresses')
         pools_count = _count('ipam_pools')
         vips_count = _count('ipam_vips')
@@ -2431,13 +2492,16 @@ def get_utilization_analytics() -> dict:
             'utilization_rate': round(used_ips_sum / total_ips_sum * 100, 1) if total_ips_sum > 0 else 0,
             'capacity_prefixes_count': capacity_prefixes_count,
             'excluded_prefixes_count': excluded_prefixes_count,
-            'capacity_policy': 'allocatable_prefixes_excluding_containers_and_point_to_point_or_host_routes',
+            'scope_excluded_prefixes_count': scope_excluded_prefixes_count,
+            'interconnect_prefixes_excluded_count': interconnect_prefixes_excluded_count,
+            'network_scope': network_scope,
+            'capacity_policy': f'{network_scope}_scope_excluding_non_allocatable_prefixes',
         }
 
         # ── Allocation trend for allocatable prefixes (cumulative, by created day) ───
         forecast_trend = []
         day_rows = conn.execute(
-            '''SELECT ip.created_at, p.prefix, p.status AS prefix_status
+            '''SELECT ip.created_at, p.prefix, p.status AS prefix_status, p.network_type
                FROM ip_addresses ip
                LEFT JOIN prefixes p ON p.id = ip.subnet_id
                WHERE ip.created_at IS NOT NULL
@@ -2452,6 +2516,10 @@ def get_utilization_analytics() -> dict:
                 dr['prefix_status'] or '',
             ):
                 continue
+            if network_scope == 'business' and not _is_business_utilization_network(
+                dr['network_type'],
+            ):
+                continue
             day = created_at[:10]
             day_counts[day] = day_counts.get(day, 0) + 1
         cumulative = 0
@@ -2462,6 +2530,7 @@ def get_utilization_analytics() -> dict:
         forecast_trend = forecast_trend[-14:]
 
         return {
+            'network_scope': network_scope,
             'overview': overview,
             'top_utilized_prefixes': top_utilized,
             'site_breakdown': site_breakdown,

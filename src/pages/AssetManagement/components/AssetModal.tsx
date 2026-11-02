@@ -28,6 +28,8 @@ import { ApiError, apiRequest, authHeaders } from '../../../api/http';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
 import { useFocusTrap } from '../../../hooks/useFocusTrap';
 import RemoteDesktopProfileEditor from './RemoteDesktopProfileEditor';
+import { getMissingAssetRequiredFields } from '../requiredFields';
+import { AssetChassisMembers } from '../../../components/AssetChassisMembers';
 
 interface AssetModalProps {
   isOpen: boolean;
@@ -393,7 +395,8 @@ export const AssetModal: React.FC<AssetModalProps> = ({
           {/* Scrollable body */}
           <div className="nx-dialog-body flex-1 space-y-4 overflow-y-auto px-5 py-4">
             <div className="nx-dialog-info rounded-lg border px-3 py-2 text-[11px] leading-relaxed">
-              {zh ? '主机名和资产编号至少填写一项。新设备默认待投产，可先保存再完成凭据验证。' : 'Provide a hostname or asset tag. New devices start in staging so you can save first and verify credentials afterward.'}
+              <span aria-hidden="true" className="font-semibold text-red-600">* </span>
+              {zh ? '表示必填。资产编号、管理 IP 必填；主机名、整机 SN、型号选填。新设备默认待投产，可先保存再完成凭据验证。' : 'Required field. Asset Tag and Management IP are required; hostname, chassis SN and model are optional. New devices start in staging; verify credentials after saving.'}
             </div>
             {isEditMode && (
               <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] leading-4 text-slate-600">
@@ -455,8 +458,9 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                 helper={zh ? '网络设备批量导入时可能通过 SNMP 同步主机名；也可在此手动填写。' : 'Network device imports may sync the hostname through SNMP; you can also enter it here.'}
                 placeholder={zh ? '例如：core-sw-01' : 'e.g. host-01'}
               />
-              <Field label={zh ? '资产编号' : 'Asset Tag'} value={form.asset_tag} onChange={v => setForm(f => ({ ...f, asset_tag: v }))} placeholder="e.g. SRV-BJ-001" disabled={isEditMode} />
-              {showMoreAssetDetails && <Field label={zh ? '序列号 (S/N)' : 'Serial Number'} value={form.serial_number} onChange={v => setForm(f => ({ ...f, serial_number: v }))} disabled={isEditMode} />}
+              <Field label={zh ? '资产编号' : 'Asset Tag'} required value={form.asset_tag} onChange={v => setForm(f => ({ ...f, asset_tag: v }))} placeholder="e.g. SRV-BJ-001" disabled={isEditMode} />
+              {showMoreAssetDetails && <Field label={zh ? '序列号 (S/N)' : 'Serial Number'} value={form.serial_number} onChange={v => setForm(f => ({ ...f, serial_number: v }))} helper={isEditMode ? (zh ? '支持手工修改；有多个机箱 SN 时请在下方机箱列表核对归属。' : 'Editable. When multiple chassis SNs exist, check the member list below.') : undefined} />}
+              {isEditMode && <AssetChassisMembers members={editingAsset?.chassis_members} zh={zh} />}
 
               <div>
                 <label className="block text-xs text-black/30 mb-0.5">{zh ? '厂商' : 'Vendor'}</label>
@@ -521,7 +525,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                   </select>
                 )}
               </div>
-              <Field label={zh ? '型号' : 'Model'} value={form.model} onChange={v => setForm(f => ({ ...f, model: v }))} placeholder="e.g. PowerEdge R750" disabled={isEditMode} />
+              <Field label={zh ? '型号' : 'Model'} value={form.model} onChange={v => setForm(f => ({ ...f, model: v }))} placeholder="e.g. PowerEdge R750" disabled={isEditMode} helper={form.asset_type === 'network_device' ? (zh ? '选填；配置有效的 SNMP 凭据后，可尝试采集整机型号。' : 'Optional; chassis model collection can be attempted with valid SNMP credentials.') : undefined} />
               {showMoreAssetDetails && <div>
                 <label className="block text-xs text-black/30 mb-0.5">{zh ? '状态' : 'Status'}</label>
                 <select
@@ -593,7 +597,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                   />
                 </div>
               )}
-              <Field label={zh ? '管理IP' : 'Mgmt IP'} value={form.management_ip} onChange={v => setForm(f => ({ ...f, management_ip: v }))} placeholder="e.g. 10.0.1.10" error={mgmtIpError} disabled={isEditMode} />
+              <Field label={zh ? '管理IP' : 'Mgmt IP'} required value={form.management_ip} onChange={v => setForm(f => ({ ...f, management_ip: v }))} placeholder="e.g. 10.0.1.10" error={mgmtIpError} disabled={isEditMode} />
               <Field label={zh ? '主通道端口' : 'Primary channel port'} value={form.management_port} onChange={v => setForm(f => ({ ...f, management_port: v }))} placeholder={form.connection_method === 'web' || form.connection_method === 'none' ? '-' : '22'} />
 
               <div className="sm:col-span-2">
@@ -1197,7 +1201,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
               <button onClick={onClose} className="nx-dialog-action-secondary rounded-lg border px-3 py-1.5 text-xs">{zh ? '取消' : 'Cancel'}</button>
               <button
                 onClick={handleSaveOnce}
-                disabled={saving || (!isEditMode && !form.hostname.trim() && !form.asset_tag.trim()) || !!uValidationError || (!isEditMode && form.asset_origin === 'legacy' && form.lifecycle_status === 'production' && String(form.takeover_exempt_reason || '').trim().length < 5)}
+                disabled={saving || (!isEditMode && (getMissingAssetRequiredFields(form).length > 0 || !!mgmtIpError)) || !!uValidationError || (!isEditMode && form.asset_origin === 'legacy' && form.lifecycle_status === 'production' && String(form.takeover_exempt_reason || '').trim().length < 5)}
                 className="nx-dialog-action-primary rounded-lg border px-4 py-1.5 text-xs font-semibold disabled:opacity-50"
               >
                 {saving ? (zh ? '保存中...' : 'Saving...') : (zh ? '保存' : 'Save')}
@@ -1457,8 +1461,8 @@ export const AssetModal: React.FC<AssetModalProps> = ({
 };
 
 /* --- Form field --- */
-function Field({ label, value, onChange, placeholder, helper, type = 'text', list, error, action, disabled = false }: {
-  label: string; value: string; onChange: (v: string) => void; placeholder?: string; helper?: string; type?: string; list?: string; error?: string | null; action?: React.ReactNode; disabled?: boolean;
+function Field({ label, value, onChange, placeholder, helper, type = 'text', list, error, action, disabled = false, required = false }: {
+  label: string; value: string; onChange: (v: string) => void; placeholder?: string; helper?: string; type?: string; list?: string; error?: string | null; action?: React.ReactNode; disabled?: boolean; required?: boolean;
 }) {
   const inputId = React.useId();
   const helperId = helper ? `${inputId}-helper` : undefined;
@@ -1467,7 +1471,7 @@ function Field({ label, value, onChange, placeholder, helper, type = 'text', lis
   return (
     <div>
       <div className="flex items-center justify-between mb-0.5">
-        <label htmlFor={inputId} className="block text-xs font-medium text-[var(--ui-fg-muted)]">{label}</label>
+        <label htmlFor={inputId} className="block text-xs font-medium text-[var(--ui-fg-muted)]">{label}{required && <span aria-hidden="true" className="ml-1 text-red-600">*</span>}</label>
         <div className="flex items-center gap-1.5">
           {action}
           {error && <span id={errorId} className="text-[11px] text-red-600 font-medium">{error}</span>}
@@ -1478,6 +1482,8 @@ function Field({ label, value, onChange, placeholder, helper, type = 'text', lis
         type={type}
         value={value}
         disabled={disabled}
+        required={required}
+        aria-required={required}
         onChange={e => onChange(e.target.value)}
         placeholder={placeholder}
         list={list}

@@ -18,6 +18,7 @@ from typing import Any
 
 from core.tenant_policy import DEFAULT_TENANT_ID, TENANT_ISOLATION_ENABLED
 from database import get_db_connection
+from services.ipam_network_scope import is_business_utilization_network
 
 logger = logging.getLogger(__name__)
 _NAMESPACE = uuid.UUID("6b50f4d4-51f7-5a11-a49a-2779d3d96030")
@@ -769,6 +770,16 @@ def _decorate_observations(
     else:
         ipam_by_scope = ipam_by_scope_override
     mac_rows = [row for row in rows if row.get("source_type") == "mac"]
+    access_port_cache: dict[tuple[str, str], str] = {}
+    vlan_vrf_cache: dict[tuple[str, str, str], tuple[str, str] | None] = {}
+
+    def access_port_status(row: dict[str, Any]) -> str:
+        from services.ip_locator_service import endpoint_access_port_evidence
+        key = (str(row.get('source_device_id') or ''), str(row.get('interface_name') or ''))
+        if key not in access_port_cache:
+            access_port_cache[key] = endpoint_access_port_evidence(conn, *key)
+        return access_port_cache[key]
+
     arp_rows = [row for row in rows if row.get("source_type") == "arp" and row.get("ip")]
     conflict_groups: dict[tuple[str, str, str, str], set[str]] = {}
     recent_arp_counts: dict[tuple[str, str, str, str], int] = {}
@@ -783,23 +794,40 @@ def _decorate_observations(
             conflict_groups.setdefault(key, set()).add(_normalized_mac(row.get("mac")))
     conflict_keys = {key for key, macs in conflict_groups.items() if len(macs - {""}) > 1}
 
-    current_mac_ports: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
+    current_mac_ports: dict[tuple[str, str, str, str, str], list[dict[str, Any]]] = {}
     for row in mac_rows:
         scope = _effective_scope(row)
         evidence_status, _timestamp_status, observed_at = _evidence_status(row, now)
         if (
             evidence_status != "recent" or not observed_at
-            or scope.get("scope_status") != "resolved"
-            or str(scope.get("vrf_context_status") or "unknown") not in {"explicit_vrf", "explicit_global"}
+            or scope.get("scope_status") not in {"resolved", "scope_pending"}
             or now - observed_at > timedelta(minutes=_recent_minutes())
             or not scope.get("tenant_id") or not scope.get("site_id")
         ):
             continue
         mac = _normalized_mac(row.get("mac"))
-        vlan = str(row.get("vlan") or "").strip()
+        vlan = _normalize_vlan_number(row.get('vlan'))
         if not mac or not vlan:
             continue
-        key = (str(scope["tenant_id"]), str(scope["site_id"]), str(scope["vrf_id"] or ""), vlan, mac)
+        if access_port_status(row) != 'access':
+            continue
+        if scope.get('vrf_context_status') in {'explicit_vrf', 'explicit_global'} and scope.get('scope_status') == 'resolved':
+            association_vrf = str(scope.get('vrf_id') or '')
+        elif scope.get('vrf_context_status') == 'unknown':
+            # A layer-2 forwarding table normally has no VRF field. Resolve
+            # its bridge VLAN only through an unambiguous configured binding;
+            # keep the original source scope unknown in the returned evidence.
+            from services.ip_locator_service import endpoint_vlan_vrf_key
+            vlan_scope = (str(scope['tenant_id']), str(scope['site_id']), vlan)
+            if vlan_scope not in vlan_vrf_cache:
+                vlan_vrf_cache[vlan_scope] = endpoint_vlan_vrf_key(conn, *vlan_scope)
+            vlan_vrf_key = vlan_vrf_cache[vlan_scope]
+            if vlan_vrf_key is None:
+                continue
+            association_vrf = vlan_vrf_key[1]
+        else:
+            continue
+        key = (str(scope["tenant_id"]), str(scope["site_id"]), association_vrf, vlan, mac)
         current_mac_ports.setdefault(key, []).append(row)
 
     decorated: list[dict[str, Any]] = []
@@ -823,7 +851,9 @@ def _decorate_observations(
         all_matches = ipam_by_scope.get((tenant_id, site_id, vrf_id, ip), []) if ip else []
         ipam_scope_conflict = any(item.get("_scope_conflict") for item in all_matches)
         matches = [item for item in all_matches if not item.get("_scope_conflict")]
-        selected_ipam = matches[0] if len(matches) == 1 and not ipam_scope_conflict else None
+        selected_ipam = matches[0] if (
+            len(matches) == 1 and not ipam_scope_conflict and scope['scope_status'] == 'resolved'
+        ) else None
         if selected_ipam:
             registration_status = "registered"
         elif not ip or scope["scope_status"] != "resolved" or ipam_scope_conflict:
@@ -831,12 +861,15 @@ def _decorate_observations(
         else:
             registration_status = "unregistered"
 
-        switch_id = row.get("source_device_id") if row.get("source_type") == "mac" else ""
-        switch_name = row.get("source_device_name") if row.get("source_type") == "mac" else ""
-        switch_port = row.get("interface_name") if row.get("source_type") == "mac" else ""
+        is_access_observation = row.get('source_type') == 'mac' and access_port_status(row) == 'access'
+        switch_id = row.get("source_device_id") if is_access_observation else ""
+        switch_name = row.get("source_device_name") if is_access_observation else ""
+        switch_port = row.get("interface_name") if is_access_observation else ""
         mac_observed_at = row.get("source_observed_at") if row.get("source_type") == "mac" else ""
-        if row.get("source_type") == "arp" and mac and row.get("vlan") and site_id and tenant_id:
-            association_key = (tenant_id, site_id, vrf_id, str(row.get("vlan") or "").strip(), mac)
+        if (row.get("source_type") == "arp" and mac and row.get("vlan") and site_id and tenant_id
+                and scope.get("scope_status") == "resolved"
+                and scope.get("vrf_context_status") in {"explicit_vrf", "explicit_global"}):
+            association_key = (tenant_id, site_id, vrf_id, _normalize_vlan_number(row.get('vlan')), mac)
             candidates = current_mac_ports.get(association_key, [])
             unique_ports = {
                 (str(candidate.get("source_device_id") or ""), str(candidate.get("interface_name") or "")): candidate
@@ -873,6 +906,7 @@ def _decorate_observations(
             "source_type": str(row.get("source_type") or ""),
             "source_device_id": str(row.get("source_device_id") or ""),
             "source_device_name": str(row.get("source_device_name") or row.get("source_device_id") or ""),
+            "source_interface_name": str(row.get('interface_name') or ''),
             "switch_id": str(switch_id or ""),
             "switch_name": str(switch_name or ""),
             "switch_port": str(switch_port or ""),
@@ -883,7 +917,8 @@ def _decorate_observations(
             "projected_at": str(row.get("projected_at") or ""),
             "evidence_status": evidence_status,
             "timestamp_status": timestamp_status,
-            "hostname": "",
+            "hostname": str((selected_ipam or {}).get("hostname") or ""),
+            "hostname_source": "ipam" if (selected_ipam or {}).get("hostname") else "",
             "coverage_status": str(row.get("coverage_status") or "unavailable"),
             "coverage_complete": bool(row.get("coverage_complete")),
             "coverage_reason": str(row.get("coverage_reason") or ""),
@@ -945,12 +980,13 @@ def _list_filter(item: dict[str, Any], *, site_id: str, vrf_id: str, device_id: 
 
 
 def _terminal_identity_key(item: dict[str, Any]) -> tuple[Any, ...]:
-    if item.get("scope_status") == "resolved" and item.get("ip"):
+    if (item.get("scope_status") == "resolved" or item.get('vrf_context_inferred')) and item.get("ip"):
         return (
             "ip", item.get("tenant_id"), item.get("site_id"), item.get("vrf_id"),
             item.get("ip"), _normalized_mac(item.get("mac")),
         )
-    if item.get("scope_status") == "resolved" and not item.get("ip") and item.get("mac"):
+    if (item.get("scope_status") == "resolved" and not item.get("ip") and item.get("mac")
+            and item.get('switch_location_status') == 'matched'):
         return (
             "mac", item.get("tenant_id"), item.get("site_id"), item.get("vrf_id"),
             _normalized_mac(item.get("mac")), item.get("vlan"), item.get("switch_id"), item.get("switch_port"),
@@ -961,6 +997,7 @@ def _terminal_identity_key(item: dict[str, Any]) -> tuple[Any, ...]:
         "source", item.get("source_type"), item.get("tenant_id"), item.get("site_id"),
         item.get("vrf_id"), item.get("source_device_id"), item.get("ip"),
         _normalized_mac(item.get("mac")), item.get("vlan"), item.get("switch_port"),
+        item.get('source_interface_name'),
     )
 
 
@@ -985,12 +1022,177 @@ def _collapse_terminal_items(items: list[dict[str, Any]]) -> list[dict[str, Any]
     return collapsed
 
 
+def _normalize_vlan_number(value: Any) -> str:
+    text = str(value or '').strip()
+    if text.isdigit() and 1 <= int(text) <= 4094:
+        return str(int(text))
+    return ''
+
+
+def _infrastructure_addresses(conn) -> set[tuple[str, str, str, str]]:
+    """Exclude known device/gateway IPs only within their own address scope."""
+    owned: set[tuple[str, str, str, str]] = set()
+    rows = conn.execute(
+        """SELECT tenant_id, site_id, vrf_id, gateway AS address FROM prefixes
+           WHERE COALESCE(is_active, 1) = 1 AND COALESCE(gateway, '') <> ''
+           UNION ALL
+           SELECT p.tenant_id, p.site_id, p.vrf_id, a.address
+           FROM ip_addresses a JOIN prefixes p ON p.id = a.subnet_id
+           WHERE a.source_type = 'interface_collection'"""
+    ).fetchall()
+    for row in rows:
+        address = _normalized_ip(row.get('address'))
+        if address and row.get('site_id'):
+            owned.add((str(row.get('tenant_id') or DEFAULT_TENANT_ID),
+                       str(row['site_id']), str(row.get('vrf_id') or ''), address))
+    # Current CMDB CLI snapshots use the project's global/default VRF policy.
+    # Never use those rows to exclude an identically numbered host in another VRF.
+    from services.ipam_service import _current_cmdb_interface_ip_observations
+    devices, _sites, _vrfs = _device_catalog(conn)
+    for row in conn.execute("SELECT id, ip_address FROM devices WHERE COALESCE(ip_address, '') <> ''").fetchall():
+        scope = devices.get(str(row['id']), {})
+        address = _normalized_ip(row.get('ip_address'))
+        if address and scope.get('site_id') and scope.get('scope_status') != 'conflict':
+            owned.add((str(scope.get('tenant_id') or DEFAULT_TENANT_ID),
+                       str(scope['site_id']), '', address))
+    for row in _current_cmdb_interface_ip_observations(conn):
+        device = devices.get(str(row.get('device_id') or ''), {})
+        scope = _resolve_device_scope(device, _sites, _vrfs)
+        address = _normalized_ip(row.get('ip_address'))
+        if address and scope.get('site_id') and scope.get('scope_status') != 'conflict':
+            owned.add((str(scope.get('tenant_id') or DEFAULT_TENANT_ID),
+                       str(scope['site_id']), '', address))
+    return owned
+
+
+def _load_active_prefix_scopes(conn) -> dict[tuple[str, str, str], list[dict[str, Any]]]:
+    rows = conn.execute(
+        """SELECT p.id, p.prefix, p.tenant_id, p.site_id, p.vrf_id,
+                  p.network_type, p.status, p.is_active, p.vlan_id,
+                  vl.vlan_id AS vlan_number, vl.status AS vlan_status,
+                  vl.site_id AS vlan_site_id, vl.tenant_id AS vlan_tenant_id
+             FROM prefixes p
+             LEFT JOIN vlans vl ON vl.id = p.vlan_id
+            WHERE COALESCE(p.is_active, 1) = 1"""
+    ).fetchall()
+    prefixes_by_scope: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    for raw in rows:
+        row = dict(raw)
+        try:
+            network = ipaddress.ip_network(str(row.get('prefix') or ''), strict=False)
+        except ValueError:
+            continue
+        tenant_id = str(row.get('tenant_id') or DEFAULT_TENANT_ID)
+        site_id = str(row.get('site_id') or '')
+        vlan_id = str(row.get('vlan_id') or '')
+        vlan_site_id = str(row.get('vlan_site_id') or '')
+        vlan_tenant_id = str(row.get('vlan_tenant_id') or '')
+        vlan_status = str(row.get('vlan_status') or '').strip().lower()
+        vlan_number = _normalize_vlan_number(row.get('vlan_number'))
+        vlan_scope_valid = bool(
+            vlan_id and vlan_number and vlan_status == 'active'
+            and (not vlan_site_id or vlan_site_id == site_id)
+            and (not vlan_tenant_id or vlan_tenant_id == tenant_id)
+        )
+        status = str(row.get('status') or 'active').strip().lower()
+        scope = (tenant_id, site_id, str(row.get('vrf_id') or ''))
+        prefixes_by_scope.setdefault(scope, []).append({
+            'id': str(row.get('id') or ''),
+            'network': network,
+            'vrf_id': scope[2],
+            'network_type': str(row.get('network_type') or ''),
+            'active': status == 'active',
+            'vlan_id': vlan_id,
+            'vlan_number': vlan_number,
+            'vlan_scope_valid': vlan_scope_valid,
+        })
+    return prefixes_by_scope
+
+
+def _match_business_vlan_scope(
+    item: dict[str, Any],
+    prefixes_by_scope: dict[tuple[str, str, str], list[dict[str, Any]]],
+) -> dict[str, Any] | None:
+    source_vrf_status = str(item.get('vrf_context_status') or 'unknown')
+    inferred_global = source_vrf_status == 'unknown' and item.get('scope_status') == 'scope_pending'
+    explicitly_scoped = (
+        source_vrf_status in {'explicit_vrf', 'explicit_global'}
+        and item.get('scope_status') in {'resolved', 'conflict'}
+    )
+    if not (inferred_global or explicitly_scoped):
+        return None
+    tenant_id = str(item.get('tenant_id') or '')
+    site_id = str(item.get('site_id') or '')
+    if not tenant_id or not site_id:
+        return None
+    scope = (tenant_id, site_id, str(item.get('vrf_id') or ''))
+    if inferred_global:
+        scoped_prefixes = [
+            prefix
+            for (prefix_tenant_id, prefix_site_id, _prefix_vrf_id), rows in prefixes_by_scope.items()
+            if prefix_tenant_id == tenant_id and prefix_site_id == site_id
+            for prefix in rows
+        ]
+    else:
+        scoped_prefixes = prefixes_by_scope.get(scope, [])
+    observed_vlan = _normalize_vlan_number(item.get('vlan'))
+
+    if item.get('ip'):
+        try:
+            address = ipaddress.ip_address(str(item.get('ip')))
+        except ValueError:
+            return None
+        candidates = [prefix for prefix in scoped_prefixes if address.version == prefix['network'].version and address in prefix['network']]
+        if not candidates:
+            return None
+        most_specific_length = max(prefix['network'].prefixlen for prefix in candidates)
+        most_specific = [prefix for prefix in candidates if prefix['network'].prefixlen == most_specific_length]
+        if len(most_specific) != 1:
+            return None
+        prefix = most_specific[0]
+        if inferred_global and prefix['vrf_id']:
+            return None
+        if not prefix['active'] or not is_business_utilization_network(prefix['network_type']):
+            return None
+        network = prefix['network']
+        if network.num_addresses <= 2:
+            return None
+        if address.version == 4 and address in {network.network_address, network.broadcast_address}:
+            return None
+        # A source VLAN is direct evidence that the endpoint was observed in
+        # a VLAN. When IPAM already links the prefix to a VLAN, require an
+        # exact match; legacy prefixes without that link can still be scoped
+        # by their business CIDR plus the source VLAN observation.
+        if not observed_vlan:
+            return None
+        if prefix['vlan_id']:
+            if not prefix['vlan_scope_valid'] or observed_vlan != prefix['vlan_number']:
+                return None
+        return {'inferred_global': inferred_global}
+
+    if inferred_global or item.get('source_type') != 'mac' or not observed_vlan:
+        return None
+    vlan_prefixes = [
+        prefix for prefix in scoped_prefixes
+        if prefix['vlan_scope_valid'] and prefix['vlan_number'] == observed_vlan
+    ]
+    if not vlan_prefixes or not all(
+        prefix['active'] and is_business_utilization_network(prefix['network_type'])
+        for prefix in vlan_prefixes
+    ):
+        return None
+    return {'inferred_global': False}
+
+
 def list_discovered_endpoints(
     *, site_id: str = "", vrf_id: str = "", device_id: str = "", q: str = "",
     kind: str = "all", evidence_status: str = "", registration_status: str = "",
+    network_scope: str = "all",
     page: int = 1, page_size: int = 20,
     visible_scopes: set[tuple[str, str]] | None = None,
 ) -> dict[str, Any]:
+    if network_scope not in {"all", "business_vlan"}:
+        raise ValueError("Unsupported discovered endpoint network_scope")
     conn = get_db_connection()
     try:
         now = _utc_now()
@@ -1001,6 +1203,29 @@ def list_discovered_endpoints(
                 if (str(row.get("tenant_id") or ""), str(row.get("site_id") or "")) in visible_scopes
             ]
         items = _decorate_observations(raw_rows, conn, now)
+        if network_scope == "business_vlan":
+            prefixes_by_scope = _load_active_prefix_scopes(conn)
+            infrastructure_addresses = _infrastructure_addresses(conn)
+            scoped_items = []
+            for item in items:
+                scope_match = _match_business_vlan_scope(item, prefixes_by_scope)
+                if scope_match is None:
+                    continue
+                address_key = (str(item.get('tenant_id') or ''), str(item.get('site_id') or ''),
+                               str(item.get('vrf_id') or ''), str(item.get('ip') or ''))
+                if item.get('ip') and address_key in infrastructure_addresses:
+                    continue
+                scoped_item = dict(item)
+                if scope_match['inferred_global']:
+                    scoped_item.update({
+                        'vrf_id': '',
+                        'vrf_name': '全局/默认',
+                        'vrf_context_status': 'inferred_global',
+                        'scope_resolution': 'business_prefix_unique_default_vrf',
+                        'vrf_context_inferred': True,
+                    })
+                scoped_items.append(scoped_item)
+            items = scoped_items
         visible_items = [
             item for item in items
             if visible_scopes is None
@@ -1077,6 +1302,7 @@ def list_discovered_endpoints(
         arp_items = [item for item in filtered if item.get("ip")]
         full_comparison_evidence = bool(arp_items) and all(
             item.get("scope_status") == "resolved" and item.get("coverage_complete")
+            and item.get("source_vrf_context_status") in {"explicit_vrf", "explicit_global"}
             and item.get("evidence_status") == "recent" for item in arp_items
         )
         summary = {
@@ -1098,6 +1324,7 @@ def list_discovered_endpoints(
             "total": len(filtered), "page": safe_page, "page_size": safe_page_size,
             "has_more": start + safe_page_size < len(filtered),
             "summary": summary, "sites": site_options, "vrfs": vrf_options, "devices": device_options,
+            "network_scope": network_scope,
         }
     finally:
         conn.close()

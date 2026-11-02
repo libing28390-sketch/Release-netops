@@ -15,6 +15,22 @@ vi.mock('./components/AssetModal', () => ({
   AssetModal: (props: any) => props.isOpen ? (
     <section role="dialog" aria-label="Asset editor">
       <label>
+        Asset Tag
+        <input
+          aria-label="Asset Tag"
+          value={props.form.asset_tag}
+          onChange={event => props.setForm((current: any) => ({ ...current, asset_tag: event.target.value }))}
+        />
+      </label>
+      <label>
+        Management IP
+        <input
+          aria-label="Management IP"
+          value={props.form.management_ip}
+          onChange={event => props.setForm((current: any) => ({ ...current, management_ip: event.target.value }))}
+        />
+      </label>
+      <label>
         Hostname
         <input
           aria-label="Hostname"
@@ -37,6 +53,7 @@ vi.mock('./components/AssetModal', () => ({
       <button type="button" onClick={() => props.setForm((current: any) => ({
         ...current,
         asset_type: 'network_device',
+        asset_tag: 'NET-H3C-DEVICE-1',
         vendor: 'H3C',
         platform: 'h3c_comware',
         management_ip: '192.0.2.44',
@@ -53,7 +70,7 @@ vi.mock('./components/AssetDetailDrawer', () => ({ AssetDetailDrawer: () => null
 vi.mock('xlsx', () => ({
   read: vi.fn(() => ({ SheetNames: ['Sheet1'], Sheets: { Sheet1: {} } })),
   utils: {
-    sheet_to_json: vi.fn(() => [{ Hostname: 'progressive-import-server', 'Asset Type': 'server', 'Mgmt IP': '192.0.2.220' }]),
+    sheet_to_json: vi.fn(() => [{ 'Asset Tag': 'SRV-IMPORT-220', Hostname: 'progressive-import-server', 'Asset Type': 'server', 'Mgmt IP': '192.0.2.220' }]),
   },
 }));
 
@@ -79,12 +96,17 @@ const renderAssetPage = () => render(
   <AssetManagementTab language="en" t={key => key} />,
 );
 
+const fillRequiredAssetFields = () => {
+  fireEvent.change(screen.getByRole('textbox', { name: 'Asset Tag' }), { target: { value: 'NET-TEST-001' } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Management IP' }), { target: { value: '192.0.2.250' } });
+};
+
 describe('AssetManagementTab request states', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn());
     useInventoryStore.setState(useInventoryStore.getInitialState());
     vi.mocked(XLSX.utils.sheet_to_json).mockReturnValue([
-      { Hostname: 'progressive-import-server', 'Asset Type': 'server', 'Mgmt IP': '192.0.2.220' },
+      { 'Asset Tag': 'SRV-IMPORT-220', Hostname: 'progressive-import-server', 'Asset Type': 'server', 'Mgmt IP': '192.0.2.220' },
     ]);
   });
 
@@ -257,6 +279,7 @@ describe('AssetManagementTab request states', () => {
     await waitFor(() => expect(useInventoryStore.getState().assetsTotal).toBe(0));
     fireEvent.click(screen.getAllByRole('button', { name: 'New' })[0]);
     fireEvent.change(screen.getByRole('textbox', { name: 'Hostname' }), { target: { value: 'new-device' } });
+    fillRequiredAssetFields();
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => expect(useInventoryStore.getState().assetsTotal).toBe(3));
@@ -393,7 +416,7 @@ describe('AssetManagementTab request states', () => {
     },
   ])('explains $label in the import feedback', async ({ result, expected }) => {
     vi.mocked(XLSX.utils.sheet_to_json).mockReturnValue([
-      { Hostname: 'snmp-feedback', 'Asset Type': 'network_device', 'Mgmt IP': '192.0.2.222' },
+      { 'Asset Tag': 'NET-SNMP-FEEDBACK', Hostname: 'snmp-feedback', 'Asset Type': 'network_device', 'Mgmt IP': '192.0.2.222' },
     ]);
     vi.mocked(fetch).mockImplementation(async input => {
       const url = String(input);
@@ -794,6 +817,7 @@ describe('AssetManagementTab request states', () => {
     fireEvent.click(screen.getAllByRole('button', { name: 'New' })[0]);
     const hostname = screen.getByRole('textbox', { name: 'Hostname' }) as HTMLInputElement;
     fireEvent.change(hostname, { target: { value: 'edge-01' } });
+    fillRequiredAssetFields();
 
     fireEvent.click(screen.getByRole('button', { name: 'Double save' }));
     await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/assets', expect.objectContaining({ method: 'POST' })));
@@ -830,6 +854,7 @@ describe('AssetManagementTab request states', () => {
     await screen.findByText('No asset records');
     fireEvent.click(screen.getAllByRole('button', { name: 'New' })[0]);
     fireEvent.change(screen.getByRole('textbox', { name: 'Hostname' }), { target: { value: 'validation-test-asset' } });
+    fillRequiredAssetFields();
     fireEvent.click(screen.getByRole('button', { name: 'Set synthetic secret' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
@@ -860,6 +885,7 @@ describe('AssetManagementTab request states', () => {
     await screen.findByText('No asset records');
     fireEvent.click(screen.getAllByRole('button', { name: 'New' })[0]);
     fireEvent.change(screen.getByRole('textbox', { name: 'Hostname' }), { target: { value: 'validation-detail-asset' } });
+    fillRequiredAssetFields();
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     const alert = await screen.findByRole('alert');

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from database import get_db_connection
 from services.cmdb_snapshot_service import begin_snapshot_attempt, complete_snapshot
-from services.ipam_service import create_subnet, list_ip_inventory
+from services.ipam_service import create_address, create_subnet, list_ip_inventory
 
 
 def _seed_scope_and_device():
@@ -61,6 +61,8 @@ def test_ip_inventory_reads_only_last_successful_interface_snapshot(isolated_db)
     row = next(item for item in inventory['items'] if item['source'] == 'interface_cli')
     assert inventory['total'] == 1
     assert row['address'] == '10.20.30.1'
+    assert row['interface_admin_status'] == 'up'
+    assert row['interface_oper_status'] == 'up'
     assert row['site_name'] == 'IPAM Snapshot Site'
     assert row['observed_prefix'] == '10.20.30.0/24'
     assert row['subnet_id'] == ''
@@ -96,3 +98,42 @@ def test_ip_inventory_marks_snapshot_networks_without_prefixes_as_unmatched(isol
     assert row['subnet_id'] == ''
     assert row['prefix_match_status'] == 'unmatched'
     assert inventory['summary']['interface_unmatched_prefix'] == 1
+
+
+def test_interface_role_does_not_replace_inventory_role_filter(isolated_db):
+    _seed_scope_and_device()
+    subnet = create_subnet(prefix='10.20.30.0/24', site_id='ipam-snapshot-site')
+    create_address(subnet['id'], address='10.20.30.10', device_type='server')
+    _publish_interface_ip('10.20.30.1')
+    all_rows = list_ip_inventory(site_id='ipam-snapshot-site', page_size=100)
+    assert all_rows['total'] == 2
+    assert {row['device_type'] for row in all_rows['items']} == {'server', 'vlan'}
+    servers = list_ip_inventory(site_id='ipam-snapshot-site', device_type='server')
+    assert servers['total'] == 1
+    assert servers['items'][0]['address'] == '10.20.30.10'
+    interfaces = list_ip_inventory(site_id='ipam-snapshot-site', device_type='vlan')
+    assert interfaces['total'] == 1
+    assert interfaces['items'][0]['source'] == 'interface_cli'
+
+
+def test_generated_interface_ledger_and_snapshot_are_one_inventory_row(isolated_db):
+    _seed_scope_and_device()
+    subnet = create_subnet(prefix='10.20.30.0/24', site_id='ipam-snapshot-site')
+    from schemas.schemas import PrefixCreate
+    assert PrefixCreate(prefix='10.20.30.0/24').network_type == 'unclassified'
+    address = create_address(subnet['id'], address='10.20.30.1', device_id='ipam-snapshot-device', device_type='device')
+    with get_db_connection() as conn:
+        assert conn.execute('SELECT network_type FROM prefixes WHERE id=?', (subnet['id'],)).fetchone()['network_type'] == 'unclassified'
+        conn.execute("UPDATE ip_addresses SET source_type='interface_collection' WHERE id=?", (address['id'],))
+        conn.commit()
+    _publish_interface_ip('10.20.30.1')
+    inventory = list_ip_inventory(site_id='ipam-snapshot-site')
+    assert inventory['total'] == 1
+    assert inventory['items'][0]['id'] == address['id']
+    assert inventory['items'][0]['has_interface_observation'] is True
+    assert inventory['items'][0]['interface_oper_status'] == 'up'
+    assert inventory['summary']['manual'] == 1
+    assert inventory['summary']['interface_observed'] == 1
+    ledger = list_ip_inventory(site_id='ipam-snapshot-site', registered_only=True)
+    assert ledger['total'] == 1
+    assert not ledger['items'][0].get('has_interface_observation')

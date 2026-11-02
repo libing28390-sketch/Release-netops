@@ -36,6 +36,13 @@ export function togglePrefixClassificationFilter(
   return current === selected ? 'all' : selected;
 }
 
+export function canUsePrefixTreeView(state: Pick<PrefixListQueryState, 'q' | 'site' | 'status' | 'classification'>): boolean {
+  return !state.q.trim()
+    && state.site === 'all'
+    && state.status === 'all'
+    && state.classification === 'all';
+}
+
 export function buildPrefixListQuery(state: PrefixListQueryState): URLSearchParams {
   return new URLSearchParams({
     q: state.q,

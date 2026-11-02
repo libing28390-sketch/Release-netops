@@ -89,30 +89,10 @@ MODERN_MAC_ALGORITHMS: List[str] = [
     "hmac-sha2-512",
 ]
 
-# These are the minimum legacy algorithms needed by the devices in the
-# supplied capture and by many older Cisco/Huawei/H3C/Juniper releases.  They
-# remain available in the normal ``auto`` profile, but are appended after the
-# modern defaults for system OpenSSH and are not used to disable modern
-# choices.
-SAFE_LEGACY_KEX_ALGORITHMS: List[str] = [
-    "diffie-hellman-group14-sha1",
-    "diffie-hellman-group-exchange-sha1",
-]
-SAFE_LEGACY_HOST_KEY_ALGORITHMS: List[str] = ["ssh-rsa"]
-SAFE_LEGACY_CIPHERS: List[str] = [
-    "aes128-cbc",
-    "aes192-cbc",
-    "aes256-cbc",
-]
-SAFE_LEGACY_MAC_ALGORITHMS: List[str] = [
-    "hmac-sha1-etm@openssh.com",
-    "hmac-sha1",
-]
-
-# Algorithms below this line are only enabled by the explicit
-# ``legacy_break_glass`` profile.  In particular, group1 is a 1024-bit DH
-# group, ssh-dss is obsolete DSA/SHA-1, and MD5/RC4/DES/Blowfish/CBC-3DES are
-# not acceptable defaults for a management plane.
+# Asset entry exposes a single compatibility mode. Both its default ``auto``
+# and historic legacy profile values must offer the complete legacy suite,
+# after modern algorithms. Explicit ``modern`` records retain strict policy.
+# Proposals cannot restore algorithms removed by the installed SSH library.
 SSH_ALGORITHM_PROFILE_AUTO = "auto"
 SSH_ALGORITHM_PROFILE_MODERN = "modern"
 SSH_ALGORITHM_PROFILE_LEGACY = "legacy_compat"
@@ -122,7 +102,7 @@ SSH_ALGORITHM_PROFILE_BREAK_GLASS = "legacy_break_glass"
 def normalize_ssh_algorithm_profile(profile: object = None) -> str:
     """Normalize a device's optional SSH algorithm profile.
 
-    Unknown or missing values fail closed to ``auto``.  The profile is kept
+    Unknown or missing values use the default compatibility mode. The profile is kept
     independent of vendor/platform so the same policy works for Cisco,
     Huawei, H3C, Ruijie, Juniper and other network drivers.
     """
@@ -157,9 +137,8 @@ def _dedupe(values: List[str]) -> List[str]:
 def get_ssh_algorithm_lists(profile: object = None) -> Dict[str, List[str]]:
     """Return ordered algorithm proposals for a transport profile.
 
-    ``auto`` is modern-first plus the safe legacy subset required by the
-    attached captures.  ``legacy_break_glass`` adds every legacy name already
-    understood by the project for devices that have no safer common option.
+    Compatibility profiles are modern-first plus all known legacy proposals.
+    Transport adapters intersect these names with their library capabilities.
     """
 
     normalized = normalize_ssh_algorithm_profile(profile)
@@ -169,12 +148,7 @@ def get_ssh_algorithm_lists(profile: object = None) -> Dict[str, List[str]]:
         "cipher": list(MODERN_CIPHERS),
         "mac": list(MODERN_MAC_ALGORITHMS),
     }
-    if normalized in {SSH_ALGORITHM_PROFILE_AUTO, SSH_ALGORITHM_PROFILE_LEGACY}:
-        lists["kex"] = _dedupe(lists["kex"] + SAFE_LEGACY_KEX_ALGORITHMS)
-        lists["host_key"] = _dedupe(lists["host_key"] + SAFE_LEGACY_HOST_KEY_ALGORITHMS)
-        lists["cipher"] = _dedupe(lists["cipher"] + SAFE_LEGACY_CIPHERS)
-        lists["mac"] = _dedupe(lists["mac"] + SAFE_LEGACY_MAC_ALGORITHMS)
-    elif normalized == SSH_ALGORITHM_PROFILE_BREAK_GLASS:
+    if normalized != SSH_ALGORITHM_PROFILE_MODERN:
         lists["kex"] = _dedupe(lists["kex"] + LEGACY_KEX_ALGORITHMS)
         lists["host_key"] = _dedupe(lists["host_key"] + LEGACY_HOST_KEY_ALGORITHMS)
         lists["cipher"] = _dedupe(lists["cipher"] + LEGACY_CIPHERS)
@@ -202,7 +176,8 @@ def filter_ssh_algorithm_names(
     }.get(str(category).strip().lower())
     if key is None:
         return []
-    allowed = set(get_ssh_algorithm_lists(profile)[key])
+    ordered = get_ssh_algorithm_lists(profile)[key]
+    allowed = set(ordered)
     result: List[str] = []
     for value in values:  # type: ignore[union-attr]
         name = value.decode("ascii") if isinstance(value, bytes) else str(value)
@@ -211,19 +186,21 @@ def filter_ssh_algorithm_names(
             continue
         # AsyncSSH/OpenSSH may expose certificate variants alongside the base
         # host-key algorithm.  A profile allowing the base key also allows its
-        # certificate form; this does not enable ssh-dss unless explicitly
-        # present in the break-glass profile.
+        # certificate form, under the same profile policy.
         base = name.split("-cert-v01@", 1)[0] if "-cert-v01@" in name else name
         if base in allowed:
             result.append(name)
-    return result
+    # Libraries may enumerate legacy algorithms first. Keep the shared policy's
+    # modern-first order for AsyncSSH too, including certificate variants.
+    priority = {name: index for index, name in enumerate(ordered)}
+    return sorted(result, key=lambda name: priority[name.split("-cert-v01@", 1)[0]])
 
 
 def _disabled_algorithms_for_profile(profile: object = None) -> Dict[str, List[str]]:
     """Build Paramiko's per-category deny list for the selected profile."""
 
     normalized = normalize_ssh_algorithm_profile(profile)
-    if normalized == SSH_ALGORITHM_PROFILE_BREAK_GLASS:
+    if normalized != SSH_ALGORITHM_PROFILE_MODERN:
         return {}
 
     allowed = get_ssh_algorithm_lists(normalized)
@@ -323,8 +300,7 @@ def build_netmiko_compatibility_kwargs(
     """
     Netmiko/Paramiko 兼容老设备的连接参数。
 
-    - ``disabled_algorithms`` 按 profile 保留附件所需的安全 legacy 子集，
-      同时默认阻止 group1/ssh-dss/MD5/RC4 等高风险算法
+    - 兼容模式允许底层库支持的旧算法，modern 模式保持严格限制
     - use_keys/allow_agent 关闭本地 SSH agent 干扰
     - 不关闭 Netmiko 的 SHA-2 兼容修复，避免现代 RSA-SHA2 设备被全局降级
     - conn/banner/auth/blocking: 使用一致的 60 秒预算，避免只放宽 TCP
@@ -460,8 +436,7 @@ def _system_pubkey_accepted_option() -> str | None:
 def build_system_ssh_open_cmd(profile: object = None) -> List[str]:
     """为 OpenSSH/system transport 生成兼容老设备的额外参数。
     
-    使用 ``+`` 追加 legacy 算法，保留现代 OpenSSH 默认优先级；只在
-    ``legacy_break_glass`` 档案中附加 group1/ssh-dss/MD5/RC4 等高风险算法。
+    使用 ``+`` 追加底层 OpenSSH 支持的 legacy 算法，保留现代默认优先级。
     """
     normalized_profile = normalize_ssh_algorithm_profile(profile)
     if normalized_profile == SSH_ALGORITHM_PROFILE_MODERN:

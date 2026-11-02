@@ -138,6 +138,74 @@ def test_utilization_excludes_container_point_to_point_and_host_routes(monkeypat
     }
 
 
+def _add_utilization_scope_prefixes(conn: postgresql_test_driver.Connection) -> None:
+    conn.execute(
+        '''INSERT INTO prefixes (id, prefix, name, status, site_id, network_type)
+           VALUES
+             ('prefix-server', '10.1.0.0/24', 'Servers', 'active', 'site-1', 'server'),
+             ('prefix-transit30', '10.2.0.0/30', 'Router link', 'active', 'site-1', 'transit'),
+             ('prefix-wan', '10.3.0.0/24', 'WAN', 'active', 'site-1', 'wan'),
+             ('prefix-management', '10.4.0.0/24', 'Management', 'active', 'site-1', 'management'),
+             ('prefix-service', '10.5.0.0/24', 'Network service', 'active', 'site-1', 'network_service'),
+             ('prefix-unclassified', '10.6.0.0/24', 'Unclassified', 'active', 'site-1', 'unclassified'),
+             ('prefix-legacy', '10.7.0.0/24', 'Legacy type', 'active', 'site-1', ''),
+             ('prefix-container-network', '10.8.0.0/24', 'Container network', 'active', 'site-1', 'container')'''
+    )
+    conn.execute(
+        '''INSERT INTO ip_addresses
+           (id, subnet_id, address, status, created_at)
+           VALUES
+             ('ip-transit30', 'prefix-transit30', '10.2.0.1', 'active', '2026-07-22T10:00:00+00:00'),
+             ('ip-server', 'prefix-server', '10.1.0.10', 'active', '2026-07-23T10:00:00+00:00'),
+             ('ip-management', 'prefix-management', '10.4.0.10', 'active', '2026-07-24T10:00:00+00:00')'''
+    )
+
+
+def test_utilization_business_scope_uses_network_type_for_all_aggregates(monkeypatch):
+    conn = _connection()
+    _add_utilization_scope_prefixes(conn)
+    monkeypatch.setattr(ipam_service, 'get_db_connection', lambda: conn)
+
+    business = ipam_service.get_utilization_analytics(network_scope='business')
+
+    assert business['network_scope'] == 'business'
+    assert business['overview']['network_scope'] == 'business'
+    assert business['overview']['prefixes_count'] == 4
+    assert business['overview']['scope_excluded_prefixes_count'] == 8
+    assert business['overview']['interconnect_prefixes_excluded_count'] == 3
+    assert business['overview']['total_ips'] == 762
+    assert business['overview']['used_ips'] == 2
+    assert {item['prefix'] for item in business['items']} == {
+        '10.0.0.0/24', '10.1.0.0/24', '10.8.0.0/24', '10.0.0.0/16',
+    }
+    assert all(
+        item['network_type'] in ipam_service.BUSINESS_UTILIZATION_NETWORK_TYPES | {'user'}
+        for item in business['items']
+    )
+    assert {item['prefix'] for item in business['top_utilized_prefixes']} == {
+        '10.0.0.0/24', '10.1.0.0/24', '10.8.0.0/24',
+    }
+    assert {item['network_type'] for item in business['top_utilized_prefixes']} == {'user', 'server', 'container'}
+    assert business['site_breakdown'] == [{
+        'site': 'Shanghai DC', 'total_ips': 762, 'used_ips': 2,
+        'utilization': round(2 / 762 * 100, 1),
+    }]
+    assert business['forecast_trend'] == [
+        {'day': '2026-07-20', 'allocated': 1},
+        {'day': '2026-07-23', 'allocated': 2},
+    ]
+    conn.close()
+
+    all_conn = _connection()
+    _add_utilization_scope_prefixes(all_conn)
+    monkeypatch.setattr(ipam_service, 'get_db_connection', lambda: all_conn)
+    all_prefixes = ipam_service.get_utilization_analytics(network_scope='all')
+    assert all_prefixes['overview']['scope_excluded_prefixes_count'] == 0
+    assert any(item['prefix'] == '10.2.0.0/30' for item in all_prefixes['top_utilized_prefixes'])
+    assert all_prefixes['overview']['total_ips'] > business['overview']['total_ips']
+    all_conn.close()
+
+
 def test_reconciliation_delegates_to_independent_discovery_evidence(monkeypatch):
     conn = _connection()
     monkeypatch.setattr(ipam_service, 'get_db_connection', lambda: conn)

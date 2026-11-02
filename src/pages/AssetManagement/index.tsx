@@ -52,6 +52,7 @@ import {
   isValidIpAddress,
 } from './constants';
 import { statusMeta, typeMeta } from './helpers';
+import { getMissingAssetRequiredFields, assetRequiredFieldLabel } from './requiredFields';
 import {
   ASSET_INFO_SHEET_RE,
   MANAGEMENT_ENTRY_SHEET_RE,
@@ -106,6 +107,7 @@ type BatchSnmpSyncResult = {
   detected_model?: string;
   synced_model?: string;
   model_source?: string;
+  serial_sync?: { status?: string; members_count?: number; message?: string; synced_serial_number?: string };
   rack_sync?: { status?: string; message?: string };
 };
 
@@ -427,6 +429,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const importInProgressRef = React.useRef(false);
   const importPollRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const snmpEnrichmentRefreshRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const snmpEnrichmentRefreshActiveRef = React.useRef(false);
   const rotationPollRef = React.useRef<any>(null);
   const batchTakeoverPollRef = React.useRef<any>(null);
 
@@ -471,6 +475,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
 
   useEffect(() => () => {
     if (importPollRef.current) clearTimeout(importPollRef.current);
+    if (snmpEnrichmentRefreshRef.current) clearTimeout(snmpEnrichmentRefreshRef.current);
+    snmpEnrichmentRefreshActiveRef.current = false;
     if (rotationPollRef.current) clearInterval(rotationPollRef.current);
     if (batchTakeoverPollRef.current) clearInterval(batchTakeoverPollRef.current);
   }, []);
@@ -870,8 +876,10 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   };
 
   const handleSave = async () => {
-    if (!editingAsset && !form.hostname.trim() && !form.asset_tag.trim()) {
-      setModalError(zh ? '主机名和资产编号至少填写一项' : 'Hostname or Asset Tag is required');
+    const missingFields = getMissingAssetRequiredFields(form);
+    if (!editingAsset && missingFields.length > 0) {
+      const labels = missingFields.map(field => assetRequiredFieldLabel(field, language)).join(zh ? '、' : ', ');
+      setModalError(zh ? `请填写必填项：${labels}` : `Required fields: ${labels}`);
       return;
     }
     const mgmtIp = String(form.management_ip || '').trim();
@@ -1263,6 +1271,9 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     // Keep failures visible above the validation dialog and page content.
     setShowValidationModal(false);
     if (importInProgressRef.current) return;
+    snmpEnrichmentRefreshActiveRef.current = false;
+    if (snmpEnrichmentRefreshRef.current) clearTimeout(snmpEnrichmentRefreshRef.current);
+    snmpEnrichmentRefreshRef.current = null;
     importInProgressRef.current = true;
     setImportInProgress(true);
     setFeedbackMsg({
@@ -1272,6 +1283,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         ? '已完成的资产会自动显示在列表中'
         : 'Completed assets will appear in the list automatically.',
     });
+    let shouldRefreshAfterSnmpEnrichment = false;
+    let pendingSnmpEnrichmentCount = 0;
     const scheduleImportListRefresh = () => {
       if (!importInProgressRef.current) return;
       importPollRef.current = setTimeout(() => {
@@ -1380,6 +1393,34 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       const platformBindingNeedsAction = platformBindingResults.some((item) => (
         item.platform_binding_status === 'suggested' || item.platform_binding_status === 'unbound'
       ));
+      const serialSyncRows = (resultRows || []).flatMap((item) => {
+        const identity = item.snmp_identification;
+        if (!identity || typeof identity !== 'object') return [];
+        const serialSync = (identity as Record<string, unknown>).serial_sync;
+        if (!serialSync || typeof serialSync !== 'object') return [];
+        const details = serialSync as Record<string, unknown>;
+        return [{
+          row: Number(item.row || 0),
+          hostname: String(item.hostname || item.asset_tag || ''),
+          status: String(details.status || ''),
+          message: String(details.message || ''),
+        }];
+      });
+      const serialRefreshRows = serialSyncRows.filter(item => item.status === 'pending');
+      const snmpSummary = res.snmp_identification && typeof res.snmp_identification === 'object'
+        ? res.snmp_identification as Record<string, unknown>
+        : {};
+      pendingSnmpEnrichmentCount = Math.max(serialRefreshRows.length, Number(snmpSummary.pending || 0));
+      shouldRefreshAfterSnmpEnrichment = pendingSnmpEnrichmentCount > 0;
+      const serialRefreshDetails = serialRefreshRows.slice(0, 8).map((item) => zh
+        ? `第 ${item.row || '?'} 行${item.hostname ? `（${item.hostname}）` : ''}：正在使用已登记的 SNMP 配置重新采集整机 SN`
+        : `Row ${item.row || '?'}${item.hostname ? ` (${item.hostname})` : ''}: refreshing chassis serials with the asset's saved SNMP profile`);
+      const serialSyncSkippedDetails = serialSyncRows
+        .filter(item => item.status === 'skipped' && item.message)
+        .slice(0, 8)
+        .map((item) => zh
+          ? `第 ${item.row || '?'} 行${item.hostname ? `（${item.hostname}）` : ''}：${item.message}`
+          : `Row ${item.row || '?'}${item.hostname ? ` (${item.hostname})` : ''}: ${item.message}`);
       const createdRows = resultRows
         ? new Set(resultRows.filter(item => item.status === 'created').map(item => Number(item.row)))
         : undefined;
@@ -1387,18 +1428,31 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       const missingSnmpDetails = missingSnmpRows.map(item => zh
         ? `第 ${item.row} 条（${item.identity}）：未填写 SNMP 社区名或 SNMPv2/v3 Profile，主机名和型号无法自动同步。请补充其中一项；SSH 登录凭据不能代替 SNMP 凭据。`
         : `Item ${item.row} (${item.identity}): no SNMP Community or SNMPv2/v3 profile was supplied, so hostname and model cannot sync automatically. Configure either one; SSH credentials do not replace SNMP credentials.`);
-      const importDetails = [...failedDetails, ...missingSnmpDetails, ...platformBindingDetails, ...skippedDetails].slice(0, 8);
+      const importDetails = [...failedDetails, ...missingSnmpDetails, ...platformBindingDetails, ...serialRefreshDetails, ...serialSyncSkippedDetails, ...skippedDetails].slice(0, 8);
       const missingSnmpSummary = missingSnmpRows.length > 0
         ? (zh
           ? `；${missingSnmpRows.length} 台设备缺少 SNMP Community/Profile，无法自动同步主机名和型号`
           : `; ${missingSnmpRows.length} device(s) lack SNMP Community/Profile, so hostname and model cannot sync automatically`)
         : '';
       const enrichmentPending = Boolean(res.enrichment_pending);
+      const pendingEnrichmentSummary = serialRefreshRows.length > 0
+        ? (zh
+          ? '；重复资产正在使用已登记的 SNMP 配置重新采集整机 SN，列表会在采集期间自动刷新'
+          : '; duplicate assets are refreshing chassis serials with their saved SNMP profile; the list will refresh during collection')
+        : shouldRefreshAfterSnmpEnrichment
+          ? (zh
+            ? '；SNMP 身份和序列号正在后台采集，资产列表会自动刷新'
+            : '; SNMP identity and chassis serials are collecting in the background; the asset list will refresh automatically')
+        : enrichmentPending && missingSnmpRows.length === 0
+          ? (zh
+            ? '；设备名称、SNMP 身份和平台绑定将在后台继续处理，稍后刷新网络设备页查看'
+            : '; device names, SNMP identity, and platform binding will continue in the background; refresh Network Devices later to view them')
+          : '';
       setFeedbackMsg({
         type: skippedCount > 0 || failedCount > 0 || missingSnmpRows.length > 0 || platformBindingNeedsAction ? 'warning' : 'success',
         text: zh
-          ? `导入完成：新增 ${res.created} 条，跳过 ${skippedCount} 条，失败 ${failedCount} 条${missingSnmpSummary}${enrichmentPending && missingSnmpRows.length === 0 ? '；设备名称、SNMP 身份和平台绑定将在后台继续处理，稍后刷新网络设备页查看' : ''}`
-          : `Import done: ${res.created} created, ${skippedCount} skipped, ${failedCount} failed${missingSnmpSummary}${enrichmentPending && missingSnmpRows.length === 0 ? '; device names, SNMP identity, and platform binding will continue in the background; refresh Network Devices later to view them' : ''}`,
+          ? `导入完成：新增 ${res.created} 条，跳过 ${skippedCount} 条，失败 ${failedCount} 条${missingSnmpSummary}${pendingEnrichmentSummary}`
+          : `Import done: ${res.created} created, ${skippedCount} skipped, ${failedCount} failed${missingSnmpSummary}${pendingEnrichmentSummary}`,
         details: importDetails.length > 0 ? importDetails : undefined,
       });
     } catch {
@@ -1410,6 +1464,29 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       setImportInProgress(false);
       // A failed detailed import may already have committed earlier rows.
       await Promise.all([fetchAssets({ silent: true }), fetchSummary(), fetchAllRacks()]);
+      if (shouldRefreshAfterSnmpEnrichment) {
+        // The import response can arrive before its post-response SNMP task finishes.
+        snmpEnrichmentRefreshActiveRef.current = true;
+        const delays = [1_500, 4_000, 10_000, 20_000, 40_000];
+        const remainingSnmpWaves = Math.max(0, Math.ceil(pendingSnmpEnrichmentCount / 5) - 1);
+        for (let wave = 0; wave < remainingSnmpWaves; wave += 1) delays.push(60_000);
+        let attempt = 0;
+        const scheduleSnmpEnrichmentRefresh = () => {
+          if (!snmpEnrichmentRefreshActiveRef.current) return;
+          if (attempt >= delays.length) {
+            snmpEnrichmentRefreshActiveRef.current = false;
+            return;
+          }
+          snmpEnrichmentRefreshRef.current = setTimeout(() => {
+            snmpEnrichmentRefreshRef.current = null;
+            void fetchAssets({ silent: true }).finally(() => {
+              attempt += 1;
+              scheduleSnmpEnrichmentRefresh();
+            });
+          }, delays[attempt]);
+        };
+        scheduleSnmpEnrichmentRefresh();
+      }
     }
   };
 
@@ -1589,6 +1666,15 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
               }
             }
             if (obj.hostname || obj.asset_tag || obj.management_ip) {
+              const missingFields = getMissingAssetRequiredFields(obj);
+              if (missingFields.length > 0) {
+                templateMismatchRows.push(`${name} ${zh ? '第' : 'row '}${rowIndex + 2}${zh ? '行：必填项缺失：' : ': missing required fields: '}${missingFields.map(field => assetRequiredFieldLabel(field, language)).join('、')}`);
+                continue;
+              }
+              if (!isValidIpAddress(obj.management_ip)) {
+                templateMismatchRows.push(`${name} ${zh ? '第' : 'row '}${rowIndex + 2}${zh ? '行：管理 IP 格式不正确' : ': invalid Management IP'}`);
+                continue;
+              }
               if (!obj.asset_type) {
                 if (isUnifiedAssetSheet) {
                   templateMismatchRows.push(`${name} 第${rowIndex + 2}行：资产类型必填，请选择“服务器”或“网络设备”`);
@@ -1654,7 +1740,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         if (templateMismatchRows.length > 0) {
           setFeedbackMsg({
             type: 'error',
-            text: `${zh ? '模板角色/设备分类不匹配，请检查：' : 'Template role/category mismatch:'} ${templateMismatchRows.slice(0, 3).join('；')}`,
+            text: `${zh ? '资产导入校验失败，请检查：' : 'Asset import validation failed:'} ${templateMismatchRows.slice(0, 3).join('；')}`,
           });
           return;
         }
@@ -1757,7 +1843,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ['网络设备', '每台设备一行', '只填写网络设备；资产类型固定填写“网络设备”，不要混入服务器。'],
       ['服务器', '每台设备一行', '只填写服务器；资产类型固定填写“服务器”，不要混入网络设备。'],
       ['资产类型', '必填', '按当前工作表填写对应值：“网络设备”或“服务器”。'],
-      ['主机名/资产编号', '选填（支持留空）', '网络设备主机名可留空，但必须填写管理 IP；Nexora 将使用设备的 SNMP Profile 执行识别和硬件采集。'],
+      ['资产编号 / 管理 IP', '必填 *', '每台设备必须填写资产编号和有效管理 IP。'],
+      ['主机名 / 整机 SN / 型号', '选填', '网络设备配置有效 SNMP Profile 后可尝试补齐主机名和型号；H3C 整机 SN 可自动读取，堆叠成员分别保存；其它厂商 SN 按需手工填写。'],
       ['录入来源', '必填', '填写“新设备”或“存量设备”。'],
       ['投产状态', '必填', '新设备填“待投产”；存量设备按实际状态填写。'],
       ['管理入口', '每个资产一行', '资产编号和主机名会从两张资产表自动带出；SSH 只填一行，导入后自动提供“SSH 终端”和“Web SSH”。'],
@@ -1782,7 +1869,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ['Network Devices', 'One row per device', 'Enter network devices only; keep Asset Type as network_device.'],
       ['Servers', 'One row per device', 'Enter servers only; keep Asset Type as server.'],
       ['Asset Type', 'Required', 'Use the value matching the current sheet: network_device or server.'],
-      ['Hostname / Asset Tag', 'Optional', 'For network devices, hostname may be blank when a management IP is provided. Nexora uses the selected SNMP profile for device identification and hardware collection.'],
+      ['Asset Tag / Management IP', 'Required *', 'Enter an asset tag and a valid management IP for every device.'],
+      ['Hostname / Chassis SN / Model', 'Optional', 'Valid SNMP profiles can help collect network hostname and model. H3C chassis SNs can be collected automatically; stack chassis are stored separately. Enter SNs manually for other vendors.'],
       ['Asset Origin', 'Required', 'Use new or legacy.'],
       ['Lifecycle', 'Required', 'Use staging for new devices; use the actual state for legacy devices.'],
       ['Management Entries', 'One row per asset', 'Asset Tag and Hostname are read from Network Devices and Servers. For SSH, enter one row only; the imported asset automatically provides SSH terminal and Web SSH.'],
@@ -1813,8 +1901,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ? ['资产类型', '主机名', '资产编号', '序列号', '厂商', '型号', '平台', 'SSH算法策略', '管理IP', '业务IP', '状态', '角色', '设备分类', '录入来源（必填：新设备或存量设备）', 'VLAN', '上联交换机', '上联端口', '站点', '机柜', 'U位', 'U高度', '规划起始U', '功耗(W)', 'SNMP社区名', 'SNMP端口', '普通用户', '特权用户', '普通密码', '特权密码', 'Enable密码', '绑定凭据', '绑定特权凭据', 'SNMP凭据名称（选填）', '标签代码', '部门', '购买日期', '投产状态', '免上收投产原因', '保修到期', '备注', '功能', '区域']
       : ['Asset Type', 'Hostname', 'Asset Tag', 'Serial Number', 'Vendor', 'Model', 'Platform', 'SSH Algorithm Profile', 'Mgmt IP', 'Business IP', 'Status', 'Role', 'Device Category', 'Asset Origin (Required: new or legacy)', 'VLAN', 'Uplink Switch', 'Uplink Port', 'Site', 'Rack', 'Rack Unit', 'U Height', 'Planned Start U', 'Power(W)', 'SNMP Community', 'SNMP Port', 'Normal User', 'Admin User', 'Normal Password', 'Admin Password', 'Enable Secret', 'Credential', 'Admin Credential', 'SNMP Credential Name (optional)', 'Tags', 'Department', 'Purchase Date', 'Lifecycle', 'Takeover Exemption Reason', 'Warranty Expiry', 'Notes', 'Function', 'Zone'];
     const requiredHeaders = zh
-      ? new Set(['资产类型', '资产编号', '录入来源（必填：新设备或存量设备）', '投产状态', '免上收投产原因'])
-      : new Set(['Asset Type', 'Asset Tag', 'Asset Origin (Required: new or legacy)', 'Lifecycle', 'Takeover Exemption Reason']);
+      ? new Set(['资产类型', '资产编号', '管理IP', '录入来源（必填：新设备或存量设备）', '投产状态', '免上收投产原因'])
+      : new Set(['Asset Type', 'Asset Tag', 'Mgmt IP', 'Asset Origin (Required: new or legacy)', 'Lifecycle', 'Takeover Exemption Reason']);
     // Keep the fallback on the same field order as the user-supplied split
     // workbook. Network sheets omit Business IP; server sheets omit the SNMP
     // community/port, Enable password and SNMP credential fields.
@@ -1946,7 +2034,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ['管理入口', '管理方式', 'Web管理', 'Web 管理入口；默认 HTTPS/443，端口填写 80 时按 HTTP 处理'],
       ['管理入口', 'SSH算法策略', '自动', '默认策略：现代算法优先，并兼容安全的旧算法'],
       ['管理入口', 'SSH算法策略', '现代算法', '严格限制为现代算法；设备较旧时可能无法连接'],
-      ['管理入口', 'SSH算法策略', '兼容旧算法', '受控启用 group14-sha1、ssh-rsa、AES-CBC、HMAC-SHA1 等安全旧算法'],
+      ['管理入口', 'SSH算法策略', '兼容旧算法', '现代算法优先，兼容底层 SSH 库支持的 group1、ssh-rsa、AES-CBC、HMAC-MD5 等旧算法'],
       ['管理入口', 'SSH算法策略', '极旧设备兼容', '紧急 break-glass 模式；可能启用 group1、ssh-dss、MD5、RC4 等高风险算法，必须审计'],
       ['远程桌面', '协议', 'RDP', 'Windows 远程桌面协议；默认端口 3389'],
       ['远程桌面', '协议', 'VNC', '虚拟网络控制台；默认端口 5900'],
@@ -1990,7 +2078,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     ] : [
       ['Common', 'Connection Method', 'SSH', 'Manage the device over SSH'],
       ['Management Entry', 'Management Method', 'Web Management', 'Web entry; defaults to HTTPS/443, or HTTP when port 80 is entered'],
-      ['Management Entry', 'SSH Algorithm Profile', 'auto', 'Modern algorithms first with the safe legacy fallback set'],
+      ['Management Entry', 'SSH Algorithm Profile', 'auto', 'Modern algorithms first, with legacy algorithms supported by the SSH library'],
       ['Management Entry', 'SSH Algorithm Profile', 'modern', 'Strict modern-only policy; older devices may fail to connect'],
       ['Management Entry', 'SSH Algorithm Profile', 'legacy_compat', 'Controlled fallback for group14-sha1, ssh-rsa, AES-CBC and HMAC-SHA1'],
       ['Management Entry', 'SSH Algorithm Profile', 'legacy_break_glass', 'Emergency break-glass mode; may enable group1, ssh-dss, MD5 and RC4. Audit every use'],
@@ -2092,7 +2180,12 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ) : <span className="text-gray-300 dark:text-zinc-600">—</span>;
       case 'vendor': return <span className="text-xs font-semibold text-gray-700 dark:text-zinc-300">{a.vendor || '—'}</span>;
       case 'model': return <span className="text-xs text-gray-600 dark:text-zinc-400">{a.model || '—'}</span>;
-      case 'serial_number': return <span className="font-mono text-xs text-gray-600 dark:text-zinc-400">{a.serial_number || '—'}</span>;
+      case 'serial_number': return (
+        <div className="text-xs text-gray-600 dark:text-zinc-400">
+          <span className="font-mono">{a.serial_number || (a.chassis_members?.length === 1 ? a.chassis_members[0].serial_number : '—')}</span>
+          {(a.chassis_members?.length || 0) > 1 && <div className="mt-0.5 text-[11px]">{zh ? `${a.chassis_members!.length} 个机箱 SN · 详情查看` : `${a.chassis_members!.length} chassis SNs · See details`}</div>}
+        </div>
+      );
       case 'management_ip': return <span className="font-mono text-xs font-semibold text-gray-800 dark:text-zinc-200">{a.management_ip || '—'}</span>;
       case 'lifecycle': return rotatingAssetId === a.id ? (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 text-[10px] font-semibold">
@@ -2294,6 +2387,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                 const details = [
                   result.message,
                   result.hostname_sync?.error,
+                  result.serial_sync?.message,
                   result.rack_sync?.status === 'failed' || result.rack_sync?.status === 'unresolved'
                     ? result.rack_sync.message
                     : '',

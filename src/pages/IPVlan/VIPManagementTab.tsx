@@ -229,6 +229,14 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
     return dev?.hostname || '-';
   };
 
+  const getStatusPresentation = (status: string) => {
+    const normalized = String(status || '').toLowerCase();
+    if (normalized === 'active') return { badge: 'bg-emerald-50 text-emerald-600 border-emerald-500/10', dot: 'bg-emerald-500' };
+    if (normalized === 'reserved' || normalized === 'standby') return { badge: 'bg-amber-50 text-amber-700 border-amber-500/10', dot: 'bg-amber-500' };
+    if (normalized === 'deprecated' || normalized === 'released' || normalized === 'disabled') return { badge: 'bg-slate-100 text-slate-600 border-slate-300', dot: 'bg-slate-400' };
+    return { badge: 'bg-slate-50 text-slate-600 border-slate-300', dot: 'bg-slate-400' };
+  };
+
   const filteredVips = vips;
   const paginatedVips = vips;
 
@@ -361,8 +369,8 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
                         )}
                       </td>
                       <td className="px-4 py-4">
-                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-600 border border-emerald-500/10`}>
-                          <span className="w-1 h-1 rounded-full bg-emerald-500" />
+                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border text-[10px] font-bold ${getStatusPresentation(node.status).badge}`}>
+                          <span className={`w-1 h-1 rounded-full ${getStatusPresentation(node.status).dot}`} />
                           {node.status.toUpperCase()}
                         </span>
                       </td>

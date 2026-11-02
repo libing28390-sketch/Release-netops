@@ -238,6 +238,14 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t, prefixId = '', embed
     return 'from-rose-400 to-red-500';
   };
 
+  const getStatusPresentation = (status: string) => {
+    const normalized = String(status || '').toLowerCase();
+    if (normalized === 'active') return { badge: 'bg-emerald-50 text-emerald-700 border-emerald-500/10', dot: 'bg-emerald-500' };
+    if (normalized === 'reserved') return { badge: 'bg-amber-50 text-amber-700 border-amber-500/10', dot: 'bg-amber-500' };
+    if (normalized === 'deprecated' || normalized === 'released') return { badge: 'bg-slate-100 text-slate-600 border-slate-300', dot: 'bg-slate-400' };
+    return { badge: 'bg-slate-50 text-slate-600 border-slate-300', dot: 'bg-slate-400' };
+  };
+
   return (
     <div className={embedded ? 'w-full min-h-0 flex flex-col gap-3' : 'flex-1 flex flex-col h-full overflow-hidden px-6 py-5 space-y-4'}>
       {embedded ? (
@@ -349,8 +357,8 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t, prefixId = '', embed
                       <td className="px-4 py-4 text-xs text-gray-600 font-semibold">{node.used_ips}</td>
                       <td className="px-4 py-4 text-xs text-gray-600 font-semibold">{node.total_ips}</td>
                       <td className="px-4 py-4">
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-500/10">
-                          <span className="w-1 h-1 rounded-full bg-emerald-500" />
+                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border text-[11px] font-bold ${getStatusPresentation(node.status).badge}`}>
+                          <span className={`w-1 h-1 rounded-full ${getStatusPresentation(node.status).dot}`} />
                           {node.status.toUpperCase()}
                         </span>
                       </td>

@@ -424,7 +424,7 @@ def _auto_bind_imported_platform(
     }
 
 
-async def identify_imported_device(
+async def _identify_imported_device_core(
     item: Mapping[str, Any],
     semaphore: Any,
     model_semaphore: Any | None = None,
@@ -757,4 +757,145 @@ async def identify_imported_device(
         conn.close()
 
 
-__all__ = ["IDENTITY_OIDS", "identify_imported_device"]
+async def _sync_import_chassis_serials(
+    item: Mapping[str, Any],
+    identity_result: dict[str, Any],
+    semaphore: Any,
+) -> dict[str, Any]:
+    """Collect confirmed chassis SN without holding a DB lease over I/O."""
+    serial_sync: dict[str, Any] = {
+        "status": "skipped", "members_count": 0,
+        "message": "仅在网络设备已关联资产且 SNMP 采集启用时同步整机 SN",
+    }
+    identity_result["serial_sync"] = serial_sync
+    if identity_result.get("status") in {"collection_disabled", "identity_conflict", "device_missing"}:
+        return identity_result
+
+    device_id = str(item.get("device_id") or "").strip()
+    conn = get_db_connection()
+    try:
+        row = conn.execute("SELECT * FROM devices WHERE id = ?", (device_id,)).fetchone()
+        if not row:
+            return identity_result
+        device = dict(row)
+        from services.snmp_collection_policy_service import is_snmp_collection_enabled
+
+        if not is_snmp_collection_enabled(device):
+            return identity_result
+        vendor = canonical_vendor(
+            identity_result.get("detected_vendor") or device.get("vendor") or item.get("declared_vendor") or ""
+        )
+        if not device.get("asset_id"):
+            return identity_result
+        settings, settings_error = _resolve_probe_settings(conn, device, bool(item.get("snmp_configured")))
+    finally:
+        conn.close()
+
+    if settings_error:
+        serial_sync.update(status="failed", message="SNMP 凭据不可用于整机 SN 读取")
+        return identity_result
+    ip = str(
+        (settings or {}).get("server")
+        or device.get("ip_address")
+        or item.get("ip")
+        or ""
+    ).strip()
+    if not ip:
+        serial_sync.update(status="failed", message="缺少整机 SN 采集地址")
+        return identity_result
+
+    try:
+        from services.asset_chassis_serial_service import read_chassis_serials, sync_asset_chassis_members
+
+        # Model probes use a single-flight gate because HCL agents can stall
+        # under parallel model walks. Chassis SN collection has its own
+        # per-device and global SNMP limits, so use the batch gate here and
+        # avoid serializing every imported device behind the model gate.
+        async with semaphore:
+            snapshot = await read_chassis_serials(ip, settings or {}, vendor=vendor)
+        conn = get_db_connection()
+        try:
+            sync_result = sync_asset_chassis_members(
+                conn, str(device["asset_id"]), snapshot,
+                device_id=device_id,
+                management_ip=str(device.get("ip_address") or ""),
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+        serial_sync.update(sync_result)
+        serial_sync["collection_status"] = str(snapshot.get("status") or "failed")
+    except Exception as exc:
+        logger.warning("Asset chassis serial synchronization failed for device %s (%s)", device_id, type(exc).__name__)
+        serial_sync.update(status="failed", message="整机 SN 采集或保存失败，原有资产数据已保留")
+    return identity_result
+
+
+async def sync_imported_device_chassis_serials(
+    item: Mapping[str, Any],
+    semaphore: Any,
+    model_semaphore: Any | None = None,
+) -> dict[str, Any]:
+    """Refresh only chassis serials for an existing import match."""
+    result = _safe_result(
+        item,
+        "serial_sync_only",
+        "重复资产仅刷新整机 SN，不修改主机名、型号或平台信息",
+    )
+    try:
+        result = await _sync_import_chassis_serials(
+            item, result, semaphore,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Existing asset chassis serial refresh failed for device %s (%s)",
+            item.get("device_id") or "", type(exc).__name__,
+        )
+        result["serial_sync"] = {
+            "status": "failed",
+            "members_count": 0,
+            "message": "整机 SN 同步暂时失败，原有设备身份信息未修改",
+        }
+    serial_sync = result.get("serial_sync") or {}
+    result["message"] = str(
+        serial_sync.get("message")
+        or "重复资产整机 SN 同步已完成"
+    )
+    return result
+
+
+async def identify_imported_device(
+    item: Mapping[str, Any],
+    semaphore: Any,
+    model_semaphore: Any | None = None,
+    *,
+    user: Mapping[str, Any] | None = None,
+    auto_bind_platform: bool = False,
+) -> dict[str, Any]:
+    """Enrich identity first, then independently collect confirmed chassis SNs."""
+    identity_result = await _identify_imported_device_core(
+        item, semaphore, model_semaphore,
+        user=user, auto_bind_platform=auto_bind_platform,
+    )
+    try:
+        return await _sync_import_chassis_serials(item, identity_result, semaphore)
+    except Exception as exc:
+        logger.warning(
+            "Optional chassis serial stage failed for device %s (%s)",
+            item.get("device_id") or "", type(exc).__name__,
+        )
+        identity_result["serial_sync"] = {
+            "status": "failed", "members_count": 0,
+            "message": "整机 SN 同步暂时失败，已保留本次设备身份识别结果",
+        }
+        return identity_result
+
+
+__all__ = [
+    "IDENTITY_OIDS",
+    "identify_imported_device",
+    "sync_imported_device_chassis_serials",
+]

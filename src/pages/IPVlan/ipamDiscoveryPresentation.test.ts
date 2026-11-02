@@ -14,7 +14,7 @@ describe('discovered endpoint query and presentation', () => {
       siteId: 'site-1', vrfId: 'vrf-2', deviceId: 'device-3', query: ' 10.1.2.3 ',
       kind: 'ip', evidenceStatus: 'recent', registrationStatus: 'unregistered', page: 2, pageSize: 50,
     });
-    expect(query.toString()).toBe('kind=ip&page=2&page_size=50&site_id=site-1&vrf_id=vrf-2&device_id=device-3&q=10.1.2.3&evidence_status=recent&registration_status=unregistered');
+    expect(query.toString()).toBe('kind=ip&network_scope=business_vlan&page=2&page_size=50&site_id=site-1&vrf_id=vrf-2&device_id=device-3&q=10.1.2.3&evidence_status=recent&registration_status=unregistered');
   });
 
   it('normalizes site and VRF options from supported response shapes', () => {

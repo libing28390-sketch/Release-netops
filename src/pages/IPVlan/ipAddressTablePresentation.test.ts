@@ -1,14 +1,27 @@
 import { describe, expect, it } from 'vitest';
 import {
   getIPAddressRegisteredPrefixLabel,
+  getIPAddressObservationStatus,
   getIPAddressSourceLabel,
   getIPAddressTimestampPresentation,
 } from './ipAddressTablePresentation';
+
+describe('IP address observation status', () => {
+  it('keeps interface state and discovery separate from allocation status', () => {
+    expect(getIPAddressObservationStatus({ source: 'interface_cli', interface_admin_status: 'up', interface_oper_status: 'down' }, true))
+      .toEqual({ label: '接口 Down', tone: 'warning' });
+    expect(getIPAddressObservationStatus({ source: 'interface_cli' }, true)?.tone).toBe('neutral');
+    expect(getIPAddressObservationStatus({ source: 'interface_cli', interface_admin_status: 'up', interface_oper_status: 'up' }, true)?.label).toBe('接口 Up');
+    expect(getIPAddressObservationStatus({ source: 'discovered' }, true)?.label).toBe('发现记录');
+    expect(getIPAddressObservationStatus({ source: 'manual' }, true)).toBeNull();
+  });
+});
 
 describe('IP address table timestamp presentation', () => {
   it('labels persisted interface CLI rows as IPAM source records', () => {
     expect(getIPAddressSourceLabel({ source: 'interface_cli' }, true)).toBe('接口采集');
     expect(getIPAddressSourceLabel({ source: 'interface_cli' }, false)).toBe('Interface collection');
+    expect(getIPAddressSourceLabel({ source: 'manual', source_type: 'interface_collection' }, true)).toBe('接口生成台账');
   });
 
   it('labels discovery timestamps as discovery and preserves the timestamp timezone', () => {

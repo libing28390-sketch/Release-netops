@@ -40,6 +40,7 @@ import {
 } from './prefixGatewayBinding';
 import { areAllVisiblePrefixIdsSelected, toggleVisiblePrefixSelection } from './prefixManagementSelection';
 import {
+  canUsePrefixTreeView,
   buildPrefixClassificationSummaryQuery,
   buildPrefixListQuery,
   togglePrefixClassificationFilter,
@@ -118,6 +119,8 @@ interface InterfacePrefixCandidate {
 }
 
 type InterfaceCandidateFilter = 'to_create' | 'existing' | 'global_default' | 'all';
+
+const DEFAULT_NEW_PREFIX_NETWORK_TYPE = 'unclassified';
 
 interface InterfaceCandidateSummary {
   candidate_count: number;
@@ -266,7 +269,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
     status: 'active',
     gateway: '',
     description: '',
-    network_type: 'server',
+    network_type: DEFAULT_NEW_PREFIX_NETWORK_TYPE,
     gateway_device_id: '',
     gateway_interface_id: '',
     traceable: 1,
@@ -287,6 +290,12 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [totalPrefixes, setTotalPrefixes] = useState(0);
+  const canUseTreeView = canUsePrefixTreeView({
+    q: search,
+    site: siteFilter,
+    status: statusFilter,
+    classification: classificationFilter,
+  });
 
   const usableIpDetails = useMemo(() => {
     const cidr = form.prefix.trim();
@@ -886,7 +895,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
         status: prefixItem.status || 'active',
         gateway: prefixItem.gateway || '',
         description: prefixItem.description || '',
-        network_type: prefixItem.network_type === 'user' ? 'user_access' : (prefixItem.network_type || 'server'),
+        network_type: prefixItem.network_type === 'user' ? 'user_access' : (prefixItem.network_type || DEFAULT_NEW_PREFIX_NETWORK_TYPE),
         gateway_device_id: prefixItem.gateway_device_id || '',
         gateway_interface_id: prefixItem.gateway_interface_id || '',
         traceable: prefixItem.traceable ?? 1,
@@ -903,7 +912,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
         status: 'active',
         gateway: '',
         description: '',
-        network_type: 'server',
+        network_type: DEFAULT_NEW_PREFIX_NETWORK_TYPE,
         gateway_device_id: '',
         gateway_interface_id: '',
         traceable: 1,
@@ -1271,7 +1280,11 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
           <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
             <select
               value={siteFilter}
-              onChange={(e) => { setSiteFilter(e.target.value); setPage(1); }}
+              onChange={(e) => {
+                setSiteFilter(e.target.value);
+                setPage(1);
+                if (viewMode === 'tree') setViewMode('table');
+              }}
               className="min-w-[150px] px-3 py-1.5 rounded-xl border border-black/5 bg-white text-xs font-semibold text-gray-500 outline-none transition-all"
             >
               <option value="all">{zh ? '全部站点' : 'All Sites'}</option>
@@ -1281,7 +1294,11 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
             </select>
             <select
               value={statusFilter}
-              onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
+              onChange={(e) => {
+                setStatusFilter(e.target.value);
+                setPage(1);
+                if (viewMode === 'tree') setViewMode('table');
+              }}
               className="px-3 py-1.5 rounded-xl border border-black/5 bg-white text-xs font-semibold text-gray-500 outline-none transition-all"
             >
               <option value="all">{zh ? '所有状态' : 'All Status'}</option>
@@ -1323,12 +1340,14 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
               {search === '' && (
                 <button
                   type="button"
-                  disabled={classificationFilter !== 'all'}
-                  title={classificationFilter !== 'all' ? (zh ? '请先清除分类筛选再查看层次树' : 'Clear the category filter before switching to hierarchy view') : undefined}
+                  disabled={!canUseTreeView}
+                  title={!canUseTreeView
+                    ? (zh ? '层次树不支持搜索、站点、状态或分类筛选；请先清除这些条件。' : 'Hierarchy view does not support search, site, status, or classification filters. Clear them first.')
+                    : undefined}
                   onClick={() => setViewMode('tree')}
                   className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
                     viewMode === 'tree' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-400 hover:text-gray-600'
-                  } ${classificationFilter !== 'all' ? 'cursor-not-allowed opacity-40' : ''}`}
+                  } ${!canUseTreeView ? 'cursor-not-allowed opacity-40' : ''}`}
                 >
                   <GitBranch size={13} />
                   {zh ? '层次树视图' : 'Hierarchy Tree'}

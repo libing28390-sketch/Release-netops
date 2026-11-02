@@ -1,13 +1,12 @@
+import pytest
+
 from api.pam import get_asyncssh_compatible_algorithms
 from drivers.ssh_compat import (
     LEGACY_CIPHERS,
     LEGACY_HOST_KEY_ALGORITHMS,
     LEGACY_KEX_ALGORITHMS,
     LEGACY_MAC_ALGORITHMS,
-    SAFE_LEGACY_CIPHERS,
-    SAFE_LEGACY_HOST_KEY_ALGORITHMS,
-    SAFE_LEGACY_KEX_ALGORITHMS,
-    SAFE_LEGACY_MAC_ALGORITHMS,
+    filter_ssh_algorithm_names,
     build_paramiko_compatibility_kwargs,
     build_system_ssh_open_cmd,
     get_ssh_algorithm_lists,
@@ -17,7 +16,7 @@ from drivers.ssh_compat import (
 )
 
 
-def test_asyncssh_compatible_algorithms_includes_safe_legacy_macs_and_kex():
+def test_asyncssh_compatible_algorithms_includes_full_legacy_macs_and_kex():
     algs = get_asyncssh_compatible_algorithms()
     assert "mac_algs" in algs
     assert "kex_algs" in algs
@@ -27,23 +26,24 @@ def test_asyncssh_compatible_algorithms_includes_safe_legacy_macs_and_kex():
     macs = algs["mac_algs"]
     for expected_mac in ["hmac-sha1", "hmac-sha2-256"]:
         assert expected_mac in macs
-    for blocked_mac in ["hmac-md5", "hmac-sha1-96", "hmac-md5-96"]:
-        assert blocked_mac not in macs
+    for legacy_mac in ["hmac-md5", "hmac-sha1-96", "hmac-md5-96"]:
+        assert legacy_mac in macs
 
     kex = algs["kex_algs"]
     for expected_kex in ["diffie-hellman-group14-sha1", "diffie-hellman-group-exchange-sha1", "curve25519-sha256"]:
         assert expected_kex in kex
-    assert "diffie-hellman-group1-sha1" not in kex
+    assert "diffie-hellman-group1-sha1" in kex
+    assert kex.index("curve25519-sha256") < kex.index("diffie-hellman-group1-sha1")
 
     ciphers = algs["encryption_algs"]
     for expected_cipher in ["aes128-ctr", "aes256-ctr", "aes256-cbc"]:
         assert expected_cipher in ciphers
-    assert "3des-cbc" not in ciphers
+    assert "3des-cbc" in ciphers
 
     host_keys = algs["server_host_key_algs"]
     for expected_host_key in ["rsa-sha2-256", "ssh-rsa"]:
         assert expected_host_key in host_keys
-    assert "ssh-dss" not in host_keys
+    assert "ssh-dss" in host_keys
 
 
 def test_legacy_algorithm_lists_contain_full_network_device_suites():
@@ -61,21 +61,19 @@ def test_legacy_algorithm_lists_contain_full_network_device_suites():
     assert "diffie-hellman-group1-sha1" in cmd_str
 
 
-def test_auto_profile_keeps_modern_algorithms_first_and_blocks_weak_legacy():
-    lists = get_ssh_algorithm_lists()
+@pytest.mark.parametrize("profile", [None, "auto", "legacy_compat", "legacy_break_glass"])
+def test_compatibility_profiles_keep_modern_first_and_include_old_device_suites(profile):
+    lists = get_ssh_algorithm_lists(profile)
     assert lists["kex"][:2] == ["curve25519-sha256", "curve25519-sha256@libssh.org"]
-    assert lists["kex"][-2:] == SAFE_LEGACY_KEX_ALGORITHMS
-    assert lists["host_key"][-1] == SAFE_LEGACY_HOST_KEY_ALGORITHMS[0]
-    assert lists["cipher"][-3:] == SAFE_LEGACY_CIPHERS
-    assert lists["mac"][-2:] == SAFE_LEGACY_MAC_ALGORITHMS
-    assert "diffie-hellman-group1-sha1" not in lists["kex"]
-    assert "ssh-dss" not in lists["host_key"]
-    assert "hmac-md5" not in lists["mac"]
+    assert set(LEGACY_KEX_ALGORITHMS) <= set(lists["kex"])
+    assert set(LEGACY_HOST_KEY_ALGORITHMS) <= set(lists["host_key"])
+    assert set(LEGACY_CIPHERS) <= set(lists["cipher"])
+    assert set(LEGACY_MAC_ALGORITHMS) <= set(lists["mac"])
 
-    cmd = " ".join(build_system_ssh_open_cmd())
+    cmd = " ".join(build_system_ssh_open_cmd(profile))
     assert "KexAlgorithms=+" in cmd
     assert "diffie-hellman-group14-sha1" in cmd
-    assert "diffie-hellman-group1-sha1" not in cmd
+    assert "diffie-hellman-group1-sha1" in cmd
     assert "HostKeyAlgorithms=+ssh-rsa" in cmd
 
 
@@ -85,6 +83,75 @@ def test_profile_aliases_fail_closed_to_auto():
     assert normalize_ssh_algorithm_profile("legacy") == "legacy_compat"
     assert normalize_ssh_algorithm_profile("break-glass") == "legacy_break_glass"
     assert normalize_ssh_algorithm_profile("unrecognized") == "auto"
+
+
+def test_modern_profile_still_rejects_legacy_algorithms():
+    options = build_paramiko_compatibility_kwargs("modern")["disabled_algorithms"]
+    assert "diffie-hellman-group1-sha1" in options["kex"]
+    assert "ssh-rsa" in options["keys"]
+    assert "hmac-md5" in options["macs"]
+    assert "ssh-rsa" in options["pubkeys"]
+    assert build_system_ssh_open_cmd("modern") == []
+    modern = get_asyncssh_compatible_algorithms("modern")
+    assert "diffie-hellman-group1-sha1" not in modern["kex_algs"]
+    assert "ssh-dss" not in modern["server_host_key_algs"]
+    assert "hmac-md5" not in modern["mac_algs"]
+
+
+def test_library_algorithm_order_cannot_prefer_legacy_over_modern():
+    assert filter_ssh_algorithm_names(
+        [b"ssh-dss", b"ssh-rsa", b"ssh-ed25519-cert-v01@openssh.com", b"ssh-ed25519"],
+        "host_key",
+    ) == ["ssh-ed25519-cert-v01@openssh.com", "ssh-ed25519", "ssh-rsa", "ssh-dss"]
+
+
+@pytest.mark.parametrize("profile", [None, "legacy_compat", "legacy_break_glass"])
+@pytest.mark.parametrize("old_peer", [True, False])
+def test_paramiko_negotiates_with_old_and_modern_peers(profile, old_peer):
+    """Exercise a real SSH handshake without contacting any managed device."""
+    import socket
+    import threading
+    import paramiko
+
+    class PasswordServer(paramiko.ServerInterface):
+        def check_auth_password(self, username, password):
+            return paramiko.AUTH_SUCCESSFUL
+
+    client_socket, peer_socket = socket.socketpair()
+    client = paramiko.Transport(
+        client_socket,
+        disabled_algorithms=build_paramiko_compatibility_kwargs(profile)["disabled_algorithms"],
+    )
+    server = paramiko.Transport(peer_socket)
+    security = server.get_security_options()
+    security.kex = ("diffie-hellman-group1-sha1" if old_peer else "ecdh-sha2-nistp256",)
+    security.key_types = ("ssh-rsa" if old_peer else "rsa-sha2-256",)
+    security.ciphers = ("aes128-cbc" if old_peer else "aes128-ctr",)
+    security.digests = ("hmac-md5" if old_peer else "hmac-sha2-256",)
+    server.add_server_key(paramiko.RSAKey.generate(2048))
+    server_errors = []
+
+    def serve():
+        try:
+            server.start_server(server=PasswordServer())
+        except Exception as exc:
+            server_errors.append(exc)
+
+    worker = threading.Thread(target=serve, daemon=True)
+    worker.start()
+    try:
+        client.start_client(timeout=5)
+        client.auth_password("synthetic-test-user", "synthetic-test-password")
+        assert client.is_authenticated()
+        assert client.host_key_type == security.key_types[0]
+        assert client.local_cipher == security.ciphers[0]
+        assert client.local_mac == security.digests[0]
+    finally:
+        client.close()
+        server.close()
+        worker.join(timeout=5)
+    assert not worker.is_alive()
+    assert not server_errors
 
 
 def test_system_open_cmd_can_use_the_openSSH_8_2_pubkey_option(monkeypatch):
@@ -126,10 +193,7 @@ def test_netmiko_compatibility_kwargs_timeout():
     assert kwargs.get("auth_timeout") == 60
     assert kwargs.get("blocking_timeout") == 60
     assert kwargs.get("session_timeout") == 120
-    disabled = kwargs.get("disabled_algorithms")
-    assert "diffie-hellman-group1-sha1" in disabled["kex"]
-    assert "ssh-dss" in disabled["keys"]
-    assert "hmac-md5" in disabled["macs"]
+    assert kwargs.get("disabled_algorithms") == {}
     assert kwargs.get("disable_sha2_fix") is False
     expanded = build_netmiko_compatibility_kwargs(180)
     assert expanded.get("banner_timeout") == 180
@@ -143,8 +207,7 @@ def test_paramiko_options_share_the_same_profile_policy():
     options = build_paramiko_compatibility_kwargs()
     assert options["look_for_keys"] is False
     assert options["allow_agent"] is False
-    assert "diffie-hellman-group1-sha1" in options["disabled_algorithms"]["kex"]
-    assert "ssh-dss" in options["disabled_algorithms"]["keys"]
+    assert options["disabled_algorithms"] == {}
 
     break_glass = build_paramiko_compatibility_kwargs("legacy_break_glass")
     assert break_glass["disabled_algorithms"] == {}
@@ -171,7 +234,9 @@ def test_paramiko_auto_profile_intersects_captured_old_device_offers():
         assert {"aes128-ctr", "aes256-ctr"} & set(transport.preferred_ciphers)
         assert "aes128-cbc" in transport.preferred_ciphers
         assert "hmac-sha1" in transport.preferred_macs
-        assert "diffie-hellman-group1-sha1" not in transport.preferred_kex
+        assert "diffie-hellman-group1-sha1" in transport.preferred_kex
+        assert "hmac-md5" in transport.preferred_macs
+        assert "hmac-sha1-96" in transport.preferred_macs
     finally:
         transport.close()
         peer_socket.close()

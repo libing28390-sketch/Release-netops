@@ -4,12 +4,28 @@ export interface IPAddressTimestampSource {
   updated_at?: string | null;
   created_at?: string | null;
   source?: string | null;
+  source_type?: string | null;
   is_discovered?: boolean;
   is_prefix_gateway?: boolean;
   is_virtual_gateway?: boolean;
 }
 
 export type IPAddressTimestampKind = 'discovered' | 'collected' | 'updated' | 'missing';
+
+export function getIPAddressObservationStatus(
+  address: { source?: string; has_interface_observation?: boolean; interface_admin_status?: string; interface_oper_status?: string },
+  zh: boolean,
+): { label: string; tone: 'success' | 'warning' | 'neutral' } | null {
+  if (address.source === 'discovered') {
+    return { label: zh ? '发现记录' : 'Observed', tone: 'neutral' };
+  }
+  if (address.source !== 'interface_cli' && !address.has_interface_observation) return null;
+  const admin = address.interface_admin_status?.toLowerCase();
+  const oper = address.interface_oper_status?.toLowerCase();
+  if (admin === 'down' || oper === 'down') return { label: zh ? '接口 Down' : 'Interface Down', tone: 'warning' };
+  if (admin === 'up' && oper === 'up') return { label: zh ? '接口 Up' : 'Interface Up', tone: 'success' };
+  return { label: zh ? '接口状态未知' : 'Interface unknown', tone: 'neutral' };
+}
 
 export interface IPAddressTimestampPresentation {
   kind: IPAddressTimestampKind;
@@ -23,6 +39,7 @@ export function getIPAddressRegisteredPrefixLabel(prefix: string | null | undefi
 }
 
 export function getIPAddressSourceLabel(address: IPAddressTimestampSource, zh: boolean): string {
+  if (address.source_type === 'interface_collection') return zh ? '接口生成台账' : 'Interface-generated record';
   if (address.source === 'manual+discovered') return zh ? 'IPAM + 采集' : 'IPAM + Discovery';
   if (address.source === 'interface_cli') return zh ? '接口采集' : 'Interface collection';
   if (address.source === 'prefix_gateway' || address.is_prefix_gateway) return zh ? '前缀网关' : 'Prefix gateway';
@@ -41,7 +58,7 @@ export function getIPAddressTimestampPresentation(
   address: IPAddressTimestampSource,
   zh: boolean,
 ): IPAddressTimestampPresentation {
-  if (address.source === 'interface_cli') {
+  if (address.source === 'interface_cli' || address.source_type === 'interface_collection') {
     const collectedAt = firstTimestamp(address.discovered_last_seen, address.last_seen);
     return collectedAt
       ? {

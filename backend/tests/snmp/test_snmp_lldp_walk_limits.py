@@ -60,13 +60,13 @@ def test_lldp_uses_dedicated_timeout_and_row_budget_for_thirteen_neighbors():
     assert batch.collection_status == 'success'
     assert batch.truncated_oids == []
     assert batch.max_rows == 10000
-    assert len(calls) == 9
+    assert len(calls) == 10
     assert all(port == 1161 for _oid, port, _timeout, _max_rows, _raise, _preserve in calls)
     assert all(timeout == 30.0 for _oid, _port, timeout, _max_rows, _raise, _preserve in calls)
     assert all(max_rows == 10000 for _oid, _port, _timeout, max_rows, _raise, _preserve in calls)
     assert all(raise_on_error for _oid, _port, _timeout, _max_rows, raise_on_error, _preserve in calls)
     assert all(
-        preserve is (oid == LLDP_CHASSIS_ID)
+        preserve is (oid in {LLDP_CHASSIS_ID, LLDP_PORT_ID})
         for oid, _port, _timeout, _max_rows, _raise, preserve in calls
     )
     assert LLDP_CHASSIS_SUBTYPE in [oid for oid, *_rest in calls]
@@ -304,7 +304,9 @@ def test_lldp_formats_raw_chassis_by_subtype_and_does_not_use_subtype_as_port():
     assert by_name['SW-PRINT-MAC']['chassis_id'] == '41:42:43:44:45:46'
     assert by_name['SW-NONMAC']['chassis_id'] == 'ABCDEF'
     assert by_name['SW-LEGACY']['chassis_id'] == 'legacy-six'
-    assert by_name['SW-LEGACY']['neighbor_interface'] == 'Unknown'
+    # No port ID/description was collected, so keep the interface unknown
+    # as an empty value instead of fabricating a display name.
+    assert by_name['SW-LEGACY']['neighbor_interface'] == ''
     assert (LLDP_CHASSIS_SUBTYPE, 1161, False) in calls
     assert (LLDP_CHASSIS_ID, 1161, True) in calls
 

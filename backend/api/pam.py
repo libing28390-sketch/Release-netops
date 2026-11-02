@@ -191,10 +191,8 @@ def _utc_now() -> str:
 def get_asyncssh_compatible_algorithms(profile: object = None) -> dict[str, list[str]]:
     """Return comprehensive algorithm suites supported by AsyncSSH.
 
-    Modern algorithms remain first.  The default ``auto`` profile appends the
-    safe legacy subset needed by older multi-vendor hardware; high-risk names
-    such as group1/ssh-dss/MD5 are only returned for the explicit
-    ``legacy_break_glass`` profile.
+    Modern algorithms remain first. Compatibility profiles append legacy
+    algorithms supported by AsyncSSH; explicit ``modern`` stays strict.
     """
     try:
         import asyncssh.encryption

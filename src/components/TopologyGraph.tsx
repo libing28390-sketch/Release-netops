@@ -6,6 +6,8 @@ import { buildFoldedChainPositions, buildRingGroupPositions, repairTopologyLayou
 import {
   buildTopologyRoleLayeredPositions,
   repairTopologyRoleLayeredPositions,
+  isTopologyWirelessController,
+  topologyDeviceRole,
 } from '../utils/topologyRoleLayout';
 import { resolveTopologyPortLabelPlacements } from '../utils/topologyLabelLayout';
 import { canonicalTopologyRole, topologyRoleLabel } from '../domain/topologyRoles';
@@ -814,6 +816,26 @@ const fitTopologyLabelText = (label: string, maxWidth: number): string => {
     result += character;
   }
   return `${result || Array.from(label)[0] || ''}${suffix}`;
+};
+
+const wrapTopologyLabelLines = (label: string, maxWidth: number): string[] => {
+  const lines: string[] = [];
+  let line = '';
+  for (const character of Array.from(label)) {
+    if (line && estimateTopologyTextWidth(line + character) > maxWidth) {
+      const hyphen = line.lastIndexOf('-');
+      if (hyphen >= Math.ceil(line.length * 0.55)) {
+        lines.push(line.slice(0, hyphen + 1));
+        line = line.slice(hyphen + 1);
+      } else {
+        lines.push(line);
+        line = '';
+      }
+    }
+    line += character;
+  }
+  if (line) lines.push(line);
+  return lines;
 };
 
 const buildLayeredPositions = (devices: Device[], width: number, height: number, links: Link[] = []) =>
@@ -2059,19 +2081,57 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
           .attr('font-weight', 600)
           .text(displayLabel);
 
-        // Render horizontal layer separators inside the site
-        const rowGroups = new Map<string, { y: number; tone: ReturnType<typeof getLayerTone> }>();
+        const controllers = site.nodes.filter((node: Device) => isTopologyWirelessController(node));
+        const controlLeft = controllers.length > 0
+          ? Math.max(left + 24, Math.min(...controllers.map((node: any) => Number(node.x))) - 118)
+          : right;
+        if (controllers.length > 0) {
+          const controlTop = Math.min(...controllers.map((node: any) => Number(node.y))) - 72;
+          const controlBottom = Math.max(...controllers.map((node: any) => Number(node.y))) + 90;
+          siteGuide.append('rect')
+            .attr('x', controlLeft).attr('y', controlTop)
+            .attr('width', Math.max(1, right - controlLeft - 12)).attr('height', controlBottom - controlTop)
+            .attr('rx', 12).attr('fill', '#f5f3ff').attr('stroke', '#ddd6fe');
+          siteGuide.append('text')
+            .attr('x', controlLeft + 12).attr('y', controlTop + 22)
+            .attr('font-size', '12px').attr('font-weight', 600).attr('fill', '#6d28d9')
+            .text(language === 'zh' ? `无线控制区 · ${controllers.length}` : `Wireless control · ${controllers.length}`);
+        }
+
+        // One heading per physical row; distinct role names must not share
+        // the same text anchor. Controllers have their own side-area header.
+        const rowGroups = new Map<string, { y: number; tone: ReturnType<typeof getLayerTone>; nodes: Device[] }>();
         site.nodes.forEach((node: any) => {
+          if (isTopologyWirelessController(node)) return;
           const tone = getLayerTone(node as Device);
-          const rowKey = `${tone.label}:${Math.round(Number(node.y || 0) / 8) * 8}`;
-          if (!rowGroups.has(rowKey)) rowGroups.set(rowKey, { y: node.y, tone });
+          const rowKey = String(Math.round(Number(node.y || 0) / 8) * 8);
+          if (!rowGroups.has(rowKey)) rowGroups.set(rowKey, { y: node.y, tone, nodes: [] });
+          rowGroups.get(rowKey)!.nodes.push(node);
         });
 
-        rowGroups.forEach(({ y, tone }) => {
-          const rowText = tone.label;
+        rowGroups.forEach(({ y, tone, nodes: rowNodes }) => {
+          let rowText = Array.from(new Set(rowNodes.map((node) => getLayerTone(node).label))).join(' / ');
+          if (rowNodes.every((node) => topologyDeviceRole(node) === 'wireless_ap')) {
+            const ids = new Set(rowNodes.map((node) => node.id));
+            const parentIds = new Set<string>();
+            graphLinks.forEach((link) => {
+              const sources = [...(link.discovery_sources || []), link.discovery_source || ''].join(' ').toLowerCase();
+              if (link.inferred || (String(link.relation_type || '').toUpperCase() !== 'PHYSICAL' && !sources.includes('lldp'))) return;
+              const parentId = ids.has(link.source_device_id) ? link.target_device_id
+                : ids.has(link.target_device_id) ? link.source_device_id : '';
+              const parent = graphDevices.find((node) => node.id === parentId);
+              if (parent && ['access', 'switch', 'distribution', 'core'].includes(topologyDeviceRole(parent))) parentIds.add(parentId);
+            });
+            const parent = parentIds.size === 1 ? graphDevices.find((node) => node.id === Array.from(parentIds)[0]) : undefined;
+            rowText = language === 'zh'
+              ? `无线接入 · ${parent?.hostname || (parentIds.size > 1 ? '多上联' : '上联待确认')} · ${rowNodes.length} 台 AP`
+              : `Wireless access · ${parent?.hostname || (parentIds.size > 1 ? 'Multiple uplinks' : 'Uplink unknown')} · ${rowNodes.length} APs`;
+          }
+          const rowRight = Math.min(right - 24, controlLeft - (controllers.length > 0 ? 16 : 0));
+          const displayRowText = fitTopologyLabelText(rowText, Math.max(60, rowRight - left - 40));
           const lineY = y - 48;
           const startX = left + 28;
-          const estimatedTextWidth = rowText.length * 7.2;
+          const estimatedTextWidth = estimateTopologyTextWidth(displayRowText);
           const lineStartX = startX + estimatedTextWidth + 12;
 
           siteGuide.append('rect')
@@ -2084,11 +2144,11 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
             .attr('opacity', 0.55);
 
           // Separator line
-          if (lineStartX < right - 24) {
+          if (lineStartX < rowRight) {
             siteGuide.append('line')
               .attr('x1', lineStartX)
               .attr('y1', lineY)
-              .attr('x2', right - 24)
+              .attr('x2', rowRight)
               .attr('y2', lineY)
               .attr('stroke', '#E8EDF5')
               .attr('stroke-width', 1.2)
@@ -2106,7 +2166,8 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
             .attr('font-size', '12px')
             .attr('font-weight', 600)
             .attr('letter-spacing', '0.02em')
-            .text(rowText);
+            .text(displayRowText)
+            .append('title').text(rowText);
         });
 
         // Render bandwidth legend at the bottom left of the site container in SVG
@@ -2782,9 +2843,21 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
       .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", "PingFang SC", "Noto Sans SC", sans-serif')
       .attr('font-size', '12.5px')
       .attr('font-weight', '800')
-      .text((d: any) => {
+      .each(function (d: any) {
         const hostname = String(d.hostname || '').toUpperCase();
-        return hostname ? fitTopologyLabelText(hostname, getDeviceLabelMaxWidth(d) * 0.78) : '';
+        if (!hostname) return;
+        const maxWidth = getDeviceLabelMaxWidth(d);
+        const lines = wrapTopologyLabelLines(hostname, maxWidth);
+        d3.select(this)
+          .selectAll('tspan')
+          .data(lines)
+          .enter()
+          .append('tspan')
+          .attr('x', 0)
+          .attr('dy', (_line: string, index: number) => index === 0
+            ? `${-((lines.length - 1) * 0.55)}em`
+            : '1.1em')
+          .text((line: string) => line);
       });
 
     // Fit each device name background to its rendered text instead of using
@@ -2792,23 +2865,32 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
     nodeHostnameText.each(function (d: any) {
       const bbox = this.getBBox();
       const boxWidth = Math.max(56, Math.ceil(bbox.width + 16));
+      const boxHeight = Math.max(20, Math.ceil(bbox.height + 8));
       d3.select(this.parentNode as SVGGElement)
         .select('rect')
         .attr('x', -boxWidth / 2)
-        .attr('width', boxWidth);
+        .attr('y', bbox.y - 4)
+        .attr('width', boxWidth)
+        .attr('height', boxHeight);
       if (String(d.hostname || '').trim()) {
-        const obstacleHeight = showNodeRoleLabels ? 43 : boxHeight;
+        const roleLabelY = 31 + Math.max(0, wrapTopologyLabelLines(
+          String(d.hostname || '').toUpperCase(), getDeviceLabelMaxWidth(d),
+        ).length - 1) * 14;
+        const labelTop = Math.min(bbox.y - 4, showNodeRoleLabels ? roleLabelY - 10 : bbox.y - 4);
+        const labelBottom = Math.max(bbox.y + bbox.height + 4, showNodeRoleLabels ? roleLabelY + 7 : bbox.y + bbox.height + 4);
         deviceLabelObstacles.set(String(d.id), {
           x: Number(d.x),
-          y: Number(d.y) + 39 + (showNodeRoleLabels ? 17 : 7),
           width: boxWidth,
-          height: obstacleHeight,
+          y: Number(d.y) + 39 + (labelTop + labelBottom) / 2,
+          height: labelBottom - labelTop,
         });
       }
     });
 
     nodeLabelGroup.append('text')
-      .attr('y', 31)
+      .attr('y', (d: any) => 31 + Math.max(0, wrapTopologyLabelLines(
+        String(d.hostname || '').toUpperCase(), getDeviceLabelMaxWidth(d),
+      ).length - 1) * 14)
       .attr('text-anchor', 'middle')
       .attr('fill', (d: any) => getLayerTone(d as Device).color)
       .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif')

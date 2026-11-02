@@ -356,6 +356,8 @@ def test_ssh_lldp_survives_snmp_failure_and_persists_this_run_local_identity(ide
     assert result['collection_status'] == 'partial'
     metadata = record.call_args.kwargs['metadata']
     assert metadata['run_id'] == 'current-run'
+    assert {'lldp', 'aggregation', 'local_identity', 'persist_observations'} <= metadata['phase_timings_ms'].keys()
+    assert all(duration >= 0 for duration in metadata['phase_timings_ms'].values())
     assert metadata['snapshot_generation'] == 7
     assert metadata['local_identity']['status'] == ('unavailable' if identity_failed else 'success')
     assert metadata['protocol_results']['snmp']['status'] == 'failed'

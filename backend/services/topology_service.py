@@ -8,6 +8,8 @@ import re
 import threading
 import time
 import uuid
+from collections import deque
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -102,7 +104,7 @@ DISCOVERY_DEFAULT_MAX_ATTEMPTS = max(1, int(os.environ.get('TOPOLOGY_DISCOVERY_M
 # network or the devices' VTY/CLI sessions.
 DISCOVERY_DEVICE_CONCURRENCY = max(
     1,
-    int(os.environ.get('TOPOLOGY_DISCOVERY_DEVICE_CONCURRENCY', '6')),
+    int(os.environ.get('TOPOLOGY_DISCOVERY_DEVICE_CONCURRENCY', '10')),
 )
 DISCOVERY_RETRYABLE_ERROR_CODES = frozenset({'ssh_unreachable'})
 
@@ -668,6 +670,8 @@ def _extract_observation_fields(raw: dict[str, Any]) -> dict[str, Any]:
         'neighbor_name_raw': neighbor_identity,
         'neighbor_name_normalized': normalize_hostname(neighbor_identity),
         'neighbor_ip_address': neighbor_ip,
+        'neighbor_port_id_subtype': raw.get('neighbor_port_id_subtype'),
+        'neighbor_port_id': raw.get('neighbor_port_id'),
         'neighbor_chassis_id': chassis_id,
         'source_port_raw': local_port,
         'source_port_normalized': normalize_interface_name(local_port),
@@ -3592,6 +3596,21 @@ async def discover_device_neighbors(
     snapshot_attempt: dict[str, Any] | None = None
     method = 'unknown'
     attempted_methods: list[str] = []
+    phase_timings_ms: dict[str, float] = {}
+
+    @contextmanager
+    def measure_phase(phase: str):
+        phase_started = time.perf_counter()
+        try:
+            yield
+        finally:
+            duration_ms = round((time.perf_counter() - phase_started) * 1000, 2)
+            phase_timings_ms[phase] = duration_ms
+            logger.info(
+                'Topology discovery phase run_id=%s device_id=%s phase=%s duration_ms=%.2f',
+                run_id or '-', device_id, phase, duration_ms,
+            )
+
     try:
         device = _get_device(device_id)
         if not device:
@@ -3631,46 +3650,48 @@ async def discover_device_neighbors(
 
         # Use a complete SNMP snapshot directly; reconcile CLI evidence only
         # when the SNMP path needs a fallback before replacing the snapshot.
-        observations, method = await _collect_device_observations(
-            device,
-            attempted_methods=attempted_methods,
-        )
+        with measure_phase('lldp'):
+            observations, method = await _collect_device_observations(
+                device,
+                attempted_methods=attempted_methods,
+            )
         aggregation_summary = {'parents': 0, 'members': 0, 'status': 'not_attempted'}
-        if str(os.environ.get('TOPOLOGY_AGGREGATION_DISCOVERY_ENABLED', '1')).strip().lower() not in {'0', 'false', 'no'}:
-            try:
-                from services.topology_aggregation_inventory_service import sync_snmp_aggregation_inventory
+        with measure_phase('aggregation'):
+            if str(os.environ.get('TOPOLOGY_AGGREGATION_DISCOVERY_ENABLED', '1')).strip().lower() not in {'0', 'false', 'no'}:
+                try:
+                    from services.topology_aggregation_inventory_service import sync_snmp_aggregation_inventory
 
-                aggregation_summary = await sync_snmp_aggregation_inventory(
-                    device, collector_credentials, snapshot_generation=snapshot_generation,
-                )
-                aggregation_status = str(aggregation_summary.get('status') or '').lower()
-                if aggregation_status in {'unavailable', 'failed', 'partial', 'disabled'} and has_ssh:
-                    snmp_detail = str(aggregation_summary.get('detail') or aggregation_status)
-                    cli_summary = await asyncio.to_thread(_sync_aggregation_inventory, device)
-                    if int(cli_summary.get('parents') or 0) > 0 and int(cli_summary.get('members') or 0) > 0:
-                        aggregation_summary = {
-                            **cli_summary,
-                            'status': 'success',
-                            'source': 'cli',
-                            'detail': f'SNMP fallback: {snmp_detail}',
-                        }
-                    else:
-                        aggregation_summary = {
-                            'status': 'unavailable',
-                            'source': 'cli',
-                            'parents': 0,
-                            'members': 0,
-                            'detail': f'SNMP fallback: {snmp_detail}; CLI returned no complete membership records',
-                        }
-                logger.info(
-                    'Aggregation inventory for %s: source=%s status=%s parents=%s members=%s',
-                    device.get('hostname') or device_id, aggregation_summary.get('source'),
-                    aggregation_summary.get('status'), aggregation_summary.get('parents', 0),
-                    aggregation_summary.get('members', 0),
-                )
-            except Exception as aggregation_exc:
-                aggregation_summary = {'parents': 0, 'members': 0, 'status': 'unavailable'}
-                logger.debug('Topology aggregation unavailable for %s (%s)', device_id, type(aggregation_exc).__name__)
+                    aggregation_summary = await sync_snmp_aggregation_inventory(
+                        device, collector_credentials, snapshot_generation=snapshot_generation,
+                    )
+                    aggregation_status = str(aggregation_summary.get('status') or '').lower()
+                    if aggregation_status in {'unavailable', 'failed', 'partial', 'disabled'} and has_ssh:
+                        snmp_detail = str(aggregation_summary.get('detail') or aggregation_status)
+                        cli_summary = await asyncio.to_thread(_sync_aggregation_inventory, device)
+                        if int(cli_summary.get('parents') or 0) > 0 and int(cli_summary.get('members') or 0) > 0:
+                            aggregation_summary = {
+                                **cli_summary,
+                                'status': 'success',
+                                'source': 'cli',
+                                'detail': f'SNMP fallback: {snmp_detail}',
+                            }
+                        else:
+                            aggregation_summary = {
+                                'status': 'unavailable',
+                                'source': 'cli',
+                                'parents': 0,
+                                'members': 0,
+                                'detail': f'SNMP fallback: {snmp_detail}; CLI returned no complete membership records',
+                            }
+                    logger.info(
+                        'Aggregation inventory for %s: source=%s status=%s parents=%s members=%s',
+                        device.get('hostname') or device_id, aggregation_summary.get('source'),
+                        aggregation_summary.get('status'), aggregation_summary.get('parents', 0),
+                        aggregation_summary.get('members', 0),
+                    )
+                except Exception as aggregation_exc:
+                    aggregation_summary = {'parents': 0, 'members': 0, 'status': 'unavailable'}
+                    logger.debug('Topology aggregation unavailable for %s (%s)', device_id, type(aggregation_exc).__name__)
         protocol_summary = {
             'success': True,
             'observations_count': 0,
@@ -3690,13 +3711,14 @@ async def discover_device_neighbors(
             try:
                 from services.topology_hostname_service import refresh_topology_hostname
 
-                hostname_identity = await refresh_topology_hostname(
-                    device,
-                    collector_credentials,
-                    run_id=run_id,
-                    snapshot_generation=snapshot_generation,
-                    protocol_results=protocol_results,
-                )
+                with measure_phase('hostname'):
+                    hostname_identity = await refresh_topology_hostname(
+                        device,
+                        collector_credentials,
+                        run_id=run_id,
+                        snapshot_generation=snapshot_generation,
+                        protocol_results=protocol_results,
+                    )
                 if hostname_identity.get('status') in {'synced', 'verified'} and hostname_identity.get('hostname'):
                     device['hostname'] = hostname_identity['hostname']
                     device['sys_name'] = hostname_identity.get('sys_name') or device.get('sys_name')
@@ -3708,20 +3730,22 @@ async def discover_device_neighbors(
             try:
                 from services.topology_local_identity_service import collect_topology_local_identity
 
-                local_identity = await collect_topology_local_identity(
-                    device, collector_credentials, protocol_results=protocol_results,
-                )
+                with measure_phase('local_identity'):
+                    local_identity = await collect_topology_local_identity(
+                        device, collector_credentials, protocol_results=protocol_results,
+                    )
             except Exception as identity_exc:
                 # LLDP remains usable even when optional local-IP collection fails.
                 logger.debug('Topology local identity unavailable for %s (%s)', device_id, type(identity_exc).__name__)
         observations = _deduplicate_observations(list(observations))
-        match_summary = _replace_device_observations(
-            device,
-            observations,
-            run_id,
-            snapshot_generation=snapshot_generation,
-            complete_snapshot=not partial_data,
-        )
+        with measure_phase('persist_observations'):
+            match_summary = _replace_device_observations(
+                device,
+                observations,
+                run_id,
+                snapshot_generation=snapshot_generation,
+                complete_snapshot=not partial_data,
+            )
         total_links = rebuild_links_from_observations() if rebuild_links else None
         collection_status = (
             'partial'
@@ -3746,6 +3770,7 @@ async def discover_device_neighbors(
                 'hostname_mismatch': match_summary['hostname_mismatch'],
                 'unmatched': match_summary['unmatched'],
                 'aggregation': aggregation_summary,
+                'phase_timings_ms': dict(phase_timings_ms),
                 'protocols': protocol_summary,
                 'run_id': run_id,
                 'snapshot_generation': snapshot_generation,
@@ -3835,6 +3860,7 @@ async def discover_device_neighbors(
             metadata={
                 'run_id': run_id,
                 'attempted_methods': attempted_methods,
+                'phase_timings_ms': dict(phase_timings_ms),
                 'protocol_results': (
                     getattr(exc, 'protocol_results', None)
                     or locals().get('protocol_results')
@@ -3844,6 +3870,11 @@ async def discover_device_neighbors(
             transport=attempted_methods[-1] if attempted_methods else '',
         )
         raise
+    finally:
+        logger.info(
+            'Topology discovery timing run_id=%s device_id=%s total_ms=%.2f phases_ms=%s',
+            run_id or '-', device_id, (time.perf_counter() - started) * 1000, phase_timings_ms,
+        )
 
 
 async def discover_lldp_neighbors(device_id: str):
@@ -4181,53 +4212,40 @@ async def execute_discovery_run(run_id: str, device_ids: list[str]):
     heartbeat_task = asyncio.create_task(
         _discovery_lease_heartbeat(run_id, worker_id, heartbeat_stop, lease_lost)
     )
+    device_workers: list[asyncio.Task] = []
     try:
         _clear_lldp_observation_history_for_run(device_ids)
         concurrency = min(DISCOVERY_DEVICE_CONCURRENCY, max(1, len(device_ids)))
-        for batch_start in range(0, len(device_ids), concurrency):
-            if lease_lost.is_set() or not _renew_discovery_lease(run_id, worker_id):
-                _update_run(run_id, status='failed', last_error_code='discovery_lease_lost')
-                return
-            if _is_run_cancel_requested(run_id):
-                cancelled = True
-                pending_device_ids = device_ids[batch_start:]
-                for pending_device_id in pending_device_ids:
-                    _update_run_device(
-                        run_id,
-                        pending_device_id,
-                        status='cancelled',
-                        completed_at=_utc_now_iso(),
-                        error_code='discovery_cancelled',
-                        error_message='Discovery cancelled before this device was processed',
-                    )
-                break
+        pending_devices = deque(device_ids)
+        if lease_lost.is_set() or not _renew_discovery_lease(run_id, worker_id):
+            _update_run(run_id, status='failed', last_error_code='discovery_lease_lost')
+            return
 
-            batch_device_ids = device_ids[batch_start:batch_start + concurrency]
-            batch_results = await asyncio.gather(
-                *(
-                    _execute_discovery_device(
-                        run_id,
-                        device_id,
-                        timeout_seconds,
-                        max_attempts,
+        async def collect_next_device() -> None:
+            nonlocal cancelled, success_devices, partial_devices, failed_devices, total_observations
+            # A lane takes the next device as soon as its previous one finishes.
+            # There is no await between cancellation/lease checks and dequeue,
+            # so no device can be assigned twice by another lane in this loop.
+            while pending_devices and not cancelled and not lease_lost.is_set():
+                if _is_run_cancel_requested(run_id):
+                    cancelled = True
+                    return
+                device_id = pending_devices.popleft()
+                try:
+                    result = await _execute_discovery_device(
+                        run_id, device_id, timeout_seconds, max_attempts,
                     )
-                    for device_id in batch_device_ids
-                ),
-                return_exceptions=True,
-            )
-            for device_id, result in zip(batch_device_ids, batch_results):
-                if isinstance(result, BaseException):
-                    error_message = str(result)[:500]
+                except Exception as exc:
+                    error_message = str(exc)[:500]
                     error_code = topology_error_code(
-                        result if isinstance(result, Exception) else RuntimeError(error_message)
+                        exc,
                     )
                     logger.error(
                         'Topology discovery worker crashed for device %s in run %s: %s',
                         device_id,
                         run_id,
-                        result,
+                        exc,
                     )
-                    failed_devices += 1
                     _update_run_device(
                         run_id,
                         device_id,
@@ -4236,7 +4254,7 @@ async def execute_discovery_run(run_id: str, device_ids: list[str]):
                         error_code=error_code,
                         error_message=error_message,
                     )
-                    continue
+                    result = {'success': False}
                 if result.get('cancelled'):
                     cancelled = True
                 elif result.get('partial'):
@@ -4247,28 +4265,25 @@ async def execute_discovery_run(run_id: str, device_ids: list[str]):
                     total_observations += int(result.get('observations_count') or 0)
                 else:
                     failed_devices += 1
+                _update_run(
+                    run_id,
+                    success_devices=success_devices,
+                    failed_devices=failed_devices,
+                    total_observations=total_observations,
+                )
 
-            _update_run(
-                run_id,
-                success_devices=success_devices,
-                failed_devices=failed_devices,
-                total_observations=total_observations,
-            )
-            if lease_lost.is_set():
-                _update_run(run_id, status='failed', last_error_code='discovery_lease_lost')
-                return
-            if cancelled:
-                pending_device_ids = device_ids[batch_start + len(batch_device_ids):]
-                for pending_device_id in pending_device_ids:
-                    _update_run_device(
-                        run_id,
-                        pending_device_id,
-                        status='cancelled',
-                        completed_at=_utc_now_iso(),
-                        error_code='discovery_cancelled',
-                        error_message='Discovery cancelled before this device was processed',
-                    )
-                break
+        device_workers = [asyncio.create_task(collect_next_device()) for _ in range(concurrency)]
+        await asyncio.gather(*device_workers)
+        if cancelled:
+            for pending_device_id in pending_devices:
+                _update_run_device(
+                    run_id,
+                    pending_device_id,
+                    status='cancelled',
+                    completed_at=_utc_now_iso(),
+                    error_code='discovery_cancelled',
+                    error_message='Discovery cancelled before this device was processed',
+                )
 
         if not cancelled and _is_run_cancel_requested(run_id):
             cancelled = True
@@ -4338,6 +4353,11 @@ async def execute_discovery_run(run_id: str, device_ids: list[str]):
             heartbeat_at=_utc_now_iso(),
         )
     finally:
+        for task in device_workers:
+            if not task.done():
+                task.cancel()
+        if device_workers:
+            await asyncio.gather(*device_workers, return_exceptions=True)
         heartbeat_stop.set()
         try:
             await heartbeat_task

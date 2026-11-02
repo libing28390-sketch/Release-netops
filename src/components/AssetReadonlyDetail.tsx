@@ -4,6 +4,7 @@
  */
 import React from 'react';
 import { Server, Router, Shield } from 'lucide-react';
+import { AssetChassisMembers, normalizeAssetChassisMembers, type AssetChassisMember } from './AssetChassisMembers';
 
 const LIFECYCLE_STATUSES = [
   { value: 'staging', label: { zh: '待投产', en: 'Staging' } },
@@ -63,6 +64,8 @@ export interface AssetRecord {
   updated_at: string;
   device_category?: string;
   power_watts?: number | string;
+  chassis_members?: AssetChassisMember[];
+  serial_number_source?: string;
 }
 
 export const CATEGORY_MAP: Record<string, { zh: string; en: string }> = {
@@ -150,6 +153,7 @@ export function AssetReadonlyDetailInner({ asset: a, zh }: { asset: AssetRecord;
         <ReadonlyField label={zh ? '型号' : 'Model'} value={a.model || '—'} />
         <ReadonlyField label={zh ? '资产编号' : 'Asset Tag'} value={a.asset_tag || '—'} />
         <ReadonlyField label={zh ? '序列号' : 'Serial No.'} value={a.serial_number || '—'} />
+        <AssetChassisMembers members={a.chassis_members} zh={zh} />
         <ReadonlyField label={zh ? '设备分类' : 'Category'} value={CATEGORY_MAP[a.device_category || '']?.[zh ? 'zh' : 'en'] || (a.device_category || '—')} />
         <ReadonlyField label={zh ? '额定功率' : 'Power (W)'} value={a.power_watts != null && String(a.power_watts) !== '0' && String(a.power_watts) !== '' ? `${a.power_watts} W` : '—'} />
         <ReadonlyField label={zh ? '管理IP' : 'Mgmt IP'} value={a.management_ip || '—'} mono />
@@ -243,5 +247,7 @@ export function normalizeAssetApiRow(row: Record<string, unknown>): AssetRecord 
     updated_at: s('updated_at'),
     device_category: s('device_category'),
     power_watts: row['power_watts'] != null ? String(row['power_watts']) : '',
+    chassis_members: normalizeAssetChassisMembers(row['chassis_members']),
+    serial_number_source: s('serial_number_source'),
   };
 }

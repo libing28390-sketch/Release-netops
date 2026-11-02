@@ -70,12 +70,13 @@ def test_snapshot_candidates_default_to_global_and_are_bulk_generatable(isolated
     }]
     with get_db_connection() as conn:
         prefix = conn.execute(
-            "SELECT id, vrf_id FROM prefixes WHERE prefix='10.88.50.0/24'"
+            "SELECT id, vrf_id, network_type FROM prefixes WHERE prefix='10.88.50.0/24'"
         ).fetchone()
         address = conn.execute(
             "SELECT source_type, source_ref, interface_id FROM ip_addresses WHERE address='10.88.50.1'"
         ).fetchone()
     assert prefix['vrf_id'] in ('', None)
+    assert prefix['network_type'] == 'unclassified'
     assert address['source_type'] == 'interface_collection'
     assert address['source_ref'] == 'cmdb-interface:snapshot-candidate-device:vlan-interface50'
     # The existing IPAM schema uses an empty string to represent an unlinked

@@ -43,12 +43,12 @@ def mark_run(when, run="run-current", *, device="gateway-a", count=1, status="su
         c.commit()
 
 
-def evidence(when, run, *, device="gateway-a", site="discovery-site-a", ip="192.0.2.10", mac=MAC, kind="arp", context="explicit_global", vrf="", projected=None):
+def evidence(when, run, *, device="gateway-a", site="discovery-site-a", ip="192.0.2.10", mac=MAC, vlan="100", kind="arp", context="explicit_global", vrf="", projected=None):
     scope={"tenant_id":"tenant-default","site_id":site,"vrf_id":vrf,"vrf_context_status":context,"scope_status":"resolved" if context != "unknown" else "scope_pending"}
     with get_db_connection() as c:
         snapshot=discovery._insert_snapshot(c,collector=kind,device_id=device,source_device_name=device,scope=scope,source_run_id=run,source_version=run,source_status="success",coverage_status="complete",coverage_complete=kind=="arp",coverage_reason="",entry_count=1 if ip else 0,observed_at=when.isoformat(),projected_at=(projected or when).isoformat())
         if ip or kind=="mac":
-            discovery._insert_observation(c,snapshot_id=snapshot,source_type=kind,device_id=device,source_device_name=device,scope=scope,ip=ip,mac=mac,interface_name="Ethernet1" if kind=="mac" else "Vlan-interface100",vlan="100",raw_timestamp=when.isoformat(),projected_at=(projected or when).isoformat())
+            discovery._insert_observation(c,snapshot_id=snapshot,source_type=kind,device_id=device,source_device_name=device,scope=scope,ip=ip,mac=mac,interface_name="Ethernet1" if kind=="mac" else "Vlan-interface100",vlan=vlan,raw_timestamp=when.isoformat(),projected_at=(projected or when).isoformat())
         c.commit()
         row=c.execute("SELECT id FROM ipam_discovery_observations WHERE snapshot_id=?",(snapshot,)).fetchone()
         return row["id"] if row else snapshot
@@ -161,6 +161,137 @@ def test_mac_only_is_separate_and_old_port_is_not_current(isolated_db):
     assert arp["switch_port"]==""
     macs=discovery.list_discovered_endpoints(kind="mac")["items"]
     assert macs and all(not r["ip"] for r in macs)
+
+
+def test_business_vlan_scope_keeps_only_active_business_vlan_endpoints(isolated_db):
+    seed()
+    with get_db_connection() as c:
+        c.execute(
+            """INSERT INTO vlans(id, vlan_id, name, site_id, status, tenant_id)
+               VALUES
+                 ('vlan-100', 100, 'User VLAN', 'discovery-site-a', 'active', 'tenant-default'),
+                 ('vlan-200', 200, 'Transit VLAN', 'discovery-site-a', 'active', 'tenant-default'),
+                 ('vlan-300', 300, 'Management VLAN', 'discovery-site-a', 'active', 'tenant-default'),
+                 ('vlan-400', 400, 'Unclassified VLAN', 'discovery-site-a', 'active', 'tenant-default')"""
+        )
+        c.commit()
+    create_subnet(prefix="192.0.2.0/24", site_id="discovery-site-a", tenant_id="tenant-default", vlan_id="vlan-100", network_type="user_access")
+    create_subnet(prefix="198.51.100.0/24", site_id="discovery-site-a", tenant_id="tenant-default", vlan_id="vlan-200", network_type="transit")
+    create_subnet(prefix="203.0.113.0/24", site_id="discovery-site-a", tenant_id="tenant-default", vlan_id="vlan-300", network_type="management")
+    create_subnet(prefix="100.64.0.0/24", site_id="discovery-site-a", tenant_id="tenant-default", network_type="server")
+    create_subnet(prefix="172.20.0.0/24", site_id="discovery-site-a", tenant_id="tenant-default", vlan_id="vlan-400", network_type="unclassified")
+    with get_db_connection() as c:
+        c.execute("INSERT INTO vrfs(id, vrf_name, tenant_id) VALUES ('discovery-blue', 'BLUE', 'tenant-default')")
+        c.commit()
+    create_subnet(prefix="100.65.0.0/24", site_id="discovery-site-a", tenant_id="tenant-default", network_type="server")
+    create_subnet(prefix="100.65.0.0/24", site_id="discovery-site-a", tenant_id="tenant-default", vrf_id="discovery-blue", network_type="server")
+    now = datetime.now(timezone.utc) - timedelta(seconds=2)
+    evidence(now, "business-ip", ip="192.0.2.10", mac=MAC, vlan="100")
+    evidence(now, "transit-ip", ip="198.51.100.10", mac=OTHER_MAC, vlan="200")
+    evidence(now, "management-ip", ip="203.0.113.10", mac="00:11:22:33:44:77", vlan="300")
+    evidence(now, "business-without-vlan", ip="100.64.0.11", mac="00:11:22:33:44:88", vlan="", context="unknown")
+    evidence(now, "unclassified-ip", ip="172.20.0.10", mac="00:11:22:33:44:99", vlan="400")
+    evidence(now, "vlan-mismatch", ip="192.0.2.20", mac="00:11:22:33:44:aa", vlan="200")
+    evidence(now, "inferred-default-business-vlan", ip="100.64.0.10", mac="00:11:22:33:44:bc", vlan="500", context="unknown")
+    evidence(now, "ambiguous-vrf-business-vlan", ip="100.65.0.10", mac="00:11:22:33:44:cd", vlan="500", context="unknown")
+    evidence(now, "business-mac-only", ip=None, mac="00:11:22:33:44:bb", vlan="100", kind="mac")
+
+    business = discovery.list_discovered_endpoints(kind="all", network_scope="business_vlan")
+    ip_items = {row["ip"]: row for row in business["items"] if row["ip"]}
+    assert set(ip_items) == {"192.0.2.10", "100.64.0.10"}
+    assert ip_items["100.64.0.10"]["vrf_name"] == "全局/默认"
+    assert ip_items["100.64.0.10"]["vrf_context_inferred"] is True
+    assert ip_items["100.64.0.10"]["scope_status"] == "scope_pending"
+    assert business["summary"]["coverage_status"] == "partial"
+    assert any(row["source_type"] == "mac" and row["vlan"] == "100" for row in business["items"])
+    assert business["summary"]["discovered_ip_count"] == 2
+    assert business["summary"]["mac_only_count"] == 1
+    assert business["network_scope"] == "business_vlan"
+
+    all_ip_observations = discovery.list_discovered_endpoints(kind="ip", network_scope="all")
+    assert all_ip_observations["total"] == 8
+    assert {row["ip"] for row in all_ip_observations["items"]} >= {
+        "192.0.2.10", "198.51.100.10", "203.0.113.10", "100.64.0.10", "100.64.0.11",
+        "100.65.0.10", "172.20.0.10", "192.0.2.20",
+    }
+
+
+def test_business_terminals_exclude_gateways_device_ips_and_non_host_addresses(isolated_db):
+    seed()
+    prefix = create_subnet(prefix="192.0.2.0/24", site_id="discovery-site-a",
+                           tenant_id="tenant-default", network_type="user_access", gateway="192.0.2.1")
+    own = create_address(subnet_id=prefix['id'], address="192.0.2.2", device_type="device")
+    with get_db_connection() as c:
+        c.execute("UPDATE ip_addresses SET source_type='interface_collection' WHERE id=?", (own['id'],))
+        c.commit()
+    now = datetime.now(timezone.utc) - timedelta(seconds=2)
+    for suffix in (0, 1, 2, 10, 255):
+        evidence(now, f"host-{suffix}", ip=f"192.0.2.{suffix}")
+    # Raw diagnostic observations remain inspectable; only the business view
+    # excludes infrastructure addresses and network/broadcast addresses.
+    assert discovery.list_discovered_endpoints(kind="ip")['total'] == 5
+    business = discovery.list_discovered_endpoints(kind="ip", network_scope="business_vlan")
+    assert [r['ip'] for r in business['items']] == ['192.0.2.10']
+
+
+def test_unknown_arp_vrf_cannot_borrow_explicit_global_mac_port(isolated_db):
+    seed()
+    seed('access-a')
+    prefix = create_subnet(prefix='192.0.2.0/24', site_id='discovery-site-a')
+    create_address(prefix['id'], address='192.0.2.10', hostname='known-global-host')
+    now = datetime.now(timezone.utc) - timedelta(seconds=2)
+    evidence(now, 'unknown-arp', context='unknown')
+    evidence(now, 'known-mac', device='access-a', kind='mac', ip=None)
+    item = discovery.list_discovered_endpoints(kind='ip')['items'][0]
+    assert item['switch_port'] == ''
+    assert item['switch_location_status'] == 'pending'
+    assert item['registration_status'] == 'scope_pending'
+    assert item['hostname'] == ''
+    assert item['ipam_address_id'] == ''
+
+
+def test_only_proven_access_mac_port_can_locate_a_business_host(isolated_db, monkeypatch):
+    from services import ip_locator_service
+    seed()
+    seed('access-a')
+    now = datetime.now(timezone.utc) - timedelta(seconds=2)
+    evidence(now, 'known-arp')
+    evidence(now, 'known-mac', device='access-a', kind='mac', ip=None)
+    monkeypatch.setattr(ip_locator_service, 'endpoint_access_port_evidence', lambda *args: 'uplink')
+    assert discovery.list_discovered_endpoints(kind='ip')['items'][0]['switch_port'] == ''
+    monkeypatch.setattr(ip_locator_service, 'endpoint_access_port_evidence', lambda *args: 'unknown')
+    assert discovery.list_discovered_endpoints(kind='ip')['items'][0]['switch_port'] == ''
+    monkeypatch.setattr(ip_locator_service, 'endpoint_access_port_evidence', lambda *args: 'access')
+    item = discovery.list_discovered_endpoints(kind='ip')['items'][0]
+    assert item['switch_id'] == 'access-a'
+    assert item['switch_port'] == 'Ethernet1'
+
+
+def test_layer_two_mac_uses_unique_vlan_vrf_binding_without_changing_source_scope(isolated_db, monkeypatch):
+    from services import ip_locator_service
+    seed()
+    seed('access-a')
+    with get_db_connection() as c:
+        c.execute("""INSERT INTO vlans(id,vlan_id,name,site_id,status,tenant_id)
+                     VALUES ('business-vlan-100',100,'Business','discovery-site-a','active','tenant-default')""")
+        c.commit()
+    create_subnet(prefix='192.0.2.0/24', site_id='discovery-site-a',
+                  vlan_id='business-vlan-100', network_type='user_access')
+    now = datetime.now(timezone.utc) - timedelta(seconds=2)
+    evidence(now, 'known-arp')
+    evidence(now, 'layer-two-mac', device='access-a', kind='mac', ip=None, context='unknown')
+    monkeypatch.setattr(ip_locator_service, 'endpoint_access_port_evidence', lambda *args: 'access')
+    item = discovery.list_discovered_endpoints(kind='ip')['items'][0]
+    assert item['switch_id'] == 'access-a'
+    source = discovery.list_discovered_endpoints(kind='mac')['items'][0]
+    assert source['source_vrf_context_status'] == 'unknown'
+    assert source['scope_status'] == 'scope_pending'
+    with get_db_connection() as c:
+        c.execute("INSERT INTO vrfs(id,vrf_name,tenant_id) VALUES ('ambiguous-vrf','Ambiguous','tenant-default')")
+        c.commit()
+    create_subnet(prefix='198.51.100.0/24', site_id='discovery-site-a', vrf_id='ambiguous-vrf',
+                  vlan_id='business-vlan-100', network_type='user_access')
+    assert discovery.list_discovered_endpoints(kind='ip')['items'][0]['switch_port'] == ''
 
 
 def test_registration_assertion_survives_generation_but_not_prefix_change(isolated_db,monkeypatch):

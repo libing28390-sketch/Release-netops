@@ -35,6 +35,30 @@ def test_h3c_s6850_is_selected_when_entity_table_exceeds_legacy_200_row_limit():
     assert service._select_chassis_model(model_rows, class_rows, contained_rows) == "H3C S6850"
 
 
+@pytest.mark.parametrize("version", ["2c", "3"])
+def test_import_model_reads_chassis_after_row_200_without_using_partial_tables(monkeypatch, version):
+    from services import snmp_service
+
+    # The chassis is deliberately the last entity, after 258 non-chassis rows.
+    columns = {
+        "1.3.6.1.2.1.47.1.1.1.1.13": [(str(i), "line-card") for i in range(1, 259)] + [("259", "H3C S6850")],
+        "1.3.6.1.2.1.47.1.1.1.1.5": [(str(i), "module(9)") for i in range(1, 259)] + [("259", "chassis(3)")],
+        "1.3.6.1.2.1.47.1.1.1.1.4": [(str(i), "259") for i in range(1, 259)] + [("259", "0")],
+    }
+    limits = []
+
+    async def fake_walk(_ip, _credential, oid, **kwargs):
+        limit = kwargs.get("max_rows", 200)
+        limits.append(limit)
+        rows = columns[oid]
+        return WalkRows(rows[:limit], truncated=len(rows) >= limit)
+
+    monkeypatch.setattr(snmp_service, "_snmp_walk", fake_walk)
+    settings = {"version": version, "community": "fixture-only", "username": "fixture-user"}
+    assert run(service.read_chassis_model("192.0.2.10", settings)) == "S6850"
+    assert limits == [2000, 2000, 2000]
+
+
 def test_entity_columns_are_joined_by_index_not_list_position():
     model_rows = [("80", "line-card-model"), ("9", "MSR56-60"), ("3", "power-module")]
     class_rows = [("3", "module(9)"), ("80", "module(9)"), ("9", "3")]

@@ -775,6 +775,7 @@ async def _snmp_walk(
     version: str = '2c',
     raise_on_error: bool = False,
     preserve_octets: bool = False,
+    prefer_bulk: bool = False,
 ) -> SnmpWalkResult:
     """Walk an OID subtree via puresnmp, return list of (oid_suffix, value).
 
@@ -787,10 +788,15 @@ async def _snmp_walk(
     backward compatible while exposing ``truncated`` when the row budget was
     reached before the subtree walk completed.  ``preserve_octets`` keeps raw
     OCTET STRING bytes in ``octet_values`` for callers that need lossless
-    binary handling without changing the normal string result.
+    binary handling without changing the normal string result. ``prefer_bulk``
+    opts this walk into GETBULK for SNMPv2c/v3; the default keeps existing
+    callers on GETNEXT.
     """
     results = SnmpWalkResult()
+    # Preserve the historical caller spelling for ordinary GETNEXT walks.
+    # The opt-in bulk path normalizes it separately before building requests.
     base_oid = oid.rstrip('.')
+    normalized_base_oid = str(base_oid).strip('.')
     version_key = str(version or '2c').strip().lower()
     if version_key in {'v1', '1'}:
         version_key = '1'
@@ -801,27 +807,111 @@ async def _snmp_walk(
     else:
         raise ValueError('Unsupported SNMP version; use 1, 2c, or 3')
 
-    async def _collect():
-        from puresnmp import PyWrapper
-        client = PyWrapper(_build_versioned_snmp_client(ip, community, port, version_key))
-        async for varbind in client.walk(base_oid):
+    bulk_fallback_attempted = False
+
+    def _replace_result(target: SnmpWalkResult, source: SnmpWalkResult) -> None:
+        target.clear()
+        target.extend(source)
+        target.truncated = source.truncated
+        target.octet_values.clear()
+        target.octet_values.update(source.octet_values)
+
+    def _merge_partial_results(*sources: SnmpWalkResult) -> SnmpWalkResult:
+        merged = SnmpWalkResult()
+        positions: dict[str, int] = {}
+        for source in sources:
+            for suffix, value in source:
+                normalized_suffix = str(suffix)
+                position = positions.get(normalized_suffix)
+                if position is None:
+                    positions[normalized_suffix] = len(merged)
+                    merged.append((normalized_suffix, value))
+                else:
+                    merged[position] = (normalized_suffix, value)
+            merged.octet_values.update(source.octet_values)
+            merged.truncated = merged.truncated or source.truncated
+        return merged
+
+    async def _consume_walk(
+        client: Any,
+        target: SnmpWalkResult,
+        *,
+        use_bulk: bool,
+        strict_subtree: bool = False,
+    ) -> None:
+        walk_oid = normalized_base_oid if use_bulk or strict_subtree else base_oid
+        walker = (
+            client.bulkwalk([walk_oid], bulk_size=20)
+            if use_bulk
+            else client.walk(walk_oid)
+        )
+        async for varbind in walker:
             oid_str = str(varbind.oid)
-            suffix = oid_str[len(base_oid) + 1:] if oid_str.startswith(base_oid + '.') else oid_str
-            v = _val_to_str(varbind.value)
-            if 'endOfMibView' in v:
+            if use_bulk or strict_subtree:
+                oid_str = oid_str.strip('.')
+                if oid_str == normalized_base_oid or not oid_str.startswith(normalized_base_oid + '.'):
+                    return
+                suffix = oid_str[len(normalized_base_oid) + 1:]
+            else:
+                # Keep the original GETNEXT suffix behavior for callers that
+                # did not opt into the LLDP bulk transport.
+                suffix = oid_str[len(base_oid) + 1:] if oid_str.startswith(base_oid + '.') else oid_str
+            raw_value = varbind.value
+            value = _val_to_str(raw_value)
+            if 'endOfMibView' in value:
                 return
-            results.append((suffix, v))
-            if preserve_octets and isinstance(varbind.value, (bytes, bytearray)):
-                results.octet_values[suffix] = bytes(varbind.value)
-            if max_rows is not None and len(results) >= max_rows:
-                results.truncated = True
+            target.append((suffix, value))
+            if preserve_octets and isinstance(raw_value, (bytes, bytearray)):
+                target.octet_values[suffix] = bytes(raw_value)
+            if max_rows is not None and len(target) >= max_rows:
+                target.truncated = True
                 return
+
+    async def _collect():
+        nonlocal bulk_fallback_attempted
+        from puresnmp import PyWrapper
+        from puresnmp.exc import GenErr, TooBig
+
+        client = PyWrapper(_build_versioned_snmp_client(ip, community, port, version_key))
+        if not prefer_bulk or version_key == '1':
+            await _consume_walk(client, results, use_bulk=False)
+            return
+
+        bulk_results = SnmpWalkResult()
+        try:
+            await _consume_walk(client, bulk_results, use_bulk=True)
+        except (GenErr, TooBig):
+            # Some otherwise usable v2 agents reject GETBULK or its response
+            # size. Try exactly one GETNEXT walk inside the same outer timeout.
+            # Do not repeat this path for auth, access, or timeout errors.
+            bulk_fallback_attempted = True
+            fallback_results = SnmpWalkResult()
+            try:
+                await _consume_walk(
+                    client,
+                    fallback_results,
+                    use_bulk=False,
+                    strict_subtree=True,
+                )
+            except BaseException:
+                _replace_result(results, _merge_partial_results(bulk_results, fallback_results))
+                raise
+            # A completed fallback is authoritative: table rows may have
+            # changed between the failed GETBULK attempt and the GETNEXT walk.
+            _replace_result(results, fallback_results)
+        except BaseException:
+            # Preserve evidence collected before cancellation/timeout, while
+            # allowing the caller to distinguish it from a complete walk.
+            _replace_result(results, bulk_results)
+            raise
+        else:
+            _replace_result(results, bulk_results)
 
     async with get_network_access_limiter().async_snmp():
       try:
         await asyncio.wait_for(_collect(), timeout=timeout)
       except asyncio.TimeoutError as exc:
-        logger.debug(f"SNMP WALK {ip} {oid} timeout after {timeout}s ({len(results)} rows collected)")
+        logger.debug('SNMP WALK %s %s timeout after %s s (%s rows collected)', ip, oid, timeout, len(results))
         if raise_on_error:
             raise SnmpWalkTimeoutError(results) from exc
       except Exception as exc:
@@ -836,6 +926,11 @@ async def _snmp_walk(
             )
             if is_timeout:
                 raise SnmpWalkTimeoutError(results) from exc
+            if prefer_bulk and bulk_fallback_attempted and results:
+                try:
+                    exc.partial_results = results
+                except Exception:
+                    pass
             raise
     return results
 
@@ -2931,6 +3026,8 @@ async def collect_snmp_lldp_neighbors(
 
     # Read the related IEEE 802.1AB LLDP-MIB columns in parallel.
     lldp_chassis_id_oid = '1.0.8802.1.1.2.1.4.1.1.5'
+    lldp_port_id_oid = '1.0.8802.1.1.2.1.4.1.1.7'
+    lldp_port_id_subtype_oid = '1.0.8802.1.1.2.1.4.1.1.6'
     walk_errors: list[BaseException] = []
     truncated_oids: list[str] = []
     truncated_rows: dict[str, int] = {}
@@ -2951,29 +3048,35 @@ async def collect_snmp_lldp_neighbors(
             item.name == 'preserve_octets' or item.kind == inspect.Parameter.VAR_KEYWORD
             for item in walk_parameters
         )
+        supports_bulk_preference = any(
+            item.name == 'prefer_bulk' or item.kind == inspect.Parameter.VAR_KEYWORD
+            for item in walk_parameters
+        )
     except (TypeError, ValueError):
         supports_error_flag = False
         supports_max_rows = False
         supports_octet_preservation = False
+        supports_bulk_preference = False
 
     async def _walk_lldp_column(oid: str) -> list[tuple[str, str]]:
         # The LLDP collector needs to distinguish an empty table from a failed
         # walk. Keep compatibility with older test doubles and plugins that
-        # expose the historical _snmp_walk signature without the newer
-        # raise_on_error/max_rows keyword arguments.
+        # expose the historical _snmp_walk signature without newer keywords.
         kwargs: dict[str, Any] = {'timeout': timeout, 'version': version}
         if supports_error_flag:
             kwargs['raise_on_error'] = True
         if supports_max_rows:
             kwargs['max_rows'] = max_rows
-        if supports_octet_preservation and oid == lldp_chassis_id_oid:
+        if supports_octet_preservation and oid in {lldp_chassis_id_oid, lldp_port_id_oid}:
             kwargs['preserve_octets'] = True
+        if supports_bulk_preference:
+            kwargs['prefer_bulk'] = version_key not in {'1', 'v1'}
         return await _snmp_walk(ip, community, oid, port, **kwargs)
 
     try:
         walk_specs = [
             ('1.0.8802.1.1.2.1.4.1.1.9', 'lldpRemSysName'),
-            ('1.0.8802.1.1.2.1.4.1.1.7', 'lldpRemPortId'),
+            (lldp_port_id_oid, 'lldpRemPortId'),
             ('1.0.8802.1.1.2.1.4.1.1.8', 'lldpRemPortDesc'),
             (lldp_chassis_id_oid, 'lldpRemChassisId'),
             ('1.0.8802.1.1.2.1.4.1.1.4', 'lldpRemChassisIdSubtype'),
@@ -2981,6 +3084,7 @@ async def collect_snmp_lldp_neighbors(
             ('1.0.8802.1.1.2.1.4.2.1', 'lldpRemManAddrTable'),
             ('1.0.8802.1.1.2.1.3.7.1.3', 'lldpLocPortId'),
             ('1.3.6.1.2.1.31.1.1.1.1', 'ifName'),
+            ('1.0.8802.1.1.2.1.4.1.1.6', 'lldpRemPortIdSubtype'),
         ]
         lldp_tasks = [_walk_lldp_column(oid) for oid, _label in walk_specs]
         results = await asyncio.gather(*lldp_tasks, return_exceptions=True)
@@ -3040,12 +3144,14 @@ async def collect_snmp_lldp_neighbors(
         rem_man_addrs = _rows_at(6)
         loc_port_ids = dict(_rows_at(7))
         if_names = dict(_rows_at(8))
+        rem_port_id_subtypes = _rows_at(9)
 
         sys_name_map = { _parse_lldp_suffix(s): v for s, v in rem_sys_names }
         port_id_map = { _parse_lldp_suffix(s): v for s, v in rem_port_ids }
         port_desc_map = { _parse_lldp_suffix(s): v for s, v in rem_port_descs }
         chassis_id_map = { _parse_lldp_suffix(s): v for s, v in rem_chassis_ids }
         chassis_subtype_map = { _parse_lldp_suffix(s): v for s, v in rem_chassis_subtypes }
+        port_id_subtype_map = { _parse_lldp_suffix(s): v for s, v in rem_port_id_subtypes }
         sys_desc_map = { _parse_lldp_suffix(s): v for s, v in rem_sys_descs }
 
         def _octets_at(index: int) -> dict[str, bytes]:
@@ -3064,6 +3170,10 @@ async def collect_snmp_lldp_neighbors(
         chassis_octet_values = {
             _parse_lldp_suffix(suffix): value
             for suffix, value in _octets_at(3).items()
+        }
+        port_id_octet_values = {
+            _parse_lldp_suffix(suffix): value
+            for suffix, value in _octets_at(1).items()
         }
 
         def _parse_chassis_subtype(value: Any) -> Optional[int]:
@@ -3087,6 +3197,70 @@ async def collect_snmp_lldp_neighbors(
             except UnicodeDecodeError:
                 return raw_value.hex(':')
             return text_value if text_value and text_value.isprintable() else raw_value.hex(':')
+
+        def _parse_port_id_subtype(value: Any) -> Optional[int]:
+            try:
+                return int(str(value).strip())
+            except (TypeError, ValueError):
+                return None
+
+        def _printable_port_id(value: str) -> str:
+            candidate = str(value or '').strip()
+            return candidate if candidate and all(char.isprintable() for char in candidate) else ''
+
+        def _format_port_id(key: tuple[str, str]) -> tuple[str, int | None, str]:
+            """Return an interface label, subtype, and safe evidence for LLDP Port ID.
+
+            IEEE Port ID is an OCTET STRING whose meaning comes from its
+            subtype. In particular, subtype 3 is a six-byte MAC address, not
+            UTF-8 interface text; a zero byte inside it is valid data.
+            """
+            subtype = _parse_port_id_subtype(port_id_subtype_map.get(key))
+            raw_octets = port_id_octet_values.get(key)
+            raw_value = str(port_id_map.get(key) or '')
+            evidence = (
+                raw_octets.hex(':')
+                if raw_octets is not None
+                else raw_value if all(char.isprintable() for char in raw_value)
+                else raw_value.encode('utf-8', errors='replace').hex(':')
+            )
+
+            def usable_description() -> str:
+                description = str(port_desc_map.get(key) or '').strip()
+                if not description or not all(char.isprintable() for char in description):
+                    return ''
+                compact = description.replace(':', '').replace('-', '').replace('.', '')
+                if compact.isdigit() or (
+                    len(compact) == 12
+                    and all(char in '0123456789abcdefABCDEF' for char in compact)
+                ):
+                    return ''
+                if re.match(r'^(?:to[-_ ]|uplink|downlink|peer)', description, re.I):
+                    return ''
+                return description
+
+            # Port ID subtype 3 is a six-octet MAC address. Subtype 4 is a
+            # network address; subtype 2 is a component number; subtype 6 is
+            # an agent circuit ID. None identifies a remote interface name.
+            # Use a readable port description when it looks like an interface.
+            if subtype in {2, 3, 4, 6}:
+                return usable_description(), subtype, evidence
+
+            if raw_octets is not None:
+                try:
+                    decoded = raw_octets.decode('utf-8', errors='strict')
+                except UnicodeDecodeError:
+                    decoded = ''
+                if decoded and all(char.isprintable() for char in decoded):
+                    return decoded.strip(), subtype, evidence
+                return usable_description(), subtype, evidence
+
+            # Older transports may not expose original OCTET STRING bytes.
+            # Never allow embedded control characters from their text view to
+            # become SQL parameters or topology interface identities.
+            if raw_value and all(char.isprintable() for char in raw_value):
+                return raw_value.strip(), subtype, evidence
+            return usable_description(), subtype, evidence
 
         # Extract management IP addresses from lldpRemManAddrTable
         # IEEE 802.1AB Index: timeMark.localPortNum.remIndex.manAddrSubtype(1).manAddrLen(4).a.b.c.d
@@ -3120,8 +3294,8 @@ async def collect_snmp_lldp_neighbors(
             if not peer_name:
                 continue
 
-            r_desc = (port_desc_map.get(key) or '').strip()
-            r_id = (port_id_map.get(key) or '').strip()
+            r_desc = _printable_port_id(port_desc_map.get(key) or '')
+            r_id, port_id_subtype, port_id_evidence = _format_port_id(key)
 
             def _is_mac_or_pure_number(val: str) -> bool:
                 if not val:
@@ -3133,17 +3307,16 @@ async def collect_snmp_lldp_neighbors(
                     return True
                 return False
 
-            # Prefer the standard IEEE 802.1AB lldpRemPortId (r_id) whenever it is a valid port identifier.
-            # Only fall back to lldpRemPortDesc (r_desc) if r_id is empty, pure numeric index, or MAC address,
-            # and r_desc is not a user description prefix (e.g. "TO-", "uplink", etc.).
-            if r_id and not _is_mac_or_pure_number(r_id):
+            if port_id_subtype in {2, 3, 4, 6}:
+                # _format_port_id has already replaced these non-interface
+                # identifiers with a usable description or an empty value.
+                remote_port = r_id
+            elif r_id and not _is_mac_or_pure_number(r_id):
                 remote_port = r_id
             elif r_desc and not _is_mac_or_pure_number(r_desc) and not re.match(r'^(?:to[-_ ]|uplink|downlink|peer)', r_desc, re.I):
                 remote_port = r_desc
-            elif r_id:
-                remote_port = r_id
             else:
-                remote_port = r_desc or 'Unknown'
+                remote_port = ''
 
             sys_desc = sys_desc_map.get(key) or ''
             chassis_val = chassis_value_map.get(key) or ''
@@ -3154,6 +3327,8 @@ async def collect_snmp_lldp_neighbors(
                 'local_interface': loc_port,
                 'neighbor_name': peer_name,
                 'neighbor_interface': remote_port,
+                'neighbor_port_id_subtype': port_id_subtype,
+                'neighbor_port_id': port_id_evidence,
                 'mgmt_address': mgmt_ip,
                 'chassis_id': chassis_val,
                 'neighbor_platform': sys_desc,

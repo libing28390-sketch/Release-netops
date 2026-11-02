@@ -34,6 +34,7 @@ from drivers.ssh_compat import (
 from services import tag_service
 from services import rack_scope_service
 from services.vault_service import credential_is_shared, resolve_collector_credentials
+from services.config_vendor_platform_service import canonical_vendor
 from services.site_identity_service import ReservedSystemSiteError, resolve_canonical_site_id
 from services.pam_web_service import replace_asset_web_profiles
 from services.audit_service import log_audit_event
@@ -51,9 +52,9 @@ logger = logging.getLogger(__name__)
 # from accidentally becoming anonymous endpoints.
 router = APIRouter(dependencies=[require_role("Viewer")])
 
-_ASSET_IDENTITY_FIELDS = ('hostname', 'asset_tag', 'serial_number', 'management_ip')
+_ASSET_IDENTITY_FIELDS = ('hostname', 'asset_tag', 'management_ip')
 _ASSET_IMMUTABLE_AFTER_CREATE_FIELDS = (
-    'asset_type', 'asset_tag', 'serial_number', 'vendor', 'model', 'hostname', 'management_ip', 'u_height',
+    'asset_type', 'asset_tag', 'vendor', 'model', 'hostname', 'management_ip', 'u_height',
 )
 _ASSET_IDENTITY_LABELS = {
     'hostname': '主机名',
@@ -89,7 +90,7 @@ _ASSET_MONITORING_SYNC_FIELDS = frozenset({
 # the compatibility SQL joins for now, but make the response projection
 # explicit so a future schema column cannot silently become an API field.
 _PUBLIC_ASSET_FIELDS = frozenset({
-    'id', 'asset_type', 'asset_tag', 'serial_number', 'vendor', 'model',
+    'id', 'asset_type', 'asset_tag', 'serial_number', 'serial_number_source', 'vendor', 'model',
     'hostname', 'site_id', 'site_name', 'site_code',
     'rack', 'rack_unit', 'rack_id', 'rack_position', 'rack_mount_kind',
     'rack_height_u', 'rack_placement_status', 'rack_placement_source',
@@ -2562,8 +2563,12 @@ def list_assets(
             [str(item.get('id') or '') for item in items],
             _user,
         )
+        from services.asset_chassis_serial_service import get_asset_chassis_members_map
+
+        chassis_map = get_asset_chassis_members_map(conn, [str(item.get('id') or '') for item in items])
         for item in items:
             item['placement'] = placement_map.get(str(item.get('id') or ''))
+            item['chassis_members'] = chassis_map.get(str(item.get('id') or ''), [])
 
         # Return tag definitions alongside assets so the asset inventory can
         # filter and display the same tags managed under /assets/tags.
@@ -2656,6 +2661,7 @@ def asset_tree(_user=require_role("Viewer")):
 def _build_asset_import_template(snmp_credential_names: list[str]) -> bytes:
     """Build the distributable asset workbook with this vault's SNMP profiles."""
     from io import BytesIO
+    from copy import copy
 
     import openpyxl
     from openpyxl.worksheet.datavalidation import DataValidation
@@ -2671,6 +2677,58 @@ def _build_asset_import_template(snmp_credential_names: list[str]) -> bytes:
         raise FileNotFoundError('Asset import template file is missing')
 
     workbook = openpyxl.load_workbook(template_path)
+    asset_header_labels = {
+        '主机名 *': '主机名',
+        '主机名': '主机名',
+        '资产编号': '资产编号 *',
+        '资产编号 *': '资产编号 *',
+        '序列号 *': '序列号',
+        '序列号': '序列号',
+        '型号 *': '型号',
+        '型号': '型号',
+        '管理IP': '管理IP *',
+        '管理IP *': '管理IP *',
+    }
+    for sheet_name in ('网络设备', '服务器'):
+        asset_sheet = workbook[sheet_name]
+        for cell in asset_sheet[1]:
+            label = str(cell.value or '').strip()
+            if label in asset_header_labels:
+                cell.value = asset_header_labels[label]
+
+        header_cells = {
+            str(cell.value or '').strip().removesuffix(' *').strip(): cell
+            for cell in asset_sheet[1]
+        }
+        optional_header_font = copy(header_cells['型号'].font)
+        optional_header_font.color = copy(header_cells['型号'].font.color)
+        hostname_font = copy(header_cells['主机名'].font)
+        hostname_font.color = copy(optional_header_font.color)
+        header_cells['主机名'].font = hostname_font
+
+        asset_tag_font = copy(header_cells['资产编号'].font)
+        asset_tag_font.color = 'FFFF0000'
+        header_cells['资产编号'].font = asset_tag_font
+        management_ip_font = copy(header_cells['管理IP'].font)
+        management_ip_font.color = copy(asset_tag_font.color)
+        header_cells['管理IP'].font = management_ip_font
+
+    instructions = workbook['填写说明']
+    instructions['A6'] = '必填标识'
+    instructions['B6'] = '资产编号 + 管理IP'
+    instructions['C6'] = '网络设备和服务器均必须填写资产编号与有效管理 IP。'
+    instructions['A15'] = '主机名/序列号/型号'
+    instructions['B15'] = '选填'
+    instructions['C15'] = (
+        '三项都可留空。网络设备配置有效 SNMP Profile 时，系统会尝试补充主机名和型号；'
+        '是否成功取决于设备响应，不保证获取。整机 SN 按实体关系自动读取，已确认的堆叠成员分别保存；不支持或归属不明时需人工核验。'
+        '服务器主机名和型号按需手工填写；其余未标 * 的字段可留空。'
+    )
+    instructions.row_dimensions[15].height = 100
+    note_alignment = copy(instructions['C15'].alignment)
+    note_alignment.wrap_text = True
+    instructions['C15'].alignment = note_alignment
+
     network_sheet = workbook['网络设备']
     credential_headers = {
         'SNMPv2凭据名称（选填）',
@@ -2862,6 +2920,9 @@ def get_asset(asset_id: str, _user=require_role("Viewer")):
         item = dict(row)
         _sanitize_asset_item(item)
         item['placement'] = _asset_placement_map(conn, [asset_id], _user).get(asset_id)
+        from services.asset_chassis_serial_service import get_asset_chassis_members_map
+
+        item['chassis_members'] = get_asset_chassis_members_map(conn, [asset_id]).get(asset_id, [])
         item['web_profiles'] = _get_asset_web_profiles(conn, asset_id)
         return item
     finally:
@@ -3396,6 +3457,11 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True, _
                     updates.append(f'{field} = ?')
                     params.append(_safe_encrypt_snmp_community(val) if field == 'snmp_community' else val)
                     changed_fields.add(field)
+
+        if 'serial_number' in changed_fields:
+            updates.append('serial_number_source = ?')
+            params.append('operator' if str(body.serial_number or '').strip() else '')
+            changed_fields.add('serial_number_source')
 
         if body.snmp_collection_enabled is not None:
             current_snmp_enabled = bool(row['snmp_collection_enabled']) if 'snmp_collection_enabled' in row.keys() else True
@@ -4043,7 +4109,19 @@ def batch_snmp_sync_assets(
             'synced_model': synced_model,
             'model_source': model_source,
             'rack_sync': rack_sync,
+            'serial_sync': dict(identity_result.get('serial_sync') or {}),
         }
+        serial_sync = response_item['serial_sync']
+        if serial_sync.get('status') in {'synced', 'partial'} and serial_sync.get('members_count'):
+            response_item['message'] += f"；已采集 {serial_sync['members_count']} 个机箱 SN"
+            if sync_status == 'failed':
+                sync_status = 'partial'
+                response_item['status'] = sync_status
+        elif serial_sync.get('status') in {'failed', 'conflict', 'partial', 'superseded'}:
+            response_item['message'] += '；' + str(serial_sync.get('message') or '整机 SN 未完整同步')
+            if sync_status == 'synced':
+                sync_status = 'partial'
+                response_item['status'] = sync_status
         results_by_asset[item['asset_id']] = response_item
 
         # Keep manual identity changes in the asset audit trail. The projection
@@ -4057,9 +4135,9 @@ def batch_snmp_sync_assets(
             after_row = dict(after) if after else {}
             changed = any(
                 str(before.get(field) or '').strip() != str(after_row.get(field) or '').strip()
-                for field in ('hostname', 'vendor', 'platform', 'model')
+                for field in ('hostname', 'vendor', 'platform', 'model', 'serial_number')
             )
-            if after_row and (changed or sync_status == 'failed'):
+            if after_row and (changed or sync_status == 'failed' or serial_sync.get('status') in {'synced', 'partial', 'conflict'}):
                 _audit_asset_event(
                     audit_conn,
                     event_type='asset.snmp_identity_sync',
@@ -4077,6 +4155,8 @@ def batch_snmp_sync_assets(
                         'hostname_sync_status': str(hostname_sync.get('status') or ''),
                         'model_source': str(identity_result.get('model_source') or ''),
                         'rack_sync_status': str((rack_sync or {}).get('status') or ''),
+                        'serial_sync_status': str(serial_sync.get('status') or ''),
+                        'chassis_members_count': int(serial_sync.get('members_count') or 0),
                     },
                 )
                 audit_conn.commit()
@@ -4227,6 +4307,22 @@ def import_assets(
         pending_librenms_enrollment: list[dict] = []
         pending_snmp_identification: list[dict] = []
 
+        def _eligible_snmp_identification_items(imported_device_ids: set[str]) -> list[dict]:
+            unique_items: dict[str, dict] = {}
+            for item in pending_snmp_identification:
+                device_id = str(item.get('device_id') or '')
+                if not device_id or (
+                    device_id not in imported_device_ids
+                    and not item.get('refresh_existing')
+                ):
+                    continue
+                current = unique_items.get(device_id)
+                if current is None or (
+                    current.get('refresh_existing') and not item.get('refresh_existing')
+                ):
+                    unique_items[device_id] = item
+            return list(unique_items.values())
+
         def _safe_import_error(exc: Exception) -> dict:
             detail = exc.detail if isinstance(exc, HTTPException) else None
             if isinstance(detail, dict):
@@ -4267,19 +4363,20 @@ def import_assets(
         def _import_one(body: AssetImportCreate, row_number: int) -> dict:
             imported_hostname = str(body.hostname or '').strip()
             if not imported_hostname:
-                if body.asset_type == 'network_device' and str(body.management_ip or '').strip():
-                    # LibreNMS accepts an IP as the device hostname and polls
-                    # through it by default. Keeping the canonical management
-                    # IP here also makes enrollment independent of a guessed
-                    # hostname before LibreNMS performs native discovery.
-                    imported_hostname = str(body.management_ip).strip()
-                else:
+                try:
+                    # An IP is a stable fallback when the asset hostname is
+                    # unknown. Validate it before using it as the stored name.
+                    fallback_hostname = _validate_asset_ip_address(body.management_ip)
+                except ValueError:
+                    fallback_hostname = ''
+                if not fallback_hostname:
                     raise HTTPException(status_code=422, detail={
                         'code': 'ASSET_HOSTNAME_REQUIRED',
-                        'message': '请填写主机名；网络设备也可留空并填写有效管理 IP',
+                        'message': '请填写主机名或有效管理IP',
                         'row': row_number,
                         'field': 'hostname',
                     })
+                imported_hostname = fallback_hostname
             body.hostname = imported_hostname
             _pre_resolve_credential(conn, body)
             snmp_profile_type = _resolve_snmp_credential_binding(conn, body)
@@ -4337,17 +4434,22 @@ def import_assets(
             if duplicates:
                 duplicate_device_id = ''
                 duplicate_enrollment_status: dict[str, str] | None = None
+                duplicate_snmp_status: dict[str, object] | None = None
                 if body.asset_type == 'network_device':
                     existing_asset_ids = {str(item['existing_id']) for item in duplicates}
                     if len(existing_asset_ids) == 1:
                         existing_asset_id = next(iter(existing_asset_ids))
                         existing_network_device = conn.execute(
                             '''SELECT pa.id AS asset_id, pa.asset_tag, pa.hostname,
+                                      COALESCE(NULLIF(pa.vendor, ''), NULLIF(d.vendor, ''), '') AS asset_vendor,
+                                      COALESCE(NULLIF(pa.platform, ''), NULLIF(d.platform, ''), '') AS asset_platform,
+                                      COALESCE(NULLIF(pa.model, ''), NULLIF(d.model, ''), '') AS asset_model,
                                       COALESCE(NULLIF(pa.management_ip, ''), NULLIF(d.ip_address, '')) AS ip,
                                       COALESCE(NULLIF(pa.snmp_credential_id, ''), NULLIF(d.snmp_credential_id, ''), '') AS snmp_credential_id,
                                       COALESCE(NULLIF(pa.snmp_port, 0), NULLIF(d.snmp_port, 0), 161) AS snmp_port,
-                                      pa.snmp_community,
+                                      COALESCE(NULLIF(pa.snmp_community, ''), NULLIF(d.snmp_community, ''), '') AS snmp_community,
                                       COALESCE(NULLIF(profile.credential_type, ''), '') AS snmp_profile_type,
+                                      COALESCE(d.snmp_collection_enabled, TRUE) AS snmp_collection_enabled,
                                       d.id AS device_id
                                FROM physical_assets pa
                                JOIN devices d ON d.asset_id = pa.id
@@ -4361,11 +4463,14 @@ def import_assets(
                             duplicate_device_id = str(existing_network_device['device_id'])
                             requested_credential_id = str(getattr(body, 'snmp_credential_id', '') or '')
                             existing_credential_id = str(existing_network_device['snmp_credential_id'] or '')
-                            same_profile = requested_credential_id == existing_credential_id
-                            if not requested_credential_id and not existing_credential_id:
+                            requested_community = str(getattr(body, 'snmp_community', '') or '').strip()
+                            requested_profile_specified = bool(requested_credential_id or requested_community)
+                            same_profile = False
+                            if requested_credential_id:
+                                same_profile = requested_credential_id == existing_credential_id
+                            elif not existing_credential_id:
                                 stored_community = str(existing_network_device['snmp_community'] or '')
                                 existing_community = decrypt_credential(stored_community)
-                                requested_community = str(getattr(body, 'snmp_community', '') or '')
                                 same_profile = (
                                     existing_community is not None
                                     and str(existing_community) == requested_community
@@ -4379,11 +4484,15 @@ def import_assets(
                                 existing_ip = ipaddress.ip_address(str(existing_network_device['ip'] or '').strip()).compressed.casefold()
                             except ValueError:
                                 existing_ip = ''
-                            same_enrollment_target = (
+                            same_management_target = (
                                 bool(requested_ip)
                                 and requested_ip == existing_ip
                                 and int(body.snmp_port or 161) == int(existing_network_device['snmp_port'] or 161)
-                                and same_profile
+                            )
+                            same_enrollment_target = same_management_target and same_profile
+                            existing_snmp_configured = bool(
+                                existing_credential_id
+                                or existing_network_device['snmp_community']
                             )
                             if same_enrollment_target:
                                 pending_librenms_enrollment.append({
@@ -4397,6 +4506,44 @@ def import_assets(
                                 duplicate_enrollment_status = {
                                     'status': 'skipped_duplicate_profile_mismatch',
                                     'message': '该行匹配到已有资产，导入规则不会修改其管理 IP、端口或 SNMP Profile；请在资产管理中编辑原资产后应用所选 Profile。',
+                                }
+                            if not same_management_target:
+                                serial_skip_message = '导入行的管理 IP 或 SNMP 端口与已登记资产不一致，未对该重复资产发起 SN 采集。'
+                            elif not bool(existing_network_device['snmp_collection_enabled']):
+                                serial_skip_message = '该设备已关闭 SNMP 采集，本次未读取整机 SN。'
+                            elif not existing_snmp_configured:
+                                serial_skip_message = '已登记资产没有可用的 SNMP Profile 或 Community，无法读取整机 SN。'
+                            elif requested_profile_specified and not same_profile:
+                                serial_skip_message = '导入行指定的 SNMP Profile 与已登记资产不一致；为避免用错凭据，本次未读取整机 SN。'
+                            else:
+                                serial_skip_message = ''
+                            if (
+                                same_management_target
+                                and bool(existing_network_device['snmp_collection_enabled'])
+                                and existing_snmp_configured
+                                and (not requested_profile_specified or same_profile)
+                            ):
+                                pending_snmp_identification.append({
+                                    'device_id': duplicate_device_id,
+                                    'row': row_number,
+                                    'asset_tag': existing_network_device['asset_tag'] or body.asset_tag or '',
+                                    'hostname': existing_network_device['hostname'] or body.hostname or '',
+                                    'ip': existing_network_device['ip'] or body.management_ip or '',
+                                    'refresh_existing': True,
+                                    'snmp_configured': True,
+                                    'declared_vendor': existing_network_device['asset_vendor'] or '',
+                                    'declared_platform': existing_network_device['asset_platform'] or '',
+                                    'declared_model': existing_network_device['asset_model'] or '',
+                                })
+                            else:
+                                duplicate_snmp_status = {
+                                    'status': 'skipped',
+                                    'message': serial_skip_message,
+                                    'serial_sync': {
+                                        'status': 'skipped',
+                                        'members_count': 0,
+                                        'message': serial_skip_message,
+                                    },
                                 }
                             pending_hostname_sync.append({
                                 'device_id': duplicate_device_id,
@@ -4420,6 +4567,8 @@ def import_assets(
                 }
                 if duplicate_device_id:
                     skipped_item['device_id'] = duplicate_device_id
+                if duplicate_snmp_status:
+                    skipped_item['snmp_identification'] = duplicate_snmp_status
                 if duplicate_enrollment_status:
                     skipped_item['librenms_enrollment'] = duplicate_enrollment_status
                 skipped_items.append(skipped_item)
@@ -4649,10 +4798,7 @@ def import_assets(
             item for item in pending_librenms_enrollment
             if str(item.get('device_id') or '') in active_device_ids
         ]
-        pending_snmp_identification = [
-            item for item in pending_snmp_identification
-            if str(item.get('device_id') or '') in imported_device_ids
-        ]
+        pending_snmp_identification = _eligible_snmp_identification_items(imported_device_ids)
 
         queued_snmp_device_ids = sorted({
             str(item.get('device_id') or '')
@@ -4690,10 +4836,7 @@ def import_assets(
                 for item in row_results
                 if item.get('status') == 'created' and item.get('device_id')
             }
-            pending_snmp_identification = [
-                item for item in pending_snmp_identification
-                if str(item.get('device_id') or '') in imported_device_ids
-            ]
+            pending_snmp_identification = _eligible_snmp_identification_items(imported_device_ids)
             identified_device_ids = {
                 str(item.get('device_id') or '') for item in pending_snmp_identification
             }
@@ -4924,17 +5067,23 @@ def import_assets(
                 async def _identify_all_imported_devices() -> list:
                     semaphore = _aio.Semaphore(min(5, len(pending_snmp_identification)))
                     model_semaphore = _aio.Semaphore(1)
-                    return await _aio.gather(
-                        *(
-                            identify_imported_device(
-                                item,
-                                semaphore,
-                                model_semaphore,
-                                user=_user if isinstance(_user, dict) else None,
-                                auto_bind_platform=True,
+
+                    async def _identify(item: dict):
+                        if item.get('refresh_existing'):
+                            from services.snmp_import_identification_service import sync_imported_device_chassis_serials
+                            return await sync_imported_device_chassis_serials(
+                                item, semaphore, model_semaphore,
                             )
-                            for item in pending_snmp_identification
-                        ),
+                        return await identify_imported_device(
+                            item,
+                            semaphore,
+                            model_semaphore,
+                            user=_user if isinstance(_user, dict) else None,
+                            auto_bind_platform=True,
+                        )
+
+                    return await _aio.gather(
+                        *(_identify(item) for item in pending_snmp_identification),
                         return_exceptions=True,
                     )
 
@@ -4962,10 +5111,10 @@ def import_assets(
                             'error': f'主机名同步任务异常（{type(output).__name__}）',
                         })
                     else:
-                        if output.get('status') == 'identified':
+                        if output.get('status') == 'identified' and not item.get('refresh_existing'):
                             output['rack_sync'] = _sync_enriched_asset_rack_device(item, _user)
                         hostname_result = output.get('hostname_sync')
-                        if isinstance(hostname_result, dict):
+                        if isinstance(hostname_result, dict) and not item.get('refresh_existing'):
                             hostname_sync_results.append({
                                 **item,
                                 **hostname_result,
@@ -5003,6 +5152,7 @@ def import_assets(
                             'identity_source', 'rack_sync',
                             'platform_binding_status', 'platform_profile_id',
                             'platform_profile_name', 'platform_binding_message',
+                            'serial_sync',
                         )
                         if identity_result.get(key) is not None
                     }
@@ -5095,7 +5245,11 @@ def import_assets(
 
             background_tasks.add_task(_run_import_post_commit_safely)
             pending_hostname_ids = {str(item.get("device_id") or "") for item in pending_hostname_sync}
-            pending_hostname_ids.update(str(item.get("device_id") or "") for item in pending_snmp_identification)
+            pending_hostname_ids.update(
+                str(item.get("device_id") or "")
+                for item in pending_snmp_identification
+                if not item.get("refresh_existing")
+            )
             pending_enrollment_by_device = {str(item.get("device_id") or ""): item for item in pending_librenms_enrollment}
             pending_snmp_by_device = {str(item.get("device_id") or ""): item for item in pending_snmp_identification}
             for row_result in row_results:
@@ -5107,7 +5261,21 @@ def import_assets(
                 if device_id in pending_enrollment_by_device:
                     row_result["librenms_enrollment"] = {"status": "pending", "message": "后台纳管处理中", "profile_applied": False}
                 if device_id in pending_snmp_by_device:
-                    row_result["snmp_identification"] = {"status": "pending", "message": "SNMP 识别将在后台继续"}
+                    row_result["snmp_identification"] = {
+                        "status": "pending",
+                        "message": (
+                            "重复资产将使用现有 SNMP 配置重新采集整机 SN"
+                            if pending_snmp_by_device[device_id].get("refresh_existing")
+                            else "SNMP 识别将在后台继续"
+                        ),
+                        **({
+                            "serial_sync": {
+                                "status": "pending",
+                                "members_count": 0,
+                                "message": "正在按实体关系采集机框及堆叠成员 SN",
+                            }
+                        } if pending_snmp_by_device[device_id].get("refresh_existing") else {}),
+                    }
             pending_hostname_count = len(pending_hostname_ids - {""})
             pending_enrollment_items = list(pending_enrollment_by_device.values())
             pending_snmp_items = list(pending_snmp_by_device.values())

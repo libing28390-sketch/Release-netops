@@ -38,6 +38,19 @@ const getRoleLayer = (device: TopologyRoleLayoutDevice): number | null => {
   return null;
 };
 
+export const topologyDeviceRole = (device: TopologyRoleLayoutDevice): string => (
+  [device.role_identity, device.role, device.device_category]
+    .map(canonicalTopologyRole).find((role) => role && role !== 'unknown') || 'unknown'
+);
+
+export const isTopologyWirelessController = (device: TopologyRoleLayoutDevice): boolean => (
+  topologyDeviceRole(device) === 'wireless_controller'
+);
+
+const wirelessMainWidth = (width: number): number => (
+  width - (width >= 700 ? Math.min(320, Math.max(240, width * 0.24)) : width * 0.42)
+);
+
 /**
  * Use only explicit device roles for visual hierarchy. Link structure does
  * not create user-facing hierarchy rows.
@@ -65,6 +78,9 @@ export const selectTopologyLayoutLayers = (
 const clampPosition = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const MIN_NODE_CENTER_GAP = 72;
 const NODE_LABEL_GAP = 12;
+const MAX_NODES_PER_TOPOLOGY_ROW = 6;
+const MIN_TOPOLOGY_SUBROW_GAP = 160;
+const MAX_TOPOLOGY_NODE_LABEL_WIDTH = 220;
 
 const estimateTopologyLabelWidth = (value: unknown): number => {
   const text = String(value || '').trim();
@@ -305,8 +321,11 @@ const buildHorizontalRowPositions = (
   width: number,
   y: number,
   layerGap: number,
+  labelMargin = 48,
 ): Record<string, TopologyRoleLayoutPoint> => {
-  const sideInset = Math.min(72, Math.max(48, width * 0.06));
+  const sideInset = labelMargin > 48
+    ? Math.min(width * 0.32, Math.max(72, width * 0.06, labelMargin))
+    : Math.min(72, Math.max(48, width * 0.06));
   const availableWidth = Math.max(0, width - sideInset * 2);
   // Relate horizontal row spread to the actual tier separation. Using total
   // canvas height makes four-tier topologies look much wider than they are tall.
@@ -325,6 +344,70 @@ const buildHorizontalRowPositions = (
   }]));
 };
 
+const splitDenseRoleRow = (
+  ids: string[],
+  layer: number,
+  devicesById: Map<string, TopologyRoleLayoutDevice>,
+  layerById: Map<string, number>,
+  edges: TopologyLayoutEdge[],
+  xById: Map<string, number>,
+  groupEveryParent = false,
+): string[][] => {
+  if (ids.length === 0) return [];
+  if (ids.length <= MAX_NODES_PER_TOPOLOGY_ROW && !groupEveryParent) return [ids];
+
+  const originalOrder = new Map(ids.map((id, index) => [id, index]));
+  const candidatesByChild = new Map<string, Set<string>>();
+  for (const edge of edges) {
+    const sourceLayer = layerById.get(edge.sourceId);
+    const targetLayer = layerById.get(edge.targetId);
+    if (sourceLayer === undefined || targetLayer === undefined || sourceLayer === targetLayer) continue;
+    const childId = sourceLayer === layer ? edge.sourceId : targetLayer === layer ? edge.targetId : '';
+    const parentId = sourceLayer === layer ? edge.targetId : targetLayer === layer ? edge.sourceId : '';
+    const parentLayer = layerById.get(parentId);
+    if (!childId || !originalOrder.has(childId) || parentLayer === undefined || parentLayer >= layer) continue;
+    const candidates = candidatesByChild.get(childId) || new Set<string>();
+    candidates.add(parentId);
+    candidatesByChild.set(childId, candidates);
+  }
+
+  const childrenByParent = new Map<string, string[]>();
+  const parentLoads = new Map<string, number>();
+  for (const id of ids) {
+    const candidates = Array.from(candidatesByChild.get(id) || []);
+    const nearestLayer = candidates.reduce((nearest, parentId) => (
+      Math.max(nearest, layerById.get(parentId) ?? Number.NEGATIVE_INFINITY)
+    ), Number.NEGATIVE_INFINITY);
+    const nearestParents = candidates.filter((parentId) => layerById.get(parentId) === nearestLayer);
+    nearestParents.sort((left, right) => (
+      (parentLoads.get(left) || 0) - (parentLoads.get(right) || 0)
+      || (xById.get(left) ?? Number.MAX_SAFE_INTEGER) - (xById.get(right) ?? Number.MAX_SAFE_INTEGER)
+      || compareDevices(devicesById.get(left) || { id: left }, devicesById.get(right) || { id: right })
+    ));
+    const parentId = groupEveryParent
+      ? [...nearestParents].sort().join('|') || '__unlinked__'
+      : nearestParents[0] || '__unlinked__';
+    childrenByParent.set(parentId, [...(childrenByParent.get(parentId) || []), id]);
+    if (parentId !== '__unlinked__') parentLoads.set(parentId, (parentLoads.get(parentId) || 0) + 1);
+  }
+
+  const orderedGroups = Array.from(childrenByParent.entries()).sort(([left], [right]) => {
+    if (left === '__unlinked__') return 1;
+    if (right === '__unlinked__') return -1;
+    return (xById.get(left) ?? Number.MAX_SAFE_INTEGER) - (xById.get(right) ?? Number.MAX_SAFE_INTEGER)
+      || left.localeCompare(right);
+  });
+
+  return orderedGroups.flatMap(([, children]) => {
+    const orderedChildren = children.sort((left, right) => (originalOrder.get(left) || 0) - (originalOrder.get(right) || 0));
+    const rows: string[][] = [];
+    for (let offset = 0; offset < orderedChildren.length; offset += MAX_NODES_PER_TOPOLOGY_ROW) {
+      rows.push(orderedChildren.slice(offset, offset + MAX_NODES_PER_TOPOLOGY_ROW));
+    }
+    return rows;
+  });
+};
+
 /**
  * Build the deterministic role-tier layout used by hierarchy mode. When
  * physical LLDP links are available, their adjacency orders each row to
@@ -339,6 +422,36 @@ export const buildTopologyRoleLayeredPositions = (
   links: TopologyRoleLayoutLink[] = [],
 ): Record<string, TopologyRoleLayoutPoint> | null => {
   if (devices.length === 0) return null;
+  const controllers = devices.filter(isTopologyWirelessController).sort(compareDevices);
+  const mainDevices = devices.filter((device) => !isTopologyWirelessController(device));
+  if (controllers.length > 0 && mainDevices.length > 0) {
+    const mainWidth = wirelessMainWidth(width);
+    const fallbackPositions: Record<string, TopologyRoleLayoutPoint> = {};
+    const orderedMain = [...mainDevices].sort(compareDevices);
+    for (let offset = 0; offset < orderedMain.length; offset += MAX_NODES_PER_TOPOLOGY_ROW) {
+      Object.assign(fallbackPositions, buildHorizontalRowPositions(
+        orderedMain.slice(offset, offset + MAX_NODES_PER_TOPOLOGY_ROW).map((device) => device.id),
+        mainWidth, 120 + (offset / MAX_NODES_PER_TOPOLOGY_ROW) * MIN_TOPOLOGY_SUBROW_GAP,
+        MIN_TOPOLOGY_SUBROW_GAP, MAX_TOPOLOGY_NODE_LABEL_WIDTH / 2 + 12,
+      ));
+    }
+    const mainPositions = buildTopologyRoleLayeredPositions(mainDevices, mainWidth, height, links) || fallbackPositions;
+    const edges = collectPhysicalLayoutEdges(links);
+    const positions = { ...mainPositions };
+    const occupied: number[] = [];
+    for (const controller of controllers) {
+      const neighbors = edges.flatMap((edge) => (
+        edge.sourceId === controller.id ? [edge.targetId] : edge.targetId === controller.id ? [edge.sourceId] : []
+      )).filter((id) => mainPositions[id]);
+      let y = neighbors.length > 0
+        ? neighbors.reduce((total, id) => total + mainPositions[id].y, 0) / neighbors.length
+        : Math.min(...Object.values(mainPositions).map((point) => point.y));
+      while (occupied.some((otherY) => Math.abs(otherY - y) < MIN_TOPOLOGY_SUBROW_GAP)) y += MIN_TOPOLOGY_SUBROW_GAP;
+      occupied.push(y);
+      positions[controller.id] = { x: mainWidth + (width - mainWidth) / 2, y };
+    }
+    return positions;
+  }
   const selection = selectTopologyLayoutLayers(devices);
   if (!selection) return null;
 
@@ -359,17 +472,52 @@ export const buildTopologyRoleLayeredPositions = (
   const layerCount = Math.max(layerKeys.length - 1, 1);
   const availableLayerHeight = Math.max(0, height - topInset - bottomInset);
   const layerGap = Math.min(170, Math.max(82, availableLayerHeight / layerCount));
-  const totalLayerHeight = layerGap * Math.max(layerKeys.length - 1, 0);
-  const firstLayerY = topInset + Math.max(0, (availableLayerHeight - totalLayerHeight) / 2);
   const orderedRows = orderLayeredRowsByLinks(grouped, devices, selection, links);
-
-  layerKeys.forEach((layer, index) => {
-    const rowIds = orderedRows.get(layer) || [];
-    Object.assign(
-      positions,
-      buildHorizontalRowPositions(rowIds, width, firstLayerY + layerGap * index, layerGap),
-    );
+  const deviceById = new Map(devices.map((device) => [device.id, device]));
+  const layerById = new Map<string, number>();
+  devices.forEach((device, index) => {
+    const layer = selection.layers[index];
+    if (layer !== null) layerById.set(device.id, layer);
   });
+  const edges = collectPhysicalLayoutEdges(links)
+    .filter((edge) => deviceById.has(edge.sourceId) && deviceById.has(edge.targetId));
+  const xById = new Map<string, number>();
+  for (const layer of layerKeys) {
+    const ordered = orderedRows.get(layer) || [];
+    ordered.forEach((id, index) => {
+      xById.set(id, ((index + 0.5) / Math.max(ordered.length, 1)) * width);
+    });
+  }
+  const rowsByLayer = new Map<number, string[][]>();
+  for (const layer of layerKeys) {
+    const ids = orderedRows.get(layer) || [];
+    const apIds = ids.filter((id) => topologyDeviceRole(deviceById.get(id)!) === 'wireless_ap');
+    const otherIds = ids.filter((id) => !apIds.includes(id));
+    const rows = [
+      ...splitDenseRoleRow(otherIds, layer, deviceById, layerById, edges, xById),
+      ...splitDenseRoleRow(apIds, layer, deviceById, layerById, edges, xById, true),
+    ];
+    rowsByLayer.set(layer, rows);
+  }
+  const rowCount = Array.from(rowsByLayer.values()).reduce((total, rows) => total + rows.length, 0);
+  const rowGap = Math.max(layerGap, MIN_TOPOLOGY_SUBROW_GAP);
+  const totalLayoutHeight = rowGap * Math.max(rowCount - 1, 0);
+  const firstRowY = topInset + Math.max(0, (availableLayerHeight - totalLayoutHeight) / 2);
+  let rowIndex = 0;
+  for (const layer of layerKeys) {
+    for (const rowIds of rowsByLayer.get(layer) || []) {
+      const rowPositions = buildHorizontalRowPositions(
+        rowIds,
+        width,
+        firstRowY + rowGap * rowIndex,
+        layerGap,
+        MAX_TOPOLOGY_NODE_LABEL_WIDTH / 2 + 12,
+      );
+      Object.assign(positions, rowPositions);
+      for (const [id, point] of Object.entries(rowPositions)) xById.set(id, point.x);
+      rowIndex += 1;
+    }
+  }
   return positions;
 };
 
@@ -387,6 +535,17 @@ export const repairTopologyRoleLayeredPositions = (
   height: number,
   links: TopologyRoleLayoutLink[] = [],
 ): Record<string, TopologyRoleLayoutPoint> => {
+  const controllers = devices.filter(isTopologyWirelessController);
+  const mainDevices = devices.filter((device) => !isTopologyWirelessController(device));
+  if (controllers.length > 0 && mainDevices.length > 0) {
+    const repaired = repairTopologyRoleLayeredPositions(
+      mainDevices, structuredPositions, preferredPositions, wirelessMainWidth(width), height, links,
+    );
+    for (const controller of controllers) {
+      if (structuredPositions[controller.id]) repaired[controller.id] = { ...structuredPositions[controller.id] };
+    }
+    return repaired;
+  }
   const repaired: Record<string, TopologyRoleLayoutPoint> = {};
   const rows = new Map<number, TopologyRoleLayoutDevice[]>();
 
@@ -407,6 +566,8 @@ export const repairTopologyRoleLayeredPositions = (
   const structuredDevices = devices.filter((device) => isFinitePoint(structuredPositions[device.id]));
   const hasCompletePreferredPositions = structuredDevices.length > 0 && structuredDevices.every((device) => (
     Number.isFinite(Number(preferredPositions[device.id]?.x))
+    && Number(preferredPositions[device.id]?.x) >= 48
+    && Number(preferredPositions[device.id]?.x) <= width - 48
   ));
   const preferredLayeredPositions = hasCompletePreferredPositions
     ? Object.fromEntries(structuredDevices.map((device) => [device.id, {
@@ -455,6 +616,7 @@ export const repairTopologyRoleLayeredPositions = (
         width,
         rowKey,
         layerGap,
+        MAX_TOPOLOGY_NODE_LABEL_WIDTH / 2 + 12,
       );
       Object.assign(repaired, rowPositions);
       return;

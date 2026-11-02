@@ -35,6 +35,22 @@ interface DHCPLeaseTabProps {
   t: (key: string) => string;
 }
 
+export function formatLocalDateInput(date: Pick<Date, 'getFullYear' | 'getMonth' | 'getDate'>): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+export function getDefaultLeaseDateRange(now: Date): { start: string; end: string } {
+  const leaseEnd = new Date(now.getTime());
+  leaseEnd.setDate(leaseEnd.getDate() + 7);
+  return {
+    start: formatLocalDateInput(now),
+    end: formatLocalDateInput(leaseEnd),
+  };
+}
+
 const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
   const zh = language === 'zh';
   const tableRef = useRef<HTMLTableElement>(null);
@@ -118,14 +134,16 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
       });
     } else {
       setEditingLease(null);
+      const today = new Date();
+      const defaultDateRange = getDefaultLeaseDateRange(today);
       setForm({
         address: '',
         mac_address: '',
         hostname: '',
         dhcp_server: 'Infoblox',
         lease_state: 'active',
-        lease_start: new Date().toISOString().split('T')[0],
-        lease_end: new Date(Date.now() + 86400000 * 7).toISOString().split('T')[0], // default 7 days lease
+        lease_start: defaultDateRange.start,
+        lease_end: defaultDateRange.end,
       });
     }
     setShowAddEdit(true);

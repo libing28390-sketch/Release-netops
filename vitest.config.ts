@@ -14,5 +14,8 @@ export default defineConfig({
     clearMocks: true,
     restoreMocks: true,
     include: ['src/**/*.test.{ts,tsx}'],
+    // Keep the jsdom-heavy suite from overloading smaller CI runners.
+    maxWorkers: 4,
+    testTimeout: 10_000,
   },
 });

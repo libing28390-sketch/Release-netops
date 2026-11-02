@@ -4,6 +4,7 @@ All write operations require Operator+; delete requires Administrator.
 """
 
 import logging
+from typing import Literal
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from core.rbac import authorize_resource, enforce_resource_scope, require_permission, require_role
@@ -909,8 +910,14 @@ def api_get_subnets_tree(_user=require_role("Viewer")):
 
 
 @router.get('/ipam/analytics')
-def api_get_analytics(_user=require_role("Viewer")):
-    return get_utilization_analytics()
+def api_get_analytics(
+    network_scope: Literal['business', 'all'] = Query(
+        'all',
+        description='Utilization range: classified business prefixes or all prefixes.',
+    ),
+    _user=require_role("Viewer"),
+):
+    return get_utilization_analytics(network_scope=network_scope)
 
 
 @router.get('/ipam/subnets/{subnet_id}/next-available-ip')
@@ -952,6 +959,10 @@ def api_list_discovered_endpoints(
     kind: str = Query('all', pattern='^(ip|mac|all)$'),
     evidence_status: str = Query('', pattern='^(|recent|historical|scope_pending|conflict|unknown)$'),
     registration_status: str = Query('', pattern='^(|registered|unregistered|scope_pending)$'),
+    network_scope: str = Query(
+        'all', pattern='^(all|business_vlan)$',
+        description='Restrict discovered endpoints to active business VLAN prefixes',
+    ),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     user=require_permission('ip_address', 'view'),
@@ -962,7 +973,8 @@ def api_list_discovered_endpoints(
     return list_discovered_endpoints(
         site_id=site_id, vrf_id=vrf_id, device_id=device_id, q=q,
         kind=kind, evidence_status=evidence_status,
-        registration_status=registration_status, page=page, page_size=page_size,
+        registration_status=registration_status, network_scope=network_scope,
+        page=page, page_size=page_size,
         visible_scopes=visible_scopes,
     )
 
