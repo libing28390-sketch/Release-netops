@@ -14,7 +14,6 @@ from services import scheduler_service
     ('ospf', 1, 1, 'partial'),
 ])
 def test_routing_job_persists_partial_device_failures(isolated_db, monkeypatch, protocol, updated, failed, expected):
-    from services import ip_locator_service
     conn = get_db_connection()
     now = datetime.now(timezone.utc).isoformat()
     job_id = 'routing-outcome-test'
@@ -32,7 +31,7 @@ def test_routing_job_persists_partial_device_failures(isolated_db, monkeypatch, 
     def collect(**kwargs):
         calls.append(kwargs)
         return {'collected_protocols': [protocol] if updated else [], 'updated_devices': updated, 'failed_devices': failed, 'target_count': 2}
-    monkeypatch.setattr(ip_locator_service, 'sync_routing_neighbors_job', collect)
+    monkeypatch.setattr(scheduler_service, 'sync_routing_neighbors_job', collect)
     result = asyncio.run(scheduler_service._run_scheduled_automation_job_body(job_id, run_id='routing-proof'))
     assert calls == [{'device_ids': {'device-a', 'device-b'}, 'explicit_protocols': {protocol}}]
     assert result['status'] == expected

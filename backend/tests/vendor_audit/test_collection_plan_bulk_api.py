@@ -289,7 +289,13 @@ def test_retired_nsot_policy_routes_are_unavailable_and_preserve_device_policy(
         method, "/api/collection-plans" + path,
         headers=_headers(), json={"operation": "reset", "filters": {"site": "site-a"}},
     )
-    assert response.status_code == 404, response.text
+    # An unregistered API is 404; the optional root static-file mount rejects
+    # non-GET methods with 405 before its file lookup. Neither may dispatch
+    # the retired policy handlers, regardless of frontend build presence.
+    assert [route.path for route in collection_plans_api.router.routes] == [
+        "/collection-plans/bulk-options",
+    ]
+    assert response.status_code in {404, 405}, response.text
     stored = connection.execute(
         "SELECT collection_policy_json FROM devices WHERE id = ?", ("retired-policy-device",),
     ).fetchone()

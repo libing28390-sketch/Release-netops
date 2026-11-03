@@ -121,7 +121,9 @@ def test_retired_nsot_job_disables_itself_without_collecting_devices(isolated_db
         ).fetchone()
     finally:
         conn.close()
-    assert run["last_run_status"] == "retired"
+    # The job body marks the retirement; the execution wrapper persists its
+    # normalized terminal outcome as skipped after it disables the schedule.
+    assert run["last_run_status"] == "skipped"
     assert run["run_count"] == 1
     assert run["enabled"] == 0
     assert run["status"] == "disabled"
