@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 
 import pytest
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
+from main import app
 
 import database
 from api import collection_plans as collection_plans_api
@@ -84,7 +86,7 @@ def nsot_preview_data(isolated_db):
         connection.close()
 
 
-def test_operation_catalog_and_scheduled_preview_share_nsot_template_operations(nsot_preview_data):
+def test_internal_operation_catalog_keeps_template_operations(nsot_preview_data):
     context = nsot_preview_data
     operation_catalog = collection_plans_api.get_nsot_collection_operation_catalog(
         platform_profile_id=context["platform_profile_id"],
@@ -115,26 +117,6 @@ def test_operation_catalog_and_scheduled_preview_share_nsot_template_operations(
     assert catalog_by_key["endpoint_location"]["status"] == "projection"
     assert catalog_by_key["prefix_projection"]["status"] == "projection"
 
-    preview = scheduled_jobs_api.get_scheduled_nsot_collection_preview(
-        context["job_id"],
-        user=context["user"],
-    )
-    preview_data = preview["data"]
-    assert preview_data["target_count"] == 1
-    assert len(preview_data["groups"]) == 1
-    group = preview_data["groups"][0]
-    assert group["device_count"] == 1
-    assert group["software_version"] == "7.1.070"
-    assert group["registry_release_number"] == group["release_number"]
-    assert all(item.get("status") for item in group["collectors"])
-    preview_by_key = {item["key"]: item for item in group["collectors"]}
-    assert preview_by_key["endpoint_location"]["status"] == "projection"
-    assert preview_by_key["prefix_projection"]["status"] == "projection"
-    assert preview_by_key["vlan"]["transport"] == "CLI/SSH"
-    preview_keys = {item["key"] for item in group["collectors"]}
-    assert {"mac_table", "vlan", "lldp"} <= preview_keys
-    assert "eigrp" not in preview_keys
-    assert "rip" not in preview_keys
 
 
 def test_operation_catalog_requires_asset_view_scope(isolated_db):
@@ -152,27 +134,33 @@ def test_operation_catalog_requires_asset_view_scope(isolated_db):
     assert denied.value.status_code == 403
 
 
-def test_nsot_preview_rejects_non_nsot_job(nsot_preview_data):
+@pytest.mark.parametrize("action_type", ["nsot", "backup"])
+def test_retired_nsot_preview_is_not_registered_for_existing_jobs(nsot_preview_data, action_type):
     context = nsot_preview_data
     connection = database.get_db_connection()
     try:
-        connection.execute("UPDATE scheduled_jobs SET action_type = ? WHERE id = ?", ("backup", context["job_id"]))
+        connection.execute("UPDATE scheduled_jobs SET action_type = ? WHERE id = ?", (action_type, context["job_id"]))
         connection.commit()
     finally:
         connection.close()
 
-    with pytest.raises(HTTPException) as invalid:
-        scheduled_jobs_api.get_scheduled_nsot_collection_preview(
-            context["job_id"],
-            user=context["user"],
-        )
-    assert invalid.value.status_code == 400
+    assert "/scheduled-jobs/{job_id}/nsot-preview" not in {
+        route.path for route in scheduled_jobs_api.router.routes
+    }
+    response = TestClient(app).get(f"/api/scheduled-jobs/{context['job_id']}/nsot-preview")
+    assert response.status_code == 404, response.text
+    with database.get_db_connection() as connection:
+        row = connection.execute(
+            "SELECT action_type,enabled,status FROM scheduled_jobs WHERE id = ?", (context["job_id"],),
+        ).fetchone()
+        assert row["action_type"] == action_type
+        assert row["enabled"] == 1
+        assert row["status"] == "approved"
 
 
-def test_nsot_preview_hides_missing_job(isolated_db):
-    with pytest.raises(HTTPException) as missing:
-        scheduled_jobs_api.get_scheduled_nsot_collection_preview(
-            "no-such-job",
-            user={"id": "admin-test", "username": "admin", "role": "Administrator"},
-        )
-    assert missing.value.status_code == 404
+def test_retired_nsot_preview_does_not_expose_missing_job(isolated_db):
+    assert "/scheduled-jobs/{job_id}/nsot-preview" not in {
+        route.path for route in scheduled_jobs_api.router.routes
+    }
+    response = TestClient(app).get("/api/scheduled-jobs/no-such-job/nsot-preview")
+    assert response.status_code == 404, response.text

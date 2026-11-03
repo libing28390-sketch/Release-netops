@@ -99,7 +99,7 @@ def test_topology_batch_marks_unconfirmed_redis_publish_partial():
     }
 
 
-def test_scheduled_nsot_stores_partial_when_topology_summary_is_incomplete(isolated_db, make_user, monkeypatch):
+def test_retired_nsot_skips_topology_collection_for_all_saved_scopes(isolated_db, make_user, monkeypatch):
     from services.scheduled_job_authorization import (
         execution_snapshot,
         manifest_hash,
@@ -202,20 +202,25 @@ def test_scheduled_nsot_stores_partial_when_topology_summary_is_incomplete(isola
     asyncio.run(scheduler_service.run_scheduled_automation_job('nsot-job'))
     asyncio.run(scheduler_service.run_scheduled_automation_job('nsot-empty-job'))
 
-    assert observed_scope == [{'nsot-wh-1'}]
+    assert observed_scope == []
     conn = isolated_db['module'].get_db_connection()
     try:
         row = conn.execute(
-            "SELECT last_run_status, run_count FROM scheduled_jobs WHERE id = ?",
+            "SELECT last_run_status, run_count, enabled, status FROM scheduled_jobs WHERE id = ?",
             ('nsot-job',),
         ).fetchone()
         empty_row = conn.execute(
-            "SELECT last_run_status, run_count FROM scheduled_jobs WHERE id = ?",
+            "SELECT last_run_status, run_count, enabled, status FROM scheduled_jobs WHERE id = ?",
             ('nsot-empty-job',),
         ).fetchone()
     finally:
         conn.close()
-    assert row['last_run_status'] == 'partial'
+    assert row['last_run_status'] == 'skipped'
     assert row['run_count'] == 1
     assert empty_row['last_run_status'] == 'skipped'
     assert empty_row['run_count'] == 1
+
+    assert row['enabled'] == 0
+    assert row['status'] == 'disabled'
+    assert empty_row['enabled'] == 0
+    assert empty_row['status'] == 'disabled'
