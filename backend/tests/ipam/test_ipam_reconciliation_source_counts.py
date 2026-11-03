@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from database import get_db_connection
 from services.cmdb_snapshot_service import begin_snapshot_attempt, complete_snapshot
 from services.ipam_service import create_address, create_subnet, get_ipam_reconciliation
+from services.ipam_discovery_service import _recent_minutes
 
 
 def _seed_reconciliation_device() -> None:
@@ -117,7 +118,7 @@ def test_reconciliation_summary_counts_comparable_sources_and_keeps_snapshot_out
 
     now = datetime.now(timezone.utc)
     _insert_endpoint('192.0.2.10', seen_at=now.isoformat(), active=1)
-    _insert_endpoint('192.0.2.20', seen_at=(now - timedelta(hours=1)).isoformat(), active=1)
+    _insert_endpoint('192.0.2.20', seen_at=(now - timedelta(minutes=_recent_minutes() + 1)).isoformat(), active=1)
     _insert_endpoint('192.0.2.30', seen_at=now.isoformat(), active=0)
     _insert_legacy_endpoint_only('192.0.2.40', seen_at=now.isoformat(), active=1)
     _publish_snapshot_ip('198.51.100.10')
@@ -142,7 +143,7 @@ def test_reconciliation_summary_distinguishes_no_comparable_data_from_snapshot_e
     # A fresh inactive endpoint must not make the current-comparison cache
     # appear healthy while the only active endpoint is outside the window.
     _insert_legacy_endpoint_only('203.0.113.20', seen_at=now.isoformat(), active=0)
-    _insert_endpoint('203.0.113.21', seen_at=(now - timedelta(hours=1)).isoformat(), active=1)
+    _insert_endpoint('203.0.113.21', seen_at=(now - timedelta(minutes=_recent_minutes() + 1)).isoformat(), active=1)
     _publish_snapshot_ip('203.0.113.10')
 
     result = get_ipam_reconciliation()
