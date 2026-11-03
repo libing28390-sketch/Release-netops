@@ -1086,32 +1086,48 @@ def _bfd_peer_state(record: dict) -> tuple[str, str, bool | None]:
         return peer, interface_name, True
     return peer, interface_name, None
 
-async def _collect_protocol_neighbor_alerts(device_row: dict, ip_address: str):
+async def _collect_protocol_neighbor_alerts(
+    device_row: dict,
+    ip_address: str,
+    *,
+    collected_snapshots: dict[str, list[dict[str, Any]]] | None = None,
+):
     device_info = dict(device_row)
-    try:
-        collector_credentials = await asyncio.to_thread(resolve_collector_credentials, device_row)
-    except Exception as exc:
-        collector_credentials = {}
-        logger.debug(
-            "[Protocol Monitor] Credential resolution for %s failed (%s)",
-            ip_address,
-            type(exc).__name__,
-        )
+    collector_credentials: Mapping[str, Any] = {}
+    snmp_credentials: Mapping[str, Any] = {}
+    has_ssh_credentials = False
+    if collected_snapshots is None:
+        try:
+            collector_credentials = await asyncio.to_thread(resolve_collector_credentials, device_row)
+        except Exception as exc:
+            logger.debug(
+                "[Protocol Monitor] Credential resolution for %s failed (%s)",
+                ip_address,
+                type(exc).__name__,
+            )
 
-    snmp_enabled = is_snmp_collection_enabled(device_row)
-    snmp_credentials = (collector_credentials.get('snmp') or {}) if snmp_enabled and isinstance(collector_credentials, Mapping) else {}
-    ssh_credentials = (collector_credentials.get('ssh') or {}) if isinstance(collector_credentials, Mapping) else {}
-    username = str(ssh_credentials.get('username') or device_row.get('username') or '').strip()
-    decrypted_password = str(ssh_credentials.get('password') or decrypt_credential(device_row.get('password')) or '')
-    has_ssh_credentials = bool(username and decrypted_password)
-    if has_ssh_credentials:
-        device_info['username'] = username
-        device_info['password'] = decrypted_password
-        device_info['enable_password'] = ssh_credentials.get('enable_password') or device_info.get('enable_password') or ''
+        snmp_enabled = is_snmp_collection_enabled(device_row)
+        snmp_credentials = (collector_credentials.get('snmp') or {}) if snmp_enabled and isinstance(collector_credentials, Mapping) else {}
+        ssh_credentials = (collector_credentials.get('ssh') or {}) if isinstance(collector_credentials, Mapping) else {}
+        username = str(ssh_credentials.get('username') or device_row.get('username') or '').strip()
+        decrypted_password = str(ssh_credentials.get('password') or decrypt_credential(device_row.get('password')) or '')
+        has_ssh_credentials = bool(username and decrypted_password)
+        if has_ssh_credentials:
+            device_info['username'] = username
+            device_info['password'] = decrypted_password
+            device_info['enable_password'] = ssh_credentials.get('enable_password') or device_info.get('enable_password') or ''
 
-    categories: dict[str, dict[str, Any]] = {}
+    categories: dict[str, dict[str, Any]] = {
+        str(protocol).strip().lower(): {
+            'key': str(protocol).strip().lower(), 'success': True, 'records': records,
+        }
+        for protocol, records in (collected_snapshots or {}).items()
+        if str(protocol).strip().lower() in {'bgp', 'ospf'} and isinstance(records, list)
+    }
     cli_categories: list[str] = []
     for protocol in ('bgp', 'ospf'):
+        if collected_snapshots is not None:
+            break
         if not should_collect(device_row, protocol):
             continue
         if not snmp_credentials.get('configured'):
@@ -1144,12 +1160,13 @@ async def _collect_protocol_neighbor_alerts(device_row: dict, ip_address: str):
             )
             cli_categories.append(protocol)
 
-    # BFD remains on its existing CLI collector. Only attempt CLI when its
-    # resolved read-only device credentials are available.
-    if has_ssh_credentials and should_collect(device_row, 'bfd'):
+    # Legacy callers without supplied snapshots may collect BFD via CLI.
+    # Periodic protocol polling is disabled; explicit BGP/OSPF jobs pass
+    # snapshots and must not start an additional BFD query here.
+    if collected_snapshots is None and has_ssh_credentials and should_collect(device_row, 'bfd'):
         cli_categories.append('bfd')
 
-    if cli_categories and has_ssh_credentials:
+    if collected_snapshots is None and cli_categories and has_ssh_credentials:
         try:
             payload = await asyncio.to_thread(collect_operational_data, device_info, cli_categories)
             for item in payload.get('categories') or []:
@@ -2022,10 +2039,10 @@ async def _process_device_raw(device, cycle_tick: int):
         poll_profile = _device_poll_profile(device)
         collect_intf = _should_collect(cycle_tick, poll_profile['interface'])
         collect_info = _should_collect(cycle_tick, poll_profile['info'])
-        collect_protocol = (
-            _should_collect(cycle_tick, poll_profile['protocol'])
-            and any(should_collect(device, category) for category in ('bgp', 'ospf', 'bfd'))
-        )
+        # Routing neighbors are collected only by explicitly approved scheduled
+        # jobs. Keeping them out of the 60-second B-Loop prevents role-based
+        # SNMP/CLI polling from adding continuous device and database I/O.
+        collect_protocol = False
 
         def mark_offline_and_clear_cache():
             # Keep UI consistent with real reachability: when a device is offline,

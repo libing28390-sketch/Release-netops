@@ -145,7 +145,6 @@ def _device_ip_lookup_scope(
     return scope.tenant_id, scope.site_ids, scope.device_group_ids
 
 
-@router.get("/catalog")
 def get_collection_catalog(_user=require_role("Viewer")):
     conn = get_db_connection()
     try:
@@ -162,7 +161,6 @@ def _managed_template_response(conn, template_id: str) -> dict:
     raise HTTPException(status_code=404, detail="NSOT 采集模板不存在")
 
 
-@router.get("/templates")
 def list_nsot_collection_templates(_user=require_role("Viewer")):
     conn = get_db_connection()
     try:
@@ -172,7 +170,6 @@ def list_nsot_collection_templates(_user=require_role("Viewer")):
     return {"success": True, "data": templates, "message": ""}
 
 
-@router.post("/templates")
 def create_nsot_collection_template(
     body: NSOTCollectionTemplateRequest,
     request: Request,
@@ -224,7 +221,6 @@ def create_nsot_collection_template(
     return {"success": True, "data": created, "message": "NSOT 采集模板已创建"}
 
 
-@router.put("/templates/{template_id}")
 def update_nsot_collection_template(
     template_id: str,
     body: NSOTCollectionTemplateRequest,
@@ -280,7 +276,6 @@ def update_nsot_collection_template(
     return {"success": True, "data": updated, "message": "NSOT 采集模板已更新"}
 
 
-@router.delete("/templates/{template_id}")
 def delete_nsot_collection_template(
     template_id: str,
     request: Request,
@@ -314,7 +309,6 @@ def delete_nsot_collection_template(
     return {"success": True, "message": "NSOT 采集模板已删除"}
 
 
-@router.get("/operation-catalog")
 def get_nsot_collection_operation_catalog(
     platform_profile_id: str | None = Query(default=None, min_length=1, max_length=128),
     role: str = Query(default="switch", min_length=1, max_length=64),
@@ -353,7 +347,6 @@ def get_bulk_collection_plan_options(user=require_role("Viewer")):
     return {"success": True, "data": options, "message": ""}
 
 
-@router.get("/devices/by-ip")
 def get_device_collection_plan_by_ip(ip: str, user=require_role("Viewer")):
     try:
         normalize_device_ip(ip)
@@ -381,7 +374,6 @@ def get_device_collection_plan_by_ip(ip: str, user=require_role("Viewer")):
     return {"success": True, "data": result, "message": ""}
 
 
-@router.post("/bulk-preview")
 def preview_bulk_collection_plan_api(
     body: BulkCollectionPlanRequest,
     user=require_role("Operator"),
@@ -407,7 +399,6 @@ def preview_bulk_collection_plan_api(
     return {"success": True, "data": preview, "message": ""}
 
 
-@router.post("/bulk-apply")
 def apply_bulk_collection_plan_api(
     request: Request,
     body: BulkCollectionPlanApplyRequest,
@@ -471,7 +462,6 @@ def apply_bulk_collection_plan_api(
     }
 
 
-@router.get("/devices")
 def list_device_collection_plans(user=require_role("Viewer")):
     conn = get_db_connection()
     try:
@@ -505,7 +495,6 @@ def list_device_collection_plans(user=require_role("Viewer")):
     return {"success": True, "data": items, "message": ""}
 
 
-@router.get("/devices/{device_id}")
 def get_device_collection_plan(device_id: str, user=require_role("Viewer")):
     conn = get_db_connection()
     try:
@@ -540,7 +529,6 @@ def get_device_collection_plan(device_id: str, user=require_role("Viewer")):
         conn.close()
 
 
-@router.put("/devices/{device_id}")
 def update_device_collection_plan(
     device_id: str,
     body: dict = Body(...),
@@ -614,7 +602,6 @@ def update_device_collection_plan(
     }
 
 
-@router.delete("/devices/{device_id}")
 def reset_device_collection_plan(device_id: str, user=require_role("Operator")):
     conn = get_db_connection()
     try:

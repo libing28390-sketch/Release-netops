@@ -99,30 +99,13 @@ describe('IPLocatorPage search controls', () => {
     expect(locateTab.getAttribute('aria-pressed')).toBe('false');
   });
 
-  it('opens the NSOT policy modal and restores trigger focus after Escape and cancel', async () => {
+  it('keeps the retired NSOT collection policy entry unavailable', async () => {
     renderLocator('nsot-only');
 
-    const trigger = await screen.findByRole('button', { name: 'Collection Templates' });
-    fireEvent.click(trigger);
-
-    const dialog = await screen.findByRole('dialog', { name: 'NSOT Device Collection Templates' });
-    const ipInput = screen.getByRole('textbox', { name: 'Find one device by exact IP' });
-    expect(dialog.contains(document.activeElement)).toBe(true);
-    expect(document.activeElement).toBe(ipInput);
-
-    fireEvent.keyDown(document, { key: 'Escape' });
-    await waitFor(() => {
-      expect(screen.queryByRole('dialog', { name: 'NSOT Device Collection Templates' })).toBeNull();
-      expect(document.activeElement).toBe(trigger);
-    });
-
-    fireEvent.click(trigger);
-    await screen.findByRole('dialog', { name: 'NSOT Device Collection Templates' });
-    fireEvent.click(screen.getByRole('button', { name: 'Close collection templates' }));
-
-    await waitFor(() => {
-      expect(screen.queryByRole('dialog', { name: 'NSOT Device Collection Templates' })).toBeNull();
-      expect(document.activeElement).toBe(trigger);
-    });
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
+    expect(screen.queryByRole('button', { name: 'Collection Templates' })).toBeNull();
+    expect(screen.queryByRole('dialog', { name: 'NSOT Device Collection Templates' })).toBeNull();
+    const calls = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
+    expect(calls.some((url) => url.includes('/api/collection-plans/'))).toBe(false);
   });
 });

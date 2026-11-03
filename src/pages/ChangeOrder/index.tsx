@@ -33,6 +33,7 @@ import {
 } from './constants';
 import {
   clampChangeOrderPage,
+  localDateTimeInputToIso,
   getFinalApproverCandidates,
   getInitialReviewerCandidates,
   formatChangeOrderApiMessage,
@@ -755,12 +756,12 @@ const ChangeOrderComponent: React.FC<Props> = ({
       if (assigneeFilter) params.set('assignee', assigneeFilter);
       if (bookmarkFilter && currentUser.id) params.set('bookmarked', String(currentUser.id));
       if (orderTypeFilter) params.set('order_type', orderTypeFilter);
-      if (createdFrom) params.set('created_from', createdFrom);
-      if (createdTo) params.set('created_to', createdTo);
-      if (completedFrom) params.set('completed_from', completedFrom);
-      if (completedTo) params.set('completed_to', completedTo);
-      if (scheduledFrom) params.set('scheduled_from', scheduledFrom);
-      if (scheduledTo) params.set('scheduled_to', scheduledTo);
+      if (createdFrom) params.set('created_from', localDateTimeInputToIso(createdFrom));
+      if (createdTo) params.set('created_to', localDateTimeInputToIso(createdTo));
+      if (completedFrom) params.set('completed_from', localDateTimeInputToIso(completedFrom));
+      if (completedTo) params.set('completed_to', localDateTimeInputToIso(completedTo));
+      if (scheduledFrom) params.set('scheduled_from', localDateTimeInputToIso(scheduledFrom));
+      if (scheduledTo) params.set('scheduled_to', localDateTimeInputToIso(scheduledTo));
       
       if (viewTab === 'my_todo' && currentUser.username) {
         params.set('my_todo', currentUser.username);

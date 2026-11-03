@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Download, FileSpreadsheet, FileText, LoaderCircle } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { ActionIconButton } from './ActionIconButton';
@@ -15,6 +15,13 @@ export interface TableExportData {
 }
 
 export type TableExportDataSource = TableExportData | (() => TableExportData | Promise<TableExportData>);
+
+interface PreparedTableDownload {
+  href: string;
+  filename: string;
+}
+
+type PreparedTableDownloads = Record<TableExportFormat, PreparedTableDownload>;
 
 export interface TableExportMenuProps {
   /** Reference to the table this menu exports. The visible table headers define the export columns and order. */
@@ -153,14 +160,28 @@ function safeFilename(value: string): string {
   return value.trim().replace(/[\\/:*?"<>|]+/g, '_').replace(/\.+$/g, '') || 'table-export';
 }
 
-function downloadCsv(contents: string, filename: string): void {
-  const blob = new Blob([contents], { type: 'text/csv;charset=utf-8;' });
+function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
-  anchor.download = `${filename}.csv`;
-  anchor.click();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  anchor.download = filename;
+  anchor.style.position = 'fixed';
+  anchor.style.left = '-10000px';
+  anchor.style.top = '0';
+  anchor.style.width = '1px';
+  anchor.style.height = '1px';
+  anchor.style.overflow = 'hidden';
+  anchor.setAttribute('aria-hidden', 'true');
+  anchor.tabIndex = -1;
+  document.body.appendChild(anchor);
+  try {
+    anchor.click();
+  } finally {
+    window.setTimeout(() => {
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    }, 1000);
+  }
 }
 
 export function exportVisibleTable(table: HTMLTableElement, format: TableExportFormat, filename: string): void {
@@ -171,7 +192,7 @@ export function exportExplicitTable(data: TableExportData, format: TableExportFo
   exportTableData(readExplicitTableData(data), format, filename);
 }
 
-function exportTableData(data: { headers: string[]; rows: ExportCell[][] }, format: TableExportFormat, filename: string): void {
+function createExportPayload(data: { headers: string[]; rows: ExportCell[][] }, format: TableExportFormat, filename: string): { blob: Blob; filename: string } {
   const { headers, rows } = data;
   if (!headers.length) throw new Error('The table has no exportable columns.');
   const normalizedFilename = safeFilename(filename);
@@ -179,10 +200,35 @@ function exportTableData(data: { headers: string[]; rows: ExportCell[][] }, form
     const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Data');
-    XLSX.writeFile(workbook, `${normalizedFilename}.xlsx`);
-    return;
+    const contents = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([contents], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    return { blob, filename: `${normalizedFilename}.xlsx` };
   }
-  downloadCsv(serializeTableCsv(headers, rows), normalizedFilename);
+  const blob = new Blob([serializeTableCsv(headers, rows)], { type: 'text/csv;charset=utf-8;' });
+  return { blob, filename: `${normalizedFilename}.csv` };
+}
+
+function createPreparedDownloads(data: { headers: string[]; rows: ExportCell[][] }, filename: string): PreparedTableDownloads {
+  const xlsxPayload = createExportPayload(data, 'xlsx', filename);
+  const csvPayload = createExportPayload(data, 'csv', filename);
+  const xlsxHref = URL.createObjectURL(xlsxPayload.blob);
+  try {
+    const csvHref = URL.createObjectURL(csvPayload.blob);
+    return {
+      xlsx: { href: xlsxHref, filename: xlsxPayload.filename },
+      csv: { href: csvHref, filename: csvPayload.filename },
+    };
+  } catch (error) {
+    URL.revokeObjectURL(xlsxHref);
+    throw error;
+  }
+}
+
+function exportTableData(data: { headers: string[]; rows: ExportCell[][] }, format: TableExportFormat, filename: string): void {
+  const payload = createExportPayload(data, format, filename);
+  downloadBlob(payload.blob, payload.filename);
 }
 
 export const TableExportMenu: React.FC<TableExportMenuProps> = ({
@@ -195,52 +241,150 @@ export const TableExportMenu: React.FC<TableExportMenuProps> = ({
   onExportError,
 }) => {
   const [open, setOpen] = useState(false);
-  const [isExporting, setIsExporting] = useState(false);
+  const [isPreparingData, setIsPreparingData] = useState(false);
+  const [preparedData, setPreparedData] = useState<{ headers: string[]; rows: ExportCell[][] } | null>(null);
+  const [preparedDownloads, setPreparedDownloads] = useState<PreparedTableDownloads | null>(null);
   const [exportError, setExportError] = useState('');
+  const exportDataRequestId = useRef(0);
+  const lastExportDataSource = useRef(exportData);
+  const preparedDownloadUrls = useRef<string[]>([]);
   const zh = language === 'zh' || (!language && typeof navigator !== 'undefined' && navigator.language.toLowerCase().startsWith('zh'));
 
-  const runExport = async (format: TableExportFormat) => {
-    if (isExporting) return;
-    setIsExporting(true);
+  useEffect(() => () => {
+    preparedDownloadUrls.current.splice(0).forEach((href) => URL.revokeObjectURL(href));
+  }, []);
+
+  const clearPreparedDownloads = useCallback((delayMs = 0) => {
+    const hrefs = preparedDownloadUrls.current.splice(0);
+    setPreparedDownloads(null);
+    const revoke = () => hrefs.forEach((href) => URL.revokeObjectURL(href));
+    if (delayMs > 0) window.setTimeout(revoke, delayMs);
+    else revoke();
+  }, []);
+
+  const setPreparedExportData = useCallback((data: TableExportData | null) => {
+    const normalized = data
+      ? readExplicitTableData(data)
+      : tableRef?.current
+        ? readVisibleTableData(tableRef.current)
+        : null;
+    if (!normalized) throw new Error('Export table is unavailable.');
+    const downloads = createPreparedDownloads(normalized, filename);
+    setPreparedData(normalized);
+    setPreparedDownloads(downloads);
+    preparedDownloadUrls.current.push(downloads.xlsx.href, downloads.csv.href);
+  }, [filename, tableRef]);
+
+  const prepareExportData = useCallback(() => {
+    const requestId = ++exportDataRequestId.current;
+    clearPreparedDownloads(1000);
+    setPreparedData(null);
+    setExportError('');
+    if (typeof exportData !== 'function') {
+      setIsPreparingData(false);
+      try {
+        setPreparedExportData(exportData ?? null);
+      } catch (error) {
+        const normalizedError = error instanceof Error ? error : new Error(String(error));
+        setExportError(normalizedError.message);
+        onExportError?.(normalizedError);
+      }
+      return;
+    }
+    setIsPreparingData(true);
+    let request: Promise<TableExportData>;
     try {
-      const explicitData = typeof exportData === 'function' ? await exportData() : exportData;
-      const table = tableRef?.current;
-      if (explicitData) exportExplicitTable(explicitData, format, filename);
-      else if (table) exportVisibleTable(table, format, filename);
-      else throw new Error('Export table is unavailable.');
-      setExportError('');
-      setOpen(false);
+      request = Promise.resolve(exportData());
     } catch (error) {
+      request = Promise.reject(error);
+    }
+    void request.then((data) => {
+      if (requestId !== exportDataRequestId.current) return;
+      setPreparedExportData(data ?? null);
+    }).catch((error) => {
+      if (requestId !== exportDataRequestId.current) return;
+      setPreparedData(null);
+      clearPreparedDownloads();
       const normalizedError = error instanceof Error ? error : new Error(String(error));
       setExportError(normalizedError.message);
       onExportError?.(normalizedError);
-    } finally {
-      setIsExporting(false);
+    }).finally(() => {
+      if (requestId === exportDataRequestId.current) setIsPreparingData(false);
+    });
+  }, [clearPreparedDownloads, exportData, onExportError, setPreparedExportData]);
+
+  useEffect(() => {
+    const sourceChanged = lastExportDataSource.current !== exportData;
+    lastExportDataSource.current = exportData;
+    if (open && sourceChanged) prepareExportData();
+  }, [exportData, open, prepareExportData]);
+
+  const toggleMenu = () => {
+    if (open) {
+      exportDataRequestId.current += 1;
+      setIsPreparingData(false);
+      setPreparedData(null);
+      clearPreparedDownloads(1000);
+      setOpen(false);
+      return;
     }
+    setOpen(true);
+    prepareExportData();
+  };
+
+  const scheduleDownloadCleanup = (href: string) => {
+    window.setTimeout(() => {
+      URL.revokeObjectURL(href);
+      preparedDownloadUrls.current = preparedDownloadUrls.current.filter((item) => item !== href);
+    }, 60_000);
   };
 
   return (
     <div className={`relative inline-flex ${className ?? ''}`} data-table-export-menu="true">
       <ActionIconButton
-        icon={isExporting ? LoaderCircle : Download}
-        iconClassName={isExporting ? 'animate-spin' : undefined}
-        label={isExporting ? (zh ? '正在准备导出' : 'Preparing export') : (zh ? '导出表格' : 'Export table')}
-        tooltip={isExporting ? (zh ? '正在准备导出' : 'Preparing export') : (zh ? '导出表格' : 'Export table')}
+        icon={isPreparingData ? LoaderCircle : Download}
+        iconClassName={isPreparingData ? 'animate-spin' : undefined}
+        label={isPreparingData ? (zh ? '正在加载导出数据' : 'Loading export data') : (zh ? '导出表格' : 'Export table')}
+        tooltip={isPreparingData ? (zh ? '正在加载导出数据' : 'Loading export data') : (zh ? '导出表格' : 'Export table')}
         size="md"
-        disabled={disabled || isExporting}
+        disabled={disabled}
         aria-haspopup="menu"
         aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
+        onClick={toggleMenu}
       />
       {open && (
         <div role="menu" className="absolute right-0 top-full z-40 mt-1 min-w-48 rounded-lg border border-slate-200 bg-white p-1 shadow-xl dark:border-slate-700 dark:bg-slate-900">
-          <button type="button" role="menuitem" disabled={isExporting} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-xs text-slate-700 hover:bg-slate-100 disabled:opacity-50 dark:text-slate-200 dark:hover:bg-slate-800" onClick={() => void runExport('xlsx')}>
-            <FileSpreadsheet size={15} aria-hidden="true" />{zh ? '导出 Excel (.xlsx)' : 'Export Excel (.xlsx)'}
-          </button>
-          <button type="button" role="menuitem" disabled={isExporting} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-xs text-slate-700 hover:bg-slate-100 disabled:opacity-50 dark:text-slate-200 dark:hover:bg-slate-800" onClick={() => void runExport('csv')}>
-            <FileText size={15} aria-hidden="true" />{zh ? '导出 CSV (.csv)' : 'Export CSV (.csv)'}
-          </button>
+          {isPreparingData && <p role="status" aria-live="polite" className="px-3 py-1.5 text-[11px] text-slate-500">{zh ? '正在加载导出数据…' : 'Preparing export data…'}</p>}
+          {!isPreparingData && preparedData && (
+            <p role="status" aria-live="polite" className="px-3 py-1.5 text-[11px] text-slate-500">
+              {zh ? `已准备 ${preparedData.rows.length} 条记录，请选择格式下载。` : `${preparedData.rows.length} rows ready. Select a format to download.`}
+            </p>
+          )}
+          {preparedDownloads ? (
+            <>
+              <a role="menuitem" href={preparedDownloads.xlsx.href} download={preparedDownloads.xlsx.filename} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-xs text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800" onClick={() => scheduleDownloadCleanup(preparedDownloads.xlsx.href)}>
+                <FileSpreadsheet size={15} aria-hidden="true" />{zh ? '导出 Excel (.xlsx)' : 'Export Excel (.xlsx)'}
+              </a>
+              <a role="menuitem" href={preparedDownloads.csv.href} download={preparedDownloads.csv.filename} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-xs text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800" onClick={() => scheduleDownloadCleanup(preparedDownloads.csv.href)}>
+                <FileText size={15} aria-hidden="true" />{zh ? '导出 CSV (.csv)' : 'Export CSV (.csv)'}
+              </a>
+            </>
+          ) : (
+            <>
+              <button type="button" role="menuitem" disabled className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-xs text-slate-700 disabled:opacity-50 dark:text-slate-200" onClick={() => undefined}>
+                <FileSpreadsheet size={15} aria-hidden="true" />{zh ? '导出 Excel (.xlsx)' : 'Export Excel (.xlsx)'}
+              </button>
+              <button type="button" role="menuitem" disabled className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-xs text-slate-700 disabled:opacity-50 dark:text-slate-200" onClick={() => undefined}>
+                <FileText size={15} aria-hidden="true" />{zh ? '导出 CSV (.csv)' : 'Export CSV (.csv)'}
+              </button>
+            </>
+          )}
           {exportError && <p role="alert" className="px-3 py-1.5 text-[11px] text-rose-600 dark:text-rose-400">{exportError}</p>}
+          {exportError && !preparedDownloads && !isPreparingData && (
+            <button type="button" className="w-full rounded-md px-3 py-1.5 text-left text-[11px] font-medium text-cyan-700 hover:bg-cyan-50 dark:text-cyan-300 dark:hover:bg-cyan-950/40" onClick={prepareExportData}>
+              {zh ? '重试加载导出数据' : 'Retry loading export data'}
+            </button>
+          )}
         </div>
       )}
     </div>

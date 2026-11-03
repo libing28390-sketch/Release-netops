@@ -573,6 +573,7 @@ def test_assignment_transfer_invalidates_approval_and_verification_gates_complet
         'created_at': transfer_event['created_at'],
     }
     assert transferred['result_detail']['invalidated_approval_authorizations'][0]['authorization']['approval_snapshot_hash'] == snapshot
+
     assert 'approval_snapshot_hash' not in transferred['result_detail']
 
     implementing_order = _create_order(
@@ -647,6 +648,85 @@ def test_assignment_transfer_invalidates_approval_and_verification_gates_complet
     )
     assert completed.status_code == 200, completed.text
     assert completed.json()['data']['status'] == 'completed'
+
+
+@pytest.mark.parametrize(
+    ('target_group_id', 'expected_status'),
+    [
+        ('m2-assignment-group-only', 200),
+        ('m2-assignment-group-outside', 400),
+    ],
+)
+def test_assignment_checks_restricted_implementer_scope_per_target_device(
+    isolated_db, make_user, monkeypatch, target_group_id, expected_status,
+):
+    import json
+
+    database = isolated_db['module']
+    requester = make_user('m2-assignment-scope-requester', tenant_id='tenant-default')
+    implementer = make_user(
+        'm2-assignment-scope-implementer', role='Administrator', tenant_id='tenant-default',
+    )
+    group_id = 'm2-assignment-group-only'
+    device_id = 'm2-assignment-scope-device'
+    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    conn = database.get_db_connection()
+    try:
+        conn.execute(
+            "UPDATE users SET role_profile = ?, scope_mode = 'restricted' WHERE id = ?",
+            ('Automation Operator', implementer['user_id']),
+        )
+        conn.execute(
+            '''INSERT INTO user_resource_scopes
+               (id, user_id, resource_type, scope_type, scope_id, actions_json, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)''',
+            (
+                str(uuid.uuid4()), implementer['user_id'], 'command', 'device_group', group_id,
+                json.dumps(['view', 'execute']), now,
+            ),
+        )
+        conn.execute(
+            '''INSERT INTO devices
+               (id, hostname, ip_address, platform, tenant_id, site_id, device_group_id, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+            (
+                device_id, 'assignment-scope-device', '192.0.2.82', 'h3c_comware',
+                'tenant-default', 'site-test', target_group_id, 'online',
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    order = _create_order(database, requester, status='draft')
+    conn = database.get_db_connection()
+    try:
+        conn.execute(
+            'UPDATE change_orders SET target_devices_json = ? WHERE id = ?',
+            (json.dumps([{'id': device_id, 'hostname': 'assignment-scope-device'}]), order['id']),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    client = _authorize_test_client(monkeypatch, {'requester-token': _actor(requester)})
+    response = client.post(
+        f"/api/change-orders/{order['id']}/assignment",
+        headers={'Authorization': 'Bearer requester-token'},
+        json={'action': 'assign', 'implementer_id': implementer['user_id']},
+    )
+
+    assert response.status_code == expected_status, response.text
+    if expected_status == 200:
+        assert response.json()['data']['control_sheet']['implementer']['id'] == implementer['user_id']
+    else:
+        assert response.json()['detail'] == '实施人无权操作工单中的全部目标设备'
+        conn = database.get_db_connection()
+        try:
+            from services.change_order_service import get_change_order
+            assert not get_change_order(conn, order['id'])['control_sheet'].get('implementer', {}).get('id')
+        finally:
+            conn.close()
 
 
 def test_rolled_back_requires_new_post_rollback_verification(isolated_db, make_user, monkeypatch):

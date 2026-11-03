@@ -27,6 +27,12 @@ from services.ip_locator_trace_service import (
 )
 
 
+@pytest.fixture(autouse=True)
+def isolate_cli_fallback(monkeypatch):
+    """This suite exercises the CLI fallback; SNMP entry has its own suite."""
+    monkeypatch.setattr(trace_service, "_try_snmp_endpoint", lambda *args, **kwargs: None)
+
+
 def test_cache_provenance_keeps_each_device_source_and_redis_write_ack():
     result = {"cache": {"route": "miss"}}
     first_device = {"id": "device-a", "hostname": "CORE-A"}

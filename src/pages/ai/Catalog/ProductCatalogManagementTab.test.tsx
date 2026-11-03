@@ -17,7 +17,7 @@ const xlsxMocks = vi.hoisted(() => ({
   aoaToSheet: vi.fn((rows: unknown[][]) => ({ rows })),
   bookNew: vi.fn(() => ({ sheets: [] as unknown[] })),
   appendSheet: vi.fn((book: { sheets: unknown[] }, sheet: unknown) => { book.sheets.push(sheet); }),
-  writeFile: vi.fn(),
+  write: vi.fn(() => new Uint8Array([1, 2, 3])),
 }));
 
 vi.mock('xlsx', () => ({
@@ -26,7 +26,7 @@ vi.mock('xlsx', () => ({
     book_new: xlsxMocks.bookNew,
     book_append_sheet: xlsxMocks.appendSheet,
   },
-  writeFile: xlsxMocks.writeFile,
+  write: xlsxMocks.write,
 }));
 
 vi.mock('../../../contexts/AppDomainContext', () => ({
@@ -146,6 +146,10 @@ describe('ProductCatalogManagementTab browser key paths', () => {
   });
 
   it('exports all filtered model pages with one business attribute per column and no internal IDs', async () => {
+    vi.stubGlobal('URL', class extends URL {
+      static createObjectURL = vi.fn(() => 'blob:prepared-export');
+      static revokeObjectURL = vi.fn();
+    });
     const model = {
       product_model_id: 'internal-model-1', tenant_id: 'tenant-1', vendor_id: 'cisco', vendor_name: 'Cisco',
       family_code: 'catalyst_9300', family_name: 'Catalyst 9300', series_code: 'c9300', series_name: 'Catalyst C9300',
@@ -174,9 +178,13 @@ describe('ProductCatalogManagementTab browser key paths', () => {
     await screen.findByText('C9300-24P');
     await user.selectOptions(screen.getAllByRole('combobox')[0], 'cisco');
     await user.click(await screen.findByRole('button', { name: '导出表格' }));
-    await user.click(screen.getByRole('menuitem', { name: '导出 Excel (.xlsx)' }));
+    await waitFor(() => expect(screen.getByRole('menuitem', { name: '导出 Excel (.xlsx)' }).tagName).toBe('A'));
+    const excelLink = screen.getByRole('menuitem', { name: '导出 Excel (.xlsx)' }) as HTMLAnchorElement;
+    expect(excelLink.href).toMatch(/^blob:/);
+    await user.click(excelLink);
 
-    await waitFor(() => expect(xlsxMocks.writeFile).toHaveBeenCalledWith(expect.any(Object), 'product-model-catalog.xlsx'));
+    expect(excelLink.download).toBe('product-model-catalog.xlsx');
+    expect(xlsxMocks.write).toHaveBeenCalledWith(expect.any(Object), { bookType: 'xlsx', type: 'array' });
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const firstUrl = new URL(String(fetchMock.mock.calls[0][0]), 'http://localhost');
     const secondUrl = new URL(String(fetchMock.mock.calls[1][0]), 'http://localhost');
@@ -197,6 +205,10 @@ describe('ProductCatalogManagementTab browser key paths', () => {
   });
 
   it('exports all filtered alias pages as split fields without product or vendor IDs', async () => {
+    vi.stubGlobal('URL', class extends URL {
+      static createObjectURL = vi.fn(() => 'blob:prepared-export');
+      static revokeObjectURL = vi.fn();
+    });
     const alias = {
       id: 'internal-alias-1', tenant_id: 'tenant-1', product_model_id: 'internal-model-1', alias: 'C9300',
       normalized_alias: 'c9300', alias_kind: 'exact', seed_status: 'active', expected_outcome: 'unique',
@@ -221,9 +233,13 @@ describe('ProductCatalogManagementTab browser key paths', () => {
     await screen.findByText('C9300');
     await user.selectOptions(screen.getByRole('combobox', { name: 'Alias 类型' }), 'exact');
     await user.click(await screen.findByRole('button', { name: '导出表格' }));
-    await user.click(screen.getByRole('menuitem', { name: '导出 Excel (.xlsx)' }));
+    await waitFor(() => expect(screen.getByRole('menuitem', { name: '导出 Excel (.xlsx)' }).tagName).toBe('A'));
+    const excelLink = screen.getByRole('menuitem', { name: '导出 Excel (.xlsx)' }) as HTMLAnchorElement;
+    expect(excelLink.href).toMatch(/^blob:/);
+    await user.click(excelLink);
 
-    await waitFor(() => expect(xlsxMocks.writeFile).toHaveBeenCalledWith(expect.any(Object), 'product-model-aliases.xlsx'));
+    expect(excelLink.download).toBe('product-model-aliases.xlsx');
+    expect(xlsxMocks.write).toHaveBeenCalledWith(expect.any(Object), { bookType: 'xlsx', type: 'array' });
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const firstUrl = new URL(String(fetchMock.mock.calls[0][0]), 'http://localhost');
     expect(firstUrl.searchParams.get('alias_kind')).toBe('exact');

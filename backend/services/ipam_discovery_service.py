@@ -23,6 +23,13 @@ from services.ipam_network_scope import is_business_utilization_network
 logger = logging.getLogger(__name__)
 _NAMESPACE = uuid.UUID("6b50f4d4-51f7-5a11-a49a-2779d3d96030")
 _PROJECTION_LOCK_KEY = (806301, 1)
+_VIRTUAL_GATEWAY_MAC_PREFIXES = (
+    "00005e0001",  # VRRP IPv4
+    "00005e0002",  # VRRP IPv6
+    "00000c07ac",  # HSRP v1
+    "00000c9f",    # HSRP v2
+    "0007b4",      # GLBP
+)
 
 
 def _utc_now() -> datetime:
@@ -67,6 +74,12 @@ def _normalized_mac(value: Any) -> str:
     return ":".join(compact[index:index + 2] for index in range(0, 12, 2))
 
 
+def _is_virtual_gateway_mac(value: Any) -> bool:
+    normalized = _normalized_mac(value)
+    compact = normalized.replace(":", "")
+    return any(compact.startswith(prefix) for prefix in _VIRTUAL_GATEWAY_MAC_PREFIXES)
+
+
 def _canonical_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
 
@@ -104,9 +117,9 @@ def _recent_minutes() -> int:
     except ValueError:
         pass
     try:
-        arp_interval_seconds = max(300, int(os.getenv("ARP_SWEEP_INTERVAL_SECONDS", "600")))
+        arp_interval_seconds = max(300, int(os.getenv("ARP_SWEEP_INTERVAL_SECONDS", "3600")))
     except ValueError:
-        arp_interval_seconds = 600
+        arp_interval_seconds = 3600
     # Two collection intervals plus two minutes of scheduler/device jitter.
     return min(max((arp_interval_seconds * 2 + 120 + 59) // 60, 1), 1440)
 
@@ -118,9 +131,12 @@ def _mac_recent_minutes() -> int:
             return min(max(int(configured), 1), 10080)
     except ValueError:
         pass
-    # The current MAC table is refreshed by the daily endpoint-location job;
-    # this freshness window does not imply a real-time port signal.
-    return 26 * 60
+    try:
+        endpoint_interval_seconds = max(300, int(os.getenv("ENDPOINT_FACT_INTERVAL_SECONDS", "3600")))
+    except ValueError:
+        endpoint_interval_seconds = 3600
+    # Match the paired ARP/FDB schedule: tolerate one missed cycle plus jitter.
+    return min(max((endpoint_interval_seconds * 2 + 120 + 59) // 60, 1), 10080)
 
 
 def _stale_days() -> int:
@@ -772,6 +788,46 @@ def _decorate_observations(
     mac_rows = [row for row in rows if row.get("source_type") == "mac"]
     access_port_cache: dict[tuple[str, str], str] = {}
     vlan_vrf_cache: dict[tuple[str, str, str], tuple[str, str] | None] = {}
+    local_mac_ports: dict[tuple[str, str, str, str, str], list[dict[str, Any]]] = {}
+    access_vlan_cache: dict[tuple[str, str, str], set[str]] = {}
+    port_generation_cache: dict[str, dict[str, Any]] = {}
+
+    def matches_access_vlan(row: dict[str, Any], vlan: str) -> bool:
+        from services.ip_locator_service import normalize_interface_name
+        device_id = str(row.get('source_device_id') or '')
+        name = normalize_interface_name(str(row.get('interface_name') or '')).lower()
+        key = (device_id, name, str(row.get('source_observed_at') or ''))
+        if key not in access_vlan_cache:
+            if device_id not in port_generation_cache:
+                generation = conn.execute(
+                    "SELECT status, transport, last_success_at, metadata_json FROM device_collection_status WHERE device_id = ? AND collector = 'endpoint_port_attributes'",
+                    (device_id,),
+                ).fetchone()
+                port_generation_cache[device_id] = dict(generation) if generation else {}
+            generation = port_generation_cache[device_id]
+            generation_ports = _json_object(generation.get('metadata_json')).get('interfaces') or []
+            # A missing-PVID bridge port must not reuse a prior round's mode.
+            if (generation.get('status') != 'success' or generation.get('transport') != 'snmp'
+                    or name not in {normalize_interface_name(str(item)).lower() for item in generation_ports}):
+                access_vlan_cache[key] = set()
+                return False
+            interface_rows = conn.execute(
+                'SELECT interface_name, access_vlan, last_seen FROM interfaces WHERE device_id = ?', (device_id,),
+            ).fetchall()
+            access_vlan_cache[key] = set()
+            mac_time, mac_time_status = _parse_time(row.get('source_observed_at'))
+            generation_time, generation_state = _parse_time(generation.get('last_success_at'))
+            if (not mac_time or mac_time_status != 'valid' or not generation_time or generation_state != 'valid'
+                    or abs(generation_time - mac_time) > timedelta(minutes=5)):
+                return False
+            for item in interface_rows:
+                if normalize_interface_name(str(item['interface_name'] or '')).lower() != name:
+                    continue
+                attribute_time, attribute_state = _parse_time(item['last_seen'])
+                if (mac_time_status == 'valid' and mac_time and attribute_state == 'valid' and attribute_time
+                        and abs(attribute_time - mac_time) <= timedelta(minutes=5)):
+                    access_vlan_cache[key].add(_normalize_vlan_number(item['access_vlan']))
+        return access_vlan_cache[key] == {vlan}
 
     def access_port_status(row: dict[str, Any]) -> str:
         from services.ip_locator_service import endpoint_access_port_evidence
@@ -811,6 +867,13 @@ def _decorate_observations(
             continue
         if access_port_status(row) != 'access':
             continue
+        if (scope.get('vrf_context_status') == 'unknown'
+                and scope.get('scope_status') == 'scope_pending'
+                and matches_access_vlan(row, vlan)):
+            # Same-device L2 location evidence does not resolve the source's
+            # L3 address space or authorize registration/reconciliation.
+            local_key = (str(scope['tenant_id']), str(scope['site_id']), str(row.get('source_device_id') or ''), vlan, mac)
+            local_mac_ports.setdefault(local_key, []).append(row)
         if scope.get('vrf_context_status') in {'explicit_vrf', 'explicit_global'} and scope.get('scope_status') == 'resolved':
             association_vrf = str(scope.get('vrf_id') or '')
         elif scope.get('vrf_context_status') == 'unknown':
@@ -866,6 +929,7 @@ def _decorate_observations(
         switch_name = row.get("source_device_name") if is_access_observation else ""
         switch_port = row.get("interface_name") if is_access_observation else ""
         mac_observed_at = row.get("source_observed_at") if row.get("source_type") == "mac" else ""
+        location_basis = ''
         if (row.get("source_type") == "arp" and mac and row.get("vlan") and site_id and tenant_id
                 and scope.get("scope_status") == "resolved"
                 and scope.get("vrf_context_status") in {"explicit_vrf", "explicit_global"}):
@@ -881,6 +945,28 @@ def _decorate_observations(
                 switch_name = candidate.get("source_device_name")
                 switch_port = candidate.get("interface_name")
                 mac_observed_at = candidate.get("source_observed_at")
+                location_basis = 'scoped_vlan_mac_access'
+
+        if (not switch_port and row.get('source_type') == 'arp' and mac and row.get('vlan')
+                and site_id and tenant_id and scope.get('scope_status') == 'scope_pending'
+                and scope.get('vrf_context_status') == 'unknown' and evidence_status == 'recent'
+                and observed_at):
+            local_key = (tenant_id, site_id, str(row.get('source_device_id') or ''), _normalize_vlan_number(row.get('vlan')), mac)
+            candidates = []
+            for candidate in local_mac_ports.get(local_key, []):
+                candidate_time, candidate_state = _parse_time(candidate.get('source_observed_at'))
+                if candidate_state == 'valid' and candidate_time and abs(candidate_time - observed_at) <= timedelta(minutes=5):
+                    candidates.append(candidate)
+            unique_ports = {
+                str(candidate.get('interface_name') or ''): candidate for candidate in candidates
+            }
+            if len(unique_ports) == 1:
+                candidate = next(iter(unique_ports.values()))
+                switch_id = candidate.get('source_device_id')
+                switch_name = candidate.get('source_device_name')
+                switch_port = candidate.get('interface_name')
+                mac_observed_at = candidate.get('source_observed_at')
+                location_basis = 'same_device_vlan_mac_access'
 
         decorated.append({
             "id": str(row.get("id") or ""),
@@ -911,6 +997,7 @@ def _decorate_observations(
             "switch_name": str(switch_name or ""),
             "switch_port": str(switch_port or ""),
             "switch_location_status": "matched" if switch_id and switch_port else "pending",
+            "switch_location_basis": location_basis,
             "vlan": str(row.get("vlan") or ""),
             "observed_at": str(row.get("source_observed_at") or ""),
             "mac_observed_at": str(mac_observed_at or ""),
@@ -1210,6 +1297,10 @@ def list_discovered_endpoints(
             for item in items:
                 scope_match = _match_business_vlan_scope(item, prefixes_by_scope)
                 if scope_match is None:
+                    continue
+                if _is_virtual_gateway_mac(item.get('mac')):
+                    # Keep this observation in raw snapshots/all-scope views,
+                    # but do not count a VRRP/HSRP/GLBP virtual MAC as a host.
                     continue
                 address_key = (str(item.get('tenant_id') or ''), str(item.get('site_id') or ''),
                                str(item.get('vrf_id') or ''), str(item.get('ip') or ''))

@@ -376,6 +376,9 @@ async def api_trigger_arp_sweep(user=require_role("Operator")):
     """手动触发一次全量 ARP 采集。"""
     try:
         sweep = await run_arp_sweep_async()
+        if not (sweep or {}).get('skipped'):
+            from services.ip_locator_service import project_endpoint_evidence
+            await asyncio.to_thread(project_endpoint_evidence)
         table = await get_arp_table_async()
         collected = int((sweep or {}).get('collected_entries') or 0)
         eligible = int((sweep or {}).get('eligible_devices') or 0)

@@ -37,10 +37,6 @@ from services.scheduled_job_run_service import (
     serialize_scheduled_job_run,
 )
 from services.audit_service import log_audit_event
-from services.nsot_collection_preview_service import (
-    NSOTPreviewPermissionError,
-    build_nsot_collection_preview,
-)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -56,7 +52,8 @@ _CRON_ACTION_TYPES = frozenset({
     "script_run",
     "server_check",
     "health_check",
-    "nsot",
+    "bgp_neighbors",
+    "ospf_neighbors",
 })
 
 # Import refresh logic from scheduler_manager
@@ -559,8 +556,12 @@ def create_scheduled_job(
 
     if not name:
         raise HTTPException(status_code=400, detail="作业名称不能为空")
+    if action_type == "nsot":
+        raise HTTPException(status_code=400, detail="NSOT 事实更新改为在资产 NSOT 页面手动触发；ARP 由系统采集任务处理")
+    if action_type == "arp_sweep":
+        raise HTTPException(status_code=400, detail="ARP sweep 由系统内置的有界采集作业管理")
     if job_type == "cron" and action_type not in _CRON_ACTION_TYPES:
-        raise HTTPException(status_code=400, detail="定时作业支持：配置备份、命令执行、自动化脚本、巡检、服务器检查及 NSOT 事实库采集")
+        raise HTTPException(status_code=400, detail="定时作业支持：配置备份、BGP/OSPF 邻居采集、命令执行、自动化脚本、巡检及服务器检查")
     if job_type == "cron" and not cron_expr:
         raise HTTPException(status_code=400, detail="定时作业需要 cron 表达式")
     if job_type == "once" and not scheduled_at:
@@ -1030,30 +1031,6 @@ def resolve_scheduled_job_run(
         conn.close()
 
 
-@router.get("/scheduled-jobs/{job_id}/nsot-preview")
-def get_scheduled_nsot_collection_preview(
-    job_id: str,
-    user=require_role("Viewer"),
-):
-    """Return a read-only collection plan for this job's current online scope."""
-    conn = get_db_connection()
-    try:
-        row = conn.execute("SELECT * FROM scheduled_jobs WHERE id = ?", (job_id,)).fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="作业不存在")
-        job = dict(row)
-        _authorize_job(user, job, "view")
-        if str(job.get("action_type") or "").strip().lower() != "nsot":
-            raise HTTPException(status_code=400, detail="仅 NSOT 事实库作业支持采集预览")
-        try:
-            preview = build_nsot_collection_preview(conn, job, user)
-        except NSOTPreviewPermissionError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
-    finally:
-        conn.close()
-    return {"success": True, "data": preview, "message": ""}
-
-
 # ── Update ──
 
 @router.put("/scheduled-jobs/{job_id}")
@@ -1082,8 +1059,12 @@ def update_scheduled_job(
         )
         name = manifest["name"]
         action_type = manifest["action"]
+        if action_type == "nsot":
+            raise HTTPException(status_code=400, detail="NSOT 事实更新改为在资产 NSOT 页面手动触发；ARP 由系统采集任务处理")
+        if action_type == "arp_sweep":
+            raise HTTPException(status_code=400, detail="ARP sweep 由系统内置的有界采集作业管理")
         if manifest["job_type"] == "cron" and action_type not in _CRON_ACTION_TYPES:
-            raise HTTPException(status_code=400, detail="定时作业支持：配置备份、命令执行、自动化脚本、巡检、服务器检查及 NSOT 事实库采集")
+            raise HTTPException(status_code=400, detail="定时作业支持：配置备份、BGP/OSPF 邻居采集、命令执行、自动化脚本、巡检及服务器检查")
         if action_type == "command" and not manifest["commands"] and not manifest["script_id"]:
             raise HTTPException(status_code=400, detail="命令类型作业需要命令或脚本")
         if action_type == "script_run" and not manifest["script_id"]:

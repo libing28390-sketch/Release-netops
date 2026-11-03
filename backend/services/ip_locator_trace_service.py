@@ -1,4 +1,4 @@
-"""Four-stage, CLI-only IP path tracing engine.
+"""SNMP endpoint evidence first, with bounded CLI path tracing as fallback.
 
 The legacy locator predates shared cache/task coordination and is kept for
 compatibility.  This module provides a small, deterministic engine for the
@@ -7,8 +7,7 @@ new flow:
     core -> target route/Direct -> ARP target IP -> MAC target -> topology
     recursion
 
-It deliberately uses the existing vendor command catalog and parsers.  No
-SNMP code is imported or used here.  The engine is synchronous so callers can
+The fallback uses the existing vendor command catalog and parsers. The engine is synchronous so callers can
 run it in the existing worker pool; the API layer is responsible for
 offloading it from the event loop.
 """
@@ -329,6 +328,7 @@ def _trace_contract_version() -> str:
         _route_command, legacy.parse_routing_table, _parse_target_route_output, _route_row, _best_routes,
         _arp_query_parts, getattr(legacy, "_targeted_arp_query_status", None),
         getattr(legacy, "_parse_arp_output_fallback", None), _targeted_mac_query_for_trace,
+        getattr(legacy, "_targeted_mac_query", None), _try_snmp_endpoint,
         getattr(legacy, "_parse_mac_output", None), getattr(legacy, "_parse_mac_table_line", None),
         getattr(legacy, "_collect_lldp_from_device", None), _lldp_neighbors,
         _load_lldp_snapshot, _record_topology_snapshot_dependency, lldp_snapshot_versions,
@@ -3786,8 +3786,108 @@ def _trace_ip_uncached(
     return result
 
 
+def _try_snmp_endpoint(target_ip: str, **kwargs: Any) -> dict[str, Any] | None:
+    """Resolve a physical attachment without inventing a complete L3 path.
+
+    Re-read source evidence on every request rather than put it in the CLI
+    result cache, whose dependency manifest describes a different data path.
+    """
+    from services.ip_locator_endpoint_evidence import (
+        endpoint_source_device_ids,
+        find_endpoint_evidence,
+    )
+
+    try:
+        address = ipaddress.ip_address(str(target_ip).strip())
+    except ValueError:
+        return None
+    if address.version != 4 or kwargs.get("network_domain_id"):
+        return None
+    target_ip = str(address)
+    cancel_check = kwargs.get("cancel_check")
+    if callable(cancel_check) and cancel_check():
+        return None
+    devices = _load_devices(
+        tenant_id=str(kwargs.get("tenant_id") or "tenant-default"),
+        site_id=str(kwargs.get("site_id") or ""),
+        authorized_device_ids=kwargs.get("authorized_device_ids"),
+    )
+    allowed_ids = {str(device["id"]) for device in devices if device.get("id")}
+    if not allowed_ids:
+        return None
+    context = {
+        "tenant_id": str(kwargs.get("tenant_id") or "tenant-default"),
+        "site_id": str(kwargs.get("site_id") or ""),
+        "vrf": _normalise_vrf(kwargs.get("vrf") or "default"),
+        "authorized_device_ids": allowed_ids,
+        "start_device_id": str(kwargs.get("start_device_id") or ""),
+        "network_domain_id": "",
+    }
+    evidence = find_endpoint_evidence(target_ip, **context)
+    refreshed_ids: set[str] = set()
+    if kwargs.get("force_refresh") or evidence is None:
+        refresh_ids = set(endpoint_source_device_ids(target_ip, **context)) & allowed_ids
+        if not refresh_ids:
+            selected_id = context["start_device_id"]
+            refresh_ids = ({selected_id} & allowed_ids) if selected_id else allowed_ids
+        limits = kwargs.get("limits") or TraceLimits()
+        # Never silently scan a truncated scope and call its first hit unique.
+        if refresh_ids and len(refresh_ids) <= limits.max_devices:
+            legacy.run_endpoint_fact_collector(device_ids=refresh_ids)
+            refreshed_ids = refresh_ids
+            evidence = find_endpoint_evidence(target_ip, **context)
+    if evidence is None or (callable(cancel_check) and cancel_check()):
+        return None
+    scope = {**context, "authorization_scope_hash": _authorization_scope_hash(allowed_ids)}
+    scope.pop("authorized_device_ids")
+    result = _initial_result(
+        target_ip, context["vrf"], scope, kwargs.get("limits") or TraceLimits(),
+        run_id=str(kwargs.get("durable_run_id") or ""),
+    )
+    result.update({
+        "found": True,
+        "status": "completed",
+        "conclusion": "endpoint_evidence_confirmed",
+        "source": "snmp",
+        "location": evidence["location"],
+        "terminal_candidates": [evidence["location"]],
+        "arp_evidence": evidence["arp_evidence"],
+        "evidence_collected_at": evidence["evidence_collected_at"],
+        "vrf_context_status": evidence["vrf_context_status"],
+        "completed_at": _now_iso(),
+        "refreshed_device_ids": sorted(refreshed_ids),
+        "queried_devices": {
+            "route": [], "lldp": [],
+            "arp": [_device_label(device) for device in devices if str(device.get("id")) in refreshed_ids],
+            "mac": [_device_label(device) for device in devices if str(device.get("id")) in refreshed_ids],
+        },
+        "cache": {"result": "snmp_evidence", "arp": "postgres", "mac": "postgres"},
+    })
+    result["dependency_manifest"] = {
+        "type": "snmp_endpoint",
+        "version": 1,
+        "contract_version": _trace_contract_version(),
+        "target_ip": target_ip,
+        "context": {**context, "authorized_device_ids": sorted(allowed_ids)},
+        "evidence": {key: evidence[key] for key in (
+            "location", "arp_evidence", "evidence_collected_at", "vrf_context_status",
+        )},
+    }
+    return result
+
+
 def trace_ip(target_ip: str, **kwargs: Any) -> dict[str, Any]:
-    """Run one trace with a Redis single-flight guard when available."""
+    """Prefer SNMP evidence, then guard the CLI fallback with single-flight."""
+    # Materialize generators before they are used by both evidence and fallback.
+    if kwargs.get("authorized_device_ids") is not None:
+        kwargs["authorized_device_ids"] = tuple(kwargs["authorized_device_ids"])
+    try:
+        endpoint_result = _try_snmp_endpoint(target_ip, **kwargs)
+    except Exception as exc:
+        logger.warning("[IPLocator] SNMP evidence lookup unavailable (%s); continuing bounded trace", type(exc).__name__)
+        endpoint_result = None
+    if endpoint_result is not None:
+        return endpoint_result
     durable_run_id = str(kwargs.get("durable_run_id") or "")
     force_refresh = bool(kwargs.get("force_refresh", False))
     tenant_id = str(kwargs.get("tenant_id") or "tenant-default")
@@ -3906,7 +4006,9 @@ def add_legacy_compatibility(result: dict[str, Any]) -> dict[str, Any]:
     if isinstance(location, dict):
         conclusion = str(enriched.get("conclusion") or "")
         location_type = (
-            "PATH_TRACED"
+            "SNMP_ENDPOINT"
+            if conclusion == "endpoint_evidence_confirmed"
+            else "PATH_TRACED"
             if conclusion == "managed_access_confirmed"
             else "DEVICE_INTERFACE"
             if conclusion == "device_interface"
@@ -3921,7 +4023,7 @@ def add_legacy_compatibility(result: dict[str, Any]) -> dict[str, Any]:
             "vlan": location.get("vlan") or "",
             "type": location_type,
             "is_uplink": location_type == "TRACE_INCOMPLETE",
-            "note": "CLI 四阶段路径追踪结果",
+            "note": "SNMP ARP/FDB 接入口证据" if conclusion == "endpoint_evidence_confirmed" else "CLI 四阶段路径追踪结果",
         }]
         enriched["mac"] = location.get("mac") or enriched.get("mac")
         if enriched.get("mac"):
@@ -3953,6 +4055,7 @@ def add_legacy_compatibility(result: dict[str, Any]) -> dict[str, Any]:
             "vlan": arp.get("vlan") or "",
         }
     enriched["trace_status"] = {
+        "endpoint_evidence_confirmed": "terminal",
         "managed_access_confirmed": "terminal",
         "device_interface": "device_interface",
         "arp_only": "arp_only",
@@ -3977,7 +4080,7 @@ def add_legacy_compatibility(result: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(enriched.get("mac_lookup"), dict):
         coverage = [str(item) for item in enriched.get("coverage_gaps") or []]
         mac_status = (
-            "found" if enriched.get("conclusion") == "managed_access_confirmed"
+            "found" if enriched.get("conclusion") in {"managed_access_confirmed", "endpoint_evidence_confirmed"}
             else "query_failed" if any("mac_failed:" in item for item in coverage)
             else "unsupported" if any("unsupported" in item for item in coverage)
             else "not_found" if any("mac_not_found:" in item for item in coverage)

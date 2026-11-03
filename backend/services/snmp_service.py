@@ -1669,8 +1669,8 @@ async def collect_qbridge_interface_vlan_data(
         if bridge_port in pvid_by_bridge_port:
             raise RuntimeError('Q-BRIDGE PVID table contains a duplicate bridge port')
         pvid_by_bridge_port[bridge_port] = pvid
-    if set(pvid_by_bridge_port) != set(bridge_port_to_if_index):
-        raise RuntimeError('Q-BRIDGE PVID and bridge-port mapping tables do not match')
+    if set(pvid_by_bridge_port) - set(bridge_port_to_if_index):
+        raise RuntimeError('Q-BRIDGE PVID references an unmapped bridge port')
 
     required_if_indexes = set(bridge_port_to_if_index.values())
     names_by_index = dict(interface_names_by_index or {})
@@ -1753,6 +1753,10 @@ async def collect_qbridge_interface_vlan_data(
 
     interface_records: list[dict[str, Any]] = []
     for bridge_port, if_index in sorted(bridge_port_to_if_index.items()):
+        # Routed/non-VLAN ports can legitimately exist in BRIDGE-MIB without
+        # a Q-BRIDGE PVID. Their mode is unknown; retain other proven ports.
+        if bridge_port not in pvid_by_bridge_port:
+            continue
         interface_records.append({
             'bridge_port': bridge_port,
             'if_index': if_index,

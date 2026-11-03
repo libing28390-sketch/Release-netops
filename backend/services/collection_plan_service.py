@@ -231,13 +231,10 @@ def _is_server(device: dict[str, Any]) -> bool:
 def _default_plan(device: dict[str, Any]) -> dict[str, bool]:
     """Return the lightweight default plan used for ordinary device inventory.
 
-    The default scheduler run is intentionally limited to reachability,
-    health, interface state, and interface IPs.  L3 routing roles also collect
-    ARP, the main route table, and BGP state by default because BGP may be
-    configured without installing a BGP route into the main RIB. ARP is also
-    enabled for SVI-bearing switch roles when the caller supplies ``_has_svi``.
-    Other topology, L2 tables, and dynamic routing protocols remain opt-in through
-    ``collection_policy_json``.
+    The default plan contains basic telemetry and interface facts. L3 roles
+    retain ARP, route-table, and BGP eligibility for explicit/manual NSOT
+    refreshes; background B-Loop protocol polling is separately disabled.
+    Other topology, L2 tables, and routing protocols remain opt-in.
     """
     if _is_server(device):
         return {

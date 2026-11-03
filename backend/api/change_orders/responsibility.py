@@ -118,7 +118,32 @@ def _validate_implementer_target(conn, order: dict, implementer_id: str) -> dict
     ):
         raise HTTPException(status_code=400, detail='实施人必须属于工单所在租户')
     assert_explicit_execution_profile(implementer, 'command')
-    if not authorize_resource(implementer, 'command', 'execute', tenant_id=tenant_id or None):
+    target_devices = order.get('target_devices') or []
+    if target_devices:
+        # Match the authorization performed when implementation starts. A
+        # tenant-only check rejects a restricted operator whose explicit grant
+        # is correctly scoped to one of the order's sites or device groups.
+        from api.automation import _resolve_change_order_target_ids
+
+        device_ids = _resolve_change_order_target_ids(conn, target_devices)
+        placeholders = ','.join('?' for _ in device_ids)
+        devices = conn.execute(
+            f'SELECT id, tenant_id, site_id, site, device_group_id FROM devices WHERE id IN ({placeholders})',
+            tuple(device_ids),
+        ).fetchall()
+        if len(devices) != len(device_ids):
+            raise HTTPException(status_code=409, detail='工单目标设备已从资产库删除')
+        for device in devices:
+            device_scope = {
+                'tenant_id': str(device['tenant_id'] or ''),
+                'site_id': device['site_id'] or device['site'] or None,
+                'device_group_id': device['device_group_id'] or None,
+            }
+            if not authorize_resource(implementer, 'command', 'execute', **device_scope):
+                raise HTTPException(status_code=400, detail='实施人无权操作工单中的全部目标设备')
+    elif not authorize_resource(implementer, 'command', 'execute', tenant_id=tenant_id or None):
+        # Preserve the existing behavior for non-device change orders. Actual
+        # device implementation still requires a resolvable target list.
         raise HTTPException(status_code=400, detail='该账号没有目标租户的设备执行权限')
     return implementer
 

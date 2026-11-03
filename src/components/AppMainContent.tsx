@@ -1039,9 +1039,9 @@ const AppMainContent: React.FC = () => {
         </Suspense>
       )}
 
-      {activeTab === 'automation' && (automationPage === 'scripts' || automationPage === 'nsot') && (
+      {activeTab === 'automation' && automationPage === 'scripts' && (
         <Suspense fallback={lazyPanelFallback}>
-          <ScriptManagementTab language={language} showToast={showToast} view={automationPage === 'nsot' ? 'nsot' : 'scripts'} />
+          <ScriptManagementTab language={language} showToast={showToast} />
         </Suspense>
       )}
 

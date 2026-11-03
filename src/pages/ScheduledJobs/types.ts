@@ -95,46 +95,6 @@ export interface AuthorizationGrantForm {
   change_order_id: string;
 }
 
-export interface NsotPreviewCommand {
-  action_code: string | null;
-  command?: string | null;
-  command_source?: string | null;
-  textfsm_template?: string | null;
-  textfsm_source?: string | null;
-  status?: string | null;
-  condition?: string | null;
-}
-
-export interface NsotPreviewCollector {
-  key: string;
-  label: string;
-  transport: string;
-  conditional: boolean;
-  status?: 'supported' | 'partial' | 'parser_missing' | 'unsupported' | 'projection' | null;
-  commands: NsotPreviewCommand[];
-}
-
-export interface NsotPreviewGroup {
-  platform: string;
-  platform_label?: string;
-  profile_label?: string | null;
-  software_version?: string | null;
-  release_number?: string | number | null;
-  registry_release_number?: string | number | null;
-  template_id: string;
-  template_name: string;
-  role?: string;
-  device_count: number;
-  collectors: NsotPreviewCollector[];
-  notes: string[];
-}
-
-export interface NsotCollectionPreview {
-  generated_at: string;
-  target_count: number;
-  groups: NsotPreviewGroup[];
-}
-
 export interface EligibleApprover {
   id: string;
   username: string;

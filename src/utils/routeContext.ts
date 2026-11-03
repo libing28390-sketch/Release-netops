@@ -153,7 +153,8 @@ export function getRouteContext(pathname: string): RouteContext {
     } else if (second === 'scripts') {
       automationPage = 'scripts';
     } else if (second === 'nsot') {
-      automationPage = 'nsot';
+      // Retired NSOT template catalog bookmarks now land on ordinary script management.
+      automationPage = 'scripts';
     } else {
       automationPage = second || 'execute';
     }

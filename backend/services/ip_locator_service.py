@@ -79,13 +79,13 @@ def _calc_arp_sweep_workers(device_count: int) -> int:
     return max(1, min(_calc_ssh_workers(device_count), ARP_SWEEP_MAX_WORKERS))
 
 # ARP 缓存：按 target_ip 懒加载，不做全网全量预采集。
-# 周期全量扫描默认每 10 分钟执行一次；缓存至少保留两个扫描周期。
-ARP_SWEEP_INTERVAL_SECONDS = max(300, int(os.environ.get('ARP_SWEEP_INTERVAL_SECONDS', '600')))
+# 周期 ARP/FDB 任务默认每小时执行一次；ARP 缓存至少保留两个扫描周期。
+ARP_SWEEP_INTERVAL_SECONDS = max(300, int(os.environ.get('ARP_SWEEP_INTERVAL_SECONDS', '3600')))
 ARP_CACHE_TTL_SECONDS = max(ARP_SWEEP_INTERVAL_SECONDS * 2, 600)
 ARP_CACHE_MAX_ENTRIES = 5000
 ARP_SWEEP_MAX_WORKERS = max(1, min(8, int(os.environ.get('ARP_SWEEP_MAX_WORKERS', '2'))))
 ENDPOINT_CACHE_TTL_SECONDS = 600
-ENDPOINT_FACT_INTERVAL_SECONDS = max(900, int(os.environ.get('ENDPOINT_FACT_INTERVAL_SECONDS', '1800')))
+ENDPOINT_FACT_INTERVAL_SECONDS = max(300, int(os.environ.get('ENDPOINT_FACT_INTERVAL_SECONDS', '3600')))
 ROUTE_SWEEP_INTERVAL_SECONDS = max(300, int(os.environ.get('ROUTE_SWEEP_INTERVAL_SECONDS', '300')))
 ARP_MAX_DEVICES_PER_SWEEP = max(0, int(os.environ.get('ARP_MAX_DEVICES_PER_SWEEP', '500')))
 
@@ -909,6 +909,8 @@ def _load_eligible_devices(
     diagnostics: dict[str, int] | None = None,
     *,
     allow_snmp_only: bool = False,
+    include_snmp_unconfigured: bool = False,
+    include_snmp_table_platforms: bool = False,
     tenant_id: str | None = None,
     site_id: str | None = None,
     device_ids: list[str] | None = None,
@@ -968,9 +970,13 @@ def _load_eligible_devices(
         if str(d.get('status') or '').strip().lower() != 'online':
             counters['not_online'] += 1
             continue
-        # 跳过不支持 ARP 采集的平台（Linux 服务器等），避免超时
+        # The SNMP table sweep probes managed network platforms such as
+        # firewalls; legacy targeted lookups keep their narrower platform set.
         platform = str(d.get('platform') or '').lower()
-        if platform in _ARP_UNSUPPORTED_PLATFORMS:
+        is_host_platform = platform in {'linux', 'linux_ssh', 'linux_telnet', 'windows', 'windows_ssh'}
+        if platform in _ARP_UNSUPPORTED_PLATFORMS and (
+            not include_snmp_table_platforms or is_host_platform
+        ):
             counters['unsupported_platform'] += 1
             continue
         if role_filter:
@@ -994,9 +1000,11 @@ def _load_eligible_devices(
                     )
                 except Exception:
                     snmp_only_ready = False
-            if not snmp_only_ready:
+            if not snmp_only_ready and not include_snmp_unconfigured:
                 counters['no_credentials'] += 1
                 continue
+            if not snmp_only_ready:
+                d['_snmp_not_configured'] = True
             d['_ssh_username'], d['_ssh_password'] = '', ''
             d['_ssh_fallback_credentials'] = []
             d['_ssh_enable'] = ''
@@ -1597,11 +1605,9 @@ def _targeted_mac_query(
     向设备发送精确 MAC 地址表查询命令。
     target_mac 为 12 位 hex（无分隔符），函数内部转为设备所需格式。
     """
-    # A router may be the ARP source for an endpoint but still have no L2
-    # forwarding table.  Respect the device collection plan before falling
-    # through to a registry action; an explicit per-device override remains
-    # available for platforms that do expose a bridge table.
-    if not should_collect(device_info, "mac_table"):
+    # Role defaults describe background collection, not whether a switch can
+    # answer a user-requested MAC query. Respect only an explicit opt-out here.
+    if explicit_collector_override(device_info, "mac_table") is False:
         logger.debug(
             "[IPLocator] Skip MAC lookup for %s: mac_table is disabled by the device collection plan",
             device_info.get("hostname") or device_info.get("id"),
@@ -1993,7 +1999,7 @@ def _collect_mac_from_device_for_mac(
 
 def _collect_mac_table_snapshot(device_info: dict) -> _LocatorSnapshotRecords:
     """Collect one bounded full MAC table for V2 snapshot sharing."""
-    if not should_collect(device_info, "mac_table"):
+    if explicit_collector_override(device_info, "mac_table") is False:
         return _LocatorSnapshotRecords(
             [],
             {"status": "disabled", "error_code": "MAC_TABLE_DISABLED"},
@@ -4180,6 +4186,24 @@ def _load_arp_collection_state() -> dict[str, dict[str, Any]]:
         conn.close()
 
 
+def _load_mac_collection_state() -> dict[str, dict[str, Any]]:
+    """Load FDB retry state once per scheduled sweep."""
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            """SELECT device_id, consecutive_failures, next_retry_at,
+                      circuit_state, failure_class
+                 FROM device_collection_status
+                WHERE collector = 'mac_table'"""
+        ).fetchall()
+        return {str(row['device_id']): dict(row) for row in rows}
+    except Exception as exc:
+        logger.warning("[FDB Sweep] Could not load retry state: %s", exc)
+        return {}
+    finally:
+        conn.close()
+
+
 def _load_svi_evidence() -> set[str]:
     """Return device ids whose interface inventory proves a vendor SVI."""
     conn = get_db_connection()
@@ -4401,29 +4425,25 @@ def _load_arp_sweep_devices(
     device_ids: set[str] | None = None,
 ) -> tuple[list[dict], int, int]:
     """Select ARP-capable devices and skip devices in retry backoff."""
-    all_eligible = _load_eligible_devices(allow_snmp_only=True)
+    all_eligible = _load_eligible_devices(
+        allow_snmp_only=True,
+        include_snmp_unconfigured=True,
+        include_snmp_table_platforms=True,
+    )
     if device_ids is not None:
         all_eligible = [device for device in all_eligible if str(device.get('id') or '') in device_ids]
-    svi_devices = _load_svi_evidence()
     state_by_device = _load_arp_collection_state()
     now = datetime.now(timezone.utc)
     candidates: list[dict] = []
     skipped_backoff = 0
 
     for device in all_eligible:
-        # The role-default collection plan enables ARP for switch/access roles
-        # only when an SVI has been observed.  Pass that evidence into the plan
-        # resolver; the live locator has a separate capability-based path.
-        candidate_input = dict(device)
-        candidate_input['_has_svi'] = (
-            bool(candidate_input.get('_has_svi'))
-            or str(candidate_input.get('id') or '') in svi_devices
-        )
-        candidate = _prepare_arp_candidate(
-            candidate_input, svi_devices, respect_collection_policy=True,
-        )
-        if candidate is None:
+        # Global ARP collection follows SNMP availability, not role/SVI
+        # defaults. An explicit per-device opt-out remains authoritative.
+        if explicit_collector_override(device, 'arp') is False:
             continue
+        candidate = dict(device)
+        candidate['_arp_policy_override'] = True
         state = state_by_device.get(str(candidate.get('id') or ''), {})
         if not _arp_device_is_due(state, now):
             skipped_backoff += 1
@@ -4448,6 +4468,10 @@ def _load_arp_sweep_devices(
 
 def _classify_arp_failure(error: Any) -> str:
     text = str(error or '').lower()
+    if 'table returned no rows' in text:
+        return 'no_data'
+    if any(token in text for token in ('not configured', 'not enabled', 'not supported', 'unsupported', 'no usable')):
+        return 'unsupported'
     if 'authentication' in text or 'auth' in text or 'permission' in text:
         return 'auth_failed'
     if 'no command' in text or 'not supported' in text or 'unsupported' in text:
@@ -4460,6 +4484,10 @@ def _classify_arp_failure(error: Any) -> str:
 
 
 def _arp_retry_delay(failure_class: str, failure_count: int) -> int:
+    if failure_class == 'no_data':
+        # The normal job interval controls empty-table polling. Adding a full
+        # interval from completion could skip the next scheduled tick.
+        return 0
     if failure_class == 'unsupported':
         return _ARP_UNSUPPORTED_RETRY_SECONDS
     if failure_class == 'auth_failed':
@@ -4470,8 +4498,13 @@ def _arp_retry_delay(failure_class: str, failure_count: int) -> int:
     return min(_ARP_RETRY_MAX_SECONDS, _ARP_RETRY_BASE_SECONDS * (2 ** exponent))
 
 
-def _collect_full_arp_result(device_info: dict) -> dict[str, Any]:
-    """用完整 SNMP walk 优先采集 ARP，失败或数据不可用时回退 CLI。"""
+def _collect_full_arp_result(device_info: dict, *, snmp_only: bool = False) -> dict[str, Any]:
+    """Collect one complete ARP snapshot; scheduled discovery can require SNMP only."""
+    if snmp_only and device_info.get('_snmp_not_configured'):
+        return {
+            'entries': [], 'status': 'failed', 'failure_class': 'unsupported',
+            'error_message': 'SNMP credentials are not configured', 'transport': 'snmp',
+        }
     try:
         from services.vault_service import resolve_collector_credentials
         from services.snmp_service import collect_arp_table
@@ -4506,12 +4539,30 @@ def _collect_full_arp_result(device_info: dict) -> dict[str, Any]:
                         'transport': 'snmp',
                     }
                 raise RuntimeError('SNMP ARP table contained rows that could not be normalized')
+        elif snmp_only:
+            return {
+                'entries': [], 'status': 'failed', 'failure_class': 'unsupported',
+                'error_message': 'SNMP collection is disabled or credentials are not configured',
+                'transport': 'snmp',
+            }
     except Exception as exc:
         logger.info(
-            "SNMP ARP collection for %s failed (%s); falling back to CLI",
+            "SNMP ARP collection for %s failed (%s)",
             device_info.get('hostname') or device_info.get('ip_address'),
             type(exc).__name__,
         )
+        if snmp_only:
+            return {
+                'entries': [], 'status': 'failed',
+                'failure_class': _classify_arp_failure(exc),
+                'error_message': str(exc), 'transport': 'snmp',
+            }
+
+    if snmp_only:
+        return {
+            'entries': [], 'status': 'failed', 'failure_class': 'unsupported',
+            'error_message': 'SNMP ARP table is unavailable', 'transport': 'snmp',
+        }
 
     try:
         payload = collect_operational_data(
@@ -4774,7 +4825,7 @@ def _persist_arp_device_entries(device_info: dict, entries: list[dict]) -> dict[
 
 def _run_arp_sweep_locked(device_ids: set[str] | None = None) -> dict[str, Any]:
     """
-    后台全量 ARP 采集：优先完整 SNMP walk，失败后回退 SSH CLI，并写入缓存。
+    后台 ARP 采集通过 SNMP 完整读取候选设备，失败时保留上次完整快照。
     调用方必须持有 ARP sweep 的共享数据库租约。
     """
     logger.info("[ARP Sweep] Starting full ARP table collection...")
@@ -4810,7 +4861,10 @@ def _run_arp_sweep_locked(device_ids: set[str] | None = None) -> dict[str, Any]:
     state_by_device = _load_arp_collection_state()
     status_updates: list[dict[str, Any]] = []
     with ThreadPoolExecutor(max_workers=workers) as executor:
-        future_map = {executor.submit(_collect_full_arp_result, dev): dev for dev in gateway_devices}
+        future_map = {
+            executor.submit(_collect_full_arp_result, dev, snmp_only=True): dev
+            for dev in gateway_devices
+        }
         for future in as_completed(future_map):
             dev = future_map[future]
             try:
@@ -4879,7 +4933,7 @@ def _run_arp_sweep_locked(device_ids: set[str] | None = None) -> dict[str, Any]:
                     'device_id': str(dev.get('id') or ''),
                     'collector': 'arp',
                     'status': 'failed',
-                    'transport': 'ssh',
+                    'transport': 'snmp',
                     'source': 'arp_sweep',
                     'coverage_total': 0,
                     'coverage_supported': 0,
@@ -4898,7 +4952,7 @@ def _run_arp_sweep_locked(device_ids: set[str] | None = None) -> dict[str, Any]:
                     'device_id': dev.get('id'),
                     'device': dev.get('hostname') or dev.get('ip_address'),
                     'entry_count': 0,
-                    'transport': 'ssh',
+                    'transport': 'snmp',
                     'status': 'failed',
                     'failure_class': failure_class,
                 })
@@ -5731,8 +5785,13 @@ def _normalize_mac_table_snapshot(records: list[dict], device_info: dict) -> lis
     return normalized_records or None
 
 
-def _collect_full_mac_table_from_device(device_info: dict) -> dict[str, Any]:
-    """Collect one switch's complete MAC table, preferring SNMP and falling back to CLI/TextFSM."""
+def _collect_full_mac_table_from_device(device_info: dict, *, snmp_only: bool = False) -> dict[str, Any]:
+    """Collect one complete MAC/FDB snapshot, optionally requiring SNMP only."""
+    if snmp_only and device_info.get('_snmp_not_configured'):
+        return {
+            'success': False, 'records': [], 'transport': 'snmp',
+            'error': 'SNMP credentials are not configured', 'failure_class': 'unsupported',
+        }
     device_label = device_info.get('hostname') or device_info.get('ip_address')
     try:
         from services.vault_service import resolve_collector_credentials
@@ -5756,14 +5815,37 @@ def _collect_full_mac_table_from_device(device_info: dict) -> dict[str, Any]:
                 )
                 normalized_records = _normalize_mac_table_snapshot(snmp_records, device_info)
                 if normalized_records and len(normalized_records) == len(snmp_records):
-                    return {'success': True, 'records': normalized_records, 'transport': 'snmp'}
+                    result = {'success': True, 'records': normalized_records, 'transport': 'snmp'}
+                    if snmp_only:
+                        try:
+                            from services.snmp_service import collect_qbridge_interface_vlan_data
+                            result['interface_vlan_data'] = asyncio.run(collect_qbridge_interface_vlan_data(
+                                target_ip, community_or_profile,
+                                port=int(snmp_profile.get('port') or 161), version=version,
+                            ))
+                        except Exception as exc:
+                            result['interface_evidence_error'] = str(exc)
+                            logger.warning('[FDB Sweep] Port attributes unavailable for %s (%s)', device_label, type(exc).__name__)
+                    return result
                 raise RuntimeError('SNMP bridge table returned incomplete or unusable MAC records')
     except Exception as exc:
         logger.info(
-            "SNMP MAC/FDB collection for %s failed (%s); falling back to platform CLI",
+            "SNMP MAC/FDB collection for %s failed (%s)",
             device_info.get('hostname') or device_info.get('ip_address'),
             type(exc).__name__,
         )
+        if snmp_only:
+            return {
+                'success': False, 'records': [], 'transport': 'snmp',
+                'error': str(exc), 'failure_class': _classify_arp_failure(exc),
+            }
+
+    if snmp_only:
+        return {
+            'success': False, 'records': [], 'transport': 'snmp',
+            'error': 'SNMP FDB collection is disabled or credentials are not configured',
+            'failure_class': 'unsupported',
+        }
 
     if device_info.get('platform_profile_id'):
         try:
@@ -6680,11 +6762,8 @@ def run_unified_nsot_sync(device_ids: list[str] | set[str] | None = None) -> dic
     interface_status_result: dict[str, Any] = {}
     prefix_result: dict[str, int] = {"devices": 0, "created": 0, "updated": 0, "failed": 0}
     try:
-        run_arp_sweep(device_ids=target_device_ids)
-        run_endpoint_collector(
-            refresh_arp=False,
+        run_endpoint_fact_collector(
             device_ids=target_device_ids,
-            sync_inventory=False,
         )
         run_route_collector(respect_collection_policy=True, device_ids=target_device_ids)
         sync_routing_neighbors_job(device_ids=target_device_ids)
@@ -6728,6 +6807,7 @@ def run_endpoint_collector(
     refresh_arp: bool = True,
     device_ids: set[str] | None = None,
     sync_inventory: bool = True,
+    snmp_only: bool = False,
 ):
     """
     后台终端事实库同步任务：
@@ -6744,6 +6824,8 @@ def run_endpoint_collector(
     if refresh_arp:
         try:
             run_arp_sweep(device_ids=device_ids)
+            if snmp_only:
+                project_endpoint_evidence()
         except Exception as e:
             logger.error(f"[Endpoint Collector] ARP sweep failed: {e}")
 
@@ -6753,11 +6835,25 @@ def run_endpoint_collector(
         logger.info("[Endpoint Collector] No active ARP entries found; continuing with eligible L2 MAC collection.")
 
     # 2. 获取所有在线交换机
-    all_eligible = _load_eligible_devices(allow_snmp_only=True)
+    all_eligible = _load_eligible_devices(
+        allow_snmp_only=True,
+        include_snmp_unconfigured=snmp_only,
+        include_snmp_table_platforms=snmp_only,
+    )
     if device_ids is not None:
         all_eligible = [device for device in all_eligible if str(device.get('id') or '') in device_ids]
     _MAC_EXCLUDED_ROLES = frozenset({'router', 'firewall', 'gateway', 'server', 'linux', 'windows'})
-    switch_devices = [d for d in filter_devices(all_eligible, "mac_table") if should_collect(d, "endpoint_location")]
+    retry_state: dict[str, dict[str, Any]] = {}
+    if snmp_only:
+        retry_state = _load_mac_collection_state()
+        now = datetime.now(timezone.utc)
+        switch_devices = [
+            device for device in all_eligible
+            if explicit_collector_override(device, 'mac_table') is not False
+            and _arp_device_is_due(retry_state.get(str(device.get('id') or ''), {}), now)
+        ]
+    else:
+        switch_devices = [d for d in filter_devices(all_eligible, "mac_table") if should_collect(d, "endpoint_location")]
     if not switch_devices:
         logger.info("[Endpoint Collector] No eligible switch devices found.")
         if device_ids is None and sync_inventory:
@@ -6767,11 +6863,19 @@ def run_endpoint_collector(
                 logger.error(f"[Endpoint Collector] Error syncing IP Inventory: {e}")
         return
 
-    workers = min(3, len(switch_devices))
+    workers = min(2 if snmp_only else 3, len(switch_devices))
     mac_device_snapshots: list[dict[str, Any]] = []
     all_mac_records: list[dict] = []
+    mac_status_updates: list[dict[str, Any]] = []
     with ThreadPoolExecutor(max_workers=workers) as executor:
-        future_map = {executor.submit(_collect_full_mac_table_from_device, dev): dev for dev in switch_devices}
+        future_map = {}
+        for dev in switch_devices:
+            future = (
+                executor.submit(_collect_full_mac_table_from_device, dev, snmp_only=True)
+                if snmp_only
+                else executor.submit(_collect_full_mac_table_from_device, dev)
+            )
+            future_map[future] = dev
         for future in as_completed(future_map):
             dev = future_map[future]
             try:
@@ -6782,8 +6886,32 @@ def run_endpoint_collector(
                     'records': result.get('records') or [],
                     'transport': result.get('transport') or 'ssh',
                     'error': result.get('error') or '',
+                    'failure_class': result.get('failure_class') or '',
+                    'interface_vlan_data': result.get('interface_vlan_data'),
+                    'interface_evidence_error': result.get('interface_evidence_error') or '',
                 }
                 mac_device_snapshots.append(snapshot)
+                mac_status_updates.append({
+                    'device_id': snapshot['device_id'],
+                    'collector': 'mac_table',
+                    'status': 'success' if snapshot['success'] else 'failed',
+                    'transport': snapshot['transport'],
+                    'source': 'endpoint_fact_sweep',
+                    'coverage_total': len(snapshot['records']) if snapshot['success'] else 0,
+                    'coverage_supported': 1 if snapshot['success'] else 0,
+                    'error_code': snapshot['failure_class'] or ('' if snapshot['success'] else 'snmp_fdb_failed'),
+                    'error_message': snapshot['error'],
+                    'failure_class': snapshot['failure_class'] or ('' if snapshot['success'] else 'collection_failed'),
+                    'next_retry_at': None if snapshot['success'] else (
+                        datetime.now(timezone.utc) + timedelta(
+                            seconds=_arp_retry_delay(
+                                snapshot['failure_class'] or 'collection_failed',
+                                int(retry_state.get(snapshot['device_id'], {}).get('consecutive_failures') or 0) + 1,
+                            )
+                        )
+                    ).replace(microsecond=0).isoformat(),
+                    'circuit_state': 'closed' if snapshot['success'] else 'backoff',
+                })
                 if snapshot['success']:
                     all_mac_records.extend(snapshot['records'])
                 else:
@@ -6799,9 +6927,33 @@ def run_endpoint_collector(
                     'device_id': str(dev.get('id') or ''),
                     'success': False,
                     'records': [],
-                    'transport': 'ssh',
+                    'transport': 'snmp' if snmp_only else 'ssh',
                     'error': str(exc),
+                    'failure_class': _classify_arp_failure(exc),
                 })
+                mac_status_updates.append({
+                    'device_id': str(dev.get('id') or ''),
+                    'collector': 'mac_table',
+                    'status': 'failed',
+                    'transport': 'snmp' if snmp_only else 'ssh',
+                    'source': 'endpoint_fact_sweep',
+                    'coverage_total': 0,
+                    'coverage_supported': 0,
+                    'error_code': _classify_arp_failure(exc),
+                    'error_message': str(exc),
+                    'failure_class': _classify_arp_failure(exc),
+                    'next_retry_at': (
+                        datetime.now(timezone.utc) + timedelta(
+                            seconds=_arp_retry_delay(
+                                _classify_arp_failure(exc),
+                                int(retry_state.get(str(dev.get('id') or ''), {}).get('consecutive_failures') or 0) + 1,
+                            )
+                        )
+                    ).replace(microsecond=0).isoformat(),
+                    'circuit_state': 'backoff',
+                })
+
+    record_collection_results(mac_status_updates)
 
     try:
         persisted_count = _persist_mac_table_records(mac_device_snapshots)
@@ -6809,6 +6961,42 @@ def run_endpoint_collector(
     except Exception as exc:
         logger.error("[Endpoint Collector] Error writing MAC observations to mac_table: %s", exc)
         return
+
+    for snapshot in mac_device_snapshots:
+        data = snapshot.get('interface_vlan_data')
+        if not snapshot.get('success'):
+            continue
+        if not data:
+            if snapshot.get('interface_evidence_error'):
+                record_collection_results([{
+                    'device_id': snapshot['device_id'], 'collector': 'endpoint_port_attributes',
+                    'status': 'failed', 'transport': 'snmp', 'source': 'endpoint_fact_sweep',
+                    'error_code': 'port_attributes_unavailable',
+                    'error_message': snapshot['interface_evidence_error'],
+                }])
+            continue
+        try:
+            from services.interface_collection_service import _upsert_qbridge_vlan_data
+            counts = _upsert_qbridge_vlan_data(snapshot['device_id'], data)
+            record_collection_results([{
+                'device_id': snapshot['device_id'], 'collector': 'endpoint_port_attributes',
+                'status': 'success', 'transport': 'snmp', 'source': 'endpoint_fact_sweep',
+                'coverage_total': counts.get('interfaces', 0),
+                'coverage_supported': counts.get('mode_inferred', 0),
+                'metadata': {'interfaces': [
+                    item.get('interface') for item in data.get('interfaces', [])
+                    if not item.get('tagged_vlans')
+                    and set(item.get('untagged_vlans') or []) == {item.get('pvid')}
+                ]},
+            }])
+        except Exception as exc:
+            logger.warning('[FDB Sweep] Could not persist port attributes for %s (%s)', snapshot['device_id'], type(exc).__name__)
+            record_collection_results([{
+                'device_id': snapshot['device_id'], 'collector': 'endpoint_port_attributes',
+                'status': 'failed', 'transport': 'snmp', 'source': 'endpoint_fact_sweep',
+                'error_code': 'port_attributes_persist_failed', 'error_message': type(exc).__name__,
+                'metadata': {'interfaces': []},
+            }])
 
     incomplete_devices = [snapshot for snapshot in mac_device_snapshots if not snapshot.get('success')]
     if incomplete_devices:
@@ -7212,12 +7400,29 @@ def run_endpoint_collector(
 
 
 async def run_endpoint_collector_async():
-    await asyncio.to_thread(run_endpoint_collector)
+    await asyncio.to_thread(run_endpoint_fact_collector)
 
 
-def run_endpoint_fact_collector() -> None:
-    """Refresh MAC/interface endpoint facts using the latest ARP snapshot."""
-    run_endpoint_collector(refresh_arp=False)
+def project_endpoint_evidence() -> None:
+    """Publish persisted observations without waiting for the minute timer."""
+    from services.ipam_discovery_service import run_ipam_discovery_projection
+    try:
+        run_ipam_discovery_projection()
+    except Exception:
+        logger.exception('[Endpoint Collector] Immediate IPAM projection failed; periodic projection will retry')
+
+
+def run_endpoint_fact_collector(*, device_ids: set[str] | None = None) -> None:
+    """Share one renewable lease between manual and scheduled SNMP cycles."""
+    lease = acquire_scheduler_lock('endpoint_fact_collection', expire_seconds=max(60, ENDPOINT_FACT_INTERVAL_SECONDS * 2))
+    if lease is None:
+        logger.info('[Endpoint Collector] Another cycle is running; skipping this trigger')
+        return
+    with lease:
+        try:
+            run_endpoint_collector(refresh_arp=True, device_ids=device_ids, sync_inventory=False, snmp_only=True)
+        finally:
+            project_endpoint_evidence()
 
 
 # ── 路由表解析与采集 ─────────────────────────────────────

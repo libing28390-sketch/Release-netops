@@ -29,6 +29,8 @@ import {
   getChangeOrderWindowState,
   getResultReviewActions,
   formatChangeOrderApiMessage,
+  formatLocalDateTimeInput,
+  localDateTimeInputToIso,
   buildWorkflowPresentation,
   isBusinessVerifier,
   isChangeOrderFinalApprover,
@@ -69,6 +71,22 @@ const createOrder = (overrides: Partial<ChangeOrder> = {}): ChangeOrder => ({
   created_at: '',
   updated_at: '',
   ...overrides,
+});
+
+describe('change order date filter timezone conversion', () => {
+  it('formats local inputs without shifting the displayed instant and serializes them as UTC', () => {
+    const instant = new Date('2026-11-02T15:02:00.000Z');
+    const localInput = formatLocalDateTimeInput(instant);
+
+    expect(localInput).toMatch(/^2026-11-02T\d{2}:02$/);
+    expect(new Date(localInput).toISOString()).toBe(instant.toISOString());
+    expect(localDateTimeInputToIso(localInput)).toBe(instant.toISOString());
+  });
+
+  it('keeps empty or invalid date inputs out of API parameters', () => {
+    expect(localDateTimeInputToIso('')).toBe('');
+    expect(localDateTimeInputToIso('not-a-date')).toBe('');
+  });
 });
 
 describe('change order API error messages', () => {

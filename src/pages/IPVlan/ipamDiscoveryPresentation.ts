@@ -89,7 +89,6 @@ export function normalizeDiscoveryOptions(value: unknown, idKeys: string[], name
 
 export function getDiscoveryPortLabel(item: Pick<DiscoveredEndpointRow, 'ip' | 'mac_observed_at' | 'switch_port'>, zh: boolean): string {
   if (item.switch_port?.trim()) return item.switch_port;
-  if (item.ip && !item.mac_observed_at) return zh ? '端口待定位（无 MAC 表证据）' : 'Port pending (no MAC-table evidence)';
   return zh ? '端口待定位' : 'Port pending';
 }
 
@@ -126,8 +125,8 @@ export function getDiscoveryRegistrationLabel(status: string | undefined, zh: bo
 export function getDiscoveryCoverageLabel(status: string | undefined, zh: boolean): string {
   const labels: Record<string, [string, string]> = {
     complete: ['数据可核对', 'Ready to compare'],
-    partial: ['部分来源待确认', 'Some sources need review'],
-    unavailable: ['发现数据待更新', 'Discovery data needs updating'],
+    partial: ['范围或覆盖待确认', 'Scope or coverage needs review'],
+    unavailable: ['暂无可用发现证据', 'No usable discovery evidence'],
     no_inputs: ['暂无数据', 'No data yet'],
     scope_pending: ['来源归属待确认', 'Source scope needs review'],
   };

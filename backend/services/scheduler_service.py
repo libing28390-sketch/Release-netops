@@ -322,13 +322,13 @@ def _resolve_nsot_target_device_ids(job: dict, conn) -> list[str]:
     return _select_nsot_scope_device_ids(job, online_devices, tagged_device_ids)
 
 
-def _is_builtin_nsot_job(job: dict) -> bool:
+def _is_builtin_arp_sweep_job(job: dict) -> bool:
     return bool(
         job.get('authorization_mode') == 'system'
-        and str(job.get('id') or '') == 'nsot-daily-collection'
-        and str(job.get('name') or '') == 'NSOT 网络事实库每日采集'
+        and str(job.get('id') or '') == 'arp-daily-sweep'
+        and str(job.get('name') or '') == 'ARP 表每日分批采集'
         and str(job.get('job_type') or '') == 'cron'
-        and str(job.get('action_type') or '') == 'nsot'
+        and str(job.get('action_type') or '') == 'arp_sweep'
         and str(job.get('cron_expr') or '') == '0 2 * * *'
         and str(job.get('device_scope') or '') == 'all'
         and not str(job.get('device_filter') or '').strip()
@@ -343,9 +343,9 @@ def _is_builtin_nsot_job(job: dict) -> bool:
 def _authorize_scheduled_job_run(conn, job: dict) -> dict | None:
     """Revalidate owner, tenant, permissions and immutable content at run time."""
     if job.get('authorization_mode') == 'system':
-        if _is_builtin_nsot_job(job):
+        if _is_builtin_arp_sweep_job(job):
             return None
-        raise PermissionError('System job identity does not match the built-in NSOT collection job')
+        raise PermissionError('System job identity does not match the built-in ARP sweep')
     if job.get('authorization_mode') != 'snapshot':
         raise PermissionError('Scheduled job requires re-authorization before execution')
     if not str(job.get('created_by_id') or '').strip() or (TENANT_ISOLATION_ENABLED and not str(job.get('tenant_id') or '').strip()):
@@ -668,11 +668,63 @@ async def _run_scheduled_automation_job_body(job_id: str, *, run_id: str) -> dic
             logger.warning("[Scheduler] Refused unauthorized job %s: %s", job_id, exc)
             return {"status": "denied", "execution_id": execution_id, "summary": str(exc)}
 
-        # NSOT uses the same saved target scope as other Automation tasks, but
-        # its target universe is explicitly the online device inventory. Resolve it
-        # before entering the composed collector; never fall back to all devices
-        # when a saved scope currently matches nothing.
-        if job.get('action_type') == 'nsot':
+        action_type = str(job.get('action_type') or '').strip().lower()
+        if action_type == 'arp_sweep':
+            if not _is_builtin_arp_sweep_job(job):
+                raise PermissionError('ARP sweep is reserved for the built-in bounded system job')
+            logger.info("[Scheduler] Starting bounded system ARP sweep (%s)", job_id)
+            try:
+                from services.ip_locator_service import run_arp_sweep
+
+                result = await asyncio.to_thread(run_arp_sweep)
+                run_status = 'skipped' if result.get('skipped') else 'success'
+                now = datetime.now().isoformat()
+                conn.execute(
+                    "UPDATE scheduled_jobs SET last_run_at = ?, last_run_status = ?, run_count = run_count + 1 WHERE id = ?",
+                    (now, run_status, job_id),
+                )
+                conn.commit()
+                successful_devices = sum(
+                    1 for item in result.get('device_results') or [] if item.get('success')
+                )
+                return {
+                    'status': run_status,
+                    'target_count': int(result.get('eligible_devices') or 0),
+                    'success_count': successful_devices,
+                    'failed_count': max(0, len(result.get('device_results') or []) - successful_devices),
+                    'execution_id': run_id,
+                    'summary': (
+                        f"ARP 分批采集：本批 {len(result.get('device_results') or [])} 台，"
+                        f"新增/更新观测 {int(result.get('collected_entries') or 0)} 条"
+                    ),
+                }
+            except Exception as exc:
+                now = datetime.now().isoformat()
+                conn.execute(
+                    "UPDATE scheduled_jobs SET last_run_at = ?, last_run_status = ?, run_count = run_count + 1 WHERE id = ?",
+                    (now, 'failed', job_id),
+                )
+                conn.commit()
+                logger.exception("[Scheduler] ARP sweep failed (%s)", job_id)
+                return {'status': 'failed', 'execution_id': run_id, 'summary': f'ARP sweep failed: {exc}'}
+
+        if action_type == 'nsot':
+            # The full NSOT system refresh is retired. The migration soft-deletes
+            # its built-in job; fail closed if an old user job is still enabled.
+            now = datetime.now().isoformat()
+            conn.execute(
+                "UPDATE scheduled_jobs SET enabled = 0, status = 'disabled', last_run_at = ?, last_run_status = ?, run_count = run_count + 1 WHERE id = ?",
+                (now, 'retired', job_id),
+            )
+            conn.commit()
+            logger.warning("[Scheduler] Retired legacy NSOT scheduled job %s without collecting devices", job_id)
+            return {
+                'status': 'skipped', 'target_count': 0, 'execution_id': run_id,
+                'summary': '全量 NSOT 定时采集已下线；请在资产 NSOT 页面手动更新',
+            }
+
+        if action_type in {'bgp_neighbors', 'ospf_neighbors'}:
+            protocol = 'bgp' if action_type == 'bgp_neighbors' else 'ospf'
             try:
                 device_ids = _resolve_nsot_target_device_ids(job, conn)
                 if owner is not None:
@@ -684,7 +736,7 @@ async def _run_scheduled_automation_job_body(job_id: str, *, run_id: str) -> dic
                     (now, 'denied', job_id),
                 )
                 conn.commit()
-                logger.warning("[Scheduler] Refused NSOT job %s due to invalid scope: %s", job_id, exc)
+                logger.warning("[Scheduler] Refused %s neighbor job %s due to invalid scope: %s", protocol.upper(), job_id, exc)
                 return {"status": "denied", "target_count": 0, "summary": str(exc)}
             if not device_ids:
                 now = datetime.now().isoformat()
@@ -693,7 +745,7 @@ async def _run_scheduled_automation_job_body(job_id: str, *, run_id: str) -> dic
                     (now, 'skipped', job_id),
                 )
                 conn.commit()
-                logger.warning("[Scheduler] NSOT job %s skipped: its saved scope matched no online devices", job_id)
+                logger.warning("[Scheduler] %s neighbor job %s skipped: no online target matches its saved scope", protocol.upper(), job_id)
                 return {"status": "skipped", "target_count": 0, "summary": "没有在线设备匹配已批准范围"}
             max_targets = _scheduled_job_max_targets(conn, job)
             if max_targets is not None and len(device_ids) > max_targets:
@@ -708,25 +760,23 @@ async def _run_scheduled_automation_job_body(job_id: str, *, run_id: str) -> dic
                     "summary": f"当前范围匹配 {len(device_ids)} 台设备，超过授权上限 {max_targets} 台",
                 }
 
-            # Only the built-in system job may request an unbounded refresh.
-            # A tenant owner's scope="all" means all authorized online devices
-            # in that tenant, so keep the resolved ID set through every phase.
-            scoped_device_ids = None if owner is None else set(device_ids)
-
             logger.info(
-                "[Scheduler] Starting NSOT scheduled collection: %s (%s), target_devices=%s",
-                job['name'], job_id, len(device_ids),
+                "[Scheduler] Starting %s neighbor collection: %s (%s), target_devices=%s",
+                protocol.upper(), job['name'], job_id, len(device_ids),
             )
             try:
-                from services.ip_locator_service import run_unified_nsot_sync
-
-                result = await asyncio.to_thread(run_unified_nsot_sync, device_ids=scoped_device_ids)
-                topology_summary = result.get('topology') if isinstance(result, dict) else None
-                run_status = (
-                    'success'
-                    if isinstance(topology_summary, dict) and topology_summary.get('status') == 'complete'
-                    else 'partial'
+                result = await asyncio.to_thread(
+                    sync_routing_neighbors_job,
+                    device_ids=set(device_ids),
+                    explicit_protocols={protocol},
                 )
+                successful_collectors = set(result.get('collected_protocols') or [])
+                if protocol not in successful_collectors:
+                    run_status = 'failed'
+                elif int(result.get('failed_devices') or 0) > 0:
+                    run_status = 'partial'
+                else:
+                    run_status = 'success'
                 now = datetime.now().isoformat()
                 conn.execute(
                     "UPDATE scheduled_jobs SET last_run_at = ?, last_run_status = ?, run_count = run_count + 1 WHERE id = ?",
@@ -734,24 +784,22 @@ async def _run_scheduled_automation_job_body(job_id: str, *, run_id: str) -> dic
                 )
                 conn.commit()
                 logger.info(
-                    "[Scheduler] NSOT scheduled collection completed: %s (%s), status=%s, target_devices=%s, phases=%s",
+                    "[Scheduler] %s neighbor collection completed: %s (%s), status=%s, target_devices=%s",
+                    protocol.upper(),
                     job['name'],
                     job_id,
                     run_status,
                     len(device_ids),
-                    ','.join(sorted(result)) if isinstance(result, dict) else 'completed',
                 )
-                detail = topology_summary if isinstance(topology_summary, dict) else {}
-                target_count = int(detail.get("target_count") or detail.get("device_count") or len(device_ids))
-                success_count = int(detail.get("success_count") or (target_count if run_status == "success" else 0))
-                failed_count = int(detail.get("failed_count") or max(0, target_count - success_count))
                 return {
                     "status": run_status,
-                    "target_count": target_count,
-                    "success_count": success_count,
-                    "failed_count": failed_count,
+                    "target_count": int(result.get("target_count") or len(device_ids)),
+                    "success_count": int(result.get("updated_devices") or 0),
+                    "failed_count": int(result.get("failed_devices") or 0),
                     "execution_id": run_id,
-                    "summary": str(detail.get("summary") or "NSOT 采集已完成"),
+                    "summary": f"{protocol.upper()} 邻居采集" + {
+                        "success": "成功", "partial": "部分成功", "failed": "失败或无有效快照",
+                    }[run_status],
                 }
             except Exception as exc:
                 now = datetime.now().isoformat()
@@ -759,12 +807,12 @@ async def _run_scheduled_automation_job_body(job_id: str, *, run_id: str) -> dic
                     "UPDATE scheduled_jobs SET last_run_at = ?, last_run_status = ?, run_count = run_count + 1 WHERE id = ?",
                     (now, 'failed', job_id),
                 )
-                logger.exception("[Scheduler] NSOT scheduled collection failed: %s (%s)", job['name'], job_id)
+                logger.exception("[Scheduler] %s neighbor collection failed: %s (%s)", protocol.upper(), job['name'], job_id)
                 conn.commit()
                 return {
                     "status": "failed", "target_count": len(device_ids),
                     "failed_count": len(device_ids), "execution_id": run_id,
-                    "summary": f"NSOT 事实库采集失败: {exc}",
+                    "summary": f"{protocol.upper()} 邻居采集失败: {exc}",
                 }
 
         # 1. 确定设备范围
@@ -2722,6 +2770,7 @@ def sync_routing_neighbors_job(
     device_ids: set[str] | None = None,
     *,
     disabled_protocols: set[str] | None = None,
+    explicit_protocols: set[str] | None = None,
 ):
     """Collect dynamic routing neighbors using policy plus route evidence.
 
@@ -2740,7 +2789,7 @@ def sync_routing_neighbors_job(
             SELECT DISTINCT device_id, protocol
             FROM route_table
             """
-        ).fetchall()
+        ).fetchall() if explicit_protocols is None else []
     finally:
         conn.close()
 
@@ -2749,7 +2798,7 @@ def sync_routing_neighbors_job(
 
     if not devices:
         logger.info("[Scheduler Job] No online devices found for routing neighbors sync.")
-        return
+        return {"target_count": 0, "updated_devices": 0, "failed_devices": 0, "collected_protocols": []}
 
     _L3_ROLES = {'router', 'gateway', 'core', 'dist', 'distribution', 'aggregation', 'l3switch', 'firewall', 'load-balancer'}
     protocol_aliases = {
@@ -2772,11 +2821,25 @@ def sync_routing_neighbors_job(
     policy_override_categories: dict[str, set[str]] = {}
     auto_protocol_devices: dict[str, list[str]] = {}
     disabled = {str(protocol).strip().lower() for protocol in (disabled_protocols or set())}
-    dynamic_protocols = tuple(
-        protocol for protocol in ('bgp', 'ospf', 'eigrp', 'isis', 'rip')
-        if protocol not in disabled
-    )
+    protocol_order = ('bgp', 'ospf', 'eigrp', 'isis', 'rip')
+    if explicit_protocols is None:
+        dynamic_protocols = tuple(protocol for protocol in protocol_order if protocol not in disabled)
+    else:
+        requested_protocols = {str(protocol).strip().lower() for protocol in explicit_protocols}
+        invalid_protocols = requested_protocols - set(protocol_order)
+        if invalid_protocols or not requested_protocols:
+            raise ValueError("Explicit routing collector selection is invalid")
+        dynamic_protocols = tuple(protocol for protocol in protocol_order if protocol in requested_protocols)
     for device in devices:
+        if explicit_protocols is not None:
+            if normalize_device_role(device.get('role')) not in _L3_ROLES:
+                continue
+            device_id = str(device.get('id') or '')
+            categories = list(dynamic_protocols)
+            l3_devices.append(device)
+            enabled_categories[device_id] = categories
+            policy_override_categories[device_id] = set(categories)
+            continue
         configured_l3_collection = should_collect(device, 'routes') or any(
             should_collect(device, protocol) for protocol in dynamic_protocols
         )
@@ -2817,7 +2880,7 @@ def sync_routing_neighbors_job(
 
     if not l3_devices:
         logger.info("[Scheduler Job] No eligible L3 routing devices found.")
-        return
+        return {"target_count": 0, "updated_devices": 0, "failed_devices": 0, "collected_protocols": []}
 
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from services.operational_data_service import collect_operational_data
@@ -3176,7 +3239,14 @@ def sync_routing_neighbors_job(
                     'neighbors': [],
                 })
 
+    successful_protocols = sorted({
+        str(protocol).strip().lower()
+        for result in collection_results
+        for protocol in (result.get('protocols') or [])
+        if str(protocol).strip()
+    })
     db_conn = get_db_connection()
+    summary: dict[str, Any] = {"updated_devices": 0, "updated_protocols": 0, "inserted_neighbors": 0}
     try:
         last_update = _beijing_now_iso()
         summary = _persist_routing_neighbor_results(db_conn, collection_results, last_update)
@@ -3204,7 +3274,47 @@ def sync_routing_neighbors_job(
     finally:
         db_conn.close()
 
+    if set(successful_protocols) & {'bgp', 'ospf'}:
+        devices_by_id = {str(device.get('id') or ''): device for device in l3_devices}
+        from services.background_monitor_service import _collect_protocol_neighbor_alerts
+
+        for result in collection_results:
+            device_id = str(result.get('device_id') or '')
+            device = devices_by_id.get(device_id)
+            if not device or not result.get('success'):
+                continue
+            protocol_rows: dict[str, list[dict[str, Any]]] = {}
+            for protocol in result.get('protocols') or []:
+                normalized_protocol = str(protocol or '').strip().lower()
+                if normalized_protocol in {'bgp', 'ospf'}:
+                    protocol_rows[normalized_protocol] = []
+            for row in result.get('neighbors') or []:
+                protocol = str(row.get('protocol') or '').strip().lower()
+                if protocol in {'bgp', 'ospf'} and protocol in (result.get('protocols') or []):
+                    protocol_rows.setdefault(protocol, []).append(row)
+            if protocol_rows:
+                try:
+                    asyncio.run(_collect_protocol_neighbor_alerts(
+                        device,
+                        str(device.get('ip_address') or ''),
+                        collected_snapshots=protocol_rows,
+                    ))
+                except Exception as alert_exc:
+                    logger.warning(
+                        "Protocol alert projection failed for scheduled snapshot %s (%s)",
+                        device_id,
+                        type(alert_exc).__name__,
+                    )
+
     logger.info("[Scheduler Job] sync_routing_neighbors_job completed.")
+    successful_devices = sum(1 for result in collection_results if result.get('success'))
+    return {
+        **summary,
+        "target_count": len(l3_devices),
+        "updated_devices": int(summary.get('updated_devices') or 0),
+        "failed_devices": max(0, len(l3_devices) - successful_devices),
+        "collected_protocols": successful_protocols,
+    }
 
 
 def sync_bgp_routes_job(device_ids: set[str] | None = None):

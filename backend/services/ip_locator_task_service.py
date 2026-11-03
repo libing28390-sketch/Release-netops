@@ -163,7 +163,32 @@ def _dependency_manifest_current_in_transaction(
     *,
     lock: bool,
 ) -> tuple[bool, list[str]]:
-    """Compare a captured topology/observation manifest with PG authority."""
+    """Compare captured source evidence with PG authority before publication."""
+
+    if manifest.get("type") == "snmp_endpoint":
+        from services.ip_locator_endpoint_evidence import find_endpoint_evidence
+
+        context = manifest.get("context")
+        expected = manifest.get("evidence")
+        if (manifest.get("version") != 1 or not isinstance(context, Mapping)
+                or not isinstance(expected, Mapping)
+                or not isinstance(context.get("authorized_device_ids"), list)):
+            return False, ["dependency_manifest_invalid_snmp_endpoint"]
+        try:
+            current = find_endpoint_evidence(
+                _non_empty(manifest.get("target_ip")), conn=conn,
+                **{key: context.get(key) for key in (
+                    "tenant_id", "site_id", "vrf", "authorized_device_ids",
+                    "start_device_id", "network_domain_id",
+                )},
+            )
+        except Exception:
+            current = None
+        if current is None or any(current.get(key) != expected.get(key) for key in (
+            "location", "arp_evidence", "evidence_collected_at", "vrf_context_status",
+        )):
+            return False, ["dependency_changed:snmp_endpoint"]
+        return True, []
 
     gaps: list[str] = []
     topology = manifest.get("topology")

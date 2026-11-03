@@ -14,7 +14,7 @@ from services.scheduled_job_authorization import (
 )
 
 
-def test_scheduled_nsot_passes_only_online_devices_from_saved_site_scope(isolated_db, make_user, monkeypatch):
+def test_retired_nsot_job_disables_itself_without_collecting_devices(isolated_db, make_user, monkeypatch):
     conn = isolated_db["module"].get_db_connection()
     now = datetime.now().isoformat()
     owner = make_user("nsot_scope_owner", role="Operator")
@@ -112,17 +112,19 @@ def test_scheduled_nsot_passes_only_online_devices_from_saved_site_scope(isolate
 
     asyncio.run(scheduler_service.run_scheduled_automation_job("nsot-site-job"))
 
-    assert observed_scopes == [{"nsot-wh-access-1", "nsot-wh-gateway-1", "nsot-wh-old-tenant-1"}]
+    assert observed_scopes == []
     conn = isolated_db["module"].get_db_connection()
     try:
         run = conn.execute(
-            "SELECT last_run_status, run_count FROM scheduled_jobs WHERE id = ?",
+            "SELECT last_run_status, run_count, enabled, status FROM scheduled_jobs WHERE id = ?",
             ("nsot-site-job",),
         ).fetchone()
     finally:
         conn.close()
-    assert run["last_run_status"] == "success"
+    assert run["last_run_status"] == "retired"
     assert run["run_count"] == 1
+    assert run["enabled"] == 0
+    assert run["status"] == "disabled"
 
 
 def test_historical_scheduled_job_keeps_owner_action_and_device_scope_checks(isolated_db, make_user):

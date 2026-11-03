@@ -296,6 +296,8 @@ export const ChangeOrderDetail: React.FC<Props> = ({
                     success: false,
                     requestSent: false,
                   });
+                } else if (action.status === 'initial_review' && selectedOrder.status === 'draft') {
+                  openEdit(selectedOrder);
                 } else if (['rejected', 'initial_review'].includes(action.status)) {
                   setActionPrompt({
                     title: action.status === 'initial_review' ? (zh ? '请输入退回原因' : 'Return reason') : (zh ? '请输入驳回原因' : 'Rejection reason'),

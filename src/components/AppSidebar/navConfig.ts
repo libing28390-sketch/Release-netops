@@ -160,12 +160,11 @@ export const navConfig: NavGroup[] = [
         label: '操作管理',
         labelEn: 'Operations',
         path: '/automation/scripts',
-        activeMatch: '/automation/scripts,/automation/nsot',
+        activeMatch: '/automation/scripts',
         icon: 'Code2',
         requiredRole: 'Operator',
         children: [
           { id: 'script-operations', label: '脚本 / 系统操作', labelEn: 'Scripts / system operations', path: '/automation/scripts', icon: 'FileCode2', requiredRole: 'Operator' },
-          { id: 'nsot-operations', label: 'NSOT 采集目录', labelEn: 'NSOT collection catalog', path: '/automation/nsot', icon: 'Terminal', requiredRole: 'Operator' },
         ],
       },
     ],

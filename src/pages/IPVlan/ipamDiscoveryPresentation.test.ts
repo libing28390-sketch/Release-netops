@@ -27,7 +27,7 @@ describe('discovered endpoint query and presentation', () => {
   it('keeps absent identity and port information explicitly unknown or pending', () => {
     expect(getDiscoveryHostname({ hostname: '' }, true)).toBe('未知');
     expect(getDiscoveryTypeLabel(true)).toBe('类型未知');
-    expect(getDiscoveryPortLabel({ ip: '10.0.0.5', mac_observed_at: null, switch_port: null }, true)).toContain('无 MAC 表证据');
+    expect(getDiscoveryPortLabel({ ip: '10.0.0.5', mac_observed_at: null, switch_port: null }, true)).toBe('端口待定位');
     expect(getDiscoveryEvidenceLabel('unknown', true)).toContain('不参与当前对账');
   });
 });

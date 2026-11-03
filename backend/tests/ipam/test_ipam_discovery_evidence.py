@@ -43,6 +43,16 @@ def mark_run(when, run="run-current", *, device="gateway-a", count=1, status="su
         c.commit()
 
 
+def test_discovery_freshness_windows_follow_hourly_collection(monkeypatch):
+    monkeypatch.setenv("ARP_SWEEP_INTERVAL_SECONDS", "3600")
+    monkeypatch.setenv("ENDPOINT_FACT_INTERVAL_SECONDS", "3600")
+    monkeypatch.delenv("IPAM_DISCOVERY_RECENT_MINUTES", raising=False)
+    monkeypatch.delenv("IPAM_DISCOVERY_MAC_RECENT_MINUTES", raising=False)
+
+    assert discovery._recent_minutes() == 122
+    assert discovery._mac_recent_minutes() == 122
+
+
 def evidence(when, run, *, device="gateway-a", site="discovery-site-a", ip="192.0.2.10", mac=MAC, vlan="100", kind="arp", context="explicit_global", vrf="", projected=None):
     scope={"tenant_id":"tenant-default","site_id":site,"vrf_id":vrf,"vrf_context_status":context,"scope_status":"resolved" if context != "unknown" else "scope_pending"}
     with get_db_connection() as c:
@@ -76,7 +86,9 @@ def test_projection_keeps_arp_without_mac_and_does_not_renew_time(isolated_db,mo
     assert rows[0]["scope_status"]=="scope_pending"
     assert rows[0]["hostname"]=="" and rows[0]["switch_port"]==""
     assert datetime.fromisoformat(rows[0]["observed_at"])==observed
-    monkeypatch.setattr(discovery,"_utc_now",lambda:now+timedelta(minutes=40))
+    # The ARP freshness window covers two hourly sweeps plus jitter. Leave
+    # enough time to exceed it while checking projection does not renew time.
+    monkeypatch.setattr(discovery,"_utc_now",lambda:now+timedelta(minutes=180))
     second=discovery.run_ipam_discovery_projection()
     again=discovery.list_discovered_endpoints(kind="ip")["items"][0]
     assert first["observations_created"]==1 and second["observations_created"]==0
@@ -234,6 +246,21 @@ def test_business_terminals_exclude_gateways_device_ips_and_non_host_addresses(i
     assert [r['ip'] for r in business['items']] == ['192.0.2.10']
 
 
+def test_business_endpoint_view_excludes_virtual_gateway_mac_but_keeps_raw_observation(isolated_db):
+    seed()
+    create_subnet(prefix='192.0.2.0/24', site_id='discovery-site-a',
+                  tenant_id='tenant-default', network_type='user_access')
+    now = datetime.now(timezone.utc) - timedelta(seconds=2)
+    evidence(now, 'vrrp-gateway', ip='192.0.2.1', mac='00:00:5e:00:01:14', vlan='100')
+
+    raw = discovery.list_discovered_endpoints(kind='ip', network_scope='all')
+    business = discovery.list_discovered_endpoints(kind='ip', network_scope='business_vlan')
+
+    assert raw['total'] == 1
+    assert raw['items'][0]['mac'] == '00:00:5e:00:01:14'
+    assert business['total'] == 0
+
+
 def test_unknown_arp_vrf_cannot_borrow_explicit_global_mac_port(isolated_db):
     seed()
     seed('access-a')
@@ -248,6 +275,46 @@ def test_unknown_arp_vrf_cannot_borrow_explicit_global_mac_port(isolated_db):
     assert item['registration_status'] == 'scope_pending'
     assert item['hostname'] == ''
     assert item['ipam_address_id'] == ''
+
+
+@pytest.mark.parametrize('case', ['matched', 'other_device', 'wrong_vlan', 'older', 'trunk', 'two_ports', 'stale_interface', 'no_interface', 'explicit_mac', 'missing_generation', 'omitted_port'])
+def test_local_l2_location_preserves_unknown_l3_scope(isolated_db, case):
+    seed()
+    seed('access-b')
+    now = datetime.now(timezone.utc) - timedelta(seconds=2)
+    source = 'access-b' if case == 'other_device' else 'gateway-a'
+    with get_db_connection() as c:
+        if case != 'no_interface':
+            c.execute("""INSERT INTO interfaces(id,device_id,interface_name,interface_type,switchport_mode,access_vlan,last_seen)
+                     VALUES ('local-port',?,'Ethernet1','physical',?,100,?)""",
+                  (source, 'trunk' if case == 'trunk' else 'access',
+                   (now - timedelta(minutes=10) if case == 'stale_interface' else now).isoformat()))
+        if case != 'missing_generation':
+            c.execute("""INSERT INTO device_collection_status(device_id,collector,status,source,transport,last_success_at,metadata_json,updated_at)
+                         VALUES (?,'endpoint_port_attributes','success','endpoint_fact_sweep','snmp',?,?,?)""",
+                      (source, now.isoformat(), json.dumps({'interfaces': [] if case == 'omitted_port' else ['Ethernet1', 'Ethernet2']}), now.isoformat()))
+        c.commit()
+    evidence(now, 'arp-local', context='unknown')
+    evidence(now - timedelta(minutes=10) if case == 'older' else now, 'mac-local',
+             device=source, kind='mac', ip=None, context='explicit_global' if case == 'explicit_mac' else 'unknown', vlan='200' if case == 'wrong_vlan' else '100')
+    if case == 'two_ports':
+        with get_db_connection() as c:
+            c.execute("""INSERT INTO interfaces(id,device_id,interface_name,interface_type,switchport_mode,access_vlan,last_seen)
+                         VALUES ('local-port-2','gateway-a','Ethernet2','physical','access',100,?)""", (now.isoformat(),))
+            row = c.execute("SELECT * FROM ipam_discovery_observations WHERE source_type='mac' LIMIT 1").fetchone()
+            c.execute("""INSERT INTO ipam_discovery_observations
+                         (id,snapshot_id,source_type,source_device_id,source_device_name,tenant_id,site_id,vrf_context_status,scope_status,mac,interface_name,vlan,source_identity_key,source_observed_at,timestamp_status,projected_at)
+                         VALUES ('other-port',?,'mac','gateway-a','gateway-a','tenant-default','discovery-site-a','unknown','scope_pending',?,'Ethernet2','100','other-port',?,'valid',?)""",
+                      (row['snapshot_id'], MAC, now.isoformat(), now.isoformat()))
+            c.commit()
+    item = discovery.list_discovered_endpoints(kind='ip')['items'][0]
+    assert item['scope_status'] == 'scope_pending'
+    assert item['registration_status'] == 'scope_pending'
+    assert item['source_vrf_context_status'] == 'unknown'
+    assert item['ipam_address_id'] == ''
+    assert item['switch_port'] == ('Ethernet1' if case == 'matched' else '')
+    if case == 'matched':
+        assert item['switch_location_basis'] == 'same_device_vlan_mac_access'
 
 
 def test_only_proven_access_mac_port_can_locate_a_business_host(isolated_db, monkeypatch):

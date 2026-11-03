@@ -57,6 +57,25 @@ def test_snmp_disabled_arp_collection_uses_cli_without_snmp_request(monkeypatch)
     assert snmp_calls == []
 
 
+def test_snmp_only_arp_collection_never_falls_back_to_cli(monkeypatch):
+    device = {**DEVICE, "snmp_collection_enabled": False}
+    monkeypatch.setattr(
+        "services.vault_service.resolve_collector_credentials",
+        lambda _device: {"snmp": {"configured": True, "community": "redacted"}},
+    )
+    monkeypatch.setattr(
+        ip_locator_service,
+        "collect_operational_data",
+        lambda *_args, **_kwargs: pytest.fail("SNMP-only sweep must not call CLI"),
+    )
+
+    result = ip_locator_service._collect_full_arp_result(device, snmp_only=True)
+
+    assert result["status"] == "failed"
+    assert result["transport"] == "snmp"
+    assert result["failure_class"] == "unsupported"
+
+
 def test_route_selection_prefers_prefix_bound_connected_gateway_over_ospf():
     rows = [
         {
@@ -213,7 +232,7 @@ def test_unified_nsot_sync_runs_route_collection_with_collection_policy(monkeypa
     monkeypatch.setattr(ip_locator_service, "run_arp_sweep", lambda **kwargs: calls.append(("arp", kwargs)))
     monkeypatch.setattr(
         ip_locator_service,
-        "run_endpoint_collector",
+        "run_endpoint_fact_collector",
         lambda **kwargs: calls.append(("endpoint", kwargs)),
     )
     monkeypatch.setattr(
@@ -245,11 +264,9 @@ def test_unified_nsot_sync_runs_route_collection_with_collection_policy(monkeypa
 
     ip_locator_service.run_unified_nsot_sync(device_ids=["device-1"])
 
-    assert ("arp", {"device_ids": {"device-1"}}) in calls
+    assert not any(name == "arp" for name, _ in calls)
     assert ("endpoint", {
-        "refresh_arp": False,
         "device_ids": {"device-1"},
-        "sync_inventory": False,
     }) in calls
     assert ("routes", {"respect_collection_policy": True, "device_ids": {"device-1"}}) in calls
     assert ("neighbors", {"device_ids": {"device-1"}}) in calls
@@ -302,7 +319,7 @@ def test_background_arp_sweep_honors_l2_template_while_live_locator_keeps_role_f
     assert live is not None
 
 
-def test_periodic_sweep_passes_svi_evidence_into_default_collection_plan(monkeypatch):
+def test_periodic_sweep_includes_access_without_svi_and_honors_explicit_opt_out(monkeypatch):
     devices = [
         {"id": "access-svi", "role": "access"},
         {"id": "access-no-svi", "role": "access"},
@@ -313,7 +330,6 @@ def test_periodic_sweep_passes_svi_evidence_into_default_collection_plan(monkeyp
         },
     ]
     monkeypatch.setattr(ip_locator_service, "_load_eligible_devices", lambda **_kwargs: devices)
-    monkeypatch.setattr(ip_locator_service, "_load_svi_evidence", lambda: {"access-svi", "access-disabled"})
     monkeypatch.setattr(ip_locator_service, "_load_arp_collection_state", lambda: {})
     monkeypatch.setattr(
         ip_locator_service,
@@ -323,9 +339,8 @@ def test_periodic_sweep_passes_svi_evidence_into_default_collection_plan(monkeyp
 
     selected, _total, _backoff = ip_locator_service._load_arp_sweep_devices("run-svi")
 
-    assert [device["id"] for device in selected] == ["access-svi"]
-    assert selected[0]["_has_svi"] is True
-    assert selected[0]["_arp_policy_override"] is True
+    assert [device["id"] for device in selected] == ["access-no-svi", "access-svi"]
+    assert all(device["_arp_policy_override"] is True for device in selected)
 
 
 def test_endpoint_access_port_evidence_requires_positive_cmdb_fact(isolated_db):
@@ -1010,6 +1025,7 @@ def test_targeted_mac_query_reports_disabled_without_opening_a_session(monkeypat
         **DEVICE,
         "role": "access",
         "platform": "h3c_comware",
+        "collection_policy_json": '{"collectors":{"mac_table":false}}',
     }
 
     def fail_if_called(*_args, **_kwargs):
@@ -1024,12 +1040,13 @@ def test_targeted_mac_query_reports_disabled_without_opening_a_session(monkeypat
     assert result.status["error_code"] == "MAC_TABLE_DISABLED"
 
 
-def test_targeted_mac_query_reports_found_and_preserves_list_contract(monkeypatch):
+@pytest.mark.parametrize('policy', ['{}', '{"collectors":{"mac_table":true}}'])
+def test_targeted_mac_query_reports_found_and_preserves_list_contract(monkeypatch, policy):
     device = {
         **DEVICE,
         "role": "access",
         "platform": "h3c_comware",
-        "collection_policy_json": '{"collectors":{"mac_table":true}}',
+        "collection_policy_json": policy,
     }
     monkeypatch.setattr(
         ip_locator_service,
@@ -1225,6 +1242,54 @@ Total matching items on slot 0 displayed = 1
     }]
 
 
+def test_snmp_only_fdb_collection_does_not_use_cli_when_snmp_is_disabled(monkeypatch):
+    device = {**DEVICE, "snmp_collection_enabled": False}
+    monkeypatch.setattr(
+        "services.vault_service.resolve_collector_credentials",
+        lambda _device: {"snmp": {"configured": True, "community": "redacted"}},
+    )
+    monkeypatch.setattr(
+        ip_locator_service,
+        "_send_command",
+        lambda *_args, **_kwargs: pytest.fail("SNMP-only FDB sweep must not call CLI"),
+    )
+
+    result = ip_locator_service._collect_full_mac_table_from_device(device, snmp_only=True)
+
+    assert result["success"] is False
+    assert result["transport"] == "snmp"
+    assert result["failure_class"] == "unsupported"
+
+
+def test_snmp_endpoint_cycle_uses_all_fdb_devices_except_explicit_opt_out(monkeypatch):
+    devices = [
+        {"id": "router", "hostname": "R1", "role": "router"},
+        {"id": "core", "hostname": "C1", "role": "core"},
+        {"id": "access", "hostname": "A1", "role": "access"},
+        {"id": "disabled", "hostname": "A2", "role": "access",
+         "collection_policy_json": '{"collectors":{"mac_table":false}}'},
+    ]
+    collected = []
+    monkeypatch.setattr(ip_locator_service, "_load_eligible_devices", lambda **_kwargs: devices)
+    monkeypatch.setattr(ip_locator_service, "_load_mac_collection_state", lambda: {})
+    monkeypatch.setattr(ip_locator_service, "get_arp_table", lambda: {"entries": []})
+    monkeypatch.setattr(ip_locator_service, "record_collection_results", lambda *_args: None)
+    monkeypatch.setattr(ip_locator_service, "_persist_mac_table_records", lambda _snapshots: 0)
+
+    def fail_snmp(device, *, snmp_only=False):
+        collected.append((device["id"], snmp_only))
+        return {"success": False, "records": [], "transport": "snmp",
+                "error": "unsupported FDB table", "failure_class": "unsupported"}
+
+    monkeypatch.setattr(ip_locator_service, "_collect_full_mac_table_from_device", fail_snmp)
+    ip_locator_service.run_endpoint_collector(
+        refresh_arp=False, sync_inventory=False, snmp_only=True,
+    )
+
+    assert {device_id for device_id, _snmp_only in collected} == {"router", "core", "access"}
+    assert all(snmp_only for _device_id, snmp_only in collected)
+
+
 def test_endpoint_mac_records_are_persisted_for_cmdb_and_offline_lookup(isolated_db):
     conn = isolated_db["module"].get_db_connection()
     try:
@@ -1364,12 +1429,33 @@ def test_full_arp_collection_uses_normalized_records_and_raw_fallback(monkeypatc
 
 
 def test_arp_failure_is_classified_and_backed_off():
+    assert ip_locator_service._classify_arp_failure("Q-BRIDGE-MIB FDB table returned no rows") == "no_data"
+    assert ip_locator_service._arp_retry_delay("no_data", 1) == 0
     assert ip_locator_service._classify_arp_failure("SSH connection timed out") == "unreachable"
     assert ip_locator_service._classify_arp_failure("Authentication failed") == "auth_failed"
     assert ip_locator_service._arp_retry_delay("unreachable", 1) == 300
     assert ip_locator_service._arp_retry_delay("unreachable", 5) == 3600
     assert ip_locator_service._arp_retry_delay("auth_failed", 1) == 3600
     assert ip_locator_service._arp_retry_delay("unsupported", 1) == 86400
+
+
+def test_endpoint_cycle_uses_shared_lease_and_projects_after_collection(monkeypatch):
+    from contextlib import nullcontext
+    calls = []
+    monkeypatch.setattr(ip_locator_service, 'acquire_scheduler_lock', lambda *_a, **_k: nullcontext())
+    monkeypatch.setattr(ip_locator_service, 'run_endpoint_collector', lambda **kw: calls.append(('collect', kw)))
+    monkeypatch.setattr(ip_locator_service, 'project_endpoint_evidence', lambda: calls.append(('project', {})))
+    ip_locator_service.run_endpoint_fact_collector(device_ids={'device-1'})
+    assert calls == [('collect', {'refresh_arp': True, 'device_ids': {'device-1'}, 'sync_inventory': False, 'snmp_only': True}), ('project', {})]
+
+
+def test_endpoint_cycle_skips_when_manual_or_scheduled_cycle_holds_lease(monkeypatch):
+    monkeypatch.setattr(ip_locator_service, 'acquire_scheduler_lock', lambda *_a, **_k: None)
+    def unexpected(**_kw):
+        raise AssertionError('a competing cycle must not collect')
+    monkeypatch.setattr(ip_locator_service, 'run_endpoint_collector', unexpected)
+    monkeypatch.setattr(ip_locator_service, 'project_endpoint_evidence', unexpected)
+    ip_locator_service.run_endpoint_fact_collector()
 
 
 def test_full_arp_collection_returns_failure_metadata(monkeypatch):

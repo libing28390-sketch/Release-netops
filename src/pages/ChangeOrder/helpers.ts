@@ -26,6 +26,20 @@ export const fmtDate = (iso: string) => {
   } catch { return iso; }
 };
 
+/** Format an instant for a datetime-local control in the browser's local timezone. */
+export const formatLocalDateTimeInput = (date: Date): string => {
+  if (!Number.isFinite(date.getTime())) return '';
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+};
+
+/** Convert a datetime-local value into the UTC ISO representation stored by the API. */
+export const localDateTimeInputToIso = (value: string): string => {
+  const normalized = String(value || '').trim();
+  if (!normalized) return '';
+  const date = new Date(normalized);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : '';
+};
+
 export const statusLabel = (status: string, lang: string) =>
   STATUS_META[status]?.label?.[lang === 'zh' ? 'zh' : 'en'] ?? status;
 

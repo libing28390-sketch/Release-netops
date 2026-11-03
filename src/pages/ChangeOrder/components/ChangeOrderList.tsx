@@ -10,7 +10,7 @@ import Pagination from '../../../components/Pagination';
 import type { ChangeOrder, Summary } from '../types';
 import type { User as UserOption, SessionUser } from '../../../types';
 import { STATUS_META, PRIORITY_META, ORDER_TYPE_META } from '../constants';
-import { describeCurrentResponsibility, fmtTime, typeLabel, priorityLabel, statusLabel } from '../helpers';
+import { describeCurrentResponsibility, fmtTime, formatLocalDateTimeInput, localDateTimeInputToIso, typeLabel, priorityLabel, statusLabel } from '../helpers';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../../../components/ui/ActionIconButton';
 
 import { TableActionCell, TableActionHeader } from '../../../components/ui/TableActionColumn';
@@ -144,12 +144,12 @@ export const ChangeOrderList: React.FC<Props> = ({
     if (assigneeFilter) params.set('assignee', assigneeFilter);
     if (bookmarkFilter && currentUser.id) params.set('bookmarked', String(currentUser.id));
     if (orderTypeFilter) params.set('order_type', orderTypeFilter);
-    if (createdFrom) params.set('created_from', createdFrom);
-    if (createdTo) params.set('created_to', createdTo);
-    if (completedFrom) params.set('completed_from', completedFrom);
-    if (completedTo) params.set('completed_to', completedTo);
-    if (scheduledFrom) params.set('scheduled_from', scheduledFrom);
-    if (scheduledTo) params.set('scheduled_to', scheduledTo);
+    if (createdFrom) params.set('created_from', localDateTimeInputToIso(createdFrom));
+    if (createdTo) params.set('created_to', localDateTimeInputToIso(createdTo));
+    if (completedFrom) params.set('completed_from', localDateTimeInputToIso(completedFrom));
+    if (completedTo) params.set('completed_to', localDateTimeInputToIso(completedTo));
+    if (scheduledFrom) params.set('scheduled_from', localDateTimeInputToIso(scheduledFrom));
+    if (scheduledTo) params.set('scheduled_to', localDateTimeInputToIso(scheduledTo));
     if (viewTab === 'my_todo' && currentUser.username) {
       params.set('my_todo', currentUser.username);
     } else if (viewTab === 'group_todo' && Array.isArray(currentUser.change_groups) && currentUser.change_groups.length > 0) {
@@ -391,10 +391,10 @@ export const ChangeOrderList: React.FC<Props> = ({
                           key={preset.days}
                           onClick={() => {
                             const now = new Date();
-                            const to = now.toISOString().slice(0, 16);
+                            const to = formatLocalDateTimeInput(now);
                             const from = preset.days === 0
-                              ? new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString().slice(0, 16)
-                              : new Date(now.getTime() - preset.days * 86400000).toISOString().slice(0, 16);
+                              ? formatLocalDateTimeInput(new Date(now.getFullYear(), now.getMonth(), now.getDate()))
+                              : formatLocalDateTimeInput(new Date(now.getTime() - preset.days * 86400000));
                             setCreatedFrom(from);
                             setCreatedTo(to);
                             setPage(1);

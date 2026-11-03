@@ -9,7 +9,7 @@ const xlsxMocks = vi.hoisted(() => ({
   aoaToSheet: vi.fn((rows: unknown[][]) => ({ rows })),
   bookNew: vi.fn(() => ({ sheets: [] as unknown[] })),
   appendSheet: vi.fn((book: { sheets: unknown[] }, sheet: unknown) => { book.sheets.push(sheet); }),
-  writeFile: vi.fn(),
+  write: vi.fn(() => new Uint8Array([1, 2, 3])),
 }));
 
 vi.mock('xlsx', () => ({
@@ -18,7 +18,7 @@ vi.mock('xlsx', () => ({
     book_new: xlsxMocks.bookNew,
     book_append_sheet: xlsxMocks.appendSheet,
   },
-  writeFile: xlsxMocks.writeFile,
+  write: xlsxMocks.write,
 }));
 
 const systemJob = (index: number) => ({
@@ -104,6 +104,10 @@ describe('ScheduledJobs system schedule exports', () => {
   });
 
   it('exports all locally filtered system schedules using visible business columns only', async () => {
+    vi.stubGlobal('URL', class extends URL {
+      static createObjectURL = vi.fn(() => 'blob:prepared-export');
+      static revokeObjectURL = vi.fn();
+    });
     const allSystemJobs = [
       systemJob(1),
       {
@@ -136,9 +140,13 @@ describe('ScheduledJobs system schedule exports', () => {
     await screen.findByText('备份计划 1');
     await user.type(screen.getByPlaceholderText('按名称、脚本ID或命令搜索...'), '备份');
     await user.click(await screen.findByRole('button', { name: '导出表格' }));
-    await user.click(screen.getByRole('menuitem', { name: '导出 Excel (.xlsx)' }));
+    await waitFor(() => expect(screen.getByRole('menuitem', { name: '导出 Excel (.xlsx)' }).tagName).toBe('A'));
+    const excelLink = screen.getByRole('menuitem', { name: '导出 Excel (.xlsx)' }) as HTMLAnchorElement;
+    expect(excelLink.href).toMatch(/^blob:/);
+    await user.click(excelLink);
 
-    await waitFor(() => expect(xlsxMocks.writeFile).toHaveBeenCalledWith(expect.any(Object), 'scheduled-jobs-system.xlsx'));
+    expect(excelLink.download).toBe('scheduled-jobs-system.xlsx');
+    expect(xlsxMocks.write).toHaveBeenCalledWith(expect.any(Object), { bookType: 'xlsx', type: 'array' });
 
     const systemRequests = fetchMock.mock.calls
       .map(([input]) => new URL(String(input), 'http://localhost'))

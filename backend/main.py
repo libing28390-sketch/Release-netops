@@ -448,16 +448,17 @@ async def lifespan(app: FastAPI):
 
     reschedule_backup(schedule_cfg)
 
-    # Keep ARP tables fresh on the configured low-frequency interval. A
-    # service-level lease serializes this job with manual and NSOT sweeps.
-    from services.ip_locator_service import ARP_SWEEP_INTERVAL_SECONDS, run_arp_sweep
+    # One bounded SNMP-only cycle collects ARP and FDB together. This avoids
+    # competing ARP/FDB schedules and keeps their observation times aligned.
+    from services.ip_locator_service import ENDPOINT_FACT_INTERVAL_SECONDS, run_endpoint_fact_collector
     scheduler.add_job(
         synchronized_scheduler_job(
-            'arp_sweep_scheduler',
-            expire_seconds=max(60, ARP_SWEEP_INTERVAL_SECONDS * 2),
-        )(run_arp_sweep),
-        'interval', seconds=ARP_SWEEP_INTERVAL_SECONDS,
-        id='arp_sweep_scheduler', replace_existing=True,
+            'endpoint_fact_collector',
+            expire_seconds=max(60, ENDPOINT_FACT_INTERVAL_SECONDS * 2),
+        )(run_endpoint_fact_collector),
+        'interval', seconds=ENDPOINT_FACT_INTERVAL_SECONDS,
+        id='endpoint_fact_collector', replace_existing=True,
+        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=30),
         max_instances=1, coalesce=True,
     )
 

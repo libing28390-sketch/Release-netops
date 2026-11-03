@@ -15,6 +15,7 @@ from services.config_approval_service import approval_manifest_hash
 
 JOB_OPERATIONS = frozenset({"CREATE", "UPDATE", "ENABLE", "DISABLE", "DELETE", "EXECUTION"})
 DEVICE_SCOPES = frozenset({"all", "site", "role", "composite", "tag", "tags", "ip", "ids"})
+ROUTING_NEIGHBOR_ACTIONS = frozenset({"bgp_neighbors", "ospf_neighbors"})
 
 
 def _canonical_filter(value: Any, scope_type: str) -> str:
@@ -245,6 +246,26 @@ def normalize_job_manifest(
         raise ValueError("执行计划需要执行时间")
     if action == "nsot" and (commands or _string(source.get("script_id")) or source.get("is_config") or source.get("use_admin_creds")):
         raise ValueError("NSOT 系统采集作业不允许命令、脚本或管理凭据")
+    if action in ROUTING_NEIGHBOR_ACTIONS:
+        if commands or _string(source.get("script_id")) or source.get("is_config") or source.get("use_admin_creds"):
+            raise ValueError("BGP/OSPF 邻居采集是只读作业，不接受命令、脚本或管理凭据")
+        if job_type != "cron":
+            raise ValueError("BGP/OSPF 邻居采集只支持定时作业")
+        if op in {"CREATE", "UPDATE", "ENABLE", "EXECUTION"}:
+            try:
+                from croniter import croniter
+
+                schedule = croniter(_string(source.get("cron_expr")), datetime.now(timezone.utc))
+                previous = schedule.get_next(datetime)
+                for _ in range(3):
+                    following = schedule.get_next(datetime)
+                    if (following - previous).total_seconds() < 300:
+                        raise ValueError("BGP/OSPF 邻居采集周期不得短于 5 分钟")
+                    previous = following
+            except ValueError:
+                raise
+            except Exception as exc:
+                raise ValueError("BGP/OSPF 作业 Cron 表达式无效") from exc
     normalized = {
         "operation": op,
         "job_id": _string(job_id if job_id is not None else source.get("job_id")),

@@ -541,7 +541,7 @@ export const JobModal: React.FC<JobModalProps> = ({
                 </div>
 
                 {/* Action Types */}
-                <div className="grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1 sm:grid-cols-3 xl:grid-cols-5 [&>button]:whitespace-nowrap [&>button]:text-[11px] [&>button>svg]:shrink-0">
+                <div className="grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1 sm:grid-cols-3 xl:grid-cols-6 [&>button]:whitespace-nowrap [&>button]:text-[11px] [&>button>svg]:shrink-0">
                   <button
                     type="button"
                     onClick={() => {
@@ -575,26 +575,24 @@ export const JobModal: React.FC<JobModalProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      setForm(f => ({
-                        ...f,
-                        action_type: 'nsot',
-                        major_type: 'collection',
-                        commands: '',
-                        script_id: '',
-                        is_config: false,
-                        config_reason: '',
-                        use_admin_creds: false,
-                      }));
+                      setForm(f => ({ ...f, action_type: 'bgp_neighbors', major_type: 'collection', commands: '', script_id: '', is_config: false, config_reason: '', use_admin_creds: false }));
                       setApproverUsername('');
                     }}
-                    className={`py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
-                      form.action_type === 'nsot'
-                        ? 'bg-white shadow-2xs text-cyan-700 font-bold'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
+                    className={`py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${form.action_type === 'bgp_neighbors' ? 'bg-white shadow-2xs text-cyan-700' : 'text-slate-600 hover:text-slate-900'}`}
                   >
                     <RefreshCw className="w-3.5 h-3.5 text-cyan-600" />
-                    {zh ? 'NSOT 事实库' : 'NSOT Facts'}
+                    {zh ? 'BGP 邻居' : 'BGP Neighbors'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setForm(f => ({ ...f, action_type: 'ospf_neighbors', major_type: 'collection', commands: '', script_id: '', is_config: false, config_reason: '', use_admin_creds: false }));
+                      setApproverUsername('');
+                    }}
+                    className={`py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${form.action_type === 'ospf_neighbors' ? 'bg-white shadow-2xs text-cyan-700' : 'text-slate-600 hover:text-slate-900'}`}
+                  >
+                    <RefreshCw className="w-3.5 h-3.5 text-cyan-600" />
+                    {zh ? 'OSPF 邻居' : 'OSPF Neighbors'}
                   </button>
                   <button
                     type="button"
@@ -620,6 +618,13 @@ export const JobModal: React.FC<JobModalProps> = ({
                     {zh ? '脚本执行' : 'Script Run'}
                   </button>
                 </div>
+                {(form.action_type === 'bgp_neighbors' || form.action_type === 'ospf_neighbors') && (
+                  <div className="rounded-xl border border-cyan-200 bg-cyan-50/60 px-3 py-2.5 text-[11px] leading-relaxed text-slate-600">
+                    {form.action_type === 'bgp_neighbors'
+                      ? (zh ? '只采集 BGP 邻居状态（SNMP 优先，CLI 回退），不拉取完整 BGP 路由表。最短周期 5 分钟；目标数受审批上限约束。' : 'Collects BGP neighbor state only (SNMP first, CLI fallback), not the full BGP RIB. Minimum interval: 5 minutes; target count is bounded by approval.')
+                      : (zh ? '只采集 OSPF 邻居状态（SNMP 优先，CLI 回退）。最短周期 5 分钟；目标数受审批上限约束。' : 'Collects OSPF neighbor state only (SNMP first, CLI fallback). Minimum interval: 5 minutes; target count is bounded by approval.')}
+                  </div>
+                )}
                 {(form.action_type === 'command' || form.action_type === 'script_run') && (
                 <div className="flex items-start gap-2 text-[11px] leading-relaxed text-amber-700">
                   <ShieldCheck size={14} className="mt-0.5 shrink-0 text-amber-600" />
@@ -775,12 +780,6 @@ export const JobModal: React.FC<JobModalProps> = ({
                   <div className="flex items-start gap-2 text-[11px] leading-relaxed text-slate-500">
                     <Database size={15} className="text-cyan-600 shrink-0" />
                     <span>{zh ? '通过 SSH 采集运行配置，自动归档至版本库。' : 'Collects running configurations via SSH and archives each version.'}</span>
-                  </div>
-                )}
-                {form.action_type === 'nsot' && (
-                  <div className="flex items-start gap-2 text-[11px] leading-relaxed text-slate-500">
-                    <RefreshCw size={15} className="text-cyan-600 shrink-0" />
-                    <span>{zh ? '按设备模板只读采集所选范围内的在线设备，写入 NSOT 事实库。' : 'Collects online targets using their read-only templates and updates NSOT facts.'}</span>
                   </div>
                 )}
 

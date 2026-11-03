@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { Info, X, CalendarClock, Target, FileText, ExternalLink, Lock, ShieldCheck, Clock3, CircleAlert, CheckCircle2, ChevronLeft, ChevronRight, LoaderCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import Pagination from '../../../components/Pagination';
-import { NsotCollectionPreview, ScheduledJob, ScheduledJobRun, ScheduledJobRunsResponse } from '../types';
+import { ScheduledJob, ScheduledJobRun, ScheduledJobRunsResponse } from '../types';
 import { describeCron, describeScope } from '../helpers';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
@@ -14,7 +14,6 @@ interface JobDetailModalProps {
   openScriptManagement: (scriptId: string) => void;
   availableScripts: Array<{ id: string; name: string; status: string; category: string; platform?: string }>;
   openEditModal: (job: ScheduledJob) => void;
-  fetchNsotCollectionPreview: (jobId: string, signal: AbortSignal) => Promise<NsotCollectionPreview>;
   fetchScheduledJobDetail: (jobId: string, signal: AbortSignal) => Promise<ScheduledJob>;
   fetchScheduledJobRuns: (jobId: string, page: number, perPage: number, signal: AbortSignal) => Promise<ScheduledJobRunsResponse>;
   resolveScheduledJobRun: (jobId: string, runId: string, body: { outcome: 'succeeded' | 'partial_failure' | 'failed'; note: string }) => Promise<ScheduledJobRun>;
@@ -110,7 +109,6 @@ export const JobDetailModal: React.FC<JobDetailModalProps> = ({
   openScriptManagement,
   availableScripts,
   openEditModal,
-  fetchNsotCollectionPreview,
   fetchScheduledJobDetail,
   fetchScheduledJobRuns,
   resolveScheduledJobRun,
@@ -138,10 +136,6 @@ export const JobDetailModal: React.FC<JobDetailModalProps> = ({
   const [resolutionError, setResolutionError] = useState('');
   const [resolutionForbidden, setResolutionForbidden] = useState(false);
   const [resolutionBusy, setResolutionBusy] = useState(false);
-  const [nsotPreview, setNsotPreview] = useState<NsotCollectionPreview | null>(null);
-  const [nsotPreviewLoading, setNsotPreviewLoading] = useState(false);
-  const [nsotPreviewError, setNsotPreviewError] = useState('');
-  const [nsotPreviewRetry, setNsotPreviewRetry] = useState(0);
 
   useEffect(() => {
     if (!isOpen || !detailJob) {
@@ -196,33 +190,6 @@ export const JobDetailModal: React.FC<JobDetailModalProps> = ({
       .finally(() => { if (!controller.signal.aborted) setRunsLoading(false); });
     return () => controller.abort();
   }, [detailJob?.id, fetchScheduledJobRuns, isOpen, runsPage, runsPageSize, runsRetry, zh]);
-
-  useEffect(() => {
-    if (!isOpen || detailJob?.action_type !== 'nsot') {
-      setNsotPreview(null);
-      setNsotPreviewError('');
-      setNsotPreviewLoading(false);
-      return;
-    }
-
-    const controller = new AbortController();
-    setNsotPreview(null);
-    setNsotPreviewError('');
-    setNsotPreviewLoading(true);
-    void fetchNsotCollectionPreview(detailJob.id, controller.signal)
-      .then((preview) => {
-        if (!controller.signal.aborted) setNsotPreview(preview);
-      })
-      .catch((error: unknown) => {
-        if (controller.signal.aborted) return;
-        setNsotPreviewError(error instanceof Error ? error.message : (zh ? '采集预览加载失败。' : 'Could not load the collection preview.'));
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setNsotPreviewLoading(false);
-      });
-
-    return () => controller.abort();
-  }, [detailJob?.action_type, detailJob?.id, fetchNsotCollectionPreview, isOpen, nsotPreviewRetry, zh]);
 
   if (!isOpen || !detailJob) return null;
 
@@ -369,7 +336,10 @@ export const JobDetailModal: React.FC<JobDetailModalProps> = ({
                     <div className="min-w-0">
                       <p className="text-xs font-semibold text-slate-800">
                         {detailJob.action_type === 'backup' ? (zh ? '配置备份' : 'Configuration backup') :
-                         detailJob.action_type === 'nsot' ? (zh ? 'NSOT 网络事实库采集' : 'NSOT facts collection') :
+                         detailJob.action_type === 'arp_sweep' ? (zh ? 'ARP 分批采集' : 'Bounded ARP sweep') :
+                         detailJob.action_type === 'bgp_neighbors' ? (zh ? 'BGP 邻居采集' : 'BGP neighbor collection') :
+                         detailJob.action_type === 'ospf_neighbors' ? (zh ? 'OSPF 邻居采集' : 'OSPF neighbor collection') :
+                         detailJob.action_type === 'nsot' ? (zh ? '全量 NSOT 作业（已下线）' : 'Full NSOT job (retired)') :
                          detailJob.action_type === 'inspection' ? (zh ? '智能巡检' : 'Smart inspection') :
                          detailJob.action_type === 'command' ? (zh ? '命令执行' : 'Command execution') :
                          (zh ? '自动化脚本' : 'Automation script')}
@@ -395,8 +365,14 @@ export const JobDetailModal: React.FC<JobDetailModalProps> = ({
                               ? (zh ? '使用平台内置巡检项。' : 'Uses built-in inspection checks.')
                               : detailJob.action_type === 'backup'
                                 ? (zh ? '采集设备配置并进行版本比对。' : 'Collects device configuration and tracks versions.')
-                                : detailJob.action_type === 'nsot'
-                                  ? (zh ? '按目标范围采集网络事实。' : 'Collects network facts for the selected scope.')
+                                : detailJob.action_type === 'bgp_neighbors'
+                                  ? (zh ? '仅采集 BGP 邻居状态，不采集完整 BGP 路由表。' : 'Collects BGP neighbor state only; it does not collect the full BGP RIB.')
+                                  : detailJob.action_type === 'ospf_neighbors'
+                                    ? (zh ? '仅采集 OSPF 邻居状态。' : 'Collects OSPF neighbor state only.')
+                                    : detailJob.action_type === 'arp_sweep'
+                                      ? (zh ? '系统内置分批 ARP 扫描。' : 'Built-in bounded ARP sweep.')
+                                      : detailJob.action_type === 'nsot'
+                                        ? (zh ? '全量 NSOT 定时采集已下线；资产 NSOT 页面仍支持手动更新。' : 'Full NSOT scheduling is retired. Manual refresh remains available on the Assets NSOT page.')
                                 : (zh ? '未关联脚本。' : 'No script is linked.')}
                       </div>
                     </div>
@@ -404,154 +380,6 @@ export const JobDetailModal: React.FC<JobDetailModalProps> = ({
                 </div>
               </div>
             </div>
-
-            {detailJob.action_type === 'nsot' && (
-              <section className="rounded-2xl border border-cyan-200/80 bg-cyan-50/40 p-4 space-y-4" aria-label={zh ? 'NSOT 采集预览' : 'NSOT collection preview'}>
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <h4 className="text-sm font-bold text-slate-800">{zh ? '采集指标与命令预览' : 'Collection facts & command preview'}</h4>
-                    <p className="mt-1 text-[10px] leading-relaxed text-slate-500">
-                      {zh
-                        ? '按当前在线目标、设备模板和平台生成的只读预览；不会连接设备。运行时发现 VRF/协议、平台能力及命令回退可能改变实际命令。'
-                        : 'Read-only preview from current online targets, device templates, and platforms. It does not connect to devices. Runtime VRF/protocol discovery, platform capabilities, and fallbacks can change the actual commands.'}
-                    </p>
-                  </div>
-                  {nsotPreview && (
-                    <span className="shrink-0 rounded-full bg-white/80 px-2.5 py-1 text-[10px] font-semibold text-cyan-800">
-                      {zh ? `当前在线目标 ${nsotPreview.target_count} 台` : `${nsotPreview.target_count} current online targets`}
-                    </span>
-                  )}
-                </div>
-
-                {nsotPreviewLoading && (
-                  <div role="status" className="rounded-xl border border-cyan-100 bg-white/70 px-3 py-4 text-xs text-slate-500">
-                    {zh ? '正在生成采集预览…' : 'Generating collection preview…'}
-                  </div>
-                )}
-                {!nsotPreviewLoading && nsotPreviewError && (
-                  <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-3 text-xs text-rose-800">
-                    <span>{nsotPreviewError}</span>
-                    <button type="button" onClick={() => setNsotPreviewRetry((attempt) => attempt + 1)} className="rounded-lg border border-rose-300 px-2.5 py-1.5 font-semibold hover:bg-rose-100">
-                      {zh ? '重试' : 'Retry'}
-                    </button>
-                  </div>
-                )}
-                {!nsotPreviewLoading && !nsotPreviewError && nsotPreview?.target_count === 0 && (
-                  <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-xs text-amber-800">
-                    {zh ? '当前作业范围内没有在线目标设备，因此本次不会下发采集命令。' : 'No online devices currently match this job scope, so no collection commands would be sent.'}
-                  </div>
-                )}
-                {!nsotPreviewLoading && !nsotPreviewError && nsotPreview && nsotPreview.target_count > 0 && nsotPreview.groups.length === 0 && (
-                  <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-xs text-amber-800">
-                    {zh ? '目标设备当前没有可展示的采集项。请检查设备策略和查看权限。' : 'No collection items are available for the current targets. Check device policies and your access scope.'}
-                  </div>
-                )}
-
-                {!nsotPreviewLoading && nsotPreview?.groups.map((group, groupIndex) => {
-                  const deviceSoftwareVersion = group.software_version;
-                  const registryReleaseNumber = group.registry_release_number || group.release_number;
-                  return (
-                  <details key={`${group.platform}:${group.template_id}:${group.role || ''}:${groupIndex}`} open={groupIndex === 0} className="rounded-xl border border-slate-200 bg-white/90">
-                    <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-2 px-3 py-3 text-xs">
-                      <span className="font-bold text-slate-800">
-                        {group.platform_label || group.platform || (zh ? '未知平台' : 'Unknown platform')}
-                        {group.profile_label && <span className="ml-1.5 font-medium text-slate-600">· {group.profile_label}</span>}
-                        {deviceSoftwareVersion && <span className="ml-1.5 font-normal text-slate-500">({zh ? '设备软件版本' : 'device software version'} {deviceSoftwareVersion})</span>}
-                        {registryReleaseNumber && <span className="ml-1.5 font-normal text-slate-500">({zh ? 'Registry release_number' : 'Registry release_number'} {registryReleaseNumber})</span>}
-                        <span className="mx-1.5 text-slate-300">·</span>
-                        {group.template_name || group.template_id}
-                        {group.role && <span className="ml-1.5 font-normal text-slate-500">({group.role})</span>}
-                      </span>
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold text-slate-600">
-                        {zh ? `${group.device_count} 台` : `${group.device_count} devices`}
-                      </span>
-                    </summary>
-                    <div className="space-y-3 border-t border-slate-100 p-3">
-                      <div>
-                        <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-500">{zh ? '采集事实 / 指标' : 'Facts / metrics'}</p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {group.collectors.map((collector) => (
-                            <span key={collector.key} className="inline-flex items-center gap-1 rounded-full bg-cyan-50 px-2 py-1 text-[10px] text-cyan-900">
-                              <span className="font-semibold">{collector.label}</span>
-                              <span className="text-cyan-700/70">{collector.transport}</span>
-                              {collector.conditional && <span className="rounded bg-amber-100 px-1 text-amber-800">{zh ? '条件' : 'Conditional'}</span>}
-                              {collector.status && <span className={`rounded px-1 ${getCollectorStatusClass(collector.status)}`}>{getCollectorStatusLabel(collector.status, zh)}</span>}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div>
-                        <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-500">{zh ? '对应只读命令' : 'Related read-only commands'}</p>
-                        <div className="space-y-2">
-                          {group.collectors.map((collector) => (
-                            <div key={collector.key} className="grid gap-1 sm:grid-cols-[minmax(8rem,0.7fr)_minmax(0,1.5fr)] sm:gap-3">
-                              <div className="text-[10px] font-semibold text-slate-600">
-                                {collector.label}
-                                {collector.conditional && <span className="ml-1 font-normal text-amber-700">{zh ? '（按条件）' : '(conditional)'}</span>}
-                                {collector.status && <span className={`ml-1 inline-block rounded px-1 py-0.5 text-[9px] ${getCollectorStatusClass(collector.status)}`}>{getCollectorStatusLabel(collector.status, zh)}</span>}
-                              </div>
-                              <div className="space-y-1">
-                                {collector.commands.length > 0 ? collector.commands.map((command, commandIndex) => (
-                                  <div key={`${command.action_code}:${commandIndex}`}>
-                                    <p className="mb-0.5 text-[9px] text-slate-500"><span className="font-semibold">action_code: </span><code className="break-all">{command.action_code || '—'}</code></p>
-                                    {command.command ? (
-                                      <code className="block overflow-x-auto rounded-md bg-slate-900 px-2 py-1.5 font-mono text-[10px] text-cyan-100">{command.command}</code>
-                                    ) : (
-                                      <p className="rounded-md bg-slate-100 px-2 py-1.5 text-[10px] font-semibold text-amber-700">
-                                        {zh ? '此版本未解析到可下发命令' : 'No command resolved for this software release'}
-                                      </p>
-                                    )}
-                                    {(command.command_source || command.textfsm_template) && (
-                                      <p className="mt-0.5 text-[9px] text-slate-400">
-                                        {command.command_source && <span>{zh ? `命令来源：${command.command_source}` : `Command source: ${command.command_source}`}</span>}
-                                        {command.textfsm_template && <span className="ml-2">TextFSM: {command.textfsm_template}{command.textfsm_source ? ` · ${command.textfsm_source}` : ''}</span>}
-                                      </p>
-                                    )}
-                                    {(command.condition || collector.conditional) && (
-                                      <p className="mt-0.5 text-[9px] leading-relaxed text-amber-700">
-                                        {command.condition || (zh ? '设备命令是否运行由运行时能力或发现结果决定。' : 'Execution depends on runtime capabilities or discovery results.')}
-                                      </p>
-                                    )}
-                                    {command.status === 'unsupported' && collector.status !== 'unsupported' && collector.status !== 'parser_missing' && !command.condition && (
-                                      <p className="mt-0.5 text-[9px] text-rose-700">
-                                        {zh ? '当前软件版本无对应 action 或 TextFSM 命令模板。' : 'No matching action or TextFSM command template exists for this software release.'}
-                                      </p>
-                                    )}
-                                  </div>
-                                )) : (
-                                  <p className="text-[10px] text-slate-400">
-                                    {getNoCommandMessage(collector.status, collector.transport, zh)}
-                                  </p>
-                                )}
-                                {collector.commands.length > 0 && collector.status && ['unsupported', 'parser_missing', 'partial', 'projection'].includes(collector.status.toLowerCase()) && (
-                                  <p className={`mt-1 text-[9px] leading-relaxed ${collector.status === 'unsupported' ? 'text-rose-700' : 'text-amber-700'}`}>
-                                    {getCollectorStatusDetail(collector.status, zh)}
-                                  </p>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      {group.notes.length > 0 && (
-                        <ul className="list-disc space-y-1 pl-4 text-[9px] leading-relaxed text-slate-500">
-                          {group.notes.map((note, noteIndex) => <li key={`${noteIndex}:${note}`}>{note}</li>)}
-                        </ul>
-                      )}
-                    </div>
-                  </details>
-                  );
-                })}
-
-                {nsotPreview && (
-                  <p className="text-right text-[9px] text-slate-400">
-                    {zh ? '预览生成时间：' : 'Preview generated: '}{new Date(nsotPreview.generated_at).toLocaleString(zh ? 'zh-CN' : 'en-US')}
-                  </p>
-                )}
-              </section>
-            )}
 
             <section className="rounded-2xl border border-cyan-100 bg-cyan-50/35 p-4" aria-label={zh ? '作业授权' : 'Job authorization'}>
               <div className="mb-3 flex items-start gap-2">

@@ -5,7 +5,7 @@ import {
   CalendarClock, Plus, X, Trash2, RotateCcw, Zap, Pencil,
   ChevronDown, Info, Shield, CheckCircle2, AlertTriangle,
   Database, Activity, Power, PowerOff, RefreshCw,
-  Search, Eye, Target, FileText, Lock, ChevronUp, Filter, ShieldAlert, User, Layers, Settings2, Terminal
+  Search, Eye, Target, FileText, Lock, ChevronUp, Filter, ShieldAlert, User, Settings2, Terminal
 } from 'lucide-react';
 import { ActionIconButton } from '../../components/ui/ActionIconButton';
 import { TableActionCell, TableActionHeader } from '../../components/ui/TableActionColumn';
@@ -18,7 +18,7 @@ import { hasTagFilterConditions, parseTagFilter, type TagFilterConfig, EMPTY_TAG
 import { ColumnSettingsButton, ListSearchInput, ListToolbar, TableHeaderMultiSelectFilter } from '../../components/ui/TableListControls';
 import { loadVisibleColumnKeys, saveVisibleColumnKeys, type ColumnPreferenceDefinition } from '../../components/ui/columnPreferences';
 
-import { ScheduledJob, EligibleApprover, SystemScheduledJob, FormState, ValidatedDevice, ScheduledJobsTabProps, type ApprovalVerificationMethod, type CollectionPlanFilters, type NsotCollectionPreview, type ScheduledJobAuthorizationGrantInput, type ScheduledJobRun, type ScheduledJobRunsResponse } from './types';
+import { ScheduledJob, EligibleApprover, SystemScheduledJob, FormState, ValidatedDevice, ScheduledJobsTabProps, type ApprovalVerificationMethod, type CollectionPlanFilters, type ScheduledJobAuthorizationGrantInput, type ScheduledJobRun, type ScheduledJobRunsResponse } from './types';
 import { INITIAL_FORM, ACTION_TYPES, MAJOR_CATEGORIES } from './constants';
 import { describeCron, describeScope } from './helpers';
 
@@ -27,7 +27,6 @@ import CountdownText from './components/CountdownText';
 import { DeleteApprovalModal } from './components/DeleteApprovalModal';
 import { JobDetailModal } from './components/JobDetailModal';
 import { JobModal } from './components/JobModal';
-import { BulkCollectionPlanModal } from './components/BulkCollectionPlanModal';
 
 type ScheduledJobOperation = 'CREATE' | 'UPDATE' | 'ENABLE' | 'DISABLE' | 'DELETE';
 
@@ -96,7 +95,6 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
 
   // Modal
   const [showAddJob, setShowAddJob] = useState(false);
-  const [bulkCollectionPlanOpen, setBulkCollectionPlanOpen] = useState(false);
   const [detailJob, setDetailJob] = useState<ScheduledJob | null>(null);
   const [editingJob, setEditingJob] = useState<ScheduledJob | null>(null);
   const [presetOpen, setPresetOpen] = useState(false);
@@ -256,25 +254,6 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
       if (requestSequence === jobsRequestSequence.current) setLoading(false);
     }
   }, [authHeaders, page, pageSize, appliedSearch, activeCategory, jobStatusFilters]);
-
-  const fetchNsotCollectionPreview = useCallback(async (jobId: string, signal: AbortSignal): Promise<NsotCollectionPreview> => {
-    const response = await fetch(`/api/scheduled-jobs/${encodeURIComponent(jobId)}/nsot-preview`, {
-      headers: authHeaders,
-      signal,
-    });
-    const payload = await response.json().catch(() => null) as {
-      data?: NsotCollectionPreview;
-      detail?: string;
-      message?: string;
-    } | null;
-    if (!response.ok) {
-      throw new Error(payload?.detail || payload?.message || (zh ? '无法加载 NSOT 采集预览。' : 'Unable to load the NSOT collection preview.'));
-    }
-    if (!payload?.data || !Array.isArray(payload.data.groups)) {
-      throw new Error(zh ? '服务器返回的 NSOT 预览格式无法识别。' : 'The server returned an invalid NSOT preview.');
-    }
-    return payload.data;
-  }, [authHeaders, zh]);
 
   const fetchScheduledJobDetail = useCallback(async (jobId: string, signal: AbortSignal): Promise<ScheduledJob> => {
     const response = await fetch(`/api/scheduled-jobs/${encodeURIComponent(jobId)}`, { headers: authHeaders, signal });
@@ -511,24 +490,6 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
     }
   };
 
-  const openScheduledJobForCollectionScope = (filters: CollectionPlanFilters) => {
-    const serializedFilters = JSON.stringify(filters);
-    resetFormState();
-    setForm({
-      ...INITIAL_FORM,
-      name: zh ? 'NSOT 范围周期采集' : 'NSOT scoped collection',
-      action_type: 'nsot',
-      device_scope: 'composite',
-      device_filter: serializedFilters,
-      major_type: 'collection',
-    });
-    setEditingJob(null);
-    setEnablingJobId(null);
-    setPresetOpen(false);
-    setBulkCollectionPlanOpen(false);
-    setShowAddJob(true);
-  };
-
   const openEditModal = (job: ScheduledJob) => {
     if (job.authorization_mode === 'system') {
       showToast(zh ? '系统内置作业由平台托管，此处仅可查看。' : 'This built-in job is platform-managed and can only be viewed here.', 'info');
@@ -546,7 +507,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
       is_config: !!job.is_config,
       config_reason: job.config_reason || '',
       use_admin_creds: !!job.use_admin_creds,
-      major_type: (job.action_type === 'backup' || job.action_type === 'nsot' || job.action_type === 'inspection') ? 'collection' : 'change',
+      major_type: (job.action_type === 'backup' || job.action_type === 'nsot' || job.action_type === 'inspection' || job.action_type === 'bgp_neighbors' || job.action_type === 'ospf_neighbors') ? 'collection' : 'change',
       enabled: Number(job.enabled) === 1 || job.status === 'reauthorization_required',
       authorization_grant: {
         valid_until: job.authorization_grant?.valid_until || '',
@@ -1345,16 +1306,6 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
               <RotateCcw size={12} className={loading ? 'animate-spin' : ''} />
               {zh ? '刷新' : 'Refresh'}
             </button>
-            {!showAddJob && (
-              <button
-                type="button"
-                onClick={() => setBulkCollectionPlanOpen(true)}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-blue-200 bg-white px-3.5 py-2.5 text-xs font-bold text-blue-700 shadow-sm transition hover:border-blue-300 hover:bg-blue-50"
-              >
-                <Layers size={15} />
-                {zh ? '批量采集模板' : 'Bulk Collection Templates'}
-              </button>
-            )}
           </>
         }
       />
@@ -1869,7 +1820,6 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
         }}
         availableScripts={availableScripts}
         openEditModal={openEditModal}
-        fetchNsotCollectionPreview={fetchNsotCollectionPreview}
         fetchScheduledJobDetail={fetchScheduledJobDetail}
         fetchScheduledJobRuns={fetchScheduledJobRuns}
         resolveScheduledJobRun={resolveScheduledJobRun}
@@ -2069,14 +2019,6 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
         confirmAddCandidates={confirmAddCandidates}
         language={language}
       />
-
-      {bulkCollectionPlanOpen && (
-        <BulkCollectionPlanModal
-          language={language}
-          onClose={() => setBulkCollectionPlanOpen(false)}
-          onCreateScheduledJob={openScheduledJobForCollectionScope}
-        />
-      )}
 
     </div>
   );

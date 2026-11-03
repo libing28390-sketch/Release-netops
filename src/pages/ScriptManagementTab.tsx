@@ -10,7 +10,6 @@ import PageHero from '../components/PageHero';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
 import { ListToolbar } from '../components/ui/TableListControls';
 import { useEscapeClose } from '../hooks/useEscapeClose';
-import NSOTCollectionOperations from './NSOTCollectionOperations';
 import { fetchAllPaginatedItems } from '../utils/pagination';
 import {
   TEXTFSM_VENDOR_OPTIONS,
@@ -331,7 +330,7 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
       <PageHero
         icon={Terminal}
         title={zh ? '操作管理' : 'Ops'}
-        subtitle={zh ? '自动化脚本、系统操作与 NSOT 采集命令' : 'Automation scripts, system operations, and NSOT collection commands'}
+        subtitle={zh ? '自动化脚本与系统操作' : 'Automation scripts and system operations'}
         accent={BRAND_COLOR}
         compact={view === 'nsot'}
       />
@@ -573,17 +572,6 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
           </div>
         </div>}
 
-        {view === 'nsot' && (
-          <div aria-label={zh ? 'NSOT 采集操作' : 'NSOT collection operations'}>
-            <NSOTCollectionOperations
-              language={language}
-              searchText={searchQuery}
-              platformFilter={nsotVendorFilter}
-              createRequestId={nsotCreateRequest}
-              refreshRequestId={nsotRefreshRequest}
-            />
-          </div>
-        )}
       </div>
 
 
