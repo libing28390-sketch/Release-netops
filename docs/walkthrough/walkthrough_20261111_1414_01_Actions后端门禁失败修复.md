@@ -19,6 +19,7 @@ GitHub Actions `Build and Sync to Release Repo` #774 的后端 pytest release ga
 - `backend/tests/ipam/test_ipam_read_scope_matrix.py`
 - `backend/tests/test_ipam_capacity_and_reconciliation.py`
 - `backend/tests/vendor_audit/test_cmdb_cli_collection.py`
+- `src/pages/HomePage.test.tsx`
 - `docs/plans/plan_20261111_1414_01_Actions后端门禁失败修复.md`
 - 本 walkthrough 与 `docs/fixes/fix_*.md`
 
@@ -34,3 +35,10 @@ GitHub Actions `Build and Sync to Release Repo` #774 的后端 pytest release ga
 - 本地未重跑完整后端 4,000+ 测试套件；推送后的 GitHub Actions 全量 release gate 是最终确认。
 - 未运行前端测试（本批只有后端测试契约/fixture 改动），未运行数据库迁移或部署，未连接真实网络设备。
 - 最新修复提交的 Actions 结果待推送后核验。若新 run 仍失败，需按该 SHA 的具体 job 日志继续处理，不把局部 76 项通过等同于全量 CI 成功。
+
+## Actions #775 前端在线率断言跟进
+
+- #775 的后端 pytest 门禁已通过；随后前端检查中 Vitest 931 项有 930 项通过、1 项失败。浏览器和用户日志均显示唯一失败来自 `HomePage.test.tsx` 期待 `75%`，而页面现有显示为 `75.00%`。
+- `HomePage.tsx` 对非满在线率执行两位小数格式化。测试值已改为 `75.00%`；在线率计算、满在线率显示规则与组件 UI 未改。
+- 本地 `npx vitest run src/pages/HomePage.test.tsx`：1 passed；`npm run lint -- --pretty false`：通过。
+- 该前端测试修复的后续 Actions run 尚未推送验证；只有最新 SHA 的完整 workflow 全绿才能标记 CI 完成。

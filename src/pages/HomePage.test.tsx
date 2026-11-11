@@ -37,7 +37,7 @@ describe('HomePage asset summary', () => {
       />,
     );
 
-    await waitFor(() => expect(screen.getByText('75%')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('75.00%')).toBeTruthy());
 
     expect(screen.getByText('3 / 4')).toBeTruthy();
     expect(fetch).toHaveBeenCalledWith(
