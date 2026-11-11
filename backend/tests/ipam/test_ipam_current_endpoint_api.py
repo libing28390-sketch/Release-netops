@@ -285,7 +285,7 @@ def test_current_endpoint_routes_use_only_current_observations_and_explicit_writ
     listed = api.api_list_discovered_endpoints(
         site_id="", vrf_id="", device_id="", q="", kind="all",
         evidence_status="", registration_status="", network_scope="all",
-        page=1, page_size=50, user=user,
+        endpoint_class="all", page=1, page_size=50, user=user,
     )
     assert listed["total"] == 2
     mapped = next(item for item in listed["items"] if item["source_device_id"] == "current-endpoint-mapped")
@@ -316,7 +316,7 @@ def test_current_endpoint_routes_use_only_current_observations_and_explicit_writ
     raw_context_list = api.api_list_discovered_endpoints(
         site_id="", vrf_id="", device_id="current-endpoint-unmapped", q="", kind="all",
         evidence_status="", registration_status="", network_scope="all",
-        page=1, page_size=50, user=user,
+        endpoint_class="all", page=1, page_size=50, user=user,
     )
     raw_context_siblings = [item for item in raw_context_list["items"] if item["ip"] == raw_context_ip]
     assert len(raw_context_siblings) == 2
@@ -327,7 +327,7 @@ def test_current_endpoint_routes_use_only_current_observations_and_explicit_writ
     repeated_list = api.api_list_discovered_endpoints(
         site_id="", vrf_id="", device_id="", q="", kind="all",
         evidence_status="", registration_status="", network_scope="all",
-        page=1, page_size=50, user=user,
+        endpoint_class="all", page=1, page_size=50, user=user,
     )
     repeated_mapped = next(item for item in repeated_list["items"] if item["source_device_id"] == "current-endpoint-mapped")
     assert repeated_mapped["id"] == mapped["id"]
@@ -347,7 +347,7 @@ def test_current_endpoint_routes_use_only_current_observations_and_explicit_writ
     fdb_list = api.api_list_discovered_endpoints(
         site_id="", vrf_id="", device_id="", q="", kind="mac",
         evidence_status="", registration_status="", network_scope="all",
-        page=1, page_size=50, user=user,
+        endpoint_class="all", page=1, page_size=50, user=user,
     )
     assert fdb_list["total"] == 2
     fdb_item = fdb_list["items"][0]
@@ -355,7 +355,7 @@ def test_current_endpoint_routes_use_only_current_observations_and_explicit_writ
     pending_fdb_list = api.api_list_discovered_endpoints(
         site_id="", vrf_id="", device_id="", q="", kind="mac",
         evidence_status="scope_pending", registration_status="", network_scope="all",
-        page=1, page_size=50, user=user,
+        endpoint_class="all", page=1, page_size=50, user=user,
     )
     assert pending_fdb_list["total"] == 2
     assert fdb_item["source_type"] == "mac"
@@ -574,7 +574,7 @@ def test_current_endpoint_routes_use_only_current_observations_and_explicit_writ
     duplicate_list = api.api_list_discovered_endpoints(
         site_id="", vrf_id="", device_id="", q="", kind="all",
         evidence_status="", registration_status="", network_scope="all",
-        page=1, page_size=50, user=user,
+        endpoint_class="all", page=1, page_size=50, user=user,
     )
     duplicate_observation = next(
         item for item in duplicate_list["items"]

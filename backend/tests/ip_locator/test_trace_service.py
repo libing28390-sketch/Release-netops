@@ -583,7 +583,7 @@ def test_trace_follows_core_to_direct_then_arp_mac_and_terminal(monkeypatch, arp
             "_targeted_mac_query": staticmethod(lambda device, mac, force_refresh=False: [
                 {"mac": mac, "port": "GigabitEthernet1/0/10", "vlan": "10", "type": "dynamic"}
             ]),
-            "_load_trace_port_identity": staticmethod(lambda conn, device_id, port: {}),
+            "_load_trace_port_identity": staticmethod(lambda *_args, **_kwargs: {}),
             "_trace_identity_confirms_access_terminal": staticmethod(lambda identity: True),
             "_collect_lldp_from_device": staticmethod(lambda device: []),
             "_normalize_mac": staticmethod(lambda value: str(value).replace(".", "").replace("-", "").replace(":", "").lower()),

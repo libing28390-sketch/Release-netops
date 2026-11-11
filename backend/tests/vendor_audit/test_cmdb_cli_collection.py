@@ -455,6 +455,10 @@ def test_cmdb_interface_job_uses_one_cli_session_and_commits_snapshot(
             "interface": "Vlan-interface219",
             "ip_address": "10.219.0.1",
             "prefix_length": 24,
+            "context_source": "cli",
+            "context_type": "unknown",
+            "local_context_key": "",
+            "local_context_name": "",
         }],
         "admin_status": "up",
         "oper_status": "up",
@@ -475,6 +479,8 @@ def test_cmdb_ip_action_keeps_multiple_addresses_and_rejects_unparsed_data(monke
     addresses, metadata = cmdb_cli_collection_service._collect_cli_ip_addresses(_device(), session)
     assert addresses == [{
         "interface": "Vlan-interface219", "ip_address": "10.219.0.1", "prefix_length": 24,
+        "context_source": "cli", "context_type": "unknown",
+        "local_context_key": "", "local_context_name": "",
     }]
     assert metadata == {}
 
@@ -581,6 +587,10 @@ Vlan-interface1 up up 192.0.2.1 gateway
         "interface": "Vlan-interface1",
         "ip_address": "192.0.2.1",
         "prefix_length": 24,
+        "context_source": "cli",
+        "context_type": "unknown",
+        "local_context_key": "",
+        "local_context_name": "",
     }]
     assert metadata["source_action_code"] == "get_interfaces"
     assert metadata["ip_action_command"] == "display ip interface brief"
@@ -651,6 +661,10 @@ def test_cmdb_ip_action_accepts_h3c_ragg_aggregate_interface(monkeypatch):
         "interface": "RAGG34",
         "ip_address": "192.0.2.1",
         "prefix_length": 24,
+        "context_source": "cli",
+        "context_type": "unknown",
+        "local_context_key": "",
+        "local_context_name": "",
     }]
 
 
@@ -677,6 +691,10 @@ def test_cmdb_ip_action_unwraps_singleton_textfsm_list_fields(monkeypatch):
         "interface": "Vlan-interface219",
         "ip_address": "10.219.0.1",
         "prefix_length": 24,
+        "context_source": "cli",
+        "context_type": "unknown",
+        "local_context_key": "",
+        "local_context_name": "",
     }]
 
 

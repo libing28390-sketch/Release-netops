@@ -104,11 +104,13 @@ def _connection() -> postgresql_test_driver.Connection:
         CREATE TABLE vrfs (id TEXT PRIMARY KEY, vrf_name TEXT, tenant_id TEXT);
         ALTER TABLE prefixes ADD COLUMN tenant_id TEXT DEFAULT 'tenant-default';
         ALTER TABLE prefixes ADD COLUMN vrf_id TEXT DEFAULT '';
+        ALTER TABLE prefixes ADD COLUMN address_space_id TEXT;
         ALTER TABLE ip_addresses ADD COLUMN tenant_id TEXT DEFAULT 'tenant-default';
         ALTER TABLE ip_addresses ADD COLUMN vrf_id TEXT DEFAULT '';
         ALTER TABLE devices ADD COLUMN tenant_id TEXT DEFAULT 'tenant-default';
         ALTER TABLE devices ADD COLUMN site_id TEXT DEFAULT '';
         ALTER TABLE physical_assets ADD COLUMN site_id TEXT DEFAULT '';
+        ALTER TABLE sites ADD COLUMN tenant_id TEXT DEFAULT 'tenant-default';
         '''
     )
     return conn
@@ -235,21 +237,20 @@ def test_reconciliation_delegates_to_independent_discovery_evidence(monkeypatch)
     assert captured['kwargs']['active_tab'] == ''
 
 
-def test_ip_inventory_merges_discovered_endpoints_by_site_and_prefix(monkeypatch):
-    # This fixture isolates legacy endpoint inventory; CLI snapshots have separate integration coverage.
+def test_ip_inventory_omits_unscoped_legacy_endpoint_from_prefix_inventory(monkeypatch):
+    # A site/IP match alone cannot supply the address-space identity required by IPAM.
     monkeypatch.setattr(ipam_service, '_current_cmdb_interface_ip_observations', lambda _conn: [])
+    monkeypatch.setattr(
+        'services.ipam_current_endpoint_observation_service.list_current_endpoint_observations',
+        lambda *_args, **_kwargs: [],
+    )
     conn = _connection()
     monkeypatch.setattr(ipam_service, 'get_db_connection', lambda: conn)
 
     data = ipam_service.list_ip_inventory(prefix_id='prefix-capacity')
 
-    assert data['summary'] == {'total': 2, 'discovered': 1, 'manual': 1, 'gateways': 0, 'prefixes': 4, 'interface_observed': 0, 'interface_observed_networks': 0, 'interface_unmatched_prefix': 0, 'interface_vrf_review': 0, 'interface_global_default': 0, 'interface_matched': 0}
-    assert {item['address'] for item in data['items']} == {'10.0.0.10', '10.0.0.20'}
-    discovered = next(item for item in data['items'] if item['address'] == '10.0.0.20')
-    assert discovered['is_discovered'] is True
-    assert discovered['site_name'] == 'Shanghai DC'
-    assert discovered['switch_name'] == 'access-sw-01'
-    assert discovered['switch_port'] == 'Gi1/0/20'
-    assert discovered['vlan'] == '100'
+    assert data['summary'] == {'total': 1, 'discovered': 0, 'manual': 1, 'gateways': 0, 'prefixes': 4, 'interface_observed': 0, 'interface_observed_networks': 0, 'interface_unmatched_prefix': 0, 'interface_vrf_review': 0, 'interface_global_default': 0, 'interface_matched': 0}
+    assert {item['address'] for item in data['items']} == {'10.0.0.10'}
+    assert data['items'][0]['is_discovered'] is False
     assert data['sites'][0]['count'] == 4
-    assert data['sites'][0]['ip_count'] == 2
+    assert data['sites'][0]['ip_count'] == 1

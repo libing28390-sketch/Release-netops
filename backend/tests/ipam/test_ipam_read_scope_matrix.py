@@ -138,7 +138,7 @@ def test_restricted_user_lists_aggregates_and_next_available_are_site_scoped(iso
 
     monkeypatch.setattr(
         ipam_api, 'get_current_discovered_endpoint',
-        lambda _observation_id: {'tenant_id': 'tenant-default', 'site_id': site_b},
+        lambda _observation_id, **_kwargs: {'tenant_id': 'tenant-default', 'site_id': site_b},
     )
     with pytest.raises(HTTPException) as hidden_evidence:
         ipam_api.api_get_discovered_endpoint('foreign-observation', user=user)
