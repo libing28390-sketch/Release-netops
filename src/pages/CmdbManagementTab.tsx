@@ -14,6 +14,7 @@ import { useFocusTrap } from '../hooks/useFocusTrap';
 import { formatMacAddress } from '../utils/resourceFormatters';
 import { fetchAllPaginatedItems } from '../utils/pagination';
 import { buildCmdbExportData, buildCmdbVlanExportData } from './cmdbExport';
+import { deviceRoleLabel } from '../domain/deviceLabels';
 import { isCliCredentialType, shouldShowEnablePasswordField } from './credentialFormPolicy';
 
 /* ────────────────────────────────────────────────────────────
@@ -2139,7 +2140,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
       { key: 'hostname', label: '设备名称', labelEn: 'Hostname', hideInForm: true },
       { key: 'ip_address', label: '管理IP', labelEn: 'Management IP', hideInForm: true },
       { key: 'platform', label: '平台', labelEn: 'Platform', hideInForm: true },
-      { key: 'role', label: '角色', labelEn: 'Role', hideInForm: true },
+      { key: 'role', label: '设备角色', labelEn: 'Device role', hideInForm: true },
       { key: 'status', label: '状态', labelEn: 'Status', hideInForm: true },
       { key: 'site_id', label: '站点', labelEn: 'Site', hideInForm: true },
       { key: 'asset_tag', label: '资产标签', labelEn: 'Asset Tag', hideInForm: true },
@@ -3557,7 +3558,9 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     const isMono = ['vlan_id', 'rd', 'username', 'ip_address', 'device_ip', 'interface_ip', 'mac_address', 'access_vlan'].includes(fd.key);
     const val = row[fd.key];
     if (val === '' || val == null) return <span className="text-black/30 dark:text-white/30">—</span>;
-    const displayValue = fd.key === 'mac_address' ? formatMacAddress(val) : String(val);
+    const displayValue = tab === 'devices' && fd.key === 'role'
+      ? deviceRoleLabel(val, zh ? 'zh' : 'en')
+      : fd.key === 'mac_address' ? formatMacAddress(val) : String(val);
     if (isMono) {
       return (
         <span className="font-mono text-xs text-black/75 dark:text-white/75 bg-black/[0.03] dark:bg-white/5 px-1.5 py-0.5 rounded border border-black/[0.04] dark:border-white/5">
@@ -3766,6 +3769,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
         }
         if (field.key === 'credential_type') return row[field.key] ? getCredTypeLabel(row[field.key]) : '—';
         if (field.key === 'account_role') return getAccountRoleLabel(row.account_role || 'login');
+        if (tab === 'devices' && field.key === 'role') return deviceRoleLabel(row.role, zh ? 'zh' : 'en');
         if (field.key === 'mac_address') return formatMacAddress(row[field.key]) || '—';
         if (field.key === 'status') {
           const statusValue = row.status || 'active';

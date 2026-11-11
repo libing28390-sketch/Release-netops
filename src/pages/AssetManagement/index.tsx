@@ -75,6 +75,7 @@ import { TerminalAccessModal } from './components/TerminalAccessModal';
 import { AssetDetailDrawer } from './components/AssetDetailDrawer';
 import { AssetModal } from './components/AssetModal';
 import { assetCategoryLabel, buildAssetExportData, fetchAllAssetPages, type AssetExportColumnKey } from './exportUtils';
+import { deviceRoleLabel } from '../../domain/deviceLabels';
 
 type AssetImportSkippedItem = {
   asset_tag?: string;
@@ -199,8 +200,8 @@ const ASSET_COLUMN_DEFS: AssetColumnDefinition[] = [
   { key: 'hostname', zh: '设备', en: 'Device', width: 'min-w-[150px]' },
   { key: 'asset_tag', zh: '资产编号', en: 'Asset tag', width: 'min-w-[130px]' },
   { key: 'asset_type', zh: '资产类型', en: 'Asset type', width: 'min-w-[110px]' },
-  { key: 'device_category', zh: '设备分类', en: 'Category', width: 'min-w-[120px]' },
-  { key: 'device_role', zh: '设备角色', en: 'Role', width: 'min-w-[110px]' },
+  { key: 'device_category', zh: '设备类别', en: 'Device category', width: 'min-w-[120px]' },
+  { key: 'device_role', zh: '设备角色', en: 'Device role', width: 'min-w-[110px]' },
   { key: 'site', zh: '站点', en: 'Site', width: 'min-w-[120px]' },
   { key: 'rack', zh: '机柜', en: 'Rack', width: 'min-w-[110px]' },
   { key: 'rack_unit', zh: 'U位', en: 'Rack U', width: 'w-20' },
@@ -1701,11 +1702,11 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
               const allowedRoles = rowIsNet ? NETWORK_TEMPLATE_ROLES : SERVER_TEMPLATE_ROLES;
               const allowedCategories = rowIsNet ? NETWORK_TEMPLATE_CATEGORIES : SERVER_TEMPLATE_CATEGORIES;
               if (obj.device_role && !allowedRoles.has(obj.device_role)) {
-                templateMismatchRows.push(`${name} 第${rowIndex + 2}行：角色“${obj.device_role}”不属于${rowIsNet ? '网络设备' : '服务器'}`);
+                templateMismatchRows.push(`${name} 第${rowIndex + 2}行：设备角色“${obj.device_role}”不属于${rowIsNet ? '网络设备' : '服务器'}`);
                 continue;
               }
               if (obj.device_category && !allowedCategories.has(obj.device_category)) {
-                templateMismatchRows.push(`${name} 第${rowIndex + 2}行：设备分类“${obj.device_category}”不属于${rowIsNet ? '网络设备' : '服务器'}`);
+                templateMismatchRows.push(`${name} 第${rowIndex + 2}行：设备类别“${obj.device_category}”不属于${rowIsNet ? '网络设备' : '服务器'}`);
                 continue;
               }
               if (obj.snmp_credential_name && obj.snmp_credential_id) {
@@ -1898,8 +1899,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     // full legacy workbook. Old 41-column files remain valid because parsing
     // is header based; this version additionally exposes SSH policy.
     const rawAssetHeaders = zh
-      ? ['资产类型', '主机名', '资产编号', '序列号', '厂商', '型号', '平台', 'SSH算法策略', '管理IP', '业务IP', '状态', '角色', '设备分类', '录入来源（必填：新设备或存量设备）', 'VLAN', '上联交换机', '上联端口', '站点', '机柜', 'U位', 'U高度', '规划起始U', '功耗(W)', 'SNMP社区名', 'SNMP端口', '普通用户', '特权用户', '普通密码', '特权密码', 'Enable密码', '绑定凭据', '绑定特权凭据', 'SNMP凭据名称（选填）', '标签代码', '部门', '购买日期', '投产状态', '免上收投产原因', '保修到期', '备注', '功能', '区域']
-      : ['Asset Type', 'Hostname', 'Asset Tag', 'Serial Number', 'Vendor', 'Model', 'Platform', 'SSH Algorithm Profile', 'Mgmt IP', 'Business IP', 'Status', 'Role', 'Device Category', 'Asset Origin (Required: new or legacy)', 'VLAN', 'Uplink Switch', 'Uplink Port', 'Site', 'Rack', 'Rack Unit', 'U Height', 'Planned Start U', 'Power(W)', 'SNMP Community', 'SNMP Port', 'Normal User', 'Admin User', 'Normal Password', 'Admin Password', 'Enable Secret', 'Credential', 'Admin Credential', 'SNMP Credential Name (optional)', 'Tags', 'Department', 'Purchase Date', 'Lifecycle', 'Takeover Exemption Reason', 'Warranty Expiry', 'Notes', 'Function', 'Zone'];
+      ? ['资产类型', '主机名', '资产编号', '序列号', '厂商', '型号', '平台', 'SSH算法策略', '管理IP', '业务IP', '状态', '设备角色', '设备类别', '录入来源（必填：新设备或存量设备）', 'VLAN', '上联交换机', '上联端口', '站点', '机柜', 'U位', 'U高度', '规划起始U', '功耗(W)', 'SNMP社区名', 'SNMP端口', '普通用户', '特权用户', '普通密码', '特权密码', 'Enable密码', '绑定凭据', '绑定特权凭据', 'SNMP凭据名称（选填）', '标签代码', '部门', '购买日期', '投产状态', '免上收投产原因', '保修到期', '备注', '功能', '区域']
+      : ['Asset Type', 'Hostname', 'Asset Tag', 'Serial Number', 'Vendor', 'Model', 'Platform', 'SSH Algorithm Profile', 'Mgmt IP', 'Business IP', 'Status', 'Device Role', 'Device Category', 'Asset Origin (Required: new or legacy)', 'VLAN', 'Uplink Switch', 'Uplink Port', 'Site', 'Rack', 'Rack Unit', 'U Height', 'Planned Start U', 'Power(W)', 'SNMP Community', 'SNMP Port', 'Normal User', 'Admin User', 'Normal Password', 'Admin Password', 'Enable Secret', 'Credential', 'Admin Credential', 'SNMP Credential Name (optional)', 'Tags', 'Department', 'Purchase Date', 'Lifecycle', 'Takeover Exemption Reason', 'Warranty Expiry', 'Notes', 'Function', 'Zone'];
     const requiredHeaders = zh
       ? new Set(['资产类型', '资产编号', '管理IP', '录入来源（必填：新设备或存量设备）', '投产状态', '免上收投产原因'])
       : new Set(['Asset Type', 'Asset Tag', 'Mgmt IP', 'Asset Origin (Required: new or legacy)', 'Lifecycle', 'Takeover Exemption Reason']);
@@ -2060,21 +2061,21 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ['服务器', '平台 (Platform)', 'esxi', 'VMware ESXi'],
       ...networkVendorRowsZh,
       ...networkPlatformRowsZh,
-      ...NETWORK_TOPOLOGY_ROLE_OPTIONS.map(option => ['网络/安全设备', '拓扑角色', option.label.zh, option.value]),
+      ...NETWORK_TOPOLOGY_ROLE_OPTIONS.map(option => ['网络/安全设备', '设备角色', option.label.zh, option.value]),
       ...TOPOLOGY_FUNCTION_OPTIONS.map(option => ['通用', '功能', option.label.zh, option.value]),
       ...TOPOLOGY_ZONE_OPTIONS.map(option => ['通用', '区域', option.label.zh, option.value]),
-      ['服务器', '设备分类', '机架式服务器', '标准机架式服务器'],
-      ['服务器', '设备分类', '刀片服务器', '刀片式服务器'],
-      ['服务器', '设备分类', '塔式服务器', '塔式服务器'],
-      ['服务器', '设备分类', '高密度服务器', '高密度计算节点'],
-      ['服务器', '设备分类', 'GPU服务器', 'GPU 计算服务器'],
-      ['服务器', '设备分类', '存储服务器', '存储用途服务器'],
-      ['服务器', '设备分类', '虚拟化宿主机', '虚拟化平台宿主机'],
-      ['网络/安全设备', '设备分类', '交换机', '网络交换设备'],
-      ['网络/安全设备', '设备分类', '路由器', '网络路由设备'],
-      ['网络/安全设备', '设备分类', '防火墙', '安全防护设备'],
-      ['网络/安全设备', '设备分类', '负载均衡', '负载均衡设备'],
-      ['网络/安全设备', '设备分类', '无线AP', '无线接入点'],
+      ['服务器', '设备类别', '机架式服务器', '标准机架式服务器'],
+      ['服务器', '设备类别', '刀片服务器', '刀片式服务器'],
+      ['服务器', '设备类别', '塔式服务器', '塔式服务器'],
+      ['服务器', '设备类别', '高密度服务器', '高密度计算节点'],
+      ['服务器', '设备类别', 'GPU服务器', 'GPU 计算服务器'],
+      ['服务器', '设备类别', '存储服务器', '存储用途服务器'],
+      ['服务器', '设备类别', '虚拟化宿主机', '虚拟化平台宿主机'],
+      ['网络/安全设备', '设备类别', '交换机', '网络交换设备'],
+      ['网络/安全设备', '设备类别', '路由器', '网络路由设备'],
+      ['网络/安全设备', '设备类别', '防火墙', '安全防护设备'],
+      ['网络/安全设备', '设备类别', '负载均衡', '负载均衡设备'],
+      ['网络/安全设备', '设备类别', '无线AP', '无线接入点'],
     ] : [
       ['Common', 'Connection Method', 'SSH', 'Manage the device over SSH'],
       ['Management Entry', 'Management Method', 'Web Management', 'Web entry; defaults to HTTPS/443, or HTTP when port 80 is entered'],
@@ -2108,7 +2109,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ['Server', 'Platform', 'esxi', 'VMware ESXi'],
       ...networkVendorRowsEn,
       ...networkPlatformRowsEn,
-      ...NETWORK_TOPOLOGY_ROLE_OPTIONS.map(option => ['Network/Security', 'Topology Role', option.value, option.label.en]),
+      ...NETWORK_TOPOLOGY_ROLE_OPTIONS.map(option => ['Network/Security', 'Device Role', option.value, option.label.en]),
       ...TOPOLOGY_FUNCTION_OPTIONS.map(option => ['Common', 'Function', option.value, option.label.en]),
       ...TOPOLOGY_ZONE_OPTIONS.map(option => ['Common', 'Zone', option.value, option.label.en]),
       ['Server', 'Device Category', 'server', 'Server'],
@@ -2155,7 +2156,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         </span>
       );
       case 'device_category': return <span className="text-xs text-gray-700 dark:text-zinc-300">{categoryDisplay(a)}</span>;
-      case 'device_role': return <span className="text-xs text-gray-600 dark:text-zinc-400">{a.device_role || '—'}</span>;
+      case 'device_role': return <span className="text-xs text-gray-600 dark:text-zinc-400">{deviceRoleLabel(a.device_role, zh ? 'zh' : 'en')}</span>;
       case 'site': return (
         <span className="text-xs font-medium text-gray-800 dark:text-zinc-200 truncate block">{a.site_name || a.site_code || '—'}</span>
       );

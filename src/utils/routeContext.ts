@@ -213,6 +213,10 @@ export function getRouteContext(pathname: string): RouteContext {
       ipamPage = 'utilization';
     } else if (second === 'reconciliation') {
       ipamPage = 'reconciliation';
+    } else if (second === 'routing-contexts') {
+      ipamPage = 'routing-contexts';
+    } else if (second === 'fhrp') {
+      ipamPage = 'fhrp';
     } else {
       ipamPage = 'locate';
     }

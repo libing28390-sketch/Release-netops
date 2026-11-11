@@ -11,11 +11,17 @@ from datetime import datetime, timezone
 from typing import Any
 
 from database import get_db_connection
+from services.ipam_address_space_service import ensure_vrf_address_space
 from core.interface_utils import normalize_interface_name
 from services.collection_plan_service import should_collect
 from services.read_only_collection_adapter import collect_read_only_evidence
 from services.vlan_discovery_service import is_svi_interface
-from services.ipam_service import CROSS_SITE_REUSE_CONDITION, build_prefix_filter_clause
+from services.ipam_service import (
+    _allowed_prefix_filter,
+    _cross_site_reuse_condition,
+    _pending_cross_site_duplicate_condition,
+    build_prefix_filter_clause,
+)
 
 
 CLASSIFICATION_RULE_VERSION = "prefix-classification-v1"
@@ -285,16 +291,89 @@ def build_prefix_candidates(
     return list(grouped.values())
 
 
-def _upsert_candidate(conn, candidate: dict[str, Any], collection_run_id: str, now: str) -> str:
-    existing = conn.execute(
-        """
-        SELECT * FROM prefixes
-        WHERE prefix = ? AND COALESCE(tenant_id, 'tenant-default') = ?
-          AND COALESCE(site_id, '') = ? AND COALESCE(vrf_id, '') = ?
-        ORDER BY updated_at DESC LIMIT 1
-        """,
-        (candidate["prefix"], candidate["tenant_id"], candidate["site_id"], candidate["vrf_id"]),
-    ).fetchone()
+def _upsert_candidate(
+    conn, candidate: dict[str, Any], collection_run_id: str, now: str
+) -> tuple[str | None, str, str]:
+    tenant_id = str(candidate.get('tenant_id') or '').strip()
+    raw_vrf_id = str(candidate.get('vrf_id') or '').strip()
+    address_space_id = ''
+    persisted_vrf_id = ''
+    scope_conflict = ''
+    persisted_tenant_id = tenant_id or None
+    if not tenant_id:
+        scope_conflict = 'Source tenant context is unknown'
+    elif not conn.execute('SELECT 1 FROM tenants WHERE id = ?', (tenant_id,)).fetchone():
+        scope_conflict = 'Source tenant does not resolve to a CMDB tenant'
+        persisted_tenant_id = None
+        tenant_id = ''
+    elif not raw_vrf_id:
+        scope_conflict = 'Source candidate has no explicit VRF/address-space context'
+    if tenant_id and raw_vrf_id:
+        try:
+            space = ensure_vrf_address_space(
+                conn,
+                vrf_id=raw_vrf_id,
+                security_tenant_id=tenant_id,
+            )
+            address_space_id = str(space['id'])
+            persisted_vrf_id = raw_vrf_id
+        except ValueError as exc:
+            # Source scope that cannot be proved against both the device tenant
+            # and CMDB VRF remains a review candidate, never an implicit Global.
+            scope_conflict = str(exc)
+
+    existing = None
+    action = 'created'
+    if address_space_id:
+        mapped_rows = conn.execute(
+            """SELECT * FROM prefixes
+                 WHERE address_space_id = ? AND prefix_cidr = ?
+                 ORDER BY id""",
+            (address_space_id, candidate['prefix']),
+        ).fetchall()
+        if len(mapped_rows) == 1:
+            existing = mapped_rows[0]
+            action = 'updated'
+        elif len(mapped_rows) > 1:
+            return None, 'scope_pending', 'Multiple mapped Prefix rows share this address-space CIDR'
+        else:
+            legacy_rows = conn.execute(
+                """SELECT * FROM prefixes
+                     WHERE address_space_id IS NULL AND prefix_cidr = ?
+                       AND tenant_id = ? AND vrf_id = ?
+                     ORDER BY id""",
+                (candidate['prefix'], tenant_id, persisted_vrf_id),
+            ).fetchall()
+            if len(legacy_rows) > 1:
+                return None, 'scope_pending', 'Multiple unmapped legacy Prefix rows share this tenant/VRF/CIDR'
+            if len(legacy_rows) == 1:
+                existing = legacy_rows[0]
+                conn.execute(
+                    """UPDATE prefixes SET address_space_id = ?, updated_at = ?
+                         WHERE id = ? AND address_space_id IS NULL""",
+                    (address_space_id, now, existing['id']),
+                )
+                # A Prefix's physical site is operator data. Reusing the same
+                # routed network from another site must not rewrite that value.
+                action = 'updated'
+    elif tenant_id:
+        existing_rows = conn.execute(
+            """SELECT * FROM prefixes
+                 WHERE address_space_id IS NULL
+                   AND prefix = ? AND COALESCE(tenant_id, 'tenant-default') = ?
+                   AND COALESCE(site_id, '') = ? AND COALESCE(vrf_id, '') = ?
+                 ORDER BY updated_at DESC""",
+            (
+                candidate['prefix'], tenant_id,
+                str(candidate.get('site_id') or ''), persisted_vrf_id,
+            ),
+        ).fetchall()
+        if len(existing_rows) > 1:
+            return None, 'scope_pending', 'Multiple unmapped Prefix rows match this discovery candidate'
+        if len(existing_rows) == 1:
+            existing = existing_rows[0]
+            action = 'updated'
+
     evidence_json = _json(candidate.get("evidence"))
     manual = bool(existing and (existing["manual_override"] or existing["source_type"] == "manual"))
     prefix_id = str(existing["id"]) if existing else f"prefix-{uuid.uuid4().hex[:12]}"
@@ -302,14 +381,17 @@ def _upsert_candidate(conn, candidate: dict[str, Any], collection_run_id: str, n
     if existing:
         conn.execute(
             """
-            UPDATE prefixes SET prefix_cidr = ?, network_type = ?, classification_status = ?, classification_source = ?,
+            UPDATE prefixes SET prefix_cidr = ?, address_space_id = COALESCE(address_space_id, ?),
+                vrf_id = CASE WHEN ? <> '' THEN ? ELSE vrf_id END,
+                network_type = ?, classification_status = ?, classification_source = ?,
                 classification_confidence = ?, classification_rule_version = ?, mixed_network = ?, address_roles_json = ?,
                 discovered_devices_json = ?, observed_interfaces_json = ?, observed_vlans_json = ?, observed_vrfs_json = ?, evidence_json = ?,
                 candidate_scores_json = ?, last_seen_at = ?, miss_count = 0, is_active = 1,
                 last_observed_at = ?, updated_at = ?
             WHERE id = ?
             """,
-            (candidate["prefix"], effective_type, "manual" if manual else "auto", "manual" if manual else "evidence",
+            (candidate["prefix"], address_space_id or None, persisted_vrf_id, persisted_vrf_id,
+             effective_type, "manual" if manual else "auto", "manual" if manual else "evidence",
              float(existing["classification_confidence"] or 0) if manual else candidate["confidence"],
              CLASSIFICATION_RULE_VERSION, int(candidate.get('mixed_network') or 0), _json(candidate.get('address_roles') or []), _json(candidate["observed_devices"]),
              _json(candidate["observed_interfaces"]), _json(candidate.get("observed_vlans") or []), _json(candidate.get("observed_vrfs") or []), evidence_json,
@@ -331,26 +413,24 @@ def _upsert_candidate(conn, candidate: dict[str, Any], collection_run_id: str, n
         conn.execute(
             """
             INSERT INTO prefixes (
-                id, prefix, prefix_cidr, vrf_id, site_id, tenant_id, status, name, network_type,
+                id, prefix, prefix_cidr, address_space_id, vrf_id, site_id, tenant_id, status, name, network_type,
                 traceable, source_type, source_ref, confidence, last_observed_at,
                 classification_status, classification_source, classification_confidence,
                 classification_rule_version, manual_override, mixed_network,
                 address_roles_json, discovered_devices_json, observed_interfaces_json, observed_vlans_json, observed_vrfs_json, evidence_json,
                 candidate_scores_json, first_seen_at, last_seen_at, miss_count, is_active,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, 'active', '', ?, 1, 'discovery', ?, ?, ?, 'auto', 'evidence', ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', '', ?, 1, 'discovery', ?, ?, ?, 'auto', 'evidence', ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?)
             """,
-            (prefix_id, candidate["prefix"], candidate["prefix"], candidate["vrf_id"] or None, candidate["site_id"] or None,
-             candidate["tenant_id"], effective_type, collection_run_id, candidate["confidence"], now,
+            (prefix_id, candidate["prefix"], candidate["prefix"], address_space_id or None,
+             persisted_vrf_id or None, candidate["site_id"] or None,
+             persisted_tenant_id, effective_type, collection_run_id, candidate["confidence"], now,
              candidate["confidence"], CLASSIFICATION_RULE_VERSION, int(candidate.get('mixed_network') or 0), _json(candidate.get('address_roles') or []),
              _json(candidate["observed_devices"]), _json(candidate["observed_interfaces"]), _json(candidate.get("observed_vlans") or []),
              _json(candidate.get("observed_vrfs") or []), evidence_json,
              _json({candidate["network_type"]: candidate["confidence"]}), now, now, now, now),
         )
-    # Site is an IPAM address-space boundary. The same CIDR may be reused in
-    # another site; list/summary APIs expose that as a dynamic reuse hint and
-    # discovery must not persist it as a true conflict.
-    return prefix_id
+    return prefix_id, action, scope_conflict
 
 
 _GATEWAY_ROLE_PRIORITY = {
@@ -366,7 +446,9 @@ _GATEWAY_ROLE_PRIORITY = {
 }
 
 
-def _infer_discovered_gateway(conn, candidate: dict[str, Any]) -> tuple[str, str, str] | None:
+def _infer_discovered_gateway(
+    conn, candidate: dict[str, Any], *, expected_vrf_id: str,
+) -> tuple[str, str, str] | None:
     """Find the SVI that owns a discovered prefix.
 
     A routed prefix can appear in several devices' OSPF tables, but only an
@@ -377,6 +459,9 @@ def _infer_discovered_gateway(conn, candidate: dict[str, Any]) -> tuple[str, str
     try:
         network = ipaddress.ip_network(str(candidate.get("prefix") or ""), strict=False)
     except ValueError:
+        return None
+    expected_vrf = str(expected_vrf_id or '').strip()
+    if not expected_vrf:
         return None
 
     device_ids = [str(value) for value in (candidate.get("observed_devices") or []) if str(value or "").strip()]
@@ -392,7 +477,7 @@ def _infer_discovered_gateway(conn, candidate: dict[str, Any]) -> tuple[str, str
     device_columns = _table_columns(conn, "devices")
     required_interface_columns = {
         "id", "device_id", "interface_name", "primary_ip", "ip_address",
-        "ip_prefix_length", "interface_type", "is_l3",
+        "ip_prefix_length", "interface_type", "is_l3", "vrf_id",
     }
     if not required_interface_columns.issubset(interface_columns) or not {"id", "hostname", "role"}.issubset(device_columns):
         return None
@@ -400,7 +485,7 @@ def _infer_discovered_gateway(conn, candidate: dict[str, Any]) -> tuple[str, str
     rows = conn.execute(
         f"""
         SELECT i.id, i.device_id, i.interface_name, i.primary_ip, i.ip_address,
-               i.ip_prefix_length, i.interface_type, i.is_l3,
+               i.ip_prefix_length, i.interface_type, i.is_l3, i.vrf_id,
                d.hostname, d.role
         FROM interfaces i
         LEFT JOIN devices d ON d.id = i.device_id
@@ -411,6 +496,10 @@ def _infer_discovered_gateway(conn, candidate: dict[str, Any]) -> tuple[str, str
 
     candidates: list[tuple[tuple[int, int, int], tuple[str, str, str]]] = []
     for row in rows:
+        # Interface scope must be explicit and match the already mapped VRF.
+        # A blank interface VRF is not proof of Global routing context.
+        if str(row['vrf_id'] or '').strip() != expected_vrf:
+            continue
         interface_name = str(row["interface_name"] or "").strip()
         if normalize_interface_name(interface_name).strip().lower() not in interface_names:
             continue
@@ -451,13 +540,14 @@ def _bind_discovered_gateway(conn, prefix_id: str, candidate: dict[str, Any], no
     """
     required_prefix_columns = {
         "id", "gateway", "gateway_device_id", "gateway_interface_id",
-        "manual_override", "source_type", "updated_at",
+        "manual_override", "source_type", "updated_at", "address_space_id", "vrf_id",
     }
     if not required_prefix_columns.issubset(_table_columns(conn, "prefixes")):
         return False
     current = conn.execute(
             """
             SELECT gateway, gateway_device_id, gateway_interface_id,
+                   address_space_id, vrf_id,
                    manual_override, source_type
             FROM prefixes WHERE id = ?
             """,
@@ -465,19 +555,38 @@ def _bind_discovered_gateway(conn, prefix_id: str, candidate: dict[str, Any], no
     ).fetchone()
     if not current:
         return False
+    address_space_id = str(current['address_space_id'] or '').strip()
+    if not address_space_id:
+        return False
+    space = conn.execute(
+        "SELECT kind, vrf_id FROM ipam_address_spaces WHERE id = ?",
+        (address_space_id,),
+    ).fetchone()
+    if (
+        not space
+        or str(space['kind'] or '') != 'vrf'
+        or not str(space['vrf_id'] or '').strip()
+        or str(space['vrf_id']) != str(current['vrf_id'] or '')
+    ):
+        # Global bindings need device-local routing-context evidence, which is
+        # not yet modeled. Stay review-only until that mapping exists.
+        return False
     if bool(current["manual_override"]) or str(current["source_type"] or "").lower() == "manual":
         return False
     if any(str(current[key] or "").strip() for key in ("gateway", "gateway_device_id", "gateway_interface_id")):
         return False
 
-    binding = _infer_discovered_gateway(conn, candidate)
+    binding = _infer_discovered_gateway(
+        conn, candidate, expected_vrf_id=str(space['vrf_id']),
+    )
     if not binding:
         return False
     gateway, device_id, interface_id = binding
     conn.execute(
             """
             UPDATE prefixes
-            SET gateway = ?, gateway_device_id = ?, gateway_interface_id = ?, updated_at = ?
+            SET gateway = ?, gateway_device_id = ?, gateway_interface_id = ?,
+                updated_at = ?, revision = revision + 1
             WHERE id = ?
             """,
             (gateway, device_id, interface_id, now, prefix_id),
@@ -548,19 +657,43 @@ def persist_prefix_candidates(candidates: list[dict[str, Any]], *, collection_ru
     conn = get_db_connection()
     created = 0
     updated = 0
+    scope_pending = 0
+    scope_conflicts: list[dict[str, str]] = []
     try:
         for candidate in candidates:
             candidate = {**candidate, 'address_roles': _derive_address_roles(conn, candidate)}
-            existing = conn.execute(
-                "SELECT id FROM prefixes WHERE prefix = ? AND COALESCE(tenant_id, 'tenant-default') = ? AND COALESCE(site_id, '') = ? AND COALESCE(vrf_id, '') = ? LIMIT 1",
-                (candidate["prefix"], candidate["tenant_id"], candidate["site_id"], candidate["vrf_id"]),
-            ).fetchone()
-            prefix_id = _upsert_candidate(conn, candidate, run_id, now)
-            _bind_discovered_gateway(conn, prefix_id, candidate, now)
-            if existing:
+            prefix_id, action, scope_conflict = _upsert_candidate(conn, candidate, run_id, now)
+            if not prefix_id:
+                scope_pending += 1
+                scope_conflicts.append({
+                    'prefix': str(candidate.get('prefix') or ''),
+                    'tenant_id': str(candidate.get('tenant_id') or ''),
+                    'site_id': str(candidate.get('site_id') or ''),
+                    'reason': scope_conflict or 'Address-space target is ambiguous',
+                })
+                continue
+            if action == 'updated':
                 updated += 1
             else:
                 created += 1
+            if scope_conflict:
+                scope_pending += 1
+                scope_conflicts.append({
+                    'prefix': str(candidate.get('prefix') or ''),
+                    'tenant_id': str(candidate.get('tenant_id') or ''),
+                    'site_id': str(candidate.get('site_id') or ''),
+                    'reason': scope_conflict,
+                })
+            prefix_site = conn.execute(
+                'SELECT site_id, address_space_id FROM prefixes WHERE id = ?',
+                (prefix_id,),
+            ).fetchone()
+            if (
+                prefix_site
+                and prefix_site['address_space_id']
+                and str(prefix_site['site_id'] or '') == str(candidate.get('site_id') or '')
+            ):
+                _bind_discovered_gateway(conn, prefix_id, candidate, now)
             for evidence in candidate.get("evidence") or []:
                 conn.execute(
                     """
@@ -579,7 +712,11 @@ def persist_prefix_candidates(candidates: list[dict[str, Any]], *, collection_ru
                      candidate["prefix"], _json(evidence), candidate["confidence"], now, now),
                 )
         conn.commit()
-        return {"ok": True, "collection_run_id": run_id, "created": created, "updated": updated, "count": len(candidates)}
+        return {
+            "ok": True, "collection_run_id": run_id, "created": created,
+            "updated": updated, "scope_pending": scope_pending,
+            "scope_conflicts": scope_conflicts, "count": len(candidates),
+        }
     except Exception:
         conn.rollback()
         raise
@@ -714,11 +851,22 @@ def age_missing_prefixes(
 
 def get_prefix_classification_summary(
     *, site: str = 'all', status: str = 'all', q: str = '', family: str = 'all',
+    allowed_prefix_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     conn = get_db_connection()
     try:
         where_sql, params = build_prefix_filter_clause(
             site=site, status=status, q=q, family=family, classification='all',
+        )
+        allowed_sql, allowed_params = _allowed_prefix_filter(allowed_prefix_ids)
+        where_sql += allowed_sql
+        where_params = (*params, *allowed_params)
+        reuse_condition, reuse_params = _cross_site_reuse_condition(allowed_prefix_ids)
+        pending_group_condition, pending_group_params = _pending_cross_site_duplicate_condition(
+            allowed_prefix_ids,
+        )
+        pending_record_condition, pending_record_params = _pending_cross_site_duplicate_condition(
+            allowed_prefix_ids,
         )
         rows = conn.execute(
             f"""
@@ -729,12 +877,15 @@ def get_prefix_classification_summary(
                 SUM(CASE WHEN COALESCE(p.network_type, 'unclassified') = 'unclassified' THEN 1 ELSE 0 END) AS unclassified_count,
                 SUM(CASE WHEN COALESCE(p.mixed_network, 0) = 1 THEN 1 ELSE 0 END) AS mixed_count,
                 SUM(CASE WHEN COALESCE(p.conflict_status, '') NOT IN ('', 'cross_site_prefix') THEN 1 ELSE 0 END) AS conflict_count,
-                SUM(CASE WHEN {CROSS_SITE_REUSE_CONDITION} THEN 1 ELSE 0 END) AS reuse_count,
+                SUM(CASE WHEN {reuse_condition} THEN 1 ELSE 0 END) AS reuse_count,
+                SUM(CASE WHEN COALESCE(NULLIF(p.address_space_id, ''), '') = '' THEN 1 ELSE 0 END) AS address_space_pending_count,
+                COUNT(DISTINCT CASE WHEN {pending_group_condition} THEN p.prefix END) AS pending_duplicate_group_count,
+                SUM(CASE WHEN {pending_record_condition} THEN 1 ELSE 0 END) AS pending_duplicate_record_count,
                 SUM(CASE WHEN COALESCE(p.is_active, 1) = 0 OR COALESCE(p.status, '') = 'stale' THEN 1 ELSE 0 END) AS stale_count
             FROM prefixes p
             WHERE {where_sql}
             """,
-            params,
+            (*reuse_params, *pending_group_params, *pending_record_params, *where_params),
         ).fetchone()
         return {key: int(rows[key] or 0) for key in rows.keys()} if rows else {}
     finally:

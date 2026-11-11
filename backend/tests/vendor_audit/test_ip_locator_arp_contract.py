@@ -1,9 +1,11 @@
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
 import ipaddress
 import json
 
 import pytest
 
+from database import get_db_connection
 import services.ip_locator_service as ip_locator_service
 
 
@@ -515,6 +517,104 @@ def test_v2_locator_context_skips_unqueued_live_interface_probe(isolated_db, mon
     assert live_probes == []
 
 
+def test_locator_context_joins_arp_svi_to_current_vlan_member_and_mac_port(isolated_db):
+    conn = isolated_db["module"].get_db_connection()
+    device_id = "device-locator-vlan-member"
+    now = datetime.now(timezone.utc)
+    vlan_observed_at = (now - timedelta(seconds=20)).isoformat()
+    interface_last_seen = (now - timedelta(seconds=5)).isoformat()
+    target_ip = "172.16.5.10"
+    target_mac = "8e47-5760-0706"
+
+    conn.execute(
+        "INSERT INTO devices (id, hostname, status, role) VALUES (?, ?, ?, ?)",
+        (device_id, "S6850-5", "online", "access"),
+    )
+    conn.execute(
+        """INSERT INTO arp_table
+           (id, device_id, ip_address, mac_address, interface_name, vlan_id, last_updated)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (
+            "arp-locator-vlan-member", device_id, target_ip, target_mac,
+            "Vlan-interface7", 7, interface_last_seen,
+        ),
+    )
+    conn.execute(
+        """INSERT INTO mac_table
+           (id, device_id, mac_address, interface_name, vlan_id, last_updated)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (
+            "mac-locator-vlan-member", device_id, target_mac,
+            "GigabitEthernet1/0/2", 7, interface_last_seen,
+        ),
+    )
+    for domain in ("vlan_inventory", "interface_inventory"):
+        conn.execute(
+            """INSERT INTO cmdb_collection_snapshots
+               (device_id, domain, attempt_generation, successful_generation,
+                attempt_status, observed_at)
+               VALUES (?, ?, 1, 1, 'success', ?)""",
+            (device_id, domain, vlan_observed_at),
+        )
+    conn.execute(
+        """INSERT INTO cmdb_device_vlan_observations
+           (device_id, vlan_id, site_id, vlan_name, vlan_status, generation, observed_at)
+           VALUES (?, 7, '', 'VLAN 0007', 'active', 1, ?)""",
+        (device_id, vlan_observed_at),
+    )
+    conn.execute(
+        """INSERT INTO cmdb_device_interface_observations
+           (device_id, normalized_interface_name, interface_name, description,
+            admin_status, oper_status, interface_type, generation, observed_at)
+           VALUES (?, 'gi1/0/2', 'GE1/0/2', 'TO-PC-7', 'up', 'up', 'physical', 1, ?)""",
+        (device_id, vlan_observed_at),
+    )
+    conn.execute(
+        """INSERT INTO cmdb_device_vlan_port_observations
+           (device_id, vlan_id, normalized_interface_name, interface_name,
+            port_mode, tagging, generation, observed_at)
+           VALUES (?, 7, 'gi1/0/2', 'GE1/0/2', 'unknown', 'unknown', 1, ?)""",
+        (device_id, vlan_observed_at),
+    )
+    conn.commit()
+
+    context = ip_locator_service._get_ip_locator_context(target_ip)
+
+    assert context["l2"]["port_confidence"] == "device_interface"
+    assert context["l2"]["switch_name"] == "S6850-5"
+    assert context["l2"]["port"] == "GE1/0/2"
+    assert context["l2"]["description"] == "TO-PC-7"
+    assert context["l2"]["arp_interface"] == "Vlan-interface7"
+    assert context["l2"]["vlan"] == "7"
+    assert context["l2"]["vlan_source"] == "arp_table"
+    candidate = context["l2"]["vlan_member_candidates"][0]
+    assert candidate["interface_name"] == "GE1/0/2"
+    assert candidate["description"] == "TO-PC-7"
+    assert candidate["mac_match"] is True
+    assert candidate["mac_match_fresh"] is True
+    assert candidate["access_confirmed"] is False
+
+    endpoint_context = ip_locator_service._get_ip_locator_context(
+        target_ip,
+        {
+            "found": True,
+            "trace_status": "terminal",
+            "mac": target_mac,
+            "locations": [{
+                "switch_id": device_id,
+                "switch_name": "S6850-5",
+                "port": "GE1/0/2",
+                "vlan": "7",
+                "type": "SNMP_ENDPOINT",
+                "is_uplink": False,
+            }],
+        },
+    )
+    assert endpoint_context["l2"]["port_confidence"] == "confirmed"
+    assert endpoint_context["l2"]["port"] == "GE1/0/2"
+    conn.close()
+
+
 def test_locator_uses_lldp_uplink_when_gateway_is_on_the_access_switch(isolated_db):
     conn = isolated_db["module"].get_db_connection()
     conn.execute(
@@ -915,23 +1015,36 @@ def test_normalize_arp_record_accepts_textfsm_standard_fields():
         "interface": "GE1/0/1",
         "source_device_id": "device-1",
         "source_device": "sw-01",
+        "context_source": "cli",
+        "context_type": "unknown",
+        "local_context_key": "",
+        "local_context_name": "",
         "vrf_context_status": "unknown",
         "vrf": "",
     }
 
 
-def test_arp_normalizer_retains_explicit_vrf_context_without_defaulting_missing_vrf():
-    global_record = ip_locator_service._normalize_arp_record(
+def test_arp_normalizer_does_not_promote_generic_scope_aliases_to_global():
+    alias_record = ip_locator_service._normalize_arp_record(
         {"ip": "192.0.2.1", "mac": "0011.2233.4455", "vrf_name": "global"}, DEVICE,
     )
     vrf_record = ip_locator_service._normalize_arp_record(
         {"ip": "192.0.2.2", "mac": "0011.2233.4466", "vrf_name": "Blue"}, DEVICE,
     )
+    h3c_global_record = ip_locator_service._normalize_arp_record(
+        {"ip": "192.0.2.3", "mac": "0011.2233.4477", "vpn_instance": "--"},
+        {**DEVICE, "platform": "h3c_comware"},
+    )
 
-    assert global_record["vrf_context_status"] == "explicit_global"
-    assert global_record["vrf"] == ""
+    assert alias_record["vrf_context_status"] == "unknown"
+    assert alias_record["vrf"] == ""
+    assert alias_record["context_type"] == "unknown"
+    assert alias_record["local_context_key"] == "global"
     assert vrf_record["vrf_context_status"] == "explicit_vrf"
     assert vrf_record["vrf"] == "Blue"
+    assert h3c_global_record["vrf_context_status"] == "explicit_global"
+    assert h3c_global_record["context_type"] == "global"
+    assert h3c_global_record["local_context_key"] == "--"
 
 
 def test_targeted_arp_query_uses_published_registry_action_for_bound_device(monkeypatch):
@@ -1215,7 +1328,14 @@ def test_format_mac_uses_platform_hyphen_style():
     assert ip_locator_service._format_mac("548998106981") == "5489-9810-6981"
 
 
-def test_full_mac_collection_parses_huawei_vrp_mac_table_layout(monkeypatch):
+def test_full_mac_collection_parses_huawei_vrp_mac_table_layout(isolated_db, monkeypatch):
+    with get_db_connection() as conn:
+        conn.execute(
+            """INSERT INTO devices (id, hostname, ip_address, platform, status, tenant_id)
+               VALUES (?, ?, ?, ?, 'online', 'tenant-default')""",
+            (DEVICE["id"], DEVICE["hostname"], DEVICE["ip_address"], "huawei_vrp"),
+        )
+        conn.commit()
     output = """
 MAC address table of slot 0:
 4c1f-cc3c-7de1 20          -      -      GE0/0/4         dynamic   0/-

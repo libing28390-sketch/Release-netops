@@ -19,6 +19,7 @@ import { buildVisibleIpamExportData, fetchAllIpamExportItems } from './ipamExpor
 import { TableActionCell, TableActionHeader } from '../../components/ui/TableActionColumn';
 interface DHCPLease {
   id: string;
+  revision: number;
   address: string;
   mac_address: string;
   hostname: string;
@@ -26,8 +27,58 @@ interface DHCPLease {
   lease_state: string;
   lease_start: string;
   lease_end: string;
+  pool_id?: string | null;
+  pool_name?: string | null;
+  address_space_id?: string | null;
+  address_space_name?: string | null;
+  scope_pending?: boolean | number;
+  scope_status?: string;
   created_at: string;
   updated_at: string;
+}
+
+interface ExternalDhcpPoolOption {
+  id: string;
+  name: string;
+  address_space_id: string;
+  address_space_name?: string;
+  start_ip: string;
+  end_ip: string;
+  management_mode: string;
+  status: string;
+  allocation_allowed: boolean | number;
+  mark_populated: boolean | number;
+  policy_pending?: boolean | number;
+}
+
+interface PendingCreateRequest {
+  fingerprint: string;
+  key: string;
+}
+
+const enabledFlag = (value: unknown) => value === true || value === 1;
+
+export function filterExternalDhcpPools(value: unknown): ExternalDhcpPoolOption[] {
+  const rows = Array.isArray(value) ? value : [];
+  return rows.filter((item): item is ExternalDhcpPoolOption => {
+    if (!item || typeof item !== 'object') return false;
+    const pool = item as Partial<ExternalDhcpPoolOption>;
+    return Boolean(pool.id)
+      && String(pool.status || '').toLowerCase() === 'active'
+      && pool.management_mode === 'external_dhcp'
+      && Boolean(pool.address_space_id)
+      && !enabledFlag(pool.policy_pending);
+  }).map((pool) => ({
+    ...pool,
+    id: String(pool.id),
+    name: String(pool.name || pool.id),
+    address_space_id: String(pool.address_space_id || ''),
+    address_space_name: pool.address_space_name ? String(pool.address_space_name) : undefined,
+    start_ip: String(pool.start_ip || ''),
+    end_ip: String(pool.end_ip || ''),
+    management_mode: String(pool.management_mode || ''),
+    status: String(pool.status || ''),
+  }));
 }
 
 interface DHCPLeaseTabProps {
@@ -74,6 +125,7 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
   // Form State
   const [form, setForm] = useState({
     address: '',
+    pool_id: '',
     mac_address: '',
     hostname: '',
     dhcp_server: '',
@@ -82,6 +134,23 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
     lease_end: '',
   });
   const [errorMsg, setErrorMsg] = useState('');
+  const [externalPools, setExternalPools] = useState<ExternalDhcpPoolOption[]>([]);
+  const [isLoadingPools, setIsLoadingPools] = useState(false);
+  const [poolLoadError, setPoolLoadError] = useState('');
+  const [poolRetryCount, setPoolRetryCount] = useState(0);
+  const poolRequest = useRef<AbortController | null>(null);
+  const pendingCreateRequest = useRef<PendingCreateRequest | null>(null);
+
+  const getCreateIdempotencyKey = (payload: unknown) => {
+    const fingerprint = JSON.stringify(payload);
+    if (!pendingCreateRequest.current || pendingCreateRequest.current.fingerprint !== fingerprint) {
+      pendingCreateRequest.current = {
+        fingerprint,
+        key: globalThis.crypto?.randomUUID?.() || `ipam-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      };
+    }
+    return pendingCreateRequest.current.key;
+  };
 
   const authHeaders = useCallback(() => {
     const token = localStorage.getItem('netops_token');
@@ -119,12 +188,84 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
     loadData();
   }, [loadData]);
 
+  useEffect(() => {
+    poolRequest.current?.abort();
+    poolRequest.current = null;
+    setExternalPools([]);
+    setPoolLoadError('');
+    setIsLoadingPools(false);
+    if (!showAddEdit) return undefined;
+
+    const controller = new AbortController();
+    poolRequest.current = controller;
+    setIsLoadingPools(true);
+    void (async () => {
+      try {
+        const query = new URLSearchParams({ status: 'active', page: '1', page_size: '100' });
+        const response = await fetch(`/api/ipam/pools?${query.toString()}`, {
+          headers: authHeaders(),
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted || poolRequest.current !== controller) return;
+        if (!response.ok) {
+          setExternalPools([]);
+          setPoolLoadError(response.status === 401
+            ? (zh ? '登录已过期，无法加载外部 DHCP 池，请重新登录后重试。' : 'Your session expired. Sign in to load external DHCP pools.')
+            : response.status === 403
+              ? (zh ? '当前账号没有查看外部 DHCP 池的权限，已停止池选择。' : 'You do not have permission to view DHCP pools. Pool selection is unavailable.')
+              : (zh ? '加载外部 DHCP 池失败，已停止池选择。' : 'Failed to load DHCP pools. Pool selection is unavailable.'));
+          return;
+        }
+        const payload: unknown = await response.json();
+        if (controller.signal.aborted || poolRequest.current !== controller) return;
+        const root = payload && typeof payload === 'object' && 'data' in payload
+          ? (payload as { data?: unknown }).data
+          : payload;
+        const rows = Array.isArray(root)
+          ? root
+          : root && typeof root === 'object' && Array.isArray((root as { items?: unknown }).items)
+            ? (root as { items: unknown[] }).items
+            : null;
+        if (!rows) {
+          setExternalPools([]);
+          setPoolLoadError(zh ? '外部 DHCP 池响应无效，已停止池选择。' : 'The DHCP pool response was invalid. Pool selection is unavailable.');
+          return;
+        }
+        const eligible = filterExternalDhcpPools(rows);
+        setExternalPools(eligible);
+        setPoolLoadError('');
+        setForm((current) => current.pool_id && eligible.some((pool) => pool.id === current.pool_id)
+          ? current
+          : editingLease
+            ? current
+            : { ...current, pool_id: '' });
+      } catch (error) {
+        if (controller.signal.aborted || poolRequest.current !== controller) return;
+        console.error(error);
+        setExternalPools([]);
+        setPoolLoadError(zh ? '加载外部 DHCP 池失败，已停止池选择。请检查网络后重试。' : 'Failed to load DHCP pools. Pool selection is unavailable; check the connection and retry.');
+      } finally {
+        if (poolRequest.current === controller) {
+          poolRequest.current = null;
+          setIsLoadingPools(false);
+        }
+      }
+    })();
+
+    return () => {
+      controller.abort();
+      if (poolRequest.current === controller) poolRequest.current = null;
+    };
+  }, [authHeaders, editingLease, poolRetryCount, showAddEdit, zh]);
+
   const openForm = (leaseItem: DHCPLease | null = null) => {
     setErrorMsg('');
+    pendingCreateRequest.current = null;
     if (leaseItem) {
       setEditingLease(leaseItem);
       setForm({
         address: leaseItem.address,
+        pool_id: leaseItem.pool_id || '',
         mac_address: leaseItem.mac_address,
         hostname: leaseItem.hostname || '',
         dhcp_server: leaseItem.dhcp_server || '',
@@ -138,6 +279,7 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
       const defaultDateRange = getDefaultLeaseDateRange(today);
       setForm({
         address: '',
+        pool_id: '',
         mac_address: '',
         hostname: '',
         dhcp_server: 'Infoblox',
@@ -159,16 +301,24 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
     try {
       const url = editingLease ? `/api/ipam/leases/${editingLease.id}` : '/api/ipam/leases';
       const method = editingLease ? 'PUT' : 'POST';
+      const { pool_id, ...leaseFields } = form;
+      const payload = editingLease
+        ? { ...leaseFields, pool_id, expected_revision: editingLease.revision }
+        : pool_id
+          ? { ...leaseFields, pool_id }
+          : leaseFields;
       const res = await fetch(url, {
         method,
         headers: {
           'Content-Type': 'application/json',
           ...authHeaders(),
+          ...(!editingLease ? { 'Idempotency-Key': getCreateIdempotencyKey(payload) } : {}),
         },
-        body: JSON.stringify(form),
+        body: JSON.stringify(payload),
       });
 
       if (res.ok) {
+        if (!editingLease) pendingCreateRequest.current = null;
         setShowAddEdit(false);
         loadData();
       } else {
@@ -181,8 +331,11 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
   };
 
   const handleDelete = async (id: string) => {
+    const lease = leases.find((item) => item.id === id);
+    if (!lease) return;
     try {
-      const res = await fetch(`/api/ipam/leases/${id}`, {
+      const query = new URLSearchParams({ expected_revision: String(lease.revision) });
+      const res = await fetch(`/api/ipam/leases/${encodeURIComponent(id)}?${query.toString()}`, {
         method: 'DELETE',
         headers: authHeaders(),
       });
@@ -207,6 +360,12 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
       { header: zh ? 'MAC地址' : 'MAC Address', value: (lease) => lease.mac_address },
       { header: zh ? '终端主机名' : 'Client Hostname', value: (lease) => lease.hostname || '-' },
       { header: zh ? 'DHCP 服务源' : 'DHCP Server', value: (lease) => lease.dhcp_server || '-' },
+      {
+        header: zh ? '地址空间 / DHCP 池' : 'Address Space / DHCP Pool',
+        value: (lease) => lease.scope_pending || lease.scope_status === 'scope_unknown' || !lease.address_space_id
+          ? (zh ? '范围待确认' : 'Scope pending')
+          : `${lease.address_space_name || lease.address_space_id} · ${lease.pool_name || lease.pool_id || '-'}`,
+      },
       { header: zh ? '租约状态' : 'Lease State', value: (lease) => lease.lease_state.toUpperCase() },
       { header: zh ? '租用生效时间' : 'Lease Started', value: (lease) => lease.lease_start || '-' },
       { header: zh ? '租用过期时间' : 'Lease Expires', value: (lease) => lease.lease_end || '-' },
@@ -218,7 +377,7 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
       <PageHero
         icon={Clock}
         title={zh ? 'DHCP 租约分配管理' : 'DHCP Leases'}
-        subtitle={zh ? '记录与管理网络动态分发中各DHCP主机的状态，跟踪IP与MAC对应关系的过期周期' : 'Monitor temporary IP mappings allocated to dynamically bound client MACs.'}
+        subtitle={zh ? 'DHCP 租约是外部观测，不等同于静态 IP 归属；仅明确关联到外部 DHCP 池时显示所属地址空间' : 'DHCP leases are external observations, not static IP ownership. Address scope is shown only when linked to an external DHCP pool.'}
         actions={
           <div className="flex items-center gap-2">
             <TableExportMenu tableRef={tableRef} exportData={exportData} filename="ipam-dhcp-leases" language={zh ? 'zh' : 'en'} disabled={loading || paginatedLeases.length === 0} />
@@ -283,6 +442,7 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
                   <th className="px-4 py-4">{zh ? 'MAC地址' : 'MAC Address'}</th>
                   <th className="px-4 py-4">{zh ? '终端主机名' : 'Client Hostname'}</th>
                   <th className="px-4 py-4">{zh ? 'DHCP 服务源' : 'DHCP Server'}</th>
+                  <th className="px-4 py-4">{zh ? '地址空间 / DHCP 池' : 'Address Space / DHCP Pool'}</th>
                   <th className="px-4 py-4">{zh ? '租约状态' : 'Lease State'}</th>
                   <th className="px-4 py-4">{zh ? '租用生效时间' : 'Lease Started'}</th>
                   <th className="px-4 py-4">{zh ? '租用过期时间' : 'Lease Expires'}</th>
@@ -300,6 +460,18 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
                       <td className="px-4 py-4 font-mono text-xs text-gray-600">{node.mac_address}</td>
                       <td className="px-4 py-4 text-xs font-semibold text-gray-500">{node.hostname || '-'}</td>
                       <td className="px-4 py-4 text-xs font-bold text-indigo-600">{node.dhcp_server}</td>
+                      <td className="px-4 py-4">
+                        {node.scope_pending || node.scope_status === 'scope_unknown' || !node.address_space_id ? (
+                          <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                            {zh ? '范围待确认' : 'Scope pending'}
+                          </span>
+                        ) : (
+                          <div className="space-y-0.5 text-[10px]">
+                            <div className="font-semibold text-gray-700">{node.address_space_name || node.address_space_id}</div>
+                            <div className="text-gray-500">{node.pool_name || node.pool_id || (zh ? '未关联池' : 'No pool')}</div>
+                          </div>
+                        )}
+                      </td>
                       <td className="px-4 py-4">
                         <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
                           node.lease_state === 'active' 
@@ -331,7 +503,7 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={8} className="py-12 text-center text-xs text-gray-400 font-medium">
+                    <td colSpan={9} className="py-12 text-center text-xs text-gray-400 font-medium">
                       {zh ? '当前无任何DHCP租约分配数据' : 'No active DHCP lease mappings found'}
                     </td>
                   </tr>
@@ -386,12 +558,18 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
                     {errorMsg}
                   </div>
                 )}
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-[11px] leading-relaxed text-slate-700">
+                  {zh
+                    ? '租约是 DHCP 来源观测，不会单独占用静态分配地址；需要明确空间时请选择对应的外部 DHCP 池。'
+                    : 'A lease is an observation from DHCP and does not independently reserve a static address. Select its external DHCP pool to assign a known scope.'}
+                </div>
 
                 <div className="grid grid-cols-2 gap-4">
                   {/* IP Address */}
                   <div className="space-y-1.5 col-span-2">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '分配 IP 地址 *' : 'Assigned IP Address *'}</label>
+                    <label htmlFor="dhcp-lease-address" className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '分配 IP 地址 *' : 'Assigned IP Address *'}</label>
                     <input
+                      id="dhcp-lease-address"
                       type="text"
                       value={form.address}
                       onChange={(e) => setForm({ ...form, address: e.target.value })}
@@ -400,10 +578,58 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
                     />
                   </div>
 
+                  <div className="space-y-1.5 col-span-2">
+                    <label htmlFor="dhcp-lease-pool" className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">
+                      {zh ? '外部 DHCP 地址池（可选）' : 'External DHCP Pool (optional)'}
+                    </label>
+                    <select
+                      id="dhcp-lease-pool"
+                      aria-label={zh ? '外部 DHCP 地址池' : 'External DHCP Pool'}
+                      value={form.pool_id}
+                      disabled={isLoadingPools || Boolean(poolLoadError)}
+                      onChange={(event) => setForm((current) => ({ ...current, pool_id: event.target.value }))}
+                      className="w-full rounded-xl border border-gray-150 bg-gray-50/50 px-4 py-2.5 text-xs font-medium outline-none transition-all focus:border-cyan-400 focus:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <option value="">{zh ? '不关联池（范围待确认）' : 'No pool linked (scope pending)'}</option>
+                      {form.pool_id && !externalPools.some((pool) => pool.id === form.pool_id) && (
+                        <option value={form.pool_id}>{zh ? '现有池关联待核验' : 'Existing Pool link needs review'}</option>
+                      )}
+                      {externalPools.map((pool) => (
+                        <option key={pool.id} value={pool.id}>
+                          {pool.name} · {pool.start_ip} – {pool.end_ip}
+                        </option>
+                      ))}
+                    </select>
+                    {isLoadingPools && <p role="status" className="ml-1 text-[10px] text-gray-500">{zh ? '正在加载外部 DHCP 池…' : 'Loading external DHCP pools…'}</p>}
+                    {poolLoadError && (
+                      <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[10px] font-semibold text-rose-700">
+                        <span>{poolLoadError}</span>
+                        <button type="button" onClick={() => setPoolRetryCount((count) => count + 1)} disabled={isLoadingPools} className="rounded-lg bg-white px-2.5 py-1 text-rose-700 shadow-sm disabled:opacity-50">
+                          {zh ? '重试' : 'Retry'}
+                        </button>
+                      </div>
+                    )}
+                    {form.pool_id ? (
+                      <p className="ml-1 text-[10px] text-cyan-700">
+                        {zh ? '租约范围由所选外部 DHCP 池确认；该观测仍不会单独阻止静态分配。' : 'The selected external DHCP pool establishes this observation scope; the lease itself still does not block static allocation.'}
+                      </p>
+                    ) : (
+                      <p className="ml-1 text-[10px] text-amber-700">
+                        {zh ? '未关联外部 DHCP 池时，租约范围保持待确认。' : 'Without an external DHCP pool, lease scope remains pending.'}
+                      </p>
+                    )}
+                    {!isLoadingPools && !poolLoadError && externalPools.length === 0 && (
+                      <p className="ml-1 text-[10px] text-gray-500">
+                        {zh ? '当前没有可关联的活动外部 DHCP 池。' : 'No active external DHCP pools are available to link.'}
+                      </p>
+                    )}
+                  </div>
+
                   {/* MAC Address */}
                   <div className="space-y-1.5 col-span-2">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '客户端 MAC 物理地址 *' : 'Client MAC Address *'}</label>
+                    <label htmlFor="dhcp-lease-mac" className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '客户端 MAC 物理地址 *' : 'Client MAC Address *'}</label>
                     <input
+                      id="dhcp-lease-mac"
                       type="text"
                       value={form.mac_address}
                       onChange={(e) => setForm({ ...form, mac_address: e.target.value })}

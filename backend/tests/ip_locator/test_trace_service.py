@@ -99,6 +99,36 @@ def test_cache_provenance_records_whole_result_redis_write_ack():
     }]
 
 
+def test_known_access_candidate_stays_partial_when_another_route_query_fails():
+    result = add_legacy_compatibility({
+        "target_ip": "172.16.5.10",
+        "found": True,
+        "status": "partial",
+        "conclusion": "path_has_unverified_branch",
+        "location": {
+            "device_id": "access-switch",
+            "device": "S6850-5",
+            "port": "GE1/0/2",
+            "vlan": "7",
+            "mac": "8e4757600706",
+        },
+        "coverage_gaps": ["route_failed:401e4856-e337-4361-9974-3d186b15f394"],
+        "errors": ["AC_21 路由查询失败"],
+    })
+
+    assert result["trace_status"] == "partial"
+    assert result["locations"] == [{
+        "switch_id": "access-switch",
+        "switch_name": "S6850-5",
+        "port": "GE1/0/2",
+        "vlan": "7",
+        "type": "PATH_TRACED_PARTIAL",
+        "is_uplink": False,
+        "note": "物理接入口已确认；部分路径证据仍待核验",
+    }]
+    assert result["errors"] == ["AC_21 路由查询失败"]
+
+
 def test_redis_write_attempt_flag_matches_cache_backend():
     class _Cache:
         def __init__(self, backend):

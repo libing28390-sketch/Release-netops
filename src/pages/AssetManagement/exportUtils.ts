@@ -5,6 +5,7 @@ import {
   TYPES,
 } from './constants';
 import type { Asset } from './types';
+import { deviceCategoryLabel, deviceRoleLabel } from '../../domain/deviceLabels';
 
 export type AssetExportColumnKey =
   | 'hostname'
@@ -32,24 +33,8 @@ export interface AssetExportColumn {
   en: string;
 }
 
-const ASSET_CATEGORY_LABELS: Record<string, { zh: string; en: string }> = {
-  rack_server: { zh: '机架式服务器', en: 'Rack Server' },
-  blade_server: { zh: '刀片服务器', en: 'Blade Server' },
-  tower_server: { zh: '塔式服务器', en: 'Tower Server' },
-  high_density: { zh: '高密度服务器', en: 'High-Density Server' },
-  gpu_server: { zh: 'GPU 服务器', en: 'GPU Server' },
-  storage_server: { zh: '存储服务器', en: 'Storage Server' },
-  virtual_host: { zh: '虚拟/物理宿主机', en: 'Virtual Host' },
-  switch: { zh: '交换机', en: 'Switch' },
-  router: { zh: '路由器', en: 'Router' },
-  firewall: { zh: '防火墙', en: 'Firewall' },
-  load_balancer: { zh: '负载均衡', en: 'Load Balancer' },
-  wireless_ap: { zh: '无线 AP', en: 'Wireless AP' },
-  other: { zh: '其他', en: 'Other' },
-};
-
 export function assetCategoryLabel(category: string | undefined, language: 'zh' | 'en'): string {
-  return ASSET_CATEGORY_LABELS[category || '']?.[language] || category || '—';
+  return deviceCategoryLabel(category, language);
 }
 
 const formatDate = (value: string | undefined) =>
@@ -70,7 +55,7 @@ export function formatAssetExportValue(
       return TYPES.find((item) => item.value === asset.asset_type)?.label[language] || asset.asset_type || '—';
     case 'device_category':
       return assetCategoryLabel(asset.device_category, language);
-    case 'device_role': return asset.device_role || '—';
+    case 'device_role': return deviceRoleLabel(asset.device_role, language);
     case 'site': {
       // site_id is an internal identifier. Keep the business site label only;
       // rack and unit have their own visible columns.

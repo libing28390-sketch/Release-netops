@@ -7,6 +7,7 @@ import { U_PX, RACK_W, STATUS_LABEL } from '../constants';
 import { getNormalizedRoleColor, uToY } from '../helpers';
 import PowerLed from './PowerLed';
 import DeviceIcon from './DeviceIcon';
+import { deviceRoleLabel } from '../../../domain/deviceLabels';
 
 interface DraggableDeviceProps {
   device: RackDevice;
@@ -51,7 +52,7 @@ export const DraggableDevice: React.FC<DraggableDeviceProps> = ({
       };
 
   const endU = startU + heightU - 1;
-  const roleName = zh ? rc.labelZh : rc.label;
+  const roleName = deviceRoleLabel(device.device_role, zh ? 'zh' : 'en');
   const statusInfo = STATUS_LABEL[device.status] || { zh: device.status, en: device.status };
   const powerColor = device.status === 'active' ? '#4ade80' : device.status === 'planned' ? '#fbbf24' : '#ef4444';
 
@@ -119,7 +120,7 @@ export const DraggableDevice: React.FC<DraggableDeviceProps> = ({
             <p className="text-[13px] font-bold mb-1.5" style={{ color: '#f1f5f9' }}>{device.name}</p>
             <div className="space-y-1">
               <p>{zh ? '型号' : 'Model'}: <span className="font-medium text-cyan-300">{device.vendor} {device.model}</span></p>
-              <p>{zh ? '角色' : 'Role'}: <span className="font-medium" style={{ color: rc.bg }}>{roleName}</span></p>
+              <p>{zh ? '设备角色' : 'Device role'}: <span className="font-medium" style={{ color: rc.bg }}>{roleName}</span></p>
               <p>U{zh ? '位' : ''}: <span className="font-mono font-medium">U{startU}{endU !== startU ? `–U${endU}` : ''} ({heightU}U)</span></p>
               <p>{zh ? '面板' : 'Panel'}: {device.position === 'front' ? (zh ? '前面板' : 'Front') : (zh ? '后面板' : 'Rear')}</p>
               <p>{zh ? '状态' : 'Status'}: {zh ? statusInfo.zh : statusInfo.en}</p>

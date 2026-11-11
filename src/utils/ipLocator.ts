@@ -1,6 +1,7 @@
 const LOCATION_TYPE_LABELS: Record<string, [string, string]> = {
   SNMP_ENDPOINT: ['已定位到接入端口', 'Access port located'],
   PATH_TRACED: ['已定位到接入端口', 'Access port located'],
+  PATH_TRACED_PARTIAL: ['接入端口已定位，路径部分待核', 'Access port located; path partly unverified'],
   ARP_DIRECT: ['ARP 来源接口', 'ARP source interface'],
   CACHED_ENDPOINT: ['缓存端点', 'Cached endpoint'],
   TRACE_INCOMPLETE: ['链路追踪未完成', 'Path trace incomplete'],

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import ipaddress
 import re
+from datetime import datetime, timezone
 from typing import Any, Iterable
 
 from core.interface_utils import normalize_interface_name
@@ -64,26 +66,30 @@ def _interface_rows_from_cli(
         _status_record,
     )
 
-    addresses_by_key: dict[str, dict[str, Any]] = {}
+    addresses_by_key: dict[str, list[dict[str, Any]]] = {}
     for address in address_records or []:
         if not isinstance(address, dict):
             continue
-        key = _normalized_name(address.get("interface"))
-        ip_address = _normalize_ip(address.get("ip_address"))
-        if not key or not ip_address:
-            continue
-        prefix_length = _normalize_prefix_length(address.get("prefix_length"))
-        current = addresses_by_key.get(key)
-        if current and (
-            current["ip_address"] != ip_address
-            or current["prefix_length"] != prefix_length
-        ):
-            raise RuntimeError("CMDB接口快照包含同一接口的多个地址，当前观察表无法无损表示")
-        addresses_by_key[key] = {
-            "interface_name": str(address.get("interface") or ""),
-            "ip_address": ip_address,
-            "prefix_length": prefix_length,
+        interface_name = str(address.get("interface") or "").strip()
+        key = _normalized_name(interface_name)
+        if not key:
+            raise RuntimeError("CMDB接口地址快照包含缺少接口名的记录")
+        raw_ip_address = str(address.get("ip_address") or "").strip()
+        raw_prefix_length = address.get("prefix_length")
+        prefix_length = _normalize_prefix_length(raw_prefix_length)
+        if prefix_length is None and "/" in raw_ip_address:
+            prefix_length = _normalize_prefix_length(raw_ip_address.rsplit("/", 1)[-1])
+        address_row = {
+            "interface": interface_name,
+            "ip_address": raw_ip_address,
+            "prefix_length": prefix_length if prefix_length is not None else raw_prefix_length,
         }
+        for field in (
+            "context_source", "context_type", "local_context_key", "local_context_name",
+        ):
+            if field in address:
+                address_row[field] = address[field]
+        addresses_by_key.setdefault(key, []).append(address_row)
 
     status_by_key: dict[str, dict[str, Any]] = {}
     for record in status_records:
@@ -118,28 +124,40 @@ def _interface_rows_from_cli(
     rows: list[dict[str, Any]] = []
     for key in sorted(set(status_by_key) | set(addresses_by_key)):
         status = status_by_key.get(key, {})
-        address = addresses_by_key.get(key, {})
+        addresses = addresses_by_key.get(key, [])
+        # Keep the historical status-output address fallback when the dedicated
+        # address action did not return an address for this interface.
+        if not addresses and status.get("ip_address"):
+            addresses = [{
+                "interface": status.get("interface_name") or key,
+                "ip_address": status["ip_address"],
+                "prefix_length": status.get("prefix_length"),
+                "context_source": "cli",
+                "context_type": "unknown",
+                "local_context_key": "",
+                "local_context_name": "",
+            }]
         description = status.get("description")
         if description is None:
             description = descriptions.get(key, {}).get("description")
+        single_address = addresses[0] if len(addresses) == 1 else {}
+        single_ip = _normalize_ip(single_address.get("ip_address"))
+        single_prefix = _normalize_prefix_length(single_address.get("prefix_length"))
         rows.append({
             "interface_name": (
                 status.get("interface_name")
-                or address.get("interface_name")
+                or (addresses[0].get("interface") if addresses else "")
                 or descriptions.get(key, {}).get("interface_name")
                 or key
             ),
             "description": description,
             "admin_status": status.get("admin_status") or "unknown",
             "oper_status": status.get("oper_status") or "unknown",
-            # The dedicated address action is authoritative for its rows;
-            # status output may still provide a direct address for other rows.
-            "interface_ip": address.get("ip_address") or status.get("ip_address") or "",
-            "prefix_length": (
-                address.get("prefix_length")
-                if address.get("prefix_length") is not None
-                else status.get("prefix_length")
-            ),
+            # Legacy parent fields are populated only when there is exactly
+            # one child address. The full address set is retained below.
+            "interface_ip": single_ip,
+            "prefix_length": single_prefix,
+            "addresses": addresses,
         })
     return rows
 
@@ -174,24 +192,145 @@ def replace_cmdb_interface_observations(
         normalized_name = _normalized_name(interface_name)
         if not normalized_name:
             raise RuntimeError("CMDB CLI接口快照包含缺少接口名的记录")
-        prefix_length = item.get("prefix_length")
-        if prefix_length is not None:
+
+        if normalized_name in normalized_rows:
+            raise RuntimeError("CMDB CLI接口快照包含重复接口记录")
+
+        if "addresses" in item:
+            raw_addresses = item.get("addresses")
+            if not isinstance(raw_addresses, list):
+                raise RuntimeError("CMDB CLI接口快照包含无效地址列表")
+        else:
+            # Preserve compatibility with older internal callers that still
+            # pass the former single-address parent fields.
+            legacy_ip = str(item.get("interface_ip") or "").strip()
+            raw_addresses = ([{
+                "interface": interface_name,
+                "ip_address": legacy_ip,
+                "prefix_length": item.get("prefix_length"),
+            }] if legacy_ip else [])
+
+        address_rows: list[dict[str, Any]] = []
+        address_rows_by_identity: dict[tuple[Any, ...], dict[str, Any]] = {}
+        for raw_address in raw_addresses:
+            if not isinstance(raw_address, dict):
+                raise RuntimeError("CMDB CLI接口快照包含无效地址记录")
+            address_interface_name = str(raw_address.get("interface") or interface_name).strip()
+            if _normalized_name(address_interface_name) != normalized_name:
+                raise RuntimeError("CMDB CLI接口地址不属于其父接口")
+
+            raw_ip_address = str(raw_address.get("ip_address") or "").strip()
+            if not raw_ip_address or "%" in raw_ip_address:
+                raise RuntimeError("CMDB CLI接口快照包含无效IP地址")
+            embedded_prefix_length = None
             try:
-                prefix_length = int(prefix_length)
-            except (TypeError, ValueError) as exc:
-                raise RuntimeError("CMDB CLI接口快照包含无效掩码长度") from exc
-            if not 0 <= prefix_length <= 128:
-                raise RuntimeError("CMDB CLI接口快照包含无效掩码长度")
+                if "/" in raw_ip_address:
+                    parsed_interface = ipaddress.ip_interface(raw_ip_address)
+                    parsed_ip = parsed_interface.ip
+                    embedded_prefix_length = parsed_interface.network.prefixlen
+                else:
+                    parsed_ip = ipaddress.ip_address(raw_ip_address)
+            except ValueError as exc:
+                raise RuntimeError("CMDB CLI接口快照包含无效IP地址") from exc
+            normalized_ip_address = str(parsed_ip)
+
+            raw_prefix_length = raw_address.get("prefix_length")
+            if raw_prefix_length is None or str(raw_prefix_length).strip() == "":
+                prefix_length = embedded_prefix_length
+            else:
+                if isinstance(raw_prefix_length, bool):
+                    raise RuntimeError("CMDB CLI接口快照包含无效掩码长度")
+                prefix_value = str(raw_prefix_length).strip()
+                if prefix_value.startswith("/"):
+                    prefix_value = prefix_value[1:].strip()
+                try:
+                    if "." in prefix_value:
+                        if parsed_ip.version != 4:
+                            raise ValueError("IPv4 netmask supplied for IPv6 address")
+                        prefix_length = ipaddress.IPv4Network(
+                            f"0.0.0.0/{prefix_value}"
+                        ).prefixlen
+                    else:
+                        prefix_length = int(prefix_value)
+                except (TypeError, ValueError) as exc:
+                    raise RuntimeError("CMDB CLI接口快照包含无效掩码长度") from exc
+            max_prefix_length = 32 if parsed_ip.version == 4 else 128
+            if (
+                prefix_length is None
+                or not 0 <= prefix_length <= max_prefix_length
+                or (
+                    embedded_prefix_length is not None
+                    and prefix_length != embedded_prefix_length
+                )
+            ):
+                raise RuntimeError("CMDB CLI接口快照包含与IP版本不匹配的掩码长度")
+
+            context_source = str(raw_address.get("context_source") or "cli").strip().lower()
+            context_type = str(raw_address.get("context_type") or "unknown").strip().lower()
+            local_context_key = str(raw_address.get("local_context_key") or "").strip()
+            local_context_name = str(raw_address.get("local_context_name") or "").strip()
+            if context_source not in {"cli", "snmp"}:
+                raise RuntimeError("CMDB CLI接口快照包含无效路由上下文来源")
+            if context_type not in {"vrf", "global", "unknown"}:
+                raise RuntimeError("CMDB CLI接口快照包含无效路由上下文类型")
+            if context_type in {"vrf", "global"} and not local_context_key:
+                raise RuntimeError("已知路由上下文必须包含本地上下文键")
+
+            normalized_address = {
+                "interface_name": address_interface_name,
+                "context_source": context_source,
+                "context_type": context_type,
+                "local_context_key": local_context_key,
+                "local_context_name": local_context_name,
+                "ip_address": normalized_ip_address,
+                "ip_prefix_length": prefix_length,
+            }
+            identity = (
+                normalized_name, context_source, context_type, local_context_key,
+                normalized_ip_address, prefix_length,
+            )
+            # Repeated identical parser rows represent one current address;
+            # distinct contexts or masks remain separate observations.
+            address_rows_by_identity[identity] = normalized_address
+
+        # Duplicate address records were collapsed by the child-table key.
+        address_rows = list(address_rows_by_identity.values())
+        if len(address_rows) > 1:
+            address_rows.sort(key=lambda address: (
+                address["context_source"], address["context_type"],
+                address["local_context_key"], address["ip_address"],
+                address["ip_prefix_length"],
+            ))
+        single_address = address_rows[0] if len(address_rows) == 1 else None
         normalized_rows[normalized_name] = {
             "interface_name": interface_name,
             "description": str(item.get("description") or ""),
             "admin_status": str(item.get("admin_status") or "unknown"),
             "oper_status": str(item.get("oper_status") or "unknown"),
-            "ip_address": str(item.get("interface_ip") or ""),
-            "ip_prefix_length": prefix_length,
+            "ip_address": single_address["ip_address"] if single_address else "",
+            "ip_prefix_length": single_address["ip_prefix_length"] if single_address else None,
             "interface_type": infer_interface_type(interface_name),
+            "addresses": address_rows,
         }
 
+    observed_value = str(observed_at or "").strip()
+    if observed_value:
+        try:
+            parsed_observed_at = datetime.fromisoformat(
+                observed_value.replace("Z", "+00:00")
+            )
+        except ValueError as exc:
+            raise RuntimeError("CMDB CLI接口快照包含无效观察时间") from exc
+        if parsed_observed_at.tzinfo is None:
+            parsed_observed_at = parsed_observed_at.replace(tzinfo=timezone.utc)
+    else:
+        parsed_observed_at = datetime.now(timezone.utc)
+    child_observed_at = parsed_observed_at.isoformat()
+
+    conn.execute(
+        "DELETE FROM cmdb_device_interface_address_observations WHERE device_id = ?",
+        (device_id,),
+    )
     conn.execute(
         "DELETE FROM cmdb_device_interface_observations WHERE device_id = ?",
         (device_id,),
@@ -211,6 +350,22 @@ def replace_cmdb_interface_observations(
                 str(observed_at), run_id, metadata_json,
             ),
         )
+        for address in item["addresses"]:
+            conn.execute(
+                """INSERT INTO cmdb_device_interface_address_observations (
+                       device_id, normalized_interface_name, interface_name,
+                       context_source, context_type, local_context_key,
+                       local_context_name, ip_address, ip_prefix_length,
+                       generation, observed_at, run_id, metadata_json
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSONB))""",
+                (
+                    device_id, normalized_name, address["interface_name"],
+                    address["context_source"], address["context_type"],
+                    address["local_context_key"], address["local_context_name"],
+                    address["ip_address"], address["ip_prefix_length"],
+                    generation, child_observed_at, run_id, metadata_json,
+                ),
+            )
     return len(normalized_rows)
 
 

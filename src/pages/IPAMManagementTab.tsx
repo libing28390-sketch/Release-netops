@@ -10,6 +10,8 @@ const DHCPLeaseTab = lazy(() => import('./IPVlan/DHCPLeaseTab'));
 const IPUtilizationTab = lazy(() => import('./IPVlan/IPUtilizationTab'));
 const IPReconciliationTab = lazy(() => import('./IPVlan/IPReconciliationTab'));
 const DiscoveredEndpointsTab = lazy(() => import('./IPVlan/DiscoveredEndpointsTab'));
+const DeviceRoutingContextTab = lazy(() => import('./IPVlan/DeviceRoutingContextTab'));
+const FhrpGroupsTab = lazy(() => import('./IPVlan/FhrpGroupsTab'));
 const IPLocatorPage = lazy(() => import('./IPLocatorPage'));
 
 interface IPAMPrefixContext {
@@ -113,6 +115,8 @@ const IPAMManagementTab: React.FC<IPAMManagementTabProps> = ({ language, t, ipam
           {ipamPage === 'utilization' && <IPUtilizationTab language={language} t={t} />}
           {ipamPage === 'reconciliation' && <IPReconciliationTab language={language} t={t} />}
           {ipamPage === 'endpoints' && <DiscoveredEndpointsTab language={language} t={t} />}
+          {ipamPage === 'routing-contexts' && <DeviceRoutingContextTab language={language} t={t} />}
+          {ipamPage === 'fhrp' && <FhrpGroupsTab language={language} t={t} />}
           {ipamPage === 'locate' && <IPLocatorPage language={language} t={t} mode="toolbox" />}
         </Suspense>
       </div>

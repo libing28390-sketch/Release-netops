@@ -180,7 +180,7 @@ describe('AssetManagementTab request states', () => {
     await waitFor(() => expect(useInventoryStore.getState().assetsTotal).toBe(1));
 
     for (const column of [
-      'Device', 'Asset tag', 'Asset type', 'Category', 'Role', 'Site', 'Status',
+      'Device', 'Asset tag', 'Asset type', 'Device category', 'Device role', 'Site', 'Status',
       'Vendor', 'Model', 'Serial', 'Management IP', 'Asset status',
     ]) {
       expect(screen.getByRole('columnheader', { name: column })).toBeTruthy();
@@ -193,7 +193,7 @@ describe('AssetManagementTab request states', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Columns' }));
     const selectedColumns = [
-      'Device', 'Asset tag', 'Asset type', 'Category', 'Role', 'Site', 'Status',
+      'Device', 'Asset tag', 'Asset type', 'Device category', 'Device role', 'Site', 'Status',
       'Vendor', 'Model', 'Serial', 'Management IP', 'Asset status',
     ];
     for (const column of selectedColumns) {

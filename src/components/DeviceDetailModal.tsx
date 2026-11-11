@@ -20,6 +20,7 @@ import PlatformProfileSelector, { type PlatformProfileOption } from './PlatformP
 import { inferPlatformVendor, platformVendorLabel } from '../utils/platformVendor';
 import { extractSoftwareMajorVersion, getDevicePlatformAdaptation, getPlatformProfileDisplayLabel, getProfileAdaptationMajorVersion, getProfileAdaptationVersion } from '../utils/platformVersion';
 import { getPlatformBindingErrorMessage } from '../utils/platformBindingErrors';
+import { deviceRoleLabel } from '../domain/deviceLabels';
 
 interface PlatformIdentificationResult {
   status?: string;
@@ -64,23 +65,8 @@ const isHardwareStatusNormal = (value: unknown) => {
   return ['true', '1', 'ok', 'normal', 'redundant', 'single', 'up', 'running', 'ready'].includes(normalized);
 };
 
-const DEVICE_ROLE_ZH: Record<string, string> = {
-  core: '核心',
-  distribution: '汇聚',
-  access: '接入',
-  firewall: '防火墙',
-  router: '路由器',
-  switch: '交换机',
-  server: '服务器',
-  wireless: '无线',
-  unassigned: '未分配',
-};
-
 const formatRoleLabel = (value: unknown, language: string) => {
-  const raw = String(value ?? '').trim();
-  if (!raw) return '—';
-  if (language !== 'zh') return raw;
-  return DEVICE_ROLE_ZH[raw.toLowerCase()] || raw;
+  return deviceRoleLabel(value, language === 'zh' ? 'zh' : 'en');
 };
 
 const formatStatusLabel = (value: unknown, language: string) => {
@@ -487,7 +473,7 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
                 <h4 className="mb-2 text-[10px] font-bold uppercase tracking-widest text-black/30">{t('locationRole')}</h4>
                 <div className="space-y-3">
                   <div className="flex justify-between text-sm"><span className="text-black/40">{language === 'zh' ? '站点（资产）' : 'Asset site'}</span><span className="font-medium">{viewingDevice.site || '—'}</span></div>
-                  <div className="flex justify-between text-sm"><span className="text-black/40">{language === 'zh' ? '角色（资产）' : 'Asset role'}</span><span className="font-medium">{formatRoleLabel(viewingDevice.role, language)}</span></div>
+                  <div className="flex justify-between text-sm"><span className="text-black/40">{language === 'zh' ? '设备角色（资产）' : 'Asset device role'}</span><span className="font-medium">{formatRoleLabel(viewingDevice.role, language)}</span></div>
                   <div className="flex justify-between text-sm"><span className="text-black/40">{language === 'zh' ? 'SNMP 系统名称' : 'SNMP sysName'}</span><span className="font-medium">{viewingDevice.sys_name || '—'}</span></div>
                   <div className="flex justify-between text-sm"><span className="text-black/40">{language === 'zh' ? 'SNMP 位置（设备 MIB）' : 'SNMP sysLocation'}</span><span className="max-w-[180px] truncate text-right font-medium" title={viewingDevice.sys_location || ''}>{viewingDevice.sys_location || '—'}</span></div>
                   <div className="flex justify-between text-sm"><span className="text-black/40">{language === 'zh' ? 'SNMP 联系人' : 'SNMP sysContact'}</span><span className="font-medium">{viewingDevice.sys_contact || '—'}</span></div>

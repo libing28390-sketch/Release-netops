@@ -54,7 +54,11 @@ from services.collector_sweep_state_service import (
     reserve_collector_sweep_batch,
 )
 from services.collector_task_queue_service import enqueue_tasks
-from services.vlan_discovery_service import is_svi_interface, parse_vlan_id_from_interface
+from services.vlan_discovery_service import (
+    is_svi_interface,
+    parse_vlan_id_from_interface,
+    parse_vlan_values,
+)
 from services.snmp_collection_policy_service import is_snmp_collection_enabled
 
 # 并发 SSH 连接上限，避免瞬间打开过多连接
@@ -482,7 +486,28 @@ def _normalize_arp_record(record: dict[str, Any], device_info: dict[str, Any]) -
         'source_device_id': device_info.get('id'),
         'source_device': device_info.get('hostname') or device_info.get('ip_address'),
     }
-    vrf_context_status, vrf_value = _explicit_vrf_context(record)
+    vrf_context_status, vrf_value = _explicit_vrf_context(record, device_info)
+    context_fallback = {
+        'local_context_key': device_info.get('_arp_context_key') or '',
+        'local_context_name': device_info.get('_arp_context_name') or '',
+    }
+    local_context_key, local_context_name = _raw_arp_local_context(record, context_fallback)
+    context_type = {
+        'explicit_global': 'global',
+        'explicit_vrf': 'vrf',
+        'unknown': 'unknown',
+    }.get(vrf_context_status, 'unknown')
+    if context_type == 'global' and not local_context_key:
+        local_context_key = str(device_info.get('_arp_context_key') or 'global').strip()
+    context_source = str(
+        _record_value(record, 'context_source')
+        or device_info.get('_arp_context_source')
+        or 'cli'
+    ).strip().lower()
+    normalized['context_source'] = context_source if context_source in {'cli', 'snmp'} else 'cli'
+    normalized['context_type'] = context_type
+    normalized['local_context_key'] = local_context_key
+    normalized['local_context_name'] = local_context_name
     normalized['vrf_context_status'] = vrf_context_status
     normalized['vrf'] = vrf_value
     entry_type = _record_value(record, 'type', 'entry_type', 'arp_type', 'kind')
@@ -522,25 +547,45 @@ def _normalize_arp_record(record: dict[str, Any], device_info: dict[str, Any]) -
     return normalized
 
 
-def _explicit_vrf_context(record: dict[str, Any]) -> tuple[str, str]:
+def _explicit_vrf_context(
+    record: dict[str, Any], device_info: dict[str, Any] | None = None,
+) -> tuple[str, str]:
     """Keep an explicit VRF claim separate from a missing/default context."""
     context_status = str(_record_value(record, 'vrf_context_status') or '').strip().lower()
     if context_status in {'explicit_global', 'global'}:
         return 'explicit_global', ''
 
     raw = _record_value(
-        record, 'vrf_id', 'vrf_name', 'vrf', 'routing_instance',
+        record, 'vrf_id', 'vrf_name', 'vrf', 'vpn_instance', 'routing_instance',
         'virtual_router', 'address_space', 'vrf_context',
     )
     if isinstance(raw, dict):
         raw = raw.get('vrf_id') or raw.get('vrf_name') or raw.get('vrf_context')
     value = str(raw or '').strip()
-    normalized = value.lower().replace('-', '_').replace(' ', '_')
-    if normalized in {'global', 'global_table', 'default', 'default_vrf', 'public'}:
-        return 'explicit_global', ''
     if context_status == 'explicit_vrf' and value:
         return 'explicit_vrf', value
-    if value and normalized not in {'unknown', 'n_a', 'na', '--', 'none'}:
+    if not value:
+        return 'unknown', ''
+
+    platform = str(
+        (device_info or {}).get('profile_parser_platform')
+        or (device_info or {}).get('platform')
+        or ''
+    ).strip().lower()
+    if value in {'--', '-'}:
+        if platform.startswith('h3c_comware') and value == '--':
+            return 'explicit_global', ''
+        return 'unknown', ''
+
+    normalized = value.lower().replace('-', '_').replace(' ', '_')
+    if normalized in {'global', 'global_table', 'default', 'default_vrf', 'public', '_public_'}:
+        # Generic aliases are not proof that two device contexts share the
+        # platform Global space. A vendor parser may mark a validated sentinel
+        # explicitly; otherwise preserve the observation as unresolved.
+        return 'unknown', ''
+    if normalized in {'unknown', 'n_a', 'na', '--', 'none', 'null'}:
+        return 'unknown', ''
+    if value:
         return 'explicit_vrf', value
     return 'unknown', ''
 
@@ -2231,6 +2276,39 @@ def _trace_access_evidence(interface_row: dict[str, Any]) -> list[str]:
     return evidence
 
 
+def _trace_observation_not_older(candidate: Any, baseline: Any) -> bool:
+    """Compare two optional observation timestamps without guessing on parse failure."""
+    candidate_text = str(candidate or '').strip()
+    baseline_text = str(baseline or '').strip()
+    if not candidate_text:
+        return False
+    if not baseline_text:
+        return True
+    try:
+        candidate_at = datetime.fromisoformat(candidate_text.replace('Z', '+00:00'))
+        baseline_at = datetime.fromisoformat(baseline_text.replace('Z', '+00:00'))
+        if candidate_at.tzinfo is None:
+            candidate_at = candidate_at.replace(tzinfo=timezone.utc)
+        if baseline_at.tzinfo is None:
+            baseline_at = baseline_at.replace(tzinfo=timezone.utc)
+        return candidate_at >= baseline_at
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
+def _trace_observation_age_seconds(value: Any) -> float | None:
+    text = str(value or '').strip()
+    if not text:
+        return None
+    try:
+        observed_at = datetime.fromisoformat(text.replace('Z', '+00:00'))
+        if observed_at.tzinfo is None:
+            observed_at = observed_at.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - observed_at.astimezone(timezone.utc)).total_seconds()
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 def _trace_identity_confirms_access_terminal(identity: dict[str, Any]) -> bool:
     """Return whether an interface identity is safe to use as a terminal port."""
     return bool(
@@ -2242,7 +2320,12 @@ def _trace_identity_confirms_access_terminal(identity: dict[str, Any]) -> bool:
     )
 
 
-def _load_trace_port_identity(conn, device_id: str, port: str) -> dict[str, Any]:
+def _load_trace_port_identity(
+    conn,
+    device_id: str,
+    port: str,
+    vlan_id: Any = None,
+) -> dict[str, Any]:
     """Expand a MAC-table port into its logical bundle and physical members.
 
     The MAC table may report ``BAGG15`` while topology discovery persists the
@@ -2266,6 +2349,7 @@ def _load_trace_port_identity(conn, device_id: str, port: str) -> dict[str, Any]
         'access_evidence': [],
         'logical_interface_ids': set(),
         'member_interface_ids': set(),
+        'vlan_port_observation': None,
     }
 
     try:
@@ -2286,6 +2370,73 @@ def _load_trace_port_identity(conn, device_id: str, port: str) -> dict[str, Any]
         if requested_norm and normalize_interface_name(row.get('interface_name') or '').lower() == requested_norm
     ]
     identity['has_interface_record'] = bool(direct_rows)
+
+    current_vlan_port = None
+    current_interface_observation = None
+    parsed_vlan_id = _parse_vlan_id(vlan_id)
+    if requested_norm and parsed_vlan_id is not None:
+        try:
+            observation = conn.execute(
+                '''SELECT p.vlan_id, p.interface_name, p.port_mode, p.tagging,
+                          p.observed_at AS vlan_observed_at,
+                          i.interface_name AS observed_interface_name,
+                          i.interface_type AS observed_interface_type,
+                          i.description AS observed_description,
+                          i.admin_status AS observed_admin_status,
+                          i.oper_status AS observed_oper_status,
+                          i.observed_at AS interface_observed_at
+                   FROM cmdb_device_vlan_port_observations p
+                   JOIN cmdb_collection_snapshots vlan_snapshot
+                     ON vlan_snapshot.device_id = p.device_id
+                    AND vlan_snapshot.domain = 'vlan_inventory'
+                    AND vlan_snapshot.successful_generation = p.generation
+                   LEFT JOIN cmdb_device_interface_observations i
+                     ON i.device_id = p.device_id
+                    AND i.normalized_interface_name = p.normalized_interface_name
+                   LEFT JOIN cmdb_collection_snapshots interface_snapshot
+                     ON interface_snapshot.device_id = i.device_id
+                    AND interface_snapshot.domain = 'interface_inventory'
+                    AND interface_snapshot.successful_generation = i.generation
+                   WHERE p.device_id = ?
+                     AND p.vlan_id = ?
+                     AND p.normalized_interface_name = ?
+                     AND (i.device_id IS NULL OR interface_snapshot.successful_generation IS NOT NULL)
+                   ORDER BY p.observed_at DESC
+                   LIMIT 1''',
+                (device_id, parsed_vlan_id, requested_norm),
+            ).fetchone()
+            if observation:
+                current_vlan_port = dict(observation)
+                identity['vlan_port_observation'] = {
+                    'vlan_id': int(current_vlan_port.get('vlan_id') or 0),
+                    'port_mode': str(current_vlan_port.get('port_mode') or 'unknown'),
+                    'tagging': str(current_vlan_port.get('tagging') or 'unknown'),
+                    'observed_at': current_vlan_port.get('vlan_observed_at'),
+                }
+                if current_vlan_port.get('observed_interface_type'):
+                    current_interface_observation = {
+                        'interface_name': current_vlan_port.get('observed_interface_name') or port,
+                        'interface_type': current_vlan_port.get('observed_interface_type'),
+                        'description': current_vlan_port.get('observed_description') or '',
+                        'admin_status': current_vlan_port.get('observed_admin_status') or 'unknown',
+                        'oper_status': current_vlan_port.get('observed_oper_status') or 'unknown',
+                        'switchport_mode': current_vlan_port.get('port_mode') or 'unknown',
+                        'access_vlan': parsed_vlan_id if current_vlan_port.get('port_mode') == 'access' else None,
+                        'native_vlan': None,
+                        'allowed_vlans': '',
+                        '_current_cmdb_snapshot': True,
+                    }
+                    direct_rows.append(current_interface_observation)
+                    identity['has_interface_record'] = True
+        except Exception as exc:
+            # Older catalogs or incomplete snapshot migrations must fail closed.
+            logger.debug(
+                '[IPLocator] current VLAN port identity unavailable for %s/%s/%s: %s',
+                device_id,
+                parsed_vlan_id,
+                port,
+                exc,
+            )
 
     logical_ids: set[str] = set()
     parent_ids: set[str] = set()
@@ -2350,11 +2501,57 @@ def _load_trace_port_identity(conn, device_id: str, port: str) -> dict[str, Any]
     # LLDP/topology: synthetic topology rows and the schema default both use
     # ``access`` without carrying a VLAN fact.
     access_evidence: set[str] = set()
+    current_vlan_mode = str((current_vlan_port or {}).get('port_mode') or '').strip().lower()
+    current_vlan_tagging = str((current_vlan_port or {}).get('tagging') or '').strip().lower()
+    if current_vlan_port:
+        if current_vlan_mode == 'access':
+            identity['is_trunk'] = False
+        elif current_vlan_mode == 'trunk' or current_vlan_tagging == 'tagged':
+            identity['is_trunk'] = True
+        if current_interface_observation:
+            identity['is_physical'] = (
+                str(current_interface_observation.get('interface_type') or '').strip().lower()
+                in _TRACE_PHYSICAL_TYPES
+            )
     for row in direct_rows:
         interface_type = str(row.get('interface_type') or '').strip().lower()
         if interface_type not in _TRACE_PHYSICAL_TYPES or _trace_interface_is_aggregation(row):
             continue
+        if (
+            current_vlan_port
+            and current_interface_observation
+            and str(current_interface_observation.get('interface_type') or '').strip().lower()
+            not in _TRACE_PHYSICAL_TYPES
+        ):
+            continue
+        if current_vlan_port and current_interface_observation and not row.get('_current_cmdb_snapshot'):
+            if current_vlan_mode == 'trunk' or current_vlan_tagging == 'tagged':
+                continue
+            if current_vlan_mode != 'access' and not (
+                _trace_observation_not_older(
+                    row.get('last_seen'), current_vlan_port.get('vlan_observed_at'),
+                )
+                and _trace_observation_not_older(
+                    row.get('last_seen'), current_vlan_port.get('interface_observed_at'),
+                )
+            ):
+                continue
         identity['is_physical'] = True
+        row_is_current_snapshot = bool(row.get('_current_cmdb_snapshot'))
+        if current_vlan_port and not row_is_current_snapshot:
+            # A current VLAN snapshot with an explicit trunk/tagged member
+            # overrides older shared interface policy. For unknown VLAN mode,
+            # only a newer shared interface row may provide access evidence.
+            if current_vlan_mode in {'trunk'} or current_vlan_tagging == 'tagged':
+                continue
+            if current_vlan_mode == 'access':
+                access_evidence.add('current_vlan_snapshot:access')
+                continue
+            if not _trace_observation_not_older(row.get('last_seen'), current_vlan_port.get('vlan_observed_at')):
+                continue
+        if current_vlan_port and row_is_current_snapshot and current_vlan_mode == 'access':
+            access_evidence.add('current_vlan_snapshot:access')
+            continue
         access_evidence.update(_trace_access_evidence(row))
     identity['access_evidence'] = sorted(access_evidence)
     identity['is_access'] = bool(identity['is_physical'] and access_evidence)
@@ -2505,7 +2702,7 @@ def _cached_endpoint_needs_retrace(endpoint: dict[str, Any]) -> bool:
     try:
         conn = get_db_connection()
         try:
-            identity = _load_trace_port_identity(conn, str(device_id), port)
+            identity = _load_trace_port_identity(conn, str(device_id), port, endpoint.get('vlan'))
         finally:
             conn.close()
         return not _trace_identity_confirms_access_terminal(identity)
@@ -2750,6 +2947,169 @@ def _collect_live_interface_status(device_id: str, port: str) -> tuple[str, str]
     return '', ''
 
 
+def _locator_vlan_member_candidates(
+    conn,
+    *,
+    device_id: str,
+    vlan_id: Any,
+    target_mac: Any,
+) -> list[dict[str, Any]]:
+    """Join a current ARP MAC to same-device VLAN member and FDB evidence.
+
+    VLAN membership alone is only a port candidate. A port is confirmed here
+    only when the current MAC table reports the target MAC on that port and
+    interface/VLAN evidence confirms a physical access terminal.
+    """
+    device_id = str(device_id or '').strip()
+    vlan_number = _parse_vlan_id(vlan_id)
+    normalized_mac = _normalize_mac(str(target_mac or ''))
+    if not device_id or not vlan_number:
+        return []
+
+    interface_by_name: dict[str, dict[str, Any]] = {}
+    try:
+        for raw in conn.execute(
+            '''SELECT interface_name, description, interface_type, switchport_mode,
+                      access_vlan, native_vlan, allowed_vlans, admin_status,
+                      oper_status, last_seen
+               FROM interfaces WHERE device_id = ?''',
+            (device_id,),
+        ).fetchall():
+            row = dict(raw)
+            interface_name = str(row.get('interface_name') or '').strip()
+            key = normalize_interface_name(interface_name).lower()
+            if not key or is_svi_interface(interface_name) or parse_vlan_id_from_interface(interface_name) == vlan_number:
+                continue
+            memberships = (
+                parse_vlan_values(row.get('access_vlan'))
+                | parse_vlan_values(row.get('native_vlan'))
+                | parse_vlan_values(row.get('allowed_vlans'))
+            )
+            if vlan_number in memberships:
+                row['source'] = 'interface_inventory'
+                row['port_mode'] = str(row.get('switchport_mode') or 'unknown')
+                row['tagging'] = 'unknown'
+                interface_by_name[key] = row
+
+        current_vlan_ports = conn.execute(
+            '''SELECT p.interface_name, p.normalized_interface_name, p.port_mode,
+                      p.tagging, p.observed_at,
+                      i.interface_type, i.description AS observed_description,
+                      i.admin_status AS observed_admin_status,
+                      i.oper_status AS observed_oper_status
+               FROM cmdb_device_vlan_port_observations p
+               JOIN cmdb_collection_snapshots vlan_snapshot
+                 ON vlan_snapshot.device_id = p.device_id
+                AND vlan_snapshot.domain = 'vlan_inventory'
+                AND vlan_snapshot.successful_generation = p.generation
+               LEFT JOIN cmdb_device_interface_observations i
+                 ON i.device_id = p.device_id
+                AND i.normalized_interface_name = p.normalized_interface_name
+               LEFT JOIN cmdb_collection_snapshots interface_snapshot
+                 ON interface_snapshot.device_id = i.device_id
+                AND interface_snapshot.domain = 'interface_inventory'
+                AND interface_snapshot.successful_generation = i.generation
+               WHERE p.device_id = ? AND p.vlan_id = ?
+                 AND (i.device_id IS NULL OR interface_snapshot.successful_generation IS NOT NULL)
+               ORDER BY p.observed_at DESC''',
+            (device_id, vlan_number),
+        ).fetchall()
+        for raw in current_vlan_ports:
+            row = dict(raw)
+            interface_name = str(row.get('interface_name') or '').strip()
+            key = str(row.get('normalized_interface_name') or '').strip().lower()
+            key = key or normalize_interface_name(interface_name).lower()
+            if not key or is_svi_interface(interface_name) or parse_vlan_id_from_interface(interface_name) == vlan_number:
+                continue
+            existing = interface_by_name.get(key, {})
+            interface_by_name[key] = {
+                **existing,
+                'interface_name': interface_name or existing.get('interface_name') or '',
+                'description': row.get('observed_description') or existing.get('description') or '',
+                'interface_type': row.get('interface_type') or existing.get('interface_type') or '',
+                'admin_status': row.get('observed_admin_status') or existing.get('admin_status') or '',
+                'oper_status': row.get('observed_oper_status') or existing.get('oper_status') or '',
+                'port_mode': str(row.get('port_mode') or 'unknown'),
+                'tagging': str(row.get('tagging') or 'unknown'),
+                'last_seen': row.get('observed_at') or existing.get('last_seen') or '',
+                'source': 'cmdb_cli_snapshot',
+            }
+
+        mac_matches: dict[str, list[dict[str, Any]]] = {}
+        if normalized_mac:
+            for raw in conn.execute(
+                '''SELECT mac_address, interface_name, last_updated
+                   FROM mac_table WHERE device_id = ? AND vlan_id = ?''',
+                (device_id, vlan_number),
+            ).fetchall():
+                row = dict(raw)
+                if _normalize_mac(str(row.get('mac_address') or '')) != normalized_mac:
+                    continue
+                interface_name = str(row.get('interface_name') or '').strip()
+                key = normalize_interface_name(interface_name).lower()
+                if not key:
+                    continue
+                mac_matches.setdefault(key, []).append(row)
+                interface_by_name.setdefault(key, {
+                    'interface_name': interface_name,
+                    'description': '',
+                    'interface_type': '',
+                    'port_mode': 'unknown',
+                    'tagging': 'unknown',
+                    'last_seen': '',
+                    'source': 'mac_table',
+                })
+    except Exception as exc:
+        logger.debug('[IPLocator] VLAN member evidence unavailable for %s/%s: %s', device_id, vlan_number, exc)
+        return []
+
+    candidates: list[dict[str, Any]] = []
+    for key, row in interface_by_name.items():
+        interface_name = str(row.get('interface_name') or '').strip()
+        matching_mac_rows = mac_matches.get(key, [])
+        latest_mac_row = max(
+            matching_mac_rows,
+            key=lambda item: str(item.get('last_updated') or ''),
+            default=None,
+        )
+        mac_age = _trace_observation_age_seconds(latest_mac_row.get('last_updated')) if latest_mac_row else None
+        mac_is_fresh = bool(
+            latest_mac_row
+            and mac_age is not None
+            and -60 <= mac_age <= ENDPOINT_CACHE_TTL_SECONDS
+        )
+        identity = _load_trace_port_identity(conn, device_id, interface_name, vlan_number)
+        access_confirmed = bool(
+            mac_is_fresh
+            and _trace_identity_confirms_access_terminal(identity)
+        )
+        candidates.append({
+            'device_id': device_id,
+            'interface_name': interface_name,
+            'description': str(row.get('description') or '').strip(),
+            'interface_type': str(row.get('interface_type') or '').strip(),
+            'port_mode': str(row.get('port_mode') or 'unknown'),
+            'tagging': str(row.get('tagging') or 'unknown'),
+            'admin_status': str(row.get('admin_status') or ''),
+            'oper_status': str(row.get('oper_status') or ''),
+            'source': str(row.get('source') or 'interface_inventory'),
+            'last_seen': row.get('last_seen') or '',
+            'mac_match': bool(latest_mac_row),
+            'mac_match_last_updated': latest_mac_row.get('last_updated') if latest_mac_row else '',
+            'mac_match_fresh': mac_is_fresh,
+            'access_confirmed': access_confirmed,
+            'evidence': list(identity.get('access_evidence') or []),
+        })
+    candidates.sort(
+        key=lambda item: (
+            not item['access_confirmed'],
+            not item['mac_match'],
+            normalize_interface_name(item['interface_name']).lower(),
+        )
+    )
+    return candidates
+
+
 def _get_ip_locator_context(
     target_ip: str,
     result: dict[str, Any] | None = None,
@@ -2772,6 +3132,9 @@ def _get_ip_locator_context(
             'switch_id': '', 'switch_name': '', 'port': '', 'description': '',
             'admin_status': '', 'oper_status': '', 'mode': '', 'native_vlan': '',
             'allowed_vlans': '', 'last_seen': '',
+            'port_confidence': 'unknown', 'port_source': '',
+            'arp_device_id': '', 'arp_device': '', 'arp_interface': '',
+            'vlan_member_candidates': [],
         },
         'l3': {
             'gateway': '', 'gateway_device': '', 'gateway_device_id': '',
@@ -2899,6 +3262,7 @@ def _get_ip_locator_context(
                 (target_ip,),
             ).fetchone()
             endpoint_needs_retrace = False
+            endpoint_identity: dict[str, Any] = {}
             if endpoint:
                 endpoint_port = str(endpoint['switch_port'] or '').strip()
                 endpoint_normalized = normalize_interface_name(endpoint_port).lower()
@@ -2909,6 +3273,7 @@ def _get_ip_locator_context(
                         conn,
                         str(endpoint['switch_id']),
                         endpoint_port,
+                        endpoint.get('vlan'),
                     )
                     # The context view may retain a physical endpoint as a
                     # historical L2 hint when VLAN discovery has not populated
@@ -2926,21 +3291,41 @@ def _get_ip_locator_context(
                     )
 
             location = None
+            trace_port_candidate = None
             if result:
-                location = next((item for item in (result.get('locations') or []) if not item.get('is_uplink')), None)
-                if location is None and result.get('trace_status') == 'incomplete':
-                    # Prefer the last live evidence over a historical
-                    # network_endpoints row, which may contain the exact
-                    # logical or otherwise unverified port that triggered
-                    # this re-trace.
-                    location = next(iter(result.get('locations') or []), None)
+                result_locations = result.get('locations') or []
+                location = next((
+                    item for item in result_locations
+                    if not item.get('is_uplink')
+                    and str(item.get('type') or '') in {
+                        'PATH_TRACED', 'PATH_TRACED_PARTIAL', 'SNMP_ENDPOINT',
+                    }
+                ), None)
+                if location is None:
+                    trace_port_candidate = next((
+                        item for item in result_locations
+                        if item.get('port')
+                        and str(item.get('type') or '') not in {'ARP_DIRECT', 'DEVICE_INTERFACE'}
+                    ), None)
 
             l2 = context['l2']
-            if (
+            if location:
+                l2.update({
+                    'mac': (location.get('mac') or (endpoint['mac'] if endpoint else '') or l2['mac']),
+                    'vlan': location.get('vlan') or (endpoint['vlan'] if endpoint else '') or l2['vlan'],
+                    'vlan_source': location.get('vlan_source') or l2['vlan_source'],
+                    'switch_id': str(location.get('switch_id') or ''),
+                    'switch_name': location.get('switch_name') or '',
+                    'port': location.get('port') or '',
+                    'port_confidence': 'confirmed',
+                    'port_source': str(location.get('type') or 'locator_trace'),
+                })
+            elif (
                 endpoint
                 and not endpoint_needs_retrace
                 and not (result and result.get('trace_status') == 'incomplete')
             ):
+                endpoint_is_access = _trace_identity_confirms_access_terminal(endpoint_identity)
                 l2.update({
                     'mac': endpoint['mac'] or l2['mac'],
                     'vlan': endpoint['vlan'] or l2['vlan'],
@@ -2948,6 +3333,8 @@ def _get_ip_locator_context(
                     'switch_id': endpoint['switch_id'] or '',
                     'switch_name': endpoint['switch_name'] or endpoint['switch_id'] or '',
                     'port': endpoint['switch_port'] or '',
+                    'port_confidence': 'confirmed' if endpoint_is_access else 'candidate',
+                    'port_source': endpoint['source_type'] or 'network_endpoints',
                 })
                 # ``network_endpoints`` is an active observation even when
                 # the IPAM address table has no explicit allocation row.
@@ -2961,13 +3348,17 @@ def _get_ip_locator_context(
                 set_if_empty(context['business'], 'criticality', endpoint['criticality'])
                 set_if_empty(context['business'], 'site', endpoint['device_site'] or endpoint['site'])
                 set_if_empty(context['l3'], 'vrf', endpoint['vrf'])
-            elif location:
-                l2.update({
-                    'switch_id': str(location.get('switch_id') or ''),
-                    'switch_name': location.get('switch_name') or '',
-                    'port': location.get('port') or '',
-                    'vlan': location.get('vlan') or l2['vlan'],
-                    'vlan_source': location.get('vlan_source') or l2['vlan_source'],
+            if trace_port_candidate:
+                l2['vlan_member_candidates'].append({
+                    'interface_name': str(trace_port_candidate.get('port') or ''),
+                    'description': str(trace_port_candidate.get('note') or ''),
+                    'port_mode': '',
+                    'tagging': '',
+                    'source': 'locator_trace',
+                    'mac_match': bool(result.get('mac')),
+                    'mac_match_fresh': False,
+                    'access_confirmed': False,
+                    'evidence': ['trace_candidate'],
                 })
 
             arp_row = conn.execute(
@@ -2982,42 +3373,103 @@ def _get_ip_locator_context(
             if arp_row:
                 arp_interface_vlan = parse_vlan_id_from_interface(arp_row['interface_name'])
                 arp_vlan = str(arp_row['vlan_id'] or arp_interface_vlan or '')
-                # network_endpoints is a derived, IP-keyed cache.  If its row
-                # has no VLAN/L2 evidence, prefer the latest ARP observation
-                # instead of retaining a stale device/port chosen by a prior
-                # tracker run.
-                prefer_arp_location = bool(
-                    arp_row['interface_name']
-                    and arp_vlan
-                    and (
-                        not endpoint
-                        or not endpoint['vlan']
-                        or not endpoint['switch_id']
-                        or not endpoint['switch_port']
-                    )
-                )
-                if prefer_arp_location:
-                    l2.update({
-                        'mac': arp_row['mac_address'] or l2['mac'],
-                        'switch_id': arp_row['device_id'] or l2['switch_id'],
-                        'switch_name': arp_row['device_name'] or arp_row['device_id'] or l2['switch_name'],
-                        'port': arp_row['interface_name'] or l2['port'],
-                        'vlan': arp_vlan,
-                        'vlan_source': 'arp_table' if arp_row['vlan_id'] else 'arp_interface',
-                    })
-                else:
-                    set_if_empty(l2, 'mac', arp_row['mac_address'])
-                    if not l2['vlan'] and arp_vlan:
+                set_if_empty(l2, 'mac', arp_row['mac_address'])
+                if arp_vlan:
+                    if not l2['vlan']:
                         l2['vlan'] = arp_vlan
+                    if str(l2.get('vlan') or '') == arp_vlan and str(
+                        l2.get('vlan_source') or ''
+                    ).strip().lower() in {'', 'unknown', 'arp'}:
                         l2['vlan_source'] = 'arp_table' if arp_row['vlan_id'] else 'arp_interface'
+                # An ARP interface is the router's L3 source interface. It is
+                # never substituted for a physical endpoint port.
+                l2['arp_device_id'] = str(arp_row['device_id'] or '')
+                l2['arp_device'] = str(arp_row['device_name'] or arp_row['device_id'] or '')
+                l2['arp_interface'] = str(arp_row['interface_name'] or '')
                 context['freshness']['arp_last_updated'] = arp_row['last_updated'] or ''
-                if not l2['switch_name']:
-                    l2['switch_name'] = arp_row['device_name'] or arp_row['device_id'] or ''
-                if not l2['port']:
-                    l2['port'] = arp_row['interface_name'] or ''
 
             if result and result.get('mac'):
                 set_if_empty(l2, 'mac', _format_mac(result['mac']))
+
+            if arp_row and arp_vlan and arp_row['device_id']:
+                vlan_candidates = _locator_vlan_member_candidates(
+                    conn,
+                    device_id=str(arp_row['device_id']),
+                    vlan_id=arp_vlan,
+                    target_mac=arp_row['mac_address'] or (result or {}).get('mac'),
+                )
+                candidate_by_port = {
+                    normalize_interface_name(str(item.get('interface_name') or '')).lower(): item
+                    for item in l2['vlan_member_candidates']
+                    if item.get('interface_name')
+                }
+                for candidate in vlan_candidates:
+                    candidate_key = normalize_interface_name(
+                        str(candidate.get('interface_name') or '')
+                    ).lower()
+                    if candidate_key in candidate_by_port:
+                        existing = candidate_by_port[candidate_key]
+                        existing.update(candidate)
+                        continue
+                    l2['vlan_member_candidates'].append(candidate)
+                    candidate_by_port[candidate_key] = candidate
+
+                confirmed_candidates = [
+                    item for item in l2['vlan_member_candidates']
+                    if item.get('access_confirmed')
+                ]
+                if l2.get('port_confidence') == 'confirmed':
+                    # A trace/SNMP endpoint with stronger terminal evidence
+                    # must not be downgraded by the supplemental VLAN view.
+                    pass
+                elif len(confirmed_candidates) == 1:
+                    confirmed_port = confirmed_candidates[0]
+                    l2.update({
+                        'switch_id': str(arp_row['device_id'] or ''),
+                        'switch_name': str(arp_row['device_name'] or arp_row['device_id'] or ''),
+                        'port': str(confirmed_port.get('interface_name') or ''),
+                        'description': str(confirmed_port.get('description') or ''),
+                        'admin_status': str(confirmed_port.get('admin_status') or ''),
+                        'oper_status': str(confirmed_port.get('oper_status') or ''),
+                        'mode': str(confirmed_port.get('port_mode') or ''),
+                        'port_confidence': 'confirmed',
+                        'port_source': 'current_mac_vlan_interface_evidence',
+                    })
+                    context['freshness']['mac_last_updated'] = (
+                        confirmed_port.get('mac_match_last_updated') or ''
+                    )
+                elif len(confirmed_candidates) > 1:
+                    l2['port_confidence'] = 'ambiguous'
+                else:
+                    # A current VLAN membership plus an exact, fresh FDB MAC
+                    # hit identifies the interface where the switch learned
+                    # the MAC, even when CMDB has not collected switchport
+                    # mode. Surface that interface separately from a proven
+                    # host-facing access port.
+                    mac_mapped_physical_candidates = [
+                        item for item in l2['vlan_member_candidates']
+                        if item.get('mac_match_fresh')
+                        and str(item.get('interface_type') or '').strip().lower()
+                        in _TRACE_PHYSICAL_TYPES
+                    ]
+                    if len(mac_mapped_physical_candidates) == 1:
+                        mac_mapped_port = mac_mapped_physical_candidates[0]
+                        l2.update({
+                            'switch_id': str(arp_row['device_id'] or ''),
+                            'switch_name': str(arp_row['device_name'] or arp_row['device_id'] or ''),
+                            'port': str(mac_mapped_port.get('interface_name') or ''),
+                            'description': str(mac_mapped_port.get('description') or ''),
+                            'admin_status': str(mac_mapped_port.get('admin_status') or ''),
+                            'oper_status': str(mac_mapped_port.get('oper_status') or ''),
+                            'mode': str(mac_mapped_port.get('port_mode') or ''),
+                            'port_confidence': 'device_interface',
+                            'port_source': 'current_fdb_vlan_interface_evidence',
+                        })
+                        context['freshness']['mac_last_updated'] = (
+                            mac_mapped_port.get('mac_match_last_updated') or ''
+                        )
+                    elif len(mac_mapped_physical_candidates) > 1:
+                        l2['port_confidence'] = 'ambiguous'
 
             switch_id = l2.get('switch_id') or ''
             port = l2.get('port') or ''
@@ -3882,7 +4334,8 @@ def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
                         # still safe to expose this as ARP-only unless the
                         # source interface itself is a bundle/trunk.
                         source_port_identity = _load_trace_port_identity(
-                            conn, curr_device_id, arp_source_info.get('interface') or ''
+                            conn, curr_device_id, arp_source_info.get('interface') or '',
+                            arp_source_info.get('vlan'),
                         )
                         if source_port_identity.get('is_aggregation') or source_port_identity.get('is_trunk'):
                             trace_incomplete = True
@@ -3926,7 +4379,9 @@ def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
                 terminal_vlan_source = mac_rec.get('vlan_source', 'mac_table') if terminal_vlan else 'unknown'
                 terminal_type = mac_rec.get('type', 'DYNAMIC')
 
-                port_identity = _load_trace_port_identity(conn, curr_device_id, curr_port)
+                port_identity = _load_trace_port_identity(
+                    conn, curr_device_id, curr_port, terminal_vlan,
+                )
                 current_hop = {
                     'switch_id': curr_device_id,
                     'switch_name': dev_label,
@@ -4498,13 +4953,553 @@ def _arp_retry_delay(failure_class: str, failure_count: int) -> int:
     return min(_ARP_RETRY_MAX_SECONDS, _ARP_RETRY_BASE_SECONDS * (2 ** exponent))
 
 
-def _collect_full_arp_result(device_info: dict, *, snmp_only: bool = False) -> dict[str, Any]:
-    """Collect one complete ARP snapshot; scheduled discovery can require SNMP only."""
-    if snmp_only and device_info.get('_snmp_not_configured'):
+def _load_scheduled_snmp_arp_contexts(
+    device_id: str,
+    *,
+    is_v3: bool | None,
+    profile_context_name: str = "",
+) -> list[dict[str, Any]]:
+    """Return one polling spec per exact active SNMP routing-context key."""
+    if is_v3 is False:
+        return [{
+            "context_source": "snmp",
+            "context_type": "unknown",
+            "local_context_key": "",
+            "local_context_name": "",
+            "request_context_name": "",
+        }]
+
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            """SELECT context_type, local_context_key, local_context_name
+                 FROM ipam_device_routing_contexts
+                WHERE device_id = ? AND context_source = 'snmp'
+                  AND status = 'active'
+                ORDER BY local_context_key, context_type""",
+            (device_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        key = str(row["local_context_key"] or "").strip()
+        grouped.setdefault(key, []).append(dict(row))
+
+    contexts: list[dict[str, Any]] = []
+    for key, candidates in sorted(grouped.items()):
+        if len(candidates) == 1:
+            mapping = candidates[0]
+            context_type = str(mapping.get("context_type") or "unknown").strip().lower()
+            local_context_name = str(mapping.get("local_context_name") or "").strip()
+        else:
+            # One SNMP contextName cannot safely feed multiple address spaces.
+            # Collect it once and retain the raw key as unresolved evidence.
+            context_type = "unknown"
+            local_context_name = ""
+        contexts.append({
+            "context_source": "snmp",
+            "context_type": context_type,
+            "local_context_key": key,
+            "local_context_name": local_context_name,
+            "request_context_name": key,
+        })
+
+    configured_context = str(profile_context_name or "").strip()
+    if configured_context and configured_context not in grouped:
+        contexts.append({
+            "context_source": "snmp",
+            "context_type": "unknown",
+            "local_context_key": configured_context,
+            "local_context_name": "",
+            "request_context_name": configured_context,
+        })
+    if not contexts:
+        contexts.append({
+            "context_source": "snmp",
+            "context_type": "unknown",
+            "local_context_key": configured_context,
+            "local_context_name": "",
+            "request_context_name": configured_context,
+        })
+    return contexts
+
+
+def _raw_arp_local_context(record: dict[str, Any], fallback: dict[str, Any]) -> tuple[str, str]:
+    """Retain parser-reported context keys when no trusted mapping stamps a type."""
+    raw_key = _record_value(
+        record,
+        "local_context_key", "vrf_id", "vrf_name", "vrf", "vpn_instance",
+        "routing_instance", "routing_context", "virtual_router", "address_space",
+        "vrf_context",
+    )
+    if isinstance(raw_key, dict):
+        raw_key = (
+            raw_key.get("local_context_key") or raw_key.get("vrf_id")
+            or raw_key.get("vrf_name") or raw_key.get("vrf_context")
+        )
+    key = str(raw_key or "").strip()
+    if not key:
+        key = str(fallback.get("local_context_key") or "").strip()
+    raw_name = _record_value(
+        record, "local_context_name", "routing_context_name", "vrf_name", "vpn_instance_name",
+    )
+    name = str(raw_name or fallback.get("local_context_name") or "").strip()
+    return key, name
+
+
+def _begin_scheduled_snmp_arp_context(
+    *,
+    device_id: str,
+    context: dict[str, Any],
+    attempted_at: str,
+    run_id: str,
+) -> int:
+    from services.ipam_current_endpoint_observation_service import begin_current_endpoint_collection
+
+    conn = get_db_connection()
+    try:
+        generation = begin_current_endpoint_collection(
+            conn,
+            device_id=device_id,
+            context_source=str(context["context_source"]),
+            context_type=str(context["context_type"]),
+            local_context_key=str(context["local_context_key"]),
+            attempted_at=attempted_at,
+            run_id=run_id,
+        )
+        conn.commit()
+        return generation
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _finish_scheduled_snmp_arp_context(
+    *,
+    device_id: str,
+    context: dict[str, Any],
+    generation: int,
+    status: str,
+    attempted_at: str,
+    completed_at: str,
+    run_id: str,
+    observations: list[dict[str, Any]] | None = None,
+    error_code: str = "",
+) -> int:
+    from services.ipam_current_endpoint_observation_service import finish_current_endpoint_collection
+
+    conn = get_db_connection()
+    try:
+        row_count = finish_current_endpoint_collection(
+            conn,
+            device_id=device_id,
+            context_source=str(context["context_source"]),
+            context_type=str(context["context_type"]),
+            local_context_key=str(context["local_context_key"]),
+            generation=generation,
+            status=status,
+            attempted_at=attempted_at,
+            completed_at=completed_at,
+            observations=observations or [],
+            run_id=run_id,
+            error_code=error_code,
+        )
+        conn.commit()
+        return row_count
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _scheduled_snmp_arp_failure_result(
+    device_info: dict,
+    *,
+    contexts: list[dict[str, Any]],
+    failure_class: str,
+    error_message: str,
+    run_id: str,
+    persist_state: bool,
+) -> dict[str, Any]:
+    device_id = str(device_info.get("id") or "").strip()
+    context_results = []
+    if device_id and persist_state:
+        for context in contexts:
+            attempted_at = _beijing_now_iso()
+            try:
+                generation = _begin_scheduled_snmp_arp_context(
+                    device_id=device_id, context=context,
+                    attempted_at=attempted_at, run_id=run_id,
+                )
+                _finish_scheduled_snmp_arp_context(
+                    device_id=device_id, context=context, generation=generation,
+                    status="unsupported" if failure_class == "unsupported" else "failed",
+                    attempted_at=attempted_at, completed_at=_beijing_now_iso(),
+                    run_id=run_id, error_code=failure_class,
+                )
+                context_results.append({
+                    "context_type": context["context_type"],
+                    "local_context_key": context["local_context_key"],
+                    "status": "unsupported" if failure_class == "unsupported" else "failed",
+                })
+            except Exception as exc:
+                logger.warning(
+                    "[ARP Sweep] Could not record SNMP context failure for %s (%s)",
+                    device_info.get("hostname") or device_id,
+                    type(exc).__name__,
+                )
+    return {
+        "entries": [], "status": "failed", "failure_class": failure_class,
+        "error_message": error_message, "transport": "snmp",
+        "context_results": context_results, "run_id": run_id,
+    }
+
+
+def _collect_scheduled_snmp_arp_result(
+    device_info: dict,
+    *,
+    collection_run_id: str = "",
+) -> dict[str, Any]:
+    """Collect and persist one current ARP snapshot per device-local context."""
+    from services.snmp_service import collect_arp_table
+    from services.vault_service import resolve_collector_credentials
+
+    device_id = str(device_info.get("id") or "").strip()
+    persist_state = bool(collection_run_id)
+    run_id = str(collection_run_id or uuid.uuid4())
+    fallback_context = [{
+        "context_source": "snmp", "context_type": "unknown",
+        "local_context_key": "", "local_context_name": "",
+        "request_context_name": "",
+    }]
+    if not device_id:
         return {
-            'entries': [], 'status': 'failed', 'failure_class': 'unsupported',
-            'error_message': 'SNMP credentials are not configured', 'transport': 'snmp',
+            "entries": [], "status": "failed", "failure_class": "unsupported",
+            "error_message": "Scheduled SNMP ARP collection requires a device id",
+            "transport": "snmp", "context_results": [], "run_id": run_id,
         }
+
+    try:
+        resolved = resolve_collector_credentials(device_info)
+    except Exception as exc:
+        try:
+            contexts = (
+                _load_scheduled_snmp_arp_contexts(device_id, is_v3=None)
+                if device_id else fallback_context
+            )
+        except Exception:
+            contexts = fallback_context
+        return _scheduled_snmp_arp_failure_result(
+            device_info, contexts=contexts,
+            failure_class=_classify_arp_failure(exc),
+            error_message=f"SNMP credential resolution failed ({type(exc).__name__})",
+            run_id=run_id, persist_state=persist_state,
+        )
+
+    snmp_profile = (
+        (resolved.get("snmp") or {})
+        if is_snmp_collection_enabled(device_info)
+        else {}
+    )
+    version = str(snmp_profile.get("version") or "2c").strip().casefold()
+    is_v3 = version in {"3", "v3", "snmpv3"}
+    profile_context_name = str(snmp_profile.get("context_name") or "").strip() if is_v3 else ""
+    try:
+        contexts = _load_scheduled_snmp_arp_contexts(
+            device_id, is_v3=is_v3, profile_context_name=profile_context_name,
+        )
+    except Exception as exc:
+        return _scheduled_snmp_arp_failure_result(
+            device_info, contexts=fallback_context,
+            failure_class="collection_failed",
+            error_message=f"SNMP routing-context lookup failed ({type(exc).__name__})",
+            run_id=run_id, persist_state=persist_state,
+        )
+
+    if device_info.get("_snmp_not_configured") or not snmp_profile.get("configured"):
+        return _scheduled_snmp_arp_failure_result(
+            device_info, contexts=contexts,
+            failure_class="unsupported",
+            error_message="SNMP credentials are not configured or collection is disabled",
+            run_id=run_id, persist_state=persist_state,
+        )
+
+    target_ip = str(snmp_profile.get("server") or device_info.get("ip_address") or "").strip()
+    if not target_ip:
+        return _scheduled_snmp_arp_failure_result(
+            device_info, contexts=contexts,
+            failure_class="unsupported",
+            error_message="SNMP target address is unavailable",
+            run_id=run_id, persist_state=persist_state,
+        )
+    port = int(snmp_profile.get("port") or 161)
+    base_community = dict(snmp_profile) if is_v3 else str(snmp_profile.get("community") or "")
+    if not is_v3 and not base_community:
+        return _scheduled_snmp_arp_failure_result(
+            device_info, contexts=contexts,
+            failure_class="unsupported",
+            error_message="SNMP community is unavailable",
+            run_id=run_id, persist_state=persist_state,
+        )
+
+    collected_contexts: list[dict[str, Any]] = []
+    failed_contexts: list[dict[str, Any]] = []
+    successful_entries: list[dict[str, Any]] = []
+    for context in contexts:
+        attempted_at = _beijing_now_iso()
+        generation: int | None = None
+        if persist_state:
+            try:
+                # Commit the current generation before issuing this context's SNMP request.
+                generation = _begin_scheduled_snmp_arp_context(
+                    device_id=device_id, context=context,
+                    attempted_at=attempted_at, run_id=run_id,
+                )
+            except Exception as exc:
+                failure_class = "collection_failed"
+                failed_contexts.append({**context, "failure_class": failure_class})
+                logger.warning(
+                    "[ARP Sweep] Could not begin SNMP context collection for %s (%s)",
+                    device_info.get("hostname") or device_id, type(exc).__name__,
+                )
+                continue
+
+        context_community: str | dict[str, Any]
+        if is_v3:
+            context_community = dict(base_community)
+            context_community["context_name"] = str(context["request_context_name"] or "")
+        else:
+            context_community = str(base_community)
+        try:
+            snmp_records = asyncio.run(
+                collect_arp_table(
+                    target_ip,
+                    community=context_community,
+                    port=port,
+                    version=version,
+                )
+            )
+            if not isinstance(snmp_records, list):
+                raise RuntimeError("SNMP ARP collector returned an invalid snapshot")
+            normalized_entries = []
+            context_type = str(context["context_type"])
+            context_key = str(context["local_context_key"])
+            for record in snmp_records:
+                normalized = _normalize_arp_record(record, device_info)
+                if normalized is None:
+                    raise RuntimeError("SNMP ARP table contained rows that could not be normalized")
+                if context_type == "global":
+                    normalized.update({
+                        "context_source": "snmp",
+                        "context_type": context_type,
+                        "local_context_key": context_key,
+                        "local_context_name": str(context.get("local_context_name") or ""),
+                    })
+                    normalized["vrf"] = "global"
+                    normalized["vrf_context_status"] = "explicit_global"
+                elif context_type == "vrf":
+                    normalized.update({
+                        "context_source": "snmp",
+                        "context_type": context_type,
+                        "local_context_key": context_key,
+                        "local_context_name": str(context.get("local_context_name") or ""),
+                    })
+                    normalized["vrf"] = context_key
+                    normalized["vrf_context_status"] = "explicit_vrf"
+                else:
+                    raw_key, raw_name = _raw_arp_local_context(record, context)
+                    normalized.update({
+                        "context_source": "snmp",
+                        "context_type": "unknown",
+                        "local_context_key": raw_key,
+                        "local_context_name": raw_name,
+                    })
+                    # Keep a raw context key for review, but never feed a generic
+                    # alias such as "global" back through the VRF normalizer.
+                    normalized["vrf"] = ""
+                    normalized["vrf_context_status"] = "unknown"
+                normalized["observed_at"] = _beijing_now_iso()
+                normalized_entries.append(normalized)
+
+            unique_entries: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+            for entry in normalized_entries:
+                unique_entries[(
+                    entry["ip"], entry["mac"], entry.get("interface") or "",
+                    str(entry.get("vlan") or ""),
+                )] = entry
+            normalized_entries = list(unique_entries.values())
+            if context_type == "unknown":
+                # The parser may expose a more specific local key than the
+                # unknown request context. Close the pre-request reservation
+                # first, then persist each raw-key group under its own unknown
+                # identity for later manual mapping.
+                grouped_by_raw_key: dict[str, list[dict[str, Any]]] = {}
+                for entry in normalized_entries:
+                    raw_key = str(entry.get("local_context_key") or "").strip()
+                    grouped_by_raw_key.setdefault(raw_key, []).append(entry)
+                reserved_key = str(context["local_context_key"] or "").strip()
+                reserved_entries = grouped_by_raw_key.pop(reserved_key, [])
+                if generation is not None:
+                    _finish_scheduled_snmp_arp_context(
+                        device_id=device_id, context=context, generation=generation,
+                        status="scope_unknown", attempted_at=attempted_at,
+                        completed_at=_beijing_now_iso(), run_id=run_id,
+                        observations=reserved_entries,
+                    )
+                successful_entries.extend(reserved_entries)
+                collected_contexts.append({
+                    "context_type": "unknown",
+                    "local_context_key": reserved_key,
+                    "status": "scope_unknown",
+                    "entry_count": len(reserved_entries),
+                })
+
+                for raw_key, raw_entries in sorted(grouped_by_raw_key.items()):
+                    raw_context = {
+                        "context_source": "snmp",
+                        "context_type": "unknown",
+                        "local_context_key": raw_key,
+                        "local_context_name": str(raw_entries[0].get("local_context_name") or ""),
+                    }
+                    raw_attempted_at = _beijing_now_iso()
+                    raw_generation: int | None = None
+                    try:
+                        if persist_state:
+                            # The parser-reported key is only known after the
+                            # walk. The pre-request reservation above fences
+                            # the request; this child generation stores the
+                            # exact raw identity without promoting its type.
+                            raw_generation = _begin_scheduled_snmp_arp_context(
+                                device_id=device_id, context=raw_context,
+                                attempted_at=raw_attempted_at, run_id=run_id,
+                            )
+                            _finish_scheduled_snmp_arp_context(
+                                device_id=device_id, context=raw_context,
+                                generation=raw_generation, status="scope_unknown",
+                                attempted_at=raw_attempted_at,
+                                completed_at=_beijing_now_iso(), run_id=run_id,
+                                observations=raw_entries,
+                            )
+                    except Exception as raw_exc:
+                        failure_class = _classify_arp_failure(raw_exc)
+                        if raw_generation is not None:
+                            try:
+                                _finish_scheduled_snmp_arp_context(
+                                    device_id=device_id, context=raw_context,
+                                    generation=raw_generation,
+                                    status="unsupported" if failure_class == "unsupported" else "failed",
+                                    attempted_at=raw_attempted_at,
+                                    completed_at=_beijing_now_iso(), run_id=run_id,
+                                    error_code=failure_class,
+                                )
+                            except Exception as persist_exc:
+                                logger.warning(
+                                    "[ARP Sweep] Could not record raw SNMP context failure for %s (%s)",
+                                    device_info.get("hostname") or device_id,
+                                    type(persist_exc).__name__,
+                                )
+                        failed_contexts.append({
+                            **raw_context, "failure_class": failure_class,
+                        })
+                        continue
+                    successful_entries.extend(raw_entries)
+                    collected_contexts.append({
+                        "context_type": "unknown",
+                        "local_context_key": raw_key,
+                        "status": "scope_unknown",
+                        "entry_count": len(raw_entries),
+                    })
+            else:
+                if generation is not None:
+                    _finish_scheduled_snmp_arp_context(
+                        device_id=device_id, context=context, generation=generation,
+                        status="complete", attempted_at=attempted_at,
+                        completed_at=_beijing_now_iso(), run_id=run_id,
+                        observations=normalized_entries,
+                    )
+                successful_entries.extend(normalized_entries)
+                collected_contexts.append({
+                    "context_type": context_type,
+                    "local_context_key": context_key,
+                    "status": "complete",
+                    "entry_count": len(normalized_entries),
+                })
+        except Exception as exc:
+            failure_class = _classify_arp_failure(exc)
+            status = "unsupported" if failure_class == "unsupported" else "failed"
+            if generation is not None:
+                try:
+                    _finish_scheduled_snmp_arp_context(
+                        device_id=device_id, context=context, generation=generation,
+                        status=status, attempted_at=attempted_at,
+                        completed_at=_beijing_now_iso(), run_id=run_id,
+                        error_code=failure_class,
+                    )
+                except Exception as persist_exc:
+                    logger.warning(
+                        "[ARP Sweep] Could not record SNMP context failure for %s (%s)",
+                        device_info.get("hostname") or device_id,
+                        type(persist_exc).__name__,
+                    )
+            failed_contexts.append({**context, "failure_class": failure_class})
+            logger.info(
+                "SNMP ARP context collection for %s failed (%s)",
+                device_info.get("hostname") or device_id,
+                type(exc).__name__,
+            )
+
+    context_results = collected_contexts + [
+        {
+            "context_type": context["context_type"],
+            "local_context_key": context["local_context_key"],
+            "status": context["failure_class"],
+            "entry_count": 0,
+        }
+        for context in failed_contexts
+    ]
+    if failed_contexts:
+        failure_class = str(failed_contexts[0]["failure_class"] or "collection_failed")
+        error_message = f"SNMP ARP collection failed for {len(failed_contexts)} routing context(s)"
+        if collected_contexts:
+            # Successful context rows are already in the scoped current-state
+            # projection; do not expose partial results to the IP-unique cache.
+            return {
+                "entries": [], "status": "partial", "failure_class": failure_class,
+                "error_message": error_message, "transport": "snmp",
+                "context_results": context_results, "run_id": run_id,
+            }
+        return {
+            "entries": [], "status": "failed", "failure_class": failure_class,
+            "error_message": error_message, "transport": "snmp",
+            "context_results": context_results, "run_id": run_id,
+        }
+    return {
+        "entries": successful_entries,
+        "status": "success",
+        "failure_class": "",
+        "error_message": "",
+        "transport": "snmp",
+        "context_results": context_results,
+        "run_id": run_id,
+    }
+
+
+def _collect_full_arp_result(
+    device_info: dict,
+    *,
+    snmp_only: bool = False,
+    collection_run_id: str = "",
+) -> dict[str, Any]:
+    """Collect one complete ARP snapshot; scheduled discovery can require SNMP only."""
+    if snmp_only:
+        return _collect_scheduled_snmp_arp_result(
+            device_info, collection_run_id=collection_run_id,
+        )
     try:
         from services.vault_service import resolve_collector_credentials
         from services.snmp_service import collect_arp_table
@@ -4539,30 +5534,12 @@ def _collect_full_arp_result(device_info: dict, *, snmp_only: bool = False) -> d
                         'transport': 'snmp',
                     }
                 raise RuntimeError('SNMP ARP table contained rows that could not be normalized')
-        elif snmp_only:
-            return {
-                'entries': [], 'status': 'failed', 'failure_class': 'unsupported',
-                'error_message': 'SNMP collection is disabled or credentials are not configured',
-                'transport': 'snmp',
-            }
     except Exception as exc:
         logger.info(
             "SNMP ARP collection for %s failed (%s)",
             device_info.get('hostname') or device_info.get('ip_address'),
             type(exc).__name__,
         )
-        if snmp_only:
-            return {
-                'entries': [], 'status': 'failed',
-                'failure_class': _classify_arp_failure(exc),
-                'error_message': str(exc), 'transport': 'snmp',
-            }
-
-    if snmp_only:
-        return {
-            'entries': [], 'status': 'failed', 'failure_class': 'unsupported',
-            'error_message': 'SNMP ARP table is unavailable', 'transport': 'snmp',
-        }
 
     try:
         payload = collect_operational_data(
@@ -4862,7 +5839,12 @@ def _run_arp_sweep_locked(device_ids: set[str] | None = None) -> dict[str, Any]:
     status_updates: list[dict[str, Any]] = []
     with ThreadPoolExecutor(max_workers=workers) as executor:
         future_map = {
-            executor.submit(_collect_full_arp_result, dev, snmp_only=True): dev
+            executor.submit(
+                _collect_full_arp_result,
+                dev,
+                snmp_only=True,
+                collection_run_id=collection_run_id,
+            ): dev
             for dev in gateway_devices
         }
         for future in as_completed(future_map):
@@ -4874,8 +5856,13 @@ def _run_arp_sweep_locked(device_ids: set[str] | None = None) -> dict[str, Any]:
                 failure_class = result.get('failure_class') or ''
                 error_message = result.get('error_message') or ''
                 transport = str(result.get('transport') or 'ssh')
-                all_entries.extend(entries)
-                if result_status == 'success' and entries and dev.get('id'):
+                # Scoped current-state snapshots may have succeeded for some
+                # contexts while the device is still partial. Keep those rows
+                # out of the IP-unique legacy cache, which can only replace a
+                # complete whole-device snapshot.
+                legacy_entries = entries if result_status == 'success' else []
+                all_entries.extend(legacy_entries)
+                if result_status == 'success' and dev.get('id'):
                     successful_device_ids.add(str(dev['id']))
                 previous_failures = int(
                     state_by_device.get(str(dev.get('id') or ''), {}).get('consecutive_failures') or 0
@@ -4895,7 +5882,7 @@ def _run_arp_sweep_locked(device_ids: set[str] | None = None) -> dict[str, Any]:
                     'status': 'success' if result_status == 'success' else 'failed',
                     'transport': transport,
                     'source': 'arp_sweep',
-                    'coverage_total': len(entries),
+                    'coverage_total': len(legacy_entries),
                     'coverage_supported': 1 if result_status == 'success' else 0,
                     'error_code': failure_class,
                     'error_message': error_message,
@@ -4904,16 +5891,16 @@ def _run_arp_sweep_locked(device_ids: set[str] | None = None) -> dict[str, Any]:
                     'circuit_state': circuit_state,
                     'metadata': {
                         'collection_run_id': collection_run_id,
-                        'entry_count': len(entries),
+                        'entry_count': len(legacy_entries),
                         'failure_count': failure_count,
                     },
                 })
                 device_results.append({
                     'device_id': dev.get('id'),
                     'device': dev.get('hostname') or dev.get('ip_address'),
-                    'entry_count': len(entries),
+                    'entry_count': len(legacy_entries),
                     'transport': transport,
-                    'status': 'success' if result_status == 'success' and entries else (
+                    'status': 'success' if result_status == 'success' and legacy_entries else (
                         'no_data' if result_status == 'success' else 'failed'
                     ),
                     'failure_class': failure_class,
@@ -4959,7 +5946,7 @@ def _run_arp_sweep_locked(device_ids: set[str] | None = None) -> dict[str, Any]:
 
     record_collection_results(status_updates)
 
-    if not all_entries:
+    if not all_entries and not successful_device_ids:
         logger.info("[ARP Sweep] No ARP entries collected")
         complete_collector_sweep(
             'arp',
@@ -5134,7 +6121,9 @@ def _run_arp_sweep_locked(device_ids: set[str] | None = None) -> dict[str, Any]:
     complete_collector_sweep(
         'arp',
         run_id=collection_run_id,
-        successful_devices=sum(1 for item in device_results if item.get('status') == 'success'),
+        successful_devices=sum(
+            1 for item in device_results if item.get('status') in {'success', 'no_data'}
+        ),
         failed_devices=sum(1 for item in device_results if item.get('status') == 'failed'),
         collected_entries=len(all_entries),
     )
@@ -5757,13 +6746,21 @@ def _set_cached_endpoint(
 
 # ── 全量 MAC 表采集 ─────────────────────────────────────────
 
-def _normalize_mac_table_snapshot(records: list[dict], device_info: dict) -> list[dict] | None:
+def _normalize_mac_table_snapshot(
+    records: list[dict],
+    device_info: dict,
+    *,
+    context: dict[str, Any] | None = None,
+    allow_empty: bool = False,
+) -> list[dict] | None:
     """Normalize a complete MAC/FDB result; reject the whole snapshot on partial rows."""
     normalized_records = []
     device_id = str(device_info.get('id') or '')
     device_name = device_info.get('hostname') or device_info.get('ip_address')
     if not device_id:
         return None
+    if not records:
+        return [] if allow_empty else None
     for record in records:
         if not isinstance(record, dict):
             return None
@@ -5772,7 +6769,7 @@ def _normalize_mac_table_snapshot(records: list[dict], device_info: dict) -> lis
         if len(mac) != 12 or not port:
             return None
         vrf_context_status, vrf_value = _explicit_vrf_context(record)
-        normalized_records.append({
+        normalized = {
             'mac': mac,
             'vlan': str(_record_value(record, 'vlan', 'vlan_id') or '').strip(),
             'port': port,
@@ -5781,148 +6778,466 @@ def _normalize_mac_table_snapshot(records: list[dict], device_info: dict) -> lis
             'switch_name': device_name,
             'vrf_context_status': vrf_context_status,
             'vrf': vrf_value,
+        }
+        if context is not None:
+            raw_key, raw_name = _raw_arp_local_context(record, context)
+            context_type = str(context.get('context_type') or 'unknown').strip().lower()
+            if context_type not in {'vrf', 'global'}:
+                context_type = 'unknown'
+            normalized.update({
+                'context_source': str(context.get('context_source') or 'cli').strip().lower(),
+                'context_type': context_type,
+                'local_context_key': (
+                    str(context.get('local_context_key') or '').strip()
+                    if context_type in {'vrf', 'global'} else raw_key
+                ),
+                'local_context_name': (
+                    str(context.get('local_context_name') or '').strip()
+                    if context_type in {'vrf', 'global'} else raw_name
+                ),
+            })
+        normalized_records.append(normalized)
+    return normalized_records
+
+
+def _load_scheduled_snmp_fdb_contexts(
+    device_id: str,
+    *,
+    is_v3: bool,
+    profile_context_name: str = '',
+) -> tuple[list[dict[str, Any]], bool]:
+    """Build exact SNMP context requests and report keys unavailable to this protocol."""
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            """SELECT context_type, local_context_key, local_context_name
+                 FROM ipam_device_routing_contexts
+                WHERE device_id = ? AND context_source = 'snmp' AND status = 'active'
+                ORDER BY local_context_key, context_type""",
+            (device_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        key = str(row['local_context_key'] or '').strip()
+        grouped.setdefault(key, []).append(dict(row))
+
+    if not is_v3:
+        context = {
+            'context_source': 'snmp', 'context_type': 'unknown',
+            'local_context_key': '', 'local_context_name': '',
+            'request_context_name': '', 'mapping_count': 0,
+            'mapped_unique': False,
+        }
+        return [context], bool(grouped)
+
+    contexts: list[dict[str, Any]] = []
+    for key, candidates in sorted(grouped.items()):
+        uniquely_mapped = len(candidates) == 1
+        mapping_type = str(candidates[0].get('context_type') or '').strip().lower() if uniquely_mapped else ''
+        typed = mapping_type in {'vrf', 'global'} and bool(key)
+        contexts.append({
+            'context_source': 'snmp',
+            'context_type': mapping_type if typed else 'unknown',
+            'local_context_key': key,
+            'local_context_name': str(candidates[0].get('local_context_name') or '').strip() if typed else '',
+            'request_context_name': key,
+            'mapping_count': len(candidates),
+            'mapped_unique': bool(typed and uniquely_mapped),
         })
-    return normalized_records or None
+    configured_context = str(profile_context_name or '').strip()
+    if configured_context and configured_context not in grouped:
+        contexts.append({
+            'context_source': 'snmp', 'context_type': 'unknown',
+            'local_context_key': configured_context, 'local_context_name': '',
+            'request_context_name': configured_context, 'mapping_count': 0,
+            'mapped_unique': False,
+        })
+    if not contexts:
+        contexts.append({
+            'context_source': 'snmp', 'context_type': 'unknown',
+            'local_context_key': configured_context, 'local_context_name': '',
+            'request_context_name': configured_context, 'mapping_count': 0,
+            'mapped_unique': False,
+        })
+    return contexts, False
+
+
+def _begin_current_fdb_context(
+    *, device_id: str, context: dict[str, Any], attempted_at: str, run_id: str,
+) -> int:
+    from services.ipam_current_fdb_observation_service import begin_current_fdb_collection
+
+    conn = get_db_connection()
+    try:
+        generation = begin_current_fdb_collection(
+            conn,
+            device_id=device_id,
+            context_source=str(context['context_source']),
+            context_type=str(context['context_type']),
+            local_context_key=str(context['local_context_key']),
+            attempted_at=attempted_at,
+            run_id=run_id,
+        )
+        conn.commit()
+        return generation
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _finish_current_fdb_context(
+    *, device_id: str, context: dict[str, Any], generation: int, status: str,
+    attempted_at: str, completed_at: str, run_id: str,
+    observations: list[dict[str, Any]] | None = None, error_code: str = '',
+) -> int:
+    from services.ipam_current_fdb_observation_service import finish_current_fdb_collection
+
+    conn = get_db_connection()
+    try:
+        count = finish_current_fdb_collection(
+            conn,
+            device_id=device_id,
+            context_source=str(context['context_source']),
+            context_type=str(context['context_type']),
+            local_context_key=str(context['local_context_key']),
+            generation=generation,
+            status=status,
+            attempted_at=attempted_at,
+            completed_at=completed_at,
+            observations=observations,
+            run_id=run_id,
+            error_code=error_code,
+        )
+        conn.commit()
+        return count
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def _collect_full_mac_table_from_device(device_info: dict, *, snmp_only: bool = False) -> dict[str, Any]:
-    """Collect one complete MAC/FDB snapshot, optionally requiring SNMP only."""
-    if snmp_only and device_info.get('_snmp_not_configured'):
-        return {
-            'success': False, 'records': [], 'transport': 'snmp',
-            'error': 'SNMP credentials are not configured', 'failure_class': 'unsupported',
-        }
+    """Collect FDB facts and persist each verified transport/context generation."""
+    device_id = str(device_info.get('id') or '').strip()
     device_label = device_info.get('hostname') or device_info.get('ip_address')
+    run_id = uuid.uuid4().hex
+    if not device_id:
+        return {'success': False, 'current_state_success': False, 'records': [], 'transport': 'snmp',
+                'error': 'FDB collection requires a device id', 'failure_class': 'unsupported'}
+
     try:
         from services.vault_service import resolve_collector_credentials
         from services.snmp_service import collect_bridge_mac_table
 
         resolved = resolve_collector_credentials(device_info)
         snmp_profile = (resolved.get('snmp') or {}) if is_snmp_collection_enabled(device_info) else {}
-        if snmp_profile.get('configured'):
-            version = str(snmp_profile.get('version') or '2c').strip().casefold()
-            is_v3 = version in {'3', 'v3', 'snmpv3'}
-            community_or_profile = dict(snmp_profile) if is_v3 else str(snmp_profile.get('community') or '')
-            target_ip = str(snmp_profile.get('server') or device_info.get('ip_address') or '').strip()
-            if target_ip and (is_v3 or community_or_profile):
-                snmp_records = asyncio.run(
-                    collect_bridge_mac_table(
-                        target_ip,
-                        community_or_profile,
-                        port=int(snmp_profile.get('port') or 161),
-                        version=version,
-                    )
-                )
-                normalized_records = _normalize_mac_table_snapshot(snmp_records, device_info)
-                if normalized_records and len(normalized_records) == len(snmp_records):
-                    result = {'success': True, 'records': normalized_records, 'transport': 'snmp'}
-                    if snmp_only:
-                        try:
-                            from services.snmp_service import collect_qbridge_interface_vlan_data
-                            result['interface_vlan_data'] = asyncio.run(collect_qbridge_interface_vlan_data(
-                                target_ip, community_or_profile,
-                                port=int(snmp_profile.get('port') or 161), version=version,
-                            ))
-                        except Exception as exc:
-                            result['interface_evidence_error'] = str(exc)
-                            logger.warning('[FDB Sweep] Port attributes unavailable for %s (%s)', device_label, type(exc).__name__)
-                    return result
-                raise RuntimeError('SNMP bridge table returned incomplete or unusable MAC records')
     except Exception as exc:
-        logger.info(
-            "SNMP MAC/FDB collection for %s failed (%s)",
-            device_info.get('hostname') or device_info.get('ip_address'),
-            type(exc).__name__,
+        snmp_profile = {}
+        credential_error = exc
+    else:
+        credential_error = None
+
+    snmp_failure: dict[str, Any] | None = None
+    snmp_records: list[dict[str, Any]] = []
+    snmp_interface_data = None
+    snmp_interface_error = ''
+    snmp_current_success = False
+    snmp_legacy_safe = False
+    snmp_coverage_partial = False
+    snmp_has_active_mappings = False
+
+    if snmp_only and (device_info.get('_snmp_not_configured') or not snmp_profile.get('configured')):
+        reason = 'SNMP credentials are not configured'
+        context = {
+            'context_source': 'snmp', 'context_type': 'unknown',
+            'local_context_key': '', 'local_context_name': '',
+        }
+        attempted_at = _beijing_now_iso()
+        try:
+            generation = _begin_current_fdb_context(
+                device_id=device_id, context=context, attempted_at=attempted_at, run_id=run_id,
+            )
+            _finish_current_fdb_context(
+                device_id=device_id, context=context, generation=generation, status='unsupported',
+                attempted_at=attempted_at, completed_at=_beijing_now_iso(), run_id=run_id,
+                error_code='unsupported',
+            )
+        except Exception as persist_exc:
+            logger.warning('[FDB Sweep] Could not record unsupported SNMP state for %s (%s)', device_label, type(persist_exc).__name__)
+        return {
+            'success': False, 'current_state_success': False, 'legacy_replace_safe': False,
+            'records': [], 'transport': 'snmp', 'error': reason, 'failure_class': 'unsupported',
+            'coverage_status': 'unsupported', 'run_id': run_id,
+        }
+
+    if snmp_profile.get('configured'):
+        version = str(snmp_profile.get('version') or '2c').strip().casefold()
+        is_v3 = version in {'3', 'v3', 'snmpv3'}
+        profile_context_name = str(snmp_profile.get('context_name') or '').strip() if is_v3 else ''
+        contexts, unmapped_active_contexts = _load_scheduled_snmp_fdb_contexts(
+            device_id, is_v3=is_v3, profile_context_name=profile_context_name,
         )
-        if snmp_only:
+        snmp_has_active_mappings = any(int(context.get('mapping_count') or 0) > 0 for context in contexts) or unmapped_active_contexts
+        target_ip = str(snmp_profile.get('server') or device_info.get('ip_address') or '').strip()
+        profile_valid = bool(target_ip and (is_v3 or snmp_profile.get('community')))
+        successful_context_count = 0
+        failed_contexts: list[dict[str, Any]] = []
+
+        for context in contexts:
+            attempted_at = _beijing_now_iso()
+            generation: int | None = None
+            try:
+                generation = _begin_current_fdb_context(
+                    device_id=device_id, context=context, attempted_at=attempted_at, run_id=run_id,
+                )
+                if not profile_valid:
+                    raise RuntimeError('SNMP FDB credentials or target are not configured')
+                query_profile: str | dict[str, Any]
+                if is_v3:
+                    query_profile = dict(snmp_profile)
+                    query_profile['context_name'] = str(context.get('request_context_name') or '')
+                else:
+                    query_profile = str(snmp_profile.get('community') or '')
+                raw_records = asyncio.run(collect_bridge_mac_table(
+                    target_ip, query_profile, port=int(snmp_profile.get('port') or 161), version=version,
+                ))
+                normalized = _normalize_mac_table_snapshot(
+                    raw_records, device_info, context=context, allow_empty=True,
+                )
+                if normalized is None or len(normalized) != len(raw_records):
+                    raise RuntimeError('SNMP bridge table returned incomplete or unusable MAC records')
+                collection_status = 'complete' if context['context_type'] in {'vrf', 'global'} else 'scope_unknown'
+                _finish_current_fdb_context(
+                    device_id=device_id, context=context, generation=generation, status=collection_status,
+                    attempted_at=attempted_at, completed_at=_beijing_now_iso(), run_id=run_id,
+                    observations=normalized,
+                )
+                successful_context_count += 1
+                snmp_records.extend(normalized)
+            except Exception as exc:
+                failure_class = _classify_arp_failure(exc)
+                if generation is not None:
+                    try:
+                        _finish_current_fdb_context(
+                            device_id=device_id, context=context, generation=generation,
+                            status='unsupported' if failure_class == 'unsupported' else 'failed',
+                            attempted_at=attempted_at, completed_at=_beijing_now_iso(), run_id=run_id,
+                            error_code=failure_class,
+                        )
+                    except Exception as persist_exc:
+                        logger.warning('[FDB Sweep] Could not record SNMP context failure for %s (%s)', device_label, type(persist_exc).__name__)
+                failed_contexts.append({
+                    **context, 'failure_class': failure_class,
+                    'failure_detail': f"{type(exc).__name__}: {str(exc)[:180]}",
+                })
+                logger.info('SNMP MAC/FDB collection for %s failed (%s)', device_label, type(exc).__name__)
+
+        snmp_current_success = successful_context_count > 0
+        snmp_coverage_partial = bool(failed_contexts or unmapped_active_contexts)
+        all_contexts_succeeded = bool(contexts) and successful_context_count == len(contexts)
+        has_unknown_context = any(str(context.get('context_type')) == 'unknown' for context in contexts)
+        one_unambiguous_context = (
+            len(contexts) == 1
+            and not unmapped_active_contexts
+            and (
+                bool(contexts[0].get('mapped_unique'))
+                or (
+                    str(contexts[0].get('context_type')) == 'unknown'
+                    and not str(contexts[0].get('local_context_key') or '').strip()
+                    and int(contexts[0].get('mapping_count') or 0) == 0
+                )
+            )
+        )
+        snmp_legacy_safe = all_contexts_succeeded and one_unambiguous_context
+
+        if snmp_only and all_contexts_succeeded and not snmp_coverage_partial and len(contexts) == 1:
+            try:
+                from services.snmp_service import collect_qbridge_interface_vlan_data
+                community_or_profile = dict(snmp_profile) if is_v3 else str(snmp_profile.get('community') or '')
+                if is_v3:
+                    community_or_profile['context_name'] = str(contexts[0].get('request_context_name') or '')
+                snmp_interface_data = asyncio.run(collect_qbridge_interface_vlan_data(
+                    target_ip, community_or_profile,
+                    port=int(snmp_profile.get('port') or 161), version=version,
+                ))
+            except Exception as exc:
+                snmp_interface_error = str(exc)
+                logger.warning('[FDB Sweep] Port attributes unavailable for %s (%s)', device_label, type(exc).__name__)
+
+        if all_contexts_succeeded and not snmp_coverage_partial and snmp_legacy_safe:
+            legacy_records = [
+                {key: value for key, value in record.items() if key not in {
+                    'context_source', 'context_type', 'local_context_key', 'local_context_name',
+                }}
+                for record in snmp_records
+            ]
             return {
-                'success': False, 'records': [], 'transport': 'snmp',
-                'error': str(exc), 'failure_class': _classify_arp_failure(exc),
+                'success': True, 'current_state_success': True, 'legacy_replace_safe': True,
+                'records': legacy_records, 'transport': 'snmp', 'coverage_status': 'scope_unknown' if has_unknown_context else 'complete',
+                'coverage_total': len(contexts), 'coverage_supported': successful_context_count,
+                'interface_vlan_data': snmp_interface_data, 'interface_evidence_error': snmp_interface_error,
+                'run_id': run_id,
             }
+        if all_contexts_succeeded and not snmp_coverage_partial:
+            # The current projection retains every exact context.  The legacy
+            # mac_table cannot represent a multi-context union safely.
+            return {
+                'success': False, 'current_state_success': True, 'legacy_replace_safe': False,
+                'records': [], 'transport': 'snmp', 'coverage_status': 'partial',
+                'coverage_total': len(contexts), 'coverage_supported': successful_context_count,
+                'error': 'FDB contexts are stored separately; legacy whole-device cache cannot represent this scope',
+                'run_id': run_id,
+            }
+        snmp_failure = {
+            'error': (
+                'SNMP FDB collection is incomplete for one or more routing contexts'
+                + (f" ({failed_contexts[0]['failure_detail']})" if failed_contexts else '')
+            ),
+            'failure_class': failed_contexts[0]['failure_class'] if failed_contexts else 'scope_unknown',
+            'coverage_total': len(contexts) + (1 if unmapped_active_contexts else 0),
+            'coverage_supported': successful_context_count,
+        }
+    elif credential_error is not None and snmp_only:
+        snmp_failure = {'error': 'SNMP credentials could not be resolved', 'failure_class': 'unsupported'}
+    elif snmp_only:
+        snmp_failure = {'error': 'SNMP FDB collection is disabled or credentials are not configured', 'failure_class': 'unsupported'}
 
     if snmp_only:
         return {
-            'success': False, 'records': [], 'transport': 'snmp',
-            'error': 'SNMP FDB collection is disabled or credentials are not configured',
-            'failure_class': 'unsupported',
+            'success': False, 'current_state_success': snmp_current_success, 'legacy_replace_safe': False,
+            'records': [], 'transport': 'snmp',
+            'error': (snmp_failure or {}).get('error', 'SNMP FDB collection failed'),
+            'failure_class': (snmp_failure or {}).get('failure_class', 'collection_failed'),
+            'coverage_status': 'partial' if snmp_current_success else 'failed',
+            'coverage_total': (snmp_failure or {}).get('coverage_total', 1),
+            'coverage_supported': (snmp_failure or {}).get('coverage_supported', 0),
+            'run_id': run_id,
         }
 
-    if device_info.get('platform_profile_id'):
-        try:
+    # CLI has its own source state and generation.  A failed SNMP attempt above
+    # remains visible in the SNMP state row and cannot overwrite CLI or vice versa.
+    cli_context = {
+        'context_source': 'cli', 'context_type': 'unknown',
+        'local_context_key': '', 'local_context_name': '',
+    }
+    attempted_at = _beijing_now_iso()
+    cli_generation: int | None = None
+    try:
+        cli_generation = _begin_current_fdb_context(
+            device_id=device_id, context=cli_context, attempted_at=attempted_at, run_id=run_id,
+        )
+        records: list[dict[str, Any]]
+        if device_info.get('platform_profile_id'):
             from services.platform_registry_service import execute_platform_action
-            result = execute_platform_action(
-                str(device_info['id']),
-                'get_mac_table',
-                user={
-                    'id': f"ip-locator:{device_info.get('id') or 'unknown'}",
-                    'username': 'ip-locator',
-                    'role': 'Operator',
-                    'tenant_id': device_info.get('tenant_id') or '',
+            cli_result = execute_platform_action(
+                device_id, 'get_mac_table', user={
+                    'id': f'ip-locator:{device_id}', 'username': 'ip-locator',
+                    'role': 'Operator', 'tenant_id': device_info.get('tenant_id') or '',
                 },
             )
-            records = result.get('records') or []
-            normalized_records = _normalize_mac_table_snapshot(records, device_info)
-            if (
-                result.get('success')
-                and str(result.get('parse_status') or '').strip().lower() == 'matched'
-                and normalized_records
-                and len(normalized_records) == len(records)
-            ):
-                return {'success': True, 'records': normalized_records, 'transport': 'ssh'}
-            return {
-                'success': False,
-                'records': [],
-                'transport': 'ssh',
-                'error': str(result.get('error') or 'MAC CLI/TextFSM result was empty or incomplete'),
-            }
-        except Exception as exc:
-            logger.debug("[MAC Collector] Registry collection failed: %s", exc)
-            return {'success': False, 'records': [], 'transport': 'ssh', 'error': str(exc)}
-    platform = str(device_info.get('platform') or 'cisco_ios').lower()
-    if platform in ('huawei_vrp', 'h3c_comware'):
-        cmd = 'display mac-address'
-    elif platform in ('juniper_junos',):
-        cmd = 'show ethernet-switching table'
-    else:
-        cmd = 'show mac address-table'
+            records = cli_result.get('records') or []
+            if not cli_result.get('success') or str(cli_result.get('parse_status') or '').strip().lower() != 'matched':
+                raise RuntimeError(str(cli_result.get('error') or 'MAC CLI/TextFSM result was empty or incomplete'))
+        else:
+            platform = str(device_info.get('platform') or 'cisco_ios').lower()
+            if platform in ('huawei_vrp', 'h3c_comware'):
+                command = 'display mac-address'
+            elif platform == 'juniper_junos':
+                command = 'show ethernet-switching table'
+            else:
+                command = 'show mac address-table'
+            output = _send_command(device_info, command)
+            records = []
+            for line in output.splitlines():
+                parsed = _parse_mac_table_line(line)
+                if not parsed:
+                    continue
+                records.append({
+                    'mac': parsed['mac'], 'vlan': str(parsed['vlan']).strip(),
+                    'port': str(parsed['port']).strip(), 'type': parsed['type'],
+                    'switch_id': device_id,
+                    'switch_name': device_info.get('hostname') or device_info.get('ip_address') or '',
+                })
+        normalized = _normalize_mac_table_snapshot(records, device_info, context=cli_context)
+        if normalized is None or len(normalized) != len(records):
+            raise RuntimeError('MAC CLI output produced no complete, parseable snapshot')
 
-    try:
-        output = _send_command(device_info, cmd)
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for item in normalized:
+            groups.setdefault(str(item.get('local_context_key') or '').strip(), []).append(item)
+        conn = get_db_connection()
+        try:
+            active_cli_contexts = conn.execute(
+                """SELECT local_context_key FROM ipam_device_routing_contexts
+                    WHERE device_id = ? AND context_source = 'cli' AND status = 'active'""",
+                (device_id,),
+            ).fetchall()
+        finally:
+            conn.close()
+        active_cli_keys = {str(row['local_context_key'] or '').strip() for row in active_cli_contexts}
+        if set(groups) == {''}:
+            _finish_current_fdb_context(
+                device_id=device_id, context=cli_context, generation=cli_generation,
+                status='scope_unknown', attempted_at=attempted_at, completed_at=_beijing_now_iso(),
+                run_id=run_id, observations=normalized,
+            )
+        else:
+            # The command-level reservation fences the device I/O.  Once a
+            # parser reports raw keys, this result cannot safely be published
+            # under a generation reserved after the I/O. Keep the reserved
+            # attempt partial and leave any previously successful keyed state
+            # untouched; the next run can only publish a key it reserved first.
+            _finish_current_fdb_context(
+                device_id=device_id, context=cli_context, generation=cli_generation,
+                status='partial', attempted_at=attempted_at, completed_at=_beijing_now_iso(),
+                run_id=run_id, error_code='raw_context_key_reported',
+            )
+
+        cli_scope_partial = bool(active_cli_keys) or set(groups) != {''} or snmp_has_active_mappings
+        cli_legacy_safe = not cli_scope_partial and set(groups) == {''} and not active_cli_keys
+        legacy_records = [
+            {key: value for key, value in record.items() if key not in {
+                'context_source', 'context_type', 'local_context_key', 'local_context_name',
+            }}
+            for record in normalized
+        ]
+        return {
+            'success': not cli_scope_partial,
+            'current_state_success': not cli_scope_partial,
+            'legacy_replace_safe': cli_legacy_safe,
+            'records': legacy_records if cli_legacy_safe else [],
+            'transport': 'ssh', 'coverage_status': 'partial' if cli_scope_partial else 'scope_unknown',
+            'coverage_total': max(1, len(active_cli_keys)), 'coverage_supported': 1,
+            'interface_vlan_data': None, 'run_id': run_id,
+            'error': ('CLI FDB coverage is partial or context-unknown' if cli_scope_partial else ''),
+            'failure_class': 'scope_unknown' if cli_scope_partial else '',
+        }
     except Exception as exc:
-        logger.debug(f"[MAC Collector] Failed from {device_info.get('ip_address')}: {exc}")
-        return {'success': False, 'records': [], 'transport': 'ssh', 'error': str(exc)}
-
-    records = []
-    dev_id = device_info.get('id', '')
-    dev_name = device_info.get('hostname') or device_info.get('ip_address') or ''
-
-    for line in output.splitlines():
-        parsed = _parse_mac_table_line(line)
-        if not parsed:
-            continue
-        vlan = parsed['vlan']
-        port_field = parsed['port']
-        mac_norm = parsed['mac']
-        if not mac_norm or len(mac_norm) != 12:
-            continue
-
-        records.append({
-            'mac': mac_norm,
-            'vlan': str(vlan).strip(),
-            'port': str(port_field).strip(),
-            'type': parsed['type'],
-            'switch_id': dev_id,
-            'switch_name': dev_name,
-        })
-    normalized_records = _normalize_mac_table_snapshot(records, device_info)
-    if normalized_records and len(normalized_records) == len(records):
-        return {'success': True, 'records': normalized_records, 'transport': 'ssh'}
-    return {
-        'success': False,
-        'records': [],
-        'transport': 'ssh',
-        'error': 'MAC CLI output produced no complete, parseable snapshot',
-    }
+        failure_class = _classify_arp_failure(exc)
+        if cli_generation is not None:
+            try:
+                _finish_current_fdb_context(
+                    device_id=device_id, context=cli_context, generation=cli_generation,
+                    status='unsupported' if failure_class == 'unsupported' else 'failed',
+                    attempted_at=attempted_at, completed_at=_beijing_now_iso(), run_id=run_id,
+                    error_code=failure_class,
+                )
+            except Exception as persist_exc:
+                logger.warning('[FDB Sweep] Could not record CLI context failure for %s (%s)', device_label, type(persist_exc).__name__)
+        logger.info('CLI MAC/FDB collection for %s failed (%s)', device_label, type(exc).__name__)
+        return {
+            'success': False, 'current_state_success': False, 'legacy_replace_safe': False,
+            'records': [], 'transport': 'ssh', 'error': str(exc), 'failure_class': failure_class,
+            'coverage_status': 'partial' if snmp_current_success else 'failed',
+            'coverage_total': (snmp_failure or {}).get('coverage_total', 1),
+            'coverage_supported': (snmp_failure or {}).get('coverage_supported', 0),
+            'run_id': run_id,
+        }
 
 
 def _persist_mac_table_records(device_snapshots: list[dict]) -> int:
@@ -5936,11 +7251,11 @@ def _persist_mac_table_records(device_snapshots: list[dict]) -> int:
     try:
         complete_snapshots = []
         for snapshot in device_snapshots:
-            if not snapshot.get('success'):
+            if not snapshot.get('success') or snapshot.get('legacy_replace_safe') is False:
                 continue
             records = snapshot.get('records') or []
             device_id = str(snapshot.get('device_id') or (records[0].get('switch_id') if records else '') or '').strip()
-            if not device_id or not records:
+            if not device_id:
                 continue
             prepared = []
             for record in records:
@@ -5958,7 +7273,7 @@ def _persist_mac_table_records(device_snapshots: list[dict]) -> int:
                     int(vlan_text) if vlan_text.isdigit() else None,
                     str(record.get('type') or record.get('entry_type') or '').strip(),
                 ))
-            if prepared and len(prepared) == len(records):
+            if not records or (prepared and len(prepared) == len(records)):
                 complete_snapshots.append((device_id, prepared))
 
         for device_id, records in complete_snapshots:
@@ -6880,13 +8195,25 @@ def run_endpoint_collector(
             dev = future_map[future]
             try:
                 result = future.result()
+                legacy_replace_safe = bool(result.get('legacy_replace_safe', True))
+                snapshot_success = bool(result.get('success')) and legacy_replace_safe
+                current_state_success = bool(result.get('current_state_success', result.get('success')))
+                coverage_partial = (
+                    str(result.get('coverage_status') or '').strip().lower() == 'partial'
+                    or (bool(result.get('success')) and not legacy_replace_safe)
+                )
                 snapshot = {
                     'device_id': str(dev.get('id') or ''),
-                    'success': bool(result.get('success')),
-                    'records': result.get('records') or [],
+                    'success': snapshot_success,
+                    'current_state_success': current_state_success,
+                    'legacy_replace_safe': legacy_replace_safe,
+                    'coverage_status': result.get('coverage_status') or ('complete' if snapshot_success else 'failed'),
+                    'records': (result.get('records') or []) if snapshot_success else [],
                     'transport': result.get('transport') or 'ssh',
                     'error': result.get('error') or '',
                     'failure_class': result.get('failure_class') or '',
+                    'coverage_total': int(result.get('coverage_total') or (len(result.get('records') or []) if snapshot_success else 0)),
+                    'coverage_supported': int(result.get('coverage_supported') or (1 if snapshot_success else 0)),
                     'interface_vlan_data': result.get('interface_vlan_data'),
                     'interface_evidence_error': result.get('interface_evidence_error') or '',
                 }
@@ -6894,11 +8221,15 @@ def run_endpoint_collector(
                 mac_status_updates.append({
                     'device_id': snapshot['device_id'],
                     'collector': 'mac_table',
-                    'status': 'success' if snapshot['success'] else 'failed',
+                    'status': (
+                        'success' if snapshot['success'] else
+                        'partial' if current_state_success or coverage_partial else
+                        ('unsupported' if snapshot['failure_class'] == 'unsupported' else 'failed')
+                    ),
                     'transport': snapshot['transport'],
                     'source': 'endpoint_fact_sweep',
-                    'coverage_total': len(snapshot['records']) if snapshot['success'] else 0,
-                    'coverage_supported': 1 if snapshot['success'] else 0,
+                    'coverage_total': snapshot['coverage_total'],
+                    'coverage_supported': snapshot['coverage_supported'],
                     'error_code': snapshot['failure_class'] or ('' if snapshot['success'] else 'snmp_fdb_failed'),
                     'error_message': snapshot['error'],
                     'failure_class': snapshot['failure_class'] or ('' if snapshot['success'] else 'collection_failed'),
@@ -6926,6 +8257,9 @@ def run_endpoint_collector(
                 mac_device_snapshots.append({
                     'device_id': str(dev.get('id') or ''),
                     'success': False,
+                    'current_state_success': False,
+                    'legacy_replace_safe': False,
+                    'coverage_status': 'failed',
                     'records': [],
                     'transport': 'snmp' if snmp_only else 'ssh',
                     'error': str(exc),
@@ -7647,9 +8981,6 @@ def parse_routing_table(output: str, platform: str) -> list[dict]:
 
 
 def _collect_device_vrfs(dev: dict) -> list[str]:
-    if dev.get('platform_profile_id'):
-        configured = dev.get('vrf') or dev.get('vrf_name')
-        return [str(configured).strip()] if configured else ['default']
     import re
     platform = str(dev.get('platform') or 'cisco_ios').lower()
     if platform in ('huawei_vrp', 'h3c_comware'):
@@ -7660,8 +8991,21 @@ def _collect_device_vrfs(dev: dict) -> list[str]:
         cmd = "show ip vrf"
         
     vrfs = ['default']
+    configured = str(dev.get('vrf') or dev.get('vrf_name') or '').strip()
+    if configured and configured.casefold() != 'default':
+        vrfs.append(configured)
+
+    def add_vrf(value: str) -> None:
+        name = str(value or '').strip()
+        if not name:
+            return
+        if name.casefold() == 'default':
+            name = 'default'
+        if all(existing.casefold() != name.casefold() for existing in vrfs):
+            vrfs.append(name)
+
     try:
-        output = _send_command(dev, cmd)
+        output = _send_command(dev, cmd, force_refresh=True)
         if not output or "Invalid input" in output or "Unrecognized command" in output:
             return vrfs
             
@@ -7669,37 +9013,152 @@ def _collect_device_vrfs(dev: dict) -> list[str]:
             line_strip = raw_line.strip()
             if not line_strip:
                 continue
+            # Some CLI transports retain a standalone device prompt even when
+            # strip_prompt is enabled. A prompt is not a local routing context.
+            if re.fullmatch(r'(?:\[[^\]]+\]|<[^>]+>|[A-Za-z0-9_.:-]+[>#])\s*', line_strip):
+                continue
             if platform not in ('huawei_vrp', 'h3c_comware', 'juniper_junos'):
                 if any(h in line_strip.lower() for h in ('name', 'default rd', 'protocols', 'interfaces')):
                     continue
                 tokens = line_strip.split()
                 if tokens and tokens[0] not in ('Name', 'Default', 'Loopback', 'Vlan'):
-                    vrf_name = tokens[0]
-                    if vrf_name not in vrfs:
-                        vrfs.append(vrf_name)
+                    add_vrf(tokens[0])
             elif platform in ('huawei_vrp', 'h3c_comware'):
                 if any(h in line_strip.lower() for h in ('vpn-instance', 'total', 'configured')):
                     continue
                 if "vpn-instance name" in line_strip.lower():
                     m = re.search(r'name\s+and\s+id\s*:\s*(\S+)', line_strip, re.IGNORECASE)
                     if m:
-                        vrfs.append(m.group(1))
+                        add_vrf(m.group(1))
                 else:
                     tokens = line_strip.split()
                     if tokens:
                         vrf_name = tokens[0]
                         if '(' in vrf_name:
                             vrf_name = vrf_name.split('(')[0]
-                        if vrf_name not in vrfs:
-                            vrfs.append(vrf_name)
+                        add_vrf(vrf_name)
             elif platform == 'juniper_junos':
                 m = re.search(r'Instance:\s*(\S+),', line_strip, re.IGNORECASE)
                 if m:
-                    vrfs.append(m.group(1))
+                    add_vrf(m.group(1))
     except Exception as e:
         logger.debug(f"[Route Collector] Failed to collect VRFs from {dev.get('hostname')}: {e}")
         
     return vrfs
+
+
+def _route_collection_vrf_candidates(dev: dict, known_vrfs: set[str] | None = None) -> list[str]:
+    """Merge configured, previously known, and live-discovered route contexts."""
+    candidates = {'default'}
+    candidates.update(str(name).strip() for name in (known_vrfs or set()) if str(name).strip())
+    configured = str(dev.get('vrf') or dev.get('vrf_name') or '').strip()
+    if configured:
+        candidates.add(configured)
+
+    platform = str(dev.get('platform') or '').strip().lower()
+    # SNMP's default context cannot enumerate newly configured VPN instances.
+    # H3C/Huawei profile devices therefore need a read-only CLI inventory before
+    # per-VRF route actions are dispatched, even when default SNMP already works.
+    if platform in {'huawei_vrp', 'h3c_comware'}:
+        try:
+            candidates.update(_collect_device_vrfs(dev))
+        except Exception as exc:
+            logger.info(
+                '[Route Collector] CLI VRF discovery failed for %s (%s); using configured/known contexts',
+                dev.get('hostname') or dev.get('ip_address'), type(exc).__name__,
+            )
+
+    unique: dict[str, str] = {}
+    # Set iteration is intentionally normalized so case-only aliases choose a
+    # stable CLI spelling across workers and collector runs.
+    for name in sorted(candidates, key=lambda value: (str(value).casefold(), str(value))):
+        normalized = str(name or '').strip()
+        if not normalized:
+            continue
+        key = normalized.casefold()
+        if key == 'default':
+            unique[key] = 'default'
+        else:
+            unique.setdefault(key, normalized)
+    return sorted(unique.values(), key=lambda value: (value.casefold() != 'default', value.casefold()))
+
+
+def _normalize_profile_route_records(
+    device_id: str,
+    vrf_name: str,
+    records: list[dict],
+) -> list[dict]:
+    """Normalize Registry/TextFSM route aliases to the route-cache contract."""
+    def first_value(record: dict, *keys: str) -> Any:
+        for key in keys:
+            value = record.get(key)
+            if value is not None and value != '':
+                return value
+        return None
+
+    def optional_int(value: Any) -> int | None:
+        if value is None or value == '':
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    normalized_routes: list[dict] = []
+    for record in records:
+        if not isinstance(record, dict):
+            return []
+        raw_prefix = str(first_value(record, 'prefix', 'destination', 'network') or '').strip()
+        prefix_length_value = first_value(record, 'prefix_length', 'prefix_len', 'mask_length')
+        prefix_length = str(prefix_length_value if prefix_length_value is not None else '').strip()
+        raw_mask_value = first_value(record, 'mask', 'netmask')
+        raw_mask = str(raw_mask_value if raw_mask_value is not None else '').strip()
+        if raw_prefix and '/' in raw_prefix:
+            network_value = raw_prefix
+        elif raw_prefix and prefix_length:
+            network_value = f'{raw_prefix}/{prefix_length}'
+        elif raw_prefix and raw_mask:
+            network_value = f'{raw_prefix}/{raw_mask}'
+        else:
+            return []
+        try:
+            network = ipaddress.ip_network(network_value, strict=False)
+        except ValueError:
+            return []
+
+        metric = optional_int(first_value(record, 'metric', 'cost'))
+        preference = optional_int(first_value(record, 'preference', 'distance'))
+        next_hop = str(
+            record.get('next_hop')
+            or record.get('nexthop')
+            or record.get('next_hop_ip')
+            or record.get('nexthop_ip')
+            or ''
+        ).strip()
+        interface = str(
+            record.get('interface')
+            or record.get('outgoing_interface')
+            or record.get('nexthop_if')
+            or ''
+        ).strip()
+        # These fields are required by the published route action contract.
+        # Treat incomplete parser rows as a failed collection so the caller
+        # preserves the previous successful VRF snapshot.
+        if not next_hop or not interface:
+            return []
+
+        normalized_routes.append({
+            'device_id': device_id,
+            'vrf_name': vrf_name,
+            'prefix': str(network.network_address),
+            'mask': str(network.prefixlen),
+            'next_hop': next_hop,
+            'protocol': str(record.get('protocol') or record.get('route_type') or '').strip(),
+            'interface': interface,
+            'metric': metric if metric is not None else 0,
+            'preference': preference,
+        })
+    return normalized_routes
 
 
 def run_route_collector(
@@ -7865,7 +9324,6 @@ def run_route_collector(
 
     def collect_device_routes(dev: dict) -> tuple[list[dict], set[str], set[str]]:
         if dev.get('platform_profile_id'):
-            configured_vrf = str(dev.get('vrf') or dev.get('vrf_name') or 'default').strip() or 'default'
             from services.platform_registry_service import execute_platform_action
             registry_user = {
                 'id': f"route-collector:{dev.get('id')}",
@@ -7874,7 +9332,10 @@ def run_route_collector(
                 'tenant_id': dev.get('tenant_id') or '',
             }
             device_id = str(dev.get('id') or '')
-            vrfs = sorted(known_vrfs_by_device.get(device_id, set()) | {configured_vrf, 'default'})
+            vrfs = _route_collection_vrf_candidates(
+                dev,
+                known_vrfs_by_device.get(device_id, set()),
+            )
             all_device_routes: list[dict] = []
             successful_vrfs: set[str] = set()
             failed_vrfs: set[str] = set()
@@ -7907,26 +9368,11 @@ def run_route_collector(
                     ):
                         failed_vrfs.add(vrf)
                         continue
-                    normalized_routes = []
-                    for record in records:
-                        if not isinstance(record, dict):
-                            normalized_routes = []
-                            break
-                        prefix = str(record.get('prefix') or record.get('destination') or '').strip()
-                        if not prefix:
-                            normalized_routes = []
-                            break
-                        normalized_routes.append({
-                            'device_id': dev['id'],
-                            'vrf_name': vrf,
-                            'prefix': prefix.split('/', 1)[0],
-                            'mask': prefix.split('/', 1)[1] if '/' in prefix else '',
-                            'next_hop': str(record.get('next_hop') or record.get('nexthop') or '').strip(),
-                            'protocol': str(record.get('protocol') or record.get('route_type') or '').strip(),
-                            'interface': str(record.get('interface') or record.get('outgoing_interface') or '').strip(),
-                            'metric': record.get('metric') or 0,
-                            'preference': record.get('preference'),
-                        })
+                    normalized_routes = _normalize_profile_route_records(
+                        str(dev['id']),
+                        vrf,
+                        records,
+                    )
                     if not normalized_routes or len(normalized_routes) != len(records):
                         failed_vrfs.add(vrf)
                         continue
@@ -7970,11 +9416,12 @@ def run_route_collector(
                 continue
             failed_vrfs.add(vrf)
 
-        # If the default SNMP table was unavailable, retain live VRF discovery
-        # through the existing CLI path. Otherwise, only the already-known
-        # contexts that SNMP could not read need SSH.
+        # A successful default SNMP table does not enumerate VPN instances.
+        # Keep the fallback for other platforms, and always refresh H3C/Huawei
+        # context inventory because those devices can add VRFs without updating
+        # CMDB interfaces or the prior route snapshot first.
         cli_vrfs = set(known_vrfs) - successful_vrfs
-        if not snmp_default_succeeded:
+        if not snmp_default_succeeded or platform in {'huawei_vrp', 'h3c_comware'}:
             try:
                 cli_vrfs.update(_collect_device_vrfs(dev) or ['default'])
             except Exception as exc:
@@ -7983,6 +9430,7 @@ def run_route_collector(
                     dev.get('hostname') or ip, type(exc).__name__,
                 )
                 cli_vrfs.add('default')
+        cli_vrfs.difference_update(successful_vrfs)
         cli_vrfs = sorted(cli_vrfs | ({'default'} if 'default' in failed_vrfs else set()))
         if cli_vrfs:
             from drivers.ssh_compat import is_ssh_port_open

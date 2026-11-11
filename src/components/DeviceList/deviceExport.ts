@@ -5,6 +5,7 @@ import { normalizeDeviceRecord } from '../../utils/deviceUtils';
 import { CHECK_BADGE, formatCheckTime } from './StatusBadge';
 import type { ColumnVisibility } from './DeviceTable';
 import { rackDisplayName } from './deviceColumns';
+import { deviceCategoryLabel, deviceRoleLabel } from '../../domain/deviceLabels';
 
 export type DeviceQuickFilter = 'all' | 'offline' | 'warning' | 'staging_maintenance' | 'healthy';
 
@@ -122,8 +123,8 @@ export function buildNetworkDeviceExportData(devices: Device[], view: NetworkDev
     { key: 'hostname', header: zh ? '设备名称' : 'Device name', value: (device) => trim(device.hostname) || (zh ? '未知' : 'Unknown') },
     { key: 'assetTag', header: zh ? '资产编号' : 'Asset tag', value: (device) => trim(device.asset_tag) || '—' },
     { key: 'managementIp', header: zh ? '管理 IP' : 'Management IP', value: (device) => trim(device.ip_address) || '—' },
-    { key: 'category', header: zh ? '设备类别' : 'Category', value: (device) => trim(device.device_category) || '—' },
-    { key: 'role', header: zh ? '角色' : 'Role', value: (device) => trim(device.role) || '—' },
+    { key: 'category', header: zh ? '设备类别' : 'Device category', value: (device) => deviceCategoryLabel(device.device_category, zh ? 'zh' : 'en') },
+    { key: 'role', header: zh ? '设备角色' : 'Device role', value: (device) => deviceRoleLabel(device.role, zh ? 'zh' : 'en') },
     { key: 'connectionMethod', header: zh ? '连接方式' : 'Connection method', value: (device) => trim(device.connection_method).toUpperCase() || '—' },
     { key: 'vendor', header: zh ? '厂商' : 'Vendor', value: vendorLabel },
     { key: 'model', header: zh ? '型号' : 'Model', value: (device) => trim(device.model || (device as Device & { asset_model?: string }).asset_model) || '—' },

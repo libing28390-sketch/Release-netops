@@ -26,6 +26,7 @@ import { buildVisibleIpamExportData, fetchAllIpamExportItems } from './ipamExpor
 
 import { Subnet, IPAddress, Conflict, IPVlanTabProps } from './types';
 import { DEVICE_TYPES } from './constants';
+import { subnetHasScopedConflict } from './conflictScope';
 import {
   isValidIPv4,
   isValidIPv6,
@@ -454,19 +455,10 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
   const overallUtil = summary.total_capacity > 0 ? Math.round((summary.total_used / summary.total_capacity) * 100) : 0;
   const highUtilSubnets = subnets.filter((subnet) => subnet.utilization >= 80).length;
   const criticalUtilSubnets = subnets.filter((subnet) => subnet.utilization >= 90).length;
-  const conflictHintText = useMemo(
-    () =>
-      `${conflicts.ip_conflicts
-        .map((item) => `${item.address} ${item.subnets}`)
-        .join(' ')} ${conflicts.mac_conflicts.map((item) => `${item.mac_address} ${item.addresses}`).join(' ')}`.toLowerCase(),
-    [conflicts]
-  );
-
   const subnetRiskScoreMap = useMemo(() => {
     const map = new Map<string, number>();
     subnets.forEach((subnet) => {
-      const nameHint = `${subnet.name} ${subnet.network}/${subnet.prefix_len}`.toLowerCase();
-      const hasConflictHint = conflictHintText.includes(subnet.network.toLowerCase()) || conflictHintText.includes(nameHint);
+      const hasConflictHint = subnetHasScopedConflict(subnet, conflicts);
       const siteHint = String(subnet.site || '').toLowerCase();
       const criticalSite = ['core', 'prod', 'dc', 'edge'].some((keyword) => siteHint.includes(keyword));
       const baseScore = Math.min(60, Math.round(subnet.utilization * 0.6));
@@ -475,7 +467,7 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
       map.set(subnet.id, Math.min(100, baseScore + conflictScore + siteScore));
     });
     return map;
-  }, [subnets, conflictHintText]);
+  }, [subnets, conflicts]);
 
   const riskSubnetCount = useMemo(
     () => subnets.filter((subnet) => (subnetRiskScoreMap.get(subnet.id) || 0) >= 70).length,

@@ -7,6 +7,7 @@ import Pagination from '../../../components/Pagination';
 import { DEVICE_PAGE_SIZE } from '../constants';
 import { getDeviceCategory, getVendor } from '../helpers';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
+import { deviceCategoryLabel, deviceRoleLabel } from '../../../domain/deviceLabels';
 
 interface DeviceSelectionStepProps {
   isZh: boolean;
@@ -191,8 +192,8 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
                       {node.roles.length > 0 && (
                         <button
                           type="button"
-                          title={isZh ? '按角色筛选' : 'Filter by role'}
-                          aria-label={`${isZh ? '展开' : 'Expand'} ${node.site} ${isZh ? '角色' : 'roles'}`}
+                          title={isZh ? '按设备角色筛选' : 'Filter by device role'}
+                          aria-label={`${isZh ? '展开' : 'Expand'} ${node.site} ${isZh ? '设备角色' : 'device roles'}`}
                           aria-expanded={expandedSites.has(node.site)}
                           onClick={() => setExpandedSites((current) => {
                             const next = new Set(current);
@@ -220,7 +221,7 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
                                 : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
                             }`}
                           >
-                            {role.role} <span className="opacity-60">{role.onlineCount}/{role.count}</span>
+                            {deviceRoleLabel(role.role, isZh ? 'zh' : 'en')} <span className="opacity-60">{role.onlineCount}/{role.count}</span>
                           </button>
                         ))}
                       </div>
@@ -231,8 +232,8 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
             </div>
             {/* Device Type chips */}
             <div>
-              <label className="text-xs font-semibold text-gray-500 block mb-1.5">{isZh ? '设备类型' : 'Device Type'}</label>
-              <div role="group" aria-label={isZh ? '设备类型筛选' : 'Device type filters'} className="flex flex-wrap gap-1">
+              <label className="text-xs font-semibold text-gray-500 block mb-1.5">{isZh ? '设备类别' : 'Device category'}</label>
+              <div role="group" aria-label={isZh ? '设备类别筛选' : 'Device category filters'} className="flex flex-wrap gap-1">
                 {(['all', 'network', 'server'] as const).map((t) => (
                   <button
                     type="button"
@@ -245,7 +246,7 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
                         : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
                     }`}
                   >
-                    {t === 'all' ? (isZh ? '全部' : 'All') : t === 'network' ? (isZh ? '网络设备' : 'Network') : (isZh ? '服务器' : 'Server')}
+                    {t === 'all' ? (isZh ? '全部' : 'All') : deviceCategoryLabel(t, isZh ? 'zh' : 'en')}
                   </button>
                 ))}
               </div>
@@ -400,7 +401,7 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
                       <p className="text-[11px] font-mono text-gray-400 mb-1.5">{device.ip_address}</p>
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">{vendor}</span>
-                        {device.role && <span className="text-[9px] px-1.5 py-0.5 rounded bg-gray-50 text-gray-400">{device.role}</span>}
+                        {device.role && <span className="text-[9px] px-1.5 py-0.5 rounded bg-gray-50 text-gray-400">{deviceRoleLabel(device.role, isZh ? 'zh' : 'en')}</span>}
                       </div>
                     </motion.button>
                   );
@@ -442,8 +443,8 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
                       <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">{isZh ? '主机名' : 'Hostname'}</th>
                       <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">IP</th>
                       <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">{isZh ? '厂商' : 'Vendor'}</th>
-                      <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">{isZh ? '类型' : 'Type'}</th>
-                      <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">{isZh ? '角色' : 'Role'}</th>
+                      <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">{isZh ? '设备类别' : 'Device category'}</th>
+                      <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">{isZh ? '设备角色' : 'Device role'}</th>
                       <th className="px-3 py-2.5 text-xs font-semibold text-gray-500">{isZh ? '站点' : 'Site'}</th>
                     </tr>
                   </thead>
@@ -492,18 +493,11 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
                           </td>
                           <td className="px-3 py-1.5">
                             <div className="flex items-center gap-1.5 text-[11px] text-gray-500">
-                              {getDeviceCategory(device) === 'server' ? (
-                                <>
-                                  <Terminal size={12} /> {isZh ? '服务器' : 'Server'}
-                                </>
-                              ) : (
-                                <>
-                                  <Cpu size={12} /> {isZh ? '网络设备' : 'Network'}
-                                </>
-                              )}
+                              {getDeviceCategory(device) === 'server' ? <Terminal size={12} /> : <Cpu size={12} />}
+                              {deviceCategoryLabel(getDeviceCategory(device), isZh ? 'zh' : 'en')}
                             </div>
                           </td>
-                          <td className="px-3 py-1.5 text-xs text-gray-600">{device.role || '—'}</td>
+                          <td className="px-3 py-1.5 text-xs text-gray-600">{device.role ? deviceRoleLabel(device.role, isZh ? 'zh' : 'en') : '—'}</td>
                           <td className="px-3 py-1.5 text-xs font-medium text-cyan-700">{device.site || '—'}</td>
                         </tr>
                       );

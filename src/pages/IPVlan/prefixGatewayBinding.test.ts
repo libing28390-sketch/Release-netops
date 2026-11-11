@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildGatewayCandidateQuery,
   getAutomaticGatewayBinding,
+  getGatewayScopePendingMessage,
   isValidGatewayCandidatePrefix,
   type GatewayCandidateResponse,
 } from './prefixGatewayBinding';
@@ -12,6 +13,23 @@ describe('IPAM gateway candidate binding', () => {
       .toBe('prefix=10.200.24.0%2F30&site_id=site-1');
     expect(buildGatewayCandidateQuery({ prefix: '10.200.24.0/30', siteId: 'site-1', gatewayIp: '10.200.24.1' }).toString())
       .toBe('prefix=10.200.24.0%2F30&site_id=site-1&gateway_ip=10.200.24.1');
+  });
+
+  it('uses only the explicit address-space mapping as gateway scope and omits it when unresolved', () => {
+    const scopedQuery = buildGatewayCandidateQuery({
+      prefix: '10.200.24.0/30',
+      siteId: 'site-1',
+      addressSpaceId: 'space-vrf-prod',
+    });
+    expect(scopedQuery.get('address_space_id')).toBe('space-vrf-prod');
+    expect(scopedQuery.has('vrf_id')).toBe(false);
+
+    const unresolvedQuery = buildGatewayCandidateQuery({
+      prefix: '10.200.24.0/30',
+      siteId: 'site-1',
+      addressSpaceId: '  ',
+    });
+    expect(unresolvedQuery.has('address_space_id')).toBe(false);
   });
 
   it('validates IPv4 and IPv6 prefixes before querying candidates', () => {
@@ -37,5 +55,12 @@ describe('IPAM gateway candidate binding', () => {
     expect(getAutomaticGatewayBinding('none', response)).toEqual({ deviceId: 'device-r2', interfaceId: '' });
     expect(getAutomaticGatewayBinding('manual', response)).toBeNull();
     expect(getAutomaticGatewayBinding('auto', { ...response, status: 'no_unique_gateway', selected: null })).toBeNull();
+    expect(getAutomaticGatewayBinding('none', { ...response, status: 'scope_pending', selected: null })).toBeNull();
+  });
+
+  it('explains that VRF-less gateway evidence needs manual review', () => {
+    expect(getGatewayScopePendingMessage('none', true)).toContain('不能自动关联网关');
+    expect(getGatewayScopePendingMessage('manual', true)).toContain('已保留人工设备选择');
+    expect(getGatewayScopePendingMessage('none', false)).toContain('cannot be auto-bound');
   });
 });

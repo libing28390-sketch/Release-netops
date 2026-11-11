@@ -1,4 +1,5 @@
 import type { TableExportData } from '../components/ui/TableExportMenu';
+import { deviceRoleLabel } from '../domain/deviceLabels';
 
 export type ServerQuickFilter = 'all' | 'offline' | 'warning' | 'healthy';
 
@@ -66,8 +67,8 @@ export function buildInventoryServersExportData(
 ): TableExportData {
   const zh = options.language === 'zh';
   const headers = zh
-    ? ['主机名', '管理 IP', '角色', '厂商', '型号', '数据中心', '机柜', 'U 位', '状态', 'Ping', 'SSH', '部门']
-    : ['Hostname', 'Management IP', 'Role', 'Vendor', 'Model', 'Datacenter', 'Rack', 'Rack Unit', 'Status', 'Ping', 'SSH', 'Department'];
+    ? ['主机名', '管理 IP', '设备角色', '厂商', '型号', '数据中心', '机柜', 'U 位', '状态', 'Ping', 'SSH', '部门']
+    : ['Hostname', 'Management IP', 'Device role', 'Vendor', 'Model', 'Datacenter', 'Rack', 'Rack Unit', 'Status', 'Ping', 'SSH', 'Department'];
 
   const filtered = filterInventoryServers(records, options);
 
@@ -89,7 +90,7 @@ export function buildInventoryServersExportData(
       return [
         display(record.hostname, 'Unknown'),
         display(record.management_ip, '0.0.0.0'),
-        display(record.device_role),
+        deviceRoleLabel(record.device_role, zh ? 'zh' : 'en'),
         display(record.vendor),
         display(record.model),
         display(record.datacenter),

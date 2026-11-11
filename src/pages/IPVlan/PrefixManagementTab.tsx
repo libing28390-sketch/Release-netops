@@ -13,6 +13,7 @@ import {
   Eye,
   Info,
   Package,
+  ArrowRightLeft,
   RefreshCw,
   Check,
   AlertTriangle,
@@ -33,6 +34,7 @@ import IPPoolTab from './IPPoolTab';
 import {
   buildGatewayCandidateQuery,
   getAutomaticGatewayBinding,
+  getGatewayScopePendingMessage,
   isValidGatewayCandidatePrefix,
   type GatewayBindingSource,
   type GatewayCandidateEndpoint,
@@ -51,11 +53,16 @@ import {
 import { TableActionCell, TableActionHeader } from '../../components/ui/TableActionColumn';
 interface Prefix {
   id: string;
+  revision: number;
   prefix: string;
   network: string;
   prefix_len: number;
   vrf_id: string | null;
   vrf_name: string | null;
+  address_space_id?: string | null;
+  address_space_name?: string | null;
+  address_space_kind?: 'global' | 'vrf' | null;
+  scope_status?: 'resolved' | 'scope_pending' | string;
   vlan_id: number | null;
   vlan_name: string | null;
   site_id: string | null;
@@ -90,6 +97,93 @@ interface Prefix {
   children?: Prefix[];
 }
 
+interface AddressSpace {
+  id: string;
+  name: string;
+  kind: 'global' | 'vrf';
+  vrf_id: string | null;
+  vrf_name: string | null;
+  security_tenant_id: string;
+  status: string;
+  revision: number;
+}
+
+interface AddressSpaceResolutionPreview {
+  expected_updated_at: string;
+  source_space?: AddressSpace;
+  target_space?: AddressSpace;
+  impact?: {
+    ip_addresses?: number;
+    pools?: number;
+    pools_to_map?: number;
+    vips?: number;
+    leases?: number;
+    conflicting_active_addresses?: number;
+  };
+  blockers?: Array<string | { message?: string; code?: string }>;
+  can_confirm: boolean;
+}
+
+type AddressSpaceBlocker = string | {
+  message?: string;
+  code?: string;
+  network?: string;
+  duplicate_count?: number;
+  sites?: string[];
+};
+
+interface AddressSpaceBatchResolutionItem {
+  prefix_id: string;
+  prefix: string;
+  site_name?: string;
+  current_address_space_id?: string | null;
+  current_vrf_id?: string | null;
+  expected_updated_at: string;
+  expected_revision: number;
+  impact?: AddressSpaceResolutionPreview['impact'];
+  blockers?: AddressSpaceBlocker[];
+  can_confirm: boolean;
+}
+
+interface AddressSpaceBatchResolutionPreview {
+  address_space_id: string;
+  target_space?: AddressSpace;
+  expected_target_revision?: number | null;
+  selected_count: number;
+  can_confirm: boolean;
+  items: AddressSpaceBatchResolutionItem[];
+  totals?: AddressSpaceResolutionPreview['impact'];
+  blockers?: Array<{ prefix_id?: string; prefix?: string; message?: string; code?: string }>;
+}
+
+interface PendingCreateRequest {
+  fingerprint: string;
+  key: string;
+}
+
+const getPendingRequestKey = (
+  pendingRequest: { current: PendingCreateRequest | null },
+  payload: unknown,
+): string => {
+  const fingerprint = JSON.stringify(payload);
+  if (!pendingRequest.current || pendingRequest.current.fingerprint !== fingerprint) {
+    pendingRequest.current = {
+      fingerprint,
+      key: globalThis.crypto?.randomUUID?.() || `ipam-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    };
+  }
+  return pendingRequest.current.key;
+};
+
+const findPrefixInTree = (items: Prefix[], id: string): Prefix | undefined => {
+  for (const item of items) {
+    if (item.id === id) return item;
+    const child = item.children ? findPrefixInTree(item.children, id) : undefined;
+    if (child) return child;
+  }
+  return undefined;
+};
+
 interface PrefixManagementTabProps {
   language: string;
   t: (key: string) => string;
@@ -101,9 +195,9 @@ interface InterfacePrefixCandidate {
   tenant_id: string;
   site_id: string | null;
   vrf_id: string | null;
+  address_space_id?: string | null;
   status: 'existing' | 'to_create' | 'scope_pending';
   vrf_scope_pending?: boolean;
-  vrf_scope_defaulted?: boolean;
   scope_review_reason?: string;
   interface_count: number;
   ip_count: number;
@@ -118,16 +212,67 @@ interface InterfacePrefixCandidate {
   }>;
 }
 
-type InterfaceCandidateFilter = 'to_create' | 'existing' | 'global_default' | 'all';
+type InterfaceCandidateFilter = 'to_create' | 'existing' | 'scope_pending' | 'all';
 
 const DEFAULT_NEW_PREFIX_NETWORK_TYPE = 'unclassified';
+
+function prefixAddressSpaceLabel(prefix: Prefix, zh: boolean): string {
+  if (prefix.scope_status === 'scope_pending' || !prefix.address_space_id) {
+    const pending = zh ? '地址空间待确认' : 'Address space pending';
+    return prefix.vrf_name ? `${pending} · ${zh ? 'VRF' : 'VRF'} ${prefix.vrf_name}` : pending;
+  }
+  return prefix.address_space_name || (prefix.address_space_kind === 'vrf'
+    ? prefix.vrf_name || prefix.vrf_id || (zh ? 'VRF' : 'VRF')
+    : (zh ? '全局地址空间' : 'Global address space'));
+}
+
+function addressSpaceOptionLabel(space: AddressSpace, zh: boolean): string {
+  return space.kind === 'vrf'
+    ? `${space.name} · ${space.vrf_name || space.vrf_id || 'VRF'}`
+    : `${space.name} · ${zh ? '全局' : 'Global'}`;
+}
+
+function addressSpaceBlockerLabel(
+  blocker: AddressSpaceBlocker,
+  zh: boolean,
+): string {
+  if (typeof blocker === 'string') return blocker;
+  const message = blocker.message || blocker.code || (zh ? '存在未解决冲突' : 'An unresolved conflict exists');
+  if (!zh) return message;
+  if (blocker.code === 'duplicate_prefix_cidr_in_batch' && blocker.network) {
+    const siteDetails = blocker.sites?.length ? `涉及站点：${blocker.sites.join('、')}。` : '';
+    const count = Number(blocker.duplicate_count || 2);
+    return `本批次选中的 ${count} 条记录使用了相同 CIDR：${blocker.network}。${siteDetails}同一地址空间不能重复登记。请核实：若是重复记录，取消多余项或先整理数据；若为不同路由域的合法复用，请分开映射到各自的地址空间。`;
+  }
+  const labels: Record<string, string> = {
+    duplicate_active_ip: '目标地址空间中已存在一个或多个相同的活跃 IP 地址。',
+    duplicate_active_ip_in_batch: '所选网段之间存在重复的活跃 IP 地址。',
+    duplicate_prefix_cidr: '目标地址空间中已存在相同的 CIDR 网段。',
+    duplicate_prefix_cidr_in_batch: '本批次包含多个相同 CIDR 的网段，请先处理重复记录。',
+    invalid_prefix: '网段 CIDR 无效。',
+    pool_range_invalid: '地址池范围无效或超出所属网段。',
+    pool_range_overlap: '地址池范围与目标地址空间内的其他地址池重叠。',
+    pool_range_overlap_in_batch: '本批次中多个地址池范围重叠。',
+    pool_scope_inconsistent: '地址池与所属网段的地址空间不一致。',
+    pool_tenant_mismatch: '地址池与所属网段的安全租户不一致。',
+    prefix_already_mapped: '该网段已归属地址空间；此批量操作只处理待归属网段。',
+    prefix_tenant_unknown: '网段的安全租户未确认。',
+    target_pool_range_invalid: '目标地址空间中存在无效的地址池范围。',
+    target_pool_scope_inconsistent: '目标地址空间中存在归属不一致的地址池。',
+    target_pool_tenant_mismatch: '目标地址空间中存在租户不一致的地址池。',
+    target_space_inactive: '目标地址空间未启用。',
+    target_space_unavailable: '目标地址空间不存在或不属于该网段的安全租户。',
+    vrf_mismatch: '目标地址空间与网段当前 VRF 不一致。',
+  };
+  return labels[blocker.code || ''] || message;
+}
 
 interface InterfaceCandidateSummary {
   candidate_count: number;
   existing_count: number;
   to_create_count: number;
   interface_count: number;
-  vrf_defaulted_count: number;
+  vrf_pending_count: number;
   skipped_count: number;
 }
 
@@ -146,6 +291,9 @@ interface PrefixClassificationSummary {
   mixed_count: number;
   conflict_count: number;
   reuse_count?: number;
+  address_space_pending_count?: number;
+  pending_duplicate_group_count?: number;
+  pending_duplicate_record_count?: number;
   stale_count: number;
 }
 
@@ -191,6 +339,8 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   const treeTableRef = useRef<HTMLTableElement>(null);
   const prefixTableRef = useRef<HTMLTableElement>(null);
   const hasLoadedPrefixDataRef = useRef(false);
+  const pendingCreateRequest = useRef<PendingCreateRequest | null>(null);
+  const pendingInterfaceGeneration = useRef<PendingCreateRequest | null>(null);
   const navigate = useNavigate();
   const zh = language === 'zh';
   
@@ -205,11 +355,16 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   const [statusFilter, setStatusFilter] = useState('all');
   const [classificationFilter, setClassificationFilter] = useState<PrefixClassificationFilter>('all');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [selectedRevisions, setSelectedRevisions] = useState<Record<string, number>>({});
   const [collapsedSites, setCollapsedSites] = useState<Record<string, boolean>>({});
 
   // CMDB Dropdowns
   const [sites, setSites] = useState<any[]>([]);
-  const [vrfs, setVrfs] = useState<any[]>([]);
+  const [addressSpaces, setAddressSpaces] = useState<AddressSpace[]>([]);
+  const [addressSpacesLoading, setAddressSpacesLoading] = useState(false);
+  const [addressSpacesError, setAddressSpacesError] = useState('');
+  const [globalSpaceName, setGlobalSpaceName] = useState('');
+  const [globalSpaceCreating, setGlobalSpaceCreating] = useState(false);
   const [vlans, setVlans] = useState<any[]>([]);
   const [devices, setDevices] = useState<any[]>([]);
 
@@ -219,10 +374,18 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
   const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
   const [showBatchNetworkTypeModal, setShowBatchNetworkTypeModal] = useState(false);
+  const [showBatchAddressSpaceModal, setShowBatchAddressSpaceModal] = useState(false);
   const [batchNetworkType, setBatchNetworkType] = useState('server');
   const [batchNetworkTypeError, setBatchNetworkTypeError] = useState('');
   const [batchNetworkTypeUpdating, setBatchNetworkTypeUpdating] = useState(false);
   const [batchNetworkTypeResult, setBatchNetworkTypeResult] = useState('');
+  const [batchAddressSpaceTargetId, setBatchAddressSpaceTargetId] = useState('');
+  const [batchAddressSpacePreview, setBatchAddressSpacePreview] = useState<AddressSpaceBatchResolutionPreview | null>(null);
+  const [batchAddressSpaceLoading, setBatchAddressSpaceLoading] = useState(false);
+  const [batchAddressSpaceSaving, setBatchAddressSpaceSaving] = useState(false);
+  const [batchAddressSpaceConfirmed, setBatchAddressSpaceConfirmed] = useState(false);
+  const [batchAddressSpaceError, setBatchAddressSpaceError] = useState('');
+  const [batchAddressSpaceResult, setBatchAddressSpaceResult] = useState('');
   const [showInterfaceGeneration, setShowInterfaceGeneration] = useState(false);
   const [poolManagerPrefix, setPoolManagerPrefix] = useState<Prefix | null>(null);
   useEscapeClose(showAddEdit, () => { setShowAddEdit(false); setEditingPrefix(null); });
@@ -233,14 +396,14 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   useEscapeClose(Boolean(poolManagerPrefix), () => setPoolManagerPrefix(null));
   const [interfaceCandidates, setInterfaceCandidates] = useState<InterfacePrefixCandidate[]>([]);
   const [selectedInterfaceCandidates, setSelectedInterfaceCandidates] = useState<Set<string>>(new Set());
-  const [selectedInterfaceVrfs, setSelectedInterfaceVrfs] = useState<Record<string, string>>({});
+  const [selectedInterfaceSpaces, setSelectedInterfaceSpaces] = useState<Record<string, string>>({});
   const [interfaceSkipped, setInterfaceSkipped] = useState<Array<{ device_name: string; interface_name: string; address: string; reason: string }>>([]);
   const [interfaceCandidateSummary, setInterfaceCandidateSummary] = useState<InterfaceCandidateSummary>({
     candidate_count: 0,
     existing_count: 0,
     to_create_count: 0,
     interface_count: 0,
-    vrf_defaulted_count: 0,
+    vrf_pending_count: 0,
     skipped_count: 0,
   });
   const [interfaceCandidatePage, setInterfaceCandidatePage] = useState<InterfaceCandidatePage>({
@@ -264,6 +427,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
     prefix: '',
     name: '',
     vrf_id: '',
+    address_space_id: '',
     vlan_id: '',
     site_id: '',
     status: 'active',
@@ -274,11 +438,39 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
     gateway_interface_id: '',
     traceable: 1,
   });
+  const findVrfAddressSpace = (vrfId: string | null | undefined) =>
+    addressSpaces.find((space) => space.kind === 'vrf'
+      && space.vrf_id === vrfId
+      && space.status === 'active');
+  const interfaceCandidateAddressSpaceId = (candidate: InterfacePrefixCandidate) =>
+    selectedInterfaceSpaces[candidate.candidate_id]
+      || candidate.address_space_id
+      || findVrfAddressSpace(candidate.vrf_id)?.id
+      || '';
+  const interfaceCandidateNeedsManualSpace = (candidate: InterfacePrefixCandidate) =>
+    Boolean(candidate.vrf_scope_pending || !candidate.vrf_id || !findVrfAddressSpace(candidate.vrf_id));
+  const interfaceCandidateSpaceOptions = (candidate: InterfacePrefixCandidate) =>
+    addressSpaces.filter((space) => space.status === 'active'
+      && (!candidate.vrf_id || (space.kind === 'vrf' && space.vrf_id === candidate.vrf_id)));
+  const interfaceCandidateHasExplicitSpace = (candidate: InterfacePrefixCandidate) =>
+    Boolean(interfaceCandidateAddressSpaceId(candidate))
+      && (!interfaceCandidateNeedsManualSpace(candidate)
+        || Boolean(selectedInterfaceSpaces[candidate.candidate_id] || candidate.address_space_id));
   const gatewayBindingSourceRef = useRef<GatewayBindingSource>('none');
   const gatewayCandidateRequestId = useRef(0);
   const [gatewayCandidates, setGatewayCandidates] = useState<GatewayCandidateResponse | null>(null);
   const [gatewayCandidatesLoading, setGatewayCandidatesLoading] = useState(false);
   const [gatewayCandidatesError, setGatewayCandidatesError] = useState('');
+  const [scopeResolutionPrefix, setScopeResolutionPrefix] = useState<Prefix | null>(null);
+  const [scopeResolutionMode, setScopeResolutionMode] = useState<'resolve' | 'move'>('resolve');
+  const [scopeResolutionSpaceId, setScopeResolutionSpaceId] = useState('');
+  const [scopeResolutionPreview, setScopeResolutionPreview] = useState<AddressSpaceResolutionPreview | null>(null);
+  const [scopeResolutionLoading, setScopeResolutionLoading] = useState(false);
+  const [scopeResolutionSaving, setScopeResolutionSaving] = useState(false);
+  const [scopeResolutionConfirmed, setScopeResolutionConfirmed] = useState(false);
+  const [scopeResolutionError, setScopeResolutionError] = useState('');
+  useEscapeClose(Boolean(scopeResolutionPrefix) && !scopeResolutionSaving, () => setScopeResolutionPrefix(null));
+  useEscapeClose(Boolean(showBatchAddressSpaceModal) && !batchAddressSpaceSaving, () => setShowBatchAddressSpaceModal(false));
   const [errorMsg, setErrorMsg] = useState('');
   const [parentSubnetId, setParentSubnetId] = useState('');
   const [desiredPrefixLen, setDesiredPrefixLen] = useState(24);
@@ -540,24 +732,40 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   // Fetch CMDB lookup tables
   const fetchLookups = useCallback(async () => {
     const hdrs = authHeaders();
+    setAddressSpacesLoading(true);
+    setAddressSpacesError('');
     try {
-      const [sitesRes, vrfsRes, vlansRes, devicesRes] = await Promise.all([
+      const [sitesRes, spacesRes, vlansRes, devicesRes] = await Promise.all([
         fetch('/api/cmdb/sites', { headers: hdrs }),
-        fetch('/api/cmdb/vrfs', { headers: hdrs }),
+        fetch('/api/ipam/address-spaces', { headers: hdrs }),
         fetch('/api/cmdb/vlans', { headers: hdrs }),
         fetch('/api/devices?mode=light', { headers: hdrs }),
       ]);
       const unwrap = (j: any) => (Array.isArray(j) ? j : (j?.data ?? j?.items ?? []));
       if (sitesRes.ok) setSites(unwrap(await sitesRes.json()));
-      if (vrfsRes.ok) setVrfs(unwrap(await vrfsRes.json()));
+      if (spacesRes.ok) {
+        const payload = await spacesRes.json();
+        setAddressSpaces(Array.isArray(payload) ? payload : (Array.isArray(payload?.items) ? payload.items : []));
+      } else {
+        const payload = await spacesRes.json().catch(() => ({}));
+        setAddressSpaces([]);
+        setAddressSpacesError(spacesRes.status === 401
+          ? (zh ? '登录已过期，请重新登录后重试。' : 'Your session has expired. Sign in and retry.')
+          : spacesRes.status === 403
+            ? (zh ? '当前账号没有查看地址空间的权限。' : 'You do not have permission to view address spaces.')
+            : payload?.detail || (zh ? '加载地址空间失败，请重试。' : 'Failed to load address spaces.'));
+      }
       if (vlansRes.ok) setVlans(unwrap(await vlansRes.json()));
       if (devicesRes.ok) {
         setDevices(unwrap(await devicesRes.json()));
       }
     } catch (e) {
       console.error('Failed to load CMDB lookup data:', e);
+      setAddressSpacesError(zh ? '加载地址空间失败，请检查网络后重试。' : 'Failed to load address spaces. Check the connection and retry.');
+    } finally {
+      setAddressSpacesLoading(false);
     }
-  }, [authHeaders]);
+  }, [authHeaders, zh]);
 
   const loadData = useCallback(async (options?: { silent?: boolean }) => {
     const silent = options?.silent === true || hasLoadedPrefixDataRef.current;
@@ -633,22 +841,13 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
 
       const candidates = Array.isArray(data?.candidates) ? data.candidates : [];
       setInterfaceCandidates(candidates);
-      setSelectedInterfaceVrfs((current) => {
-        const next = { ...current };
-        candidates.forEach((candidate: InterfacePrefixCandidate) => {
-          if (candidate.vrf_scope_defaulted && !(candidate.candidate_id in next)) {
-            next[candidate.candidate_id] = '__global__';
-          }
-        });
-        return next;
-      });
       setInterfaceSkipped(Array.isArray(data?.skipped) ? data.skipped : []);
       setInterfaceCandidateSummary({
         candidate_count: Number(data?.candidate_count || 0),
         existing_count: Number(data?.existing_count || 0),
         to_create_count: Number(data?.to_create_count || 0),
         interface_count: Number(data?.interface_count || 0),
-        vrf_defaulted_count: Number(data?.vrf_defaulted_count || 0),
+        vrf_pending_count: Number(data?.vrf_pending_count || 0),
         skipped_count: Number(data?.skipped_count || 0),
       });
       setInterfaceCandidatePage({
@@ -670,7 +869,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
     setInterfaceGenerationError('');
     setInterfaceGenerationResult('');
     setSelectedInterfaceCandidates(new Set());
-    setSelectedInterfaceVrfs({});
+    setSelectedInterfaceSpaces({});
     setInterfaceCandidateFilter('all');
     setInterfaceCandidatePage((current) => ({ ...current, page: 1 }));
     setShowSkippedDetails(false);
@@ -688,7 +887,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
 
   const selectVisibleInterfaceCandidates = () => {
     const visibleIds = interfaceCandidates
-      .filter((candidate) => !candidate.vrf_scope_pending || Boolean(selectedInterfaceVrfs[candidate.candidate_id]))
+      .filter(interfaceCandidateHasExplicitSpace)
       .map((candidate) => candidate.candidate_id);
     const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((candidateId) => selectedInterfaceCandidates.has(candidateId));
     const next = new Set(selectedInterfaceCandidates);
@@ -704,24 +903,24 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
     setInterfaceGenerationLoading(true);
     setInterfaceGenerationError('');
     try {
+      const addressSpaceOverrides = Object.fromEntries(
+        Object.entries(selectedInterfaceSpaces)
+          .filter(([candidateId, addressSpaceId]) => selectedInterfaceCandidates.has(candidateId) && Boolean(addressSpaceId)),
+      );
+      const requestBody = allPending
+        ? { all_pending: true }
+        : {
+          candidate_ids: Array.from(selectedInterfaceCandidates),
+          ...(Object.keys(addressSpaceOverrides).length > 0 ? { address_space_overrides: addressSpaceOverrides } : {}),
+        };
       const res = await fetch('/api/ipam/prefixes/generate-from-interfaces', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify(allPending
-          ? {
-            all_pending: true,
-            vrf_overrides: Object.fromEntries(
-              Object.entries(selectedInterfaceVrfs).filter(([, vrfId]) => Boolean(vrfId)),
-            ),
-          }
-          : {
-            candidate_ids: Array.from(selectedInterfaceCandidates),
-            vrf_overrides: Object.fromEntries(
-              Array.from(selectedInterfaceCandidates)
-                .filter((candidateId) => Boolean(selectedInterfaceVrfs[candidateId]))
-                .map((candidateId) => [candidateId, selectedInterfaceVrfs[candidateId]]),
-            ),
-          }),
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders(),
+          'Idempotency-Key': getPendingRequestKey(pendingInterfaceGeneration, requestBody),
+        },
+        body: JSON.stringify(requestBody),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -732,6 +931,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
             : data?.detail || (zh ? '生成前缀失败' : 'Prefix generation failed');
         throw new Error(message);
       }
+      pendingInterfaceGeneration.current = null;
       setInterfaceGenerationResult(
         zh
           ? `已创建 ${data.created_prefixes || 0} 个网段，并登记 ${data.created_addresses || 0} 个接口 IP`
@@ -784,6 +984,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
           prefix: form.prefix,
           siteId: form.site_id,
           gatewayIp: form.gateway,
+          addressSpaceId: form.address_space_id,
         });
         const response = await fetch(`/api/ipam/prefixes/gateway-candidates?${query.toString()}`, {
           headers: authHeaders(),
@@ -836,7 +1037,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [showAddEdit, form.prefix, form.site_id, form.gateway, authHeaders, zh]);
+  }, [showAddEdit, form.prefix, form.site_id, form.gateway, form.address_space_id, authHeaders, zh]);
 
   // Tree mode support
   const [treeData, setTreeData] = useState<Prefix[]>([]);
@@ -871,6 +1072,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   };
 
   const openForm = (prefixItem: Prefix | null = null) => {
+    pendingCreateRequest.current = null;
     gatewayCandidateRequestId.current += 1;
     setGatewayCandidates(null);
     setGatewayCandidatesError('');
@@ -890,6 +1092,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
         prefix: prefixItem.prefix,
         name: prefixItem.name || '',
         vrf_id: prefixItem.vrf_id || '',
+        address_space_id: prefixItem.address_space_id || '',
         vlan_id: prefixItem.vlan_id ? String(prefixItem.vlan_id) : '',
         site_id: prefixItem.site_id || '',
         status: prefixItem.status || 'active',
@@ -907,6 +1110,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
         prefix: '',
         name: '',
         vrf_id: '',
+        address_space_id: '',
         vlan_id: '',
         site_id: '',
         status: 'active',
@@ -919,6 +1123,290 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
       });
     }
     setShowAddEdit(true);
+  };
+
+  const createGlobalAddressSpace = async (selectInPrefixForm = true) => {
+    const name = globalSpaceName.trim();
+    if (!name || globalSpaceCreating) return;
+    setAddressSpacesError('');
+    setGlobalSpaceCreating(true);
+    try {
+      const response = await fetch('/api/ipam/address-spaces', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ name, kind: 'global' }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const detail = typeof data?.detail === 'string' ? data.detail : data?.detail?.message;
+        throw new Error(response.status === 403
+          ? (zh ? '当前账号没有创建地址空间的权限。' : 'You do not have permission to create address spaces.')
+          : detail || (zh ? '创建全局地址空间失败。' : 'Failed to create global address space.'));
+      }
+      const created = data?.item || data;
+      if (!created?.id) throw new Error(zh ? '服务端未返回地址空间 ID。' : 'The server did not return an address-space ID.');
+      const createdSpace: AddressSpace = {
+        ...created,
+        id: String(created.id),
+        name: String(created.name || name),
+        kind: 'global',
+        vrf_id: null,
+        vrf_name: null,
+        security_tenant_id: String(created.security_tenant_id || ''),
+        status: String(created.status || 'active'),
+        revision: Number(created.revision || 1),
+      };
+      let refreshedSpaces = [...addressSpaces.filter((item) => item.id !== createdSpace.id), createdSpace];
+      try {
+        const refreshResponse = await fetch('/api/ipam/address-spaces', { headers: authHeaders() });
+        if (refreshResponse.ok) {
+          const refreshData = await refreshResponse.json().catch(() => ({}));
+          const returnedSpaces = Array.isArray(refreshData) ? refreshData : refreshData?.items;
+          if (Array.isArray(returnedSpaces)) {
+            refreshedSpaces = returnedSpaces.some((item: AddressSpace) => item.id === createdSpace.id)
+              ? returnedSpaces
+              : [...returnedSpaces, createdSpace];
+          }
+        } else {
+          setAddressSpacesError(refreshResponse.status === 403
+            ? (zh ? '地址空间已创建，但当前账号不能刷新地址空间列表。' : 'The address space was created, but you cannot refresh the list.')
+            : (zh ? '地址空间已创建，但刷新列表失败。' : 'The address space was created, but refreshing the list failed.'));
+        }
+      } catch {
+        setAddressSpacesError(zh ? '地址空间已创建，但刷新列表失败。' : 'The address space was created, but refreshing the list failed.');
+      }
+      setAddressSpaces(refreshedSpaces);
+      if (selectInPrefixForm) setForm((current) => ({ ...current, address_space_id: createdSpace.id, vrf_id: '' }));
+      else if (scopeResolutionPrefix) {
+        setScopeResolutionSpaceId(createdSpace.id);
+        setScopeResolutionPreview(null);
+        setScopeResolutionConfirmed(false);
+        setScopeResolutionError('');
+      } else if (showBatchAddressSpaceModal) {
+        setBatchAddressSpaceTargetId(createdSpace.id);
+        setBatchAddressSpacePreview(null);
+        setBatchAddressSpaceConfirmed(false);
+        setBatchAddressSpaceError('');
+      }
+      setGlobalSpaceName('');
+    } catch (error) {
+      setAddressSpacesError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setGlobalSpaceCreating(false);
+    }
+  };
+
+  const openAddressSpaceResolution = (prefix: Prefix) => {
+    setScopeResolutionMode('resolve');
+    setScopeResolutionPrefix(prefix);
+    setScopeResolutionSpaceId('');
+    setScopeResolutionPreview(null);
+    setScopeResolutionConfirmed(false);
+    setScopeResolutionError('');
+  };
+
+  const openAddressSpaceMove = (prefix: Prefix) => {
+    setScopeResolutionMode('move');
+    setScopeResolutionPrefix(prefix);
+    setScopeResolutionSpaceId('');
+    setScopeResolutionPreview(null);
+    setScopeResolutionConfirmed(false);
+    setScopeResolutionError('');
+  };
+
+  const openBatchAddressSpaceResolution = () => {
+    if (selectedIds.size === 0) return;
+    setBatchAddressSpaceTargetId('');
+    setBatchAddressSpacePreview(null);
+    setBatchAddressSpaceConfirmed(false);
+    setBatchAddressSpaceError('');
+    setShowBatchAddressSpaceModal(true);
+  };
+
+  useEffect(() => {
+    if (!scopeResolutionPrefix || !scopeResolutionSpaceId) {
+      setScopeResolutionPreview(null);
+      setScopeResolutionLoading(false);
+      return undefined;
+    }
+    const controller = new AbortController();
+    setScopeResolutionLoading(true);
+    setScopeResolutionError('');
+    const query = new URLSearchParams({ address_space_id: scopeResolutionSpaceId });
+    const previewPath = scopeResolutionMode === 'move'
+      ? 'address-space-move-preview'
+      : 'address-space-preview';
+    fetch(`/api/ipam/subnets/${encodeURIComponent(scopeResolutionPrefix.id)}/${previewPath}?${query.toString()}`, {
+      headers: authHeaders(),
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(response.status === 401
+            ? (zh ? '登录已过期，请重新登录后重试。' : 'Your session has expired. Sign in and retry.')
+            : response.status === 403
+              ? (zh ? '当前账号没有查看此网段归属的权限。' : 'You do not have permission to review this prefix.')
+              : data?.detail || (zh ? '无法预览地址空间映射。' : 'Unable to preview address-space mapping.'));
+        }
+        setScopeResolutionPreview(data);
+      })
+      .catch((error) => {
+        if (error?.name !== 'AbortError') {
+          setScopeResolutionPreview(null);
+          setScopeResolutionError(error instanceof Error ? error.message : String(error));
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setScopeResolutionLoading(false);
+      });
+    return () => controller.abort();
+  }, [scopeResolutionPrefix, scopeResolutionSpaceId, scopeResolutionMode, authHeaders, zh]);
+
+  useEffect(() => {
+    if (!showBatchAddressSpaceModal || !batchAddressSpaceTargetId) {
+      setBatchAddressSpacePreview(null);
+      setBatchAddressSpaceLoading(false);
+      return undefined;
+    }
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0 || ids.length > 100) {
+      setBatchAddressSpacePreview(null);
+      setBatchAddressSpaceError(ids.length > 100
+        ? (zh ? '一次最多批量处理 100 个网段，请缩小选择范围。' : 'Select no more than 100 prefixes per batch.')
+        : (zh ? '请先选择网段。' : 'Select prefixes first.'));
+      setBatchAddressSpaceLoading(false);
+      return undefined;
+    }
+    const controller = new AbortController();
+    setBatchAddressSpaceLoading(true);
+    setBatchAddressSpaceError('');
+    fetch('/api/ipam/subnets/address-space-batch-preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ ids, address_space_id: batchAddressSpaceTargetId }),
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          const detail = typeof data?.detail === 'string' ? data.detail : '';
+          throw new Error(response.status === 401
+            ? (zh ? '登录已过期，请重新登录后重试。' : 'Your session has expired. Sign in and retry.')
+            : response.status === 403
+              ? (zh ? '当前账号没有查看全部所选网段的权限。' : 'You do not have permission to review every selected prefix.')
+              : detail || (zh ? '无法预览批量地址空间映射。' : 'Unable to preview the batch address-space mapping.'));
+        }
+        setBatchAddressSpacePreview(data as AddressSpaceBatchResolutionPreview);
+        setBatchAddressSpaceConfirmed(false);
+      })
+      .catch((error) => {
+        if (error?.name !== 'AbortError') {
+          setBatchAddressSpacePreview(null);
+          setBatchAddressSpaceConfirmed(false);
+          setBatchAddressSpaceError(error instanceof Error ? error.message : String(error));
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setBatchAddressSpaceLoading(false);
+      });
+    return () => controller.abort();
+  }, [showBatchAddressSpaceModal, batchAddressSpaceTargetId, selectedIds, authHeaders, zh]);
+
+  const resolveAddressSpace = async () => {
+    if (!scopeResolutionPrefix || !scopeResolutionPreview?.can_confirm || !scopeResolutionConfirmed || scopeResolutionSaving) return;
+    setScopeResolutionSaving(true);
+    setScopeResolutionError('');
+    try {
+      const operationPath = scopeResolutionMode === 'move'
+        ? 'move-address-space'
+        : 'resolve-address-space';
+      const response = await fetch(`/api/ipam/subnets/${encodeURIComponent(scopeResolutionPrefix.id)}/${operationPath}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({
+          address_space_id: scopeResolutionSpaceId,
+          expected_revision: scopeResolutionPrefix.revision,
+          expected_updated_at: scopeResolutionPreview.expected_updated_at,
+          confirmed: true,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(response.status === 401
+          ? (zh ? '登录已过期，请重新登录后重试。' : 'Your session has expired. Sign in and retry.')
+          : response.status === 403
+            ? (zh ? '当前账号没有修改此网段归属的权限。' : 'You do not have permission to change this prefix scope.')
+            : data?.detail || (zh
+              ? (scopeResolutionMode === 'move' ? '迁移地址空间失败。请刷新预览并重试。' : '确认地址空间失败。请刷新预览并重试。')
+              : (scopeResolutionMode === 'move' ? 'Address-space move failed. Refresh the preview and retry.' : 'Address-space resolution failed. Refresh the preview and retry.')));
+      }
+      setScopeResolutionPrefix(null);
+      await loadData({ silent: true });
+      if (viewMode === 'tree' && !search) {
+        const treeResponse = await fetch('/api/ipam/subnets/tree', { headers: authHeaders() });
+        if (treeResponse.ok) setTreeData(await treeResponse.json());
+      }
+    } catch (error) {
+      setScopeResolutionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setScopeResolutionSaving(false);
+    }
+  };
+
+  const resolveBatchAddressSpace = async () => {
+    const preview = batchAddressSpacePreview;
+    if (
+      !preview?.can_confirm
+      || !preview.expected_target_revision
+      || !batchAddressSpaceConfirmed
+      || batchAddressSpaceSaving
+      || preview.items.length !== selectedIds.size
+    ) return;
+    setBatchAddressSpaceSaving(true);
+    setBatchAddressSpaceError('');
+    try {
+      const response = await fetch('/api/ipam/subnets/address-space-batch-resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({
+          address_space_id: batchAddressSpaceTargetId,
+          expected_target_revision: preview.expected_target_revision,
+          items: preview.items.map((item) => ({
+            prefix_id: item.prefix_id,
+            expected_updated_at: item.expected_updated_at,
+            expected_revision: item.expected_revision,
+          })),
+          confirmed: true,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const detail = typeof data?.detail === 'string' ? data.detail : '';
+        throw new Error(response.status === 401
+          ? (zh ? '登录已过期，请重新登录后重试。' : 'Your session has expired. Sign in and retry.')
+          : response.status === 403
+            ? (zh ? '当前账号没有修改全部所选网段的权限。' : 'You do not have permission to update every selected prefix.')
+            : detail || (zh ? '批量修改地址空间失败；没有提交部分结果，请刷新预览后重试。' : 'Batch mapping failed; no partial changes were committed. Refresh the preview and retry.'));
+      }
+      const updatedCount = Number(data?.updated || preview.items.length);
+      const targetName = String(data?.address_space_name || preview.target_space?.name || '');
+      setBatchAddressSpaceResult(zh
+        ? `已将 ${updatedCount} 个网段映射到 ${targetName}。`
+        : `Mapped ${updatedCount} prefixes to ${targetName}.`);
+      setShowBatchAddressSpaceModal(false);
+      setSelectedIds(new Set());
+      setSelectedRevisions({});
+      await loadData({ silent: true });
+      if (viewMode === 'tree' && !search) {
+        const treeResponse = await fetch('/api/ipam/subnets/tree', { headers: authHeaders() });
+        if (treeResponse.ok) setTreeData(await treeResponse.json());
+      }
+    } catch (error) {
+      setBatchAddressSpaceError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBatchAddressSpaceSaving(false);
+    }
   };
 
   const handleGetSuggestedPrefix = async () => {
@@ -948,16 +1436,25 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
       setErrorMsg(zh ? 'Prefix网段是必填项' : 'Prefix CIDR is required');
       return;
     }
+    if (!editingPrefix && !form.address_space_id) {
+      setErrorMsg(zh ? '请选择明确的地址空间；不能根据站点或空 VRF 自动推断。' : 'Select an explicit address space. Site or an empty VRF cannot determine it.');
+      return;
+    }
 
     const payload = {
       ...form,
-      vrf_id: form.vrf_id || null,
+      vrf_id: addressSpaces.find((space) => space.id === form.address_space_id)?.vrf_id || null,
       vlan_id: form.vlan_id ? form.vlan_id : null,
       site_id: form.site_id || null,
       tenant_id: DEFAULT_TENANT_ID,
       gateway_device_id: form.gateway_device_id || null,
       gateway_interface_id: form.gateway_interface_id || null,
+      ...(editingPrefix ? { expected_revision: editingPrefix.revision } : {}),
     };
+    if (editingPrefix) {
+      delete (payload as Partial<typeof payload>).address_space_id;
+      delete (payload as Partial<typeof payload>).vrf_id;
+    }
 
     setIsSaving(true);
     try {
@@ -968,11 +1465,13 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
         headers: {
           'Content-Type': 'application/json',
           ...authHeaders(),
+          ...(!editingPrefix ? { 'Idempotency-Key': getPendingRequestKey(pendingCreateRequest, payload) } : {}),
         },
         body: JSON.stringify(payload),
       });
 
       if (res.ok) {
+        if (!editingPrefix) pendingCreateRequest.current = null;
         setShowAddEdit(false);
         await loadData({ silent: true });
       } else {
@@ -991,8 +1490,11 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   };
 
   const handleDelete = async (id: string) => {
+    const prefix = prefixes.find((item) => item.id === id) || findPrefixInTree(treeData, id);
+    if (!prefix) return;
     try {
-      const res = await fetch(`/api/ipam/subnets/${id}`, {
+      const query = new URLSearchParams({ expected_revision: String(prefix.revision) });
+      const res = await fetch(`/api/ipam/subnets/${encodeURIComponent(id)}?${query.toString()}`, {
         method: 'DELETE',
         headers: authHeaders(),
       });
@@ -1006,6 +1508,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   };
 
   const handleBatchDelete = async () => {
+    const expectedRevisions = Object.fromEntries(Array.from(selectedIds, (id) => [id, selectedRevisions[id]]));
     try {
       const res = await fetch('/api/ipam/subnets/batch-delete', {
         method: 'POST',
@@ -1013,10 +1516,11 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
           'Content-Type': 'application/json',
           ...authHeaders(),
         },
-        body: JSON.stringify({ ids: Array.from(selectedIds) }),
+        body: JSON.stringify({ ids: Array.from(selectedIds), expected_revisions: expectedRevisions }),
       });
       if (res.ok) {
         setSelectedIds(new Set());
+        setSelectedRevisions({});
         setShowBatchDeleteConfirm(false);
         loadData();
       }
@@ -1031,6 +1535,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
     setBatchNetworkTypeResult('');
     setBatchNetworkTypeUpdating(true);
     const selectedCount = selectedIds.size;
+    const expectedRevisions = Object.fromEntries(Array.from(selectedIds, (id) => [id, selectedRevisions[id]]));
     try {
       const response = await fetch('/api/ipam/subnets/batch-update-network-type', {
         method: 'POST',
@@ -1038,7 +1543,11 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
           'Content-Type': 'application/json',
           ...authHeaders(),
         },
-        body: JSON.stringify({ ids: Array.from(selectedIds), network_type: batchNetworkType }),
+        body: JSON.stringify({
+          ids: Array.from(selectedIds),
+          expected_revisions: expectedRevisions,
+          network_type: batchNetworkType,
+        }),
       });
       const data = await response.json().catch(() => ({})) as { detail?: unknown };
       if (!response.ok) {
@@ -1052,6 +1561,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
       }
 
       setSelectedIds(new Set());
+      setSelectedRevisions({});
       setShowBatchNetworkTypeModal(false);
       setBatchNetworkTypeResult(zh ? `已将 ${selectedCount} 个网段设为人工保护。` : `${selectedCount} prefixes were updated and protected from automatic classification.`);
       await loadData({ silent: true });
@@ -1065,15 +1575,39 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   // Toggle selection
   const toggleSelectRow = (id: string) => {
     setBatchNetworkTypeResult('');
+    setBatchAddressSpaceResult('');
     const next = new Set(selectedIds);
-    if (next.has(id)) next.delete(id);
+    const isSelected = next.has(id);
+    if (isSelected) next.delete(id);
     else next.add(id);
     setSelectedIds(next);
+    setSelectedRevisions((current) => {
+      const revisions = { ...current };
+      if (isSelected) delete revisions[id];
+      else {
+        const prefix = prefixes.find((item) => item.id === id);
+        if (prefix) revisions[id] = prefix.revision;
+      }
+      return revisions;
+    });
   };
 
   const toggleSelectAll = () => {
     setBatchNetworkTypeResult('');
-    setSelectedIds((current) => toggleVisiblePrefixSelection(current, visiblePrefixIds));
+    setBatchAddressSpaceResult('');
+    const next = toggleVisiblePrefixSelection(selectedIds, visiblePrefixIds);
+    setSelectedIds(next);
+    setSelectedRevisions((current) => {
+      const revisions = { ...current };
+      visiblePrefixIds.forEach((id) => {
+        if (!next.has(id)) delete revisions[id];
+        else {
+          const prefix = prefixes.find((item) => item.id === id);
+          if (prefix) revisions[id] = prefix.revision;
+        }
+      });
+      return revisions;
+    });
   };
 
   // IPv4 / IPv6 family filter (an IPv6 prefix always contains a colon)
@@ -1128,7 +1662,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
       { header: zh ? 'Prefix网段' : 'Prefix / CIDR', value: (prefix) => prefix.prefix },
       { header: zh ? '网段名称' : 'Name', value: (prefix) => prefix.name || '-' },
       { header: zh ? '用途' : 'Role', value: roleText },
-      { header: zh ? '所属VRF' : 'VRF', value: (prefix) => prefix.vrf_name || '-' },
+      { header: zh ? '所属地址空间' : 'Address space', value: (prefix) => prefixAddressSpaceLabel(prefix, zh) },
       { header: zh ? '所属VLAN' : 'VLAN', value: (prefix) => prefix.vlan_id ? `VLAN ${prefix.vlan_id}` : '-' },
       { header: zh ? '网关IP' : 'Gateway IP', value: (prefix) => prefix.gateway || '-' },
       { header: zh ? '网关设备' : 'Gateway Device', value: (prefix) => prefix.gateway_device_name || '-' },
@@ -1192,7 +1726,11 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
               );
             })()}
           </td>
-          <td className="px-4 py-4 text-xs font-medium text-gray-600">{node.vrf_name || '-'}</td>
+          <td className="px-4 py-4 text-xs font-medium">
+            <span className={node.scope_status === 'scope_pending' || !node.address_space_id ? 'text-amber-700' : 'text-gray-600'}>
+              {prefixAddressSpaceLabel(node, zh)}
+            </span>
+          </td>
           <td className="px-4 py-4">
             {node.vlan_id ? (
               <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-600 border border-indigo-500/10">
@@ -1226,6 +1764,20 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
           <td className="px-4 py-4 text-xs font-semibold text-gray-600 tabular-nums">{node.utilization}%</td>
           <td className="pr-6 py-4 text-right">
             <ActionIconGroup label={zh ? '前缀操作' : 'Prefix actions'} className="opacity-0 transition-opacity group-hover:opacity-100">
+              {(!node.address_space_id || node.scope_status === 'scope_pending') && (
+                <ActionIconButton
+                  icon={Settings}
+                  label={zh ? '确认地址空间' : 'Resolve address space'}
+                  onClick={() => openAddressSpaceResolution(node)}
+                />
+              )}
+              {node.address_space_id && node.scope_status !== 'scope_pending' && (
+                <ActionIconButton
+                  icon={ArrowRightLeft}
+                  label={zh ? '迁移地址空间' : 'Move address space'}
+                  onClick={() => openAddressSpaceMove(node)}
+                />
+              )}
               <ActionIconButton
                 icon={Package}
                 label={zh ? '分配范围 / 地址池' : 'Allocation ranges / pools'}
@@ -1255,7 +1807,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
       <PageHero
         icon={Network}
         title={zh ? 'Prefix前缀网段管理' : 'Prefix Management'}
-        subtitle={zh ? '管理全局IP前缀与网段的层次树结构，并绑定所属的VRF、VLAN与物理站点' : 'Manage global IP prefixes, hierarchical routing network blocks, and CMDB associations.'}
+        subtitle={zh ? '按明确地址空间管理前缀层次，并关联 VRF、VLAN 与物理站点' : 'Manage prefix hierarchies within explicit address spaces with VRF, VLAN, and site associations.'}
         className="[&>div:first-child]:flex-wrap [&>div:first-child>div:last-child]:max-w-full"
         actions={
           <div className="flex flex-wrap items-center justify-end gap-2">
@@ -1385,6 +1937,25 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
 
       {classificationSummary && (
         <div>
+          {((classificationSummary.address_space_pending_count ?? 0) > 0
+            || (classificationSummary.pending_duplicate_group_count ?? 0) > 0) && (
+            <div
+              role="status"
+              aria-label={zh ? '待确认地址归属与重复网段' : 'Pending address scope and duplicate prefixes'}
+              className="mb-2 rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-2.5 text-xs text-amber-900"
+            >
+              <p className="font-bold">
+                {zh
+                  ? `地址空间待确认 ${classificationSummary.address_space_pending_count ?? 0} 条；跨站点重复 CIDR 待裁决 ${classificationSummary.pending_duplicate_group_count ?? 0} 组（${classificationSummary.pending_duplicate_record_count ?? 0} 条 Prefix）`
+                  : `${classificationSummary.address_space_pending_count ?? 0} prefixes need an address space; ${classificationSummary.pending_duplicate_group_count ?? 0} cross-site duplicate CIDR groups need a decision (${classificationSummary.pending_duplicate_record_count ?? 0} prefixes)`}
+              </p>
+              <p className="mt-1 text-[11px] text-amber-800/85">
+                {zh
+                  ? '地址空间未明确前，这些 CIDR 不计为已确认冲突或合法复用；请按映射与重复 CIDR 复核表裁决。'
+                  : 'Until address spaces are explicit, these CIDRs are not treated as confirmed conflicts or valid reuse. Review the mapping and duplicate-CIDR decisions.'}
+              </p>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7">
             {classificationCards.map((item) => (
               <button
@@ -1394,8 +1965,8 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                 aria-label={`${item.label}: ${item.value}. ${zh ? '点击筛选此类网段' : 'Click to filter this category'}`}
                 title={item.key === 'reuse'
                   ? (zh
-                    ? '同一租户下相同 CIDR 出现在不同站点。地址空间按站点切分，因此这是复用提示而非冲突；请按地址规划确认。数字按受影响的网段记录数统计。'
-                    : 'The same CIDR appears for the same tenant at multiple sites. Site-scoped address space makes this a reuse notice, not a conflict; confirm it against the address plan. Count is affected prefix records.')
+                    ? '同一租户下相同 CIDR 出现在不同站点，且已明确归属到同一地址空间时，按跨站点复用统计提示，不等同于地址冲突；未映射的重复记录会单独列为待裁决。数字按受影响的网段记录数统计。'
+                    : 'The same tenant and CIDR appear at different sites with an explicit shared address space. This is counted as a cross-site reuse notice, not an address-conflict finding; unmapped duplicates are shown separately as pending. Count is affected prefix records.')
                   : item.key === 'conflict'
                     ? (zh ? '当前筛选范围内的真实地址冲突网段记录数；点击查看记录。' : 'True address-conflict prefix records in the current filter scope; click to review.')
                     : (zh ? '点击查看当前筛选范围内此分类的网段记录。' : 'Click to view this category within the current filter scope.')}
@@ -1429,6 +2000,11 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
           {batchNetworkTypeResult}
         </div>
       )}
+      {batchAddressSpaceResult && (
+        <div role="status" aria-live="polite" className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-800">
+          {batchAddressSpaceResult}
+        </div>
+      )}
 
       {selectedIds.size > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-cyan-200 bg-cyan-50/80 px-4 py-3" aria-label={zh ? '所选网段操作' : 'Selected prefix actions'}>
@@ -1436,6 +2012,14 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
             {zh ? `已选 ${selectedIds.size} 个网段` : `${selectedIds.size} prefixes selected`}
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <ActionButton
+              icon={Network}
+              variant="default"
+              disabled={batchAddressSpaceSaving || selectedIds.size > 100}
+              onClick={openBatchAddressSpaceResolution}
+            >
+              {zh ? '批量修改地址空间' : 'Batch change address space'}
+            </ActionButton>
             <ActionButton
               icon={Pencil}
               variant="default"
@@ -1456,7 +2040,12 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
             </ActionButton>
             <button
               type="button"
-              onClick={() => { setSelectedIds(new Set()); setBatchNetworkTypeResult(''); }}
+              onClick={() => {
+                setSelectedIds(new Set());
+                setSelectedRevisions({});
+                setBatchNetworkTypeResult('');
+                setBatchAddressSpaceResult('');
+              }}
               className="rounded-lg px-2.5 py-2 text-xs font-semibold text-cyan-800 hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
             >
               {zh ? '清除选择' : 'Clear selection'}
@@ -1479,7 +2068,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                   <th className="pl-6 py-4">{zh ? 'Prefix网段' : 'Prefix / CIDR'}</th>
                   <th className="px-4 py-4">{zh ? '网段名称' : 'Name'}</th>
                   <th className="px-4 py-4">{zh ? '用途' : 'Role'}</th>
-                  <th className="px-4 py-4">{zh ? '所属VRF' : 'VRF'}</th>
+                  <th className="px-4 py-4">{zh ? '所属地址空间' : 'Address Space'}</th>
                   <th className="px-4 py-4">{zh ? '所属VLAN' : 'VLAN'}</th>
                   <th className="px-4 py-4">{zh ? '网关IP' : 'Gateway IP'}</th>
                   <th className="px-4 py-4">{zh ? '网关设备' : 'Gateway Device'}</th>
@@ -1522,7 +2111,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                   <th className="px-4 py-4">{zh ? 'Prefix网段' : 'Prefix / CIDR'}</th>
                   <th className="px-4 py-4">{zh ? '网段名称' : 'Name'}</th>
                   <th className="px-4 py-4">{zh ? '用途' : 'Role'}</th>
-                  <th className="px-4 py-4">{zh ? '所属VRF' : 'VRF'}</th>
+                  <th className="px-4 py-4">{zh ? '所属地址空间' : 'Address Space'}</th>
                   <th className="px-4 py-4">{zh ? '所属VLAN' : 'VLAN'}</th>
                   <th className="px-4 py-4">{zh ? '网关IP' : 'Gateway IP'}</th>
                   <th className="px-4 py-4">{zh ? '网关设备' : 'Gateway Device'}</th>
@@ -1618,7 +2207,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                                   </span>
                                 ) : null}
                                 {node.cross_site_reuse ? (
-                                  <span title={zh ? '同一租户下相同 CIDR 出现在不同站点。地址空间按站点切分，这是复用提示而非冲突；请按地址规划确认。' : 'The same CIDR appears for the same tenant at different sites. Site-scoped address space makes this a reuse notice, not a conflict; confirm it against the address plan.'} className="inline-flex items-center gap-0.5 whitespace-nowrap px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                                  <span title={zh ? '同一租户、相同 CIDR 位于不同站点，且已有相同明确地址空间归属，因此显示为跨站点复用提示；它不等同于地址冲突。未映射重复记录会单列待裁决。' : 'The same tenant and CIDR appear at different sites with the same explicit address-space mapping, so this is shown as a cross-site reuse notice, not an address-conflict finding. Unmapped duplicates are listed separately as pending.'} className="inline-flex items-center gap-0.5 whitespace-nowrap px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
                                     {zh ? '跨站点复用' : 'Cross-site reuse'}
                                   </span>
                                 ) : null}
@@ -1626,7 +2215,11 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                             );
                           })()}
                         </td>
-                          <td className="whitespace-nowrap px-4 py-4 text-xs font-medium text-gray-600">{node.vrf_name || '-'}</td>
+                          <td className="whitespace-nowrap px-4 py-4 text-xs font-medium">
+                            <span className={node.scope_status === 'scope_pending' || !node.address_space_id ? 'text-amber-700' : 'text-gray-600'}>
+                              {prefixAddressSpaceLabel(node, zh)}
+                            </span>
+                          </td>
                         <td className="px-4 py-4">
                           {node.vlan_id ? (
                             <span className="whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-600 border border-indigo-500/10">
@@ -1660,6 +2253,20 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                         <td className="px-4 py-4 text-xs font-semibold text-gray-600 tabular-nums">{node.utilization}%</td>
                         <TableActionCell className="pr-6 py-4 text-right">
                           <ActionIconGroup label={zh ? '前缀操作' : 'Prefix actions'} className="opacity-0 transition-opacity group-hover:opacity-100">
+                            {(!node.address_space_id || node.scope_status === 'scope_pending') && (
+                              <ActionIconButton
+                                icon={Settings}
+                                label={zh ? '确认地址空间' : 'Resolve address space'}
+                                onClick={() => openAddressSpaceResolution(node)}
+                              />
+                            )}
+                            {node.address_space_id && node.scope_status !== 'scope_pending' && (
+                              <ActionIconButton
+                                icon={ArrowRightLeft}
+                                label={zh ? '迁移地址空间' : 'Move address space'}
+                                onClick={() => openAddressSpaceMove(node)}
+                              />
+                            )}
                             <ActionIconButton
                               icon={Package}
                               label={zh ? '分配范围 / 地址池' : 'Allocation ranges / pools'}
@@ -1726,7 +2333,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
               <div className="flex shrink-0 items-center justify-between gap-3 border-b border-gray-100 px-4 py-4 sm:px-6">
                 <div className="min-w-0">
                   <h3 className="font-bold text-gray-900">{zh ? '从接口采集生成 IPAM 网段' : 'Generate IPAM Prefixes from Interfaces'}</h3>
-                <p className="mt-1 text-xs text-gray-500">{zh ? '优先使用最后一次成功的 CMDB 接口快照；快照未提供 VRF 时默认全局/默认，可在生成前改选。' : 'Uses the last successful CMDB interface snapshot; missing VRF values default to global and can be changed before generation.'}</p>
+                <p className="mt-1 text-xs text-gray-500">{zh ? '使用最后一次成功的 CMDB 接口快照。接口快照缺少 VRF 时必须逐项选择地址空间；不会默认归到全局。' : 'Uses the last successful CMDB interface snapshot. Choose a target space for each candidate without VRF context; it is never defaulted to global.'}</p>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
                   {interfaceCandidates.length > 0 && <>
@@ -1769,6 +2376,33 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                     </button>
                   </div>
                 )}
+                {addressSpacesError && (
+                  <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-700">
+                    {addressSpacesError}
+                  </div>
+                )}
+                {addressSpaces.filter((space) => space.status === 'active' && space.kind === 'global').length === 0 && (
+                  <div className="flex flex-col gap-2 rounded-xl border border-amber-200 bg-amber-50/70 p-3 sm:flex-row sm:items-center">
+                    <p className="flex-1 text-[11px] text-amber-800">
+                      {zh ? '当前没有全局地址空间。若已确认目标属于独立全局路由域，可在此显式创建；不会按站点自动创建。' : 'No global address space is available. If the target is a verified independent global domain, create it explicitly here; no space is inferred from site.'}
+                    </p>
+                    <input
+                      aria-label={zh ? '接口生成用全局空间名称' : 'Global space name for interface generation'}
+                      value={globalSpaceName}
+                      onChange={(event) => setGlobalSpaceName(event.target.value)}
+                      placeholder={zh ? '全局空间名称' : 'Global space name'}
+                      className="min-w-0 rounded-lg border border-amber-200 bg-white px-3 py-2 text-[11px] sm:w-52"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void createGlobalAddressSpace(false)}
+                      disabled={globalSpaceCreating || !globalSpaceName.trim()}
+                      className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-[11px] font-semibold text-amber-800 disabled:opacity-50"
+                    >
+                      {globalSpaceCreating ? (zh ? '创建中…' : 'Creating…') : (zh ? '创建全局空间' : 'Create global space')}
+                    </button>
+                  </div>
+                )}
                 {interfaceGenerationResult && (
                   <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-semibold text-emerald-700">{interfaceGenerationResult}</div>
                 )}
@@ -1778,7 +2412,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                     { label: zh ? '待创建' : 'To create', value: interfaceCandidateSummary.to_create_count },
                     { label: zh ? '已存在' : 'Existing', value: interfaceCandidateSummary.existing_count },
                     { label: zh ? '接口 IP' : 'Interface IPs', value: interfaceCandidateSummary.interface_count },
-                    { label: zh ? '默认全局' : 'Default global', value: interfaceCandidateSummary.vrf_defaulted_count },
+                    { label: zh ? '范围待确认' : 'Scope needs confirmation', value: interfaceCandidateSummary.vrf_pending_count },
                   ].map((item) => (
                     <div key={item.label} className="rounded-xl border border-gray-100 bg-gray-50/70 px-3 py-2.5">
                       <div className="text-[10px] font-semibold text-gray-500">{item.label}</div>
@@ -1791,7 +2425,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                     {([
                       ['to_create', zh ? '待创建' : 'To create', interfaceCandidateSummary.to_create_count],
                       ['existing', zh ? '已存在' : 'Existing', interfaceCandidateSummary.existing_count],
-                      ['global_default', zh ? '默认全局' : 'Default global', interfaceCandidateSummary.vrf_defaulted_count],
+                      ['scope_pending', zh ? '范围待确认' : 'Scope needs confirmation', interfaceCandidateSummary.vrf_pending_count],
                       ['all', zh ? '全部候选' : 'All candidates', interfaceCandidateSummary.candidate_count],
                     ] as Array<[InterfaceCandidateFilter, string, number]>).map(([status, label, count]) => (
                       <button
@@ -1815,8 +2449,8 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                       ? (zh ? '正在更新候选项…' : 'Updating candidates…')
                       : (zh ? `当前筛选 ${interfaceCandidatePage.filtered_count.toLocaleString()} 项` : `${interfaceCandidatePage.filtered_count.toLocaleString()} filtered`)}</span>
                     <button type="button" onClick={selectVisibleInterfaceCandidates} disabled={interfaceCandidates.length === 0 || interfaceCandidatesLoading || interfaceGenerationLoading} className="rounded-lg border border-gray-200 px-2.5 py-1.5 font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50">
-                      {interfaceCandidates.filter((candidate) => !candidate.vrf_scope_pending || Boolean(selectedInterfaceVrfs[candidate.candidate_id])).length > 0 && interfaceCandidates
-                        .filter((candidate) => !candidate.vrf_scope_pending || Boolean(selectedInterfaceVrfs[candidate.candidate_id]))
+                      {interfaceCandidates.filter(interfaceCandidateHasExplicitSpace).length > 0 && interfaceCandidates
+                        .filter(interfaceCandidateHasExplicitSpace)
                         .every((candidate) => selectedInterfaceCandidates.has(candidate.candidate_id))
                         ? (zh ? '取消本页选择' : 'Clear page selection')
                         : (zh ? '选择本页' : 'Select page')}
@@ -1830,7 +2464,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                     <span>{zh ? '精确候选网段与接口样例' : 'Exact candidate prefix and interface samples'}</span>
                     <span>{zh ? '接口数' : 'Interfaces'}</span>
                     <span>{zh ? 'IP 数' : 'IPs'}</span>
-                    <span>{zh ? 'VRF 归属' : 'VRF scope'}</span>
+                    <span>{zh ? '地址空间' : 'Address space'}</span>
                     <span>{zh ? '状态' : 'Status'}</span>
                   </div>
                   {interfaceCandidatesLoading && interfaceCandidates.length === 0 ? (
@@ -1852,7 +2486,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                             type="checkbox"
                             checked={selectedInterfaceCandidates.has(candidate.candidate_id)}
                             onChange={() => toggleInterfaceCandidate(candidate.candidate_id)}
-                            disabled={interfaceCandidatesLoading || interfaceGenerationLoading || Boolean(interfaceGenerationError) || Boolean(candidate.vrf_scope_pending && !selectedInterfaceVrfs[candidate.candidate_id])}
+                            disabled={interfaceCandidatesLoading || interfaceGenerationLoading || Boolean(interfaceGenerationError) || !interfaceCandidateHasExplicitSpace(candidate)}
                             className="rounded border-gray-300 text-cyan-600 focus:ring-cyan-500"
                           />
                           <div className="min-w-0">
@@ -1866,22 +2500,29 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                           </div>
                           <span className="text-xs tabular-nums text-gray-600">{candidate.interface_count.toLocaleString()}</span>
                           <span className="text-xs tabular-nums text-gray-600">{candidate.ip_count.toLocaleString()}</span>
-                          {candidate.vrf_scope_pending || candidate.vrf_scope_defaulted ? (
+                          {interfaceCandidateNeedsManualSpace(candidate) ? (
                             <select
-                              aria-label={`${zh ? '为' : 'Choose VRF for'} ${candidate.prefix}`}
-                              value={selectedInterfaceVrfs[candidate.candidate_id] || (candidate.vrf_scope_defaulted ? '__global__' : '')}
-                              onChange={(event) => setSelectedInterfaceVrfs((current) => ({
+                              aria-label={`${zh ? '为' : 'Choose address space for'} ${candidate.prefix}`}
+                              value={selectedInterfaceSpaces[candidate.candidate_id] || candidate.address_space_id || ''}
+                              onChange={(event) => setSelectedInterfaceSpaces((current) => ({
                                 ...current, [candidate.candidate_id]: event.target.value,
                               }))}
-                              className={`min-w-0 rounded-lg border bg-white px-2 py-1.5 text-[10px] text-gray-700 ${candidate.vrf_scope_defaulted ? 'border-cyan-200' : 'border-amber-200'}`}
+                              disabled={addressSpacesLoading || interfaceCandidatesLoading || interfaceGenerationLoading}
+                              className="min-w-0 rounded-lg border border-amber-200 bg-white px-2 py-1.5 text-[10px] text-gray-700"
                             >
-                              {!candidate.vrf_scope_defaulted && <option value="">{zh ? '请选择 VRF' : 'Select VRF'}</option>}
-                              <option value="__global__">{zh ? '全局/默认' : 'Global/default'}</option>
-                              {vrfs
-                                .filter((item) => String(item.tenant_id || 'tenant-default') === candidate.tenant_id)
-                                .map((item) => <option key={item.id} value={item.id}>{item.vrf_name || item.name || item.id}</option>)}
+                              <option value="">{zh ? '请选择地址空间' : 'Select address space'}</option>
+                              {interfaceCandidateSpaceOptions(candidate)
+                                .map((item) => <option key={item.id} value={item.id}>{addressSpaceOptionLabel(item, zh)}</option>)}
                             </select>
-                          ) : <span className="truncate text-[10px] text-gray-600">{candidate.vrf_id ? (vrfs.find((item) => item.id === candidate.vrf_id)?.vrf_name || candidate.vrf_id) : (zh ? '全局/默认' : 'Global/default')}</span>}
+                          ) : <span className="truncate text-[10px] text-gray-600">
+                            {(() => {
+                              const spaceId = interfaceCandidateAddressSpaceId(candidate);
+                              const space = addressSpaces.find((item) => item.id === spaceId);
+                              return space
+                                ? addressSpaceOptionLabel(space, zh)
+                                : (zh ? '地址空间待配置' : 'Address space pending');
+                            })()}
+                          </span>}
                           <span className={`inline-flex items-center gap-1 text-[10px] font-bold ${candidate.status === 'existing' ? 'text-emerald-600' : candidate.status === 'scope_pending' ? 'text-amber-600' : 'text-cyan-600'}`}>
                             {candidate.status === 'existing' ? <Check size={13} /> : candidate.status === 'scope_pending' ? <AlertTriangle size={13} /> : <Plus size={13} />}
                             {candidate.status === 'existing' ? (zh ? '已存在' : 'Existing') : candidate.status === 'scope_pending' ? (zh ? '归属待确认' : 'Scope review') : (zh ? '待创建' : 'To create')}
@@ -1953,8 +2594,8 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                       <h4 id="generate-all-pending-title" className="text-sm font-bold text-gray-900">{zh ? '生成全部待创建网段？' : 'Generate all pending prefixes?'}</h4>
                       <p className="mt-2 text-xs leading-relaxed text-gray-600">
                         {zh
-                          ? `将处理全部 ${interfaceCandidateSummary.to_create_count.toLocaleString()} 个待创建候选网段，并按原始 CIDR 登记接口 IP。已有网段不会在本次全量操作中补齐。`
-                          : `This will process all ${interfaceCandidateSummary.to_create_count.toLocaleString()} pending prefixes and register their interface IPs using the exact CIDRs. Existing prefixes are not included in this bulk action.`}
+                          ? `将处理全部 ${interfaceCandidateSummary.to_create_count.toLocaleString()} 个范围已明确的待创建候选网段，并按原始 CIDR 登记接口 IP。待确认范围和已有网段不包含在全量操作中。`
+                          : `This will process all ${interfaceCandidateSummary.to_create_count.toLocaleString()} pending candidates with resolved address spaces and register their interface IPs using the exact CIDRs. Scope-pending and existing prefixes are excluded.`}
                       </p>
                       <div className="mt-5 flex justify-end gap-2">
                         <button type="button" onClick={() => setShowGenerateAllPendingConfirm(false)} className="rounded-lg px-3 py-2 text-xs font-semibold text-gray-500 hover:bg-gray-100">{zh ? '取消' : 'Cancel'}</button>
@@ -1992,7 +2633,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                   </div>
                   <div>
                     <h3 id="prefix-form-title" className="font-bold text-gray-900">{editingPrefix ? (zh ? '编辑网段' : 'Edit Prefix') : (zh ? '新增网段' : 'Add Prefix')}</h3>
-                    <p className="mt-0.5 text-xs text-gray-500">{zh ? '只需先填写 CIDR；名称、网关及其他信息均可选，也可以稍后补充。' : 'Start with the CIDR. Name, gateway and other details are optional and can be added later.'}</p>
+                    <p className="mt-0.5 text-xs text-gray-500">{zh ? '先选择明确的地址空间并填写 CIDR；站点只记录位置，不会推断地址空间。' : 'Select an explicit address space and enter the CIDR. Site records location and never determines the address space.'}</p>
                   </div>
                 </div>
                 <button type="button" onClick={() => setShowAddEdit(false)} aria-label={zh ? '关闭网段表单' : 'Close prefix form'} className="p-1.5 rounded-lg hover:bg-gray-50 transition-colors text-gray-400">
@@ -2007,6 +2648,76 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                     {errorMsg}
                   </div>
                 )}
+
+                <section className="space-y-2 rounded-2xl border border-cyan-100 bg-cyan-50/30 p-3.5" aria-label={zh ? '前缀地址空间' : 'Prefix address space'}>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-cyan-800">
+                    {zh ? '所属地址空间 *' : 'Address space *'}
+                    <select
+                      aria-label={zh ? '所属地址空间' : 'Address space'}
+                      value={form.address_space_id}
+                      onChange={(event) => {
+                        const space = addressSpaces.find((item) => item.id === event.target.value);
+                        setForm((current) => ({
+                          ...current,
+                          address_space_id: event.target.value,
+                          vrf_id: space?.vrf_id || '',
+                        }));
+                      }}
+                      disabled={addressSpacesLoading || Boolean(editingPrefix)}
+                      className="mt-1.5 h-10 w-full rounded-xl border border-cyan-100 bg-white px-3 text-xs font-medium text-gray-800 disabled:cursor-not-allowed disabled:bg-gray-100"
+                    >
+                      <option value="">
+                        {addressSpacesLoading
+                          ? (zh ? '正在加载地址空间…' : 'Loading address spaces…')
+                          : (zh ? '请选择，不会自动推断' : 'Select explicitly; no scope is inferred')}
+                      </option>
+                      {addressSpaces.filter((item) => item.status === 'active').map((item) => (
+                        <option key={item.id} value={item.id}>{addressSpaceOptionLabel(item, zh)}</option>
+                      ))}
+                    </select>
+                  </label>
+                  {addressSpacesError && <p role="alert" className="text-[10px] font-medium text-rose-700">{addressSpacesError}</p>}
+                  {!addressSpacesError && addressSpaces.filter((item) => item.status === 'active').length === 0 && !addressSpacesLoading && (
+                    <p role="status" className="text-[10px] text-amber-800">
+                      {zh ? '当前没有可选地址空间。创建一个全局空间，或先在 CMDB 中创建 VRF。' : 'No address spaces are available. Create a global space or add a VRF in CMDB.'}
+                    </p>
+                  )}
+                  {form.address_space_id && (
+                    <p className="text-[10px] text-gray-600">
+                      {zh
+                        ? (addressSpaces.find((item) => item.id === form.address_space_id)?.kind === 'vrf'
+                          ? `VRF：${addressSpaces.find((item) => item.id === form.address_space_id)?.vrf_name || form.vrf_id || '—'}；物理站点只表示位置，不参与地址空间判定。`
+                          : '已明确选择独立全局地址空间；物理站点只表示位置，不参与地址空间判定。')
+                        : (addressSpaces.find((item) => item.id === form.address_space_id)?.kind === 'vrf'
+                          ? `VRF: ${addressSpaces.find((item) => item.id === form.address_space_id)?.vrf_name || form.vrf_id || '—'}; site records location only.`
+                          : 'An explicit global address space is selected. Site records location only.')}
+                    </p>
+                  )}
+                  {!editingPrefix && (
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <input
+                        aria-label={zh ? '新全局地址空间名称' : 'New global address-space name'}
+                        value={globalSpaceName}
+                        onChange={(event) => setGlobalSpaceName(event.target.value)}
+                        placeholder={zh ? '需要新的独立全局域时输入名称' : 'Name a new independent global space'}
+                        className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 text-[11px]"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void createGlobalAddressSpace()}
+                        disabled={globalSpaceCreating || !globalSpaceName.trim()}
+                        className="rounded-lg border border-cyan-200 bg-white px-3 py-2 text-[11px] font-semibold text-cyan-700 hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {globalSpaceCreating ? (zh ? '创建中…' : 'Creating…') : (zh ? '创建全局空间' : 'Create global space')}
+                      </button>
+                    </div>
+                  )}
+                  {editingPrefix && !editingPrefix.address_space_id && (
+                    <p role="status" className="text-[10px] text-amber-800">
+                      {zh ? '此旧网段的地址空间尚未确认。普通编辑不会替它选择全局域，请使用列表中的“确认地址空间”操作。' : 'This legacy prefix has no confirmed address space. Regular editing will not assign a global domain; use “Resolve address space” from the list.'}
+                    </p>
+                  )}
+                </section>
 
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
 
@@ -2284,14 +2995,20 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                             ? (zh ? '正在读取最新成功接口快照中的网关候选…' : 'Checking gateway candidates from the latest successful interface snapshot…')
                             : gatewayCandidates?.status === 'needs_site'
                               ? (zh ? '请先选择物理站点，再匹配网关候选。' : 'Choose a physical site to match gateway candidates.')
+                              : gatewayCandidates?.status === 'scope_pending'
+                                ? getGatewayScopePendingMessage(gatewayBindingSourceRef.current, zh)
                               : gatewayCandidates?.status === 'matched'
                                 ? gatewayBindingSourceRef.current === 'manual'
                                   ? (zh ? `发现唯一候选 ${gatewayCandidates.selected ? gatewayCandidateEndpointLabel(gatewayCandidates.selected, zh) : ''}；已保留当前人工设备选择。` : `Unique candidate found${gatewayCandidates.selected ? `: ${gatewayCandidateEndpointLabel(gatewayCandidates.selected, zh)}` : ''}; the manual device selection is preserved.`)
                                   : (zh ? `已按唯一证据自动关联：${gatewayCandidates.selected ? gatewayCandidateEndpointLabel(gatewayCandidates.selected, zh) : '设备'}` : `Automatically bound from unique evidence: ${gatewayCandidates.selected ? gatewayCandidateEndpointLabel(gatewayCandidates.selected, zh) : 'device'}`)
-                                : gatewayCandidates?.status === 'no_unique_gateway'
+                                : gatewayCandidates?.status === 'no_unique_gateway' || gatewayCandidates?.status === 'ambiguous'
                                   ? gatewayBindingSourceRef.current === 'manual'
-                                    ? (zh ? '发现多个接口端点，没有唯一网关证据；已保留人工设备选择。' : 'Multiple interface endpoints have no unique gateway evidence; the manual device selection is preserved.')
-                                    : (zh ? '发现接口端点，但没有唯一证据确认网关；当前未绑定网关。' : 'Interface endpoints were found, but there is no unique gateway evidence; no gateway is bound.')
+                                    ? gatewayCandidates?.status === 'ambiguous'
+                                      ? (zh ? '多个接口与网关 IP 完全匹配，无法唯一选择；已保留人工设备选择。' : 'Multiple interfaces exactly match this gateway IP; the manual device selection is preserved.')
+                                      : (zh ? '发现多个接口端点，没有唯一网关证据；已保留人工设备选择。' : 'Multiple interface endpoints have no unique gateway evidence; the manual device selection is preserved.')
+                                    : gatewayCandidates?.status === 'ambiguous'
+                                      ? (zh ? '多个接口与网关 IP 完全匹配，无法唯一选择；当前未自动关联。' : 'Multiple interfaces exactly match this gateway IP; no automatic binding was selected.')
+                                      : (zh ? '发现接口端点，但没有唯一证据确认网关；当前未绑定网关。' : 'Interface endpoints were found, but there is no unique gateway evidence; no gateway is bound.')
                                   : gatewayBindingSourceRef.current === 'manual'
                                     ? (zh ? '没有匹配的网关接口候选；已保留人工设备选择。' : 'No matching gateway-interface candidate was found; the manual device selection is preserved.')
                                     : (zh ? '未找到匹配的网关接口候选，当前未绑定网关。' : 'No matching gateway-interface candidate was found; no gateway is bound.'))}
@@ -2326,21 +3043,6 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                     <p className="text-[10px] leading-relaxed text-gray-400">
                       {zh ? '只有快照明确提供共享接口 ID 时才写入；未提供 ID 时保持为空，不会伪造。' : 'An interface ID is saved only when the snapshot provides a shared interface ID; missing IDs remain empty and are never fabricated.'}
                     </p>
-                  </div>
-
-                  {/* VRF Select */}
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '所属VRF' : 'VRF'}</label>
-                    <select
-                      value={form.vrf_id}
-                      onChange={(e) => setForm({ ...form, vrf_id: e.target.value })}
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
-                    >
-                      <option value="">{zh ? '请选择VRF' : 'None'}</option>
-                      {vrfs.map((item) => (
-                        <option key={item.id} value={item.id}>{item.vrf_name}</option>
-                      ))}
-                    </select>
                   </div>
 
                   {/* VLAN Select */}
@@ -2447,6 +3149,340 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                 </button>
               </div>
             </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Explicit legacy prefix scope resolution */}
+      <AnimatePresence>
+        {scopeResolutionPrefix && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+            <motion.section
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 8 }}
+              role="dialog"
+              aria-modal="true"
+              aria-label={zh ? (scopeResolutionMode === 'move' ? '迁移地址空间' : '确认地址空间') : (scopeResolutionMode === 'move' ? 'Move address space' : 'Resolve address space')}
+              className="w-full max-w-xl overflow-hidden rounded-2xl border border-black/5 bg-white shadow-2xl"
+            >
+              <header className="flex items-start justify-between gap-3 border-b border-gray-100 px-5 py-4">
+                <div>
+                  <h3 className="text-sm font-bold text-gray-900">{zh ? (scopeResolutionMode === 'move' ? '迁移网段地址空间' : '确认网段地址空间') : (scopeResolutionMode === 'move' ? 'Move prefix address space' : 'Resolve prefix address space')}</h3>
+                  <p className="mt-1 text-xs text-gray-500">{scopeResolutionPrefix.prefix} · {scopeResolutionPrefix.site_name || (zh ? '站点未指定' : 'Site not set')}</p>
+                  <p className="mt-1 text-[10px] text-amber-700">
+                    {scopeResolutionMode === 'move'
+                      ? (zh ? '迁移会同步更新该 Prefix 和其正式登记 IP；若关联地址池、VIP 或 DHCP 租约，系统会阻止迁移并要求先单独处理。' : 'The move updates this Prefix and its registered IPs together. Pools, VIPs, or DHCP leases block the move and must be handled separately first.')
+                      : (zh ? '系统不会按站点或空 VRF 推断归属；请根据实际路由域选择。' : 'The system will not infer scope from site or an empty VRF. Choose the verified routing domain.')}
+                  </p>
+                </div>
+                <button type="button" onClick={() => setScopeResolutionPrefix(null)} aria-label={zh ? '关闭地址空间确认' : 'Close address-space resolution'} className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-50">
+                  <X size={15} />
+                </button>
+              </header>
+              <div className="space-y-3 p-5">
+                <label className="block text-xs font-semibold text-gray-700">
+                  {zh ? '目标地址空间' : 'Target address space'}
+                  <select
+                    aria-label={zh ? '目标地址空间' : 'Target address space'}
+                    value={scopeResolutionSpaceId}
+                    onChange={(event) => {
+                      setScopeResolutionSpaceId(event.target.value);
+                      setScopeResolutionConfirmed(false);
+                      setScopeResolutionPreview(null);
+                    }}
+                    disabled={addressSpacesLoading || scopeResolutionSaving}
+                    className="mt-1.5 h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-xs"
+                  >
+                    <option value="">{addressSpacesLoading ? (zh ? '加载地址空间…' : 'Loading address spaces…') : (zh ? '请选择，不会自动选择' : 'Select explicitly; none is assumed')}</option>
+                    {addressSpaces.filter((item) => item.status === 'active' && (scopeResolutionMode !== 'move' || item.id !== scopeResolutionPrefix.address_space_id)).map((space) => (
+                      <option key={space.id} value={space.id}>{addressSpaceOptionLabel(space, zh)}</option>
+                    ))}
+                  </select>
+                </label>
+                <div className="flex flex-col gap-2 rounded-xl border border-gray-100 bg-gray-50/70 p-3 sm:flex-row sm:items-center">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[11px] font-semibold text-gray-700">{zh ? '需要新的独立全局域？' : 'Need a new independent global domain?'}</p>
+                    <p className="mt-0.5 text-[10px] text-gray-500">{zh ? '显式创建后会刷新列表并选中，不会按站点自动创建。' : 'Create it explicitly to refresh and select it; no space is inferred from site.'}</p>
+                  </div>
+                  <input
+                    aria-label={zh ? '新全局地址空间名称' : 'New global address-space name'}
+                    value={globalSpaceName}
+                    onChange={(event) => setGlobalSpaceName(event.target.value)}
+                    placeholder={zh ? '全局空间名称' : 'Global space name'}
+                    disabled={globalSpaceCreating || scopeResolutionSaving}
+                    className="min-w-0 rounded-lg border border-gray-200 bg-white px-3 py-2 text-[11px] sm:w-48"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void createGlobalAddressSpace(false)}
+                    disabled={globalSpaceCreating || scopeResolutionSaving || !globalSpaceName.trim()}
+                    className="rounded-lg border border-cyan-200 bg-white px-3 py-2 text-[11px] font-semibold text-cyan-700 hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {globalSpaceCreating ? (zh ? '创建中…' : 'Creating…') : (zh ? '创建并选中' : 'Create and select')}
+                  </button>
+                </div>
+                {addressSpacesError && <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-2.5 text-xs text-rose-700">{addressSpacesError}</div>}
+                {scopeResolutionLoading && <div role="status" className="rounded-lg border border-gray-100 bg-gray-50 p-3 text-xs text-gray-500">{zh ? '正在读取影响预览…' : 'Loading impact preview…'}</div>}
+                {scopeResolutionError && <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-2.5 text-xs text-rose-700">{scopeResolutionError}</div>}
+                {scopeResolutionPreview && (
+                  <div className="space-y-3 rounded-xl border border-gray-100 bg-gray-50/60 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                      {scopeResolutionMode === 'move' && (
+                        <>
+                          <span className="font-semibold text-gray-600">{zh ? '当前空间' : 'Current space'}</span>
+                          <span className="font-bold text-gray-800">
+                            {scopeResolutionPreview.source_space
+                              ? addressSpaceOptionLabel(scopeResolutionPreview.source_space, zh)
+                              : scopeResolutionPrefix.address_space_name || scopeResolutionPrefix.address_space_id}
+                          </span>
+                        </>
+                      )}
+                      <span className="font-semibold text-gray-600">{zh ? '目标空间' : 'Target space'}</span>
+                      <span className="font-bold text-gray-800">
+                        {scopeResolutionPreview.target_space
+                          ? addressSpaceOptionLabel(scopeResolutionPreview.target_space, zh)
+                          : addressSpaces.find((item) => item.id === scopeResolutionSpaceId)
+                            ? addressSpaceOptionLabel(addressSpaces.find((item) => item.id === scopeResolutionSpaceId) as AddressSpace, zh)
+                            : scopeResolutionSpaceId}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                      {[
+                        [zh ? '登记 IP' : 'Registered IPs', scopeResolutionPreview.impact?.ip_addresses],
+                        [zh ? '地址池' : 'Pools', scopeResolutionPreview.impact?.pools],
+                        ['VIP', scopeResolutionPreview.impact?.vips],
+                        [zh ? 'DHCP 租约' : 'DHCP leases', scopeResolutionPreview.impact?.leases],
+                      ].map(([label, value]) => (
+                        <div key={String(label)} className="rounded-lg border border-white bg-white p-2">
+                          <div className="text-[10px] text-gray-500">{label}</div>
+                          <div className="mt-0.5 text-sm font-bold tabular-nums text-gray-800">{Number(value || 0).toLocaleString()}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {(scopeResolutionPreview.blockers || []).length > 0 && (
+                      <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-2.5 text-xs text-rose-700">
+                        <strong>{zh ? '当前不能确认' : 'Cannot resolve yet'}</strong>
+                        <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                          {(scopeResolutionPreview.blockers || []).map((blocker, index) => (
+                            <li key={index}>{typeof blocker === 'string' ? blocker : blocker.message || blocker.code || (zh ? '存在未解决冲突' : 'An unresolved conflict exists')}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {scopeResolutionPreview.can_confirm && (
+                      <label className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-[11px] leading-relaxed text-amber-900">
+                        <input
+                          type="checkbox"
+                          checked={scopeResolutionConfirmed}
+                          onChange={(event) => setScopeResolutionConfirmed(event.target.checked)}
+                          className="mt-0.5 rounded border-amber-300 text-cyan-600 focus:ring-cyan-500"
+                        />
+                        <span>{scopeResolutionMode === 'move'
+                          ? (zh ? '我已核实设备的真实路由域，并确认迁移该 Prefix 及其正式登记 IP 到所选地址空间。' : 'I verified the device routing domain and confirm moving this Prefix and its registered IPs to the selected address space.')
+                          : (zh ? '我已核实此网段的真实路由域，并理解映射会更新该 Prefix 及其正式登记 IP 的 VRF/地址空间。' : 'I verified the routing domain and understand this maps the Prefix and its registered IPs to the selected address space.')}</span>
+                      </label>
+                    )}
+                  </div>
+                )}
+              </div>
+              <footer className="flex justify-end gap-2 border-t border-gray-100 px-5 py-3">
+                <button type="button" onClick={() => setScopeResolutionPrefix(null)} disabled={scopeResolutionSaving} className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-600 disabled:opacity-50">
+                  {zh ? '取消' : 'Cancel'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void resolveAddressSpace()}
+                  disabled={scopeResolutionSaving || scopeResolutionLoading || !scopeResolutionPreview?.can_confirm || !scopeResolutionConfirmed}
+                  className="rounded-lg bg-cyan-600 px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {scopeResolutionSaving
+                    ? (zh ? (scopeResolutionMode === 'move' ? '迁移中…' : '确认中…') : (scopeResolutionMode === 'move' ? 'Moving…' : 'Resolving…'))
+                    : (zh ? (scopeResolutionMode === 'move' ? '确认迁移' : '确认地址空间') : (scopeResolutionMode === 'move' ? 'Move address space' : 'Resolve address space'))}
+                </button>
+              </footer>
+            </motion.section>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showBatchAddressSpaceModal && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+            <motion.section
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 8 }}
+              role="dialog"
+              aria-modal="true"
+              aria-label={zh ? '批量修改地址空间' : 'Batch change address space'}
+              className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-black/5 bg-white shadow-2xl"
+            >
+              <header className="flex shrink-0 items-start justify-between gap-3 border-b border-gray-100 px-5 py-4">
+                <div>
+                  <h3 className="text-sm font-bold text-gray-900">{zh ? '批量修改地址空间' : 'Batch change address space'}</h3>
+                  <p className="mt-1 text-xs text-gray-500">
+                    {zh
+                      ? `将为已选的 ${selectedIds.size} 个网段设置同一个目标地址空间。`
+                      : `Map all ${selectedIds.size} selected prefixes to one target address space.`}
+                  </p>
+                  <p className="mt-1 text-[10px] text-amber-700">
+                    {zh
+                      ? '仅处理待确认归属的网段；已归属的网段会显示阻断，不会被自动迁移。先逐条预览，任一网段有阻断，整批都不会写入；地址空间不会按站点或空 VRF 推断。'
+                      : 'This operation maps pending prefixes only; already-mapped prefixes are blocked and never moved automatically. Every prefix is previewed first, and any blocker prevents the entire batch. Scope is never inferred from site or an empty VRF.'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  aria-label={zh ? '关闭批量地址空间修改' : 'Close batch address-space mapping'}
+                  disabled={batchAddressSpaceSaving}
+                  onClick={() => setShowBatchAddressSpaceModal(false)}
+                  className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-50 disabled:opacity-40"
+                >
+                  <X size={15} />
+                </button>
+              </header>
+
+              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-5">
+                <label className="block text-xs font-semibold text-gray-700">
+                  {zh ? '目标地址空间' : 'Target address space'}
+                  <select
+                    aria-label={zh ? '批量目标地址空间' : 'Batch target address space'}
+                    value={batchAddressSpaceTargetId}
+                    onChange={(event) => {
+                      setBatchAddressSpaceTargetId(event.target.value);
+                      setBatchAddressSpacePreview(null);
+                      setBatchAddressSpaceConfirmed(false);
+                      setBatchAddressSpaceError('');
+                    }}
+                    disabled={addressSpacesLoading || batchAddressSpaceSaving}
+                    className="mt-1.5 h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-xs"
+                  >
+                    <option value="">
+                      {addressSpacesLoading
+                        ? (zh ? '加载地址空间…' : 'Loading address spaces…')
+                        : (zh ? '请选择，不会自动选择' : 'Select explicitly; none is assumed')}
+                    </option>
+                    {addressSpaces.filter((item) => item.status === 'active').map((space) => (
+                      <option key={space.id} value={space.id}>{addressSpaceOptionLabel(space, zh)}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <div className="flex flex-col gap-2 rounded-xl border border-gray-100 bg-gray-50/70 p-3 sm:flex-row sm:items-center">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[11px] font-semibold text-gray-700">{zh ? '需要新的独立全局域？' : 'Need a new independent global domain?'}</p>
+                    <p className="mt-0.5 text-[10px] text-gray-500">
+                      {zh ? '只有确认这些网段实际不属于 VRF 时才创建 Global。' : 'Create a Global space only when these prefixes truly have no VRF.'}
+                    </p>
+                  </div>
+                  <input
+                    aria-label={zh ? '新全局地址空间名称' : 'New global address-space name'}
+                    value={globalSpaceName}
+                    onChange={(event) => setGlobalSpaceName(event.target.value)}
+                    placeholder={zh ? '全局空间名称' : 'Global space name'}
+                    disabled={globalSpaceCreating || batchAddressSpaceSaving}
+                    className="min-w-0 rounded-lg border border-gray-200 bg-white px-3 py-2 text-[11px] sm:w-48"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void createGlobalAddressSpace(false)}
+                    disabled={globalSpaceCreating || batchAddressSpaceSaving || !globalSpaceName.trim()}
+                    className="rounded-lg border border-cyan-200 bg-white px-3 py-2 text-[11px] font-semibold text-cyan-700 hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {globalSpaceCreating ? (zh ? '创建中…' : 'Creating…') : (zh ? '创建并选中' : 'Create and select')}
+                  </button>
+                </div>
+
+                {addressSpacesError && <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-2.5 text-xs text-rose-700">{addressSpacesError}</div>}
+                {batchAddressSpaceError && <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-2.5 text-xs text-rose-700">{batchAddressSpaceError}</div>}
+                {selectedIds.size > 100 && (
+                  <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-800">
+                    {zh ? '一次最多批量处理 100 个网段，请先减少选择数量。' : 'A batch can include at most 100 prefixes. Reduce the selection to continue.'}
+                  </div>
+                )}
+                {batchAddressSpaceLoading && <div role="status" className="rounded-lg border border-gray-100 bg-gray-50 p-3 text-xs text-gray-500">{zh ? '正在逐条检查影响与冲突…' : 'Checking each prefix impact and conflict…'}</div>}
+
+                {batchAddressSpacePreview && (
+                  <div className="space-y-3">
+                    <div className="rounded-xl border border-gray-100 bg-gray-50/60 p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <span className="font-semibold text-gray-600">{zh ? '目标空间' : 'Target space'}</span>
+                        <span className="font-bold text-gray-800">
+                          {batchAddressSpacePreview.target_space
+                            ? addressSpaceOptionLabel(batchAddressSpacePreview.target_space, zh)
+                            : batchAddressSpaceTargetId}
+                        </span>
+                      </div>
+                      <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                        {[
+                          [zh ? '登记 IP' : 'Registered IPs', batchAddressSpacePreview.totals?.ip_addresses],
+                          [zh ? '地址池' : 'Pools', batchAddressSpacePreview.totals?.pools],
+                          ['VIP', batchAddressSpacePreview.totals?.vips],
+                          [zh ? 'DHCP 租约' : 'DHCP leases', batchAddressSpacePreview.totals?.leases],
+                        ].map(([label, value]) => (
+                          <div key={String(label)} className="rounded-lg border border-white bg-white p-2">
+                            <div className="text-[10px] text-gray-500">{label}</div>
+                            <div className="mt-0.5 text-sm font-bold tabular-nums text-gray-800">{Number(value || 0).toLocaleString()}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="max-h-64 space-y-2 overflow-y-auto rounded-xl border border-gray-100 p-3" aria-label={zh ? '逐条映射预览' : 'Per-prefix mapping preview'}>
+                      {batchAddressSpacePreview.items.map((item) => (
+                        <div key={item.prefix_id} className="rounded-lg border border-gray-100 bg-white p-2.5">
+                          <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                            <span className="font-semibold text-gray-800">{item.prefix}</span>
+                            <span className="text-[10px] text-gray-500">{item.site_name || (zh ? '站点未指定' : 'Site not set')}</span>
+                          </div>
+                          {item.blockers?.length ? (
+                            <ul className="mt-1.5 list-disc space-y-0.5 pl-4 text-[10px] text-rose-700">
+                              {item.blockers.map((blocker, index) => (
+                                <li key={`${item.prefix_id}-${index}`}>{addressSpaceBlockerLabel(blocker, zh)}</li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="mt-1.5 text-[10px] font-medium text-emerald-700">{zh ? '无阻断，可纳入本批次' : 'No blocker; eligible for this batch'}</p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
+                    {batchAddressSpacePreview.can_confirm && (
+                      <label className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-[11px] leading-relaxed text-amber-900">
+                        <input
+                          type="checkbox"
+                          checked={batchAddressSpaceConfirmed}
+                          onChange={(event) => setBatchAddressSpaceConfirmed(event.target.checked)}
+                          className="mt-0.5 rounded border-amber-300 text-cyan-600 focus:ring-cyan-500"
+                        />
+                        <span>{zh ? '我已逐条核实所有选中网段的真实路由域，并确认将它们全部映射到同一地址空间。' : 'I verified the routing domain for every selected prefix and confirm they all belong in the same address space.'}</span>
+                      </label>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <footer className="flex shrink-0 justify-end gap-2 border-t border-gray-100 px-5 py-3">
+                <button
+                  type="button"
+                  onClick={() => setShowBatchAddressSpaceModal(false)}
+                  disabled={batchAddressSpaceSaving}
+                  className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-600 disabled:opacity-50"
+                >
+                  {zh ? '取消' : 'Cancel'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void resolveBatchAddressSpace()}
+                  disabled={batchAddressSpaceSaving || batchAddressSpaceLoading || !batchAddressSpacePreview?.can_confirm || !batchAddressSpaceConfirmed}
+                  className="rounded-lg bg-cyan-600 px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {batchAddressSpaceSaving ? (zh ? '批量映射中…' : 'Mapping batch…') : (zh ? `确认映射 ${selectedIds.size} 个网段` : `Map ${selectedIds.size} prefixes`)}
+                </button>
+              </footer>
+            </motion.section>
           </div>
         )}
       </AnimatePresence>

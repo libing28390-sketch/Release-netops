@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 
+from database import get_db_connection
 from services import snmp_service as snmp
 
 
@@ -42,9 +43,15 @@ def test_pvid_without_bridge_mapping_still_rejects_snapshot(monkeypatch):
 
 
 @pytest.mark.parametrize('attribute_failure', [False, True])
-def test_fdb_success_survives_independent_port_attribute_failure(monkeypatch, attribute_failure):
+def test_fdb_success_survives_independent_port_attribute_failure(isolated_db, monkeypatch, attribute_failure):
     from services import ip_locator_service as locator
     from services import vault_service
+    with get_db_connection() as conn:
+        conn.execute(
+            """INSERT INTO devices (id, hostname, ip_address, platform, status, tenant_id)
+               VALUES ('fixture', 'fixture', '192.0.2.1', 'cisco_ios', 'online', 'tenant-default')"""
+        )
+        conn.commit()
     monkeypatch.setattr(locator, 'is_snmp_collection_enabled', lambda _d: True)
     monkeypatch.setattr(vault_service, 'resolve_collector_credentials', lambda _d: {
         'snmp': {'configured': True, 'community': 'fixture', 'version': '2c'},

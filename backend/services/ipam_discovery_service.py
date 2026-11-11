@@ -666,10 +666,12 @@ def _ipam_address_index(conn) -> tuple[dict[tuple[str, str, str, str], list[dict
     rows = conn.execute(
         """SELECT ip.id, ip.address, ip.hostname, ip.mac_address, ip.subnet_id, ip.status,
                   ip.device_id, ip.interface_name, ip.tenant_id AS ip_tenant_id,
-                  ip.vrf_id AS ip_vrf_id, ip.site_id AS ip_site_id, ip.source_ref,
+                  ip.vrf_id AS ip_vrf_id, ip.site_id AS ip_site_id,
+                  ip.address_space_id AS ip_address_space_id, ip.source_ref,
                   ip.created_at, ip.purpose, ip.device_type, ip.interface_id,
                   p.prefix, p.name AS prefix_name, p.tenant_id AS prefix_tenant_id,
                   p.vrf_id AS prefix_vrf_id, p.site_id AS prefix_site_id,
+                  p.address_space_id AS prefix_address_space_id,
                   p.status AS prefix_status, p.is_active AS prefix_is_active,
                   p.gateway_device_id AS prefix_gateway_device_id,
                   p.network_type, i.interface_type AS interface_type,
@@ -693,6 +695,8 @@ def _ipam_address_index(conn) -> tuple[dict[tuple[str, str, str, str], list[dict
         prefix_site = str(item.get("prefix_site_id") or "")
         ip_vrf = str(item.get("ip_vrf_id") or "")
         prefix_vrf = str(item.get("prefix_vrf_id") or "")
+        ip_address_space = str(item.get("ip_address_space_id") or "")
+        prefix_address_space = str(item.get("prefix_address_space_id") or "")
         scope_conflicts = []
         if has_prefix:
             if ip_tenant and prefix_tenant and ip_tenant != prefix_tenant:
@@ -703,14 +707,19 @@ def _ipam_address_index(conn) -> tuple[dict[tuple[str, str, str, str], list[dict
             # stale address-level VRF must not silently override it.
             if ip_vrf and ip_vrf != prefix_vrf:
                 scope_conflicts.append("vrf_mismatch")
+            if ip_address_space and prefix_address_space and ip_address_space != prefix_address_space:
+                scope_conflicts.append("address_space_mismatch")
             tenant_id, site_id, vrf_id = prefix_tenant or DEFAULT_TENANT_ID, prefix_site, prefix_vrf
+            address_space_id = prefix_address_space or ip_address_space
         else:
             scope_conflicts.append("parent_prefix_missing")
             tenant_id, site_id, vrf_id = ip_tenant or DEFAULT_TENANT_ID, ip_site, ip_vrf
+            address_space_id = ip_address_space
         item.update({
             "_address": address, "_tenant_id": tenant_id, "_site_id": site_id,
             "_vrf_id": vrf_id, "_scope_conflict": bool(scope_conflicts),
             "_scope_conflict_reason": ",".join(scope_conflicts),
+            "_address_space_id": address_space_id,
             "_expected_source_device_id": str(item.get("prefix_gateway_device_id") or ""),
         })
         by_scope.setdefault((tenant_id, site_id, vrf_id, address), []).append(item)
@@ -1055,7 +1064,13 @@ def _list_filter(item: dict[str, Any], *, site_id: str, vrf_id: str, device_id: 
         return False
     if kind == "mac" and (item.get("source_type") != "mac" or not item.get("mac")):
         return False
-    if evidence_status and item.get("evidence_status") != evidence_status:
+    if evidence_status == "scope_pending":
+        if item.get("scope_status") == "resolved":
+            return False
+    elif evidence_status == "conflict":
+        if not item.get("ip_mac_conflict"):
+            return False
+    elif evidence_status and item.get("evidence_status") != evidence_status:
         return False
     if registration_status and item.get("registration_status") != registration_status:
         return False
@@ -1702,7 +1717,7 @@ def calibrate_ipam_mac(
             raise ValueError("observation_scope_does_not_match_ipam")
         updated_at = _iso(_utc_now()) or _utc_now().isoformat()
         conn.execute(
-            "UPDATE ip_addresses SET mac_address = ?, updated_at = ? WHERE id = ?",
+            "UPDATE ip_addresses SET mac_address = ?, updated_at = ?, revision = revision + 1 WHERE id = ?",
             (observed_mac, updated_at, ipam_address_id),
         )
         conn.commit()
@@ -1719,30 +1734,1474 @@ def calibrate_ipam_mac(
         conn.close()
 
 
-def _snapshot_scope_key(snapshot: dict[str, Any]) -> tuple[str, str, str] | None:
-    if snapshot.get("scope_status") != "resolved":
-        return None
-    if str(snapshot.get("vrf_context_status") or "unknown") not in {"explicit_vrf", "explicit_global"}:
-        return None
-    if not snapshot.get("tenant_id") or not snapshot.get("site_id"):
-        return None
+def _current_endpoint_observation_id(row: dict[str, Any]) -> str:
+    """Build a stable ID for one replaceable ARP/ND row in a successful generation."""
+    identity = {
+        "source": str(row.get("observation_source") or "arp"),
+        "device_id": str(row.get("source_device_id") or ""),
+        "context_source": str(row.get("context_source") or ""),
+        "context_type": str(row.get("context_type") or ""),
+        "local_context_key": str(row.get("local_context_key") or ""),
+        "ip": _normalized_ip(row.get("ip_address")),
+        "mac": _normalized_mac(row.get("mac_address")),
+        "interface": str(row.get("normalized_interface_name") or ""),
+        "vlan": int(row.get("vlan_id") or 0),
+        "generation": int(row.get("generation") or 0),
+    }
+    return _stable_id("ipam-current-endpoint:" + _canonical_json(identity))
+
+
+def _current_endpoint_projection(
+    conn, *, device_id: str = "", observation_source: str = "arp",
+) -> list[dict[str, Any]]:
+    """Decorate current ARP/ND rows, collection state, and explicit mappings."""
+    from services.ipam_current_endpoint_observation_service import list_current_endpoint_observations
+
+    normalized_source = str(observation_source or "arp").strip().lower()
+    if normalized_source not in {"arp", "ndp"}:
+        raise ValueError("unsupported_current_address_observation_source")
+    source_rows = list_current_endpoint_observations(
+        conn, device_id=device_id or None, observation_source=normalized_source,
+    )
+    if not source_rows:
+        return []
+
+    device_ids = sorted({str(row.get("source_device_id") or "") for row in source_rows if row.get("source_device_id")})
+    device_marks = ",".join("?" for _ in device_ids)
+    device_rows = conn.execute(
+        f"""SELECT device.id, device.hostname,
+                   COALESCE(NULLIF(btrim(device.tenant_id), ''), ?) AS tenant_id,
+                   COALESCE(device.site_id, '') AS site_id,
+                   COALESCE(site.site_name, site.site_code, '') AS site_name,
+                   COALESCE(site.site_code, '') AS site_code
+              FROM devices device
+              LEFT JOIN sites site ON site.id = device.site_id
+             WHERE device.id IN ({device_marks})""",
+        (DEFAULT_TENANT_ID, *device_ids),
+    ).fetchall()
+    devices = {str(row["id"]): dict(row) for row in device_rows}
+
+    address_space_ids = sorted({str(row.get("address_space_id") or "") for row in source_rows if row.get("address_space_id")})
+    spaces: dict[str, dict[str, Any]] = {}
+    if address_space_ids:
+        space_marks = ",".join("?" for _ in address_space_ids)
+        space_rows = conn.execute(
+            f"""SELECT space.id, space.security_tenant_id, space.name,
+                       space.kind, space.vrf_id, space.status,
+                       COALESCE(vrf.vrf_name, '') AS vrf_name
+                  FROM ipam_address_spaces space
+                  LEFT JOIN vrfs vrf ON vrf.id = space.vrf_id
+                 WHERE space.id IN ({space_marks})""",
+            tuple(address_space_ids),
+        ).fetchall()
+        spaces = {str(row["id"]): dict(row) for row in space_rows}
+
+    ips = sorted({
+        _normalized_ip(row.get("ip_address"))
+        for row in source_rows if row.get("address_space_id") and _normalized_ip(row.get("ip_address"))
+    })
+    formal_by_scope: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    if address_space_ids and ips:
+        space_marks = ",".join("?" for _ in address_space_ids)
+        ip_marks = ",".join("?" for _ in ips)
+        formal_rows = conn.execute(
+            f"""SELECT ip.id, COALESCE(host(ip.address_inet), ip.address) AS address,
+                       ip.mac_address, ip.hostname, ip.status, ip.revision,
+                       COALESCE(NULLIF(ip.address_space_id, ''), prefix.address_space_id, '') AS address_space_id,
+                       COALESCE(NULLIF(prefix.tenant_id, ''), ?) AS tenant_id,
+                       prefix.site_id, prefix.id AS subnet_id, prefix.prefix AS subnet_prefix,
+                       prefix.status AS prefix_status, prefix.is_active AS prefix_is_active
+                  FROM ip_addresses ip
+                  JOIN prefixes prefix ON prefix.id = ip.subnet_id
+                 WHERE COALESCE(NULLIF(ip.address_space_id, ''), prefix.address_space_id, '') IN ({space_marks})
+                   AND COALESCE(host(ip.address_inet), ip.address) IN ({ip_marks})""",
+            (DEFAULT_TENANT_ID, *address_space_ids, *ips),
+        ).fetchall()
+        for raw in formal_rows:
+            item = dict(raw)
+            address = _normalized_ip(item.get("address"))
+            key = (
+                str(item.get("tenant_id") or DEFAULT_TENANT_ID),
+                str(item.get("address_space_id") or ""),
+                address,
+            )
+            formal_by_scope.setdefault(key, []).append(item)
+
+    current_groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    staged: list[dict[str, Any]] = []
+    for source in source_rows:
+        row = dict(source)
+        device = devices.get(str(row.get("source_device_id") or ""))
+        if not device:
+            # An orphan row cannot carry a trustworthy security scope.
+            continue
+        tenant_id = str(device.get("tenant_id") or DEFAULT_TENANT_ID)
+        site_id = str(device.get("site_id") or "")
+        address = _normalized_ip(row.get("ip_address"))
+        if not address:
+            continue
+
+        generation = int(row.get("generation") or 0)
+        last_success_generation = int(row.get("last_success_generation") or 0)
+        if generation < 1 or generation != last_success_generation:
+            # A row whose generation does not match the state fence is not current evidence.
+            continue
+
+        space_id = str(row.get("address_space_id") or "")
+        space = spaces.get(space_id)
+        resolved_type = str(row.get("resolved_context_type") or "")
+        resolved = bool(
+            space and space_id
+            and str(space.get("status") or "") == "active"
+            and str(space.get("security_tenant_id") or "") == tenant_id
+            and (
+                (resolved_type == "vrf" and str(space.get("kind") or "") == "vrf")
+                or (resolved_type == "global" and str(space.get("kind") or "") == "global")
+            )
+        )
+        if not resolved:
+            space_id = ""
+            space = None
+            resolved_type = ""
+
+        observed_at = str(row.get("observed_at") or "")
+        observed_time, timestamp_status = _parse_time(observed_at)
+        age = (_utc_now() - observed_time) if observed_time and timestamp_status == "valid" else None
+        evidence_status = (
+            "recent" if age is not None and age <= timedelta(minutes=_recent_minutes())
+            else "stale" if age is not None
+            else "unknown"
+        )
+        latest_status = str(row.get("latest_status") or "")
+        latest_attempt_generation = int(row.get("latest_attempt_generation") or 0)
+        latest_success_is_current_attempt = (
+            generation == latest_attempt_generation
+            and latest_status in {"complete", "scope_unknown"}
+        )
+        coverage_complete = latest_success_is_current_attempt
+        context_status = (
+            "explicit_vrf" if resolved_type == "vrf"
+            else "explicit_global" if resolved_type == "global"
+            else "unknown"
+        )
+        ipam_key = (tenant_id, space_id, address) if resolved else (tenant_id, "", address)
+        candidates = formal_by_scope.get(ipam_key, []) if resolved else []
+        active_candidates = [
+            item for item in candidates
+            if str(item.get("status") or "active") not in {"released", "available"}
+            and str(item.get("prefix_status") or "active") != "stale"
+            and item.get("prefix_is_active") not in (False, 0)
+        ]
+        ipam_conflict = len(active_candidates) > 1
+        selected_ipam = active_candidates[0] if len(active_candidates) == 1 else None
+        registration_status = (
+            "registered" if selected_ipam
+            else "unregistered" if resolved and not ipam_conflict
+            else "scope_pending"
+        )
+        mac = _normalized_mac(row.get("mac_address"))
+        scope_key = (tenant_id, space_id, address) if resolved else (
+            tenant_id,
+            f"device:{device['id']}:{row.get('context_source')}:{row.get('context_type')}:{row.get('local_context_key')}",
+            address,
+        )
+        item = {
+            "id": _current_endpoint_observation_id(row),
+            "observation_id": _current_endpoint_observation_id(row),
+            "ip": address,
+            "mac": mac or None,
+            "tenant_id": tenant_id,
+            "site_id": site_id,
+            "site_name": str(device.get("site_name") or device.get("site_code") or ""),
+            "site": str(device.get("site_name") or device.get("site_code") or ""),
+            "vrf_id": str(space.get("vrf_id") or "") if space and resolved_type == "vrf" else "",
+            "vrf_name": str(space.get("vrf_name") or ("全局/默认" if resolved_type == "global" else "")) if space else "",
+            "vrf_context_status": context_status,
+            "source_vrf_context_status": str(row.get("context_type") or "unknown"),
+            "scope_assertion_status": "not_applicable",
+            "scope_status": "resolved" if resolved else "scope_pending",
+            "scope_resolution": "current_explicit_context_mapping" if resolved else "unresolved_current_context",
+            "registration_status": registration_status,
+            "ipam_scope_status": "conflict" if ipam_conflict else "resolved" if selected_ipam else "unmatched",
+            "ip_mac_conflict": False,
+            "subnet_id": str((selected_ipam or {}).get("subnet_id") or ""),
+            "subnet_prefix": str((selected_ipam or {}).get("subnet_prefix") or ""),
+            "source_type": normalized_source,
+            "observation_source": normalized_source,
+            "source_device_id": str(row.get("source_device_id") or ""),
+            "source_device_name": str(device.get("hostname") or row.get("source_device_id") or ""),
+            "source_interface_name": str(row.get("interface_name") or ""),
+            "normalized_interface_name": str(row.get("normalized_interface_name") or ""),
+            "switch_id": "",
+            "switch_name": "",
+            "switch_port": "",
+            "switch_location_status": "pending",
+            "switch_location_basis": "",
+            "vlan": str(row.get("vlan_id") or ""),
+            "observed_at": observed_at,
+            "mac_observed_at": "",
+            "projected_at": "",
+            "evidence_status": evidence_status,
+            "timestamp_status": timestamp_status,
+            "hostname": str((selected_ipam or {}).get("hostname") or ""),
+            "hostname_source": "ipam" if (selected_ipam or {}).get("hostname") else "",
+            "coverage_status": "complete" if coverage_complete else latest_status or "unavailable",
+            "coverage_complete": coverage_complete,
+            "coverage_reason": (
+                "latest_attempt_complete" if coverage_complete
+                else "latest_attempt_not_successful; showing last successful current generation"
+            ),
+            "source_run_id": str(row.get("run_id") or ""),
+            "source_version": str(generation),
+            "source_identity_key": _digest({
+                "device_id": str(row.get("source_device_id") or ""),
+                "context_source": str(row.get("context_source") or ""),
+                "context_type": str(row.get("context_type") or ""),
+                "local_context_key": str(row.get("local_context_key") or ""),
+                "ip": address,
+                "mac": mac,
+                "interface": str(row.get("normalized_interface_name") or ""),
+                "vlan": int(row.get("vlan_id") or 0),
+                "generation": generation,
+            }),
+            "ipam_address_id": str((selected_ipam or {}).get("id") or ""),
+            "ipam_mac": str((selected_ipam or {}).get("mac_address") or ""),
+            "observed_mac": mac,
+            "mac_mismatch": bool(
+                selected_ipam and _normalized_mac(selected_ipam.get("mac_address"))
+                and mac and _normalized_mac(selected_ipam.get("mac_address")) != mac
+            ),
+            "calibration_safe": bool(
+                resolved and evidence_status == "recent" and timestamp_status == "valid"
+                and latest_success_is_current_attempt and not ipam_conflict
+                and selected_ipam and str(selected_ipam.get("status") or "active") not in {"available", "released"}
+                and _normalized_mac(selected_ipam.get("mac_address"))
+                and mac and _normalized_mac(selected_ipam.get("mac_address")) != mac
+            ),
+            "address_space_id": space_id or None,
+            "address_space_name": str(space.get("name") or "") if space else "",
+            "address_space_kind": str(space.get("kind") or "") if space else "",
+            "context_source": str(row.get("context_source") or ""),
+            "context_type": str(row.get("context_type") or "unknown"),
+            "local_context_key": str(row.get("local_context_key") or ""),
+            "local_context_name": str(row.get("local_context_name") or ""),
+            "collection_status": latest_status,
+            "generation": generation,
+            "latest_attempt_generation": latest_attempt_generation,
+            "last_success_generation": last_success_generation,
+            "last_attempt_at": str(row.get("last_attempt_at") or ""),
+            "last_success_at": str(row.get("last_success_at") or ""),
+            "_current_scope_key": scope_key,
+            "_ipam_conflict": ipam_conflict,
+        }
+        staged.append(item)
+        current_groups.setdefault(scope_key, []).append(item)
+
+    for siblings in current_groups.values():
+        observed_macs = {_normalized_mac(item.get("mac")) for item in siblings if _normalized_mac(item.get("mac"))}
+        if len(observed_macs) > 1:
+            for item in siblings:
+                item["ip_mac_conflict"] = True
+                item["evidence_status"] = "conflict"
+                item["calibration_safe"] = False
+
+    for item in staged:
+        item.pop("_current_scope_key", None)
+        item.pop("_ipam_conflict", None)
+    ids: dict[str, int] = {}
+    for item in staged:
+        ids[str(item.get("id") or "")] = ids.get(str(item.get("id") or ""), 0) + 1
+    # Stable IDs intentionally omit observed_at. If the current table contains
+    # conflicting rows for one identity/generation, hide each collision.
+    return [item for item in staged if ids.get(str(item.get("id") or "")) == 1]
+
+
+def _current_fdb_observation_id(row: dict[str, Any]) -> str:
+    return "fdb:" + _digest({
+        "device_id": str(row.get("source_device_id") or ""),
+        "context_source": str(row.get("context_source") or ""),
+        "context_type": str(row.get("context_type") or ""),
+        "local_context_key": str(row.get("local_context_key") or ""),
+        "mac": _normalized_mac(row.get("mac_address")),
+        "interface": str(row.get("normalized_interface_name") or ""),
+        "vlan": int(row.get("vlan_id") or 0),
+        "generation": int(row.get("generation") or 0),
+    })
+
+
+def _classify_current_fdb_path(
+    interface_metadata: dict[str, Any] | None,
+    aggregation: dict[str, Any] | None,
+    topology_link_kind: str = '',
+) -> tuple[str, str]:
+    """Describe current port evidence without inventing a unique edge host."""
+    if not interface_metadata:
+        return 'unknown', 'interface_inventory_missing'
+    if aggregation:
+        return (
+            'logical_aggregation' if aggregation.get('is_logical') else 'aggregation_member',
+            'current_interface_aggregation_membership',
+        )
+    switchport_mode = str(interface_metadata.get('switchport_mode') or '').strip().lower()
+    if switchport_mode in {'trunk', 'tagged', 'hybrid'}:
+        return 'trunk_tagged_interface', 'current_interface_switchport_mode'
+    if topology_link_kind:
+        return str(topology_link_kind), 'current_topology_link'
+    if switchport_mode in {'access', 'untagged'}:
+        return 'access_edge', 'explicit_interface_access_mode'
+    return 'unknown', 'insufficient_edge_or_uplink_evidence'
+
+
+def _current_fdb_path_metadata(conn, source_rows: list[dict[str, Any]]) -> dict[tuple[str, str], dict[str, Any]]:
+    """Load current interface and topology hints for FDB path classification."""
+    from core.interface_utils import normalize_interface_name
+    from services.topology_service import _load_interface_aggregation_map
+
+    device_ids = sorted({
+        str(row.get('source_device_id') or '').strip()
+        for row in source_rows if row.get('source_device_id')
+    })
+    if not device_ids:
+        return {}
+    marks = ', '.join('?' for _ in device_ids)
+    interface_rows = [dict(row) for row in conn.execute(
+        f'''SELECT id, device_id, interface_name, interface_type, switchport_mode
+              FROM interfaces WHERE device_id IN ({marks})''',
+        tuple(device_ids),
+    ).fetchall()]
+    interface_by_key: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for row in interface_rows:
+        normalized = normalize_interface_name(str(row.get('interface_name') or '')).strip().lower()
+        if normalized:
+            interface_by_key.setdefault((str(row.get('device_id') or ''), normalized), []).append(row)
+
+    aggregation_map = _load_interface_aggregation_map(conn)
+    topology_kinds: dict[tuple[str, str], set[str]] = {}
+    link_rows = conn.execute(
+        f'''SELECT source_device_id, source_port, source_port_normalized,
+                   target_device_id, target_port, target_port_normalized,
+                   link_kind, status
+              FROM topology_links
+             WHERE source_device_id IN ({marks}) OR target_device_id IN ({marks})''',
+        tuple(device_ids + device_ids),
+    ).fetchall()
+    for raw in link_rows:
+        link = dict(raw)
+        if str(link.get('status') or '').strip().lower() not in {'up', 'degraded'}:
+            continue
+        link_kind = str(link.get('link_kind') or 'physical').strip().lower()
+        path_kind = 'topology_aggregation_link' if link_kind == 'aggregation' else 'topology_neighbor_link'
+        for side in ('source', 'target'):
+            endpoint_device = str(link.get(f'{side}_device_id') or '').strip()
+            endpoint_name = str(link.get(f'{side}_port_normalized') or '').strip().lower()
+            if not endpoint_name:
+                endpoint_name = normalize_interface_name(
+                    str(link.get(f'{side}_port') or '')
+                ).strip().lower()
+            if endpoint_device and endpoint_device in device_ids and endpoint_name:
+                topology_kinds.setdefault((endpoint_device, endpoint_name), set()).add(path_kind)
+
+    result: dict[tuple[str, str], dict[str, Any]] = {}
+    for key, matches in interface_by_key.items():
+        if len(matches) != 1:
+            result[key] = {
+                'path_classification': 'unknown',
+                'path_evidence': 'interface_identity_ambiguous',
+                'aggregation_name': '',
+                'aggregation_protocol': '',
+            }
+            continue
+        interface = matches[0]
+        aggregation = aggregation_map.get(key)
+        topology_options = sorted(topology_kinds.get(key, set()))
+        topology_kind = topology_options[0] if len(topology_options) == 1 else (
+            'topology_uplink' if topology_options else ''
+        )
+        if aggregation and not topology_kind:
+            topology_kind = topology_kinds.get(
+                (key[0], normalize_interface_name(str(aggregation.get('aggregation_name') or '')).strip().lower()),
+                set(),
+            )
+            topology_kind = sorted(topology_kind)[0] if topology_kind else ''
+        path_classification, path_evidence = _classify_current_fdb_path(
+            interface, aggregation, topology_kind,
+        )
+        result[key] = {
+            'path_classification': path_classification,
+            'path_evidence': path_evidence,
+            'aggregation_name': str((aggregation or {}).get('aggregation_name') or ''),
+            'aggregation_protocol': str((aggregation or {}).get('aggregation_protocol') or ''),
+            'topology_link_kind': str(topology_kind or ''),
+        }
+    return result
+
+
+def _current_fdb_endpoint_projection(conn, *, device_id: str = "") -> list[dict[str, Any]]:
+    """Project current FDB rows as MAC-only observations; never as IP ownership."""
+    from services.ipam_current_fdb_observation_service import list_current_fdb_observations
+
+    source_rows = list_current_fdb_observations(conn, device_id=device_id or None)
+    path_metadata = _current_fdb_path_metadata(conn, [dict(row) for row in source_rows])
+    staged: list[dict[str, Any]] = []
+    path_groups: dict[tuple[str, ...], list[dict[str, Any]]] = {}
+    for source in source_rows:
+        row = dict(source)
+        mac = _normalized_mac(row.get("mac_address"))
+        if not mac:
+            continue
+        generation = int(row.get("generation") or 0)
+        if generation < 1 or generation != int(row.get("last_success_generation") or 0):
+            continue
+        tenant_id = str(row.get("tenant_id") or DEFAULT_TENANT_ID)
+        site_id = str(row.get("site_id") or "")
+        address_space_id = str(row.get("address_space_id") or "")
+        resolved_context_type = str(row.get("resolved_context_type") or "")
+        resolved = bool(address_space_id and resolved_context_type in {"vrf", "global"})
+        context_type = str(row.get("context_type") or "unknown")
+        context_source = str(row.get("context_source") or "")
+        local_context_key = str(row.get("local_context_key") or "")
+        interface_name = str(row.get("interface_name") or "")
+        normalized_interface = str(row.get("normalized_interface_name") or "")
+        observed_at = str(row.get("observed_at") or "")
+        observed_time, timestamp_status = _parse_time(observed_at)
+        age = (_utc_now() - observed_time) if observed_time and timestamp_status == "valid" else None
+        evidence_status = (
+            "recent" if age is not None and age <= timedelta(minutes=_recent_minutes())
+            else "stale" if age is not None
+            else "unknown"
+        )
+        latest_status = str(row.get("latest_status") or "")
+        latest_attempt_generation = int(row.get("latest_attempt_generation") or 0)
+        coverage_complete = (
+            generation == latest_attempt_generation
+            and latest_status in {"complete", "scope_unknown"}
+        )
+        device_id_value = str(row.get("source_device_id") or "")
+        interface_path = path_metadata.get(
+            (device_id_value, normalized_interface.strip().lower()),
+            {
+                'path_classification': 'unknown',
+                'path_evidence': 'interface_inventory_missing',
+                'aggregation_name': '',
+                'aggregation_protocol': '',
+                'topology_link_kind': '',
+            },
+        )
+        observation_id = _current_fdb_observation_id(row)
+        item = {
+            "id": observation_id,
+            "observation_id": observation_id,
+            "ip": None,
+            "mac": mac,
+            "tenant_id": tenant_id,
+            "site_id": site_id,
+            "site_name": str(row.get("site_name") or ""),
+            "vrf_id": str(row.get("mapped_vrf_id") or "") if resolved_context_type == "vrf" else "",
+            "vrf_name": str(row.get("address_space_name") or "") if resolved_context_type == "vrf" else "",
+            "vrf_context_status": resolved_context_type if resolved else "unknown",
+            "source_vrf_context_status": context_type,
+            "scope_status": "resolved" if resolved else "scope_pending",
+            "scope_resolution": "current_explicit_context_mapping" if resolved else "unresolved_current_context",
+            "registration_status": "not_applicable",
+            "subnet_id": None,
+            "subnet_prefix": None,
+            "source_type": "mac",
+            "observation_source": "fdb",
+            "source_device_id": device_id_value,
+            "source_device_name": str(row.get("source_device_name") or device_id_value),
+            "switch_id": device_id_value,
+            "switch_name": str(row.get("source_device_name") or device_id_value),
+            "switch_port": interface_name,
+            "source_interface_name": interface_name,
+            "normalized_interface_name": normalized_interface,
+            "switch_location_status": "observed_interface",
+            "switch_location_basis": "current_fdb_observation",
+            "path_ambiguity": False,
+            "path_ambiguity_reason": "",
+            "path_classification": str(interface_path.get('path_classification') or 'unknown'),
+            "path_evidence": str(interface_path.get('path_evidence') or ''),
+            "aggregation_name": str(interface_path.get('aggregation_name') or ''),
+            "aggregation_protocol": str(interface_path.get('aggregation_protocol') or ''),
+            "topology_link_kind": str(interface_path.get('topology_link_kind') or ''),
+            "virtual_gateway_mac": _is_virtual_gateway_mac(mac),
+            "vlan": str(row.get("vlan_id") or ""),
+            "entry_type": str(row.get("entry_type") or ""),
+            "observed_at": observed_at,
+            "mac_observed_at": observed_at,
+            "projected_at": "",
+            "evidence_status": evidence_status,
+            "timestamp_status": timestamp_status,
+            "hostname": "",
+            "hostname_source": "",
+            "coverage_status": "complete" if coverage_complete else latest_status or "unavailable",
+            "coverage_complete": coverage_complete,
+            "coverage_reason": (
+                "latest_attempt_complete" if coverage_complete
+                else "latest_attempt_not_successful; showing last successful current generation"
+            ),
+            "source_run_id": str(row.get("run_id") or ""),
+            "source_version": str(generation),
+            "source_identity_key": _digest({
+                "device_id": device_id_value,
+                "context_source": context_source,
+                "context_type": context_type,
+                "local_context_key": local_context_key,
+                "mac": mac,
+                "interface": normalized_interface,
+                "vlan": int(row.get("vlan_id") or 0),
+                "generation": generation,
+            }),
+            "ipam_address_id": None,
+            "ipam_mac": None,
+            "observed_mac": mac,
+            "mac_mismatch": False,
+            "calibration_safe": False,
+            "address_space_id": address_space_id or None,
+            "address_space_name": str(row.get("address_space_name") or "") if resolved else "",
+            "address_space_kind": "vrf" if resolved_context_type == "vrf" else "global" if resolved else "",
+            "context_source": context_source,
+            "context_type": context_type,
+            "local_context_key": local_context_key,
+            "local_context_name": str(row.get("local_context_name") or ""),
+            "collection_status": latest_status,
+            "generation": generation,
+            "latest_attempt_generation": latest_attempt_generation,
+            "last_success_generation": int(row.get("last_success_generation") or 0),
+            "last_attempt_at": str(row.get("last_attempt_at") or ""),
+            "last_success_at": str(row.get("last_success_at") or ""),
+            "source_evidence_count": 1,
+            "observations": [{
+                "observation_id": observation_id,
+                "source_type": "fdb",
+                "source_device_id": device_id_value,
+                "source_device_name": str(row.get("source_device_name") or device_id_value),
+                "interface_name": interface_name,
+                "vlan": str(row.get("vlan_id") or ""),
+                "ip": None,
+                "mac": mac,
+                "observed_at": observed_at,
+                "source_version": str(generation),
+                "coverage_status": latest_status,
+                "timestamp_status": timestamp_status,
+                "context_source": context_source,
+                "context_type": context_type,
+                "local_context_key": local_context_key,
+                "path_classification": str(interface_path.get('path_classification') or 'unknown'),
+                "aggregation_name": str(interface_path.get('aggregation_name') or ''),
+                "topology_link_kind": str(interface_path.get('topology_link_kind') or ''),
+                "virtual_gateway_mac": _is_virtual_gateway_mac(mac),
+            }],
+        }
+        staged.append(item)
+        if resolved:
+            path_key = (tenant_id, address_space_id, mac, str(row.get("vlan_id") or ""))
+        else:
+            path_key = (
+                tenant_id, site_id, f"device:{device_id_value}:{context_source}:{context_type}:{local_context_key}",
+                mac, str(row.get("vlan_id") or ""),
+            )
+        path_groups.setdefault(path_key, []).append(item)
+
+    for siblings in path_groups.values():
+        locations = {
+            (str(item.get("source_device_id") or ""), str(item.get("normalized_interface_name") or ""))
+            for item in siblings
+        }
+        if len(locations) > 1:
+            for item in siblings:
+                item["path_ambiguity"] = True
+                item["path_ambiguity_reason"] = "multiple_current_fdb_paths_for_mac_vlan_scope"
+                item["switch_location_status"] = "ambiguous"
+
+    ids: dict[str, int] = {}
+    for item in staged:
+        identity = str(item.get("id") or "")
+        ids[identity] = ids.get(identity, 0) + 1
+    return [item for item in staged if ids.get(str(item.get("id") or "")) == 1]
+
+
+def _current_endpoint_is_current(conn, observation_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Lock and reload a current ARP/ND row/state pair after selection."""
+    projection = [
+        *_current_endpoint_projection(conn, observation_source="arp"),
+        *_current_endpoint_projection(conn, observation_source="ndp"),
+    ]
+    matches = [item for item in projection if item.get("id") == observation_id]
+    if not matches:
+        raise LookupError("observation_not_current")
+    if len(matches) != 1:
+        raise ValueError("observation_version_ambiguous")
+    displayed = matches[0]
+    observation_source = str(displayed.get("observation_source") or displayed.get("source_type") or "arp")
+    if observation_source not in {"arp", "ndp"}:
+        raise ValueError("observation_source_not_supported_for_ip_action")
+    context_source = str(displayed.get("context_source") or "")
+    context_type = str(displayed.get("context_type") or "")
+    local_key = str(displayed.get("local_context_key") or "")
+    state = conn.execute(
+        """SELECT * FROM ipam_endpoint_collection_states
+             WHERE device_id = ? AND observation_source = ?
+               AND context_source = ? AND context_type = ? AND local_context_key = ?
+             FOR UPDATE""",
+        (displayed["source_device_id"], observation_source, context_source, context_type, local_key),
+    ).fetchone()
+    if not state:
+        raise LookupError("observation_not_current")
+    current = conn.execute(
+        """SELECT * FROM ipam_current_endpoint_observations
+             WHERE source_device_id = ? AND observation_source = ?
+               AND context_source = ? AND context_type = ? AND local_context_key = ?
+               AND generation = ? AND ip_address = ?::inet AND mac_address = ?
+               AND normalized_interface_name = ? AND vlan_key = ?
+             FOR UPDATE""",
+        (
+            displayed["source_device_id"], observation_source, context_source, context_type, local_key,
+            int(displayed["generation"]), displayed["ip"],
+            _normalized_mac(displayed.get("mac")).replace(":", ""),
+            str(displayed.get("normalized_interface_name") or ""), int(displayed.get("vlan") or 0),
+        ),
+    ).fetchone()
+    if not current:
+        raise ValueError("observation_version_changed")
+    locked = dict(current)
+    locked["vlan_id"] = locked.get("vlan_key")
+    locked["observed_at"] = locked.get("observed_at")
+    if _current_endpoint_observation_id(locked) != observation_id:
+        raise ValueError("observation_version_changed")
+    if int(state["last_success_generation"] or 0) != int(locked["generation"] or 0):
+        raise ValueError("observation_version_changed")
+    return displayed, {**locked, "_state": dict(state)}
+
+
+def _current_infrastructure_ip_keys(
+    conn, visible_scopes: set[tuple[str, str]] | None = None,
+) -> tuple[
+    set[tuple[str, str, str]], set[tuple[str, str, str]], set[tuple[str, str]],
+]:
+    """Read configured interface and managed-device addresses from current state."""
+    from services.ipam_service import _current_cmdb_interface_ip_observations
+
+    interface_keys: set[tuple[str, str, str]] = set()
+    for row in _current_cmdb_interface_ip_observations(conn):
+        sites = {str(row.get(key) or '') for key in ('asset_site_id', 'device_site_id') if row.get(key)}
+        address = _normalized_ip(row.get('ip_address'))
+        if len(sites) == 1 and address:
+            tenant_id = str(row.get('tenant_id') or DEFAULT_TENANT_ID)
+            site_id = next(iter(sites))
+            if visible_scopes is None or (tenant_id, site_id) in visible_scopes:
+                interface_keys.add((tenant_id, site_id, address))
+
+    managed_keys: set[tuple[str, str, str]] = set()
+    managed_addresses: set[tuple[str, str]] = set()
+    for row in conn.execute(
+        "SELECT tenant_id, site_id, ip_address FROM devices WHERE COALESCE(ip_address, '') <> ''"
+    ).fetchall():
+        address = _normalized_ip(row['ip_address'])
+        if not address:
+            continue
+        tenant_id = str(row['tenant_id'] or DEFAULT_TENANT_ID)
+        if visible_scopes is not None and (tenant_id, str(row['site_id'] or '')) not in visible_scopes:
+            continue
+        managed_addresses.add((tenant_id, address))
+        if row['site_id']:
+            managed_keys.add((tenant_id, str(row['site_id']), address))
+    return interface_keys, managed_keys, managed_addresses
+
+
+def _classify_current_endpoint_rows(
+    items: list[dict[str, Any]], fdb_items: list[dict[str, Any]],
+    interface_keys: set[tuple[str, str, str]], managed_keys: set[tuple[str, str, str]],
+    managed_addresses: set[tuple[str, str]],
+) -> None:
+    """Annotate observations without promoting ARP or FDB to formal ownership."""
+    fdb_by_identity: dict[tuple[str, ...], list[dict[str, Any]]] = {}
+    for fdb in fdb_items:
+        key = tuple(str(fdb.get(field) or '') for field in (
+            'tenant_id', 'site_id', 'source_device_id', 'context_source',
+            'context_type', 'local_context_key', 'mac', 'vlan',
+        ))
+        fdb_by_identity.setdefault(key, []).append(fdb)
+
+    for item in items:
+        ip = _normalized_ip(item.get('ip'))
+        if not ip:
+            item['endpoint_class'] = 'mac_only'
+            item['endpoint_class_reason'] = 'fdb_without_ip'
+            continue
+        identity = (
+            str(item.get('tenant_id') or DEFAULT_TENANT_ID),
+            str(item.get('site_id') or ''), ip,
+        )
+        if identity in interface_keys:
+            endpoint_class, reason = 'infrastructure', 'current_l3_interface_ip'
+        elif identity in managed_keys:
+            endpoint_class, reason = 'infrastructure', 'managed_device_ip'
+        elif _is_virtual_gateway_mac(item.get('mac')):
+            endpoint_class, reason = 'infrastructure', 'virtual_gateway_mac'
+            item['virtual_gateway_mac'] = True
+        elif (identity[0], ip) in managed_addresses:
+            endpoint_class, reason = 'infrastructure', 'managed_device_site_mismatch'
+        else:
+            key = tuple(str(item.get(field) or '') for field in (
+                'tenant_id', 'site_id', 'source_device_id', 'context_source',
+                'context_type', 'local_context_key', 'mac', 'vlan',
+            ))
+            paths = fdb_by_identity.get(key, []) if item.get('mac') and item.get('vlan') else []
+            access_paths = [fdb for fdb in paths if (
+                fdb.get('path_classification') == 'access_edge'
+                and not fdb.get('path_ambiguity')
+                and fdb.get('evidence_status') == 'recent'
+                and fdb.get('coverage_complete')
+                and fdb.get('switch_port')
+            )]
+            if (
+                item.get('evidence_status') == 'recent'
+                and item.get('coverage_complete')
+                and len(paths) == len(access_paths) == 1
+            ):
+                path = access_paths[0]
+                endpoint_class, reason = 'access_host', 'same_device_vlan_fdb_access'
+                item['switch_id'] = path.get('switch_id') or ''
+                item['switch_name'] = path.get('switch_name') or ''
+                item['switch_port'] = path.get('switch_port') or ''
+                item['path_classification'] = 'access_edge'
+                item['path_evidence'] = reason
+            else:
+                endpoint_class, reason = 'candidate', 'access_path_not_confirmed'
+        item['endpoint_class'] = endpoint_class
+        item['endpoint_class_reason'] = reason
+
+
+def _current_endpoint_identity(item: dict[str, Any]) -> tuple[str, ...]:
+    space = str(item.get('address_space_id') or '')
+    context = space or ':'.join(str(item.get(key) or '') for key in (
+        'context_source', 'context_type', 'local_context_key',
+    ))
     return (
-        str(snapshot.get("tenant_id") or ""), str(snapshot.get("site_id") or ""),
-        str(snapshot.get("vrf_id") or ""),
+        str(item.get('tenant_id') or DEFAULT_TENANT_ID),
+        str(item.get('site_id') or ''), context, str(item.get('ip') or ''),
     )
 
 
-def _source_snapshots(conn) -> list[dict[str, Any]]:
+def list_current_discovered_endpoints(
+    *, site_id: str = "", vrf_id: str = "", device_id: str = "", q: str = "",
+    kind: str = "all", evidence_status: str = "", registration_status: str = "",
+    network_scope: str = "all", endpoint_class: str = 'all',
+    page: int = 1, page_size: int = 20,
+    visible_scopes: set[tuple[str, str]] | None = None,
+) -> dict[str, Any]:
+    """List replaceable current ARP/FDB projections and explicit mappings only."""
+    if network_scope not in {"all", "business_vlan"}:
+        raise ValueError("Unsupported discovered endpoint network_scope")
+    if endpoint_class not in {'all', 'infrastructure', 'access_host', 'candidate'}:
+        raise ValueError('Unsupported endpoint_class')
+    conn = get_db_connection()
+    try:
+        arp_projection = _current_endpoint_projection(
+            conn, device_id=device_id.strip(), observation_source="arp",
+        )
+        ndp_projection = _current_endpoint_projection(
+            conn, device_id=device_id.strip(), observation_source="ndp",
+        )
+        fdb_projection = _current_fdb_endpoint_projection(conn, device_id=device_id.strip())
+        all_items = [*arp_projection, *ndp_projection, *fdb_projection]
+        if visible_scopes is not None:
+            all_items = [
+                item for item in all_items
+                if (str(item.get("tenant_id") or ""), str(item.get("site_id") or "")) in visible_scopes
+            ]
+        interface_keys, managed_keys, managed_addresses = _current_infrastructure_ip_keys(conn, visible_scopes)
+        _classify_current_endpoint_rows(all_items, fdb_projection, interface_keys, managed_keys, managed_addresses)
+
+        if network_scope == "business_vlan":
+            address_space_ids = sorted({str(item.get("address_space_id") or "") for item in all_items if item.get("address_space_id")})
+            business_prefixes: list[dict[str, Any]] = []
+            if address_space_ids:
+                marks = ",".join("?" for _ in address_space_ids)
+                rows = conn.execute(
+                    f"""SELECT id, prefix, tenant_id, site_id, address_space_id, network_type
+                          FROM prefixes
+                         WHERE address_space_id IN ({marks})
+                           AND COALESCE(status, 'active') <> 'stale'
+                           AND COALESCE(is_active, 1) = 1""",
+                    tuple(address_space_ids),
+                ).fetchall()
+                from services.ipam_network_scope import is_business_utilization_network
+                for raw in rows:
+                    prefix = dict(raw)
+                    if not is_business_utilization_network(prefix.get("network_type")):
+                        continue
+                    try:
+                        prefix["_network"] = ipaddress.ip_network(str(prefix.get("prefix") or ""), strict=False)
+                    except ValueError:
+                        continue
+                    business_prefixes.append(prefix)
+            filtered_for_network = []
+            for item in all_items:
+                try:
+                    address = ipaddress.ip_address(str(item.get("ip") or ""))
+                except ValueError:
+                    continue
+                if any(
+                    str(prefix.get("tenant_id") or DEFAULT_TENANT_ID) == str(item.get("tenant_id") or "")
+                    and str(prefix.get("address_space_id") or "") == str(item.get("address_space_id") or "")
+                    and (not prefix.get("site_id") or str(prefix.get("site_id")) == str(item.get("site_id") or ""))
+                    and address.version == prefix["_network"].version and address in prefix["_network"]
+                    for prefix in business_prefixes
+                ) and not _is_virtual_gateway_mac(item.get("mac")):
+                    filtered_for_network.append(item)
+            all_items = filtered_for_network
+
+        visible_items = list(all_items)
+        query = q.strip().lower()
+        filtered_source_items = [
+            item for item in all_items
+            if _list_filter(
+                item,
+                site_id=site_id.strip(), vrf_id=vrf_id.strip(), device_id=device_id.strip(),
+                query=query, kind=kind, evidence_status=evidence_status,
+                registration_status=registration_status,
+            )
+            and (endpoint_class == 'all' or item.get('endpoint_class') == endpoint_class)
+        ]
+        filtered_source_items.sort(
+            key=lambda item: (item.get("observed_at") or "", item.get("id") or ""), reverse=True,
+        )
+        safe_page = max(1, int(page or 1))
+        safe_page_size = min(max(1, int(page_size or 20)), 100)
+        start = (safe_page - 1) * safe_page_size
+
+        sites_by_id = {
+            str(item.get("site_id") or ""): str(item.get("site_name") or item.get("site_id") or "")
+            for item in visible_items if item.get("site_id")
+        }
+        site_options = [{"id": key, "name": sites_by_id[key]} for key in sorted(sites_by_id)]
+        vrf_options_by_id: dict[str, str] = {}
+        for item in visible_items:
+            if item.get("vrf_context_status") == "unknown":
+                vrf_options_by_id["__unknown__"] = "范围待确认"
+            else:
+                vrf_id_value = str(item.get("vrf_id") or "")
+                vrf_options_by_id[vrf_id_value] = str(item.get("vrf_name") or ("全局/默认" if not vrf_id_value else vrf_id_value))
+        vrf_options = [{"id": key, "name": vrf_options_by_id[key]} for key in sorted(vrf_options_by_id)]
+        devices_by_id = {
+            str(item.get("source_device_id") or ""): str(item.get("source_device_name") or item.get("source_device_id") or "")
+            for item in filtered_source_items if item.get("source_device_id")
+        }
+        device_options = [{"id": key, "name": devices_by_id[key]} for key in sorted(devices_by_id)]
+        arp_items = [item for item in filtered_source_items if item.get("ip")]
+        mac_items = [item for item in filtered_source_items if not item.get("ip") and item.get("mac")]
+        distinct_ips: dict[tuple[str, ...], str] = {}
+        class_rank = {'candidate': 0, 'access_host': 1, 'infrastructure': 2}
+        for item in arp_items:
+            key = _current_endpoint_identity(item)
+            current = distinct_ips.get(key, 'candidate')
+            proposed = str(item.get('endpoint_class') or 'candidate')
+            if class_rank.get(proposed, 0) >= class_rank.get(current, 0):
+                distinct_ips[key] = proposed
+        complete = bool(filtered_source_items) and all(
+            item.get("coverage_complete") and item.get("scope_status") == "resolved"
+            and item.get("evidence_status") == "recent" for item in filtered_source_items
+        )
+        summary = {
+            "discovered_ip_count": len(arp_items),
+            "distinct_ip_count": len(distinct_ips),
+            "infrastructure_ip_count": sum(value == 'infrastructure' for value in distinct_ips.values()),
+            "access_host_ip_count": sum(value == 'access_host' for value in distinct_ips.values()),
+            "candidate_ip_count": sum(value == 'candidate' for value in distinct_ips.values()),
+            "recent_ip_count": sum(item.get("evidence_status") == "recent" for item in arp_items),
+            "mac_only_count": len(mac_items),
+            "registered_count": sum(item.get("registration_status") == "registered" for item in arp_items),
+            "unregistered_count": sum(item.get("registration_status") == "unregistered" for item in arp_items),
+            "scope_pending_count": sum(item.get("scope_status") != "resolved" for item in filtered_source_items),
+            "conflict_count": sum(bool(item.get("ip_mac_conflict")) for item in filtered_source_items),
+            "path_ambiguity_count": sum(bool(item.get("path_ambiguity")) for item in filtered_source_items),
+            "coverage_status": "complete" if complete else "partial" if filtered_source_items else "unavailable",
+            "coverage_reason": "仅使用最新成功的当前 ARP/FDB 上下文行；未成功的最新尝试可能保留上一成功代次。",
+            "source_last_success_at": max((str(item.get("last_success_at") or "") for item in visible_items), default=""),
+        }
+        return {
+            "items": filtered_source_items[start:start + safe_page_size],
+            "total": len(filtered_source_items), "page": safe_page, "page_size": safe_page_size,
+            "has_more": start + safe_page_size < len(filtered_source_items),
+            "summary": summary, "sites": site_options, "vrfs": vrf_options,
+            "devices": device_options, "network_scope": network_scope,
+        }
+    finally:
+        conn.close()
+
+
+def get_current_discovered_endpoint(
+    observation_id: str, *, visible_scopes: set[tuple[str, str]] | None = None,
+) -> dict[str, Any] | None:
+    """Return one current ARP/FDB row and its current collection state only."""
+    conn = get_db_connection()
+    try:
+        fdb_items = _current_fdb_endpoint_projection(conn)
+        items = [
+            *_current_endpoint_projection(conn, observation_source="arp"),
+            *_current_endpoint_projection(conn, observation_source="ndp"),
+            *fdb_items,
+        ]
+        if visible_scopes is not None:
+            items = [item for item in items if (
+                str(item.get('tenant_id') or ''), str(item.get('site_id') or '')
+            ) in visible_scopes]
+        interface_keys, managed_keys, managed_addresses = _current_infrastructure_ip_keys(conn, visible_scopes)
+        _classify_current_endpoint_rows(items, fdb_items, interface_keys, managed_keys, managed_addresses)
+        matches = [item for item in items if item.get("id") == observation_id]
+        if len(matches) != 1:
+            return None
+        latest = matches[0]
+        if latest.get("source_type") == "mac":
+            return latest
+        observation = {
+            "observation_id": latest["id"],
+            "source_type": latest["source_type"],
+            "observation_source": latest["observation_source"],
+            "source_device_id": latest["source_device_id"],
+            "source_device_name": latest["source_device_name"],
+            "interface_name": latest["source_interface_name"],
+            "interface_id": None,
+            "vlan": latest["vlan"],
+            "ip": latest["ip"],
+            "mac": latest["mac"],
+            "observed_at": latest["observed_at"],
+            "projected_at": "",
+            "timestamp_status": latest["timestamp_status"],
+            "scope_status": latest["scope_status"],
+            "vrf_context_status": latest["vrf_context_status"],
+            "coverage_status": latest["coverage_status"],
+            "coverage_complete": latest["coverage_complete"],
+            "coverage_reason": latest["coverage_reason"],
+            "source_run_id": latest["source_run_id"],
+            "source_version": latest["source_version"],
+            "source_identity_key": latest["source_identity_key"],
+        }
+        return {**latest, "source_evidence_count": 1, "observations": [observation]}
+    finally:
+        conn.close()
+
+
+def register_current_endpoint_observation(
+    *, observation_id: str, subnet_id: str, expected_observed_at: str,
+    confirmed_scope: bool, requested_by: str, audit_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Register a current host observation against the operator-selected Prefix."""
+    if not confirmed_scope:
+        raise ValueError("scope_confirmation_required")
+    conn = get_db_connection()
+    try:
+        # Read both scopes without locks first. All writers that can claim an
+        # address identity then take the address-space advisory lock before
+        # locking Prefix, address space, or address rows.
+        observation_matches = [
+            item for item in [
+                *_current_endpoint_projection(conn, observation_source="arp"),
+                *_current_endpoint_projection(conn, observation_source="ndp"),
+            ]
+            if item.get("id") == observation_id
+        ]
+        if not observation_matches:
+            raise LookupError("observation_not_current")
+        if len(observation_matches) != 1:
+            raise ValueError("observation_version_ambiguous")
+        pre_displayed = observation_matches[0]
+        if pre_displayed.get("source_type") not in {"arp", "ndp"} or not pre_displayed.get("ip"):
+            raise ValueError("registration_requires_ip_observation")
+        pre_prefix_row = conn.execute(
+            """SELECT id, prefix, tenant_id, site_id, vrf_id, address_space_id,
+                      status, is_active
+                 FROM prefixes WHERE id = ?""",
+            (subnet_id,),
+        ).fetchone()
+        if not pre_prefix_row:
+            raise LookupError("subnet_not_found")
+        pre_prefix = dict(pre_prefix_row)
+        prefix_tenant = str(pre_prefix.get("tenant_id") or DEFAULT_TENANT_ID)
+        source_tenant = str(pre_displayed.get("tenant_id") or DEFAULT_TENANT_ID)
+        if prefix_tenant != source_tenant:
+            raise ValueError("subnet_tenant_does_not_match_source")
+        address_space_id = str(pre_prefix.get("address_space_id") or "")
+        if not address_space_id:
+            raise ValueError("subnet_address_space_required")
+        pre_space = conn.execute(
+            """SELECT security_tenant_id, status FROM ipam_address_spaces
+                 WHERE id = ?""",
+            (address_space_id,),
+        ).fetchone()
+        if not pre_space:
+            raise ValueError("subnet_address_space_invalid")
+        if (
+            str(pre_space["security_tenant_id"] or "") != prefix_tenant
+            or str(pre_space["status"] or "") != "active"
+        ):
+            raise ValueError("subnet_address_space_not_active")
+        if (
+            pre_displayed.get("scope_status") == "resolved"
+            and str(pre_displayed.get("address_space_id") or "") != address_space_id
+        ):
+            raise ValueError("observation_address_space_mismatch")
+        try:
+            pre_network = ipaddress.ip_network(str(pre_prefix.get("prefix") or ""), strict=False)
+            pre_address = ipaddress.ip_address(str(pre_displayed.get("ip") or ""))
+        except ValueError as exc:
+            raise ValueError("subnet_prefix_invalid") from exc
+        if pre_network.version != pre_address.version or pre_address not in pre_network:
+            raise ValueError("ip_not_in_subnet")
+
+        from services.ipam_address_space_service import lock_ipam_scope
+        lock_ipam_scope(
+            conn,
+            security_tenant_id=prefix_tenant,
+            address_space_id=address_space_id,
+            vrf_id=str(pre_prefix.get("vrf_id") or ""),
+        )
+        prefix_row = conn.execute(
+            "SELECT * FROM prefixes WHERE id = ? FOR UPDATE",
+            (subnet_id,),
+        ).fetchone()
+        if not prefix_row:
+            raise LookupError("subnet_not_found")
+        prefix = dict(prefix_row)
+        locked_scope = (
+            str(prefix.get("tenant_id") or DEFAULT_TENANT_ID),
+            str(prefix.get("site_id") or ""),
+            str(prefix.get("vrf_id") or ""),
+            str(prefix.get("address_space_id") or ""),
+        )
+        pre_scope = (
+            prefix_tenant,
+            str(pre_prefix.get("site_id") or ""),
+            str(pre_prefix.get("vrf_id") or ""),
+            address_space_id,
+        )
+        if locked_scope != pre_scope:
+            raise ValueError("subnet_scope_changed")
+        if str(prefix.get("status") or "active") != "active" or prefix.get("is_active") in (False, 0):
+            raise ValueError("subnet_not_active")
+        space_row = conn.execute(
+            """SELECT security_tenant_id, status FROM ipam_address_spaces
+                 WHERE id = ? FOR SHARE""",
+            (address_space_id,),
+        ).fetchone()
+        if (
+            not space_row
+            or str(space_row["security_tenant_id"] or "") != prefix_tenant
+            or str(space_row["status"] or "") != "active"
+        ):
+            raise ValueError("subnet_address_space_not_active")
+
+        displayed, current = _current_endpoint_is_current(conn, observation_id)
+        if (
+            displayed.get("scope_status") == "resolved"
+            and str(displayed.get("address_space_id") or "") != address_space_id
+        ):
+            raise ValueError("observation_address_space_mismatch")
+        if str(displayed.get("tenant_id") or DEFAULT_TENANT_ID) != prefix_tenant:
+            raise ValueError("subnet_tenant_does_not_match_source")
+        observed_at, observed_state = _parse_time(displayed.get("observed_at"))
+        expected_at, expected_state = _parse_time(expected_observed_at)
+        if observed_state != "valid" or expected_state != "valid" or observed_at != expected_at:
+            raise ValueError("observation_version_changed")
+        if _utc_now() - observed_at > timedelta(minutes=_recent_minutes()):
+            raise ValueError("observation_not_current")
+        device = conn.execute(
+            """SELECT id, COALESCE(NULLIF(btrim(tenant_id), ''), ?) AS tenant_id,
+                      COALESCE(site_id, '') AS site_id, hostname
+                 FROM devices WHERE id = ? FOR SHARE""",
+            (DEFAULT_TENANT_ID, displayed["source_device_id"]),
+        ).fetchone()
+        if not device:
+            raise LookupError("source_device_not_found")
+        if str(device["tenant_id"] or DEFAULT_TENANT_ID) != prefix_tenant:
+            raise ValueError("subnet_tenant_does_not_match_source")
+        device_tenant = str(device["tenant_id"] or DEFAULT_TENANT_ID)
+        try:
+            network = ipaddress.ip_network(str(prefix.get("prefix") or ""), strict=False)
+            address = ipaddress.ip_address(str(displayed.get("ip") or ""))
+        except ValueError as exc:
+            raise ValueError("subnet_prefix_invalid") from exc
+        if network.version != address.version or address not in network:
+            raise ValueError("ip_not_in_subnet")
+
+        from services.ipam_service import _create_address_with_conn
+        source_note = "当前 ARP 观察经操作者确认登记；主机归属待核实。"
+        source_device_name = str(device["hostname"] or device["id"] or "")
+        source_interface = str(displayed.get("source_interface_name") or "")
+        if source_device_name or source_interface:
+            source_note += f" 来源设备/接口：{source_device_name} {source_interface}".strip()
+        address_result = _create_address_with_conn(
+            conn, subnet_id, address=str(address), hostname="", device_id="", interface_name="",
+            mac_address=_normalized_mac(displayed.get("mac")) or "", device_type="",
+            description=source_note, status="active", lock_prefix=False,
+            requested_by=requested_by, source_type="ipam_current_endpoint",
+            source_ref=observation_id,
+        )
+        audit_values = dict(audit_context or {})
+        from services.audit_service import log_audit_event
+        log_audit_event(
+            event_type="ipam.discovery.register", category="ipam", severity="info", status="success",
+            summary=f"Registered current endpoint {address} in explicit Prefix {subnet_id}",
+            target_type="ip_address", target_id=address_result.get("id"), target_name=subnet_id,
+            before={"registration_status": "unregistered"},
+            after={"registration_status": "registered", "address": str(address), "subnet_id": subnet_id},
+            details={
+                "current_observation_id": observation_id,
+                "generation": int(current["generation"]),
+                "explicit_prefix_selection": True,
+                "source_context_resolution": displayed.get("scope_status"),
+            },
+            conn=conn, **audit_values,
+        )
+        conn.commit()
+        return {
+            "ok": True,
+            "ipam_address_id": str(address_result.get("id") or ""),
+            "observation_id": observation_id,
+            "created": not bool(address_result.get("reused")),
+            "assertion_id": "",
+            "scope": {
+                "tenant_id": prefix_tenant, "site_id": str(prefix.get("site_id") or ""),
+                "vrf_id": str(prefix.get("vrf_id") or ""), "subnet_id": subnet_id,
+            },
+            "source_scope": {
+                "tenant_id": device_tenant, "site_id": str(device["site_id"] or ""),
+                "vrf_id": str(displayed.get("vrf_id") or ""),
+                "address_space_id": displayed.get("address_space_id"),
+                "context_status": displayed.get("scope_status"),
+            },
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def calibrate_current_endpoint_mac(
+    *, observation_id: str, ipam_address_id: str, expected_observed_at: str,
+    expected_mac_address: str, confirmed: bool, audit_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Calibrate an IPAM MAC from one unique, resolved current ARP/ND row in the same space."""
+    if not confirmed:
+        raise ValueError("mac_calibration_confirmation_required")
+    conn = get_db_connection()
+    try:
+        observation_matches = [
+            item for item in [
+                *_current_endpoint_projection(conn, observation_source="arp"),
+                *_current_endpoint_projection(conn, observation_source="ndp"),
+            ]
+            if item.get("id") == observation_id
+        ]
+        if not observation_matches:
+            raise LookupError("observation_not_current")
+        if len(observation_matches) != 1:
+            raise ValueError("observation_version_ambiguous")
+        pre_displayed = observation_matches[0]
+        if not pre_displayed.get("address_space_id") or pre_displayed.get("scope_status") != "resolved":
+            raise ValueError("observation_not_calibration_safe")
+        pre_address_row = conn.execute(
+            """SELECT ip.id, ip.address, ip.address_inet, ip.address_space_id,
+                      ip.status, prefix.id AS prefix_id,
+                      prefix.tenant_id AS prefix_tenant_id,
+                      prefix.site_id AS prefix_site_id, prefix.vrf_id AS prefix_vrf_id,
+                      prefix.address_space_id AS prefix_address_space_id,
+                      prefix.status AS prefix_status, prefix.is_active AS prefix_is_active
+                 FROM ip_addresses ip
+                 JOIN prefixes prefix ON prefix.id = ip.subnet_id
+                WHERE ip.id = ?""",
+            (ipam_address_id,),
+        ).fetchone()
+        if not pre_address_row:
+            raise LookupError("ipam_address_not_found")
+        pre_address = dict(pre_address_row)
+        prefix_address_space_id = str(pre_address.get("prefix_address_space_id") or "")
+        address_field_space_id = str(pre_address.get("address_space_id") or "")
+        address_space_id = prefix_address_space_id
+        tenant_id = str(pre_address.get("prefix_tenant_id") or DEFAULT_TENANT_ID)
+        prefix_vrf_id = str(pre_address.get("prefix_vrf_id") or "")
+        if (
+            not address_space_id
+            or (address_field_space_id and address_field_space_id != prefix_address_space_id)
+            or address_space_id != str(pre_displayed.get("address_space_id") or "")
+            or tenant_id != str(pre_displayed.get("tenant_id") or "")
+            or _normalized_ip(pre_address.get("address_inet") or pre_address.get("address")) != str(pre_displayed.get("ip") or "")
+        ):
+            raise ValueError("observation_scope_does_not_match_ipam")
+        pre_space = conn.execute(
+            "SELECT security_tenant_id, status FROM ipam_address_spaces WHERE id = ?",
+            (address_space_id,),
+        ).fetchone()
+        if (
+            not address_space_id or not pre_space
+            or str(pre_space["security_tenant_id"] or "") != tenant_id
+            or str(pre_space["status"] or "") != "active"
+        ):
+            raise ValueError("observation_scope_does_not_match_ipam")
+        if str(pre_address.get("prefix_status") or "active") != "active" or pre_address.get("prefix_is_active") in (False, 0):
+            raise ValueError("ipam_address_not_active")
+
+        from services.ipam_address_space_service import lock_ipam_scope
+        lock_ipam_scope(
+            conn,
+            security_tenant_id=tenant_id,
+            address_space_id=address_space_id,
+            vrf_id=prefix_vrf_id,
+        )
+        prefix_row = conn.execute(
+            "SELECT * FROM prefixes WHERE id = ? FOR UPDATE",
+            (str(pre_address["prefix_id"]),),
+        ).fetchone()
+        if not prefix_row:
+            raise LookupError("ipam_prefix_not_found")
+        prefix = dict(prefix_row)
+        locked_prefix_scope = (
+            str(prefix.get("tenant_id") or DEFAULT_TENANT_ID),
+            str(prefix.get("site_id") or ""),
+            str(prefix.get("vrf_id") or ""),
+            str(prefix.get("address_space_id") or ""),
+        )
+        pre_prefix_scope = (
+            tenant_id,
+            str(pre_address.get("prefix_site_id") or ""),
+            prefix_vrf_id,
+            str(pre_address.get("prefix_address_space_id") or ""),
+        )
+        if locked_prefix_scope != pre_prefix_scope or str(prefix.get("status") or "active") != "active" or prefix.get("is_active") in (False, 0):
+            raise ValueError("ipam_scope_changed")
+        space_row = conn.execute(
+            """SELECT security_tenant_id, status FROM ipam_address_spaces
+                 WHERE id = ? FOR SHARE""",
+            (address_space_id,),
+        ).fetchone()
+        if (
+            not space_row
+            or str(space_row["security_tenant_id"] or "") != tenant_id
+            or str(space_row["status"] or "") != "active"
+        ):
+            raise ValueError("observation_scope_does_not_match_ipam")
+        address_row = conn.execute(
+            "SELECT * FROM ip_addresses WHERE id = ? FOR UPDATE",
+            (ipam_address_id,),
+        ).fetchone()
+        if not address_row:
+            raise LookupError("ipam_address_not_found")
+        address = dict(address_row)
+        locked_address_space_id = str(address.get("address_space_id") or prefix.get("address_space_id") or "")
+        if (
+            locked_address_space_id != address_space_id
+            or (address.get("address_space_id") and str(address.get("address_space_id")) != str(prefix.get("address_space_id") or ""))
+            or (address.get("tenant_id") and str(address.get("tenant_id")) != tenant_id)
+        ):
+            raise ValueError("ipam_scope_changed")
+        if str(address.get("status") or "active") in {"released", "available"}:
+            raise ValueError("ipam_address_not_active")
+
+        displayed, current = _current_endpoint_is_current(conn, observation_id)
+        if (
+            displayed.get("scope_status") != "resolved"
+            or str(displayed.get("address_space_id") or "") != address_space_id
+            or str(displayed.get("tenant_id") or "") != tenant_id
+        ):
+            raise ValueError("observation_scope_does_not_match_ipam")
+        observed_at, observed_state = _parse_time(displayed.get("observed_at"))
+        expected_at, expected_state = _parse_time(expected_observed_at)
+        if observed_state != "valid" or expected_state != "valid" or observed_at != expected_at:
+            raise ValueError("observation_version_changed")
+        if _utc_now() - observed_at > timedelta(minutes=_recent_minutes()):
+            raise ValueError("observation_not_current")
+
+        current_rows = [
+            *_current_endpoint_projection(conn, observation_source="arp"),
+            *_current_endpoint_projection(conn, observation_source="ndp"),
+        ]
+        same_scope_ip = [
+            item for item in current_rows
+            if str(item.get("tenant_id") or "") == tenant_id
+            and str(item.get("address_space_id") or "") == address_space_id
+            and str(item.get("ip") or "") == str(displayed.get("ip") or "")
+            and item.get("scope_status") == "resolved"
+        ]
+        if len(same_scope_ip) != 1 or same_scope_ip[0].get("id") != observation_id:
+            raise ValueError("observation_not_unique_in_address_space")
+
+        if _normalized_ip(address.get("address_inet") or address.get("address")) != str(displayed.get("ip") or ""):
+            raise ValueError("observation_scope_does_not_match_ipam")
+        current_mac = _normalized_mac(address.get("mac_address"))
+        expected_mac = _normalized_mac(expected_mac_address)
+        observed_mac = _normalized_mac(displayed.get("observed_mac"))
+        if current_mac != expected_mac:
+            raise ValueError("ipam_mac_version_changed")
+        if not observed_mac or observed_mac == current_mac:
+            raise ValueError("mac_calibration_not_required")
+        updated_at = _iso(_utc_now()) or _utc_now().isoformat()
+        conn.execute(
+            "UPDATE ip_addresses SET mac_address = ?, updated_at = ?, revision = revision + 1 WHERE id = ?",
+            (observed_mac, updated_at, ipam_address_id),
+        )
+        audit_values = dict(audit_context or {})
+        from services.audit_service import log_audit_event
+        log_audit_event(
+            event_type="ipam.discovery.mac_calibrate", category="ipam", severity="warning", status="success",
+            summary=f"Calibrated IPAM MAC for address {ipam_address_id}",
+            target_type="ip_address", target_id=ipam_address_id,
+            before={"mac_address": current_mac},
+            after={"mac_address": observed_mac, "current_observation_id": observation_id},
+            details={
+                "confirmed": True, "observed_at": displayed.get("observed_at"),
+                "address_space_id": address_space_id, "generation": int(current["generation"]),
+            },
+            conn=conn, **audit_values,
+        )
+        conn.commit()
+        return {
+            "ok": True, "ipam_address_id": ipam_address_id,
+            "observation_id": observation_id, "previous_mac": current_mac,
+            "mac": observed_mac, "observed_at": displayed.get("observed_at"),
+            "scope": {
+                "tenant_id": tenant_id,
+                "site_id": str(prefix.get("site_id") or ""),
+                "vrf_id": str(prefix.get("vrf_id") or ""),
+                "address_space_id": address_space_id,
+            },
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _current_routing_context_mappings(conn) -> dict[tuple[str, str], list[dict[str, Any]]]:
+    """Load only explicit active device-local mappings for endpoint context keys."""
     rows = conn.execute(
-        """SELECT id, collector, device_id, source_device_name, tenant_id, site_id, vrf_id,
-                  vrf_context_status, scope_status, source_run_id, source_version, source_status,
-                  coverage_status, coverage_complete, coverage_reason, entry_count,
-                  observed_at, projected_at
-             FROM ipam_discovery_snapshots
-            WHERE collector = 'arp'
-            ORDER BY observed_at, projected_at"""
+        """SELECT context.device_id, context.context_source, context.context_type,
+                  context.local_context_key, context.address_space_id,
+                  COALESCE(NULLIF(btrim(device.tenant_id), ''), 'tenant-default') AS device_tenant_id,
+                  space.security_tenant_id, space.kind AS address_space_kind,
+                  space.vrf_id, space.status AS address_space_status
+             FROM ipam_device_routing_contexts AS context
+             JOIN devices AS device ON device.id = context.device_id
+             JOIN ipam_address_spaces AS space ON space.id = context.address_space_id
+            WHERE context.status = 'active' AND space.status = 'active'
+            ORDER BY context.device_id, context.local_context_key, context.context_source"""
     ).fetchall()
-    return [dict(row) for row in rows]
+    mappings: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for row in rows:
+        item = dict(row)
+        if str(item.get('security_tenant_id') or '') != str(item.get('device_tenant_id') or ''):
+            continue
+        context_type = str(item.get('context_type') or '')
+        expected_kind = 'vrf' if context_type == 'vrf' else 'global' if context_type == 'global' else ''
+        if not expected_kind or str(item.get('address_space_kind') or '') != expected_kind:
+            continue
+        key = (str(item.get('device_id') or ''), str(item.get('local_context_key') or ''))
+        mappings.setdefault(key, []).append(item)
+    return mappings
+
+
+def _current_arp_collection_state(
+    conn,
+    *,
+    devices: dict[str, dict[str, Any]],
+    scope_visible,
+) -> dict[str, Any]:
+    """Return only the latest sweep and each device's current result row."""
+    status_rows = conn.execute(
+        """SELECT status.device_id, status.status, status.source,
+                  status.last_attempt_at, status.last_success_at,
+                  status.coverage_total, status.coverage_supported, status.metadata_json
+             FROM device_collection_status AS status
+            WHERE status.collector = 'arp'
+            ORDER BY status.device_id"""
+    ).fetchall()
+    status_by_device = {str(row['device_id']): dict(row) for row in status_rows}
+    sweep_row = conn.execute(
+        "SELECT * FROM collector_sweep_state WHERE collector = 'arp'"
+    ).fetchone()
+    sweep = dict(sweep_row) if sweep_row else {}
+    run_id = str(sweep.get('last_run_id') or '').strip()
+    current_by_device: dict[str, dict[str, Any]] = {}
+    for device_id, status in status_by_device.items():
+        metadata = _json_object(status.get('metadata_json'))
+        if run_id and str(metadata.get('collection_run_id') or '').strip() == run_id:
+            current_by_device[device_id] = {**status, '_metadata': metadata}
+
+    try:
+        eligible = int(sweep.get('last_eligible') or 0)
+        selected = int(sweep.get('last_selected') or 0)
+        successful = int(sweep.get('last_successful') or 0)
+        failed = int(sweep.get('last_failed') or 0)
+        collected = int(sweep.get('last_collected') or 0)
+    except (TypeError, ValueError):
+        eligible = selected = successful = failed = collected = 0
+    started_at, started_state = _parse_time(sweep.get('last_started_at'))
+    completed_at, completed_state = _parse_time(sweep.get('last_completed_at'))
+
+    def result_is_complete(status: dict[str, Any]) -> bool:
+        metadata = status.get('_metadata') or {}
+        try:
+            coverage_total = int(status.get('coverage_total') or 0)
+            entry_count = int(metadata.get('entry_count'))
+            coverage_supported = int(status.get('coverage_supported') or 0)
+        except (TypeError, ValueError):
+            return False
+        attempted_at, attempted_state = _parse_time(status.get('last_attempt_at'))
+        success_at, success_state = _parse_time(status.get('last_success_at'))
+        return bool(
+            status.get('status') == 'success'
+            and str(status.get('source') or '') == 'arp_sweep'
+            and coverage_supported > 0
+            and entry_count == coverage_total
+            and attempted_state == success_state == 'valid'
+            and attempted_at and success_at and attempted_at == success_at
+            and started_state == completed_state == 'valid'
+            and started_at and completed_at
+            and started_at <= attempted_at <= success_at <= completed_at
+        )
+
+    all_results_complete = bool(current_by_device) and all(
+        result_is_complete(status) for status in current_by_device.values()
+    )
+    valid_current_by_device = {
+        device_id: status
+        for device_id, status in current_by_device.items()
+        if result_is_complete(status)
+    }
+    expected_status_count = selected
+    visible_status_set = all(
+        scope_visible(
+            devices.get(device_id, {}).get('tenant_id'),
+            devices.get(device_id, {}).get('site_id'),
+        )
+        for device_id in current_by_device
+    )
+    complete = bool(
+        run_id and eligible > 0 and selected == eligible
+        and successful == selected and failed == 0
+        and expected_status_count == len(current_by_device)
+        and all_results_complete and visible_status_set
+        and started_state == completed_state == 'valid'
+        and started_at and completed_at and completed_at >= started_at
+        and sum(int(status.get('coverage_total') or 0) for status in current_by_device.values()) == collected
+    )
+    return {
+        'sweep': sweep,
+        'run_id': run_id,
+        'status_by_device': status_by_device,
+        'current_by_device': current_by_device,
+        'valid_current_by_device': valid_current_by_device,
+        'complete': complete,
+        'started_at': started_at,
+        'completed_at': completed_at,
+        'eligible': eligible,
+        'selected': selected,
+        'successful': successful,
+        'failed': failed,
+        'collected': collected,
+    }
 
 
 def _reconciliation_ipam_status(item: dict[str, Any]) -> str:
@@ -1760,38 +3219,34 @@ def _reconciliation_address_is_stale_eligible(item: dict[str, Any]) -> bool:
     return not interface_name.startswith("loopback") and not (interface_name.startswith("lo") and not interface_name.startswith("local"))
 
 
-def _scoped_ipam_records(
-    ipam_by_scope: dict[tuple[str, str, str, str], list[dict[str, Any]]],
-) -> list[dict[str, Any]]:
-    seen: set[str] = set()
-    records = []
-    for values in ipam_by_scope.values():
-        for item in values:
-            marker = str(item.get("id") or "")
-            if marker and marker not in seen:
-                seen.add(marker)
-                records.append(item)
-    return records
-
-
-def _known_scope_key(item: dict[str, Any]) -> tuple[str, str, str] | None:
-    if item.get("_scope_conflict"):
-        return None
-    if not item.get("_tenant_id") or not item.get("_site_id"):
-        return None
-    return (str(item["_tenant_id"]), str(item["_site_id"]), str(item["_vrf_id"] or ""))
-
-
 def build_ipam_reconciliation(
     conn, *, active_tab: str = "", q: str = "", page: int | None = None,
     page_size: int = 20, visible_scopes: set[tuple[str, str]] | None = None,
 ) -> dict[str, Any]:
-    """Build reconciliation findings solely from IPAM-owned source evidence."""
+    """Build from current IPAM, endpoint, CMDB and collector state only.
+
+    Discovery-ledger observations and snapshots remain available to the
+    discovery endpoints, but this current-state page never reads them.
+    """
     now = _utc_now()
     from services.ipam_inventory_scope import load_inventory_catalog, match_inventory_prefix
+    from services.ipam_service import _current_cmdb_interface_ip_observations
+    from services.ipam_current_endpoint_observation_service import (
+        get_current_endpoint_collection_states,
+        list_current_endpoint_observations,
+    )
+    from core.interface_utils import normalize_interface_name
+
     prefix_catalog, _prefix_sites, _prefix_vrfs = load_inventory_catalog(conn)
-    ipam_by_scope, ipam_records = _ipam_address_index(conn)
+    _ipam_by_scope, ipam_records = _ipam_address_index(conn)
     devices, sites, vrfs = _device_catalog(conn)
+    address_spaces = {
+        str(row["id"]): dict(row)
+        for row in conn.execute(
+            """SELECT id, security_tenant_id, kind, vrf_id, status
+                 FROM ipam_address_spaces"""
+        ).fetchall()
+    }
 
     def scope_visible(tenant_id: Any, site_id: Any) -> bool:
         if visible_scopes is None:
@@ -1802,542 +3257,785 @@ def build_ipam_reconciliation(
         item for item in ipam_records
         if scope_visible(item.get("_tenant_id"), item.get("_site_id"))
     ]
-    ipam_by_scope = {}
-    for item in ipam_records:
-        ipam_by_scope.setdefault(
-            (item["_tenant_id"], item["_site_id"], item["_vrf_id"], item["_address"]), []
-        ).append(item)
-    observations = _load_projected_observations(conn)
-    observations = [
-        row for row in observations
-        if scope_visible(row.get("tenant_id"), row.get("site_id"))
-    ]
-    decorated = _decorate_observations(observations, conn, now, ipam_by_scope_override=ipam_by_scope)
-    history_rows = _load_projected_observations(conn, history=True)
-    history_rows = [
-        row for row in history_rows
-        if scope_visible(row.get("tenant_id"), row.get("site_id"))
-    ]
-    history_decorated = _decorate_observations(history_rows, conn, now, ipam_by_scope_override=ipam_by_scope)
-    snapshots = [
-        row for row in _source_snapshots(conn)
-        if scope_visible(row.get("tenant_id"), row.get("site_id"))
-    ]
-    status_rows = conn.execute(
-        """SELECT s.device_id, s.status, s.source, s.last_attempt_at, s.last_success_at,
-                  s.coverage_total, s.coverage_supported, s.metadata_json,
-                  d.hostname, d.site_id, d.site, d.tenant_id
-             FROM device_collection_status s
-             LEFT JOIN devices d ON d.id = s.device_id
-            WHERE s.collector = 'arp'
-            ORDER BY s.device_id"""
-    ).fetchall()
-    source_status_by_device = {str(row["device_id"]): dict(row) for row in status_rows}
-    sweep_row = conn.execute(
-        "SELECT * FROM collector_sweep_state WHERE collector = 'arp'"
-    ).fetchone()
-    sweep = dict(sweep_row) if sweep_row else {}
-    current_sweep_run_id = str(sweep.get("last_run_id") or "")
-    current_sweep_devices = [
-        row for row in source_status_by_device.values()
-        if str(_json_object(row.get("metadata_json")).get("collection_run_id") or "") == current_sweep_run_id
-    ]
-    try:
-        last_eligible = int(sweep.get("last_eligible") or 0)
-        last_selected = int(sweep.get("last_selected") or 0)
-    except (TypeError, ValueError):
-        last_eligible = last_selected = 0
-    current_sweep_completed, current_sweep_completed_state = _parse_time(sweep.get("last_completed_at"))
-    source_set_known = bool(
-        current_sweep_run_id and last_eligible > 0 and last_selected == last_eligible
-        and len(current_sweep_devices) == last_selected
-        and current_sweep_completed_state == "valid" and current_sweep_completed
-        and all(
-            row.get("status") == "success"
-            and str(row.get("source") or "") == "arp_sweep"
-            and int(row.get("coverage_supported") or 0) > 0
-            for row in current_sweep_devices
-        )
-    )
-    if visible_scopes is not None:
-        source_set_known = source_set_known and all(
-            scope_visible(
-                devices.get(str(row.get("device_id") or ""), {}).get("tenant_id"),
-                devices.get(str(row.get("device_id") or ""), {}).get("site_id"),
-            )
-            for row in current_sweep_devices
-        )
-
-    all_observations_by_ip: dict[str, list[dict[str, Any]]] = {}
-    exact_history: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
-    current_by_scope_ip: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
-    latest_endpoint_seen: datetime | None = None
-    latest_active_endpoint_seen: datetime | None = None
-    for item in history_decorated:
-        if item.get("source_type") != "arp" or not item.get("ip"):
-            continue
-        ip = str(item.get("ip"))
-        all_observations_by_ip.setdefault(ip, []).append(item)
-        observed_at, timestamp_status = _parse_time(item.get("observed_at"))
-        if observed_at and timestamp_status == "valid" and (latest_endpoint_seen is None or observed_at > latest_endpoint_seen):
-            latest_endpoint_seen = observed_at
-        if item.get("scope_status") == "resolved" and timestamp_status == "valid" and observed_at:
-            key = (str(item.get("tenant_id") or ""), str(item.get("site_id") or ""), str(item.get("vrf_id") or ""), ip)
-            exact_history.setdefault(key, []).append(item)
-
-    for item in decorated:
-        if item.get("source_type") != "arp" or not item.get("ip"):
-            continue
-        observed_at, timestamp_status = _parse_time(item.get("observed_at"))
-        if (
-            item.get("scope_status") == "resolved"
-            and item.get("evidence_status") == "recent"
-            and timestamp_status == "valid" and observed_at
-        ):
-            key = (str(item.get("tenant_id") or ""), str(item.get("site_id") or ""), str(item.get("vrf_id") or ""), str(item.get("ip") or ""))
-            current_by_scope_ip.setdefault(key, []).append(item)
-            if latest_active_endpoint_seen is None or observed_at > latest_active_endpoint_seen:
-                latest_active_endpoint_seen = observed_at
-
-    ipam_by_id = {str(item.get("id") or ""): item for item in ipam_records}
     allocated_records = [
         item for item in ipam_records
         if _reconciliation_ipam_status(item) not in {"available", "released"}
     ]
-    allocated_count = len(allocated_records)
-    interface_snapshot_ip_count = 0
-    try:
-        from services.ipam_service import _current_cmdb_interface_ip_observations
-        interface_rows = _current_cmdb_interface_ip_observations(conn)
-        interface_snapshot_ip_count = sum(
-            1 for item in interface_rows
-            if scope_visible(
-                item.get("tenant_id") or devices.get(str(item.get("device_id") or ""), {}).get("tenant_id"),
-                item.get("asset_site_id") or item.get("device_site_id") or devices.get(str(item.get("device_id") or ""), {}).get("site_id"),
-            )
+    ipam_by_space_ip: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    all_ipam_by_space_ip: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    for item in ipam_records:
+        space_id = str(item.get("_address_space_id") or "")
+        if not space_id:
+            continue
+        key = (
+            str(item.get("_tenant_id") or ""),
+            space_id,
+            str(item.get("_address") or ""),
         )
-    except Exception:
-        # Interface snapshots are an explanatory source count only. Their
-        # availability must never turn into a discovery/reconciliation input.
-        interface_snapshot_ip_count = 0
+        all_ipam_by_space_ip.setdefault(key, []).append(item)
+        if not item.get("_scope_conflict"):
+            ipam_by_space_ip.setdefault(key, []).append(item)
 
-    undocumented: dict[tuple[Any, ...], dict[str, Any]] = {}
-    mismatched: dict[tuple[Any, ...], dict[str, Any]] = {}
-    unscoped: dict[str, dict[str, Any]] = {}
-    for item in decorated:
-        if item.get("source_type") != "arp" or not item.get("ip"):
-            continue
-        finding_observed_at, finding_time_status = _parse_time(item.get("observed_at"))
-        if finding_time_status != "valid" or not finding_observed_at or now - finding_observed_at > timedelta(minutes=_recent_minutes()):
-            continue
-        if item.get("evidence_status") != "recent" and item.get("evidence_status") != "conflict":
-            continue
-        if item.get("scope_status") != "resolved":
-            unscoped[str(item.get("id") or "")] = {
-                **item, "reason": "source_scope_conflict" if item.get("scope_status") == "conflict" else "source_scope_pending",
+    context_mappings = _current_routing_context_mappings(conn)
+    collection_state = _current_arp_collection_state(
+        conn, devices=devices, scope_visible=scope_visible,
+    )
+    source_set_known = bool(collection_state["complete"])
+    current_run_id = str(collection_state["run_id"] or "")
+    last_checked_at = _iso(collection_state["completed_at"]) if collection_state["completed_at"] else ""
+    valid_current_by_device = collection_state["valid_current_by_device"]
+
+    def scope_for_device(device_id: str, address_space_id: str = "") -> dict[str, Any]:
+        device = devices.get(str(device_id or ""))
+        if not device:
+            return {
+                "tenant_id": "", "site_id": "", "vrf_id": "",
+                "scope_status": "scope_pending", "reason": "source_device_not_found",
             }
-            if item.get("ip_mac_conflict"):
-                conflict_key = ("source-conflict", item.get("tenant_id"), item.get("site_id"), item.get("ip"), item.get("mac"))
-                mismatched[conflict_key] = {
-                    **item, "conflict": True, "mac_mismatch": False,
-                    "reason": "multiple_macs_for_same_scope_ip", "ipam_address_id": "",
+        resolved = _resolve_device_scope(device, sites, vrfs)
+        tenant_id = str(resolved.get("tenant_id") or "")
+        site_id = str(resolved.get("site_id") or "")
+        if resolved.get("scope_status") == "conflict":
+            return {**resolved, "reason": "source_device_scope_conflict"}
+        if not tenant_id or not site_id:
+            return {**resolved, "scope_status": "scope_pending", "reason": "source_device_scope_missing"}
+        space = address_spaces.get(str(address_space_id or ""))
+        if (
+            not space
+            or str(space.get("status") or "") != "active"
+            or str(space.get("security_tenant_id") or "") != tenant_id
+        ):
+            return {**resolved, "scope_status": "scope_pending", "reason": "address_space_mapping_missing"}
+        return {
+            **resolved,
+            "tenant_id": tenant_id,
+            "site_id": site_id,
+            "vrf_id": str(space.get("vrf_id") or ""),
+            "address_space_id": str(address_space_id),
+            "scope_status": "resolved",
+            "reason": "",
+        }
+
+    def endpoint_scope(endpoint: dict[str, Any]) -> tuple[dict[str, Any], str, str]:
+        device_id = str(endpoint.get("switch_id") or "")
+        device = devices.get(device_id)
+        if not device:
+            return scope_for_device(device_id), "", "source_device_not_found"
+        base = _resolve_device_scope(device, sites, vrfs)
+        if base.get("scope_status") == "conflict":
+            return base, "", "source_device_scope_conflict"
+        # network_endpoints stores a local VRF key only. Resolve it solely by
+        # an exact active device-local mapping; never by VRF display names or aliases.
+        local_key = str(endpoint.get("vrf") or "").strip()
+        if not local_key:
+            return {**base, "scope_status": "scope_pending"}, "", "routing_context_mapping_missing"
+        candidates = context_mappings.get((device_id, local_key), [])
+        identities = {
+            (str(row.get("address_space_id") or ""), str(row.get("context_type") or ""))
+            for row in candidates
+        }
+        if len(identities) != 1:
+            reason = "routing_context_mapping_ambiguous" if identities else "routing_context_mapping_missing"
+            return {**base, "scope_status": "scope_pending"}, "", reason
+        address_space_id, context_type = next(iter(identities))
+        resolved = scope_for_device(device_id, address_space_id)
+        if resolved.get("scope_status") != "resolved":
+            return resolved, "", str(resolved.get("reason") or "routing_context_mapping_invalid")
+        return resolved, context_type, ""
+
+    def endpoint_source_identity(source: dict[str, Any]) -> tuple[str, ...]:
+        """Deduplicate only the same source position within one explicit scope."""
+        normalized_interface = normalize_interface_name(str(source.get("interface_name") or ""))
+        return (
+            str(source.get("tenant_id") or ""),
+            str(source.get("site_id") or ""),
+            str(source.get("address_space_id") or ""),
+            str(source.get("ip") or ""),
+            _normalized_mac(source.get("mac")),
+            str(source.get("vlan") or ""),
+            str(source.get("source_device_id") or ""),
+            normalized_interface.strip().lower(),
+            str(source.get("local_context_key") or ""),
+        )
+
+    unscoped: dict[tuple[Any, ...], dict[str, Any]] = {}
+    unresolved_by_tenant_ip: set[tuple[str, str]] = set()
+    unresolved_by_tenant_site_ip: set[tuple[str, str, str]] = set()
+
+    def add_unscoped(item: dict[str, Any], *, reason: str, source_kind: str) -> None:
+        record = {
+            **item,
+            "kind": source_kind,
+            "reason": reason,
+            "scope_status": str(item.get("scope_status") or "scope_pending"),
+            "address_space_id": str(item.get("address_space_id") or ""),
+        }
+        identity = (source_kind, record.get("id"), record.get("ip"), reason)
+        unscoped[identity] = record
+        tenant_id = str(record.get("tenant_id") or "")
+        site_id = str(record.get("site_id") or "")
+        ip = str(record.get("ip") or "")
+        if tenant_id and ip:
+            unresolved_by_tenant_ip.add((tenant_id, ip))
+            if site_id:
+                unresolved_by_tenant_site_ip.add((tenant_id, site_id, ip))
+
+    active_endpoint_rows = conn.execute(
+        """SELECT id, ip, mac, hostname, switch_id, switch_port, vlan, vrf, site,
+                  source_type, first_seen, last_seen, is_active
+             FROM network_endpoints
+            WHERE is_active = 1
+            ORDER BY ip, id"""
+    ).fetchall()
+    active_endpoint_count = 0
+    endpoint_times: list[datetime] = []
+    recent_endpoint_times: list[datetime] = []
+    endpoint_count_identities: set[tuple[str, ...]] = set()
+    current_endpoint_sources: list[dict[str, Any]] = []
+    for raw in active_endpoint_rows:
+        endpoint = dict(raw)
+        if str(endpoint.get("source_type") or "arp").strip().lower() != "arp":
+            continue
+        ip = _normalized_ip(endpoint.get("ip"))
+        if not ip:
+            continue
+        observed_at, time_state = _parse_time(endpoint.get("last_seen"))
+        recent = bool(
+            observed_at and time_state == "valid"
+            and observed_at <= now and now - observed_at <= timedelta(minutes=_recent_minutes())
+        )
+
+        resolved, context_type, reason = endpoint_scope(endpoint)
+        device_id = str(endpoint.get("switch_id") or "")
+        device = devices.get(device_id) or {}
+        source = {
+            "id": str(endpoint.get("id") or ""),
+            "ip": ip,
+            "address": ip,
+            "mac": _normalized_mac(endpoint.get("mac")),
+            "mac_address": _normalized_mac(endpoint.get("mac")),
+            "hostname": str(endpoint.get("hostname") or ""),
+            "device_id": device_id,
+            "source_device_id": device_id,
+            "source_device_name": str(device.get("hostname") or device_id),
+            "device_name": str(device.get("hostname") or endpoint.get("hostname") or device_id),
+            "interface_name": str(endpoint.get("switch_port") or ""),
+            "vlan": str(endpoint.get("vlan") or ""),
+            "vrf": str(endpoint.get("vrf") or ""),
+            "site_id": str(resolved.get("site_id") or ""),
+            "site_name": str(sites.get(str(resolved.get("site_id") or ""), {}).get("site_name") or ""),
+            "tenant_id": str(resolved.get("tenant_id") or ""),
+            "vrf_id": str(resolved.get("vrf_id") or ""),
+            "address_space_id": str(resolved.get("address_space_id") or ""),
+            "scope_status": str(resolved.get("scope_status") or "scope_pending"),
+            "observed_at": str(endpoint.get("last_seen") or ""),
+            "evidence_status": "recent" if recent else "outside_current_window",
+            "context_source": "arp",
+            "context_type": context_type or "unknown",
+            "local_context_key": str(endpoint.get("vrf") or ""),
+            "source_kind": "network_endpoint",
+        }
+        if not scope_visible(source["tenant_id"], source["site_id"]):
+            continue
+        if observed_at and time_state == "valid":
+            endpoint_times.append(observed_at)
+        if recent:
+            source_identity = endpoint_source_identity(source)
+            if source_identity not in endpoint_count_identities:
+                endpoint_count_identities.add(source_identity)
+                active_endpoint_count += 1
+                recent_endpoint_times.append(observed_at)
+        if source["scope_status"] != "resolved":
+            add_unscoped(source, reason=reason or "source_scope_unresolved", source_kind="network_endpoint")
+            continue
+        if recent:
+            current_endpoint_sources.append(source)
+
+    current_neighbor_rows = [
+        *list_current_endpoint_observations(conn, observation_source="arp"),
+        *list_current_endpoint_observations(conn, observation_source="ndp"),
+    ]
+    current_neighbor_sources: list[dict[str, Any]] = []
+    current_neighbor_coverage_incomplete = False
+    current_neighbor_visible_count = 0
+    current_neighbor_last_success_times: list[datetime] = []
+    for raw in current_neighbor_rows:
+        observation = dict(raw)
+        observation_source = str(observation.get("observation_source") or "arp")
+        source_kind = f"current_{observation_source}"
+        ip = _normalized_ip(observation.get("ip_address"))
+        if not ip:
+            continue
+        device_id = str(observation.get("source_device_id") or "")
+        device = devices.get(device_id) or {}
+        base_scope = _resolve_device_scope(device, sites, vrfs) if device else {
+            "tenant_id": "", "site_id": "", "scope_status": "scope_pending",
+        }
+        tenant_id = str(base_scope.get("tenant_id") or observation.get("tenant_id") or "")
+        site_id = str(
+            observation.get("asset_site_id") or observation.get("device_site_id")
+            or base_scope.get("site_id") or ""
+        )
+        if not scope_visible(tenant_id, site_id):
+            continue
+        current_neighbor_visible_count += 1
+        last_success_time, last_success_time_state = _parse_time(observation.get("last_success_at"))
+        if last_success_time and last_success_time_state == "valid":
+            current_neighbor_last_success_times.append(last_success_time)
+
+        observed_at = observation.get("observed_at")
+        observed_time, time_state = _parse_time(observed_at)
+        if observed_time and time_state == "valid":
+            endpoint_times.append(observed_time)
+        recent = bool(
+            observed_time and time_state == "valid" and observed_time <= now
+            and now - observed_time <= timedelta(minutes=_recent_minutes())
+        )
+
+        address_space_id = str(observation.get("address_space_id") or "")
+        resolved = scope_for_device(device_id, address_space_id) if address_space_id else {
+            **base_scope, "scope_status": "scope_pending", "reason": "routing_context_mapping_missing",
+        }
+        context_type = str(observation.get("resolved_context_type") or "")
+        if resolved.get("scope_status") != "resolved":
+            unresolved = {
+                "id": _current_endpoint_observation_id(observation),
+                "ip": ip, "address": ip,
+                "mac": _normalized_mac(observation.get("mac_address")),
+                "mac_address": _normalized_mac(observation.get("mac_address")),
+                "hostname": str(observation.get("source_device_name") or device.get("hostname") or ""),
+                "device_id": device_id, "source_device_id": device_id,
+                "source_device_name": str(observation.get("source_device_name") or device.get("hostname") or device_id),
+                "device_name": str(observation.get("source_device_name") or device.get("hostname") or device_id),
+                "interface_name": str(observation.get("interface_name") or ""),
+                "vlan": str(observation.get("vlan_id") or ""),
+                "vrf": str(observation.get("local_context_key") or ""),
+                "site_id": site_id, "site_name": str(sites.get(site_id, {}).get("site_name") or ""),
+                "tenant_id": tenant_id,
+                "vrf_id": "", "address_space_id": "",
+                "scope_status": "scope_pending",
+                "observed_at": str(observed_at or ""),
+                "evidence_status": f"current_successful_{observation_source}_observation",
+                "context_source": str(observation.get("context_source") or ""),
+                "context_type": str(observation.get("context_type") or "unknown"),
+                "local_context_key": str(observation.get("local_context_key") or ""),
+                "generation": int(observation.get("generation") or 0),
+                "source_kind": source_kind,
+            }
+            reason = str(resolved.get("reason") or "routing_context_mapping_missing")
+            if not address_space_id and device_id and unresolved["local_context_key"]:
+                candidates = [
+                    item for item in context_mappings.get((device_id, unresolved["local_context_key"]), [])
+                    if str(item.get("context_source") or "") == unresolved["context_source"]
+                ]
+                identities = {
+                    (str(item.get("address_space_id") or ""), str(item.get("context_type") or ""))
+                    for item in candidates
                 }
+                if len(identities) > 1:
+                    reason = "routing_context_mapping_ambiguous"
+                elif identities:
+                    reason = "routing_context_mapping_invalid"
+            add_unscoped(unresolved, reason=reason, source_kind=source_kind)
             continue
-        key = (str(item.get("tenant_id") or ""), str(item.get("site_id") or ""), str(item.get("vrf_id") or ""), str(item.get("ip") or ""))
-        candidates = ipam_by_scope.get(key, [])
-        conflicting_ipam = [candidate for candidate in candidates if candidate.get("_scope_conflict")]
-        candidates = [candidate for candidate in candidates if not candidate.get("_scope_conflict")]
-        if conflicting_ipam:
-            unscoped[str(item.get("id") or "")] = {
-                **item, "scope_status": "conflict", "reason": "ipam_scope_conflict",
-            }
+
+        space_id = str(resolved.get("address_space_id") or "")
+        current_status = str(observation.get("latest_status") or "")
+        latest_success_is_current_attempt = (
+            int(observation.get("latest_attempt_generation") or 0)
+            == int(observation.get("last_success_generation") or 0)
+            and current_status in {"complete", "scope_unknown"}
+        )
+        if not latest_success_is_current_attempt:
+            current_neighbor_coverage_incomplete = True
+        source = {
+            "id": _current_endpoint_observation_id(observation),
+            "ip": ip, "address": ip,
+            "mac": _normalized_mac(observation.get("mac_address")),
+            "mac_address": _normalized_mac(observation.get("mac_address")),
+            "hostname": str(observation.get("source_device_name") or device.get("hostname") or ""),
+            "device_id": device_id, "source_device_id": device_id,
+            "source_device_name": str(observation.get("source_device_name") or device.get("hostname") or device_id),
+            "device_name": str(observation.get("source_device_name") or device.get("hostname") or device_id),
+            "interface_name": str(observation.get("interface_name") or ""),
+            "vlan": str(observation.get("vlan_id") or ""),
+            "vrf": str(observation.get("local_context_key") or ""),
+            "site_id": site_id,
+            "site_name": str(sites.get(site_id, {}).get("site_name") or ""),
+            "tenant_id": tenant_id,
+            "vrf_id": str(resolved.get("vrf_id") or ""),
+            "address_space_id": space_id,
+            "scope_status": "resolved",
+            "observed_at": str(observed_at or ""),
+            "evidence_status": "recent" if recent else "outside_recent_window",
+            "context_source": str(observation.get("context_source") or ""),
+            "context_type": context_type or "unknown",
+            "local_context_key": str(observation.get("local_context_key") or ""),
+            "generation": int(observation.get("generation") or 0),
+            "last_success_at": str(observation.get("last_success_at") or ""),
+            "collection_status": current_status,
+            "coverage_complete": latest_success_is_current_attempt,
+            "source_kind": source_kind,
+        }
+        identity = endpoint_source_identity(source)
+        if recent and identity not in endpoint_count_identities:
+            endpoint_count_identities.add(identity)
+            active_endpoint_count += 1
+            recent_endpoint_times.append(observed_time)
+        current_neighbor_sources.append(source)
+
+    current_neighbor_states = [
+        *get_current_endpoint_collection_states(conn, observation_source="arp"),
+        *get_current_endpoint_collection_states(conn, observation_source="ndp"),
+    ]
+    for state in current_neighbor_states:
+        latest_status = str(state.get("latest_status") or "")
+        latest_attempt_generation = int(state.get("latest_attempt_generation") or 0)
+        last_success_generation = int(state.get("last_success_generation") or 0)
+        if latest_status != "complete" or latest_attempt_generation != last_success_generation:
+            current_neighbor_coverage_incomplete = True
+        last_success_time, last_success_time_state = _parse_time(state.get("last_success_at"))
+        if last_success_time and last_success_time_state == "valid":
+            current_neighbor_last_success_times.append(last_success_time)
+
+    current_neighbor_identities = {endpoint_source_identity(item) for item in current_neighbor_sources}
+    current_endpoint_sources = [
+        item for item in current_endpoint_sources
+        if endpoint_source_identity(item) not in current_neighbor_identities
+    ] + current_neighbor_sources
+
+    current_interface_rows = _current_cmdb_interface_ip_observations(conn)
+    interface_snapshot_ip_count = 0
+    current_interface_sources: list[dict[str, Any]] = []
+    for raw in current_interface_rows:
+        interface = dict(raw)
+        ip = _normalized_ip(interface.get("ip_address"))
+        if not ip:
+            continue
+        device_id = str(interface.get("device_id") or "")
+        device = devices.get(device_id) or {}
+        base_scope = _resolve_device_scope(device, sites, vrfs) if device else {
+            "tenant_id": "", "site_id": "", "scope_status": "scope_pending",
+        }
+        tenant_id = str(base_scope.get("tenant_id") or interface.get("tenant_id") or "")
+        site_id = str(
+            interface.get("asset_site_id") or interface.get("device_site_id")
+            or base_scope.get("site_id") or ""
+        )
+        if not scope_visible(tenant_id, site_id):
+            continue
+        interface_snapshot_ip_count += 1
+        address_space_id = str(interface.get("address_space_id") or "")
+        space = address_spaces.get(address_space_id) if address_space_id else None
+        if (
+            base_scope.get("scope_status") == "conflict"
+            or not tenant_id or not site_id
+            or not space or str(space.get("status") or "") != "active"
+            or str(space.get("security_tenant_id") or "") != tenant_id
+        ):
+            add_unscoped({
+                "id": f"interface:{device_id}:{interface.get('normalized_interface_name') or ''}:{ip}",
+                "ip": ip, "address": ip,
+                "device_id": device_id, "source_device_id": device_id,
+                "source_device_name": str(interface.get("device_hostname") or device_id),
+                "device_name": str(interface.get("device_hostname") or device_id),
+                "interface_name": str(interface.get("interface_name") or ""),
+                "tenant_id": tenant_id, "site_id": site_id,
+                "site_name": str(sites.get(site_id, {}).get("site_name") or ""),
+                "address_space_id": "",
+                "context_source": str(interface.get("context_source") or ""),
+                "context_type": str(interface.get("context_type") or "unknown"),
+                "local_context_key": str(interface.get("local_context_key") or ""),
+                "scope_status": "scope_pending",
+                "observed_at": str(interface.get("observed_at") or ""),
+            }, reason="interface_routing_context_unmapped", source_kind="interface_snapshot")
+            continue
+        current_interface_sources.append({
+            "id": f"interface:{device_id}:{interface.get('normalized_interface_name') or ''}:{ip}",
+            "ip": ip, "address": ip, "mac": "", "mac_address": "",
+            "hostname": str(interface.get("device_hostname") or ""),
+            "device_id": device_id, "source_device_id": device_id,
+            "source_device_name": str(interface.get("device_hostname") or device_id),
+            "device_name": str(interface.get("device_hostname") or device_id),
+            "interface_name": str(interface.get("interface_name") or ""),
+            "site_id": site_id,
+            "site_name": str(sites.get(site_id, {}).get("site_name") or ""),
+            "tenant_id": tenant_id,
+            "vrf_id": str(interface.get("mapped_vrf_id") or space.get("vrf_id") or ""),
+            "address_space_id": address_space_id,
+            "scope_status": "resolved",
+            "observed_at": str(interface.get("observed_at") or ""),
+            "context_source": str(interface.get("context_source") or ""),
+            "context_type": str(interface.get("context_type") or "unknown"),
+            "local_context_key": str(interface.get("local_context_key") or ""),
+            "source_kind": "interface_snapshot",
+            "evidence_status": "current_successful_interface_snapshot",
+        })
+
+    current_observed_by_space_ip = {
+        (
+            str(item.get("tenant_id") or ""),
+            str(item.get("address_space_id") or ""),
+            str(item.get("ip") or ""),
+        )
+        for item in [*current_endpoint_sources, *current_interface_sources]
+    }
+    undocumented: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    mismatched: dict[str, dict[str, Any]] = {}
+    for source in [*current_endpoint_sources, *current_interface_sources]:
+        tenant_id = str(source.get("tenant_id") or "")
+        site_id = str(source.get("site_id") or "")
+        space_id = str(source.get("address_space_id") or "")
+        ip = str(source.get("ip") or "")
+        key = (tenant_id, space_id, ip)
+        all_candidates = all_ipam_by_space_ip.get(key, [])
+        conflicts = [candidate for candidate in all_candidates if candidate.get("_scope_conflict")]
+        candidates = [
+            candidate for candidate in ipam_by_space_ip.get(key, [])
+            if not candidate.get("_site_id") or str(candidate.get("_site_id") or "") == site_id
+        ]
+        if conflicts and not candidates:
+            add_unscoped(
+                {**source, "ipam_address_id": "", "scope_status": "conflict"},
+                reason="ipam_scope_conflict", source_kind=str(source.get("source_kind") or "endpoint"),
+            )
             continue
         if len(candidates) > 1:
-            unscoped[str(item.get("id") or "")] = {
-                **item, "scope_status": "conflict", "reason": "duplicate_ipam_scope_records",
-            }
+            add_unscoped(
+                {**source, "ipam_address_id": "", "scope_status": "conflict"},
+                reason="duplicate_ipam_scope_records", source_kind=str(source.get("source_kind") or "endpoint"),
+            )
             continue
         if not candidates:
-            suggested = match_inventory_prefix(str(item.get("ip") or ""), (key[0], key[2], key[3]), key[1], prefix_catalog)
-            identity = (key, _normalized_mac(item.get("mac")))
-            record = undocumented.get(identity)
-            evidence = {
-                **item,
-                "subnet_id": (suggested or {}).get("id") or "",
-                "subnet_prefix": (suggested or {}).get("prefix") or "",
-                "subnet_name": (suggested or {}).get("name") or "",
-                "source_evidence_count": 1,
+            suggested = match_inventory_prefix(
+                ip, (tenant_id, f"space:{space_id}", ip), site_id, prefix_catalog,
+            )
+            identity = (tenant_id, space_id, site_id, ip)
+            evidence_device = {
+                "id": source.get("source_device_id") or "",
+                "name": source.get("source_device_name") or source.get("device_name") or "",
+                "interface_name": source.get("interface_name") or "",
+                "source_kind": source.get("source_kind") or "",
+                "ip": source.get("ip") or "",
+                "mac": source.get("mac") or "",
+                "vlan": source.get("vlan") or "",
+                "address_space_id": source.get("address_space_id") or "",
+                "local_context_key": source.get("local_context_key") or "",
+                "observation_id": source.get("id") or "",
             }
-            if record:
-                record["source_evidence_count"] += 1
-                record.setdefault("source_devices", []).append({
-                    "id": item.get("source_device_id"), "name": item.get("source_device_name"),
-                    "observation_id": item.get("observation_id"),
-                })
+            if identity in undocumented:
+                record = undocumented[identity]
+                record["source_evidence_count"] = int(record.get("source_evidence_count") or 0) + 1
+                record.setdefault("source_devices", []).append(evidence_device)
             else:
-                evidence["source_devices"] = [{
-                    "id": item.get("source_device_id"), "name": item.get("source_device_name"),
-                    "observation_id": item.get("observation_id"),
-                }]
-                undocumented[identity] = evidence
+                undocumented[identity] = {
+                    **source,
+                    "ipam_address_id": "",
+                    "subnet_id": (suggested or {}).get("id") or "",
+                    "subnet_prefix": (suggested or {}).get("prefix") or "",
+                    "subnet_name": (suggested or {}).get("name") or "",
+                    "reason": "not_registered_in_current_ipam",
+                    "source_evidence_count": 1,
+                    "source_devices": [evidence_device],
+                }
             continue
-
         ipam = candidates[0]
         ipam_status = _reconciliation_ipam_status(ipam)
         ipam_mac = _normalized_mac(ipam.get("mac_address"))
-        observed_mac = _normalized_mac(item.get("mac"))
+        observed_mac = _normalized_mac(source.get("mac"))
         mac_mismatch = bool(ipam_mac and observed_mac and ipam_mac != observed_mac)
         status_mismatch = ipam_status in {"available", "released"}
-        key_mismatch = (key, str(ipam.get("id") or ""))
-        if mac_mismatch or status_mismatch or item.get("evidence_status") == "conflict":
-            mismatched[key_mismatch] = {
-                **item,
-                "ipam_address_id": ipam.get("id") or "",
-                "ipam_mac": ipam.get("mac_address") or "",
-                "observed_mac": item.get("mac") or "",
+        if not mac_mismatch and not status_mismatch:
+            continue
+        ipam_id = str(ipam.get("id") or "")
+        source_device = {
+            "id": source.get("source_device_id") or "",
+            "name": source.get("source_device_name") or source.get("device_name") or "",
+            "interface_name": source.get("interface_name") or "",
+            "source_kind": source.get("source_kind") or "",
+            "ip": source.get("ip") or "",
+            "mac": source.get("mac") or "",
+            "vlan": source.get("vlan") or "",
+            "address_space_id": source.get("address_space_id") or "",
+            "local_context_key": source.get("local_context_key") or "",
+            "observation_id": source.get("id") or "",
+        }
+        if ipam_id in mismatched:
+            mismatch = mismatched[ipam_id]
+            mismatch["mac_mismatch"] = bool(mismatch.get("mac_mismatch") or mac_mismatch)
+            mismatch["status_mismatch"] = bool(mismatch.get("status_mismatch") or status_mismatch)
+            mismatch["source_evidence_count"] = int(mismatch.get("source_evidence_count") or 0) + 1
+            mismatch.setdefault("source_devices", []).append(source_device)
+        else:
+            mismatched[ipam_id] = {
+                **source,
+                "id": ipam_id,
+                "ipam_address_id": ipam_id,
+                "ipam_mac": str(ipam.get("mac_address") or ""),
+                "observed_mac": str(source.get("mac") or ""),
                 "mac_mismatch": mac_mismatch,
                 "status_mismatch": status_mismatch,
                 "ipam_status": ipam_status,
-                "subnet_id": ipam.get("subnet_id") or "",
-                "subnet_prefix": ipam.get("prefix") or "",
-                "evidence_status": item.get("evidence_status"),
-                "scope_status": item.get("scope_status"),
+                "subnet_id": str(ipam.get("subnet_id") or ""),
+                "subnet_prefix": str(ipam.get("prefix") or ""),
+                "reason": "mac_mismatch" if mac_mismatch else "status_mismatch",
+                "source_evidence_count": 1,
+                "source_devices": [source_device],
             }
 
-    # Source conflicts are computed over current evidence even if there is no
-    # IPAM row, because a duplicate address is still useful to investigate.
-    conflict_groups: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
-    for key, items in current_by_scope_ip.items():
-        macs = {_normalized_mac(item.get("mac")) for item in items if item.get("mac")}
-        if len(macs) <= 1:
-            continue
-        conflict_groups[key] = items
-        ipam_candidates = [item for item in ipam_by_scope.get(key, []) if not item.get("_scope_conflict")]
-        representative = items[0]
-        if key not in {tuple(row.get("_key") or ()) for row in mismatched.values()}:
-            mismatched[("source-conflict", *key)] = {
-                **representative,
-                "ipam_address_id": ipam_candidates[0].get("id") if len(ipam_candidates) == 1 else "",
-                "ipam_mac": ipam_candidates[0].get("mac_address") if len(ipam_candidates) == 1 else "",
-                "observed_mac": ", ".join(sorted(macs)),
-                "observed_macs": sorted(macs),
-                "mac_mismatch": False,
-                "conflict": True,
-                "reason": "multiple_macs_for_same_scope_ip",
-                "scope_status": "conflict",
-                "evidence_status": "conflict",
-                "calibration_safe": False,
-            }
+    def source_positions_are_ambiguous(record: dict[str, Any]) -> bool:
+        sources = list(record.get("source_devices") or [])
+        if len(sources) < 2:
+            return False
+        positions = {
+            (
+                str(item.get("id") or ""),
+                normalize_interface_name(str(item.get("interface_name") or "")).strip().lower(),
+                str(item.get("local_context_key") or ""),
+            )
+            for item in sources
+        }
+        macs = {str(item.get("mac") or "") for item in sources if item.get("mac")}
+        vlans = {str(item.get("vlan") or "") for item in sources if item.get("vlan")}
+        return len(positions) > 1 or len(macs) > 1 or len(vlans) > 1
 
-    cutoff_recent = now - timedelta(minutes=_recent_minutes())
-    cutoff_stale = now - timedelta(days=_stale_days())
-    snapshot_misses_by_source_scope: dict[tuple[str, str, str, str], dict[str, datetime]] = {}
-    for snapshot in snapshots:
-        if not snapshot.get("coverage_complete") or str(snapshot.get("source_status") or "") != "success":
-            continue
-        scope_key = _snapshot_scope_key(snapshot)
-        run_id = str(snapshot.get("source_run_id") or "").strip()
-        observed_at, timestamp_status = _parse_time(snapshot.get("observed_at"))
-        device_id = str(snapshot.get("device_id") or "")
-        if not scope_key or not device_id or not run_id or timestamp_status != "valid" or observed_at is None:
-            continue
-        key = (device_id, *scope_key)
-        scope_runs = snapshot_misses_by_source_scope.setdefault(key, {})
-        previous = scope_runs.get(run_id)
-        if previous is None or observed_at > previous:
-            scope_runs[run_id] = observed_at
+    for record in undocumented.values():
+        record["source_ambiguity"] = source_positions_are_ambiguous(record)
+    for record in mismatched.values():
+        record["source_ambiguity"] = source_positions_are_ambiguous(record)
 
-    positive_runs_by_scope_ip: dict[tuple[str, str, str, str], set[str]] = {}
-    for item in history_decorated:
-        if item.get("source_type") != "arp" or not item.get("ip") or item.get("scope_status") != "resolved":
-            continue
-        run_id = str(item.get("source_run_id") or "").strip()
-        if not run_id:
-            continue
-        key = (
-            str(item.get("tenant_id") or ""), str(item.get("site_id") or ""),
-            str(item.get("vrf_id") or ""), str(item.get("ip") or ""),
-        )
-        positive_runs_by_scope_ip.setdefault(key, set()).add(run_id)
-
-    never_observed: list[dict[str, Any]] = []
     stale: list[dict[str, Any]] = []
     unavailable: list[dict[str, Any]] = []
     unavailable_address_count = 0
-    expected_source_ids_all: set[str] = set()
-    proven_source_ids_all: set[str] = set()
+    expected_source_ids: set[str] = set()
+    proven_source_ids: set[str] = set()
     addresses_without_expected_source = 0
+
+    def address_base(ipam: dict[str, Any]) -> dict[str, Any]:
+        site_id = str(ipam.get("_site_id") or "")
+        vrf_id = str(ipam.get("_vrf_id") or "")
+        return {
+            "id": str(ipam.get("id") or ""),
+            "ipam_address_id": str(ipam.get("id") or ""),
+            "ip": str(ipam.get("_address") or ""),
+            "address": str(ipam.get("_address") or ""),
+            "hostname": str(ipam.get("hostname") or ""),
+            "mac_address": str(ipam.get("mac_address") or ""),
+            "subnet_id": str(ipam.get("subnet_id") or ""),
+            "subnet_prefix": str(ipam.get("prefix") or ""),
+            "subnet_name": str(ipam.get("prefix_name") or ""),
+            "site_id": site_id,
+            "site_name": str(sites.get(site_id, {}).get("site_name") or ""),
+            "vrf_id": vrf_id,
+            "vrf_name": str(vrfs.get(vrf_id, {}).get("vrf_name") or ""),
+            "tenant_id": str(ipam.get("_tenant_id") or DEFAULT_TENANT_ID),
+            "address_space_id": str(ipam.get("_address_space_id") or ""),
+            "status": str(ipam.get("status") or "active"),
+        }
+
     for ipam in allocated_records:
+        base = address_base(ipam)
         ip = str(ipam.get("_address") or "")
-        ipam_id = str(ipam.get("id") or "")
-        scope_key = _known_scope_key(ipam)
-        base = {
-            "id": ipam_id, "ipam_address_id": ipam_id, "ip": ip,
-            "address": ip, "hostname": ipam.get("hostname") or "",
-            "mac_address": ipam.get("mac_address") or "",
-            "subnet_id": ipam.get("subnet_id") or "",
-            "subnet_prefix": ipam.get("prefix") or "",
-            "site_id": ipam.get("_site_id") or "",
-            "vrf_id": ipam.get("_vrf_id") or "",
-            "tenant_id": ipam.get("_tenant_id") or DEFAULT_TENANT_ID,
-            "status": ipam.get("status") or "active",
-        }
-        if ipam.get("_scope_conflict") or not scope_key:
-            unavailable.append({**base, "reason": ipam.get("_scope_conflict_reason") or "ipam_scope_missing", "miss_count": 0, "required_misses": _required_misses()})
+        tenant_id = str(ipam.get("_tenant_id") or "")
+        site_id = str(ipam.get("_site_id") or "")
+        space_id = str(ipam.get("_address_space_id") or "")
+        if (tenant_id, space_id, ip) in current_observed_by_space_ip:
             continue
-        key = (*scope_key, ip)
-        created_at, created_status = _parse_time(ipam.get("created_at"))
-        exact = [item for item in exact_history.get(key, []) if item.get("timestamp_status") == "valid"]
-        source_ref = str(ipam.get("source_ref") or "")
-        matching_since_registration = [
-            item for item in exact
-            if str(item.get("id") or "") == source_ref
-            or not created_at
-            or ((item_time := _parse_time(item.get("observed_at"))[0]) is not None and item_time >= created_at)
-        ]
-        recent_matches = [item for item in current_by_scope_ip.get(key, []) if item.get("evidence_status") == "recent"]
-        if recent_matches:
+        if ipam.get("_scope_conflict") or not tenant_id or not site_id or not space_id:
+            unavailable.append({
+                **base,
+                "kind": "ipam_address",
+                "reason": ipam.get("_scope_conflict_reason") or "ipam_scope_or_address_space_unresolved",
+                "miss_count": 0,
+                "required_misses": 1,
+                "coverage_status": "unavailable",
+                "last_observed_at": "",
+                "stale_reason": "scope_not_comparable",
+            })
+            unavailable_address_count += 1
             continue
-        ambiguous_source = [
-            item for item in all_observations_by_ip.get(ip, [])
-            if item.get("scope_status") != "resolved"
-            and str(item.get("tenant_id") or "") == scope_key[0]
-            and str(item.get("site_id") or "") == scope_key[1]
-        ]
-        latest_exact = None
-        if matching_since_registration:
-            latest_exact = max(
-                matching_since_registration,
-                key=lambda item: (_parse_time(item.get("observed_at"))[0] or datetime.min.replace(tzinfo=timezone.utc), str(item.get("id") or "")),
-            )
-        latest_seen = _parse_time(latest_exact.get("observed_at"))[0] if latest_exact else None
-        expected_source_ids = {
-            str(item.get("source_device_id") or "")
-            for item in exact if str(item.get("source_device_id") or "")
-        }
-        gateway_source_id = str(ipam.get("_expected_source_device_id") or "")
-        if gateway_source_id:
-            expected_source_ids.add(gateway_source_id)
-        expected_source_ids_all.update(expected_source_ids)
-        if not expected_source_ids:
+        if (tenant_id, ip) in unresolved_by_tenant_ip or (tenant_id, site_id, ip) in unresolved_by_tenant_site_ip:
+            unavailable.append({
+                **base,
+                "kind": "ipam_address",
+                "reason": "same_ip_current_evidence_scope_unresolved",
+                "miss_count": 0,
+                "required_misses": 1,
+                "coverage_status": "unavailable",
+                "last_observed_at": "",
+                "stale_reason": "current_evidence_scope_unresolved",
+            })
+            unavailable_address_count += 1
+            continue
+        if not _reconciliation_address_is_stale_eligible(ipam):
+            continue
+        expected_device_id = str(ipam.get("_expected_source_device_id") or "")
+        if not expected_device_id:
+            unavailable.append({
+                **base,
+                "kind": "ipam_address",
+                "reason": "expected_source_not_established",
+                "miss_count": 0,
+                "required_misses": 1,
+                "coverage_status": "unavailable",
+                "last_observed_at": "",
+                "stale_reason": "expected_source_not_established",
+            })
+            unavailable_address_count += 1
             addresses_without_expected_source += 1
-
-        runs_by_expected_source = {
-            device_id: snapshot_misses_by_source_scope.get((device_id, *scope_key), {})
-            for device_id in expected_source_ids
-        }
-        if expected_source_ids and len(runs_by_expected_source) == len(expected_source_ids):
-            common_run_ids = set.intersection(*(set(values) for values in runs_by_expected_source.values())) if runs_by_expected_source else set()
-        else:
-            common_run_ids = set()
-        positive_run_ids = positive_runs_by_scope_ip.get(key, set())
-        eligible_runs: dict[str, datetime] = {}
-        for run_id in common_run_ids - positive_run_ids:
-            per_source_times = [runs_by_expected_source[device_id][run_id] for device_id in expected_source_ids]
-            if not per_source_times:
-                continue
-            observation_time = min(per_source_times)
-            if observation_time > now:
-                continue
-            if created_at and created_status == "valid" and observation_time < created_at:
-                continue
-            if latest_seen and observation_time <= latest_seen:
-                continue
-            eligible_runs[run_id] = observation_time
-        miss_count = len(eligible_runs)
-
-        current_source_proven = bool(expected_source_ids and current_sweep_run_id in common_run_ids)
-        if current_source_proven:
-            per_source_latest_times = []
-            for source_device_id in expected_source_ids:
-                status = source_status_by_device.get(source_device_id) or {}
-                metadata = _json_object(status.get("metadata_json"))
-                if (
-                    status.get("status") != "success"
-                    or str(status.get("source") or "") != "arp_sweep"
-                    or str(metadata.get("collection_run_id") or "") != current_sweep_run_id
-                    or int(status.get("coverage_supported") or 0) < 1
-                ):
-                    current_source_proven = False
-                    break
-                per_source_latest_times.append(
-                    runs_by_expected_source[source_device_id].get(current_sweep_run_id)
-                )
-            if current_source_proven and (
-                not per_source_latest_times or any(value is None or value < cutoff_recent for value in per_source_latest_times)
-            ):
-                current_source_proven = False
-        if current_source_proven:
-            proven_source_ids_all.update(expected_source_ids)
-
-        if (
-            matching_since_registration and latest_seen and latest_seen <= cutoff_stale
-            and miss_count >= _required_misses() and current_source_proven
-        ):
-            stale.append({
-                **base, "last_observed_at": _iso(latest_seen) or "",
-                "last_seen": _iso(latest_seen) or "",
-                "days_since_seen": round((now - latest_seen).total_seconds() / 86400, 1),
-                "miss_count": miss_count, "required_misses": _required_misses(),
-                "coverage_runs": sorted(eligible_runs), "evidence_status": "historical",
-                "scope_status": "resolved",
-            })
             continue
-        if not matching_since_registration and not ambiguous_source:
-            never_observed.append({
-                **base, "last_observed_at": "", "evidence_status": "unknown",
-                "reason": "no_matching_observation_since_registration",
+        expected_source_ids.add(expected_device_id)
+        current_source = valid_current_by_device.get(expected_device_id)
+        if current_source:
+            proven_source_ids.add(expected_device_id)
+        if not source_set_known:
+            unavailable.append({
+                **base,
+                "kind": "ipam_address",
+                "reason": "no_complete_current_sweep",
+                "miss_count": 0,
+                "required_misses": 1,
+                "coverage_status": "unavailable",
+                "last_observed_at": "",
+                "stale_reason": "current_sweep_incomplete",
             })
-        if ambiguous_source:
-            unavailable_reason = "same_ip_observation_scope_unresolved"
-        elif not expected_source_ids:
-            unavailable_reason = "expected_source_not_established"
-        elif not snapshots:
-            unavailable_reason = "no_collection_coverage_evidence"
-        elif not current_source_proven:
-            unavailable_reason = "expected_source_current_snapshot_unavailable"
-        elif miss_count < _required_misses() and latest_seen and latest_seen <= cutoff_stale:
-            unavailable_reason = "insufficient_complete_snapshots"
-        elif matching_since_registration and latest_seen and latest_seen > cutoff_stale:
-            unavailable_reason = "within_long_unseen_window"
-        elif not matching_since_registration and miss_count < _required_misses():
-            unavailable_reason = "no_proven_complete_scope_snapshot"
-        else:
-            unavailable_reason = "source_coverage_unavailable"
-        unavailable.append({
-            **base, "reason": unavailable_reason,
-            "last_observed_at": _iso(latest_seen) if latest_seen else "",
-            "miss_count": miss_count, "required_misses": _required_misses(),
-            "coverage_status": "complete" if miss_count >= _required_misses() else "unavailable",
-            "source_device_id": latest_exact.get("source_device_id") if latest_exact else "",
-            "source_device_name": latest_exact.get("source_device_name") if latest_exact else "",
-            "expected_source_device_ids": sorted(expected_source_ids),
+            unavailable_address_count += 1
+            continue
+        if not current_source:
+            unavailable.append({
+                **base,
+                "kind": "ipam_address",
+                "reason": "expected_source_not_complete_in_current_sweep",
+                "miss_count": 0,
+                "required_misses": 1,
+                "coverage_status": "unavailable",
+                "last_observed_at": "",
+                "stale_reason": "expected_source_not_complete",
+            })
+            unavailable_address_count += 1
+            continue
+        stale.append({
+            **base,
+            "last_observed_at": "",
+            "last_checked_at": last_checked_at,
+            "miss_count": 1,
+            "required_misses": 1,
+            "coverage_status": "complete",
+            "current_sweep_run_id": current_run_id,
+            "evidence_status": "current_sweep_miss",
+            "scope_status": "resolved",
+            "stale_reason": "not_observed_in_latest_complete_sweep",
         })
-        unavailable_address_count += 1
 
-    latest_snapshot_by_device: dict[str, dict[str, Any]] = {}
-    for snapshot in snapshots:
-        previous = latest_snapshot_by_device.get(str(snapshot.get("device_id") or ""))
-        if previous is None or str(snapshot.get("projected_at") or "") > str(previous.get("projected_at") or ""):
-            latest_snapshot_by_device[str(snapshot.get("device_id") or "")] = snapshot
-    for status in source_status_by_device.values():
-        device_id = str(status.get("device_id") or "")
-        device_scope = devices.get(device_id, {})
-        if not scope_visible(device_scope.get("tenant_id"), device_scope.get("site_id")):
+    for device_id, status in collection_state["current_by_device"].items():
+        if device_id in valid_current_by_device:
             continue
-        metadata = _json_object(status.get("metadata_json"))
-        source_scope = _resolve_device_scope(device_scope, sites, vrfs, metadata)
-        run_id = str(metadata.get("collection_run_id") or "")
-        snapshot = latest_snapshot_by_device.get(device_id) or {}
-        if (
-            status.get("status") == "success"
-            and run_id
-            and snapshot.get("source_run_id") == run_id
-            and snapshot.get("coverage_complete")
-            and _snapshot_scope_key(snapshot) is not None
-        ):
-            completed_at, completed_state = _parse_time(snapshot.get("observed_at"))
-            if completed_state == "valid" and completed_at and now - completed_at <= timedelta(minutes=_recent_minutes()):
-                continue
-        if status.get("status") == "success" and snapshot.get("coverage_complete") and _snapshot_scope_key(snapshot) is None:
-            reason = "source_scope_unresolved"
-            coverage_status = "scope_pending"
-        elif status.get("status") != "success":
-            reason = "collector_not_successful"
-            coverage_status = "unavailable"
-        elif not snapshot or not snapshot.get("coverage_complete"):
-            reason = str(snapshot.get("coverage_reason") or "collection_run_not_correlated")
-            coverage_status = "unavailable"
-        else:
-            reason = "source_snapshot_stale"
-            coverage_status = "unavailable"
+        device = devices.get(device_id, {})
+        tenant_id = str(device.get("tenant_id") or "")
+        site_id = str(device.get("site_id") or "")
+        if not scope_visible(tenant_id, site_id):
+            continue
+        metadata = status.get("_metadata") or {}
         unavailable.append({
-            "id": f"source:{device_id}", "kind": "source_coverage",
+            "id": f"source:{device_id}",
+            "kind": "source_coverage",
             "source_device_id": device_id,
-            "source_device_name": str(status.get("hostname") or snapshot.get("source_device_name") or device_id),
-            "tenant_id": source_scope.get("tenant_id") or DEFAULT_TENANT_ID,
-            "site_id": source_scope.get("site_id") or "",
-            "scope_status": source_scope.get("scope_status") or "scope_pending",
+            "source_device_name": str(device.get("hostname") or device_id),
+            "tenant_id": tenant_id,
+            "site_id": site_id,
+            "scope_status": "resolved" if tenant_id and site_id else "scope_pending",
             "status": str(status.get("status") or "unknown"),
-            "coverage_status": coverage_status,
-            "coverage_reason": reason,
+            "coverage_status": "unavailable",
+            "coverage_reason": "current_device_result_incomplete",
+            "reason": "current_device_result_incomplete",
+            "source_run_id": str(metadata.get("collection_run_id") or ""),
             "last_attempt_at": str(status.get("last_attempt_at") or ""),
             "last_success_at": str(status.get("last_success_at") or ""),
-            "source_run_id": run_id,
+        })
+    if current_run_id and not source_set_known:
+        unavailable.append({
+            "id": f"source:sweep:{current_run_id}",
+            "kind": "source_coverage",
+            "source_device_id": "",
+            "source_device_name": "ARP sweep",
+            "status": "incomplete",
+            "coverage_status": "unavailable",
+            "coverage_reason": "current_sweep_incomplete",
+            "reason": "current_sweep_incomplete",
+            "source_run_id": current_run_id,
+            "last_attempt_at": str(collection_state["sweep"].get("last_started_at") or ""),
+            "last_success_at": str(collection_state["sweep"].get("last_completed_at") or ""),
+            "expected_device_count": int(collection_state["eligible"] or 0),
+            "selected_device_count": int(collection_state["selected"] or 0),
+            "successful_device_count": int(collection_state["successful"] or 0),
+            "failed_device_count": int(collection_state["failed"] or 0),
         })
 
-    current_ip_identities = {
-        (str(item.get("tenant_id") or ""), str(item.get("site_id") or ""), str(item.get("vrf_id") or ""), str(item.get("ip") or ""))
-        for item in decorated
-        if item.get("source_type") == "arp" and item.get("ip") and item.get("scope_status") == "resolved" and item.get("evidence_status") == "recent"
-    }
-    active_endpoint_count = len(current_ip_identities)
-    complete_run_count = len({
-        snapshot.get("source_run_id") for snapshot in snapshots
-        if snapshot.get("coverage_complete") and snapshot.get("source_run_id")
-        and _snapshot_scope_key(snapshot) is not None
-    })
-    visible_success_times: list[datetime] = []
-    for device_id, status in source_status_by_device.items():
-        snapshot = latest_snapshot_by_device.get(device_id, {})
-        device_scope = devices.get(device_id, {})
-        if not scope_visible(
-            snapshot.get("tenant_id") or device_scope.get("tenant_id"),
-            snapshot.get("site_id") or device_scope.get("site_id"),
-        ):
-            continue
-        if status.get("status") == "success":
-            parsed, parsed_state = _parse_time(status.get("last_success_at"))
-            if parsed and parsed_state == "valid":
-                visible_success_times.append(parsed)
-    latest_success_at = _iso(max(visible_success_times)) if visible_success_times else ""
-    missing_expected_sources = len(expected_source_ids_all - proven_source_ids_all) + addresses_without_expected_source
-    if not allocated_count and not decorated:
+    expected_source_count = len(expected_source_ids) + addresses_without_expected_source
+    missing_source_count = max(0, expected_source_count - len(proven_source_ids))
+    latest_success_times = [
+        parsed
+        for status in valid_current_by_device.values()
+        if (parsed := _parse_time(status.get("last_success_at"))[0]) is not None
+    ]
+    latest_success_times.extend(current_neighbor_last_success_times)
+    latest_endpoint_seen = _iso(max(endpoint_times)) if endpoint_times else ""
+    latest_active_endpoint_seen = _iso(max(recent_endpoint_times)) if recent_endpoint_times else ""
+    latest_source_success_at = _iso(max(latest_success_times)) if latest_success_times else ""
+    has_inputs = bool(
+        ipam_records or active_endpoint_rows or interface_snapshot_ip_count
+        or current_neighbor_visible_count or current_neighbor_states
+    )
+    if not has_inputs:
         coverage_status = "no_inputs"
-        coverage_reason = "当前没有已登记地址或可展示的发现证据。"
-    elif unavailable or unscoped or not source_set_known or missing_expected_sources:
-        coverage_status = "partial" if complete_run_count or active_endpoint_count or decorated else "unavailable"
-        coverage_reason = "来源集合或地址范围尚未完整证明；结果仅反映当前可验证的正向观察。"
-    elif complete_run_count or active_endpoint_count:
-        coverage_status = "complete"
-        coverage_reason = "当前比较输入具备可用范围；结果仍是供人工核查的证据。"
+        coverage_reason = "当前没有已登记 IP、活动终端、最新成功接口地址、ARP 当前观察行或采集结果。"
+    elif not source_set_known:
+        coverage_status = "partial" if (
+            active_endpoint_rows or interface_snapshot_ip_count
+            or current_neighbor_visible_count or current_neighbor_states
+        ) else "unavailable"
+        coverage_reason = "当前全量 ARP sweep 尚未证明设备与覆盖完整；无法判断本次是否未观察到。"
+    elif unavailable or unscoped or missing_source_count or current_neighbor_coverage_incomplete:
+        coverage_status = "partial"
+        coverage_reason = "结果仅比较当前数据；存在未映射范围、未完整证明的来源或未成功的最新上下文尝试。"
     else:
-        coverage_status = "unavailable"
-        coverage_reason = "已有台账，但没有可证明范围和时间的有效发现快照。"
+        coverage_status = "complete"
+        coverage_reason = "结果仅依据当前 IPAM、ARP/ND 当前观察行、活动终端、最新成功接口地址和最近一次完整 ARP sweep；不回溯历史观察。"
 
     result: dict[str, Any] = {
         "undocumented_endpoints": list(undocumented.values()),
         "stale_ip_addresses": stale,
         "mismatched_endpoints": list(mismatched.values()),
-        "never_observed": never_observed,
+        "never_observed": [],
         "unscoped": list(unscoped.values()),
         "unavailable": unavailable,
         "summary": {
             "ipam_address_record_count": len(ipam_records),
-            "allocated_ipam_address_count": allocated_count,
+            "allocated_ipam_address_count": len(allocated_records),
             "active_endpoint_count": active_endpoint_count,
             "current_endpoint_count": active_endpoint_count,
             "interface_snapshot_ip_count": interface_snapshot_ip_count,
             "total_undocumented": len(undocumented),
             "total_stale": len(stale),
             "total_mismatched": len(mismatched),
-            "total_never_observed": len(never_observed),
+            "total_never_observed": 0,
             "total_unscoped": len(unscoped),
             "total_unavailable": len(unavailable),
             "unavailable_address_count": unavailable_address_count,
-            "unavailable_source_count": len(unavailable) - unavailable_address_count,
-            "endpoint_cache_fresh": bool(active_endpoint_count),
-            "latest_endpoint_seen": _iso(latest_endpoint_seen) or "",
-            "latest_active_endpoint_seen": _iso(latest_active_endpoint_seen) or "",
-            "latest_source_success_at": latest_success_at,
+            "unavailable_source_count": sum(1 for item in unavailable if item.get("kind") == "source_coverage"),
+            "endpoint_cache_fresh": source_set_known,
+            "latest_endpoint_seen": latest_endpoint_seen,
+            "latest_active_endpoint_seen": latest_active_endpoint_seen,
+            "latest_source_success_at": latest_source_success_at,
             "current_window_minutes": _recent_minutes(),
-            "stale_after_days": _stale_days(),
-            "required_misses": _required_misses(),
-            "complete_source_run_count": complete_run_count,
+            "stale_after_days": 0,
+            "required_misses": 1,
+            "stale_basis": "latest_complete_current_sweep",
+            "complete_source_run_count": 1 if source_set_known else 0,
             "coverage_source_set_known": source_set_known,
-            "expected_source_count": len(expected_source_ids_all) + addresses_without_expected_source,
-            "proven_source_count": len(proven_source_ids_all),
-            "missing_source_count": missing_expected_sources,
+            "expected_source_count": expected_source_count,
+            "proven_source_count": len(proven_source_ids),
+            "missing_source_count": missing_source_count,
             "coverage_status": coverage_status,
             "coverage_reason": coverage_reason,
         },
@@ -2357,7 +4055,8 @@ def build_ipam_reconciliation(
     normalized_query = q.strip().lower()
     all_items = [
         item for item in result[normalized_tab]
-        if not normalized_query or normalized_query in " ".join(str(value or "") for value in item.values()).lower()
+        if not normalized_query
+        or normalized_query in " ".join(str(value or "") for value in item.values()).lower()
     ]
     safe_page = max(1, int(page or 1))
     safe_page_size = min(max(1, int(page_size or 20)), 100)

@@ -99,6 +99,11 @@ IF_LAST_CHANGE    = '1.3.6.1.2.1.2.2.1.9'        # ifLastChange (TimeTicks)
 IP_NET_TO_MEDIA_PHYS_ADDRESS = '1.3.6.1.2.1.4.22.1.2'
 IP_NET_TO_MEDIA_TYPE = '1.3.6.1.2.1.4.22.1.4'
 
+# Standard IP-MIB address-to-physical table (IPv4 ARP and IPv6 ND).
+IP_NET_TO_PHYSICAL_PHYS_ADDRESS = '1.3.6.1.2.1.4.35.1.4'
+IP_NET_TO_PHYSICAL_TYPE = '1.3.6.1.2.1.4.35.1.6'
+IP_NET_TO_PHYSICAL_STATE = '1.3.6.1.2.1.4.35.1.7'
+
 # Standard Q-BRIDGE-MIB forwarding and VLAN-to-FDB tables.
 DOT1Q_TP_FDB_PORT = '1.3.6.1.2.1.17.7.1.2.2.1.2'
 DOT1Q_TP_FDB_STATUS = '1.3.6.1.2.1.17.7.1.2.2.1.3'
@@ -1768,6 +1773,224 @@ async def collect_qbridge_interface_vlan_data(
     return {'vlans': vlan_records, 'interfaces': interface_records}
 
 
+def _decode_ip_net_to_physical_index(suffix: Any) -> dict[str, Any]:
+    """Decode the RFC 4293 index, including the length-prefixed InetAddress.
+
+    InetAddressIPv6z has twenty octets: the 16-byte address followed by its
+    four-byte zone index.  Keeping the table's ifIndex and zone in the result
+    lets callers preserve link-local rows on their original interface.
+    """
+    import ipaddress
+
+    parts = str(suffix or '').strip('.').split('.')
+    if len(parts) < 3 or any(not part.isdigit() for part in parts):
+        raise RuntimeError('IP-MIB ipNetToPhysical row has a malformed InetAddress index')
+    values = [int(part) for part in parts]
+    if_index, address_type, address_length = values[:3]
+    encoded_address = values[3:]
+    if if_index <= 0 or any(value < 0 or value > 255 for value in encoded_address):
+        raise RuntimeError('IP-MIB ipNetToPhysical row has an invalid ifIndex or address octet')
+    if len(encoded_address) != address_length:
+        raise RuntimeError('IP-MIB ipNetToPhysical InetAddress index length is inconsistent')
+
+    zone_index: int | None = None
+    if address_type == 0:
+        if address_length != 0:
+            raise RuntimeError('IP-MIB unknown InetAddress index must be empty')
+        address = ''
+    elif address_type == 1:
+        if address_length != 4:
+            raise RuntimeError('IP-MIB IPv4 InetAddress index has an invalid size')
+        address = str(ipaddress.IPv4Address(bytes(encoded_address)))
+    elif address_type == 2:
+        if address_length != 16:
+            raise RuntimeError('IP-MIB IPv6 InetAddress index has an invalid size')
+        address = str(ipaddress.IPv6Address(bytes(encoded_address)))
+    elif address_type == 3:
+        if address_length != 8:
+            raise RuntimeError('IP-MIB IPv4z InetAddress index has an invalid size')
+        address = str(ipaddress.IPv4Address(bytes(encoded_address[:4])))
+        zone_index = int.from_bytes(bytes(encoded_address[4:]), 'big')
+    elif address_type == 4:
+        if address_length != 20:
+            raise RuntimeError('IP-MIB IPv6z InetAddress index has an invalid size')
+        address = str(ipaddress.IPv6Address(bytes(encoded_address[:16])))
+        zone_index = int.from_bytes(bytes(encoded_address[16:]), 'big')
+    elif address_type == 16:
+        if not 1 <= address_length <= 255:
+            raise RuntimeError('IP-MIB DNS InetAddress index has an invalid size')
+        try:
+            address = bytes(encoded_address).decode('ascii')
+        except UnicodeDecodeError as exc:
+            raise RuntimeError('IP-MIB DNS InetAddress index is not ASCII') from exc
+    else:
+        raise RuntimeError('IP-MIB ipNetToPhysical row has an unsupported InetAddressType')
+
+    return {
+        'if_index': if_index,
+        'inet_address_type': address_type,
+        'ip_address': address,
+        'zone_index': zone_index,
+    }
+
+
+def _ip_net_to_physical_mac(value: Any) -> str:
+    if isinstance(value, memoryview):
+        value = value.tobytes()
+    elif isinstance(value, bytearray):
+        value = bytes(value)
+    if isinstance(value, bytes):
+        octets = value
+        if len(octets) not in {6, 8}:
+            raise RuntimeError('IP-MIB ipNetToPhysical physical address has an invalid size')
+        return ':'.join(f'{octet:02x}' for octet in octets)
+
+    raw = _snmp_text_value(value).lower()
+    compact = re.sub(r'[^0-9a-f]', '', raw)
+    if len(compact) not in {12, 16} or len(compact) != len(raw.replace(':', '').replace('-', '').replace('.', '')):
+        raise RuntimeError('IP-MIB ipNetToPhysical physical address is malformed')
+    return ':'.join(compact[index:index + 2] for index in range(0, len(compact), 2))
+
+
+async def collect_ipv6_neighbor_table(
+    ip: str,
+    community_or_profile: str | Mapping[str, Any],
+    port: int = 161,
+    *,
+    version: str = '2c',
+    timeout: float = 120,
+) -> list[dict[str, Any]]:
+    """Collect a complete IPv6 neighbor snapshot from IP-MIB's shared table.
+
+    The three readable columns are walked in full and joined by their exact
+    RFC 4293 instance suffix. Any walk or row-set disagreement makes the
+    snapshot incomplete, so callers can preserve the last successful rows.
+    """
+    phys_rows, type_rows, state_rows = await asyncio.gather(
+        _snmp_bulk_walk_complete(
+            ip, community_or_profile, IP_NET_TO_PHYSICAL_PHYS_ADDRESS, port,
+            timeout=timeout, version=version,
+        ),
+        _snmp_bulk_walk_complete(
+            ip, community_or_profile, IP_NET_TO_PHYSICAL_TYPE, port,
+            timeout=timeout, version=version,
+        ),
+        _snmp_bulk_walk_complete(
+            ip, community_or_profile, IP_NET_TO_PHYSICAL_STATE, port,
+            timeout=timeout, version=version,
+        ),
+    )
+    if not phys_rows and not type_rows and not state_rows:
+        return []
+    if not phys_rows or not type_rows or not state_rows:
+        raise RuntimeError('IP-MIB ipNetToPhysical primary columns have incomplete coverage')
+
+    def _column_by_suffix(rows: list[tuple[str, Any]], label: str) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for suffix, value in rows:
+            normalized_suffix = str(suffix).strip('.')
+            if not normalized_suffix or normalized_suffix in result:
+                raise RuntimeError(f'IP-MIB ipNetToPhysical {label} column has duplicate row keys')
+            result[normalized_suffix] = value
+        return result
+
+    phys_by_suffix = _column_by_suffix(phys_rows, 'physical-address')
+    raw_type_by_suffix = _column_by_suffix(type_rows, 'type')
+    raw_state_by_suffix = _column_by_suffix(state_rows, 'state')
+    row_keys = set(phys_by_suffix)
+    if row_keys != set(raw_type_by_suffix) or row_keys != set(raw_state_by_suffix):
+        raise RuntimeError('IP-MIB ipNetToPhysical columns do not cover the same row keys')
+
+    decoded_by_suffix = {
+        suffix: _decode_ip_net_to_physical_index(suffix)
+        for suffix in row_keys
+    }
+    ipv6_rows = {
+        suffix: decoded
+        for suffix, decoded in decoded_by_suffix.items()
+        if decoded['inet_address_type'] in {2, 4}
+    }
+    if not ipv6_rows:
+        return []
+
+    type_labels = {1: 'other', 2: 'invalid', 3: 'dynamic', 4: 'static', 5: 'local'}
+    state_labels = {
+        1: 'reachable', 2: 'stale', 3: 'delay', 4: 'probe',
+        5: 'invalid', 6: 'unknown', 7: 'incomplete',
+    }
+    usable_ipv6_rows: dict[str, dict[str, Any]] = {}
+    type_by_suffix: dict[str, int] = {}
+    state_by_suffix: dict[str, int] = {}
+    for suffix, decoded in ipv6_rows.items():
+        entry_type = _snmp_integer_value(raw_type_by_suffix[suffix])
+        state = _snmp_integer_value(raw_state_by_suffix[suffix])
+        if entry_type not in type_labels or state not in state_labels:
+            raise RuntimeError('IP-MIB ipNetToPhysical row has an invalid type or state value')
+        type_by_suffix[suffix] = entry_type
+        state_by_suffix[suffix] = state
+        # Device-local addresses are not remote endpoint candidates; invalid
+        # and unresolved rows do not carry a usable neighbor mapping.
+        if entry_type in {2, 5} or state in {5, 7}:
+            continue
+        usable_ipv6_rows[suffix] = decoded
+    if not usable_ipv6_rows:
+        return []
+
+    if_name_rows: list[tuple[str, Any]] = []
+    try:
+        if_name_rows = await _snmp_bulk_walk_complete(
+            ip, community_or_profile, IF_NAME, port, timeout=timeout, version=version,
+        )
+    except Exception:
+        # Some agents expose only the older IF-MIB ifDescr object.
+        if_name_rows = []
+    interface_by_index = {
+        int(suffix): _snmp_text_value(raw_name)
+        for suffix, raw_name in if_name_rows
+        if str(suffix).isdigit() and _snmp_text_value(raw_name)
+    }
+    needed_indexes = {row['if_index'] for row in usable_ipv6_rows.values()}
+    if needed_indexes - set(interface_by_index):
+        try:
+            descr_rows = await _snmp_bulk_walk_complete(
+                ip, community_or_profile, IF_DESCR, port, timeout=timeout, version=version,
+            )
+        except Exception as exc:
+            raise RuntimeError('IF-MIB could not map every ipNetToPhysical ifIndex') from exc
+        for suffix, raw_name in descr_rows:
+            if str(suffix).isdigit() and _snmp_text_value(raw_name):
+                interface_by_index.setdefault(int(suffix), _snmp_text_value(raw_name))
+    if needed_indexes - set(interface_by_index):
+        raise RuntimeError('IF-MIB did not map every IPv6 neighbor row to an interface')
+
+    entries: list[dict[str, Any]] = []
+    identities: set[tuple[int, str]] = set()
+    for suffix, decoded in usable_ipv6_rows.items():
+        entry_type = type_by_suffix[suffix]
+        state = state_by_suffix[suffix]
+        address = decoded['ip_address']
+        if not address:
+            raise RuntimeError('IP-MIB IPv6 neighbor row has no address')
+        key = (decoded['if_index'], address)
+        if key in identities:
+            raise RuntimeError('IP-MIB ipNetToPhysical contains duplicate IPv6 interface/address rows')
+        identities.add(key)
+        interface_name = interface_by_index[decoded['if_index']]
+        entries.append({
+            'ip_address': address,
+            'mac_address': _ip_net_to_physical_mac(phys_by_suffix[suffix]),
+            'interface': interface_name,
+            'if_index': decoded['if_index'],
+            'inet_address_type': decoded['inet_address_type'],
+            'zone_index': decoded['zone_index'],
+            'type': type_labels[entry_type],
+            'state': state_labels[state],
+        })
+    return sorted(entries, key=lambda item: (
+        item['interface'].casefold(), item['ip_address'], item['mac_address'],
+    ))
+
+
 async def collect_arp_table(
     ip: str,
     community: str | Mapping[str, Any] = 'public',
@@ -1788,7 +2011,12 @@ async def collect_arp_table(
         ),
     )
     if not phys_rows and not type_rows:
-        raise RuntimeError('IP-MIB ARP table returned no rows')
+        # Both walks completed successfully and returned empty tables: this is
+        # a complete-empty snapshot. A one-sided empty result is ambiguous and
+        # must not replace the last successful ARP projection.
+        return []
+    if not phys_rows or not type_rows:
+        raise RuntimeError('IP-MIB ARP physical-address/type tables have incomplete coverage')
 
     type_by_index: dict[str, int] = {}
     for suffix, raw_type in type_rows:
@@ -1900,8 +2128,14 @@ async def collect_bridge_mac_table(
             timeout=timeout, version=version,
         ),
     )
+    # An empty FDB is a valid complete snapshot only when both independent
+    # primary tables were walked successfully and both are empty.  The four
+    # walks above have already returned without error at this point, so the
+    # ancillary mappings are not needed to prove a complete-empty table.
+    if not fdb_port_rows and not fdb_status_rows:
+        return []
     if not fdb_port_rows or not fdb_status_rows:
-        raise RuntimeError('Q-BRIDGE-MIB FDB table returned no rows')
+        raise RuntimeError('Q-BRIDGE-MIB FDB port/status tables do not both contain a complete snapshot')
     if not vlan_fdb_rows:
         raise RuntimeError('Q-BRIDGE-MIB VLAN-to-FDB table returned no rows')
     if not bridge_if_rows:

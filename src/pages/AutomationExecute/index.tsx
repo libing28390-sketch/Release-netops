@@ -17,6 +17,7 @@ import { DEVICE_PAGE_SIZE, VAR_GROUP_ORDER } from './constants';
 import { ApiError, apiRequest } from '../../api/http';
 import { fetchAllPaginatedItems } from '../../utils/pagination';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
+import { deviceRoleLabel, deviceCategoryLabel } from '../../domain/deviceLabels';
 
 interface DeviceSelectionSiteFacet {
   site: string;
@@ -310,7 +311,7 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
       if (!facet.site || !facet.role) return;
       const roles = rolesBySite.get(facet.site) || [];
       roles.push({
-        role: isZh && facet.role === 'Unassigned' ? '未分配' : facet.role,
+        role: facet.role,
         count: Number(facet.count || 0),
         onlineCount: Number(facet.online_count || 0),
       });
@@ -350,8 +351,8 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
         isZh ? '主机名' : 'Hostname',
         'IP',
         isZh ? '厂商' : 'Vendor',
-        isZh ? '类型' : 'Type',
-        isZh ? '角色' : 'Role',
+        isZh ? '设备类别' : 'Device category',
+        isZh ? '设备角色' : 'Device role',
         isZh ? '站点' : 'Site',
       ],
       rows: allDevices.map((device) => [
@@ -359,8 +360,8 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
         device.hostname,
         device.ip_address,
         getVendor(device),
-        getDeviceCategory(device) === 'server' ? (isZh ? '服务器' : 'Server') : (isZh ? '网络设备' : 'Network'),
-        device.role || '—',
+        deviceCategoryLabel(getDeviceCategory(device), isZh ? 'zh' : 'en'),
+        device.role ? deviceRoleLabel(device.role, isZh ? 'zh' : 'en') : '—',
         device.site || '—',
       ]),
     };

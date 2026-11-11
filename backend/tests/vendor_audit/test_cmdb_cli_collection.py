@@ -451,12 +451,17 @@ def test_cmdb_interface_job_uses_one_cli_session_and_commits_snapshot(
         "description": None,
         "interface_ip": "10.219.0.1",
         "prefix_length": 24,
+        "addresses": [{
+            "interface": "Vlan-interface219",
+            "ip_address": "10.219.0.1",
+            "prefix_length": 24,
+        }],
         "admin_status": "up",
         "oper_status": "up",
     }]
 
 
-def test_cmdb_ip_action_rejects_ambiguous_or_unparsed_data(monkeypatch):
+def test_cmdb_ip_action_keeps_multiple_addresses_and_rejects_unparsed_data(monkeypatch):
     session = _FakeActionSession()
     monkeypatch.setattr(cmdb_cli_collection_service, "_action_record_limit", lambda _action: 2000)
     monkeypatch.setattr(
@@ -484,8 +489,12 @@ def test_cmdb_ip_action_rejects_ambiguous_or_unparsed_data(monkeypatch):
             ],
         },
     )
-    with pytest.raises(RuntimeError, match="多个地址"):
-        cmdb_cli_collection_service._collect_cli_ip_addresses(_device(), session)
+    addresses, _metadata = cmdb_cli_collection_service._collect_cli_ip_addresses(
+        _device(), session,
+    )
+    assert [(row["ip_address"], row["prefix_length"]) for row in addresses] == [
+        ("10.219.0.1", 24), ("10.219.0.2", 24),
+    ]
 
     monkeypatch.setattr(
         "services.platform_registry_service.execute_platform_action",
@@ -671,7 +680,7 @@ def test_cmdb_ip_action_unwraps_singleton_textfsm_list_fields(monkeypatch):
     }]
 
 
-def test_cmdb_ip_action_rejects_multiple_values_inside_a_textfsm_list(monkeypatch):
+def test_cmdb_ip_action_preserves_multiple_addresses_inside_a_textfsm_list(monkeypatch):
     monkeypatch.setattr(cmdb_cli_collection_service, "_action_record_limit", lambda _action: 2000)
     monkeypatch.setattr(
         "services.platform_registry_service.execute_platform_action",
@@ -685,10 +694,44 @@ def test_cmdb_ip_action_rejects_multiple_values_inside_a_textfsm_list(monkeypatc
         },
     )
 
-    with pytest.raises(RuntimeError, match="多个值"):
-        cmdb_cli_collection_service._collect_cli_ip_addresses(
-            _device(), _FakeActionSession(),
-        )
+    addresses, _metadata = cmdb_cli_collection_service._collect_cli_ip_addresses(
+        _device(), _FakeActionSession(),
+    )
+    assert [(row["ip_address"], row["prefix_length"]) for row in addresses] == [
+        ("10.219.0.1", 24), ("10.219.0.2", 24),
+    ]
+
+
+def test_h3c_cli_context_parser_distinguishes_explicit_global_from_vrf_and_alias(monkeypatch):
+    monkeypatch.setattr(cmdb_cli_collection_service, "_action_record_limit", lambda _action: 2000)
+    monkeypatch.setattr(
+        cmdb_cli_collection_service,
+        "_collect_cli_ip_action_result",
+        lambda *_args: {
+            "success": True,
+            "parse_status": "matched",
+            "parser_platform": "h3c_comware_v7",
+            "records": [
+                {"INTERFACE": "Vlan-interface1", "IP_ADDRESS": "192.0.2.1/24", "VPN_INSTANCE": "--"},
+                {"INTERFACE": "Vlan-interface1", "IP_ADDRESS": "198.51.100.1/24", "VPN_INSTANCE": "CORE-VRF"},
+                {"INTERFACE": "Vlan-interface1", "IP_ADDRESS": "203.0.113.1/24", "VPN_INSTANCE": "default"},
+                {"INTERFACE": "Vlan-interface1", "IP_ADDRESS": "203.0.113.2/24", "VPN_INSTANCE": "global"},
+            ],
+        },
+    )
+
+    addresses, _metadata = cmdb_cli_collection_service._collect_cli_ip_addresses(
+        _device(), _FakeActionSession(),
+    )
+    by_ip = {item["ip_address"]: item for item in addresses}
+    assert by_ip["192.0.2.1"]["context_type"] == "global"
+    assert by_ip["192.0.2.1"]["local_context_key"] == "--"
+    assert by_ip["198.51.100.1"]["context_type"] == "vrf"
+    assert by_ip["198.51.100.1"]["local_context_key"] == "CORE-VRF"
+    assert by_ip["203.0.113.1"]["context_type"] == "unknown"
+    assert by_ip["203.0.113.1"]["local_context_key"] == "default"
+    assert by_ip["203.0.113.2"]["context_type"] == "unknown"
+    assert by_ip["203.0.113.2"]["local_context_key"] == "global"
 
 
 def test_cmdb_ip_action_reparses_raw_output_only_with_an_exact_current_profile_template(monkeypatch):

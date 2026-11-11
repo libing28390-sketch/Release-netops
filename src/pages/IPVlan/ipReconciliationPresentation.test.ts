@@ -9,17 +9,16 @@ import {
 } from './ipReconciliationPresentation';
 
 describe('IPAM reconciliation categories', () => {
-  it('covers all six server-side tabs and uses the matching summary counts', () => {
+  it('covers current-evidence tabs and uses the matching summary counts', () => {
     const summary = {
       total_undocumented: 1,
       total_mismatched: 2,
       total_stale: 3,
-      total_never_observed: 4,
       total_unscoped: 5,
       total_unavailable: 6,
     };
-    expect(RECONCILIATION_TABS).toEqual(['undocumented', 'mismatched', 'stale', 'never_observed', 'unscoped', 'unavailable']);
-    expect(RECONCILIATION_TABS.map((tab) => getReconciliationCategoryCount(summary, tab))).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(RECONCILIATION_TABS).toEqual(['undocumented', 'mismatched', 'stale', 'unscoped', 'unavailable']);
+    expect(RECONCILIATION_TABS.map((tab) => getReconciliationCategoryCount(summary, tab))).toEqual([1, 2, 3, 5, 6]);
   });
 
   it.each(RECONCILIATION_TABS)('provides a category-specific empty-state message for %s', (tab) => {

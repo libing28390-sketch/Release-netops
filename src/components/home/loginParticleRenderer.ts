@@ -151,7 +151,7 @@ export function createLoginParticleRenderer(container: HTMLDivElement): () => vo
   };
   const animate = (now: number) => {
     frame = 0;
-    if (disposed || document.hidden || motionPreference.matches || contextLost) return;
+    if (disposed || document.hidden || (motionPreference.matches && !pointerInside) || contextLost) return;
     const delta = lastFrame ? Math.min((now - lastFrame) / 1000, 0.05) : 1 / 60;
     lastFrame = now; elapsed += delta;
     const noiseX = Math.sin(elapsed * 0.66 + 94.234) * 0.65 + Math.sin(elapsed * 0.24) * 0.35;
@@ -165,22 +165,28 @@ export function createLoginParticleRenderer(container: HTMLDivElement): () => vo
   const syncAnimation = () => {
     cancelAnimationFrame(frame); frame = 0; lastFrame = 0;
     if (disposed || document.hidden || contextLost) return;
-    if (motionPreference.matches || !canSimulate) {
+    if ((motionPreference.matches && !pointerInside) || !canSimulate) {
       elapsed = 0; ring.set(0, 0); simulated = false;
       // Settle a single stationary frame instead of leaving half-grown points.
       for (let index = 0; index < (canSimulate ? 30 : 1); index++) render(1 / 60);
     } else frame = requestAnimationFrame(animate);
   };
   const onPointerMove = (event: PointerEvent) => {
-    if (motionPreference.matches || event.pointerType === 'touch') return;
+    if (event.pointerType === 'touch') return;
     const bounds = container.getBoundingClientRect();
     const x = (event.clientX - bounds.left) / width * 2 - 1;
     const y = -((event.clientY - bounds.top) / height * 2 - 1);
     const halfHeight = Math.tan(THREE.MathUtils.degToRad(20)) * camera.position.z;
     pointer.set(x * halfHeight * camera.aspect * 0.175, y * halfHeight * 0.175);
     pointerInside = Math.abs(x) <= 1 && Math.abs(y) <= 1;
+    // Reduced motion keeps the idle field still, while deliberate pointer input
+    // can still move it. Resume only when no animation is already scheduled.
+    if (motionPreference.matches && pointerInside && !frame && canSimulate) syncAnimation();
   };
-  const onPointerLeave = () => { pointerInside = false; };
+  const onPointerLeave = () => {
+    pointerInside = false;
+    if (motionPreference.matches) syncAnimation();
+  };
   const onContextLost = (event: Event) => { event.preventDefault(); contextLost = true; cancelAnimationFrame(frame); };
   const onContextRestored = () => { contextLost = false; simulated = false; syncAnimation(); };
   container.appendChild(renderer.domElement);

@@ -14,7 +14,7 @@ const response = (payload: unknown) => ({
 }) as unknown as Response;
 
 const allServerColumns = [
-  '主机名', '管理 IP', '角色', '厂商', '型号', '数据中心', '机柜', 'U 位', '状态', 'Ping', 'SSH', '部门',
+  '主机名', '管理 IP', '设备角色', '厂商', '型号', '数据中心', '机柜', 'U 位', '状态', 'Ping', 'SSH', '部门',
 ];
 
 const renderServerPage = () => render(

@@ -72,6 +72,7 @@ scrape_configs:
   - job_name: platform_hardware_inventory
     scrape_interval: 60s
     scrape_timeout: 30s
+    max_scrape_size: "67108864" # 64 MiB; fleet-wide hardware inventory
     metrics_path: /hardware-metrics
     static_configs:
       - targets: ["netops:8003"]

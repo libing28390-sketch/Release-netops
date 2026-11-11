@@ -92,6 +92,220 @@ def _mac_status_is_proven(status: dict[str, Any]) -> bool:
     )
 
 
+def find_current_endpoint_evidence(
+    target_ip: str,
+    *,
+    tenant_id: str,
+    site_id: str = "",
+    vrf: str = "default",
+    authorized_device_ids: set[str] | list[str] | tuple[str, ...] | None = None,
+    start_device_id: str = "",
+    network_domain_id: str = "",
+    conn=None,
+) -> dict[str, Any] | None:
+    """Resolve an endpoint from current ARP/FDB generations without history.
+
+    Unknown routing context is acceptable only for a unique same-device
+    ARP MAC/VLAN -> FDB port match. The context remains unknown; this function
+    never infers Global or a VRF from a VLAN number.
+    """
+    normalized_ip = discovery._normalized_ip(target_ip)
+    tenant = _id(tenant_id)
+    site = _id(site_id)
+    start = _id(start_device_id)
+    allowed = _authorized_ids(authorized_device_ids)
+    requested_vrf, is_default_vrf = _requested_vrf(vrf)
+    if (
+        not normalized_ip or not tenant or not allowed or _id(network_domain_id)
+        or (start and start not in allowed)
+    ):
+        return None
+
+    owns_connection = conn is None
+    db_conn = conn if conn is not None else get_db_connection()
+    try:
+        allowed_ids = sorted(allowed)
+        marks = ", ".join("?" for _ in allowed_ids)
+        arp_sources = db_conn.execute(
+            f"""SELECT DISTINCT observation.source_device_id
+                  FROM ipam_current_endpoint_observations AS observation
+                  JOIN ipam_endpoint_collection_states AS state
+                    ON state.device_id = observation.source_device_id
+                   AND state.observation_source = observation.observation_source
+                   AND state.context_source = observation.context_source
+                   AND state.context_type = observation.context_type
+                   AND state.local_context_key = observation.local_context_key
+                   AND state.last_success_generation = observation.generation
+                  JOIN devices AS device ON device.id = observation.source_device_id
+                 WHERE observation.observation_source = 'arp'
+                   AND host(observation.ip_address) = ?
+                   AND observation.source_device_id IN ({marks})
+                   AND COALESCE(NULLIF(btrim(device.tenant_id), ''), 'tenant-default') = ?
+                   AND (? = '' OR COALESCE(device.site_id, '') = ?)
+                   AND state.latest_attempt_generation = observation.generation
+                   AND state.latest_status IN ('complete', 'scope_unknown')
+                 ORDER BY observation.source_device_id""",
+            (normalized_ip, *allowed_ids, tenant, site, site),
+        ).fetchall()
+        if not arp_sources:
+            return None
+
+        candidates: list[dict[str, Any]] = []
+        for source in arp_sources:
+            source_device_id = _id(source.get("source_device_id"))
+            if not source_device_id or (start and source_device_id != start):
+                continue
+            arp_rows = [
+                row for row in discovery._current_endpoint_projection(
+                    db_conn,
+                    device_id=source_device_id,
+                    observation_source="arp",
+                )
+                if discovery._normalized_ip(row.get("ip")) == normalized_ip
+                and _scope_matches(
+                    row,
+                    tenant_id=tenant,
+                    site_id=site,
+                    authorized_device_ids=allowed,
+                    start_device_id=start,
+                )
+            ]
+            # Multiple current IP/context identities are ambiguous even if
+            # they happen to share the same MAC or physical port.
+            if len(arp_rows) != 1:
+                continue
+            arp = arp_rows[0]
+            mac = discovery._normalized_mac(arp.get("mac"))
+            vlan = discovery._normalize_vlan_number(arp.get("vlan"))
+            source_context = _id(arp.get("source_vrf_context_status")).lower() or "unknown"
+            effective_context = _id(arp.get("vrf_context_status")).lower() or "unknown"
+            if (
+                not mac or not vlan or discovery._is_virtual_gateway_mac(mac)
+                or not arp.get("coverage_complete")
+                or _id(arp.get("evidence_status")).lower() != "recent"
+                or _id(arp.get("timestamp_status")).lower() != "valid"
+            ):
+                continue
+
+            if source_context == "unknown":
+                if not is_default_vrf:
+                    continue
+            elif source_context == "global":
+                if not is_default_vrf or effective_context != "explicit_global":
+                    continue
+            elif source_context == "vrf":
+                if (
+                    is_default_vrf or effective_context != "explicit_vrf"
+                    or _id(arp.get("vrf_id")) != requested_vrf
+                ):
+                    continue
+            else:
+                continue
+
+            fdb_rows = [
+                row for row in discovery._current_fdb_endpoint_projection(
+                    db_conn, device_id=source_device_id,
+                )
+                if _id(row.get("source_device_id")) == source_device_id
+                and _id(row.get("tenant_id")) == tenant
+                and (not site or _id(row.get("site_id")) == site)
+                and discovery._normalized_mac(row.get("mac")) == mac
+                and discovery._normalize_vlan_number(row.get("vlan")) == vlan
+                and _id(row.get("context_source")) == _id(arp.get("context_source"))
+                and _id(row.get("context_type")) == _id(arp.get("context_type"))
+                and _id(row.get("local_context_key")) == _id(arp.get("local_context_key"))
+            ]
+            if len(fdb_rows) != 1:
+                continue
+            fdb = fdb_rows[0]
+            if (
+                not fdb.get("coverage_complete")
+                or _id(fdb.get("evidence_status")).lower() != "recent"
+                or _id(fdb.get("timestamp_status")).lower() != "valid"
+                or fdb.get("path_ambiguity")
+                or fdb.get("virtual_gateway_mac")
+                or _id(fdb.get("path_classification")).lower() != "access_edge"
+                or not _id(fdb.get("switch_port"))
+            ):
+                continue
+
+            # The FDB path projector classifies an interface by port mode,
+            # while this IP-to-port join also needs to prove that the learned
+            # VLAN is the interface's configured access VLAN.
+            from core.interface_utils import normalize_interface_name
+
+            port_name = _id(fdb.get("switch_port"))
+            port_key = normalize_interface_name(port_name).strip().lower()
+            interface_rows = [
+                dict(row)
+                for row in db_conn.execute(
+                    """SELECT interface_name, interface_type, switchport_mode, access_vlan
+                         FROM interfaces WHERE device_id = ?""",
+                    (source_device_id,),
+                ).fetchall()
+                if normalize_interface_name(_id(row.get("interface_name"))).strip().lower() == port_key
+            ]
+            if len(interface_rows) != 1:
+                continue
+            interface = interface_rows[0]
+            if (
+                _id(interface.get("interface_type")).lower()
+                not in {"physical", "ethernet", "ethernet_port", "port", "access"}
+                or _id(interface.get("switchport_mode")).lower() != "access"
+                or discovery._normalize_vlan_number(interface.get("access_vlan")) != vlan
+            ):
+                continue
+
+            arp_observed_at, _ = _iso_utc(arp.get("observed_at"))
+            fdb_observed_at, _ = _iso_utc(fdb.get("observed_at"))
+            timestamps = [value for value in (arp_observed_at, fdb_observed_at) if value]
+            candidates.append({
+                "location": {
+                    "device_id": source_device_id,
+                    "device": _id(fdb.get("switch_name") or fdb.get("source_device_name") or source_device_id),
+                    "port": _id(fdb.get("switch_port")),
+                    "mac": mac,
+                    "vlan": str(vlan),
+                },
+                "arp_evidence": [{
+                    "observation_id": _id(arp.get("observation_id") or arp.get("id")),
+                    "device_id": source_device_id,
+                    "source_device_id": source_device_id,
+                    "device": _id(arp.get("source_device_name") or source_device_id),
+                    "source_device": _id(arp.get("source_device_name") or source_device_id),
+                    "interface": _id(arp.get("source_interface_name") or arp.get("interface_name")),
+                    "ip": normalized_ip,
+                    "mac": mac,
+                    "vlan": str(vlan),
+                    "site_id": _id(arp.get("site_id")),
+                    "vrf_id": _id(arp.get("vrf_id")),
+                    "vrf_context_status": effective_context,
+                    "observed_at": _id(arp.get("observed_at")),
+                }],
+                "fdb_evidence": [{
+                    "observation_id": _id(fdb.get("observation_id") or fdb.get("id")),
+                    "device_id": source_device_id,
+                    "interface": _id(fdb.get("switch_port")),
+                    "mac": mac,
+                    "vlan": str(vlan),
+                    "entry_type": _id(fdb.get("entry_type")),
+                    "path_classification": _id(fdb.get("path_classification")),
+                    "path_evidence": _id(fdb.get("path_evidence")),
+                    "generation": int(fdb.get("generation") or 0),
+                    "observed_at": _id(fdb.get("observed_at")),
+                }],
+                "evidence_collected_at": min(timestamps) if timestamps else "",
+                "vrf_context_status": effective_context,
+                "source_device_ids": [source_device_id],
+                "collection_source": _id(arp.get("context_source")),
+            })
+
+        return candidates[0] if len(candidates) == 1 else None
+    finally:
+        if owns_connection:
+            db_conn.close()
+
+
 def _current_snmp_mac_rows(conn, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Keep projected FDB rows that still exist in the latest SNMP table."""
     mac_rows = [

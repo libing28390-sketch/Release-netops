@@ -21,6 +21,11 @@ def test_fixed_collector_stack_and_queue_contract():
     assert any("nexora-monitoring-artifacts:/etc/nexora-collector" in item for item in services["vmagent"]["volumes"])
     assert any("nexora-monitoring-artifacts:/etc/snmp_exporter" in item for item in services["snmp-exporter"]["volumes"])
     assert any("runtime/vmagent/scrape.yml" in item for item in command)
+    # Existing published artifacts must recover without a plan republication.
+    assert "-promscrape.maxScrapeSize=67108864" in command
+    bootstrap_scrape = yaml.safe_load((ROOT / "monitoring/vmagent/scrape.yml").read_text(encoding="utf-8"))
+    hardware_job = next(job for job in bootstrap_scrape["scrape_configs"] if job["job_name"] == "platform_hardware_inventory")
+    assert hardware_job["max_scrape_size"] == "67108864"
     exporter_command = " ".join(str(item) for item in services["snmp-exporter"]["command"])
     assert "runtime/snmp_exporter/snmp.yml" in exporter_command
     assert "current_version.json" not in exporter_command

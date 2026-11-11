@@ -8,6 +8,7 @@ from core.interface_utils import normalize_interface_name
 from database import get_db_connection
 from schemas.schemas import BatchPrefixNetworkTypeUpdate
 from services.cmdb_snapshot_service import begin_snapshot_attempt, complete_snapshot
+from services.ipam_address_space_service import create_address_space
 from services.ipam_service import (
     batch_update_subnet_network_type,
     create_subnet,
@@ -21,12 +22,20 @@ def _seed_prefixes() -> tuple[dict, dict]:
         conn.execute("INSERT INTO sites (id, site_code, site_name) VALUES ('batch-site-a', 'BATCH-A', 'Batch A')")
         conn.execute("INSERT INTO sites (id, site_code, site_name) VALUES ('batch-site-b', 'BATCH-B', 'Batch B')")
         conn.commit()
+    global_space = create_address_space(
+        name='Prefix Batch Test Global',
+        kind='global',
+        vrf_id=None,
+        security_tenant_id='tenant-default',
+    )
     first = create_subnet(
         prefix='10.90.1.0/24', tenant_id='tenant-default', site_id='batch-site-a',
+        address_space_id=global_space['id'],
         name='Batch A', network_type='server',
     )
     second = create_subnet(
         prefix='10.90.2.0/24', tenant_id='tenant-default', site_id='batch-site-b',
+        address_space_id=global_space['id'],
         name='Batch B', network_type='server',
     )
     return first, second
@@ -36,12 +45,17 @@ def _read_prefixes(ids: list[str]) -> dict[str, dict]:
     placeholders = ', '.join('?' for _ in ids)
     with get_db_connection() as conn:
         rows = conn.execute(
-            f'''SELECT id, network_type, manual_override, manual_network_type,
+            f'''SELECT id, revision, network_type, manual_override, manual_network_type,
                        classification_status, classification_source
                 FROM prefixes WHERE id IN ({placeholders})''',
             tuple(ids),
         ).fetchall()
     return {str(row['id']): dict(row) for row in rows}
+
+
+def _read_prefix_revisions(ids: list[str]) -> dict[str, int]:
+    rows = _read_prefixes(ids)
+    return {prefix_id: int(row.get('revision') or 1) for prefix_id, row in rows.items()}
 
 
 def test_batch_network_type_update_sets_manual_protection_and_checks_each_scope(isolated_db, monkeypatch) -> None:
@@ -50,7 +64,6 @@ def test_batch_network_type_update_sets_manual_protection_and_checks_each_scope(
     from api import ipam as ipam_api
 
     scope_checks: list[tuple[str, str, str, str]] = []
-    audit_events: list[dict] = []
     monkeypatch.setattr(
         ipam_api,
         'enforce_resource_scope',
@@ -58,9 +71,12 @@ def test_batch_network_type_update_sets_manual_protection_and_checks_each_scope(
             (resource, action, str(scope.get('tenant_id')), str(scope.get('site_id')))
         ),
     )
-    monkeypatch.setattr(ipam_api, 'log_audit_event', lambda **kwargs: audit_events.append(kwargs))
-
-    body = BatchPrefixNetworkTypeUpdate(ids=[first['id'], second['id']], network_type='loopback')
+    ids = [first['id'], second['id']]
+    body = BatchPrefixNetworkTypeUpdate(
+        ids=ids,
+        network_type='loopback',
+        expected_revisions=_read_prefix_revisions(ids),
+    )
     response = ipam_api.api_batch_update_subnet_network_type(
         body,
         user={'username': 'operator', 'role': 'Operator'},
@@ -72,8 +88,12 @@ def test_batch_network_type_update_sets_manual_protection_and_checks_each_scope(
         ('prefix', 'update', 'tenant-default', 'batch-site-a'),
         ('prefix', 'update', 'tenant-default', 'batch-site-b'),
     }
-    assert len(audit_events) == 1
-    assert audit_events[0]['event_type'] == 'ipam.prefix.batch_update_network_type'
+    with get_db_connection() as conn:
+        audit = conn.execute(
+            "SELECT event_type, target_id FROM audit_events WHERE event_type = 'ipam.prefix.batch_update_network_type' ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+    assert audit is not None
+    assert audit['target_id'] == 'batch'
     updated = _read_prefixes([first['id'], second['id']])
     for prefix_id in (first['id'], second['id']):
         assert updated[prefix_id]['network_type'] == 'loopback'
@@ -102,7 +122,6 @@ def test_batch_network_type_scope_error_rolls_back_and_does_not_audit(isolated_d
     from api import ipam as ipam_api
 
     checked_sites: list[str] = []
-    audit_events: list[dict] = []
 
     def deny_after_first_scope(_user, _resource, _action, **scope):
         site_id = str(scope.get('site_id') or '')
@@ -111,18 +130,25 @@ def test_batch_network_type_scope_error_rolls_back_and_does_not_audit(isolated_d
             raise HTTPException(status_code=403, detail='out of scope')
 
     monkeypatch.setattr(ipam_api, 'enforce_resource_scope', deny_after_first_scope)
-    monkeypatch.setattr(ipam_api, 'log_audit_event', lambda **kwargs: audit_events.append(kwargs))
-
     with pytest.raises(HTTPException) as denied:
+        ids = [first['id'], second['id']]
         ipam_api.api_batch_update_subnet_network_type(
-            BatchPrefixNetworkTypeUpdate(ids=[first['id'], second['id']], network_type='loopback'),
+            BatchPrefixNetworkTypeUpdate(
+                ids=ids,
+                network_type='loopback',
+                expected_revisions=_read_prefix_revisions(ids),
+            ),
             user={'username': 'operator', 'role': 'Operator'},
         )
 
     assert denied.value.status_code == 403
     assert len(checked_sites) == 2
     assert set(checked_sites) == {'batch-site-a', 'batch-site-b'}
-    assert audit_events == []
+    with get_db_connection() as conn:
+        audit_count = conn.execute(
+            "SELECT COUNT(*) AS count FROM audit_events WHERE event_type = 'ipam.prefix.batch_update_network_type'"
+        ).fetchone()['count']
+    assert int(audit_count) == 0
     unchanged = _read_prefixes([first['id'], second['id']])
     assert unchanged[first['id']]['network_type'] == 'server'
     assert unchanged[second['id']]['network_type'] == 'server'
@@ -130,9 +156,17 @@ def test_batch_network_type_scope_error_rolls_back_and_does_not_audit(isolated_d
 
 def test_batch_network_type_schema_rejects_values_outside_prefix_page_types() -> None:
     with pytest.raises(ValidationError):
-        BatchPrefixNetworkTypeUpdate(ids=['prefix-one'], network_type='not-a-prefix-role')
+        BatchPrefixNetworkTypeUpdate(
+            ids=['prefix-one'],
+            network_type='not-a-prefix-role',
+            expected_revisions={'prefix-one': 1},
+        )
     with pytest.raises(ValidationError):
-        BatchPrefixNetworkTypeUpdate(ids=['prefix-one', 'prefix-one'], network_type='loopback')
+        BatchPrefixNetworkTypeUpdate(
+            ids=['prefix-one', 'prefix-one'],
+            network_type='loopback',
+            expected_revisions={'prefix-one': 1},
+        )
 
 
 def _seed_gateway_device(site_id: str, device_id: str, *, tenant_id: str = 'tenant-default') -> None:
@@ -167,6 +201,24 @@ def _publish_interface_observations(device_id: str, observations: list[dict]) ->
                     attempt['run_id'],
                 ),
             )
+            context_type = str(item.get('context_type') or 'unknown')
+            if context_type != 'unknown':
+                conn.execute(
+                    """INSERT INTO cmdb_device_interface_address_observations (
+                           device_id, normalized_interface_name, interface_name,
+                           context_source, context_type, local_context_key,
+                           local_context_name, ip_address, ip_prefix_length,
+                           generation, observed_at, run_id, metadata_json
+                       ) VALUES (?, ?, ?, 'cli', ?, ?, ?, ?::inet, ?, ?, ?::timestamptz, ?, '{}'::jsonb)""",
+                    (
+                        device_id,
+                        normalize_interface_name(item['interface_name']).strip().lower(),
+                        item['interface_name'], context_type, item['local_context_key'],
+                        item.get('local_context_name') or item['local_context_key'],
+                        item['address'], item['prefix_length'], attempt['generation'],
+                        observed_at, attempt['run_id'],
+                    ),
+                )
         assert complete_snapshot(
             conn,
             attempt,
@@ -189,7 +241,7 @@ def _seed_gateway_scope() -> None:
         conn.commit()
 
 
-def test_gateway_evidence_matches_configured_ip_and_unique_svi(isolated_db) -> None:
+def test_vrfless_gateway_evidence_is_review_only_even_for_unique_svi(isolated_db) -> None:
     del isolated_db
     _seed_gateway_scope()
     _seed_gateway_device('gateway-site-a', 'gateway-device-svi')
@@ -209,22 +261,126 @@ def test_gateway_evidence_matches_configured_ip_and_unique_svi(isolated_db) -> N
     configured = get_prefix_gateway_candidates(
         prefix='10.10.10.0/24', site_id='gateway-site-a', tenant_id='tenant-default', gateway_ip='10.10.10.1',
     )
-    assert configured['status'] == 'matched'
-    assert configured['selected'] == configured['endpoints'][0]
-    assert configured['selected'] == {
+    assert configured['status'] == 'scope_pending'
+    assert configured['selected'] is None
+    assert configured['endpoints'] == [{
         'device_id': 'gateway-device-svi',
         'device_name': 'GATEWAY-DEVICE-SVI',
         'interface_name': 'Vlan-interface10',
         'interface_id': 'mapped-svi-id',
         'address': '10.10.10.1',
         'interface_type': 'svi',
-    }
+        'address_space_id': None,
+        'context_source': 'cli',
+        'context_type': 'unknown',
+        'local_context_key': '',
+        'scope_status': 'scope_pending',
+    }]
 
     automatic = get_prefix_gateway_candidates(
         prefix='10.10.10.0/24', site_id='gateway-site-a', tenant_id='tenant-default',
     )
-    assert automatic['status'] == 'matched'
-    assert automatic['selected'] == configured['selected']
+    assert automatic['status'] == 'scope_pending'
+
+
+def test_explicit_device_context_mapping_allows_only_same_space_gateway_binding(isolated_db) -> None:
+    del isolated_db
+    _seed_gateway_scope()
+    _seed_gateway_device('gateway-site-a', 'gateway-device-mapped')
+    address_space = create_address_space(
+        name='Gateway Explicit Global', kind='global', vrf_id=None,
+        security_tenant_id='tenant-default',
+    )
+    create_subnet(
+        prefix='10.11.10.0/24', tenant_id='tenant-default',
+        site_id='gateway-site-a', address_space_id=address_space['id'],
+    )
+    with get_db_connection() as conn:
+        conn.execute(
+            """INSERT INTO ipam_device_routing_contexts (
+                   id, device_id, context_source, context_type, local_context_key,
+                   local_context_name, address_space_id, status, revision,
+                   created_at, updated_at
+               ) VALUES ('gateway-global-context', 'gateway-device-mapped', 'cli',
+                         'global', '--', '--', ?, 'active', 1,
+                         CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+            (address_space['id'],),
+        )
+        conn.commit()
+    _publish_interface_observations('gateway-device-mapped', [{
+        'interface_name': 'Vlan-interface11',
+        'address': '10.11.10.1',
+        'prefix_length': 24,
+        'interface_type': 'svi',
+        'context_type': 'global',
+        'local_context_key': '--',
+    }])
+
+    result = get_prefix_gateway_candidates(
+        prefix='10.11.10.0/24', site_id='gateway-site-a',
+        tenant_id='tenant-default', gateway_ip='10.11.10.1',
+        address_space_id=address_space['id'],
+    )
+    assert result['status'] == 'matched'
+    assert result['address_space_id'] == address_space['id']
+    assert result['selected']['device_id'] == 'gateway-device-mapped'
+    assert result['selected']['scope_status'] == 'resolved'
+
+
+def test_same_site_gateway_ip_is_isolated_between_explicit_address_spaces(isolated_db) -> None:
+    del isolated_db
+    _seed_gateway_scope()
+    _seed_gateway_device('gateway-site-a', 'gateway-device-space-a')
+    _seed_gateway_device('gateway-site-a', 'gateway-device-space-b')
+    space_a = create_address_space(
+        name='Gateway Same Site Space A', kind='global', vrf_id=None,
+        security_tenant_id='tenant-default',
+    )
+    space_b = create_address_space(
+        name='Gateway Same Site Space B', kind='global', vrf_id=None,
+        security_tenant_id='tenant-default',
+    )
+    for prefix_space, device_id, context_id in (
+        (space_a, 'gateway-device-space-a', 'gateway-context-space-a'),
+        (space_b, 'gateway-device-space-b', 'gateway-context-space-b'),
+    ):
+        create_subnet(
+            prefix='10.20.30.0/24', tenant_id='tenant-default',
+            site_id='gateway-site-a', address_space_id=prefix_space['id'],
+        )
+        with get_db_connection() as conn:
+            conn.execute(
+                """INSERT INTO ipam_device_routing_contexts (
+                       id, device_id, context_source, context_type, local_context_key,
+                       local_context_name, address_space_id, status, revision,
+                       created_at, updated_at
+                   ) VALUES (?, ?, 'cli', 'global', '--', '--', ?, 'active', 1,
+                             CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+                (context_id, device_id, prefix_space['id']),
+            )
+            conn.commit()
+        _publish_interface_observations(device_id, [{
+            'interface_name': 'Vlan-interface30',
+            'address': '10.20.30.1',
+            'prefix_length': 24,
+            'interface_type': 'svi',
+            'context_type': 'global',
+            'local_context_key': '--',
+        }])
+
+    result_a = get_prefix_gateway_candidates(
+        prefix='10.20.30.0/24', site_id='gateway-site-a', tenant_id='tenant-default',
+        gateway_ip='10.20.30.1', address_space_id=space_a['id'],
+    )
+    result_b = get_prefix_gateway_candidates(
+        prefix='10.20.30.0/24', site_id='gateway-site-a', tenant_id='tenant-default',
+        gateway_ip='10.20.30.1', address_space_id=space_b['id'],
+    )
+
+    assert result_a['status'] == 'matched'
+    assert result_a['selected']['device_id'] == 'gateway-device-space-a'
+    assert result_b['status'] == 'matched'
+    assert result_b['selected']['device_id'] == 'gateway-device-space-b'
 
 
 def test_physical_point_to_point_endpoints_are_returned_without_gateway_guess(isolated_db) -> None:
@@ -248,7 +404,7 @@ def test_physical_point_to_point_endpoints_are_returned_without_gateway_guess(is
     result = get_prefix_gateway_candidates(
         prefix='10.0.30.0/30', site_id='gateway-site-p2p', tenant_id='tenant-default',
     )
-    assert result['status'] == 'no_unique_gateway'
+    assert result['status'] == 'scope_pending'
     assert result['selected'] is None
     assert [item['address'] for item in result['endpoints']] == ['10.0.30.1', '10.0.30.2']
     assert {item['device_name'] for item in result['endpoints']} == {'GATEWAY-R2', 'GATEWAY-R4'}
@@ -271,9 +427,9 @@ def test_gateway_candidates_respect_site_and_tenant_and_require_site(isolated_db
     scoped = get_prefix_gateway_candidates(
         prefix='10.20.20.0/24', site_id='gateway-site-a', tenant_id='tenant-default',
     )
-    assert scoped['status'] == 'matched'
+    assert scoped['status'] == 'scope_pending'
     assert [item['device_id'] for item in scoped['endpoints']] == ['gateway-device-a']
-    assert scoped['selected']['device_id'] == 'gateway-device-a'
+    assert scoped['selected'] is None
 
     missing_site = get_prefix_gateway_candidates(
         prefix='10.20.20.0/24', site_id=None, tenant_id='tenant-default',

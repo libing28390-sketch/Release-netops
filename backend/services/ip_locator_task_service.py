@@ -165,17 +165,22 @@ def _dependency_manifest_current_in_transaction(
 ) -> tuple[bool, list[str]]:
     """Compare captured source evidence with PG authority before publication."""
 
-    if manifest.get("type") == "snmp_endpoint":
-        from services.ip_locator_endpoint_evidence import find_endpoint_evidence
+    if manifest.get("type") in {"snmp_endpoint", "current_endpoint"}:
+        from services.ip_locator_endpoint_evidence import (
+            find_current_endpoint_evidence,
+            find_endpoint_evidence,
+        )
 
         context = manifest.get("context")
         expected = manifest.get("evidence")
+        is_current_endpoint = manifest.get("type") == "current_endpoint"
         if (manifest.get("version") != 1 or not isinstance(context, Mapping)
                 or not isinstance(expected, Mapping)
                 or not isinstance(context.get("authorized_device_ids"), list)):
-            return False, ["dependency_manifest_invalid_snmp_endpoint"]
+            return False, ["dependency_manifest_invalid_current_endpoint" if is_current_endpoint else "dependency_manifest_invalid_snmp_endpoint"]
         try:
-            current = find_endpoint_evidence(
+            finder = find_current_endpoint_evidence if is_current_endpoint else find_endpoint_evidence
+            current = finder(
                 _non_empty(manifest.get("target_ip")), conn=conn,
                 **{key: context.get(key) for key in (
                     "tenant_id", "site_id", "vrf", "authorized_device_ids",
@@ -184,10 +189,14 @@ def _dependency_manifest_current_in_transaction(
             )
         except Exception:
             current = None
-        if current is None or any(current.get(key) != expected.get(key) for key in (
+        evidence_keys = (
+            "location", "arp_evidence", "fdb_evidence",
+            "evidence_collected_at", "vrf_context_status",
+        ) if is_current_endpoint else (
             "location", "arp_evidence", "evidence_collected_at", "vrf_context_status",
-        )):
-            return False, ["dependency_changed:snmp_endpoint"]
+        )
+        if current is None or any(current.get(key) != expected.get(key) for key in evidence_keys):
+            return False, ["dependency_changed:current_endpoint" if is_current_endpoint else "dependency_changed:snmp_endpoint"]
         return True, []
 
     gaps: list[str] = []

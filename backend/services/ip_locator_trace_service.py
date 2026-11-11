@@ -1677,9 +1677,14 @@ def _neighbor_device_candidates(
     return [by_id[device_id] for device_id in sorted(selected_ids) if device_id in by_id]
 
 
-def _terminal_evidence(conn: Any, device_id: str, port: str) -> dict[str, Any]:
+def _terminal_evidence(
+    conn: Any,
+    device_id: str,
+    port: str,
+    vlan_id: Any = None,
+) -> dict[str, Any]:
     try:
-        identity = legacy._load_trace_port_identity(conn, device_id, port)
+        identity = legacy._load_trace_port_identity(conn, device_id, port, vlan_id)
     except Exception as exc:
         logger.debug("[IPLocatorV2] terminal identity failed: %s", exc)
         return {"is_terminal": False, "reason": "interface_evidence_unavailable"}
@@ -3550,7 +3555,7 @@ def _trace_ip_uncached(
                     if conn is not None:
                         topology = _topology_neighbors(conn, current_id, port)
                     terminal_identity = (
-                        _terminal_evidence(conn, current_id, port)
+                        _terminal_evidence(conn, current_id, port, vlan_hint)
                         if conn is not None else {"is_terminal": False}
                     )
                     if topology:
@@ -3724,7 +3729,10 @@ def _trace_ip_uncached(
         result["status"] = "partial"
         result["conclusion"] = "ambiguous_terminal_candidates"
     elif len(final_candidates) == 1:
-        result["found"] = False
+        # The physical endpoint is still a valid location when an unrelated
+        # route candidate failed. Keep the path partial, but do not report the
+        # located interface as a failed lookup.
+        result["found"] = True
         result["status"] = "partial"
         result["conclusion"] = (
             "deadline_exceeded_with_candidate"
@@ -3787,21 +3795,19 @@ def _trace_ip_uncached(
 
 
 def _try_snmp_endpoint(target_ip: str, **kwargs: Any) -> dict[str, Any] | None:
-    """Resolve a physical attachment without inventing a complete L3 path.
-
-    Re-read source evidence on every request rather than put it in the CLI
-    result cache, whose dependency manifest describes a different data path.
-    """
-    from services.ip_locator_endpoint_evidence import (
-        endpoint_source_device_ids,
-        find_endpoint_evidence,
-    )
+    """Resolve a physical attachment from current ARP/FDB generations only."""
+    from services.ip_locator_endpoint_evidence import find_current_endpoint_evidence
 
     try:
         address = ipaddress.ip_address(str(target_ip).strip())
     except ValueError:
         return None
     if address.version != 4 or kwargs.get("network_domain_id"):
+        return None
+    # "Real-time refresh" must bypass persisted current observations and use
+    # the bounded CLI trace below. This read-only fast path never dispatches a
+    # collector that also writes the legacy network_endpoints/history tables.
+    if kwargs.get("force_refresh"):
         return None
     target_ip = str(address)
     cancel_check = kwargs.get("cancel_check")
@@ -3823,19 +3829,7 @@ def _try_snmp_endpoint(target_ip: str, **kwargs: Any) -> dict[str, Any] | None:
         "start_device_id": str(kwargs.get("start_device_id") or ""),
         "network_domain_id": "",
     }
-    evidence = find_endpoint_evidence(target_ip, **context)
-    refreshed_ids: set[str] = set()
-    if kwargs.get("force_refresh") or evidence is None:
-        refresh_ids = set(endpoint_source_device_ids(target_ip, **context)) & allowed_ids
-        if not refresh_ids:
-            selected_id = context["start_device_id"]
-            refresh_ids = ({selected_id} & allowed_ids) if selected_id else allowed_ids
-        limits = kwargs.get("limits") or TraceLimits()
-        # Never silently scan a truncated scope and call its first hit unique.
-        if refresh_ids and len(refresh_ids) <= limits.max_devices:
-            legacy.run_endpoint_fact_collector(device_ids=refresh_ids)
-            refreshed_ids = refresh_ids
-            evidence = find_endpoint_evidence(target_ip, **context)
+    evidence = find_current_endpoint_evidence(target_ip, **context)
     if evidence is None or (callable(cancel_check) and cancel_check()):
         return None
     scope = {**context, "authorization_scope_hash": _authorization_scope_hash(allowed_ids)}
@@ -3848,29 +3842,30 @@ def _try_snmp_endpoint(target_ip: str, **kwargs: Any) -> dict[str, Any] | None:
         "found": True,
         "status": "completed",
         "conclusion": "endpoint_evidence_confirmed",
-        "source": "snmp",
+        "source": "ipam_current",
         "location": evidence["location"],
         "terminal_candidates": [evidence["location"]],
         "arp_evidence": evidence["arp_evidence"],
+        "fdb_evidence": evidence["fdb_evidence"],
         "evidence_collected_at": evidence["evidence_collected_at"],
         "vrf_context_status": evidence["vrf_context_status"],
         "completed_at": _now_iso(),
-        "refreshed_device_ids": sorted(refreshed_ids),
+        "evidence_source": "current_arp_fdb_observations",
         "queried_devices": {
             "route": [], "lldp": [],
-            "arp": [_device_label(device) for device in devices if str(device.get("id")) in refreshed_ids],
-            "mac": [_device_label(device) for device in devices if str(device.get("id")) in refreshed_ids],
+            "arp": [], "mac": [],
         },
-        "cache": {"result": "snmp_evidence", "arp": "postgres", "mac": "postgres"},
+        "cache": {"result": "current_arp_fdb_evidence", "arp": "postgres", "mac": "postgres"},
     })
     result["dependency_manifest"] = {
-        "type": "snmp_endpoint",
+        "type": "current_endpoint",
         "version": 1,
         "contract_version": _trace_contract_version(),
         "target_ip": target_ip,
         "context": {**context, "authorized_device_ids": sorted(allowed_ids)},
         "evidence": {key: evidence[key] for key in (
-            "location", "arp_evidence", "evidence_collected_at", "vrf_context_status",
+            "location", "arp_evidence", "fdb_evidence",
+            "evidence_collected_at", "vrf_context_status",
         )},
     }
     return result
@@ -4005,9 +4000,17 @@ def add_legacy_compatibility(result: dict[str, Any]) -> dict[str, Any]:
     location = enriched.get("location")
     if isinstance(location, dict):
         conclusion = str(enriched.get("conclusion") or "")
+        partial_known_location = (
+            conclusion in {"path_has_unverified_branch", "deadline_exceeded_with_candidate"}
+            and bool(enriched.get("found"))
+        )
         location_type = (
             "SNMP_ENDPOINT"
+            if conclusion == "endpoint_evidence_confirmed" and enriched.get("source") == "snmp"
+            else "PATH_TRACED"
             if conclusion == "endpoint_evidence_confirmed"
+            else "PATH_TRACED_PARTIAL"
+            if partial_known_location
             else "PATH_TRACED"
             if conclusion == "managed_access_confirmed"
             else "DEVICE_INTERFACE"
@@ -4022,8 +4025,16 @@ def add_legacy_compatibility(result: dict[str, Any]) -> dict[str, Any]:
             "port": location.get("port") or "",
             "vlan": location.get("vlan") or "",
             "type": location_type,
-            "is_uplink": location_type == "TRACE_INCOMPLETE",
-            "note": "SNMP ARP/FDB 接入口证据" if conclusion == "endpoint_evidence_confirmed" else "CLI 四阶段路径追踪结果",
+            "is_uplink": location_type in {"TRACE_INCOMPLETE", "ARP_DIRECT"},
+            "note": (
+                "物理接入口已确认；部分路径证据仍待核验"
+                if partial_known_location
+                else "SNMP ARP/FDB 接入口证据"
+                if conclusion == "endpoint_evidence_confirmed" and enriched.get("source") == "snmp"
+                else "当前 ARP/FDB 代次已确认物理 Access 端口"
+                if conclusion == "endpoint_evidence_confirmed"
+                else "CLI 四阶段路径追踪结果"
+            ),
         }]
         enriched["mac"] = location.get("mac") or enriched.get("mac")
         if enriched.get("mac"):
@@ -4061,9 +4072,9 @@ def add_legacy_compatibility(result: dict[str, Any]) -> dict[str, Any]:
         "arp_only": "arp_only",
         "topology_incomplete": "incomplete",
         "ambiguous_terminal_candidates": "incomplete",
-        "path_has_unverified_branch": "incomplete",
+        "path_has_unverified_branch": "partial" if enriched.get("found") else "incomplete",
         "deadline_exceeded": "incomplete",
-        "deadline_exceeded_with_candidate": "incomplete",
+        "deadline_exceeded_with_candidate": "partial" if enriched.get("found") else "incomplete",
         "mac_not_found": "incomplete",
         "arp_not_found": "not_found",
         "no_route": "not_found",
@@ -4091,6 +4102,10 @@ def add_legacy_compatibility(result: dict[str, Any]) -> dict[str, Any]:
         existing_errors = list(enriched.get("errors") or [])
         for gap in enriched["coverage_gaps"]:
             message = str(gap)
+            # These identifiers are for correlation/diagnostics; the same
+            # failed device already has a readable error in ``errors``.
+            if message.startswith("route_failed:"):
+                continue
             if message not in existing_errors:
                 existing_errors.append(message)
         enriched["errors"] = existing_errors

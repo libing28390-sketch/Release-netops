@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildVisibleIpamExportData, fetchAllIpamReconciliationItems, type IpamExportColumn } from './ipamExport';
+import {
+  buildVisibleIpamExportData,
+  fetchAllIpamExportItems,
+  fetchAllIpamReconciliationItems,
+  type IpamExportColumn,
+} from './ipamExport';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -8,6 +13,33 @@ afterEach(() => {
 });
 
 describe('IPAM export', () => {
+  it('keeps list filters and authorization on every exported page', async () => {
+    localStorage.setItem('netops_token', 'test-token');
+    const response = (payload: unknown) => ({ ok: true, json: async () => payload }) as Response;
+    const request = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(response({ items: [{ id: 'prefix-a' }], total: 2, page: 1, page_size: 100 }))
+      .mockResolvedValueOnce(response({ items: [{ id: 'prefix-b' }], total: 2, page: 2, page_size: 100 }));
+    vi.stubGlobal('fetch', request);
+
+    const items = await fetchAllIpamExportItems<{ id: string }>(
+      '/api/ipam/subnets',
+      new URLSearchParams({ site: 'site-a', q: '10.18.0', classification: 'unclassified' }),
+    );
+
+    expect(items.map((item) => item.id)).toEqual(['prefix-a', 'prefix-b']);
+    expect(request).toHaveBeenCalledTimes(2);
+    for (const [url, init] of request.mock.calls) {
+      const parsed = new URL(String(url), 'http://localhost');
+      expect(parsed.searchParams.get('site')).toBe('site-a');
+      expect(parsed.searchParams.get('q')).toBe('10.18.0');
+      expect(parsed.searchParams.get('classification')).toBe('unclassified');
+      expect(parsed.searchParams.get('page_size')).toBe('100');
+      expect(init?.headers).toEqual({ Authorization: 'Bearer test-token' });
+    }
+    expect(new URL(String(request.mock.calls[0][0]), 'http://localhost').searchParams.get('page')).toBe('1');
+    expect(new URL(String(request.mock.calls[1][0]), 'http://localhost').searchParams.get('page')).toBe('2');
+  });
+
   it('loads all filtered reconciliation pages from the tab-specific response shape', async () => {
     localStorage.setItem('netops_token', 'test-token');
     const response = (payload: unknown) => ({ ok: true, json: async () => payload }) as Response;

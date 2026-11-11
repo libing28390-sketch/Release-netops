@@ -13,6 +13,7 @@ import { ColumnSettingsButton, ListSearchInput, ListToolbar } from '../component
 import { authHeaders } from '../api/http';
 import { fetchAllPaginatedItems } from '../utils/pagination';
 import { buildInventoryServersExportData, filterInventoryServers } from './inventoryServersExport';
+import { deviceRoleLabel } from '../domain/deviceLabels';
 
 import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
 /* ═══════════════════════════════════════════════════════
@@ -38,7 +39,7 @@ type ServerColumnVisibility = Record<ServerColumnKey, boolean>;
 const SERVER_COLUMN_DEFS: Array<{ key: ServerColumnKey; zh: string; en: string }> = [
   { key: 'hostname', zh: '主机名', en: 'Hostname' },
   { key: 'management_ip', zh: '管理 IP', en: 'Management IP' },
-  { key: 'device_role', zh: '角色', en: 'Role' },
+  { key: 'device_role', zh: '设备角色', en: 'Device role' },
   { key: 'vendor', zh: '厂商', en: 'Vendor' },
   { key: 'model', zh: '型号', en: 'Model' },
   { key: 'datacenter', zh: '数据中心', en: 'Datacenter' },
@@ -238,7 +239,7 @@ const DetailModal: React.FC<{
           <ReadonlyField label={zh ? '状态' : 'Status'} value={zh ? st.zh : st.en} />
           <ReadonlyField label={zh ? '数据中心' : 'Datacenter'} value={server.datacenter} />
           <ReadonlyField label={zh ? '机柜 / U位' : 'Rack / U'} value={[server.rack, server.rack_unit].filter(Boolean).join(' / ') || '—'} />
-          <ReadonlyField label={zh ? '角色' : 'Role'} value={server.device_role} />
+          <ReadonlyField label={zh ? '设备角色' : 'Device role'} value={deviceRoleLabel(server.device_role, zh ? 'zh' : 'en')} />
           <ReadonlyField label={zh ? '部门' : 'Department'} value={server.department} />
           <ReadonlyField label="VLAN" value={server.vlan} />
           <ReadonlyField label={zh ? '上联交换机' : 'Uplink Switch'} value={server.uplink_switch} />
@@ -565,7 +566,7 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
                 </th>
                 <SortHeader col="hostname" sortConfig={sortConfig} onSort={handleSort} className={columns.hostname ? '' : 'hidden'}>{zh ? '主机名' : 'Hostname'}</SortHeader>
                 <th hidden={!columns.management_ip} className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">{zh ? '管理 IP' : 'Management IP'}</th>
-                <th hidden={!columns.device_role} className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">{zh ? '角色' : 'Role'}</th>
+                <th hidden={!columns.device_role} className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">{zh ? '设备角色' : 'Device role'}</th>
                 <SortHeader col="vendor" sortConfig={sortConfig} onSort={handleSort} className={columns.vendor ? '' : 'hidden'}>{zh ? '厂商' : 'Vendor'}</SortHeader>
                 <th hidden={!columns.model} className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">{zh ? '型号' : 'Model'}</th>
                 <SortHeader col="datacenter" sortConfig={sortConfig} onSort={handleSort} className={columns.datacenter ? '' : 'hidden'}>{zh ? '数据中心' : 'Datacenter'}</SortHeader>
@@ -625,7 +626,7 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
                     <td hidden={!columns.device_role} className="px-3 py-2">
                       {server.device_role ? (
                         <span className="inline-block text-[9px] font-semibold uppercase px-1.5 py-0.5 rounded bg-black/[.04] dark:bg-white/6 text-black/45 dark:text-white/45">
-                          {server.device_role}
+                          {deviceRoleLabel(server.device_role, zh ? 'zh' : 'en')}
                         </span>
                       ) : '—'}
                     </td>

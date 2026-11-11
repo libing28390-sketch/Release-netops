@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
 from typing import Optional, List, Literal
 from datetime import datetime
 import ipaddress as _ipaddress
@@ -109,6 +109,7 @@ class SubnetUpdate(BaseModel):
 
 class IPAddressCreate(BaseModel):
     address: str
+    pool_id: Optional[str] = None
     hostname: str = ''
     device_id: str = ''
     interface_id: str = ''
@@ -140,6 +141,8 @@ class IPAddressCreate(BaseModel):
 
 
 class IPAddressUpdate(BaseModel):
+    expected_revision: int = Field(ge=1)
+    pool_id: Optional[str] = None
     hostname: Optional[str] = None
     device_id: Optional[str] = None
     interface_id: Optional[str] = None
@@ -1533,8 +1536,128 @@ class VlanBusinessBindingUpdate(BaseModel):
 
 # ─── New IPAM Schemas (Prefix, Pool, VIP, Lease) ───────────────────
 
+class AddressSpaceCreate(BaseModel):
+    """Create an explicit Global address space or a mapping for an existing VRF."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    name: str = Field(min_length=1, max_length=200)
+    kind: Literal['global', 'vrf']
+    vrf_id: Optional[str] = None
+
+    @field_validator('name')
+    @classmethod
+    def normalize_address_space_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError('Address-space name is required')
+        return normalized
+
+    @field_validator('vrf_id')
+    @classmethod
+    def normalize_address_space_vrf(cls, value: Optional[str]) -> Optional[str]:
+        normalized = (value or '').strip()
+        return normalized or None
+
+    @model_validator(mode='after')
+    def validate_address_space_kind(self):
+        if self.kind == 'global' and self.vrf_id:
+            raise ValueError('Global address spaces must not reference a VRF')
+        if self.kind == 'vrf' and not self.vrf_id:
+            raise ValueError('VRF address spaces require a VRF')
+        return self
+
+
+class ResolvePrefixAddressSpaceRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    address_space_id: str = Field(min_length=1, max_length=200)
+    expected_updated_at: str = Field(min_length=1, max_length=100)
+    expected_revision: int = Field(ge=1)
+    confirmed: bool = False
+
+    @field_validator('address_space_id', 'expected_updated_at')
+    @classmethod
+    def normalize_resolution_fields(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError('Address-space resolution fields are required')
+        return normalized
+
+
+class MovePrefixAddressSpaceRequest(ResolvePrefixAddressSpaceRequest):
+    """Confirm moving a mapped Prefix and its registered IPs to another space."""
+
+    model_config = ConfigDict(extra='forbid')
+
+
+class PrefixAddressSpaceBatchPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    ids: List[str] = Field(min_length=1, max_length=100)
+    address_space_id: str = Field(min_length=1, max_length=200)
+
+    @field_validator('ids')
+    @classmethod
+    def normalize_prefix_ids(cls, values: List[str]) -> List[str]:
+        normalized = [str(value or '').strip() for value in values]
+        if any(not value for value in normalized):
+            raise ValueError('Prefix IDs must not be empty')
+        if len(set(normalized)) != len(normalized):
+            raise ValueError('Prefix IDs must not contain duplicates')
+        return normalized
+
+    @field_validator('address_space_id')
+    @classmethod
+    def normalize_batch_address_space_id(cls, value: str) -> str:
+        normalized = str(value or '').strip()
+        if not normalized:
+            raise ValueError('Address-space ID is required')
+        return normalized
+
+
+class PrefixAddressSpaceBatchItem(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    prefix_id: str = Field(min_length=1, max_length=200)
+    expected_updated_at: str = Field(min_length=1, max_length=100)
+    expected_revision: StrictInt = Field(ge=1)
+
+    @field_validator('prefix_id', 'expected_updated_at')
+    @classmethod
+    def normalize_batch_revision_fields(cls, value: str) -> str:
+        normalized = str(value or '').strip()
+        if not normalized:
+            raise ValueError('Prefix revision fields are required')
+        return normalized
+
+
+class ResolvePrefixAddressSpaceBatchRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    address_space_id: str = Field(min_length=1, max_length=200)
+    expected_target_revision: StrictInt = Field(ge=1)
+    items: List[PrefixAddressSpaceBatchItem] = Field(min_length=1, max_length=100)
+    confirmed: bool = False
+
+    @field_validator('address_space_id')
+    @classmethod
+    def normalize_batch_target_id(cls, value: str) -> str:
+        normalized = str(value or '').strip()
+        if not normalized:
+            raise ValueError('Address-space ID is required')
+        return normalized
+
+    @model_validator(mode='after')
+    def require_unique_prefix_items(self):
+        ids = [item.prefix_id for item in self.items]
+        if len(set(ids)) != len(ids):
+            raise ValueError('Prefix items must not contain duplicates')
+        return self
+
 class PrefixCreate(BaseModel):
     prefix: str
+    address_space_id: Optional[str] = None
     vrf_id: Optional[str] = None
     vlan_id: Optional[str] = None
     site_id: Optional[str] = None
@@ -1569,6 +1692,7 @@ class PrefixCreate(BaseModel):
 
 
 class PrefixUpdate(BaseModel):
+    expected_revision: int = Field(ge=1)
     prefix: Optional[str] = None
     vrf_id: Optional[str] = None
     vlan_id: Optional[str] = None
@@ -1594,6 +1718,7 @@ PrefixNetworkType = Literal[
 class BatchPrefixNetworkTypeUpdate(BaseModel):
     ids: List[str] = Field(min_length=1, max_length=500)
     network_type: PrefixNetworkType
+    expected_revisions: dict[str, StrictInt]
 
     @field_validator('ids')
     @classmethod
@@ -1605,53 +1730,151 @@ class BatchPrefixNetworkTypeUpdate(BaseModel):
             raise ValueError('ids must not contain duplicates')
         return normalized
 
+    @field_validator('expected_revisions')
+    @classmethod
+    def normalize_expected_revisions(cls, values: dict[str, int]) -> dict[str, int]:
+        normalized: dict[str, int] = {}
+        for prefix_id, revision in values.items():
+            normalized_id = str(prefix_id or '').strip()
+            if not normalized_id:
+                raise ValueError('expected_revisions must use non-empty Prefix IDs')
+            if normalized_id in normalized:
+                raise ValueError('expected_revisions must not contain duplicate Prefix IDs')
+            if revision < 1:
+                raise ValueError('Prefix revisions must be positive integers')
+            normalized[normalized_id] = revision
+        return normalized
+
+    @model_validator(mode='after')
+    def require_revision_for_every_id(self):
+        if set(self.expected_revisions) != set(self.ids):
+            raise ValueError('expected_revisions must include every selected Prefix')
+        return self
+
+
+class BatchPrefixDeleteRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    ids: List[str] = Field(min_length=1, max_length=500)
+    expected_revisions: dict[str, StrictInt]
+
+    @field_validator('ids')
+    @classmethod
+    def validate_ids(cls, values: List[str]) -> List[str]:
+        normalized = [value.strip() for value in values]
+        if any(not value for value in normalized):
+            raise ValueError('ids must contain non-empty prefix IDs')
+        if len(set(normalized)) != len(normalized):
+            raise ValueError('ids must not contain duplicates')
+        return normalized
+
+    @field_validator('expected_revisions')
+    @classmethod
+    def normalize_expected_revisions(cls, values: dict[str, int]) -> dict[str, int]:
+        normalized: dict[str, int] = {}
+        for prefix_id, revision in values.items():
+            normalized_id = str(prefix_id or '').strip()
+            if not normalized_id:
+                raise ValueError('expected_revisions must use non-empty Prefix IDs')
+            if normalized_id in normalized:
+                raise ValueError('expected_revisions must not contain duplicate Prefix IDs')
+            if revision < 1:
+                raise ValueError('Prefix revisions must be positive integers')
+            normalized[normalized_id] = revision
+        return normalized
+
+    @model_validator(mode='after')
+    def require_revision_for_every_id(self):
+        if set(self.expected_revisions) != set(self.ids):
+            raise ValueError('expected_revisions must include every selected Prefix')
+        return self
+
 
 class IPPoolCreate(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
     name: str
     prefix_id: str
     start_ip: str
     end_ip: str
+    management_mode: Literal['local_static', 'reserved', 'external_dhcp', 'external_other']
+    allocation_allowed: bool
     description: str = ''
     status: str = 'active'
-    tenant_id: str = 'tenant-default'
+    mark_populated: bool = False
+    mark_utilized: bool = False
 
     @field_validator('start_ip', 'end_ip')
     @classmethod
     def validate_ips(cls, v: str) -> str:
-        _ipaddress.ip_address(v)
-        return v
+        return str(_ipaddress.ip_address(str(v or '').strip()))
+
+    @model_validator(mode='after')
+    def validate_management_policy(self):
+        if self.management_mode != 'local_static' and self.allocation_allowed:
+            raise ValueError('reserved and external pools must not allow local allocation')
+        return self
 
 
 class IPPoolUpdate(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    expected_revision: int = Field(ge=1)
     name: Optional[str] = None
     prefix_id: Optional[str] = None
     start_ip: Optional[str] = None
     end_ip: Optional[str] = None
+    management_mode: Optional[Literal['local_static', 'reserved', 'external_dhcp', 'external_other']] = None
+    allocation_allowed: Optional[bool] = None
+    mark_populated: Optional[bool] = None
+    mark_utilized: Optional[bool] = None
     description: Optional[str] = None
     status: Optional[str] = None
-    tenant_id: Optional[str] = None
+
+    @field_validator('start_ip', 'end_ip')
+    @classmethod
+    def validate_optional_ips(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        return str(_ipaddress.ip_address(str(v).strip()))
+
+    @model_validator(mode='after')
+    def validate_management_policy(self):
+        if (
+            self.management_mode is not None
+            and self.management_mode != 'local_static'
+            and self.allocation_allowed is True
+        ):
+            raise ValueError('reserved and external pools must not allow local allocation')
+        return self
 
 
 class VIPCreate(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
     address: str
     vip_type: str
-    prefix_id: Optional[str] = None
+    prefix_id: str
     device_id: Optional[str] = None
     backup_device_id: Optional[str] = None
     interface_name: str = ''
     description: str = ''
     real_servers: str = ''
     status: str = 'active'
-    tenant_id: str = 'tenant-default'
 
     @field_validator('address')
     @classmethod
     def validate_address(cls, v: str) -> str:
-        _ipaddress.ip_address(v)
-        return v
+        value = str(v or '').strip()
+        if '/' in value:
+            raise ValueError('VIP address must be a host IP without a CIDR prefix length')
+        return str(_ipaddress.ip_address(value))
 
 
 class VIPUpdate(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    expected_revision: int = Field(ge=1)
     address: Optional[str] = None
     vip_type: Optional[str] = None
     prefix_id: Optional[str] = None
@@ -1661,12 +1884,25 @@ class VIPUpdate(BaseModel):
     description: Optional[str] = None
     real_servers: Optional[str] = None
     status: Optional[str] = None
-    tenant_id: Optional[str] = None
+
+    @field_validator('address')
+    @classmethod
+    def validate_optional_address(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        value = str(v).strip()
+        if '/' in value:
+            raise ValueError('VIP address must be a host IP without a CIDR prefix length')
+        return str(_ipaddress.ip_address(value))
 
 
 class DHCPLeaseCreate(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
     address: str
     mac_address: str
+    pool_id: Optional[str] = None
+    external_id: Optional[str] = None
     hostname: str = ''
     dhcp_server: str = ''
     lease_state: str = 'active'
@@ -1676,8 +1912,10 @@ class DHCPLeaseCreate(BaseModel):
     @field_validator('address')
     @classmethod
     def validate_address(cls, v: str) -> str:
-        _ipaddress.ip_address(v)
-        return v
+        value = str(v or '').strip()
+        if '/' in value:
+            raise ValueError('Lease address must be a host IP without a CIDR prefix length')
+        return str(_ipaddress.ip_address(value))
 
     @field_validator('mac_address')
     @classmethod
@@ -1686,8 +1924,13 @@ class DHCPLeaseCreate(BaseModel):
 
 
 class DHCPLeaseUpdate(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    expected_revision: int = Field(ge=1)
     address: Optional[str] = None
     mac_address: Optional[str] = None
+    pool_id: Optional[str] = None
+    external_id: Optional[str] = None
     hostname: Optional[str] = None
     dhcp_server: Optional[str] = None
     lease_state: Optional[str] = None
@@ -1698,3 +1941,280 @@ class DHCPLeaseUpdate(BaseModel):
     @classmethod
     def validate_mac(cls, v: Optional[str]) -> Optional[str]:
         return _normalize_mac(v)
+
+    @field_validator('address')
+    @classmethod
+    def validate_optional_address(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        value = str(v).strip()
+        if '/' in value:
+            raise ValueError('Lease address must be a host IP without a CIDR prefix length')
+        return str(_ipaddress.ip_address(value))
+
+
+class IPAMRoutingContextCreate(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    device_id: str = Field(min_length=1)
+    context_source: Literal['cli', 'snmp']
+    context_type: Literal['vrf', 'global']
+    local_context_key: str = Field(min_length=1)
+    local_context_name: str = ''
+    address_space_id: str = Field(min_length=1)
+
+    @field_validator('device_id', 'local_context_key', 'address_space_id')
+    @classmethod
+    def trim_required_routing_context_values(cls, value: str) -> str:
+        normalized = str(value or '').strip()
+        if not normalized:
+            raise ValueError('Routing-context identifiers must not be empty')
+        return normalized
+
+    @field_validator('local_context_name')
+    @classmethod
+    def trim_routing_context_name(cls, value: str) -> str:
+        return str(value or '').strip()
+
+
+class IPAMRoutingContextUpdate(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    expected_revision: StrictInt = Field(ge=1)
+    address_space_id: Optional[str] = None
+    local_context_name: Optional[str] = None
+    status: Optional[Literal['active', 'disabled']] = None
+
+    @field_validator('address_space_id')
+    @classmethod
+    def trim_optional_address_space_id(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError('address_space_id must not be empty')
+        return normalized
+
+    @field_validator('local_context_name')
+    @classmethod
+    def trim_optional_routing_context_name(cls, value: Optional[str]) -> Optional[str]:
+        return None if value is None else value.strip()
+
+    @model_validator(mode='after')
+    def require_an_update_field(self):
+        if not self.model_fields_set.intersection({'address_space_id', 'local_context_name', 'status'}):
+            raise ValueError('At least one routing-context field must be updated')
+        return self
+
+
+class IPAMFHRPGroupCreate(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    address_space_id: str = Field(min_length=1)
+    group_type: Literal['fhrp', 'anycast']
+    protocol: Literal['hsrp', 'vrrp', 'anycast']
+    group_id: str = Field(min_length=1, max_length=100)
+    address_family: Literal[4, 6]
+    display_name: str = Field(default='', max_length=200)
+    status: Literal['active', 'disabled'] = 'active'
+
+    @field_validator('address_space_id', 'group_id')
+    @classmethod
+    def trim_required_fhrp_values(cls, value: str) -> str:
+        normalized = str(value or '').strip()
+        if not normalized:
+            raise ValueError('FHRP group identifiers must not be empty')
+        return normalized
+
+    @field_validator('display_name')
+    @classmethod
+    def trim_fhrp_display_name(cls, value: str) -> str:
+        return str(value or '').strip()
+
+    @model_validator(mode='after')
+    def validate_group_protocol(self):
+        if self.group_type == 'fhrp' and self.protocol not in {'hsrp', 'vrrp'}:
+            raise ValueError('FHRP groups require the HSRP or VRRP protocol')
+        if self.group_type == 'anycast' and self.protocol != 'anycast':
+            raise ValueError('Anycast groups require protocol=anycast')
+        return self
+
+
+class IPAMFHRPGroupUpdate(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    expected_revision: StrictInt = Field(ge=1)
+    group_type: Optional[Literal['fhrp', 'anycast']] = None
+    protocol: Optional[Literal['hsrp', 'vrrp', 'anycast']] = None
+    group_id: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    address_family: Optional[Literal[4, 6]] = None
+    display_name: Optional[str] = Field(default=None, max_length=200)
+    status: Optional[Literal['active', 'disabled']] = None
+
+    @field_validator('group_id')
+    @classmethod
+    def trim_optional_fhrp_group_id(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError('FHRP group id must not be empty')
+        return normalized
+
+    @field_validator('display_name')
+    @classmethod
+    def trim_optional_fhrp_display_name(cls, value: Optional[str]) -> Optional[str]:
+        return value.strip() if value is not None else None
+
+    @model_validator(mode='after')
+    def validate_update_fields(self):
+        update_fields = self.model_fields_set - {'expected_revision'}
+        if not update_fields or all(getattr(self, field_name) is None for field_name in update_fields):
+            raise ValueError('At least one FHRP group field must be updated')
+        if any(getattr(self, field_name) is None for field_name in update_fields):
+            raise ValueError('FHRP group update fields must not be null')
+        if self.group_type == 'fhrp' and self.protocol == 'anycast':
+            raise ValueError('FHRP groups require the HSRP or VRRP protocol')
+        if self.group_type == 'anycast' and self.protocol not in {None, 'anycast'}:
+            raise ValueError('Anycast groups require protocol=anycast')
+        if self.protocol == 'anycast' and self.group_type not in {None, 'anycast'}:
+            raise ValueError('Anycast protocol requires group_type=anycast')
+        if self.protocol in {'hsrp', 'vrrp'} and self.group_type == 'anycast':
+            raise ValueError('Anycast groups require protocol=anycast')
+        return self
+
+
+class IPAMFHRPGroupMemberAdd(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    expected_revision: StrictInt = Field(ge=1)
+    device_id: str = Field(min_length=1)
+    interface_name: str = Field(min_length=1, max_length=200)
+    interface_id: Optional[str] = Field(default=None, min_length=1)
+    role: Optional[str] = Field(default=None, max_length=80)
+    priority: Optional[StrictInt] = Field(default=None, ge=0, le=255)
+    status: Literal['active', 'disabled'] = 'active'
+
+    @field_validator('device_id', 'interface_name', 'interface_id')
+    @classmethod
+    def trim_required_member_identity(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError('FHRP member device and interface identifiers must not be empty')
+        return normalized
+
+    @field_validator('role')
+    @classmethod
+    def trim_member_role(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+
+class IPAMFHRPVIPAttach(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    expected_revision: StrictInt = Field(ge=1)
+    vip_id: str = Field(min_length=1)
+
+    @field_validator('vip_id')
+    @classmethod
+    def trim_vip_id(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError('VIP id must not be empty')
+        return normalized
+
+
+class IPAMFHRPGroupMemberResponse(BaseModel):
+    id: str
+    group_id: str
+    device_id: str
+    device_name: str
+    interface_id: Optional[str] = None
+    interface_name: str
+    normalized_interface_name: str
+    role: Optional[str] = None
+    priority: Optional[int] = None
+    status: str
+    revision: int
+    created_at: str
+    updated_at: str
+
+
+class IPAMFHRPGroupMemberAddResponse(IPAMFHRPGroupMemberResponse):
+    group_revision: int
+
+
+class IPAMFHRPVIPResponse(BaseModel):
+    vip_id: str
+    address: str
+    vip_type: str
+    status: str
+    address_space_id: str
+    tenant_id: str
+    prefix_id: str
+    revision: int
+    linked_at: str
+
+
+class IPAMFHRPVIPAttachResponse(BaseModel):
+    id: str
+    group_id: str
+    vip_id: str
+    address: str
+    vip_type: str
+    group_revision: int
+
+
+class IPAMFHRPRelationMutationResponse(BaseModel):
+    ok: bool
+    id: Optional[str] = None
+    group_id: Optional[str] = None
+    vip_id: Optional[str] = None
+    group_revision: int
+
+
+class IPAMFHRPGroupResponse(BaseModel):
+    id: str
+    security_tenant_id: str
+    address_space_id: str
+    address_space_name: str
+    group_type: str
+    protocol: str
+    group_id: str
+    address_family: int
+    display_name: str
+    status: str
+    revision: int
+    created_at: str
+    updated_at: str
+    members: list[IPAMFHRPGroupMemberResponse] = Field(default_factory=list)
+    vips: list[IPAMFHRPVIPResponse] = Field(default_factory=list)
+
+
+class IPAMFHRPGroupListItem(BaseModel):
+    id: str
+    security_tenant_id: str
+    address_space_id: str
+    address_space_name: str
+    group_type: str
+    protocol: str
+    group_id: str
+    address_family: int
+    display_name: str
+    status: str
+    revision: int
+    created_at: str
+    updated_at: str
+
+
+class IPAMFHRPGroupListResponse(BaseModel):
+    items: list[IPAMFHRPGroupListItem] = Field(default_factory=list)
+    total: int
+    page: int
+    page_size: int
+    total_pages: int

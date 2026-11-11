@@ -31,6 +31,7 @@ import { ActionButton, ActionIconButton, ActionIconGroup } from '../../component
 import { TableExportMenu } from '../../components/ui/TableExportMenu';
 import { Rack, RackType, DeviceType, RackDevice, RackLayout, RackStats, Props } from './types';
 import { ROLE_COLORS, U_PX, RACK_W, LABEL_W, API, INSTALL_ASSET_PAGE_SIZE, STATUS_LABEL } from './constants';
+import { deviceRoleLabel } from '../../domain/deviceLabels';
 import {
   getNormalizedRoleColor,
   authHeaders,
@@ -1181,7 +1182,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     lx += 20;
     ctx.fillStyle = '#64748b';
     ctx.font = 'bold 10px system-ui, sans-serif';
-    ctx.fillText(zh ? '角色:' : 'Role:', lx, legendY);
+    ctx.fillText(zh ? '设备角色:' : 'Device role:', lx, legendY);
     lx += 40;
 
     const visibleRoles = Object.entries(ROLE_COLORS).slice(0, 7);
@@ -1787,7 +1788,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                           <>
                             <div className="flex gap-2 flex-wrap mb-2">
                               <span className="text-xs px-2.5 py-1 rounded-lg font-semibold" style={{ background: rc.bg + '20', color: rc.bg }}>
-                                {zh ? rc.labelZh : rc.label}
+                                {deviceRoleLabel(device.device_role, zh ? 'zh' : 'en')}
                               </span>
                               <span className="text-xs px-2.5 py-1 rounded-lg font-semibold flex items-center gap-1" style={{ background: device.status === 'active' ? '#4ade80' + '20' : device.status === 'planned' ? '#fbbf24' + '20' : '#ef4444' + '20', color: device.status === 'active' ? '#4ade80' : device.status === 'planned' ? '#fbbf24' : '#ef4444' }}>
                                 <span className="w-2 h-2 rounded-full" style={{ background: 'currentColor' }} />
@@ -2432,7 +2433,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                       >
                         <option value="" disabled>{zh ? '选择设备型号' : 'Select device type'}</option>
                         {deviceTypes.map(dt => (
-                          <option key={dt.id} value={dt.id}>{dt.vendor} {dt.model} ({dt.u_height}U - {dt.device_role})</option>
+                          <option key={dt.id} value={dt.id}>{dt.vendor} {dt.model} ({dt.u_height}U - {deviceRoleLabel(dt.device_role, zh ? 'zh' : 'en')})</option>
                         ))}
                       </select>
                       {selectedAsset && !deviceForm.device_type_id && deviceTypes.length > 0 && (
@@ -2601,7 +2602,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                       <th className="px-2 py-1.5 text-left font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '型号' : 'Model'}</th>
                       <th className="px-2 py-1.5 text-left font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '厂商' : 'Vendor'}</th>
                       <th className="px-2 py-1.5 text-center font-semibold" style={{ color: 'var(--muted-text)' }}>U</th>
-                      <th className="px-2 py-1.5 text-left font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '角色' : 'Role'}</th>
+                      <th className="px-2 py-1.5 text-left font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '设备角色' : 'Device role'}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2615,7 +2616,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                             const rcDt = getNormalizedRoleColor(dt.device_role, dt.model, dt.vendor);
                             return (
                               <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold" style={{ background: rcDt.bg + '20', color: rcDt.bg }}>
-                                {zh ? rcDt.labelZh : rcDt.label}
+                                {deviceRoleLabel(dt.device_role, zh ? 'zh' : 'en')}
                               </span>
                             );
                           })()}

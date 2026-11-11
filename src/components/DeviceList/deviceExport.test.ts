@@ -55,12 +55,12 @@ describe('network device table export', () => {
     const row = result.rows[0].map(String);
 
     expect(result.headers).toEqual([
-      '设备名称', '资产编号', '管理 IP', '设备类别', '角色', '连接方式', '厂商', '型号', '软件版本',
+      '设备名称', '资产编号', '管理 IP', '设备类别', '设备角色', '连接方式', '厂商', '型号', '软件版本',
       '命令/解析适配', '站点', '机柜', 'U 位', '标签', '在线状态',
       '健康状态', '生命周期', '连通性检查', '检查时间',
     ]);
     expect(row.slice(0, 9)).toEqual([
-      'core-sw-01', 'NET-WH-001', '192.168.18.201', 'switch', 'core', 'SSH', 'Cisco', 'C2960', '15.2',
+      'core-sw-01', 'NET-WH-001', '192.168.18.201', '交换机', '核心层', 'SSH', 'Cisco', 'C2960', '15.2',
     ]);
     expect(row.slice(10, 14)).toEqual(['WH-DC-02J-01', '—', 'U1', '核心']);
     expect(row.slice(14)).toEqual(['在线', '健康', '已投产', '—', '—']);

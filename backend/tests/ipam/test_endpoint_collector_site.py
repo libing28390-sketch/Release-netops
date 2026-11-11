@@ -147,6 +147,7 @@ def test_collector_uses_cmdb_site_id_for_arp_fallback_and_best_mac(isolated_db, 
             'interface': 'Vlan10',
             'vlan': '10',
             'vrf': 'global',
+            'vrf_context_status': 'explicit_global',
         },
         {
             'ip': '198.51.100.11',
@@ -156,6 +157,7 @@ def test_collector_uses_cmdb_site_id_for_arp_fallback_and_best_mac(isolated_db, 
             'interface': 'Vlan20',
             'vlan': '20',
             'vrf': 'global',
+            'vrf_context_status': 'explicit_global',
         },
     ]
     mac_records = [
@@ -166,6 +168,7 @@ def test_collector_uses_cmdb_site_id_for_arp_fallback_and_best_mac(isolated_db, 
             'port': 'Gi1/0/10',
             'vlan': '20',
             'vrf': 'global',
+            'vrf_context_status': 'explicit_global',
             'type': 'dynamic',
         },
     ]
@@ -537,15 +540,18 @@ def test_collector_excludes_device_interface_addresses(isolated_db, monkeypatch)
             {
                 'ip': '198.51.100.64', 'mac_raw': '00aa.bbcc.ddf3',
                 'device_id': 'device-interface-ip', 'vlan': '50', 'vrf': 'global',
+                'vrf_context_status': 'explicit_global',
             },
             {
                 'ip': '198.51.100.65', 'mac_raw': '00aa.bbcc.ddf4',
                 'device_id': 'device-interface-ip', 'vlan': '50', 'vrf': 'global',
+                'vrf_context_status': 'explicit_global',
             },
         ],
         [{
             'mac': '00aabbccddf4', 'switch_id': 'device-interface-ip', 'port': 'Gi1/0/5',
-            'vlan': '50', 'vrf': 'global', 'type': 'dynamic',
+            'vlan': '50', 'vrf': 'global', 'vrf_context_status': 'explicit_global',
+            'type': 'dynamic',
         }],
     )
 

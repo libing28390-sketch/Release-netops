@@ -11,6 +11,7 @@ import {
   Router,
   PlusCircle,
   Eye,
+  LoaderCircle,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import PageHero from '../../components/PageHero';
@@ -32,6 +33,7 @@ import {
 import { TableActionCell, TableActionHeader } from '../../components/ui/TableActionColumn';
 interface IPAddress {
   id: string;
+  revision: number;
   subnet_id: string;
   address: string;
   hostname: string;
@@ -50,6 +52,7 @@ interface IPAddress {
   site_name?: string;
   subnet_prefix?: string;
   observed_prefix?: string;
+  prefix_match_status?: 'global_default' | 'vrf_unavailable' | 'unmatched';
   interface_admin_status?: string;
   interface_oper_status?: string;
   subnet_name?: string;
@@ -64,7 +67,13 @@ interface IPAddress {
   available_after?: string;
   switch_name?: string;
   switch_port?: string;
+  observed_switch_name?: string;
+  observed_switch_port?: string;
+  observed_hostname?: string;
+  observed_mac_address?: string;
   vlan?: string;
+  observed_vlan?: string;
+  observed_switch_id?: string;
   bound_device_hostname?: string;
   linked_asset_id?: string;
   asset_tag?: string;
@@ -74,6 +83,143 @@ interface IPAddress {
   asset_model?: string;
   asset_management_ip?: string;
   asset_business_ip?: string;
+  observed_asset_tag?: string;
+  observed_asset_serial_number?: string;
+  observed_asset_hostname?: string;
+  observed_asset_vendor?: string;
+  observed_asset_model?: string;
+  observed_asset_management_ip?: string;
+  observed_asset_business_ip?: string;
+}
+
+interface IPAddressPoolOption {
+  id: string;
+  name: string;
+  start_ip: string;
+  end_ip: string;
+  status: string;
+  management_mode: string;
+  allocation_allowed: boolean | number;
+  mark_populated: boolean | number;
+  policy_pending: boolean | number;
+}
+
+interface PendingCreateRequest {
+  fingerprint: string;
+  key: string;
+}
+
+const isEnabledFlag = (value: unknown) => value === true || value === 1;
+const isDisabledFlag = (value: unknown) => value === false || value === 0;
+
+/** Only explicitly confirmed active local-static pools may be chosen for allocation. */
+export function filterAllocatableAddressPools(value: unknown): IPAddressPoolOption[] {
+  const rows = Array.isArray(value) ? value : [];
+  return rows.filter((item): item is IPAddressPoolOption => {
+    if (!item || typeof item !== 'object') return false;
+    const pool = item as Partial<IPAddressPoolOption>;
+    return Boolean(pool.id)
+      && String(pool.status || '').toLowerCase() === 'active'
+      && pool.management_mode === 'local_static'
+      && isEnabledFlag(pool.allocation_allowed)
+      && isDisabledFlag(pool.mark_populated)
+      && isDisabledFlag(pool.policy_pending);
+  }).map((pool) => ({
+    ...pool,
+    id: String(pool.id),
+    name: String(pool.name || pool.id),
+    start_ip: String(pool.start_ip || ''),
+    end_ip: String(pool.end_ip || ''),
+    status: String(pool.status || ''),
+    management_mode: String(pool.management_mode || ''),
+  }));
+}
+
+export function buildNextAvailableIpUrl(prefixId: string, poolId = ''): string {
+  const query = new URLSearchParams();
+  if (poolId) query.set('pool_id', poolId);
+  const queryString = query.toString();
+  const suffix = queryString ? `?${queryString}` : '';
+  return `/api/ipam/subnets/${encodeURIComponent(prefixId)}/next-available-ip${suffix}`;
+}
+
+type RegisteredAddressEditRequest = Pick<IPAddress, 'id' | 'subnet_id' | 'address'>;
+
+export class RegisteredAddressLookupError extends Error {
+  constructor(readonly reason: 'invalid_request' | 'invalid_response' | 'missing' | 'ambiguous' | 'http', readonly status?: number) {
+    super(reason);
+    this.name = 'RegisteredAddressLookupError';
+  }
+}
+
+/** Load the persisted IPAM record used by the edit form, never the mixed inventory row. */
+export async function fetchRegisteredAddressForEdit(
+  row: RegisteredAddressEditRequest,
+  options: { headers?: HeadersInit; signal?: AbortSignal; fetcher?: typeof fetch } = {},
+): Promise<IPAddress> {
+  if (!row.id || !row.subnet_id || !row.address) {
+    throw new RegisteredAddressLookupError('invalid_request');
+  }
+
+  const query = new URLSearchParams({
+    site_id: 'all',
+    registered_only: 'true',
+    prefix_id: row.subnet_id,
+    q: row.address,
+    page: '1',
+    page_size: '100',
+  });
+  const response = await (options.fetcher || fetch)(`/api/ipam/addresses?${query.toString()}`, {
+    headers: options.headers,
+    signal: options.signal,
+  });
+  if (!response.ok) throw new RegisteredAddressLookupError('http', response.status);
+
+  const payload: unknown = await response.json();
+  if (!payload || typeof payload !== 'object' || !Array.isArray((payload as { items?: unknown }).items)) {
+    throw new RegisteredAddressLookupError('invalid_response');
+  }
+  const matches = (payload as { items: unknown[] }).items.filter((item): item is IPAddress => (
+    Boolean(item)
+    && typeof item === 'object'
+    && typeof (item as { id?: unknown }).id === 'string'
+    && (item as { id: string }).id === row.id
+  ));
+  if (matches.length === 0) throw new RegisteredAddressLookupError('missing');
+  if (matches.length !== 1) throw new RegisteredAddressLookupError('ambiguous');
+  if (!Number.isSafeInteger(matches[0].revision) || matches[0].revision < 1) {
+    throw new RegisteredAddressLookupError('invalid_response');
+  }
+  return matches[0];
+}
+
+export function getIPAddressReadOnlyDisplayFields(address: Pick<IPAddress,
+  'hostname' | 'observed_hostname' | 'switch_name' | 'observed_switch_name' | 'bound_device_hostname'
+  | 'switch_port' | 'observed_switch_port' | 'interface_name' | 'mac_address' | 'observed_mac_address'
+>): { hostname: string; switchName: string; switchPort: string; macAddress: string } {
+  return {
+    hostname: address.hostname || address.observed_hostname || '',
+    switchName: address.observed_switch_name || address.switch_name || address.bound_device_hostname || '',
+    switchPort: address.observed_switch_port || address.switch_port || address.interface_name || '',
+    macAddress: address.mac_address || address.observed_mac_address || '',
+  };
+}
+
+export function getIPAddressDeviceAssignmentDisplay(address: Pick<IPAddress,
+  'device_id' | 'bound_device_hostname' | 'asset_hostname' | 'observed_switch_name' | 'switch_name'
+  | 'source' | 'is_discovered'
+>, zh: boolean): string {
+  const isObservationOnly = address.is_discovered || address.source === 'discovered' || address.source === 'interface_cli';
+  const assignedDevice = isObservationOnly
+    ? (zh ? '未登记' : 'Unregistered')
+    : address.device_id
+    ? address.bound_device_hostname || address.asset_hostname || address.device_id
+    : (zh ? '未绑定' : 'Unassigned');
+  const observedSwitch = address.observed_switch_name || address.switch_name || '';
+  if (observedSwitch) {
+    return `${zh ? '登记' : 'Assigned'}: ${assignedDevice} · ${zh ? '接入' : 'Access'}: ${observedSwitch}`;
+  }
+  return address.device_id ? assignedDevice : '-';
 }
 
 function assetInfoLabel(address: IPAddress, zh: boolean): string {
@@ -82,6 +228,20 @@ function assetInfoLabel(address: IPAddress, zh: boolean): string {
     address.asset_serial_number ? `${zh ? '序列号' : 'Serial'}: ${address.asset_serial_number}` : '',
   ].filter(Boolean);
   return values.join(' · ') || '-';
+}
+
+export function observedPrefixScopeLabel(status: IPAddress['prefix_match_status'], zh: boolean): string {
+  if (status === 'vrf_unavailable') return zh ? 'VRF 待确认' : 'VRF needs confirmation';
+  if (status === 'unmatched') return zh ? '未匹配网段' : 'No matching prefix';
+  return zh ? '全局/默认' : 'Global/default';
+}
+
+export function formatPendingDiscoveryWarning(count: number, zh: boolean): string {
+  const pendingCount = Number.isFinite(count) ? Math.max(0, Math.trunc(count)) : 0;
+  if (pendingCount === 0) return '';
+  return zh
+    ? `当前页面中另有 ${pendingCount} 个 VRF 待确认的观测 IP 已临时保留；刷新当前采集数据或确认归属后会重新计算。`
+    : `${pendingCount} IP observations currently shown are temporarily reserved while their VRF is unconfirmed. Availability is recalculated after the current data refreshes or scope is confirmed.`;
 }
 
 interface DeviceCandidate {
@@ -583,6 +743,11 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
   const [loading, setLoading] = useState(true);
   const [inventoryError, setInventoryError] = useState('');
   const inventoryRequest = useRef<AbortController | null>(null);
+  const registeredAddressEditRequest = useRef<AbortController | null>(null);
+  const poolRequest = useRef<AbortController | null>(null);
+  const [isLoadingRegisteredAddress, setIsLoadingRegisteredAddress] = useState(false);
+  const [loadingRegisteredAddressId, setLoadingRegisteredAddressId] = useState('');
+  const [registeredAddressEditError, setRegisteredAddressEditError] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
@@ -610,6 +775,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
   // Form State
   const [form, setForm] = useState({
     subnet_id: '', // selected prefix ID
+    pool_id: '', // optional allocation range; empty means the whole Prefix
     address: '',
     hostname: '',
     device_id: '',
@@ -622,11 +788,28 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
     expires_at: '',
   });
   const [errorMsg, setErrorMsg] = useState('');
+  const pendingCreateRequest = useRef<PendingCreateRequest | null>(null);
+  const [suggestionWarning, setSuggestionWarning] = useState('');
+  const [poolOptions, setPoolOptions] = useState<IPAddressPoolOption[]>([]);
+  const [isLoadingPools, setIsLoadingPools] = useState(false);
+  const [poolLoadError, setPoolLoadError] = useState('');
+  const [poolRetryCount, setPoolRetryCount] = useState(0);
 
   const authHeaders = useCallback(() => {
     const token = localStorage.getItem('netops_token');
     return token ? { Authorization: `Bearer ${token}` } : {};
   }, []);
+
+  const getCreateIdempotencyKey = (payload: unknown) => {
+    const fingerprint = JSON.stringify(payload);
+    if (!pendingCreateRequest.current || pendingCreateRequest.current.fingerprint !== fingerprint) {
+      pendingCreateRequest.current = {
+        fingerprint,
+        key: globalThis.crypto?.randomUUID?.() || `ipam-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      };
+    }
+    return pendingCreateRequest.current.key;
+  };
 
   // Fetch lookups
   const fetchLookups = useCallback(async () => {
@@ -750,11 +933,89 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
     const activeRequest = inventoryRequest.current;
     inventoryRequest.current = null;
     activeRequest?.abort();
+    registeredAddressEditRequest.current?.abort();
+    registeredAddressEditRequest.current = null;
+    poolRequest.current?.abort();
+    poolRequest.current = null;
   }, []);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    poolRequest.current?.abort();
+    poolRequest.current = null;
+    setPoolOptions([]);
+    setPoolLoadError('');
+    setIsLoadingPools(false);
+
+    if (!showAddEdit || editingIP || isQuickAllocation || !form.subnet_id) return undefined;
+
+    const controller = new AbortController();
+    poolRequest.current = controller;
+    setIsLoadingPools(true);
+    const query = new URLSearchParams({ prefix_id: form.subnet_id, page: '1', page_size: '100' });
+
+    const failPoolLoad = (message: string) => {
+      setPoolOptions([]);
+      setPoolLoadError(message);
+      setForm((current) => ({ ...current, pool_id: '' }));
+    };
+
+    void (async () => {
+      try {
+        const response = await fetch(`/api/ipam/pools?${query.toString()}`, {
+          headers: authHeaders(),
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted || poolRequest.current !== controller) return;
+        if (!response.ok) {
+          failPoolLoad(response.status === 401
+            ? (zh ? '登录已过期，无法加载地址池，请重新登录后重试。' : 'Your session expired. Sign in to load allocation pools.')
+            : response.status === 403
+              ? (zh ? '当前账号没有查看此网段地址池的权限，已停止池选择。' : 'You do not have permission to view pools for this prefix. Pool selection is unavailable.')
+              : (zh ? '加载地址池失败，已停止池选择。请重试。' : 'Failed to load pools. Pool selection is unavailable; retry to continue.'));
+          return;
+        }
+
+        const payload: unknown = await response.json();
+        if (controller.signal.aborted || poolRequest.current !== controller) return;
+        const root = payload && typeof payload === 'object' && 'data' in payload
+          ? (payload as { data?: unknown }).data
+          : payload;
+        const rows = Array.isArray(root)
+          ? root
+          : root && typeof root === 'object' && Array.isArray((root as { items?: unknown }).items)
+            ? (root as { items: unknown[] }).items
+            : null;
+        if (!rows) {
+          failPoolLoad(zh ? '地址池响应无效，已停止池选择。' : 'The pool response was invalid. Pool selection is unavailable.');
+          return;
+        }
+        const eligible = filterAllocatableAddressPools(rows);
+        setPoolOptions(eligible);
+        setPoolLoadError('');
+        setForm((current) => current.pool_id && eligible.some((pool) => pool.id === current.pool_id)
+          ? current
+          : { ...current, pool_id: '' });
+      } catch (error) {
+        if (controller.signal.aborted || poolRequest.current !== controller) return;
+        console.error(error);
+        failPoolLoad(zh ? '加载地址池失败，已停止池选择。请检查网络后重试。' : 'Failed to load pools. Pool selection is unavailable; check the connection and retry.');
+      } finally {
+        if (poolRequest.current === controller) {
+          poolRequest.current = null;
+          setIsLoadingPools(false);
+        }
+      }
+    })();
+
+    return () => {
+      controller.abort();
+      if (poolRequest.current === controller) poolRequest.current = null;
+    };
+  }, [authHeaders, editingIP, form.subnet_id, isQuickAllocation, poolRetryCount, showAddEdit, zh]);
 
   const siteScopedPrefixes = useMemo(
     () => selectedSiteId === 'all'
@@ -769,6 +1030,13 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
     setPage(1);
     const matched = siteScopedPrefixes.find((p) => p.id === id) || null;
     setActivePrefix(matched);
+    if (!editingIP) {
+      setForm((current) => ({ ...current, subnet_id: id, pool_id: '', address: '' }));
+      setPoolOptions([]);
+      setPoolLoadError('');
+      setSuggestionWarning('');
+      setErrorMsg('');
+    }
     navigate(`/ipam/ips?prefix_id=${id}`);
   };
 
@@ -777,6 +1045,13 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
     setSelectedPrefixId('');
     setActivePrefix(null);
     setPage(1);
+    if (!editingIP) {
+      setForm((current) => ({ ...current, subnet_id: '', pool_id: '', address: '' }));
+      setPoolOptions([]);
+      setPoolLoadError('');
+      setSuggestionWarning('');
+      setErrorMsg('');
+    }
     navigate('/ipam/ips');
   };
 
@@ -801,6 +1076,10 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
     if (activePrefix?.id !== target.id) {
       setSelectedPrefixId(target.id);
       setActivePrefix(target);
+      setForm((current) => ({ ...current, subnet_id: target.id, pool_id: '', address: '' }));
+      setPoolOptions([]);
+      setPoolLoadError('');
+      setSuggestionWarning('');
       navigate(`/ipam/ips?prefix_id=${target.id}`);
     }
     setPage(1);
@@ -897,11 +1176,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
       isMatrixView,
     });
     const allAddresses = await fetchAllIpamExportItems<IPAddress>('/api/ipam/addresses', params);
-    const linkedDeviceName = (node: IPAddress) => {
-      if (node.switch_name || node.bound_device_hostname) return node.switch_name || node.bound_device_hostname || '-';
-      const device = deviceCandidateFromAddress(node);
-      return device ? deviceHostLabel(device) : '-';
-    };
+    const linkedDeviceName = (node: IPAddress) => getIPAddressDeviceAssignmentDisplay(node, zh);
     return buildVisibleIpamExportData(addressTableRef.current, [
       { header: zh ? '站点' : 'Site', value: (node) => node.site_name || '-' },
       {
@@ -909,19 +1184,19 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
         value: (node) => {
           const registeredPrefix = node.subnet_prefix || (zh ? '未关联网段' : 'No linked prefix');
           return node.source === 'interface_cli' && node.observed_prefix
-            ? `${registeredPrefix} · ${zh ? '接口观察' : 'Observed'} ${node.observed_prefix} · ${zh ? '全局/默认' : 'Global/default'}`
+            ? `${registeredPrefix} · ${zh ? '接口观察' : 'Observed'} ${node.observed_prefix} · ${observedPrefixScopeLabel(node.prefix_match_status, zh)}`
             : registeredPrefix;
         },
       },
       { header: zh ? 'IP地址' : 'IP Address', value: (node) => node.address },
       { header: zh ? '用途' : 'Purpose', value: (node) => purposeLabel(node.purpose || inferIpPurpose(node.network_type), zh) },
       { header: zh ? '类型' : 'Role Type', value: (node) => roleLabel(node.device_type, zh) },
-      { header: zh ? '主机名 / 域名' : 'DNS Hostname', value: (node) => node.hostname || '-' },
-      { header: zh ? '关联设备' : 'Linked Device', value: linkedDeviceName },
+      { header: zh ? '主机名 / 域名' : 'DNS Hostname', value: (node) => getIPAddressReadOnlyDisplayFields(node).hostname || '-' },
+      { header: zh ? 'IPAM分配对象 / 接入交换机' : 'IPAM Assignment / Access Switch', value: linkedDeviceName },
       { header: zh ? '资产编号' : 'Asset Tag', value: (node) => node.asset_tag || '-' },
       { header: zh ? '资产序列号' : 'Asset Serial', value: (node) => node.asset_serial_number || '-' },
-      { header: zh ? '接口' : 'Interface', value: (node) => node.switch_port || node.interface_name || '-' },
-      { header: zh ? 'MAC地址' : 'MAC Address', value: (node) => formatMacAddress(node.mac_address) || '-' },
+      { header: zh ? '接口' : 'Interface', value: (node) => getIPAddressReadOnlyDisplayFields(node).switchPort || '-' },
+      { header: zh ? 'MAC地址' : 'MAC Address', value: (node) => formatMacAddress(getIPAddressReadOnlyDisplayFields(node).macAddress) || '-' },
       { header: zh ? '状态' : 'Status', value: (node) => statusLabel(node.status, zh) },
       { header: zh ? '备注描述' : 'Description', value: (node) => node.description || '-' },
       {
@@ -935,56 +1210,106 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
   }, [selectedSiteId, selectedPrefixId, search, statusFilter, isMatrixView, typeFilter, purposeFilter, zh]);
 
   // Form handling
-  const openForm = (ipItem: IPAddress | null = null, quickAllocation = false) => {
+  const openForm = async (ipItem: IPAddress | null = null, quickAllocation = false) => {
+    pendingCreateRequest.current = null;
+    registeredAddressEditRequest.current?.abort();
+    registeredAddressEditRequest.current = null;
+    setIsLoadingRegisteredAddress(false);
+    setLoadingRegisteredAddressId('');
+    setRegisteredAddressEditError('');
     setErrorMsg('');
+    setSuggestionWarning('');
     setIsQuickAllocation(quickAllocation && !ipItem?.id);
     setShowAdvancedFields(Boolean(ipItem?.id));
-    const inheritedPurpose = inferIpPurpose(ipItem?.network_type || activePrefix?.network_type);
+    setShowAddEdit(false);
+    setEditingIP(null);
     if (ipItem?.id) {
-      setEditingIP(ipItem);
-      setForm({
-        subnet_id: ipItem.subnet_id || selectedPrefixId,
-        address: ipItem.address,
-        hostname: ipItem.hostname || '',
-        device_id: ipItem.device_id || '',
-        interface_name: ipItem.interface_name || '',
-        mac_address: ipItem.mac_address || '',
-        device_type: ipItem.device_type || defaultRoleForPurpose(inheritedPurpose),
-        purpose: ipItem.purpose || inheritedPurpose,
-        status: ipItem.status || 'active',
-        description: ipItem.description || '',
-        expires_at: ipItem.expires_at || '',
-      });
-    } else {
-      setEditingIP(null);
-      setForm({
-        subnet_id: ipItem?.subnet_id || selectedPrefixId,
-        address: ipItem?.address || '',
-        hostname: ipItem?.hostname || '',
-        device_id: ipItem?.device_id || '',
-        interface_name: ipItem?.interface_name || '',
-        mac_address: ipItem?.mac_address || '',
-        device_type: ipItem?.device_type || defaultRoleForPurpose(inheritedPurpose),
-        purpose: ipItem?.purpose || inheritedPurpose,
-        status: ipItem?.status && ipItem.status !== 'available' ? ipItem.status : 'active',
-        description: ipItem?.description || '',
-        expires_at: ipItem?.expires_at || '',
-      });
+      const controller = new AbortController();
+      registeredAddressEditRequest.current = controller;
+      setIsLoadingRegisteredAddress(true);
+      setLoadingRegisteredAddressId(ipItem.id);
+      try {
+        const registeredRecord = await fetchRegisteredAddressForEdit(ipItem, {
+          headers: authHeaders(),
+          signal: controller.signal,
+        });
+        if (registeredAddressEditRequest.current !== controller) return;
+        const inheritedPurpose = inferIpPurpose(registeredRecord.network_type || activePrefix?.network_type);
+        setEditingIP(registeredRecord);
+        setIsQuickAllocation(false);
+        setShowAdvancedFields(true);
+        setForm({
+          subnet_id: registeredRecord.subnet_id || selectedPrefixId,
+          pool_id: '',
+          address: registeredRecord.address,
+          hostname: registeredRecord.hostname || '',
+          device_id: registeredRecord.device_id || '',
+          interface_name: registeredRecord.interface_name || '',
+          mac_address: registeredRecord.mac_address || '',
+          device_type: registeredRecord.device_type || defaultRoleForPurpose(inheritedPurpose),
+          purpose: registeredRecord.purpose || inheritedPurpose,
+          status: registeredRecord.status || 'active',
+          description: registeredRecord.description || '',
+          expires_at: registeredRecord.expires_at || '',
+        });
+        setShowAddEdit(true);
+      } catch (error) {
+        if (controller.signal.aborted || registeredAddressEditRequest.current !== controller) return;
+        const reason = error instanceof RegisteredAddressLookupError ? error.reason : '';
+        const status = error instanceof RegisteredAddressLookupError ? error.status : undefined;
+        setRegisteredAddressEditError(status === 401
+          ? (zh ? '登录已过期，无法读取登记记录，请重新登录后重试。' : 'Your session expired. Sign in and retry loading the registered record.')
+          : status === 403
+            ? (zh ? '当前账号没有读取此 IP 登记记录的权限。' : 'You do not have permission to read this registered IP record.')
+            : reason === 'missing'
+              ? (zh ? '该 IP 登记记录已不存在或已变更，请刷新清单后重试。' : 'The registered IP record is missing or has changed. Refresh the inventory and retry.')
+              : reason === 'ambiguous'
+                ? (zh ? '无法唯一确认该 IP 登记记录，请刷新清单后重试。' : 'The registered IP record could not be uniquely identified. Refresh the inventory and retry.')
+                : (zh ? '无法加载 IP 登记记录，编辑已停止。请刷新清单后重试。' : 'Failed to load the registered IP record. Editing was stopped; refresh the inventory and retry.'));
+      } finally {
+        if (registeredAddressEditRequest.current === controller) {
+          registeredAddressEditRequest.current = null;
+          setIsLoadingRegisteredAddress(false);
+          setLoadingRegisteredAddressId('');
+        }
+      }
+      return;
     }
+
+    const inheritedPurpose = inferIpPurpose(ipItem?.network_type || activePrefix?.network_type);
+    setEditingIP(null);
+    setForm({
+      subnet_id: ipItem?.subnet_id || selectedPrefixId,
+      pool_id: '',
+      address: ipItem?.address || '',
+      hostname: ipItem?.hostname || '',
+      device_id: ipItem?.device_id || '',
+      interface_name: ipItem?.interface_name || '',
+      mac_address: ipItem?.mac_address || '',
+      device_type: ipItem?.device_type || defaultRoleForPurpose(inheritedPurpose),
+      purpose: ipItem?.purpose || inheritedPurpose,
+      status: ipItem?.status && ipItem.status !== 'available' ? ipItem.status : 'active',
+      description: ipItem?.description || '',
+      expires_at: ipItem?.expires_at || '',
+    });
     setShowAddEdit(true);
   };
 
   const handleGetSuggestedIP = async () => {
     setErrorMsg('');
+    setSuggestionWarning('');
     if (!form.subnet_id) {
       setErrorMsg(zh ? '请先选择一个归属前缀网段' : 'Please select an allocating prefix first');
       return;
     }
     try {
-      const res = await fetch(`/api/ipam/subnets/${form.subnet_id}/next-available-ip`, { headers: authHeaders() });
+      const res = await fetch(buildNextAvailableIpUrl(form.subnet_id, form.pool_id), { headers: authHeaders() });
       if (res.ok) {
         const data = await res.json();
-        setForm((prev) => ({ ...prev, address: data.next_available_ip }));
+        setForm((prev) => ({ ...prev, address: data.next_available_ip || '' }));
+        setSuggestionWarning(formatPendingDiscoveryWarning(
+          Number(data.pending_discovery_count || 0), zh,
+        ));
       } else {
         const err = await res.json().catch(() => null);
         setErrorMsg(err?.detail || (zh ? '无法获取推荐 IP，网段可能已满。' : 'Failed to fetch suggested IP. Subnet might be full.'));
@@ -1008,16 +1333,24 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
     try {
       const url = editingIP ? `/api/ipam/addresses/${editingIP.id}` : `/api/ipam/subnets/${form.subnet_id}/addresses`;
       const method = editingIP ? 'PUT' : 'POST';
+      const { pool_id, ...addressFields } = form;
+      const payload = editingIP
+        ? { ...addressFields, expected_revision: editingIP.revision }
+        : !isQuickAllocation && pool_id
+          ? { ...addressFields, pool_id }
+          : addressFields;
       const res = await fetch(url, {
         method,
         headers: {
           'Content-Type': 'application/json',
           ...authHeaders(),
+          ...(!editingIP ? { 'Idempotency-Key': getCreateIdempotencyKey(payload) } : {}),
         },
-        body: JSON.stringify(form),
+        body: JSON.stringify(payload),
       });
 
       if (res.ok) {
+        if (!editingIP) pendingCreateRequest.current = null;
         setShowAddEdit(false);
         loadData();
       } else {
@@ -1030,11 +1363,13 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
   };
 
   const handleDelete = async (id: string) => {
+    const address = addresses.find((item) => item.id === id);
+    if (!address) return;
     try {
-      const res = await fetch(`/api/ipam/addresses/${id}/release`, {
+      const res = await fetch(`/api/ipam/addresses/${encodeURIComponent(id)}/release`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: '{}',
+        body: JSON.stringify({ expected_revision: address.revision }),
       });
       if (res.ok) {
         setShowDeleteConfirm(null);
@@ -1047,8 +1382,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
 
   // Use the linked-device summary returned with the IP address.
   const getDeviceName = (address: IPAddress) => {
-    const device = deviceCandidateFromAddress(address);
-    return device ? deviceHostLabel(device) : '-';
+    return getIPAddressDeviceAssignmentDisplay(address, zh);
   };
 
   return (
@@ -1205,6 +1539,20 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
         </div>
       )}
 
+      {isLoadingRegisteredAddress && (
+        <div role="status" className="rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-2 text-xs font-semibold text-cyan-800">
+          {zh ? '正在读取正式 IP 登记记录…' : 'Loading the registered IP record…'}
+        </div>
+      )}
+      {registeredAddressEditError && (
+        <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-semibold text-rose-700">
+          <span>{registeredAddressEditError}</span>
+          <button type="button" onClick={() => setRegisteredAddressEditError('')} className="rounded-lg bg-white px-3 py-1.5 text-rose-700 shadow-sm hover:bg-rose-100">
+            {zh ? '关闭' : 'Dismiss'}
+          </button>
+        </div>
+      )}
+
       <section role="note" aria-label={zh ? 'IPAM 地址台账说明' : 'IPAM address ledger scope'} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50/90 px-4 py-2.5 text-[11px] leading-4 text-slate-600">
         <p>
           {zh
@@ -1294,6 +1642,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                         } else {
                           openForm({
                             id: '',
+                            revision: 0,
                             subnet_id: selectedPrefixId,
                             address: cell.ip,
                             hostname: '',
@@ -1367,8 +1716,10 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                       <td className="bg-[var(--ui-surface)] px-3 py-3 text-gray-600 group-hover:bg-[var(--ui-surface-muted)] xl:sticky xl:z-20" style={{ left: 170 }}>
                         <span className="font-mono text-[10px] text-gray-700">{getIPAddressRegisteredPrefixLabel(node.subnet_prefix, zh)}</span>
                         {node.source === 'interface_cli' && node.observed_prefix && (
-                          <span className="mt-1 block break-all font-mono text-[9px] font-semibold text-[var(--ui-fg-muted)]" title={zh ? '接口快照未包含 VRF，按全局/默认范围展示' : 'Interface snapshot omits VRF; shown under global/default'}>
-                            {zh ? `接口观察 ${node.observed_prefix} · 全局/默认` : `Observed ${node.observed_prefix} · Global/default`}
+                          <span className="mt-1 block break-all font-mono text-[9px] font-semibold text-[var(--ui-fg-muted)]" title={zh ? '接口快照没有提供VRF，网段归属仍需核实' : 'The interface snapshot has no VRF context; prefix scope still needs review'}>
+                            {zh
+                              ? `接口观察 ${node.observed_prefix} · ${observedPrefixScopeLabel(node.prefix_match_status, zh)}`
+                              : `Observed ${node.observed_prefix} · ${observedPrefixScopeLabel(node.prefix_match_status, zh)}`}
                           </span>
                         )}
                       </td>
@@ -1428,11 +1779,11 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                           {roleLabel(node.device_type, zh)}
                         </span>
                       </td>
-                      <td className="px-3 py-3 text-xs font-semibold text-[var(--ui-fg)]"><span className="block max-w-[130px] truncate" title={node.hostname || '-'}>{node.hostname || '-'}</span></td>
-                      <td className="px-3 py-3 text-xs font-bold text-[var(--ui-accent)] hover:underline cursor-pointer"><span className="block max-w-[140px] truncate" title={node.switch_name || node.bound_device_hostname || getDeviceName(node)}>{node.switch_name || node.bound_device_hostname || getDeviceName(node)}</span></td>
+                      <td className="px-3 py-3 text-xs font-semibold text-[var(--ui-fg)]"><span className="block max-w-[130px] truncate" title={getIPAddressReadOnlyDisplayFields(node).hostname || '-'}>{getIPAddressReadOnlyDisplayFields(node).hostname || '-'}</span></td>
+                      <td className="px-3 py-3 text-xs font-bold text-[var(--ui-accent)] hover:underline cursor-pointer"><span className="block max-w-[140px] truncate" title={getDeviceName(node)}>{getDeviceName(node)}</span></td>
                       <td className="px-3 py-3 text-xs font-medium text-[var(--ui-fg-muted)]"><span className="block max-w-[135px] truncate" title={assetInfoLabel(node, zh)}>{assetInfoLabel(node, zh)}</span></td>
-                      <td className="px-3 py-3 text-xs font-semibold text-[var(--ui-fg)]"><span className="block max-w-[100px] truncate" title={node.switch_port || node.interface_name || '-'}>{node.switch_port || node.interface_name || '-'}</span></td>
-                      <td className="px-3 py-3 font-mono text-xs text-[var(--ui-fg)]">{formatMacAddress(node.mac_address) || '-'}</td>
+                      <td className="px-3 py-3 text-xs font-semibold text-[var(--ui-fg)]"><span className="block max-w-[100px] truncate" title={getIPAddressReadOnlyDisplayFields(node).switchPort || '-'}>{getIPAddressReadOnlyDisplayFields(node).switchPort || '-'}</span></td>
+                      <td className="px-3 py-3 font-mono text-xs text-[var(--ui-fg)]">{formatMacAddress(getIPAddressReadOnlyDisplayFields(node).macAddress) || '-'}</td>
                       <td className="px-3 py-3">
                         {getIPAddressObservationStatus(node, zh) ? (
                           <span className={`inline-flex max-w-[120px] truncate whitespace-nowrap rounded-full border px-1.5 py-0.5 text-[10px] font-bold ${
@@ -1462,8 +1813,10 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                         {!node.is_discovered && !node.is_virtual_gateway ? (
                           <ActionIconGroup label={zh ? '地址操作' : 'Address actions'} className="opacity-0 transition-opacity group-hover:opacity-100">
                             <ActionIconButton
-                              icon={Pencil}
-                              label={zh ? '编辑' : 'Edit'}
+                              icon={loadingRegisteredAddressId === node.id ? LoaderCircle : Pencil}
+                              iconClassName={loadingRegisteredAddressId === node.id ? 'animate-spin' : undefined}
+                              label={loadingRegisteredAddressId === node.id ? (zh ? '正在读取登记记录' : 'Loading registered record') : (zh ? '编辑' : 'Edit')}
+                              disabled={loadingRegisteredAddressId === node.id}
                               onClick={() => openForm(node)}
                             />
                             {!node.is_prefix_gateway && <ActionIconButton
@@ -1538,6 +1891,11 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                     {errorMsg}
                   </div>
                 )}
+                {suggestionWarning && (
+                  <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-xs font-semibold text-amber-800">
+                    {suggestionWarning}
+                  </div>
+                )}
 
                 <div className="grid grid-cols-2 gap-4">
                   {/* Selected Prefix info */}
@@ -1561,6 +1919,56 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                       )}
                     </div>
                   </div>
+
+                  {!editingIP && !isQuickAllocation && (
+                    <div className="space-y-1.5 col-span-2">
+                      <label htmlFor="ip-address-pool" className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">
+                        {zh ? '分配范围' : 'Allocation Range'}
+                      </label>
+                      <select
+                        id="ip-address-pool"
+                        aria-label={zh ? '分配范围' : 'Allocation Range'}
+                        value={form.pool_id}
+                        disabled={isLoadingPools || Boolean(poolLoadError)}
+                        onChange={(e) => {
+                          setForm((current) => ({ ...current, pool_id: e.target.value, address: '' }));
+                          setSuggestionWarning('');
+                          setErrorMsg('');
+                        }}
+                        className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <option value="">{zh ? '整个 Prefix（按当前策略计算）' : 'Entire Prefix (apply current range policies)'}</option>
+                        {poolOptions.map((pool) => (
+                          <option key={pool.id} value={pool.id}>
+                            {pool.name} · {pool.start_ip} – {pool.end_ip}
+                          </option>
+                        ))}
+                      </select>
+                      {isLoadingPools && (
+                        <div role="status" className="ml-1 text-[10px] text-gray-500">
+                          {zh ? '正在加载此网段的可分配地址池…' : 'Loading eligible pools for this prefix…'}
+                        </div>
+                      )}
+                      {poolLoadError && (
+                        <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[10px] font-semibold text-rose-700">
+                          <span>{poolLoadError}</span>
+                          <button type="button" onClick={() => setPoolRetryCount((count) => count + 1)} className="shrink-0 rounded-lg bg-white px-2.5 py-1.5 text-rose-700 shadow-sm hover:bg-rose-100">
+                            {zh ? '重试' : 'Retry'}
+                          </button>
+                        </div>
+                      )}
+                      {!isLoadingPools && !poolLoadError && poolOptions.length === 0 && (
+                        <p className="ml-1 text-[10px] text-gray-500">
+                          {zh ? '没有符合本地分配策略的地址池；仍可使用整个 Prefix 的可用地址。' : 'No pool is eligible for local allocation. You can still allocate within the Prefix according to its range policies.'}
+                        </p>
+                      )}
+                      {form.pool_id && poolOptions.find((pool) => pool.id === form.pool_id) && (
+                        <p className="ml-1 text-[10px] text-cyan-700">
+                          {zh ? `推荐和提交都会限制在 ${poolOptions.find((pool) => pool.id === form.pool_id)?.name} 范围内。` : `Suggestions and submission will both be bounded to ${poolOptions.find((pool) => pool.id === form.pool_id)?.name}.`}
+                        </p>
+                      )}
+                    </div>
+                  )}
 
                   {/* IP Purpose */}
                   <div className="space-y-1.5 col-span-2">
@@ -1599,7 +2007,10 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                     <input
                       type="text"
                       value={form.address}
-                      onChange={(e) => setForm({ ...form, address: e.target.value })}
+                      onChange={(e) => {
+                        setForm({ ...form, address: e.target.value });
+                        setSuggestionWarning('');
+                      }}
                       placeholder="e.g. 10.1.1.10"
                       className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                       disabled={editingIP !== null || isQuickAllocation}

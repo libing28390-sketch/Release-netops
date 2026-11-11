@@ -2417,7 +2417,10 @@ def backfill_field_authority(conn) -> dict:
             (address['device_id'], address['interface_name']),
         ).fetchall()
         if len(matches) == 1:
-            conn.execute("UPDATE ip_addresses SET interface_id = ? WHERE id = ?", (matches[0]['id'], address['id']))
+            conn.execute(
+                "UPDATE ip_addresses SET interface_id = ?, revision = revision + 1 WHERE id = ?",
+                (matches[0]['id'], address['id']),
+            )
             counters['ip_addresses_interface_id'] += 1
 
     links = conn.execute(
@@ -2823,6 +2826,15 @@ def create_vrf(conn, *, vrf_name: str, rd: str = '', description: str = '',
         "INSERT INTO vrfs (id, vrf_name, rd, description, tenant_id) VALUES (?, ?, ?, ?, ?)",
         (vrf_id, vrf_name, rd, description, target_tenant),
     )
+    # Keep the canonical IPAM routing-domain identity in the same transaction
+    # as the authoritative VRF row.
+    from services.ipam_address_space_service import ensure_vrf_address_space
+    ensure_vrf_address_space(
+        conn,
+        vrf_id=vrf_id,
+        security_tenant_id=target_tenant,
+        name=vrf_name,
+    )
     _bump_cmdb_reference_versions(conn, reference_domain="vrfs")
     conn.commit()
     logger.info(f"[CmdbService] Created VRF '{vrf_name}'")
@@ -2831,6 +2843,14 @@ def create_vrf(conn, *, vrf_name: str, rd: str = '', description: str = '',
 
 def update_vrf(conn, vrf_id: str, **fields) -> dict:
     existing = get_vrf(conn, vrf_id)
+    if 'tenant_id' in fields and fields['tenant_id'] is not None:
+        mapping = conn.execute(
+            'SELECT security_tenant_id FROM ipam_address_spaces WHERE vrf_id = ?',
+            (vrf_id,),
+        ).fetchone()
+        target_tenant = str(fields['tenant_id'] or _DEFAULT_TENANT)
+        if mapping and str(mapping['security_tenant_id']) != target_tenant:
+            raise ValueError('VRF tenant cannot change while an IPAM address-space mapping exists')
     if any(key in fields and fields[key] is not None for key in ('vrf_name', 'tenant_id')):
         target_name = fields.get('vrf_name', existing.get('vrf_name'))
         target_tenant = fields.get('tenant_id', existing.get('tenant_id')) or _DEFAULT_TENANT
@@ -2856,6 +2876,12 @@ def update_vrf(conn, vrf_id: str, **fields) -> dict:
 
 def delete_vrf(conn, vrf_id: str) -> None:
     get_vrf(conn, vrf_id)
+    mapping = conn.execute(
+        'SELECT id FROM ipam_address_spaces WHERE vrf_id = ?',
+        (vrf_id,),
+    ).fetchone()
+    if mapping:
+        raise ValueError('VRF cannot be deleted while an IPAM address-space mapping exists')
     _raise_if_referenced(conn, "VRF", [
         ('interfaces', 'vrf_id', vrf_id),
         ('prefixes', 'vrf_id', vrf_id),

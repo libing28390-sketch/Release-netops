@@ -30,6 +30,7 @@ import { useFocusTrap } from '../../../hooks/useFocusTrap';
 import RemoteDesktopProfileEditor from './RemoteDesktopProfileEditor';
 import { getMissingAssetRequiredFields } from '../requiredFields';
 import { AssetChassisMembers } from '../../../components/AssetChassisMembers';
+import { deviceRoleLabel } from '../../../domain/deviceLabels';
 
 interface AssetModalProps {
   isOpen: boolean;
@@ -666,14 +667,14 @@ export const AssetModal: React.FC<AssetModalProps> = ({
               ))}
 
               {showMoreAssetDetails && <div>
-                <label className="block text-xs text-black/30 mb-0.5">{zh ? '设备子类' : 'Device Sub-category'}</label>
+                <label className="block text-xs text-black/30 mb-0.5">{zh ? '设备类别' : 'Device category'}</label>
                 <select
                   value={form.device_category}
                   onChange={e => setForm(f => ({ ...f, device_category: e.target.value }))}
                   className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 focus:outline-none focus:border-[#00bceb]/25"
-                  title="Device Sub-category"
+                  title={zh ? '设备类别' : 'Device category'}
                 >
-                  <option value="">{zh ? '选择子分类...' : 'Select category...'}</option>
+                  <option value="">{zh ? '请选择设备类别...' : 'Select device category...'}</option>
                   {form.asset_type === 'server' ? (
                     <>
                       <option value="rack_server">{zh ? '机架式服务器' : 'Rack Server'}</option>
@@ -716,16 +717,16 @@ export const AssetModal: React.FC<AssetModalProps> = ({
 
             {/* ─── 连接配置 & PAM ─── */}
             {showMoreAssetDetails && form.asset_type === 'network_device' && <div className="rounded-xl border border-cyan-100 bg-cyan-50/40 px-3 py-2.5">
-              <label className="block text-xs font-semibold text-cyan-900/70">{zh ? '拓扑角色' : 'Topology Role'}</label>
+              <label className="block text-xs font-semibold text-cyan-900/70">{zh ? '设备角色' : 'Device role'}</label>
               <select
                 value={form.device_role || ''}
                 onChange={e => setForm(f => ({ ...f, device_role: e.target.value }))}
                 className="mt-1 w-full rounded-lg border border-cyan-200 bg-white px-2.5 py-1.5 text-xs text-black/65 outline-none focus:border-cyan-400"
-                title="Topology Role"
+                title={zh ? '设备角色' : 'Device role'}
               >
-                <option value="">{zh ? '请选择拓扑角色...' : 'Select topology role...'}</option>
+                <option value="">{zh ? '请选择设备角色...' : 'Select device role...'}</option>
                 {form.device_role && !NETWORK_TOPOLOGY_ROLE_OPTIONS.some(option => option.value === form.device_role) && (
-                  <option value={form.device_role}>{form.device_role}</option>
+                  <option value={form.device_role}>{deviceRoleLabel(form.device_role, zh ? 'zh' : 'en')}</option>
                 )}
                 {NETWORK_TOPOLOGY_ROLE_OPTIONS.map(option => (
                   <option key={option.value} value={option.value}>{option.label[zh ? 'zh' : 'en']}</option>

@@ -10,6 +10,7 @@ import { normalizeImportedPlatform, SSH_ALGORITHM_PROFILE_OPTIONS, SSH_ALGORITHM
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import { PasswordInputField } from './ui/PasswordInputField';
 import { FormActionBar, FormSection } from './ui/FormLayout';
+import { deviceRoleLabel } from '../domain/deviceLabels';
 
 interface DeviceFormModalProps {
   language: string;
@@ -317,18 +318,18 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
               </p>
             </div>
             <div>
-              <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">Role</label>
+              <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">{language === 'zh' ? '设备角色' : 'Device role'}</label>
               <select
                 value={form.role || 'Unknown'}
-                title="Device role"
+                title={language === 'zh' ? '设备角色' : 'Device role'}
                 onChange={(event) => handleFieldChange('role', event.target.value)}
                 className="w-full rounded-xl border border-black/5 bg-black/[0.02] px-4 py-2.5 text-sm outline-none transition-colors focus:border-black/20 focus:bg-white"
               >
                 {form.role && !ROLE_OPTIONS.includes(form.role) && (
-                  <option value={form.role}>{form.role} (legacy)</option>
+                  <option value={form.role}>{deviceRoleLabel(form.role, language === 'zh' ? 'zh' : 'en')} {language === 'zh' ? '（旧值）' : '(legacy)'}</option>
                 )}
                 {ROLE_OPTIONS.map((role) => (
-                  <option key={role} value={role}>{role}</option>
+                  <option key={role} value={role}>{deviceRoleLabel(role, language === 'zh' ? 'zh' : 'en')}</option>
                 ))}
               </select>
             </div>

@@ -10,7 +10,7 @@ const sourceObservation = {
   scope_status: 'resolved', evidence_status: 'recent', timestamp_status: 'valid', calibration_safe: true, site_name: 'WH-DC-01', vrf_name: 'PROD', source_device_name: 'SW-01',
 };
 const baseSummary = {
-  total_undocumented: 1, total_mismatched: 1, total_stale: 0, total_never_observed: 1, total_unscoped: 0, total_unavailable: 0,
+  total_undocumented: 1, total_mismatched: 1, total_stale: 0, total_unscoped: 0, total_unavailable: 0,
   allocated_ipam_address_count: 12, active_endpoint_count: 10, interface_snapshot_ip_count: 55,
   coverage_status: 'complete', coverage_reason: '', latest_active_endpoint_seen: '2026-10-28T09:10:00+08:00',
 };
@@ -34,11 +34,11 @@ describe('IPReconciliationTab', () => {
           payload.result_total = 1;
         }
         if (activeTab === 'stale') {
-          payload.stale_ip_addresses = [{ ipam_address_id: 'address-stale', ip: '10.1.1.99', last_observed_at: '2026-10-01T09:10:00Z', miss_count: 3, required_misses: 3, subnet_prefix: '10.1.1.0/24' }];
-          payload.result_total = 1;
-        }
-        if (activeTab === 'never_observed') {
-          payload.never_observed = [{ ipam_address_id: 'address-never', ip: '10.1.1.88', last_observed_at: null, subnet_prefix: '10.1.1.0/24' }];
+          payload.stale_ip_addresses = [{
+            ipam_address_id: 'address-stale', ip: '10.1.1.99', last_checked_at: '2026-11-06T09:10:00Z',
+            last_observed_at: '2026-10-01T09:10:00Z', miss_count: 1, required_misses: 1,
+            stale_reason: 'not_observed_in_latest_complete_sweep', subnet_prefix: '10.1.1.0/24',
+          }];
           payload.result_total = 1;
         }
         return response(payload);
@@ -56,18 +56,22 @@ describe('IPReconciliationTab', () => {
     vi.unstubAllGlobals();
   });
 
-  it('renders all six categories, uses server pagination, and does not expose IP release', async () => {
+  it('renders current-evidence categories, uses server pagination, and does not expose IP release', async () => {
     renderPage();
     expect(await screen.findByText('10.1.1.9')).toBeTruthy();
-    for (const name of ['发现未登记', '信息不一致', '长期未发现', '登记后未观察', '归属待确认', '来源不可用']) {
+    for (const name of ['发现未登记', '信息不一致', '本轮未观察到', '归属待确认', '来源不可用']) {
       expect(screen.getByRole('button', { name: new RegExp(name) })).toBeTruthy();
     }
+    expect(screen.queryByRole('button', { name: /登记后未观察/ })).toBeNull();
     expect(screen.queryByText(/接口快照 IP（不纳入对账）/)).toBeNull();
     expect(screen.getByText(/IPAM 已登记 IP/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: /释放此 IP|Release IP/ })).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: /长期未发现/ }));
+    fireEvent.click(screen.getByRole('button', { name: /本轮未观察到/ }));
     expect(await screen.findByText('10.1.1.99')).toBeTruthy();
+    expect(screen.getByText('2026-11-06T09:10:00Z')).toBeTruthy();
+    expect(screen.getByText('1/1')).toBeTruthy();
+    expect(screen.queryByText('2026-10-01T09:10:00Z')).toBeNull();
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes('active_tab=stale'))).toBe(true));
   });
 

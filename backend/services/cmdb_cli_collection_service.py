@@ -104,45 +104,89 @@ def _collect_cli_ip_addresses(
     if result.get("truncated") or _has_truncation_marker(result.get("raw_output")):
         raise RuntimeError("接口IP CLI结果疑似分页或输出截断")
 
-    by_interface: dict[str, dict[str, Any]] = {}
+    by_interface: dict[str, dict[tuple[str, int, str, str], dict[str, Any]]] = {}
     for record in records:
         if not isinstance(record, dict):
             raise RuntimeError("接口IP CLI记录格式无效")
         interface_name = _cmdb_record_value(record, "INTERFACE", "IFNAME", "NAME", "PORT")
-        raw_address = _cmdb_record_value(record, "IP_ADDRESS", "PRIMARY_IP", "MAIN_IP", "IP", "ADDRESS")
-        ip_address = _normalize_ip(raw_address)
-        if not ip_address:
-            if str(raw_address or "").strip().lower() in {"", "unassigned", "none", "--", "-", "n/a"}:
-                continue
-            raise RuntimeError("接口IP CLI记录包含无效IP地址")
-        # The shared IP-interface template also parses valid interface rows
-        # that have no assigned address. They are irrelevant to this IP-only
-        # snapshot and must not be rejected by the interface-name guard.
-        if not interface_name or not _looks_like_cmdb_ip_interface_name(interface_name):
-            raise RuntimeError("接口IP CLI记录缺少有效接口名称")
-
-        raw_prefix = _cmdb_record_value(
+        raw_addresses = _cmdb_record_values(
+            record, "IP_ADDRESS", "PRIMARY_IP", "MAIN_IP", "IP", "ADDRESS",
+        )
+        if not raw_addresses:
+            continue
+        raw_prefixes = _cmdb_record_values(
             record, "PREFIX_LENGTH", "PREFIX_LEN", "MASK", "NETMASK", "SUBNET_MASK", "PREFIX",
         )
-        if not raw_prefix and "/" in raw_address:
-            raw_prefix = raw_address.split("/", 1)[1].strip()
-        prefix_length = _normalize_prefix_length(raw_prefix)
-        if prefix_length is None:
-            raise RuntimeError("接口IP CLI记录缺少有效掩码或前缀长度")
+        if len(raw_prefixes) not in (0, 1, len(raw_addresses)):
+            raise RuntimeError("接口IP CLI地址与掩码数量不匹配")
+
+        raw_contexts = _cmdb_record_values(
+            record, "LOCAL_CONTEXT_KEY", "VPN_INSTANCE", "VRF_NAME", "VRF",
+            "ROUTING_INSTANCE", "VIRTUAL_ROUTER",
+        )
+        if len(raw_contexts) not in (0, 1, len(raw_addresses)):
+            raise RuntimeError("接口IP CLI地址与路由上下文数量不匹配")
 
         key = normalize_interface_name(interface_name)
-        current = by_interface.get(key)
-        if current is not None:
-            if current["ip_address"] == ip_address and current["prefix_length"] == prefix_length:
-                continue
-            raise RuntimeError("接口IP CLI快照包含同一接口的多个地址，当前CMDB投影无法无损表示")
-        by_interface[key] = {
-            "interface": interface_name,
-            "ip_address": ip_address,
-            "prefix_length": prefix_length,
-        }
+        interface_addresses = by_interface.setdefault(key, {})
+        for address_index, raw_address in enumerate(raw_addresses):
+            ip_address = _normalize_ip(raw_address)
+            if not ip_address:
+                if str(raw_address or "").strip().lower() in {"", "unassigned", "none", "--", "-", "n/a"}:
+                    continue
+                raise RuntimeError("接口IP CLI记录包含无效IP地址")
+            # The shared IP-interface template also parses valid rows without
+            # an address. They are skipped above before validating their names.
+            if not interface_name or not _looks_like_cmdb_ip_interface_name(interface_name):
+                raise RuntimeError("接口IP CLI记录缺少有效接口名称")
 
-    if not by_interface:
+            raw_prefix = (
+                raw_prefixes[address_index]
+                if len(raw_prefixes) > 1
+                else raw_prefixes[0] if raw_prefixes else ""
+            )
+            if not raw_prefix and "/" in raw_address:
+                raw_prefix = raw_address.split("/", 1)[1].strip()
+            prefix_length = _normalize_prefix_length(raw_prefix)
+            if prefix_length is None:
+                raise RuntimeError("接口IP CLI记录缺少有效掩码或前缀长度")
+
+            raw_context = (
+                raw_contexts[address_index]
+                if len(raw_contexts) > 1
+                else raw_contexts[0] if raw_contexts else ""
+            )
+            context_type, local_context_key, local_context_name = _cli_interface_context(
+                device,
+                raw_context,
+                parser_platform=result.get("parser_platform"),
+            )
+            address_identity = (
+                ip_address, prefix_length, context_type, local_context_key,
+            )
+            if address_identity in interface_addresses:
+                continue
+            address_row = {
+                "interface": interface_name,
+                "ip_address": ip_address,
+                "prefix_length": prefix_length,
+            }
+            # Keep the device-local token even when its routing meaning is
+            # unknown. An operator may map that exact token to a canonical
+            # address space later; blank/missing evidence remains unmapped.
+            address_row.update({
+                "context_source": "cli",
+                "context_type": context_type,
+                "local_context_key": local_context_key,
+                "local_context_name": local_context_name,
+            })
+            interface_addresses[address_identity] = address_row
+
+    address_count = sum(len(items) for items in by_interface.values())
+    if address_count >= _action_record_limit("get_ip_interfaces"):
+        raise RuntimeError("接口IP CLI结果触及记录上限，不能确认快照完整")
+
+    if not address_count:
         raise RuntimeError("接口IP CLI快照没有可确认的地址行")
     action_metadata = {
         key: result.get(key)
@@ -154,7 +198,11 @@ def _collect_cli_ip_addresses(
         )
         if result.get(key) not in (None, "")
     }
-    return list(by_interface.values()), action_metadata
+    return [
+        address
+        for interface_key in sorted(by_interface)
+        for _, address in sorted(by_interface[interface_key].items())
+    ], action_metadata
 
 
 def _has_prefixless_ip_interface_header(raw_output: Any) -> bool:
@@ -203,6 +251,62 @@ def _cmdb_record_value(record: dict[str, Any], *keys: str) -> str:
         if raw:
             return raw
     return ""
+
+
+def _cmdb_record_values(record: dict[str, Any], *keys: str) -> list[str]:
+    """Return ordered scalar values from a TextFSM field, preserving multi-IP rows."""
+    normalized = {
+        str(record_key).strip().replace("-", "_").upper(): value
+        for record_key, value in record.items()
+    }
+    for key in keys:
+        value = normalized.get(str(key).strip().replace("-", "_").upper())
+        if value is None:
+            continue
+        if isinstance(value, (list, tuple)):
+            return [str(item).strip() for item in value if item is not None and str(item).strip()]
+        if isinstance(value, set):
+            return sorted({str(item).strip() for item in value if item is not None and str(item).strip()})
+        raw = str(value).strip()
+        if raw:
+            return [raw]
+    return []
+
+
+def _cli_interface_context(
+    device: dict[str, Any],
+    raw_context: str,
+    *,
+    parser_platform: object = "",
+) -> tuple[str, str, str]:
+    """Normalize only explicit CLI routing-context evidence.
+
+    H3C Comware's parsed ``VPN instance`` field uses ``--`` to explicitly mark
+    its public/global table. Generic aliases such as ``default`` or ``global``
+    preserve their raw local key but remain unresolved until an operator maps
+    them. Other named contexts are explicit device-local VRF keys, not tenant
+    VRFs; they still require an explicit mapping.
+    """
+    local_name = str(raw_context or "").strip()
+    if not local_name:
+        return "unknown", "", ""
+
+    parser_key = str(
+        parser_platform
+        or device.get("profile_parser_platform")
+        or device.get("platform")
+        or ""
+    ).strip().lower()
+    if parser_key.startswith("h3c_comware") and local_name == "--":
+        return "global", local_name, local_name
+    normalized_alias = re.sub(r"\s+", "_", local_name.lower().replace("-", "_"))
+    if local_name in {"--", "-"} or normalized_alias in {
+        "global", "global_table", "default", "default_vrf", "default_context",
+        "public", "_public_", "unknown", "n_a", "na", "n/a", "none", "null",
+        "not_available", "not_applicable", "unassigned", "_", "__",
+    }:
+        return "unknown", local_name, local_name
+    return "vrf", local_name, local_name
 
 
 def _collect_cli_ip_action_result(device: dict[str, Any], session) -> dict[str, Any]:

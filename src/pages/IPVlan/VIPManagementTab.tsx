@@ -15,12 +15,12 @@ import Pagination from '../../components/Pagination';
 import { ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
 import { TableExportMenu } from '../../components/ui/TableExportMenu';
 import { useEscapeClose } from '../../hooks/useEscapeClose';
-import { DEFAULT_TENANT_ID } from '../../types/cmdb';
 import { buildVisibleIpamExportData, fetchAllIpamExportItems } from './ipamExport';
 
 import { TableActionCell, TableActionHeader } from '../../components/ui/TableActionColumn';
 interface VIP {
   id: string;
+  revision: number;
   address: string;
   vip_type: string;
   device_id: string | null;
@@ -31,8 +31,24 @@ interface VIP {
   description: string;
   real_servers: string;
   status: string;
-  tenant_id: string;
+  prefix_id: string | null;
+  prefix_name?: string | null;
+  prefix_cidr: string | null;
+  address_space_id: string | null;
+  address_space_name: string | null;
+  scope_pending: boolean | number;
   tenant_name: string | null;
+}
+
+interface PrefixOption {
+  id: string;
+  prefix: string;
+  name?: string;
+}
+
+interface PendingCreateRequest {
+  fingerprint: string;
+  key: string;
 }
 
 interface VIPManagementTabProps {
@@ -48,8 +64,11 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
 
   const [vips, setVips] = useState<VIP[]>([]);
   const [devices, setDevices] = useState<any[]>([]);
+  const [prefixes, setPrefixes] = useState<PrefixOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
+  const [prefixLoadError, setPrefixLoadError] = useState('');
+  const [prefixesLoading, setPrefixesLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
   const [page, setPage] = useState(1);
@@ -65,6 +84,7 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
 
   // Form State
   const [form, setForm] = useState({
+    prefix_id: prefixId,
     address: '',
     vip_type: 'F5',
     device_id: '',
@@ -75,6 +95,18 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
     status: 'active',
   });
   const [errorMsg, setErrorMsg] = useState('');
+  const pendingCreateRequest = useRef<PendingCreateRequest | null>(null);
+
+  const getCreateIdempotencyKey = (payload: unknown) => {
+    const fingerprint = JSON.stringify(payload);
+    if (!pendingCreateRequest.current || pendingCreateRequest.current.fingerprint !== fingerprint) {
+      pendingCreateRequest.current = {
+        fingerprint,
+        key: globalThis.crypto?.randomUUID?.() || `ipam-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      };
+    }
+    return pendingCreateRequest.current.key;
+  };
 
   const authHeaders = useCallback(() => {
     const token = localStorage.getItem('netops_token');
@@ -132,9 +164,46 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
     }
   }, [authHeaders, page, pageSize, prefixId, search, typeFilter, zh]);
 
+  const loadPrefixes = useCallback(async () => {
+    if (prefixId) {
+      setPrefixes(prefixScope ? [{
+        id: prefixId,
+        prefix: prefixScope.prefix,
+        name: prefixScope.name,
+      }] : []);
+      setPrefixLoadError('');
+      return;
+    }
+
+    setPrefixesLoading(true);
+    setPrefixLoadError('');
+    try {
+      const items = await fetchAllIpamExportItems<PrefixOption>('/api/ipam/subnets', new URLSearchParams({ status: 'all' }));
+      setPrefixes(items.map((item) => ({
+        ...item,
+        prefix: String(item.prefix || (item as PrefixOption & { prefix_cidr?: string }).prefix_cidr || ''),
+      })));
+    } catch (error) {
+      console.error(error);
+      setPrefixes([]);
+      const message = error instanceof Error ? error.message : '';
+      setPrefixLoadError(message.includes('403')
+        ? (zh ? '当前账号没有查看可用网段的权限。' : 'You do not have permission to view available prefixes.')
+        : message.includes('401')
+          ? (zh ? '登录已过期，请重新登录后重试。' : 'Your session has expired. Sign in and retry.')
+          : (zh ? '加载网段列表失败，请重试。' : 'Failed to load prefixes. Please retry.'));
+    } finally {
+      setPrefixesLoading(false);
+    }
+  }, [prefixId, prefixScope, zh]);
+
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    void loadPrefixes();
+  }, [loadPrefixes]);
 
   useEffect(() => {
     setPage(1);
@@ -142,9 +211,11 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
 
   const openForm = (vipItem: VIP | null = null) => {
     setErrorMsg('');
+    pendingCreateRequest.current = null;
     if (vipItem) {
       setEditingVip(vipItem);
       setForm({
+        prefix_id: vipItem.prefix_id || prefixId || '',
         address: vipItem.address,
         vip_type: vipItem.vip_type,
         device_id: vipItem.device_id || '',
@@ -157,6 +228,7 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
     } else {
       setEditingVip(null);
       setForm({
+        prefix_id: prefixId || '',
         address: '',
         vip_type: 'F5',
         device_id: '',
@@ -172,6 +244,15 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
 
   const handleSave = async () => {
     setErrorMsg('');
+    const selectedPrefixId = prefixId || form.prefix_id;
+    if (prefixId && !prefixScope) {
+      setErrorMsg(zh ? '当前网段尚未加载完成，请稍后重试。' : 'The current Prefix has not loaded yet. Retry in a moment.');
+      return;
+    }
+    if (!selectedPrefixId) {
+      setErrorMsg(zh ? '请选择明确的归属前缀' : 'Select an explicit Prefix for this VIP');
+      return;
+    }
     if (!form.address || !form.vip_type) {
       setErrorMsg(zh ? '请填写所有必填字段' : 'Please fill all required fields');
       return;
@@ -179,10 +260,10 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
 
     const payload = {
       ...form,
+      prefix_id: selectedPrefixId,
       device_id: form.device_id || null,
       backup_device_id: form.backup_device_id || null,
-      tenant_id: DEFAULT_TENANT_ID,
-      ...(prefixId ? { prefix_id: prefixId } : {}),
+      ...(editingVip ? { expected_revision: editingVip.revision } : {}),
     };
 
     try {
@@ -193,11 +274,13 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
         headers: {
           'Content-Type': 'application/json',
           ...authHeaders(),
+          ...(!editingVip ? { 'Idempotency-Key': getCreateIdempotencyKey(payload) } : {}),
         },
         body: JSON.stringify(payload),
       });
 
       if (res.ok) {
+        if (!editingVip) pendingCreateRequest.current = null;
         setShowAddEdit(false);
         loadData();
       } else {
@@ -210,8 +293,11 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
   };
 
   const handleDelete = async (id: string) => {
+    const vip = vips.find((item) => item.id === id);
+    if (!vip) return;
     try {
-      const res = await fetch(`/api/ipam/vips/${id}`, {
+      const query = new URLSearchParams({ expected_revision: String(vip.revision) });
+      const res = await fetch(`/api/ipam/vips/${encodeURIComponent(id)}?${query.toString()}`, {
         method: 'DELETE',
         headers: authHeaders(),
       });
@@ -247,6 +333,12 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
     const deviceName = (id: string | null, suppliedName: string | null) => suppliedName || (id ? devices.find((device) => device.id === id)?.hostname || '-' : '-');
     return buildVisibleIpamExportData(tableRef.current, [
       { header: zh ? '虚拟IP (VIP)' : 'Virtual IP', value: (vip) => vip.address },
+      {
+        header: zh ? '地址空间 / 前缀' : 'Address Space / Prefix',
+        value: (vip) => vip.scope_pending || !vip.address_space_id
+          ? (zh ? '范围待确认' : 'Scope pending')
+          : `${vip.address_space_name || vip.address_space_id} · ${vip.prefix_cidr || vip.prefix_id || '-'}`,
+      },
       { header: zh ? '高可用模式类型' : 'VIP Protocol Type', value: (vip) => vip.vip_type },
       { header: zh ? '绑定控制设备' : 'Bound Controller', value: (vip) => deviceName(vip.device_id, vip.device_name) },
       { header: zh ? '备用/Standby 设备' : 'Standby Device', value: (vip) => deviceName(vip.backup_device_id, vip.backup_device_name) },
@@ -289,6 +381,7 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
               <option value="F5">F5 LTM</option>
               <option value="HSRP">Cisco HSRP</option>
               <option value="VRRP">VRRP</option>
+              <option value="anycast">{zh ? '任播 Anycast' : 'Anycast'}</option>
               <option value="Keepalived">Keepalived</option>
               <option value="Nginx">Nginx Reverse Proxy</option>
               <option value="SLB">Cloud SLB</option>
@@ -330,6 +423,7 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50/40 text-[10px] font-bold text-gray-400 uppercase tracking-wider select-none">
                   <th className="pl-6 py-4">{zh ? '虚拟IP (VIP)' : 'Virtual IP'}</th>
+                  <th className="px-4 py-4">{zh ? '地址空间 / 前缀' : 'Address Space / Prefix'}</th>
                   <th className="px-4 py-4">{zh ? '高可用模式类型' : 'VIP Protocol Type'}</th>
                   <th className="px-4 py-4">{zh ? '绑定控制设备' : 'Bound Controller'}</th>
                   <th className="px-4 py-4">{zh ? '备用/Standby 设备' : 'Standby Device'}</th>
@@ -348,6 +442,18 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
                       className="hover:bg-gray-50/50 transition-colors border-b border-gray-100 group"
                     >
                       <td className="pl-6 py-4 font-mono font-extrabold text-xs text-gray-800">{node.address}</td>
+                      <td className="px-4 py-4">
+                        {node.scope_pending || !node.address_space_id ? (
+                          <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                            {zh ? '范围待确认' : 'Scope pending'}
+                          </span>
+                        ) : (
+                          <div className="space-y-0.5 text-[10px]">
+                            <div className="font-semibold text-gray-700">{node.address_space_name || node.address_space_id}</div>
+                            <div className="font-mono text-gray-500">{node.prefix_cidr || node.prefix_id || '-'}</div>
+                          </div>
+                        )}
+                      </td>
                       <td className="px-4 py-4">
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-50 text-cyan-600 border border-cyan-500/10">
                           {node.vip_type}
@@ -451,10 +557,59 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
                 )}
 
                 <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5 col-span-2">
+                    <label htmlFor="vip-prefix" className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">
+                      {zh ? '归属前缀 *' : 'Parent Prefix *'}
+                    </label>
+                    {prefixId ? (
+                      <div id="vip-prefix" className="rounded-xl border border-cyan-100 bg-cyan-50/60 px-4 py-2.5 text-xs font-semibold text-cyan-800">
+                        {prefixScope?.prefix || prefixLoadError || (zh ? '正在加载当前网段…' : 'Loading current Prefix…')}
+                      </div>
+                    ) : (
+                      <>
+                        <select
+                          id="vip-prefix"
+                          aria-label={zh ? '归属前缀' : 'Parent Prefix'}
+                          value={form.prefix_id}
+                          disabled={prefixesLoading || Boolean(prefixLoadError)}
+                          onChange={(event) => setForm((current) => ({ ...current, prefix_id: event.target.value }))}
+                          className="w-full rounded-xl border border-gray-150 bg-gray-50/50 px-4 py-2.5 text-xs font-medium outline-none transition-all focus:border-cyan-400 focus:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <option value="">{zh ? '请选择明确的归属前缀' : 'Select an explicit Prefix'}</option>
+                          {prefixes.map((prefix) => (
+                            <option key={prefix.id} value={prefix.id}>
+                              {prefix.name ? `${prefix.name} · ` : ''}{prefix.prefix}
+                            </option>
+                          ))}
+                        </select>
+                        {prefixesLoading && <p role="status" className="ml-1 text-[10px] text-gray-500">{zh ? '正在加载网段…' : 'Loading prefixes…'}</p>}
+                        {prefixLoadError && (
+                          <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[10px] font-semibold text-rose-700">
+                            <span>{prefixLoadError}</span>
+                            <button type="button" onClick={() => void loadPrefixes()} disabled={prefixesLoading} className="rounded-lg bg-white px-2.5 py-1 text-rose-700 shadow-sm disabled:opacity-50">
+                              {zh ? '重试' : 'Retry'}
+                            </button>
+                          </div>
+                        )}
+                      </>
+                    )}
+                    {editingVip && (editingVip.scope_pending || !editingVip.address_space_id) && (
+                      <p role="status" className="ml-1 text-[10px] font-semibold text-amber-700">
+                        {zh ? '此 VIP 尚未确认地址空间。请选择有权限的 Prefix 后保存，系统会按该前缀明确归属。' : 'This VIP has no confirmed scope. Select an authorized Prefix and save to establish its scope.'}
+                      </p>
+                    )}
+                    {!prefixId && form.prefix_id && prefixes.find((prefix) => prefix.id === form.prefix_id) && (
+                      <p className="ml-1 text-[10px] text-cyan-700">
+                        {zh ? `VIP 地址必须位于 ${prefixes.find((prefix) => prefix.id === form.prefix_id)?.prefix} 内。` : `The VIP address must be inside ${prefixes.find((prefix) => prefix.id === form.prefix_id)?.prefix}.`}
+                      </p>
+                    )}
+                  </div>
+
                   {/* VIP Address */}
                   <div className="space-y-1.5 col-span-2">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '虚拟 IP 地址 (VIP) *' : 'Virtual IP Address *'}</label>
+                    <label htmlFor="vip-address" className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '虚拟 IP 地址 (VIP) *' : 'Virtual IP Address *'}</label>
                     <input
+                      id="vip-address"
                       type="text"
                       value={form.address}
                       onChange={(e) => setForm({ ...form, address: e.target.value })}
@@ -470,8 +625,9 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
 
                   {/* VIP Type Select */}
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '高可用技术模式 *' : 'VIP Mode *'}</label>
+                    <label htmlFor="ipam-vip-type" className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '高可用技术模式 *' : 'VIP Mode *'}</label>
                     <select
+                      id="ipam-vip-type"
                       value={form.vip_type}
                       onChange={(e) => setForm({ ...form, vip_type: e.target.value })}
                       className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
@@ -479,6 +635,7 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
                       <option value="F5">F5 LTM</option>
                       <option value="HSRP">Cisco HSRP</option>
                       <option value="VRRP">VRRP</option>
+                      <option value="anycast">{zh ? '任播 Anycast' : 'Anycast'}</option>
                       <option value="Keepalived">Keepalived</option>
                       <option value="Nginx">Nginx Proxy</option>
                       <option value="SLB">Cloud SLB</option>

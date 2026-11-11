@@ -39,6 +39,12 @@ describe('getRouteContext IPAM discovery route', () => {
     expect(context.activeTab).toBe('ipam');
     expect(context.ipamPage).toBe('endpoints');
   });
+
+  it('maps FHRP and Anycast management to the IPAM address-space subpage', () => {
+    const context = getRouteContext('/ipam/fhrp');
+    expect(context.activeTab).toBe('ipam');
+    expect(context.ipamPage).toBe('fhrp');
+  });
 });
 
 describe('getRouteContext terminal access routes', () => {

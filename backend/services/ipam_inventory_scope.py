@@ -20,6 +20,7 @@ def load_inventory_catalog(conn) -> tuple[list[dict], dict[str, dict], dict[tupl
     prefixes = []
     for row in conn.execute(
         '''SELECT p.id, p.prefix, p.name, p.tenant_id, p.vrf_id, p.site_id,
+                  p.address_space_id,
                   p.network_type, p.gateway, p.gateway_device_id,
                   p.gateway_interface_id, d.hostname AS gateway_device_name
            FROM prefixes p
@@ -32,6 +33,7 @@ def load_inventory_catalog(conn) -> tuple[list[dict], dict[str, dict], dict[tupl
             continue
         item['tenant_id'] = str(item.get('tenant_id') or 'tenant-default')
         item['vrf_id'] = str(item.get('vrf_id') or '')
+        item['address_space_id'] = str(item.get('address_space_id') or '')
         site = sites.get(str(item.get('site_id') or ''))
         item['invalid_site_assignment'] = bool(item.get('site_id') and not site)
         item['site_id'] = site['id'] if site else ''
@@ -44,40 +46,44 @@ def load_inventory_catalog(conn) -> tuple[list[dict], dict[str, dict], dict[tupl
     return prefixes, sites, vrfs
 
 
-def address_key(address: str, tenant_id: str, vrf_id: str) -> tuple[str, str, str]:
+def address_key(address: str, tenant_id: str, scope_key: str) -> tuple[str, str, str]:
     try:
         normalized = str(ipaddress.ip_address(str(address).strip()))
     except ValueError:
         normalized = str(address or '').strip()
-    return str(tenant_id or 'tenant-default'), str(vrf_id or ''), normalized
+    return str(tenant_id or 'tenant-default'), str(scope_key or 'legacy-unresolved'), normalized
 
 
 def manual_address_key(item: dict) -> tuple[str, str, str]:
     tenant = item.get('prefix_tenant_id') or item.get('tenant_id') or 'tenant-default'
-    # The parent prefix also defines the global (empty) VRF. Legacy address
-    # rows may not yet have copied its scope columns.
+    address_space_id = str(
+        item.get('prefix_address_space_id') or item.get('address_space_id') or ''
+    ).strip()
+    if address_space_id:
+        return address_key(item.get('address') or '', tenant, f'space:{address_space_id}')
+
+    # Keep unresolved legacy rows in a separate namespace. An empty VRF is not
+    # the same identity as any explicitly mapped Global address space.
     vrf = item.get('prefix_vrf_id') if item.get('subnet_prefix') else item.get('vrf_id')
-    return address_key(item.get('address') or '', tenant, vrf or '')
+    return address_key(
+        item.get('address') or '', tenant,
+        f'legacy-vrf:{str(vrf).strip()}' if str(vrf or '').strip() else 'legacy-unresolved',
+    )
 
 
-def endpoint_address_key(endpoint: dict, vrfs: dict) -> tuple[str, str, str] | None:
+def endpoint_address_key(endpoint: dict, vrfs: dict | None = None) -> tuple[str, str, str] | None:
+    del vrfs  # Legacy VRF names are display hints, not canonical address identity.
     if not endpoint.get('cmdb_device_id'):
         # The legacy endpoint cache has no tenant column. Without a CMDB
         # owner, assigning it to the default tenant would be invented scope.
         return None
+    address_space_id = str(endpoint.get('address_space_id') or '').strip()
+    if not address_space_id:
+        # Until the collector projection carries a context mapping, the same
+        # VRF label on two devices is insufficient evidence to join a Prefix.
+        return None
     tenant = str(endpoint.get('device_tenant_id') or 'tenant-default')
-    raw_vrf = str(endpoint.get('vrf') or '').strip()
-    matches = vrfs.get((tenant, raw_vrf), set())
-    if len(matches) > 1:
-        return None
-    if matches:
-        vrf = next(iter(matches))
-    elif raw_vrf.lower() in ('', 'default', 'global', 'public'):
-        vrf = ''
-    else:
-        # An unknown name must never become the global VRF.
-        return None
-    return address_key(endpoint.get('ip') or '', tenant, vrf)
+    return address_key(endpoint.get('ip') or '', tenant, f'space:{address_space_id}')
 
 
 def endpoint_site_id(endpoint: dict, sites: dict) -> str:
@@ -97,15 +103,16 @@ def endpoint_site_id(endpoint: dict, sites: dict) -> str:
 
 
 def match_inventory_prefix(address: str, key: tuple | None, site_id: str, prefixes: list[dict]) -> dict | None:
-    if key is None:
+    if key is None or len(key) < 2 or not str(key[1]).startswith('space:'):
         return None
+    address_space_id = str(key[1]).removeprefix('space:')
     try:
         ip_obj = ipaddress.ip_address(address)
     except ValueError:
         return None
     matches = [
         item for item in prefixes
-        if item['tenant_id'] == key[0] and item['vrf_id'] == key[1]
+        if item['tenant_id'] == key[0] and item.get('address_space_id') == address_space_id
         and not item.get('invalid_site_assignment')
         and ip_obj.version == item['network'].version and ip_obj in item['network']
         and (not site_id or not item['site_id'] or item['site_id'] == site_id)

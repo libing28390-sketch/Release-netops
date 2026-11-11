@@ -6,8 +6,8 @@ const splitColumns: AssetExportColumn[] = [
   { key: 'hostname', zh: '设备', en: 'Device' },
   { key: 'asset_tag', zh: '资产编号', en: 'Asset tag' },
   { key: 'asset_type', zh: '资产类型', en: 'Asset type' },
-  { key: 'device_category', zh: '设备分类', en: 'Category' },
-  { key: 'device_role', zh: '设备角色', en: 'Role' },
+  { key: 'device_category', zh: '设备类别', en: 'Device category' },
+  { key: 'device_role', zh: '设备角色', en: 'Device role' },
   { key: 'site', zh: '站点', en: 'Site' },
   { key: 'rack', zh: '机柜', en: 'Rack' },
   { key: 'rack_unit', zh: 'U位', en: 'Rack U' },
@@ -47,13 +47,13 @@ describe('asset table export contract', () => {
 
     const exported = buildAssetExportData([asset], splitColumns, 'zh');
 
-    expect(exported.headers).toEqual(['设备', '资产编号', '资产类型', '设备分类', '设备角色', '站点', '机柜', 'U位']);
+    expect(exported.headers).toEqual(['设备', '资产编号', '资产类型', '设备类别', '设备角色', '站点', '机柜', 'U位']);
     expect(exported.rows).toEqual([[
       'core-sw-01',
       'NET-WH-001',
       '网络设备',
       '交换机',
-      'core',
+      '核心层',
       'WH-DC-02J-01',
       'RACK-01',
       'U1',

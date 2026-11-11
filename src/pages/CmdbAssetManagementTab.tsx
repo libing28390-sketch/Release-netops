@@ -23,6 +23,7 @@ import { fetchAllPaginatedItems } from "../utils/pagination";
 import { buildCmdbExportData } from "./cmdbExport";
 import { BatchTagModal } from "./AssetManagement/components/BatchTagModal";
 import type { SessionUser, TagDefinition } from "../types";
+import { deviceCategoryLabel, deviceRoleLabel } from "../domain/deviceLabels";
 
 interface Props {
   language?: string;
@@ -32,7 +33,6 @@ interface Props {
 interface TreeRow {
   site_id: string;
   site_name: string;
-  site_code?: string;
   asset_type: string;
   device_category: string;
   device_role: string;
@@ -53,7 +53,6 @@ interface AssetRow {
   model: string;
   site_id: string;
   site_name?: string;
-  site_code?: string;
   management_ip: string;
   online_status: string;
   status: string;
@@ -86,7 +85,6 @@ type ColumnKey =
   | "asset_type"
   | "category"
   | "role"
-  | "site_code"
   | "site_name"
   | "status"
   | "tags"
@@ -104,15 +102,6 @@ const TYPE_LABELS: Record<string, [string, string]> = {
   server: ["服务器", "Servers"],
   other: ["其他资产", "Other assets"],
 };
-const CATEGORY_LABELS: Record<string, [string, string]> = {
-  router: ["路由器", "Routers"],
-  switch: ["交换机", "Switches"],
-  firewall: ["防火墙", "Firewalls"],
-  blade_server: ["刀片服务器", "Blade servers"],
-  rack_server: ["机架服务器", "Rack servers"],
-  storage: ["存储设备", "Storage"],
-  other: ["未分类产品", "Uncategorised"],
-};
 const STATUS_LABELS: Record<string, [string, string]> = {
   online: ["在线", "Online"],
   offline: ["离线", "Offline"],
@@ -128,9 +117,8 @@ const COLUMN_DEFS: Array<{ key: ColumnKey; zh: string; en: string }> = [
   { key: "hostname", zh: "设备名称", en: "Hostname" },
   { key: "asset_tag", zh: "资产编号", en: "Asset tag" },
   { key: "asset_type", zh: "资产类型", en: "Asset type" },
-  { key: "category", zh: "设备分类", en: "Device category" },
+  { key: "category", zh: "设备类别", en: "Device category" },
   { key: "role", zh: "设备角色", en: "Device role" },
-  { key: "site_code", zh: "站点编码", en: "Site code" },
   { key: "site_name", zh: "站点名称", en: "Site name" },
   { key: "status", zh: "在线状态", en: "Status" },
   { key: "tags", zh: "标签", en: "Tags" },
@@ -148,7 +136,6 @@ const DEFAULT_COLUMNS: ColumnVisibility = {
   asset_type: true,
   category: true,
   role: true,
-  site_code: true,
   site_name: true,
   status: true,
   tags: true,
@@ -227,7 +214,7 @@ function buildTree(rows: TreeRow[], zh: boolean): TreeNode[] {
     const category = findOrCreate(
       type,
       `${type.id}:category:${row.device_category}`,
-      labelOf(CATEGORY_LABELS, row.device_category, zh),
+      deviceCategoryLabel(row.device_category, zh ? "zh" : "en"),
       "category",
       {
         site_id: siteId,
@@ -481,9 +468,8 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
     if (key === "hostname") return <span className="font-semibold text-slate-800">{asset.hostname || "—"}</span>;
     if (key === "asset_tag") return <span className="font-mono text-slate-600">{asset.asset_tag || "—"}</span>;
     if (key === "asset_type") return <span className="text-slate-700">{labelOf(TYPE_LABELS, asset.asset_type, zh)}</span>;
-    if (key === "category") return <span className="text-slate-700">{labelOf(CATEGORY_LABELS, asset.device_category || "other", zh)}</span>;
-    if (key === "role") return <span className="text-slate-600">{asset.device_role || (zh ? "未分配角色" : "Unassigned role")}</span>;
-    if (key === "site_code") return <span className="text-slate-600">{asset.site_code || "—"}</span>;
+    if (key === "category") return <span className="text-slate-700">{deviceCategoryLabel(asset.device_category || "other", zh ? "zh" : "en")}</span>;
+    if (key === "role") return <span className="text-slate-600">{deviceRoleLabel(asset.device_role, zh ? "zh" : "en")}</span>;
     if (key === "site_name") return <span className="text-slate-700">{asset.site_name || "—"}</span>;
     if (key === "status")
       return (
@@ -515,7 +501,7 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
         </div>
       );
     const values: Record<
-      Exclude<ColumnKey, "hostname" | "asset_tag" | "asset_type" | "category" | "role" | "site_code" | "site_name" | "status" | "tags">,
+      Exclude<ColumnKey, "hostname" | "asset_tag" | "asset_type" | "category" | "role" | "site_name" | "status" | "tags">,
       string | undefined
     > = {
       vendor: asset.vendor,
@@ -537,9 +523,8 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
     if (key === "hostname") return asset.hostname || "—";
     if (key === "asset_tag") return asset.asset_tag || "—";
     if (key === "asset_type") return labelOf(TYPE_LABELS, asset.asset_type, zh);
-    if (key === "category") return labelOf(CATEGORY_LABELS, asset.device_category || "other", zh);
-    if (key === "role") return asset.device_role || (zh ? "未分配角色" : "Unassigned role");
-    if (key === "site_code") return asset.site_code || "—";
+    if (key === "category") return deviceCategoryLabel(asset.device_category || "other", zh ? "zh" : "en");
+    if (key === "role") return deviceRoleLabel(asset.device_role, zh ? "zh" : "en");
     if (key === "site_name") return asset.site_name || "—";
     if (key === "status") return labelOf(STATUS_LABELS, asset.online_status, zh);
     if (key === "tags") return asset.tags?.length
@@ -566,8 +551,8 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
           </h1>
           <p className="nx-page-description mt-1 text-slate-500">
             {zh
-              ? "按站点、资产类型、产品分类和设备角色逐级定位资产。"
-              : "Browse assets by site, type, product category and physical asset role."}
+              ? "按站点、资产类型、设备类别和设备角色逐级定位资产。"
+              : "Browse assets by site, type, device category and device role."}
           </p>
         </div>
       </div>

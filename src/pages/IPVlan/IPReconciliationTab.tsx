@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, CheckCircle2, ClipboardCheck, Eye, Globe, Info, Plus, RefreshCw, Search, ShieldAlert, WifiOff, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ClipboardCheck, Eye, Globe, Plus, RefreshCw, Search, ShieldAlert, WifiOff, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import PageHero from '../../components/PageHero';
 import Pagination from '../../components/Pagination';
@@ -28,6 +28,7 @@ type ReconciliationRow = Record<string, unknown> & {
   observed_mac?: string;
   observed_at?: string;
   last_observed_at?: string | null;
+  last_checked_at?: string | null;
   scope_status?: string;
   evidence_status?: string;
   mac_mismatch?: boolean;
@@ -51,7 +52,6 @@ interface ReconciliationSummary extends Record<string, unknown> {
   total_undocumented?: number;
   total_mismatched?: number;
   total_stale?: number;
-  total_never_observed?: number;
   total_unscoped?: number;
   total_unavailable?: number;
   ipam_address_record_count?: number;
@@ -71,7 +71,6 @@ interface ReconciliationData {
   undocumented_endpoints: ReconciliationRow[];
   mismatched_endpoints: ReconciliationRow[];
   stale_ip_addresses: ReconciliationRow[];
-  never_observed: ReconciliationRow[];
   unscoped: ReconciliationRow[];
   unavailable: ReconciliationRow[];
   summary: ReconciliationSummary;
@@ -101,8 +100,7 @@ interface IPReconciliationTabProps {
 const TAB_METADATA: Record<ReconciliationTab, { title: [string, string]; icon: React.ComponentType<{ size?: number; className?: string }>; countKey: string }> = {
   undocumented: { title: ['发现未登记', 'Undocumented'], icon: Plus, countKey: 'total_undocumented' },
   mismatched: { title: ['信息不一致', 'Mismatched'], icon: ShieldAlert, countKey: 'total_mismatched' },
-  stale: { title: ['长期未发现', 'Stale'], icon: WifiOff, countKey: 'total_stale' },
-  never_observed: { title: ['登记后未观察', 'Never observed'], icon: Info, countKey: 'total_never_observed' },
+  stale: { title: ['本轮未观察到', 'Not observed this sweep'], icon: WifiOff, countKey: 'total_stale' },
   unscoped: { title: ['归属待确认', 'Unscoped'], icon: Globe, countKey: 'total_unscoped' },
   unavailable: { title: ['来源不可用', 'Unavailable'], icon: AlertTriangle, countKey: 'total_unavailable' },
 };
@@ -111,7 +109,6 @@ const emptyData = (): ReconciliationData => ({
   undocumented_endpoints: [],
   mismatched_endpoints: [],
   stale_ip_addresses: [],
-  never_observed: [],
   unscoped: [],
   unavailable: [],
   summary: {},
@@ -174,7 +171,6 @@ const getRowsForTab = (data: ReconciliationData, tab: ReconciliationTab): Reconc
     undocumented: 'undocumented_endpoints',
     mismatched: 'mismatched_endpoints',
     stale: 'stale_ip_addresses',
-    never_observed: 'never_observed',
     unscoped: 'unscoped',
     unavailable: 'unavailable',
   };
@@ -248,7 +244,6 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language }) =
         undocumented_endpoints: asRows(payload.undocumented_endpoints),
         mismatched_endpoints: asRows(payload.mismatched_endpoints),
         stale_ip_addresses: asRows(payload.stale_ip_addresses),
-        never_observed: asRows(payload.never_observed),
         unscoped: asRows(payload.unscoped),
         unavailable: asRows(payload.unavailable),
         summary: summary as ReconciliationSummary,
@@ -443,9 +438,16 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language }) =
       headers: [zh ? '来源设备' : 'Source device', zh ? '来源类型' : 'Source type', zh ? '采集状态' : 'Collection status', zh ? '最近成功时间' : 'Last success', zh ? '原因' : 'Reason'],
       rows: rows.map(item => [textValue(item, 'source_device_name', 'source_device_id'), textValue(item, 'source_type'), textValue(item, 'status'), textValue(item, 'last_success_at'), textValue(item, 'reason')]),
     };
-    if (activeTab === 'stale' || activeTab === 'never_observed') return {
-      headers: ['IP', zh ? '状态' : 'Status', zh ? '网段' : 'Prefix', zh ? '站点 / VRF' : 'Site / VRF', zh ? '最近观察' : 'Last observed', zh ? '完整未发现次数' : 'Complete misses'],
-      rows: rows.map(item => [textValue(item, 'ip', 'address'), textValue(item, 'registration_status', 'status'), textValue(item, 'subnet_prefix'), site(item), textValue(item, 'last_observed_at'), textValue(item, 'miss_count')]),
+    if (activeTab === 'stale') return {
+      headers: ['IP', zh ? '状态' : 'Status', zh ? '网段' : 'Prefix', zh ? '站点 / VRF' : 'Site / VRF', zh ? '本轮完整采集时间' : 'Latest complete sweep', zh ? '本轮结果' : 'Sweep result'],
+      rows: rows.map(item => [
+        textValue(item, 'ip', 'address'),
+        textValue(item, 'registration_status', 'status'),
+        textValue(item, 'subnet_prefix'),
+        site(item),
+        textValue(item, 'last_checked_at'),
+        `${textValue(item, 'miss_count') || '1'}/${textValue(item, 'required_misses') || '1'}`,
+      ]),
     };
     if (activeTab === 'mismatched') return {
       headers: ['IP', 'IPAM MAC', zh ? '观察 MAC' : 'Observed MAC', zh ? '站点 / VRF' : 'Site / VRF', zh ? '观察时间' : 'Observed at', zh ? '范围 / 证据' : 'Scope / evidence'],
@@ -478,7 +480,7 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language }) =
         <span>{coverageStatus}</span>
       </section>
 
-      <div className="grid grid-cols-2 gap-2 md:grid-cols-3 2xl:grid-cols-6" role="group" aria-label={zh ? '对账分类' : 'Reconciliation categories'}>
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-3 2xl:grid-cols-5" role="group" aria-label={zh ? '对账分类' : 'Reconciliation categories'}>
         {RECONCILIATION_TABS.map((tab) => {
           const active = activeTab === tab;
           const metadata = TAB_METADATA[tab];
@@ -510,7 +512,7 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language }) =
               : <DataTable className="min-w-[1020px] text-left" exportConfig={{ filename: `ipam-reconciliation-${activeTab}`, exportData: exportAll, language: zh ? 'zh' : 'en', disabled: loading || activeRows.length === 0 }}>
                 <thead><tr>
                   {activeTab === 'unavailable' ? <><th>{zh ? '来源设备' : 'Source device'}</th><th>{zh ? '来源类型' : 'Source type'}</th><th>{zh ? '采集状态' : 'Collection status'}</th><th>{zh ? '最近成功时间' : 'Last success'}</th><th>{zh ? '原因' : 'Reason'}</th></>
-                    : activeTab === 'stale' || activeTab === 'never_observed' ? <><th>IP</th><th>{zh ? '状态' : 'Status'}</th><th>{zh ? '网段' : 'Prefix'}</th><th>{zh ? '站点 / VRF' : 'Site / VRF'}</th><th>{zh ? '最近观察' : 'Last observed'}</th><th>{zh ? '完整未发现次数' : 'Complete misses'}</th></>
+                    : activeTab === 'stale' ? <><th>IP</th><th>{zh ? '状态' : 'Status'}</th><th>{zh ? '网段' : 'Prefix'}</th><th>{zh ? '站点 / VRF' : 'Site / VRF'}</th><th>{zh ? '本轮完整采集时间' : 'Latest complete sweep'}</th><th>{zh ? '本轮结果' : 'Sweep result'}</th></>
                       : activeTab === 'mismatched' ? <><th>IP</th><th>{zh ? 'IPAM MAC' : 'IPAM MAC'}</th><th>{zh ? '观察 MAC' : 'Observed MAC'}</th><th>{zh ? '站点 / VRF' : 'Site / VRF'}</th><th>{zh ? '观察时间' : 'Observed at'}</th><th>{zh ? '范围 / 证据' : 'Scope / evidence'}</th></>
                         : <><th>IP</th><th>MAC</th><th>{zh ? '站点 / VRF' : 'Site / VRF'}</th><th>{zh ? '来源设备 / 端口' : 'Source device / port'}</th><th>{zh ? '网段' : 'Prefix'}</th><th>{zh ? '观察时间' : 'Observed at'}</th><th>{zh ? '范围 / 证据' : 'Scope / evidence'}</th></>}
                   <TableActionHeader>{zh ? '操作' : 'Actions'}</TableActionHeader>
@@ -526,7 +528,7 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language }) =
                     const isCalibratable = activeTab === 'mismatched' && canCalibrateMac(item);
                     return <tr key={observationId || textValue(item, 'ipam_address_id', 'id') || `${activeTab}-${index}`}>
                       {activeTab === 'unavailable' ? <><td>{textValue(item, 'source_device_name', 'source_device_id') || (zh ? '未知来源' : 'Unknown source')}</td><td>{textValue(item, 'source_type') || '—'}</td><td>{textValue(item, 'status') || (zh ? '未知' : 'Unknown')}</td><td className="font-mono">{textValue(item, 'last_success_at') || '—'}</td><td>{textValue(item, 'reason') || '—'}</td></>
-                        : activeTab === 'stale' || activeTab === 'never_observed' ? <><td className="font-mono font-semibold">{ip || '—'}</td><td>{textValue(item, 'registration_status', 'status') || (zh ? '已登记' : 'Registered')}</td><td className="font-mono">{textValue(item, 'subnet_prefix') || '—'}</td><td>{textValue(item, 'site_name', 'site') || (zh ? '未知站点' : 'Unknown site')} / {textValue(item, 'vrf_name', 'vrf') || (zh ? '待确认' : 'Pending')}</td><td className="font-mono">{textValue(item, 'last_observed_at') || (zh ? '从未观察' : 'Never observed')}</td><td>{textValue(item, 'miss_count') ? `${textValue(item, 'miss_count')}/${textValue(item, 'required_misses') || '—'}` : '—'}</td></>
+                        : activeTab === 'stale' ? <><td className="font-mono font-semibold">{ip || '—'}</td><td>{textValue(item, 'registration_status', 'status') || (zh ? '已登记' : 'Registered')}</td><td className="font-mono">{textValue(item, 'subnet_prefix') || '—'}</td><td>{textValue(item, 'site_name', 'site') || (zh ? '未知站点' : 'Unknown site')} / {textValue(item, 'vrf_name', 'vrf') || (zh ? '待确认' : 'Pending')}</td><td className="font-mono">{textValue(item, 'last_checked_at') || '—'}</td><td>{`${textValue(item, 'miss_count') || '1'}/${textValue(item, 'required_misses') || '1'}`}</td></>
                       : activeTab === 'mismatched' ? <><td className="font-mono font-semibold">{ip || '—'}</td><td className="font-mono">{textValue(item, 'ipam_mac') || '—'}</td><td className="font-mono">{textValue(item, 'observed_mac') || '—'}</td><td>{textValue(item, 'site_name', 'site') || (zh ? '未知站点' : 'Unknown site')} / {textValue(item, 'vrf_name', 'vrf') || (zh ? '待确认' : 'Pending')}</td><td className="font-mono">{textValue(item, 'observed_at') || '—'}</td><td>{scopeStatusLabel(textValue(item, 'scope_status'), zh)} / {evidenceStatusLabel(textValue(item, 'evidence_status'), zh)}</td></>
                             : <><td className="font-mono font-semibold">{ip || '—'}</td><td className="font-mono">{textValue(item, 'mac') || '—'}</td><td>{textValue(item, 'site_name', 'site') || (zh ? '未知站点' : 'Unknown site')} / {textValue(item, 'vrf_name', 'vrf') || (zh ? '待确认' : 'Pending')}</td><td>{textValue(item, 'source_device_name', 'switch_name') || (zh ? '未知设备' : 'Unknown device')} / {textValue(item, 'switch_port') || (zh ? '端口待定位' : 'Port pending')}</td><td className="font-mono">{textValue(item, 'subnet_prefix') || '—'}</td><td className="font-mono">{textValue(item, 'observed_at', 'last_observed_at') || '—'}</td><td>{scopeStatusLabel(textValue(item, 'scope_status'), zh)} / {evidenceStatusLabel(textValue(item, 'evidence_status'), zh)}</td></>}
                       <TableActionCell><div className="flex items-center justify-end gap-1">
@@ -536,7 +538,7 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language }) =
                         <ActionIconButton icon={Globe} label={zh ? '打开 IP 地址台账' : 'Open IP address ledger'} onClick={() => navigate('/ipam/ips')} />
                       </div></TableActionCell>
                     </tr>;
-                  }) : <tr><td colSpan={activeTab === 'unavailable' ? 6 : activeTab === 'stale' || activeTab === 'never_observed' ? 7 : activeTab === 'mismatched' ? 7 : 8} className="py-12 text-center text-xs text-[var(--ui-fg-muted)]">{emptyMessage}</td></tr>}
+                  }) : <tr><td colSpan={activeTab === 'unavailable' ? 6 : activeTab === 'stale' || activeTab === 'mismatched' ? 7 : 8} className="py-12 text-center text-xs text-[var(--ui-fg-muted)]">{emptyMessage}</td></tr>}
                 </tbody>
               </DataTable>}
         </div>

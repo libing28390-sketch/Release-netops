@@ -1153,6 +1153,9 @@ def render_vmagent_config(
                 "job_name": job_name,
                 "scrape_interval": "60s" if job_name == "platform_hardware_inventory" else "30s",
                 "scrape_timeout": "30s" if job_name == "platform_hardware_inventory" else "10s",
+                # Hardware inventory is a shared endpoint across all devices.
+                # Leave headroom beyond vmagent's default 16 MiB as fleets grow.
+                **({"max_scrape_size": "67108864"} if job_name == "platform_hardware_inventory" else {}),
                 "metrics_path": (
                     "/grafana/metrics" if job_name == "platform_grafana"
                     else "/hardware-metrics" if job_name == "platform_hardware_inventory"

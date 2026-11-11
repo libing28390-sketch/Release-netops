@@ -242,7 +242,7 @@ const HomePage: React.FC<HomePageProps> = ({
 
     return {
       total: summary.total, online, offline, pending,
-      onlineRate: summary.total > 0 ? Math.round((online / summary.total) * 100) : 0,
+      onlineRate: summary.total > 0 ? Math.min(100, Math.max(0, (online / summary.total) * 100)) : 0,
       cpuPercent: hostResources?.cpu_percent ?? null,
       memPercent: hostResources?.memory_percent ?? null,
       diskPercent: hostResources?.disk_percent ?? null,
@@ -263,7 +263,7 @@ const HomePage: React.FC<HomePageProps> = ({
 
   /* ── Stat blocks data ── */
   const statBlocks = [
-    { label: zh ? '在线率' : 'Online Rate',   value: `${stats.onlineRate}%`, sub: `${stats.online} / ${stats.total}`, icon: Wifi,          accent: '#1677ff' },
+    { label: zh ? '在线率' : 'Online Rate',   value: stats.total === 0 ? '0%' : stats.online >= stats.total ? '100%' : `${Math.min(stats.onlineRate, 99.99).toFixed(2)}%`, sub: `${stats.online} / ${stats.total}`, icon: Wifi,          accent: '#1677ff' },
     { label: zh ? '严重告警' : 'Critical',     value: String(stats.critical), sub: zh ? '未处理' : 'unresolved',       icon: AlertTriangle, accent: stats.critical > 0 ? '#f5222d' : '#52c41a' },
     { label: zh ? '自动化成功率' : 'Success',   value: `${stats.successRate}%`, sub: zh ? `今日 ${stats.todayJobs} 任务` : `${stats.todayJobs} jobs today`, icon: CheckCircle2, accent: '#52c41a' },
     { label: zh ? 'CPU 使用率' : 'CPU Usage',  value: stats.cpuPercent !== null ? `${stats.cpuPercent}%` : '—', sub: zh ? '主机资源' : 'host resource', icon: Cpu, accent: '#722ed1' },

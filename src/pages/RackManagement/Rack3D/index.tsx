@@ -181,7 +181,7 @@ const RackLayerMenuPanel: React.FC<RackLayerMenuPanelProps> = ({
           className={`flex items-center gap-1 rounded-md px-1.5 py-0.5 font-medium transition-all ${
             displayMode === 'role' ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-slate-200'
           }`}
-          title={zh ? '设备角色分类' : 'Role Classification'}
+          title={zh ? '设备角色' : 'Device role'}
         >
           <Tag size={11} />
         </button>

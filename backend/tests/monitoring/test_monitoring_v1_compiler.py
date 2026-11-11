@@ -175,6 +175,12 @@ def test_platform_scrape_targets_are_added_only_to_local_collector():
     assert local_platform_jobs["platform_grafana"]["metrics_path"] == "/grafana/metrics"
     assert local_platform_jobs["platform_hardware_inventory"]["metrics_path"] == "/hardware-metrics"
     assert local_platform_jobs["platform_hardware_inventory"]["scrape_interval"] == "60s"
+    assert local_platform_jobs["platform_hardware_inventory"]["max_scrape_size"] == "67108864"
+    assert all(
+        "max_scrape_size" not in job
+        for name, job in local_platform_jobs.items()
+        if name != "platform_hardware_inventory"
+    )
     assert all(
         job["metrics_path"] == "/metrics"
         for name, job in local_platform_jobs.items()

@@ -17,26 +17,37 @@ def test_empty_discovery_prefix_binds_to_higher_level_svi_gateway() -> None:
     conn.executescript('''
         CREATE TABLE prefixes (
             id TEXT PRIMARY KEY, gateway TEXT, gateway_device_id TEXT,
-            gateway_interface_id TEXT, manual_override INTEGER, source_type TEXT,
-            updated_at TEXT
+            gateway_interface_id TEXT, address_space_id TEXT, vrf_id TEXT,
+            manual_override INTEGER, source_type TEXT, updated_at TEXT,
+            revision INTEGER NOT NULL DEFAULT 1
+        );
+        CREATE TABLE ipam_address_spaces (
+            id TEXT PRIMARY KEY, kind TEXT, vrf_id TEXT
         );
         CREATE TABLE devices (id TEXT PRIMARY KEY, hostname TEXT, role TEXT);
         CREATE TABLE interfaces (
             id TEXT PRIMARY KEY, device_id TEXT, interface_name TEXT,
             primary_ip TEXT, ip_address TEXT, ip_prefix_length INTEGER,
-            interface_type TEXT, is_l3 INTEGER
+            interface_type TEXT, is_l3 INTEGER, vrf_id TEXT
         );
     ''')
-    conn.execute("INSERT INTO prefixes VALUES (?, ?, ?, ?, ?, ?, ?)", ('prefix-1', '', '', '', 0, 'discovery', ''))
+    conn.execute("INSERT INTO ipam_address_spaces VALUES (?, 'vrf', ?)", ('space-vrf-1', 'vrf-1'))
+    conn.execute(
+        """INSERT INTO prefixes (
+               id, gateway, gateway_device_id, gateway_interface_id,
+               address_space_id, vrf_id, manual_override, source_type, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        ('prefix-1', '', '', '', 'space-vrf-1', 'vrf-1', 0, 'discovery', ''),
+    )
     conn.executemany(
         "INSERT INTO devices VALUES (?, ?, ?)",
         [('lsw5', 'LSW5', 'distribution'), ('lsw7', 'LSW7', 'access')],
     )
     conn.executemany(
-        "INSERT INTO interfaces VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO interfaces VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
-            ('if-lsw5', 'lsw5', 'Vlanif20', '10.253.20.1', '10.253.20.1', 24, 'svi', 1),
-            ('if-lsw7', 'lsw7', 'Vlanif20', '10.253.20.2', '10.253.20.2', 24, 'svi', 1),
+            ('if-lsw5', 'lsw5', 'Vlanif20', '10.253.20.1', '10.253.20.1', 24, 'svi', 1, 'vrf-1'),
+            ('if-lsw7', 'lsw7', 'Vlanif20', '10.253.20.2', '10.253.20.2', 24, 'svi', 1, 'vrf-1'),
         ],
     )
     candidate = {
@@ -45,6 +56,9 @@ def test_empty_discovery_prefix_binds_to_higher_level_svi_gateway() -> None:
         'observed_interfaces': ['Vlanif20'],
     }
 
+    conn.execute("UPDATE interfaces SET vrf_id = 'vrf-other'")
+    assert prefix_service._bind_discovered_gateway(conn, 'prefix-1', candidate, 'now') is False
+    conn.execute("UPDATE interfaces SET vrf_id = 'vrf-1'")
     assert prefix_service._bind_discovered_gateway(conn, 'prefix-1', candidate, 'now') is True
     row = conn.execute(
         'SELECT gateway, gateway_device_id, gateway_interface_id FROM prefixes WHERE id = ?',
@@ -276,7 +290,8 @@ def test_prefix_classification_summary_returns_sql_row(monkeypatch) -> None:
     conn.row_factory = postgresql_test_driver.Row
     conn.execute('''
         CREATE TABLE prefixes (
-            prefix TEXT, tenant_id TEXT, site_id TEXT, vrf_id TEXT,
+            prefix TEXT, prefix_cidr CIDR, address_space_id TEXT,
+            tenant_id TEXT, site_id TEXT, vrf_id TEXT,
             classification_status TEXT, manual_override INTEGER, source_type TEXT,
             network_type TEXT, mixed_network INTEGER, conflict_status TEXT,
             is_active INTEGER, status TEXT
@@ -330,7 +345,8 @@ def test_persist_is_idempotent_and_does_not_default_to_server(monkeypatch) -> No
     conn.row_factory = postgresql_test_driver.Row
     conn.executescript('''
         CREATE TABLE prefixes (
-            id TEXT PRIMARY KEY, prefix TEXT, prefix_cidr TEXT, vrf_id TEXT, site_id TEXT, tenant_id TEXT,
+            id TEXT PRIMARY KEY, prefix TEXT, prefix_cidr TEXT, address_space_id TEXT,
+            vrf_id TEXT, site_id TEXT, tenant_id TEXT,
             status TEXT, name TEXT, network_type TEXT, traceable INTEGER, source_type TEXT,
             source_ref TEXT, confidence REAL, last_observed_at TEXT,
             classification_status TEXT, classification_source TEXT, classification_confidence REAL,
@@ -341,6 +357,8 @@ def test_persist_is_idempotent_and_does_not_default_to_server(monkeypatch) -> No
             first_seen_at TEXT, last_seen_at TEXT, miss_count INTEGER, is_active INTEGER,
             created_at TEXT, updated_at TEXT
         );
+        CREATE TABLE tenants (id TEXT PRIMARY KEY, name TEXT);
+        INSERT INTO tenants(id, name) VALUES ('tenant-default', 'Default');
         CREATE TABLE prefix_observations (
             id TEXT PRIMARY KEY, prefix_id TEXT, collection_run_id TEXT, source_device_id TEXT,
             source_type TEXT, observed_value TEXT, evidence_json TEXT, confidence REAL,
@@ -379,7 +397,8 @@ def test_persist_attaches_vip_address_role_without_changing_prefix_type(monkeypa
     conn.row_factory = postgresql_test_driver.Row
     conn.executescript('''
         CREATE TABLE prefixes (
-            id TEXT PRIMARY KEY, prefix TEXT, prefix_cidr TEXT, vrf_id TEXT, site_id TEXT, tenant_id TEXT,
+            id TEXT PRIMARY KEY, prefix TEXT, prefix_cidr TEXT, address_space_id TEXT,
+            vrf_id TEXT, site_id TEXT, tenant_id TEXT,
             status TEXT, name TEXT, network_type TEXT, traceable INTEGER, source_type TEXT,
             source_ref TEXT, confidence REAL, last_observed_at TEXT,
             classification_status TEXT, classification_source TEXT, classification_confidence REAL,
@@ -389,6 +408,8 @@ def test_persist_attaches_vip_address_role_without_changing_prefix_type(monkeypa
             first_seen_at TEXT, last_seen_at TEXT,
             miss_count INTEGER, is_active INTEGER, created_at TEXT, updated_at TEXT
         );
+        CREATE TABLE tenants (id TEXT PRIMARY KEY, name TEXT);
+        INSERT INTO tenants(id, name) VALUES ('tenant-default', 'Default');
         CREATE TABLE prefix_observations (
             id TEXT PRIMARY KEY, prefix_id TEXT, collection_run_id TEXT, source_device_id TEXT,
             source_type TEXT, observed_value TEXT, evidence_json TEXT, confidence REAL,

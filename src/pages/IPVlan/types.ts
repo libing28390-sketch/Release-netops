@@ -1,5 +1,6 @@
 export interface Subnet {
   id: string;
+  address_space_id?: string | null;
   name: string;
   network: string;
   prefix_len: number;
@@ -29,8 +30,8 @@ export interface IPAddress {
 }
 
 export interface Conflict {
-  ip_conflicts: { address: string; subnets: string; cnt: number }[];
-  mac_conflicts: { mac_address: string; addresses: string; cnt: number }[];
+  ip_conflicts: { address_space_id?: string | null; address: string; subnets: string; cnt: number }[];
+  mac_conflicts: { address_space_id?: string | null; mac_address: string; addresses: string; subnets?: string; cnt: number }[];
   total_conflicts: number;
 }
 

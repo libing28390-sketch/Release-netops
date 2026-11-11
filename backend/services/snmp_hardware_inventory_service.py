@@ -38,6 +38,19 @@ _METRIC_FAMILIES = {
     "sensor_value": "nexora_hw_sensor_value",
     "wireless_sensor_value": "nexora_wireless_sensor_value",
 }
+_HARDWARE_DEVICE_LABELS = (
+    "tenant_id", "asset_id", "device_id", "hostname", "site_name", "vendor", "platform", "role",
+)
+_HARDWARE_SENSOR_IDENTITY_LABELS = (
+    "sensor_key", "data_origin", "source_type", "component_class", "measurement_type",
+    "native_instance_id", "native_device_id", "native_entity_id",
+)
+_WIRELESS_INDEX_LABELS = (
+    # These are the bounded AP/Radio/SSID labels consumed by the wireless
+    # dashboards. Other discovery indexes remain represented by sensor_key/index.
+    "ap_id", "ap_name", "ap_model", "ap_ip", "ap_mac", "radio_id", "ssid", "wlan_id",
+)
+_WIRELESS_AP_INFO_LABELS = ("ap_id", "ap_name", "ap_model", "ap_ip", "ap_mac")
 _FAMILY_HELP = {
     "nexora_hw_sensor_info": "Discovered hardware sensor metadata.",
     "nexora_hw_sensor_quality": "Current quality state for a hardware sensor.",
@@ -1195,9 +1208,6 @@ def render_hardware_metrics(sensors: Sequence[Mapping[str, Any]], device_labels:
     """
     if not isinstance(device_labels, Mapping):
         raise HardwareInventoryError("device_labels must be a mapping")
-    allowed_device_labels = (
-        "tenant_id", "asset_id", "device_id", "hostname", "site_name", "vendor", "platform", "role",
-    )
     lines_by_family: dict[str, list[tuple[str, str]]] = {}
 
     def add(
@@ -1220,53 +1230,81 @@ def render_hardware_metrics(sensors: Sequence[Mapping[str, Any]], device_labels:
         lifecycle = str(sensor.get("lifecycle_status") or "active")
         if lifecycle == "retired" or sensor.get("enabled") is False:
             continue
-        base = {name: device_labels.get(name) for name in allowed_device_labels}
+        # The caller supplies the authoritative device identity. Sensor rows
+        # may fill missing identifiers for direct renderer callers, but must
+        # never replace a populated device label with stale sensor data.
+        base = {name: device_labels.get(name) for name in _HARDWARE_DEVICE_LABELS}
         for name in ("tenant_id", "asset_id", "device_id"):
-            if sensor.get(name) not in (None, ""):
+            if base.get(name) in (None, "") and sensor.get(name) not in (None, ""):
                 base[name] = sensor[name]
         sensor_key = _get_sensor_key(sensor)
         base["sensor_key"] = sensor_key
-        base["data_origin"] = sensor.get("data_origin", "")
-        for identity_label in ("native_instance_id", "native_device_id", "native_entity_id"):
-            if sensor.get(identity_label) not in (None, ""):
-                base[identity_label] = sensor[identity_label]
-        base["source_type"] = sensor.get("source_type", "")
-        base["component_class"] = sensor.get("component_class", "")
-        base["measurement_type"] = sensor.get("measurement_type", "")
+        for identity_label in _HARDWARE_SENSOR_IDENTITY_LABELS:
+            if identity_label != "sensor_key":
+                base[identity_label] = sensor.get(identity_label, "")
         metadata = _decode_json_field(sensor.get("metadata", sensor.get("metadata_json")), fallback={})
         index_labels = _decode_json_field(sensor.get("index_labels", sensor.get("index_labels_json")), fallback={})
-        if isinstance(index_labels, dict) and index_labels.get("ent_physical_index") not in (None, ""):
-            base["ent_physical_index"] = index_labels["ent_physical_index"]
+        component_is_wireless = str(sensor.get("component_class") or "").casefold().startswith("wireless_")
+        has_wireless_index = isinstance(index_labels, dict) and any(
+            index_labels.get(label_name) not in (None, "")
+            for label_name in _WIRELESS_INDEX_LABELS
+        )
+        # Older LibreNMS mappings can attach AP identity labels to a normalized
+        # non-wireless component class (for example fan_state). Treat those
+        # records as wireless for the label budget and preserve their AP tags.
+        is_wireless = component_is_wireless or has_wireless_index
         if isinstance(index_labels, dict):
-            for label_name in ("ap_id", "ap_name", "ap_model", "ap_ip", "ap_mac", "ap_serial", "radio_id", "radio_index", "radio_ifindex", "radio_mac", "radio_mode", "wlan_id", "ssid", "ssid_index", "radio_band", "bssid", "vlan_id"):
-                label_value = index_labels.get(label_name)
-                if label_value not in (None, ""):
-                    base[label_name] = _clean_text(label_value, field=label_name, limit=120)
-        if isinstance(metadata, dict) and metadata.get("ent_physical_index_measured"):
-            base["measured_entity_type"] = metadata["ent_physical_index_measured"]
-        if sensor.get("rule_version"):
+            if index_labels.get("ent_physical_index") not in (None, ""):
+                if not is_wireless:
+                    base["ent_physical_index"] = index_labels["ent_physical_index"]
+            if is_wireless:
+                for label_name in _WIRELESS_INDEX_LABELS:
+                    label_value = index_labels.get(label_name)
+                    if label_value not in (None, ""):
+                        base[label_name] = _clean_text(label_value, field=label_name, limit=120)
+        if isinstance(metadata, dict):
+            measured_entity_type = metadata.get("ent_physical_index_measured")
+            if measured_entity_type and not is_wireless:
+                base["measured_entity_type"] = measured_entity_type
+        rule_version = sensor.get("rule_version")
+        if rule_version and not is_wireless:
             base["rule_version"] = sensor.get("rule_version")
         explicit_window = metadata.get("window") if isinstance(metadata, dict) else None
         base["window"] = _clean_text(explicit_window, field="window", limit=100) or "unknown"
 
-        info_labels = dict(base)
-        # Keep the metadata metric below VictoriaMetrics' default label cap.
-        # These fields are redundant here: window belongs to value samples,
-        # group is the normalized alias for group_name, and index_labels are
-        # already promoted to individual AP/entity labels above.
-        info_labels.pop("window", None)
+        # Use a declared info-label contract: device and sensor identity plus
+        # labels used by Grafana's joins/selectors. The 5 AP identity labels are
+        # retained for wireless sensors; the remaining wireless index fields
+        # stay on value series where the dashboards consume them. This schema
+        # has at most 27 labels even when every input field is populated.
+        info_labels = {name: base.get(name) for name in _HARDWARE_DEVICE_LABELS}
+        for name in _HARDWARE_SENSOR_IDENTITY_LABELS:
+            info_labels[name] = base.get(name)
+        for label_name in ("ent_physical_index", "measured_entity_type"):
+            if base.get(label_name) not in (None, ""):
+                info_labels[label_name] = base[label_name]
         for label_name, field_name in (
             ("source_id", "source_id"),
             ("sensor_name", "sensor_name"),
-            ("entity_name", "entity_name"),
-            ("unit", "unit"),
-            ("discovery_status", "discovery_status"),
-            ("lifecycle_status", "lifecycle_status"),
+            ("group", "group_name"),
         ):
             info_labels[label_name] = sensor.get(field_name, "")
-        info_labels["group"] = sensor.get("group_name", "")
         index_value = _decode_json_field(sensor.get("index", sensor.get("index_json")), fallback=[])
         info_labels["index"] = _json_text(index_value)
+        if rule_version not in (None, ""):
+            info_labels["rule_version"] = rule_version
+        if is_wireless:
+            for label_name in _WIRELESS_AP_INFO_LABELS:
+                if base.get(label_name) not in (None, ""):
+                    info_labels[label_name] = base[label_name]
+        else:
+            for label_name, field_name in (
+                ("entity_name", "entity_name"),
+                ("unit", "unit"),
+                ("discovery_status", "discovery_status"),
+                ("lifecycle_status", "lifecycle_status"),
+            ):
+                info_labels[label_name] = sensor.get(field_name, "")
         add("nexora_hw_sensor_info", info_labels, "1")
 
         quality = str(sensor.get("last_quality") or "missing").lower()

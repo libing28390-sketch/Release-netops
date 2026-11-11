@@ -530,6 +530,8 @@ services:
       - no_proxy=localhost,127.0.0.1,netops,victoriametrics,snmp-exporter,postgres-exporter,vmagent,grafana,cadvisor
     command:
       - "-promscrape.config=/etc/nexora-collector/runtime/vmagent/scrape.yml"
+      # Also covers existing runtime artifacts until their next publication.
+      - "-promscrape.maxScrapeSize=67108864"
       - "-remoteWrite.url=http://victoriametrics:8428/api/v1/write"
       - "-remoteWrite.tmpDataPath=/var/lib/vmagent"
       # Bound retry buffering when VictoriaMetrics enters read-only mode.

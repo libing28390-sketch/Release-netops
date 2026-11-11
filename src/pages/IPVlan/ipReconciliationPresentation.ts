@@ -1,4 +1,4 @@
-export type ReconciliationTab = 'undocumented' | 'mismatched' | 'stale' | 'never_observed' | 'unscoped' | 'unavailable';
+export type ReconciliationTab = 'undocumented' | 'mismatched' | 'stale' | 'unscoped' | 'unavailable';
 export type ReconciliationEmptyState =
   | 'current_page_empty'
   | 'search_no_results'
@@ -24,7 +24,7 @@ export interface ReconciliationEndpointSeenSummary {
 }
 
 export const RECONCILIATION_TABS: ReconciliationTab[] = [
-  'undocumented', 'mismatched', 'stale', 'never_observed', 'unscoped', 'unavailable',
+  'undocumented', 'mismatched', 'stale', 'unscoped', 'unavailable',
 ];
 
 export function getLatestActiveEndpointSeen(summary: ReconciliationEndpointSeenSummary): string {
@@ -39,7 +39,6 @@ export function getReconciliationCategoryCount(summary: Record<string, unknown>,
     undocumented: 'total_undocumented',
     mismatched: 'total_mismatched',
     stale: 'total_stale',
-    never_observed: 'total_never_observed',
     unscoped: 'total_unscoped',
     unavailable: 'total_unavailable',
   };
@@ -87,8 +86,7 @@ export function getReconciliationEmptyMessage(
   const labels: Record<ReconciliationTab, [string, string]> = {
     undocumented: ['未发现漏登记 IP。', 'No undocumented IPs found.'],
     mismatched: ['未发现 IPAM 登记与当前观察不一致。', 'No IPAM registration mismatches found.'],
-    stale: ['未发现达到长期未发现条件的登记 IP。', 'No registered IPs meet the stale threshold.'],
-    never_observed: ['未发现登记后从未观察到的 IP。', 'No registered IPs have never been observed.'],
+    stale: ['本轮完整采集没有观察到这些已登记 IP。', 'These registered IPs were not observed in the latest complete collection.'],
     unscoped: ['没有归属待确认的观察记录。', 'No observations need scope confirmation.'],
     unavailable: ['当前没有来源不可用记录。', 'No unavailable sources were reported.'],
   };

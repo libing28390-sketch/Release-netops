@@ -462,6 +462,34 @@ async def lifespan(app: FastAPI):
         max_instances=1, coalesce=True,
     )
 
+    # IPv6 neighbor discovery is stored as its own current snapshot. Keep it
+    # outside the legacy endpoint wrapper, which also projects history.
+    from services.ipam_current_ndp_collection_service import run_current_ndp_collection
+    scheduler.add_job(
+        synchronized_scheduler_job(
+            'ipam_current_ndp_collector',
+            expire_seconds=max(60, ENDPOINT_FACT_INTERVAL_SECONDS * 2),
+        )(run_current_ndp_collection),
+        'interval', seconds=ENDPOINT_FACT_INTERVAL_SECONDS,
+        id='ipam_current_ndp_collector', replace_existing=True,
+        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=90),
+        max_instances=1, coalesce=True,
+    )
+
+    # Supported HSRP/VRRP runtime facts are saved in a current-only FHRP store.
+    # This collector is separate from the legacy endpoint/history projector.
+    from services.ipam_current_fhrp_collection_service import run_current_fhrp_collection
+    scheduler.add_job(
+        synchronized_scheduler_job(
+            'ipam_current_fhrp_collector',
+            expire_seconds=max(60, ENDPOINT_FACT_INTERVAL_SECONDS * 2),
+        )(run_current_fhrp_collection),
+        'interval', seconds=ENDPOINT_FACT_INTERVAL_SECONDS,
+        id='ipam_current_fhrp_collector', replace_existing=True,
+        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=150),
+        max_instances=1, coalesce=True,
+    )
+
     # IPAM projects existing database evidence into its own history. This
     # task never opens device sessions or changes the collection schedule.
     from services.ipam_discovery_service import run_ipam_discovery_projection

@@ -22,14 +22,15 @@ import type { TableExportData } from '../components/ui/TableExportMenu';
 import TagFilterDropdown from '../components/TagFilterDropdown';
 import PageHero from '../components/PageHero';
 import BatchPlatformBindingModal from '../components/BatchPlatformBindingModal';
+import { deviceRoleLabel } from '../domain/deviceLabels';
 
 /* ─── Column Visibility Toggle ─── */
 const COLUMN_LABELS: Record<ColumnKey, { zh: string; en: string }> = {
   hostname: { zh: '设备名称', en: 'Device name' },
   assetTag: { zh: '资产编号', en: 'Asset tag' },
   managementIp: { zh: '管理 IP', en: 'Management IP' },
-  category: { zh: '设备类别', en: 'Category' },
-  role: { zh: '角色', en: 'Role' },
+  category: { zh: '设备类别', en: 'Device category' },
+  role: { zh: '设备角色', en: 'Device role' },
   connectionMethod: { zh: '连接方式', en: 'Connection method' },
   vendor: { zh: '厂商', en: 'Vendor' },
   model: { zh: '型号', en: 'Model' },
@@ -458,21 +459,17 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
             <select
               value={inventoryRoleFilter}
               onChange={e => setInventoryRoleFilter(e.target.value)}
-              title={zh ? '按角色筛选' : 'Filter by role'}
+              title={zh ? '按设备角色筛选' : 'Filter by device role'}
               className={`shrink-0 px-3 py-1.5 rounded-xl border text-xs outline-none cursor-pointer transition-all ${
                 inventoryRoleFilter !== 'all'
                   ? 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300 font-semibold'
                   : 'bg-gray-50 dark:bg-zinc-800 border-gray-200/80 dark:border-zinc-700 text-gray-600 dark:text-zinc-300'
               }`}
             >
-              <option value="all">{zh ? '全部角色' : 'All Roles'}</option>
-              <option value="core">Core</option>
-              <option value="distribution">Distribution</option>
-              <option value="access">Access</option>
-              <option value="edge">Edge</option>
-              <option value="firewall">Firewall</option>
-              <option value="vpn">VPN</option>
-              <option value="test">Test</option>
+              <option value="all">{zh ? '全部设备角色' : 'All device roles'}</option>
+              {['core', 'distribution', 'access', 'edge', 'firewall', 'vpn', 'test'].map(role => (
+                <option key={role} value={role}>{deviceRoleLabel(role, zh ? 'zh' : 'en')}</option>
+              ))}
             </select>
 
             {/* Status Select */}

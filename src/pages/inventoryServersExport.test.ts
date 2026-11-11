@@ -10,8 +10,8 @@ describe('buildInventoryServersExportData', () => {
   it('splits visible composite server fields and excludes the internal ID', () => {
     const data = buildInventoryServersExportData(servers, { language: 'zh', quickFilter: 'all' });
 
-    expect(data.headers).toEqual(['主机名', '管理 IP', '角色', '厂商', '型号', '数据中心', '机柜', 'U 位', '状态', 'Ping', 'SSH', '部门']);
-    expect(data.rows[0]).toEqual(['web-01', '10.0.0.1', 'web', 'Dell', 'R650', 'dc-a', 'r1', 'U12', '在线', '—', '—', 'IT']);
+    expect(data.headers).toEqual(['主机名', '管理 IP', '设备角色', '厂商', '型号', '数据中心', '机柜', 'U 位', '状态', 'Ping', 'SSH', '部门']);
+    expect(data.rows[0]).toEqual(['web-01', '10.0.0.1', 'Web 服务器', 'Dell', 'R650', 'dc-a', 'r1', 'U12', '在线', '—', '—', 'IT']);
     expect(data.rows[0]).not.toContain('db-row-1');
   });
 
@@ -24,7 +24,7 @@ describe('buildInventoryServersExportData', () => {
     });
 
     expect(data.rows).toHaveLength(1);
-    expect(data.rows[0]).toEqual(['web-02', '10.0.0.2', 'web', 'Dell', 'R650', 'dc-a', 'r1', 'U13', 'Offline', 'OK', 'FAIL', 'IT']);
+    expect(data.rows[0]).toEqual(['web-02', '10.0.0.2', 'Web server', 'Dell', 'R650', 'dc-a', 'r1', 'U13', 'Offline', 'OK', 'FAIL', 'IT']);
   });
 
   it('applies server, vendor, and client-side datacenter filters together', () => {

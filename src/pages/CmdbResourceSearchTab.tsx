@@ -7,6 +7,7 @@ import { TableExportMenu } from '../components/ui/TableExportMenu';
 import { fetchAllPaginatedItems } from '../utils/pagination';
 import { buildCmdbExportData } from './cmdbExport';
 import type { TagDefinition } from '../types';
+import { DEVICE_CATEGORY_LABELS, deviceCategoryLabel, deviceRoleLabel } from '../domain/deviceLabels';
 
 interface Props {
   language?: string;
@@ -92,15 +93,12 @@ const TYPE_OPTIONS = [
   ['other', '其他资产', 'Other'],
 ] as const;
 
-const CATEGORY_OPTIONS = [
-  ['', '全部设备分类', 'All categories'],
-  ['router', '路由器', 'Router'],
-  ['switch', '交换机', 'Switch'],
-  ['firewall', '防火墙', 'Firewall'],
-  ['rack_server', '机架服务器', 'Rack server'],
-  ['blade_server', '刀片服务器', 'Blade server'],
-  ['storage', '存储设备', 'Storage'],
-] as const;
+const CATEGORY_OPTIONS: Array<[string, string, string]> = [
+  ['', '全部设备类别', 'All device categories'],
+  ...Object.entries(DEVICE_CATEGORY_LABELS)
+    .filter(([value]) => !['network_device', 'server', 'unknown'].includes(value))
+    .map(([value, label]): [string, string, string] => [value, label.zh, label.en]),
+];
 
 const STATUS_OPTIONS = [
   ['all', '全部在线状态', 'All statuses'],
@@ -140,8 +138,8 @@ function formatLifecycle(value: string, zh: boolean): string {
 const RESOURCE_COLUMNS = [
   { key: 'hostname', zh: '设备名称', en: 'Hostname', value: (row: ResourceRow) => row.hostname || '—' },
   { key: 'asset_type', zh: '资产类型', en: 'Asset type', value: (row: ResourceRow, zh: boolean) => formatType(row.asset_type, zh) },
-  { key: 'device_category', zh: '设备分类', en: 'Device category', value: (row: ResourceRow, zh: boolean) => row.device_category || (zh ? '未分类' : 'Unclassified') },
-  { key: 'device_role', zh: '设备角色', en: 'Device role', value: (row: ResourceRow) => row.device_role || '—' },
+  { key: 'device_category', zh: '设备类别', en: 'Device category', value: (row: ResourceRow, zh: boolean) => deviceCategoryLabel(row.device_category, zh ? 'zh' : 'en') },
+  { key: 'device_role', zh: '设备角色', en: 'Device role', value: (row: ResourceRow, zh: boolean) => deviceRoleLabel(row.device_role, zh ? 'zh' : 'en') },
   { key: 'serial_number', zh: '序列号', en: 'Serial number', value: (row: ResourceRow) => row.serial_number || '—' },
   { key: 'asset_tag', zh: '资产编号', en: 'Asset tag', value: (row: ResourceRow) => row.asset_tag || '—' },
   { key: 'management_ip', zh: '管理 IP', en: 'Management IP', value: (row: ResourceRow) => row.management_ip || '—' },

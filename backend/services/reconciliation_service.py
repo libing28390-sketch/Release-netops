@@ -264,15 +264,25 @@ def _apply_action(conn, finding: dict, action: dict, approved_by: str) -> dict:
             now = datetime.now(timezone.utc).replace(microsecond=0)
             values = {'status': 'released', 'released_at': now.isoformat(),
                       'available_after': (now + timedelta(hours=24)).isoformat(),
-                      'device_id': '', 'interface_id': '', 'interface_name': '', 'mac_address': ''}
+                      'device_id': None, 'interface_id': None, 'interface_name': '', 'mac_address': ''}
         elif action_type == 'mark_stale':
             values = {'status': 'deprecated'}
         else:
             allowed = {'hostname', 'mac_address', 'device_id', 'interface_id', 'interface_name', 'description'}
             values = {key: value for key, value in payload.items() if key in allowed}
+            if 'device_id' in values or 'interface_id' in values:
+                from services.ipam_service import _normalize_ip_assignment
+                values['device_id'], values['interface_id'] = _normalize_ip_assignment(
+                    conn,
+                    device_id=values.get('device_id', before.get('device_id')),
+                    interface_id=values.get('interface_id', before.get('interface_id')),
+                )
         if values:
             assignments = ', '.join(f"{key} = ?" for key in values)
-            conn.execute(f"UPDATE ip_addresses SET {assignments}, updated_at = ? WHERE id = ?", (*values.values(), _now(), target_id))
+            conn.execute(
+                f"UPDATE ip_addresses SET {assignments}, updated_at = ?, revision = revision + 1 WHERE id = ?",
+                (*values.values(), _now(), target_id),
+            )
         after_row = conn.execute("SELECT * FROM ip_addresses WHERE id = ?", (target_id,)).fetchone()
         after = dict(after_row) if after_row else {}
     elif action_type == 'update_device':

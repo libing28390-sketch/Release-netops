@@ -52,6 +52,22 @@ interface TraceHop {
   evidence?: string;
 }
 
+interface VlanMemberCandidate {
+  device_id?: string;
+  interface_name: string;
+  description?: string;
+  interface_type?: string;
+  port_mode?: string;
+  tagging?: string;
+  source?: string;
+  last_seen?: string;
+  mac_match?: boolean;
+  mac_match_last_updated?: string;
+  mac_match_fresh?: boolean;
+  access_confirmed?: boolean;
+  evidence?: string[];
+}
+
 interface LocatorContext {
   address: {
     ip: string;
@@ -79,6 +95,12 @@ interface LocatorContext {
     native_vlan: string;
     allowed_vlans: string;
     last_seen: string;
+    port_confidence?: 'unknown' | 'candidate' | 'confirmed' | 'ambiguous' | 'device_interface';
+    port_source?: string;
+    arp_device_id?: string;
+    arp_device?: string;
+    arp_interface?: string;
+    vlan_member_candidates?: VlanMemberCandidate[];
   };
   l3: {
     gateway: string;
@@ -193,6 +215,22 @@ const PATH_KIND_LABELS: Record<string, [string, string]> = {
 function formatPathKind(kind: string, zhLang: boolean): string {
   const labels = PATH_KIND_LABELS[kind] || [kind, kind];
   return labels[zhLang ? 0 : 1];
+}
+
+function formatLocatorVlanSource(source: string, zhLang: boolean): string {
+  const labels: Record<string, [string, string]> = {
+    arp: ['ARP 表', 'ARP table'],
+    arp_table: ['ARP 表', 'ARP table'],
+    arp_interface: ['ARP 接口', 'ARP interface'],
+    mac_table: ['MAC 表', 'MAC table'],
+    interface_snapshot: ['接口快照', 'Interface snapshot'],
+    cmdb_cli_snapshot: ['CMDB VLAN 快照', 'CMDB VLAN snapshot'],
+    unknown: ['未知', 'Unknown'],
+  };
+  const key = String(source || '').trim().toLowerCase();
+  if (!key) return zhLang ? '未知' : 'Unknown';
+  const localized = labels[key];
+  return localized ? localized[zhLang ? 0 : 1] : source;
 }
 
 function formatExactTime(value: string, zhLang: boolean): string {
@@ -1435,6 +1473,16 @@ ${rep.repair_commands}
                 </div>
               </div>
 
+              {result.trace_status === 'partial' && (
+                <div className="mx-5 mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300">
+                  <p className="font-semibold">{zh ? '接入端口已定位，路径部分待核' : 'Access port located; path partly unverified'}</p>
+                  <p className="mt-1">{zh ? '物理端口证据已确认；部分路由候选设备查询失败，完整路径仍需复核。' : 'The physical port is confirmed. Some route candidates failed, so the full path still needs review.'}</p>
+                  {result.errors?.map((err, i) => (
+                    <p key={i} className="mt-1">{err}</p>
+                  ))}
+                </div>
+              )}
+
               {/* Path flow: IP → MAC → Switch:Port */}
               <div className="px-5 py-5">
                 <div className="flex items-center gap-1.5 flex-wrap">
@@ -1520,6 +1568,16 @@ ${rep.repair_commands}
                 )}
               </div>
             </div>
+          ) : result.trace_status === 'arp_only' ? (
+            <div className="bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 rounded-2xl px-5 py-4">
+              <div className="flex items-start gap-3">
+                <AlertCircle size={18} className="text-amber-500 mt-0.5 flex-shrink-0" />
+                <div>
+                  <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">{locatorContext?.l2.port_confidence === 'device_interface' ? (zh ? '已定位到 MAC 所在物理接口' : 'MAC mapped to a physical interface') : (zh ? '已找到 ARP 和 VLAN，物理端口待确认' : 'ARP and VLAN found; physical port needs confirmation')}</p>
+                  <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">{locatorContext?.l2.port_confidence === 'device_interface' ? (zh ? 'ARP 来源接口是三层接口；当前 VLAN 成员记录与新鲜 MAC 表已关联到下方物理接口，但端口模式未知，因此暂不认定为主机接入口。' : 'The ARP source is an L3 interface. Current VLAN membership and a fresh MAC-table hit identify the physical interface below; its access role remains unverified because the port mode is unknown.') : (zh ? 'ARP 来源接口是三层接口。下方 VLAN 成员端口显示当前可核对的接口证据。' : 'The ARP source is an L3 interface. VLAN member ports below show the available interface evidence.')}</p>
+                </div>
+              </div>
+            </div>
           ) : result.trace_status === 'incomplete' ? (
             <div className="bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 rounded-2xl px-5 py-4">
               <div className="flex items-start gap-3">
@@ -1535,7 +1593,7 @@ ${rep.repair_commands}
                     )}
                   </div>
                   <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
-                    {zh ? '已从 ARP 获取 MAC，但当前路径证据不足，系统未把中间接口判定为主机接入口。' : 'The MAC was resolved from ARP, but the path evidence is incomplete, so an intermediate interface is not marked as a host port.'}
+                    {zh ? '已从 ARP 获取 MAC 和 VLAN；ARP 接口是三层来源。下方分开展示 MAC 表命中的 VLAN 成员接口，以及尚未确认的接入口角色。' : 'ARP resolved the MAC and VLAN. Its interface is an L3 source; the VLAN member interface matched by the MAC table and any remaining access-role uncertainty appear below.'}
                   </p>
                   {macLookupMessage && macLookup?.status !== 'not_attempted' && (
                     <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">{macLookupMessage}</p>
@@ -1601,9 +1659,17 @@ ${rep.repair_commands}
                 <LocatorContextCard title={zh ? '二层定位' : 'Layer 2'} icon={Cable}>
                   <LocatorContextField label="MAC" value={formatMacAddress(locatorContext.l2.mac || result.mac_display)} mono />
                   <LocatorContextField label="VLAN" value={locatorContext.l2.vlan ? `${locatorContext.l2.vlan}${locatorContext.l2.vlan_name ? ` · ${locatorContext.l2.vlan_name}` : ''}` : ''} mono />
-                  <LocatorContextField label={zh ? 'VLAN 来源' : 'VLAN Source'} value={locatorContext.l2.vlan_source} />
-                  <LocatorContextField label={zh ? '接入设备' : 'Switch'} value={locatorContext.l2.switch_name} />
-                  <LocatorContextField label={zh ? '接入接口' : 'Port'} value={locatorContext.l2.port} mono />
+                  <LocatorContextField label={zh ? 'VLAN 来源' : 'VLAN Source'} value={formatLocatorVlanSource(locatorContext.l2.vlan_source, zh)} />
+                  <LocatorContextField label={locatorContext.l2.port_confidence === 'device_interface' ? (zh ? 'MAC 所在设备' : 'MAC Device') : (zh ? '接入设备' : 'Access Device')} value={['confirmed', 'device_interface'].includes(locatorContext.l2.port_confidence || '') ? locatorContext.l2.switch_name : ''} />
+                  <LocatorContextField label={locatorContext.l2.port_confidence === 'device_interface' ? (zh ? 'MAC 所在接口' : 'MAC Interface') : (zh ? '接入接口' : 'Access Port')} value={['confirmed', 'device_interface'].includes(locatorContext.l2.port_confidence || '') ? locatorContext.l2.port : ''} mono />
+                  <LocatorContextField label={zh ? 'ARP 来源设备' : 'ARP Source Device'} value={locatorContext.l2.arp_device} />
+                  <LocatorContextField label={zh ? 'ARP 来源接口' : 'ARP Source Interface'} value={locatorContext.l2.arp_interface} mono />
+                  <LocatorContextField
+                    label={zh ? 'VLAN 成员接口候选' : 'VLAN Member Port Candidates'}
+                    value={locatorContext.l2.vlan_member_candidates?.map((item) =>
+                      `${item.interface_name}${item.description ? ` · ${item.description}` : ''}${item.mac_match ? (zh ? ' · MAC 命中' : ' · MAC hit') : ''}${item.access_confirmed ? (zh ? ' · 接入已确认' : ' · access confirmed') : ''}`
+                    ).join('；')}
+                  />
                   <LocatorContextField
                     label={zh ? 'MAC 表查询' : 'MAC Lookup'}
                     value={macLookup && macLookup.status !== 'not_attempted' ? macLookupStatusLabel(macLookup.status, zh) : ''}

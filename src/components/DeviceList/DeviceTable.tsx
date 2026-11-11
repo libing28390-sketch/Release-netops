@@ -11,6 +11,7 @@ import { ActionIconButton, ActionIconGroup } from '../ui/ActionIconButton';
 import { CHECK_BADGE, HEALTH_CFG, LIFECYCLE_CFG, STATUS_CFG, formatCheckTime } from './StatusBadge';
 import DeviceRowExpand from './DeviceRowExpand';
 import { getDevicePlatformAdaptation } from '../../utils/platformVersion';
+import { deviceCategoryLabel, deviceRoleLabel } from '../../domain/deviceLabels';
 
 import { TableActionCell, TableActionHeader } from '../ui/TableActionColumn';
 import {
@@ -147,10 +148,10 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
                 {zh ? '管理 IP' : 'Management IP'}
               </SortHeader>
             )}
-            {columns.category && <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">{zh ? '设备类别' : 'Category'}</th>}
+            {columns.category && <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">{zh ? '设备类别' : 'Device category'}</th>}
             {columns.role && (
               <SortHeader col="role" sortConfig={sortConfig} onSort={onSort}>
-                {zh ? '角色' : 'Role'}
+                {zh ? '设备角色' : 'Device role'}
               </SortHeader>
             )}
             {columns.connectionMethod && <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">{zh ? '连接方式' : 'Connection method'}</th>}
@@ -235,8 +236,8 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
                   {columns.hostname && <td className="px-3 py-2.5 text-xs font-bold text-gray-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400">{device.hostname || (zh ? '未知' : 'Unknown')}</td>}
                   {columns.assetTag && <td className="px-3 py-2.5 text-xs font-mono text-gray-700 dark:text-zinc-300">{device.asset_tag || '—'}</td>}
                   {columns.managementIp && <td className="px-3 py-2.5 text-xs font-mono text-gray-700 dark:text-zinc-300">{device.ip_address || '—'}</td>}
-                  {columns.category && <td className="px-3 py-2.5 text-xs text-gray-700 dark:text-zinc-300">{device.device_category || '—'}</td>}
-                  {columns.role && <td className="px-3 py-2.5 text-xs text-gray-700 dark:text-zinc-300">{device.role || '—'}</td>}
+                  {columns.category && <td className="px-3 py-2.5 text-xs text-gray-700 dark:text-zinc-300">{deviceCategoryLabel(device.device_category, zh ? 'zh' : 'en')}</td>}
+                  {columns.role && <td className="px-3 py-2.5 text-xs text-gray-700 dark:text-zinc-300">{deviceRoleLabel(device.role, zh ? 'zh' : 'en')}</td>}
                   {columns.connectionMethod && <td className="px-3 py-2.5 text-xs font-semibold uppercase text-gray-600 dark:text-zinc-300">{device.connection_method || '—'}</td>}
                   {columns.vendor && <td className="px-3 py-2.5 text-xs text-gray-700 dark:text-zinc-300">{device.vendor || assetMetadata.asset_vendor || vendorOf(device.platform)}</td>}
                   {columns.model && <td className="px-3 py-2.5 text-xs text-gray-700 dark:text-zinc-300">{device.model || assetMetadata.asset_model || '—'}</td>}

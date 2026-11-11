@@ -5,6 +5,7 @@
 import React from 'react';
 import { Server, Router, Shield } from 'lucide-react';
 import { AssetChassisMembers, normalizeAssetChassisMembers, type AssetChassisMember } from './AssetChassisMembers';
+import { deviceCategoryLabel, deviceRoleLabel } from '../domain/deviceLabels';
 
 const LIFECYCLE_STATUSES = [
   { value: 'staging', label: { zh: '待投产', en: 'Staging' } },
@@ -67,25 +68,6 @@ export interface AssetRecord {
   chassis_members?: AssetChassisMember[];
   serial_number_source?: string;
 }
-
-export const CATEGORY_MAP: Record<string, { zh: string; en: string }> = {
-  // Network
-  switch: { zh: '交换机', en: 'Switch' },
-  router: { zh: '路由器', en: 'Router' },
-  firewall: { zh: '防火墙', en: 'Firewall' },
-  load_balancer: { zh: '负载均衡', en: 'Load Balancer' },
-  wireless_ap: { zh: '无线 AP', en: 'Wireless AP' },
-  // Server
-  rack_server: { zh: '机架式服务器', en: 'Rack Server' },
-  blade_server: { zh: '刀片服务器', en: 'Blade Server' },
-  tower_server: { zh: '塔式服务器', en: 'Tower Server' },
-  high_density: { zh: '高密度服务器', en: 'High-Density Server' },
-  gpu_server: { zh: 'GPU 服务器', en: 'GPU Server' },
-  storage_server: { zh: '存储服务器', en: 'Storage Server' },
-  virtual_host: { zh: '虚拟/物理宿主机', en: 'Virtual Host' },
-  // Shared
-  other: { zh: '其他', en: 'Other' },
-};
 
 function statusMeta(v: string) {
   return STATUSES.find(s => s.value === v) || STATUSES[3];
@@ -154,7 +136,7 @@ export function AssetReadonlyDetailInner({ asset: a, zh }: { asset: AssetRecord;
         <ReadonlyField label={zh ? '资产编号' : 'Asset Tag'} value={a.asset_tag || '—'} />
         <ReadonlyField label={zh ? '序列号' : 'Serial No.'} value={a.serial_number || '—'} />
         <AssetChassisMembers members={a.chassis_members} zh={zh} />
-        <ReadonlyField label={zh ? '设备分类' : 'Category'} value={CATEGORY_MAP[a.device_category || '']?.[zh ? 'zh' : 'en'] || (a.device_category || '—')} />
+        <ReadonlyField label={zh ? '设备类别' : 'Device category'} value={deviceCategoryLabel(a.device_category, zh ? 'zh' : 'en')} />
         <ReadonlyField label={zh ? '额定功率' : 'Power (W)'} value={a.power_watts != null && String(a.power_watts) !== '0' && String(a.power_watts) !== '' ? `${a.power_watts} W` : '—'} />
         <ReadonlyField label={zh ? '管理IP' : 'Mgmt IP'} value={a.management_ip || '—'} mono />
         <ReadonlyField label={zh ? '管理方式' : 'Management methods'} value={managementMethods.join('、') || (zh ? '无登录通道' : 'No login channel')} mono />
@@ -180,7 +162,7 @@ export function AssetReadonlyDetailInner({ asset: a, zh }: { asset: AssetRecord;
         <ReadonlyField label={zh ? '设备高度(U)' : 'Height (U)'} value={a.u_height != null ? String(a.u_height) : '—'} />
         <ReadonlyField label={zh ? '计划起始U' : 'Planned start U'} value={a.planned_start_u != null ? String(a.planned_start_u) : '—'} />
         <ReadonlyField label={zh ? '机位备注' : 'Loc. note'} value={a.rack_unit || '—'} />
-        <ReadonlyField label={zh ? '角色' : 'Role'} value={a.device_role || '—'} />
+        <ReadonlyField label={zh ? '设备角色' : 'Device role'} value={deviceRoleLabel(a.device_role, zh ? 'zh' : 'en')} />
         <ReadonlyField label={zh ? '部门/业务' : 'Dept'} value={a.department || '—'} />
         <ReadonlyField label={zh ? '购买日期' : 'Purchased'} value={a.purchase_date || '—'} />
         <ReadonlyField label={zh ? '保修到期' : 'Warranty'} value={a.warranty_expiry || '—'} warn={!!(a.warranty_expiry && new Date(a.warranty_expiry) <= new Date(Date.now() + 90 * 86400000))} />

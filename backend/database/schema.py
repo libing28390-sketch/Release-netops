@@ -778,6 +778,7 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     CREATE TABLE IF NOT EXISTS prefixes (
         id TEXT PRIMARY KEY,
         prefix TEXT NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 1,
         vrf_id TEXT,
         vlan_id TEXT,
         site_id TEXT,
@@ -799,6 +800,7 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_prefixes_vrf_prefix ON prefixes(vrf_id, prefix)')
 
     ensure_column('prefixes', 'parent_prefix_id', "TEXT")
+    ensure_column('prefixes', 'revision', "INTEGER NOT NULL DEFAULT 1")
     ensure_column('prefixes', 'network_type', "TEXT DEFAULT 'server'")
     ensure_column('prefixes', 'gateway_device_id', "TEXT")
     ensure_column('prefixes', 'gateway_interface_id', "TEXT")
@@ -874,10 +876,16 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         prefix_id TEXT NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 1,
+        address_space_id TEXT,
         start_ip TEXT NOT NULL,
         end_ip TEXT NOT NULL,
         description TEXT DEFAULT '',
         status TEXT DEFAULT 'active',
+        management_mode TEXT,
+        allocation_allowed BOOLEAN,
+        mark_populated BOOLEAN NOT NULL DEFAULT FALSE,
+        mark_utilized BOOLEAN NOT NULL DEFAULT FALSE,
         tenant_id TEXT DEFAULT 'tenant-default',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
@@ -885,6 +893,12 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE SET NULL
     )
     ''')
+    ensure_column('ipam_pools', 'address_space_id', 'TEXT')
+    ensure_column('ipam_pools', 'revision', 'INTEGER NOT NULL DEFAULT 1')
+    ensure_column('ipam_pools', 'management_mode', 'TEXT')
+    ensure_column('ipam_pools', 'allocation_allowed', 'BOOLEAN')
+    ensure_column('ipam_pools', 'mark_populated', 'BOOLEAN NOT NULL DEFAULT FALSE')
+    ensure_column('ipam_pools', 'mark_utilized', 'BOOLEAN NOT NULL DEFAULT FALSE')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_ipam_pools_prefix ON ipam_pools(prefix_id)')
 
     # Create ipam_vips table if not exists
@@ -892,6 +906,10 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     CREATE TABLE IF NOT EXISTS ipam_vips (
         id TEXT PRIMARY KEY,
         address TEXT NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 1,
+        address_inet INET,
+        prefix_id TEXT,
+        address_space_id TEXT,
         vip_type TEXT NOT NULL,
         device_id TEXT,
         interface_name TEXT DEFAULT '',
@@ -906,13 +924,23 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     )
     ''')
     ensure_column('ipam_vips', 'backup_device_id', "TEXT")
+    ensure_column('ipam_vips', 'revision', "INTEGER NOT NULL DEFAULT 1")
+    ensure_column('ipam_vips', 'address_inet', "INET")
+    ensure_column('ipam_vips', 'prefix_id', "TEXT")
+    ensure_column('ipam_vips', 'address_space_id', "TEXT")
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_ipam_vips_device ON ipam_vips(device_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_ipam_vips_space ON ipam_vips(address_space_id, status)')
 
     # Create ipam_dhcp_leases table if not exists
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS ipam_dhcp_leases (
         id TEXT PRIMARY KEY,
         address TEXT NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 1,
+        address_space_id TEXT,
+        pool_id TEXT,
+        external_id TEXT,
+        scope_status TEXT NOT NULL DEFAULT 'scope_unknown',
         mac_address TEXT NOT NULL,
         hostname TEXT DEFAULT '',
         dhcp_server TEXT DEFAULT '',
@@ -925,7 +953,32 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     )
     ''')
     ensure_column('ipam_dhcp_leases', 'tenant_id', "TEXT DEFAULT 'tenant-default'")
+    ensure_column('ipam_dhcp_leases', 'revision', "INTEGER NOT NULL DEFAULT 1")
+    ensure_column('ipam_dhcp_leases', 'address_space_id', "TEXT")
+    ensure_column('ipam_dhcp_leases', 'pool_id', "TEXT")
+    ensure_column('ipam_dhcp_leases', 'external_id', "TEXT")
+    ensure_column('ipam_dhcp_leases', 'scope_status', "TEXT NOT NULL DEFAULT 'scope_unknown'")
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_ipam_dhcp_mac ON ipam_dhcp_leases(mac_address)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_ipam_leases_space_state ON ipam_dhcp_leases(address_space_id, lease_state)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_ipam_leases_pool_state ON ipam_dhcp_leases(pool_id, lease_state)')
+
+    # Durable idempotency results are created in the baseline for fresh
+    # installs; the versioned migration verifies their contract after this
+    # bootstrap has finished seeding legacy data.
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS ipam_idempotency_records (
+        tenant_id TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        request_hash TEXT NOT NULL,
+        response_json JSONB NOT NULL,
+        resource_type TEXT NOT NULL,
+        resource_id TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT uq_ipam_idempotency_records_tenant_operation_key
+            UNIQUE (tenant_id, operation, idempotency_key)
+    )
+    ''')
 
 
     # Create jobs table if not exists
@@ -3129,9 +3182,11 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     CREATE TABLE IF NOT EXISTS ip_addresses (
         id TEXT PRIMARY KEY,
         subnet_id TEXT NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 1,
         address TEXT NOT NULL,
+        pool_id TEXT,
         hostname TEXT DEFAULT '',
-        device_id TEXT DEFAULT '',
+        device_id TEXT DEFAULT NULL,
         interface_name TEXT DEFAULT '',
         mac_address TEXT DEFAULT '',
         device_type TEXT DEFAULT '',
@@ -3146,12 +3201,14 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_ip_addr_unique ON ip_addresses(subnet_id, address)')
 
     ensure_column('ip_addresses', 'device_type', "TEXT DEFAULT ''")
+    ensure_column('ip_addresses', 'revision', "INTEGER NOT NULL DEFAULT 1")
+    ensure_column('ip_addresses', 'pool_id', "TEXT")
     ensure_column('ip_addresses', 'ip_address', "TEXT DEFAULT ''")
     ensure_column('ip_addresses', 'prefix_id', "TEXT DEFAULT ''")
     ensure_column('ip_addresses', 'vrf_id', "TEXT DEFAULT ''")
     ensure_column('ip_addresses', 'tenant_id', "TEXT DEFAULT 'tenant-default'")
     ensure_column('ip_addresses', 'site_id', "TEXT DEFAULT ''")
-    ensure_column('ip_addresses', 'interface_id', "TEXT DEFAULT ''")
+    ensure_column('ip_addresses', 'interface_id', "TEXT DEFAULT NULL")
     ensure_column('ip_addresses', 'address_inet', "INET" if _USE_PG else "TEXT DEFAULT ''")
     ensure_column('ip_addresses', 'ip_version', "INTEGER DEFAULT 0")
     for col, dtype in [
@@ -3189,19 +3246,23 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_devices_asset_id ON devices(asset_id) WHERE asset_id IS NOT NULL AND asset_id <> ''")
     except Exception as _asset_unique_exc:
         logger.warning("Asset/device unique index deferred because historical duplicates exist: %s", _asset_unique_exc)
-    try:
-        if _USE_PG:
-            cursor.execute("""CREATE UNIQUE INDEX IF NOT EXISTS uq_ip_addresses_scope_active
-                ON ip_addresses(tenant_id, vrf_id, address_inet)
-                WHERE address_inet IS NOT NULL
-                  AND COALESCE(status, 'active') NOT IN ('released', 'available')""")
-        else:
-            cursor.execute("""CREATE UNIQUE INDEX IF NOT EXISTS uq_ip_addresses_scope_active
-                ON ip_addresses(tenant_id, vrf_id, address_inet)
-                WHERE address_inet IS NOT NULL AND address_inet <> ''
-                  AND COALESCE(status, 'active') NOT IN ('released', 'available')""")
-    except Exception as _ip_unique_exc:
-        logger.warning("IPAM active-address unique index deferred because historical conflicts exist: %s", _ip_unique_exc)
+    # The address-space migration owns this column and its FK on fresh installs.
+    # The baseline may recreate the legacy-only index after migration, but must
+    # not pre-create the column and cause ADD COLUMN ... REFERENCES to be skipped.
+    if 'address_space_id' in _table_columns(cursor, 'ip_addresses'):
+        try:
+            if _USE_PG:
+                cursor.execute("""CREATE UNIQUE INDEX IF NOT EXISTS uq_ip_addresses_legacy_scope_active
+                    ON ip_addresses(COALESCE(tenant_id, 'tenant-default'), COALESCE(vrf_id, ''), address_inet)
+                    WHERE address_space_id IS NULL AND address_inet IS NOT NULL
+                      AND COALESCE(status, 'active') NOT IN ('released', 'available')""")
+            else:
+                cursor.execute("""CREATE UNIQUE INDEX IF NOT EXISTS uq_ip_addresses_legacy_scope_active
+                    ON ip_addresses(COALESCE(tenant_id, 'tenant-default'), COALESCE(vrf_id, ''), address_inet)
+                    WHERE address_space_id IS NULL AND address_inet IS NOT NULL AND address_inet <> ''
+                      AND COALESCE(status, 'active') NOT IN ('released', 'available')""")
+        except Exception as _ip_unique_exc:
+            logger.warning("IPAM legacy-scope active-address unique index deferred because historical conflicts exist: %s", _ip_unique_exc)
 
     # Capacity planning snapshots
     cursor.execute('''
@@ -4684,10 +4745,25 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
             else:
                 ip_role = itype_l or 'host'
 
-            # Find matching interface_id from interfaces table
-            cursor.execute("SELECT id FROM interfaces WHERE device_id = ? AND interface_name = ?", (d_id, interface))
-            intf_row = cursor.fetchone()
-            intf_id = intf_row['id'] if intf_row else None
+            # Keep optional assignment references compatible with IPAM's
+            # nullable foreign keys. Resolve the interface through the same
+            # device so an imported interface_id can never point elsewhere.
+            device_id_value = str(d_id or '').strip() or None
+            interface_name_value = str(interface or '').strip()
+            if device_id_value:
+                cursor.execute("SELECT id FROM devices WHERE id = ?", (device_id_value,))
+                if not cursor.fetchone():
+                    device_id_value = None
+
+            intf_id = None
+            if device_id_value and interface_name_value:
+                cursor.execute(
+                    "SELECT id FROM interfaces WHERE device_id = ? AND interface_name = ?",
+                    (device_id_value, interface_name_value),
+                )
+                intf_row = cursor.fetchone()
+                if intf_row:
+                    intf_id = str(intf_row['id'] or '').strip() or None
 
             # Insert or update ip_addresses to align prefix relationships and masks
             cursor.execute("SELECT id, ip_address, prefix_id FROM ip_addresses WHERE address = ?", (ip,))
@@ -4700,8 +4776,8 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
                 # Update if mask or prefix association has changed
                 if old_ip_addr != ip_addr_with_mask or old_prefix_id != prefix_id:
                     cursor.execute(
-                        "UPDATE ip_addresses SET ip_address = ?, address_inet = ?, prefix_id = ?, subnet_id = ?, interface_id = ?, device_id = ?, interface_name = ?, device_type = ?, last_seen = ?, updated_at = ? WHERE id = ?",
-                        (ip_addr_with_mask, ip, prefix_id, prefix_id, intf_id or '', d_id, interface, ip_role, last_seen, datetime.now(timezone.utc).isoformat(), addr_id)
+                        "UPDATE ip_addresses SET ip_address = ?, address_inet = ?, prefix_id = ?, subnet_id = ?, interface_id = ?, device_id = ?, interface_name = ?, device_type = ?, last_seen = ?, updated_at = ?, revision = revision + 1 WHERE id = ?",
+                        (ip_addr_with_mask, ip, prefix_id, prefix_id, intf_id, device_id_value, interface, ip_role, last_seen, datetime.now(timezone.utc).isoformat(), addr_id)
                     )
             else:
                 addr_id = f"ip-{uuid.uuid4().hex[:12]}"
@@ -4713,7 +4789,7 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
                             mac_address, device_type, status, description, last_seen, created_at, updated_at,
                             ip_address, address_inet, prefix_id, vrf_id, interface_id
                         ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ''', (addr_id, prefix_id, ip, '', d_id, interface, '', ip_role, 'active', 'Imported from ip_inventory', last_seen, now, now, ip_addr_with_mask, ip, prefix_id, '', intf_id or ''))
+                    ''', (addr_id, prefix_id, ip, '', device_id_value, interface, '', ip_role, 'active', 'Imported from ip_inventory', last_seen, now, now, ip_addr_with_mask, ip, prefix_id, '', intf_id))
                 else:
                     cursor.execute('''
                         INSERT INTO ip_addresses (
@@ -4721,7 +4797,7 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
                             mac_address, device_type, status, description, last_seen, created_at, updated_at,
                             ip_address, address_inet, prefix_id, vrf_id, interface_id
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (addr_id, prefix_id, ip, '', d_id, interface, '', ip_role, 'active', 'Imported from ip_inventory', last_seen, now, now, ip_addr_with_mask, ip, prefix_id, '', intf_id or ''))
+                    ''', (addr_id, prefix_id, ip, '', device_id_value, interface, '', ip_role, 'active', 'Imported from ip_inventory', last_seen, now, now, ip_addr_with_mask, ip, prefix_id, '', intf_id))
 
         # Clean up empty, auto-generated host-route prefixes (/32, /128) no longer referenced
         cursor.execute('''

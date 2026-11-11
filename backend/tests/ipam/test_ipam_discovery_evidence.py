@@ -8,6 +8,7 @@ import pytest
 from database import get_db_connection
 from database.migrations.m0301_ipam_discovery_evidence import upgrade
 from services import ipam_discovery_service as discovery
+from services.ipam_address_space_service import create_address_space
 from services.ipam_service import create_address, create_subnet, get_ipam_reconciliation, list_ip_inventory
 
 MAC = "00:11:22:33:44:55"
@@ -20,6 +21,21 @@ def seed(device="gateway-a", site="discovery-site-a"):
         c.execute("INSERT INTO sites(id,site_code,site_name,tenant_id) VALUES (?,?,?,'tenant-default') ON CONFLICT DO NOTHING", (site, site, site))
         c.execute("INSERT INTO devices(id,hostname,tenant_id,site_id,status) VALUES (?,?,'tenant-default',?,'online') ON CONFLICT DO NOTHING", (device, device, site))
         c.commit()
+
+
+def _global_space_id():
+    with get_db_connection() as c:
+        row = c.execute(
+            "SELECT id FROM ipam_address_spaces WHERE security_tenant_id='tenant-default' AND name='Discovery Evidence Test Global' AND kind='global' LIMIT 1"
+        ).fetchone()
+    if row:
+        return str(row["id"])
+    return str(create_address_space(
+        name="Discovery Evidence Test Global",
+        kind="global",
+        vrf_id=None,
+        security_tenant_id="tenant-default",
+    )["id"])
 
 
 def raw_arp(when, *, device="gateway-a", ip="192.0.2.10", mac=MAC):
@@ -101,7 +117,7 @@ def test_projection_keeps_arp_without_mac_and_does_not_renew_time(isolated_db,mo
         assert c.execute("SELECT COUNT(*) AS n FROM network_endpoints").fetchone()["n"]==0
 
 
-def test_completed_run_context_and_failed_metadata_are_distinguished(isolated_db, monkeypatch):
+def test_completed_legacy_run_evidence_does_not_drive_current_reconciliation(isolated_db, monkeypatch):
     seed()
     now=datetime(2026, 1, 1, tzinfo=timezone.utc)
     monkeypatch.setattr(discovery, "_utc_now", lambda: now)
@@ -113,7 +129,11 @@ def test_completed_run_context_and_failed_metadata_are_distinguished(isolated_db
     assert item["scope_status"]=="resolved" and item["vrf_context_status"]=="explicit_global"
     assert item["coverage_complete"]
     result=get_ipam_reconciliation()
-    assert len(result["undocumented_endpoints"])==1  # Empty ledger is a valid comparison.
+    # Discovery history stays available to its own view, but it is not a
+    # current IPAM reconciliation source.
+    assert result["undocumented_endpoints"]==[]
+    assert result["mismatched_endpoints"]==[]
+    assert result["summary"]["active_endpoint_count"]==0
     mark_run(when+timedelta(seconds=2),run="failed-run",status="failed")
     discovery.run_ipam_discovery_projection()
     response=discovery.list_discovered_endpoints(kind="ip")
@@ -151,8 +171,9 @@ def test_scope_reuse_and_same_ip_mac_conflicts_preserve_all_evidence(isolated_db
     assert len(rows)==2 and {r["site_id"] for r in rows}=={"discovery-site-a","discovery-site-b"}
     evidence(now,"conflict",device="gateway-a",mac=OTHER_MAC)
     result=get_ipam_reconciliation()
-    assert result["mismatched_endpoints"]
-    assert all(not r.get("calibration_safe") for r in result["mismatched_endpoints"])
+    assert result["mismatched_endpoints"]==[]
+    assert result["undocumented_endpoints"]==[]
+    assert result["summary"]["active_endpoint_count"]==0
     assert len(discovery.list_discovered_endpoints(kind="ip",visible_scopes={("tenant-default","discovery-site-b")})["items"])==1
     with get_db_connection() as c:
         c.execute("INSERT INTO vrfs(id,vrf_name,tenant_id) VALUES ('blue','BLUE','tenant-default'),('red','RED','tenant-default')")
@@ -187,15 +208,16 @@ def test_business_vlan_scope_keeps_only_active_business_vlan_endpoints(isolated_
                  ('vlan-400', 400, 'Unclassified VLAN', 'discovery-site-a', 'active', 'tenant-default')"""
         )
         c.commit()
-    create_subnet(prefix="192.0.2.0/24", site_id="discovery-site-a", tenant_id="tenant-default", vlan_id="vlan-100", network_type="user_access")
-    create_subnet(prefix="198.51.100.0/24", site_id="discovery-site-a", tenant_id="tenant-default", vlan_id="vlan-200", network_type="transit")
-    create_subnet(prefix="203.0.113.0/24", site_id="discovery-site-a", tenant_id="tenant-default", vlan_id="vlan-300", network_type="management")
-    create_subnet(prefix="100.64.0.0/24", site_id="discovery-site-a", tenant_id="tenant-default", network_type="server")
-    create_subnet(prefix="172.20.0.0/24", site_id="discovery-site-a", tenant_id="tenant-default", vlan_id="vlan-400", network_type="unclassified")
+    global_space_id = _global_space_id()
+    create_subnet(prefix="192.0.2.0/24", site_id="discovery-site-a", tenant_id="tenant-default", address_space_id=global_space_id, vlan_id="vlan-100", network_type="user_access")
+    create_subnet(prefix="198.51.100.0/24", site_id="discovery-site-a", tenant_id="tenant-default", address_space_id=global_space_id, vlan_id="vlan-200", network_type="transit")
+    create_subnet(prefix="203.0.113.0/24", site_id="discovery-site-a", tenant_id="tenant-default", address_space_id=global_space_id, vlan_id="vlan-300", network_type="management")
+    create_subnet(prefix="100.64.0.0/24", site_id="discovery-site-a", tenant_id="tenant-default", address_space_id=global_space_id, network_type="server")
+    create_subnet(prefix="172.20.0.0/24", site_id="discovery-site-a", tenant_id="tenant-default", address_space_id=global_space_id, vlan_id="vlan-400", network_type="unclassified")
     with get_db_connection() as c:
         c.execute("INSERT INTO vrfs(id, vrf_name, tenant_id) VALUES ('discovery-blue', 'BLUE', 'tenant-default')")
         c.commit()
-    create_subnet(prefix="100.65.0.0/24", site_id="discovery-site-a", tenant_id="tenant-default", network_type="server")
+    create_subnet(prefix="100.65.0.0/24", site_id="discovery-site-a", tenant_id="tenant-default", address_space_id=global_space_id, network_type="server")
     create_subnet(prefix="100.65.0.0/24", site_id="discovery-site-a", tenant_id="tenant-default", vrf_id="discovery-blue", network_type="server")
     now = datetime.now(timezone.utc) - timedelta(seconds=2)
     evidence(now, "business-ip", ip="192.0.2.10", mac=MAC, vlan="100")
@@ -231,7 +253,8 @@ def test_business_vlan_scope_keeps_only_active_business_vlan_endpoints(isolated_
 def test_business_terminals_exclude_gateways_device_ips_and_non_host_addresses(isolated_db):
     seed()
     prefix = create_subnet(prefix="192.0.2.0/24", site_id="discovery-site-a",
-                           tenant_id="tenant-default", network_type="user_access", gateway="192.0.2.1")
+                           tenant_id="tenant-default", address_space_id=_global_space_id(),
+                           network_type="user_access", gateway="192.0.2.1")
     own = create_address(subnet_id=prefix['id'], address="192.0.2.2", device_type="device")
     with get_db_connection() as c:
         c.execute("UPDATE ip_addresses SET source_type='interface_collection' WHERE id=?", (own['id'],))
@@ -249,7 +272,8 @@ def test_business_terminals_exclude_gateways_device_ips_and_non_host_addresses(i
 def test_business_endpoint_view_excludes_virtual_gateway_mac_but_keeps_raw_observation(isolated_db):
     seed()
     create_subnet(prefix='192.0.2.0/24', site_id='discovery-site-a',
-                  tenant_id='tenant-default', network_type='user_access')
+                  tenant_id='tenant-default', address_space_id=_global_space_id(),
+                  network_type='user_access')
     now = datetime.now(timezone.utc) - timedelta(seconds=2)
     evidence(now, 'vrrp-gateway', ip='192.0.2.1', mac='00:00:5e:00:01:14', vlan='100')
 
@@ -264,7 +288,10 @@ def test_business_endpoint_view_excludes_virtual_gateway_mac_but_keeps_raw_obser
 def test_unknown_arp_vrf_cannot_borrow_explicit_global_mac_port(isolated_db):
     seed()
     seed('access-a')
-    prefix = create_subnet(prefix='192.0.2.0/24', site_id='discovery-site-a')
+    prefix = create_subnet(
+        prefix='192.0.2.0/24', site_id='discovery-site-a',
+        tenant_id='tenant-default', address_space_id=_global_space_id(),
+    )
     create_address(prefix['id'], address='192.0.2.10', hostname='known-global-host')
     now = datetime.now(timezone.utc) - timedelta(seconds=2)
     evidence(now, 'unknown-arp', context='unknown')
@@ -343,6 +370,7 @@ def test_layer_two_mac_uses_unique_vlan_vrf_binding_without_changing_source_scop
                      VALUES ('business-vlan-100',100,'Business','discovery-site-a','active','tenant-default')""")
         c.commit()
     create_subnet(prefix='192.0.2.0/24', site_id='discovery-site-a',
+                  address_space_id=_global_space_id(),
                   vlan_id='business-vlan-100', network_type='user_access')
     now = datetime.now(timezone.utc) - timedelta(seconds=2)
     evidence(now, 'known-arp')
@@ -367,7 +395,7 @@ def test_registration_assertion_survives_generation_but_not_prefix_change(isolat
     raw_arp(observed)
     discovery.run_ipam_discovery_projection()
     item=discovery.list_discovered_endpoints(kind="ip")["items"][0]
-    prefix=create_subnet(prefix="192.0.2.0/24",site_id="discovery-site-a",tenant_id="tenant-default")
+    prefix=create_subnet(prefix="192.0.2.0/24",site_id="discovery-site-a",tenant_id="tenant-default",address_space_id=_global_space_id())
     result=discovery.register_discovered_observation(observation_id=item["id"],subnet_id=prefix["id"],expected_observed_at=item["observed_at"],confirmed_scope=True,requested_by="reviewer")
     with get_db_connection() as c:
         address=dict(c.execute("SELECT * FROM ip_addresses WHERE id=?",(result["ipam_address_id"],)).fetchone())
@@ -393,7 +421,7 @@ def test_stale_dialog_observation_is_rejected_and_registration_rolls_back(isolat
     raw_arp(observed)
     discovery.run_ipam_discovery_projection()
     item=discovery.list_discovered_endpoints(kind="ip")["items"][0]
-    prefix=create_subnet(prefix="192.0.2.0/24",site_id="discovery-site-a",tenant_id="tenant-default")
+    prefix=create_subnet(prefix="192.0.2.0/24",site_id="discovery-site-a",tenant_id="tenant-default",address_space_id=_global_space_id())
     raw_arp(observed+timedelta(seconds=30),mac=OTHER_MAC)
     discovery.run_ipam_discovery_projection()
     with pytest.raises(ValueError,match="observation_version_changed"):
@@ -415,7 +443,7 @@ def test_calibration_changes_only_mac_and_checks_current_value(isolated_db):
     raw_arp(observed)
     mark_run(observed)
     discovery.run_ipam_discovery_projection()
-    prefix=create_subnet(prefix="192.0.2.0/24",site_id="discovery-site-a",tenant_id="tenant-default")
+    prefix=create_subnet(prefix="192.0.2.0/24",site_id="discovery-site-a",tenant_id="tenant-default",address_space_id=_global_space_id())
     address=create_address(prefix["id"],address="192.0.2.10",hostname="real-pc",mac_address=OTHER_MAC,status="active")
     item=discovery.list_discovered_endpoints(kind="ip")["items"][0]
     assert item["calibration_safe"]
@@ -427,10 +455,10 @@ def test_calibration_changes_only_mac_and_checks_current_value(isolated_db):
         assert record["mac_address"]==MAC and record["hostname"]=="real-pc"
 
 
-def test_absence_requires_all_responsible_sources_and_distinct_runs(isolated_db):
+def test_legacy_absence_runs_do_not_mark_current_ipam_addresses_stale(isolated_db):
     seed()
     now=datetime.now(timezone.utc)
-    prefix=create_subnet(prefix="192.0.2.0/24",site_id="discovery-site-a",tenant_id="tenant-default",gateway_device_id="gateway-a")
+    prefix=create_subnet(prefix="192.0.2.0/24",site_id="discovery-site-a",tenant_id="tenant-default",address_space_id=_global_space_id(),gateway_device_id="gateway-a")
     address=create_address(prefix["id"],address="192.0.2.10",status="active")
     with get_db_connection() as c:
         c.execute("UPDATE ip_addresses SET created_at=? WHERE id=?",((now-timedelta(days=12)).isoformat(),address["id"]))
@@ -441,8 +469,8 @@ def test_absence_requires_all_responsible_sources_and_distinct_runs(isolated_db)
         evidence(when,f"missing-{index}",ip=None)
     mark_run(now-timedelta(minutes=2),run="missing-2",count=0)
     result=get_ipam_reconciliation()
-    assert len(result["stale_ip_addresses"])==1
-    assert result["stale_ip_addresses"][0]["miss_count"]==3
+    assert result["stale_ip_addresses"]==[]
+    assert result["summary"]["total_stale"]==0
     seed("gateway-b")
     with get_db_connection() as c:
         c.execute("UPDATE prefixes SET gateway_device_id='gateway-b' WHERE id=?",(prefix["id"],))
@@ -466,7 +494,7 @@ def test_registered_only_inventory_excludes_unregistered_observations(isolated_d
     seed()
     raw_arp(datetime.now(timezone.utc)-timedelta(minutes=1))
     discovery.run_ipam_discovery_projection()
-    prefix=create_subnet(prefix="192.0.2.0/24",site_id="discovery-site-a",tenant_id="tenant-default",gateway="192.0.2.1")
+    prefix=create_subnet(prefix="192.0.2.0/24",site_id="discovery-site-a",tenant_id="tenant-default",address_space_id=_global_space_id(),gateway="192.0.2.1")
     create_address(prefix["id"],address="192.0.2.20",source_type="interface_collection",status="active")
     result=list_ip_inventory(registered_only=True,page_size=100)
     assert [r["address"] for r in result["items"]]==["192.0.2.20"]
