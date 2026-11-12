@@ -351,7 +351,7 @@ def test_unlabelled_snmp_context_preserves_raw_global_alias_for_manual_mapping(i
     assert rows[0]["address_space_id"] is None
 
 
-def test_v2c_raw_global_alias_context_key_is_not_overwritten(isolated_db, monkeypatch):
+def test_v2c_default_table_uses_global_when_no_vrf_is_configured(isolated_db, monkeypatch):
     device_id = "arp-v2c-unknown-alias-device"
     _insert_device(device_id)
 
@@ -374,20 +374,20 @@ def test_v2c_raw_global_alias_context_key_is_not_overwritten(isolated_db, monkey
     assert calls[0]["version"] == "2c"
     assert calls[0]["community"] == "mock-community"
     entry = result["entries"][0]
-    assert entry["context_type"] == "unknown"
+    assert entry["context_type"] == "global"
     assert entry["local_context_key"] == "global"
-    assert entry["vrf"] == ""
-    assert entry["vrf_context_status"] == "unknown"
+    assert entry["vrf"] == "global"
+    assert entry["vrf_context_status"] == "explicit_global"
     with get_db_connection() as conn:
         rows = list_current_endpoint_observations(conn, device_id=device_id)
         states = get_current_endpoint_collection_states(conn, device_id=device_id)
     row = next(row for row in rows if row["local_context_key"] == "global")
     assert row["address_space_id"] is None
-    assert row["latest_status"] == "scope_unknown"
+    assert row["latest_status"] == "complete"
     assert {
         (state["context_type"], state["local_context_key"])
         for state in states
-    } == {("unknown", ""), ("unknown", "global")}
+    } == {("global", "global")}
 
 
 def test_credential_resolution_failure_marks_each_active_context_failed(isolated_db, monkeypatch):

@@ -61,8 +61,8 @@ def _seed_device(device_id: str, hostname: str, site_id: str) -> None:
             (site_id, site_id.upper(), f"Site {site_id}"),
         )
         conn.execute(
-            """INSERT INTO devices (id, hostname, tenant_id, site_id, status)
-               VALUES (?, ?, 'tenant-default', ?, 'online')""",
+            """INSERT INTO devices (id, hostname, tenant_id, site_id, status, role)
+               VALUES (?, ?, 'tenant-default', ?, 'online', 'access')""",
             (device_id, hostname, site_id),
         )
         conn.commit()

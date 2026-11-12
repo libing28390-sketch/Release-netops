@@ -1632,7 +1632,11 @@ def test_arp_sweep_reports_skipped_backoff_and_does_not_abort(monkeypatch):
 
 def test_arp_sweep_device_selection_uses_bounded_cursor_batch(monkeypatch):
     devices = [
-        {"id": f"device-{index}", "role": "router", "ip_address": f"10.0.0.{index}"}
+        {
+            "id": f"device-{index}",
+            "role": "router" if index == 1 else "access",
+            "ip_address": f"10.0.0.{index}",
+        }
         for index in range(5)
     ]
     monkeypatch.setattr(ip_locator_service, "_load_eligible_devices", lambda **_kwargs: devices)
@@ -1642,14 +1646,14 @@ def test_arp_sweep_device_selection_uses_bounded_cursor_batch(monkeypatch):
     monkeypatch.setattr(
         ip_locator_service,
         "reserve_collector_sweep_batch",
-        lambda *_args, **_kwargs: {"start_cursor": 3, "selected_count": 2},
+        lambda *_args, **_kwargs: {"start_cursor": 2, "selected_count": 2},
     )
 
     selected, total, skipped = ip_locator_service._load_arp_sweep_devices("run-1")
 
     assert [item["id"] for item in selected] == ["device-3", "device-4"]
     assert all(item["_arp_policy_override"] is True for item in selected)
-    assert total == 5
+    assert total == 4
     assert skipped == 0
 
 
